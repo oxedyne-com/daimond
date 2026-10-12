@@ -60,6 +60,7 @@ import { open, scratch, signInAs, BROWSER } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APP  = fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
@@ -461,6 +462,7 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

@@ -50,6 +50,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, newChat, shot, errors, signInAs, steerDiamond } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APPJS = path.join(HERE, '..', 'www', 'js', 'daimond.js');
@@ -611,6 +612,7 @@ const errs = errors(s).filter(e => !/favicon|404|401|402|403|500|502|Bad Gateway
 check('and none of it throws', errs.length === 0, errs[0] || '');
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

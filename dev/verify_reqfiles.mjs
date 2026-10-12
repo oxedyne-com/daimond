@@ -52,6 +52,7 @@
 // going red when the file it is about is absent or empty rather than passing on anything.
 //
 import { open, signInAs, connectMock, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -324,6 +325,7 @@ try {
 	await s.close?.().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (BREAK) {
 	console.log(bad.length

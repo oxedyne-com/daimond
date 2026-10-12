@@ -67,7 +67,7 @@ const NOTES = (() => {
 	if (a < 0) throw new Error('var Notes not found in daimond.js');
 	return SRC.slice(a, SRC.indexOf('\n\t};\n', a) + 5);
 })();
-const WANT = [lift('\tvar DIAMOND_LOCKS = {};'), NOTES, lift('\tfunction abortTurn(c) {'), lift('\tfunction stopGeneration() {'), lift('\tfunction rebuildChatApp(c) {'),
+const WANT = [lift('\tvar DIAMOND_LOCKS = {};'), NOTES, lift('\tfunction abortTurn(c) {'), lift('\tfunction turnPhase() {'), lift('\tfunction stopGeneration() {'), lift('\tfunction rebuildChatApp(c) {'),
 	lift('\tfunction steerApi(op) {'), lift('\tasync function steerStore(op, a, b) {'), lift('\tasync function steerNotes() {')];
 const STEERING = (() => { const win = {}; new Function('window', readFileSync(join(HERE, 'steering.js'), 'utf8'))(win); return win.DaimondSteering; })();
 
@@ -96,6 +96,7 @@ function page(o) {
 		'function diamondModel(id) { return { provider: "p", model: "m1" }; }\n' +
 		'function diamondAppKey(a) { return a.model; }\n' +
 		'function setCurrent(c) { current = c; }\n' +
+		'function syncSendMode() {}\n' +
 		'var STEER_API = { read: ["DaimondNotes", "list"], back: ["DaimondNotes", "back"] };\n' +
 		patch(WANT.join('\n')) + '\n' +
 		'window.DaimondNotes = Notes;\n' +

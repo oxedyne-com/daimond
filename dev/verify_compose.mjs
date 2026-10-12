@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import { open, shot, scratch } from './harness.mjs';
 import { IMAP_PORT, SMTP_PORT } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const SENT = process.env.SENT_EML || '/tmp/sent.eml';
 const ok = [], bad = [];
@@ -212,6 +213,7 @@ check('the agent\'s draft opens for the human to send',
 
 await shot(s, 'compose');
 console.log('\nconsole errors:', s.errs.filter(e => !/favicon|404/.test(e)).slice(0, 5));
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 await s.close();

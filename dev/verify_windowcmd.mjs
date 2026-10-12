@@ -15,6 +15,7 @@
 //
 //   node dev/verify_windowcmd.mjs
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -73,6 +74,7 @@ check('the row names the chat\'s agent, credited through a command',
 	!!by && by.role === 'chat' && by.m === 'mock/fast' && by.pv === 'mockprov' && by.sp === 'sp1:probe' && by.via === 'command',
 	JSON.stringify(by));
 check('the window glue raised nothing on the console', msgs.length === 0, JSON.stringify(msgs));
+guardRan(ok.length + bad.length);
 console.log('\nwindowcmd: ' + ok.length + ' ok, ' + bad.length + ' failed');
 await s.close();
 process.exit(bad.length ? 1 : 0);

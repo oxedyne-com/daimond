@@ -43,6 +43,7 @@ import fs from 'node:fs';
 import { open, signInAs, scratch, workRows, pressRowItem, pressRowMark } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const tally = { route: [0, 0], control: [0, 0] };
@@ -479,6 +480,7 @@ try {
 }
 
 console.log(`\nroute checks: ${tally.route[0]} held, ${tally.route[1]} failed; controls: ${tally.control[0]} held, ${tally.control[1]} failed`);
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

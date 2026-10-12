@@ -46,6 +46,7 @@
 //   node dev/verify_doorbell.mjs --break twice    # 5: the notice repeats
 
 import { open, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const BREAK = (process.argv.indexOf('--break') >= 0)
 	? process.argv[process.argv.indexOf('--break') + 1] : '';
@@ -353,6 +354,7 @@ server.fail = false;
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) {
 	console.log('failed: ' + bad.join('; '));

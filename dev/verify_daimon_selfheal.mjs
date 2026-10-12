@@ -15,8 +15,8 @@
 // verify_gatheronrunner method) with every dependency stubbed, so what is proven is
 // the shipped guard's own behaviour, not a paraphrase of it:
 //
-//   (b) an unclaimed daimon dispatch REACHES the recovery call (recoverOneLocally /
-//       retryNextDesktopBeforeLocal) in both `runDispatchFallback` and
+//   (b) an unclaimed daimon dispatch REACHES the recovery call (recoverOneLocally)
+//       in both `runDispatchFallback` and
 //       `peerCollectOnReturn` -- was early-returned/continued before the fix.
 //
 //   node dev/verify_daimon_selfheal.mjs
@@ -26,6 +26,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { guardRan } from './verdict.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC  = readFileSync(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
@@ -86,7 +87,7 @@ const REASON_DISPATCHED = 'dispatched';
 		messages: [{ why: REASON_DISPATCHED, iturn: 't1' }],
 	};
 	const chats = [chat];
-	let retriedWith = null, recoveredWith = null;
+	let recoveredWith = null;
 	const window = {
 		DaimondPeer: { recoverDecision: () => true, runErrand: function () {}, REASON_DISPATCHED },
 		DaimondPost: { collect: async () => {} },
@@ -95,21 +96,19 @@ const REASON_DISPATCHED = 'dispatched';
 	};
 	const factory = new Function(
 		'window', 'chats', 'dispatchedChat', 'DaimondLease', 'dispatchedTurnFinished',
-		'selfDeviceId', 'retryNextDesktopBeforeLocal', 'recoverOneLocally', 'DaimondPeer',
-		guarded('runDispatchFallback') + '\nreturn runDispatchFallback;');
+		'selfDeviceId', 'recoverOneLocally', 'DaimondPeer',
+		'var _localRecovering = {}, _handBack = {}, diag = function () {};\n'
+		+ guarded('runDispatchFallback') + '\nreturn runDispatchFallback;');
 	const runDispatchFallback = factory(
 		window, chats,
 		/* dispatchedChat            */ () => null,
 		window.DaimondLease,
 		/* dispatchedTurnFinished    */ () => false,
 		/* selfDeviceId              */ () => 'self1',
-		/* retryNextDesktopBeforeLocal */ async (c, m) => { retriedWith = { c, m }; return false; },
 		/* recoverOneLocally         */ async (c, m) => { recoveredWith = { c, m }; },
 		window.DaimondPeer);
 	await runDispatchFallback('c1', 't1');
-	check('(b1) runDispatchFallback reaches recovery for an unclaimed DAIMON dispatch (retryNextDesktopBeforeLocal tried)',
-		!!retriedWith, retriedWith ? 'reached' : 'early-returned before the recovery call');
-	check('(b1) and falls to recoverOneLocally when no other desktop took it — the self-heal',
+	check('(b1) runDispatchFallback runs an unclaimed DAIMON dispatch here (recoverOneLocally) — the self-heal',
 		!!recoveredWith && recoveredWith.c === chat,
 		recoveredWith ? 'recovered locally' : 'never recovered — the hang');
 }
@@ -124,7 +123,7 @@ const REASON_DISPATCHED = 'dispatched';
 	const chats = [chat];
 	const _dispatchedIx = { t1: 'c1' };
 	let recovering = false;
-	let retriedWith = null, recoveredWith = null;
+	let recoveredWith = null;
 	const window = {
 		DaimondPost: { collect: async () => {} },
 		DaimondSync: { pull: async () => {} },
@@ -133,23 +132,20 @@ const REASON_DISPATCHED = 'dispatched';
 	};
 	const factory = new Function(
 		'window', 'chats', '_dispatchedIx', 'selfDeviceId', 'dispatchedTurnFinished',
-		'retryNextDesktopBeforeLocal', 'recoverOneLocally', 'releaseOwnStaleLeases',
+		'recoverOneLocally', 'releaseOwnStaleLeases',
 		'DaimondPeer', 'DaimondLease',
-		'var _recovering = false;\n'
+		'var _recovering = false, _localRecovering = {}, diag = function () {};\n'
 		+ guarded('peerCollectOnReturn')
 		+ '\nreturn peerCollectOnReturn;');
 	const peerCollectOnReturn = factory(
 		window, chats, _dispatchedIx,
 		/* selfDeviceId              */ () => 'self1',
 		/* dispatchedTurnFinished    */ () => false,
-		/* retryNextDesktopBeforeLocal */ async (c, m) => { retriedWith = { c, m }; return false; },
 		/* recoverOneLocally         */ async (c, m) => { recoveredWith = { c, m }; },
 		/* releaseOwnStaleLeases     */ async () => {},
 		window.DaimondPeer, window.DaimondLease);
 	await peerCollectOnReturn();
-	check('(b2) peerCollectOnReturn reaches recovery for an unclaimed DAIMON dispatch (retryNextDesktopBeforeLocal tried)',
-		!!retriedWith, retriedWith ? 'reached' : 'skipped — the daimon\'s dispatched turn was never even looked at');
-	check('(b2) and falls to recoverOneLocally when no other desktop took it — the self-heal',
+	check('(b2) peerCollectOnReturn runs an unclaimed DAIMON dispatch here (recoverOneLocally) — the self-heal',
 		!!recoveredWith && recoveredWith.c === chat,
 		recoveredWith ? 'recovered locally' : 'never recovered — the hang');
 }
@@ -159,5 +155,6 @@ if (BREAK) {
 		+ (bad.length ? '' : ' — NOTHING FAILED, so the checks above prove nothing'));
 	process.exit(bad.length ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? '\nall checks passed' : `\n${bad.length} check(s) FAILED`);
 process.exit(bad.length === 0 ? 0 : 1);

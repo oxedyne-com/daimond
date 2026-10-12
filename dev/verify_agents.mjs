@@ -18,6 +18,7 @@
 //   node dev/verify_agents.mjs --break two   # expected to FAIL
 //   node dev/verify_agents.mjs               # and then, clean
 import { open, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -125,5 +126,6 @@ const errs = errors(s).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(x => console.log('  FAILED: ' + x)); process.exit(1); }

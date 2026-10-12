@@ -28,6 +28,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE    = path.dirname(fileURLToPath(import.meta.url));
 const I18NDIR = path.join(HERE, '..', 'www', 'i18n');
@@ -418,5 +419,6 @@ for (const [what, group] of [
 		silent.length === 0, silent.join(', '));
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

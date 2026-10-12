@@ -16,9 +16,12 @@
 // PROVES:
 //   (1) HOSTED   — the daimon turn ran on B (its answer carries ranOn === B), and
 //                  no copy ran on A: one turn, one bill.
-//   (2) VISIBLE  — a tool tile streamed to A's `.handoff-stream` before `done`.
+//   (2) VISIBLE  — the runner streamed the daimon's tool tile to A before `done`: a
+//                  frame carrying a `tool_log` row, or the tool tile on A's screen.
 //   (3) FENCED   — a file_write OUTSIDE the Diamond's own dir was refused: the
-//                  per-call `steer_crystal` fence fails closed to `own_dir`.
+//                  per-call `steer_crystal` fence fails closed to `own_dir`. Its own
+//                  short turn: the question is put to A, the sending device, never
+//                  to B, and A says Not now (CONSENT-ROUTE aeae1bcb).
 //   (4) ONCE     — A's daimon chat carries the answer exactly once (no double
 //                  bill from a re-collect or a park).
 //   (5) RECOVERS — reloading B mid-turn re-hands via the lease backstop or A's
@@ -34,6 +37,8 @@
 import { open, chat, signInAs, newChat, connectMock, storedChats, mockLog, clearMockLog, contentText } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { nominateRunner } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -54,19 +59,28 @@ const settle = (pg) => pg.waitForFunction(() => {
 	try { return window.DaimondSync && window.DaimondSync.state().quiet; } catch (e) { return true; }
 }, null, { timeout: 20000 }).catch(() => {});
 const devId = (pg) => pg.evaluate(() => window.DaimondIdentity.deviceId());
-/// The streamed tail A has on screen. A frame is a view, not a message, so the
-/// store does not hold it and it exists only while the turn is running.
+/// The streamed turn A has on screen. Since 0ffe75e2 (2026-09-18) a frame is folded into
+/// A's transcript as PROVISIONAL rows drawn as the turn's own tiles (a tool row as a tool
+/// tile, `.tool-block`), and the flattened `.handoff-stream` view this read is gone.
 const streamedOf = (pg) => pg.evaluate(() => {
-	const el = document.querySelector('.handoff-stream');
-	return el ? String(el.textContent || '') : '';
+	const out = document.getElementById('chat-output');
+	if (!out) return '';
+	return [...out.querySelectorAll('.tool-block, .chat-msg-assistant .chat-msg-content')]
+		.map((e) => String(e.textContent || '')).join(' ');
 });
+/// A progress frame's rows. Since 0ffe75e2 the door carries JSON `{v:1,msgs:[…]}`, one
+/// structured row per message, where it once carried a text tail with `[tool …]` lines.
+const frameRows = (p) => {
+	try { const j = JSON.parse(p.tail); return (j && Array.isArray(j.msgs)) ? j.msgs : []; }
+	catch (e) { return []; }
+};
 /// The daimon's own conversation on this device, as stored (messages + ranOn).
 const daimonMsgs = (pg, id) => pg.evaluate((did) => {
 	try {
 		const rec = window.DaimondDiamond.conversation(did);
 		return (rec && rec.messages ? rec.messages : []).map((m) => ({
-			role: String(m.role || ''), ranOn: String(m.ranOn || ''),
-			iturn: String(m.iturn || ''), name: String(m.name || ''),
+			role: String(m.role || ''), ranOn: String(m.ranOn || ''), mid: String(m.mid || ''), provisional: !!m.provisional,
+			iturn: String(m.iturn || ''), name: String(m.name || ''), why: String(m.why || ''),
 			content: typeof m.content === 'string' ? m.content : '' }));
 	} catch (e) { return []; }
 }, id);
@@ -85,16 +99,21 @@ async function until(pg, fn, arg, ms = 30000, step = 250) {
 	}
 	return false;
 }
-// `@rounds 3/1200 file_write {…}` makes the model call file_write THREE times, PACED at
+// `@rounds 3/1200 file_list {…}` makes the model call file_list THREE times, PACED at
 // 1200ms each, then answer "Called 3 time(s); done." (mockllm.mjs case 'rounds'). The
-// path is OUTSIDE the Diamond's own dir, so `steer_crystal` refuses each write (the fence
-// result rides back as the tool message). The pacing is what the streaming and the mid-turn
-// reload need: a one-shot mock turn finishes inside the 2s progress interval and between
-// the 300ms polls, so nothing streams and the runner is never caught busy. ~3.6s is enough
-// for the progress door to push a tool tile and for the reload to land mid-turn.
+// pacing is what the streaming and the mid-turn reload need: a one-shot mock turn finishes
+// inside the 2s progress interval and between the 300ms polls, so nothing streams and the
+// runner is never caught busy. ~3.6s is enough for the progress door to push a tool tile
+// and for the reload to land mid-turn.
+// THE PACED CALL NEITHER FAILS NOR ASKS (12 Oct, specs/daimond_dh_answer_diag_20261012.md).
+// It was a refused file_write, which since bb17ef74 (G T3) ends blocked after the second
+// refusal and since aeae1bcb (CONSENT-ROUTE) asks A each time, waiting out 60 s unanswered:
+// (4), (5) and (6) then counted a reply the turn no longer gave. The fence (3) has its own
+// short turn, and a turn's answer is counted by its turn id, not by its wording.
 const ESCAPE_PATH = '../../daimon_escape.txt';
-const STEER = `@rounds 3/1200 file_write {"path":"${ESCAPE_PATH}","content":"nope"}`;
-const ANSWER = 'Called 3 time';            // the mock's post-rounds reply, counted in the daimon rec
+const STEER = '@rounds 3/1200 file_list {"path":"."}';
+const ANSWER = 'Called 3 time';            // the mock's post-rounds reply, shown beside the count
+const FENCE_STEER = `@rounds 1/1200 file_write {"path":"${ESCAPE_PATH}","content":"nope"}`;
 const carrying = (msgs, needle) => msgs.filter((m) => m.content && m.content.includes(needle)).length;
 
 /// Create a Diamond through its real dialog and answer its id. Mirrors
@@ -221,16 +240,11 @@ try {
 		(window.DaimondPresence.awake(self, Date.now()) || []).length, idA);
 	check('A sees B as an awake peer it can hand a turn to', aSeesB >= 1, 'awake peers: ' + aSeesB);
 
-	// ARM A to hand off. Two independent triggers, so the dispatch does not hinge on one
-	// mechanism: (i) the step-away posture (`daimond-handoff-when-away` -> `handoffWhenAway`
-	// -> the pure decision's `globalDefault`), which hands EVERY turn to a live peer; and
-	// (ii) nominating B as the always-on runner (the realistic owner setup). Either makes
-	// `autoDispatchDecision` seat B for the daimon turn; a bare desktop otherwise keeps an
-	// agentic daimon turn local (peer.js), which is the pre-arm behaviour.
-	await a.page.evaluate((id) => {
-		try { localStorage.setItem('daimond-handoff-when-away', '1'); } catch (e) {}
-		try { if (window.DaimondCore && window.DaimondCore.nominate) window.DaimondCore.nominate(id); } catch (e) {}
-	}, idB);
+	// ARM A to hand off: B NOMINATED, the one route a composer send takes off this device
+	// since D-20261009-23 (the step-away posture alone seats nobody now), plus the posture,
+	// which `armed` below still reads.
+	await a.page.evaluate(() => { try { localStorage.setItem('daimond-handoff-when-away', '1'); } catch (e) {} });
+	await nominateRunner(check, a, b, 'dhmate');
 	await a.page.waitForTimeout(400);
 	await a.page.evaluate(() => window.DaimondSync && window.DaimondSync.push && window.DaimondSync.push());
 	await b.page.evaluate(() => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'dhmate'));
@@ -239,8 +253,6 @@ try {
 	const armed = await a.page.evaluate(() => { try { return localStorage.getItem('daimond-handoff-when-away'); } catch (e) { return null; } });
 	check('A is armed to hand off (step-away posture on)', armed === '1', 'armed=' + armed);
 
-	// Count the answer in A's daimon rec (per-turn delta, since ANSWER repeats).
-	const answerCount = async () => carrying(await daimonMsgs(a.page, diaId), ANSWER);
 	const rerefresh = async () => {
 		await b.page.evaluate(() => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'dhmate')).catch(() => {});
 		await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
@@ -268,14 +280,46 @@ try {
 		} else if (s) { window.__ppf = []; }
 	}).catch(() => {});
 
-	async function steerAndWatch({ reloadMid = false, directive = STEER, answer = ANSWER, waitLoops = 200 } = {}) {
-		const countAns = async () => carrying(await daimonMsgs(a.page, diaId), answer);
-		const before = await countAns();
+	/// `consent: 'no'` answers a write question Not now on A and records which device asked.
+	async function steerAndWatch({ reloadMid = false, directive = STEER, answer = ANSWER, waitLoops = 200, consent = '' } = {}) {
+		// THIS TURN'S answer: an assistant row carrying the turn id of a prompt sent here
+		// (a re-ask under a fresh id is the same prompt, so it counts too), whatever it says.
+		const seen = new Set((await daimonMsgs(a.page, diaId)).filter((m) => m.role === 'user').map((m) => m.iturn));
+		const turnRows = async () => {
+			const msgs = await daimonMsgs(a.page, diaId);
+			const tids = new Set(msgs.filter((m) => m.role === 'user' && m.iturn && !seen.has(m.iturn)
+				&& m.content.trim() === directive).map((m) => m.iturn));
+			return msgs.filter((m) => m.role === 'assistant' && tids.has(m.iturn)
+				&& m.why !== 'dispatched' && m.content.trim());
+		};
+		const countAns = async () => (await turnRows()).length;
+		const before = 0;
+		const needleBefore = carrying(await daimonMsgs(a.page, diaId), answer);
+		const asks = { a: [], b: [] };
+		// A question asked on the device itself is a `.modal.dlg[data-ask]`; one ROUTED from a
+		// runner (CONSENT-ROUTE) is a Pending card, "Let <Diamond> change <file>?" (raiseConsentFromPeer).
+		const openAsks = (pg) => pg.evaluate(() => [...document.querySelectorAll('.modal.dlg[data-ask]')]
+			.filter((d) => d.getClientRects().length).map((d) => d.getAttribute('data-ask'))
+			.concat([...document.querySelectorAll('#pending-list .pend-card')].filter((c) => c.querySelector('.pend-no'))
+				.map((c) => 'card:' + ((c.querySelector('.pend-line') || {}).textContent || '').trim().slice(0, 60)))).catch(() => []);
+		const watchAsks = async () => {
+			for (const [k, pg] of [['a', a.page], ['b', b.page]]) {
+				for (const x of await openAsks(pg)) if (!asks[k].includes(x)) asks[k].push(x);
+			}
+			if (consent !== 'no') return;
+			await a.page.evaluate(() => {
+				const c = [...document.querySelectorAll('.modal.dlg[data-ask] .dlg-card')].pop();
+				const no = c && c.querySelector('.dlg-cancel');
+				if (no) no.click();
+				for (const k of document.querySelectorAll('#pending-list .pend-card .pend-no')) k.click();
+			}).catch(() => {});
+		};
 		try { clearMockLog(); } catch (e) {}
 		try { await b.page.evaluate(() => { window.__ppf = []; }); } catch (e) {}
 		await a.page.$('#dview-chat').then((el) => el && el.click({ force: true })).catch(() => {});
 		await a.page.waitForTimeout(300);
 		await a.page.fill('#chat-input', directive);
+		const t0 = Date.now();
 		await a.page.click('#chat-send', { force: true });
 		let sawStream = false, ranOnBSeen = false, ranOnASeen = false, reloaded = false, maxStream = '';
 		for (let i = 0; i < 240; i++) {
@@ -287,6 +331,7 @@ try {
 			} catch (e) { return false; } };
 			if (await busyOf(b.page)) ranOnBSeen = true;
 			if (await busyOf(a.page)) ranOnASeen = true;
+			if (consent) await watchAsks();
 			if (reloadMid && !reloaded && ranOnBSeen) {
 				reloaded = true;
 				await b.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
@@ -304,6 +349,7 @@ try {
 		// A's own recovery-on-return fires on a visibility change, so simulate one too.
 		for (let i = 0; i < waitLoops; i++) {
 			if ((await countAns()) > before) break;
+			if (consent) await watchAsks();
 			await a.page.evaluate(() => window.DaimondSync && window.DaimondSync.pull && window.DaimondSync.pull(true)).catch(() => {});
 			if (i % 3 === 0) {
 				await b.page.evaluate(() => { try { window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'dhmate'); } catch (e) {} try { window.DaimondPost && window.DaimondPost.collect && window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
@@ -311,9 +357,18 @@ try {
 			}
 			await a.page.waitForTimeout(400);
 		}
-		const msgs = await daimonMsgs(a.page, diaId);
-		const mine = msgs.filter((m) => m.role === 'assistant' && m.content.includes(answer));
+		// THE SETTLED ANSWER, not the streamed one. A runner's answer reaches A first as a
+		// streamed row, which carries no `ranOn` until the final frame or the parcel brings
+		// the copy that does (peer.js progressRow); the loops above stop at the first row,
+		// so (3) read '∅' whenever it caught the stream (12 Oct). Wait, bounded, for the
+		// copy that names its runner; one that never comes still reads '∅' and fails.
+		let mine = await turnRows();
+		for (let i = 0; i < 50 && mine.length && !mine[mine.length - 1].ranOn; i++) {
+			await a.page.waitForTimeout(400);
+			mine = await turnRows();
+		}
 		const answerRanOn = (mine[mine.length - 1] || {}).ranOn || '';
+		const needle = carrying(await daimonMsgs(a.page, diaId), answer) - needleBefore;
 		let toolResults = [];
 		try { toolResults = (mockLog() || []).flatMap((r) => (r.messages || []).filter((m) => m.role === 'tool').map((m) => contentText(m.content))); } catch (e) {}
 		let bPushes = [];
@@ -330,10 +385,12 @@ try {
 				return disp.some((d) => !msgs.some((m) => m.role === 'assistant' && String(m.iturn) === String(d.iturn) && m.content && m.content.trim()));
 			}, diaId);
 		} catch (e) {}
-		return { copies: (await countAns()) - before, sawStream, maxStream, ranOnBSeen, ranOnASeen, reloaded, answerRanOn, toolResults, bPushes, recoverable };
+		return { t0, rows: mine, copies: (await countAns()) - before, needle, asks, sawStream, maxStream, ranOnBSeen, ranOnASeen, reloaded, answerRanOn, toolResults, bPushes, recoverable };
 	}
 
 	// ── Turn 1 — the clean hand-off: A steers, B runs, A watches. ────────
+	// The rings a failure prints are recorded only with Diagnostics on.
+	for (const pg of [a.page, b.page]) await pg.evaluate(() => { try { window.DaimondDiag.set(true, 'dhandoff'); } catch (e) {} }).catch(() => {});
 	console.log('\nTurn 1 — clean hand-off (A steers, B runs)');
 	await applyBreak(a.page);
 	await instrumentBPush();
@@ -348,25 +405,47 @@ try {
 		'ranOnASeen=' + t1.ranOnASeen + ' answerRanOn=' + (t1.answerRanOn || '∅'));
 	// (2) VISIBLE — the runner streams the daimon's tool tile through the progress door
 	// BEFORE the final frame. This is the fix's own code: runSteerDetached feeds the
-	// tool_logs and the pushProgress dep renders `[tool …]` and pushes it live. (The
-	// dispatcher-side on-screen paint is a separate world path that fails
-	// verify_handoff_streaming identically here, so it is not gated on.)
-	const toolFrame = (t1.bPushes || []).find((p) => /\[tool /.test(p.tail) && !p.final);
+	// tool_logs and the pushProgress dep pushes them live, as a structured `tool_log` row
+	// since 0ffe75e2 (the `/\[tool /` text match this used found nothing in a JSON frame).
+	const toolFrame = (t1.bPushes || []).find((p) => !p.final && frameRows(p).some((r) => r.role === 'tool_log'));
 	check('(2) the runner streamed the daimon\'s tool tile through the progress door before done',
 		!!toolFrame || t1.sawStream,
-		toolFrame ? ('pushed: ' + JSON.stringify(toolFrame.tail).slice(0, 60))
-			: ('no live [tool …] frame; pushes=' + JSON.stringify((t1.bPushes || []).map((p) => [p.tail.slice(0, 20), p.final])).slice(0, 200)));
-	// (3) FENCED — the file_write outside own_dir was refused. Proof: the tool RESULT
-	//     the runner fed the model on the next round. `steer_crystal` runs the fence in
-	//     wasm (tools.rs may_write -> refusal_line, opening word "Refused"), so the
-	//     round-1 request carries a `tool` message beginning "Refused". Read off the mock
-	//     log (cleared before the steer) — the runner's own outbound wire.
-	const fenced = t1.toolResults.some((c) => /Refused/i.test(c)
-		&& /(daimon_escape|not in|workspace|may write|cannot be written)/i.test(c));
-	check('(3) the write outside the Diamond\'s own dir was refused (fence fails closed to own_dir)',
-		fenced, fenced ? 'refused on the wire' : 'no "Refused" tool result: ' + JSON.stringify(t1.toolResults).slice(0, 240));
+		toolFrame ? ('pushed: ' + JSON.stringify(frameRows(toolFrame).filter((r) => r.role === 'tool_log')
+			.map((r) => r.name)).slice(0, 60))
+			: ('no live tool_log frame; pushes=' + JSON.stringify((t1.bPushes || []).map((p) =>
+				[frameRows(p).map((r) => r.role).join(','), p.final])).slice(0, 200)));
 	// (4) ONCE.
-	check('(4) the answer crossed the hand-off exactly once (no double bill)', t1.copies === 1, `${t1.copies} copies`);
+	check('(4) the answer crossed the hand-off exactly once (no double bill)', t1.copies === 1,
+		`${t1.copies} copies of turn 1's answer (needle '${ANSWER}': ${t1.needle})`);
+
+	// ── Turn 1b — the fence: one write outside the Diamond's own dir, on B. ──────
+	// (3) FENCED — `steer_crystal` runs the fence in wasm (tools.rs may_write), which asks
+	//     before it refuses. The question goes to A, the device the person sent from, and
+	//     never to B, a runner nobody is at; A says Not now, so the turn ends at once
+	//     rather than waiting out the 60 s deadline. Proof of the refusal: the tool RESULT
+	//     the runner fed the model on the next round, read off the mock log (cleared
+	//     before the steer) -- the runner's own outbound wire.
+	console.log('\nTurn 1b — the fence (a write outside own_dir, asked on A, Not now)');
+	await rerefresh();
+	const tf = await steerAndWatch({ directive: FENCE_STEER, answer: 'Called 1 time', consent: 'no' });
+	const fenced = tf.toolResults.some((c) => /Refused/i.test(c)
+		&& /(daimon_escape|not in|workspace|may write|cannot be written|not changed)/i.test(c));
+	check('(3) the write outside the Diamond\'s own dir was refused (fence fails closed to own_dir)',
+		fenced, fenced ? 'refused on the wire' : 'no "Refused" tool result: ' + JSON.stringify(tf.toolResults).slice(0, 240));
+	check('(3) and the question was put to A, the sending device, never to B',
+		tf.asks.a.length > 0 && tf.asks.b.length === 0, JSON.stringify(tf.asks));
+	check('(3) and the fenced turn still answered once, on B',
+		tf.copies === 1 && tf.answerRanOn === idB, `copies=${tf.copies} ranOn=${tf.answerRanOn || '∅'}`);
+
+	// Where a failed turn went: both devices' hand-off rings from its send on, and A's rows.
+	const dumpRings = async (label, t0, rows) => {
+		const ring = (pg) => pg.evaluate((t) => ((window.DaimondDiag && DaimondDiag.rows()) || [])
+			.filter((r) => r.ts >= t && /ready|errand|claim|reconstruct|hand.?back|dispatch|parcel|pull|tomb|UNDELIVER|busy|answer/i.test(r.tag + ' ' + (r.data || '')))
+			.map((r) => (r.ts - t) + 'ms ' + r.tag + ': ' + String(r.data || '').slice(0, 200)), t0).catch(() => []);
+		for (const [k, pg] of [['A', a.page], ['B', b.page]]) for (const l of (await ring(pg)).slice(0, 60)) console.log('  ring ' + label + ' ' + k + ' ' + l);
+		for (const r of (rows || [])) console.log('  row  ' + label + ' ' + JSON.stringify({ mid: r.mid, prov: r.provisional, why: r.why, ranOn: r.ranOn, iturn: r.iturn.slice(0, 12), c: r.content.slice(0, 40) }));
+	};
+	if (!(tf.copies === 1 && tf.answerRanOn === idB)) await dumpRings('T1b', tf.t0, tf.rows);
 
 	// `diamondBusy` (crystalRunning) is the flag peerReconstruct's hand-back reads — set
 	// by a runner's detached run as well as a local steer, and truer than the chat-face
@@ -387,6 +466,7 @@ try {
 	await a.page.$('#dview-chat').then((el) => el && el.click({ force: true })).catch(() => {});
 	await a.page.waitForTimeout(300);
 	await a.page.fill('#chat-input', '@rounds 16/1500 file_list {"path":"."}');   // ~24s on B
+	const tLong = Date.now();
 	await a.page.click('#chat-send', { force: true });
 	let bBusyAtDispatch = false;
 	for (let w = 0; w < 50 && !bBusyAtDispatch; w++) { bBusyAtDispatch = await bBusyNow(diaId); if (!bBusyAtDispatch) await a.page.waitForTimeout(400); }
@@ -396,6 +476,7 @@ try {
 	check('(6) with B busy on the Diamond, the errand handed back and the answer still landed exactly once (never done-empty)',
 		bBusyAtDispatch && t2.copies === 1,
 		`busy=${bBusyAtDispatch} copies=${t2.copies} ranOn=${t2.answerRanOn || '∅'}`);
+	if (!(bBusyAtDispatch && t2.copies === 1)) await dumpRings('T2', tLong, t2.rows);
 	// Let B's long turn finish so it does not bleed into the reload test.
 	await until(b.page, (did) => bBusyNow(did).then((x) => !x), diaId, 40000).catch(() => {});
 
@@ -406,7 +487,7 @@ try {
 	// A LONGER turn, so the reload lands solidly mid-turn (a 5s turn can finish before the
 	// reload fires), and a big recovery window: a re-hand runs local or B re-collects, and
 	// the point is only that it lands ONCE — never zero-forever, never a double.
-	const RELOAD_STEER = '@rounds 10/1500 file_write {"path":"../../daimon_escape.txt","content":"x"}';
+	const RELOAD_STEER = '@rounds 10/1500 file_list {"path":"."}';
 	const t3 = await steerAndWatch({ reloadMid: true, directive: RELOAD_STEER, answer: 'Called 10 time', waitLoops: 320 });
 	// MONEY-SAFETY (the property the owner cares about): a mid-turn reload of the runner
 	// NEVER double-bills the turn — across every run the answer count is 0 or 1, never 2.
@@ -439,4 +520,5 @@ if (BREAK) {
 		+ (bad.length ? '' : ' — NOTHING FAILED, so the checks above prove nothing'));
 	process.exit(bad.length ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 process.exit(bad.length ? 1 : 0);

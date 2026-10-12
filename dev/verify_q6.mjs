@@ -26,6 +26,7 @@
 //   eval "$(bash dev/world.sh N --up)"
 //   node dev/verify_q6.mjs [N] [D] [B] [P] [R]
 import { open, connectMock, scratch, mockLog, newChat } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const want = process.argv.slice(2);
 const on = (k) => !want.length || want.includes(k);
@@ -269,5 +270,6 @@ if (on('R')) {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed' + (bad.length ? ': ' + bad.join(', ') : ''));
 process.exit(bad.length ? 1 : 0);

@@ -241,7 +241,7 @@ const snapshot = (page, ids) => page.evaluate(async (ids) => {
 	const sig = (m) => { const c = m.content == null ? '' : String(m.content);
 		return (m.mid || '') + '#' + (m.role || '') + '#' + c.length + '#' + (m.elided || 0) + '#' + (m.outcome || '') + '#' + (m.interrupted ? 1 : 0)
 			+ '#' + (m.why || '') + '#' + (m.folded || 0) + '#' + (m.kept || 0) + '#' + (m.ranOn || '') + '#' + (m.handoffFellBack ? 1 : 0) + '#' + (m.interject ? 1 : 0)
-			+ '#' + (m.refused ? 1 : 0) + '#' + (m.handoffRefused ? 1 : 0) + '#' + (m.retryTo || '') + '#' + (m.toDevice || '') + '#' + (m.name || '') + '#' + (m.callId || ''); };
+			+ '#' + (m.refused ? 1 : 0) + '#' + (m.handoffRefused ? 1 : 0) + '#' + (m.handoffBusy || '') + '#' + (m.toDevice || '') + '#' + (m.name || '') + '#' + (m.callId || ''); };
 	const msgs = {};
 	for (const id of ids) { const g = await orig.call(st, id); msgs[id] = { sigs: (g.messages || []).map(sig), json: (g.messages || []).map((m) => hash(JSON.stringify(m))), session: hash(JSON.stringify(g.session || null)) }; }
 	const sums = st.stored().filter((r) => ids.includes(r.id)).map((r) => ({ id: r.id, seed: r.seed || '', fp: r.fp || '', msgCount: r.msgCount, standing: r.standing || '', updatedAt: r.updatedAt, bytes: r.bytes || 0 }))

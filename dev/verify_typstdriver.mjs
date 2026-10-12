@@ -32,6 +32,7 @@
 // answering the question it was written for -- is the compiler reachable and does it write to the
 // right place -- for the customer who is entitled to an answer.
 import { open, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -122,6 +123,7 @@ const errs = s.errs.filter(e => !/favicon|404|401|net::ERR/.test(e));
 console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

@@ -24,6 +24,7 @@
 // later hand moves the seed back into a turn, that check goes red and says why.
 import fs from 'node:fs';
 import { open, errors, signInAs, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -176,5 +177,6 @@ const errs = errors(b).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw in session B', errs.length === 0, errs.slice(0, 2).join(' | '));
 await b.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(x => console.log('  FAILED: ' + x)); process.exit(1); }

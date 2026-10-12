@@ -30,6 +30,7 @@ import {
 	send,
 	freshChat,
 } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const SLOW_MS   = 30000;		// the first turn's length on B
 const CLAIM_MS  = 30000;		// B claims the first turn this soon
@@ -131,5 +132,6 @@ try {
 	try { await b?.close(); } catch (e) { /* gone */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

@@ -31,6 +31,7 @@
 // (DAIMOND_MOCK_PORT, default 9099). No gateway.
 import fs from 'node:fs';
 import { open, errors, signInAs, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -277,5 +278,6 @@ const errs = errors(s).filter(e =>
 check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

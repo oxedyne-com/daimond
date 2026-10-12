@@ -29,6 +29,7 @@
 import { open, chat, signInAs, newChat, connectMock, shot, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const RTMS = Number(process.env.RESCUE_MS || 90000);
 const ok = [], bad = [];
@@ -120,6 +121,10 @@ try {
 	const idA = await devId(a.page), idB = await devId(b.page);
 	check('A and B are distinct paired devices of one account', !!idA && !!idB && idA !== idB,
 		JSON.stringify({ idA, idB }));
+	// Since D-20261009-23 a send is handed only to the NOMINATED runner (or runs here), so
+	// B is nominated on both devices, as handoffpair.mjs's `pair` does.
+	for (const s of [a, b]) await s.page.evaluate((id) => window.DaimondCore.roster.nominate(id), idB);
+	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
 
 	// B must be parked (listening) so it collects the errand.
 	await until(b.page, () => {
@@ -293,6 +298,7 @@ try {
 	if (a) await a.close().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { for (const l of bad) console.log('  FAILED: ' + l); }
 process.exit(bad.length ? 1 : 0);

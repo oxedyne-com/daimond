@@ -43,6 +43,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pjoin } from 'node:path';
 import { open, shot, bin } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE  = dirname(fileURLToPath(import.meta.url));
 const FIX   = pjoin(HERE, 'fixtures', 'typstproj');
@@ -542,6 +543,7 @@ const errs = s.errs.filter(e => !/favicon|404|401|net::ERR/.test(e));
 console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed, ${skipped.length} skipped`
 	+ (BROKEN ? '   (TYPST_BROKEN=1)' : ''));
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));

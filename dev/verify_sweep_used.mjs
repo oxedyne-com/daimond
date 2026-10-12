@@ -43,6 +43,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, chat, newChat, signInAs, shot, errors } from './harness.mjs';
 import { audit, showPanels, openPanels, seedNotes } from './sweepkit.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = path.join(HERE, 'shots', 'nsweep');
@@ -267,5 +268,6 @@ check('nothing threw in the page while it was used', errs.length === 0, errs.sli
 await shot(s, 'nsweep-used-last');
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { for (const b of bad) console.log('  FAIL ' + b); process.exit(1); }

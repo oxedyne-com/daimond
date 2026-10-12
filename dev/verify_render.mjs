@@ -100,6 +100,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, scratch, errors, artefactPath } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -963,6 +964,7 @@ if (BREAK) {
 		+ (bad.length ? ' — ' + bad.join('; ') : ' — NOTHING FAILED, so the checks above prove nothing'));
 	process.exit(bad.length ? 0 : 1);		// a break MUST fail something
 }
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0
 	? `\nrender: all ${ok.length} checks passed`
 	: `\nrender: ${bad.length} of ${ok.length + bad.length} checks FAILED`);

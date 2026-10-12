@@ -10,6 +10,7 @@
 //   2. "Link another device" draws a QR canvas with real dark modules.
 //   3. Opening the app at /#pair=<code> opens the redeem dialog, code prefilled.
 import { open, shot, errors, APP } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -100,6 +101,7 @@ try {
 	check('run completed without throwing', false, e.message);
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 await s.close();
 process.exit(bad.length ? 1 : 0);

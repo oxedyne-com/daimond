@@ -68,6 +68,7 @@ import { open, chat, signInAs, newChat, connectMock, mockLog, errors, shot } fro
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import { checker, until, settle, storedMsgs, answersFor, placeholders, send, freshChat } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -961,5 +962,6 @@ if (BREAK) {
 	console.log(`\nbreak '${BREAK}': ${bad.length} check(s) failed` + (bad.length ? '' : ' — NOTHING FAILED, so the checks prove nothing'));
 	process.exit(bad.length ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

@@ -24,6 +24,7 @@ import {
 import { open, signInAs, connectMock } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const MIX = process.env.MIX || '', THREE = !!process.env.THREE, B2B = !!process.env.B2B, IDLE = !!process.env.IDLE;
 const R543 = process.env.DAIMOND_OLD_WWW || '/home/jason/lanes/oxedyne/pin/web/apps/oxedyne/lane-r543rel/www';
@@ -124,7 +125,7 @@ try {
 		c = await addC(a);
 		await c.page.evaluate(() => { try { window.DaimondDiag.set(true, 'qa544'); } catch (e) {} });
 		idC = await c.page.evaluate(() => window.DaimondIdentity.deviceId());
-		await a.page.evaluate((id) => window.DaimondCore.nominate(id), idB);
+		await a.page.evaluate((id) => window.DaimondCore.roster.nominate(id), idB);
 		await a.page.waitForTimeout(3000);
 		for (const s of [a, b, c]) await s.page.evaluate(() => { try { return window.DaimondSync.pull(); } catch (e) {} });
 		const awake = await a.page.evaluate(() => (window.DaimondPresence.awake(window.DaimondIdentity.deviceId(), Date.now()) || []).length);
@@ -210,5 +211,6 @@ try {
 } finally {
 	for (const s of [a, b, c]) { try { await s?.close(); } catch (e) {} }
 }
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

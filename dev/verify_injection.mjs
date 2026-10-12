@@ -36,6 +36,7 @@
 // So every await of a page promise here now goes through `settle`, and a question
 // nobody answered is a FAILED CHECK naming the call rather than the end of the run.
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -309,5 +310,6 @@ try {
 	try { await s.browser.close(); } catch (e) { /* ignore */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

@@ -1,37 +1,41 @@
 // gateway: none
 /* ============================================================
-   verify_seatline.mjs — WHERE THE NEXT TURN WILL RUN, stated
-   before the send (owner spec, 2026-09-12).
+   verify_seatline.mjs — WHERE THE NEXT TURN WILL RUN, chosen
+   before the send (owner spec 2026-09-12; re-aimed 2026-10-11 to
+   the "Here | <runner>" switch by the input box, D-20261009-23).
    ------------------------------------------------------------
-   The election was invisible. A turn left for another machine, or
+   The election was invisible: a turn left for another machine, or
    stayed on the phone, and the only way to find out which was to
-   send it and watch. That is not cosmetic on a phone: a turn that
-   runs locally needs the app in the foreground and the screen
-   awake, so the user has to be told while they can still plan for
-   it.
+   send it and watch. The line under the composer that said so is
+   gone; the person now CHOOSES on a switch styled like Crystal |
+   Chat, and the send obeys it -- the named runner, or here,
+   nothing else.
 
-   `DaimondPeer.seatPlan` is the lifted formatter -- pure over
-   presence, taking the SAME `autoDispatchDecision` the send takes,
-   so the line cannot promise one seat and the send take another --
-   and it answers the i18n key, the device label, and whether
-   running here is something the user must act on. This drives the
-   real www/js/peer.js in pure node and asserts:
+   `DaimondPeer.seatPlan` and `seatSwitch` are pure over presence
+   and take the SAME `autoDispatchDecision` the send takes, with
+   the app's `runnerOnly`, so the switch cannot offer one seat and
+   the send take another. This drives the real www/js/peer.js in
+   pure node and asserts:
 
-     (a) a live nominated runner   -> seat.on_runner, named;
-     (b) the runner silent, another live desktop present ->
-         seat.on_desktop_runner_off, named: the fallback is VISIBLE
-         rather than a silent substitution;
-     (c) no runner set, a live desktop -> seat.on_desktop;
-     (d) a MOBILE device with nothing live -> seat.local_mobile,
-         warn, and the reason it can give;
-     (e) a DESKTOP with nothing live -> seat.local, no warning:
-         running here is the ordinary case on a machine that stays
-         awake;
-     (f) a phone that beats mobile:true is not a seat, so the line
-         on another phone still says "runs here" -- the seating
-         rule and the line cannot disagree;
-     (g) every key the plan can name exists in www/i18n/en.js, and
-         each carries the {name} the line substitutes.
+     (a) a live nominated runner -> the runner, named; the switch
+         reads "Here | argonaut" with the runner chosen;
+     (b) the runner silent, another live desktop present -> HERE,
+         reason runner-silent; the switch is plain "Here" (was: the
+         other desktop, named as a fallback -- now no substitution);
+     (c) no runner set, a live desktop -> here, plain "Here" (was:
+         that desktop);
+     (d) a MOBILE device with nothing live -> here, warn, and why;
+     (i) an armed runner posture is the runner with no nominee
+         record stored here, and the switch names it;
+     (e) a DESKTOP with nothing live -> here, no warning;
+     (f) a phone that beats mobile:true is never a seat;
+     (k) a chat pinned Here still offers the runner to go back to;
+     (h) the switch is the SAME control as Crystal | Chat, and the
+         tile's warning is styled, one clause, reason on its title;
+     (j) a daimon chat seats like any other;
+     (g) every key the switch and tile name is in en.js with its
+         placeholders, and the removed seat-line and take-back keys
+         are gone.
 
    Run:  node dev/verify_seatline.mjs
    ============================================================ */
@@ -39,6 +43,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { webcrypto } from 'node:crypto';
+import { guardRan } from './verdict.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ok = [], bad = [];
@@ -95,45 +100,52 @@ try {
 	// stamp is stale -- the live shape of the 2026-09-13 fault.
 	const armed = (name, ageMs) => ({ name, lastSeen: now - (ageMs || 0),
 		servicedAt: 0, attended: false, mobile: false, runner: true });
-	const plan = (presence, opts) => P.seatPlan({ id: 'c', provider: 'openrouter', model: 'm' },
-		presence, Object.assign({ selfId: PHONE, isPhone: true, selfMobile: true,
-			freshWindowMs: W }, opts || {}), now);
+	// The app's own options (`seatOpts`): only the switch's runner may take a turn.
+	const opt = (opts) => Object.assign({ selfId: PHONE, isPhone: true, selfMobile: true,
+		freshWindowMs: W, runnerOnly: true }, opts || {});
+	const CHAT = { id: 'c', provider: 'openrouter', model: 'm' };
+	const plan = (presence, opts) => P.seatPlan(CHAT, presence, opt(opts), now);
+	const sw   = (presence, opts) => P.seatSwitch(CHAT, presence, opt(opts), now);
+	const swStr = (x) => JSON.stringify(x);
 
-	// ── (a) THE RUNNER IS LIVE: it is named, and named as the runner. ──
+	// ── (a) THE RUNNER IS LIVE: it is named, and the switch offers it, chosen. ──
 	{
-		const p = plan({ [ARG]: desk('argonaut', 2000) }, { nominatedId: ARG });
+		const pres = { [ARG]: desk('argonaut', 2000) };
+		const p = plan(pres, { nominatedId: ARG });
 		check('(a) a live nominated runner is the seat, named',
-			p.where === 'runner' && p.key === 'seat.on_runner' && p.label === 'argonaut' && p.warn === false,
-			'key=' + p.key + ' label=' + p.label);
+			p.where === 'runner' && p.label === 'argonaut' && p.warn === false,
+			'where=' + p.where + ' label=' + p.label);
+		const x = sw(pres, { nominatedId: ARG });
+		check('(a) the switch reads "Here | argonaut" with the runner chosen',
+			!!x.runner && x.runner.deviceId === ARG && x.runner.label === 'argonaut' && x.choice === 'runner', swStr(x));
 	}
 
-	// ── (b) THE RUNNER IS SILENT: the fallback is named AND the reason given. ──
-	//
-	// The substitution used to be silent: the turn simply went somewhere else. A user
-	// who set a runner and sees another machine named has to be told which of the two
-	// facts is true, or the line looks like the app ignoring the setting.
+	// ── (b) THE RUNNER IS SILENT: no substitution; plain Here, and why. ──
 	{
-		const p = plan({ [ARG]: desk('argonaut', W + 60000), [GIL]: desk('gilgamesh', 1000) },
-			{ nominatedId: ARG });
-		check('(b) the runner silent, another desktop live -> that desktop, with the runner named offline',
-			p.where === 'desktop' && p.key === 'seat.on_desktop_runner_off' && p.label === 'gilgamesh',
-			'key=' + p.key + ' label=' + p.label);
+		const pres = { [ARG]: desk('argonaut', W + 60000), [GIL]: desk('gilgamesh', 1000) };
+		const p = plan(pres, { nominatedId: ARG });
+		check('(b) the runner silent, another desktop live -> HERE, not that desktop, reason runner-silent',
+			p.where === 'local' && p.why === 'runner-silent' && p.dispatch !== true,
+			'where=' + p.where + ' why=' + p.why + ' label=' + p.label);
+		const x = sw(pres, { nominatedId: ARG });
+		check('(b) and the switch is plain "Here"', x.runner === null && x.choice === 'here', swStr(x));
 	}
 
-	// ── (c) NO RUNNER SET: a live desktop is simply the seat. ──
+	// ── (c) NO RUNNER SET: a live desktop is not a seat the switch offers. ──
 	{
-		const p = plan({ [GIL]: desk('gilgamesh', 1000) });
-		check('(c) no runner set, a live desktop -> that desktop, no runner-offline clause',
-			p.where === 'desktop' && p.key === 'seat.on_desktop' && p.label === 'gilgamesh',
-			'key=' + p.key);
+		const pres = { [GIL]: desk('gilgamesh', 1000) };
+		const p = plan(pres);
+		check('(c) no runner set, a live desktop -> here', p.where === 'local' && p.why === 'no-desktop',
+			'where=' + p.where + ' why=' + p.why);
+		const x = sw(pres);
+		check('(c) and the switch is plain "Here"', x.runner === null && x.choice === 'here', swStr(x));
 	}
 
 	// ── (d) THE LOUD CASE: a phone about to run the turn itself. ──
 	{
 		const p = plan({});
 		check('(d) a MOBILE device with nothing live -> runs here, as a WARNING',
-			p.where === 'local' && p.key === 'seat.local_mobile' && p.warn === true,
-			'key=' + p.key + ' warn=' + p.warn);
+			p.where === 'local' && p.warn === true, 'where=' + p.where + ' warn=' + p.warn);
 		check('(d) and it can say WHY: no desktop is awake to take it',
 			p.why === 'no-desktop', 'why=' + p.why);
 		const silent = plan({ [ARG]: desk('argonaut', W + 60000) }, { nominatedId: ARG });
@@ -144,33 +156,26 @@ try {
 
 	// ── (i) THE RUNNER POSTURE IS A SEAT ON ITS OWN (owner, 2026-09-13). ──
 	//
-	// THE LIVE FAULT. The phone's line said "Runs here -- keep this screen open" with the
-	// reason `no-desktop` while argonaut was beside it: beating, starred, and ARMED. Two
-	// things had to be true at once and both were. The star lives in the NOMINATING
-	// device's localStorage and reaches a phone only on a full parcel round, so the phone
-	// held no nominee record and (a) could not fire; and argonaut's `serviced_at` was
-	// stale, so the generic desktop scan excluded it as a phantom. `runner:true` -- the
-	// machine's own claim that it is arranged to take a turn -- rode every beat and was
-	// read by nothing.
+	// THE LIVE FAULT. The phone said "Runs here -- keep this screen open" with the reason
+	// `no-desktop` while argonaut was beside it: beating, starred, and ARMED. The star lives
+	// in the NOMINATING device's localStorage and reaches a phone only on a full parcel
+	// round, and argonaut's `serviced_at` was stale. `runner:true` -- the machine's own
+	// claim that it is arranged to take a turn -- rode every beat and was read by nothing.
 	{
-		const p = plan({ [ARG]: armed('argonaut', 10000) });		// NO nominatedId: the phone knows nothing
+		const pres = { [ARG]: armed('argonaut', 10000) };		// NO nominatedId: the phone knows nothing
+		const p = plan(pres);
 		check('(i) an ARMED runner is the seat with NO nominee record stored here',
-			p.where === 'runner' && p.key === 'seat.on_runner' && p.label === 'argonaut',
-			'key=' + p.key + ' reason=' + p.reason + ' label=' + p.label);
+			p.where === 'runner' && p.label === 'argonaut', 'where=' + p.where + ' reason=' + p.reason + ' label=' + p.label);
 		check('(i) and it is seated as the RUNNER, not as a generic desktop',
 			p.reason === 'runner-posture', 'reason=' + p.reason);
-		// The exact line the owner saw, and the proof it no longer appears.
-		check('(i) the phone no longer says "runs here" beside an armed runner',
-			p.where !== 'local' && p.why !== 'no-desktop', 'where=' + p.where + ' why=' + p.why);
-		// A STALE servicing stamp is what the posture outranks; a stale BEAT is not.
+		const x = sw(pres);
+		check('(i) the switch names the armed runner', !!x.runner && x.runner.deviceId === ARG, swStr(x));
 		const cold = plan({ [ARG]: armed('argonaut', W + 60000) });
 		check('(i) an armed runner that has stopped BEATING is still not a seat',
 			cold.where === 'local', 'where=' + cold.where);
-		// An armed MOBILE device is never a seat: the posture does not override mobility.
 		const armedPhone = plan({ [GIL]: Object.assign(armed('gilgamesh', 1000), { mobile: true }) });
 		check('(i) an armed MOBILE device is still never seated as a worker',
 			armedPhone.where === 'local', 'where=' + armedPhone.where);
-		// An explicit star still outranks a bare posture elsewhere.
 		const both = plan({ [ARG]: armed('argonaut', 20000), [GIL]: desk('gilgamesh', 1000) },
 			{ nominatedId: GIL });
 		check('(i) an explicit star still wins over another machine\u2019s posture',
@@ -180,77 +185,61 @@ try {
 
 	// ── (e) A DESKTOP RUNNING ITS OWN TURN IS THE ORDINARY CASE. ──
 	{
-		const p = P.seatPlan({ id: 'c', provider: 'openrouter', model: 'm' }, {},
-			{ selfId: DESK, isPhone: false, selfMobile: false, freshWindowMs: W }, now);
+		const p = plan({}, { selfId: DESK, isPhone: false, selfMobile: false });
 		check('(e) a DESKTOP with nothing live -> runs here, and NOT as a warning',
-			p.where === 'local' && p.key === 'seat.local' && p.warn === false,
-			'key=' + p.key + ' warn=' + p.warn);
+			p.where === 'local' && p.warn === false, 'where=' + p.where + ' warn=' + p.warn);
 	}
 
-	// ── (f) THE LINE AND THE SEATING RULE CANNOT DISAGREE. ──
-	//
-	// A phone is never seated as another device's worker, so a phone that is the only
-	// live peer must leave the line saying "runs here" -- the line is drawn from the
-	// same decision, so this is a property of one function, not two kept in step.
+	// ── (f) A PHONE IS NEVER A SEAT. ──
 	{
 		const p = plan({ [GIL]: phone('gilgamesh', 1000) });
-		check('(f) another PHONE (mobile:true, desktop name) is not a seat, and the line says runs here',
-			p.where === 'local' && p.key === 'seat.local_mobile', 'key=' + p.key);
+		check('(f) another PHONE (mobile:true, desktop name) is not a seat: here',
+			p.where === 'local' && sw({ [GIL]: phone('gilgamesh', 1000) }).runner === null, 'where=' + p.where);
 	}
 
-	// ── (h) THE LOUD CASE IS ACTUALLY LOUD. ──
-	//
-	// "Runs here" on a phone is a request, not a statement: the app must stay in the
-	// foreground or the turn stalls. So the line is styled as a warning and says WHY,
-	// and the in-flight tile says it again for a turn that found nobody -- which is the
-	// moment it matters. Read off the files that ship, because the styling is the whole
-	// point of this one and a plan that merely SAYS warn is not a visible warning.
+	// ── (k) HERE IS THE CHAT'S CHOICE, AND THE RUNNER STAYS ON OFFER. ──
+	{
+		const x = sw({ [ARG]: desk('argonaut', 2000) }, { nominatedId: ARG, toggle: false });
+		check('(k) a chat pinned Here sends here, and still offers argonaut to go back to',
+			x.choice === 'here' && !!x.runner && x.runner.deviceId === ARG, swStr(x));
+		const p = plan({ [ARG]: desk('argonaut', 2000) }, { nominatedId: ARG, toggle: false });
+		check('(k) and the send agrees: the plan for a Here chat is local', p.where === 'local', 'where=' + p.where);
+	}
+
+	// ── (h) THE SWITCH IS CRYSTAL | CHAT'S CONTROL; THE TILE'S WARNING IS LOUD. ──
 	{
 		const css  = readFileSync(join(HERE, '..', 'www', 'css', 'app.css'), 'utf8');
+		const html = readFileSync(join(HERE, '..', 'www', 'index.html'), 'utf8');
 		const en   = loadEn();
 		const js   = readFileSync(join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
-		check('(h) the warning class is STYLED, on the line and inside the tile',
-			/\.seat-line\.seat-warn\s*\{[^}]*var\(--warn\)/.test(css)
-			&& /\.seat-note\.seat-warn\s*\{[^}]*var\(--warn\)/.test(css));
-		check('(h) the renderer puts that class on exactly the plans that warn',
-			/classList\.toggle\('seat-warn', !!txt\.warn\)/.test(js));
-		check('(h) each reason the line can give is in en.js',
-			['seat.why_no_desktop', 'seat.why_runner_silent', 'seat.why_chat_local',
-				'seat.tile_local_mobile'].every((k) => !!en && !!en[k]));
-		// ONE SHORT CLAUSE, AND THE REASON ON A TOOLTIP (owner, 2026-09-13: the line read
-		// as "overly verbose"). So the reason must NOT be interpolated into any seat
-		// string, and the renderer must put it on `title` instead.
+		check('(h) the switch is a `dview` group of `dview-btn` segments, as Crystal | Chat is',
+			/class="dview seat-switch" id="seat-switch"/.test(html)
+				&& /class="dview-btn" id="seat-here"/.test(html)
+				&& /class="dview-btn" id="seat-runner"/.test(html)
+				&& /class="dview" id="diamond-view"/.test(html));
+		check('(h) the old seat line is gone from markup, CSS and the renderer',
+			!/id="seat-line"/.test(html) && !/\.seat-line\b/.test(css) && !/getElementById\('seat-line'\)/.test(js));
+		check('(h) the tile\u2019s warning class is STYLED',
+			/\.seat-note\.seat-warn\s*\{[^}]*var\(--warn\)/.test(css));
+		check('(h) each reason the tile can give is in en.js',
+			['seat.why_no_desktop', 'seat.why_runner_silent', 'seat.tile_local_mobile'].every((k) => !!en && !!en[k]));
 		check('(h) the tile repeats the request in one clause',
 			!!en && /keep this open/i.test(String(en['seat.tile_local_mobile']))
 				&& String(en['seat.tile_local_mobile']).indexOf('{why}') < 0,
 			String(en && en['seat.tile_local_mobile']));
-		check('(h) no seat line interpolates the reason inline',
+		check('(h) no seat string interpolates the reason inline',
 			Object.keys(en || {}).filter((k) => k.indexOf('seat.') === 0
 				&& String(en[k]).indexOf('{why}') >= 0).length === 0);
-		check('(h) the renderer hands the reason to `title`, not to the line',
-			/el\.title = txt\.why/.test(js) && !/seat-why/.test(js));
-		check('(h) each seat line is ONE clause -- no sentence-ending full stop mid-line',
-			['seat.on_runner', 'seat.on_desktop', 'seat.on_desktop_runner_off', 'seat.local',
-				'seat.local_mobile', 'seat.tile_local_mobile']
-				.every((k) => en && !/\.\s/.test(String(en[k])) && String(en[k]).length <= 40));
+		check('(h) the renderer hands the reason to `title`, not to the text',
+			/if \(note\.why\) nd\.title = note\.why/.test(js) && !/seat-why/.test(js));
 	}
 
 	// ── (j) A DAIMON CHAT SEATS LIKE ANY OTHER CHAT (daimon hand-off). ──
-	//
-	// The pure `seatPlan` is chat-agnostic -- it reads provider/model, not `diamondId` --
-	// so a daimon chat (a chat record with `diamondId` set) seats on the live runner just
-	// as an ordinary chat does. The gate that USED to keep the seat line off daimons was
-	// `seatPlanNow`'s `current.diamondId` early-return in daimond.js; with a daimon turn
-	// now dispatching, that gate is gone, and this proves the formatter it hands to does
-	// the right thing with a daimon chat.
 	{
 		const daimon = { id: 'dc', provider: 'openrouter', model: 'm', diamondId: 'x1' };
-		const p = P.seatPlan(daimon, { [ARG]: desk('argonaut', 2000) },
-			{ selfId: PHONE, isPhone: true, selfMobile: true, freshWindowMs: W, nominatedId: ARG }, now);
-		check('(j) a DAIMON chat with a live nominee -> seat.on_runner, named',
-			p.where === 'runner' && p.key === 'seat.on_runner' && p.label === 'argonaut',
-			'key=' + p.key + ' label=' + p.label);
-		// AND the daimon gate is gone from `seatPlanNow`: the line is drawn for a daimon.
+		const p = P.seatPlan(daimon, { [ARG]: desk('argonaut', 2000) }, opt({ nominatedId: ARG }), now);
+		check('(j) a DAIMON chat with a live nominee -> the runner, named',
+			p.where === 'runner' && p.label === 'argonaut', 'where=' + p.where + ' label=' + p.label);
 		const js = readFileSync(join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 		const sp = js.slice(js.indexOf('\tfunction seatPlanNow('),
 			js.indexOf('\tfunction seatPlanNow(') + 700);
@@ -258,33 +247,25 @@ try {
 			!/current\.diamondId\)\s*return null/.test(sp), 'gate still present');
 	}
 
-	// ── (g) EVERY KEY THE PLAN CAN NAME IS IN en.js, WITH ITS {name}. ──
-	//
-	// The line names its own key, so no call-site read can check it; i18ncheck takes
-	// the declared set on trust. This closes that: the set the code can produce is
-	// enumerated here and each member looked up in the file that ships.
+	// ── (g) THE KEYS THE SWITCH AND TILE NAME ARE IN en.js; THE OLD ONES ARE GONE. ──
 	{
 		const en = loadEn();
-		const named = ['seat.on_runner', 'seat.on_desktop', 'seat.on_desktop_runner_off'];
-		const bare  = ['seat.local', 'seat.local_mobile'];
-		const missing = [...named, ...bare, 'seat.retry'].filter((k) => !en || !en[k]);
-		check('(g) every key the plan can name exists in en.js', missing.length === 0,
-			missing.join(' '));
-		check('(g) each device-naming key carries its {name} placeholder',
-			named.every((k) => en && String(en[k]).indexOf('{name}') >= 0));
-		check('(g) the re-seat line names BOTH machines',
-			!!en && String(en['seat.retry']).indexOf('{from}') >= 0
-				&& String(en['seat.retry']).indexOf('{to}') >= 0,
-			String(en && en['seat.retry']));
-		check('(g) the phone’s local line asks for the screen, the desktop’s does not',
-			!!en && /keep this open/i.test(String(en['seat.local_mobile']))
-				&& !/keep this open/i.test(String(en['seat.local'])),
-			String(en && en['seat.local_mobile']));
+		const need = ['seat.here', 'seat.switch', 'seat.ran_here'];
+		const missing = need.filter((k) => !en || !en[k]);
+		check('(g) every key the switch and tile name exists in en.js', missing.length === 0, missing.join(' '));
+		check('(g) the ran-here note names the runner that was gone',
+			!!en && String(en['seat.ran_here']).indexOf('{name}') >= 0, String(en && en['seat.ran_here']));
+		const gone = ['seat.on_runner', 'seat.on_desktop', 'seat.on_desktop_runner_off', 'seat.local',
+			'seat.local_mobile', 'turn.peer_takeback', 'turn.peer_takingback', 'seat.retry'].filter((k) => en && en[k]);
+		check('(g) the seat-line, take-back and re-seat keys are gone', gone.length === 0, gone.join(' '));
+		const p = plan({ [ARG]: desk('argonaut', 2000) }, { nominatedId: ARG });
+		check('(g) the plan names no i18n key of its own any more', !('key' in p), Object.keys(p).join(','));
 	}
 } catch (e) {
 	bad.push('crashed: ' + (e && e.message || e));
 	console.log('  FAIL crashed — ' + (e && e.stack || e));
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' fail');
 process.exitCode = bad.length ? 1 : 0;

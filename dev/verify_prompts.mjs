@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, chat, mockLog, clearMockLog } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -279,6 +280,7 @@ await remove('prompts/chat.md');
 const errs = s.errs.filter(e => !/favicon|404|401|402|502|net::ERR/.test(e));
 check('nothing throws while all this happens', errs.length === 0, errs.slice(0, 3).join(' | '));
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 await s.close();

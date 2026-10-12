@@ -62,6 +62,7 @@
 //
 // Needs a world for the mock provider: `eval "$(bash dev/world.sh N --env)"`.
 import { open } from './harness.mjs';
+import { armFilter, guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -71,8 +72,7 @@ const check = (name, pass, detail) => {
 
 const FOLDER = 'dkfolder';
 const MOCK   = process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions';
-const only   = (process.env.DK_ONLY || '').split(',').filter(Boolean);
-const want   = (f) => !only.length || only.includes(f);
+const want   = armFilter('DK_ONLY');
 
 // A loaded machine can take longer than Playwright's thirty seconds to paint the first page.
 const s = await open({ name: 'deletekeep', connect: false,
@@ -1305,6 +1305,7 @@ const errs = s.errs.filter(e => !/favicon|404|401|net::ERR|Failed to load resour
 console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
+guardRan(ok.length + bad.length, want);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

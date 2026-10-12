@@ -24,6 +24,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const ENGINES = ['chromium', 'webkit'];
 
@@ -246,5 +247,6 @@ for (const kind of ['phone', 'desk']) {
 		try { await s.close(); } catch (e) { /* gone */ }
 	}
 }
+guardRan(ok.length + bad.length);
 console.log('\n' + BROWSER + ': ' + ok.length + ' passed, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

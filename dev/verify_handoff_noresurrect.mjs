@@ -35,8 +35,8 @@
 //       failed replay leaves it), and A goes to sleep. B comes back well inside the
 //       deadline, holding the placeholder, and must not run it -- the sender gate by
 //       itself, the one the incident actually went through (audit F7). Nor may it hand
-//       the turn on: the old recovery re-dispatches an orphan to another live desktop
-//       before it runs one locally (`retryNextDesktopBeforeLocal`), so (1) and (5)
+//       the turn on: the old recovery re-dispatched an orphan to another live desktop
+//       before it ran one locally (the re-seat chase, removed under D-20261009-23), so (1) and (5)
 //       count errands for the turn on the relay as well as model requests.
 //   (7) NOR DOES SILENCE ANSWER A QUESTION DAYS OLD. A card five days old, drawn again
 //       from the transcript after a reload, stays open past the (shortened) idle bound
@@ -67,10 +67,29 @@ import {
 	freshChat,
 } from './handoffpair.mjs';
 import { chat } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const FIVE_DAYS = 5 * 86400000;
 const QUIET_MS  = 30000;	// how long a return is watched for a run that must not come
 const { ok, bad, check } = checker();
+
+/// Press a segment of A's "Here | <runner>" switch for the open chat, as a finger
+/// would, and say whether it took: '' when it did, else what stood in the way. The
+/// switch is drawn once a beat has named the runner, so a beat is nudged while waiting.
+async function seatTo(a, sel) {
+	for (const t0 = Date.now(); Date.now() - t0 < 20000; ) {
+		if (await a.page.locator(sel).isVisible().catch(() => false)) break;
+		await a.page.evaluate(() => window.dispatchEvent(new Event('daimond:presence'))).catch(() => {});
+		await a.page.waitForTimeout(500);
+	}
+	try { await a.page.click(sel, { timeout: 4000 }); }
+	catch (e) { return String(e && e.message || e).split('\n')[0].slice(0, 160); }
+	const on = await a.page.evaluate((s) => {
+		const el = document.querySelector(s);
+		return el ? el.getAttribute('aria-pressed') : 'no ' + s;
+	}, sel).catch((x) => String(x));
+	return on === 'true' ? '' : sel + ' aria-pressed=' + on;
+}
 
 /// A hand-off sent five days ago, as the incident's were, then a reload: five days
 /// on there is no backstop timer, only what the store holds.
@@ -244,6 +263,11 @@ try {
 	const OPEN_OPT = '#chat-output .ask-card:not(.answered) .ask-opt';
 	const SILENT6  = 'Other: ' + Q6.if_silent;	// what the card sends on silence
 	await freshChat(a);
+	// The question is A's own, asked on A's clock: B is nominated (`pair`), so a send
+	// with the switch on B would be B's to run, on B's clock. Here is pressed for the
+	// ask, and B again for the answer, which goes out as the hand-off.
+	const here6 = await seatTo(a, '#seat-here');
+	check('(6) A\'s switch is pressed to Here for the ask', here6 === '', here6);
 	// Asked AND answered five days ago, as the incident's card was: the question is as old
 	// as its answer, so the card [Answer again] reopens is a question days old.
 	await a.page.evaluate((ms) => {
@@ -260,6 +284,8 @@ try {
 	const off6 = await keepErrandsOff(a.page);
 	await a.page.setViewportSize({ width: 420, height: 860 });
 	await a.page.waitForTimeout(300);
+	const run6 = await seatTo(a, '#seat-runner');
+	check('(6) and to B for the answer', run6 === '', run6);
 	if (cardUp) {
 		await a.page.locator(OPEN_OPT, { hasText: 'Unhook the folders' }).first().click({ force: true }).catch(() => {});
 	}
@@ -337,6 +363,8 @@ try {
 	const OLD6B = 'Chose: Unhook the old folders';
 	const saw6b = modelSaw(OLD6B);
 	await freshChat(a);
+	const here6b = await seatTo(a, '#seat-here');			// A's question, as in (6)
+	check('(6b) A\'s switch is pressed to Here for the ask', here6b === '', here6b);
 	await a.page.evaluate((ms) => {
 		const real = Date.now.bind(Date);
 		window.__verifyRealNow = real;
@@ -347,6 +375,8 @@ try {
 	const off6b = await keepErrandsOff(a.page);			// five days on, its errand is gone
 	await a.page.setViewportSize({ width: 420, height: 860 });
 	await a.page.waitForTimeout(300);
+	const run6b = await seatTo(a, '#seat-runner');
+	check('(6b) and to B for the answer', run6b === '', run6b);
 	if (card6b) {
 		await a.page.locator(OPEN_OPT, { hasText: 'Unhook the old folders' }).first().click({ force: true }).catch(() => {});
 	}
@@ -481,4 +511,5 @@ try {
 	try { await a?.close(); } catch (e) {}
 	try { await b?.close(); } catch (e) {}
 }
+guardRan(ok.length + bad.length);
 process.exit(bad.length ? 1 : 0);

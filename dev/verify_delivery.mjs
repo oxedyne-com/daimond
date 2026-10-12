@@ -43,6 +43,7 @@ import { open, APP } from './harness.mjs';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { hashTree, bundleHash, parseLog, nextEntry } from '../verify/lib.mjs';
+import { guardRan } from './verdict.mjs';
 
 const LOG = fileURLToPath(new URL('../verify/transparency.jsonl', import.meta.url));
 const WWW = fileURLToPath(new URL('../www', import.meta.url));
@@ -148,5 +149,6 @@ check('the tampered file is named as differing',
 	line(v.checks, /every served file/));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

@@ -29,6 +29,7 @@
 //
 //	node dev/verify_kitask.mjs
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -181,5 +182,6 @@ await p.evaluate(async (ids) => {
 	}
 }, ids);
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

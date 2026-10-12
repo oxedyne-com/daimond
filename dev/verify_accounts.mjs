@@ -14,6 +14,7 @@
 // The primary account keeps the raw keys and the OPFS root (so an existing install is untouched);
 // only a SECOND account brings a namespace into being. Both halves are checked.
 import { open, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -160,6 +161,7 @@ console.log('\nconsole errors:', errs.slice(0, 4));
 check('nothing throws through all the switching', errs.length === 0, errs[0] || '');
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

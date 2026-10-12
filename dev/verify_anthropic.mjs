@@ -22,6 +22,7 @@
 // `r: 1` in the ledger, not an estimate `e`), and that the thinking and effort settings reach
 // a body (measure 5), which no OpenAI-dialect request carries at all.
 import { open, errors, newChat, chat } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -230,5 +231,6 @@ const errs = errors(s).filter(e => !(/\/api\//.test(e) && GW_NONEVENT.test(e)));
 check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

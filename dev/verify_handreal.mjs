@@ -127,6 +127,7 @@ import { fileURLToPath } from 'node:url';
 
 import { open as openApp, newChat, chat, transcript, mockLog, clearMockLog, scratch } from './harness.mjs';
 import { whyStaleBinary, whyStaleWasm, refuse } from './staleguard.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
@@ -890,6 +891,7 @@ try {
 	}
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (BREAK) {
 	console.log(bad.length

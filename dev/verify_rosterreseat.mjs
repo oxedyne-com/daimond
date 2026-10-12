@@ -25,6 +25,7 @@
 //   DAIMOND_APP=http://localhost:8779 node dev/verify_rosterreseat.mjs
 
 import { open, errors, newChat } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -298,5 +299,6 @@ try {
 	if (s && s.close) await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' fail');
 process.exit(bad.length ? 1 : 0);

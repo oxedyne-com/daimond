@@ -43,6 +43,7 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, connectMock, chat, newChat, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE    = path.dirname(fileURLToPath(import.meta.url));
 // The cap mock is a world fixture like the LLM mock, so its port and log follow
@@ -467,6 +468,7 @@ await shot(s, 'replylen-meter');
 
 // ── Report ──────────────────────────────────────────────────────────────
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) bad.forEach(b => console.log('  FAIL ' + b));
 await s.close();

@@ -24,6 +24,7 @@
 //   node dev/verify_diamondfit.mjs
 import { open, scratch } from './harness.mjs';
 import fs from 'node:fs';
+import { guardRan } from './verdict.mjs';
 
 const KiB = 1024, MiB = 1024 * 1024;
 const ok = [], bad = [];
@@ -193,6 +194,7 @@ check('offload refused: the chunk store surfaces its own standRefused notice', /
 
 console.log('\nconsole errors:', s.errs.filter(e => !/favicon|404|502|ERR_/.test(e)).slice(0, 4));
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

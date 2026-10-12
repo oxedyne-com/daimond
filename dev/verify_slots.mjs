@@ -15,6 +15,7 @@
 // dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs (DAIMOND_MOCK_PORT,
 // default 9099).
 import { open, signInAs, shot, MOCK } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
 const json = (body, status = 200) => ({ status, contentType: 'application/json', headers: CORS, body: JSON.stringify(body) });
@@ -120,5 +121,6 @@ await shot(s, 'slots');
 await s.close();
 console.log('\nminted slots: ' + JSON.stringify(gw.mintedSlots));
 console.log('provider calls: ' + JSON.stringify(gw.providerCalls));
+guardRan(ok.length + bad.length);
 console.log(ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

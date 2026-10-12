@@ -46,6 +46,7 @@
 // stub also RECORDS what reached it, which is how check 1's second half is
 // asked at the driver rather than at the model's reply.
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -318,5 +319,6 @@ try {
 	try { await s.browser.close(); } catch (e) { /* ignore */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

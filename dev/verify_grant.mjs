@@ -20,6 +20,7 @@
 import { open, errors, shot } from './harness.mjs';
 import path from 'node:path';
 import fs from 'node:fs';
+import { guardRan } from './verdict.mjs';
 
 const EXT = path.resolve('ext');
 const SHOTS = path.resolve('dev/shots');
@@ -214,6 +215,7 @@ console.log('\npanel note after refusal:\n  ' + note.replace(/\n/g, '\n  '));
 const errs = errors(s).filter((e) => !/Failed to load resource.*\b(401|402|502|503)\b/.test(e));
 check('the app logged no console errors', errs.length === 0, errs.join(' | '));
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 await s.close();
 process.exit(bad.length ? 1 : 0);

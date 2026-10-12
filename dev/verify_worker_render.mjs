@@ -26,6 +26,7 @@
 //
 // Needs dev/serve.mjs and the world's mock. No gateway.
 import { open, newChat, scratch, checker, BROWSER } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const KEEP      = 40;			// finished runs kept (Workers.FINISHED_KEEP)
 const MAX_CHARS = 1000000;		// persisted key bound (Workers.PERSIST_MAX_CHARS)
@@ -34,7 +35,7 @@ const WORDS     = 600;			// streamed by the mock at 5 ms a word
 const LONG_MS   = 200;
 const EVAL_MS   = 1000;
 
-const { bad, check } = checker();
+const { ok, bad, check } = checker();
 
 const s = await open({ name: 'worker_render', profile: scratch('pw', 'worker_render-' + BROWSER) });
 const { page: p } = s;
@@ -185,5 +186,6 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(bad.length ? `\n${bad.length} check(s) FAILED` : '\nall checks passed');
 process.exit(bad.length ? 1 : 0);

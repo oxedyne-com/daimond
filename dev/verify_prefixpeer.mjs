@@ -56,6 +56,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, steerDiamond, connectMock, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const BREAK = process.argv.includes('--break');
@@ -325,6 +326,7 @@ try {
 	try { await s.browser.close(); } catch (e) { /* already gone */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length}/${ok.length + bad.length} checks passed`);
 if (bad.length) { console.log(bad.length + ' FAILED:\n  ' + bad.join('\n  ')); process.exit(1); }
 console.log('verify_prefixpeer: all checks passed');

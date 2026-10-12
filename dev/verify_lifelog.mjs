@@ -54,6 +54,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Derived from this file, so it is the same tree whatever the working directory is: `run_all.sh`
@@ -1893,6 +1894,7 @@ try {
 	await s.close?.().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (BREAK) {
 	console.log(bad.length

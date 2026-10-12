@@ -83,6 +83,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CHROME, scratch } from './harness.mjs';
 import * as forge from './forge.mjs';
+import { guardRan } from './verdict.mjs';
 
 const { chromium } = await import('./pw.mjs');
 
@@ -967,5 +968,6 @@ async function run() {
 
 await run();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

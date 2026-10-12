@@ -29,10 +29,12 @@
 //   (b) the desktop beats with `runner: true` and `mobile: false`, and the gateway
 //       relays both to the mobile device;
 //   (c) the mobile device's seat plan names the desktop, as the RUNNER
-//       (`seat.on_runner`, reason `runner-posture`) — not `local`/`no-desktop`;
-//   (d) the line UNDER THE COMPOSER says so, within one beat interval;
-//   (e) and the line is one short clause, with the reason on its `title` and not
-//       appended to the text (the copy the owner called overly verbose).
+//       (reason `runner-posture`) — not `local`/`no-desktop`;
+//   (d) the "Here | <runner>" switch BY THE INPUT BOX (owner, D-20261009-23; it
+//       replaced the line under the composer) names the desktop, pressed, within
+//       one beat interval;
+//   (e) and the runner segment is the device's name alone, no clause or reason
+//       appended (the copy the owner called overly verbose).
 //
 // Needs the dev stack: the app (DAIMOND_PORT), the mock, and a gateway on
 // DAIMOND_GW_PORT. Presence rides the Pro-gated /api/sync door, so the account is
@@ -41,6 +43,7 @@
 import { open, signInAs, newChat } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -139,32 +142,33 @@ try {
 			? DaimondCore.seat.planNow() : null;
 	});
 	check('(c) the phone’s seat plan names the desktop as the RUNNER',
-		!!plan && plan.where === 'runner' && plan.key === 'seat.on_runner'
-			&& plan.reason === 'runner-posture', JSON.stringify(plan));
+		!!plan && plan.where === 'runner' && plan.reason === 'runner-posture', JSON.stringify(plan));
 	check('(c) and it is NOT the line the owner saw (local / no-desktop)',
 		!!plan && !(plan.where === 'local' && plan.why === 'no-desktop'), JSON.stringify(plan));
 
-	// ── (d) THE LINE UNDER THE COMPOSER SAYS SO, WITHIN ONE BEAT. ─────
-	// `renderSeatLine` is wired to `daimond:presence`, which every ingest raises, so
+	// ── (d) THE SWITCH BY THE INPUT BOX SAYS SO, WITHIN ONE BEAT. ─────
+	// `renderSeatSwitch` is wired to `daimond:presence`, which every ingest raises, so
 	// a redraw must already have happened by the time the plan above was readable.
-	const line = await phone.page.evaluate(() => {
-		const el = document.getElementById('seat-line');
-		if (!el) return null;
-		return { hidden: !!el.hidden, text: el.textContent || '', title: el.getAttribute('title') || '',
-			warn: el.classList.contains('seat-warn') };
+	const sw = await phone.page.evaluate(() => {
+		const box = document.getElementById('seat-switch');
+		const run = document.getElementById('seat-runner');
+		const here = document.getElementById('seat-here');
+		if (!box || !run || !here) return null;
+		return { hidden: !!box.hidden, runHidden: !!run.hidden, text: run.textContent || '',
+			runPressed: run.getAttribute('aria-pressed'), herePressed: here.getAttribute('aria-pressed') };
 	});
-	check('(d) the seat line is shown and names the desktop',
-		!!line && line.hidden === false && /runnerdesk|Chrom|device/i.test(line.text)
-			&& /Next turn/i.test(line.text), JSON.stringify(line));
-	check('(d) and it is no longer a warning asking for this screen',
-		!!line && line.warn === false && !/keep this open/i.test(line.text), JSON.stringify(line));
+	check('(d) the switch is shown and its runner segment names the desktop',
+		!!sw && sw.hidden === false && sw.runHidden === false
+			&& /runnerdesk|Chrom|device/i.test(sw.text), JSON.stringify(sw));
+	check('(d) and the runner is the chosen segment, not "Here"',
+		!!sw && sw.runPressed === 'true' && sw.herePressed === 'false', JSON.stringify(sw));
 
-	// ── (e) ONE SHORT CLAUSE, THE REASON ON THE TOOLTIP. ─────────────
-	check('(e) the line is one short clause (no second sentence appended)',
-		!!line && line.text.length <= 48 && !/\.\s/.test(line.text),
-		JSON.stringify(line && line.text));
-	check('(e) and no `.seat-why` span is appended to it any more',
-		await phone.page.evaluate(() => !document.querySelector('#seat-line .seat-why')));
+	// ── (e) THE DEVICE'S NAME ALONE. ─────────────────────────────────
+	check('(e) the runner segment is a name, no clause appended',
+		!!sw && sw.text.length <= 32 && !/\.\s|next turn|keep this/i.test(sw.text),
+		JSON.stringify(sw && sw.text));
+	check('(e) and no `.seat-why` span is appended to it',
+		await phone.page.evaluate(() => !document.querySelector('#seat-switch .seat-why')));
 
 	// ── THE REGRESSION, MEASURED: disarm the posture and the line falls back. ──
 	// Proof the seat came from the posture and from nothing else.
@@ -184,5 +188,6 @@ try {
 	try { if (desk)  await desk.close();  } catch (e) { /* closing */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' fail');
 process.exit(bad.length ? 1 : 0);

@@ -25,6 +25,7 @@
 //   node dev/verify_spawn_gather.mjs --break noorphan   # the orphan runs to its whole ceiling
 //   node dev/verify_spawn_gather.mjs --break emptyturn  # a turn is spent on an empty report
 import { open, newChat, shot, mockLog, clearMockLog } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -322,15 +323,30 @@ const inGather = await page.waitForFunction(
 		&& window.DaimondWorkers.awaiting.length),
 	null, { timeout: 12000 }).catch(() => null);
 check('the stop case reaches a waiting gather to stop', !!inGather);
+const beforePress = mockLog().length;
+const endsBefore = await page.evaluate(() => document.querySelectorAll('#chat-output .ended-notice').length);
 await page.click('#chat-send', { force: true });
 // Seven seconds, which is well inside the twenty-five the worker would take and
 // well inside the sixty the gather was told to wait: anything seen here is the
 // press and not the deadline.
 await page.waitForTimeout(7000);
-const stopWire = mockLog();
-check('the gather answered at once, saying the user stopped it',
-	toolRepliesWith(stopWire, 'Stopped: the user stopped the turn').length >= 1,
-	`${toolRepliesWith(stopWire, 'Stopped:').length} such tool repl(y|ies)`);
+// THE STOP IS THE TURN'S OWN, AND IT HOLDS ACROSS ITS ROUNDS (b4a79980, release 5). This
+// check used to look for the gather's "Stopped: the user stopped the turn" as a tool reply
+// in a FURTHER model request -- the next round, run after the press. That round was the
+// fault b4a79980 fixed (PQA W/WD: "the rest of the turn ran"): the halt is now asked at the
+// top of every round, so a stopped turn makes no further call and its ending is Stopped,
+// shown under what it said. So what is asserted is that: no request of THIS conversation
+// after the press (the worker's own requests carry only its task), and the ending line.
+const afterPress = mockLog().slice(beforePress).filter(m => (m.messages || []).some(x =>
+	x.role === 'user' && typeof x.content === 'string' && x.content.includes('"name":"stopme"')));
+check('the stopped turn made no further model call — the press held across its rounds',
+	afterPress.length === 0, `${afterPress.length} request(s) of the turn after the press`);
+const stopEnds = await page.evaluate(() => ({
+	n:    document.querySelectorAll('#chat-output .ended-notice').length,
+	last: ([...document.querySelectorAll('#chat-output .ended-notice .end-line')].pop() || {}).textContent || '',
+}));
+check('and the turn says it was stopped, rather than reading as finished',
+	stopEnds.n > endsBefore && stopEnds.last.trim() !== '', JSON.stringify({ before: endsBefore, ...stopEnds }));
 const settled = await page.evaluate(() => (window.DaimondWorkers
 	? window.DaimondWorkers.awaiting.length : -1));
 check('and nothing is left waiting, so the turn is not held open by a dead gather',
@@ -467,5 +483,6 @@ if (BREAK) {
 		+ (bad.length ? '' : ' — NOTHING FAILED, so the checks above prove nothing'));
 	process.exit(bad.length ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? '\nall checks passed' : `\n${bad.length} check(s) FAILED`);
 process.exit(bad.length === 0 ? 0 : 1);

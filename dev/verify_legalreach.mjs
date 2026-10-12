@@ -71,6 +71,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, scratch, keepTracked } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -674,6 +675,7 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (BREAK) {
 	console.log(bad.length

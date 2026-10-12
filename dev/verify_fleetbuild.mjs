@@ -31,6 +31,7 @@
 
 import { open, errors, signInAs, scratch } from './harness.mjs';
 import fs from 'node:fs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -280,5 +281,6 @@ try {
 	try { fs.rmSync(PROFILE, { recursive: true, force: true }); } catch (e) { /* gone */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

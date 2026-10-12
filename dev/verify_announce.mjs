@@ -19,6 +19,7 @@
 // And the two popovers, from the same round: both are role="dialog", both cover
 // the app, and Tab used to walk out of them into the page behind.
 import { open, newChat, chat as sendChat } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -126,6 +127,7 @@ check('the chip row hid something, so the gallery has an opener', haveMore === t
 if (haveMore) await trapped('#panel-more', '#panel-gallery', 'the panel gallery');
 
 console.log('');
+guardRan(ok.length + bad.length);
 console.log(bad.length
 	? `${bad.length} FAILED of ${ok.length + bad.length}:\n  - ${bad.join('\n  - ')}`
 	: `announce: all ${ok.length} checks pass — one announcement per answer, and the popovers hold Tab.`);

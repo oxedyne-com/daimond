@@ -42,6 +42,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, scratch, shot, chat } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const WWW = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'www');
 
@@ -316,6 +317,7 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0
 	? `\nverify_panelfacts: all ${ok.length} checks pass.`
 	: `\nverify_panelfacts: ${bad.length} of ${ok.length + bad.length} failed:\n  ` + bad.join('\n  '));

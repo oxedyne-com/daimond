@@ -41,6 +41,7 @@ import { fileURLToPath } from 'node:url';
 
 import { open, connectMock, newChat, scratch } from './harness.mjs';
 import { plant, fakeExtension, bridge } from './handbridge.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -240,5 +241,6 @@ try {
 }
 
 console.log('');
+guardRan(ok.length + bad.length);
 console.log(ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) process.exit(1);

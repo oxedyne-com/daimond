@@ -42,6 +42,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { open, newChat, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -238,7 +239,30 @@ if (!A || !B || A === B) die('this world does not hold two Diamonds to navigate 
 // defect read. Without this the checks below could pass on a run where the work
 // landed before the user moved, and prove nothing whatever.
 const spy = async () => p.evaluate(() => window.__spendSpy.slice());
-const armSpy = () => p.evaluate(() => {
+/// Wait until nothing is still spending: `DaimondCore.busy()` false (no turn generating or
+/// queued, no fold, no worker active) and no metered turn for two seconds.
+///
+/// WITHOUT IT THE SECTIONS RACE EACH OTHER. A section waits for its FIRST metered turn and
+/// moves on, but the work it started can meter again after that: the daimon's round that
+/// gathers a worker's report, a turn's second round. That late turn lands in the NEXT
+/// section's freshly armed spy as its `rows[0]`, so section 3 read A's gather (counted while
+/// A was still on screen) as the worker landing under a chat, and section 5 read section 4's
+/// daimon (billed to A) as the ordinary chat's turn: the two reds every gate carried.
+const settle = async (ms = 60000) => {
+	const t0 = Date.now();
+	let n0 = -1, since = Date.now();
+	while (Date.now() - t0 < ms) {
+		const st = await p.evaluate(() => ({
+			busy: !!(window.DaimondCore && window.DaimondCore.busy()),
+			n:    (window.__spendSpy || []).length,
+		}));
+		if (st.busy || st.n !== n0) { n0 = st.n; since = Date.now(); }
+		else if (Date.now() - since >= 2000) return true;
+		await p.waitForTimeout(250);
+	}
+	return false;
+};
+const armSpy = async () => { await settle(); return p.evaluate(() => {
 	if (!window.__spendSpyOn) {
 		window.__spendSpyOn = true;
 		const real = window.DaimondSignals.noteTurn;
@@ -254,7 +278,7 @@ const armSpy = () => p.evaluate(() => {
 	}
 	window.__spendSpy = [];
 	window.DaimondSignals.reset();
-});
+}); };
 const goDiamond = (id) => p.evaluate((i) => {
 	// `el.click()`, not Playwright's: headless Chrome without a display gives the
 	// rail no frame to consider stable, and the actionability wait never resolves.
@@ -401,6 +425,7 @@ check('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) console.log('  ' + bad.join('\n  '));
 if (BREAK) {

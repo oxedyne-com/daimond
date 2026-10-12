@@ -40,6 +40,7 @@ import {
 	sendAgo,
 	reload,
 } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HELD_MS  = 3000;				// a request in flight longer than this is being HELD
 const STALE_MS = 20 * 60 * 1000;	// past the 15-minute errand deadline
@@ -222,4 +223,5 @@ try {
 	try { await a?.close(); } catch (e) {}
 	try { await b?.close(); } catch (e) {}
 }
+guardRan(ok.length + bad.length);
 process.exit(bad.length ? 1 : 0);

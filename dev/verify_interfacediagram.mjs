@@ -46,6 +46,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
@@ -321,6 +322,7 @@ check('the page threw nothing', errs.length === 0, errs.slice(0, 3).join(' | '))
 
 await browser.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (BREAK) {
 	if (bad.length) { console.log('the break was caught, as it should be'); process.exit(0); }

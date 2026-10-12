@@ -47,6 +47,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { open, chat, transcript, scratch, APP } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -1156,5 +1157,6 @@ check('THE BEFORE-CONSENT CHECK FIRES on a build that arms itself',
 	forward.requests.filter(toTelemetry).length > 0,
 	`${forward.requests.filter(toTelemetry).length} request(s) — the quiet session had ${quietBatches.length}`);
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

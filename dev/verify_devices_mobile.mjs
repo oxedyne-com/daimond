@@ -31,6 +31,7 @@
 //   DAIMOND_APP=http://localhost:8802 node dev/verify_devices_mobile.mjs
 
 import { open, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -289,5 +290,6 @@ try {
 	for (const s of [phone, desk]) { if (s) { try { await s.close(); } catch (e) {} } }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { bad.forEach(b => console.log('  FAIL ' + b)); process.exit(1); }

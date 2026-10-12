@@ -70,6 +70,7 @@ const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-li
 import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
 import { hashTree, bundleHash, coveredFiles, sha256, parseLog, nextEntry } from '../verify/lib.mjs';
+import { guardRan } from './verdict.mjs';
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
 // run under `xvfb-run` still went to the compositor and opened a window on the owner's
@@ -328,6 +329,7 @@ try {
 	cleanup();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (BREAK) {
 	if (bad.length) { console.log('the break was caught, as it should be'); process.exit(0); }

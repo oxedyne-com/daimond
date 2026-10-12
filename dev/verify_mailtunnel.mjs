@@ -47,6 +47,7 @@ import tls from 'node:tls';
 import crypto from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP  = path.resolve(HERE, '..');
@@ -547,6 +548,7 @@ try {
 	try { fs.rmSync(path.join(WORK, 'pw'), { recursive: true, force: true }); } catch (e) {}
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\nverify_mailtunnel: ${ok.length} ok, ${bad.length} failed, ${skip.length} skipped.`);
 if (bad.length) { bad.forEach((b) => console.log('  FAILED: ' + b)); process.exit(1); }
 process.exit(0);

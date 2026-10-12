@@ -19,6 +19,7 @@
 // Both are asserted by pressing the key and asking the APPLICATION what changed.
 // Each is then proved red by breaking the property in the live page.
 import { open, newChat } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -227,6 +228,7 @@ red(!!r3red && (r3red.isButton === false || r3red.fields > 0),
 	'a tile with the old rename field put back fails both label checks');
 
 console.log('');
+guardRan(ok.length + bad.length);
 console.log(bad.length
 	? `${bad.length} FAILED of ${ok.length + bad.length}:\n  - ${bad.join('\n  - ')}`
 	: `rail keyboard: all ${ok.length} checks pass — a Diamond and a chat both open from the keyboard.`);

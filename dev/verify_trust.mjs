@@ -41,6 +41,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, errors } from './harness.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -743,5 +744,6 @@ try {
 	}
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAIL ' + b)); process.exit(1); }

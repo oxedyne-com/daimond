@@ -44,6 +44,7 @@ import {
 	reload,
 	modelSaw,
 } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const { ok, bad, check } = checker();
 const NUDGE = 'Carry on from exactly';
@@ -234,4 +235,5 @@ try {
 	try { await a?.close(); } catch (e) {}
 	try { await b?.close(); } catch (e) {}
 }
+guardRan(ok.length + bad.length);
 process.exit(bad.length ? 1 : 0);

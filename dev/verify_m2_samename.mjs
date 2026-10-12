@@ -27,6 +27,7 @@
 //
 // Needs a world: `eval "$(bash dev/world.sh N --env)"`.
 import { open, signInAs, markHere, standInFolders, workRows, pressRowItem } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -174,6 +175,7 @@ const ran = ok.length + bad.length;
 check('every planned check ran', ran === PLANNED - 1, ran + ' of ' + (PLANNED - 1) + ' before this one');
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

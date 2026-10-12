@@ -31,6 +31,7 @@
 import { open, chat, signInAs, newChat } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -206,6 +207,7 @@ try {
 	await a.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { for (const l of bad) console.log('  FAILED: ' + l); }
 process.exit(bad.length ? 1 : 0);

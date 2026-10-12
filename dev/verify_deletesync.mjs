@@ -36,6 +36,7 @@
 import { open, signInAs, scratch } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail, kind = 'route') => {
@@ -218,5 +219,6 @@ try {
 	if (A) await A.close().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? `\nall ${ok.length} checks passed` : `\n${bad.length} check(s) FAILED, ${ok.length} passed`);
 process.exit(bad.length === 0 ? 0 : 1);

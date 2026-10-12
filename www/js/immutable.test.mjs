@@ -258,11 +258,11 @@ async function main() {
 			late === null);
 	}
 
-	// ── (e) Take-back is PRE-CLAIM ONLY; [Run here] on failure; none once claimed. ──
-	console.log('\n(e) — the footer control table (owner take-back ruling 2026-09-17)');
+	// ── (e) No take-back at all (D-20261009-23); [Run here] on failure. ──
+	console.log('\n(e) — the footer control table (owner, D-20261009-23: no take back)');
 	{
-		check('(e1) take-back is offered ONLY pre-claim (dispatched, unclaimed)',
-			P.dispatchControl('dispatched') === 'takeback');
+		check('(e1) a healthy hand-off (dispatched, unclaimed) offers no control',
+			P.dispatchControl('dispatched') === '');
 		check('(e2) once a peer has CLAIMED, there is no take-back',
 			P.dispatchControl('claimed') === '');
 		check('(e3) nor while it is RUNNING', P.dispatchControl('running') === '');
@@ -272,11 +272,10 @@ async function main() {
 		check('(e7) a turn NO device took offers [Run here]', P.dispatchControl('no-peer-awake') === 'runhere');
 		check('(e8) a PARKED turn offers a re-run', P.dispatchControl('parked') === 'rerun');
 		check('(e9) a DONE turn offers no control (the answer draws itself)', P.dispatchControl('done') === '');
-		// The whole table has exactly one take-back state, and it is the pre-claim one.
+		// No state of the whole table offers a take-back.
 		const states = ['dispatched', 'no-peer-awake', 'failed', 'parked', 'claimed', 'running', 'awaiting-consent', 'blocked', 'done'];
 		const takebacks = states.filter((s) => P.dispatchControl(s) === 'takeback');
-		check('(e10) exactly ONE state offers take-back, and it is the pre-claim `dispatched`',
-			takebacks.length === 1 && takebacks[0] === 'dispatched');
+		check('(e10) NO state offers take-back', takebacks.length === 0, JSON.stringify(takebacks));
 	}
 
 	// ── (d) Per-device request/pull rate does not rise vs baseline. ──

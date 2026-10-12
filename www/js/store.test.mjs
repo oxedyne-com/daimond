@@ -229,7 +229,7 @@ async function main() {
 			v('NOMINATED_KEY'), 'var DEVICE_ID_RE = /^[0-9a-f]{16}$|^[0-9a-f]{32}$/;',
 			fn('ms'), fn('nominationSnapshot'), fn('nominateDevice'), fn('adoptNomination'), fn('fresherNomination'),
 			fn('nominationRank'),
-			'function renderSeatLine() {}',
+			'function renderSeatSwitch() {}',
 			'return { nominateDevice: nominateDevice, nominationSnapshot: nominationSnapshot, adoptNomination: adoptNomination };',
 		].join('\n'))(A.win, A.win.localStorage, A.win.DaimondStore, A.win.DaimondStamp);
 		b.full = true;

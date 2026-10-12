@@ -9,6 +9,7 @@
 // iOS auto-zoom itself is a Safari behaviour Chromium cannot reproduce, so we test
 // its CAUSE instead: no focusable control may be under 16px on a phone.
 import { open, signInAs, connectMock } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -203,6 +204,7 @@ check('files: new-file dialog field is ≥16px', dlgSmall.found ? dlgSmall.fs >=
 const real = s.errs.filter(e => !/Failed to load resource|status of 4\d\d/.test(e));
 check('no console errors across the walk', real.length === 0, real.slice(0, 3).join(' | '));
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED: ' + bad.join(', '));
 await s.close();

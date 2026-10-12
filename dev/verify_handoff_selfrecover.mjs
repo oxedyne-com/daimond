@@ -58,7 +58,8 @@
 // the double-bill is proven at the lease-mechanism level, not yet reproduced end-to-end
 // through B's ordinary collect path. Reported as found, not forced green.
 //
-// #5 — a re-seat draws ONE hand-off tile (markTurnDispatched updates in place).
+// #5 — no re-seat chase: an unclaimed turn runs here, never on the next live desktop,
+//      and keeps one hand-off tile.
 // #6 — a 413 (and a prompt larger than the door) is RENDERED as a refused seat and the
 //      turn runs here, its provenance naming the refusal.
 //
@@ -71,9 +72,10 @@
 //   node dev/verify_handoff_selfrecover.mjs --break   # revert holdOwnDispatch AND the
 //                                                      # lease's settled-stamp
 
-import { open, chat, signInAs, newChat, connectMock, shot, servedChats, mockLog, clearMockLog, contentText } from './harness.mjs';
+import { routeProbe, open, chat, signInAs, newChat, connectMock, shot, servedChats, mockLog, clearMockLog, contentText } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const RTMS = Number(process.env.RESCUE_MS || 90000);
 const BREAK = process.argv.includes('--break');
@@ -197,18 +199,19 @@ const completionsFor = (needle) => mockLog().filter((r) => new RegExp(needle, 'i
 let a, b, c;
 try {
 	// ── A: the phone, and B: a paired desktop peer. ───────────────────────────
-	a = await open({ name: 'selfrec', touch: true });
+	a = await open({ name: 'selfrec', touch: true, serviceWorkers: 'block' });
 	await a.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer && window.DaimondGateway
 		&& DaimondGateway.state().authed, null, { timeout: 20000 }).catch(() => {});
 	const pro = await makePagePro(a.page, new URL('../gateway', import.meta.url).pathname, GW_URL);
 	check('A holds Pro (the dispatch/presence path is not refused)', pro.pro === true, JSON.stringify(pro));
+	await routeProbe(check, a.page);
 	await connectMock(a);
 	await newChat(a);
 	await chat(a, 'seed turn so the chat and its parcel exist');
 	await settle(a.page);
 	if (BREAK) await applyBreak(a.page);
 
-	b = await open({ name: 'selfrecmate', signIn: false, connect: false });
+	b = await open({ name: 'selfrecmate', signIn: false, connect: false, serviceWorkers: 'block' });
 	await b.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 }).catch(() => {});
 	const code = await a.page.evaluate(() => DaimondPairing.create());
 	await b.page.evaluate((cc) => DaimondPairing.redeem(cc), code.code);
@@ -223,6 +226,10 @@ try {
 
 	const idA = await devId(a.page), idB = await devId(b.page);
 	check('A and B are distinct paired devices', !!idA && !!idB && idA !== idB, JSON.stringify({ idA, idB }));
+	// Since D-20261009-23 a send is handed only to the NOMINATED runner (or runs here), so
+	// B is nominated on both devices, as handoffpair.mjs's `pair` does; C (#5) never is.
+	for (const s of [a, b]) await s.page.evaluate((id) => window.DaimondCore.roster.nominate(id), idB);
+	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
 
 	// ═══════════════════════════════════════════════════════════════════════════
 	// #1/#2 — A dispatches to a PHANTOM B, recovers locally, THEN B collects.
@@ -420,11 +427,13 @@ try {
 	await a.page.click('#chat-send', { force: true });
 	const refusedNote = await until(a.page, () => {
 		const n = document.querySelector('.seat-note.seat-warn');
-		return !!(n && /refused \(413\)/i.test(n.textContent || ''));
+		return !!(n && /couldn.t take it/i.test(n.textContent || '') && !/413/.test(n.textContent || ''));
 	}, null, 20000);
 	const notes6 = refusedNote ? '' : await a.page.evaluate(() => Array.from(document.querySelectorAll('.seat-note'))
 		.map((n) => n.className + ': ' + n.textContent.trim()).join(' | ')).catch(() => '');
-	check('#6: the seat note reads "refused (413)"', refusedNote, notes6 ? 'notes: ' + notes6.slice(0, 300) + ' posts: ' + postCalls : '');
+	// Where A's seat stood when no note came: a turn that never went out has no note to draw.
+	const plan6 = refusedNote ? '' : await a.page.evaluate(() => { try { return JSON.stringify(window.DaimondCore.seat.planNow()); } catch (e) { return String(e); } }).catch(() => '');
+	check('#6: the seat note reads "couldn\'t take it", no status code', refusedNote, refusedNote ? '' : 'notes: ' + (notes6 || '(none)').slice(0, 300) + ' posts: ' + postCalls + ' plan: ' + String(plan6).slice(0, 300));
 	const ranHere413 = await untilChats(a, (cs) => answersFor(cs, 'refused413').some((m) => String(m.ranOn) === String(idA)), RTMS);
 	check('#6: the refused turn completed HERE with one assistant row', answersFor(ranHere413, 'refused413').filter((m) => String(m.ranOn) === String(idA)).length === 1);
 	await a.page.unroute('**/api/post');
@@ -463,7 +472,7 @@ try {
 		window.__seatWarnObs.disconnect();
 		return window.__seatWarnSeen.join(' | ');
 	});
-	check('#6: an oversized prompt shows a refused seat (status 0)', /refused \(0\)/i.test(note0 || ''), 'note=' + JSON.stringify(note0));
+	check('#6: an oversized prompt says it ran here, in plain words', /couldn.t take it/i.test(note0 || '') && !/\(0\)/.test(note0 || ''), 'note=' + JSON.stringify(note0));
 	check('#6: no POST /api/post was attempted for the oversized prompt', postCalls2 === 0, 'post calls: ' + postCalls2);
 	// QUARANTINE NOTE (2026-09-20, live diagnosis, not fixed here -- out of this file's
 	// fence and needs the app author's read): both checks above are RED, deterministically,
@@ -482,10 +491,16 @@ try {
 	await a.page.unroute('**/api/post');
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// #5 — a re-seat draws ONE hand-off tile.
+	// #5 — no re-seat chase: the orphan runs HERE, never on the next desktop.
 	// ═══════════════════════════════════════════════════════════════════════════
-	console.log('\n#5 one tile per turn — a re-seat updates the placeholder in place');
-	c = await open({ name: 'selfrecC', signIn: false, connect: false });
+	// Re-aimed 11 Oct 2026 (seat 8, D-20261009-23): the backstop no longer re-seats an
+	// unclaimed turn on the next live desktop (retryNextDesktopBeforeLocal is gone); with
+	// the owner's switch a turn runs on the named runner or Here, nothing else. So with
+	// phantom B silent and C live and listening, A's recovery must run the turn itself,
+	// C must never be handed it, the model must see it exactly once, and the turn keeps
+	// one hand-off tile at most throughout.
+	console.log('\n#5 no re-seat chase — the unclaimed turn runs here, never on the live C');
+	c = await open({ name: 'selfrecC', signIn: false, connect: false, serviceWorkers: 'block' });
 	await c.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 }).catch(() => {});
 	const code2 = await a.page.evaluate(() => DaimondPairing.create());
 	await c.page.evaluate((cc) => DaimondPairing.redeem(cc), code2.code);
@@ -498,42 +513,57 @@ try {
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);
 
-	const PROMPT5 = 'RESEAT trying the next desktop';
+	const PROMPT5 = 'RESEAT runs here not on C';
+	// Every errand C RUNS for this prompt is counted at C's runner door. Collecting one is
+	// not being handed it: the Post channel is the account's, so C collects the errand
+	// addressed to B and stands down (the lease, the nominee); only `ran` is a hand-off.
+	await c.page.evaluate(() => {
+		window.__reseatOnC = 0; window.__reseatWhy = [];
+		const P = window.DaimondPeer, run = P && P.runErrand;
+		if (!run) return;
+		P.runErrand = async function (e) {
+			const r = await run.apply(this, arguments);
+			if (e && /RESEAT/.test(String(e.prompt || ''))) {
+				if (r && r.ran) window.__reseatOnC++;
+				window.__reseatWhy.push(r && r.ran ? 'ran' : String((r && r.why) || 'no result'));
+			}
+			return r;
+		};
+	});
+	clearMockLog();
 	await a.page.fill('#chat-input', PROMPT5);
 	await a.page.click('#chat-send', { force: true });
 	const rs = await untilChats(a, (cs) => dispatchedRows(cs, 'reseat').length >= 1, 10000);
 	const tid5 = (dispatchedRows(rs, 'reseat')[0] || {}).iturn;
-	// Trigger the re-seat backstop (phantom B never picks it up; C is live), and POLL for
-	// the tile rather than sleep-then-snapshot-once: `appendDispatchedTile` deliberately
-	// draws NOTHING once the answer has merged (owner rule, 2026-09-18 -- the merged reply
-	// draws its own quiet provenance tile instead), so a single fixed-delay snapshot taken
-	// after C's round trip has already landed reads a correctly-empty DOM as a failure. The
-	// property under test -- never MORE than one tile for the turn -- is checked on every
-	// poll, not only the last one, so a genuine second tile from a real re-seat still fails
-	// this the instant it appears.
-	// The SAME reason the row count is polled alongside the tile, not read once
-	// afterward: a completed re-seat resolves the placeholder's own `why` away from
-	// 'dispatched' (the merged answer draws its own quiet provenance tile instead --
-	// owner rule, 2026-09-18), so a single read taken after the round trip has already
-	// landed sees a correctly-empty store as a failure. "Never more than one" is the
-	// actual property (a re-seat updates the placeholder IN PLACE rather than adding a
-	// second one); tracked as a peak across the same poll the tile uses.
-	let tiles = 0, tilesEverSeen = false, rows = 0, rowsEverSeen = false;
-	for (let t0 = Date.now(); Date.now() - t0 < 6000; ) {
+	check('#5: A dispatched the turn to the phantom B', !!tid5, 'turn ' + (tid5 || '(none)'));
+
+	// A returns and recovers the orphan, as in #1/#2. The tile and row counts are polled
+	// throughout (a merged answer resolves the placeholder away, so one late read would
+	// see a correctly-empty DOM); "never more than one" is the property.
+	await a.page.waitForTimeout(2500);
+	await a.page.evaluate(() => {
+		try { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); } catch (e) {}
+		document.dispatchEvent(new Event('visibilitychange'));
+	});
+	let tiles = 0, rows = 0, here = false;
+	for (let t0 = Date.now(); Date.now() - t0 < 40000 && !here; ) {
 		const n = await a.page.evaluate((t) => document.querySelectorAll('.ctile[data-t="handoff"][data-handoff-turn="' + t + '"]').length, tid5);
 		if (n > tiles) tiles = n;
-		if (n > 0) tilesEverSeen = true;
 		const r = tid5 ? dispatchedRows(await servedChats(a), 'reseat').filter((m) => String(m.iturn) === String(tid5)).length : 0;
 		if (r > rows) rows = r;
-		if (r > 0) rowsEverSeen = true;
-		if (n > 1 || r > 1) break;			// already failing; no need to keep polling
-		await a.page.waitForTimeout(300);
+		here = answersFor(await servedChats(a), 'reseat').length > 0;
+		if (!here) await a.page.waitForTimeout(500);
 	}
-	check('#5: never MORE than one hand-off tile for the turn after a re-seat', tiles <= 1, 'peak tiles=' + tiles);
-	if (!tilesEverSeen) console.log('  note  the tile was never observed at all -- the round trip likely finished inside the '
-		+ 'poll\'s own first tick, which is a timing gap in this check rather than evidence against the fix');
+	// C has had every chance to be handed it: a further 8 s past A's answer.
+	await a.page.waitForTimeout(8000);
+	const onC = await c.page.evaluate(() => window.__reseatOnC || 0);
+	const whyC = await c.page.evaluate(() => (window.__reseatWhy || []).join(','));
+	const seen5 = completionsFor('reseat').length;
+	check('#5: A ran the unclaimed turn itself (an answer is in on A)', here);
+	check('#5: the turn was never handed to C, the next live desktop', onC === 0, 'errands run on C: ' + onC + (whyC ? ' (C at its door: ' + whyC + ')' : ''));
+	check('#5: the model saw the turn exactly once', seen5 === 1, 'completions: ' + seen5);
+	check('#5: never MORE than one hand-off tile for the turn', tiles <= 1, 'peak tiles=' + tiles);
 	check('#5: never more than one why:dispatched row for the turn in the store', rows <= 1, 'peak rows=' + rows);
-	if (!rowsEverSeen) console.log('  note  no dispatched row was ever observed for this turn -- see the tile note above');
 
 } catch (e) {
 	check('the run finished without throwing', false, String((e && e.stack) || e));
@@ -543,6 +573,7 @@ try {
 	if (a) await a.close().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) for (const l of bad) console.log('  FAILED: ' + l);
 process.exit(bad.length ? 1 : 0);

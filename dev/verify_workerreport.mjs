@@ -33,6 +33,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { guardRan } from './verdict.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC  = readFileSync(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
@@ -155,5 +156,6 @@ if (BREAK) {
 	console.log(`\nbreak '${BREAK}': ${bad.length} check(s) failed` + (bad.length ? '' : ' — NOTHING FAILED, so the checks prove nothing'));
 	process.exit(bad.length ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

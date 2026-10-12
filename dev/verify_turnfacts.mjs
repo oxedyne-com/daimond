@@ -38,6 +38,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, connectMock, chat, newChat, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -259,6 +260,7 @@ const errs = s.errs.filter((x) => !/favicon|404|401|net::ERR/.test(x));
 console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

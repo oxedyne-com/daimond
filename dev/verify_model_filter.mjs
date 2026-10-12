@@ -26,6 +26,7 @@
 //   node dev/verify_model_filter.mjs        (inside a world: bash dev/world.sh N --up)
 import http from 'node:http';
 import { open, shot, APP } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -559,6 +560,7 @@ check('opening, filtering and choosing wrote no use record and no new store',
 
 stub.close();
 await s.close?.();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} FAIL`);
 if (bad.length) console.log('FAILED: ' + bad.join(' | '));
 process.exit(bad.length ? 1 : 0);

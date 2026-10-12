@@ -269,6 +269,7 @@ worldFixture('needsworld', 'saw', HARNESS_IMPORT);
 // budget still takes the world down.
 fs.writeFileSync(path.join(DEV, 'verify_fixsleep.mjs'), `// A fixture. Not a check of anything.
 import { APP } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 ${HELPER}say('the fixture started', true);
 await new Promise(r => setTimeout(r, 120000));
 say('the fixture finished', true);
@@ -969,6 +970,7 @@ for (const n of stood) {
 
 // ── The summary ─────────────────────────────────────────────────────
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (BREAK) {
 	console.log(bad.length

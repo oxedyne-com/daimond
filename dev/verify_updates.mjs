@@ -9,6 +9,7 @@
 // whole state machine without a real deploy. The updater runs on the locked screen too (it is
 // independent of identity), so no sign-in is needed.
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -297,5 +298,6 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

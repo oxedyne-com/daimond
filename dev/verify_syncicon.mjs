@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { open, checker, errors, BROWSER } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const SHOTS = process.env.SYNCICON_SHOTS
 	|| path.join(os.homedir(), 'usr/code/ai/claude/notes/daimond_syncicon_20261004');
@@ -232,5 +233,6 @@ for (const [w, h, touch] of SIZES) {
 	check(tag + ' no page errors', errors(s).filter((e) => !/Failed to load resource|\/api\//.test(String(e))).length === 0);
 	await s.close();
 }
+guardRan(ok.length + bad.length);
 console.log('\n' + BROWSER + ': ' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

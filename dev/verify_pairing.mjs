@@ -11,6 +11,7 @@
 // presentation snapshot, since a snapshot applied in the parent's own page would
 // be indistinguishable from the parent's own settings.
 import { open, signInAs, scratch, coldShim, coldReport, gateState } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -291,5 +292,6 @@ try {
 	await s.close?.().catch?.(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + (bad.length ? `FAIL: ${bad.length} failed, ${ok.length} passed` : `ok: all ${ok.length} passed`));
 process.exit(bad.length ? 1 : 0);

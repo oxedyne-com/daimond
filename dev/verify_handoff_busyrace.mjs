@@ -17,10 +17,10 @@
 //       its answer reaches A, and each turn reaches the model exactly once.
 //   (3) THREE DEVICES, TWO BUSY (r545, Q19). B (the nominee) and C both run long turns of
 //       their own with their beats held back, so A reads both idle. A seats B; B hands it
-//       back busy; A re-seats it on C. C must not hold the row for B, which has already
-//       handed it back (the errand's `tried`), so C hands it back at once and A runs it
-//       inside 10 s of the send -- before Q19, C deferred to B and A waited out its 95 s
-//       backstop. The answer's tile names the busy seat as the cause.
+//       back busy, and A runs it inside 10 s of the send -- never waiting out its 95 s
+//       backstop. Re-aimed 2026-10-11 to the owner's switch (D-20261009-23): A no longer
+//       re-seats it on C, a desk the switch never offered (was: C, re-seated, must not hold
+//       the row for B in `tried`, Q19). The answer's tile names the busy seat as the cause.
 //
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK_PORT), gateway
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs.
@@ -39,6 +39,7 @@ import {
 	third,
 	answersFor,
 } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const EDGE_MS   = 5000;			// the bound on a busy or idle edge reaching A
 const EDGE_SLOW = 12000;		// B's first local turn
@@ -225,7 +226,13 @@ try {
 				&& String(r.data).includes(t) && /ANSWER busy/.test(String(r.data))); } catch (e) { return false; }
 		}, tid3, 15000) : Promise.resolve(false));
 		check('(3) B, the nominee, handed it back busy', await answeredBusy(b));
-		check('(3) C, re-seated with it, handed it back too rather than hold for B', await answeredBusy(c));
+		const reseatC = await a.page.evaluate((x) => {
+			try { return window.DaimondDiag.rows().filter((r) => /dispatch retry/.test(r.tag)
+				&& String(r.data).includes('turn=' + x.tid) && String(r.data).includes('next=' + x.c8)
+				&& !/not the runner/.test(String(r.data))).map((r) => String(r.data)); } catch (e) { return ['diag: ' + e]; }
+		}, { tid: tid3, c8: idC.slice(0, 8) }).catch((e) => ['eval: ' + e]);
+		check('(3) A never re-seated it on C, a desk the switch never offered', reseatC.length === 0,
+			reseatC.join(' / ').slice(0, 200));
 		while (at3 < 0 && Date.now() - t3 < TRIO_MS + 1000) await a.page.waitForTimeout(100);
 		check('(3) A\'s turn reached the model inside ' + TRIO_MS / 1000 + ' s of the send', at3 >= 0 && at3 <= TRIO_MS,
 			at3 >= 0 ? 'at +' + at3 + 'ms' : 'not inside ' + (TRIO_MS + 1000) + 'ms');
@@ -274,5 +281,6 @@ try {
 	try { await b?.close(); } catch (e) { /* gone */ }
 	try { await c?.close(); } catch (e) { /* gone */ }
 }
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

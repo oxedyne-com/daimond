@@ -27,6 +27,7 @@
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099).
 import { open, chat, newChat, signInAs, clearMockLog, mockLog, errors, transcriptExpanded } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -256,5 +257,6 @@ const errs = errors(s).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw while all that happened', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

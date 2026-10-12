@@ -469,8 +469,8 @@ async function main() {
 	{
 		const fnSrc = extractFn(src, 'runDispatchFallback');
 		const makeFn = (recovering) => {
-			// Since 448f951b the backstop hands the turn to `recoverOneLocally(chat, m, { reseat })`,
-			// which offers it to the next live desktop first; the one spy sees both halves.
+			// The backstop hands the turn to `recoverOneLocally(chat, m)`, which runs it here
+			// (no re-seat to another desktop since D-20261009-23).
 			const localSpy = [];
 			const peer  = { REASON_DISPATCHED: 'dispatched', recoverDecision: () => true, runErrand: () => {} };
 			const lease = { record: () => null };
@@ -492,19 +492,19 @@ async function main() {
 			return { fn, localSpy };
 		};
 
-		// (d1) GUARD ON: a turn already recovering locally is neither re-seated nor re-run.
+		// (d1) GUARD ON: a turn already recovering locally is not run again.
 		// PRE-FIX (no guard) this re-dispatched the still-running turn to another desktop.
 		const on = makeFn(true);
 		await on.fn('c1', 't1');
-		check('(d1) backstop stands down while _localRecovering[tid] is set (no re-seat, no re-run)',
+		check('(d1) backstop stands down while _localRecovering[tid] is set (no second run)',
 			on.localSpy.length === 0, { local: on.localSpy.length });
 
-		// (d2) GUARD OFF: with no local recovery in flight, the backstop still proceeds
-		// to try the next desktop -- the guard is surgical, not a blanket stand-down.
+		// (d2) GUARD OFF: with no local recovery in flight, the backstop still runs the
+		// turn here -- the guard is surgical, not a blanket stand-down.
 		const off = makeFn(false);
 		await off.fn('c1', 't1');
-		check('(d2) with no local recovery in flight, the backstop still re-seats to the next desktop first',
-			off.localSpy.length === 1 && !!off.localSpy[0] && !!off.localSpy[0].reseat,
+		check('(d2) with no local recovery in flight, the backstop runs it here, with no re-seat option',
+			off.localSpy.length === 1 && off.localSpy[0] === undefined,
 			{ local: off.localSpy.length, opts: off.localSpy[0] });
 	}
 

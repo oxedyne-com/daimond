@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const WWW = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'www');
 
@@ -218,6 +219,7 @@ check('desktop 1400px: the rail is back', await page.evaluate(() =>
 	getComputedStyle(document.getElementById('panel-rail')).display !== 'none'),
 	await page.evaluate(() => getComputedStyle(document.getElementById('panel-rail')).display));
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed${bad.length ? ': ' + bad.join(', ') : ''}`);
 await s.close();
 process.exit(bad.length ? 1 : 0);

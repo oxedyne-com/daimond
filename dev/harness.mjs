@@ -50,6 +50,7 @@ import { fileURLToPath } from 'node:url';
 import { extDev, isExtSource } from './extdev.mjs';
 import { PW, chromium, webkit, firstThatOpens } from './pw.mjs';
 import { testCfg } from './testcfg.mjs';
+import { verdict } from './verdict.mjs';
 
 // playwright-core is reached only through ./pw.mjs, whose Chromium keeps its
 // shared memory in /dev/shm; PW is re-exported for the files that name it.
@@ -73,6 +74,7 @@ function firstWritable(candidates) {
 						// the failure, never `undefined`
 }
 export { PW };
+export { armFilter, guardRan, verdict } from './verdict.mjs';
 
 /// Which engine `open()` launches. Chromium is the default and the only one the
 /// extension (MV3) flows can use; `webkit` is Playwright's bundled JavaScriptCore
@@ -571,7 +573,7 @@ export async function open(opts = {}) {
 			...(ua ? { userAgent: ua } : {}),
 			...(timezoneId ? { timezoneId: timezoneId } : {}),
 			...(video ? { recordVideo: { dir: video, size: { width: 1500, height: 950 } } } : {}),
-			serviceWorkers,
+			serviceWorkers: 'allow',	// 'block' is the init script below
 		});
 	} else if (engine === 'chromium') {
 		browser = await chromium.launchPersistentContext(profileDir, {
@@ -592,6 +594,18 @@ export async function open(opts = {}) {
 	}
 
 	const page = browser.pages()[0] || await browser.newPage();
+	// WEBKIT HONOURS 'block' ONLY BY HAND. Under Playwright's own 'block' WebKit closes the
+	// page the moment the app calls `serviceWorker.register`, and with workers allowed a
+	// page the worker controls is invisible to `page.route` -- even a request the worker
+	// passes straight through -- so every route-made withhold is a no-op (measured 12 Oct
+	// 2026: a controlled page 0 of 2 requests routed, an uncontrolled one 2 of 2). The
+	// registration is refused before any app script runs, which pwa.js already treats as
+	// "no worker, no cache".
+	if (serviceWorkers === 'block' && engine === 'webkit') {
+		await browser.addInitScript(() => {
+			if (navigator.serviceWorker) navigator.serviceWorker.register = () => Promise.reject(new Error('service workers blocked by the verifier'));
+		});
+	}
 	const errs   = [];
 	const logs   = [];
 	// Every answer of 400 or worse, and every request that got no answer at all,
@@ -982,6 +996,18 @@ export async function newChat(s, { reuse = false } = {}) {
 	}
 	// force:true throughout — a page animation keeps failing Playwright's
 	// "stable" actionability check, hanging otherwise-fine clicks.
+	// What the + click will land on, so a failure below names its cause.
+	const seen = await page.evaluate(() => {
+		const btn = document.getElementById('new-session-btn');
+		const r = btn ? btn.getBoundingClientRect() : null;
+		const hit = r ? document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) : null;
+		const nm = (e) => e ? (e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\s+/).join('.') : '')) : 'none';
+		return 'plus=' + (r ? Math.round(r.x) + ',' + Math.round(r.y) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : 'absent')
+			+ ' hit=' + nm(hit) + ' tile-start=' + document.querySelectorAll('.tile-start').length
+			+ ' centre-start=' + document.querySelectorAll('.pending-centre .empty-new-session').length
+			+ ' vw=' + window.innerWidth
+			+ (hit && hit.closest('.modal') ? ' modal="' + String(hit.closest('.modal').innerText || '').replace(/\s+/g, ' ').trim().slice(0, 160) + '"' : '');
+	}).catch((e) => 'unread: ' + e);
 	await page.click('#new-session-btn', { force: true });
 	await page.waitForTimeout(500);
 	// `.tile-start` by class, NOT `button:has-text("Start")`: has-text is a
@@ -990,8 +1016,10 @@ export async function newChat(s, { reuse = false } = {}) {
 	// returned that hidden button and the click failed as "not visible" in any
 	// test whose settings form happened to be in the DOM.
 	const start = page.locator('.tile-start').first();
+	let how = 'no start drawn';
 	if (await start.count()) {
 		await start.click({ force: true });
+		how = 'tile start';
 	}
 	// Start moved off the tile into the centre placeholder on 2026-09-05
 	// (renderPendingCentre → `.empty-new-session`, "▶ Start"), so a build without
@@ -999,15 +1027,22 @@ export async function newChat(s, { reuse = false } = {}) {
 	// harness drives the old flow and the new one without a version flag.
 	if (!(await start.count())) {
 		const centreStart = page.locator('.pending-centre .empty-new-session').first();
-		if (await centreStart.count()) await centreStart.click({ force: true });
+		if (await centreStart.count()) { await centreStart.click({ force: true }); how = 'centre start'; }
 	}
 	await page.waitForSelector('#chat-input', { state: 'visible', timeout: 10000 });
 	await page.waitForTimeout(300);
-	const after = await focusId();
+	// The focus moves to the new chat once its start has landed, which under load can be
+	// seconds after the composer shows; one read at 300 ms called a made chat unmade
+	// (busyrace (2), 11 Oct). Poll for the move before judging it.
+	let after = await focusId();
+	for (let t0 = Date.now(); !reuse && before && after === before && Date.now() - t0 < 8000; ) {
+		await page.waitForTimeout(250);
+		after = await focusId();
+	}
 	// Only when both ids are readable: with no `DaimondAttach` there is nothing to
 	// compare, and a harness that threw on that would be inventing a failure.
 	if (!reuse && before && after && before === after) {
-		throw new Error(`newChat: still in chat ${after} — no new chat was made. `
+		throw new Error(`newChat: still in chat ${after} — no new chat was made (before the click ${seen}; then ${how}). `
 			+ 'Pass { reuse: true } if any chat will do.');
 	}
 	return after;
@@ -1610,12 +1645,34 @@ export async function gateState(page) {
 	});
 }
 
-/// A counted check, printed as it is made.
+/// A counted check, printed as it is made. `finish(green)` ends the run through the shared
+/// verdict, so a run that made no check exits 4, never green.
 export function checker() {
 	const ok = [], bad = [];
 	const check = (name, pass, detail) => {
 		(pass ? ok : bad).push(name);
 		console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 	};
-	return { ok, bad, check };
+	const finish = (green, ...filters) => verdict({ ran: ok.length + bad.length, bad, green, filters });
+	return { ok, bad, check, finish };
+}
+
+/// Does `page.route` see this page's own requests on this engine? Every withhold a
+/// verifier makes through a route is a no-op where it does not, and a no-op reads as the
+/// PRODUCT failing (slowparcel under WebKit, 2026-09-12). One throwaway same-origin
+/// fetch, the path a product request takes, is fulfilled by a route or it is not; the
+/// line says which, so a WebKit failure can be called an engine limit on evidence.
+export async function routeProbe(check, page) {
+	let hit = 0;
+	const re = /[?&]routeprobe=1/;
+	const h = (route) => { hit++; return route.fulfill({ status: 200, contentType: 'application/json', body: '{"routeProbe":true}' }); };
+	await page.route(re, h);
+	await page.evaluate(() => fetch('/api/post?routeprobe=1', { credentials: 'same-origin' })
+		.then((r) => r.text()).catch(() => '')).catch(() => '');
+	await page.unroute(re, h).catch(() => {});
+	let eng = '?';
+	try { eng = page.context().browser() ? page.context().browser().browserType().name() : (process.env.DAIMOND_BROWSER || 'chromium'); } catch (e) { /* unnamed */ }
+	check('page.route intercepts this engine\'s requests (' + eng + ')', hit > 0,
+		'intercepted on the probe fetch: ' + hit + ' (0 means page.route is inert here, so every route-made withhold below is a no-op)');
+	return hit > 0;
 }

@@ -23,6 +23,7 @@
 // collapsed out of `innerText`, not because it was not there. `transcriptExpanded` opens
 // every tile and rollup first, so the checks below read what the page actually says.
 import { open, chat, newChat, errors, transcriptExpanded } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -99,5 +100,6 @@ const errs = errors(s).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

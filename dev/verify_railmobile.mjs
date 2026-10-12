@@ -43,6 +43,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = path.join(HERE, 'shots');
@@ -432,5 +433,6 @@ try {
 	for (const s of sessions) { try { await s.close(); } catch (e) { /* already gone */ } }
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) { bad.forEach((b) => console.log('  FAILED: ' + b)); process.exit(1); }

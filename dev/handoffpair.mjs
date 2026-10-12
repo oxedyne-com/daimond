@@ -1,10 +1,12 @@
 // handoffpair.mjs — two paired devices on the real gateway, for the hand-off verifiers.
 //
 // A is a PHONE (a touch context, sending at a phone's width), which hands its turns to
-// an awake desktop; B is that desktop. Shared by `verify_handoff_noresurrect.mjs` and
+// its NOMINATED runner; B is that desktop. Since D-20261009-23 a composer send goes to
+// the nominated runner or runs here, never to an unnominated desktop, so `pair`
+// nominates B unless told not to. Shared by `verify_handoff_noresurrect.mjs` and
 // `verify_handoff_progresswatch.mjs`, which drive the same pair to different ends.
 
-import { open, chat, signInAs, newChat, connectMock, mockLog } from './harness.mjs';
+import { routeProbe, open, chat, signInAs, newChat, connectMock, mockLog } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -15,6 +17,10 @@ export const WAKE = process.env.DAIMOND_WAKE === 'poll' ? 'poll' : '';
 // `checker` lives in harness.mjs, so a verifier that only counts checks need not import a file that pairs devices (and be read,
 // by run_all.sh's declaration check, as one that needs a gateway). It is re-exported here for the verifiers that already import it.
 export { checker } from './harness.mjs';
+
+// A page these verifiers withhold through `page.route` must not be a worker's: on WebKit
+// a controlled page's requests never reach the route (harness `open`, 12 Oct 2026).
+export const ROUTED_SW = 'block';
 
 export const settle = (pg) => pg.waitForFunction(() => {
 	try { return window.DaimondSync && window.DaimondSync.state().quiet; } catch (e) { return true; }
@@ -139,7 +145,7 @@ export async function sendAgo(a, prompt, ago) {
 		ph = placeholders(await storedMsgs(a)).find((m) => m.itext === prompt) || null;
 		if (!ph) await a.page.waitForTimeout(250);
 	}
-	if (off) await off.release();
+	if (off) { await off.release(); console.log('  ..    errands kept off the relay by the route: ' + off.kept()); }
 	await a.page.evaluate(() => { if (window.__verifyRealNow) Date.now = window.__verifyRealNow; });
 	await settle(a.page);
 	return ph;
@@ -172,7 +178,7 @@ export async function reload(s) {
 /// Open a device that was closed, on its own profile, and sign it back in: a machine
 /// that was asleep coming back, with its store and its identity as it left them.
 export async function reopen(s) {
-	const r = await open({ name: s.name, touch: !!s.touch, signIn: false, connect: false });
+	const r = await open({ name: s.name, touch: !!s.touch, signIn: false, connect: false, serviceWorkers: ROUTED_SW });
 	r.name = s.name; r.touch = s.touch; r.account = s.account;
 	await gateUp(r);
 	await signInAs(r, r.account);
@@ -185,7 +191,7 @@ export async function reopen(s) {
 
 /// Pair one more device of `a`'s account, awake, parked and beating, as `pair` pairs B.
 async function joinMate(a, lead, mate, route, extra = {}) {
-	const b = await open({ name: mate, signIn: false, connect: false, route, ...extra });
+	const b = await open({ name: mate, signIn: false, connect: false, route, serviceWorkers: ROUTED_SW, ...extra });
 	b.account = lead; b.name = mate;
 	await b.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 90000 }).catch(() => {});
 	const code = await a.page.evaluate(() => DaimondPairing.create());
@@ -218,6 +224,30 @@ export async function third(check, a, mate, opts = {}) {
 	return c;
 }
 
+/// Name B the account's runner, as its owner would: nominated on A and on B, and B answers
+/// "Make this device the runner?" yes. Since D-20261009-23 a composer send goes to the
+/// nominated runner or runs here, so a verifier that hands a turn to B must call this, and
+/// it asserts the nomination rather than assuming it: a call to the non-existent
+/// `DaimondCore.nominate` (the API is `roster.nominate`) once left no nominee, silently, and
+/// every turn ran on A. `mate` is B's presence name.
+export async function nominateRunner(check, a, b, mate) {
+	const idB = await b.page.evaluate(() => window.DaimondIdentity.deviceId());
+	for (const s of [a, b]) await s.page.evaluate((id) => window.DaimondCore.roster.nominate(id), idB);
+	// A nominated machine is asked, once, "Make this device the runner?" (runner.js), and
+	// the question stays up until answered: left open it sits over B's + and every
+	// control under it. B says yes, as the person who nominated it would.
+	await b.page.evaluate(() => { window.DaimondRunner.ask(); });
+	await b.page.locator('.modal.dlg .dlg-ok').first().click({ timeout: 10000 }).catch(() => {});
+	const armed = await until(b.page, () => window.DaimondRunner.on(), null, 10000);
+	const onA = await a.page.evaluate(() => window.DaimondCore.roster.nominee()).catch((e) => 'error ' + (e && e.message));
+	check('B is the runner, asked and answered yes', armed && onA === idB,
+		'nominee on A=' + (onA === idB ? 'B' : onA) + ' '
+		+ JSON.stringify(await b.page.evaluate(() => window.DaimondRunner.state()).catch(() => null)));
+	await b.page.evaluate((n) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), n), mate).catch(() => {});
+	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
+	return idB;
+}
+
 /// A and B: two devices of one Pro account, paired, both awake, A seeing B.
 ///
 /// # Arguments
@@ -226,9 +256,11 @@ export async function third(check, a, mate, opts = {}) {
 ///   damaged `www/js` file to BOTH devices (a `--break`). Absent, nothing is routed.
 /// * `opts.openA`, `opts.openB` - Further `open()` options for one device alone, so a verifier
 ///   can give A or B another build's www (its own `route`, service workers blocked).
+/// * `opts.nominate` - `false` leaves the account with no nominated runner; by default B is
+///   nominated on both devices, the only way a send is handed off (D-20261009-23).
 export async function pair(check, lead, mate, opts = {}) {
 	const route = opts.route || null;
-	const a = await open({ name: lead, touch: true, signIn: false, connect: false, route, ...(opts.openA || {}) });
+	const a = await open({ name: lead, touch: true, signIn: false, connect: false, route, serviceWorkers: ROUTED_SW, ...(opts.openA || {}) });
 	a.account = lead; a.name = lead; a.touch = true;
 	await gateUp(a);
 	await signInAs(a, lead);
@@ -236,6 +268,7 @@ export async function pair(check, lead, mate, opts = {}) {
 		&& window.DaimondGateway && DaimondGateway.state().authed, null, { timeout: 20000 }).catch(() => {});
 	const pro = await makePagePro(a.page, new URL('../gateway', import.meta.url).pathname, GW_URL);
 	check('A holds Pro', pro.pro === true, JSON.stringify(pro));
+	await routeProbe(check, a.page);
 	await connectMock(a);
 	if (WAKE) await a.page.evaluate((m) => window.DaimondSync.wakeVia(m), WAKE);
 	await newChat(a);
@@ -245,6 +278,7 @@ export async function pair(check, lead, mate, opts = {}) {
 
 	const b = await joinMate(a, lead, mate, route, opts.openB || {});
 	const idA = await a.page.evaluate(() => window.DaimondIdentity.deviceId());
+	if (opts.nominate !== false) await nominateRunner(check, a, b, mate);
 	const aSeesB = await a.page.evaluate((self) => (window.DaimondPresence.awake(self, Date.now()) || []).length, idA);
 	check('A sees B as an awake peer', aSeesB >= 1, 'awake peers: ' + aSeesB);
 	return { a, b, idA };

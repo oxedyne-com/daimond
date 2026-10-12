@@ -854,13 +854,16 @@
 					     with text mid-turn is a correction to send, not a turn to kill.
 					     Emptying the box reaches stop in that mode. -->
 				</div>
-				<!-- WHERE THE NEXT TURN WILL RUN. One line, always there while a chat is
-				     open, written from the latest presence beats: the device the turn is
-				     going to, or that it is running here and this screen must stay open.
-				     Under the composer because it is a statement about the thing the
-				     composer is about to do, and a live region because it changes on its
-				     own as devices wake and go quiet. Filled by `renderSeatLine`. -->
-				<div class="seat-line" id="seat-line" role="status" aria-live="polite" hidden></div>
+				<!-- WHERE THE NEXT TURN RUNS, chosen by the person (owner, D-20261009-23):
+				     "Here | <runner>" while the nominated runner is reachable, plain "Here"
+				     otherwise. By the input box, where the eyes already are. Sticky per
+				     chat; drawn by `renderSeatSwitch`. -->
+				<div class="dview seat-switch" id="seat-switch" role="group" hidden
+				     data-i18n-aria-label="seat.switch" aria-label="Where the next turn runs">
+					<button class="dview-btn" id="seat-here" type="button" aria-pressed="true"
+					        data-i18n="seat.here">Here</button>
+					<button class="dview-btn" id="seat-runner" type="button" aria-pressed="false" hidden></button>
+				</div>
 				<!-- Crystal view: the Diamond command surface (steer + fold), shown in
 				     place of the chat when a Diamond is selected. Built in JS. -->
 				<div class="crystal-view" id="crystal-view" style="display:none">

@@ -33,6 +33,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { open, scratch, errors, steerDiamond, pressRowMark, signInAs } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 let ran = 0;
@@ -700,5 +701,6 @@ try {
 
 const EXPECTED = 47;
 check(`exactly ${EXPECTED} checks ran — a displaced case trips this`, ran === EXPECTED, `ran ${ran}`);
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? '\nall checks passed' : `\n${bad.length} check(s) FAILED`);
 process.exit(bad.length === 0 ? 0 : 1);

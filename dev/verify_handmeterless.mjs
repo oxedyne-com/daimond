@@ -84,6 +84,7 @@ import { fileURLToPath } from 'node:url';
 import { open as openApp } from './harness.mjs';
 import { whyStaleBinary, whyStaleWasm, refuse } from './staleguard.mjs';
 import { plant, fakeExtension, bridge } from './handbridge.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
@@ -508,5 +509,6 @@ try {
 	if (!KEEP) fs.rmSync(FIX, { recursive: true, force: true });
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

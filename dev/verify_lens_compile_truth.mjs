@@ -61,6 +61,7 @@ import os   from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(HERE);
@@ -282,5 +283,6 @@ check('typst.js still documents that engine() gates the live view only',
 	fs.rmSync(root, { recursive: true, force: true });
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

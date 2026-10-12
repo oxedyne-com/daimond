@@ -12,6 +12,7 @@
 // IS HALF THE PROPERTY -- "drive the page you made" is what the local driver is for,
 // and a page seeded from outside would not prove the agent could produce one.
 import { open, chat, newChat, shot, errors, transcriptExpanded } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -76,5 +77,6 @@ const errs = errors(s).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

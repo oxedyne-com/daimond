@@ -44,6 +44,7 @@ import fs from 'node:fs';
 import { open, scratch, markHere, signInAs, APP } from './harness.mjs';
 import { makePagePro, GW_URL } from './pro.mjs';
 import { GWDIR } from './gwbin.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -822,5 +823,6 @@ try {
 } catch (e) {
 	check('the run finished', false, String(e && e.stack || e).slice(0, 500));
 }
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

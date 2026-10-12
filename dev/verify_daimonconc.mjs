@@ -47,6 +47,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, newChat, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -308,13 +309,38 @@ console.log('\n4. the fold controls answer for the right conversation\n');
 	// depends on the first one still running is a check on how fast the machine is.
 	// Max, because Simple draws no tile controls at all, so the picker would be off
 	// screen for a reason that is not this one.
+	//
+	// THE TARGET IS A DIAMOND THE USER MADE. The fold picker offers no built-in as a
+	// target (20459002, 2026-09-15: "New first, and no built-in offered"), and A and B are
+	// this world's two seeded built-ins, so the menu held only "＋ New diamond…" and every
+	// gate since read that as the busy Diamond being left out. C is made through the app's
+	// own dialog, set playing as A and B are, and kept busy the same way.
 	await settle(A);
 	const chatTile = await p.evaluate(() =>
 		(document.querySelector('#session-list .session-box.active') || {}).dataset?.id || '');
-	await goDiamond(A);
+	const CName = 'Conc Fold';
+	const railIds = () => p.evaluate(() =>
+		[...document.querySelectorAll('#diamond-list .diamond-box')].map(b => b.dataset.id));
+	const had = await railIds();
+	await p.click('#new-diamond-btn', { force: true });
+	await p.waitForSelector('.dlg-input', { timeout: 10000 }).catch(() => {});
+	await p.fill('.dlg-input', CName).catch(() => {});
+	await p.waitForFunction(() => { const b = document.querySelector('.dlg-ok'); return !!b && !b.disabled; },
+		null, { timeout: 5000 }).catch(() => {});
+	await p.click('.dlg-ok', { force: true }).catch(() => {});
+	let C = '';
+	for (let i = 0; i < 40 && !C; i++) {
+		await p.waitForTimeout(250);
+		C = (await railIds()).find((id) => !had.includes(id)) || '';
+	}
+	check('the control: a Diamond of the user\'s own is on the rail to fold into', !!C, C || '(none made)');
+	await p.evaluate((id) => {
+		if (window.DaimondPause) DaimondPause.set(DaimondPause.id('root', 'diamonds', id, 'self'), true);
+	}, C);
+	await goDiamond(C);
 	await say('@slow 25000');
 	await p.waitForTimeout(800);
-	check('the control: A is mid-turn when the fold is attempted', (await state(A)).gen);
+	check('the control: C is mid-turn when the fold is attempted', (await state(C)).gen);
 	const wasView = await p.evaluate(() => window.DaimondView && window.DaimondView.get
 		? window.DaimondView.get() : '');
 	await p.evaluate(() => window.DaimondView && window.DaimondView.set('max'));
@@ -351,10 +377,10 @@ console.log('\n4. the fold controls answer for the right conversation\n');
 		if (!want) return { ok: false, saw: items.map(i => (i.textContent || '').trim()) };
 		want.click();
 		return { ok: true };
-	}, AName);
+	}, CName);
 	if (!picked.ok) {
 		check('the fold menu offers the busy Diamond', false,
-			`wanted ${JSON.stringify(AName)}, saw ${JSON.stringify(picked.saw)}`);
+			`wanted ${JSON.stringify(CName)}, saw ${JSON.stringify(picked.saw)}`);
 	} else {
 		await p.waitForTimeout(700);
 		const dlg = await p.evaluate(() => {
@@ -363,7 +389,7 @@ console.log('\n4. the fold controls answer for the right conversation\n');
 		});
 		check('folding into a Diamond that is mid-turn answers with a notice, not a silent nothing',
 			dlg.length > 0, dlg.slice(0, 200));
-		check('and the notice names the Diamond it refused', dlg.includes(AName), dlg.slice(0, 200));
+		check('and the notice names the Diamond it refused', dlg.includes(CName), dlg.slice(0, 200));
 		await p.evaluate(() => {
 			const d = document.querySelector('.modal.dlg');
 			const b = d && d.querySelector('button');
@@ -374,12 +400,12 @@ console.log('\n4. the fold controls answer for the right conversation\n');
 	await p.evaluate((v) => window.DaimondView && window.DaimondView.set(v || 'simple'), wasView);
 	await p.waitForTimeout(400);
 	// A 25-second steer is not worth waiting out, and Stop is the app's own door.
-	await goDiamond(A);
+	await goDiamond(C);
 	await p.evaluate(() => {
 		const b = document.getElementById('chat-send');
 		if (b && /stop/i.test(b.getAttribute('aria-label') || b.title || '')) b.click();
 	});
-	await settle(A);
+	await settle(C);
 }
 
 
@@ -484,6 +510,7 @@ check('no console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) console.log('  ' + bad.join('\n  '));
 if (BREAK) {

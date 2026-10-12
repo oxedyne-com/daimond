@@ -25,6 +25,7 @@
 //   node dev/verify_linktools.mjs
 //
 import { open, shot, clearMockLog, mockLog } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -233,6 +234,7 @@ check('a miss is explained rather than reported as success',
 await shot(s, 'linktools-graph');
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

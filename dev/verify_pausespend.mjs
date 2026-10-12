@@ -43,6 +43,7 @@
 import fs from 'node:fs';
 import { open, signInAs, shot, scratch, errors, MOCK } from './harness.mjs';
 import { IMAP_PORT, SMTP_PORT } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const PROFILE = scratch('pw', 'pausespend');
 fs.rmSync(PROFILE, { recursive: true, force: true });
@@ -403,5 +404,6 @@ try {
 console.log('\nmints: ' + JSON.stringify(net.mint));
 console.log('web: ' + net.web.length + '  mail sync: ' + net.mailSync.length
 	+ '  mail folders: ' + net.mailFolders + '  provider: ' + net.provider);
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? '\nall checks passed' : `\n${bad.length} check(s) FAILED`);
 process.exit(bad.length === 0 ? 0 : 1);

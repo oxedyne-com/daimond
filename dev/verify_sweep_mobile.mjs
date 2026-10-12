@@ -66,6 +66,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { APP, CHROME, signInAs, connectMock, scratch, artefactPath } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const { chromium } = await import('./pw.mjs');
 
@@ -1250,5 +1251,6 @@ if (SELFTEST) {
 }
 
 await s.browser.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(x => console.log('  FAILED: ' + x)); process.exit(1); }

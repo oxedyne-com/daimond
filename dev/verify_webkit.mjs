@@ -8,6 +8,7 @@
 // reproduce iOS-only behaviour (auto-zoom, address-bar vh) — the zoom PROBE below
 // reports whether this build does; treat that line as a diagnostic, not a gate.
 import { signInAs, connectMock, APP, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 // This host (Ubuntu 25.10) is newer than Playwright's WebKit build targets, so
 // its dependency preflight refuses to launch; the real runtime libs are supplied
@@ -144,6 +145,7 @@ check('safari: ask pill on screen', await page.evaluate(() => {
 
 check('safari: no console errors', realErrs().length === 0, realErrs().slice(0, 3).join(' | '));
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed  (engine: WebKit)`);
 if (bad.length) console.log('FAILED: ' + bad.join(', '));
 await ctx.close();

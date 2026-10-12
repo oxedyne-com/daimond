@@ -25,6 +25,7 @@
 // that STATES a lower balance, which is a two-line stub and a provisioned account plus a real
 // spend otherwise.
 import { open, signInAs, connectMock, chat, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -206,6 +207,7 @@ const errs = s.errs.filter(x => !/favicon|404|401|net::ERR/.test(x));
 console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

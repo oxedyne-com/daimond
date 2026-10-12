@@ -10,6 +10,7 @@
 // (DAIMOND_MOCK_PORT, default 9099). The gateway is NOT needed — the governor never
 // touches it.
 import { open, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -70,5 +71,6 @@ check('no governor-related console errors', real.length === 0, real.slice(0, 3).
 await shot(s, 'governor');
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

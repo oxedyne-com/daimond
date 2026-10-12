@@ -41,6 +41,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CHROME, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const { chromium } = await import('./pw.mjs');
 
@@ -268,5 +269,6 @@ async function run() {
 
 await run();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

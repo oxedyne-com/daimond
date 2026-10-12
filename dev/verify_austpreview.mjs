@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIX  = path.join(HERE, 'fixtures');
@@ -241,5 +242,6 @@ try {
 } catch (e) {
 	check('the run completed', false, String(e && e.stack || e).slice(0, 400));
 }
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

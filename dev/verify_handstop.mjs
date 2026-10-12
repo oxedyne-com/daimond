@@ -56,6 +56,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
@@ -378,6 +379,7 @@ await b.close();
 server.close();
 if (!KEEP) fs.rmSync(BASE, { recursive: true, force: true });
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (BREAK) {
 	const must = BREAKS[BREAK].must;

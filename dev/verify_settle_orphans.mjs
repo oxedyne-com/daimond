@@ -60,6 +60,7 @@ import {
 	until,
 	WAKE,
 } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE      = path.dirname(fileURLToPath(import.meta.url));
 const TOOL      = fs.readFileSync(process.env.SETTLE_TOOL || path.join(HERE, 'settle_stale_orphans.js'), 'utf8');
@@ -213,4 +214,5 @@ try {
 	try { await a?.close(); } catch (e) {}
 	try { await b?.close(); } catch (e) {}
 }
+guardRan(ok.length + bad.length);
 process.exit(bad.length ? 1 : 0);

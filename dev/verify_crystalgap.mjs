@@ -45,6 +45,7 @@
 // leg and the markdown ones do; revert the metadata-last sort in
 // `import_diamond` and the import one does.
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -214,5 +215,6 @@ const noise = s.errs.filter((e) =>
 check('the page threw nothing along the way', noise.length === 0, noise.slice(0, 3).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

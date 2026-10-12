@@ -143,8 +143,35 @@ try {
 	// flaw: `sendMode()` already returns 'stop', so the button was ALWAYS wired to
 	// stop the turn -- it merely said "Send" while it did. Nobody presses an arrow
 	// to stop something, which is why the paint is the whole defect.
+	// STOP ACKNOWLEDGES AT ONCE (SA). A capture listener runs before the button's
+	// own handler, and the animation frame it asks for runs after that handler and
+	// before the next paint -- so what the button says in that frame is what the
+	// first frame after the press shows, whatever the engine does next.
+	await p.evaluate(() => {
+		window.__saAck = null;
+		window.addEventListener('click', (e) => {
+			const b = document.getElementById('chat-send');
+			if (!b || !b.contains(e.target)) return;
+			requestAnimationFrame(() => {
+				window.__saAck = {
+					title: b.title || '',
+					aria:  b.getAttribute('aria-label') || '',
+					busy:  b.getAttribute('aria-busy') || '',
+					held:  b.disabled,
+					glyph: (b.textContent || '').trim(),
+				};
+			});
+		}, { capture: true, once: true });
+	});
 	const t0 = Date.now();
 	await p.click('#chat-send');
+	await p.waitForFunction(() => window.__saAck !== null, null, { timeout: 5000 }).catch(() => {});
+	const ack = await p.evaluate(() => window.__saAck);
+	check(!!ack && /^Stopping/.test(ack.title),
+		'THE NEXT FRAME AFTER THE PRESS SAYS "Stopping…"', JSON.stringify(ack));
+	check(!!ack && ack.aria === ack.title && ack.busy === 'true' && ack.glyph === '■',
+		'with the label, the title and aria-busy saying so, on the stop mark', JSON.stringify(ack));
+	check(!!ack && ack.held, 'and a second press cannot act', JSON.stringify(ack));
 	let ended = false;
 	for (let i = 0; i < 60; i++) {
 		await p.waitForTimeout(250);
@@ -164,39 +191,33 @@ try {
 	//
 	// In an ordinary chat, which is where a correction gets typed. The send button
 	// is expected to LEAVE stop mode here -- that is the interject behaviour B03 and
-	// B04 rest on -- so what is asserted is that Stop is still on screen, as its own
-	// control, and that both controls say the same word twice.
+	// B04 rest on. Since p19 there is no second ■ beside the arrow (verify_p19stop
+	// owns that): Stop is reached by emptying the box, which makes Send ■ again.
 	await newChat(s);
 	await p.fill('#chat-input', '@long 300');
 	await p.click('#chat-send');
 	await p.waitForTimeout(1500);
 	await p.fill('#chat-input', 'a correction');
 	await p.waitForTimeout(300);
-	const typed = await p.evaluate(() => {
-		const b = document.getElementById('chat-send'), st = document.getElementById('chat-stop');
-		const shown = (e) => !!(e && e.getClientRects().length);
-		return {
-			sendStop:  b.classList.contains('stop'),
-			sendTitle: b.title || '',
-			sendAria:  b.getAttribute('aria-label') || '',
-			stopShown: shown(st),
-			stopTitle: st ? (st.title || '') : '',
-			stopAria:  st ? (st.getAttribute('aria-label') || '') : '',
-		};
+	const sendSays = () => p.evaluate(() => {
+		const b = document.getElementById('chat-send');
+		return { stop: b.classList.contains('stop'), title: b.title || '',
+			aria: b.getAttribute('aria-label') || '', second: !!document.getElementById('chat-stop') };
 	});
-	check(!typed.sendStop,
+	const typed = await sendSays();
+	check(!typed.stop,
 		'with a correction typed, the send button is a Send arrow — B04 is untouched',
-		JSON.stringify(typed.sendTitle));
-	check(typed.stopShown,
-		'BUT STOP IS STILL REACHABLE — a control of its own, so the box need not be emptied',
-		JSON.stringify(typed));
-	check(typed.sendAria === typed.sendTitle && typed.stopAria === typed.stopTitle,
-		'and each control says the same word to a reader and to a screen reader',
-		`send ${JSON.stringify(typed.sendAria)}/${JSON.stringify(typed.sendTitle)}, `
-			+ `stop ${JSON.stringify(typed.stopAria)}/${JSON.stringify(typed.stopTitle)}`);
+		JSON.stringify(typed.title));
+	check(typed.aria === typed.title,
+		'and it says the same word to a reader and to a screen reader', JSON.stringify(typed));
+	await p.fill('#chat-input', '');
+	await p.waitForTimeout(300);
+	const emptied = await sendSays();
+	check(emptied.stop && emptied.aria === emptied.title,
+		'EMPTYING THE BOX MAKES IT STOP AGAIN — so the box need not be sent to stop', JSON.stringify(emptied));
 
 	// ── 3. And the stopped turn says it was stopped ─────────
-	await p.click('#chat-stop');
+	await p.click('#chat-send');
 	let stoppedIn = -1;
 	for (let i = 0; i < 60; i++) {
 		await p.waitForTimeout(250);
@@ -206,7 +227,7 @@ try {
 		});
 		if (!busy) { stoppedIn = i * 250; break; }
 	}
-	check(stoppedIn >= 0, 'PRESSING THE SEPARATE STOP ENDS THE TURN', stoppedIn + 'ms');
+	check(stoppedIn >= 0, 'PRESSING IT ENDS THE TURN', stoppedIn + 'ms');
 	await p.waitForTimeout(800);
 
 	/// The trailing "how it ended" line, and the words the turn managed, from the thread.

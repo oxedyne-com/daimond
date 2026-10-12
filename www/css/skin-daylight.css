@@ -513,8 +513,9 @@
 /* QUIET TILES (owner, D-20261010-16): your message, the answer and the Thinking-and-Tools
    group each stand on a faint fill in their own hue, always, so the eye finds where one
    entry ends without a line drawn round it. A lone step is its group, so the group wears
-   the fill and the step inside stays clear. */
-:root[data-skin="daylight"] .chat-output > :is(.ctile.chat-msg-user, .ctile.chat-msg-assistant, .ctile[data-t="rating"], .crollup[data-t="work"]) {
+   the fill and the step inside stays clear. Every tile the thread draws is on the list, the
+   hand-off and the answered Decision with them (r556tx QA F1: "every instance"). */
+:root[data-skin="daylight"] .chat-output > :is(.ctile.chat-msg-user, .ctile.chat-msg-assistant, .ctile[data-t="rating"], .ctile[data-t="handoff"], .crollup[data-t="work"], .ask-card.answered) {
 	background: color-mix(in srgb, var(--ct-edge) 4.5%, transparent);
 }
 /* A tile shows its extent under the pointer, as a fill in its own hue: the
@@ -524,10 +525,13 @@
 	background: color-mix(in srgb, var(--ct-edge) 8%, transparent);
 }
 :root[data-skin="daylight"] .ctile .ctile:hover { background: color-mix(in srgb, var(--ct-edge) 8%, transparent); }
-/* A step inside a group is flat at rest, whatever its kind, and shows its extent under the
-   pointer; app.css gives a nested step a ground four selectors deep, so the step is named
-   as deeply here. A lone step takes no fill of its own: its group is already showing one. */
-:root[data-skin="daylight"] .crollup[data-t] > .crollup-body > .ctile[data-t] { background: transparent; }
+/* A step inside an open group is a quiet tile one level in: the same faint fill in its own hue,
+   laid over the group's, so the step stands off the group as the group stands off the page
+   (r556tx QA F3: edge to edge and flat, a step and its group read as one block). app.css gives
+   a nested step a ground four selectors deep, so the step is named as deeply here. A lone step
+   takes no fill of its own: it is its group, and the group is already showing one. */
+:root[data-skin="daylight"] .crollup[data-t] > .crollup-body > .ctile[data-t] { background: color-mix(in srgb, var(--ct-edge) 4.5%, transparent); }
+:root[data-skin="daylight"] .crollup.solo[data-t] > .crollup-body > .ctile[data-t] { background: transparent; }
 :root[data-skin="daylight"] .crollup[data-t]:not(.solo) > .crollup-body > .ctile[data-t]:hover {
 	background: color-mix(in srgb, var(--ct-edge) 8%, transparent);
 }
@@ -550,7 +554,7 @@
    the line's: the button's inline padding is taken back by its margin, so its hover fill
    still has room (F4). */
 :root[data-skin="daylight"] .chat-msg-ended.ended-stop { font-size: var(--dl-md); line-height: 1.56; }
-:root[data-skin="daylight"] .chat-msg-ended.has-continue .ti-continue { margin-inline-start: -10px; }
+:root[data-skin="daylight"] :is(.chat-msg-ended.has-continue, .turn-interrupted) .ti-continue { margin-inline-start: -10px; }
 /* Your turn reads in exactly the daimon's own type -- same face, size, weight
    and line-height, from the plain `.ctile-body` rule above. The label line
    above it (name and stamp, `.ctile-lbl`) is what still tells the speakers
@@ -747,7 +751,12 @@
 
 /* Every one of these was set to plain `--text-muted` above, at the same
    specificity; placed last on purpose so `--dl-faint` (sweep item 14) wins
-   by source order without out-specifying anything. */
+   by source order without out-specifying anything. The pending card's time and
+   steer line, the rail counts, the tools count, a release's date and meta line and
+   a history entry's age are the same role (meta) and took `--text-muted`: the role was two-toned, and
+   whichever tone a view drew more of became the gate's canon, so a desk (release
+   dates) and a phone (pending cards) disagreed. One colour for the role (by-role,
+   12 Oct). The mono stamps keep their own reading (`:is(.ctile-meta, ...)` above). */
 :root[data-skin="daylight"] .tile-when-sub,
 :root[data-skin="daylight"] .tile-model-chip,
 :root[data-skin="daylight"] .tile-meter,
@@ -757,6 +766,13 @@
 :root[data-skin="daylight"] .session-box-cost,
 :root[data-skin="daylight"] .ctile-time,
 :root[data-skin="daylight"] .files-size,
+:root[data-skin="daylight"] .pend-when,
+:root[data-skin="daylight"] .rail-count,
+:root[data-skin="daylight"] .tools-count,
+:root[data-skin="daylight"] .steer-meta,
+:root[data-skin="daylight"] .rel-when,
+:root[data-skin="daylight"] .rel-meta,
+:root[data-skin="daylight"] .hist-when,
 :root[data-skin="daylight"] .cmeter { color: var(--dl-faint); }
 
 /* ── Tag chips: the colours stay, the outlines go ──────────── */
@@ -1328,8 +1344,9 @@
    height: the toggle-option rule's fixed 30px squashed their caption away. */
 :root[data-skin="daylight"] .seg .grid-opt { height: auto; }
 /* `.chead-left > #diamond-view .dview-btn` (app.css) outranks the toggle-option
-   rule above on specificity (an id), so its own 30px padding is repeated here. */
-:root[data-skin="daylight"] #diamond-view .dview-btn { padding: 6px 8px; }
+   rule above on specificity (an id), so its own 30px padding is repeated here.
+   The seat switch by the composer is the same control, drawn the same. */
+:root[data-skin="daylight"] :is(#diamond-view, #seat-switch) .dview-btn { padding: 6px 8px; }
 :root[data-skin="daylight"] .theme-pick:hover,
 :root[data-skin="daylight"] .pop select:hover { border-color: transparent; background-color: var(--bg-hover); }
 /* A chat tile's name sits on the same edge as a diamond's. A Pending tile's headline is the same label button (5.3.2): its
@@ -1482,7 +1499,6 @@
 :root[data-skin="daylight"] .acard.done { background: var(--ok-bg); }
 :root[data-skin="daylight"] .acard.error { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 :root[data-skin="daylight"] .ask-card { background: var(--accent-soft); }
-:root[data-skin="daylight"] .ask-card.answered { background: var(--bg-secondary); }
 :root[data-skin="daylight"] .lapse-note { background: var(--warn-bg); }
 
 /* ── The phone chat head: the title, the mode and one "more" on a row ────────────────
@@ -1549,6 +1565,12 @@
 	/* Row 2, a Diamond only: the face switch, its "edited" time, and Fold or full screen at the right. */
 	:root[data-skin="daylight"] .panel.ai .chead #diamond-view { order: 5; margin: 7px 0 7px -8px; overflow: visible; }
 	:root[data-skin="daylight"] .panel.ai .chead #diamond-view .dview-btn { margin-block: 0; min-width: 44px; }
+	/* The seat switch by the composer is the face switch's control, so it keeps the same 30px box, 44px width and 44px overlay. */
+	:root[data-skin="daylight"] .panel.ai #seat-switch { overflow: visible; }
+	:root[data-skin="daylight"] .panel.ai #seat-switch .dview-btn { position: relative; min-width: 44px; }
+	:root[data-skin="daylight"] .panel.ai #seat-switch .dview-btn::before {
+		content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%);
+	}
 	:root[data-skin="daylight"] .panel.ai .chead #chead-when { order: 6; margin-left: 8px; }
 	:root[data-skin="daylight"] .panel.ai .chead .chead-right > :is(#crystal-full-btn, #chat-fold-btn) { order: 7; margin-left: auto; }
 

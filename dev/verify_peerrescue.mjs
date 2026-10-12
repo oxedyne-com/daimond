@@ -21,6 +21,7 @@
 import { open, chat, signInAs, newChat, connectMock, shot, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 // The live two-context round-trip -- B wakes on the Post channel, claims the
 // lease, runs the mock and pushes -- has a variable latency dominated by B's wake
@@ -260,6 +261,7 @@ try {
 	if (a) await a.close().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { for (const l of bad) console.log('  FAILED: ' + l); }
 process.exit(bad.length ? 1 : 0);

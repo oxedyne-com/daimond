@@ -28,6 +28,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SH   = path.join(HERE, 'runner-chrome.sh');
@@ -128,6 +129,7 @@ const FEATURES = ['IntensiveWakeUpThrottling', 'CalculateNativeWinOcclusion',
 	fs.rmSync(home, { recursive: true, force: true });
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { bad.forEach((b) => console.log('  failed: ' + b)); process.exit(1); }
 console.log('all runner launcher checks passed');

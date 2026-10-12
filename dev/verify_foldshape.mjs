@@ -39,6 +39,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, chat, clearMockLog, mockLog, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MODE = String(process.env.DAIMOND_MOCK_FOLD || 'structured');
@@ -164,5 +165,6 @@ try {
 	await s.close?.().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

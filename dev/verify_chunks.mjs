@@ -64,6 +64,7 @@ import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { open, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT   = path.resolve(__dirname, '..');
@@ -694,6 +695,7 @@ if (NO_GATEWAY) {
 	if (bad.length) GW_LOG.report();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed'
 	+ (NO_GATEWAY ? ' (tier 2 skipped)' : ''));
 process.exit(bad.length ? 1 : 0);

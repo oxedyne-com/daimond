@@ -51,6 +51,11 @@ mkdir -p "$SCRATCH"
 LOG=${LOG:-$SCRATCH/suite.log}          # override with LOG=... ; session-independent
 GW_BIN=${GW_BIN:-gateway/target/release/daimond_gateway}
 CTL_BIN=${CTL_BIN:-gateway/target/release/daimond_ctl}
+# GW_BIN and CTL_BIN may be relative (to $ROOT) or absolute, e.g. a prebuilt gateway in
+# another tree. They are run from $GW_CWD, so a relative one is joined to $ROOT there; an
+# absolute one joined the same way named a path that did not exist, and every
+# gateway verifier SKIPPED with an empty suite-gw.log (10 Oct, RERUN on world 98).
+rootpath() { case $1 in /*) printf '%s' "$1" ;; *) printf '%s' "$ROOT/$1" ;; esac; }
 # THE GATEWAY'S PORT IS THIS RUN'S, NOT THE FLEET'S.
 #
 # It was the literal 9002 in five places, and `dev/world.sh` says why that is not
@@ -837,7 +842,7 @@ start_gateway() {
 	# failed left the wrapper's pid alone in the file, and `stop_gateway` stopped the wrapper
 	# and orphaned the gateway. Found on 2026-09-27: a nightly rerun's gateway (pid 1957255,
 	# under wrapper 1957254) had held :9002 on a deleted worktree's store since 09-25.
-	( cd "$GW_CWD" && APP_MODE=sandbox exec nohup "$ROOT/$GW_BIN" >>"$SCRATCH/suite-gw.log" 2>&1 &
+	( cd "$GW_CWD" && APP_MODE=sandbox exec nohup "$(rootpath "$GW_BIN")" >>"$SCRATCH/suite-gw.log" 2>&1 &
 		echo $! > "$SCRATCH/suite-gw.pid" )
 	wait_gateway 25 || return 1
 	# AND THE PID THAT SERVES IS NOT THE PID THAT WAS SPAWNED, which is the whole
@@ -1353,9 +1358,9 @@ if [ -n "$PHASE2" ]; then
 					# entitlement a verifier does not need would hide the day it starts
 					# needing one, which is the failure this whole block exists against.
 					case "$id" in
-						compose) ( cd "$GW_CWD" && "$ROOT/$CTL_BIN" grant "$a" email ) >>"$PROV_LOG" 2>&1 || GRANT_OK=no ;;
+						compose) ( cd "$GW_CWD" && "$(rootpath "$CTL_BIN")" grant "$a" email ) >>"$PROV_LOG" 2>&1 || GRANT_OK=no ;;
 					esac
-					( cd "$GW_CWD" && "$ROOT/$CTL_BIN" topup "$a" 5000 ) >>"$PROV_LOG" 2>&1 || GRANT_OK=no
+					( cd "$GW_CWD" && "$(rootpath "$CTL_BIN")" topup "$a" 5000 ) >>"$PROV_LOG" 2>&1 || GRANT_OK=no
 				done
 				# The gateway comes back either way -- the rest of phase 2 needs
 				# it whether or not the grants landed.

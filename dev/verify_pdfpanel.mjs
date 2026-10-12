@@ -27,6 +27,7 @@
 //      DAIMOND_BROWSER=webkit node dev/verify_pdfpanel.mjs
 import fs from 'node:fs';
 import { open, shot, scratch, errors, BROWSER } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [], cant = [];
 const cannot = (name, why) => { cant.push(name); console.log('  n/a  ' + name + ' — ' + why); };
@@ -218,5 +219,6 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed` + (cant.length ? `, ${cant.length} not run` : '') + ` (${BROWSER})`);
 process.exit(bad.length ? 1 : 0);

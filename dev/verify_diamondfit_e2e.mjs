@@ -26,6 +26,7 @@ import { open, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const KiB = 1024, MiB = 1024 * 1024;
 const GWDIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'gateway');
@@ -174,6 +175,7 @@ const errs = (a.errs || []).concat(b.errs || []).filter(e => !/favicon|404|401|n
 console.log('\nconsole errors:', errs.slice(0, 4));
 await b.close();
 await a.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

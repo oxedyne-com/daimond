@@ -31,6 +31,7 @@ import {
 	freshChat,
 } from './handoffpair.mjs';
 import { mockLog } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const CLAIM_MS = 30000;			// B claims the turn this soon
 const FILES_MS = 60000;			// and its files reach A's store
@@ -190,5 +191,6 @@ try {
 	try { await b?.close(); } catch (e) { /* gone */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

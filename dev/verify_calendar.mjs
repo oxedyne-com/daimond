@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, scratch, signInAs, BROWSER } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -206,6 +207,7 @@ try {
 	try { await s?.close?.(); } catch {}
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed' + (BREAK ? '  (break: ' + BREAK + ')' : ''));
 if (bad.length) for (const n of bad) console.log('  FAILED: ' + n);
 process.exit(bad.length ? 1 : 0);

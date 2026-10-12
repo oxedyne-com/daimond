@@ -14,6 +14,7 @@
 //
 // Run with dev/serve.mjs up. No gateway needed.
 import { open, signInAs, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -373,6 +374,7 @@ await shot(s, 'links-graph-open');
 
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

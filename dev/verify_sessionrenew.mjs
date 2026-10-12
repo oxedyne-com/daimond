@@ -42,6 +42,7 @@ import { makePagePro } from './pro.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -511,5 +512,6 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

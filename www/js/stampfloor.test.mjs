@@ -104,7 +104,7 @@ await skewCase('device name: Desk, then Kitchen', async (now) => {
 	const w = makeWindow({ now });
 	const f = sliceDaimond(w, ['renameDevice', 'mergeDevices', 'loadDevices'], {
 		ChatStore: { putTombs: () => Promise.resolve(true) }, storageAlarm: () => {}, tOr: (k, x) => x, t: (k) => k,
-		deviceId: () => 'ffffffffffffffff', renderSeatLine: () => {}, nudgeSync: () => {} }).fns;
+		deviceId: () => 'ffffffffffffffff', renderSeatSwitch: () => {}, nudgeSync: () => {} }).fns;
 	const ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 	f.mergeDevices({ [ID]: { name: 'Chrome on Linux', label: '', created: 1, namedAt: 0, seen: 1, build: '' } });
 	return { w,

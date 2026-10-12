@@ -43,6 +43,7 @@
 import { open, chat, signInAs, newChat, connectMock, shot, servedChats, mockLog, contentText } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const CASE1_BLOCK_MS = 15000;		// CASE 1: withhold the parcel this long (> the old 8 s window)
 const CASE1_MS       = 60000;		// room for the ~15 s wait + the turn
@@ -118,7 +119,7 @@ function isContentPull(req) {
 let a, b;
 try {
 	// ── A: the dispatcher (a phone). B: a desktop peer paired to the same account. ──
-	a = await open({ name: 'hoflead', touch: true });
+	a = await open({ name: 'hoflead', touch: true, serviceWorkers: 'block' });
 	await a.page.waitForFunction(
 		() => !!window.DaimondSync && !!window.DaimondPeer && window.DaimondGateway
 			&& DaimondGateway.state().authed, null, { timeout: 20000 }).catch(() => {});
@@ -129,7 +130,7 @@ try {
 	await chat(a, 'seed turn so the account has a chat and a parcel');
 	await settle(a.page);
 
-	b = await open({ name: 'hofmate', signIn: false, connect: false });
+	b = await open({ name: 'hofmate', signIn: false, connect: false, serviceWorkers: 'block' });
 	const bErrs = [];		// B's console errors — the reconstruct signature prints here
 	b.page.on('console', (m) => { if (m.type() === 'error') bErrs.push(m.text()); });
 	await b.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 }).catch(() => {});
@@ -175,6 +176,9 @@ try {
 	const idA = await devId(a.page), idB = await devId(b.page);
 	check('A and B are distinct paired devices of one account', !!idA && !!idB && idA !== idB,
 		JSON.stringify({ idA, idB }));
+	// Since D-20261009-23 a send is handed only to the NOMINATED runner (or runs here), so
+	// B is nominated on both devices, as handoffpair.mjs's `pair` does.
+	for (const s of [a, b]) await s.page.evaluate((id) => window.DaimondCore.roster.nominate(id), idB);
 
 	const wakeB = async () => {
 		await until(b.page, () => {
@@ -448,8 +452,10 @@ try {
 	const ans3 = answersMatching(aStore3, 'STALERUN');
 	const ranA3 = ans3.filter((m) => String(m.ranOn) === String(idA)).length;
 	const ranB3 = ans3.filter((m) => String(m.ranOn) === String(idB)).length;
-	const undeliverable3 = bAll3.filter((e) => /reconstruct undeliverable/i.test(e) && /incomplete/i.test(e));
-	check('CASE 3: B logged reconstruct UNDELIVERABLE … incomplete (refused the stale thread)',
+	// Since THREAD-READY (D2) B asks whether it can rebuild the thread BEFORE it claims, so the refusal is
+	// normally the pre-claim "collect not ready"; the reconstruct's own refusal remains the later net.
+	const undeliverable3 = bAll3.filter((e) => (/reconstruct undeliverable/i.test(e) && /incomplete/i.test(e)) || /collect not ready/i.test(e));
+	check('CASE 3: B refused the stale thread (collect not ready, or reconstruct UNDELIVERABLE … incomplete)',
 		undeliverable3.length >= 1, 'undeliverable-incomplete lines: ' + undeliverable3.length);
 	// WHAT THE MODEL WAS SENT. Every request for this turn must carry both pastes whole,
 	// end markers and all: a cut paste, or a missing one, is the stale run itself. (The
@@ -478,6 +484,7 @@ try {
 	if (a) await a.close().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { for (const l of bad) console.log('  FAILED: ' + l); }
 process.exit(bad.length ? 1 : 0);

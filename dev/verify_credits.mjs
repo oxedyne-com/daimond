@@ -22,6 +22,7 @@
 // the provider behind the minted key are FETCH-stubbed — the store is never touched, and every
 // assertion below is against the real wasm, the real models.js and the real DOM.
 import { open, signInAs, connectMock, shot, errors, mockLog, clearMockLog, contentText, APP, MOCK } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -711,5 +712,6 @@ check('...and names the browser\'s own offline claim when there is nothing to co
 	/Offline/.test(noSession.offline), JSON.stringify(noSession.offline));
 await b.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { console.log('FAILED:\n  - ' + bad.join('\n  - ')); process.exit(1); }

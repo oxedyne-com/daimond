@@ -81,6 +81,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, scratch, errors, bin } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -690,6 +691,7 @@ try {
 	for (const s of [phone, desk, wk]) { if (s) { try { await s.close(); } catch (e) {} } }
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`
 	+ (unrun.length ? `, ${unrun.length} NOT RUN: ${unrun.join('; ')}` : ''));
 if (bad.length) { console.log('FAILED:\n  ' + bad.join('\n  ')); process.exit(1); }

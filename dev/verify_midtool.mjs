@@ -20,6 +20,7 @@
 //   eval "$(bash dev/world.sh N --up)" ; eval "$(bash dev/world.sh N --env)"
 //   node dev/verify_midtool.mjs
 import { open, chat, newChat, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -108,5 +109,6 @@ const errs = errors(s).filter((e) => !/502|\/api\//.test(e));
 check('3. nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

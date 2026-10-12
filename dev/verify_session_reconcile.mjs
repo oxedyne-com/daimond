@@ -39,6 +39,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chat, newChat, mockLog, contentText, errors } from './harness.mjs';
 import { checker, settle, pair, reload } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -327,5 +328,6 @@ if (BREAK) {
 	console.log(`\nbreak '${BREAK}': red in ${red.length ? red.join(', ') : 'NOTHING'}; wanted ${want.join(', ')} only -- ${exact ? 'AS WANTED' : (red.length ? 'WRONG SET' : 'NOTHING FAILED, so the checks prove nothing')}`);
 	process.exit(exact ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

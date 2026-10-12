@@ -13,6 +13,7 @@
 //   3. /api/ledger answers ok with an entries array, every entry categorised.
 //   4. Credits: an authed account shows a balance; the header meter opens the panel.
 import { open, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -274,6 +275,7 @@ try {
 	check('run completed without throwing', false, e.message);
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 await s.close();
 process.exit(bad.length ? 1 : 0);

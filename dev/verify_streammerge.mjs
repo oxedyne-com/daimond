@@ -12,6 +12,7 @@
 //   node dev/verify_streammerge.mjs
 
 import { makeWindow, sliceDaimond } from './syncprobe.mjs';
+import { guardRan } from './verdict.mjs';
 
 function loadMsgTombs() { return {}; }		// no tombstones in these cases
 
@@ -121,5 +122,6 @@ const countOf = (out, mid) => out.filter((x) => x.mid === mid).length;
 		contentOf(store, 't9') === 'one two three' && countOf(store, 't9') === 1);
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + (bad.length ? 'FAILED ' + bad.length + '/' + (ok.length + bad.length) : 'ALL PASS ' + ok.length + '/' + ok.length));
 process.exit(bad.length ? 1 : 0);

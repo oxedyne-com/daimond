@@ -27,6 +27,7 @@
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway.
 
 import { open, signInAs, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const s = await open({ name: 'docking', connect: false });
 const p = s.page;
@@ -497,5 +498,6 @@ const heights = (g, col) => (g.cols[col || 0] ? g.cols[col || 0].panels.map((x) 
 }
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach((b) => console.log('  FAILED: ' + b)); process.exit(1); }

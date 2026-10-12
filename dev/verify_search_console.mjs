@@ -99,6 +99,7 @@ import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, GWCWD } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
@@ -1258,6 +1259,7 @@ try {
 }
 
 console.log('');
+guardRan(ok.length + bad.length);
 console.log(`passed ${ok.length}, failed ${bad.length}` + (BREAK ? `   [--break ${BREAK}]` : ''));
 if (bad.length) { console.log('failures:'); bad.forEach(b => console.log('  - ' + b)); }
 process.exit(bad.length ? 1 : 0);

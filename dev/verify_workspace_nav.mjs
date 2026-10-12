@@ -36,6 +36,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, scratch, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -214,5 +215,6 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(bad.length ? `\n${bad.length} FAILED` : `\nALL PASS (${ok.length})`);
 process.exit(bad.length ? 1 : 0);

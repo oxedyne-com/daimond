@@ -26,6 +26,7 @@
 //   d. NO SYNC — the posture key appears nowhere in `DaimondCore.collectSync()`
 //      nor in `DaimondSync.parcel()`, so arming one machine cannot arm another.
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const KEY = 'daimond-autonomous-posture';		// must match daimond.js/handmode.js
 
@@ -156,5 +157,6 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

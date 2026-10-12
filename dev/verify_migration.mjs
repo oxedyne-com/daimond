@@ -19,6 +19,7 @@
 // already sitting at its destination. The easy order -- `RED.md` alone, no starter anywhere --
 // is the one that never needed a check.
 import { open, signInAs, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -198,6 +199,7 @@ const errs = s.errs.filter(e => !/favicon|404|net::ERR/.test(e));
 console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

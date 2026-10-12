@@ -695,6 +695,7 @@ const PAGE = `<!doctype html><meta charset="utf-8"><title>ptyedge</title>
 <script src="/js/handpty.js"><\/script>
 <script type="module">
 import init, * as W from '/pkg/oxedyne_daimond.js';
+import { guardRan } from './verdict.mjs';
 await init();
 window.Wasm = W;
 window.__ready = true;
@@ -1672,6 +1673,7 @@ await reload();
 
 // ── Done ────────────────────────────────────────────────────────
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed, `
 	+ `${provedNames.length} properties proved against broken code.`);
 if (bad.length) console.log(`failed:\n  ${bad.join('\n  ')}`);

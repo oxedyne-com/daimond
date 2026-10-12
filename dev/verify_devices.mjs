@@ -38,6 +38,7 @@
 // profiles rather than the fabricated peers above.
 import fs from 'node:fs';
 import { open, shot, scratch, signInAs, connectMock } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 // Two FIXED profiles, wiped before use rather than minted per run. Every check
 // below is about a FRESH install -- one that has never seen a roster -- so the
@@ -895,5 +896,6 @@ try {
 	}
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + (bad.length ? `FAIL: ${bad.length} failed, ${ok.length} passed` : `ok: all ${ok.length} passed`));
 process.exit(bad.length ? 1 : 0);

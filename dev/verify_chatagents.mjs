@@ -25,6 +25,7 @@
 // WORKER PRODUCED, so a transcript carrying one answer twice fails where a
 // count of two would pass.
 import { open, mockLog, clearMockLog, contentText, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -174,9 +175,16 @@ try {
 	await page.keyboard.press('Enter');
 	await page.waitForTimeout(5000);
 	const next = mockLog();
+	// What stood in front of the turn, when no request went: a dialog, or a composer
+	// still holding the words. Reported beside the verdict so a red names its cause.
+	const blocked = await page.evaluate(() => ({
+		dlg: [...document.querySelectorAll('.modal.dlg .dlg-card')].filter((c) => c.getClientRects().length)
+			.map((c) => (c.innerText || '').replace(/\s+/g, ' ').slice(0, 160)),
+		box: (document.getElementById('chat-input') || {}).value || '',
+	}));
 	check('and the chat\'s own agent is told they were NOT started',
 		next.some(m => JSON.stringify(m.messages || []).includes('WERE NOT STARTED')),
-		`${next.length} request(s) since`);
+		`${next.length} request(s) since` + (next.length ? '' : ' · ' + JSON.stringify(blocked)));
 	check('and told why, and that nothing was spent',
 		next.some(m => {
 			const j = JSON.stringify(m.messages || []);
@@ -226,5 +234,6 @@ try {
 	try { await s.browser.close(); } catch (e) { /* ignore */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

@@ -56,6 +56,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const { chromium } = await import('./pw.mjs');
 const CHROME = process.env.DAIMOND_CHROME
@@ -591,5 +592,6 @@ try {
 	fs.rmSync(WORK, { recursive: true, force: true });
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

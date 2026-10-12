@@ -70,6 +70,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 import { audit, positions, drifted, transients, reveal, restore,
 	SHAPES, CORNER, seedNotes, showPanels, openPanels } from './sweepkit.mjs';
 
@@ -381,5 +382,6 @@ check('nothing threw in the page while it swept', errs.length === 0, errs.slice(
 await shot(s, 'nsweep-seen-last');
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { for (const b of bad) console.log('  FAIL ' + b); process.exit(1); }

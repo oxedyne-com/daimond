@@ -1,3 +1,4 @@
+// gateway: none
 // dev/verify_crystalsync.mjs -- a crystal changed on another device reaches the page on
 // screen without taking anything the person is in the middle of (D-20261006-07, QA B
 // r543 F-B1..F-B5).

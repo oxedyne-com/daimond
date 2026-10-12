@@ -28,6 +28,7 @@
 //   node dev/verify_identityfold.mjs --break shortcard   # expected to FAIL
 //   node dev/verify_identityfold.mjs                     # and then, clean
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -138,5 +139,6 @@ check('and it does not scroll, so the foot never leaves its place',
 	!!un && un.over === 0, un ? `${un.over}px under the fold` : 'no card');
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(x => console.log('  FAILED: ' + x)); process.exit(1); }

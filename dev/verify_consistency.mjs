@@ -1022,7 +1022,9 @@ async function seed() {
 	page = s.page;
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await wait(800);
-	await ev(async () => { const m = await import('/pkg/oxedyne_daimond.js'); window.__free = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true); });
+	// A second handle on the store, for reading Diamond ids; a page reload drops it, so each reload re-opens it.
+	const freeApp = () => ev(async () => { const m = await import('/pkg/oxedyne_daimond.js'); window.__free = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true); });
+	await freeApp();
 	for (const name of DIAMONDS) {
 		await page.click('#new-diamond-btn', { force: true });
 		await page.waitForSelector('.dlg-input', { timeout: 10000 });
@@ -1087,12 +1089,26 @@ async function seed() {
 		const lines = await ev(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length);
 		if (lines !== 3) { log(`seed: the file rating did not land (${lines} Rating lines, want 3)`); await s.close().catch(() => {}); process.exit(3); }
 	}
+	// L8 (an interrupted turn's warning and its Continue) is this turn. A 5xx is retried as a dropped road, eight tries over
+	// about 70 s, so `chat` returns at its 30 s bound with the turn still retrying; the reload cuts it there, and the write-ahead
+	// journal recovers it as interrupted. Left to run, the steps below decided by their own pace whether the seed's last reload
+	// caught it retrying (the interrupted tile) or ended (two error lines and their Report this): c2da8ffd's seed caught one,
+	// SEAT's on 11 Oct the other, and the report read the difference as eleven faults.
 	await chat(s, '@err 500').catch((e) => log('err turn', e.message));
+	{
+		const live = await ev(() => { try { return window.DaimondCore.busy(); } catch (e) { return String(e); } });
+		if (live !== true) { log(`seed: the error turn ended before the reload could cut it (busy=${live})`); await s.close().catch(() => {}); process.exit(3); }
+		await page.reload(); await wait(2500);
+		await freeApp();
+		const cut = await ev(() => document.querySelectorAll('#chat-output .turn-interrupted').length);
+		if (cut !== 1) { log(`seed: the cut error turn is not drawn interrupted (${cut} interrupted tiles, want 1)`); await s.close().catch(() => {}); process.exit(3); }
+	}
 	// A Diamond's own turn that changes files leaves the tail note (a Files tile at the foot of its thread), one row rated up. It is the
 	// long-titled Kitchen Diamond, which the pass's `/Kitchen/` picks open (the most recently active), so every Diamond surface has the note. It runs on the
 	// default (mock) model, so it comes before the per-Diamond models below are set to names the mock has no route for.
 	{
 		const kid2 = await ev(async (n) => { const d = JSON.parse(await window.__free.list_diamonds()).find((x) => x.name === n); return d ? d.id : ''; }, DIAMONDS[3]);
+		if (typeof kid2 !== 'string' || !kid2) { log(`seed: no id for the long-titled Kitchen Diamond (${JSON.stringify(kid2)})`); await s.close().catch(() => {}); process.exit(3); }
 		const pick = await ev((name) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === name); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; }, DIAMONDS[3]);
 		if (pick !== true) { log('seed: no long-titled Kitchen Diamond to steer'); await s.close().catch(() => {}); process.exit(3); }
 		await wait(1000);
@@ -1104,7 +1120,15 @@ async function seed() {
 		await page.waitForFunction((id) => !window.DaimondCore.diamondBusy(id), kid2, { timeout: 90000, polling: 500 }).catch((e) => log('diamond turn', e.message));
 		await wait(1500);
 		const rr = await ev(() => document.querySelectorAll('#chat-output .turn-files .turn-file-row[data-h]').length);
-		if (rr !== 4) { log(`seed: the Diamond's tail note has ${rr} rated rows, want 4`); await s.close().catch(() => {}); process.exit(3); }
+		if (rr !== 4) {
+			// What the thread holds instead, so a seed that stops here says why.
+			const why = await ev((id) => { try {
+				const tiles = [...document.querySelectorAll('#chat-output > *')].slice(-6).map((e) => (e.className || e.tagName) + ': ' + (e.textContent || '').trim().slice(0, 90));
+				return JSON.stringify({ busy: window.DaimondCore.busy(), dBusy: window.DaimondCore.diamondBusy(id), files: document.querySelectorAll('#chat-output .turn-files').length,
+					input: (document.querySelector('#chat-input') || {}).value || '', tail: tiles });
+			} catch (e) { return String(e); } }, kid2);
+			log(`seed: the Diamond's tail note has ${rr} rated rows, want 4 :: ${why}`); await s.close().catch(() => {}); process.exit(3);
+		}
 		await page.locator('#chat-output .turn-files .turn-file-row', { hasText: 'quotes.md' }).locator('.ctile-rate-up').click({ force: true });
 		await wait(300);
 		await ev(async (id) => { const c = window.DaimondDiamond.conversation(id); await window.DaimondRatingUI.flush(String(c.id)); }, kid2);
@@ -1814,9 +1838,9 @@ function report() {
 	// letter's own side bearing (the K of Keep, the A of Add) moves the ink a pixel between tiles.
 	const GLYROLE = (it) => /^summary\b|\btagf-toggle\b|#sys-head\b|\barte-strip\b|\bastat-val\b|#sync-rest\b|\bcrystal-act\b|\bpend-verb\b|#current-session-name\b/.test(it.sig);
 	const RIGHTALIGN = (it) => /\bastat-aside\b|\brel-when\b|\bpptw-head-state\b/.test(it.sig);
-	// The seat line ("Runs here -- keep this open") is drawn under the composer and padded 12 px so its text lines up with the composer box edge
-	// (app.css "reads as part of the one control"); it is placed by the composer, not by the panel title, so it is not compared to the panel's text edge.
-	const COMPOSER_PART = (it) => /#seat-line\b/.test(it.sig);
+	// The "Here | <runner>" switch (D-20261009-23) sits by the input box, inset 12 px to the composer box edge; it is placed by the composer, not by
+	// the panel title, so its text is not compared to the panel's text edge. Its segments are still compared by role, as Crystal | Chat's are.
+	const COMPOSER_PART = (it) => /#seat-switch\b|#seat-here\b|#seat-runner\b/.test(it.sig);
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
 	const textBySurf = new Map(); for (const o of items) { if (!o.view || o.tx == null || o.tcy == null) continue; if (!textBySurf.has(o.surface)) textBySurf.set(o.surface, []); textBySurf.get(o.surface).push(o); }
@@ -2026,6 +2050,9 @@ const V_LINT  = ['Write a line.', 'This line cannot be used: it is over 200 byte
 // [name, ctx, comp, slot, values, pick, setup]. `slot` '' = the comp itself;
 // `pick` chooses the instance by its text; values `{count}` vary a list's length.
 const V_OFFER = ['There is a newer page.', 'There is a newer Log Life page. Your own changes to this page are kept.', 'There is a newer Gym, diet and body measurements, the long-form training journal page. Your own changes are kept. Where it changes the same lines you did, yours stay, and both are shown below.'];
+// THREAD-READY (d): a hand-off tile's line is a sentence naming the device and the cause, from a few words to a long device name.
+const V_HANDOFF = ['Ran on this device', 'Ran here \u2014 trmate didn\u2019t have the whole conversation',
+	'Ran here \u2014 Chromium on Linux, Leederville office (second laptop) \u00b7 9f00a2c4 was busy with another chat'];
 const VSLOTS = [
 	['diamond name',        '#diamond-list', '.diamond-box', '.session-box-name', V_NAME, /Tax return/],
 	['diamond model',       '#diamond-list', '.diamond-box', '.tile-model-chip', V_MODEL, /Tax return/],
@@ -2083,6 +2110,8 @@ const VSLOTS = [
 	// F-C3: the Trash's keep-until line and the Steering list's day, as wide as either calendar writes them.
 	['trash until date',         '#trash-list', '.arte-row', '.arte-note', { text: V_DAY }, null, 'trash'],
 	['steer list day',           '#panel-modeldash', '.steer-row', '.steer-foot .steer-meta', { text: ['Added 4 Oct 2026', 'This diamond: Thesis, chapter 4 \u00b7 All models \u00b7 Added Oct 4, 12026', 'Dieser Diamant: Thesis, chapter 4 \u00b7 Alle Modelle \u00b7 Hinzugef\u00fcgt am 4. Okt. 12026'] }, /Keep answers under/, 'models'],
+	// THREAD-READY (d): the hand-off line takes the column's width and wraps; the time and the copy control keep their places.
+	['hand-off line',            '#chat-output', '.ctile.chat-msg-handoff', '.ctile-who', V_HANDOFF, null, 'handoff'],
 ];
 // Whole surfaces re-read in each locale: every label at once, en against de and fr.
 const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags'], ['chat files row', '#chat-output', 'files'], ['file popup', 'OVERLAY', 'filepop'],
@@ -2227,6 +2256,13 @@ async function vSetup(kind) {
 		if (hit !== true) return 'no Log Life on this device';
 		await wait(1200); await click('#dview-crystal'); await wait(2200);
 	}
+	if (kind === 'handoff') {
+		// A turn that came back from its seat and ran here, drawn by the app's own `appendRanHere`: this harness has one device and no runner.
+		await mainChat();
+		await ev(() => { if (!document.querySelector('#chat-output .chat-msg-handoff')) window.DaimondCore.drawRanHere('trmate', { handoffThread: 'trmate', ts: Date.now() });
+			const t = document.querySelector('#chat-output .chat-msg-handoff'); if (t) t.scrollIntoView({ block: 'center' }); });
+		await wait(300);
+	}
 	if (kind === 'headmore') { await mainChat(); await click('#chead-more'); await wait(700); }
 	if (kind === 'pending' || kind === 'steeredit' || kind === 'models') {
 		const ph = page.viewportSize().width <= 760;
@@ -2281,7 +2317,7 @@ async function varlenPass(phone) {
 		if (!phone) await panels(['rail', 'ai', 'work']);
 		if (phone && setup === 'work') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
 		else if (phone && setup === 'viewer') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
-		else if (phone && (['chat', 'ratetags', 'ratepop', 'headmore', 'files', 'filepop', 'ratingfile', 'dtail'].includes(setup) || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
+		else if (phone && (['chat', 'ratetags', 'ratepop', 'headmore', 'files', 'filepop', 'ratingfile', 'dtail', 'handoff'].includes(setup) || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
 		else if (phone && /rail|diamond-list|session-list|admin-status|topbar/.test(ctx) || phone && ['cog', 'newdia', 'steercog'].includes(setup)) await railOpen();
 		const miss = setup ? await vSetup(setup) : null;
 		if (miss) return miss;

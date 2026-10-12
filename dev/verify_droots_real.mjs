@@ -28,6 +28,7 @@
 // model.
 import fs from 'node:fs';
 import { open, signInAs } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const arg = (name) => {
 	const i = process.argv.indexOf(name);
@@ -285,6 +286,7 @@ const noise = s.errs.filter((e) =>
 check('the page threw nothing along the way', noise.length === 0, noise.slice(0, 3).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed'
 	+ '  (over ' + store.length + ' real files, ' + total + ' bytes)');
 process.exit(bad.length ? 1 : 0);

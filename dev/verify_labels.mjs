@@ -20,6 +20,7 @@
 //   eval "$(bash dev/world.sh N --env)"; bash dev/world.sh N --up
 //   node dev/verify_labels.mjs [desk|phone]
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ONLY  = process.argv[2] || '';
 const LOOKS = (process.env.LABELS_LOOKS || 'obsidian,porcelain').split(',');
@@ -174,5 +175,6 @@ async function run(cfg, look) {
 }
 
 for (const cfg of CONFIGS) for (const look of LOOKS) await run(cfg, look);
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed${bad.length ? ': ' + bad.join(', ') : ''}`);
 process.exit(bad.length ? 1 : 0);

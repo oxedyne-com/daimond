@@ -37,6 +37,7 @@
 // catches a change to how the button is revealed, not every way its slot could
 // stop being reserved.
 import { open, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -423,5 +424,6 @@ check('no console errors while the bar was measured', errs.length === 0, errs.sl
 
 await s.close();
 console.log('');
+guardRan(ok.length + bad.length);
 console.log(bad.length ? `${ok.length} passed, ${bad.length} failed` : `ALL ${ok.length} CHECKS PASSED`);
 process.exit(bad.length ? 1 : 0);

@@ -57,6 +57,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -240,6 +241,7 @@ check('5 the switch raised nothing in the console', errs.length === 0,
 
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (BREAK) {
 	console.log(bad.length ? `--break ${BREAK}: reddened ${bad.length} check(s), as it must`

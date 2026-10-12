@@ -53,6 +53,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const die  = (why) => { console.error('ABORT: ' + why); process.exit(2); };
@@ -971,6 +972,7 @@ const errs = s.errs.filter(e => !/favicon|404|401|net::ERR/.test(e));
 console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 if (BREAK) {

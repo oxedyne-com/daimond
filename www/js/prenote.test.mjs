@@ -303,8 +303,9 @@ console.log('\nA replay carries the original pre and computes none');
 	}
 	check('dispatchToPeer puts the stored pre in the errand it builds (every re-dispatch goes through it)',
 		/pre:\s*storedPre\(chat, turnId\)/.test(dtp || ''));
-	const rd = ['{ parkCount: count }', 'String(m.itext || \'\')', 'turn.text'].map((s) => SRC.indexOf(s) > 0);
-	check('the three re-dispatch sites call dispatchToPeer, and none of them composes', rd.every(Boolean)
+	// Two re-dispatch sites since the re-seat chase went (D-20261009-23).
+	const rd = ['{ parkCount: count }', 'turn.text'].map((s) => SRC.indexOf(s) > 0);
+	check('the two re-dispatch sites call dispatchToPeer, and none of them composes', rd.every(Boolean)
 		&& calls(SRC, 'dispatchToPeer').every((c) => !/ratingPre|noteFor/.test(c.text)));
 }
 
@@ -516,13 +517,14 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	const fns = ['continueTurn', 'retryTurn', 'answerAgain'].map((n) => lift(SRC, n));
 	check('the three doors are in daimond.js', fns.every(Boolean));
 	const spy = () => ({ tombstoned: [], ran: [], journal: [] });
-	function doors(sp) {
+	function doors(sp, over) {
 		const st = {
 			DaimondPeer: { isAskAnswer: Peer.isAskAnswer, dispatchState: () => 'no-peer-awake', dispatchControl: () => '' },
 			DaimondLease: { record: () => null }, DaimondJournal: { clearTurn: (id) => sp.journal.push(id) },
 			loadMsgTombs: () => ({}), msgTombstone: (mids) => sp.tombstoned.push(...mids), touchChat() {}, persistChats() {}, renderHistory() {},
 			runTurn: (chat, text, opts) => { sp.ran.push({ text, opts, had: (chat.messages || []).map((m) => m.mid) }); }, ChatStore: { compact() {} },
 			newMid: () => 'nmid', CONTINUE_NUDGE: '__nudge__', handoffTargetLabel: () => '', peerUiStateFor: () => '', selfDeviceId: () => 'SELF', turnHold: () => '', _askCard: null };
+		Object.assign(st, over || {});
 		const body = (helper ? helper + '\n' : '') + fns.filter(Boolean).join('\n') + '\nreturn { continueTurn, retryTurn, answerAgain };';
 		return new Function('window', 'DaimondRatings', ...Object.keys(st), body)(Object.assign({}, st), R, ...Object.values(st));
 	}
@@ -563,6 +565,31 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 		run(() => d.continueTurn(c, 't9', 'the question'));
 		check('continueTurn: the unmarked question is retracted and asked once, with the retracted note', sp.ran.length === 1 && !mids(c).includes('t9') && !sp.ran[0].had.includes('t9')
 			&& sp.ran[0].opts && sp.ran[0].opts.told === '[Daimond: the user rated your answer of 10:01 +1.]', { ran: sp.ran, left: mids(c) });
+	}
+	{ // continueTurn as [Run here] on a hand-off nothing answered (seat 17): the prompt is asked again
+		// under a FRESH id. Re-run under the turn's own id, the new prompt took the mid just
+		// tombstoned with the old one, and every device stored an answer with no question.
+		const sp = spy(), tombs = {};
+		const d = doors(sp, {
+			handoffTargetLabel: (m) => (m.why === 'dispatched' ? 'argonaut' : ''), deviceLabelFor: () => '',
+			msgTombstone: (mids) => { sp.tombstoned.push(...mids); mids.forEach((x) => { tombs[x] = 1; }); },
+			loadMsgTombs: () => tombs,
+			// runTurn's own rule for the new prompt's mid (daimond.js `umid`), then the answer under that turn.
+			runTurn: (chat, text, opts) => {
+				const o = opts || {}, umid = o.turnId ? String(o.turnId) : 'nmid';
+				sp.ran.push({ text, opts: o });
+				chat.messages.push(U(umid, T(9), text, { iturn: umid }), Object.assign(A(9, T(9)), { iturn: umid, handoffFellBack: o.handoffFellBack }));
+			} });
+		const c = { id: 'c9', messages: [ U('mold', T(0), 'an earlier question'), A(1, T(1)),
+			U('t7', T(2), 'keep going', { iturn: 't7' }),
+			{ role: 'assistant', content: '', mid: 'mph7', ts: T(3), why: 'dispatched', iturn: 't7' } ] };
+		run(() => d.continueTurn(c, 't7', 'keep going'));
+		const stored = c.messages.filter((m) => !tombs[m.mid]);
+		const last2 = stored.slice(-2).map((m) => m.role + ':' + m.content);
+		check('[Run here]: the stored transcript holds the prompt, then its answer', last2.join('|') === 'user:keep going|assistant:answer 9', { stored: stored.map((m) => m.mid), tombs });
+		check('[Run here]: no stored message carries a tombstoned mid', c.messages.every((m) => !tombs[m.mid]), c.messages.map((m) => m.mid));
+		check('[Run here]: the old prompt and placeholder stay tombstoned', tombs.t7 === 1 && tombs.mph7 === 1, tombs);
+		check('[Run here]: the answer still says where the hand-off went', sp.ran.length === 1 && sp.ran[0].opts.handoffFellBack === 'argonaut', sp.ran);
 	}
 	// One finder, no marking
 	const n = (re) => (SRC.match(re) || []).length;

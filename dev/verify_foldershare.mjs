@@ -90,6 +90,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { buildBook } from './foldershare_book.mjs';
 import { open, signInAs, scratch, BROWSER, markHere, MOCK } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -1909,5 +1910,6 @@ check('and B loses nothing when that folder goes over — a refusal is not a del
 	if (B) await B.close().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) process.exit(1);

@@ -18,6 +18,7 @@
 //
 //   node dev/verify_pre.mjs
 import { open, mockLog, clearMockLog, contentText } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -199,6 +200,7 @@ check('P7 the safety clause is still the last section of each',
 		&& roles[k].indexOf(CLAUSE) > 0 && roles[k].indexOf('\n## ', roles[k].indexOf(CLAUSE) + 3) === -1));
 
 check('no panic, borrow or trap on the console', msgs.length === 0, JSON.stringify(msgs));
+guardRan(ok.length + bad.length);
 console.log('\npre: ' + ok.length + ' ok, ' + bad.length + ' failed');
 await s.close();
 process.exit(bad.length ? 1 : 0);

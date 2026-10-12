@@ -31,6 +31,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, clearMockLog, mockLog, shot, errors, MOCK } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 // Only so the preflight below can NAME the file it reads. Derived exactly as
 // `harness.mjs` derives it, since it does not export the path itself.
@@ -495,6 +496,7 @@ check('a Diamond cut from a chat inherits that chat\'s worker model',
 	JSON.stringify(cut) + ' from chat ' + JSON.stringify(persisted));
 
 console.log('\nconsole errors:', errors(s).slice(0, 4).join(' | ') || '(none)');
+guardRan(ok.length + bad.length);
 console.log(`\nworker model: ${ok.length} ok, ${bad.length} failed.`);
 if (bad.length) console.log('failed: ' + bad.join(' | '));
 await s.close();

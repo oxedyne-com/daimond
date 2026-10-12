@@ -50,6 +50,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE   = path.dirname(fileURLToPath(import.meta.url));
 const TREE   = process.env.DAIMOND_TREE || path.join(HERE, '..');
@@ -340,6 +341,7 @@ const errs = s.errs.filter(e => !/502|Bad Gateway|quartz/.test(e));
 check('no page errors', errs.length === 0, errs.slice(0, 3).join(' | ') || undefined);
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\nspendcats: ${ok.length} ok, ${bad.length} failed.`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

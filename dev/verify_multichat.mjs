@@ -25,6 +25,7 @@
 //   node dev/verify_multichat.mjs --break shorta    # expected to FAIL
 //   node dev/verify_multichat.mjs                   # and then, clean
 import { open, newChat, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -63,17 +64,26 @@ check('A LONG TURN IN CHAT A IS RUNNING — stop-mode on the send button, compos
 	aRunning.stopMode && !aRunning.disabled, JSON.stringify(aRunning));
 
 // Start a SECOND chat while A still streams.
+//
+// THE + OPENS THE CHAT ITSELF since 105e214e (2026-09-05, the UI reconciliation pass): the
+// pending tile and its `.tile-start` button are gone, so this looked for a control that no
+// longer exists and every gate read that as "a second chat cannot be started". What is
+// asserted is the property: the + moves the focus to a NEW chat while A still runs -- read
+// from the page's own focus, never from a button that might outlive its meaning.
+const focusChat = () => s.page.evaluate(() => {
+	try {
+		const f = window.DaimondAttach && window.DaimondAttach.focus();
+		return (f && f.kind === 'chat') ? String(f.id) : '';
+	} catch (e) { return ''; }
+});
+const aId = await focusChat();
 await s.page.click('#new-session-btn');
-await s.page.waitForTimeout(400);
-// Start the pending tile. `.tile-start` by class, NOT has-text("Start") —
-// the substring match also hits the BYOK form's hidden "Save & start".
-const startBtn = s.page.locator('.tile-start').first();
-const started = await startBtn.count();
-// This used to be a bare `if`: with no Start button the file went on to measure
+await s.page.waitForTimeout(1000);
+const bId = await focusChat();
+// This used to be a bare `if`: with no second chat the file went on to measure
 // chat A a second time and printed three greens about it.
-check('a second chat can be started while the first one runs', !!started, `${started} .tile-start on the rail`);
-if (started) await startBtn.click();
-await s.page.waitForTimeout(600);
+const started = !!bId && bId !== aId;
+check('a second chat can be started while the first one runs', started, JSON.stringify({ a: aId, b: bId }));
 
 const bComposer = await s.page.evaluate(() => {
 	const inp = document.getElementById('chat-input');
@@ -132,5 +142,6 @@ const errs = errors(s).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(x => console.log('  FAILED: ' + x)); process.exit(1); }

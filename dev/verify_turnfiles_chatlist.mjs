@@ -35,6 +35,7 @@
 //   node dev/verify_turnfiles_chatlist.mjs
 
 import { open, connectMock, steerDiamond, scratch, shot, storedChats } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -192,5 +193,6 @@ try {
 	await s.close().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

@@ -49,6 +49,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC  = fs.readFileSync(path.join(ROOT, 'www/js/models.js'), 'utf8');
@@ -485,5 +486,6 @@ for (const [name, b] of Object.entries(BREAK)) {
 	}
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${bad.length ? `verify_creditage: ${bad.length} FAILED` : 'verify_creditage: all checks pass.'}`);
 if (bad.length) { bad.forEach((b) => console.log('  - ' + b)); process.exit(1); }

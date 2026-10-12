@@ -68,6 +68,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -554,6 +555,7 @@ await at(1500);
 const errs = s.errs.filter((e) => !/\b(401|402|502)\b|Bad Gateway|Unauthorized|Payment Required|net::ERR/.test(e));
 check('no unexpected console errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log(bad.map((b) => '  - ' + b).join('\n'));
 await s.close();

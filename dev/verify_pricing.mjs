@@ -32,6 +32,7 @@
 //   node dev/verify_pricing.mjs                     # and then, clean
 import { readFileSync } from 'fs';
 import { loadStore } from '../www/js/storefixture.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -649,6 +650,7 @@ const C = P._core;
 }
 
 // ── Result ─────────────────────────────────────────────────────────
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) console.log('FAILED: ' + bad.join(', '));
 if (BREAK) {

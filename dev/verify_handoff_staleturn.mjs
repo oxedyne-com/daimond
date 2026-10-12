@@ -17,7 +17,7 @@
 // A is a PHONE on the live bundle (`oldTree`, world `oldWorld`); B is a DESKTOP on this
 // tree (world `newWorld`); one account, one gateway (the new world's). Cases:
 //
-//   a  M3: A leaves a five-day-old hand-off and re-hands it on its return.
+//   a  M3: A leaves a five-day-old hand-off and comes back to it.
 //   b  the same, A's clock five days FAST for the whole session -- so a check against
 //      B's own clock would pass the turn.
 //   c  the same, B's clock five days SLOW -- the same trap from the other side.
@@ -25,9 +25,11 @@
 //      writes is already past on B, which is what B refused it on before.
 //   e  a plain fresh hand-off must run.
 //
-// A stale case asserts, on B: the re-hand reached it and it did not claim it, no model
-// request carried the prompt, A collected an `aborted` report, and the relay no longer
-// holds the errand. A fresh case asserts B claimed it inside a minute and the model saw
+// A stale case asserts (re-aimed 11 Oct 2026 to the removed re-seat chase, D-20261009-23):
+// A's return and backstop neither run the orphan nor re-hand it, B is never handed it and
+// claims nothing, no model request carried the prompt, and the relay holds no errand for
+// it. Before seat 8 A re-handed the orphan to B, and these cases asserted B's own refusal
+// of that replay. A fresh case asserts B claimed it inside a minute and the model saw
 // it once. Each stale case, and case d, fails on 4d164343.
 //
 // A FIVE-DAY-OLD TURN IS SIMULATED BY MOVING A's CLOCK FOR THE SEND ALONE, as the
@@ -43,9 +45,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const [, , CASE = 'a', OLDT, NEWT = path.join(HERE, '..'), OLDW = '84', NEWW = '83'] = process.argv;
+// RUN BARE, AS dev/run_all.sh RUNS EVERY VERIFIER, IT HAS NOTHING TO MEASURE. Its subject is a
+// page of an OLDER release beside this one, and the suite has no older tree to give it, so
+// every gate since 2026-09-24 read its usage line as a red. It says so as a skip instead,
+// loudly and never as a pass; the release proof runs it with both trees (a-e).
+if (process.argv.length <= 2) {
+	console.log('SKIPPED: verify_handoff_staleturn needs an older release\'s tree beside this one '
+		+ '(<a|b|c|d|e> <oldTree> [newTree] [oldWorld] [newWorld]); the suite has none to give it. '
+		+ 'The release proof runs it with both. This is NOT a pass.');
+	process.exit(2);
+}
 if (!/^[a-e]$/.test(CASE) || !OLDT) {
 	console.log('usage: node dev/verify_handoff_staleturn.mjs <a|b|c|d|e> <oldTree> [newTree] [oldWorld] [newWorld]');
 	process.exit(2);
@@ -56,8 +69,7 @@ const DAY = 86400000, MIN = 60000;
 const SKEW_A = CASE === 'b' ? 5 * DAY : (CASE === 'd' ? -60 * MIN : 0);
 const SKEW_B = CASE === 'c' ? -5 * DAY : 0;
 const CLAIM_MS  = 60000;		// a fresh hand-off is claimed by B well inside this
-const REHAND_MS = 150000;		// A's re-hand: on its return, or at its own backstop
-const AFTER_MS  = 105000;		// past A's 95 s backstop after the re-hand
+const REHAND_MS = 150000;		// past A's return and its 95 s backstop
 
 function worldEnv(tree, n) {
 	const out = execSync(`bash dev/world.sh ${n} --env`, { cwd: tree, env: process.env }).toString();
@@ -77,7 +89,8 @@ const HN = await import(pathToFileURL(path.join(NEWT, 'dev/harness.mjs')).href);
 const { makePagePro } = await import(pathToFileURL(path.join(NEWT, 'dev/pro.mjs')).href);
 const GW_URL = 'http://127.0.0.1:' + envNew.DAIMOND_GW_PORT;
 const GWDIR = path.join(NEWT, 'gateway');
-const LOGS = [envOld.DAIMOND_MOCK_LOG, envNew.DAIMOND_MOCK_LOG];
+// One log when both devices share a world (this tree on both sides), read once.
+const LOGS = [...new Set([envOld.DAIMOND_MOCK_LOG, envNew.DAIMOND_MOCK_LOG])];
 
 /// How many model requests, across both worlds' mocks, carried `text`. The mock logs
 /// the provider URL the chat carries, not the device, so both are read.
@@ -202,7 +215,7 @@ try {
 	fs.rmSync(profA, { recursive: true, force: true }); fs.rmSync(profB, { recursive: true, force: true });
 
 	// ── One account, two devices, one gateway ─────────────────
-	const a = await HO.open({ name: acct + '-a', touch: true, signIn: false, connect: false, profile: profA,
+	const a = await HO.open({ name: acct + '-a', touch: true, signIn: false, connect: false, profile: profA, serviceWorkers: 'block',
 		route: async (page) => { page.setDefaultNavigationTimeout(120000); } });
 	sessions.push(a);
 	await gateUp(a);
@@ -210,12 +223,15 @@ try {
 	check('A is signed in to the gateway', await authed(a));
 	const proA = await makePagePro(a.page, GWDIR, GW_URL);
 	check('A holds Pro', proA.pro === true, JSON.stringify(proA));
+	await HN.routeProbe(check, a.page);
 	await HO.connectMock(a);
-	await HO.newChat(a);
+	// newChat drives the page alone (no world settings), so A takes THIS tree's: the old
+	// tree's lacks the focus/modal waits (seat 11/12/14) and left A "still in chat".
+	await HN.newChat(a);
 	await HO.chat(a, 'seed turn ' + CASE + ' ' + Date.now());
 	await settle(a.page);
 
-	const b = await HN.open({ name: acct + '-b', signIn: false, connect: false, profile: profB,
+	const b = await HN.open({ name: acct + '-b', signIn: false, connect: false, profile: profB, serviceWorkers: 'block',
 		route: async (page) => { page.setDefaultNavigationTimeout(120000); } });
 	sessions.push(b);
 	for (const [lab, s] of [['A', a], ['B', b]]) s.page.on('dialog', (d) => { note(lab + ' dialog: ' + d.type() + ' (dismissed)'); d.dismiss().catch(() => {}); });
@@ -232,6 +248,10 @@ try {
 	await b.page.waitForTimeout(2000);
 	await settle(b.page);
 
+	// Since D-20261009-23 a send is handed only to the NOMINATED runner (or runs here):
+	// B is nominated on both devices, as handoffpair.mjs's `pair` does.
+	const idB0 = await b.page.evaluate(() => window.DaimondIdentity.deviceId());
+	for (const s of [a, b]) await s.page.evaluate((id) => window.DaimondCore.roster && window.DaimondCore.roster.nominate(id), idB0).catch(() => {});
 	// Presence, both ways, and each device's decisions logged.
 	for (const [s, n] of [[b, acct + '-b'], [a, acct + '-a']]) {
 		await s.page.evaluate((nm) => window.DaimondSync.beatPresence && window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), nm), n).catch(() => {});
@@ -255,7 +275,7 @@ try {
 
 	// ── A FRESH hand-off: the case under test for d and e, the warm-up for a-c ──
 	await a.page.setViewportSize({ width: 1280, height: 900 });
-	await HO.newChat(a);
+	await HN.newChat(a);
 	const FRESH = 'fresh hand-off ' + CASE + ' ' + Date.now();
 	const f0 = modelSaw(FRESH);
 	const tSend = Date.now();
@@ -295,8 +315,7 @@ try {
 		// ── THE STALE ORPHAN ──────────────────────────────────
 		// A sends as if five days ago (its clock moved back five days for the send alone);
 		// the errand it posts is answered in the page, so only the re-hand reaches the relay.
-		// Taps, before anything is sent: what B's collector is handed, and every report A
-		// absorbs (A's own backstop can re-hand before its return does).
+		// A tap, before anything is sent: what B's collector is handed.
 		await b.page.evaluate(() => {
 			const P = window.DaimondPeer, run = P.runErrand;
 			window.__errands = [];
@@ -305,19 +324,11 @@ try {
 				return run.apply(this, arguments);
 			};
 		});
-		await a.page.evaluate(() => {
-			const P = window.DaimondPeer, absorb = P.absorb;
-			window.__reports = [];
-			P.absorb = async function (o) {
-				try { if (o && o.t === 'report') window.__reports.push({ turnId: o.turnId, status: o.status, why: String(o.why || '').slice(0, 80) }); } catch (x) { /* record only */ }
-				return absorb.apply(this, arguments);
-			};
-		});
 
 		await settle(a.page); await settle(b.page);
 		await sleep(8000);
 		await a.page.setViewportSize({ width: 1280, height: 900 });
-		await HO.newChat(a);
+		await HN.newChat(a);
 		const STALE_TXT = 'stale orphan ' + CASE + ' ' + Date.now();
 		const kept = [];
 		const keepOff = async (route) => {
@@ -368,37 +379,31 @@ try {
 		}
 		note('A reads B as servicing: ' + (svc != null ? svc + ' s ago' : 'no'));
 
-		// THE OLD TAB COMES BACK TO THE FOREGROUND, and re-hands the orphan.
+		// THE OLD TAB COMES BACK TO THE FOREGROUND. With the re-seat chase gone (seat 8,
+		// D-20261009-23) its wake path runs an orphan HERE or not at all, never re-handing
+		// it to B; a turn past its deadline it leaves alone (recoverDecision).
 		await a.page.evaluate(async () => {
 			const set = (v) => Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v });
 			set('hidden');  document.dispatchEvent(new Event('visibilitychange'));
 			await new Promise((r) => setTimeout(r, 300));
 			set('visible'); document.dispatchEvent(new Event('visibilitychange'));
 		});
-		let rehandAt = 0;
-		const tComeback = Date.now();
-		while (tid && !rehandAt && Date.now() - tComeback < REHAND_MS) {
-			if ((await diagRows(a, tid)).some((r) => /dispatch retry/.test(r.tag || '') && String(r.data || '').includes(tid))) rehandAt = Date.now();
-			else await sleep(500);
-		}
-		check('(precondition) A re-handed the five-day-old turn to B', !!rehandAt,
-			rehandAt ? '+' + (rehandAt - tComeback) + 'ms after its return' : 'no re-hand in ' + (REHAND_MS / 1000) + ' s');
-		while (rehandAt && Date.now() - rehandAt < AFTER_MS) await sleep(1000);
-
+		// Past A's return and its 95 s backstop: the window either could act in.
+		await sleep(REHAND_MS);
+		const localRuns = (await diagRows(a, tid)).filter((r) => /handoff local run/.test(r.tag || '') && String(r.data || '').includes(tid));
+		check('A\'s return and backstop did not run the five-day-old orphan here (recoverDecision leaves it)',
+			!localRuns.some((r) => / done$/.test(String(r.data || ''))),
+			localRuns.length ? String(localRuns[0].data).slice(0, 160) : 'no local run');
+		const rehands = (await diagRows(a, tid)).filter((r) => /dispatch retry/.test(r.tag || '') && String(r.data || '').includes(tid)).length;
+		check('A never re-handed the turn to another desktop (no re-seat chase)', rehands === 0, 're-hands ' + rehands);
 		const handed = (await b.page.evaluate(() => window.__errands || []).catch(() => [])).filter((x) => String(x.turnId) === tid);
-		for (const x of handed) note('B was handed ' + x.turnId + ': errand ts ' + (x.ts ? new Date(x.ts).toISOString() : x.ts)
-			+ ', deadline ' + (x.deadline ? new Date(x.deadline).toISOString() : x.deadline) + ', relay stamp ' + x.rowTs);
-		check('(precondition) the re-hand reached B\'s collector', handed.length >= 1, 'handed ' + handed.length);
+		check('B\'s collector was never handed the turn', handed.length === 0, 'handed ' + handed.length);
 		const bClaims = await claims(b, tid);
 		check('B did not claim the five-day-old turn', bClaims === 0, 'claims ' + bClaims);
-		const refused = (await diagRows(b, tid)).filter((r) => /collect age/.test(r.tag || '') && /REFUSE/.test(String(r.data || '')));
-		check('B refused it by its age, in its own decision log', refused.length >= 1,
-			refused.length ? String(refused[0].data).slice(0, 160) : 'no refusal logged');
 		const runs = modelSaw(STALE_TXT);
 		check('no model request carried the stale prompt, on any device', runs === 0, 'requests ' + runs);
-		const reps = (await a.page.evaluate(() => window.__reports || []).catch(() => [])).filter((r) => String(r.turnId) === tid);
-		check('A collected an `aborted` report for it', reps.some((r) => r.status === 'aborted'), JSON.stringify(reps).slice(0, 200));
-		// The relay no longer holds a live errand for the turn: B let the row go.
+		// The relay holds no live errand for the turn: the original was kept off, and
+		// nothing re-posted it.
 		const left = await b.page.evaluate(async (t) => {
 			const r = await fetch('/api/post?since=0', { credentials: 'same-origin',
 				headers: { 'x-daimond-api': String(window.DaimondGateway.clientApi()) } });
@@ -412,7 +417,7 @@ try {
 			}
 			return n;
 		}, tid).catch((e) => -1);
-		check('the relay no longer holds an errand for it (the row was let go and acked)', left === 0, 'errand rows left ' + left);
+		check('the relay holds no errand for it', left === 0, 'errand rows left ' + left);
 		const aClaims = await claims(a, tid);
 		check('(holds) A did not run it locally either', aClaims === 0, 'A claims ' + aClaims);
 		for (const r of (await diagRows(b, tid.slice(0, 12))).slice(-8)) note('B diag ' + r.tag + ' :: ' + String(r.data || '').slice(0, 200));
@@ -428,4 +433,5 @@ try {
 	for (const s of sessions) { try { await s.close(); } catch (e) { /* gone */ } }
 }
 console.log('\ncase ' + CASE + ': ' + pass + ' passed, ' + fail + ' failed');
+guardRan(pass + fail);
 process.exit(fail ? 1 : 0);

@@ -32,6 +32,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { open, signInAs, connectMock, newChat, chat, mockLog, clearMockLog, contentText } from './harness.mjs';
+import { armFilter, guardRan } from './verdict.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -39,6 +40,7 @@ const MIX = process.env.MIX || '';
 if (MIX && MIX !== 'A547' && MIX !== 'B547' && MIX !== 'C547') { console.error('MIX is A547, B547 or C547'); process.exit(2); }
 // PERMIT_ARMS=fix runs only the review-fix arms (P1-P3, F3, B-F9, RA3) after the setup; PERMIT_ONLY names some.
 const ARMS = process.env.PERMIT_ARMS || '';
+const on   = armFilter('PERMIT_ONLY');	// PERMIT_ONLY=P1,F3 … runs only the arms named
 const OLD = process.env.DAIMOND_OLD_WWW || '';
 if (MIX && !OLD) { console.error('MIX needs DAIMOND_OLD_WWW'); process.exit(2); }
 const APP = process.env.DAIMOND_APP || 'http://localhost:' + (process.env.DAIMOND_PORT || 8777);
@@ -424,9 +426,6 @@ try {
 
 		const SHIFT = (ms) => { window.__realNow = window.__realNow || Date.now; const n = window.__realNow; Date.now = () => n.call(Date) + ms; };
 		const UNSHIFT = () => { if (window.__realNow) Date.now = window.__realNow; };
-		// PERMIT_ONLY=P1,F3 … runs only the arms named.
-		const ONLY = (process.env.PERMIT_ONLY || '').split(',').filter(Boolean);
-		const on = (k) => !ONLY.length || ONLY.includes(k);
 
 		if (on('P1')) {
 		// ── P1 (B-F1): the RUNNER's posture never grants a permit on someone else's turn ──
@@ -469,10 +468,9 @@ try {
 				window.__seen = [];
 				const b = await DaimondDiamond.bounds(a.id);
 				const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
-				window.__turn = app.steer_crystal(a.id, a.dir, JSON.stringify(b.attached || []), JSON.stringify(b.read_only || []),
+				window.__turn = app.steer_crystal(a.id, a.dir,
 					JSON.stringify(b.toolkits || []), [],
-					(ev) => { if (ev.type === 'tool_result') window.__seen.push(String(ev.content || '')); },
-					JSON.stringify(b.unconfirmed || []))
+					(ev) => { if (ev.type === 'tool_result') window.__seen.push(String(ev.content || '')); })
 					.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
 			}, { id: dia, dir: PLACEIN('fixp3own', 'own.md'), mock: process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions' });
 			const dlg = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 }).then(() => true, () => false);
@@ -512,8 +510,8 @@ try {
 			const mod = await import('/pkg/oxedyne_daimond.js');
 			const b = await DaimondDiamond.bounds(a.id);
 			const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
-			window.__turn = app.steer_crystal(a.id, a.dir, JSON.stringify(b.attached || []), JSON.stringify(b.read_only || []),
-				JSON.stringify(b.toolkits || []), [], () => {}, JSON.stringify(b.unconfirmed || []))
+			window.__turn = app.steer_crystal(a.id, a.dir,
+				JSON.stringify(b.toolkits || []), [], () => {})
 				.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
 		}, { id: dia, dir: PLACEIN('fixkit', 'home.md'), mock: process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions' });
 		const home = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 }).then(() => true, () => false);
@@ -731,6 +729,7 @@ try {
 		const seen2 = new Set((await answers(A.page, dia)).map((m) => m.mid));
 		const fresh2 = async () => (await answers(A.page, dia)).filter((m) => !seen2.has(m.mid)).length;
 		const hb2 = { A: await holds(A.page, dia), B: await holds(B.page, dia) }, mb2 = { A: await marks(A.page), B: await marks(B.page) };
+		const t2at = Date.now();
 		const retried = await press(A.page, '^You said no\\.$', 'go');
 		const at2 = await waitCard(A.page, '^Let .*change', 40000);
 		const busyToast = await A.page.evaluate(() => [...document.querySelectorAll('.toast')].map((x) => x.textContent).join('|')).catch(() => '');
@@ -752,6 +751,13 @@ try {
 			holdsAfter: { A: await holds(A.page, dia), B: await holds(B.page, dia) }, marksAfter: { A: await marks(A.page), B: await marks(B.page) } };
 		note('T2 retried=' + retried + ' at=' + at2 + ' allowed=' + allowed2 + ' copies=' + copies2 + ' toast=' + busyToast.slice(0, 120)
 			+ ' results=' + JSON.stringify(res2.map((c) => c.slice(0, 50))));
+		if (!(retried && at2 >= 0)) {
+			// Where the retried turn went: both devices' rings from the press on.
+			const ring = (pg) => pg.evaluate((t) => ((window.DaimondDiag && DaimondDiag.rows()) || [])
+				.filter((r) => r.ts >= t && /ready|errand|claim|reconstruct|hand.?back|dispatch|pull|tomb|UNDELIVER/i.test(r.tag + ' ' + (r.data || '')))
+				.map((r) => (r.ts - t) + 'ms ' + r.tag + ': ' + String(r.data || '').slice(0, 200)), t2at).catch(() => []);
+			for (const [k, pg] of [['A', A.page], ['B', B.page]]) for (const l of (await ring(pg)).slice(0, 60)) note('T2 ' + k + ' ' + l);
+		}
 		check('(3c) Retry asks again on A', retried && at2 >= 0
 			&& pvB2.sealed.filter((x) => x.t === 'consent-ask' && x.target === idA).length === 1, 'retried=' + retried + ' at=' + at2);
 		check('(3c) Allow then lets the write proceed', allowed2 && res2.some((c) => /^Wrote /.test(c)), JSON.stringify(res2.map((c) => c.slice(0, 60))));
@@ -787,10 +793,9 @@ try {
 			window.__seen = [];
 			const b = await DaimondDiamond.bounds(a.id);
 			const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
-			window.__turn = app.steer_crystal(a.id, a.dir, JSON.stringify(b.attached || []), JSON.stringify(b.read_only || []),
+			window.__turn = app.steer_crystal(a.id, a.dir,
 				JSON.stringify(b.toolkits || []), [],
-				(ev) => { if (ev.type === 'tool_result') window.__seen.push(String(ev.content || '')); },
-				JSON.stringify(b.unconfirmed || []))
+				(ev) => { if (ev.type === 'tool_result') window.__seen.push(String(ev.content || '')); })
 				.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
 		}, { id: dia, dir: PLACE('ctl.md'), mock: process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions' });
 		const dlg4 = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 }).then(() => true, () => false);
@@ -898,4 +903,5 @@ try {
 } finally {
 	for (const s of [A, B, C]) { try { await s?.close(); } catch (e) {} }
 }
+guardRan(ok.length + bad.length, on);
 process.exit(bad.length ? 1 : 0);

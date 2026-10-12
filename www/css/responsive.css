@@ -392,3 +392,11 @@
 	.ctile-time-full { display: none; }
 	.ctile-time-short { display: inline; }
 }
+/* The same swap keyed to the PANE, not the window: three panels open on a 1280px window leave the AI
+   pane ~270px, narrower than a phone, and the full stamp (114px) then took the width the tile's own
+   line needed (THREAD-READY arm d: a hand-off line left 37 of its 279px). What the label bar has is
+   the pane's width, so that is what decides. */
+@container aipane (max-width: 380px) {
+	.ctile-time-full { display: none; }
+	.ctile-time-short { display: inline; }
+}

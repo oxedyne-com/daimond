@@ -20,6 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC_DIR = path.join(HERE, '..', 'www');
@@ -207,4 +208,5 @@ console.log('refreshToc — the section rail\'s consumer, both engines\' query s
 
 console.log(`\n${ran - bad}/${ran} checks passed`);
 if (bad) { console.log(`${bad} FAILED`); process.exit(1); }
+guardRan(ran);
 console.log('verify_sectionsrail: all checks passed');

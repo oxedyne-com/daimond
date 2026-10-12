@@ -44,6 +44,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { open, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const RED = !!process.env.LANE4_RED;
 const OLD = process.env.LANE4_OLD
@@ -509,4 +510,5 @@ console.log('\n' + (RED ? 'RED RUN (HEAD code) ' : 'GREEN RUN ')
 if (bad.length) console.log('failed:\n  ' + bad.join('\n  '));
 if (errs && errs.length) console.log('console errors:\n  ' + errs.slice(0, 8).join('\n  '));
 await s.close();
+guardRan(ok.length + bad.length);
 process.exit(bad.length ? 1 : 0);

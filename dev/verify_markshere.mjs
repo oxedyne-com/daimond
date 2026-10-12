@@ -54,6 +54,7 @@
 // Needs a world for the app and the mock provider: `eval "$(bash dev/world.sh N --env)"`.
 import fs from 'node:fs';
 import { open, signInAs, connectMock, newChat, errors, scratch, workRows, pressRowItem, pressRowMark } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const tally = { route: [0, 0], control: [0, 0] };
@@ -924,6 +925,7 @@ console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
 console.log(`\nroute checks: ${tally.route[0]} held, ${tally.route[1]} failed; controls: ${tally.control[0]} held, ${tally.control[1]} failed`);
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

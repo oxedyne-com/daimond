@@ -15,6 +15,7 @@
 //
 //   node dev/verify_guiderender.mjs --break wide   # expected to FAIL
 //   node dev/verify_guiderender.mjs                # and then, clean
+import { guardRan } from './verdict.mjs';
 const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const SP = new URL('shots/', import.meta.url).pathname;
@@ -105,5 +106,6 @@ check(`EVERY TRANSLATED PAGE IS SERVED — ${LOCS.length} locales × ${PAGES.len
 check('AND NOTHING SPILLS OUT OF THE BOX IT WAS DRAWN FOR',
 	problems.length === 0, `${problems.length} pages with overflow`);
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(x => console.log('  FAILED: ' + x)); process.exit(1); }

@@ -24,6 +24,7 @@ import crypto from 'node:crypto';
 import { open, signInAs, scratch, markHere } from './harness.mjs';
 import { makePagePro, GW_URL } from './pro.mjs';
 import { GWDIR } from './gwbin.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail, kind = 'route') => {
@@ -291,5 +292,6 @@ async function armFolder() {
 if (ONLY.includes('H')) await arm('H', false);
 if (ONLY.includes('E')) await arm('E', true);
 if (ONLY.includes('F')) await armFolder();
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? `\nall ${ok.length} checks passed` : `\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length === 0 ? 0 : 1);

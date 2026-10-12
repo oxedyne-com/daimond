@@ -43,6 +43,7 @@
 // `diamond_bounds` emitting `Bound::OnlyUnder`, which is the 2026-08-12
 // regression put back, turns sixteen unit tests red including the reads below.
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -269,6 +270,7 @@ try {
 	try { await s.browser.close(); } catch (e) { /* ignore */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (BREAK) {
 	console.log(bad.length

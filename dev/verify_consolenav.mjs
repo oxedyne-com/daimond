@@ -36,6 +36,7 @@
 // desktop. Importing this strips the two variables from `process.env`, which is all a
 // launcher that spreads `process.env` needs. See dev/display.mjs.
 import './display.mjs';
+import { guardRan } from './verdict.mjs';
 const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
@@ -320,6 +321,7 @@ try {
 }
 
 console.log('');
+guardRan(ok.length + bad.length);
 console.log(`passed ${ok.length}, failed ${bad.length}` + (BREAK ? `   [--break ${BREAK}]` : ''));
 if (bad.length) { console.log('failures:'); bad.forEach(b => console.log('  - ' + b)); }
 process.exit(bad.length ? 1 : 0);

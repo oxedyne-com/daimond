@@ -30,6 +30,7 @@
 // retry, and the gateway will not produce the 401 that would show it. See (7).
 import { open } from './harness.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -677,5 +678,6 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

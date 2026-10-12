@@ -19,6 +19,7 @@ import { GWDIR } from './gwbin.mjs';
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { guardRan } from './verdict.mjs';
 
 // ── --break: the fix undone, served to every page through `page.route` (Chromium) ──
 const BREAK = (() => { const i = process.argv.indexOf('--break'); return i > 0 ? process.argv[i + 1] : ''; })();
@@ -309,5 +310,6 @@ async function armFolder() {
 if (ONLY.includes('H')) await arm('H', false);
 if (ONLY.includes('E')) await arm('E', true);
 if (ONLY.includes('F')) await armFolder();
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? `\nall ${ok.length} checks passed` : `\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length === 0 ? 0 : 1);

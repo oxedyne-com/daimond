@@ -43,6 +43,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const AR_JS = path.join(HERE, '..', 'www', 'js', 'autoreload.js');
@@ -473,6 +474,7 @@ check('Credits opened before the session lands is filled in when it does',
 			: `still blank ${lateAuthed ? 'WITH' : 'without'} a session, 20s on`);
 await shot(late, 'autoreload-late');
 await late.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 if (BREAK) {

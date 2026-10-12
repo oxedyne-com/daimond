@@ -1306,6 +1306,57 @@ async function runRecoveryAcceptance(P, L, check) {
 		check('orphan recovery released the lease when done', sync.leases()['t-orphan'].mode === 'released');
 	}
 
+	// ── A RUN A RELOAD CUT SHORT is not run again (r545 QA-C2 F-C2-1). The runner's
+	//    journal holds the turn open after a reload; the asker re-sends it. runErrand ends
+	//    it as interrupted: the final frame, a done report marked interrupted, the lease
+	//    done then released, the ack, the parcel -- and no runTurn, so no model request
+	//    and no tool call is made twice. On 436db66f the dep is unknown and the turn ran. ──
+	{
+		console.log('\nReload — a handed-off run the runner lost ends interrupted, never rerun');
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0, acked = 0, pushed = 0, framed = 0, asked = null; let report = null; const order = [];
+		const errand = sentErrand(P, { turnId: 't-lost', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const ctx = { chat: {}, app: {} };
+		let clk = NOW;
+		const res = await P.runErrand(errand, {
+			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true, awaitPush: true,
+			finished:    async () => false,
+			reconstruct: async () => ctx,
+			interrupted: async (er, c) => { asked = [er.turnId, c === ctx]; order.push('fold'); return true; },
+			runTurn:     async () => { ran++; },
+			finalFrame:  async () => { framed++; order.push('frame:' + sync.leases()['t-lost'].mode); return '{"final":1}'; },
+			abort: () => {}, pushResult: async () => { pushed++; return 7; },
+			post:  async (r) => { report = r; }, ack: async () => { acked++; order.push('ack:' + sync.leases()['t-lost'].mode); },
+			now: () => (clk += 1),			// a moving clock: one lease write per instant
+		});
+		check('the lost run is NOT run again (no runTurn)', ran === 0 && res.ran === false && res.done === true && res.interrupted === true, JSON.stringify(res));
+		check('the fold was asked for this turn, with the reconstructed chat', !!asked && asked[0] === 't-lost' && asked[1] === true);
+		check('the final frame went first, before the lease settled', framed === 1 && order[0] === 'fold' && order[1] === 'frame:claimed', order.join());
+		check('a done report marked interrupted, naming its final frame', !!report && report.status === 'done' && report.interrupted === 1 && report.finalTail === 1,
+			JSON.stringify(report));
+		check('lease done before the ack, then released as settled', order[2] === 'ack:done' && sync.leases()['t-lost'].mode === 'released'
+			&& sync.leases()['t-lost'].settled === 1, order.join());
+		check('acked once and the parcel pushed', acked === 1 && pushed === 1 && res.parcelVersion === 7);
+	}
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0; let report = null;
+		const errand = sentErrand(P, { turnId: 't-whole', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const res = await P.runErrand(errand, {
+			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			interrupted: async () => false,
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1,
+			post:  async (r) => { report = r; }, ack: async () => {}, now: () => NOW,
+		});
+		check('[ctl] no journal entry: the turn runs once, an ordinary done', ran === 1 && res.ran === true && !res.interrupted
+			&& report && report.status === 'done' && report.interrupted === 0);
+	}
+
 	// ── UNDELIVERABLE reconstruct: the peer HANDS THE TURN BACK cleanly. When the
 	//    progress-based catch-up gives up (the chat's parcel never synced here), the
 	//    reconstruct throws an `undeliverable` error. runErrand must: report status
@@ -1336,6 +1387,88 @@ async function runRecoveryAcceptance(P, L, check) {
 			res.trace.join(',').includes('reconstruct-undeliverable')
 			&& res.trace.indexOf('release') > res.trace.indexOf('report')
 			&& res.trace.indexOf('ack') > res.trace.indexOf('release'));
+	}
+
+	// ── THREAD-READY (D2, 11 Oct): a thread is fingerprinted only from a resident chat,
+	//    a runner that cannot rebuild the thread never claims, and a mismatch that can
+	//    never converge is told apart from a thread still arriving. ──
+	{
+		console.log('\nTHREAD-READY — residency before the fingerprint, readiness before the claim');
+		const userRow = { role: 'user', content: 'the turn', mid: 'TR-T', ts: NOW };
+		let threw = null;
+		try { P.buildDispatch({ id: 'c-tr', _loaded: false, messages: [userRow] }, { turnId: 'TR-T', prompt: 'the turn' }); }
+		catch (e) { threw = e; }
+		check('TR1: buildDispatch REFUSES a non-resident chat (no thread from an unloaded transcript)',
+			!!threw && /not loaded|resident/i.test(String(threw.message)), threw ? threw.message : 'returned a plan');
+		const prior = [
+			{ role: 'user',      content: 'q1', mid: 'p1', ts: NOW - 5 },
+			{ role: 'assistant', content: 'a1', mid: 'p2', ts: NOW - 4 },
+			{ role: 'user',      content: 'q2', mid: 'p3', ts: NOW - 3 },
+			{ role: 'assistant', content: 'a2', mid: 'p4', ts: NOW - 2 },
+		];
+		const full = { id: 'c-tr', _loaded: true, messages: prior.concat([userRow]) };
+		const want = P.threadSig(full, 'TR-T');
+		const er = { turnId: 'TR-T', thread: want };
+		check('TR2: holdsThread is FALSE for a non-resident chat, whatever it shows',
+			P.holdsThread({ id: 'c-tr', _loaded: false, messages: prior.slice() }, er) === false);
+		const R = P.threadReadiness;
+		check('TR3a: threadReadiness exists', typeof R === 'function');
+		if (typeof R === 'function') {
+			check('TR3b: the same thread is a match', R(full, er).state === 'match');
+			check('TR3c: a runner missing the tail is BEHIND (still arriving)',
+				R({ id: 'c-tr', messages: prior.slice(0, 2) }, er).state === 'behind');
+			const more = { id: 'c-tr', messages: prior.concat([{ role: 'user', content: 'x', mid: 'p5', ts: NOW - 1 }]) };
+			check('TR3d: a runner holding MORE than the errand is FINAL (the D2 "7 of 0")',
+				R(more, { turnId: 'TR-T', thread: { n: 0, sig: P.threadSig({ messages: [] }, 'TR-T').sig } }).state === 'final'
+				&& R(more, er).state === 'final');
+			const swapped = { id: 'c-tr', messages: prior.slice(0, 3).concat([{ role: 'assistant', content: 'z', mid: 'pZ', ts: NOW - 2 }]) };
+			check('TR3e: an equal count with a different sig is FINAL', R(swapped, er).state === 'final');
+			check('TR3f: an absent chat whose errand SEED carries the thread is a match (no write)',
+				R(null, { turnId: 'TR-T', thread: want, seed: { msgs: prior.concat([userRow]), whole: true } }).state === 'match');
+			check('TR3g: an errand with no thread is never judged final', R(full, { turnId: 'TR-T' }).state !== 'final');
+			// TR3h (permit 3c, 12 Oct): a Retry tombstones T1 and dispatches before that parcel
+			// lands; a runner still below the errand's parcel version holds T1's two rows and is
+			// only BEHIND on deletions, not divergent. At or past the version, the rows judge.
+			const retry = { turnId: 'TR-T', parcelVersion: 16, thread: { n: 0, sig: P.threadSig({ messages: [] }, 'TR-T').sig } };
+			const stale = { id: 'c-tr', messages: prior.slice(0, 2) };
+			check('TR3h: a runner below the parcel version holding extra rows is BEHIND, not final',
+				R(stale, retry, 15).state === 'behind', R(stale, retry, 15).state);
+			check('TR3i: at the parcel version the same copy is FINAL; without a version, as before',
+				R(stale, retry, 16).state === 'final' && R(stale, retry).state === 'final');
+		}
+		// TR4: a runner whose readiness says no never writes a lease, hands back at once.
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0, acked = 0, recon = 0; let report = null;
+		const t0 = Date.now();
+		const res = await P.runErrand(sentErrand(P, { turnId: 't-tr', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'DESK' }), {
+			selfId: 'PEER', cas: P.syncCas(sync),
+			finished: async () => false,
+			ready:    async () => ({ ok: false, why: 'the thread differs on this device (have 7, sent 0)' }),
+			reconstruct: async () => { recon++; return { chat: {}, app: {} }; },
+			runTurn: async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1,
+			post: async (r) => { report = r; }, ack: async () => { acked++; }, now: () => NOW,
+		});
+		check('TR4a: not ready -> NO lease written (never claimed)', !sync.leases()['t-tr'], JSON.stringify(sync.leases()['t-tr'] || null));
+		check('TR4b: not ready -> nothing reconstructed or run', ran === 0 && recon === 0 && res.ran === false);
+		check('TR4c: not ready -> an undeliverable report naming the reason, and an ack',
+			!!report && report.status === 'undeliverable' && /differs/.test(String(report.why)) && acked === 1);
+		check('TR4d: the hand-back is immediate (< 1 s)', Date.now() - t0 < 1000);
+		// TR5: ready -> claims and runs as before.
+		L.forget();
+		const sync5 = makeLeaseSync({});
+		let ran5 = 0;
+		const res5 = await P.runErrand(sentErrand(P, { turnId: 't-tr5', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'DESK' }), {
+			selfId: 'PEER', cas: P.syncCas(sync5),
+			finished: async () => false, ready: async () => ({ ok: true }),
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn: async () => { ran5++; },
+			abort: () => {}, pushResult: async () => 1,
+			post: async () => {}, ack: async () => {}, now: () => NOW,
+		});
+		check('TR5: ready -> claimed and run once', ran5 === 1 && res5.ran === true);
+		L.forget();
 	}
 
 	// ── THE SENDER RELEASES A HANDED-BACK CLAIM ITSELF (hand-off QA F7). The report names
@@ -1422,6 +1555,23 @@ async function runRecoveryAcceptance(P, L, check) {
 		const folded = P.foldProvisional(msgs.slice(0, 1), 'T', rows) || [];
 		const fa = folded.find((m) => m.mid === 'ans');
 		check('frames: and the sender\'s provisional copy keeps them', !!fa && fa.ranModel === 'm-1' && fa.ranCost === 0.01, JSON.stringify(fa));
+	}
+
+	// ── A RUNNER'S FRAME NAMES ITS WORKERS (workers-line, D-20261011-21). The asker draws
+	//    them on the hand-off tile; off the door they are untrusted, so each is read field
+	//    by field and an unknown state or a missing id drops the entry, never the frame.
+	{
+		const ws = [{ id: 'r1', name: 'alpha', status: 'done' }, { id: 'r2', name: 'beta', status: 'running' }];
+		const fj = P.frameJson([{ mid: 'm', role: 'assistant', content: 'x' }], null, null, { workers: ws });
+		const back = JSON.parse(fj);
+		check('workers: a frame carries them beside its rows', JSON.stringify(P.frameWorkers(back.workers)) === JSON.stringify(ws), fj);
+		check('workers: a frame from a build that sends none yields none', P.frameWorkers(undefined).length === 0);
+		const odd = P.frameWorkers([null, 'x', { id: 'a', status: 'pwned' }, { name: 'n', status: 'done' },
+			{ id: 'b', status: 'queued' }, { id: 'c', name: 7, status: 'error', extra: '<b>' }]);
+		check('workers: only known states with an id survive, named by id when unnamed',
+			JSON.stringify(odd) === JSON.stringify([{ id: 'b', name: 'b', status: 'queued' }, { id: 'c', name: 'c', status: 'error' }]),
+			JSON.stringify(odd));
+		check('workers: bounded per frame', P.frameWorkers(Array.from({ length: 99 }, (_, i) => ({ id: 'w' + i, status: 'done' }))).length === 32);
 	}
 
 	// ── A FINAL FRAME CARRIES EVERY ROW WHOLE (hand-off QA F4, round 2). The door keeps one
@@ -1605,8 +1755,8 @@ async function runRecoveryAcceptance(P, L, check) {
 				P.dispatchControl('no-peer-awake', Object.assign({}, ans, { itext: 'Other: leave them' })) === 'answeragain');
 			check('dispatchControl: a plain expired prompt keeps [Run here]',
 				P.dispatchControl('no-peer-awake', Object.assign({}, ans, { itext: 'Keep going autonomously now' })) === 'runhere');
-			check('dispatchControl: an ask answer still in flight keeps its pre-claim take-back',
-				P.dispatchControl('dispatched', ans) === 'takeback');
+			check('dispatchControl: an ask answer still in flight offers no control (no take back)',
+				P.dispatchControl('dispatched', ans) === '');
 		}
 		// A PLACEHOLDER WITH NO STAMP READS AS EXPIRED (audit F6), as watchDecision has it.
 		check('uiState: a placeholder with no stamp is no-peer-awake ([Run here]), not "dispatched" for ever',
@@ -2526,6 +2676,66 @@ async function runPresenceAcceptance(P, PR, check) {
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone' }, T); return d.dispatch === false && d.reason === 'desktop-local'; })());
 	check('DESKTOP + no peer at all -> run LOCAL',
 		P.autoDispatchDecision(quickChat, {}, { selfId: 'phone' }, T).dispatch === false);
+
+	// ── THE PERSON'S SWITCH (owner, D-20261009-23). A composer send passes `runnerOnly`:
+	// it goes to the nominated runner or runs here, never to a desktop the switch never
+	// offered. `seatSwitch` is what the switch draws: the runner while it is reachable,
+	// with the chat's Here pin pressing Here without hiding the runner. ──
+	{
+		const ro = { selfId: 'phone', runnerOnly: true };
+		check('runnerOnly: a fresh nominee takes the turn',
+			(() => { const d = P.autoDispatchDecision(quickChat, fresh, Object.assign({ nominatedId: 'argonaut' }, ro), T); return d.dispatch === true && d.peer.deviceId === 'argonaut'; })());
+		check('runnerOnly: an AGENTIC turn with only an unnominated peer runs here (no-runner)',
+			(() => { const d = P.autoDispatchDecision(quickChat, fresh, Object.assign({ toolsEnabled: true }, ro), T); return d.dispatch === false && d.reason === 'no-runner'; })());
+		check('runnerOnly: a silent nominee is not replaced by another desktop',
+			(() => { const d = P.autoDispatchDecision(quickChat, fresh, Object.assign({ nominatedId: 'gone', toolsEnabled: true }, ro), T); return d.dispatch === false; })());
+		check('runnerOnly: Here pinned (toggle false) never hands off, even to the nominee',
+			(() => { const d = P.autoDispatchDecision(quickChat, fresh, Object.assign({ nominatedId: 'argonaut', toggle: false }, ro), T); return d.dispatch === false && d.reason === 'chat-local'; })());
+		const sw = P.seatSwitch(quickChat, fresh, Object.assign({ nominatedId: 'argonaut' }, ro), T);
+		check('seatSwitch: a reachable nominee is the runner segment, pressed by default',
+			!!sw.runner && sw.runner.deviceId === 'argonaut' && sw.choice === 'runner', JSON.stringify(sw));
+		const swHere = P.seatSwitch(quickChat, fresh, Object.assign({ nominatedId: 'argonaut', toggle: false }, ro), T);
+		check('seatSwitch: Here pinned keeps the runner on offer and presses Here',
+			!!swHere.runner && swHere.runner.deviceId === 'argonaut' && swHere.choice === 'here', JSON.stringify(swHere));
+		const swNone = P.seatSwitch(quickChat, fresh, Object.assign({ toolsEnabled: true }, ro), T);
+		check('seatSwitch: no nominee -> plain Here, even with another desktop awake',
+			swNone.runner === null && swNone.choice === 'here', JSON.stringify(swNone));
+		const swGone = P.seatSwitch(quickChat, stale, Object.assign({ nominatedId: 'argonaut' }, ro), T);
+		check('seatSwitch: an unreachable nominee -> plain Here',
+			swGone.runner === null && swGone.choice === 'here', JSON.stringify(swGone));
+		// R4: the switch knows the moment its runner stops counting as reachable, so one
+		// timer redraws it to plain Here before the person sends; and a busy runner is
+		// never offered, so the send never queues behind it.
+		const W = P.DISPATCH_FRESH_MS;
+		check('seatSwitch R4: `until` is the last beat plus the dispatch window',
+			sw.until === (T - 1000) + W + 1, JSON.stringify(sw) + ' W=' + W);
+		const swEdge = P.seatSwitch(quickChat, fresh, Object.assign({ nominatedId: 'argonaut' }, ro), sw.until - 1);
+		const swPast = P.seatSwitch(quickChat, fresh, Object.assign({ nominatedId: 'argonaut' }, ro), sw.until);
+		check('seatSwitch R4: the runner is offered up to `until` and plain Here from it',
+			!!swEdge.runner && swPast.runner === null && swPast.choice === 'here' && swPast.until === 0,
+			JSON.stringify([swEdge, swPast]));
+		const busyP = { argonaut: { name: 'argonaut', lastSeen: T - 1000, busy: 1 } };
+		const swBusy = P.seatSwitch(quickChat, busyP, Object.assign({ nominatedId: 'argonaut' }, ro), T);
+		check('seatSwitch R4: a busy runner is hidden -> plain Here, no timer',
+			swBusy.runner === null && swBusy.choice === 'here' && swBusy.until === 0, JSON.stringify(swBusy));
+		// Lead, 12 Oct: "no queue-on-busy" is about a runner busy with ANOTHER chat. A
+		// follow-up in a chat the runner is still running waits in that chat's queue there,
+		// so the switch offers the runner and the send takes it (O3).
+		const swBusyQ = P.seatSwitch(quickChat, busyP, Object.assign({ nominatedId: 'argonaut', queueOn: 'argonaut' }, ro), T);
+		check('seatSwitch: a runner busy with THIS chat is still offered (the follow-up queues there)',
+			!!swBusyQ.runner && swBusyQ.runner.deviceId === 'argonaut' && swBusyQ.choice === 'runner', JSON.stringify(swBusyQ));
+		check('runnerOnly: a follow-up queues on the runner already running this chat',
+			(() => { const d = P.autoDispatchDecision(quickChat, busyP, Object.assign({ nominatedId: 'argonaut', queueOn: 'argonaut' }, ro), T); return d.dispatch === true && d.peer && d.peer.deviceId === 'argonaut'; })());
+		// Busy with another chat: queueOn names some other device (or none) -> plain Here.
+		const swBusyO = P.seatSwitch(quickChat, busyP, Object.assign({ nominatedId: 'argonaut', queueOn: 'gilgamesh' }, ro), T);
+		check('seatSwitch: a runner busy with ANOTHER chat is not offered -> plain Here',
+			swBusyO.runner === null && swBusyO.choice === 'here', JSON.stringify(swBusyO));
+		check('runnerOnly: the send takes no runner busy with another chat',
+			(() => { const d = P.autoDispatchDecision(quickChat, busyP, Object.assign({ nominatedId: 'argonaut' }, ro), T); return d.dispatch === false; })());
+		// Pinned Here, a follow-up stays here even while the runner runs this chat.
+		check('runnerOnly: a chat pinned Here never queues on the runner',
+			(() => { const d = P.autoDispatchDecision(quickChat, busyP, Object.assign({ nominatedId: 'argonaut', queueOn: 'argonaut', toggle: false }, ro), T); return d.dispatch === false && d.reason === 'chat-local'; })());
+	}
 	check('OPT-IN (toggle true) + genuine peer -> dispatch (toggle-on)',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', toggle: true }, T); return d.dispatch === true && d.reason === 'toggle-on'; })());
 	check('OPT-IN (toggle true) but only a PHANTOM peer -> run LOCAL (phantom excluded)',
@@ -3508,6 +3718,44 @@ async function runRunnerAcceptance(P, L, check) {
 			res.trace.indexOf('abort') >= 0 && res.trace.indexOf('push') < 0);
 	}
 
+	// ── STOP-ON-PEER: a revoke ADOPTED from another device aborts a QUIET turn at once ──
+	// No journal event and no tick: the turn is a long tool call or a model thinking. The
+	// lease wake adopts the door, and the runner's `_leaseWatch` reads it then, not 30 s on.
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		const cas = P.syncCas(sync);
+		const timer = makeFakeTimer();
+		let abortFired = false, reads = 0, armed = false;
+		const counted = Object.assign({}, cas, { read: () => { if (armed) reads += 1; return cas.read(); } });
+		const res = await P.runErrand(errand, {
+			selfId: 'peerA', cas: counted, now: () => 1000,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'chat-w', messages: [] } }),
+			runTurn: async () => {
+				armed = true;
+				L.adopt({ [TID + '-other']: { turnId: TID + '-other', eid: 'o', holder: 'peerC',
+					mode: 'running', expiry: 9e15, deadline: 9e15, renewedAt: 1 } });
+				await new Promise((r) => setTimeout(r, 10));
+				check('STOP: a lease change on ANOTHER turn costs the runner no read', reads === 0, reads + ' read(s)');
+				// The phone's Stop, written at the door by another device, then adopted here.
+				const cur = sync.leases();
+				cur[TID] = Object.assign({}, cur[TID], { mode: 'released', expiry: 0, settled: 1,
+					renewedAt: (cur[TID].renewedAt | 0) + 5 });
+				sync.commit(sync.version(), cur);
+				L.adopt(sync.leases());
+				await new Promise((r) => setTimeout(r, 10));
+				if (abortFired) throw new Error('aborted by signal');
+			},
+			abort: () => { abortFired = true; },
+			pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		check('STOP: an adopted revoke aborts a quiet turn with no tick and no event',
+			res.aborted === true && abortFired === true && reads === 1, JSON.stringify(res.trace) + ' reads=' + reads);
+		check('STOP: the runner stops watching once its run ends',
+			timer.handles.filter((h) => h.live).length === 0);
+	}
+
 	// ── Crash before commit: no ack, so the errand is NOT dropped (step-2 gap closed). ──
 	{
 		L.forget();
@@ -3868,15 +4116,18 @@ async function runLeaseFollowupAcceptance(phone, check) {
 
 	// M1 part 3. The sender's own local recovery that stands down undecided arms its backstop again.
 	{
-		const calls = [];
+		const calls = [], ctx = {}, ctxSeen = [];
 		const mk = (res) => {
 			const win = {
 				_localRecovering: Object.create(null), diag: () => {}, renderDispatchedBadges: () => {},
 				claimTurnHere: async () => ({ release: () => {} }),
 				errandForRecovery: () => ({ turnId: 'turn-m1' }), peerRunErrandDeps: () => ({}),
-				dropDispatchedPlaceholder: () => {}, retryNextDesktopBeforeLocal: async () => false,
+				dropDispatchedPlaceholder: () => {},
 				scheduleDispatchFallback: (...a) => calls.push(a), UNDECIDED_RECOLLECT_MS: 30000,
-				DaimondPeer: { runErrand: async () => res, standDownUndecided: P.standDownUndecided },
+				DaimondPeer: { runErrand: async () => { ctxSeen.push(Object.keys(ctx).join()); return res; },
+					standDownUndecided: P.standDownUndecided },
+				// STOP-ON-PEER: the reclaimed run is registered in `_runnerCtx` for its life.
+				runnerCtxBegin: (e) => { ctx[e.turnId] = 1; }, runnerCtxEnd: (tid) => { delete ctx[tid]; },
 			};
 			new Function('window', 'with (window) {\nasync ' + daimondFuncSource('recoverOneLocally')
 				+ '\nwindow.__r = recoverOneLocally; }')(win);
@@ -3884,13 +4135,15 @@ async function runLeaseFollowupAcceptance(phone, check) {
 		};
 		for (const [why, armed] of [['unread', true], ['exhausted', true], ['holder', false], ['stale-turn', false]]) {
 			calls.length = 0;
-			await mk({ ran: false, why })({ id: 'chat-m1', messages: [] }, { iturn: 'turn-m1', dispatchedBy: 'dev' }, {});
+			await mk({ ran: false, why })({ id: 'chat-m1', messages: [] }, { iturn: 'turn-m1', dispatchedBy: 'dev' });
 			check('M1: a local recovery that stood down for `' + why + '` ' + (armed ? 're-arms' : 'does not re-arm') + ' the backstop',
 				armed ? (calls.length === 1 && calls[0][0] === 'chat-m1' && calls[0][1] === 'turn-m1' && calls[0][2] > 0 && calls[0][2] < 90000)
 					: calls.length === 0, JSON.stringify(calls));
 		}
+		check('STOP: the reclaimed run is in `_runnerCtx` while it runs, and gone after',
+			ctxSeen.length > 0 && ctxSeen.every((k) => k === 'turn-m1') && !Object.keys(ctx).length, JSON.stringify(ctxSeen));
 		calls.length = 0;
-		await mk({ ran: true, done: true })({ id: 'chat-m1', messages: [] }, { iturn: 'turn-m1', dispatchedBy: 'dev' }, {});
+		await mk({ ran: true, done: true })({ id: 'chat-m1', messages: [] }, { iturn: 'turn-m1', dispatchedBy: 'dev' });
 		check('M1: a local recovery that ran does not re-arm it', calls.length === 0, JSON.stringify(calls));
 	}
 
@@ -4206,82 +4459,40 @@ async function runTurnAgeAcceptance(P, L, PR, check) {
 }
 
 // R4b (2026-09-23). With no nominee the send advertises no device, and the backstop
-// seeded what it had tried from that advertisement alone: it found nothing tried and
-// re-handed the turn to the very desktop that had just failed to collect it, so a
-// one-desktop account ran it here only at the SECOND backstop, about 190 s after the
-// send. The elected device is now recorded in `triedDevices` from the first send.
-// Driven through daimond.js's own `electedTried`, `markTurnDispatched` and
-// `retryNextDesktopBeforeLocal`, extracted from source, over the real peer.js.
+// seeded what it had tried from that advertisement alone, so it re-handed the turn to
+// the very desktop that had just failed to collect it. The elected device is recorded in
+// `triedDevices` from the first send. Since D-20261009-23 ("If argonaut is selected, it
+// runs there, no take back") there is no re-seat at all: a turn the runner did not run
+// runs here, so the app holds no chase to another desktop.
 async function runElectedTriedAcceptance(P, check) {
-	console.log('\nR4b — the first backstop does not hand a turn back to the desktop that did not collect it');
-	function sandbox(presence) {
-		const spy = { redispatched: [], persisted: 0 };
-		const win = {
-			DaimondPeer: P,
-			DaimondLease: { holder: () => null },
-			DaimondPresence: { snapshot: () => presence },
-			selfDeviceId: () => 'PHONE',
-			annotatePresence: (p) => p,
-			fleetCurrentBuild: () => '',
-			preferredWorkerLabel: () => '',
-			nominatedDeviceId: () => '',
-			deviceLabelFor: (id) => String(id),
-			touchChat: () => {}, persistChats: () => { spy.persisted++; },
-			renderHistory: () => {}, ownsChat: () => false, diag: () => {},
-			newMid: () => Date.now().toString(36) + '-1-ph000',
-			_dispatchedIx: {}, updateExpedite: () => {},
-			dispatchToPeer: (chat, tid, text, holds, opts) => {
-				spy.redispatched.push({ tid, to: opts && opts.toId });
-				return Promise.resolve({ ok: true });
-			},
-			scheduleDispatchFallback: () => {}, runDispatchFallback: () => {},
-			// Nothing here is paused: the re-seat is asked the pause first (F2).
-			turnHold: () => '',
-			DISPATCH_RETRY_MAX: 3,
-			_msNum: (x) => +x || 0,
-			// A re-seat is a stamped edit (`touchMsg`, the message law, r53).
-			DaimondStamp: (() => { const w = {}; new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(w); return w.DaimondStamp; })(),
-			msgFpSeen: new WeakMap(),
-		};
-		const src = ['electedTried', 'touchMsg', 'markTurnDispatched', 'retryNextDesktopBeforeLocal']
-			.map((n) => daimondFuncSource(n)).join('\n')
-			+ '\nwindow.electedTried = electedTried;\nwindow.markTurnDispatched = markTurnDispatched;'
-			+ '\nwindow.retryNextDesktopBeforeLocal = retryNextDesktopBeforeLocal;\n';
-		new Function('window', 'with (window) {\n' + src + '\n}')(win);
-		return { win, spy };
-	}
-	const now = Date.now();
-	const desk = (name) => ({ name, lastSeen: now - 1000, servicedAt: now - 1000, mobile: false });
-	const send = (sb, d) => {
-		const chat = { id: 'c', messages: [{ role: 'user', mid: 'T', iturn: 'T', content: 'p', ts: now }] };
-		// What dispatchToPeer marks for a send with no nominee: no advertised device, and
-		// (the fix) the elected one recorded as tried.
-		sb.win.markTurnDispatched(chat, { interrupted: true, why: 'dispatched', iturn: 'T', itext: 'p',
-			dispatchedBy: 'PHONE', parkCount: 0, toDevice: '', toName: '', tried: sb.win.electedTried(d) });
-		return { chat, m: chat.messages.find((x) => x.why === 'dispatched') };
+	console.log('\nR4b — the elected desktop is recorded as tried, and nothing re-seats a turn');
+	const win = {
+		DaimondPeer: P,
+		renderHistory: () => {}, ownsChat: () => false, diag: () => {}, touchChat: () => {}, persistChats: () => {},
+		newMid: () => Date.now().toString(36) + '-1-ph000',
+		_dispatchedIx: {}, updateExpedite: () => {},
+		DaimondStamp: (() => { const w = {}; new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(w); return w.DaimondStamp; })(),
+		msgFpSeen: new WeakMap(),
 	};
 	try {
-		// ONE desktop, which did not collect: the first backstop runs the turn here.
-		{
-			const sb = sandbox({ DESK: desk('desk') });
-			const { chat, m } = send(sb, { dispatch: true, peer: { deviceId: 'DESK', name: 'desk' }, reason: 'mobile-peer' });
-			check('R4b: the placeholder records the elected desktop as tried, and still advertises no device',
-				Array.isArray(m.triedDevices) && m.triedDevices.indexOf('DESK') !== -1 && m.toDevice === '');
-			const re = await sb.win.retryNextDesktopBeforeLocal(chat, m);
-			check('R4b: at the first backstop a one-desktop account runs the turn here, not back to that desktop',
-				re === false && sb.spy.redispatched.length === 0);
-		}
-		// TWO desktops: the first backstop moves the turn to the OTHER one.
-		{
-			const sb = sandbox({ DESK: desk('desk'), DESK2: desk('desk2') });
-			const { chat, m } = send(sb, { dispatch: true, peer: { deviceId: 'DESK', name: 'desk' }, reason: 'mobile-peer' });
-			const re = await sb.win.retryNextDesktopBeforeLocal(chat, m);
-			check('R4b: with a second desktop the first backstop re-hands to it, never to the first',
-				re === true && sb.spy.redispatched.length === 1 && sb.spy.redispatched[0].to === 'DESK2');
-		}
+		const src = ['electedTried', 'touchMsg', 'markTurnDispatched'].map((n) => daimondFuncSource(n)).join('\n')
+			+ '\nwindow.electedTried = electedTried;\nwindow.markTurnDispatched = markTurnDispatched;\n';
+		new Function('window', 'with (window) {\n' + src + '\n}')(win);
+		const chat = { id: 'c', messages: [{ role: 'user', mid: 'T', iturn: 'T', content: 'p', ts: Date.now() }] };
+		win.markTurnDispatched(chat, { interrupted: true, why: 'dispatched', iturn: 'T', itext: 'p',
+			dispatchedBy: 'PHONE', parkCount: 0, toDevice: '', toName: '',
+			tried: win.electedTried({ dispatch: true, peer: { deviceId: 'DESK', name: 'desk' }, reason: 'mobile-peer' }) });
+		const m = chat.messages.find((x) => x.why === 'dispatched');
+		check('R4b: the placeholder records the elected desktop as tried, and still advertises no device',
+			!!m && Array.isArray(m.triedDevices) && m.triedDevices.indexOf('DESK') !== -1 && m.toDevice === '', JSON.stringify(chat.messages).slice(0, 300));
 	} catch (e) {
 		check('R4b: the elected desktop is recorded as tried (' + String(e && e.message || e).slice(0, 80) + ')', false);
 	}
+	const gone = ['retryNextDesktopBeforeLocal', 'DISPATCH_RETRY_MAX', 'retryFrom', 'retryTo', "'seat.retry'"]
+		.filter((w) => DAIMOND_SRC.indexOf(w) !== -1);
+	check('R4b: the app holds no re-seat chase (no retryNextDesktopBeforeLocal, retry stamps or seat.retry words)',
+		gone.length === 0, JSON.stringify(gone));
+	check('R4b: the local recovery takes no re-seat option', /function\s+recoverOneLocally\s*\(chat, m\)/.test(DAIMOND_SRC));
 }
 
 /// S-HAND #1: the settled own-errand is released, and a settled lease refuses a take.
@@ -4439,6 +4650,47 @@ async function runSettleMoneySafety(P, L, check) {
 		const race = await L.take(TID, { holder: 'RACER', eid: 'eR', deadline: now + P.DISPATCH_DEADLINE_MS }, cas, clock);
 		check('a take of a SETTLED lease stands down (why:settled)',
 			race.won === false && race.why === 'settled', JSON.stringify(race));
+	}
+
+	// ── STOP-ON-PEER (D-20261011-21): a Stop is a revoke SETTLED, so nothing re-runs the turn ──
+	{
+		L.forget();
+		let t = now;
+		const clock = () => t;
+		const cas = makeCas({});
+		await L.take(TID, { holder: 'PEER', eid: 'eX', deadline: now + P.DISPATCH_DEADLINE_MS }, cas, clock);
+		t = now + 3000;
+		await L.renew(TID, 'PEER', cas, clock);		// claimed -> running
+		t = now + 3010;
+		const stop = await L.revoke(TID, cas, clock, { settle: true });
+		const rec = cas.peekLeases()[TID];
+		check('STOP: a settling revoke succeeds and leaves the lease released, settled:1',
+			stop.ok === true && rec.mode === 'released' && rec.settled === 1, JSON.stringify(rec));
+		check('STOP: every device reads the stopped turn done', P.settledLease(rec) === true);
+		t = now + 3020;
+		const again = await L.take(TID, { holder: 'NEXT', eid: 'eY', deadline: now + P.DISPATCH_DEADLINE_MS }, cas, clock);
+		check('STOP: no take re-runs a stopped turn (why:settled)',
+			again.won === false && again.why === 'settled', JSON.stringify(again));
+		// A turn already released (unsettled) is settled by the Stop too, and the stamp
+		// survives the same-holder merge.
+		L.forget();
+		const cas2 = makeCas({});
+		t = now;
+		await L.take(TID, { holder: 'PEER', eid: 'eZ', deadline: now + P.DISPATCH_DEADLINE_MS }, cas2, clock);
+		t = now + 10;
+		await L.release(TID, 'PEER', cas2, clock);
+		const stop2 = await L.revoke(TID, cas2, clock, { settle: true });
+		check('STOP: a released-unsettled turn is settled by the Stop',
+			stop2.ok === true && cas2.peekLeases()[TID].settled === 1, JSON.stringify(cas2.peekLeases()[TID]));
+		// A plain revoke (the rescue half of [Run here]) still settles nothing.
+		L.forget();
+		const cas3 = makeCas({});
+		t = now;
+		await L.take(TID, { holder: 'PEER', eid: 'eW', deadline: now + P.DISPATCH_DEADLINE_MS }, cas3, clock);
+		t = now + 10;
+		await L.revoke(TID, cas3, clock);
+		check('STOP: a plain revoke is not settled (Run here still claims)',
+			(cas3.peekLeases()[TID].settled | 0) === 0);
 	}
 
 	// ── a PARK release (running->released) is NOT settled: a re-dispatch still claims ──

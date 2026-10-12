@@ -51,6 +51,7 @@ import {
 	send,
 	freshChat,
 } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const CLAIM_MS   = 30000;		// B must claim a hand-off this soon; A's backstop fires at ~95 s
 const ANSWER_MS  = 150000;		// long enough for the backstop to land it when B does not
@@ -284,4 +285,5 @@ try {
 	try { await a?.close(); } catch (e) {}
 	try { await b?.close(); } catch (e) {}
 }
+guardRan(ok.length + bad.length);
 process.exit(bad.length ? 1 : 0);

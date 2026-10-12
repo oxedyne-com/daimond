@@ -20,6 +20,7 @@ import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { open } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GWDIR  = path.resolve(__dirname, '..', 'gateway');
@@ -415,5 +416,6 @@ try {
 }
 
 if (bad.length) GW_LOG.report();
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

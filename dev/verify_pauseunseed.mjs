@@ -33,6 +33,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, connectMock, newChat, scratch, mockLog, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const want = process.argv.slice(2);
@@ -288,5 +289,6 @@ if (on('G') && gwUp) {
 	await b2.close(); await a.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { console.log('FAILED:\n  ' + bad.join('\n  ')); process.exit(1); }

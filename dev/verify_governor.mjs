@@ -13,6 +13,7 @@
 // the pure core and the Node export run. This is robust to whatever module
 // system the app's package.json declares.
 import { readFileSync } from 'fs';
+import { guardRan } from './verdict.mjs';
 
 const src = readFileSync(new URL('../www/js/governor.js', import.meta.url), 'utf8');
 const mod = { exports: {} };
@@ -133,5 +134,6 @@ const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
 	check('past the budget is tripped', C.levelFor(0.10, base, budget + 1, budget) === 'tripped');
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

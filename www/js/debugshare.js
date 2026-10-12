@@ -179,7 +179,7 @@
 	// every `SCREEN_FLOOR_MS`, so a reader is never more than five minutes stale.
 	var SCREEN_FLOOR_MS   = 300000;			// ship one even unchanged, at least this often
 	var MAX_VIEW_CHARS    = 24;					// the view/thread kind
-	var MAX_SEAT_CHARS    = 60;					// the seat-line text, as rendered
+	var MAX_SEAT_CHARS    = 60;					// the seat switch's pressed words
 	var MAX_TILE_ROLE_CHARS = 16;				// the last tile's role ("user", "assistant", ...)
 	var MAX_TILE_TEXT_CHARS = 80;				// the last tile's text, head only
 	var MAX_DLG_CHARS     = 48;					// an open dialog/banner's kind + head
@@ -1062,7 +1062,7 @@
 	/// matches on: an `sk-` key beginning at character 190 of a console line reaches
 	/// the seam as eight characters of prefix, which no rule can recognise and every
 	/// reader still can. Every free-text field the feed carries -- a console line, an
-	/// error message, the tile of the daimon's own answer, the seat line -- is cut
+	/// error message, the tile of the daimon's own answer, the seat switch -- is cut
 	/// here first, so this is where the content rules have to run.
 	function clip(s, n) {
 		var v = scrubText(String(s == null ? '' : s))

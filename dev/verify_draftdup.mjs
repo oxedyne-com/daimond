@@ -35,6 +35,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -351,4 +352,5 @@ console.log('\ndrafts.js — a script-dispatched write is never mistaken for a k
 
 console.log(`\n${ran - bad}/${ran} checks passed`);
 if (bad) { console.log(`${bad} FAILED`); process.exit(1); }
+guardRan(ran);
 console.log('verify_draftdup: all checks passed');

@@ -29,6 +29,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, connectMock, newChat, scratch, mockLog } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BASE = process.env.BASE || '81309ed6';
@@ -214,5 +215,6 @@ if (on('W')) {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed' + (bad.length ? ': ' + bad.join(', ') : ''));
 process.exit(bad.length ? 1 : 0);

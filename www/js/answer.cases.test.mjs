@@ -313,11 +313,11 @@ function homeSend(opts = {}) {
 	chatInput.focus = () => { log.focused++; };
 	chatSend.classList = { toggle() {}, add() {}, remove() {} };
 	const toasts = [];
-	const make = new Function('DaimondAnswer', 'chatSend', 'chatInput', 'chatStop', 'curGen', 't', 'SEND_ARROW', 'toast', 'stopGeneration', 'sendUserMessage',
+	const make = new Function('DaimondAnswer', 'chatSend', 'chatInput', 'chatStop', 'turnPhase', 't', 'SEND_ARROW', 'toast', 'stopGeneration', 'sendUserMessage',
 		'var current = ' + (opts.sending ? '{ _sending: true }' : 'null') + '; var sendCtl = null;'
 		+ body + '; return { bind: function () { return bindSend(); }, sync: syncSendMode, mode: sendMode, set: function (c) { current = c; } };');
 	const toast = (text, isErr) => { const b = { text, isErr, parentNode: { removeChild(x) { log.toasts.splice(log.toasts.indexOf(x), 1); } } }; log.toasts.push(b); toasts.push(text); return b; };
-	const m = make(answer(), chatSend, chatInput, null, () => !!opts.running, words, '<arrow>', toast, () => { log.stopped++; }, () => { log.sent++; });
+	const m = make(answer(), chatSend, chatInput, null, () => opts.phase || (opts.running ? 'running' : 'idle'), words, '<arrow>', toast, () => { log.stopped++; }, () => { log.sent++; });
 	return { chatSend, chatInput, log, m, toasts };
 }
 
@@ -362,6 +362,17 @@ test('Home Send: with a turn running and the box empty it is Stop, which acts', 
 	assert.equal(off(h.chatSend), false, 'Stop is never dimmed for want of words');
 	await h.chatSend.fire('click');
 	assert.equal(h.log.stopped, 1); assert.equal(h.log.sent, 0);
+});
+
+test('Home Send: once Stop is pressed it says Stopping, is held, and a second press does nothing', async () => {
+	const h = homeSend({ phase: 'stopping', value: 'typed meanwhile' });
+	h.m.bind();
+	assert.equal(h.m.mode(), 'stopping', 'a Stop on its way outranks what is typed');
+	assert.equal(h.chatSend.getAttribute('aria-label'), '[chat.stopping]');
+	assert.equal(h.chatSend.getAttribute('aria-busy'), 'true');
+	assert.equal(h.chatSend.disabled, true, 'held, with no reason');
+	await h.chatSend.fire('click');
+	assert.equal(h.log.stopped, 0); assert.equal(h.log.sent, 0);
 });
 
 test('Home Send: while a press is in flight it is really disabled with no reason, and a second press does nothing', async () => {

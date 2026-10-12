@@ -30,6 +30,7 @@
 //   DAIMOND_APP=http://localhost:8795 node dev/verify_rosterghost.mjs
 
 import { open, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -332,5 +333,6 @@ try {
 	if (s && s.close) await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' fail');
 process.exit(bad.length ? 1 : 0);

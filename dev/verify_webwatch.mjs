@@ -24,6 +24,7 @@
 //   node dev/verify_webwatch.mjs            # all cases
 //   WEBWATCH_CASES=AB node dev/verify_webwatch.mjs
 import { open, shot, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const CASES = (process.env.WEBWATCH_CASES || 'ABCDE').toUpperCase();
 const ok = [], bad = [];
@@ -232,6 +233,7 @@ await shot(s, 'webwatch-end');
 const errs = errors(s).filter((e) => !/Failed to load resource.*\b(401|402|404|502|503)\b/.test(e));
 check('the app logged no console errors', errs.length === 0, errs.join(' | '));
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 await s.close();
 process.exit(bad.length ? 1 : 0);

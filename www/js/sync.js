@@ -234,6 +234,7 @@
 	// only pull a wake needs to stand down for is one that has just this second
 	// asked the same question.
 	var WAKE_PULL_MIN_MS  = 1000;
+	var LEASE_WAKE_MIN_MS = 1000;	// at most one wake-caused lease read a second per device
 	// How long the gateway is asked to hold a parked request. Under a minute, so
 	// no intermediary decides it has stalled; the gateway clamps it anyway.
 	var WAKE_POLL_MS      = 45000;
@@ -504,6 +505,7 @@
 	// what it must not talk over. See `wakeVia` and `catchUp`.
 	var wakeShut    = false;
 	var wakes       = 0;		// Wakes acted on, for the verifier and for debugging.
+	var leaseWakes  = 0;		// Lease reads a wake caused, likewise.
 	// The park the poll transport is holding, so a change in what it must listen for
 	// can end it at once rather than wait out forty-five seconds. See `wakePoll`.
 	var wakeHold    = { ac: null };
@@ -2899,10 +2901,16 @@
 		return false;
 	}
 
+	/// Can a beat reach the gateway now? False while the door is not yet open -- locked,
+	/// not yet signed in to the gateway, unentitled or removed -- when `beatPresence`
+	/// would send nothing at all.
+	function canBeat() {
+		return ready() && entitled && !_removedSelf;
+	}
+
 	async function beatPresence(deviceId, name, attended, servicing, runner, mobile,
 		hand, folder, busy) {
-		if (!ready() || !entitled) return null;
-		if (_removedSelf) return null;		// removed: the door will only refuse it again
+		if (!canBeat()) return null;
 		try {
 			// `attended` is the attention signal (foreground + recent interaction) a
 			// live consent routes on. `servicing` says this device is genuinely running
@@ -3637,6 +3645,55 @@
 		wakeSoon = setTimeout(function () { wakeSoon = null; wakePull(); }, wait);
 	}
 
+	/// A wake that brings no parcel news is LEASE news, and is read, never dropped.
+	///
+	/// The live gateway wakes the other devices with the lease door's version as a
+	/// bare number on the same channel as the parcel (gateway sync.rs, lease CAS), and
+	/// that number is far below the parcel's. `wakeTo` reads every bare number as a
+	/// parcel version and so threw every lease wake away: a peer's claim reached this
+	/// device only on its next ordinary pull, tens of seconds on, and its footer kept
+	/// offering "[Take back]" on a turn the peer had already claimed (D1, 2026-10-11).
+	/// A tagged `l<ver>` comes here directly once the gateway sends it.
+	function wakeHeard(v) {
+		v = v | 0;
+		if (v > heardUpTo()) { wakeTo(v); return; }
+		leaseWake(0);
+	}
+
+	/// Read the lease door because a wake said it moved, and adopt it, which fires
+	/// the lease change hook and the redraw.
+	///
+	/// BOUND: one read in flight and at most one start per LEASE_WAKE_MIN_MS, per device.
+	/// A wake that lands while a read is out or inside the interval is not dropped: it
+	/// arms ONE trailing read, so a burst of N wakes costs at most two reads per second,
+	/// and the last of them always ends in a read that began after it arrived. A tagged
+	/// version the door has already been read at costs nothing.
+	var leaseWakeAt = 0, leaseWakeSoon = null, leaseWakeBusy = false, leaseWakeAgain = false;
+	function leaseWake(ver) {
+		if ((ver | 0) > 0 && (ver | 0) <= (_leaseVer | 0)) return;
+		if (leaseWakeBusy) { leaseWakeAgain = true; return; }
+		if (leaseWakeSoon) return;
+		var wait = Math.max(0, LEASE_WAKE_MIN_MS - (Date.now() - leaseWakeAt));
+		leaseWakeSoon = setTimeout(function () { leaseWakeSoon = null; leaseWakeRead(); }, wait);
+	}
+
+	async function leaseWakeRead() {
+		if (!ready() || !window.DaimondLease) return;
+		leaseWakeBusy = true;
+		leaseWakeAt   = Date.now();
+		leaseWakes++;
+		try {
+			var g = await leaseGet();
+			// An unreadable door is unknown, never vacant (see leaseGet): adopt nothing.
+			if (!g.unread) DaimondLease.adopt(g.leases);
+		} catch (e) {
+			log('lease wake read failed', e);
+		} finally {
+			leaseWakeBusy = false;
+			if (leaseWakeAgain) { leaseWakeAgain = false; leaseWake(0); }
+		}
+	}
+
 	/// The pull a wake asks for. Held behind the same `inFlight` gate as every
 	/// other round, and re-armed rather than dropped if one is under way: the
 	/// news is real, so it must not be lost to a coincidence of timing.
@@ -3709,6 +3766,7 @@
 				&& res.json.changed && wakeWanted()) {
 				wakeTo(res.json.version | 0);
 			}
+			if (res.status === 200 && res.json && res.json.lease === true && wakeWanted()) leaseWake(0);	// STOP-ON-PEER
 			// Everything below decides what the channel does NEXT, which is the
 			// live generation's business and nobody else's.
 			if (gen !== wakeGen || !wakeWanted()) return;
@@ -3763,12 +3821,15 @@
 		};
 		sock.onmessage = function (ev) {
 			if (gen !== wakeGen) return;
-			// `p<seq>`: a progress frame was stored for one of the account's turns. A bare
-			// integer is the parcel version, as it always was.
+			// `p<seq>`: a progress frame was stored for one of the account's turns.
+			// `l<ver>`: the lease door moved. A bare integer is the parcel version, or,
+			// from a gateway that does not tag its lease wakes, the lease door's: one
+			// that is not parcel news is read as lease news (wakeHeard).
 			var d = String(ev.data);
 			if (d.charAt(0) === 'p') { progressTapped(); return; }
+			if (d.charAt(0) === 'l') { leaseWake(parseInt(d.slice(1), 10) | 0); return; }
 			var v = parseInt(d, 10);
-			if (isFinite(v)) wakeTo(v);
+			if (isFinite(v)) wakeHeard(v);
 		};
 		sock.onerror = function () { /* a close always follows; handled there. */ };
 		sock.onclose = function () {
@@ -3872,6 +3933,8 @@
 					&& gen === wakeGen) {
 					progressTapped();
 				}
+				// STOP-ON-PEER: the lease door moved (a gateway with the Lease channel).
+				if (res.status === 200 && res.json && res.json.lease === true && wakeWanted()) leaseWake(0);
 				if (gen !== wakeGen) break;
 				if (res.status !== 200) {
 					// A refusal, or a 502 from a gateway that is restarting: both
@@ -4608,6 +4671,7 @@
 		/// no version and waking nobody); `refreshPresence()` reads that map without a
 		/// beat, for a dispatch-time refresh. Both ingest through DaimondPresence.
 		beatPresence:    beatPresence,
+		canBeat:         canBeat,
 		refreshPresence: refreshPresence,
 		/// REAL REMOVAL (owner ruling 2026-09-12). `removeDevice(id)` tells the gateway
 		/// to refuse that device at every door it reaches the account by -- presence,
@@ -4681,6 +4745,7 @@
 				probing:   wakeProbing && wakeProbeGen === wakeGen,
 				heard:     wakeTarget,				// highest version the channel reported
 				wakes:     wakes,					// pulls this channel has caused
+				leaseWakes: leaseWakes,				// lease reads it has caused
 				progTaps:  progTaps,				// progress taps it has carried
 				progTapped: progTapGen === wakeGen,	// the gateway has tapped this channel
 			};

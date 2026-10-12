@@ -22,6 +22,7 @@
 // finds nothing must SAY so, and a create must never land behind a filter.
 import { open, signInAs, connectMock, shot, scratch, PASS, APP } from './harness.mjs';
 import fs from 'node:fs';
+import { guardRan } from './verdict.mjs';
 
 // How long another window is allowed to take to notice. The `storage` event is
 // synchronous-ish, but the listener re-reads OPFS, and a cold OPFS read on a
@@ -208,6 +209,7 @@ async function secondWindow(s) {
 }
 
 if (skipped.length) console.log('\nnot covered here:\n  ' + skipped.join('\n  '));
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed, ${skipped.length} not covered`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

@@ -40,6 +40,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, chat, newChat, signInAs, mockLog, contentText, errors, scratch, BROWSER, checker } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -1250,5 +1251,6 @@ await section('FW6', async () => {
 // ── The end ─────────────────────────────────────────────────────────────
 await letGo(D); await letGo(PH);
 if (seenErrors.length) console.log('  (first page error of each device: ' + seenErrors.join(' | ') + ')');
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed${BREAK ? ' (BREAK ' + BREAK + ')' : ''}`);
 if (bad.length) { console.log('\nFAILED:\n' + bad.map((b) => '  - ' + b).join('\n')); process.exit(1); }

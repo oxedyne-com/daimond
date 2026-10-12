@@ -19,8 +19,9 @@
 //
 //   eval "$(bash dev/world.sh 89 --env)"; node dev/verify_effort.mjs
 import { open, scratch, connectMock, chat, storedChats, mockLog, clearMockLog, checker } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
-const { bad, check: named } = checker();
+const { ok, bad, check: named } = checker();
 const check = (pass, name, detail) => named(name, pass, detail);
 
 async function openCog(page, listSel) {
@@ -190,5 +191,6 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + (bad.length ? ('FAILED ' + bad.length) : 'ok: verify_effort'));
 process.exit(bad.length ? 1 : 0);

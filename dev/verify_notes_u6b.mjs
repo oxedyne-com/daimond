@@ -11,6 +11,7 @@
 //   N8 a line the writer cannot read is kept as written through an add; a refused line is not stored.
 // Run: node dev/verify_notes_u6b.mjs (in a world)
 import { open, chat, mockLog, clearMockLog, contentText } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -107,5 +108,6 @@ try {
 	check('N8 a refused line is not stored', /cannot be kept/.test(refused) && (await store('diamonds/' + OPT + '/.daimond/steering.md')) === after, refused);
 } catch (e) { bad.push('threw'); console.log('  FAIL threw -- ' + (e && e.stack || e)); }
 finally { try { await s.close(); } catch (e) { /* closed */ } }
+guardRan(ok.length + bad.length);
 console.log(`\nverify_notes_u6b: ${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

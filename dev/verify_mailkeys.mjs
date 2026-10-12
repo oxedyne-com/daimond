@@ -21,6 +21,7 @@
 // Every check is proved red before it is trusted, at the end, by breaking the property
 // in the live page: the role goes, the tabindex goes, the handler goes, each in turn.
 import { open, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -306,6 +307,7 @@ await p.evaluate((had) => {
 }, was);
 
 console.log('');
+guardRan(ok.length + bad.length);
 console.log(bad.length
 	? `${bad.length} FAILED of ${ok.length + bad.length}:\n  - ${bad.join('\n  - ')}`
 	: `mail keyboard: all ${ok.length} checks pass — every choice in Email can be made without a pointer.`);

@@ -13,6 +13,7 @@
 // either way, which is exactly the memory this file is about. Anything that starts
 // asserting on the FILE has to move to the scratch first — see verify_writeguard.
 import { open, chat, clearMockLog, mockLog } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -51,5 +52,6 @@ check('and the result that came back from it', sawToolResult,
 	msgs.map(m => m.role).join(','));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

@@ -61,10 +61,14 @@ const BREAK = (() => {
 })();
 
 const BREAKS = {
-	// The tile before the fix: only a paused run is offered anything.
+	// The tile before the fix: an interrupted run is offered nothing. Since f6c730f0 the
+	// same condition also offers a capped or spend-capped run its Continue, over two lines;
+	// the break takes out only `interrupted`, the case this file is about.
 	notile: [
-		"\t\t\t} else if (run.status === 'paused' || run.status === 'interrupted') {\n",
-		"\t\t\t} else if (run.status === 'paused') {\n",
+		"\t\t\t} else if (run.status === 'paused' || run.status === 'interrupted'\n"
+			+ "\t\t\t\t|| run.status === 'capped' || run.status === 'spend_cap') {\n",
+		"\t\t\t} else if (run.status === 'paused'\n"
+			+ "\t\t\t\t|| run.status === 'capped' || run.status === 'spend_cap') {\n",
 	],
 	// The plausible over-correction: continue everything, including a run with no text
 	// to continue from.

@@ -751,9 +751,12 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    `.imp-chip.on` marks the active chip (improve.css), so "Send this report"
    reads as the main verb beside "Not now". */
 .report-send   { background: var(--accent-soft); color: var(--accent-text); }
-.chat-msg-error > .chat-err-report { display: block; margin-top: 6px; font-size: var(--fs-xs); border: 0; }
+.chat-msg-error > .chat-err-report { display: block; margin-top: 6px; margin-inline-start: -10px; font-size: var(--fs-xs); border: 0; }
 /* The pill's 1px border would stand its words 1px off the note's foot, so here the hover ring is
-   drawn inside the box and takes no room. */
+   drawn inside the box and takes no room. With no ground and no border the button reads as a
+   line of text, so its words stand on the fault's column: the pill's 10px side padding is taken
+   back by its margin and still gives the ring its room -- the idiom of daylight's Continue
+   (r556tx QA F2; one borderless text button, drawn one way). */
 .chat-msg-error > .chat-err-report:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--accent); }
 /* One heading idiom for the whole drawer. The account (user-name) menu heads its
    groups with `.admin-sec` -- small, upper-case, muted -- while the Models,
@@ -1388,27 +1391,26 @@ button.tag-pool { cursor: pointer; }
    crystal face the source order puts the box at the top of the page -- above
    the document it is meant to sit under. Ordered explicitly rather than moved
    in the markup, because the chat face wants the source order it already has. */
-/* WHERE THE NEXT TURN WILL RUN. Quiet by default -- it is a standing fact, not a
-   notice -- and a WARNING only in the one state that asks something of the user: a
-   phone about to run the turn itself, which must stay foregrounded for it to finish.
-   Under the composer, inside its border, so it reads as part of the one control. */
-.seat-line {
-	padding: 0 12px 8px;
-	font-size: var(--fs-xs);
-	color: var(--text-muted);
-	line-height: 1.4;
-}
-.seat-line.seat-warn { color: var(--warn); }
+/* WHERE THE NEXT TURN RUNS: the "Here | <runner>" switch (D-20261009-23), the same
+   segmented control as Crystal | Chat, under the composer inside its border so it
+   reads as part of the one control. Sized to its words, not the row. */
+.seat-switch { align-self: flex-start; margin: 0 12px 8px; }
+.seat-switch[hidden] { display: none; }
+.seat-switch .dview-btn { padding: 3px 7px; }
 /* The same statement inside a hand-off tile, where it is about ONE turn rather than
    about the next one. Indented under the status it qualifies. */
 .seat-note { margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
 .seat-note.seat-warn { color: var(--warn); }
-:root[data-cfull] .panel.ai .seat-line { display: none !important; }
+/* The workers a handed-off turn is running on the other device, each with the agents
+   list's own status pill. */
+.handoff-workers { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-xs); color: var(--text-muted); }
+.handoff-workers .hw { display: inline-flex; align-items: center; gap: 6px; }
+:root[data-cfull] .panel.ai .seat-switch { display: none !important; }
 
 .panel.ai.crystal-face .crystal-view   { order: 1; }
 .panel.ai.crystal-face .mark-notice    { order: 2; }
 .panel.ai.crystal-face .chat-input-bar { order: 2; }
-.panel.ai.crystal-face .seat-line      { order: 3; }
+.panel.ai.crystal-face .seat-switch    { order: 3; }
 
 /* MARKS NOT IN FORCE ON THIS DEVICE. It asks something of the person, so it is drawn
    as the crystal's fallback note is -- a warning band, in the text ink that holds its
@@ -4243,14 +4245,15 @@ body.resizing { cursor: col-resize; user-select: none; }
    blocks nothing. The two mean opposite things and a reader has to be
    able to tell them apart at a glance. */
 /* D-20260929-03 (left bars): uniform border, not thicker on one side. */
+/* An entry of the transcript like any tile (r556tx QA F1): no margin, since the gap above it
+   is the thread's rule (block 4 below) and nothing sits under it; the text at the tile's depth
+   and column, and no border to push it 1px further in. Answered, it keeps a tile's ground. */
 .ask-card {
-	margin: 12px 0;
-	padding: 12px 14px;
-	border: 1px solid transparent;
+	--ct-edge: var(--accent);
+	padding: var(--tx-pad-y) var(--ct-pad-x);
 	border-radius: var(--radius);
 	background: var(--bg-secondary);
 }
-.ask-card.answered { background: var(--bg-primary); }
 .ask-count {
 	font-size: var(--fs-2xs);
 	color: var(--text-muted);
@@ -4629,8 +4632,11 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    tool. Minimal: a label bar with no body. */
 .ctile[data-t="handoff"] { --ct-edge: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 6%, var(--bg-secondary)); }
 .ctile[data-t="handoff"] .ctile-who { font-weight: 500; }
-/* Its `who` is a device sentence ("Chromium on Linux · 9f00 is on it"), not a role word, so on a phone it gives way before the time and the copy control do. */
-.ctile[data-t="handoff"] .ctile-who { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Its `who` is a sentence ("Ran here — trmate didn’t have the whole conversation"), not a role word, and the
+   sentence IS the tile's message. So it takes the column's width beside the time and the copy control and WRAPS
+   there, never ellipsised: an ellipsis on a column of ~230px (three panels open at 1280px) left "Ran h…", 37 of
+   279px (THREAD-READY arm d). */
+.ctile[data-t="handoff"] .ctile-who { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 /* An empty meta or peek still costs a flex gap; on this bar that 16px is the sentence's. */
 .ctile[data-t="handoff"] :is(.ctile-meta, .ctile-peek):empty, .ctile[data-t="handoff"] .ctile-grow { display: none; }
 /* The expanded body: a provenance line and a terse facts row, both muted — this
@@ -4950,6 +4956,9 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .chat-output > .ctile.chat-msg-assistant + .chat-msg:not(.ctile) { margin-top: var(--tx-gap-aside); }
 .chat-output > :not(.chat-msg-user) + .chat-msg-user { margin-top: var(--tx-gap-turn); }
 .chat-output > .chat-msg:not(.ctile) { padding: var(--tx-note-y) var(--ct-pad-x); }
+/* The Interrupted footer sits inside the answer tile, after its body: it keeps the tile's
+   column and its depth under it, as the body does (r556tx QA, every instance). */
+.chat-output .ctile > .turn-interrupted { margin-inline: var(--ct-pad-x); margin-bottom: var(--tx-pad-y); }
 /* A label with its body under it gives up most of its lower padding, so the name sits on
    its text; where the label is a tap row it keeps its height instead. A body with nothing in
    it (see .ctile-body:empty) leaves the label its full padding. :has() cannot nest, so the

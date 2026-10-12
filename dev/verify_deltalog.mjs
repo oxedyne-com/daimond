@@ -34,6 +34,7 @@
 //
 //	node dev/verify_deltalog.mjs
 import { open, clearDiamonds } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 // The store's errors arrive coloured, and a colour code in a verifier's own
@@ -388,6 +389,7 @@ check('so the history continues from there rather than ending at the break',
 	JSON.stringify({ got: mended.got, want: mended.want, err: mended.err }));
 
 console.log('');
+guardRan(ok.length + bad.length);
 console.log('  ' + ok.length + ' ok, ' + bad.length + ' failed');
 await s.close();
 process.exit(bad.length ? 1 : 0);

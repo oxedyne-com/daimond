@@ -29,6 +29,7 @@
 import { open, chat, newChat, shot, errors, signInAs } from './harness.mjs';
 import { scratch } from './harness.mjs';
 import fs from 'node:fs';
+import { guardRan } from './verdict.mjs';
 
 const PROFILE = scratch('pw', 'thinktools-group');
 fs.rmSync(PROFILE, { recursive: true, force: true });
@@ -283,5 +284,6 @@ const errs = errors(s).filter((e) => !/502|\/api\//.test(e));
 check('6 nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

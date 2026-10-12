@@ -51,6 +51,7 @@ import fs			from 'node:fs';
 import os			from 'node:os';
 import path			from 'node:path';
 import { fileURLToPath }	from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const LENS	= path.join(HERE, 'lens.mjs');
@@ -1288,6 +1289,7 @@ check('an unknown command exits non-zero', rc === 2, 'exit ' + rc);
 
 fs.rmSync(ROOT, { recursive: true, force: true });
 
+guardRan(ok.length + bad.length);
 console.log(`\nlens: ${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

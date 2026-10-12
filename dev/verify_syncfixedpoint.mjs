@@ -95,6 +95,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, scratch, clearDiamonds, BROWSER, markHere } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -1650,6 +1651,7 @@ check('(xi) and after it A\'s store and B\'s still hold the fixture byte for byt
 // WHAT THIS RUN COULD NOT LOOK AT, on the line that reports the count -- a skip
 // nobody reads is a skip nobody knows about.
 for (const s_ of skipped) console.log('  --   not covered on ' + BROWSER + ': ' + s_);
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`
 	+ (skipped.length ? `, ${skipped.length} not covered on ${BROWSER}` : ''));
 if (bad.length) process.exit(1);

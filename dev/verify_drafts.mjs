@@ -129,10 +129,16 @@ const reload = async () => {
 	await p.waitForTimeout(1200);
 };
 
+// The Social panel opens on its Messages view; the note box is in the Proposals view,
+// hidden until its chip is pressed. This opened the panel and filled a box that was not
+// on screen ("element is not visible"), so it presses the chip a person presses.
 const openSocial = async () => {
 	await p.evaluate(() => {
 		window.DaimondPanels.show('social');
 		if (window.DaimondImprove) window.DaimondImprove.onOpen();
+		const chip = document.querySelector('#panel-social .imp-chip[data-view="proposals"]');
+		if (chip) chip.click();
+		else if (window.DaimondSocial && window.DaimondSocial.show) window.DaimondSocial.show('proposals');
 	});
 	await p.waitForTimeout(600);
 };

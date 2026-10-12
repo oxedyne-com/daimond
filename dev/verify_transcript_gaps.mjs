@@ -37,6 +37,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { guardRan } from './verdict.mjs';
 
 const BREAK = process.argv.includes('--break');
 const DUMP  = process.argv.includes('--dump');
@@ -67,6 +68,7 @@ const RULE = {
 	padY: 8, padYTap: 12.5, padX: 12,
 	tapMax: 760,		// at this width and under, a tile's label row is a 44px tap row
 	tol: 0.5,			// subpixel
+	stepContrast: 0.75,	// a step's ground against its group's, as a share of the group's against the page
 };
 
 const ok = [], bad = [];
@@ -96,6 +98,8 @@ const RICH = [
 const CODE_LAST = 'It ends on code.\n\n```\nlast line\n```';
 const LIST_LAST = 'It ends on a list.\n\n1. first\n2. second';
 
+const ASK = JSON.stringify({ question: 'Which of the two should it use?', options: [{ label: 'Alpha', means: 'The first of them.' }, { label: 'Beta', means: 'The second of them.' }], recommend: 'Alpha', why: 'It is the one already in use.' });
+
 let seq = 0;
 const m = (role, extra) => { const i = seq++; return Object.assign({ role, mid: 'g' + i, ts: 1760000000000 + i * 1000, content: role + ' ' + i }, extra || {}); };
 const tool = () => m('tool_log', { name: 'file_list', args: '{"path":"."}', outcome: 'done' });
@@ -120,8 +124,20 @@ const messages = [
 	m('user', { content: 'Asked again.' }),											// group → user
 	m('assistant', { content: LONG }),
 	m('error_log', { content: 'A fault line.' }),									// answer → fault
+	// Every tile the owner can see takes the rule, not only the ones it was written for (owner's ruling
+	// of 11 Oct: "an example he names means every instance"): the Decision answered and open, the
+	// hand-off tiles, an answer cut short with its footer, and the fault's Report button.
+	m('user', { content: 'Choose for me.' }),
+	m('tool_log', { name: 'ask', args: ASK, outcome: 'done' }),						// user → Decision
+	m('user', { content: 'Chose: Alpha' }),											// Decision, answered → user
+	m('assistant', { content: 'Ran here after the hand-off.', handoffFellBack: 'Phone' }),	// user → hand-off → answer
+	m('user', { content: 'Again, by the relay.' }),
+	m('assistant', { content: 'The relay refused it.', handoffRefused: 'relay refused' }),
+	m('user', { content: 'Stop half way.' }),
+	m('assistant', { content: 'Cut short.', interrupted: true, why: 'stopped' }),		// an answer with its Interrupted footer
 	m('user', { content: 'The last question.' }),
 	m('assistant', { content: 'The last answer.' }),
+	m('tool_log', { name: 'ask', args: ASK, outcome: 'done', ts: Date.now() }),		// the Decision still open: it stands last
 ];
 
 // ── What the page reports ──
@@ -135,7 +151,8 @@ const MEASURE = () => {
 		if (has(e, 'chat-msg-user')) return 'user';
 		if (has(e, 'chat-msg-assistant') && has(e, 'ctile')) return 'answer';
 		if (has(e, 'crollup')) return e.dataset.t === 'work' ? 'work' : 'system';
-		if (has(e, 'ctile')) return ({ think: 'work', tool: 'work', rating: 'rating', user: 'user', assistant: 'answer' })[e.dataset.t] || 'tile:' + e.dataset.t;
+		if (has(e, 'ask-card')) return has(e, 'answered') ? 'ask' : 'ask-open';
+		if (has(e, 'ctile')) return ({ think: 'work', tool: 'work', rating: 'rating', user: 'user', assistant: 'answer', handoff: 'handoff' })[e.dataset.t] || 'tile:' + e.dataset.t;
 		if (has(e, 'chat-msg-compacted') || has(e, 'chat-msg-ended') || has(e, 'chat-msg-error')
 			|| has(e, 'chat-msg-interjected') || has(e, 'chat-msg-empty')) return 'note';
 		if (has(e, 'chat-msg-working') || has(e, 'chat-msg-assistant')) return 'said';
@@ -157,7 +174,9 @@ const MEASURE = () => {
 			const cs = getComputedStyle(n);
 			if (!block && !/^inline($|-)/.test(cs.display) && cs.display !== 'contents') block = n;
 			else if (!block && /^inline-/.test(cs.display)) block = n;
-			if (block && paints(cs)) painted = n;
+			// A step's own ground (r556tx QA F3) is not its group's content: the step is judged as a tile
+			// of its own (step depth, step edge, step-ground), and the group's depth is read through it.
+			if (block && paints(cs) && !n.matches('.crollup-body > .ctile')) painted = n;
 		}
 		if (painted) { const r = painted.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left }; }
 		if (!block) {		// text straight in the entry: its own line boxes
@@ -212,7 +231,7 @@ const MEASURE = () => {
 	const row = (e) => {
 		const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
 		return {
-			role: role(e), top: r.top, bottom: r.bottom, left: r.left, right: r.right,
+			role: role(e), ground: paints(cs), top: r.top, bottom: r.bottom, left: r.left, right: r.right,
 			mt: px(cs.marginTop), mb: px(cs.marginBottom),
 			depth: depth(e),
 			first: !e.previousElementSibling || ![...e.parentElement.children].slice(0, [...e.parentElement.children].indexOf(e)).some(shown),
@@ -254,6 +273,44 @@ const MEASURE = () => {
 		undoNext: undoNext ? named(undoNext) : null,
 		// A rating row's first glyph: the left edge of its INK (path geometry less half the round-capped
 		// stroke, in px), against the answer text's column in the same tile.
+		// A button with no ground and no border that starts its line is text, so its words stand on the
+		// column of the block it is in: side padding on it puts the label off that column (r556tx QA F2).
+		textBtns: [...out.querySelectorAll('button')].filter((b) => shown(b) && !b.closest('.ctile-lbl, .crollup-lbl')
+			&& (b.textContent || '').trim() && !/absolute|fixed/.test(getComputedStyle(b).position)).map((b) => {
+			const cs = getComputedStyle(b), par = b.parentElement, pcs = getComputedStyle(par);
+			if (paints(cs) || cs.opacity === '0' || cs.visibility === 'hidden') return null;
+			if (['Top', 'Right', 'Bottom', 'Left'].some((k) => px(cs['border' + k + 'Width']) > 0 && !/rgba?\([^)]*,\s*0\)$|transparent/.test(cs['border' + k + 'Color']))) return null;
+			const col = par.getBoundingClientRect().left + px(pcs.borderLeftWidth) + px(pcs.paddingLeft);
+			const br = b.getBoundingClientRect();
+			if (br.left > col + 0.5) return null;		// not the first thing on its line; a margin taken back still starts it
+			const rg = document.createRange(); rg.selectNodeContents(b);
+			return { text: rg.getBoundingClientRect().left, col, what: String(b.className).split(' ').pop() + ' ' + b.textContent.trim().slice(0, 16) };
+		}).filter(Boolean),
+		// The grounds of an open group and of its steps, as the eye gets them: every fill from the page down,
+		// composed. A step must stand off its group (r556tx QA F3), measured as a contrast ratio.
+		grounds: (() => {
+			const parse = (c) => {
+				let m = /^rgba?\(([^)]+)\)$/.exec(c);
+				if (m) { const v = m[1].split(/[\s,/]+/).filter(Boolean).map(parseFloat); return [v[0], v[1], v[2], v.length > 3 ? v[3] : 1]; }
+				m = /^color\(srgb ([^)]+)\)$/.exec(c);
+				if (m) { const v = m[1].split(/[\s/]+/).filter(Boolean).map(parseFloat); return [v[0] * 255, v[1] * 255, v[2] * 255, v.length > 3 ? v[3] : 1]; }
+				return null;
+			};
+			const seen = (el) => {
+				const chain = [];
+				for (let n = el; n; n = n.parentElement) chain.push(getComputedStyle(n).backgroundColor);
+				let rgb = [255, 255, 255];
+				for (const c of chain.reverse()) { const v = parse(c); if (!v || !v[3]) continue; rgb = rgb.map((x, i) => x * (1 - v[3]) + v[i] * v[3]); }
+				return rgb;
+			};
+			const lum = (rgb) => { const f = (x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }; return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]); };
+			const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+			const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+			return [...out.querySelectorAll('.crollup:not(.collapsed):not(.solo) > .crollup-body > .ctile')].filter(shown).slice(0, 4).map((st) => {
+				const g = st.closest('.crollup'), sg = seen(st), gg = seen(g), pg = seen(out);
+				return { step: ratio(sg, gg), stepD: dist(sg, gg), group: ratio(gg, pg), groupD: dist(gg, pg), what: st.dataset.t + ' in ' + g.dataset.t };
+			});
+		})(),
 		rateInk: [...out.querySelectorAll('.ctile-rate-row')].filter(shown).map((row) => {
 			const svg = row.querySelector('.ctile-rate button svg'), body = row.closest('.ctile') && row.closest('.ctile').querySelector('.ctile-body');
 			if (!svg || !body) return null;
@@ -263,7 +320,7 @@ const MEASURE = () => {
 };
 
 // ── The judgement: what the rule says each measure is ──
-const TILE = { user: 1, answer: 1, work: 1, rating: 1 };
+const TILE = { user: 1, answer: 1, work: 1, rating: 1, ask: 1, 'ask-open': 1, handoff: 1 };
 const gapWant = (a, b) => {
 	if (b === 'user' && a !== 'user') return RULE.turn;
 	if (a === 'answer' && b === 'note') return RULE.aside;
@@ -273,7 +330,7 @@ const near = (got, want) => Math.abs(got - want) <= RULE.tol;
 const r1 = (v) => Math.round(v * 10) / 10;
 
 const faults = [];		// { cfg, kind, where, want, got }
-const tally = { gaps: 0, depths: 0, steps: 0 };
+const tally = { gaps: 0, depths: 0, steps: 0, grounds: 0 };
 function judge(cfg, d, { width }) {
 	const put = (kind, where, want, got, what) => { if (!near(got, want)) faults.push({ cfg, kind, where, want, got: r1(got), what }); };
 	const padY = width <= RULE.tapMax ? RULE.padYTap : RULE.padY;
@@ -296,6 +353,8 @@ function judge(cfg, d, { width }) {
 			put('depth-left', e.role, RULE.padX, e.depth.left, e.what);
 		}
 		put('edge-left', e.role, d.outLeft + d.outPadL, e.left, e.what);
+		// Quiet tiles, always on (owner, D-20261010-16): every tile stands on a ground of its own.
+		if (TILE[e.role] && !e.ground && !/ hover /.test(cfg)) faults.push({ cfg, kind: 'quiet-tile', where: e.role, want: 'a ground', got: 'none', what: e.what });
 	}
 	for (const g of d.groups) {
 		for (let i = 0; i < g.steps.length; i++) {
@@ -344,6 +403,13 @@ function judge(cfg, d, { width }) {
 	}
 	// The rating row's glyph INK stands on the answer text's column (lead ruling, 11 Oct), not its 16px box.
 	for (const k of d.rateInk || []) put('rate-ink', 'rating glyph ink↔answer text', k.col, k.ink, k.what);
+	for (const k of d.textBtns || []) put('text-column', 'text button↔its column', k.col, k.text, k.what);
+	// A step stands off its group as plainly as the group stands off the page: the same quiet step, one level in.
+	for (const k of d.grounds || []) {
+		tally.grounds++;
+		const want = 1 + RULE.stepContrast * (k.group - 1);
+		if (k.step < want) faults.push({ cfg, kind: 'step-ground', where: k.what + ' (group on page ' + (Math.round(k.group * 1000) / 1000) + ')', want: '≥ ' + Math.round(want * 1000) / 1000, got: Math.round(k.step * 1000) / 1000, what: k.what });
+	}
 }
 
 // ── The run ──
@@ -414,6 +480,21 @@ for (const S of SESSIONS) {
 			judge(cfg + ' rest', d, { width: w });
 			for (const e of d.entries) seenRoles.add(e.role);
 			for (let i = 1; i < d.entries.length; i++) seenPairs.add(d.entries[i - 1].role + '→' + d.entries[i].role);
+			// One group opened in every theme, so a step's ground is judged against its group's in each
+			// (r556tx QA F3: the step contrast held in two themes and not in the rest).
+			const opened1 = await page.evaluate(() => {
+				const g = document.querySelector('#chat-output > .crollup.collapsed:not(.solo)[data-t="work"]');
+				if (!g) return false;
+				g.querySelector(':scope > .crollup-lbl').click();
+				return true;
+			});
+			if (!opened1) faults.push({ cfg, kind: 'fixture', where: 'a group to open', want: 'present', got: 'absent' });
+			else {
+				await wait(250);
+				judge(cfg + ' group-open', await measure(), { width: w });
+				await page.evaluate(() => { for (const g of document.querySelectorAll('#chat-output > .crollup:not(.collapsed):not(.solo)[data-t="work"]')) g.querySelector(':scope > .crollup-lbl').click(); });
+				await wait(200);
+			}
 			if (DUMP && !dumped[S.kind + w]) {
 				dumped[S.kind + w] = 1;
 				console.log(`--- ${cfg}: flow ${d.flow}, pad ${d.outPadL}/${d.outPadB}`);
@@ -557,6 +638,9 @@ for (const S of SESSIONS) {
 // ── The fixture held every pair the rule names ──
 for (const p of ['user→work', 'work→answer', 'user→answer', 'answer→user', 'answer→note', 'note→user', 'note→note', 'work→user'])
 	check('fixture: the thread holds ' + p, seenPairs.has(p), [...seenPairs].join(' '));
+for (const r of ['ask', 'ask-open', 'handoff'])
+	check('fixture: the thread holds a ' + r + ' tile', seenRoles.has(r), [...seenRoles].join(' '));
+check('fixture: a step was measured against its group', tally.grounds > 0, tally.grounds + ' step ground(s)');
 const unknown = [...seenRoles].filter((r) => r[0] === '?' || r.startsWith('tile:'));
 check('every entry in the thread has a role the rule knows', unknown.length === 0, unknown.slice(0, 4).join(' | '));
 
@@ -583,5 +667,6 @@ if (BREAK) {
 	check('every gap, margin and depth in the transcript meets the one rule', faults.length === 0, faults.length ? `${faults.length} off the rule in ${kinds.length} kind(s)` : `${tally.gaps} gaps, ${tally.depths} depths, ${tally.steps} steps`);
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

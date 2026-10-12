@@ -58,6 +58,7 @@ import { fileURLToPath } from 'node:url';
 import { open, signInAs, scratch, shot, bin } from './harness.mjs';
 import { makePagePro, makePagePack } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -255,6 +256,16 @@ const devId = (pg) => pg.evaluate(() => window.DaimondIdentity.deviceId());
 const claimPair = (pg, o) => pg.evaluate((opt) => {
 	window.__claimHand   = !!opt.hand;
 	window.__claimFolder = !!opt.folder;
+	// THE RUNNER POSTURE IS THE NOMINEE'S ALONE (runner.js `decide`): a machine holding the
+	// posture that is not the account's nominated runner has it CLEARED on the next
+	// fifteen-second reconcile ("nominee-elsewhere" / "un-nominated"). Set without the
+	// nomination, it lasted only until that tick, so on a busy box the beat read
+	// `runner:false` by the time this file looked. The runner is named first, as a person
+	// arranging a runner does.
+	if (opt.runner) {
+		try { window.DaimondCore.roster.nominate(window.DaimondIdentity.deviceId()); }
+		catch (e) { /* an older page with no roster: the posture alone, as before */ }
+	}
 	try {
 		if (opt.runner) localStorage.setItem(window.DaimondRunner.KEY, '1');
 		else localStorage.removeItem(window.DaimondRunner.KEY);
@@ -656,7 +667,7 @@ try {
 	// ══ CELL 4: NOBODY IS AWAKE ═══════════════════════════════════════
 	//
 	// The runner's beat is aged out through the seat window rather than by waiting it
-	// out, exactly as the seat-line test does. The sentence has to NAME the machine.
+	// out, exactly as verify_seatline does. The sentence has to NAME the machine.
 	// THE SAME SIDECAR, RE-PLANTED. Sync replaces it with whatever the last real build
 	// recorded, and a document that FITS is placed `here` however asleep the fleet is --
 	// which is a true answer to a different question from the one this cell asks.
@@ -901,6 +912,7 @@ try {
 	for (const s of [P2, D, P1, R]) { if (s) { try { await s.close(); } catch (e) {} } }
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`
 	+ (unrun.length ? `, ${unrun.length} NOT RUN: ${unrun.join('; ')}` : ''));
 if (bad.length) { console.log('FAILED:\n  ' + bad.join('\n  ')); process.exit(1); }

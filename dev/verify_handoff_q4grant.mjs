@@ -45,6 +45,7 @@ import { open, signInAs, connectMock } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import { pair, checker, until, settle, comeBack, WAKE } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const { ok, bad, check } = checker();
 let R, L, P;
@@ -202,6 +203,7 @@ check('R acked through the grant', rAcked);
 check('R\'s ack took the grant off the relay',
 	!finalRows.rows.some((x) => x.addr === grantAddr), JSON.stringify(finalRows.rows));
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' passed, ' + bad.length + ' failed');
 if (bad.length) console.log('  FAILED: ' + bad.join(' | '));
 for (const s of [R, L, P]) { try { await s.close(); } catch (e) { /* already gone */ } }

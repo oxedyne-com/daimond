@@ -64,7 +64,9 @@ const lifted = new Function('env', [
 	'var REASON_DISPATCHED_STR = "dispatched";',
 	'function loadMsgTombs() { return {}; }',
 	'var window = env.window, DaimondPeer = env.window.DaimondPeer, DaimondLease = env.window.DaimondLease;',
-	'var peerReports = env.peerReports, _finalMids = env.finalMids;',
+	'var peerReports = env.peerReports, _finalMids = env.finalMids, _finalRun = env.finalRun;',
+	'var current = null; function renderHistory() {}',
+	'function msgTombstone(mids) { env.tombs.push.apply(env.tombs, mids); }',
 	'function dispatchedChat(t) { return env.chatFor(t); }',
 	'function chatHoldingTurn(t) { return env.holding ? env.holding(t) : null; }',
 	'function touchChat() {}',
@@ -83,18 +85,21 @@ const lifted = new Function('env', [
 	extractVar(src, 'ARRIVE_FRESH_MS'),
 	extractFn(src, 'noteArrive'),
 	extractFn(src, 'finalFrameChat'),
+	extractFn(src, 'dropOtherRunRows'),
 	extractFn(src, 'adoptFinalFrame'),
 	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame };',
 ].join('\n'));
 const settledLease = new Function(extractFn(psrc, 'settledLease') + '\nreturn settledLease;')();
+const otherRunRows = (psrc.indexOf('function otherRunRows(') >= 0)
+	? new Function(extractFn(psrc, 'otherRunRows') + '\nreturn otherRunRows;')() : null;
 
 function world(lease) {
 	const env = {
 		window: {
-			DaimondPeer:  { settledLease },
+			DaimondPeer:  { settledLease, otherRunRows },
 			DaimondLease: { record: () => lease || null },
 		},
-		peerReports: {}, finalMids: {}, persisted: 0, badges: 0, dropped: [], chat: null,
+		peerReports: {}, finalMids: {}, finalRun: {}, tombs: [], persisted: 0, badges: 0, dropped: [], chat: null,
 		chatFor: () => env.chat,
 	};
 	return Object.assign(env, lifted(env));
@@ -155,6 +160,30 @@ function sending(lease) {
 	check('RELOAD: and the store was written with them', w.persisted === 1);
 	check('exactly one copy of each mid', ms.map((m) => m.mid).sort().join() === 'a0,a1,t1,u1', ms.map((m) => m.mid).join());
 	check('a second call moves nothing', w.adoptFinalFrame('u1') === false && w.persisted === 1);
+}
+{
+	// A reload on the runner mid-turn: run R1 streamed rows, R2 reran and finished (F-C2-1).
+	const w = sending(null);
+	w.chat.messages.splice(2, 0, Object.assign(real('x1', 'lost run tool'), { run: 'R1' }), prov('x2', 'lost run stream'));
+	w.chat.messages.push(Object.assign(real('a2', 'kept run'), { run: 'R2' }));
+	w.finalMids.u1.a2 = 1;
+	w.finalRun.u1 = 'R2';
+	w.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
+	check('LOST RUN: adopted', w.adoptFinalFrame('u1') === true);
+	const ms = w.chat.messages;
+	check('a real row of another run goes, and is tombstoned', !find(ms, 'x1').length && w.tombs.join() === 'x1', JSON.stringify(w.tombs));
+	check('a provisional row the whole frame does not hold goes, untombstoned', !find(ms, 'x2').length && w.tombs.indexOf('x2') < 0);
+	check('[ctl] the kept run\'s rows and the unstamped real row stand', ['t1', 'a1', 'a0', 'a2'].every((mid) => find(ms, mid).length === 1),
+		ms.map((m) => m.mid).join());
+	check('the run is consumed', !('u1' in w.finalRun));
+}
+{
+	const w = sending(null);
+	w.chat.messages = [user(), place(), Object.assign(prov('i1', ''), { interrupted: true, why: 'runner', run: 'R1' })];
+	w.finalMids.u1 = {};
+	w.finalMids.u1.i1 = 1;
+	w.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
+	check('a lost run\'s interrupted answer drops the placeholder', w.adoptFinalFrame('u1') === true && w.dropped.join() === 'u1');
 }
 {
 	const w = sending({ turnId: 'u1', holder: 'b', mode: 'released', expiry: 0, settled: 1 });

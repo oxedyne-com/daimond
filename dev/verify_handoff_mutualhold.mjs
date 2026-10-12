@@ -8,10 +8,12 @@
 // idle desk it could see. Neither handed it back, so `tried` (Q19) never grew, and A waited
 // out its 95 s backstop before running the turn itself.
 //
-// THE PROPERTY. The busy desks break the tie in one order both compute alike (peer.js
-// `busyHoldsFor`): the first in id order hands the turn back, A re-seats it with that desk
-// in `tried`, the second then hands back too, and A runs it -- inside 15 s of the send, not
-// 95 s. Exactly one run, and the answer reaches A.
+// THE PROPERTY (re-aimed 2026-10-11 to the owner's switch, D-20261009-23: only the
+// nominated runner may take a turn). A nominates B; B and C are both busy and read each
+// other idle. B, the runner, hands the turn back at once rather than hold it for C; A does
+// NOT re-seat it on C, a desk the switch never offered, and runs it itself -- inside 15 s
+// of the send, not 95 s. Exactly one run, and the answer reaches A. (Was: no nominee, the
+// first busy desk in id order hands back, A re-seats on the second, which hands back too.)
 //
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK_PORT), gateway
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs.
@@ -28,6 +30,7 @@ import {
 	freshChat,
 	third,
 } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const OWN_SLOW  = 120000;		// B's and C's own turns, running through the send
 const RUN_MS    = 15000;		// the bound on A's turn reaching the model
@@ -73,7 +76,7 @@ const busyRows = (s, tid) => s.page.evaluate((t) => {
 
 let a, b, c;
 try {
-	({ a, b } = await pair(check, 'mutualload', 'mutualb'));
+	({ a, b } = await pair(check, 'mutualload', 'mutualb', { nominate: false }));
 	c = await third(check, a, 'mutualc');
 	for (const s of [a, b, c]) {
 		await s.page.evaluate(() => { try { window.DaimondDiag.set(true, 'mutualhold'); } catch (e) { /* none */ } });
@@ -82,11 +85,7 @@ try {
 	const idB = await b.page.evaluate(() => window.DaimondIdentity.deviceId());
 	const idC = await c.page.evaluate(() => window.DaimondIdentity.deviceId());
 
-	console.log('\nB and C both busy, each read idle, no nominee; A sends');
-	for (const s of [a, b, c]) await s.page.evaluate(() => window.DaimondCore.roster.nominate(''));
-	const noms = [];
-	for (const s of [a, b, c]) noms.push(await s.page.evaluate(() => window.DaimondCore.roster.nominee()));
-	check('no device names a nominee', noms.every((x) => !x), noms.map((x) => String(x || '-').slice(0, 8)).join(','));
+	console.log('\nB and C both busy, each read idle, B the nominated runner; A sends');
 	// A fresh idle beat from each, then every later beat lost on the way: the 45 s gap.
 	for (const [s, n] of [[b, 'mutualb'], [c, 'mutualc']]) {
 		await s.page.evaluate((nm) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), nm), n);
@@ -104,6 +103,13 @@ try {
 	const vB = await aViewBusy(a, idB), vC = await aViewBusy(a, idC);
 	check('A still reads both idle', (vB === 0 || vB === -1) && (vC === 0 || vC === -1), 'B=' + vB + ' C=' + vC);
 
+	// Named only now, as in busyrace (3): with B the runner already, C would hand its own
+	// turn to B rather than run it.
+	for (const s of [a, b, c]) await s.page.evaluate((id) => window.DaimondCore.roster.nominate(id), idB);
+	const noms = [];
+	for (const s of [a, b, c]) noms.push(await s.page.evaluate(() => window.DaimondCore.roster.nominee()));
+	check('every device names B the runner', noms.every((x) => x === idB), noms.map((x) => String(x || '-').slice(0, 8)).join(','));
+
 	await freshChat(a);
 	const prompt = 'mutual hold chat ' + tag;
 	const t0 = Date.now();
@@ -120,22 +126,27 @@ try {
 		ph = placeholders(await storedMsgs(a)).find((m) => String(m.itext || '').includes(prompt)) || null;
 		if (!ph) await a.page.waitForTimeout(100);
 	}
-	check('A handed the chat off', !!ph, ph ? 'tid=' + ph.iturn + ' to=' + String(ph.toDevice || '').slice(0, 8) : 'ran locally');
+	check('A handed the chat off to B, the runner', !!ph && String(ph.toDevice || '') === idB, ph ? 'tid=' + ph.iturn + ' to=' + String(ph.toDevice || '').slice(0, 8) : 'ran locally');
 	const tid = ph ? String(ph.iturn) : '';
 	let collected = false;
 	for (const tB = Date.now(); tid && !collected && Date.now() - tB < 15000;) {
-		collected = (await busyRows(b, tid)).length > 0 && (await busyRows(c, tid)).length > 0;
+		collected = (await busyRows(b, tid)).length > 0;
 		if (!collected) await a.page.waitForTimeout(250);
 	}
-	check('B and C both collected it busy', collected);
+	check('B, the runner, collected it busy', collected);
 	while (at < 0 && Date.now() - t0 < RUN_MS + 1000) await a.page.waitForTimeout(100);
 	check('A\'s turn reached the model inside ' + RUN_MS / 1000 + ' s of the send, not at the 95 s backstop',
 		at >= 0 && at <= RUN_MS, at >= 0 ? 'at +' + at + 'ms' : 'not inside ' + (RUN_MS + 1000) + 'ms');
 	const rowsB = tid ? await busyRows(b, tid) : [], rowsC = tid ? await busyRows(c, tid) : [];
-	const first = idB < idC ? 'B' : 'C';
 	const handedBack = (rs) => rs.some((r) => /ANSWER busy/.test(r));
-	check('the first in id order (' + first + ') handed it back rather than hold',
-		handedBack(first === 'B' ? rowsB : rowsC), 'B: ' + rowsB.join(' / ').slice(0, 160) + ' || C: ' + rowsC.join(' / ').slice(0, 160));
+	check('B, the runner, handed it back rather than hold it for C',
+		handedBack(rowsB), 'B: ' + rowsB.join(' / ').slice(0, 160) + ' || C: ' + rowsC.join(' / ').slice(0, 160));
+	const reseatC = await a.page.evaluate((x) => {
+		try { return window.DaimondDiag.rows().filter((r) => /dispatch retry/.test(r.tag)
+			&& String(r.data).includes('turn=' + x.tid) && String(r.data).includes('next=' + x.c8)
+			&& !/not the runner/.test(String(r.data))).map((r) => String(r.data)); } catch (e) { return ['diag: ' + e]; }
+	}, { tid, c8: idC.slice(0, 8) }).catch((e) => ['eval: ' + e]);
+	check('A never re-seated it on C, a desk the switch never offered', reseatC.length === 0, reseatC.join(' / ').slice(0, 200));
 	let ans = false;
 	for (const tA = Date.now(); !ans && Date.now() - tA < ANSWER_MS + 100000;) {
 		ans = await answered(a, prompt);
@@ -163,5 +174,6 @@ try {
 	try { await b?.close(); } catch (e) { /* gone */ }
 	try { await c?.close(); } catch (e) { /* gone */ }
 }
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

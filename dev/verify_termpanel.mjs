@@ -57,6 +57,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -1056,5 +1057,6 @@ try {
 	for (const proc of started) { try { proc.kill(); } catch (e) { /* already gone */ } }
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed, ${provedNames.length} properties proved against broken code`);
 process.exit(bad.length ? 1 : 0);

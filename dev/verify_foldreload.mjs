@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, chat, signInAs, clearMockLog, mockLog, errors } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 // THE SHAPE HAS TO SURVIVE THE RELOAD TOO, added 2026-09-13. A fold's note is now written under
 // a fixed heading layout, and the layout lives in the note's own TEXT -- so a reload that kept
@@ -134,5 +135,6 @@ check('nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
 try { fs.unlinkSync(SIDE); } catch { /* the next run writes it again */ }
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) { bad.forEach(b => console.log('  FAILED: ' + b)); process.exit(1); }

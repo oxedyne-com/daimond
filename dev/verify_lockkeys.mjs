@@ -11,6 +11,7 @@
 // nothing; the question is whether the key is gone.
 import { open, chat, errors } from './harness.mjs';
 import http from 'node:http';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -126,6 +127,7 @@ check('nothing throws while locking', errs.length === 0, errs[0] || '');
 
 await s.close();
 srv.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

@@ -48,6 +48,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, connectMock, PASS, MODEL as MOCK_MODEL } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC  = 'js/models.js';
@@ -393,6 +394,7 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\nkeysync: ${ok.length}/${ok.length + bad.length} passed`
 	+ (bad.length ? `; FAILED: ${bad.join(' | ')}` : ''));
 

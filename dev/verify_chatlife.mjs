@@ -63,6 +63,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, scratch, signInAs } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -805,8 +806,12 @@ try {
 		if (run) W.stop(run);
 		const stillLive = W.liveFor('c-yest');
 		await window.DaimondExpiryTick();
+		// Why, when it is not: the rule's own inputs at the moment the tick ran.
+		let focus = '';
+		try { const f = window.DaimondAttach && window.DaimondAttach.focus(); focus = f ? f.kind + ':' + f.id : ''; } catch (e) { focus = 'threw'; }
 		return { queuedLive, runningLive, held, stillLive,
-			status: run ? run.status : 'no run', afterDone: DaimondTrash.has('c-yest') };
+			status: run ? run.status : 'no run', afterDone: DaimondTrash.has('c-yest'),
+			dueAt: window.DaimondCore.chatDueAt('c-yest'), now: Date.now(), focus };
 	});
 	check('a chat ten days untouched is NOT trashed while a run is live',
 		live && live.queuedLive === true && live.runningLive === true && live.held === true,
@@ -888,6 +893,7 @@ try {
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) {
 	console.log('failed: ' + bad.join('; '));

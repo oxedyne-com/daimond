@@ -55,6 +55,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, scratch, errors, signInAs } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -629,5 +630,6 @@ try {
 }
 
 console.log(`\nforge opens: ${opens().length}`);
+guardRan(ok.length + bad.length);
 console.log(`\nsocialpost: ${ok.length} ok, ${bad.length} failed`);
 if (bad.length) { for (const b of bad) console.log('  FAILED: ' + b); process.exit(1); }

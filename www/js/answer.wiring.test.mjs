@@ -172,7 +172,12 @@ test('the home Send is built through the helper with a reason and a say, and not
 	assert.match(d, /bindSend\(\);/, 'the control is never built');
 	// A hold is the helper's, so the page cannot set `disabled` behind its back.
 	assert.equal(count(d, /chatSend\.disabled\s*=/g), 1, 'only the fallback before the control exists');
-	assert.match(d, /sendCtl\.hold\(mode === 'sending'\)/);
+	assert.match(d, /var busy = mode === 'sending' \|\| mode === 'stopping';/);
+	assert.match(d, /sendCtl\.hold\(busy\)/);
+	// ONE SOURCE OF A TURN'S STATE (SA re-fix): Send asks `turnPhase`, never `current`'s turn fields itself.
+	const sm = d.slice(d.indexOf('\tfunction sendMode() {'), d.indexOf('\n\t}\n', d.indexOf('\tfunction sendMode() {')));
+	assert.match(sm, /turnPhase\(\)/);
+	assert.doesNotMatch(sm, /_aborted|_generating|curGen/);
 });
 
 test('every place the composer\'s words change by script re-asks Send, since a script raises no input event', () => {

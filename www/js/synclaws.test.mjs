@@ -62,7 +62,7 @@ function core(names) {
 	const w = win();
 	return sliceDaimond(w, names, {
 		ChatStore: { putTombs: () => Promise.resolve(true), stored: () => [] },
-		storageAlarm: () => {}, renderSeatLine: () => {}, tOr: (k, f) => f, t: (k) => k,
+		storageAlarm: () => {}, renderSeatSwitch: () => {}, tOr: (k, f) => f, t: (k) => k,
 		deviceId: () => 'ffffffffffffffff', nudgeSync: () => {},
 	}).fns;
 }

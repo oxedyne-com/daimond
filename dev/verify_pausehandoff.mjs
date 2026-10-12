@@ -53,6 +53,7 @@ import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import { GWBIN, requireFreshGateway } from './gwbin.mjs';
 import { checker, storedMsgs, placeholders, send, freshChat, settle, until } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TREE = path.resolve(HERE, '..');
@@ -803,5 +804,6 @@ if (BREAK) {
 	console.log(`\nbreak '${BREAK}': ${bad.length} check(s) failed` + (bad.length ? ' — ' + bad.join('; ') : ' — NOTHING FAILED, so the checks above prove nothing'));
 	process.exit(bad.length ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 console.log(`\nverify_pausehandoff: ${ok.length} ok, ${bad.length} FAIL`);
 process.exit(exitCode || (bad.length ? 1 : 0));

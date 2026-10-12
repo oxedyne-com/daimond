@@ -38,6 +38,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC  = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
@@ -182,5 +183,6 @@ check(ranBefore === EXPECTED,
 	`exactly ${EXPECTED} checks ran — a displaced case trips this`,
 	`ran ${ranBefore}`);
 
+guardRan(ran);
 console.log(bad ? `\n${bad} check(s) FAILED` : '\nall checks passed');
 process.exit(bad ? 1 : 0);

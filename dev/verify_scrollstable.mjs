@@ -59,6 +59,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, chat, signInAs, newChat, connectMock, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -389,27 +390,28 @@ try {
 			.includes('at the live end')));
 
 	// ── (5) Furniture arriving around the transcript during the pull ──
-	// The seat line is the one that moves on a sync: it is written from the presence
-	// beats a pull delivers, it sits outside the thread, and the thread is the
-	// flexible row of the column it sits in.
-	const seatable = await a.page.evaluate(() => !!document.getElementById('seat-line'));
+	// The "Here | <runner>" switch (D-20261009-23; it replaced the seat line) is the one
+	// that moves on a sync: it is drawn from the presence beats a pull delivers, it sits
+	// by the input box outside the thread, and the thread is the flexible row of the
+	// column it sits in.
+	const seatable = await a.page.evaluate(() => !!document.getElementById('seat-switch'));
 	await scrollTo(a.page, 'bot');
 	await a.page.waitForTimeout(400);
 	await watch(a.page, 2000);
-	await a.page.evaluate(() => { document.getElementById('seat-line').hidden = true; });
+	await a.page.evaluate(() => { document.getElementById('seat-switch').hidden = true; });
 	await a.page.waitForTimeout(300);
-	await a.page.evaluate(() => { document.getElementById('seat-line').hidden = false; });
+	await a.page.evaluate(() => { document.getElementById('seat-switch').hidden = false; });
 	await a.page.waitForTimeout(1400);
 	const s5 = await samples(a.page);
-	check('(5) the seat line coming and going leaves a reader at the live end on it',
+	check('(5) the seat switch coming and going leaves a reader at the live end on it',
 		seatable && gapEnd(s5) !== null && Math.abs(gapEnd(s5)) <= TOL,
 		'ended ' + gapEnd(s5) + 'px from the end');
 	await scrollTo(a.page, 'mid');
 	await a.page.waitForTimeout(400);
 	await watch(a.page, 2000);
-	await a.page.evaluate(() => { document.getElementById('seat-line').hidden = true; });
+	await a.page.evaluate(() => { document.getElementById('seat-switch').hidden = true; });
 	await a.page.waitForTimeout(300);
-	await a.page.evaluate(() => { document.getElementById('seat-line').hidden = false; });
+	await a.page.evaluate(() => { document.getElementById('seat-switch').hidden = false; });
 	await a.page.waitForTimeout(1400);
 	const m5 = movement(await samples(a.page));
 	check('(5) and does not move a reader who is scrolled up',
@@ -447,6 +449,7 @@ try {
 	try { await b?.close?.(); } catch {}
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed'
 	+ (BREAK ? '  (break: ' + BREAK + ')' : '') + (MOBILE ? '  (mobile viewport)' : ''));
 if (bad.length) for (const n of bad) console.log('  FAILED: ' + n);

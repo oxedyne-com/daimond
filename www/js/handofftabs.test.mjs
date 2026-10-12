@@ -133,8 +133,8 @@ const LIFTED = [
 /// One tab of the device `SELF`: the lifted functions over this tab's own memory, the
 /// shared lock manager, and a shared world (`w`: the lease server, the post box).
 function makeTab(name, locks, w) {
-	const stat = { runs: 0, reseats: 0, released: [], reports: [], appended: [], restored: null };
-	const tab = { stat, runnerCtx: Object.create(null), gate: null, reseatAnswer: false };
+	const stat = { runs: 0, released: [], reports: [], appended: [], restored: null };
+	const tab = { stat, runnerCtx: Object.create(null), gate: null };
 	const doorRead = async () => {
 		w.reads++;
 		if (w.unreadAt.indexOf(w.reads) >= 0) return { version: 0, leases: {}, unread: true };
@@ -170,9 +170,9 @@ function makeTab(name, locks, w) {
 		}),
 		errandForRecovery: (chat, m) => ({ turnId: String(m.iturn), chatId: chat.id }),
 		peerRunErrandDeps: () => ({}),
+		runnerCtxBegin: () => {}, runnerCtxEnd: () => {},	// STOP-ON-PEER: the reclaimed run registers as a runner's
 		dropDispatchedPlaceholder: () => {},
 		renderDispatchedBadges: () => {},
-		retryNextDesktopBeforeLocal: async () => { stat.reseats++; return tab.reseatAnswer; },
 		// ensureApp's world: an agent that records what it was given.
 		appCfgFor: () => ({ baseUrl: '', apiKey: '', model: 'm', provider: 'p' }),
 		creditsGen: () => 0,
@@ -216,21 +216,16 @@ check('the local run claims the key a runner\'s collect claims',
 	const locks = makeLocks(), w = world();
 	const A1 = makeTab('A1', locks, w), A2 = makeTab('A2', locks, w);
 	A2.gate = makeGate();
-	const run2 = A2.recoverOneLocally(chatOf(), turn, { reseat: {} });
+	const run2 = A2.recoverOneLocally(chatOf(), turn);
 	await ticks();
 	check('F1: A2\'s local run holds the turn\'s claim across the device', locks.held().includes('daimond-post-work:turn:T'));
-	await A1.recoverOneLocally(chatOf(), turn, { reseat: {} });
+	await A1.recoverOneLocally(chatOf(), turn);
 	check('F1: A1\'s backstop stands down while A2 runs it: one model run, not two', w.runs === 1, w.runs);
-	check('F1: nor does A1 re-seat a turn its sibling is running', A1.stat.reseats === 0, A1.stat.reseats);
 	A2.gate.open(); await run2; await ticks();
 	check('F1: the claim is let go when the run ends', !locks.held().includes('daimond-post-work:turn:T'));
 	// Control: with no sibling running it, the same call runs -- the stand-down was the claim.
-	await A1.recoverOneLocally(chatOf(), turn, { reseat: {} });
-	check('F1 control: unclaimed, A1 offers the re-seat and then runs it', w.runs === 2 && A1.stat.reseats === 1, [w.runs, A1.stat.reseats]);
-	// A re-seat that lands elsewhere runs nothing here.
-	A1.reseatAnswer = true;
-	await A1.recoverOneLocally(chatOf(), turn, { reseat: {} });
-	check('F1 control: a re-seat to another desktop runs nothing here', w.runs === 2, w.runs);
+	await A1.recoverOneLocally(chatOf(), turn);
+	check('F1 control: unclaimed, A1 runs it here (no re-seat, D-20261009-23)', w.runs === 2, w.runs);
 }
 
 // ── F1'. The wake path and a take-back, in the same tab as a running recovery. ──
@@ -240,7 +235,7 @@ check('the local run claims the key a runner\'s collect claims',
 	A.gate = makeGate();
 	const r = A.recoverOneLocally(chatOf(), turn);
 	await ticks();
-	await A.recoverOneLocally(chatOf(), turn, { explicit: true });
+	await A.recoverOneLocally(chatOf(), turn);
 	check('F1: a second driver in the same tab stands down too', w.runs === 1, w.runs);
 	A.gate.open(); await r;
 }
@@ -271,8 +266,8 @@ check('the local run claims the key a runner\'s collect claims',
 	await ticks();
 	const n = await A2.releaseOwnStaleLeases();
 	check('F2: a sender\'s focused tab frees no lease its sibling\'s local run holds', n === 0 && w.released.length === 0, w.released);
-	await A2.recoverOneLocally(chatOf(), turn, { reseat: { requireGenuine: true } });
-	check('F2: nor does its wake path re-seat or run the turn again', w.runs === 1 && A2.stat.reseats === 0, [w.runs, A2.stat.reseats]);
+	await A2.recoverOneLocally(chatOf(), turn);
+	check('F2: nor does its wake path run the turn again', w.runs === 1, w.runs);
 	A1.gate.open(); await r;
 }
 

@@ -31,6 +31,7 @@
 //   node dev/verify_gatherwake.mjs
 //   node dev/verify_gatherwake.mjs --break nopush   # must fail something
 import { open, newChat, shot, mockLog, clearMockLog } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -113,5 +114,6 @@ if (BREAK) {
 		+ (bad.length ? '' : ' — NOTHING FAILED, so the checks above prove nothing'));
 	process.exit(bad.length ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? '\nall checks passed' : `\n${bad.length} check(s) FAILED`);
 process.exit(bad.length === 0 ? 0 : 1);

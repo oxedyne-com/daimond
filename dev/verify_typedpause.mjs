@@ -48,6 +48,7 @@
 //   eval "$(bash dev/world.sh N --env)"
 //   node dev/verify_typedpause.mjs
 import { open, signInAs, connectMock, scratch, mockLog, MOCK } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ok = [], bad = [];
@@ -509,5 +510,6 @@ async function runnerHeld(page, id, node) {
 }
 
 console.log('');
+guardRan(ok.length + bad.length);
 console.log(ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) process.exit(1);

@@ -34,6 +34,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { open, scratch, signInAs, newChat, chat, mockLog, clearMockLog, contentText, errors, checker } from './harness.mjs';
 import { pair, send, settle } from './handoffpair.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -409,5 +410,6 @@ if (BREAK) {
 	console.log(`\nbreak '${BREAK}': red in ${red.length ? red.join(', ') : 'NOTHING'}; wanted ${want.join(', ')} only — ${only ? 'AS WANTED' : (red.length ? 'WRONG SET' : 'NOTHING FAILED, so the checks prove nothing')}`);
 	process.exit(only ? 0 : 1);
 }
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 process.exit(bad.length ? 1 : 0);

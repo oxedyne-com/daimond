@@ -519,6 +519,7 @@
 	'chat.ran_here_failed': 'Ran here — hand-off to {name} didn’t finish',
 	'chat.ran_here_refused': 'Ran here — the relay refused the hand-off',
 	'chat.ran_here_busy': 'Ran here — {name} was busy with another chat',
+	'chat.ran_here_thread': 'Ran here — {name} didn’t have the whole conversation',
 	'chat.ran_here':       'Ran on this device',
 	// The hand-off tile's expanded body: a concise account of what happened when a
 	// turn ran off this device. The provenance line, then a facts row of only the
@@ -526,6 +527,7 @@
 	'chat.handoff_ran_on':        'Ran on {name}; the answer synced back to this device.',
 	'chat.handoff_ran_here':      'Ran on this device after the hand-off to {name} didn’t finish.',
 	'chat.handoff_ran_here_busy': 'Ran on this device because {name} was busy with another chat.',
+	'chat.handoff_ran_here_thread': 'Ran on this device because {name} didn’t have the whole conversation.',
 	'chat.handoff_ran_here_plain': 'Ran on this device.',
 	'chat.handoff_tokens':        '{n} tok',
 	'chat.who_handoff':    'Hand-off',
@@ -1091,6 +1093,7 @@
 	// worse than no promise.
 	'chat.send_into':         'Send into this answer',
 	'chat.sending':           'Sending…',
+	'chat.stopping':          'Stopping…',
 	'chat.interject_help':    'Waiting; goes in at the model\'s next step or turn\'s end.',
 	'chat.interject_pending': 'Not delivered yet. Click to edit it.',
 	'chat.interjected':       'You cut in here',
@@ -2315,6 +2318,8 @@
 	'chat.connect_action':  'Connect a provider',
 	'chat.stop':           'Stop',
 	'turn.interrupted':       'Interrupted. The browser closed before this finished.',
+	'turn.runner_lost':       'Interrupted. The device running this reloaded before it finished.',
+	'turn.retry':             'Retry',
 	'turn.interrupted_early': 'Interrupted before it could answer.',
 	'turn.offline':           'The connection dropped before this finished.',
 	'turn.offline_early':     'The connection dropped before an answer arrived.',
@@ -2328,8 +2333,6 @@
 	'turn.peer_running':       'Running on your other device.',
 	'turn.peer_running_named': '{name} is doing this.',
 	'turn.peer_failed':        'Your other device couldn’t finish this.',
-	'turn.peer_takeback':      'Take back',
-	'turn.peer_takingback':    'Taking back…',
 	'turn.peer_runhere':       'Run here',
 	'turn.peer_answeragain':   'Answer again',
 	'turn.peer_consent':       'Your other device needs your permission to {act}.',
@@ -2337,30 +2340,20 @@
 	'turn.peer_parked':        'This needed your permission — it will re-run when you’re back.',
 	'turn.peer_rerun':         'Re-run',
 	'turn.peer_takeback_failed': 'Could not run it here. Try again.',
-	// WHERE THE NEXT TURN WILL RUN -- the line under the composer. Stated before the
-	// send, not after it: a turn that runs on the phone itself needs the screen kept
-	// awake and in the foreground, and the user can only plan for that if they are
-	// told while they can still do something about it.
-	// The line names its own key (DaimondPeer.seatPlan chooses which of the five the
-	// latest beats imply), so the call site cannot be read for it. The set is closed.
-	// i18n-indirect: daimond.js plan.key = seat.on_runner seat.on_desktop seat.on_desktop_runner_off seat.local seat.local_mobile
-	// ONE SHORT CLAUSE EACH (owner, 2026-09-13: the line was "overly verbose"). The
-	// reason rides the `title` tooltip, not the line -- it explains a seat the user can
-	// already read, so it is worth a hover and not a second clause under every composer.
-	'seat.on_runner':            'Next turn: {name}',
-	'seat.on_desktop':           'Next turn: {name}',
-	'seat.on_desktop_runner_off': 'Next turn: {name}',
-	'seat.local':                'Runs here',
-	'seat.local_mobile':         'Runs here — keep this open',
+	'turn.peer_stop_failed': 'Could not stop it on the other device. Try again.',
+	// WHERE THE NEXT TURN RUNS. The reason a hand-off tile ran here, said on its tooltip.
 	'seat.why_no_desktop':       'No other device is awake to take it.',
 	'seat.why_runner_silent':    '{name} is not awake — it may be at its lock screen.',
-	'seat.why_chat_local':       'This chat is pinned to this device.',
 	'seat.tile_local_mobile':    'Runs here — keep this open',
-	'seat.retry':                '{from} did not pick it up; trying {to}',
 	// The relay REFUSED the hand-off (S-HAND #6): it never reached a peer, so the turn
 	// is running here. The status rides the tooltip; the reason `errand.prompt_too_large`
 	// is one such refusal a device raises itself, without a round trip.
-	'seat.refused':              'Hand-off refused ({status}) — running here',
+	'seat.refused':              'Running here · {name} couldn’t take it',
+	'seat.here':                 'Here',
+	'seat.switch':               'Where the next turn runs',
+	'seat.ran_here':             'Ran here · {name} wasn’t reachable',
+	'seat.ran_here_busy':        'Ran here · {name} was busy',
+	'seat.ran_here_refused':     'Ran here · {name} couldn’t take it',
 	'errand.prompt_too_large':   'the prompt alone is larger than the relay accepts',
 	// ── WHERE A TASK OTHER THAN A TURN RUNS (owner design, 2026-09-14) ──
 	// A compile and a publish are placed by the same election a turn is, and the

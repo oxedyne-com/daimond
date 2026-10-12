@@ -101,6 +101,7 @@ import { fileURLToPath } from 'node:url';
 import { open, signInAs, connectMock, scratch, PASS, shot } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -1028,6 +1029,7 @@ try {
 	await B?.close?.().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (CONTROL) {
 	// The control passes when the marked checks went red: the reverted fix was

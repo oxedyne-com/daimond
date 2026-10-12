@@ -44,6 +44,7 @@
 // and `allattached` is the one this design turns on — it is what a caller does
 // who reads the paperclip's list as a permission list.
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -292,6 +293,7 @@ try {
 	try { await s.browser.close(); } catch (e) { /* ignore */ }
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (BREAK) {
 	console.log(bad.length

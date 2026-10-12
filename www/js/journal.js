@@ -151,8 +151,11 @@
 		if (!text) return Promise.resolve();
 		return push(stamp({ type: 'delta', stream: turnId, chatId: chatId, text: text }), false);
 	}
-	function toolOpen(turnId, chatId, callId, name, args) {
-		return push(stamp({ type: 'tool_open', stream: turnId, chatId: chatId, callId: callId, name: name, args: args }), true);
+	// `mid` is the tool row's own, so a recovered turn re-uses the row a watcher already holds.
+	function toolOpen(turnId, chatId, callId, name, args, mid) {
+		var ev = { type: 'tool_open', stream: turnId, chatId: chatId, callId: callId, name: name, args: args };
+		if (mid) ev.mid = String(mid);
+		return push(stamp(ev), true);
 	}
 	/// A tool call ended, and HOW it ended travels as the engine's own word.
 	///
@@ -270,7 +273,7 @@
 			// the model's working on its way to the tool, and `text` is the reply -- the round
 			// after the last tool. Joined, every round ran on into one recovered answer with
 			// nothing between them, "…now.Here is…" (D-20261011-34); `runTurn` keeps the same rule.
-			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, name: e.name, args: e.args, result: null, outcome: '', done: false, said: c.text }); c.text = ''; }
+			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, mid: e.mid || '', name: e.name, args: e.args, result: null, outcome: '', done: false, said: c.text }); c.text = ''; }
 			// `e.outcome` is the engine's word; `e.failed` is what a record written before this
 			// field carried, and is passed through UNREAD so the caller can tell "not stored" from
 			// "stored as done" -- which is the difference between §4's named exception and a guess.

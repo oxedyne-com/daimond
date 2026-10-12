@@ -37,6 +37,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { webcrypto } from 'node:crypto';
+import { guardRan } from './verdict.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ok = [], bad = [];
@@ -584,6 +585,7 @@ try {
 	console.log('  FAIL crashed — ' + (e && e.stack || e));
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' fail'
 	+ '  (cells ' + (KINDS.length * COLUMNS.length) + ')');
 process.exitCode = bad.length ? 1 : 0;

@@ -37,6 +37,7 @@
 //
 // Needs a world for the app server: `eval "$(bash dev/world.sh N --env)"`.
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -426,6 +427,7 @@ console.log('\nconsole errors:', errs.slice(0, 4));
 await A.close();
 await B.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

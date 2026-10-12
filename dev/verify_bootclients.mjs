@@ -24,6 +24,7 @@
 //
 // Needs a world for the mock provider: `eval "$(bash dev/world.sh N --env)"`.
 import { open, connectMock } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -71,6 +72,7 @@ const pageErrors = s.errs.filter((e) => /^pageerror|PAGE CRASHED/.test(e));
 check('3. no page error in the run', pageErrors.length === 0, JSON.stringify(pageErrors.slice(0, 3)));
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

@@ -25,6 +25,7 @@
 //
 // Run with dev/serve.mjs up (DAIMOND_PORT, default 8777). No gateway, no mock model.
 import { open, signInAs, shot } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -253,6 +254,7 @@ const errs = s.errs.filter(e => !/favicon|404|401|net::ERR/.test(e));
 console.log('\nconsole errors:', errs.slice(0, 4));
 await s.close();
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

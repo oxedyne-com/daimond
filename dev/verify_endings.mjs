@@ -23,6 +23,7 @@ import { open, shot, signInAs, scratch } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const src = fs.readFileSync(path.join(ROOT, 'src/agent.rs'), 'utf8');
@@ -159,6 +160,7 @@ for (const [w, h] of [[1440, 900], [390, 844]]) {
 	}
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\nendings: ${ok.length} ok, ${bad.length} failed`);
 if (bad.length) console.log('  FAILED: ' + bad.join(' | '));
 await s.close();

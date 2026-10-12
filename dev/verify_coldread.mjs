@@ -25,6 +25,7 @@
 //      passphrase key and drop it to login); it leaves the banner to offer Reload.
 //      A LOCKED tab, with nothing to lose, still auto-updates.
 import { open, errors, APP } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -235,5 +236,6 @@ await p.waitForTimeout(1500);
 }
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' passed, ' + bad.length + ' failed');
 if (bad.length) { bad.forEach((b) => console.log('  FAILED: ' + b)); process.exit(1); }

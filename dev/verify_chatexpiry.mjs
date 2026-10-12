@@ -63,6 +63,7 @@
 // No world and no server: it opens no port and touches no scratch directory.
 import { readFileSync } from 'fs';
 import vm from 'node:vm';
+import { guardRan } from './verdict.mjs';
 
 const SRC = new URL('../www/js/trash.js', import.meta.url);
 
@@ -455,6 +456,7 @@ const T0 = Date.parse('2026-06-01T09:00:00Z');	// when the chat was last touched
 }
 
 // ── Report ───────────────────────────────────────────────────────────
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) {
 	console.log('failed: ' + bad.join('; '));

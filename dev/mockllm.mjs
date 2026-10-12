@@ -36,7 +36,13 @@
 //                            `<n>/<ms>` paces it: each round is answered after that many
 //                            milliseconds, which is the only way here to make a turn take
 //                            TIME as well as rounds -- a worker still running when the turn
-//                            that dispatched it ends.
+//                            that dispatched it ends. `{n}` and `{c}` in the JSON become
+//                            the round's index and the call's id (a side-effect counter).
+//   @grind <n>/<words>/<ms> <name> <json>
+//                            STREAMED PROSE AND A CALL, n rounds, then a text reply: each
+//                            round streams <words> words of prose, one every <ms>, then the
+//                            call. A worker searching while it talks, which is the load the
+//                            engine-worker starvation probe needs (dev/verify_engineworker.mjs).
 //   @narrate <words> ;; <name> <json>
 //   @narrates <ms> <say1> ;; <call1> ;; <say2> ;; <call2> ;; <answer>
 //                            prose and a call each round, the answer after <ms>.
@@ -859,7 +865,12 @@ const plan = (messages, tools) => {
 			if (rounds >= n) return { text: `Called ${rounds} time(s); done.`, delayMs: pace };
 			const { name, args } = splitCall((sp === -1 ? 'file_list {"path":"."}'
 				: d.rest.slice(sp + 1).trim()));
-			return { calls: [toolCall(nextCallId(), name, args)], delayMs: pace };
+			// `{n}` in the arguments is this round's index and `{c}` this call's id, so a
+			// side effect names the round that made it and the request that asked: a
+			// round made twice (a runner that reran the turn) leaves two names for one n.
+			const cid = nextCallId();
+			const named = JSON.parse(JSON.stringify(args).split('{n}').join(String(rounds)).split('{c}').join(cid));
+			return { calls: [toolCall(cid, name, named)], delayMs: pace };
 		}
 
 		case 'tools': {
@@ -924,6 +935,20 @@ const plan = (messages, tools) => {
 				text:     '',
 				calls:    [toolCall(nextCallId(), name, args)],
 			};
+		}
+
+		// Streamed prose, then a call, round after round. See the directive list.
+		case 'grind': {
+			const sp   = d.rest.indexOf(' ');
+			const head = (sp === -1 ? d.rest : d.rest.slice(0, sp)).split('/');
+			const n     = Math.max(1, numArg(head[0] || '', 10, 'grind'));
+			const words = Math.max(0, numArg(head[1] || '', 40, 'grind words'));
+			const wordMs = Math.max(0, numArg(head[2] || '', 25, 'grind pace'));
+			const say = Array.from({ length: words }, (_, i) => `grinding-${rounds + 1}-${i + 1}`).join(' ');
+			if (rounds >= n) return { text: `Ground ${rounds} round(s). ` + say, wordMs };
+			const { name, args } = splitCall((sp === -1 ? 'file_list {"path":"."}'
+				: d.rest.slice(sp + 1).trim()));
+			return { text: say, calls: [toolCall(nextCallId(), name, args)], wordMs };
 		}
 
 		// Prose, then a call, in ONE message. See the directive list.
@@ -1081,7 +1106,7 @@ const stream = async (res, model, p) => {
 		for (const w of (p.text || '').split(' ').filter(Boolean)) {
 			if (res.writableEnded || res.destroyed) return;
 			send(frame({ content: w + ' ' }));
-			await sleep(5);
+			await sleep(p.wordMs != null ? p.wordMs : 5);
 		}
 		p.calls.forEach((c, i) => {
 			send(frame({ tool_calls: [{ index: i, id: c.id, type: 'function',
@@ -1118,7 +1143,7 @@ const stream = async (res, model, p) => {
 				res.destroy();
 				return;
 			}
-			await sleep(p.slowChunks ? 120 : 5);
+			await sleep(p.slowChunks ? 120 : (p.wordMs != null ? p.wordMs : 5));
 		}
 		// `cutReason` (`@cutreason`): the provider's own word for a reply it cut at
 		// the output limit, rather than one that finished on its own.

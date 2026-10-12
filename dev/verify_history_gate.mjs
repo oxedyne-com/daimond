@@ -28,6 +28,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { open, scratch, errors, steerDiamond, pressRowMark, signInAs } from './harness.mjs';
+import { armFilter, verdict } from './verdict.mjs';
 
 const ok = [], bad = [];
 let ran = 0;
@@ -132,8 +133,7 @@ const PROFILE = scratch('pw', 'histgate');
 fs.rmSync(PROFILE, { recursive: true, force: true });
 const s = await open({ name: 'histgate', profile: PROFILE, defaults: false });
 const { page } = s;
-const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
-const want = (k) => ONLY.length === 0 || ONLY.includes(k);
+const want = armFilter('ONLY');
 try {
 	await page.waitForFunction(() => !!(window.DaimondCore && DaimondCore.diamondApp && window.DaimondVersions), null, { timeout: 15000 });
 	for (const [dir, files] of Object.entries(H_SEED))
@@ -539,5 +539,4 @@ try {
 } finally {
 	await s.close();
 }
-console.log(bad.length === 0 ? '\nall arms held' : `\n${bad.length} arm(s) FAILED: ` + bad.join(' ; '));
-process.exit(bad.length === 0 ? 0 : 1);
+verdict({ ran, bad, green: 'all arms held', filters: [want] });

@@ -27,6 +27,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no mock LLM.
 import path from 'node:path';
+import { guardRan } from './verdict.mjs';
 
 const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
@@ -124,6 +125,7 @@ for (const vp of [{ width: 1200, height: 900 }, { width: 390, height: 844 }]) {
 }
 
 await browser.close();
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { bad.forEach((b) => console.log('  failed: ' + b)); process.exit(1); }
 console.log('all guide runner checks passed');

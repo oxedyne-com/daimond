@@ -34,6 +34,7 @@ const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
 // run under `xvfb-run` still went to the compositor and opened a window on the owner's
@@ -961,5 +962,6 @@ try {
 	try { fs.rmSync(MOCKDIR, { recursive: true, force: true }); } catch (e) {}
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

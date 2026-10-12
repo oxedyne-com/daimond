@@ -43,6 +43,7 @@
 import { webcrypto, createPublicKey, verify as osslVerify } from 'node:crypto';
 import { open, signInAs, PASS, APP } from './harness.mjs';
 import { GW_URL, GW_PORT } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -472,6 +473,7 @@ try {
 	if (oldPkcs8) oldPkcs8.fill(0);
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' passed, ' + bad.length + ' failed');
 if (bad.length) {
 	for (const b of bad) console.log('  FAILED: ' + b);

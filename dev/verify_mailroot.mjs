@@ -43,6 +43,7 @@
 //
 //	node dev/verify_mailroot.mjs
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -335,6 +336,7 @@ const noise = s.errs.filter((e) =>
 	!/favicon|ERR_ABORTED|net::ERR|Failed to load resource/i.test(e));
 check('the page threw nothing along the way', noise.length === 0, noise.slice(0, 3).join(' | '));
 
+guardRan(ok.length + bad.length);
 console.log('\n  ' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) console.log('  failed: ' + bad.join(', '));
 await s.close();

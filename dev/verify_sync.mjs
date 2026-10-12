@@ -49,6 +49,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -2947,5 +2948,6 @@ try {
 	await s.close?.().catch?.(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + (bad.length ? `FAIL: ${bad.length} failed, ${ok.length} passed` : `ok: all ${ok.length} passed`));
 process.exit(bad.length ? 1 : 0);

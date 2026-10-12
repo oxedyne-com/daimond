@@ -20,21 +20,22 @@
 //   (1a) NOMINEE ARM: with a runner nominated (DaimondCore.roster.nominate(B)), the tile names
 //        it -- a tentative "Sending to B…" (`turn.peer_sending_named`) -- NOT the
 //        past-tense "Handed off to X" that seq 217 withholds until a real claim;
-//   (1b) NO-NOMINEE ARM: with none nominated, the tile stays GENERIC ("Sent to your
-//        other devices.") and names no device. The owner's ruling of 2026-09-07
-//        (a3bdf814): "With NO nominee set, advertise NOTHING specific ... never a
-//        guessed device." This verifier predates that ruling by 12 hours and asked for
-//        the guess; split 2026-10-09 (Q7) so each arm asserts its own rule;
-//   (2) a take-back control is offered during the spinner;
-//   (3) MONEY-SAFETY: clicking it pulls the turn local through the take-if-vacant lease
-//       (trace: take…release), producing exactly one answer -- no double-run even with
-//       the peer present.
+//   (1b) NO-NOMINEE ARM: with none nominated, the turn runs HERE -- no hand-off tile,
+//        no device named. The 2026-09-07 ruling (a3bdf814: "never a guessed device")
+//        is now held by the owner's switch (D-20261009-23): only a nominated runner may
+//        take a turn, so with none there is no hand-off to name;
+//   (2) NO take-back / run-here / cancel control on the pre-claim tile (D-20261009-23:
+//       no Take back at all; "Run here" only as failure recovery). Re-aimed from
+//       "a take-back is offered";
+//   (3) MONEY-SAFETY, re-aimed from the take-back click: the no-nominee turn yields
+//       exactly one answer, ran on this device, and the peer never answers it.
 //
 // Needs the dev stack (app, mock, gateway). Pro-gated via pro.mjs.
 
 import { open, chat, signInAs, newChat, connectMock, shot, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -168,109 +169,69 @@ try {
 			&& !/handed off to/i.test(armN.snap.txt),
 		'tile text: ' + JSON.stringify(flat(armN.snap.txt).slice(0, 160)));
 
-	// ── (1b) NO-NOMINEE ARM. The nomination is cleared; the tile must name no device. ──
-	console.log('\n(1b) No-nominee arm — nothing nominated; the spinner stays generic (owner, 2026-09-07)');
+	// (2) NO TAKE-BACK (owner, D-20261009-23): the pre-claim tile offers no take-back,
+	//     cancel or run-here control. The switch by the input box is where the person
+	//     chooses where a turn runs; "Run here" exists only as failure recovery, and a
+	//     tile still waiting for its runner is not a failure. Re-aimed from the seq-2xx
+	//     "(2) a take-back is offered" arm, which tested the control the owner removed.
+	check('(2) the pre-claim tile offers no take-back / run-here / cancel control',
+		!armN.snap.btns.some((t) => /take back|run here|cancel|bring back/i.test(t)),
+		'buttons in the tile: ' + JSON.stringify(armN.snap.btns));
+	const holder = await a.page.evaluate(() => {
+		try { return (window.DaimondLease && DaimondLease.holder) ? (DaimondLease.holder() || '') : ''; }
+		catch (e) { return ''; }
+	});
+	await shot(a, 'handoff_spinner_ui_' + A_ENGINE);
+	console.log('\nDIAGNOSIS: holder="' + holder + '" (empty = pre-claim). '
+		+ 'Tile=' + JSON.stringify(flat(armN.snap.txt).slice(0, 120)) + ' buttons=' + JSON.stringify(armN.snap.btns));
+
+	// ── (1b) NO-NOMINEE ARM. The nomination is cleared. Under the owner's switch (Here |
+	//    runner, D-20261009-23) only a nominated runner may take a turn, so the send runs
+	//    HERE: no hand-off tile, no guessed device (the 2026-09-07 ruling's intent, now
+	//    held by never handing off at all), the answer rendered on this device. ──
+	console.log('\n(1b) No-nominee arm — nothing nominated; the turn runs here and names no device');
 	const cleared = await a.page.evaluate(() => {
 		try { window.DaimondCore.roster.nominate(''); return window.DaimondCore.roster.nominee() || ''; }
 		catch (e) { return 'ERR ' + e; }
 	});
 	check('A cleared its nomination', cleared === '', JSON.stringify(cleared));
 	await a.page.waitForTimeout(1500);
-	const PROMPT = 'SPINUI what is two plus two';
-	const armG = await sendArm(PROMPT);
-	const snap = armG.snap;
-	check('A shows the hand-off tile with its spinner', armG.up);
-	// Confirm we are genuinely PRE-CLAIM (no lease holder), so this is the reported
-	// window and not a post-claim state.
-	const holder = await a.page.evaluate(() => {
-		try { return (window.DaimondLease && DaimondLease.holder) ? (DaimondLease.holder() || '') : ''; }
-		catch (e) { return ''; }
-	});
-	check('the hand-off tile is on screen', snap.found, 'tile text: ' + JSON.stringify(flat(snap.txt).slice(0, 120)));
-	check('(1b) with no nominee, the spinner is the generic line and names no device',
-		/sent to your other devices/i.test(snap.txt) && !/sending to|handed off to/i.test(snap.txt)
-			&& snap.txt.indexOf(bLabel) === -1,
-		'tile text: ' + JSON.stringify(flat(snap.txt).slice(0, 160)));
-	// (2) TAKE-BACK / CANCEL: a control to pull the turn back / run here should be offered
-	//     during the spinner. Currently none is (take-back is holder-gated) -> RED.
-	const hasControl = snap.btns.some((t) => /take back|run here|cancel|bring back|stop/i.test(t));
-	check('(2) a take-back / run-here control is offered during the spinner',
-		hasControl, 'buttons in the tile: ' + JSON.stringify(snap.btns));
-
-	await shot(a, 'handoff_spinner_ui_' + A_ENGINE);
-	console.log('\nDIAGNOSIS: holder="' + holder + '" (empty = pre-claim, the reported window). '
-		+ 'Tile=' + JSON.stringify(snap.txt.replace(/\s+/g, ' ').slice(0, 120)) + ' buttons=' + JSON.stringify(snap.btns));
-
-	// ── MONEY-SAFETY: clicking the pre-claim take-back runs the turn HERE, exactly
-	//    once, with no double-run even though the peer is present. ──
-	console.log('\nMoney-safety — the take-back pulls the turn local through the take-if-vacant lease');
-	const answersMatching = (cs) => (cs || []).flatMap((c) => (c.messages || []))
-		.filter((m) => m.role === 'assistant' && m.content && m.content.trim() && !m.interrupted
-			&& /SPINUI/i.test(m.content));
-	// Wait for the DURABLE dispatched placeholder to be persisted (markTurnDispatched,
-	// after the parcel push in dispatchToPeer) so the take-back can resolve it via the
-	// index -- the synthetic send-time tile is drawn first, before the dispatch commits.
-	{
-		const t0 = Date.now();
-		while (Date.now() - t0 < 15000) {
-			let cs = []; try { cs = await servedChats(a); } catch (e) { cs = []; }
-			// This arm's chat, not the nominee arm's, which is dispatched too.
-			if ((cs || []).some((c) => (c.messages || []).some((mm) => mm.why === 'dispatched')
-				&& (c.messages || []).some((mm) => mm.role === 'user' && /SPINUI/.test(mm.content || '')))) break;
-			await a.page.waitForTimeout(400);
-		}
-	}
-	// Capture what runErrand does on A when the take-back fires -- the money-safe trace
-	// (take -> reconstruct -> run -> push -> report -> complete -> ack -> release) is the
-	// evidence the local run went through the take-if-vacant lease, not a bare re-run.
-	await a.page.evaluate(() => {
-		const orig = window.DaimondPeer.runErrand;
-		window.__lastRun = 'not-called';
-		window.DaimondPeer.runErrand = async function (e, d) {
-			const r = await orig(e, d);
-			window.__lastRun = { ran: !!(r && r.ran), done: !!(r && r.done), why: r && r.why, trace: (r && r.trace) || [] };
-			return r;
-		};
-	});
-	// Click the take-back in the hand-off tile (pre-claim -> takeBackToLocal).
-	const clicked = await a.page.evaluate(() => {
-		const tile = document.querySelector('#chat-output .chat-msg-handoff') || document.querySelector('#chat-output .ti-handoff');
-		const scope = tile ? (tile.closest('.chat-msg') || tile) : null;
-		const btn = scope && Array.from(scope.querySelectorAll('button'))
-			.find((b) => /take back|run here|bring back/i.test((b.textContent || '')));
-		if (btn) { btn.click(); return true; }
-		return false;
-	});
-	check('the take-back control was clickable', clicked);
-	await a.page.waitForTimeout(2000);
-	const lastRun = await a.page.evaluate(() => window.__lastRun);
-	console.log('take-back runErrand: ' + JSON.stringify(lastRun));
-	// The take-back went through the take-if-vacant lease (not a bare local re-run):
-	// the trace shows it TOOK the lease and released it -- the single-runner guarantee.
-	const tookLease = !!(lastRun && lastRun.trace && lastRun.trace.indexOf('take') !== -1
-		&& lastRun.trace.indexOf('release') !== -1);
-	check('the take-back ran through the take-if-vacant lease (money-safe path)', tookLease,
-		'trace: ' + JSON.stringify(lastRun && lastRun.trace));
-	// A runs it locally and produces exactly one answer (idA declared above).
-	const ranLocal = await until(a.page, () => {
+	await a.page.setViewportSize({ width: 1500, height: 950 });
+	await newChat(a);
+	await a.page.setViewportSize({ width: 390, height: 844 });
+	await a.page.waitForTimeout(300);
+	await a.page.fill('#chat-input', 'SPINUI what is two plus two');
+	await a.page.click('#chat-send', { force: true });
+	const ranHere = await until(a.page, () => {
 		const out = document.getElementById('chat-output');
 		return !!(out && /Mock reply to:[^\n]*SPINUI/i.test(out.innerText));
 	}, null, 30000);
-	check('the turn RAN locally after take-back (answer rendered here)', ranLocal);
-	// Un-stub B and force it to collect the errand: it must STAND DOWN (finished / lease),
-	// never producing a second answer -- the money-safe race outcome.
+	check('(1b) with no nominee, the turn RAN here (answer rendered on A)', ranHere);
+	const snap = await snapTile();
+	check('(1b) with no nominee, no hand-off tile is drawn and no device is named',
+		!snap.found && !/sent to your other devices|sending to|handed off to/i.test(snap.txt),
+		'tile: ' + JSON.stringify({ found: snap.found, txt: flat(snap.txt).slice(0, 160) }));
+
+	// ── (3) MONEY-SAFETY, re-aimed from the take-back click: the no-nominee turn runs
+	//    exactly once, here, and the peer -- un-stubbed and made to collect -- never
+	//    produces a second answer for it. ──
+	console.log('\n(3) Money-safety — one answer, on this device, none from the peer');
+	const answersMatching = (cs) => (cs || []).flatMap((c) => (c.messages || []))
+		.filter((m) => m.role === 'assistant' && m.content && m.content.trim() && !m.interrupted
+			&& /SPINUI/i.test(m.content));
 	await b.page.evaluate(() => { if (window.__origRunErrand) window.DaimondPeer.runErrand = window.__origRunErrand; });
 	await b.page.evaluate(() => { try { if (window.DaimondPost && DaimondPost.collect) DaimondPost.collect(); } catch (e) {} });
 	await b.page.waitForTimeout(3000);
-	// Settle A and count answers on BOTH sides for this turn.
 	await settle(a.page);
-	const aAns = answersMatching(await servedChats(a)).length;
-	const bAns = answersMatching(await servedChats(b)).length;
-	const ranOnA = answersMatching(await servedChats(a)).filter((m) => String(m.ranOn) === String(idA)).length;
-	check('exactly one answer for the turn after take-back (no double-run vs the peer)',
-		aAns === 1, 'A answers: ' + aAns + '  B answers: ' + bAns);
-	check('the one answer ran on THIS device (the take-back landed here)', ranOnA >= 1,
-		'ranOnA: ' + ranOnA + ' of ' + aAns);
+	await settle(b.page);
+	const aList = answersMatching(await servedChats(a));
+	const bList = answersMatching(await servedChats(b));
+	const ranOnA = aList.filter((m) => String(m.ranOn) === String(idA)).length;
+	const ranOnB = aList.concat(bList).filter((m) => String(m.ranOn) === String(idB)).length;
+	check('(3) exactly one answer for the turn (no double-run vs the peer)',
+		aList.length === 1, 'A answers: ' + aList.length + '  B answers: ' + bList.length);
+	check('(3) the one answer ran on THIS device, none on the peer', ranOnA === 1 && ranOnB === 0,
+		'ranOnA: ' + ranOnA + '  ranOnB: ' + ranOnB);
 
 } catch (e) {
 	check('the run finished without throwing', false, String((e && e.stack) || e));
@@ -279,6 +240,7 @@ try {
 	if (a) await a.close().catch(() => {});
 }
 
+guardRan(ok.length + bad.length);
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 if (bad.length) { for (const l of bad) console.log('  (RED confirms the bug) ' + l); }
 process.exit(bad.length ? 1 : 0);

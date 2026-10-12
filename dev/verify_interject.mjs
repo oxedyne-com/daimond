@@ -32,6 +32,7 @@
 // is missing the mock, not finding a bug.
 
 import { open, newChat, shot, errors, signInAs } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -413,6 +414,7 @@ console.log('\nconsole errors:', errs.slice(0, 5));
 check('nothing throws while all this happens', errs.length === 0, errs[0] || '');
 
 await s.close();
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));
 process.exit(bad.length ? 1 : 0);

@@ -61,6 +61,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, scratch, errors } from './harness.mjs';
 import { IMAP_PORT, SMTP_PORT } from './ports.mjs';
+import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -563,5 +564,6 @@ if (BREAK) {
 		+ (bad.length ? ' — ' + bad.join('; ') : ' — NOTHING FAILED, so the checks above prove nothing'));
 	process.exit(bad.length ? 0 : 1);		// a break MUST fail something
 }
+guardRan(ok.length + bad.length);
 console.log(bad.length === 0 ? '\nall checks passed' : `\n${bad.length} check(s) FAILED`);
 process.exit(bad.length === 0 ? 0 : 1);

@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const WWW = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'www');
 
@@ -391,6 +392,7 @@ check('desktop: no new console errors', realErrs().length === 0, realErrs().slic
 
 await shot('shots/mobile-desktop-after.png');
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} passed, ${bad.length} failed`);
 if (bad.length) console.log('FAILED: ' + bad.join(', '));
 await s.close();

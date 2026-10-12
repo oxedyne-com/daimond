@@ -58,6 +58,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, shot, scratch } from './harness.mjs';
+import { guardRan } from './verdict.mjs';
 
 const WWW = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'www');
 
@@ -808,6 +809,7 @@ check('and the Social panel has the plain word Messages to itself',
 	await s.close();
 }
 
+guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);
 if (bad.length) {
 	console.log('failed: ' + bad.join('; '));
