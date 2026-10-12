@@ -350,6 +350,50 @@ const { page: p } = s;
 try {
 	if (BREAK) console.log(`  ..   running with --break ${BREAK}`);
 
+	// ══ 0. Which door each thread's band comes through (HIST-SAFE U2) ═══
+	// A chat's own conversation has a door of its own, `wire_chat_system`; `wire_system` is a
+	// Diamond's, and an empty or bad id there is refused by name rather than read as "a chat".
+	// Every call is recorded, so the bands below are known to have come through the right one.
+	const refusals = await p.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const proto = m.DaimondApp.prototype;
+		window.__wireCalls = [];
+		for (const name of ['wire_system', 'wire_chat_system']) {
+			const orig = proto[name];
+			if (typeof orig !== 'function') continue;
+			proto[name] = function (...args) {
+				window.__wireCalls.push({ name, id: args.length ? String(args[0]) : null });
+				return orig.apply(this, args);
+			};
+		}
+		const a = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
+		const said = async (f) => { try { await f(); return 'ACCEPTED'; } catch (e) { return String(e && e.message || e); } };
+		const out = {
+			chatDoor: typeof proto.wire_chat_system === 'function',
+			empty:    await said(() => a.wire_system('', '[]')),
+			bad:      await said(() => a.wire_system('../x', '[]')),
+			chatId:   await said(() => a.set_chat_scope('../x', '[]')),
+		};
+		window.__wireCalls.length = 0; // these probes are not a band's
+		return out;
+	});
+	check(refusals.chatDoor, 'a chat\'s own conversation has its own Wire door, wire_chat_system');
+	check(/wire_system/.test(refusals.empty) && /wire_chat_system/.test(refusals.empty),
+		'wire_system refuses an empty id by name, and names the chat\'s door', refusals.empty.slice(0, 200));
+	check(refusals.bad !== 'ACCEPTED', 'and refuses a bad id', refusals.bad.slice(0, 200));
+	check(/chat id/.test(refusals.chatId) && !/no longer takes/.test(refusals.chatId),
+		'a bad chat id gets its own refusal, not the old-caller one', refusals.chatId.slice(0, 200));
+
+	// The bands below need the store (the house rules, the chat, the Diamond). An engine with
+	// no OPFS -- Playwright's Linux WebKit -- runs the doors above and no band.
+	const opfs = await p.evaluate(() => !!(navigator.storage && navigator.storage.getDirectory));
+	if (!opfs) {
+		console.log(`\nNOT COVERED: this engine exposes no OPFS (navigator.storage.getDirectory absent); `
+			+ `the doors ran (${failures} failed), no band was drawn.`);
+		await s.close();
+		process.exit(failures === 0 ? 3 : 1);
+	}
+
 	// The user's own house rules, in force before either turn.
 	//
 	// NOT decoration. They are appended after everything the app composes, so on a
@@ -382,6 +426,10 @@ try {
 	await showWire(p);
 	let w = await wireDom(p);
 	check(!!w && w.area > 0, 'the band is drawn on a chat', w && `area ${w.area}`);
+	const chatCalls = await p.evaluate(() => window.__wireCalls.splice(0));
+	check(chatCalls.some((c) => c.name === 'wire_chat_system')
+		&& !chatCalls.some((c) => c.name === 'wire_system'),
+		'and it came through the chat\'s own door', JSON.stringify(chatCalls).slice(0, 200));
 	const chatShown = bandTools(w);
 	check(!!chatShown, 'and its schema band parses as JSON');
 	check(JSON.stringify(chatShown) === JSON.stringify(chatSent),
@@ -482,6 +530,10 @@ try {
 	await redrawWire(p);
 	w = await wireDom(p);
 	check(!!w && w.area > 0, 'the band is drawn on a daimon thread', w && `area ${w.area}`);
+	const dCalls = await p.evaluate(() => window.__wireCalls.splice(0));
+	check(dCalls.some((c) => c.name === 'wire_system' && c.id === did)
+		&& !dCalls.some((c) => c.name === 'wire_chat_system' || (c.name === 'wire_system' && c.id !== did)),
+		'and it came through the Diamond\'s door, with its id', JSON.stringify(dCalls).slice(0, 200));
 	const dShown = bandTools(w);
 	check(JSON.stringify(dShown) === JSON.stringify(dSent),
 		'THE BAND\'S TOOL LIST IS THE DAIMON\'S REAL REGISTRY',

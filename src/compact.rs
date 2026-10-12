@@ -4134,6 +4134,7 @@ mod tests {
 			turn:        String::new(),
 			keeper:      String::new(),
 			unconfirmed: Vec::new(),
+			live: None,
 			by_model:    false,
 			restoring:   0,
 			by:          None,

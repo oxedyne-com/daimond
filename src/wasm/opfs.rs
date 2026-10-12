@@ -247,6 +247,11 @@ pub fn folder_id() -> Option<String> {
     }
 }
 
+/// The open folder's own name, or `None` where the file tools are on browser storage.
+pub fn folder_name() -> Option<String> {
+    WORKSPACE_OVERRIDE.with(|c| c.borrow().as_ref().map(|h| h.name()))
+}
+
 /// Whether a real folder is open at all.
 ///
 /// [`workspace_mode`] answers the same question for the page, which wants a word to render; a
@@ -1126,6 +1131,8 @@ fn file_stamp(f: &File) -> Option<f64> {
     }
 }
 
+const LIST_WAVE: usize = 32; // file reads a listing asks for at once
+
 /// Read the entries of `dir`, returning `(name, is_dir, size, last_modified_ms)` per entry.
 ///
 /// The names come back AS THE WORKSPACE SPELLS THEM, not as the browser stores them: a listing
@@ -1150,24 +1157,54 @@ fn file_stamp(f: &File) -> Option<f64> {
 async fn read_entries(dir: &FileSystemDirectoryHandle)
     -> Outcome<Vec<(String, bool, u64, Option<f64>)>>
 {
-    let mut out: Vec<(String, bool, u64, Option<f64>)> = Vec::new();
-    for (name, handle, is_dir) in res!(stored_entries(dir).await) {
-        let (size, when) = if is_dir {
-            (0u64, None)
-        } else {
-            match handle.dyn_into::<FileSystemFileHandle>() {
-                Ok(fh) => {
-                    let file_val = res!(JsFuture::from(fh.get_file()).await
-                        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", name, js_err(&e); IO, File, Read)));
-                    match file_val.dyn_into::<File>() {
-                        Ok(f)  => (f.size() as u64, file_stamp(&f)),
-                        Err(_) => (0u64, None),
-                    }
-                }
-                Err(_) => (0u64, None),
+    let stored = res!(stored_entries(dir).await);
+    let mut out: Vec<(String, bool, u64, Option<f64>)> = Vec::with_capacity(stored.len());
+    // IN WAVES, NOT ONE AT A TIME (D-20261006-32). Each `getFile()` was awaited before the next
+    // was asked for, so a folder of 594 files was 594 round trips end to end -- on a real disk
+    // behind an open folder, seconds of an empty picker. A wave of [`LIST_WAVE`] is asked at once
+    // and settled together; the bound keeps a folder of a hundred thousand from opening that many
+    // files at the same moment.
+    for wave in stored.chunks(LIST_WAVE) {
+        let asks = js_sys::Array::new();
+        for (_, handle, is_dir) in wave {
+            if *is_dir {
+                continue;
             }
-        };
-        out.push((fsname::decode(&name), is_dir, size, when));
+            match handle.clone().dyn_into::<FileSystemFileHandle>() {
+                Ok(fh) => { asks.push(&fh.get_file()); }
+                Err(_) => { asks.push(&JsValue::NULL); }	// settles at once, read as no file
+            }
+        }
+        let settled = res!(JsFuture::from(js_sys::Promise::all_settled(&asks)).await
+            .map_err(|e| err!("OPFS: settling a wave of {} file reads failed: {}.",
+                asks.length(), js_err(&e); IO, File, Read)));
+        let settled = js_sys::Array::from(&settled);
+        let mut k = 0u32;
+        for (name, _, is_dir) in wave {
+            let (size, when) = if *is_dir {
+                (0u64, None)
+            } else {
+                let rec = settled.get(k);
+                k += 1;
+                let status = js_sys::Reflect::get(&rec, &JsValue::from_str("status"))
+                    .ok()
+                    .and_then(|v| v.as_string())
+                    .unwrap_or_default();
+                if status != "fulfilled" {
+                    let why = js_sys::Reflect::get(&rec, &JsValue::from_str("reason"))
+                        .unwrap_or(JsValue::UNDEFINED);
+                    return Err(err!("OPFS: get file '{}' failed: {}.", name, js_err(&why);
+                        IO, File, Read));
+                }
+                let value = js_sys::Reflect::get(&rec, &JsValue::from_str("value"))
+                    .unwrap_or(JsValue::UNDEFINED);
+                match value.dyn_into::<File>() {
+                    Ok(f)  => (f.size() as u64, file_stamp(&f)),
+                    Err(_) => (0u64, None),
+                }
+            };
+            out.push((fsname::decode(name), *is_dir, size, when));
+        }
     }
     Ok(out)
 }

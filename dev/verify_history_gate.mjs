@@ -17,6 +17,10 @@
 //   P5.  THE ANSWER IS THE ENGINE'S: on the open ticket, before he answers, a put-back over his
 //        flagged edit is refused, with `over` or without; and Keep keeps it.                  (F2)
 //   P6.  ONE RESTORE A DIAMOND, across failed opens, a double press, a closed tab and a reload.
+//   P7.  THE MARK AS IT IS AT THE ACT: withdrawn (P7) or made read-only (P7r) while the question
+//        is open, then yes: his file is untouched and in the refused list.             (HIST-SAFE U2)
+//   P8.  FAIL CLOSED: this device's record of the marks damaged (P8) or the account locked (P8L)
+//        while the question is open, then yes: refused in the UNREAD sentence, disk unchanged.
 //
 // Seeded test Diamonds only; a world with no owner data:
 //   eval "$(bash dev/world.sh 98 --up)"; node dev/verify_history_gate.mjs
@@ -117,6 +121,10 @@ const H_SEED = {
 	p2: { 'f.txt': 'two-orig' },
 	p3: { 'f.txt': 'r1' },
 	p4: { 'f.txt': 's1' },
+	p7: { 'f.txt': 'p7 original' },
+	p7r: { 'f.txt': 'p7r original' },
+	p8: { 'f.txt': 'p8 original' },
+	p8l: { 'f.txt': 'p8l original' },
 	p6: { 'f.txt': 't1' },
 	p5: { 'f.txt': 'u1' },
 };
@@ -199,9 +207,8 @@ try {
 		}
 	});
 	const door = (pg, id, tool, args, ticket) => pg.evaluate(async (a) => {
-		const marks = await DaimondDiamond.bounds(a.id);
+		// The marks are the engine's to read at the act (HIST-SAFE U2).
 		const r = DaimondCore.diamondApp(a.id).run_diamond_tool(String(a.id),
-			JSON.stringify(marks.attached || []), JSON.stringify(marks.read_only || []),
 			a.tool, JSON.stringify(a.args), a.ticket === null ? undefined : a.ticket);
 		const o = await r;
 		return { outcome: o.outcome, text: String(o.text).slice(0, 200) };
@@ -244,7 +251,7 @@ try {
 		console.log('\nP1W. no mark flow: a Diamond, his file, run_diamond_tool with no / made-up ticket');
 		const id = await newDiamond(page, 'QA P1W');
 		const raw = (pg, t, tool, args) => pg.evaluate(async (a) => {
-			const o = await DaimondCore.diamondApp(a.id).run_diamond_tool(String(a.id), JSON.stringify(['p1']), '[]',
+			const o = await DaimondCore.diamondApp(a.id).run_diamond_tool(String(a.id),
 				a.tool, JSON.stringify(a.args), a.t === null ? undefined : a.t);
 			return { outcome: o.outcome, text: String(o.text).slice(0, 160) };
 		}, { id, t, tool, args });
@@ -433,6 +440,99 @@ try {
 		const afterR = await page.evaluate((a) => DaimondVersions.undoVersion(a.id, a.v, ['p6/f.txt']).catch((e) => 'threw ' + e), { id, v: v.v });
 		check('P6: after a reload with a question open, a restore runs', afterR !== null && !/threw/.test(String(afterR)),
 			JSON.stringify(afterR).slice(0, 200) + ' disk ' + await showDisk('p6/f.txt'));
+	}
+	// ── The engine reads the marks at the act (HIST-SAFE U2) ──
+	// The answer, released, with the restore's own refused list read back whole.
+	const releaseRefused = (pg, yes) => pg.evaluate(async (y) => {
+		window.__released = true; window.__later = y;
+		if (window.__release) window.__release(y);
+		const r = await window.__pending;
+		const o = (typeof r === 'string') ? (() => { try { return JSON.parse(r); } catch (e) { return { raw: r }; } })() : r;
+		return { refused: (o && o.refused) || [], raw: JSON.stringify(o).slice(0, 300), asks: window.__asks.map((x) => x.opts.ask) };
+	}, yes);
+	const refusedOf = (out, rel) => (out.refused || []).find((e) => String(e.path || '') === rel);
+	// The Diamond's `holds` row on `dir`, as the panel's own steps act on it.
+	const markOn = (pg, id, dir, how) => pg.evaluate(async (a) => {
+		const eng = DaimondCore.diamondApp();
+		const ls = JSON.parse(await eng.links_touching('diamond:' + a.id) || '[]');
+		const pathOf = (to) => String(to).replace(/^(file|dir):(\[[^\]]*\])?/, '').trim();
+		const row = ls.find((l) => l.owner === a.id && l.from === 'diamond:' + a.id && l.rel === 'holds' && pathOf(l.to) === a.dir);
+		if (!row) return 'no row';
+		if (a.how === 'readonly') {
+			// `setReadOnly`: a `consulted` row pressed here, then the `holds` row removed.
+			const lid = await eng.add_link(a.id, 'diamond:' + a.id, row.to, 'consulted', '', 'user');
+			const ls2 = JSON.parse(await eng.links_touching('diamond:' + a.id) || '[]');
+			const c = ls2.find((l) => l.id === lid && l.owner === a.id);
+			if (!c || !DaimondMarksHere.grant(a.id, c, DaimondAttach.root(), { share: false })) return 'consulted not pressed';
+		}
+		// `removeLinkHere`: the press dropped, then the row.
+		DaimondMarksHere.drop(a.id, row.id, row.to);
+		await eng.remove_link(a.id, row.id);
+		const b = await DaimondDiamond.bounds(a.id);
+		return JSON.stringify([b.attached || [], b.read_only || []]);
+	}, { id, dir, how });
+	for (const [arm, how] of [['P7', 'withdraw'], ['P7r', 'readonly']]) {
+		if (!want(arm)) continue;
+		const dir = arm.toLowerCase();
+		const rel = dir + '/f.txt';
+		console.log('\n' + arm + '. the mark ' + (how === 'readonly' ? 'made read-only' : 'withdrawn') + ' while the question is open, then yes');
+		const { id, clipped } = await folderFile('QA ' + arm, dir);
+		const v = await steerWrite(id, rel, 'daimon ' + arm);
+		check(arm + ' setup', clipped && wrote(v, rel));
+		const his = 'HIS ' + arm + ' EDIT';
+		await glue(page, 'write_file', rel, his);
+		await holdFirst(page, { id, v: v.v, paths: [rel], undo: true, later: true });
+		const held = await waitAsk(page);
+		const after = await markOn(page, id, dir, how);
+		check(arm + ': the question was open, and the mark ' + how + ' while it was',
+			held.length > 0 && after === (how === 'readonly' ? JSON.stringify([[dir], [dir]]) : '[[],[]]'),
+			`held ${JSON.stringify(held)} bounds ${after}`);
+		const out = await releaseRefused(page, true);
+		check(arm + ': he says yes, and his file is untouched', (await onDisk(page, rel)) === his,
+			`${out.raw} disk ${await showDisk(rel)}`);
+		const e = refusedOf(out, rel);
+		check(arm + ': and the file is in the refused list', !!e, JSON.stringify(out.refused).slice(0, 300));
+	}
+	for (const [arm, how] of [['P8', 'damaged'], ['P8L', 'locked']]) {
+		if (!want(arm)) continue;
+		const dir = arm.toLowerCase();
+		const rel = dir + '/f.txt';
+		console.log('\n' + arm + '. this device\'s record ' + (how === 'locked' ? 'locked away' : 'damaged') + ' while the question is open, then yes');
+		const { id, clipped } = await folderFile('QA ' + arm, dir);
+		const v = await steerWrite(id, rel, 'daimon ' + arm);
+		check(arm + ' setup', clipped && wrote(v, rel));
+		const his = 'HIS ' + arm + ' EDIT';
+		await glue(page, 'write_file', rel, his);
+		await holdFirst(page, { id, v: v.v, paths: [rel], undo: true, later: true });
+		const held = await waitAsk(page);
+		// Broken the way the engine meets it: the record's own key holding no record (through the
+		// page's Storage, so the account prefix applies), or the identity saying it is locked.
+		const broke = await page.evaluate((h) => {
+			if (h === 'locked') {
+				window.__origUnlocked = DaimondIdentity.isUnlocked;
+				DaimondIdentity.isUnlocked = () => false;
+				return DaimondIdentity.isUnlocked() === false;
+			}
+			window.__origMarks = localStorage.getItem('daimond-marks-here');
+			localStorage.setItem('daimond-marks-here', '{"v":1,"d":');
+			return window.__origMarks !== null;
+		}, how);
+		const lone = await door(page, id, 'file_write', { path: rel, content: 'LONE WHILE BROKEN' }, undefined);
+		const out = await releaseRefused(page, true);
+		await page.evaluate((h) => {
+			if (h === 'locked') DaimondIdentity.isUnlocked = window.__origUnlocked;
+			else localStorage.setItem('daimond-marks-here', window.__origMarks);
+		}, how);
+		check(arm + ': the question was open, and the record ' + how + ' while it was', held.length > 0 && broke,
+			`held ${JSON.stringify(held)} broke ${broke}`);
+		const UNREAD = /record of the folders marked here could not be read/;
+		check(arm + ': a ticketless write meanwhile is refused in the UNREAD sentence',
+			lone.outcome !== 'done' && UNREAD.test(lone.text), JSON.stringify(lone));
+		check(arm + ': he says yes, and his file is untouched', (await onDisk(page, rel)) === his,
+			`${out.raw} disk ${await showDisk(rel)}`);
+		const e = refusedOf(out, rel);
+		check(arm + ': the file is refused, in the UNREAD sentence', !!e && UNREAD.test(String(e.said || '')),
+			JSON.stringify(out.refused).slice(0, 400));
 	}
 	const errs = errors(s).filter((e) => !/favicon/i.test(e) && !/Failed to load resource/.test(e) && !/502 \(Bad Gateway\)/.test(e));
 	console.log('    page errors: ' + (errs.slice(0, 3).join(' | ') || 'none'));

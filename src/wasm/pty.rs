@@ -320,7 +320,8 @@ fn inside(path: &str, roots: &[String]) -> bool {
 ///
 /// # Arguments
 /// * `ask_json` - What the page knows, as JSON:
-///   `{own_dir, attached, read_only, cwd, cols, rows}`, plus the optional
+///   `{diamond, cwd, cols, rows}` (`diamond` the Diamond's id, or absent for the user's own
+///   terminal), plus the optional
 ///   `argv` (defaulting to [`SHELL`]), `toolkits` (the names the user granted
 ///   this Diamond) and `tainted` (a session belonging to a turn that has read a
 ///   stranger's words, which loses the network).
@@ -375,9 +376,33 @@ pub async fn pty_request(ask_json: String) -> String {
             pseudo-terminal -- does not exist. Commands can still be run.");
     }
 
-    let own_dir   = extract_json_string(ask, "own_dir").unwrap_or_default();
-    let attached  = extract_json_string_array(ask, "attached").unwrap_or_default();
-    let read_only = extract_json_string_array(ask, "read_only").unwrap_or_default();
+    // THE DIAMOND'S MARKS ARE THE ENGINE'S TO READ (HIST-SAFE U2, 2026-10-12), here as at every
+    // other door: the page named its own directory and what it had attached until then, so a page
+    // script could open a terminal over a folder nobody marked.  An ask still carrying them is
+    // refused; one naming no Diamond is the user's own terminal at the granted root.
+    if extract_json_string(ask, "own_dir").is_some()
+        || extract_json_string_array(ask, "attached").is_some()
+        || extract_json_string_array(ask, "read_only").is_some()
+    {
+        return refused(
+            "This build no longer takes own_dir, attached or read_only from the page: the engine \
+            reads the Diamond's marks itself. Send the Diamond's id as `diamond`. Nothing was done.");
+    }
+    let diamond = extract_json_string(ask, "diamond").unwrap_or_default();
+    let (own_dir, attached, read_only) = if diamond.is_empty() {
+        (String::new(), Vec::new(), Vec::new())
+    } else {
+        let id = match crate::marks::DiamondId::parse(&diamond) {
+            Ok(d)  => d,
+            Err(_) => return refused(&fmt!("'{}' is not a Diamond's id, so there is no terminal \
+                to open for it. Nothing was done.", diamond)),
+        };
+        // FAIL CLOSED: a record that cannot be read opens no terminal over anything.
+        match crate::wasm::marks::diamond_reach(&id).await {
+            Ok(r)  => (id.dir(), r.attached, r.read_only),
+            Err(_) => return refused(crate::wasm::marks::UNREAD),
+        }
+    };
     // A TERMINAL IS THE USER AT A KEYBOARD, NOT A DAIMON, so its fence is the machine grant
     // and not this Diamond's attachments (owner, 2026-08-26). The composition, and why each part
     // of it is safe, is `tools::terminal_bounds`; a daimon's `run` never reaches it.

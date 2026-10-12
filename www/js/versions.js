@@ -307,21 +307,18 @@
 		var refused = [];
 		if (!(entries || []).length) return refused;
 		// THE DIAMOND'S REACH AS IT IS NOW, and not as it was when the file was
-		// written. `run_diamond_tool` builds the fence per call from these, so a mark
-		// the user has withdrawn since is refused in the fence's own sentence and the
-		// file on disk is untouched -- which the shared `toolsApp` could never do,
-		// because it carries no diamond's bounds and `set_diamond_scope` composes
-		// rather than assigns.
-		var marks = { attached: [], read_only: [] };
-		// A CHAT'S STORE (`chat:<id>`) goes back through the CHAT'S marks, which are
-		// what its turn was fenced to; a Diamond's through its own.
+		// written: `run_diamond_tool` reads the marks, this device's record of them
+		// and the open workspace itself at each call (HIST-SAFE U2), so a mark the
+		// user has withdrawn since is refused in the fence's own sentence and the file
+		// on disk is untouched. A CHAT'S STORE (`chat:<id>`) goes back through the
+		// chat's workspace, and only its holdings travel -- the engine counts each
+		// only where this device's record has the press.
 		var chat = String(id).indexOf('chat:') === 0 ? String(id).slice(5) : '';
-		try {
-			marks = chat
-				? { attached: await DaimondAttach.chatScope(chat), read_only: [] }
-				: await DaimondDiamond.bounds(id);
+		var holds;
+		if (chat) {
+			try { holds = DaimondAttach.chatHolds(chat); }
+			catch (e) { holds = '[]'; }
 		}
-		catch (e) { marks = { attached: [], read_only: [] }; }
 		var eng = app(id);
 		// FAILS CLOSED. An engine without the fenced door is not a reason to write
 		// through an unfenced one: the whole property of this half is that a restore
@@ -333,9 +330,9 @@
 			return refused;
 		}
 		var run = function (tool, args) {
-			return eng.run_diamond_tool(String(id),
-				JSON.stringify(marks.attached || []), JSON.stringify(marks.read_only || []),
-				tool, JSON.stringify(args), ticket);
+			return chat
+				? eng.run_diamond_tool(String(id), tool, JSON.stringify(args), ticket, holds)
+				: eng.run_diamond_tool(String(id), tool, JSON.stringify(args), ticket);
 		};
 		// HIS ANSWER IS THE ENGINE'S (hist-safe QA A F2, 2026-10-12). Each question's
 		// answer is recorded against the bytes he was asked about, and the door refuses an
@@ -510,7 +507,7 @@
 					{ n: names.length, paths: shown }),
 				tOr('versions.over_allow', 'Replace them'),
 				{ title: tOr('versions.changed_title', 'Your files changed since you were asked'), danger: true,
-					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					cancelLabel: tOr('versions.over_keep', 'Leave my files'),
 					ask: 'restore-changed', guard: true });
 			return yes === true;
 		} catch (e) { return false; }
@@ -574,7 +571,7 @@
 						{ n: names.length, paths: shown }),
 				tOr('versions.over_allow', 'Replace them'),
 				{ title: tOr('versions.over_title', 'Replace files in your folder?'), danger: true,
-					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					cancelLabel: tOr('versions.over_keep', 'Leave my files'),
 					ask: 'restore-over', guard: true });
 			return yes === true;
 		} catch (e) { return false; }
@@ -630,7 +627,7 @@
 						{ n: names.length, paths: shown }),
 				tOr('versions.over_allow', 'Replace them'),
 				{ title: tOr('versions.over_title', 'Replace files in your folder?'), danger: true,
-					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					cancelLabel: tOr('versions.over_keep', 'Leave my files'),
 					ask: 'restore-theirs', guard: true });
 			return yes === true;
 		} catch (e) { return false; }
@@ -663,7 +660,7 @@
 						{ n: named.length, paths: shown }),
 				tOr('versions.gone_allow', 'Delete them'),
 				{ title: tOr('versions.own_title', 'Delete this Diamond’s newer files?'), danger: true,
-					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					cancelLabel: tOr('versions.own_keep', 'Keep the Diamond’s files'),
 					ask: 'restore-own', guard: true });
 			return yes === true;
 		} catch (e) { return false; }

@@ -49,7 +49,7 @@ function makeTab(answer) {
 		// Called only where `askGone` answered yes: a no refuses every `gone`
 		// entry before the loop reaches a door, so a call here proves the
 		// answer actually gated the delete, not only the question shown.
-		run_diamond_tool(diaId, attached, readOnly, tool, argsJson) {
+		run_diamond_tool(diaId, tool, argsJson, ticket) {
 			runCalls.push({ tool: String(tool), args: JSON.parse(argsJson) });
 			return Promise.resolve(JSON.stringify({ outcome: 'done' }));
 		},

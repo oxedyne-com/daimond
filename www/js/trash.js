@@ -334,6 +334,7 @@
 	}
 
 	var _items = null;			// id -> { k, at, back, a, r }, or null before the first read
+	var _damaged = false;		// stored text that is not a trash record: never empty, never written over
 	var _subs  = [];			// redraw callbacks
 
 	function log(/* ...args */) {
@@ -367,11 +368,19 @@
 
 	/// Read through `DaimondStore`, so a record this tab could not store is held
 	/// owed and read back here, not lost to a sibling tab's write (SIM-11).
+	///
+	/// TEXT THAT IS THERE BUT IS NOT A TRASH RECORD IS DAMAGED, NOT EMPTY. Read as
+	/// empty it brought every trashed Diamond back as live, and the next save wrote
+	/// over what was left of the record (QA A F2). It holds nothing here, every
+	/// write is refused, and only `resetDamaged` -- a person's explicit press --
+	/// replaces it. The engine's `marks::trashed_ids` keeps the same rule.
 	function load() {
 		if (_items) return _items;
 		_items = {};
 		var raw = window.DaimondStore.get(KEY, {});
-		var items = (raw && raw.items) || {};
+		_damaged = window.DaimondStore.damaged(KEY) || !isRecord(raw);
+		if (_damaged) { log('the stored trash record is damaged; nothing will be written over it'); return _items; }
+		var items = raw.items || {};
 		Object.keys(items).forEach(function (id) {
 			var r = clean(items[id]);
 			if (r) _items[id] = r;
@@ -379,10 +388,30 @@
 		return _items;
 	}
 
+	/// Is this a trash record: a map whose `items`, where present, is a map?
+	function isRecord(v) {
+		var plain = function (o) { return !!o && typeof o === 'object' && !Array.isArray(o); };
+		return plain(v) && (v.items === undefined || plain(v.items));
+	}
+
+	/// Is the stored record damaged? See `load`.
+	function damaged() { load(); return _damaged; }
+
+	/// Replace a damaged record with an empty one: the one way out, on a person's
+	/// press. False, and nothing written, where the record is not damaged.
+	function resetDamaged() {
+		if (!damaged()) return false;
+		var ok = window.DaimondStore.put(KEY, { v: 1, items: {} }, law);
+		_items = null;
+		announce();
+		return ok && !damaged();
+	}
+
 	/// Returns whether the write landed. One the box refuses is held owed by
 	/// `DaimondStore`, retried under `law` and said on screen; the caller still
 	/// hears the false, so a trashing is never reported as stored when it is not.
 	function save() {
+		if (damaged()) return false;
 		return window.DaimondStore.put(KEY, { v: 1, items: sorted(load()) }, law);
 	}
 
@@ -425,7 +454,7 @@
 	/// taken on this device at this moment, and a stamp copied from an older
 	/// record would be a trashing that a restore elsewhere could not outrank.
 	function put(id, kind) {
-		if (!id) return false;
+		if (!id || damaged()) return false;	// a damaged record is never written over
 		var items = load();
 		var r = items[id] || { k: 'c', at: 0, back: 0, a: 0, r: retainDays() };
 		r.k  = (kind === 'diamond' || kind === 'd') ? 'd' : 'c';
@@ -459,7 +488,7 @@
 	///
 	/// Returns true only when the record actually moved.
 	function expire(id, kind, at) {
-		if (!id) return false;
+		if (!id || damaged()) return false;	// a damaged record is never written over
 		var when = ms(at);
 		if (!when) return false;
 		var items = load();
@@ -582,6 +611,7 @@
 	/// (SIM-16, A5).
 	function adopt(rec) {
 		if (!rec || typeof rec !== 'object') return false;
+		if (damaged()) throw window.DaimondStore.refusal(KEY);	// not applied: re-pulled after a reset
 		var moved = mergeItems(load(), rec.items || {});
 		if (!moved) return false;
 		var landed = save();
@@ -640,7 +670,7 @@
 
 	/// Drop everything held, for an account switch: one account's trash must
 	/// never show in another's panel.
-	function reset() { _items = null; }
+	function reset() { _items = null; _damaged = false; }
 
 	// Another tab moved the trash. localStorage fires this in the OTHER tabs
 	// only, which is exactly what is wanted: this one has already redrawn.
@@ -662,6 +692,8 @@
 		snapshot: snapshot,
 		adopt:    adopt,
 		reset:    reset,
+		damaged:  damaged,
+		resetDamaged: resetDamaged,
 		subscribe: function (fn) { if (typeof fn === 'function') _subs.push(fn); },
 		/// How long a thing trashed NOW would be kept, in ms. Read by the panel
 		/// so the sentence a user sees and the rule the sweep applies are one
@@ -778,8 +810,19 @@
 		if (!items.length) {
 			var none = document.createElement('div');
 			none.className = 'rail-note';
-			none.textContent = t('trash.nothing');
+			// A damaged record is not an empty one (QA A F2), and its one way out is here.
+			var bad = DaimondTrash.damaged();
+			none.textContent = t(bad ? 'trash.damaged' : 'trash.nothing');
 			listEl.appendChild(none);
+			if (bad) {
+				var fix = document.createElement('button');
+				fix.type = 'button';
+				fix.className = 'chip-btn';
+				fix.dataset.act = 'trash-reset';
+				fix.textContent = t('trash.reset');
+				fix.addEventListener('click', resetDamaged);
+				listEl.appendChild(fix);
+			}
 			return;
 		}
 
@@ -911,6 +954,16 @@
 			{ title: t('trash.empty') });
 		if (!ok) return;
 		for (var i = 0; i < items.length; i++) await core().trashPurge(items[i].id);
+		await render();
+	}
+
+	/// Replace a damaged trash record, ASKING FIRST: what it held cannot be read,
+	/// and anything it kept in the trash shows as live again.
+	async function resetDamaged() {
+		if (!core()) return;
+		var ok = await core().confirm(t('trash.reset_ask'), t('trash.reset'), { title: t('trash.reset') });
+		if (!ok) return;
+		DaimondTrash.resetDamaged();
 		await render();
 	}
 

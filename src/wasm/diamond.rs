@@ -5007,6 +5007,12 @@ pub fn restore_store(ticket: u64) -> Option<String> {
     RESTORES.with(|r| r.borrow().get(&ticket).map(|x| x.id.clone()))
 }
 
+/// Did the open restore `ticket` hand out `spelled` (normalised, as [`restore_route`] keys it)?
+pub fn restore_handed(ticket: u64, spelled: &str) -> bool {
+    let key = crate::tools::normalise(spelled);
+    RESTORES.with(|r| r.borrow().get(&ticket).map(|x| x.routes.contains_key(&key)).unwrap_or(false))
+}
+
 /// May the act of the open restore `ticket` at `spelled`, which reaches `landed` now, put back the
 /// row it was handed out for ([`versions::route`]), over what stands there now?  An act at a
 /// spelling the open did not hand out is [`Act::Unasked`] ([`versions::act`]).
@@ -6140,12 +6146,17 @@ pub async fn remove_link_by_model(owner: &str, link_id: &str) -> Outcome<Unlink>
 }
 
 /// Remove a link from a Diamond's sidecar.  Returns whether one went.
+///
+/// This device's press of the row goes in the same act, before the row does: a press left
+/// standing would put the row back in force, with no press, the moment a sync merge returned it
+/// (QA B F4, 2026-10-12).  A press that cannot be dropped refuses the removal.
 pub async fn remove_link(owner: &str, link_id: &str) -> Outcome<bool> {
     let links = res!(read_links(owner).await);
     let kept: Vec<Link> = links.iter().filter(|l| l.id != link_id).cloned().collect();
     if kept.len() == links.len() {
         return Ok(false);
     }
+    res!(crate::wasm::marks::forget_press(owner, link_id));
     res!(write_links_for(owner, &kept).await);
     touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
     Ok(true)

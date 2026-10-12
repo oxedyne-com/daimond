@@ -18,6 +18,7 @@ use crate::llm::{Halt, LlmClient, parse_json_string_array};
 use crate::prompts::Role;
 use crate::protocol::{AgentEvent, ChatMessage, Session, ToolCall, generate_session_id};
 use crate::tools::{Tool, ToolContext, ToolRegistry};
+use crate::marks::{DiamondId, Live};
 use crate::executor::Executor;
 use crate::workspace::Workspace;
 use crate::diamond_versions::{self as versions, Cause};
@@ -196,6 +197,7 @@ impl DaimondApp {
             turn:        String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
+            live:        None,
             by_model:    false,
             restoring:   0,
             by:          None,
@@ -662,10 +664,9 @@ impl DaimondApp {
     /// `scratch` is the chat's own working folder under [`crate::tools::CHAT_ROOT`], which is
     /// browser storage and therefore never a path on the user's disk -- so a chat with an empty
     /// workspace has somewhere to think and nowhere to run, exactly as a Diamond with no attachment
-    /// does.  `read_only` is a JSON array of workspace paths to be consulted rather than edited; it
-    /// may be omitted, and is today, because no control on the chat surface says that yet.
-    /// Malformed input yields an empty list rather than an error, and an empty list still leaves
-    /// the scratch: a scope that failed open would be the one bug in here that matters.
+    /// does.  No control on the chat surface says "consult, do not edit" yet, so nothing is
+    /// read-only.  Malformed input yields an empty list rather than an error, and an empty list
+    /// still leaves the scratch: a scope that failed open would be the one bug in here that matters.
     ///
     /// COMPOSED and never assigned, exactly as [`DaimondApp::set_diamond_scope`] is: a second
     /// caller must not be able to widen what a first one set.  **A consequence the browser has to
@@ -674,30 +675,52 @@ impl DaimondApp {
     /// fresh app, which is what the page's own turn path does when the marked set no longer matches
     /// the one its app was built with.
     ///
+    /// **What is in force is the engine's to say** (HIST-SAFE U2, 2026-10-12).  The page passed
+    /// the paths it judged in force until then; it now passes the chat's holdings, the synced
+    /// half, and each counts only where this device's record has the press, in the workspace
+    /// open in this engine ([`crate::wasm::marks::chat_reach`]).  The marks waiting for a press
+    /// are worked out here as well, and named in a refusal of one of them so the model asks for
+    /// the press (see [`crate::tools::ToolContext::unconfirmed`]).  The chat's own working
+    /// directory is minted here from its id ([`crate::tools::chat_scratch`]), never taken from
+    /// the page, which could name another Diamond's folder as the chat's own and so make it
+    /// writable (QA B F1).  An old caller -- a scratch directory where the chat's id goes, or a
+    /// third argument -- is refused.
+    ///
     /// # Arguments
-    /// * `scratch` - The chat's own working directory, workspace-relative.
-    /// * `workspace` - JSON array of paths the user marked into this chat's workspace.
-    /// * `read_only` - JSON array of those that may be read but not written; may be omitted.
-    /// * `unconfirmed` - JSON array of the places marked into it that are NOT in force on this
-    ///   device until the user confirms them here; may be omitted.  Named in a refusal of one of
-    ///   them, so the model asks for the press (see [`crate::tools::ToolContext::unconfirmed`]).
+    /// * `chat` - The chat's id.
+    /// * `holds` - JSON array of the chat's holdings, `{ref, path, ws, state}`.
     pub fn set_chat_scope(
         &mut self,
-        scratch:     String,
-        workspace:   String,
-        read_only:   Option<String>,
-        unconfirmed: Option<String>,
-    ) {
-        let paths = parse_path_array;
-        let bounds = crate::tools::chat_bounds(
-            &scratch,
-            &paths(&workspace),
-            &paths(&read_only.unwrap_or_default()));
+        chat:        String,
+        holds:       String,
+        legacy:      JsValue,
+    )
+        -> Result<(), JsValue>
+    {
+        if !legacy.is_undefined() || !holds.trim_start().starts_with('[') {
+            return Err(to_js_err(refuse(LEGACY_BOUNDS)));
+        }
+        // An id that is no chat's is its own fault, not an old caller's lists.
+        if !crate::marks::is_chat_id(&chat) {
+            return Err(to_js_err(refuse(&fmt!("set_chat_scope was given {:?}, which is not a chat id, \
+                so no chat's scope was set.", chat.chars().take(64).collect::<String>()))));
+        }
+        let scratch = crate::tools::chat_scratch(&chat);
+        let holds = crate::marks::parse_holds(&holds);
+        // FAIL CLOSED: a record that cannot be read refuses the turn, never "nothing pressed".
+        let (workspace, unconfirmed) =
+            match crate::wasm::marks::chat_reach(&chat, &holds) {
+                Ok(r)  => r,
+                Err(_) => return Err(to_js_err(refuse(crate::wasm::marks::UNREAD))),
+            };
+        let bounds = crate::tools::chat_bounds(&scratch, &workspace, &[]);
         self.registry.ctx.no_write = crate::tools::compose(&self.registry.ctx.no_write, &bounds);
         // AND WHOSE STORE KEEPS WHAT IT REPLACES OR REMOVES: the chat's, read off its scratch.
         // A chat deleting a file in the user's open folder kept nothing until 2026-09-23.
         self.registry.ctx.keeper = crate::tools::keeper_of_dir(&scratch);
-        self.registry.ctx.unconfirmed = paths(&unconfirmed.unwrap_or_default());
+        self.registry.ctx.unconfirmed = unconfirmed;
+        self.registry.ctx.live = Some(Live::Chat(chat, holds));
+        Ok(())
     }
 
     /// Confine this agent to a Diamond's workspace.
@@ -730,24 +753,36 @@ impl DaimondApp {
     /// for the same reason: a toolchain is a grant, and a grant is never inferred from what the
     /// model asked to run.  A name this build does not know is dropped.
     ///
+    /// **The marks are the engine's to read** (HIST-SAFE U2, 2026-10-12): the page passed its
+    /// own directory and its marks until then, and a page script could claim a folder writable.
+    /// A caller passing them -- an `own_dir` where the id goes, or a third argument -- is refused.
+    ///
     /// # Arguments
-    /// * `own_dir` - The Diamond's own directory, always in scope and always writable.
-    /// * `attached` - JSON array of paths in this Diamond's workspace.
-    /// * `read_only` - JSON array of those that may be read but not written.
+    /// * `id` - The Diamond the worker works for.
     /// * `toolkits` - JSON array of granted toolkit names (`rust`, `node`, `python`, `go`).
-    /// * `unconfirmed` - JSON array of the places marked into the Diamond that are NOT in force
-    ///   on this device until the user confirms them here; may be omitted.
-    pub fn set_diamond_scope(
+    pub async fn set_diamond_scope(
         &mut self,
-        own_dir:     String,
-        attached:    String,
-        read_only:   String,
+        id:          String,
         toolkits:    String,
-        unconfirmed: Option<String>,
-    ) {
+        legacy:      JsValue,
+    )
+        -> Result<(), JsValue>
+    {
+        if !legacy.is_undefined() {
+            return Err(to_js_err(refuse(LEGACY_BOUNDS)));
+        }
+        let id = match DiamondId::parse(&id) {
+            Ok(d)  => d,
+            Err(e) => return Err(to_js_err(e)),
+        };
         let paths = parse_path_array;
-        let mut bounds = crate::tools::diamond_bounds(
-            &own_dir, &paths(&attached), &paths(&read_only));
+        let own_dir = id.dir();
+        // FAIL CLOSED: a record that cannot be read refuses the turn, never "nothing pressed".
+        let reach = match crate::wasm::marks::diamond_reach(&id).await {
+            Ok(r)  => r,
+            Err(_) => return Err(to_js_err(refuse(crate::wasm::marks::UNREAD))),
+        };
+        let mut bounds = crate::tools::diamond_bounds(&own_dir, &reach.places(), &reach.read_only);
         // Appended, never merged in earlier: a toolkit widens what a COMMAND may touch and nothing
         // else, and composing it here rather than inside `diamond_bounds` keeps the scope and the
         // grant visible as two separate decisions in the one expression.
@@ -762,7 +797,32 @@ impl DaimondApp {
         // A worker's changes are its Diamond's, kept in its store and recorded at the end of the
         // daimon's turn that dispatched it, beside the daimon's own.
         self.registry.ctx.keeper = crate::tools::keeper_of_dir(&own_dir);
-        self.registry.ctx.unconfirmed = paths(&unconfirmed.unwrap_or_default());
+        self.registry.ctx.unconfirmed = reach.unconfirmed;
+        self.registry.ctx.live = Some(Live::Diamond(id, paths(&toolkits)));
+        Ok(())
+    }
+
+    /// What the Diamond `id` reaches on this device now, as the engine reads it at every act:
+    /// `{"attached":[…],"read_only":[…],"unconfirmed":[…]}`.  The page's panels draw from this
+    /// rather than composing the marks a second time, so what is shown is what is in force.  A
+    /// record that cannot be read rejects with [`crate::wasm::marks::UNREAD`].
+    pub async fn diamond_reach(&self, id: String) -> Result<String, JsValue> {
+        let id = match DiamondId::parse(&id) {
+            Ok(d)  => d,
+            Err(e) => return Err(to_js_err(e)),
+        };
+        let reach = match crate::wasm::marks::diamond_reach(&id).await {
+            Ok(r)  => r,
+            Err(_) => return Err(to_js_err(refuse(crate::wasm::marks::UNREAD))),
+        };
+        let list = |v: &[String]| -> String {
+            let items: Vec<String> = v.iter()
+                .map(|s| fmt!("\"{}\"", crate::llm::json_escape(s)))
+                .collect();
+            fmt!("[{}]", items.join(","))
+        };
+        Ok(fmt!("{{\"attached\":{},\"read_only\":{},\"unconfirmed\":{}}}",
+            list(&reach.attached), list(&reach.read_only), list(&reach.unconfirmed)))
     }
 
     /// What this agent is actually confined to, as the engine holds it.
@@ -1761,26 +1821,67 @@ impl DaimondApp {
     /// next write from that read is refused and it reads the file again; what an act left is noted
     /// beside it, so the refusal says the person restored the file ([`crate::tools::note_restored`]).
     ///
+    /// **ITS REACH IS THE ENGINE'S, READ AT THIS ACT** (HIST-SAFE U2, 2026-10-12).  It took
+    /// `attached` and `read_only` from the page until then, read when a restore began: a mark
+    /// withdrawn, or made read-only, while the restore's question stood open was written through
+    /// once the question was answered, and a page script that claimed a folder writable was
+    /// believed.  Each call now reads the Diamond's marks, this device's record of them, the open
+    /// workspace and the trash itself ([`crate::wasm::marks::diamond_reach`]).  A caller still
+    /// passing the two lists is refused, plainly, with nothing done.  A chat's store
+    /// (`chat:<id>`) goes back through the chat's workspace, and only there does a fifth
+    /// argument belong: the chat's holdings, `{ref, path, ws, state}`, each in force only where
+    /// this device's record has the press ([`crate::wasm::marks::chat_reach`]).
+    ///
     /// # Arguments
     /// * `id` - The Diamond whose reach this call gets.
-    /// * `attached` - JSON array of the paths marked into it, as `Files.bounds` reports them.
-    /// * `read_only` - JSON array of those that may be read but not written.
     /// * `ticket` - The restore this act belongs to, from `versions_restore_open`; absent for a
     ///   lone act.
     pub async fn run_diamond_tool(
         &self,
         id:        String,
-        attached:  String,
-        read_only: String,
         name:      String,
         args_json: String,
         ticket:    Option<f64>,
+        holds:     JsValue,
     )
         -> js_sys::Object
     {
         let obj = js_sys::Object::new();
         let set = |k: &str, v: &JsValue| {
             let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
+        };
+        // AN OLD CALLER, `(id, attached, read_only, name, args, ticket)`: its lists land in `name`
+        // and `args_json`, and its verb one further on.
+        let chat = id.strip_prefix("chat:").map(str::to_string);
+        if name.trim_start().starts_with('[') || (chat.is_none() && !holds.is_undefined()) {
+            let text = crate::tools::refusal_line(
+                "run_diamond_tool no longer takes attached or read_only: the engine reads this \
+                Diamond's marks itself at every act. Call it as (id, name, args, ticket). \
+                Nothing was done.");
+            set("outcome", &JsValue::from_str(crate::tools::call_outcome(&text).wire()));
+            set("text",    &JsValue::from_str(&text));
+            return obj;
+        }
+        // THE STORE'S ID, CHECKED BEFORE ANYTHING ELSE IS: a Diamond's is hex, a chat's is the
+        // page's mint.  `""` or `<X>/../<Y>` would have composed the act on another home (QA B F2).
+        let did = match &chat {
+            Some(c) if crate::marks::is_chat_id(c) => None,
+            Some(c) => {
+                let text = crate::tools::refusal_line(&fmt!(
+                    "'{}' is not a chat's id. Nothing was done.", c));
+                set("outcome", &JsValue::from_str(crate::tools::call_outcome(&text).wire()));
+                set("text",    &JsValue::from_str(&text));
+                return obj;
+            },
+            None => match DiamondId::parse(&id) {
+                Ok(d)  => Some(d),
+                Err(e) => {
+                    let text = crate::tools::refusal_line(&fmt!("{} Nothing was done.", e.plain()));
+                    set("outcome", &JsValue::from_str(crate::tools::call_outcome(&text).wire()));
+                    set("text",    &JsValue::from_str(&text));
+                    return obj;
+                },
+            },
         };
         let acts = match name.as_str() {
             "file_put_back" | "file_write" | "file_delete" => true,
@@ -1794,9 +1895,34 @@ impl DaimondApp {
                 return obj;
             },
         };
+        // THE MARKS AS THEY STAND NOW, and not as they stood when the restore began.  A record
+        // that cannot be read refuses every act that writes or deletes (FAIL CLOSED); a read
+        // writes nothing, so it goes on in the Diamond's own directory only, and a read of what
+        // the open restore handed out is refused as the writes are (see below).
+        let read = match (&chat, &did) {
+            (_, Some(d))    => crate::wasm::marks::diamond_reach(d).await,
+            (Some(c), None) => {
+                let list = crate::marks::parse_holds(&holds.as_string().unwrap_or_default());
+                crate::wasm::marks::chat_reach(c, &list).map(|(ws, wait)|
+                    crate::marks::Reach { attached: ws, read_only: Vec::new(), unconfirmed: wait, nested: Vec::new() })
+            },
+            (None, None)    => Err(err!("No store was named."; Invalid, Input)),
+        };
+        let (reach, unread) = match read {
+            Ok(r)          => (r, false),
+            Err(_) if acts => {
+                let text = crate::tools::refusal_line(crate::wasm::marks::UNREAD);
+                set("outcome", &JsValue::from_str(crate::tools::call_outcome(&text).wire()));
+                set("text",    &JsValue::from_str(&text));
+                return obj;
+            },
+            Err(_)         => (crate::marks::Reach::default(), true),
+        };
         // THE RESTORE THIS ACT KEEPS INTO, which must be open for this Diamond (hist-safe QA A F1,
         // 2026-10-12).  Any other ticket -- none, made up, closed, another Diamond's -- made a
-        // restore of its own that wrote with no question and no claim.  A read needs none.
+        // restore of its own that wrote with no question and no claim.  A read needs none.  Asked
+        // only after the marks are read, so an unreadable record refuses first, in its own
+        // sentence (FAIL CLOSED before any other reason, hist-safe U2 P8).
         let restoring = match ticket {
             Some(t) if t >= 1.0 && diamond::restore_store(t as u64).as_deref() == Some(id.as_str())
                 => t as u64,
@@ -1809,10 +1935,36 @@ impl DaimondApp {
             },
             _         => 0,
         };
-        let bounds = crate::tools::diamond_bounds(
-            &diamond::diamond_dir(&id),
-            &parse_path_array(&attached),
-            &parse_path_array(&read_only));
+        let own = match &did {
+            Some(d) => d.dir(),
+            None    => diamond::diamond_dir(&id),
+        };
+        // A READ IS HELD TO THE STORE'S OWN DIRECTORY AND THE PATHS ITS OPEN RESTORE HANDED OUT
+        // (QA A F4, 2026-10-12).  Bounds fence writes only, and this door's workspace is `/`, so a
+        // read here took any browser-workspace file, marked or not, and `file_list` of `''` the
+        // whole root.
+        if !acts {
+            let raw = crate::llm::extract_json_string(&args_json, "path").unwrap_or_default();
+            let p = crate::tools::normalise(&raw);
+            let mine = !p.is_empty() && (p == own || p.starts_with(&fmt!("{}/", own)));
+            // What the restore handed out lies in the marked folders, so with the record
+            // unreadable it is refused in the UNREAD sentence, as the writes are (FAIL CLOSED).
+            if !mine && unread {
+                let text = crate::tools::refusal_line(crate::wasm::marks::UNREAD);
+                set("outcome", &JsValue::from_str(crate::tools::call_outcome(&text).wire()));
+                set("text",    &JsValue::from_str(&text));
+                return obj;
+            }
+            if !mine && !(restoring > 0 && diamond::restore_handed(restoring, &raw)) {
+                let text = crate::tools::refusal_line(&fmt!(
+                    "'{}' is not in this store's own folder nor among the files its open restore \
+                    handed out, so this door does not read it. Nothing was done.", raw));
+                set("outcome", &JsValue::from_str(crate::tools::call_outcome(&text).wire()));
+                set("text",    &JsValue::from_str(&text));
+                return obj;
+            }
+        }
+        let bounds = crate::tools::diamond_bounds(&own, &reach.places(), &reach.read_only);
         let ctx = ToolContext {
             workspace:   Workspace::unchecked(PathBuf::from("/")),
             executor:    Executor::Wasm,
@@ -1830,6 +1982,7 @@ impl DaimondApp {
             turn:        String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
+            live:        None,
             by_model:    false,
             restoring,
             by:          None,
@@ -1909,41 +2062,55 @@ impl DaimondApp {
     /// of that.
     ///
     /// # Arguments
-    /// * `diamond_id` - The Diamond whose daimon owns the thread being shown, or empty for an
-    ///   ordinary chat.  IT IS NOT OPTIONAL DECORATION: a daimon's turn is composed by
+    /// * `diamond_id` - The Diamond whose daimon owns the thread being shown.  An ordinary chat's
+    ///   own conversation is [`DaimondApp::wire_chat_system`]'s, and an empty or bad id here is
+    ///   refused by name, never read as "a chat" (HIST-SAFE U2).  IT IS NOT OPTIONAL DECORATION: a daimon's turn is composed by
     ///   [`DaimondApp::compose_daimon`] and never by [`DaimondApp::run_turn`], so a Diamond's
     ///   thread answered from this app's own agent and registry is answered about a conversation
     ///   that is not happening.
-    /// * `attached` - JSON array of the paths marked into that Diamond, exactly as
-    ///   [`DaimondApp::steer_crystal`] takes them.  Ignored for a chat.
-    /// * `read_only` - Those of them to be consulted rather than edited.
     /// * `toolkits` - The toolchains granted to that Diamond, so the view of the request says
     ///   what the turn will actually carry.  A view composed without them described a briefing
-    ///   nobody would be sent.
-    /// * `unconfirmed` - The places marked into it that are not in force on this device, as
-    ///   [`DaimondApp::steer_crystal`] takes them; optional.
+    ///   nobody would be sent.  The marks are the engine's to read (HIST-SAFE U2); a third
+    ///   argument is an old caller's lists, and is refused.
     pub async fn wire_system(
         &self,
         diamond_id:  String,
-        attached:    String,
-        read_only:   String,
         toolkits:    String,
-        unconfirmed: Option<String>,
+        legacy:      JsValue,
     )
         -> Result<String, JsValue>
     {
-        if diamond_id.trim().is_empty() {
-            // Refreshed here rather than read as it stands, because `run_turn` refreshes it on the
-            // way out and the constructor cannot: it needs an await to ask the hand.  Without this
-            // the band naming this computer is empty until a first turn has gone, which is the
-            // same drift in miniature -- a view of the request that is only true afterwards.
-            let brief = self.briefing(&self.registry).await;
-            self.agent.set_briefing(&brief);
-            return Ok(wire_json(&self.agent, &self.registry, ""));
+        if !legacy.is_undefined() {
+            return Err(to_js_err(refuse(LEGACY_BOUNDS)));
         }
-        let turn = self.compose_daimon(&diamond_id, &attached, &read_only, &toolkits,
-            &unconfirmed.unwrap_or_default()).await;
+        if diamond_id.trim().is_empty() {
+            return Err(to_js_err(refuse("wire_system was given no Diamond id. A chat's own \
+                conversation is shown by wire_chat_system; nothing was composed.")));
+        }
+        let did = match DiamondId::parse(&diamond_id) {
+            Ok(d)  => d,
+            Err(e) => return Err(to_js_err(refuse(&fmt!("wire_system was given {:?}, which is \
+                not a Diamond id ({}); nothing was composed.",
+                diamond_id.chars().take(64).collect::<String>(), e)))),
+        };
+        let turn = match self.compose_daimon(&did, &toolkits).await {
+            Ok(t)  => t,
+            Err(e) => return Err(to_js_err(e)),
+        };
         Ok(wire_json(&turn.agent, &turn.registry, &turn.local))
+    }
+
+    /// The Wire for an ordinary chat's own conversation: this app's agent and registry, as
+    /// `run_turn` sends them.  Its own door, so a Diamond's [`DaimondApp::wire_system`] never
+    /// reads an empty id as "a chat".
+    pub async fn wire_chat_system(&self) -> Result<String, JsValue> {
+        // Refreshed here rather than read as it stands, because `run_turn` refreshes it on the
+        // way out and the constructor cannot: it needs an await to ask the hand.  Without this
+        // the band naming this computer is empty until a first turn has gone, which is the
+        // same drift in miniature -- a view of the request that is only true afterwards.
+        let brief = self.briefing(&self.registry).await;
+        self.agent.set_briefing(&brief);
+        Ok(wire_json(&self.agent, &self.registry, ""))
     }
 
     /// Create a Diamond at a KNOWN id, or answer with the id if it is already there.
@@ -2538,25 +2705,19 @@ impl DaimondApp {
     /// which is the other half of what notes2 asks for: *"automatically and visibly
     /// folded at the context threshold"*.
     ///
-    /// **The marks travel with the instruction.** A daimon writes and runs only where the user
-    /// attached something, and what is attached changes between one turn and the next -- so the
-    /// browser reports it per turn rather than at construction, from the same `Files.bounds` that
-    /// scopes a worker. Passing empty arrays is a turn confined to the Diamond's own directory,
-    /// which is the safe reading of "nothing was said": the reach fails closed.
+    /// **The marks are read per turn, by the engine.** A daimon writes and runs only where the
+    /// user attached something, and what is attached changes between one turn and the next -- so
+    /// each turn reads them afresh ([`crate::wasm::marks::diamond_reach`]).  The page reported
+    /// them until HIST-SAFE U2 (2026-10-12), which let a page script claim a folder writable; an
+    /// old caller's lists arrive where `prior` goes and are refused.
     ///
     /// # Arguments
     /// * `id` - The Diamond.
     /// * `instruction` - What the user said, before `/name` resolution.
-    /// * `attached` - JSON array of the paths the user marked into this Diamond, as workspace-
-    ///   relative strings, already filtered to those the OPEN workspace can reach.
-    /// * `read_only` - JSON array of those of them to be consulted rather than edited.
+    /// * `toolkits` - JSON array of the toolchains the user granted this Diamond.
     /// * `prior` - The daimon's conversation so far, in the shape
     ///   [`DaimondApp::export_session`] produces. Empty starts a new daimon.
     /// * `on_event` - The event sink.
-    /// * `unconfirmed` - JSON array of the places marked into this Diamond that are NOT in force
-    ///   on this device until the user confirms them here, which the daimon is told so that it
-    ///   asks for the press rather than working around a refusal.  Optional, so a caller that
-    ///   says nothing is a turn with none waiting.
     /// * `pre` - The app's note for what the person said (the ratings given since their last
     ///   message), joined once ahead of the instruction where the request is built and never
     ///   part of it.  Last and optional, so a trigger, a preset or a gather round, which no
@@ -2571,18 +2732,26 @@ impl DaimondApp {
         &self,
         id:          String,
         instruction: String,
-        attached:    String,
-        read_only:   String,
         toolkits:    String,
-        prior:       js_sys::Array,
-        on_event:    js_sys::Function,
-        unconfirmed: Option<String>,
+        prior:       JsValue,
+        on_event:    JsValue,
         pre:         Option<String>,
     )
         -> Result<js_sys::Array, JsValue>
     {
-        self.steer_inner(&id, instruction, pre.unwrap_or_default(), attached, read_only,
-            toolkits, unconfirmed.unwrap_or_default(), prior, on_event)
+        // AN OLD CALLER, `(id, text, attached, read_only, toolkits, prior, on_event, ...)`, puts
+        // a string where the prior turns go.  Refused plainly rather than run on a guess.
+        let (prior, on_event) = match (prior.dyn_into::<js_sys::Array>(), on_event.dyn_into::<js_sys::Function>()) {
+            (Ok(p), Ok(f)) => (p, f),
+            _              => return Err(to_js_err(refuse(LEGACY_BOUNDS))),
+        };
+        // THE ID IS CHECKED HERE, AT THE EDGE, and only a checked one goes on: `""` composed the
+        // turn on `diamonds/`, every Diamond's home, and `<X>/../<Y>` on Y's (QA B F2).
+        let id = match DiamondId::parse(&id) {
+            Ok(d)  => d,
+            Err(e) => return Err(to_js_err(e)),
+        };
+        self.steer_inner(&id, instruction, pre.unwrap_or_default(), toolkits, prior, on_event)
             .await
             .map_err(to_js_err)
     }
@@ -3086,14 +3255,9 @@ impl DaimondApp {
     /// # Arguments
     /// * `id` - The Diamond.  It decides the reach, the folder named in the prompt, and where a
     ///   link this daimon asserts is kept.
-    /// * `attached` - JSON array of the paths marked into this Diamond, as `Files.bounds` reports
-    ///   them.  Read per turn because they change per turn; empty is a turn confined to the
-    ///   Diamond's own directory, which is the safe reading of "nothing was said".
-    /// * `read_only` - Those of them to be consulted rather than edited.
     /// * `toolkits` - JSON array of the toolchain names the user granted this Diamond, as
-    ///   `Files.bounds` reports them.
-    /// * `unconfirmed` - JSON array of the places marked into this Diamond that are not in force
-    ///   on this device until the user confirms them here, as `Files.bounds` reports them.
+    ///   `Files.bounds` reports them.  The marks are read here, per turn
+    ///   ([`crate::wasm::marks::diamond_reach`]).
     /// The stops of the running turns whose tag `pick` accepts, cloned out so none is fired
     /// under the borrow.
     fn halts_where(&self, pick: impl Fn(&str) -> bool) -> Vec<Halt> {
@@ -3119,14 +3283,12 @@ impl DaimondApp {
 
     async fn compose_daimon(
         &self,
-        id:          &str,
-        attached:    &str,
-        read_only:   &str,
+        did:         &DiamondId,
         toolkits:    &str,
-        unconfirmed: &str,
     )
-        -> DaimonTurn
+        -> Outcome<DaimonTurn>
     {
+        let id = did.as_str();
         // What this daimon may write and run in, composed from the marks the browser reports.
         //
         // The same function a worker's scope is built from, called with this Diamond's own
@@ -3136,8 +3298,19 @@ impl DaimondApp {
         // exactly, minus the pin -- rather than an unbounded turn.  The marks arrive per turn
         // because they change per turn: the user attaches a folder and the next thing they do is
         // ask about it, and a scope composed once at construction would still be yesterday's.
-        let marked = parse_path_array(attached);
-        let consult = parse_path_array(read_only);
+        //
+        // READ HERE, BY THE ENGINE, and no longer handed over by the page (HIST-SAFE U2,
+        // 2026-10-12): what a turn may write was whatever its caller said, so a page script could
+        // claim a folder writable.  The marks, this device's record of them, the open workspace
+        // and the trash are read for every turn ([`crate::wasm::marks::diamond_reach`]).
+        //
+        // FAIL CLOSED: a record that cannot be read refuses the turn and the Wire alike.
+        let reach = match crate::wasm::marks::diamond_reach(did).await {
+            Ok(r)  => r,
+            Err(_) => return Err(refuse(crate::wasm::marks::UNREAD)),
+        };
+        let marked = reach.places();
+        let consult = reach.read_only;
         let mut bounds = crate::tools::diamond_bounds(
             &diamond::diamond_dir(id), &marked, &consult);
         // THE TOOLCHAINS THE USER TICKED ON THIS DIAMOND, and they were missing here.
@@ -3204,7 +3377,7 @@ impl DaimondApp {
         // before marks said who made them -- is out of reach here until they press to confirm it.
         // A daimon not told that meets a plain refusal and concludes the folder is not its to use,
         // or goes looking for another way in; told, it asks the user for the one press.
-        let waiting = parse_path_array(unconfirmed);
+        let waiting = reach.unconfirmed;
         if marked.is_empty() && consult.is_empty() && waiting.is_empty() {
             local.push_str(" Nothing is attached to this Diamond yet, so the folder above is the \
                 only place you may write. If the user asks for work on files that are not there, \
@@ -3333,6 +3506,9 @@ impl DaimondApp {
             turn,
             keeper:      id.to_string(),
             unconfirmed: waiting,
+            // And re-read at every call the turn makes, so a mark withdrawn mid-turn is not
+            // written through for the rest of it (QA B F3).
+            live:        Some(Live::Diamond(did.clone(), parse_path_array(toolkits))),
             by_model:    false,
             restoring:   0,
             by:          Some(author),
@@ -3369,25 +3545,23 @@ impl DaimondApp {
         // nothing that names a Diamond, and this is the only place the name is in hand. See
         // `dev/CRYSTAL_CONTRACT.md` §13.
         agent.set_diamond(id);
-        DaimonTurn { agent, registry, crystal: before, standing: files, local }
+        Ok(DaimonTurn { agent, registry, crystal: before, standing: files, local })
     }
 
     /// Drive the crystal agent for one instruction (see
     /// [`DaimondApp::steer_crystal`]).
     async fn steer_inner(
         &self,
-        id:          &str,
+        did:         &DiamondId,
         instruction: String,
         pre:         String,
-        attached:    String,
-        read_only:   String,
         toolkits:    String,
-        unconfirmed: String,
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
     )
         -> Outcome<js_sys::Array>
     {
+        let id = did.as_str();
         // A `/name` here matters more than in a chat, not less: a skill lives in the workspace, and
         // until this turn was given the workspace a daimon could not read one for itself, so the
         // prose convention failed here in total silence.
@@ -3417,7 +3591,7 @@ impl DaimondApp {
         // which the agent already holds, and a second copy of half of it would be one more thing
         // able to disagree with the first.
         let DaimonTurn { mut agent, registry, crystal: before, standing: standing_before, .. } =
-            self.compose_daimon(id, &attached, &read_only, &toolkits, &unconfirmed).await;
+            res!(self.compose_daimon(did, &toolkits).await);
         agent.llm = agent.llm.with_halt(halt);
         // THE USER'S OWN EDITS BECOME A VERSION BEFORE THE TURN CAN WRITE OVER THEM.
         //
@@ -3909,6 +4083,7 @@ impl DaimondApp {
             turn:        String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
+            live:        None,
             by_model:    false,
             restoring:   0,
             by:          None,
@@ -4109,6 +4284,11 @@ async fn read_skill(root: crate::tools::FileRoot, name: &str, extra: &[String])
     }
     None
 }
+
+/// What an old caller of a Diamond's turn, Wire or scope is told: the marks are not its to pass.
+const LEGACY_BOUNDS: &str = "This build no longer takes a chat's folder, attached, read_only or \
+    unconfirmed from the page: the engine reads the Diamond's marks, this device's record of them and the open \
+    workspace itself, at every act. Nothing was done.";
 
 /// The refusal a turn ends with when the user named a skill that is not there.
 ///

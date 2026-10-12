@@ -58,6 +58,16 @@
 		try { return JSON.parse(raw); } catch (e) { return null; }
 	}
 
+	/// Is there text under `key` that is not a record -- it does not parse, or it
+	/// parses to null? `get` reads that as nothing, so a kind whose damaged record
+	/// must not be read as empty, or written over, asks here (HIST-SAFE U2, QA A F2).
+	function damaged(key) {
+		var raw = null;
+		try { raw = localStorage.getItem(key); } catch (e) { return false; }
+		if (raw === null || raw === undefined) return false;
+		try { return JSON.parse(raw) === null; } catch (e) { return true; }
+	}
+
 	/// The record as this tab must see it: the box's, with anything this tab still
 	/// owes merged over it by the kind's law. `fallback` for nothing at all.
 	function get(key, fallback) {
@@ -193,6 +203,7 @@
 
 	var api = {
 		get:       get,
+		damaged:   damaged,
 		put:       put,
 		putMerged: putMerged,
 		remove:    remove,

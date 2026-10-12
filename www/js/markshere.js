@@ -14,7 +14,7 @@
      DEVICE'S OWN RECORD OF WHAT WAS PRESSED ON IT.
 
    The record is one localStorage entry per account, never synced, and
-   written only by a person's press here. A removal or a narrowing of a
+   written only by a person's press here (and once, empty, at unlock). A removal or a narrowing of a
    row travels from any device and is applied to the record when the
    copy carrying it arrives (`settle`); a widening never travels, so a
    row that arrives shared, or `holds` where it was `consulted`, gains
@@ -525,13 +525,20 @@
 	/// The record as stored, parsed afresh: nothing is kept between reads, so a
 	/// tab never acts on a record another tab has changed. `ok` is false where the
 	/// record may not be read; `absent` where the key is not there at all.
+	///
+	/// TEXT THAT IS THERE BUT IS NOT A RECORD IS `damaged`, not empty: read as
+	/// empty, the next press wrote over it and every other press on this device
+	/// was lost without a word (QA A F5). The engine reads it as UNREAD. Nothing
+	/// is written over it until a person presses reset (`resetDamaged`).
 	function read() {
-		if (!open()) return { rec: empty(), ok: false, absent: false };
+		if (!open()) return { rec: empty(), ok: false, absent: false, damaged: false };
 		var raw = null;
 		try { raw = window.localStorage.getItem(KEY); }
-		catch (e) { return { rec: empty(), ok: false, absent: false }; }
-		if (raw === null) return { rec: empty(), ok: true, absent: true };
-		return { rec: readRecord(raw) || empty(), ok: true, absent: false };
+		catch (e) { return { rec: empty(), ok: false, absent: false, damaged: false }; }
+		if (raw === null) return { rec: empty(), ok: true, absent: true, damaged: false };
+		var rec = readRecord(raw);
+		if (!rec) return { rec: empty(), ok: false, absent: false, damaged: true };
+		return { rec: rec, ok: true, absent: false, damaged: false };
 	}
 
 	/// One read-modify-write, with nothing awaited between the read and the
@@ -682,6 +689,23 @@
 		/// Is there no record on this device at all -- the first start after R2, or
 		/// cleared site data? False while it cannot be read.
 		absent: function () { return read().absent; },
+		/// Is the record here text that is not a record? False while it cannot be read.
+		damaged: function () { return read().damaged; },
+		/// Replace a damaged record with an empty one, on a person's press. Only
+		/// while unlocked, and never over a record that reads.
+		resetDamaged: function () {
+			if (!read().damaged) return false;
+			var text = JSON.stringify(empty());
+			var back = null;
+			try {
+				window.localStorage.setItem(KEY, text);
+				back = window.localStorage.getItem(KEY);
+			} catch (e) { /* quota or blocked storage: reported below */ }
+			if (back === text) announce();
+			return back === text;
+		},
+		// The page's check on a synced chat's `diamondId` (daimond.js `chatDiamondOk`).
+		isDiamondId: isDiamondId,
 		subscribe: function (fn) { if (typeof fn === 'function') _subs.push(fn); },
 		// Pure core, for the tests.
 		_core: {
@@ -709,8 +733,25 @@
 		},
 	};
 
+	/// An empty record where an unlocked account has none, written once. The ENGINE
+	/// FAILS CLOSED on a record it cannot find (HIST-SAFE U2, lead ruling 2026-10-12):
+	/// locked, unreadable, missing or damaged all refuse every write and delete. So
+	/// "none pressed yet" must be a record that says so, written at unlock, and a
+	/// missing one afterwards is a store that lost it. An empty record grants nothing,
+	/// so this is no press made on anybody's behalf.
+	function ensure() {
+		if (!open()) return;
+		try {
+			if (window.localStorage.getItem(KEY) === null) {
+				window.localStorage.setItem(KEY, JSON.stringify(empty()));
+			}
+		} catch (e) { /* blocked storage: the engine refuses, which is the point */ }
+	}
+
 	if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
 		window.addEventListener('storage', onStorage);
+		window.addEventListener('daimond:unlock', ensure);
+		ensure();
 	}
 	if (typeof window !== 'undefined') window.DaimondMarksHere = api;
 	if (typeof module !== 'undefined' && module.exports) module.exports = api;

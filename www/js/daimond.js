@@ -1211,6 +1211,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return typeof id === 'string' && id.length > 0 && !/[#\/\\]/.test(id) && id.indexOf('..') < 0;
 	}
 
+	/// Does chat `c` name no Diamond, or one by an id the engine mints? A synced chat's
+	/// `diamondId` reaches `wire_system` and `set_diamond_scope` as a path segment, and
+	/// `X/../Y` or `..` there read another Diamond's prompt or the OPFS root (HIST-SAFE U2,
+	/// live exposure). Fails closed when the checker is not loaded.
+	function chatDiamondOk(c) {
+		var d = c && c.diamondId;
+		if (d == null || d === '') return true;
+		var m = window.DaimondMarksHere;
+		return !!(m && typeof m.isDiamondId === 'function' && m.isDiamondId(d));
+	}
+
 	/// Give every stored message an id, minting one from its POSITION WITHIN ITS OWN CHAT
 	/// for anything written before mids existed. The position is stable across loads, so
 	/// the same record stamps identically every time and the append-only union does not
@@ -2605,9 +2616,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The transcript law, on the way in and against what is here: a copy that
 				// is not one is left out (the old store is archived whole, so it keeps it),
 				// and one that cannot be unioned leaves the stored row as it is.
-				if (!chatIdOk(c.id) || !transcriptOk(c.messages)) {
+				if (!chatIdOk(c.id) || !chatDiamondOk(c) || !transcriptOk(c.messages)) {
 					noteSkipped(String(c.id).slice(0, 64), 'the copy coming in is not a chat that can be read ('
-						+ (chatIdOk(c.id) ? 'its transcript is ' + transcriptShape(c.messages) : 'its id') + ')');
+						+ (!chatIdOk(c.id) ? 'its id'
+							: !chatDiamondOk(c) ? 'its Diamond id'
+							: 'its transcript is ' + transcriptShape(c.messages)) + ')');
 					return;
 				}
 				var st = byId[c.id];
@@ -11081,6 +11094,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var inote = 'an id that is not a plain chat id: ' + String(src.id).slice(0, 64);
 				if (!refusedNoted[inote]) { refusedNoted[inote] = 1; trail('sync chat REFUSED', inote); }
 				diag('apply chat REFUSED', 'id not a plain chat id: ' + String(src.id).slice(0, 64));
+				continue;
+			}
+			if (!chatDiamondOk(src)) {
+				refused.push(String(src.id).slice(0, 64));
+				var dnote = 'chat ' + String(src.id).slice(0, 64) + ' names a Diamond id that is not one: '
+					+ String(src.diamondId).slice(0, 64);
+				if (!refusedNoted[dnote]) { refusedNoted[dnote] = 1; trail('sync chat REFUSED', dnote); }
+				diag('apply chat REFUSED', dnote);
 				continue;
 			}
 			touched.push(src.id);
@@ -19642,12 +19663,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		// Nothing may be mid-call on this app: `set_diamond_scope` is `&mut self`.
 		await engineIdle(app);
-		app.set_diamond_scope(
-			b.own_dir,
-			JSON.stringify(b.attached  || []),
-			JSON.stringify(b.read_only || []),
-			JSON.stringify(b.toolkits  || []),
-			JSON.stringify(b.unconfirmed || []));
+		// The marks are the engine's to read (HIST-SAFE U2); only the toolkits are the page's.
+		await app.set_diamond_scope(String(diamondId), JSON.stringify(b.toolkits || []));
 
 		// What the engine actually holds now. Compared rather than trusted: everything that can
 		// go wrong here is silent, and every silent failure is in the direction of more reach.
@@ -19710,6 +19727,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// A chat's fence inputs, in the shape `Files.bounds` gives a Diamond's. The one
 	/// source for both `scopeChatTo` and the Workspace "Can change" rows, so the two
 	/// cannot disagree about what the chat may write.
+	/// A chat's holdings as the engine reads them, `[{ref, path, ws, state}]`: the synced half
+	/// only. The engine counts each where this device's record has the press (HIST-SAFE U2).
+	function chatHoldsJson(chatId) {
+		return JSON.stringify(chatAttachList(chatId).map(function (a) {
+			return { ref: String(a.ref || ''), path: String(a.path || ''), ws: !!a.ws,
+				state: String(a.state || '') };
+		}));
+	}
+
 	async function chatBounds(chatId) {
 		return {
 			own_dir:     chatScratchDir(chatId),
@@ -19799,10 +19825,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Nothing may be mid-call on this app: `set_chat_scope` is `&mut self`, and the
 		// System band's `wire_system` is very often still composing when a turn starts.
 		await engineIdle(app);
-		// The third is the read-only list, which a chat does not keep; the fourth is what is
-		// marked in and not in force on this device, named in a refusal so the model asks the
-		// user to confirm it here (audit finding 6).
-		app.set_chat_scope(scratch, JSON.stringify(b.attached), undefined, JSON.stringify(b.unconfirmed));
+		// THE ENGINE SAYS WHAT IS IN FORCE (HIST-SAFE U2): it is handed the chat's holdings, the
+		// synced half, and counts each only where this device's record has the press. What is
+		// waiting for a press is worked out there too, and named in a refusal so the model asks
+		// the user to confirm it here (audit finding 6).
+		// The engine derives the scratch from the chat id itself (QA B F1); `scratch` is only
+		// the read-back check below.
+		app.set_chat_scope(String(chatId), chatHoldsJson(chatId));
 
 		var got = {};
 		try { got = JSON.parse(app.diamond_scope() || '{}') || {}; }
@@ -49516,46 +49545,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// must not run at the reach of an ordinary workspace turn.
 				if (trashed(did)) return { own_dir: '', attached: [], read_only: [], toolkits: [], unconfirmed: [] };
 				if (!did) return { own_dir: '', attached: [], read_only: [], toolkits: [], unconfirmed: [] };
-				var list = [];
-				try { list = await attachmentsOf(did); } catch (e) { list = []; }
 				var d = diamonds.find(function (x) { return x.id === did; });
-				// ONLY `holds` and `consulted` are marks (`dev/ATTACH_CONTRACT.md`
-				// §2b). `produced` is provenance -- what a fold harvested from a
-				// tool call the user already blessed -- and never a grant: a link
-				// the app wrote about the daimon's own past work must not become a
-				// door the daimon can write through next time, or a folder its reach
-				// chip claims to reach. `attachmentsOf` still carries `produced` rows
-				// for the panel to draw; this is the one place they are cut before
-				// they can become a fence.
-				//
-				// AND ONLY THE USER'S. A grant is a person's act: a `holds` link a fold
-				// harvested, or one a model asserted with `link_add` (`agent:<name>`), is a
-				// record of what an agent did and never a door it may write through next
-				// time -- or a daimon could widen its own reach with one call and a fold.
-				//
-				// AND ONLY WHERE IT WAS PRESSED ON THIS DEVICE (R2). A row is bytes in a
-				// sidecar that syncs whole, and `by:"user"` is a string anybody writing
-				// the sidecar can write. `markForce` asks the row and this device's own
-				// record together, and a mark in force here is on the workspace that is
-				// open, so a path allowed and absent -- which reads to the daimon as an
-				// empty folder -- never reaches the fence.
-				var here = list.filter(function (a) { return !!a.force; });
+				// THE MARKS IN FORCE ARE THE ENGINE'S TO SAY (HIST-SAFE U2, 2026-10-12): the
+				// one composition -- only the user's `holds` and `consulted` rows, only where
+				// pressed on this device, only on the workspace open now, none for a Diamond in
+				// the trash -- is `marks::reach` in src/marks.rs, read at every act. This page
+				// only draws and reports what it answers, so what is shown is what is in force.
+				// A record the engine cannot read REJECTS here (fail closed), and so does an
+				// engine without the door: neither is "nothing is marked".
+				var eng = diamondApp(did);
+				if (!eng || typeof eng.diamond_reach !== 'function') {
+					throw new Error('This build of the engine cannot say what this diamond reaches.');
+				}
+				var r = JSON.parse(await eng.diamond_reach(String(did)));
 				return {
 					own_dir:   'diamonds/' + did,
-					attached:  here.map(function (a) { return a.path; }),
-					read_only: here.filter(function (a) { return a.force.rel === 'consulted'; })
-						.map(function (a) { return a.path; }),
+					attached:  Array.isArray(r.attached)  ? r.attached  : [],
+					read_only: Array.isArray(r.read_only) ? r.read_only : [],
 					// The toolchains the USER granted this Diamond, from the store. Never
 					// inferred from anything a model asked to run — see `Toolkit` in
 					// src/tools.rs, which says the same thing at the other end.
 					toolkits:  (d && Array.isArray(d.toolkits)) ? d.toolkits.slice() : [],
 					// MARKED, AND NOT IN FORCE ON THIS DEVICE until the user confirms them
-					// here (`markWaiting`). In no list above, so they grant nothing; they
-					// are handed over so the daimon is TOLD, and asks for the press, rather
-					// than meeting a plain refusal and concluding the folder is not its to
-					// use (audit finding 6).
-					unconfirmed: list.filter(function (a) { return a.waiting; })
-						.map(function (a) { return a.path; }),
+					// here. They grant nothing; the engine names them in a refusal so the
+					// daimon asks for the press (audit finding 6).
+					unconfirmed: Array.isArray(r.unconfirmed) ? r.unconfirmed : [],
 				};
 			},
 			/// The marks on a Diamond that are not in force on this device and that
@@ -49913,17 +49927,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// The `open` request, composed on the Rust side.
 		///
 		/// **This is the whole of the fence question.** The page hands over what it
-		/// knows — which Diamond, what the user attached, how big the screen is —
+		/// knows — which Diamond, its granted toolchains, how big the screen is —
 		/// and Rust answers with the request the wire carries, fence included, by
 		/// the same `fence_spec` a `Tool::Run` goes through. Where that edge is
 		/// missing the answer is a refusal, never a request this page filled in.
 		async function request() {
-			var b = { own_dir: '', attached: [], read_only: [], toolkits: [] };
+			var b = { own_dir: '', toolkits: [] };
 			try { b = await Files.bounds(); } catch (e) { /* no Diamond open */ }
 			var ask = {
-				own_dir:   b.own_dir,
-				attached:  b.attached,
-				read_only: b.read_only,
+				// THE DIAMOND, AND NOT ITS MARKS (HIST-SAFE U2): `pty_request` reads what it
+				// reaches itself, and refuses an ask that still carries the lists. None for
+				// no Diamond open, which is the user's own terminal at the granted root.
+				diamond:   (b.own_dir && currentDiamond) ? String(currentDiamond.id) : '',
 				// The toolchains the user granted this Diamond. Without them a session
 				// in a Diamond granted Rust met `cargo` as a refusal, because the fence
 				// never named the toolchain and the hand clamps to what it was told.
@@ -59320,6 +59335,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (seq !== _markNoticeSeq) return;
 		var items = got.items;
 		box.innerHTML = '';
+		// A record that is there but is not a record refuses every press (QA A F5), so
+		// it is said instead of the list, with the one press that replaces it.
+		if (DaimondMarksHere.damaged()) { drawMarksDamaged(box); return; }
 		if (!items.length) { box.hidden = true; return; }
 		box.hidden = false;
 		box.dataset.count = String(items.length);
@@ -59389,6 +59407,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			all.addEventListener('click', function () { press(items); });
 			box.appendChild(all);
 		}
+	}
+
+	/// This device's marks record is damaged: say so, and offer the reset, asked first.
+	function drawMarksDamaged(box) {
+		box.hidden = false;
+		box.dataset.count = '0';
+		var head = document.createElement('p');
+		head.className = 'mark-notice-head';
+		head.textContent = t('marks.damaged');
+		box.appendChild(head);
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'chip-btn accent';
+		b.dataset.act = 'mark-reset';
+		b.textContent = t('marks.reset');
+		b.addEventListener('click', async function () {
+			if (!(await confirmDialog(t('marks.reset_ask'), t('marks.reset'), { title: t('marks.reset') }))) return;
+			DaimondMarksHere.resetDamaged();
+			renderMarkNotice();
+		});
+		box.appendChild(b);
 	}
 
 	/// The `+`: attach files and folders without leaving what you are reading.
@@ -59595,6 +59634,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// can ask what the fence was built from without dispatching anything.
 		chatScope:    chatScopePaths,
 		chatScratch:  chatScratchDir,
+		// A chat's holdings as JSON, for an engine door that reads the marks itself.
+		chatHolds:    chatHoldsJson,
 		// Where a mark is in force, and the user's confirmation of another device's
 		// mark on this one (2026-09-23): what the paperclip writes, whether a stored
 		// reference is in force here, what the page says about where it lives, and
@@ -61263,25 +61304,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		};
 		var fa = diamondApp(diamondId);            // the Diamond steers with its own model
-		// What the user marked into this Diamond, read fresh for THIS turn.
-		//
-		// The same `Files.bounds` that scopes a dispatched worker, so the daimon and the
-		// workers it commands are told the same thing by the same function. Read per turn
-		// rather than once, because a user attaches a folder and then immediately asks
-		// about it: bounds composed at construction would still be the ones from before
-		// the paperclip was pressed.
-		//
-		// A failure here is NOT swallowed into an unscoped turn. The engine reads an
-		// absent list as "nothing is marked" and confines the daimon to the Diamond's own
-		// directory, which is the safe half of the ambiguity — but a scope that silently
-		// became narrower is still worth saying out loud, so it is reported and the turn
-		// goes ahead confined rather than being refused outright.
-		var marks = { attached: [], read_only: [] };
+		// The toolchains the user ticked on this Diamond, read fresh for THIS turn. The
+		// marks themselves are the engine's to read at the turn (HIST-SAFE U2), from the
+		// same `marks::reach` that `Files.bounds` answers with, so the daimon and the
+		// workers it commands are held to the same reach. A record the engine cannot read
+		// refuses the turn there, plainly; here a failure only costs the toolchains, and
+		// that is said out loud rather than discovered as a refusal.
+		var marks = { toolkits: [] };
 		try { marks = await Files.bounds(diamondId); }
 		catch (e) {
-			marks = { attached: [], read_only: [] };
-			crystalSay(tOr('crystal.marks_unread',
-				'The attachments could not be read, so this turn works only in the diamond.'), true);
+			marks = { toolkits: [] };
+			crystalSay(tOr('crystal.kits_unread',
+				'The toolchains granted to this diamond could not be read, so this turn runs without them.'), true);
 		}
 		// THE TURN IS HELD BEFORE IT GOES OUT, so a `spawn_agent` call inside it can be
 		// attributed to this Diamond. A fresh tag per turn: `rec.id` is the daimon chat's own
@@ -61330,18 +61364,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// persistent, which is the whole of notes2's "the daimon is meant to be
 			// persistant": it used to build a fresh session per instruction, so it could
 			// not be asked a follow-up question.
+			// The marks, this device's record of them and what waits for a press are the
+			// engine's to read at the turn (HIST-SAFE U2); only the toolkits travel.
 			var after = await fa.steer_crystal(diamondId, sent,
-				JSON.stringify(marks.attached  || []),
-				JSON.stringify(marks.read_only || []),
 				// The toolchains the user ticked on this Diamond. Handed over here because
 				// `compose_daimon` is where a daimon's own bounds are built, and it is not the
 				// place a worker's are: ticking Git granted it to this daimon's workers and not
 				// to the daimon, which is the surface the user granted it on.
 				JSON.stringify(marks.toolkits  || []),
 				(rec.session && rec.session.msgs) || [], onEvent,
-				// What is marked in and not in force on this device, so the daimon is told
-				// and asks the user to confirm it here rather than working around a refusal.
-				JSON.stringify(marks.unconfirmed || []),
 				steerPre || undefined);
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {
@@ -64395,10 +64426,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// this device's own copy of it (if any) stands. Adopted as it was, `[null]`
 					// stopped every save once opened; merged, a string took the whole restore
 					// down half way through.
-					if (!chatIdOk(r.id) || !transcriptOk(r.messages)) {
+					if (!chatIdOk(r.id) || !chatDiamondOk(r) || !transcriptOk(r.messages)) {
 						unreadable++;
 						trail('restore chat REFUSED', String(r.id).slice(0, 64) + ': '
-							+ (chatIdOk(r.id) ? 'its transcript is ' + transcriptShape(r.messages) : 'not a plain chat id'));
+							+ (!chatIdOk(r.id) ? 'not a plain chat id'
+								: !chatDiamondOk(r) ? 'not a plain Diamond id'
+								: 'its transcript is ' + transcriptShape(r.messages)));
 						continue;
 					}
 					var st = byId[r.id];
@@ -67315,26 +67348,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// session the next turn stored kept it that way. The band is drawn again when the transcript arrives.
 		if (!did && current._loaded === false) { dropWire(); return; }
 		try { app = did ? diamondApp(did) : ensureApp(current); } catch (e) { dropWire(); return; }
-		if (!app || typeof app.wire_system !== 'function') { dropWire(); return; }
-		// What is marked into this Diamond, from the same `Files.bounds` the turn reads it from,
-		// so the band and the turn cannot come to different ideas of what is attached. A failure
-		// is the empty pair, which the engine reads as "nothing was marked" and confines to the
-		// Diamond's own folder -- the same fail-closed reading `doSteer` takes.
-		var marks = { attached: [], read_only: [] };
+		// Two doors: a Diamond's thread is `wire_system(id, ...)`, a chat's own conversation is
+		// `wire_chat_system()`. An empty id at the first is refused, never read as "a chat".
+		if (!app || typeof (did ? app.wire_system : app.wire_chat_system) !== 'function') { dropWire(); return; }
+		// The toolkits ticked on this Diamond, from the same `Files.bounds` the turn reads them
+		// from. The marks are the engine's to read, for the band as for the turn (HIST-SAFE U2),
+		// so the two cannot come to different ideas of what is attached.
+		var marks = { toolkits: [] };
 		if (did) {
 			try { marks = await Files.bounds(did); }
-			catch (e) { marks = { attached: [], read_only: [] }; }
+			catch (e) { marks = { toolkits: [] }; }
 		}
 		var seq = ++_wireSeq;
 		var w;
 		try {
 			// HELD: this await borrows the chat's own app for as long as it takes, and a
 			// turn starting underneath it must wait rather than throw. See `engineHold`.
-			w = JSON.parse(await engineHold(app, app.wire_system(did,
-				JSON.stringify(marks.attached  || []),
-				JSON.stringify(marks.read_only || []),
-				JSON.stringify(marks.toolkits  || []),
-				JSON.stringify(marks.unconfirmed || []))));
+			w = JSON.parse(await engineHold(app, did
+				? app.wire_system(did, JSON.stringify(marks.toolkits  || []))
+				: app.wire_chat_system()));
 		} catch (e) { dropWire(); return; }
 		// Still the thread this render was started for, and still wanted. Re-read rather than
 		// assumed: everything above this line may have happened while the user was moving.

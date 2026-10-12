@@ -1346,6 +1346,13 @@ pub const CHAT_WORK_DIR: &str = "work";
 /// What a chat's key in the version store starts with: `chat:<id>`, where a Diamond's is its id.
 pub const CHAT_KEEPER: &str = "chat:";
 
+/// A chat's own working directory, `chats/<id>/work`, minted from its id alone (`chatScratchDir`
+/// in daimond.js).  The engine derives it rather than taking it from the page, which could name
+/// another Diamond's folder as the chat's own (QA B F1, 2026-10-12).
+pub fn chat_scratch(chat: &str) -> String {
+    fmt!("{}/{}/{}", CHAT_ROOT, chat, CHAT_WORK_DIR)
+}
+
 /// Whose version store keeps what a turn deletes or overwrites, read off the folder its scope was
 /// given: `diamonds/<id>` for a Diamond's worker, `chats/<id>/work` for a chat and its workers.
 ///
@@ -12331,6 +12338,9 @@ pub struct ToolContext {
     /// refused one of them is told why ([`ToolContext::refusal`]) and asks the user to confirm
     /// it, rather than concluding the folder is not its to use or hunting another way in.
     pub unconfirmed: Vec<String>,
+    // WHOSE MARKS this turn's writes are held to, read afresh at every call a model makes
+    // ([`ToolContext::bounds_now`]): `None` for a turn no mark scopes.
+    pub live: Option<crate::marks::Live>,
     // Answering a MODEL's call rather than the user's own door (a panel): see `may_write`.
     // Set by `ToolRegistry::try_dispatch`, the door a turn's calls come through, and by no one
     // else.
@@ -13081,6 +13091,28 @@ impl ToolContext {
                 held.push(*k);
             }
         }
+    }
+
+    /// The bounds a call runs under: the turn's, intersected with what its marks give NOW.
+    ///
+    /// Read afresh at every call a model makes rather than kept from the turn's start, and that
+    /// is the fix for QA B F3 (2026-10-12): the scope was composed once per turn, so a mark
+    /// withdrawn while the turn waited on a question was written through by its next call.  A
+    /// live read at the call, rather than a generation counter bumped by every press and
+    /// removal, because the presses are the page's writes to local storage and a counter would
+    /// hold only for the writers that remembered to bump it; the read sees every writer.  It is
+    /// at the call and not inside `may_write`, which is synchronous and cannot read a sidecar.
+    /// The intersection only ever narrows: a mark pressed mid-turn waits for the next turn.
+    /// "A call" is each tool call, so every write and delete is checked at its own act.  A
+    /// record that cannot be read is an error, which the call answers in the UNREAD sentence
+    /// (QA A F1).
+    pub async fn bounds_now(&self) -> Outcome<Vec<Bound>> {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(live) = &self.live {
+            let b = res!(crate::wasm::marks::live_bounds(live).await);
+            return Ok(compose(&self.no_write, &b));
+        }
+        Ok(self.no_write.clone())
     }
 
     /// The turn's bounds with any place the user let it change in the consent door since it
@@ -28727,10 +28759,17 @@ impl ToolRegistry {
         A: FnOnce(PlaceAsk, String, String) -> F,
         F: std::future::Future<Output = Option<Permit>>,
     {
+        // THE MARKS AS THEY STAND AT THIS CALL, not as they stood when the turn began: a mark
+        // withdrawn, or made read-only, while the turn waits on a question is not written
+        // through by the turn's next call (QA B F3).
+        let now = match self.ctx.bounds_now().await {
+            Ok(b)  => ToolContext { no_write: b, ..self.ctx.clone() },
+            Err(e) => return Ok(MessageContent::text(refusal_line(&e.plain()))),
+        };
         // A MODEL IS CALLING, so the call is answered as a model's and never as the user's own
         // door: the record's fence holds whatever the turn's bounds (`ToolContext::may_write`).
-        let model = || ToolContext { by_model: true, no_write: self.ctx.write_bounds(),
-            ..self.ctx.clone() };
+        let model = || ToolContext { by_model: true, no_write: now.write_bounds(),
+            ..now.clone() };
         let ctx = model();
         ctx.take_place_ask();
         let mut out = self.dispatch_in(name, args_json, &ctx).await;
@@ -30261,7 +30300,7 @@ mod tests {
             Err(e) => panic!("a scratch directory: {}", e),
         };
         let ws = Workspace::new(dir).expect("ws");
-        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), turn: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new(), keeper: String::new(), unconfirmed: Vec::new(), by_model: false, restoring: 0, by: None }
+        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), turn: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new(), keeper: String::new(), unconfirmed: Vec::new(), live: None, by_model: false, restoring: 0, by: None }
     }
 
     /// A context scoped to a Diamond, as `diamond_bounds` builds it.

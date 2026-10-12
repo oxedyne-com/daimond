@@ -452,7 +452,7 @@ console.log('\nThe turn-starting exports, the journal and the runner carry it');
 	check('a worker and the triage reader take none', !/run_turn\([^)]*pre/i.test(SRC.slice(SRC.indexOf('run.app.run_turn(task, sink)') - 40, SRC.indexOf('run.app.run_turn(task, sink)') + 60)));
 	const open = rt.indexOf('J.turnOpen(');
 	check('the journal opens a turn with its note and its mark', open > 0 && /pre/.test(rt.slice(open - 400, open + 200)) && /app/.test(rt.slice(open - 400, open + 200)) && /turnPre/.test(rt.slice(open - 400, open + 200)), rt.slice(open - 200, open + 160));
-	check('a steer\'s note is read off its record, or the errand\'s for a runner, and handed to steer_crystal last', /steer_crystal\([\s\S]*JSON\.stringify\(marks\.unconfirmed \|\| \[\]\),\s*steerPre \|\| undefined\)/.test(rs) && /detached\.pre/.test(rs));
+	check('a steer\'s note is read off its record, or the errand\'s for a runner, and handed to steer_crystal last', /steer_crystal\([\s\S]*JSON\.stringify\(marks\.toolkits\s*\|\| \[\]\),[\s\S]*onEvent,\s*steerPre \|\| undefined\)/.test(rs) && /detached\.pre/.test(rs));
 	check('the detached steer is handed the errand\'s note', /pre:\s*\(ropts && ropts\.pre\)/.test(lift(SRC, 'runSteerDetached') || ''));
 	check('a screen-transcript tail restored into the engine carries each user message\'s note', /append_message\(m\.role, m\.content \|\| '',\s*[^)]*m\.pre/.test(ea), ea.slice(ea.indexOf('append_message') - 20, ea.indexOf('append_message') + 160));
 	// the runner

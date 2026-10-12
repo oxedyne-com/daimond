@@ -50,6 +50,7 @@ pub mod diamond_versions;
 /// natively rather than only in a page.  The edge that applies it is [`wasm::opfs`].
 pub mod fsname;
 pub mod llm;
+pub mod marks;
 /// The system prompt each kind of agent runs under, and the part of it a user
 /// may replace from their workspace.
 /// What a model's own dialect needs, read off the provider's slug: the prompt addendum it

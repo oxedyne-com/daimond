@@ -14,7 +14,8 @@
 // ── WHAT IT ASSERTS ──────────────────────────────────────────────────────────
 //
 //   P12 A desktop marks a folder in its browser workspace. On the phone, on its first start after
-//       R2, the mark waits and the notice says the phone holds no record; one press brings it into
+//       R2, the mark waits, the phone holds only the empty record (HIST-SAFE U2) and the notice says
+//       the folder waits for a press here; one press brings it into
 //       force there, and the desktop is unaffected.
 //   P6  Two computers with a folder of one name. B presses Use here on A's mark: B's sidecar is
 //       byte-identical and its stamp unmoved, the rounds settle at a fixed point, and the mark is
@@ -130,6 +131,13 @@ const install = (s) => s.page.evaluate(() => {
 const H = (s, name, ...args) => s.page.evaluate(([n, a]) => window.__mh[n](...a), [name, args]);
 
 /// The notice, as drawn: `drawn` is whether it is up at all, whatever the shell's layout.
+// This device's marks record as read from the page: empty is `{v:1,d:{},c:{}}`.
+const recHere = (s) => s.page.evaluate(() => {
+	const raw = window.localStorage.getItem('daimond-marks-here');
+	let empty = false;
+	try { const r = JSON.parse(raw); empty = !!r && r.v === 1 && !Object.keys(r.d || {}).length && !Object.keys(r.c || {}).length; } catch (e) { /* not empty */ }
+	return { raw, empty };
+});
 const notice = (s) => s.page.evaluate(() => {
 	const box = document.getElementById('mark-notice');
 	if (!box) return { drawn: false, rows: [] };
@@ -271,9 +279,13 @@ try {
 	const sideA12 = await H(A, 'sidecar', d12), stA12 = await H(A, 'stamp', d12);
 	const stP12 = await H(P, 'stamp', d12);
 	const n12 = await notice(P);
-	const noRec = await P.page.evaluate(() => DaimondI18n.t('marks.no_record'));
-	check('P12. the phone\'s notice lists it and says the phone holds no record',
-		n12.drawn && has(n12.rows, 'notes') && n12.why === noRec, J(n12));
+	// HIST-SAFE U2 (lead ruling 2026-10-12): the engine fails closed on a missing record, so an
+	// unlocked first start writes an EMPTY record once. The phone therefore holds a record that
+	// grants nothing, and its notice says the folder waits for a press here.
+	const rec12 = await recHere(P);
+	const waitWhy = await P.page.evaluate(() => DaimondI18n.t('marks.waiting_why'));
+	check('P12. the phone holds only the empty record, and its notice lists the folder as waiting for a press here',
+		rec12.empty && n12.drawn && has(n12.rows, 'notes') && n12.why === waitWhy, J({ rec12, n12 }));
 	const pr12 = await press(P, '#mark-notice .mark-notice-row[data-path="notes"] [data-act="mark-use-here"]');
 	const p12b = await H(P, 'bounds', d12);
 	control('P12. one press on the phone brings it into force there', has(p12b.at, 'notes'), J({ pr12, p12b }));
@@ -437,11 +449,17 @@ try {
 		if (!M) return { module: false };
 		const row = { id: 'wk1', owner: WKD, from: 'diamond:' + WKD, to: 'dir:[browser]notes', rel: 'holds', by: 'user', share: false };
 		const absent = M.absent();
+		const raw = window.localStorage.getItem('daimond-marks-here');
+		let empty = false;
+		try { const r = JSON.parse(raw); empty = !!r && r.v === 1 && !Object.keys(r.d || {}).length && !Object.keys(r.c || {}).length; } catch (e) { /* not empty */ }
+		const before = M.force(WKD, row, 'browser');
 		const granted = M.grant(WKD, row, 'browser', { share: false });
-		return { module: true, absent, granted, force: M.force(WKD, row, 'browser') };
+		return { module: true, absent, raw, empty, before, granted, force: M.force(WKD, row, 'browser') };
 	}, WKD);
-	control('W. on WebKit the first start holds no record, and a press writes one that grants',
-		w1.module && w1.absent === true && w1.granted === true && !!w1.force && w1.force.rel === 'holds', J(w1));
+	// HIST-SAFE U2: an unlocked first start writes an empty record once; it must grant nothing.
+	control('W. on WebKit the first start holds only the empty record, which grants nothing, and a press writes one that grants',
+		w1.module && w1.absent === false && w1.empty === true && w1.before === null
+		&& w1.granted === true && !!w1.force && w1.force.rel === 'holds', J(w1));
 	await W.page.reload({ waitUntil: 'domcontentloaded' });
 	await signInAs(W, 'mhsync-webkit');
 	await sleep(2000);

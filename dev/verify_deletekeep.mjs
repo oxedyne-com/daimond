@@ -94,17 +94,46 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 	const dir = await root.getDirectoryHandle(folder, { create: true });
 	// Named as the page names every folder it opens (FsaDB.folderId): a folder opened with no id
 	// names no folder, so its rows are asked about before they go back over different bytes (HX2).
-	mod.set_workspace_dir(dir, '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f');
+	const FID = '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f';
+	mod.set_workspace_dir(dir, FID);
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
 	const sha = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256',
 		new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+	// The marks a turn names, PRESSED as the page presses them (HIST-SAFE U2): the engine reads the
+	// Diamond's sidecar row and this device's record of the press itself and takes no list from a
+	// caller. Exactly the named marks are left in force: one pressed for an earlier turn and not
+	// named now is withdrawn as the page withdraws one (`removeLinkHere`). Read off the sidecar
+	// each time, so it holds across the reload F3 needs. Only marks pressed HERE (rooted on this
+	// folder, as `refOf` writes them) are withdrawn: a user row a section wrote for itself -- F7's
+	// `usermark`, which the daimon must be refused removing -- is that section's, not the turn's.
+	const ROOT = 'machine:' + folder + '#' + FID;
+	const refOf = (m) => (m.includes('.') ? 'file:' : 'dir:') + '[machine:' + folder + ']' + m;
+	const pressedHere = (to) => /^(file|dir):/.test(to)
+		&& to.slice(to.indexOf(':') + 1).startsWith('[machine:' + folder + ']');
+	const press = async (id, marks) => {
+		const did = String(id);
+		const want = marks.map(refOf);
+		const rows = JSON.parse(await app.links_touching('diamond:' + did) || '[]')
+			.filter((l) => l.owner === did && l.from === 'diamond:' + did && l.rel === 'holds'
+				&& l.by === 'user' && pressedHere(String(l.to || '')));
+		for (const l of rows) {
+			if (want.includes(l.to)) continue;
+			window.DaimondMarksHere.drop(did, l.id, l.to);
+			await app.remove_link(did, l.id);
+		}
+		for (const ref of want) {
+			if (rows.some((l) => l.to === ref) && window.DaimondMarksHere.force(did, rows.find((l) => l.to === ref), ROOT)) continue;
+			if (!await window.__pressMark(app, did, ref, ROOT)) throw new Error('mark not pressed: ' + ref);
+		}
+	};
 	// A daimon's turn: the mock answers `@tool` / `@tools` with those calls.
 	const turnEv = async (id, marks, text) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
 		const seen = [];
 		try {
-			await eng.steer_crystal(id, text, JSON.stringify(marks), '[]', '[]', [],
+			await press(id, marks);
+			await eng.steer_crystal(id, text, '[]', [],
 				(ev) => { if (ev.type === 'tool_result') seen.push({ name: String(ev.name || ''),
 					content: String(ev.content || '') }); });
 		} catch (e) { seen.push({ name: '', content: 'THREW: ' + String(e && e.message || e) }); }
@@ -115,20 +144,32 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 	// A Diamond's worker: its changes wait for the daimon's turn end.
 	const worker = async (id, marks, text) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
-		eng.set_diamond_scope('diamonds/' + id, JSON.stringify(marks), '[]', '[]');
 		const seen = [];
 		try {
+			await press(id, marks);
+			await eng.set_diamond_scope(String(id), '[]');
 			await eng.run_turn(text, (ev) => {
 				if (ev.type === 'tool_result') seen.push(String(ev.content || ''));
 			});
 		} catch (e) { seen.push('THREW: ' + String(e && e.message || e)); }
 		return seen;
 	};
+	// THE PAGE'S "Use here" on a waiting row, under the root the ENGINE has open. `confirmHere`
+	// presses under the page's own root, and this verifier opens the folder in the engine behind
+	// the page's back (`set_workspace_dir` above), so the page still stands on `browser` and its
+	// press would land where the engine never looks. The same grant `confirmMarkHere` makes, on
+	// the workspace the turns run on.
+	const confirm = async (id, ref) => {
+		const did = String(id);
+		const row = JSON.parse(await app.links_touching('diamond:' + did) || '[]')
+			.find((l) => l.owner === did && l.from === 'diamond:' + did && l.to === ref);
+		return !!row && window.DaimondMarksHere.grant(did, row, ROOT, { share: false });
+	};
 	const newest = async (id) => {
 		const rows = JSON.parse(await app.versions_list(id));
 		return rows.length ? rows[0] : null;
 	};
-	window.__k = { mod, app, dir, read, sha, turn, turnEv, worker, newest };
+	window.__k = { mod, app, dir, read, sha, turn, turnEv, worker, newest, press, confirm };
 }, { folder: FOLDER, mock: MOCK, fresh });
 
 await install(true);
@@ -137,7 +178,7 @@ const id = await p.evaluate(() => __k.app.create_diamond('delete keep'));
 // ── F1: the sidecar is the record, and a row with no `by` is nobody's ────
 if (want('F1')) {
 	const f1 = await p.evaluate(async (id) => {
-		const { mod, read, turn } = __k;
+		const { mod, read, turn, confirm } = __k;
 		const out = {};
 		const side = 'diamonds/' + id + '/.daimond/links.jsonl';
 		await mod.write_file('vault/v.md', 'v');
@@ -166,9 +207,7 @@ if (want('F1')) {
 		// pressed, exactly as Use here does. The row with no `by` is left waiting
 		// on purpose: the contrast this check is about is now between a mark
 		// pressed and one that is not, rather than between the two kinds of row.
-		if (window.DaimondAttach && DaimondAttach.confirmHere) {
-			await DaimondAttach.confirmHere(id, 'dir:granted');
-		}
+		await confirm(id, 'dir:granted');
 		out.bounds2 = (await DaimondDiamond.bounds(id)).attached;
 		// Put the sidecar back as the daimon left it, for the sections after.
 		await mod.write_file(side, after || '');
@@ -335,7 +374,7 @@ if (want('F5')) {
 // ── F7: minors ─────────────────────────────────────────────────────────────
 if (want('F7')) {
 	const f7 = await p.evaluate(async (id) => {
-		const { mod, app, read, turn } = __k;
+		const { mod, app, read, turn, confirm } = __k;
 		const out = {};
 		const self = 'diamond:' + id;
 		// A daimon's link_remove of the user's mark.
@@ -382,12 +421,12 @@ if (want('F7')) {
 		if (out.confirmApi) {
 			const realSetItem = window.localStorage.setItem.bind(window.localStorage);
 			window.localStorage.setItem = () => { throw new Error('quota exceeded, or storage blocked'); };
-			try { out.failed = await A.confirmHere(id, 'dir:confirmme'); } catch (e) { out.failed = 'threw'; }
+			try { out.failed = await confirm(id, 'dir:confirmme'); } catch (e) { out.failed = 'threw'; }
 			window.localStorage.setItem = realSetItem;
 			out.kept = JSON.parse(await app.links_touching(self) || '[]')
 				.filter((l) => /confirmme$/.test(l.other)).map((l) => [l.other, l.by || '']);
 			out.bFail = (await DaimondDiamond.bounds(id)).attached;
-			out.done = await A.confirmHere(id, 'dir:confirmme');
+			out.done = await confirm(id, 'dir:confirmme');
 			out.after = JSON.parse(await app.links_touching(self) || '[]')
 				.filter((l) => /confirmme$/.test(l.other)).map((l) => [l.other, l.by || '']);
 			out.bDone = (await DaimondDiamond.bounds(id)).attached;
@@ -717,7 +756,7 @@ if (want('F9')) {
 // test uses, and the ones that are not writes are named here with the native test's reasons.
 if (want('F10')) {
 	const f10 = await p.evaluate(async () => {
-		const { mod, app, turnEv, dir } = __k;
+		const { mod, app, turnEv, dir, press } = __k;
 		const out = { rows: [], wire: false };
 		const id = await app.create_diamond('f10 table');
 		const READS = ['file_read.path', 'file_read.paths', 'file_list.path', 'file_search.path',
@@ -751,7 +790,8 @@ if (want('F10')) {
 			if (was === 'D') return;
 			await mod.write_file(path, was.slice(2));
 		};
-		const wire = JSON.parse(await app.wire_system(id, JSON.stringify(['vault']), '[]', '[]'));
+		await press(id, ['vault']);
+		const wire = JSON.parse(await app.wire_system(id, '[]'));
 		out.wire = Array.isArray(wire.schemas);
 		const tools = (wire.schemas || []).map((s) => s.function || s);
 		// The fenced places: two record files and one unmarked file that are there, one of each

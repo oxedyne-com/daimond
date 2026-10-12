@@ -380,6 +380,26 @@ export { displayFault, cleanDisplayEnv, WAYLAND_VARS, INHERITED_ENV,
 	UNATTENDED_VAR, OWNED_VAR, SEAT_DISPLAY } from './display.mjs';
 import { displayFault, cleanDisplayEnv, INHERITED_ENV } from './display.mjs';
 
+/// A mark pressed as the page presses one, for a verifier (HIST-SAFE U2, 2026-10-12). The engine
+/// reads a Diamond's marks itself at every act -- the user's sidecar row AND this device's record
+/// of the press, on the workspace open in the engine -- and takes no list from a caller, so a
+/// verifier that used to pass `['vault']` presses the mark instead:
+///
+///   await window.__pressMark(app, id, 'dir:[machine:vault]vault', 'machine:vault#<fid>', 'holds')
+///
+/// `root` is the record's key for the workspace the ENGINE has open (`marks::root_key`):
+/// `browser`, or `machine:<folder name>#<folder id>`. Answers whether the press landed.
+const PRESS_MARK = () => {
+	window.__pressMark = async (app, id, ref, root, rel) => {
+		const did = String(id);
+		await app.add_link(did, 'diamond:' + did, ref, rel || 'holds', '', 'user');
+		const ls = JSON.parse(await app.links_touching('diamond:' + did) || '[]');
+		const row = ls.find((l) => l.owner === did && l.from === 'diamond:' + did
+			&& (l.to === ref || l.other === ref) && l.rel === (rel || 'holds'));
+		return !!row && window.DaimondMarksHere.grant(did, row, root, { share: false });
+	};
+};
+
 export async function open(opts = {}) {
 	const {
 		headed    = false,
@@ -666,6 +686,7 @@ export async function open(opts = {}) {
 	}
 
 	if (route) await route(page);
+	await page.addInitScript(PRESS_MARK);
 	await page.goto(APP, { waitUntil: 'domcontentloaded' });
 
 	const s = { browser, page, errs, logs, net, name, foreign: [] };

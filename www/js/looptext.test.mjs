@@ -144,7 +144,8 @@ test("every turn's briefing carries today's date in ISO and the user's zone", { 
 	const m = await import(join(PKG, 'oxedyne_daimond.js'));
 	m.initSync({ module: readFileSync(join(PKG, 'oxedyne_daimond_bg.wasm')) });
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
-	const brief = JSON.parse(await app.wire_system('', '[]', '[]', '[]')).machine;
+	// A chat's own briefing is wire_chat_system's: wire_system is a Diamond's and takes no lists from the page (HIST-SAFE U2).
+	const brief = JSON.parse(await app.wire_chat_system()).machine;
 	const d = new Date();
 	const iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 	assert.ok(brief.includes(iso), "the briefing does not say today's date:\n" + brief);

@@ -76,7 +76,8 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	const dir  = await root.getDirectoryHandle(folder, { create: true });
 	// Named as the page names every folder it opens (FsaDB.folderId): a folder opened with no id
 	// names no folder, so its rows are asked about before they go back over different bytes (HX2).
-	mod.set_workspace_dir(dir, '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f');
+	const FID = '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f';
+	mod.set_workspace_dir(dir, FID);
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 	const call = async (tool, args) => {
 		const o = await app.run_tool_outcome(tool, JSON.stringify(args));
@@ -116,13 +117,30 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	const sha = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256',
 		new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, '0')).join('');
 	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
+	// The marks a turn names, PRESSED as the page presses them (HIST-SAFE U2): the engine reads the
+	// Diamond's sidecar row and this device's record of the press itself and takes no list from a
+	// caller. Each mark is pressed once per workspace and stays in force after.
+	const pressed = new Set();
+	const here = () => mod.workspace_mode() === 'folder'
+		? { root: 'machine:' + folder + '#' + FID, at: '[machine:' + folder + ']' }
+		: { root: 'browser', at: '[browser]' };
+	const refOf = (m) => (m.includes('.') ? 'file:' : 'dir:') + here().at + m;
+	const chatHolds = (marks) => JSON.stringify(marks.map((m) => ({ ref: refOf(m), path: m, ws: true, state: '' })));
+	const press = async (marks) => {
+		const h = here();
+		for (const m of marks) {
+			if (pressed.has(h.root + '|' + m)) continue;
+			if (!await window.__pressMark(app, id, refOf(m), h.root)) throw new Error('mark not pressed: ' + refOf(m));
+			pressed.add(h.root + '|' + m);
+		}
+	};
 	// A turn, as the daimon has one: the mock answers `@tool` with that call.
 	const turn = async (marks, tool, args) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
 		const seen = [];
 		try {
-			await eng.steer_crystal(id, '@tool ' + tool + ' ' + JSON.stringify(args),
-				JSON.stringify(marks), '[]', '[]', [],
+			await press(marks);
+			await eng.steer_crystal(id, '@tool ' + tool + ' ' + JSON.stringify(args), '[]', [],
 				(ev) => { if (ev.type === 'tool_result') seen.push(String(ev.content || '')); });
 		} catch (e) { seen.push('THREW: ' + String(e && e.message || e)); }
 		return seen.join(' | ').slice(0, 400);
@@ -137,9 +155,12 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	// an open ticket (hist-safe QA A F1, 2026-10-12); `during` acts beside the handed-out files.
 	const ticketed = async (keeper, marks, opening, during) => {
 		const o = JSON.parse(await opening);
+		const k = String(keeper);
+		if (!k.startsWith('chat:')) await press(marks);
 		const run = async (tool, args) => {
-			const w = await app.run_diamond_tool(String(keeper), JSON.stringify(marks), '[]',
-				tool, JSON.stringify(args), o.ticket);
+			const w = k.startsWith('chat:')
+				? await app.run_diamond_tool(k, tool, JSON.stringify(args), o.ticket, chatHolds(marks))
+				: await app.run_diamond_tool(k, tool, JSON.stringify(args), o.ticket);
 			return { outcome: w.outcome, text: String(w.text).slice(0, 800) };
 		};
 		const acts = [];
@@ -316,7 +337,8 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
 		const seen = [];
 		try {
-			await eng.steer_crystal(id, text, JSON.stringify(marks), '[]', '[]', [],
+			await press(marks);
+			await eng.steer_crystal(id, text, '[]', [],
 				(ev) => {
 					if (ev.type === 'tool_result') seen.push({ name: String(ev.name || ''),
 						content: String(ev.content || ''), outcome: String(ev.outcome || ''),
@@ -354,9 +376,15 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	out.hCap.rows = mc ? (mc.files || []).filter((f) => /^vault\/cap\//.test(f.path) && f.gone).length : 0;
 
 	// 3. A chat's delete, kept in the chat's own store.
-	const CHAT = 'cfd1';
+	// A chat's holding, pressed as the chat's workspace row presses it (chatGrant), and the
+	// holdings handed over as `chatAttachList` gives them: the engine reads the press itself.
+	const CHAT = 'c1001';
+	for (const m of ['vault']) {
+		if (!window.DaimondMarksHere.chatGrant(CHAT, { ref: refOf(m), path: m }, here().root, { ws: true }))
+			throw new Error('chat holding not pressed: ' + m);
+	}
 	const chatEng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
-	chatEng.set_chat_scope('chats/' + CHAT + '/work', JSON.stringify(['vault']));
+	chatEng.set_chat_scope(CHAT, chatHolds(['vault']));
 	const chatTurn = async (text) => {
 		const seen = [];
 		let ver = null;
@@ -396,7 +424,8 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 
 	// 3. A Diamond's worker: kept in its Diamond's store, recorded at the daimon's turn end.
 	const wEng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
-	wEng.set_diamond_scope('diamonds/' + id, JSON.stringify(['vault']), '[]', '[]');
+	await press(['vault']);
+	await wEng.set_diamond_scope(id, '[]');
 	const workText = 'the worker deletes me';
 	await mod.write_file('vault/worker.md', workText);
 	let wSaid = '';
@@ -537,7 +566,7 @@ check('H2. and the next is refused, sending the model to the user',
 check("H3. a chat's delete runs", /Deleted /.test(r.hChat.del) && r.hChat.gone, r.hChat.del);
 check("H3. and the chat's own store keeps it", r.hChat.kept === true, JSON.stringify(r.hChat.ver));
 check('H3. and tells the page, which offers it back',
-	!!r.hChat.ver && r.hChat.ver.keeper === 'chat:cfd1' && r.hChat.ver.files.includes('vault/chat.md'),
+	!!r.hChat.ver && r.hChat.ver.keeper === 'chat:c1001' && r.hChat.ver.files.includes('vault/chat.md'),
 	JSON.stringify(r.hChat.ver));
 check("H3. the chat's file_revert puts it back", r.hChat.back === true, r.hChat.revert);
 check("H3. and so does the page's undo, through the chat's marks",

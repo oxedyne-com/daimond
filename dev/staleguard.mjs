@@ -318,6 +318,10 @@ function firstDifference(rec, root, srcDir) {
 /// # Returns
 /// The refusal, or '' when the bundle is this source's.
 export function whyStaleWasm(wasm, srcDir, { subject, holds = '', quiet = false }) {
+	// A release kit that has already proved the bundle is its certified seal says so,
+	// and the bundle is then judged on its engine alone: the mirror's manifest is never
+	// this tree's, so the manifest check below would refuse every seal on sight.
+	if (process.env.DAIMOND_WASM_SEALED === '1') return whyStaleSealed(wasm, srcDir, { subject, holds });
 	let built;
 	try { built = fs.statSync(wasm).mtimeMs; }
 	catch (e) {

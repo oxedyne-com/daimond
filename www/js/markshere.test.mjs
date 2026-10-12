@@ -38,10 +38,12 @@ function storage() {
 }
 
 /// One tab: markshere.js, fresh, over `ls`, with an identity that is unlocked
-/// until `lock` says otherwise.
-function tab(ls) {
+/// until `lock` says otherwise, or locked from the start with `locked`, and
+/// `unlock` doing what the account's own unlock does (`daimond:unlock`). An
+/// unlocked tab writes an empty record once where it finds none (HIST-SAFE U2).
+function tab(ls, opts) {
 	const on = {};
-	let unlocked = true;
+	let unlocked = !(opts && opts.locked);
 	let heard = 0;
 	const win = {
 		localStorage: ls,
@@ -54,6 +56,7 @@ function tab(ls) {
 	return {
 		M: win.DaimondMarksHere,
 		lock: (v) => { unlocked = !v; },
+		unlock: () => { unlocked = true; (on['daimond:unlock'] || []).forEach((fn) => fn({})); },
 		heard: () => heard,
 		storage: (key) => (on.storage || []).forEach((fn) => fn({ key })),
 	};
@@ -167,8 +170,9 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	check('M1. another Diamond\'s directory, or a name that only begins with this one\'s, is still a mark',
 		M.isMark(own('file:[browser]diamonds/ffff/x.md')) === true && M.isMark(own('dir:[browser]diamonds/' + A + '-old')) === true
 			&& M.isMark(own('dir:[browser]src/diamonds/' + A)) === true);
+	const m1was = ls.getItem('daimond-marks-here'), m1n = ls.writes.length;
 	check('M1. a press refuses to record it, and writes nothing', M.grant(A, kept, BR, {}) === false
-		&& ls.getItem('daimond-marks-here') === null);
+		&& ls.getItem('daimond-marks-here') === m1was && ls.writes.length === m1n);
 }
 
 // ── F3: a store path is reachable from any workspace ────────────────
@@ -302,10 +306,11 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 		&& C.waiting({ v: 1, d: {}, c: {} }, A, mrow({ to: 'dir:[machine:a#b@0123456789abcdef]code' }), 'machine:a#b#' + FA, []) === true);
 
 	// The doors refuse a key with no id, so nothing is ever written under one.
-	const ls = storage(), M = tab(ls).M;
+	// Counted from after the load, whose one write is the empty record an unlocked tab makes.
+	const ls = storage(), M = tab(ls).M, n0 = ls.writes.length;
 	check('grant refuses a machine key with an empty id', M.grant(A, mrow(), 'machine:usr#') === false
-		&& M.grant(A, mrow(), 'machine:usr') === false && ls.writes.length === 0, JSON.stringify(ls.writes));
-	check('chatGrant refuses one too', M.chatGrant('c1', h, 'machine:usr#', { ws: true }) === false && ls.writes.length === 0);
+		&& M.grant(A, mrow(), 'machine:usr') === false && ls.writes.length === n0, JSON.stringify(ls.writes));
+	check('chatGrant refuses one too', M.chatGrant('c1', h, 'machine:usr#', { ws: true }) === false && ls.writes.length === n0);
 	check('and a keyed grant lands', M.grant(A, mrow(), MA) === true && !!M.force(A, mrow(), MA) && M.force(A, mrow(), MB) === null);
 	check('setShare refuses a machine key with an empty id', M.setShare(A, mrow(), 'machine:usr#', true) === false
 		&& M.setShare(A, mrow(), MA, true) === true && M.force(A, mrow(), MA).share === true && M.force(A, mrow(), MB) === null);
@@ -334,7 +339,19 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	const ls = storage();
 	const T1 = tab(ls), T2 = tab(ls);
 	const M1 = T1.M, M2 = T2.M;
-	check('with no record the key is absent', M1.absent() === true);
+	// HIST-SAFE U2: the engine fails closed on a missing record, so "nothing pressed yet" is an
+	// empty record written once at unlock. Before unlock the key stays absent and nothing is
+	// written; after, it holds a record that grants nothing, and a missing one is a lost store.
+	const ls0 = storage(), T0 = tab(ls0, { locked: true });
+	const lockedAbsent = ls0.getItem('daimond-marks-here') === null && ls0.writes.length === 0;
+	check('with no record and the account locked, the key is absent and nothing is written', lockedAbsent);
+	T0.unlock();
+	check('at unlock an empty record is written once, granting nothing', T0.M.absent() === false
+		&& ls0.writes.length === 1 && T0.M.force(A, row(), BR) === null, JSON.stringify(ls0.writes));
+	T0.unlock();
+	check('and a second unlock does not write it again', ls0.writes.length === 1);
+	check('an unlocked tab finding no record writes the empty one at load', M1.absent() === false
+		&& M1.force(A, row(), BR) === null);
 	check('a grant in one tab lands', M1.grant(A, row(), BR) === true);
 	check('and is in force in the other with no event', !!M2.force(A, row(), BR));
 	check('the key is no longer absent', M2.absent() === false);
@@ -360,7 +377,9 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	check('and granted nothing', M1.force(A, row({ id: 'L4', to: 'dir:[browser]d' }), BR) === null);
 	ls.setItem(M1.KEY, '{not json');
 	check('a record that does not parse reads as empty: every mark waits', M1.force(A, row({ id: 'L2', to: 'dir:[browser]b' }), BR) === null);
-	check('and a press still writes a good one', M1.grant(A, row(), BR) && !!M2.force(A, row(), BR));
+	// It is damaged, not empty (QA A F5): a press is refused until a reset.
+	check('and a press is refused until a reset, then writes a good one', M1.grant(A, row(), BR) === false
+		&& M1.resetDamaged() && M1.grant(A, row(), BR) && !!M2.force(A, row(), BR));
 	check('settle drops an entry absent from the copy', M1.settle(A, '', '') === true && M2.force(A, row(), BR) === null);
 	check('the seeds are given once', M1.seeds([{ owner: A, path: 'secret' }]) === true && M1.seeds([]) === false);
 	check('a grant is refused on a row that is not the Diamond\'s own', M1.grant(A, row({ owner: 'ffff' }), BR) === false);
@@ -468,6 +487,30 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	const inList = list ? list[1].split(key).length - 1 : 0;
 	check('and in daimond.js only in FORGET_CLEARS', inList === 1 && dsrc.split(key).length - 1 === 1,
 		'in list ' + inList + ', in file ' + (dsrc.split(key).length - 1));
+}
+
+// ── A damaged record is refused, said, and reset only on a press (QA A F5) ──
+{
+	const ls = storage(), T = tab(ls), M = T.M;
+	const has = (f) => typeof M[f] === 'function';
+	M.grant(A, row(), BR);
+	for (const bad of ['{"v":1,"d":', '[1]', '"x"', 'null', '{"v":2,"d":{},"c":{}}']) {
+		ls.setItem(M.KEY, bad);
+		check('damaged ' + bad + ': said', has('damaged') && M.damaged() === true && M.absent() === false);
+		check('damaged ' + bad + ': a press is refused and the record left as it is',
+			M.grant(A, row({ id: 'L2', to: 'dir:[browser]other' }), BR) === false
+			&& M.chatGrant('c1', { ref: 'dir:[browser]x', path: 'x' }, BR, { ws: true }) === false
+			&& M.dropAll(A) === false && ls.getItem(M.KEY) === bad, ls.getItem(M.KEY));
+	}
+	T.lock(true);
+	check('a locked device cannot reset it', has('resetDamaged') && M.resetDamaged() === false && ls.getItem(M.KEY) === '{"v":2,"d":{},"c":{}}');
+	T.lock(false);
+	check('a reset writes an empty record', has('resetDamaged') && M.resetDamaged() === true && M.damaged() === false
+		&& ls.getItem(M.KEY) === '{"v":1,"d":{},"c":{}}', ls.getItem(M.KEY));
+	M.grant(A, row(), BR);
+	const kept = ls.getItem(M.KEY);
+	check('a reset refuses a record that is not damaged', has('resetDamaged') && M.resetDamaged() === false
+		&& ls.getItem(M.KEY) === kept && !!M.force(A, row(), BR));
 }
 
 console.log(failures === 0
