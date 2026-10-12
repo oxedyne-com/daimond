@@ -1784,7 +1784,7 @@ impl DaimondApp {
         };
         let acts = match name.as_str() {
             "file_put_back" | "file_write" | "file_delete" => true,
-            "file_read" | "file_list"                      => false,
+            "file_read" | "file_list" | "file_restore_look" => false,
             _ => {
                 let text = crate::tools::refusal_line(&fmt!(
                     "{} is not a restore's verb: this door reads, puts back, writes and deletes, \
@@ -1794,13 +1794,20 @@ impl DaimondApp {
                 return obj;
             },
         };
-        // The restore this act keeps into: the one named, where it is open for this Diamond, or
-        // one of its own.
-        let (restoring, lone) = match ticket {
+        // THE RESTORE THIS ACT KEEPS INTO, which must be open for this Diamond (hist-safe QA A F1,
+        // 2026-10-12).  Any other ticket -- none, made up, closed, another Diamond's -- made a
+        // restore of its own that wrote with no question and no claim.  A read needs none.
+        let restoring = match ticket {
             Some(t) if t >= 1.0 && diamond::restore_store(t as u64).as_deref() == Some(id.as_str())
-                => (t as u64, false),
-            _ if acts => (diamond::restore_lone(&id).await, true),
-            _         => (0, false),
+                => t as u64,
+            _ if acts => {
+                let raw = crate::llm::extract_json_string(&args_json, "path").unwrap_or_default();
+                let text = crate::tools::restore_ended_refusal(&raw);
+                set("outcome", &JsValue::from_str(crate::tools::call_outcome(&text).wire()));
+                set("text",    &JsValue::from_str(&text));
+                return obj;
+            },
+            _         => 0,
         };
         let bounds = crate::tools::diamond_bounds(
             &diamond::diamond_dir(&id),
@@ -1829,17 +1836,10 @@ impl DaimondApp {
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx);
         let text = match name.as_str() {
-            "file_put_back" => registry.put_back(&args_json).await,
+            "file_put_back"     => registry.put_back(&args_json).await,
+            "file_restore_look" => registry.restore_look(&args_json).await,
             _               => registry.dispatch_unbilled(&name, &args_json).await,
         }.as_text().into_owned();
-        // A lone act is recorded as it lands; a refused one recorded nothing and writes nothing.
-        if lone {
-            if let Err(e) = diamond::versions_restore_close(&id, restoring).await {
-                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
-                    "the restore of a file in {} could not be recorded (its copy is noted for the \
-                    next turn end): {}", id, e)));
-            }
-        }
         let outcome = crate::tools::call_outcome(&text);
         // WHAT THE ACT LEFT, beside what the daimon read, as the engine's own restore writes are
         // ([`DaimondApp::versions_restore_close`]).
@@ -2416,6 +2416,16 @@ impl DaimondApp {
             crate::llm::parse_json_string_array(&paths));
         let opened = ok!(diamond::versions_restore_open(&id, plan).await.map_err(to_js_err));
         Ok(opened.said(version as u64))
+    }
+
+    /// Record the person's answer to the question restore `ticket` put about `paths` (a JSON
+    /// array, as the open handed them out): an act at an asked file goes only after his yes, and
+    /// only over the bytes he was asked about ([`diamond::restore_answer`]).
+    pub fn versions_restore_answer(&self, ticket: f64, paths: String, yes: bool)
+        -> Result<(), JsValue>
+    {
+        diamond::restore_answer(ticket as u64, &crate::llm::parse_json_string_array(&paths), yes)
+            .map_err(to_js_err)
     }
 
     /// Close the restore `ticket` opened: `{version, recorded, crystal, restored, missing, refused}`.

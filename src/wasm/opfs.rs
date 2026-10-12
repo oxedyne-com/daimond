@@ -614,9 +614,64 @@ async fn open_parent(
 /// Write `content` to `path` under `root`, creating parent directories
 /// and the file as needed, replacing any existing contents.
 pub(in crate::wasm) async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<()> {
+    match res!(write_file_if(root, path, content, None).await) {
+        None    => Ok(()),
+        Some(_) => Err(err!("OPFS: an unconditional write of '{}' was refused as changed.", path;
+            IO, File, Write, Bug)),
+    }
+}
+
+/// The bytes of a file handle as they stand committed, which a writable's staged bytes are not
+/// until it closes.
+async fn committed(file: &FileSystemFileHandle, leaf: &str) -> Outcome<Vec<u8>> {
+    let blob_val = res!(JsFuture::from(file.get_file()).await
+        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
+    let blob: File = res!(blob_val.dyn_into()
+        .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
+    let buf_val = res!(JsFuture::from(blob.array_buffer()).await
+        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
+    Ok(js_sys::Uint8Array::new(&buf_val).to_vec())
+}
+
+/// [`write_file`], landing only where what stands at `path` is still `expect`: `None` once
+/// written, or what stands there instead, with nothing written (hist-safe F1, 2026-10-12).
+///
+/// **The comparison is the last thing before the commit.**  A writable's bytes are staged and land
+/// at `close`, so the committed file is read after the staging and the stream is closed straight
+/// after the comparison, or aborted.  Neither OPFS nor the File System Access API offers a
+/// compare-and-swap, and an editor writing an opened folder from outside the page can still land
+/// in the gap between this read and the `close`, but that gap is the commit itself rather than the
+/// round trip from the restore's read.  `expect` of `None` is the plain write.
+pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: &[u8],
+    expect: Option<&crate::diamond_versions::Seen>)
+    -> Outcome<Option<crate::diamond_versions::Seen>>
+{
+    use crate::diamond_versions::Seen;
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(descend(&handle, components).await);
+
+    // Whether a file stood there before this write made one, which the empty file `create`
+    // leaves would otherwise hide.
+    if let Some(want) = expect {
+        if let Seen::Unread = want {
+            return Err(err!("OPFS: a write of '{}' was bound to bytes that could not be read, so \
+                there is nothing to compare.", path; IO, File, Write, Invalid));
+        }
+        let had: Option<FileSystemFileHandle> = match JsFuture::from(dir.get_file_handle(&leaf))
+            .await
+        {
+            Ok(v)  => v.dyn_into().ok(),
+            Err(_) => None,
+        };
+        let found = match &had {
+            Some(f) => Seen::of(Some(&res!(committed(f, &leaf).await))),
+            None    => Seen::Absent,
+        };
+        if &found != want {
+            return Ok(Some(found));
+        }
+    }
 
     let opts = FileSystemGetFileOptions::new();
     opts.set_create(true);
@@ -658,11 +713,32 @@ pub(in crate::wasm) async fn write_file(root: FileRoot, path: &str, content: &[u
     res!(JsFuture::from(write_promise).await
         .map_err(|e| err!("OPFS: write '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
 
+    // THE RE-CHECK, with the bytes staged: what is committed now against what the act was bound
+    // to.  Where nothing stood, the handle's own creation left an empty file, so only bytes
+    // that are not empty say someone else wrote there.
+    if let Some(want) = expect {
+        let now = match committed(&file, &leaf).await {
+            Ok(b)  => b,
+            Err(e) => {
+                let _ = JsFuture::from(writable.abort()).await;
+                return Err(e);
+            },
+        };
+        let found = match (want, now.is_empty()) {
+            (Seen::Absent, true) => Seen::Absent,
+            _                    => Seen::of(Some(&now)),
+        };
+        if &found != want {
+            let _ = JsFuture::from(writable.abort()).await;
+            return Ok(Some(found));
+        }
+    }
+
     // `close` is inherited from `WritableStream` and flushes the file.
     res!(JsFuture::from(writable.close()).await
         .map_err(|e| err!("OPFS: close '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
     announce_change(path);
-    Ok(())
+    Ok(None)
 }
 
 /// Say on the page that `path` has just changed.
@@ -1209,6 +1285,50 @@ pub(in crate::wasm) async fn delete_entry(root: FileRoot, path: &str, recursive:
     Ok(())
 }
 
+/// [`delete_entry`] of one regular file, only where what stands at `path` is still `expect`:
+/// `None` once removed (or where nothing stood and nothing was expected), or what stands there
+/// instead, with nothing removed (hist-safe H6, 2026-10-12).  The committed bytes are read
+/// immediately before the removal, as [`write_file_if`] does before its commit.
+pub(in crate::wasm) async fn delete_file_if(root: FileRoot, path: &str,
+    expect: &crate::diamond_versions::Seen)
+    -> Outcome<Option<crate::diamond_versions::Seen>>
+{
+    use crate::diamond_versions::Seen;
+    if let Seen::Unread = expect {
+        return Err(err!("OPFS: a delete of '{}' was bound to bytes that could not be read, so \
+            there is nothing to compare.", path; IO, File, Write, Invalid));
+    }
+    let handle = res!(resolve_root(root, path).await);
+    let components = res!(jail_components(path));
+    let (dir, leaf) = match open_parent(&handle, components).await {
+        Ok(v)  => v,
+        Err(_) => return Ok(match expect {
+            Seen::Absent => None,
+            _            => Some(Seen::Absent),
+        }),
+    };
+    let had: Option<FileSystemFileHandle> = match JsFuture::from(dir.get_file_handle(&leaf)).await {
+        Ok(v)  => v.dyn_into().ok(),
+        Err(_) => None,
+    };
+    let found = match &had {
+        Some(f) => Seen::of(Some(&res!(committed(f, &leaf).await))),
+        None    => Seen::Absent,
+    };
+    if &found != expect {
+        return Ok(Some(found));
+    }
+    if had.is_none() {
+        return Ok(None);    // nothing there, as expected
+    }
+    let opts = FileSystemRemoveOptions::new();
+    opts.set_recursive(false);
+    res!(JsFuture::from(dir.remove_entry_with_options(&leaf, &opts)).await
+        .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
+    announce_change(path);
+    Ok(None)
+}
+
 /// Whether an entry (file or directory) exists at `path` under `root`.
 pub async fn exists(root: FileRoot, path: &str) -> Outcome<bool> {
     let handle = res!(resolve_root(root, path).await);
@@ -1240,6 +1360,15 @@ pub async fn exists(root: FileRoot, path: &str) -> Outcome<bool> {
 /// [`write_file`], for a tool: the bytes go to the path `lic` names and nowhere else.
 pub async fn write_licensed(root: FileRoot, lic: &Licence, content: &[u8]) -> Outcome<()> {
     write_file(root, lic.path(), content).await
+}
+
+/// [`write_licensed`], only over the bytes a restore's act was bound to: `None` once written, or
+/// what stands there instead, with nothing written ([`write_file_if`]).
+pub async fn write_licensed_if(root: FileRoot, lic: &Licence, content: &[u8],
+    expect: &crate::diamond_versions::Seen)
+    -> Outcome<Option<crate::diamond_versions::Seen>>
+{
+    write_file_if(root, lic.path(), content, Some(expect)).await
 }
 
 /// [`delete_file`], for a tool: one regular file, the one `lic` names.

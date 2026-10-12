@@ -19055,7 +19055,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the card, the focus trap, Escape, Enter and the two buttons stay the
 			// app's own. It exists so that a new picker is not a new modal: this
 			// app has one modal and it should go on having one.
-			if (opts.kind === 'pick') picked = opts.build(card);
+			// A pick body says when its yes can act, and why not when it cannot:
+			// `allow(false, why)` while its list is still loading or nothing is
+			// chosen, so OK is never pressed on a choice that is not there yet
+			// (D-20261006-32). Held here and painted onto the button once it exists.
+			// Marked by the answer rule (`DaimondAnswer.gate`): aria-disabled with the
+			// reason as its title, and a press that still arrives is answered in the
+			// card's own error line rather than dropped.
+			var okOn = true, okWhy = '', ok = null;
+			function paintOk() {
+				if (!ok) return;
+				if (guardTimer) { ok.disabled = true; return; }
+				DaimondAnswer.gate(ok, okOn ? '' : okWhy);
+				if (okOn && err && err.textContent === okLastSaid) { err.textContent = ''; okLastSaid = ''; }
+			}
+			var okLastSaid = '';
+			if (opts.kind === 'pick') picked = opts.build(card, {
+				allow: function (on, why) { okOn = !!on; okWhy = on ? '' : (why || t('common.not_ready')); paintOk(); },
+			});
 			if (opts.kind === 'prompt') {
 				// `opts.lines` (2 or more) asks for a field that wraps and shows that many rows at least, growing to
 				// the whole of what is in it (to ten rows, then it scrolls): a line of 200 bytes is read, not scrolled
@@ -19091,11 +19108,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				mark(cancel, '', opts.cancelLabel || t('common.cancel'));
 				row.appendChild(cancel);
 			}
-			var ok = document.createElement('button');
+			ok = document.createElement('button');
 			ok.type = 'button';
 			ok.className = 'dlg-ok' + (opts.danger ? ' danger' : '');
 			mark(ok, '', opts.okLabel || t('dlg.ok'));
 			row.appendChild(ok);
+			paintOk();
 			card.appendChild(row);
 
 			back.appendChild(card);
@@ -19146,7 +19164,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				resolve(value);
 			}
 			async function submit() {
-				if (opts.kind === 'pick') return close(picked.read());
+				if (opts.kind === 'pick') {
+					if (!okOn) { err.textContent = okLastSaid = okWhy; return; }
+					return close(picked.read());
+				}
 				if (opts.kind === 'form') {
 					var vals = form.read();
 					var bad2 = opts.validate ? await opts.validate(vals) : '';
@@ -19184,7 +19205,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (opts.guard) {
 				document.addEventListener('keyup', onKeyUp, true);
 				ok.disabled = true;
-				guardTimer = setTimeout(function () { guardTimer = null; ok.disabled = false; },
+				guardTimer = setTimeout(function () { guardTimer = null; paintOk(); },
 					GUARD_MS);
 			}
 			back.addEventListener('mousedown', function (e) {
@@ -36107,6 +36128,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// before lifting a safe start, and that was the one caller left doing it
 		/// natively.
 		confirm:         function (message, okLabel, opts) { return confirmDialog(message, okLabel, opts); },
+		/// The app's toast, for a classic script with a sentence to say: History's
+		/// refusal of a second restore of one Diamond (hist-safe R3).
+		toast:           function (text, isErr) { toast(String(text || ''), !!isErr); },
 		/// Re-read the Diamonds and redraw the rail. Published for
 		/// `verify_diamondwalk`, which has to ask for several walks at once to
 		/// prove they coalesce into one.
@@ -44645,6 +44669,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return !!chatAttachFind(f.id, ref);
 		}
 
+		/// `attachedTruly` for every `{ path, dir }` of a listing, with the store read
+		/// once for the lot rather than once per row.
+		async function attachedTrulyAll(items) {
+			var f = attachFocus();
+			if (!f) return items.map(function () { return false; });
+			var own = f.kind === 'diamond' ? await ownLinks(f.id) : null;
+			return items.map(function (it) {
+				var ref = rootedRef(it.dir ? 'dir' : 'file', it.path);
+				return own ? !!linkAmong(f.id, own, ref) : !!chatAttachFind(f.id, ref);
+			});
+		}
+
+		async function pickListing(dir) {
+			var res = null;
+			try { res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' })); }
+			catch (e) { return { ok: false, rows: [], why: String((e && e.message) || e || '') }; }
+			if (!res || res.outcome !== 'done') {
+				return { ok: false, rows: [], why: String((res && res.text) || '') };
+			}
+			var atRoot = !dir || dir === '.' || dir === '/';
+			var rows = parseListing(res.text).filter(function (e) {
+				if (e.name.charAt(0) === '.') return false;
+				return !(atRoot && e.name === 'diamonds' && e.dir);
+			}).sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
+			return { ok: true, rows: rows, why: '' };
+		}
+
 		/// Paint the paperclip so it says the same thing everywhere it appears:
 		/// same icon, same words, same meaning (§4). Hidden entirely with
 		/// nothing in focus — a control that does nothing when pressed teaches
@@ -49214,14 +49265,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// an `.env` or a `.git` offered for attachment is a different question
 			/// from one shown in a list. The panel is where he goes to see them.
 			entries:       async function (dir) {
-				var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' }));
-				if (!res || res.outcome !== 'done') return [];
-				var atRoot = !dir || dir === '.' || dir === '/';
-				return parseListing(res.text).filter(function (e) {
-					if (e.name.charAt(0) === '.') return false;
-					return !(atRoot && e.name === 'diamonds' && e.dir);
-				}).sort(function (a, b) { return (b.dir - a.dir) || a.name.localeCompare(b.name); });
+				return (await pickListing(dir)).rows;
 			},
+			/// `entries`, saying whether the listing was had at all: `{ ok, rows, why }`.
+			/// A folder that could not be read is not an empty folder, and a picker
+			/// that drew "Nothing here." for both told the reader a falsehood.
+			listing:       pickListing,
 			/// The app's own breadcrumb, so a path reads the same in the picker
 			/// as it does in the panel.
 			crumbs:        renderCrumbs,
@@ -49234,6 +49283,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// which on an attachment that really is there means DETACH. The
 			/// `+` must never take something off.
 			attached:      attachedTruly,
+			attachedAll:   attachedTrulyAll,
 			/// Attach it, unless it is attached already. The picker only ever
 			/// ADDS: a tick that could also detach would make one press of OK
 			/// both give and take away, and nothing on the row says which.
@@ -57939,6 +57989,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	async function linkTo(diamondId, ref) {
+		return linkAmong(diamondId, await ownLinks(diamondId), ref);
+	}
+
+	/// This Diamond's own rows by a person, read from the store ONCE, for a caller
+	/// asking about many references at a time.
+	///
+	/// The `+` picker used to ask `linkTo` per row, and each ask re-read and
+	/// re-parsed every link touching the Diamond: 594 rows in one folder were
+	/// 594 store reads in series, about 20 s of an empty list (D-20261006-32).
+	async function ownLinks(diamondId) {
 		try {
 			var links = JSON.parse(await diamondApp().links_touching('diamond:' + diamondId) || '[]');
 			// This Diamond's own rows, by a PERSON, only: one kept in another Diamond's
@@ -57956,9 +58016,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// let the paperclip toggle it off: `isUsersMark` folds both exclusions
 			// into one test, and filtering by it here took M1's own rows out of
 			// reach along with fold's.
-			var own = links.filter(function (l) {
+			return links.filter(function (l) {
 				return l.owner === diamondId && l.from === 'diamond:' + diamondId && (l.by === 'user' || !l.by);
 			});
+		} catch (e) { /* unreadable: treat as not held */ }
+		return [];
+	}
+
+	/// The row among `own` (from `ownLinks`) that `ref` names, or null.
+	function linkAmong(diamondId, own, ref) {
+		try {
 			// Matched on what it names, not on the string, so an attachment made before
 			// roots were recorded is still found by a button that now writes one -- but
 			// only in a reference this workspace can open (M3), and ranked exactly as
@@ -59282,7 +59349,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			kind:  'pick',
 			title: grants ? t('attach.pick_mark_title') : t('attach.pick_title'),
 			okLabel: t(grants ? 'attach.select' : 'attach.add'),
-			build: function (card) {
+			build: function (card, ctl) {
 				if (grants) {
 					// What a tick will DO, at the top of the thing doing it. A folder and
 					// a file are ticked with the same box here and mean two different
@@ -59298,26 +59365,57 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var listEl = document.createElement('div');
 				listEl.className = 'attach-pick';
 				card.appendChild(listEl);
+				// The yes acts only on a listing that is in and a choice that is made.
+				// Pressed while the folder is still loading it would add nothing and
+				// close, which reads as "added" (D-20261006-32).
+				var loaded = false;
+				var unread = false;
+				function gate() {
+					var why = DaimondAnswer.reasons.pick({ loaded: loaded, unread: unread,
+						ticked: Object.keys(ticked).length });
+					ctl.allow(!why, why ? t(why) : '');
+				}
+				var showing = 0;			// the latest `show`; an older one that lands late is dropped
 				show('');
 				async function show(next) {
+					var mine = ++showing;
 					dir = next || '';
+					loaded = false; unread = false;
+					gate();
 					Files.crumbs(crumbs, t('panel.work'), dir, show);
+					// The wait is SHOWN, with the app's own dots: an empty list while the
+					// folder is read looked exactly like an empty folder.
 					listEl.innerHTML = '';
-					var rows = await Files.entries(dir);
-					if (!rows.length) {
+					listEl.setAttribute('aria-busy', 'true');
+					var wait = document.createElement('div');
+					wait.className = 'chat-spinner attach-pick-loading';
+					wait.setAttribute('role', 'status');
+					wait.innerHTML = '<span class="chat-spinner-dot"></span>'
+						+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
+					var waitSay = document.createElement('span');
+					waitSay.className = 'chat-spinner-say';
+					waitSay.textContent = t('files.loading');
+					wait.appendChild(waitSay);
+					listEl.appendChild(wait);
+					var got = await Files.listing(dir);
+					var rows = got.rows;
+					// Whether each row is already attached, asked before the row is drawn
+					// -- a tick that appears empty and is then found to be attached would
+					// be a row that lies -- and asked of the store ONCE for the folder.
+					var have = rows.length ? await Files.attachedAll(rows.map(function (e) {
+						return { path: dir ? (dir + '/' + e.name) : e.name, dir: !!e.dir };
+					})) : [];
+					if (mine !== showing) return;
+					listEl.innerHTML = '';
+					listEl.removeAttribute('aria-busy');
+					loaded = true; unread = !got.ok;
+					gate();
+					if (!got.ok || !rows.length) {
 						var none = document.createElement('div');
 						none.className = 'files-empty';
-						none.textContent = t('attach.pick_empty');
+						none.textContent = got.ok ? t('attach.pick_empty') : t('attach.pick_unread');
 						listEl.appendChild(none);
 						return;
-					}
-					// One store read per row, awaited before the row is drawn: a
-					// tick that appears empty and is then found to be attached
-					// would be a row that lies about the state it is in.
-					var have = [];
-					for (var j = 0; j < rows.length; j++) {
-						have.push(await Files.attached(
-							dir ? (dir + '/' + rows[j].name) : rows[j].name, rows[j].dir));
 					}
 					rows.forEach(function (e, j) {
 						var full = dir ? (dir + '/' + e.name) : e.name;
@@ -59338,6 +59436,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						box2.addEventListener('change', function () {
 							if (box2.checked) ticked[full] = { dir: !!e.dir };
 							else delete ticked[full];
+							gate();
 						});
 						row.appendChild(box2);
 

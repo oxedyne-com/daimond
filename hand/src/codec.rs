@@ -34,6 +34,7 @@
 use crate::wire::{
     Breaks,
     Capture,
+    Expect,
     FenceSpec,
     FileOp,
     Meter,
@@ -891,7 +892,21 @@ fn fileop_of(obj: &Dat) -> Outcome<FileOp> {
             offset: res!(u32_field(obj, "file", "offset")),
             limit:  res!(u32_field(obj, "file", "limit")),
         }),
-        "write" => Ok(FileOp::Write { path, content: res!(text("text")) }),
+        "write" => Ok(FileOp::Write {
+            path,
+            content: res!(text("text")),
+            // Absent is the unconditional write every page before this one sends. Present, it
+            // is a closed word: one this build cannot read is refused, never written past.
+            expect:  match res!(opt_str_field(obj, "file", "expect")) {
+                None    => None,
+                Some(w) => match Expect::of(&w) {
+                    Some(x) => Some(x),
+                    None    => return Err(Fault::WrongShape.raise(&fmt!(
+                        "A write's \"expect\" must be \"absent\" or a SHA-256 in lowercase \
+                        hex, and {:?} is neither. Nothing was written.", w))),
+                },
+            },
+        }),
         "edit"  => Ok(FileOp::Edit {
             path,
             old: res!(text("text")),
@@ -1315,6 +1330,10 @@ fn req_dat(req: &Req) -> Dat {
             "text2"		=> match op {
                 FileOp::Edit { new, .. }	=> Dat::Str(new.clone()),
                 _				=> Dat::Opt(Box::new(None)),
+            },
+            "expect"	=> match op {
+                FileOp::Write { expect: Some(x), .. }	=> Dat::Str(x.word().to_string()),
+                _					=> Dat::Opt(Box::new(None)),
             },
             "offset"	=> match op {
                 FileOp::Read { offset, .. }	=> *offset,
@@ -2660,6 +2679,35 @@ mod tests {
             let txt = res!(req_json(&req));
             let back = res!(req_of_json(&txt));
             assert_eq!(req, back, "{}", txt);
+        }
+        Ok(())
+    }
+
+    /// A write's `expect` survives the JSON; a page that sends none asks for the unconditional
+    /// write it always had; and a word that is neither `absent` nor a hash is refused, never
+    /// read as no condition (hist-safe F1, 2026-10-12).
+    #[test]
+    fn a_write_expect_travels_and_a_bad_one_is_refused() -> Outcome<()> {
+        let fence = FenceSpec { rw: vec![fmt!("/w")], ro: Vec::new(), deny: Vec::new(), net: false };
+        let h = "ab".repeat(32);
+        for expect in [None, Some(Expect::Absent), Some(Expect::Hash(h.clone()))] {
+            let req = Req::File {
+                id:       fmt!("f-write"),
+                op:       FileOp::Write { path: fmt!("/w/a.md"), content: fmt!("x"), expect },
+                cwd:      fmt!("/w"),
+                fence:    fence.clone(),
+                toolkits: Vec::new(),
+            };
+            let txt = res!(req_json(&req));
+            assert_eq!(req, res!(req_of_json(&txt)), "{}", txt);
+        }
+        let raw = |x: &str| fmt!(r#"{{"t":"file","id":"f","op":"write","path":"/w/a.md","cwd":"/w","fence":{{"rw":["/w"],"ro":[],"deny":[],"net":false}},"toolkits":[],"text":"x"{}}}"#, x);
+        let plain = res!(req_of_json(&raw("")));
+        assert!(matches!(plain, Req::File { op: FileOp::Write { expect: None, .. }, .. }),
+            "a write with no expect read as {:?}", plain);
+        for bad in ["", "ABAB", "sha256", &"g".repeat(64), &"AB".repeat(32)] {
+            assert!(req_of_json(&raw(&fmt!(r#","expect":"{}""#, bad))).is_err(),
+                "a write expecting {:?} was read rather than refused", bad);
         }
         Ok(())
     }

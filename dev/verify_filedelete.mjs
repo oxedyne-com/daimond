@@ -111,15 +111,72 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	out.survived = await at('proj/a.txt') && await at('proj/sub/b.txt')
 		&& await at('proj/sub/deep/c.txt') && await at('empty', 'dir');
 
-	// A, again, through a Diamond's daimon with `proj` marked in: the incident's own route.
+	// A, again, through a Diamond with `proj` marked in: the incident's own route.
 	const id = await app.create_diamond('delete guard');
-	const dia = async (tool, args) => {
-		const o = await app.run_diamond_tool(id, JSON.stringify(['proj', 'keep.txt']), '[]',
-			tool, JSON.stringify(args));
-		return { outcome: o.outcome, text: String(o.text).slice(0, 800) };
+	const sha = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256',
+		new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
+	// A turn, as the daimon has one: the mock answers `@tool` with that call.
+	const turn = async (marks, tool, args) => {
+		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
+		const seen = [];
+		try {
+			await eng.steer_crystal(id, '@tool ' + tool + ' ' + JSON.stringify(args),
+				JSON.stringify(marks), '[]', '[]', [],
+				(ev) => { if (ev.type === 'tool_result') seen.push(String(ev.content || '')); });
+		} catch (e) { seen.push('THREW: ' + String(e && e.message || e)); }
+		return seen.join(' | ').slice(0, 400);
 	};
-	out.diaDir   = await dia('file_delete', { path: 'proj', recursive: 'true' });
-	out.diaSub   = await dia('file_delete', { path: 'proj/sub', recursive: 'true' });
+	const newest = async () => {
+		const rows = JSON.parse(await app.versions_list(id));
+		return rows.length ? rows[0] : null;
+	};
+	// THE PERSON'S RESTORE, as History's `restoreAt` drives it (www/js/versions.js): the open, each
+	// file it hands out acted on under its ticket -- looked at first where the open could not read
+	// it, his yes recorded where he is asked -- then the close.  `run_diamond_tool` acts only under
+	// an open ticket (hist-safe QA A F1, 2026-10-12); `during` acts beside the handed-out files.
+	const ticketed = async (keeper, marks, opening, during) => {
+		const o = JSON.parse(await opening);
+		const run = async (tool, args) => {
+			const w = await app.run_diamond_tool(String(keeper), JSON.stringify(marks), '[]',
+				tool, JSON.stringify(args), o.ticket);
+			return { outcome: w.outcome, text: String(w.text).slice(0, 800) };
+		};
+		const acts = [];
+		let extra = null;
+		try {
+			const ms = (o.machine || []).filter((e) => e && e.left !== true && !e.skipped);
+			for (const e of ms) {
+				if (e.look !== true || e.gone) continue;
+				const lr = await run('file_restore_look', { path: e.path });
+				const seen = lr.outcome === 'done' ? JSON.parse(lr.text) : null;
+				e.over = !(seen && seen.over === false);
+			}
+			const asked = ms.filter((e) => e.gone ? e.kept === true : e.over === true);
+			if (asked.length) await app.versions_restore_answer(o.ticket,
+				JSON.stringify(asked.map((e) => e.path)), true);
+			for (const e of ms) {
+				acts.push(Object.assign({ path: e.path }, e.gone
+					? await run('file_delete', { path: e.path })
+					: await run('file_put_back', { path: e.path, hash: e.hash })));
+			}
+			if (during) extra = await during(run);
+		}
+		finally { o.closed = JSON.parse(await app.versions_restore_close(String(keeper), o.ticket)); }
+		return { opened: o, acts, extra };
+	};
+	// A version to open a restore on, then the folder deletes under its ticket: the person's door
+	// holds the folder guard as the registry does.
+	await turn(['proj', 'keep.txt'], 'file_write', { path: 'proj/t.txt', content: 't' });
+	const va = await newest();
+	const ra = await ticketed(id, ['proj', 'keep.txt'],
+		app.versions_restore_open(id, Number(va ? va.version : 1), 'proj/t.txt'),
+		async (run) => ({
+			dir: await run('file_delete', { path: 'proj', recursive: 'true' }),
+			sub: await run('file_delete', { path: 'proj/sub', recursive: 'true' }),
+		}));
+	out.diaDir   = ra.extra.dir;
+	out.diaSub   = ra.extra.sub;
 	out.diaSurv  = await at('proj/sub/deep/c.txt');
 
 	// B. Escapes.
@@ -132,7 +189,8 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	// C. One file still goes, through both doors.
 	out.file    = await call('file_delete', { path: 'gone.txt' });
 	out.fileGone = !(await at('gone.txt'));
-	out.diaFile = await dia('file_delete', { path: 'proj/a.txt' });
+	// The daimon's own one-file delete, through a real turn.
+	out.diaFile = await turn(['proj', 'keep.txt'], 'file_delete', { path: 'proj/a.txt' });
 	out.diaFileGone = !(await at('proj/a.txt'));
 
 	// D. Moves.
@@ -181,25 +239,7 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 		out.cfForgotten = !DaimondCloud.index()['cf/away.md'];
 	}
 
-	// G. A daimon's delete, through a real turn, and the two ways back.
-	const sha = async (t) => [...new Uint8Array(await crypto.subtle.digest('SHA-256',
-		new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, '0')).join('');
-	const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
-	// A turn, as the daimon has one: the mock answers `@tool` with that call.
-	const turn = async (marks, tool, args) => {
-		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
-		const seen = [];
-		try {
-			await eng.steer_crystal(id, '@tool ' + tool + ' ' + JSON.stringify(args),
-				JSON.stringify(marks), '[]', '[]', [],
-				(ev) => { if (ev.type === 'tool_result') seen.push(String(ev.content || '')); });
-		} catch (e) { seen.push('THREW: ' + String(e && e.message || e)); }
-		return seen.join(' | ').slice(0, 400);
-	};
-	const newest = async () => {
-		const rows = JSON.parse(await app.versions_list(id));
-		return rows.length ? rows[0] : null;
-	};
+	// G. A daimon's delete, through a real turn (`turn`, above), and the two ways back.
 	// Both ways back, for one file on one root. `history` is the engine's half of the History
 	// panel's Restore and then the fenced write-back `writeMachine` does for a marked path.
 	const wayBack = async (dir, name, text) => {
@@ -217,18 +257,11 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 		// back through the fenced write-back rather than the engine's own write.
 		let why = '';
 		try {
-			const res = JSON.parse(await app.versions_restore(id, Number(m.version) - 1, path));
-			const hit = (res.machine || []).find((x) => x.path === path && x.hash);
-			if (hit) {
-				const body = await app.versions_body(id, hit.hash);
-				const w = await app.run_diamond_tool(id, JSON.stringify([dir]), '[]',
-					'file_write', JSON.stringify({ path, content: body }));
-				why = 'fenced write-back, ' + w.outcome + ': ' + String(w.text).slice(0, 100);
-			} else if ((res.restored || []).includes(path)) {
-				why = 'the engine wrote it back itself';
-			} else {
-				why = 'nothing to restore: ' + JSON.stringify(res).slice(0, 200);
-			}
+			const b = await ticketed(id, [dir], app.versions_restore_open(id, Number(m.version) - 1, path));
+			const hit = b.acts.find((x) => x.path === path);
+			if (hit) why = 'put back under its ticket, ' + hit.outcome + ': ' + hit.text.slice(0, 100);
+			else if ((b.opened.closed.restored || []).includes(path)) why = 'the engine wrote it back itself';
+			else why = 'nothing to restore: ' + JSON.stringify(b.opened).slice(0, 200);
 		} catch (err) { why = 'threw: ' + String(err && err.message || err); }
 		o.history  = { restored: (await read(path)) === text, why };
 		// And again with `file_revert`, which a daimon reaches for.
@@ -352,17 +385,11 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	out.hChat.undo = 'no version event';
 	if (cd2.ver) {
 		try {
-			const res = JSON.parse(await app.versions_restore(cd2.ver.keeper, cd2.ver.version - 1,
-				'vault/chat.md'));
-			const hit = (res.machine || []).find((x) => x.path === 'vault/chat.md' && x.hash);
-			if (hit) {
-				const body = await app.versions_body(cd2.ver.keeper, hit.hash);
-				const w = await app.run_diamond_tool(cd2.ver.keeper, JSON.stringify(['vault']), '[]',
-					'file_write', JSON.stringify({ path: 'vault/chat.md', content: body }));
-				out.hChat.undo = w.outcome;
-			} else {
-				out.hChat.undo = 'not sent back through the fence: ' + JSON.stringify(res).slice(0, 200);
-			}
+			const b = await ticketed(cd2.ver.keeper, ['vault'], app.versions_undo_open(cd2.ver.keeper,
+				cd2.ver.version, JSON.stringify(['vault/chat.md'])));
+			const hit = b.acts.find((x) => x.path === 'vault/chat.md');
+			out.hChat.undo = hit ? hit.outcome
+				: 'not sent back through the fence: ' + JSON.stringify(b.opened).slice(0, 200);
 		} catch (e) { out.hChat.undo = 'threw: ' + String(e && e.message || e); }
 	}
 	out.hChat.undone = (await read('vault/chat.md')) === chatText;
@@ -456,7 +483,7 @@ check("B. '.' (the root) is refused", refused(r.dot), show(r.dot));
 check('B. the file the escapes named is still there', r.keptAfterEscapes === true);
 check('C. one file is deleted', r.file.outcome === 'done' && r.fileGone, show(r.file));
 check("C. a daimon's one-file delete in its workspace works",
-	r.diaFile.outcome === 'done' && r.diaFileGone, show(r.diaFile));
+	/Deleted /.test(r.diaFile) && r.diaFileGone, r.diaFile.slice(0, 160));
 check("D. a folder cannot be moved off the disk into Daimond's store", refused(r.toStore), show(r.toStore));
 check('D. a folder cannot be moved into itself', refused(r.intoSelf), show(r.intoSelf));
 check('D. refused moves left the tree whole', r.afterRefusedMoves === true);
@@ -543,9 +570,13 @@ check('H9. and the class names no path', !/vault|sub|lens/.test(String(r.hLens.f
 check('H9. a read carries no class', r.hLens.read.name === 'file_read' && r.hLens.read.class === null,
 	String(r.hLens.read.class));
 const row = r.hLens.row;
-check("H9. the page's tool row carries ab and the class, and no path",
+// A refused row carries the engine's own sentence as `full` (D-20261008-02, 396e4c6e), which the
+// debug feed scrubs and sends as a text set; no other field of the row names the path.
+const rowBare = row ? Object.assign({}, row, { full: undefined }) : null;
+check("H9. the page's tool row carries ab and the class, and no path outside the refusal's own words",
 	!!row && row.ab === JSON.stringify({ path: 'vault/sub' }).length && row.pd === 2
-		&& row.pk === 'folder' && row.po === 1 && row.px === 1 && !/vault/.test(JSON.stringify(row)),
+		&& row.pk === 'folder' && row.po === 1 && row.px === 1 && !/vault/.test(JSON.stringify(rowBare))
+		&& /^Refused/.test(String(row.full || '')),
 	JSON.stringify(row));
 {
 	// The daimon's half builds its row with the same function; read off the source this world

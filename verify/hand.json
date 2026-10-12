@@ -1,6 +1,6 @@
 {
 	"algo": "sha-256",
-	"source": "aef05cb5b16c485e24efe5b0aca5ad70e7c81996e099ad46b7d5be59c77f2328",
+	"source": "681fafc606d4140b23168e98a712a44066501e37f85537eab7d90b1fdeac56be",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --locked --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
@@ -18,17 +18,17 @@
 		"install/install.test.sh": "dbd28c0c80b9f4363a71aeb737ce0531a9940cff17c6ea8cf7131d83e5044ee5",
 		"install/mock_host.py": "9ce2d2d59f438b1606607b05982ae37de800dda76814683087ec51223df452a5",
 		"install/uninstall.sh": "9e8a84942e53661cc54574e7dd416b8e5fbbc66b6218f7f94bfdbae378f23ef1",
-		"src/codec.rs": "6851037ae5910f4b9ca8f58cf628ef302b3eceb6abc98f20c9cb7b5a3728077a",
-		"src/exec.rs": "6564652d899b5e98c968b410890db9f3885072cf214aaded8778b17a99a05354",
+		"src/codec.rs": "e0811cb52f2c9c89adac1c2ff62558cc2aaa674e261a585c307870387fd7f643",
+		"src/exec.rs": "afee285c882bda07089bae082fbd8350eb92fe8a37d718ef2869875c88aa4ef6",
 		"src/fence.rs": "eb117273aba4830d51b4f7344a80cb000449ca77843415b016213fd707b69195",
 		"src/journal.rs": "7a3cbe6884d59b1c6ca92089a626434f8981183f3689a889d5b3e56e5d52d898",
 		"src/lib.rs": "c294d0c35c82101881b2419a90c0cefa48cdc5988abf1c657ab242f9a93f5ca1",
-		"src/main.rs": "e85d55ae16612d761daf465182d9c18f50af120eed67e266f242b9b5fc90eebe",
+		"src/main.rs": "4bdc7cf72e92d0a065ba329e42f89cf13f9e329e0c266631278fce3602b54b25",
 		"src/meter.rs": "f2a3d7a81f919cefb49b0045ef5a101f23cac76c6c41b34d79f8f4d2a353cec7",
 		"src/pty.rs": "152536a79f3bdf08a1fcb5fd38a783a2941b2e628337de722948b1614bbde78f",
 		"src/seccomp.rs": "9c4ab27ecebf6fd6833daff1f53839aa03cd422f5b71928410de6e7ab51bb76a",
 		"src/verify.rs": "eb5295c8c000373a8df39459c830982fc4a9f1a423a379b114f854d8bca409da",
-		"src/wire.rs": "eeb9f54c88d88562c1e3069304daedd780a637dc9209daf9479e723a85e8987d",
+		"src/wire.rs": "98f95ee5102371001d536bcc03a3b79df992d6da85548b9f4eeeca82026f1ddb",
 		"tests/delete_fence.rs": "4393f41001987c314420943fb967ac072521bcc5a0d3be3890ed2e272bd2fff3"
 	}
 }

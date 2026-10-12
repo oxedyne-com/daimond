@@ -258,10 +258,19 @@ test('Compose Save Draft, Attach and Discard need only a message open', () => {
 	assert.equal(R.draft({ open: true, to: '' }), '', 'an unaddressed draft can still be saved, attached to or discarded');
 });
 
+test('the `+` picker: loading, then an unread folder, then nothing ticked, then free', () => {
+	const R = load().DaimondAnswer.reasons;
+	assert.equal(R.pick({ loaded: false, ticked: 3 }), 'files.loading', 'a tick made elsewhere does not open a yes mid-load');
+	assert.equal(R.pick({ loaded: true, unread: true, ticked: 1 }), 'attach.pick_unread');
+	assert.equal(R.pick({ loaded: true, ticked: 0 }), 'attach.pick_tick');
+	assert.equal(R.pick({ loaded: true, ticked: 1 }), '');
+});
+
 test('every reason the table can give is worded, in all eight languages', () => {
 	const R = load().DaimondAnswer.reasons;
 	const keys = new Set();
-	for (const s of [ { text: '' }, { text: 'x', ready: false }, { open: false }, { open: true, to: '' } ]) for (const f of Object.values(R)) { const k = f(s); if (k) keys.add(k); }
+	for (const s of [ { text: '' }, { text: 'x', ready: false }, { open: false }, { open: true, to: '' },
+		{ loaded: true, unread: true }, { loaded: true, ticked: 0 } ]) for (const f of Object.values(R)) { const k = f(s); if (k) keys.add(k); }
 	assert.ok(keys.size >= 4, 'the table gave only ' + keys.size + ' keys');
 	for (const f of fs.readdirSync(I18N).filter((x) => x.endsWith('.js'))) {
 		const src = fs.readFileSync(path.join(I18N, f), 'utf8');

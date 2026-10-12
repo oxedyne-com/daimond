@@ -337,6 +337,17 @@
 				JSON.stringify(marks.attached || []), JSON.stringify(marks.read_only || []),
 				tool, JSON.stringify(args), ticket);
 		};
+		// HIS ANSWER IS THE ENGINE'S (hist-safe QA A F2, 2026-10-12). Each question's
+		// answer is recorded against the bytes he was asked about, and the door refuses an
+		// asked file until it holds his yes; a page that skipped the call wrote nothing.
+		var answer = async function (list, yes) {
+			try {
+				await eng.versions_restore_answer(ticket,
+					JSON.stringify(list.map(function (x) { return x.path; })), !!yes);
+			}
+			catch (err) { /* the door refuses each act unanswered */ }
+			return yes;
+		};
 		// A FILE IN THE PERSON'S OWN FOLDER IS NEVER TAKEN AWAY UNASKED (F5, 2026-09-25).
 		// A whole-version restore once deleted marked files straight off the open folder
 		// under a question that said only "Today's state is kept". A path here that is
@@ -347,15 +358,30 @@
 		// copy is taken as it goes, after their yes -- so a yes is undoable too. One the
 		// door could not keep (a hand's path, or past the ceiling) is left where it is
 		// and said so.
+		// A FILE THE OPEN COULD NOT READ IS LOOKED AT BEFORE ANYTHING IS ASKED (hist-safe,
+		// 2026-10-12): one on the machine, through the hand. What stands there now is what
+		// the restore's act is bound to, and the engine says whether the person is asked
+		// before it goes over it. A look that fails asks. One that found the file there and
+		// could not read it is left as it stands and said so (F3): the act would read it
+		// again and refuse it as changed, after the person had said yes.
+		for (var li = 0; li < (entries || []).length; li++) {
+			var le = entries[li];
+			if (!le || le.look !== true || le.gone || le.left === true) continue;
+			var lr = null;
+			try { lr = await run('file_restore_look', { path: le.path }); } catch (err) { lr = null; }
+			var seen = (lr && lr.outcome === 'done') ? parse(lr.text, null) : null;
+			if (seen && seen.unread === true) { le.unread = true; continue; }
+			le.over = !(seen && seen.over === false);
+		}
 		var gone = (entries || []).filter(function (e) { return e && e.gone && e.kept === true && e.left !== true; });
-		var takeGone = gone.length ? await askGone(gone, isUndo) : false;
+		var takeGone = gone.length ? await answer(gone, await askGone(gone, isUndo)) : false;
 		// A FILE IN THE PERSON'S OWN FOLDER IS NEVER WRITTEN OVER UNASKED EITHER
 		// (D-20261009-29 item 6). The engine flags `over` where the bytes there now
 		// differ from the version's, and the person is asked once, Keep the default.
 		var overs = (entries || []).filter(function (e) {
-			return e && e.over === true && !e.gone && !e.skipped && e.left !== true;
+			return e && e.over === true && !e.gone && !e.skipped && e.left !== true && e.unread !== true;
 		});
-		var takeOver = overs.length ? await askTheirs(overs, isUndo) : true;
+		var takeOver = overs.length ? await answer(overs, await askTheirs(overs, isUndo)) : true;
 		// A ROW FROM A FOLDER THE ENGINE CANNOT PLACE HERE IS PUT TO THE PERSON (release
 		// 5.2's HR, 2026-09-25): one kept before Daimond recorded which folder a file came
 		// from, or one recorded in a folder this device does not know -- on another device,
@@ -363,6 +389,9 @@
 		// its put-back in the first pass, and the person is asked once for each of the two,
 		// after the rest have landed.
 		var unplaced = [];
+		// A FILE CHANGED SINCE THE PERSON DECIDED ON IT is refused by the door, which reads it
+		// at the act (hist-safe R2, 2026-10-12), and put to them once more below, by name.
+		var changed = [];
 		for (var i = 0; i < (entries || []).length; i++) {
 			var e = entries[i];
 			var r = null;
@@ -372,6 +401,10 @@
 			// is a different file of the same name, and it is left as it stands.
 			if (e.left === true) {
 				refused.push({ path: e.path, why: tOr('versions.gone_kept', 'Left in your folder') });
+				continue;
+			}
+			if (e.unread === true) {
+				refused.push({ path: e.path, why: tOr('versions.unread_now', 'Could not be read now; left as it is') });
 				continue;
 			}
 			try {
@@ -406,12 +439,17 @@
 				unplaced.push(Object.assign({}, e, { unknown: UNKNOWN.test(String(r.text || '')) }));
 				continue;
 			}
+			if (r && r.outcome === 'refused' && CHANGED.test(String(r.text || ''))) {
+				changed.push(e);
+				continue;
+			}
 			settled(e, r, refused);
 		}
 		var unknown = unplaced.filter(function (u) { return u.unknown; });
 		var unrecorded = unplaced.filter(function (u) { return !u.unknown; });
-		var overUnknown = unknown.length ? await askOver(unknown, true) : false;
-		var overUnrecorded = unrecorded.length ? await askOver(unrecorded, false) : false;
+		var overUnknown = unknown.length ? await answer(unknown, await askOver(unknown, true)) : false;
+		var overUnrecorded = unrecorded.length
+			? await answer(unrecorded, await askOver(unrecorded, false)) : false;
 		if (unplaced.length) {
 			for (var k = 0; k < unplaced.length; k++) {
 				var u = unplaced[k];
@@ -421,12 +459,61 @@
 					continue;
 				}
 				var ru = null;
-				try { ru = await run('file_put_back', { path: u.path, hash: u.hash, over: true }); }
+				try { ru = await run('file_put_back', { path: u.path, hash: u.hash }); }
 				catch (err) { ru = null; }
 				settled(u, ru, refused);
 			}
 		}
+		// ONCE MORE, BY NAME, KEEP THE DEFAULT. A yes is bound to what stands there as they
+		// are asked; a file changed again after it is left, and said.
+		if (changed.length) {
+			var again = await answer(changed, await askChanged(changed));
+			for (var c = 0; c < changed.length; c++) {
+				var ch = changed[c];
+				if (!again) {
+					refused.push({ path: ch.path, why: tOr('versions.gone_kept', 'Left in your folder') });
+					continue;
+				}
+				var rc = null;
+				try {
+					rc = ch.gone
+						? await run('file_delete', { path: ch.path })
+						: await run('file_put_back', { path: ch.path, hash: ch.hash });
+				}
+				catch (err) { rc = null; }
+				settled(ch, rc, refused);
+			}
+		}
 		return refused;
+	}
+
+	/// The door's refusal of an act whose file changed since the person decided on
+	/// it (`restore_changed_refusal` in src/tools.rs).
+	var CHANGED = /changed since you were asked about it/;
+
+	/// The engine's refusal of a second open restore of one Diamond (`claim_restore`
+	/// in src/wasm/diamond.rs).
+	var BUSY = /A restore of this Diamond is waiting for your answer/;
+
+	/// Ask the person once more whether a restore may write over files that changed
+	/// since they were asked, or since the restore opened: by their editor, a
+	/// daimon, another tab. Resolves true only on their yes; Keep is the default,
+	/// and with no dialog the answer is no.
+	async function askChanged(list) {
+		var names = list.map(function (e) { return String(e.path); });
+		var shown = names.slice(0, 8).join(', ') + (names.length > 8 ? ', …' : '');
+		try {
+			if (!core() || !DaimondCore.confirm) return false;
+			var yes = await DaimondCore.confirm(
+				tOr('versions.changed_ask',
+					'{n} of your files changed since you were asked: {paths}. Their current contents are kept in History. Replace them anyway?',
+					{ n: names.length, paths: shown }),
+				tOr('versions.over_allow', 'Replace them'),
+				{ title: tOr('versions.changed_title', 'Your files changed since you were asked'), danger: true,
+					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					ask: 'restore-changed', guard: true });
+			return yes === true;
+		} catch (e) { return false; }
 	}
 
 	/// The door's refusal of a row it cannot place, over different bytes
@@ -459,7 +546,7 @@
 			? said
 			: /bytes Daimond keeps a copy of|larger than the machine hand returns whole/.test(said)
 				? tOr('versions.too_big', 'Too large to keep')
-				: /carries text only|was written in a different folder/.test(said) || UNPLACED.test(said)
+				: /carries text only|was written in a different folder/.test(said) || UNPLACED.test(said) || CHANGED.test(said)
 					? tOr('versions.gone_kept', 'Left in your folder')
 					: /is not on this device/.test(said)
 						? tOr('versions.not_here', 'Not on this device')
@@ -623,7 +710,15 @@
 				: await eng.versions_restore_open(String(id), Number(n), String(path || ''),
 					folder ? String(folder) : undefined), null);
 		}
-		catch (e) { return null; }
+		catch (e) {
+			// ONE RESTORE OF A DIAMOND AT A TIME (hist-safe R3): another, in this tab or
+			// another, is waiting for the person's answer, and this one is refused, said.
+			if (BUSY.test(String(e && e.message || e)) && core() && DaimondCore.toast) {
+				DaimondCore.toast(tOr('versions.restore_busy',
+					'A restore of this Diamond is waiting for your answer. Answer it first; nothing was changed.'), true);
+			}
+			return null;
+		}
 		if (!opened) return null;
 		var refused = [], res = null, keepNew = false;
 		try {

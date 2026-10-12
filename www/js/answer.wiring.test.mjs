@@ -238,3 +238,11 @@ test('the reason Sync now gives is in all eight languages', () => {
 		assert.match(read('i18n', l + '.js'), /'trig\.no_mailbox':/, l);
 	}
 });
+
+// ── D-20261006-32: the `+` picker's yes ────────────────────────────────
+test('a pick dialog gates its yes by the answer rule, and the `+` picker asks the table why', () => {
+	const d = read('js', 'daimond.js');
+	assert.match(d, /DaimondAnswer\.gate\(ok, okOn \? '' : okWhy\)/, 'the yes is marked, not given a bare disabled');
+	assert.match(d, /if \(!okOn\) \{ err\.textContent = okLastSaid = okWhy; return; \}/, 'a press on a gated yes is answered');
+	assert.match(d, /DaimondAnswer\.reasons\.pick\(/);
+});

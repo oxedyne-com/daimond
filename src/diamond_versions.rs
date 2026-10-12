@@ -1931,6 +1931,152 @@ pub fn route(
 	}
 }
 
+/// What stood at one of the person's paths when a restore was decided on: when it was opened, or
+/// when the door last refused an act there and the person was asked about it.
+///
+/// **An answer is bound to the bytes it was asked about** (hist-safe R2, 2026-10-12).  A restore's
+/// questions can stay open for minutes, and the door wrote with no look at what was there by
+/// then: a file that matched at the open, and was changed by the person's editor, a daimon's turn,
+/// another tab or another restore while a question was open, was written over unasked.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Seen {
+	Absent,		// nothing stood there
+	Bytes(String),	// these bytes, by their hash
+	Unread,		// something stood there that could not be read whole
+}
+
+impl Seen {
+
+	/// `now` as a [`Seen`]; `None` is nothing there.
+	pub fn of(now: Option<&[u8]>) -> Self {
+		match now {
+			Some(b)	=> Self::Bytes(hash_of(b)),
+			None	=> Self::Absent,
+		}
+	}
+}
+
+/// What a restore's act at the row's own file may do, by what stands there now.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Bound {
+	Same,		// it already holds what the act would leave: done, and nothing written
+	Go,		// it holds what the person decided on
+	Changed,	// it changed since: nothing is written until the person says so again
+}
+
+/// May a restore's act go ahead, given what stood at its path when it was decided on (`seen`),
+/// what stands there `now`, and what it `puts` there (`None` for a delete)?
+///
+/// **Equal bytes are not written** (hist-safe, 2026-10-12): the door rewrote a file that already
+/// held the version's bytes, so a restore that changed nothing still touched the person's files.
+pub fn bound(seen: &Seen, now: Option<&[u8]>, puts: Option<&[u8]>) -> Bound {
+	let same = match (now, puts) {
+		(Some(n), Some(p))	=> n == p,
+		(None, None)		=> true,
+		_			=> false,
+	};
+	if same {
+		return Bound::Same;
+	}
+	match seen {
+		Seen::Unread			=> Bound::Changed,
+		s if *s == Seen::of(now)	=> Bound::Go,
+		_				=> Bound::Changed,
+	}
+}
+
+/// What a restore's act at one of the person's files may do ([`act`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Act {
+	Go,		// put the row back
+	Same,		// it already holds those bytes: done, nothing written
+	Changed,	// changed since the person decided: asked again first
+	Left,		// another place's file of the same name
+	Ask(Unplaced),	// whose file it is cannot be told: the person decides
+	Unasked,	// a file the open restore never handed out: nobody was asked
+	Unanswered,	// he was asked about it and has not said yes: nothing goes until he does
+}
+
+/// One of the person's files a restore's open handed out, as [`act`] weighs it.
+#[derive(Clone, Copy, Debug)]
+pub struct Handout<'a> {
+	pub row:	&'a str,		// the path as its row names it
+	pub folder:	Option<&'a str>,	// the folder the row was written in
+	pub known:	bool,			// does this device know that folder?
+	pub seen:	&'a Seen,		// at the open, or at the page's look
+	pub must:	bool,			// does the open ask him before it goes over `seen`?
+	pub asked:	Option<&'a Seen>,	// when an act was last refused and put to them
+	pub yes:	Option<&'a Seen>,	// the bytes he last said yes to, as the engine recorded it
+}
+
+/// May a restore's act, reaching `landed` (in `landed_folder`), put its row back over what stands
+/// there `now`?  `handed` is the open's handout for the act's spelling, `None` where it handed
+/// none out.
+///
+/// **Bound to the bytes the person decided on** (hist-safe R2, 2026-10-12): those seen at the open
+/// (or the page's look), or those he said yes to.  Anything else there is [`Act::Changed`]; bytes
+/// already equal to the act's are [`Act::Same`].
+///
+/// **Only at a file the open handed out** (hist-safe QA A, 2026-10-12).  An act at any other path
+/// is [`Act::Unasked`]: the question named only what the open handed out, so a write elsewhere
+/// would land on bytes nobody decided on, and be recorded as the restore's.
+///
+/// **Only after his yes, where he is asked** (hist-safe QA A F2, 2026-10-12).  The answer was the
+/// page's to remember, and a put-back over his flagged edit went before he answered, so "Keep
+/// them" kept nothing.  A file the open asks about, every delete, and one an act's refusal put to
+/// him again is [`Act::Unanswered`] until the engine holds his yes ([`Handout::yes`]).  A yes
+/// given after a refusal also answers the route's own question: whose file it is.
+///
+/// # Arguments
+/// * `puts` - The bytes the act puts there, or `None` for a delete.
+pub fn act(
+	handed:		Option<Handout>,
+	landed:		&str,
+	landed_folder:	Option<&str>,
+	now:		Option<&[u8]>,
+	puts:		Option<&[u8]>,
+)
+	-> Act
+{
+	let h = match handed {
+		Some(h)	=> h,
+		None	=> return Act::Unasked,
+	};
+	if (h.must || puts.is_none() || h.asked.is_some()) && h.yes.is_none() {
+		return Act::Unanswered;
+	}
+	let over = h.asked.is_some() && h.yes.is_some();	// his yes to a question an act put
+	let overwrites = !over && match (now, puts) {
+		(Some(n), Some(p))	=> n != p,
+		_			=> false,
+	};
+	match route(h.row, h.folder, landed, landed_folder, h.known, overwrites) {
+		Route::Go	=> {},
+		Route::Left	=> return Act::Left,
+		Route::Ask(why)	=> return Act::Ask(why),
+	}
+	match bound(h.yes.unwrap_or(h.seen), now, puts) {
+		Bound::Same	=> Act::Same,
+		Bound::Go	=> Act::Go,
+		Bound::Changed	=> Act::Changed,
+	}
+}
+
+/// Is the person asked before a restore writes `target` over what stands at their path (`now`)?
+/// Not where nothing stands, nor where it already holds `target`, nor where it holds `quiet`: for
+/// an undo, what the undone version left there, which nobody has changed since.
+///
+/// **Item 6 of D-20261009-29 for every plan** (hist-safe R1, 2026-10-12).  Only a whole-version
+/// restore asked; an undo -- "Restore before", "Undo this restore", a turn's Undo -- wrote over the
+/// person's edit since the version unasked.
+pub fn asks_over(now: &Seen, target: &str, quiet: Option<&str>) -> bool {
+	match now {
+		Seen::Absent	=> false,
+		Seen::Unread	=> true,
+		Seen::Bytes(h)	=> h != target && Some(h.as_str()) != quiet,
+	}
+}
+
 /// Is a row of a relative path, written in `row_folder`, another place's file where the path
 /// reaches `here`: a place this device can name, and not this one?  Browser storage from a folder
 /// or a folder from it, or a folder this device knows with another named folder open.  A row from
@@ -2213,7 +2359,29 @@ pub fn undo_of<F>(manifests: &[(u64, Manifest)], of: u64, paths: &[String], here
 	-> Vec<(String, At)>
 	where F: Fn(&str) -> Option<String>
 {
-	let mut out: Vec<(String, At)> = Vec::new();
+	undo_rows(manifests, of, paths, here).into_iter()
+		.map(|(p, e)| (p, At::before(e).unwrap_or_else(|| At::made(e))))
+		.collect()
+}
+
+/// What the rows [`undo_of`] undoes left at each path: the hash each wrote, or `None` where it
+/// deleted the path.  A file that holds anything else now was changed since, by the person or by
+/// someone else, so the undo asks before it writes over it (hist-safe R1, 2026-10-12).
+pub fn undo_left<F>(manifests: &[(u64, Manifest)], of: u64, paths: &[String], here: F)
+	-> Vec<(String, Option<String>)>
+	where F: Fn(&str) -> Option<String>
+{
+	undo_rows(manifests, of, paths, here).into_iter()
+		.map(|(p, e)| (p, if e.gone { None } else { Some(e.hash.clone()) }))
+		.collect()
+}
+
+/// The row of each path that [`undo_of`] undoes, by its rule.
+fn undo_rows<'a, F>(manifests: &'a [(u64, Manifest)], of: u64, paths: &[String], here: F)
+	-> Vec<(String, &'a Entry)>
+	where F: Fn(&str) -> Option<String>
+{
+	let mut out: Vec<(String, &Entry)> = Vec::new();
 	for (path, rows) in rows_by_path(manifests).into_iter() {
 		if !paths.is_empty() && !paths.iter().any(|p| p == path) {
 			continue;
@@ -2223,7 +2391,7 @@ pub fn undo_of<F>(manifests: &[(u64, Manifest)], of: u64, paths: &[String], here
 			.min();
 		let h = here(path);
 		if let Some(e) = first.and_then(|n| pick(&rows, n, h.as_deref())) {
-			out.push((path.to_string(), At::before(e).unwrap_or_else(|| At::made(e))));
+			out.push((path.to_string(), e));
 		}
 	}
 	out
@@ -4192,6 +4360,101 @@ Garden: order two bags of bark for a bed.
 		assert_eq!(1, undo_of(&split, 5, &[], |_| None).len());
 		// Nothing at or after `of` names it: nothing to put back.
 		assert!(undo_of(&ms, 5, &["vault/u/a.md".to_string()], |_| None).is_empty());
+	}
+
+	/// **What an undo's rows left is what it may write over unasked** (hist-safe R1, 2026-10-12):
+	/// the hash each undone row wrote, `None` where it deleted, for the same rows as [`undo_of`].
+	#[test]
+	fn test_undo_left_names_what_each_undone_row_wrote() {
+		let mut born = e("vault/u/born.md", "born", None);
+		born.mark = true;
+		let ms = vec![
+			(1, m(Cause::Turn, vec![e("vault/u/a.md", "turn one", Some("orig"))])),
+			(3, m(Cause::Turn, vec![e("vault/u/a.md", "turn two", Some("save")), born,
+				gone("diamonds/d/old.md", "old notes")])),
+		];
+		let left = undo_left(&ms, 3, &[], |_| None);
+		let get = |p: &str| left.iter().find(|(q, _)| q == p).map(|(_, h)| h.clone());
+		assert_eq!(Some(Some(hash_of(b"turn two"))), get("vault/u/a.md"));
+		assert_eq!(Some(Some(hash_of(b"born"))), get("vault/u/born.md"));
+		assert_eq!(Some(None), get("diamonds/d/old.md"), "a delete left nothing");
+		let paths: Vec<String> = undo_of(&ms, 3, &[], |_| None).into_iter().map(|(p, _)| p).collect();
+		let lpaths: Vec<String> = left.into_iter().map(|(p, _)| p).collect();
+		assert_eq!(paths, lpaths, "undo_left and undo_of walk the same rows");
+	}
+
+	/// **An undo asks before writing over a file changed since the version** (hist-safe R1).
+	#[test]
+	fn test_asks_over_spares_nothing_the_target_and_the_undone_bytes_only() {
+		let t = hash_of(b"target");
+		let q = hash_of(b"undone left this");
+		assert!(!asks_over(&Seen::Absent, &t, Some(&q)), "nothing there: nothing to lose");
+		assert!(!asks_over(&Seen::of(Some(b"target")), &t, Some(&q)), "already the target");
+		assert!(!asks_over(&Seen::of(Some(b"undone left this")), &t, Some(&q)), "untouched since");
+		assert!(asks_over(&Seen::of(Some(b"his edit")), &t, Some(&q)), "his edit since");
+		assert!(asks_over(&Seen::of(Some(b"undone left this")), &t, None), "no quiet: asked");
+		assert!(asks_over(&Seen::Unread, &t, Some(&q)), "what cannot be read is asked about");
+	}
+
+	/// **An answer is bound to the bytes it was asked about** (hist-safe R2): equal bytes are done
+	/// unwritten, the bytes decided on go, and anything else is asked about again.
+	#[test]
+	fn test_bound_goes_only_on_the_bytes_decided_on() {
+		let seen = Seen::of(Some(b"blue"));
+		assert_eq!(Bound::Go, bound(&seen, Some(b"blue"), Some(b"green")));
+		assert_eq!(Bound::Changed, bound(&seen, Some(b"his edit"), Some(b"green")));
+		assert_eq!(Bound::Changed, bound(&seen, None, Some(b"green")), "deleted since");
+		assert_eq!(Bound::Same, bound(&seen, Some(b"green"), Some(b"green")), "nothing to write");
+		assert_eq!(Bound::Same, bound(&seen, None, None), "already gone");
+		assert_eq!(Bound::Go, bound(&Seen::Absent, None, Some(b"green")));
+		assert_eq!(Bound::Changed, bound(&Seen::Absent, Some(b"made since"), Some(b"green")));
+		assert_eq!(Bound::Go, bound(&seen, Some(b"blue"), None), "a delete of what was seen");
+		assert_eq!(Bound::Changed, bound(&Seen::Unread, Some(b"blue"), Some(b"green")));
+		assert_eq!(Bound::Same, bound(&Seen::Unread, Some(b"green"), Some(b"green")));
+	}
+
+	/// **An act goes only at a file an open restore handed out** (hist-safe, QA A F1): one at any
+	/// other path, in the person's folder, is a write nobody was asked about, and is refused.  There
+	/// is no act without an open behind it.
+	#[test]
+	fn test_an_act_the_open_never_handed_out_is_refused() {
+		let out = act(None, "h1/f.txt", Some("h1"), Some(b"his edit"), Some(b"green"));
+		assert_eq!(Act::Unasked, out, "an unhanded path went");
+		assert_eq!(Act::Unasked, act(None, "h1/new.txt", None, None, Some(b"x")), "nor a new file");
+		assert_eq!(Act::Unasked, act(None, "h1/f.txt", Some("h1"), Some(b"x"), None), "nor a delete");
+		let seen = Seen::of(Some(b"blue"));
+		let h = Handout { row: "h1/f.txt", folder: Some("h1"), known: true, seen: &seen, must: false,
+			asked: None, yes: None };
+		assert_eq!(Act::Go, act(Some(h), "h1/f.txt", Some("h1"), Some(b"blue"), Some(b"green")));
+		assert_eq!(Act::Changed, act(Some(h), "h1/f.txt", Some("h1"), Some(b"edit"), Some(b"green")));
+	}
+
+	/// **His answer is the engine's** (hist-safe, QA A F2): a file the open asks about, a delete,
+	/// and one put to him again after a refusal go only once the engine holds his yes, and then
+	/// only over the bytes he said yes to.
+	#[test]
+	fn test_an_asked_file_goes_only_after_his_yes_to_those_bytes() {
+		let seen = Seen::of(Some(b"his edit"));
+		let asked = Handout { row: "h1/f.txt", folder: Some("h1"), known: true, seen: &seen, must: true,
+			asked: None, yes: None };
+		let put = |h| act(Some(h), "h1/f.txt", Some("h1"), Some(b"his edit"), Some(b"green"));
+		assert_eq!(Act::Unanswered, put(asked), "went over his flagged edit before he answered");
+		assert_eq!(Act::Go, put(Handout { yes: Some(&seen), ..asked }));
+		let plain = Handout { must: false, ..asked };
+		assert_eq!(Act::Unanswered, act(Some(plain), "h1/f.txt", Some("h1"), Some(b"his edit"), None),
+			"a delete is always asked");
+		assert_eq!(Act::Go, act(Some(Handout { yes: Some(&seen), ..plain }), "h1/f.txt", Some("h1"),
+			Some(b"his edit"), None));
+		// Put to him again after a refusal: unanswered until his yes, which binds to what he was
+		// asked about, and nothing later.
+		let later = Seen::of(Some(b"later"));
+		let again = Handout { asked: Some(&later), ..plain };
+		assert_eq!(Act::Unanswered, act(Some(again), "h1/f.txt", Some("h1"), Some(b"later"), Some(b"green")));
+		let yes = Handout { yes: Some(&later), ..again };
+		assert_eq!(Act::Go, act(Some(yes), "h1/f.txt", Some("h1"), Some(b"later"), Some(b"green")));
+		assert_eq!(Act::Changed, act(Some(yes), "h1/f.txt", Some("h1"), Some(b"later still"), Some(b"green")));
+		// A file nobody asked about goes, bound to what the open saw.
+		assert_eq!(Act::Go, put(plain));
 	}
 
 	#[test]

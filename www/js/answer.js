@@ -122,6 +122,12 @@
 		sync_mail: function (s) { return s.sel ? '' : 'trig.no_mailbox'; },
 		// The home composer's Send needs words; with a turn running and the box empty it is Stop, which needs none.
 		send_home: function (s) { return (s.stop || String(s.text || '').trim()) ? '' : 'sheet.ask_empty'; },
+		// A picker's yes needs its listing in, a folder that could be read, and something ticked (D-20261006-32).
+		pick:  function (s) {
+			if (!s.loaded) return 'files.loading';
+			if (s.unread) return 'attach.pick_unread';
+			return s.ticked > 0 ? '' : 'attach.pick_tick';
+		},
 	};
 
 	// Whether a contextual control can act now, from the thread's measures: `users` questions, scrolled `top`,

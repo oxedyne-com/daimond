@@ -1540,6 +1540,8 @@ impl Desk {
         // this cap falls back to the two-item choice, which is what every build before this one
         // had.
         caps.push(fmt!("browse:dirs"));
+        // A write may carry what it expects to find, and is refused where something else stands.
+        caps.push(fmt!("{}", daimond_hand::wire::CAP_WRITE_IF));
         // A daimon's command is held after `meter::BUDGET` removals of files that existed
         // before the turn, and each is kept in the trash first. Or it does not run: a
         // launcher that cannot install the meter refuses the command.

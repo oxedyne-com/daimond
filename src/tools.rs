@@ -6340,6 +6340,40 @@ pub fn fence_enforced(caps: &[String]) -> bool {
 pub const CAP_METER_DELETES: &str = "meter:deletes"; // said by `hand/src/main.rs`
 pub const CAP_RUN_ROOT_START: &str = "run:root-start"; // said by `hand/src/main.rs`
 pub const CAP_RELAY_ROOT_START: &str = "relay:root-start"; // added by `ext/hand.js` to the hello
+pub const CAP_WRITE_IF: &str = "file:write-if"; // said by `hand/src/main.rs` (`wire::CAP_WRITE_IF`)
+
+/// The words a hand's refusal of a conditional write opens its reason with, followed by what
+/// stands there now as `now sha256 <hex>` or `now absent` (`wire::WRITE_CHANGED` in the hand).
+pub const HAND_WRITE_CHANGED: &str = "changed since it was read";
+
+/// Does this hand compare what stands at a path with what the page expects, and write only over
+/// that, in one op?  Affirmative, like [`deletes_metered`]: a hand older than 2026-10-12 ignores a
+/// write's `expect` and writes whatever stands there.
+pub fn writes_if(caps: &[String]) -> bool {
+    caps.iter().any(|c| c == CAP_WRITE_IF)
+}
+
+/// What a hand that refused a conditional write found there, read from its sentence: `None` where
+/// the sentence is not that refusal.
+pub fn hand_found(said: &str) -> Option<crate::diamond_versions::Seen> {
+    let at = match said.find(HAND_WRITE_CHANGED) {
+        Some(i) => i + HAND_WRITE_CHANGED.len(),
+        None    => return None,
+    };
+    let rest = &said[at..];
+    if let Some(i) = rest.find("now sha256 ") {
+        let h: String = rest[i + "now sha256 ".len()..].chars().take(64).collect();
+        if crate::diamond_versions::is_hash(&h) {
+            return Some(crate::diamond_versions::Seen::Bytes(h));
+        }
+    }
+    if rest.contains("now absent") {
+        return Some(crate::diamond_versions::Seen::Absent);
+    }
+    // The refusal, with no reading of what is there: the next question binds to nothing it
+    // could compare, so it is asked again rather than written past.
+    Some(crate::diamond_versions::Seen::Unread)
+}
 
 /// May a command start at the workspace root above its fence? See [`ToolContext::run_cwd`].
 ///
@@ -7065,6 +7099,55 @@ fn restore_unplaced_refusal(raw: &str, why: crate::diamond_versions::Unplaced) -
             no longer knows -- and a different file stands at this path now. Nothing was changed; it \
             goes back over that file only once the person says so.", raw)),
     }
+}
+
+/// What a restore's act says where the file already holds what it would leave: done, and nothing
+/// written (hist-safe, 2026-10-12).  Not a refusal, so the page counts it as put back.
+#[cfg(any(target_arch = "wasm32", test))]
+fn restore_same_line(raw: &str) -> String {
+    fmt!("'{}' already holds those bytes, so nothing was written.", raw)
+}
+
+/// The refusal a restore's act meets where its restore is not open -- none named, made up, closed,
+/// or another Diamond's (hist-safe QA A F1, 2026-10-12).  Every act belongs to an open restore.
+#[cfg(any(target_arch = "wasm32", test))]
+pub fn restore_ended_refusal(raw: &str) -> String {
+    refusal_line(&fmt!("The restore '{}' was part of has ended, so nothing was changed.", raw))
+}
+
+/// The refusal a restore's act meets at a file the person was asked about and has not said yes to
+/// (hist-safe QA A F2, 2026-10-12): the engine holds his answer, not the page.
+#[cfg(any(target_arch = "wasm32", test))]
+fn restore_unanswered_refusal(raw: &str) -> String {
+    refusal_line(&fmt!("'{}' is waiting for your answer to the restore's question, so the restore \
+        did not write there. Nothing was changed.", raw))
+}
+
+/// The refusal an act under an open restore meets at a path the open never handed out: the
+/// question named only what it handed out, so nothing else is written in the restore's name.
+#[cfg(any(target_arch = "wasm32", test))]
+fn restore_unasked_refusal(raw: &str) -> String {
+    refusal_line(&fmt!("'{}' was not one of the files this restore was opened with, so it did not \
+        write there. Nothing was changed.", raw))
+}
+
+/// The refusal a restore's act meets where the file changed since the person decided on it: at
+/// the open, or when they were last asked about it (hist-safe R2, 2026-10-12).  The page tells it
+/// apart by this sentence (`CHANGED` in `www/js/versions.js`) and asks once more, by name.
+#[cfg(any(target_arch = "wasm32", test))]
+fn restore_changed_refusal(raw: &str) -> String {
+    refusal_line(&fmt!("'{}' changed since you were asked about it, so the restore did not write \
+        over it. Nothing was changed.", raw))
+}
+
+/// The refusal a restore's write on the machine meets where the hand is older than the write that
+/// compares before it writes ([`CAP_WRITE_IF`]): it would write over a save made since the door
+/// read the file, so nothing is sent (hist-safe F1, 2026-10-12).
+#[cfg(any(target_arch = "wasm32", test))]
+fn write_if_unheld_refusal(raw: &str) -> String {
+    fmt!("The machine hand on this computer is older than this page and cannot check that '{}' \
+        is unchanged as it writes, so it could write over a save made a moment ago. Nothing was \
+        changed. Update the machine hand, then try again.", raw)
 }
 
 /// The refusal a restore's act meets where what stands at the path is larger than a version keeps
@@ -8501,8 +8584,9 @@ enum Door {
 /// A fence, and the link to the hand whose hello it was built from ([`bound_to_link`]).
 #[cfg(target_arch = "wasm32")]
 struct LinkedFence {
-    fence: FenceSpec,
-    link:  Option<u64>,	// the relay's link the status was read on; `None` where it named none
+    fence:    FenceSpec,
+    link:     Option<u64>,	// the relay's link the status was read on; `None` where it named none
+    write_if: bool,		// the hand said [`CAP_WRITE_IF`]
 }
 
 /// `req`, a request for the hand, bound to the link whose hello it was built from (re-check of
@@ -8623,7 +8707,7 @@ async fn reach_of(ctx: &ToolContext, raw: &str, path: &str, door: Door) -> Reach
         abs:  fmt!("{}/{}", root, rel),
         cwd:  fmt!("{}/{}", root, mark),
         root,
-        spec: LinkedFence { fence: spec, link },
+        spec: LinkedFence { fence: spec, link, write_if: writes_if(&machine.caps) },
     }
 }
 
@@ -9298,9 +9382,23 @@ const MACHINE_LOOKS: [&str; 4] = ["read", "list", "search", "glob"];
 #[cfg(target_arch = "wasm32")]
 enum MachineChange<'a> {
     Write(&'a Licence, &'a str),        // the file's whole text
+    WriteIf(&'a Licence, &'a str, &'a crate::diamond_versions::Seen), // only over what was seen
     Edit(&'a Licence, &'a str, &'a str), // one hunk: the text found, and what replaces it
     Mkdir(&'a Licence),
     Move(&'a Licence, &'a Licence),     // from, and to
+}
+
+/// A whole-file write on the machine: under a restore's hold, only over what the act was bound
+/// to (`seen`, the bytes it found); otherwise over whatever stands there.
+#[cfg(target_arch = "wasm32")]
+fn restore_write<'a>(rest: &Option<RestoreHold>, lic: &'a Licence, text: &'a str,
+    seen: &'a crate::diamond_versions::Seen)
+    -> MachineChange<'a>
+{
+    match rest {
+        Some(_) => MachineChange::WriteIf(lic, text, seen),
+        None    => MachineChange::Write(lic, text),
+    }
 }
 
 /// The machine hand's file door, as the tools reach it: [`machine_op`] to look, [`machine_change`]
@@ -9404,6 +9502,23 @@ mod hand_door {
         let (op, abs, fields) = match change {
             MachineChange::Write(lic, text) =>
                 ("write", at(lic), fmt!(r#","text":"{}""#, json_escape(text))),
+            // NEVER SENT TO A HAND THAT WOULD IGNORE THE CONDITION (hist-safe F1, 2026-10-12): an
+            // older hand reads past `expect` and writes whatever stands there, so the act is
+            // refused here in words instead.
+            MachineChange::WriteIf(lic, text, seen) => {
+                if !spec.write_if {
+                    return Ok(Err(fmt!("{}: {}", tool, write_if_unheld_refusal(lic.path()))));
+                }
+                let expect = match seen {
+                    crate::diamond_versions::Seen::Bytes(h) => h.as_str(),
+                    crate::diamond_versions::Seen::Absent   => "absent",
+                    crate::diamond_versions::Seen::Unread   => return Ok(Err(fmt!(
+                        "{}: what stands at '{}' could not be read, so there is nothing to write \
+                        only over. Nothing was changed.", tool, lic.path()))),
+                };
+                ("write", at(lic), fmt!(r#","text":"{}","expect":"{}""#,
+                    json_escape(text), expect))
+            },
             MachineChange::Edit(lic, old, new) =>
                 ("edit", at(lic), fmt!(r#","text":"{}","text2":"{}""#,
                     json_escape(old), json_escape(new))),
@@ -22505,23 +22620,34 @@ impl Tool {
                 // A RESTORE'S WRITE KEEPS WHAT IT REPLACES, read through the hand at the act:
                 // the person's own save since the version is the file's newest state, and the
                 // restore is the one thing that would otherwise write over it with no copy.
-                let rest = if ctx.restoring != 0 {
+                // And the hand compares as it writes, as `put_bytes` has it (hist-safe F1).
+                if ctx.restoring != 0 && !spec.write_if {
+                    Self::overwrite_failed(&over).await;
+                    return Ok(MessageContent::text(refusal_line(&write_if_unheld_refusal(&raw))));
+                }
+                let (rest, seen) = if ctx.restoring != 0 {
                     let now = match machine_before(&abs, &cwd, &spec, &ctx.no_write).await {
-                        (None, Some(why)) => return Ok(MessageContent::text(
-                            overwrite_unkept_refusal(&raw, &why))),
+                        (None, Some(why)) => {
+                            Self::overwrite_failed(&over).await;
+                            return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, &why)));
+                        },
                         (b, _)            => b,
                     };
+                    let seen = crate::diamond_versions::Seen::of(now.as_deref());
                     match Self::restore_hold(ctx, &raw, &abs, now.as_deref(),
-                        Some(content.as_bytes()), false).await
+                        Some(content.as_bytes())).await
                     {
-                        Ok(h)    => h,
-                        Err(why) => return Ok(MessageContent::text(why)),
+                        Ok(h)    => (h, seen),
+                        Err(why) => {
+                            Self::overwrite_failed(&over).await;
+                            return Ok(MessageContent::text(why));
+                        },
                     }
                 } else {
-                    None
+                    (None, crate::diamond_versions::Seen::Unread)
                 };
                 let got = match machine_change("file_write",
-                    MachineChange::Write(&lic, &content), &root, &cwd, &spec,
+                    restore_write(&rest, &lic, &content, &seen), &root, &cwd, &spec,
                     &ctx.no_write).await
                 {
                     Ok(g)  => g,
@@ -22533,6 +22659,11 @@ impl Tool {
                 };
                 if got.is_err() {
                     Self::overwrite_failed(&over).await;
+                }
+                if let Some(said) = Self::restore_hand_changed(ctx, &raw, &rest, &got).await {
+                    return Ok(MessageContent::text(said));
+                }
+                if got.is_err() {
                     Self::restore_failed(&rest).await;
                 }
                 return match got {
@@ -22702,8 +22833,8 @@ impl Tool {
                 Some((bytes, _)) => bytes,
                 None             => content.as_bytes(),
             };
-            match Self::restore_hold(ctx, &raw, &normalise(&path), now.as_deref(), Some(puts),
-                false).await
+            match Self::restore_hold(ctx, &raw, &normalise(&path), now.as_deref(), Some(puts))
+                .await
             {
                 Ok(h)    => h,
                 Err(why) => return Ok(MessageContent::text(why)),
@@ -22712,10 +22843,17 @@ impl Tool {
             None
         };
         if let Some((bytes, note)) = office {
-            if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &bytes).await {
-                Self::overwrite_failed(&over).await;
-                Self::restore_failed(&rest).await;
-                return Err(e);
+            match Self::restore_store_write(ctx, &raw, &lic, &bytes, &rest).await {
+                Ok(None)       => {},
+                Ok(Some(said)) => {
+                    Self::overwrite_failed(&over).await;
+                    return Ok(MessageContent::text(said));
+                },
+                Err(e)         => {
+                    Self::overwrite_failed(&over).await;
+                    Self::restore_failed(&rest).await;
+                    return Err(e);
+                },
             }
             Self::restore_landed(rest, crate::wasm::diamond::Body::Held(bytes.clone()));
             if let Some((dia, before)) = keep {
@@ -22728,10 +22866,17 @@ impl Tool {
                 fmt!("Wrote {} bytes to {}.{}{}{}", bytes.len(), path, note, place_line,
                     Self::file_write_nudge(content.len()))));
         }
-        if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, content.as_bytes()).await {
-            Self::overwrite_failed(&over).await;
-            Self::restore_failed(&rest).await;
-            return Err(e);
+        match Self::restore_store_write(ctx, &raw, &lic, content.as_bytes(), &rest).await {
+            Ok(None)       => {},
+            Ok(Some(said)) => {
+                Self::overwrite_failed(&over).await;
+                return Ok(MessageContent::text(said));
+            },
+            Err(e)         => {
+                Self::overwrite_failed(&over).await;
+                Self::restore_failed(&rest).await;
+                return Err(e);
+            },
         }
         Self::restore_landed(rest, crate::wasm::diamond::Body::Held(content.as_bytes().to_vec()));
         if let Some((dia, before)) = keep {
@@ -22774,16 +22919,46 @@ impl Tool {
         };
         let id = match crate::wasm::diamond::restore_store(ctx.restoring) {
             Some(id) => id,
-            None     => return Ok(MessageContent::text(refusal_line(&fmt!(
-                "The restore '{}' was part of has ended, so nothing was changed.", raw)))),
+            None     => return Ok(MessageContent::text(restore_ended_refusal(&raw))),
         };
         let body = match res!(crate::wasm::diamond::versions_body(&id, &hash).await) {
             Some(b) => b,
             None    => return Ok(MessageContent::text(put_back_absent_refusal(&raw))),
         };
-        // The person's yes to a row kept before folders were recorded ([`restore_unplaced_refusal`]).
-        let over = extract_json_bool(args_json, "over") == Some(true);
-        Self::put_bytes(ctx, &raw, &path, &lic, body, over).await
+        Self::put_bytes(ctx, &raw, &path, &lic, body).await
+    }
+
+    /// The page's look at one of the person's files an open restore could not read, through this
+    /// context's fence: `{"over":bool}`, whether the person is asked before the restore's act goes
+    /// over what stands there, which that act is then bound to
+    /// ([`crate::wasm::diamond::restore_look`]; hist-safe R2, 2026-10-12).  Changes nothing.
+    #[cfg(target_arch = "wasm32")]
+    async fn restore_look_page(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        let raw = res!(Self::arg(args_json, "path"));
+        let path = res!(Self::scoped(ctx, &raw));
+        let now = match reach_of(ctx, &raw, &path, Door::Look).await {
+            Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
+            Reach::Machine { abs, cwd, spec, .. } =>
+                match machine_before(&abs, &cwd, &spec, &ctx.no_write).await {
+                    (Some(b), _)   => crate::diamond_versions::Seen::of(Some(&b)),
+                    (None, None)   => crate::diamond_versions::Seen::Absent,
+                    (None, Some(_)) => crate::diamond_versions::Seen::Unread,
+                },
+            Reach::Storage => match Self::before_bytes(ctx, &path).await {
+                Ok(b)  => crate::diamond_versions::Seen::of(b.as_deref()),
+                Err(_) => crate::diamond_versions::Seen::Unread,
+            },
+        };
+        // A FILE THAT WOULD NOT READ IS NOT ASKED ABOUT (hist-safe F3, 2026-10-12): the act reads
+        // it again and, finding nothing it was bound to, refused it as changed after the person had
+        // said yes.  The page leaves it as it stands and says it could not be read now.
+        let unread = now == crate::diamond_versions::Seen::Unread;
+        Ok(MessageContent::text(match crate::wasm::diamond::restore_look(ctx.restoring, &raw, now) {
+            Some(_) if unread => "{\"unread\":true}".to_string(),
+            Some(over) => fmt!("{{\"over\":{}}}", over),
+            None       => refusal_line(&fmt!("'{}' is no file of an open restore, so there is \
+                nothing to look at. Nothing was changed.", raw)),
+        }))
     }
 
     /// A page door's write of `bytes` at `raw`, byte for byte, through this context's fence: the
@@ -22801,7 +22976,7 @@ impl Tool {
             Ok(l)    => l,
             Err(why) => return Ok(MessageContent::text(why)),
         };
-        Self::put_bytes(ctx, raw, &path, &lic, bytes, false).await
+        Self::put_bytes(ctx, raw, &path, &lic, bytes).await
     }
 
     /// Write `body` at the licensed `path`, byte for byte: through the hand where the path is
@@ -22809,12 +22984,7 @@ impl Tool {
     /// the act keeps what it replaces ([`Self::restore_hold`]); for any other caller it keeps
     /// nothing, as `file_write` for the same caller keeps nothing.
     #[cfg(target_arch = "wasm32")]
-    ///
-    /// # Arguments
-    /// * `over` - Has the person said a row kept before folders were recorded may go back over
-    ///   what stands there ([`Self::restore_hold`])?
-    async fn put_bytes(ctx: &ToolContext, raw: &str, path: &str, lic: &Licence, body: Vec<u8>,
-        over: bool)
+    async fn put_bytes(ctx: &ToolContext, raw: &str, path: &str, lic: &Licence, body: Vec<u8>)
         -> Outcome<MessageContent>
     {
         let raw = raw.to_string();
@@ -22827,19 +22997,30 @@ impl Tool {
                     Ok(t)  => t.to_string(),
                     Err(_) => return Ok(MessageContent::text(put_back_binary_refusal(&raw))),
                 };
+                // A restore's write needs a hand that compares as it writes, which is asked
+                // before anything is read or held, so the refusal keeps nothing.
+                if ctx.restoring != 0 && !spec.write_if {
+                    return Ok(MessageContent::text(refusal_line(
+                        &write_if_unheld_refusal(&raw))));
+                }
                 let now = match machine_before(&abs, &cwd, &spec, &ctx.no_write).await {
                     (None, Some(why)) => return Ok(MessageContent::text(
                         overwrite_unkept_refusal(&raw, &why))),
                     (b, _)            => b,
                 };
-                let rest = match Self::restore_hold(ctx, &raw, &abs, now.as_deref(), Some(&body),
-                    over).await
+                let rest = match Self::restore_hold(ctx, &raw, &abs, now.as_deref(), Some(&body)).await
                 {
                     Ok(h)    => h,
                     Err(why) => return Ok(MessageContent::text(why)),
                 };
-                let got = match machine_change("file_write", MachineChange::Write(lic, &text),
-                    &root, &cwd, &spec, &ctx.no_write).await
+                // UNDER A RESTORE THE HAND COMPARES AS IT WRITES (hist-safe F1, 2026-10-12): the
+                // read above and this write are two round trips, and a save landing between them
+                // was written over and kept nowhere. The hand writes only over the bytes the act
+                // was bound to, and refuses where anything else stands.
+                let seen = crate::diamond_versions::Seen::of(now.as_deref());
+                let change = restore_write(&rest, lic, &text, &seen);
+                let got = match machine_change("file_write", change, &root, &cwd, &spec,
+                    &ctx.no_write).await
                 {
                     Ok(g)  => g,
                     Err(e) => {
@@ -22847,6 +23028,9 @@ impl Tool {
                         return Err(e);
                     },
                 };
+                if let Some(said) = Self::restore_hand_changed(ctx, &raw, &rest, &got).await {
+                    return Ok(MessageContent::text(said));
+                }
                 return match got {
                     Ok(_)    => {
                         let n = body.len();
@@ -22878,14 +23062,18 @@ impl Tool {
             Err(why) => return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, &why))),
         };
         let rest = match Self::restore_hold(ctx, &raw, &normalise(&path), now.as_deref(),
-            Some(&body), over).await
+            Some(&body)).await
         {
             Ok(h)    => h,
             Err(why) => return Ok(MessageContent::text(why)),
         };
-        if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, lic, &body).await {
-            Self::restore_failed(&rest).await;
-            return Err(e);
+        match Self::restore_store_write(ctx, &raw, lic, &body, &rest).await {
+            Ok(None)       => {},
+            Ok(Some(said)) => return Ok(MessageContent::text(said)),
+            Err(e)         => {
+                Self::restore_failed(&rest).await;
+                return Err(e);
+            },
         }
         // The read cache is left as it stands: a daimon whose last read was before the restore is
         // refused its next blind write, rather than writing over what was put back.
@@ -23233,6 +23421,27 @@ impl Tool {
         // the store could not keep is refused before the person is asked about it.
         let open = ctx.root == FileRoot::Workspace && crate::wasm::opfs::folder_open()
             && !is_store_path(&path);
+        // A RESTORE'S DELETE KEEPS WHAT IT REMOVES, read at the act and after the person's
+        // yes: a save made while the question was open is what goes, so it is what is kept.
+        // Every reason a turn's delete could keep no copy refuses this one too.  Asked BEFORE
+        // the turn's claim, so a restore refused here leaves no reservation, count or note behind
+        // (hist-safe F2, 2026-10-12: its three refusals returned past `held` and `counted`), and
+        // every return below gives this hold back.
+        let rest = if ctx.restoring != 0 {
+            let store = crate::wasm::diamond::restore_store(ctx.restoring).unwrap_or_default();
+            match Self::delete_copy(ctx, &store, &raw, &path).await {
+                Ok(Ok(now)) => match Self::restore_hold(ctx, &raw, &normalise(&path), Some(&now),
+                    None).await
+                {
+                    Ok(h)    => h,
+                    Err(why) => return Ok(MessageContent::text(why)),
+                },
+                Ok(Err(why)) => return Ok(MessageContent::text(refusal_line(&why))),
+                Err(e)       => return Err(e),
+            }
+        } else {
+            None
+        };
         // PAST WHAT THE TURN MAY KEEP, the turn stops and asks -- and that is asked FIRST,
         // before the person is asked anything (R2-5): a delete the bound would refuse is
         // never put to them.
@@ -23241,7 +23450,10 @@ impl Tool {
                 true).await
             {
                 Ok(h)    => Some(h),
-                Err(why) => return Ok(MessageContent::text(why)),
+                Err(why) => {
+                    Self::restore_failed(&rest).await;
+                    return Ok(MessageContent::text(why));
+                },
             },
             None => None,
         };
@@ -23253,6 +23465,7 @@ impl Tool {
                     Ok(false) => None,
                     Err(why)  => {
                         Self::let_go(&claimed).await;
+                        Self::restore_failed(&rest).await;
                         return Ok(MessageContent::text(why));
                     },
                 }
@@ -23274,28 +23487,11 @@ impl Tool {
                 Ok(h)    => Some(h),
                 Err(why) => {
                     give_back();
+                    Self::restore_failed(&rest).await;
                     return Ok(MessageContent::text(why));
                 },
             },
             _ => None,
-        };
-        // A RESTORE'S DELETE KEEPS WHAT IT REMOVES, read at the act and after the person's
-        // yes: a save made while the question was open is what goes, so it is what is kept.
-        // Every reason a turn's delete could keep no copy refuses this one too.
-        let rest = if ctx.restoring != 0 {
-            let store = crate::wasm::diamond::restore_store(ctx.restoring).unwrap_or_default();
-            match Self::delete_copy(ctx, &store, &raw, &path).await {
-                Ok(Ok(now)) => match Self::restore_hold(ctx, &raw, &normalise(&path), Some(&now),
-                    None, false).await
-                {
-                    Ok(h)    => h,
-                    Err(why) => return Ok(MessageContent::text(why)),
-                },
-                Ok(Err(why)) => return Ok(MessageContent::text(refusal_line(&why))),
-                Err(e)       => return Err(e),
-            }
-        } else {
-            None
         };
         // Absence from this device means "not here"; removal from the cloud index means
         // "gone". Those are different things, and only an explicit delete does the
@@ -24602,10 +24798,9 @@ impl Tool {
     /// * `key` - As the store names it: the scoped path normalised, or absolute on the machine.
     /// * `now` - What stands there as the act found it, or `None` where nothing does.
     /// * `puts` - The bytes the act puts there, or `None` for a delete.
-    /// * `over` - Has the person said the bytes may go back over what stands there?
     #[cfg(target_arch = "wasm32")]
     async fn restore_hold(ctx: &ToolContext, raw: &str, key: &str, now: Option<&[u8]>,
-        puts: Option<&[u8]>, over: bool)
+        puts: Option<&[u8]>)
         -> Result<Option<RestoreHold>, String>
     {
         let deleting = puts.is_none();
@@ -24614,23 +24809,29 @@ impl Tool {
         }
         let id = match crate::wasm::diamond::restore_store(ctx.restoring) {
             Some(id) => id,
-            None     => return Err(refusal_line(&fmt!(
-                "The restore '{}' was part of has ended, so nothing was changed.", raw))),
+            None     => return Err(restore_ended_refusal(raw)),
         };
         if !key.starts_with('/') && !crate::wasm::diamond::versionable(&id, key) {
             return Err(refusal_line(&fmt!(
                 "'{}' is part of Daimond's own record, which keeps its own history, so a restore \
                 does not change it here. Nothing was changed.", raw)));
         }
-        match crate::wasm::diamond::restore_route(ctx.restoring, raw, key, now, puts, over) {
-            crate::diamond_versions::Route::Go       => {},
-            crate::diamond_versions::Route::Left     => return Err(restore_elsewhere_refusal(raw)),
-            crate::diamond_versions::Route::Ask(why) => return Err(restore_unplaced_refusal(raw, why)),
-        }
+        // Before the route, so a file too large to keep is not asked about first and refused after.
         if let Some(b) = now {
             if b.len() > crate::diamond_versions::VERSION_FILE_MAX {
                 return Err(restore_size_refusal(raw, b.len() as u64));
             }
+        }
+        // THE ACT IS BOUND TO THE BYTES THE PERSON DECIDED ON (hist-safe R2, 2026-10-12): `now` is
+        // read here, at the act, and anything else there since is asked about again.
+        match crate::wasm::diamond::restore_route(ctx.restoring, raw, key, now, puts) {
+            crate::wasm::diamond::Act::Go         => {},
+            crate::wasm::diamond::Act::Same       => return Err(restore_same_line(raw)),
+            crate::wasm::diamond::Act::Changed    => return Err(restore_changed_refusal(raw)),
+            crate::wasm::diamond::Act::Left       => return Err(restore_elsewhere_refusal(raw)),
+            crate::wasm::diamond::Act::Ask(why)   => return Err(restore_unplaced_refusal(raw, why)),
+            crate::wasm::diamond::Act::Unasked    => return Err(restore_unasked_refusal(raw)),
+            crate::wasm::diamond::Act::Unanswered => return Err(restore_unanswered_refusal(raw)),
         }
         match crate::wasm::diamond::restore_keep(ctx.restoring, key, now, deleting).await {
             Ok(())  => Ok(Some(RestoreHold {
@@ -24662,6 +24863,55 @@ impl Tool {
                 by:      None,          // a restore is the person's own act
                 door:    false,
             });
+        }
+    }
+
+    /// A restore's machine write the hand refused as changed since the door read it, given back
+    /// and recorded so the page's re-ask names what stands there now: the sentence to answer
+    /// with, or `None` where `got` is not that refusal (hist-safe F1, 2026-10-12).
+    #[cfg(target_arch = "wasm32")]
+    async fn restore_hand_changed(ctx: &ToolContext, raw: &str, rest: &Option<RestoreHold>,
+        got: &Result<String, String>)
+        -> Option<String>
+    {
+        let found = match (got, rest) {
+            (Err(why), Some(_)) => hand_found(why),
+            _                   => None,
+        };
+        match found {
+            Some(now) => {
+                Self::restore_failed(rest).await;
+                crate::wasm::diamond::restore_asked(ctx.restoring, raw, now);
+                Some(restore_changed_refusal(raw))
+            },
+            None      => None,
+        }
+    }
+
+    /// Write `bytes` into storage at `lic`; under a restore's hold, only over the bytes the act
+    /// was bound to, re-read immediately before the commit (hist-safe F1, 2026-10-12).  `None` once
+    /// written; where the file changed since, the hold is given back, what stands there is what
+    /// the person is asked about next, and the sentence to answer with comes back.
+    #[cfg(target_arch = "wasm32")]
+    async fn restore_store_write(ctx: &ToolContext, raw: &str, lic: &Licence, bytes: &[u8],
+        rest: &Option<RestoreHold>)
+        -> Outcome<Option<String>>
+    {
+        let held = match rest {
+            Some(h) => h,
+            None    => {
+                res!(crate::wasm::opfs::write_licensed(ctx.root, lic, bytes).await);
+                return Ok(None);
+            },
+        };
+        let seen = crate::diamond_versions::Seen::of(held.before.as_deref());
+        match res!(crate::wasm::opfs::write_licensed_if(ctx.root, lic, bytes, &seen).await) {
+            None        => Ok(None),
+            Some(found) => {
+                Self::restore_failed(rest).await;
+                crate::wasm::diamond::restore_asked(ctx.restoring, raw, found);
+                Ok(Some(restore_changed_refusal(raw)))
+            },
         }
     }
 
@@ -28545,6 +28795,15 @@ impl ToolRegistry {
         out
     }
 
+    /// The page's look before a restore asks ([`Tool::restore_look_page`]).
+    #[cfg(target_arch = "wasm32")]
+    pub async fn restore_look(&self, args_json: &str) -> MessageContent {
+        match Tool::restore_look_page(args_json, &self.ctx).await {
+            Ok(c)  => c,
+            Err(e) => MessageContent::text(error_line(&e.plain())),
+        }
+    }
+
     /// A restore's put-back of a stored body, byte for byte ([`Tool::put_back_page`]), answered as
     /// [`Self::dispatch_op`] answers a tool call: a failure as its sentence, and a lost folder
     /// reported.  A verb of the restore door alone, so it is in no model's roster.
@@ -28956,6 +29215,42 @@ mod tests {
     use crate::llm::parse_json_string_array;
 
     use oxedyne_fe2o3_jdat::prelude::*;
+
+    // ── writes_if / hand_found ───────────────────────────────────
+
+    /// hist-safe F1, 2026-10-12: a restore writes through a hand only where the hand says it
+    /// compares as it writes, and an older hand's silence is a no.
+    #[test]
+    fn test_writes_if_is_affirmative_00() {
+        let caps = |v: &[&str]| v.iter().map(|c| c.to_string()).collect::<Vec<String>>();
+        assert!(writes_if(&caps(&["fence:linux", CAP_WRITE_IF])));
+        assert!(!writes_if(&caps(&[])), "silence is not the capability");
+        assert!(!writes_if(&caps(&["fence:linux", "file:write"])));
+        assert!(!writes_if(&caps(&["file:write-if-maybe"])), "a prefix is not the capability");
+    }
+
+    /// The hand's refusal, in the words `hand/src/exec.rs` (`write_changed_said`) writes it, is
+    /// read back as what stands there now; anything else is no such refusal.
+    #[test]
+    fn test_hand_found_reads_the_hands_refusal_00() {
+        let h = "ab".repeat(32);
+        let said = |now: &str| fmt!("'/home/u/notes.md' {}, so it was not written over ({}). \
+            Nothing was written.", HAND_WRITE_CHANGED, now);
+        // Hash.
+        assert_eq!(hand_found(&said(&fmt!("now sha256 {}", h))),
+            Some(crate::diamond_versions::Seen::Bytes(h.clone())));
+        // Absent.
+        assert_eq!(hand_found(&said("now absent")), Some(crate::diamond_versions::Seen::Absent));
+        // The refusal with no reading, or a malformed one, binds to nothing: asked again.
+        assert_eq!(hand_found(&said("now sha256 XYZ")), Some(crate::diamond_versions::Seen::Unread));
+        assert_eq!(hand_found(&said(&fmt!("now sha256 {}", &h[..63]))),
+            Some(crate::diamond_versions::Seen::Unread), "a short hash is no hash");
+        assert_eq!(hand_found(&said("")), Some(crate::diamond_versions::Seen::Unread));
+        // Other sentences are not the refusal.
+        assert_eq!(hand_found("Permission denied: '/home/u/notes.md'"), None);
+        assert_eq!(hand_found(&fmt!("now sha256 {}", h)), None,
+            "a hash with no refusal before it is not what the hand found");
+    }
 
     // ── crystal_look ─────────────────────────────────────────────
 

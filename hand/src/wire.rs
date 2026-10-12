@@ -370,9 +370,15 @@ pub enum FileOp {
         limit:  u32,
     },
     /// Replace the whole of `path` with `content`, creating it and its parents.
+    ///
+    /// **`expect` makes it a compare-and-write** (hist-safe F1, 2026-10-12): the hand reads what
+    /// stands there, compares it with what the caller decided on and writes by temp-and-rename in
+    /// the same op, or refuses with [`WRITE_CHANGED`] and writes nothing.  A read in one round
+    /// trip and a write in the next left a save made between them overwritten and kept nowhere.
     Write {
         path:    String,
         content: String,
+        expect:  Option<Expect>,	// None: write whatever stands there
     },
     /// Replace `old` with `new` in `path`, exactly once.
     ///
@@ -429,6 +435,52 @@ pub enum FileOp {
         budget:  u32,
     },
 }
+
+/// What a conditional [`FileOp::Write`] expects to find at its path before it writes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Expect {
+    Absent,		// nothing stands there
+    Hash(String),	// a file whose bytes have this SHA-256, lowercase hex
+}
+
+impl Expect {
+    /// The wire's spelling: `absent`, or the 64-character hash.
+    pub fn word(&self) -> &str {
+        match self {
+            Self::Absent	=> EXPECT_ABSENT,
+            Self::Hash(h)	=> h,
+        }
+    }
+
+    /// The [`Expect`] a wire word names, refused rather than guessed at.
+    pub fn of(word: &str) -> Option<Self> {
+        if word == EXPECT_ABSENT {
+            return Some(Self::Absent);
+        }
+        let hex = word.len() == 64
+            && word.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        match hex {
+            true	=> Some(Self::Hash(word.to_string())),
+            false	=> None,
+        }
+    }
+}
+
+/// The wire word for an [`Expect::Absent`].
+pub const EXPECT_ABSENT: &str = "absent";
+
+/// The `caps` entry of a hand that honours [`FileOp::Write`]'s `expect`.
+///
+/// **A hand without it ignores the field and writes unconditionally**, so the page must never
+/// send a conditional write to a hand that does not say this: it refuses the act instead.
+pub const CAP_WRITE_IF: &str = "file:write-if";
+
+/// The words a conditional write's refusal opens its reason with, which the page tells apart.
+///
+/// The sentence then names what stands there now, as `now sha256 <hex>` or `now absent`, so
+/// the page binds its next question to exactly the bytes the hand compared.  Mirrored as
+/// `HAND_WRITE_CHANGED` in the page's `src/tools.rs`.
+pub const WRITE_CHANGED: &str = "changed since it was read";
 
 impl FileOp {
     /// The word this travels under.

@@ -79,6 +79,7 @@ use crate::{
     },
     wire::{
         Capture,
+        Expect,
         FenceSpec,
         FileOp,
         Req,
@@ -97,7 +98,10 @@ use crate::{
 };
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_core::byte::B32;
 use oxedyne_fe2o3_core::rand::Rand;
+use oxedyne_fe2o3_core::string::ToHexString;
+use oxedyne_fe2o3_hash::sha256;
 // The SAME matchers the page compiles, from the same source text. Two engines that agree
 // today is not a property worth resting a search on: the hand's pass decides which files are
 // worth carrying and the page's decides what the reader sees, so a hand that matched less
@@ -4517,7 +4521,10 @@ fn do_file(op: &FileOp) -> (bool, String) {
     }
     match op {
         FileOp::Read { path, offset, limit } => read_op(path, *offset, *limit),
-        FileOp::Write { path, content }      => write_op(path, content),
+        FileOp::Write { path, content, expect } => match expect {
+            None    => write_op(path, content),
+            Some(x) => write_if_op(path, content, x),
+        },
         FileOp::Edit { path, old, new }      => edit_op(path, old, new),
         FileOp::Move { path, to }            => move_op(path, to),
         FileOp::List { path }                => list_op(path),
@@ -4646,6 +4653,78 @@ fn write_op(path: &str, content: &str) -> (bool, String) {
         Ok(())  => (true, String::new()),
         Err(e)  => (false, fs_said("write", path, &e)),
     }
+}
+
+/// The whole of `path` replaced by `content` only where what stands there is what `expect`
+/// says, compared and written in this one op (hist-safe F1, 2026-10-12).
+///
+/// **The new bytes go to a temporary file beside it first, then the comparison, then a rename
+/// into place**, so the gap between looking and writing is a rename and not a round trip to the
+/// page.  A rename replaces the name and keeps no part of the old file, so a reader never sees
+/// half of either.  The old file's permissions are carried over, and a symbolic link is written
+/// through to its target, as `std::fs::write` would.  On a mismatch nothing is written and the
+/// refusal names what stands there now, opening with [`crate::wire::WRITE_CHANGED`].
+#[cfg(unix)]
+fn write_if_op(path: &str, content: &str, expect: &Expect) -> (bool, String) {
+    // Through a link to the file it names, so the link itself is left standing.
+    let at = match std::fs::canonicalize(path) {
+        Ok(p)  => p,
+        Err(_) => std::path::PathBuf::from(path),
+    };
+    let dir = match at.parent() {
+        Some(d) => d.to_path_buf(),
+        None    => return (false, fmt!("'{}' has no folder to write in. Nothing was written.",
+            path)),
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return (false, fs_said("write", path, &e));
+    }
+    let name = at.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let tmp = dir.join(fmt!(".{}.daimond-{}.tmp", name, std::process::id()));
+    let made = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, content.as_bytes())
+            .and_then(|()| f.sync_all()));
+    if let Err(e) = made {
+        let _ = std::fs::remove_file(&tmp);
+        return (false, fs_said("write", path, &e));
+    }
+    // Looked at last, with the bytes ready, so the rename follows at once.
+    let found = match std::fs::read(&at) {
+        Ok(b)  => {
+            if let Ok(m) = std::fs::metadata(&at) {
+                let _ = std::fs::set_permissions(&tmp, m.permissions());
+            }
+            Expect::Hash(B32(sha256::digest(&b)).to_hex_string())
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Expect::Absent,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return (false, fs_said("write", path, &e));
+        },
+    };
+    if &found != expect {
+        let _ = std::fs::remove_file(&tmp);
+        return (false, write_changed_said(path, &found));
+    }
+    match std::fs::rename(&tmp, &at) {
+        Ok(())  => (true, String::new()),
+        Err(e)  => {
+            let _ = std::fs::remove_file(&tmp);
+            (false, fs_said("write", path, &e))
+        },
+    }
+}
+
+/// The refusal of a conditional write whose file changed since the caller read it, naming what
+/// stands there now in the form the page reads back: `now sha256 <hex>` or `now absent`.
+#[cfg(unix)]
+fn write_changed_said(path: &str, found: &Expect) -> String {
+    let now = match found {
+        Expect::Absent  => fmt!("now {}", crate::wire::EXPECT_ABSENT),
+        Expect::Hash(h) => fmt!("now sha256 {}", h),
+    };
+    fmt!("'{}' {}, so it was not written over ({}). Nothing was written.",
+        path, crate::wire::WRITE_CHANGED, now)
 }
 
 /// `old` replaced by `new` in `path`, exactly once.
@@ -5325,7 +5404,16 @@ pub(crate) fn encode_payload(p: &Payload) -> Outcome<Vec<u8>> {
                     res!(e.len(*offset as usize));
                     res!(e.len(*limit as usize));
                 },
-                FileOp::Write { content, .. } => res!(e.text(content)),
+                FileOp::Write { content, expect, .. } => {
+                    res!(e.text(content));
+                    match expect {
+                        None    => e.byte(0),
+                        Some(x) => {
+                            e.byte(1);
+                            res!(e.text(x.word()));
+                        },
+                    }
+                },
                 FileOp::Edit { old, new, .. } => {
                     res!(e.text(old));
                     res!(e.text(new));
@@ -5469,7 +5557,22 @@ fn decode_payload(b: &[u8]) -> Outcome<Payload> {
                     offset: res!(d.len()) as u32,
                     limit:  res!(d.len()) as u32,
                 },
-                1 => FileOp::Write { path: res!(one(&named)), content: res!(d.text()) },
+                1 => FileOp::Write {
+                    path:    res!(one(&named)),
+                    content: res!(d.text()),
+                    expect:  match res!(d.byte()) {
+                        0 => None,
+                        _ => {
+                            let w = res!(d.text());
+                            match Expect::of(&w) {
+                                Some(x) => Some(x),
+                                None    => return Err(err!(
+                                    "The plan names a write expecting {:?}, which is no hash.", w;
+                                    Invalid, Input)),
+                            }
+                        },
+                    },
+                },
                 2 => FileOp::Edit {
                     path: res!(one(&named)),
                     old:  res!(d.text()),
@@ -8287,11 +8390,92 @@ mod tests {
         let (ok, said) = res!(filed(&files, &ws, FileOp::Write {
             path:    fmt!("{}", outside.display()),
             content: fmt!("clobbered"),
+            expect:  None,
         }).await);
         assert!(!ok, "a file tool wrote outside its fence: {:?}", said);
         let still = res!(std::fs::read_to_string(&outside).map_err(|e| err!(e,
             "the file outside the fence could not be read back"; Test, IO)));
         assert_eq!(still, "other", "a file tool changed a file outside its fence");
+        Ok(())
+    }
+
+    /// A conditional write lands only over the bytes it expects, and a save made since is left
+    /// standing and named (hist-safe F1, 2026-10-12).
+    ///
+    /// Through the real launcher under its fence, because the temp file and the rename are
+    /// what the kernel must allow, and a unit test of the function alone would not ask it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_conditional_write_lands_only_over_the_bytes_it_expects() -> Outcome<()> {
+        let base = res!(fixture("file-door-write-if"));
+        let ws = base.join("ws");
+        let files = res!(file_door());
+        let target = ws.join("a.md");
+        let hash = |t: &str| B32(sha256::digest(t.as_bytes())).to_hex_string();
+        res!(std::fs::write(&target, "his first"));
+        let mode = |p: &Path| -> u32 {
+            use std::os::unix::fs::PermissionsExt;
+            match std::fs::metadata(p) {
+                Ok(m)  => m.permissions().mode() & 0o777,
+                Err(_) => 0,
+            }
+        };
+        res!(std::fs::set_permissions(&target,
+            std::os::unix::fs::PermissionsExt::from_mode(0o640)));
+        let write = |text: &str, expect: Expect| FileOp::Write {
+            path:    fmt!("{}", target.display()),
+            content: text.to_string(),
+            expect:  Some(expect),
+        };
+
+        // His save lands after the door read "his first": the write expecting it is refused.
+        res!(std::fs::write(&target, "his save"));
+        let (ok, said) = res!(filed(&files, &ws, write("the version",
+            Expect::Hash(hash("his first")))).await);
+        assert!(!ok, "a conditional write went over a save made since it was read: {:?}", said);
+        assert!(said.contains(crate::wire::WRITE_CHANGED), "the refusal is not the one the page \
+            tells apart: {:?}", said);
+        assert!(said.contains(&fmt!("now sha256 {}", hash("his save"))),
+            "the refusal does not name what stands there now: {:?}", said);
+        let still = res!(std::fs::read_to_string(&target));
+        assert_eq!(still, "his save", "his save was written over");
+
+        // Expecting what stands there, it writes, by rename, keeping the file's mode.
+        let (ok, said) = res!(filed(&files, &ws, write("the version",
+            Expect::Hash(hash("his save")))).await);
+        assert!(ok, "a conditional write over the bytes it expected was refused: {:?}", said);
+        assert_eq!(res!(std::fs::read_to_string(&target)), "the version");
+        assert_eq!(mode(&target), 0o640, "the rename lost the file's permissions");
+        let left: Vec<String> = res!(std::fs::read_dir(&ws)).filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".tmp")).collect();
+        assert!(left.is_empty(), "a temporary file was left behind: {:?}", left);
+
+        // Expecting nothing where something stands is refused, and says so.
+        let (ok, said) = res!(filed(&files, &ws, write("again", Expect::Absent)).await);
+        assert!(!ok, "a write expecting no file went over one: {:?}", said);
+        assert_eq!(res!(std::fs::read_to_string(&target)), "the version");
+
+        // Expecting nothing where nothing stands creates the file, folders and all.
+        let fresh = ws.join("new/b.md");
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Write {
+            path:    fmt!("{}", fresh.display()),
+            content: fmt!("made"),
+            expect:  Some(Expect::Absent),
+        }).await);
+        assert!(ok, "a write expecting no file where there is none was refused: {:?}", said);
+        assert_eq!(res!(std::fs::read_to_string(&fresh)), "made");
+
+        // Expecting a file where it was deleted since is refused, with "now absent".
+        let gone = ws.join("gone.md");
+        let (ok, said) = res!(filed(&files, &ws, FileOp::Write {
+            path:    fmt!("{}", gone.display()),
+            content: fmt!("back"),
+            expect:  Some(Expect::Hash(hash("was here"))),
+        }).await);
+        assert!(!ok && said.contains("now absent"),
+            "a write expecting a file that is gone was not refused as such: {:?}", said);
+        assert!(!gone.exists(), "a write expecting a file that is gone created one");
         Ok(())
     }
 
