@@ -113,24 +113,79 @@ let _fontState = '';           // which project fonts the live compiler was last
 // counter live on the instance, so a second instance would be a second cache starting
 // cold and a `version` that restarts below the last one this view discarded on.
 //
-// It does not exist yet: austenite-a's lane builds `www/vendor/austenite`. Until it is
-// there `getAustenite` rejects, `compileProjectDelta` answers `{ error }`, and the flag
-// being off by default means none of this is reached in a shipped build.
-const AUST_VENDOR = new URL('../vendor/austenite/', import.meta.url);
-const AUST_GLUE   = new URL('oxedyne_fe2o3_austenite.js', AUST_VENDOR);
-const AUST_WASM   = new URL('oxedyne_fe2o3_austenite_bg.wasm', AUST_VENDOR);
-let _austPromise = null;       // memoised Austenite instance build
-let _aust = null;              // the built instance, once resolved, for the sync heap read
+// `www/vendor/austenite` holds the pinned build (`dev/austenite.pin`). Without it the
+// worker says so, `getAustenite` rejects and `compileProjectDelta` answers `{ error }`.
+//
+// IT RUNS IN A WORKER (`austenite_worker.js`), and this side holds a stand-in with the
+// instance's method names, each answering a promise. On the main thread a rebuild held
+// the page for as long as it took -- 0.25 s a keystroke on a 300-page book with the
+// paragraph memo, 1.35 s when every paragraph holds inline maths (au_preview_measure.md,
+// 12 Oct) -- so typing stopped answering while the pages caught up. One worker for the
+// life of the page, for the reason above; if it dies, every later call says so, with a
+// reason the watch loop reads as a dead compiler (`TRAPPED` in typstwatch.js).
+const AUST_WORKER = new URL('austenite_worker.js', import.meta.url);
+let _austPromise = null;       // memoised worker start
+let _aust = null;              // the stand-in, once the worker has said it is ready
+let _austHeap = 0;             // the worker's wasm heap in MB, from its last reply
+const _dec = new TextDecoder();
 
-/// Build (once) and return the Austenite compiler instance.
+/// Decode, in place, the page SVGs a worker reply moved across as UTF-8 bytes
+/// (`austenite_worker.js` `pack`), so the reply reads as the instance wrote it.
+function unpack(value) {
+	const changed = value && Array.isArray(value.changed) ? value.changed.slice() : [];
+	if (value && value.svg instanceof Uint8Array) changed.push(value);
+	for (const c of changed) {
+		if (c && c.svg instanceof Uint8Array) c.svg = _dec.decode(c.svg);
+	}
+	return value;
+}
+
+/// Start (once) the Austenite worker and return its stand-in.
 function getAustenite() {
 	if (_austPromise) return _austPromise;
-	_austPromise = (async function () {
-		const mod = await import(AUST_GLUE.href);
-		await mod.default(AUST_WASM.href);
-		_aust = new mod.DaimondTypst();
-		return _aust;
-	})();
+	_austPromise = new Promise(function (resolve, reject) {
+		const w = new Worker(AUST_WORKER, { type: 'module' });
+		const waiting = new Map();	// id -> { resolve, reject }
+		let seq = 0;
+		let gone = '';			// why the worker stopped, once it has
+		w.onmessage = function (ev) {
+			const m = ev.data || {};
+			if (typeof m.heap === 'number') _austHeap = m.heap;
+			if (m.id === 0) {
+				if (m.error) { gone = String(m.error); reject(new Error(gone)); return; }
+				resolve(_aust = stand);
+				return;
+			}
+			const p = waiting.get(m.id);
+			if (!p) return;
+			waiting.delete(m.id);
+			if (m.error) p.reject(new Error(String(m.error)));
+			else p.resolve(unpack(m.value));
+		};
+		w.onerror = function (ev) {
+			ev.preventDefault();
+			gone = 'The Austenite compiler worker stopped: '
+				+ String((ev && ev.message) || 'no reason was given');
+			for (const p of waiting.values()) p.reject(new Error(gone));
+			waiting.clear();
+			reject(new Error(gone));
+			w.terminate();
+		};
+		function call(op, args) {
+			if (gone) return Promise.reject(new Error(gone));
+			return new Promise(function (res, rej) {
+				const id = ++seq;
+				waiting.set(id, { resolve: res, reject: rej });
+				w.postMessage({ id, op, args });
+			});
+		}
+		const stand = {
+			compileProjectDelta: function (p) { return call('compileProjectDelta', [p]); },
+			renderPage: function (page) { return call('renderPage', [page]); },
+			queryProject: function (sel, field) { return call('queryProject', [sel, field]); },
+			heapMB: function () { return _austHeap; },
+		};
+	});
 	return _austPromise;
 }
 
@@ -755,9 +810,22 @@ export async function compileProjectDelta(p) {
 	}
 	try {
 		const aust = await getAustenite();
-		return await Promise.resolve(aust.compileProjectDelta(p));
+		return await aust.compileProjectDelta(p);
 	} catch (e) {
 		return { error: tt('typst.compile_error', { reason: (e && e.message ? e.message : e) }) };
+	}
+}
+
+/// One page of the last delta, drawn again from the pages the Austenite instance kept:
+/// `{ id, index, version, svg }`, or `{ error, code }` with `code` one of `uncompiled`,
+/// `gone`, `range`, `input` (or `internal`). How the live view gets back a page it let go
+/// of when it scrolled away (`typstwatch.js` `fetchPages`). Resolves, never rejects.
+export async function renderPage(page) {
+	try {
+		const aust = await getAustenite();
+		return await aust.renderPage(page);
+	} catch (e) {
+		return { error: tt('typst.compile_error', { reason: (e && e.message ? e.message : e) }), code: 'internal' };
 	}
 }
 
@@ -817,6 +885,8 @@ if (typeof window !== 'undefined' && !window.DaimondTypst) {
 		/// `{ version, order, changed, reset }` or `{ error }`. The default live-view
 		/// path now that the Austenite wasm is vendored.
 		compileProjectDelta: function (project) { return compileProjectDelta(project); },
+		/// One page of the last delta, by id or index, for a page the view let go of.
+		renderPage: function (page) { return renderPage(page); },
 		/// Read or set which engine lays the live view out: `'austenite'` (default)
 		/// or `'typst'`. The A/B flips this between runs on one device.
 		engine: engine,

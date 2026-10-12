@@ -349,8 +349,8 @@
 	'chat.send': 'Enviar',
 	'chat.busy': 'Pensando…',
 	'chat.thinking': 'Raciocínio',
-	'chat.busy_tool': 'Executando {tool}, passo {n}…',
-	'chat.busy_next': 'Passo {n} concluído, pensando…',
+	'chat.busy_tool': 'Executando {tool}, chamada de ferramenta {n}…',
+	'chat.busy_next': 'Chamada de ferramenta {n} concluída, pensando…',
 	'chat.busy_road':  'A conexão caiu — tentando {name} novamente ({n} de {of})…',
 	'chat.busy_writing': 'Escrevendo a resposta…',
 	// One command's own line, when the turn's fence withheld the network from it.

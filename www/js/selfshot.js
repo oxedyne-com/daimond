@@ -69,8 +69,10 @@
 		var DROP = { SCRIPT: 1, NOSCRIPT: 1, LINK: 1, TEMPLATE: 1 };
 
 		/// The colour to paint behind a view whose own background is see-through. A vision
-		/// worker handed a transparent PNG reads the compositor's black, not the app.
-		function backdrop(el, asked) {
+		/// worker handed a transparent PNG reads the compositor's black, not the app. `dflt` is
+		/// what is behind the document itself when nothing in it is opaque: a Diamond's page is
+		/// transparent over the app, and white under its light theme text drew a blank strip.
+		function backdrop(el, asked, dflt) {
 			if (asked) return asked;
 			var probe = el;
 			while (probe) {
@@ -85,7 +87,7 @@
 				&& !/rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)/.test(body)) {
 				return body;
 			}
-			return '#ffffff';
+			return dflt || '#ffffff';
 		}
 
 		/// Copy every computed property from `src` onto `dst`'s inline style, so the clone
@@ -100,43 +102,90 @@
 			dst.setAttribute('style', out);
 		}
 
-		/// Clone `el` and inline the computed style of it and every descendant, walking the
-		/// live tree and the clone in lock-step. A `<canvas>` is turned into an `<img>` of
-		/// its pixels, because a foreignObject does not carry a canvas's contents; a form
-		/// control's current value is pinned as an attribute for the same reason.
-		function cloneStyled(el) {
-			var clone = el.cloneNode(true);
-			var srcAll = [el].concat(Array.prototype.slice.call(el.querySelectorAll('*')));
-			var dstAll = [clone].concat(Array.prototype.slice.call(clone.querySelectorAll('*')));
-			// Back-to-front, so removing a dropped node never shifts an index we have not
-			// reached yet.
-			for (var i = srcAll.length - 1; i >= 0; i--) {
-				var s = srcAll[i];
-				var d = dstAll[i];
-				if (!d) continue;
-				if (DROP[s.tagName]) { if (d.parentNode) d.parentNode.removeChild(d); continue; }
-				inlineStyle(s, d);
-				if (s.tagName === 'CANVAS') {
-					try {
-						var png = s.toDataURL('image/png');
-						var img = document.createElement('img');
-						img.setAttribute('src', png);
-						img.setAttribute('style', d.getAttribute('style') || '');
-						if (d.parentNode) d.parentNode.replaceChild(img, d);
-					} catch (e) { /* a tainted canvas stays a blank box; the shot goes on */ }
-					continue;
-				}
-				if (s.tagName === 'INPUT') {
-					if (s.type === 'checkbox' || s.type === 'radio') {
-						if (s.checked) d.setAttribute('checked', 'checked');
-					} else if (s.value != null) {
-						d.setAttribute('value', s.value);
-					}
-				} else if (s.tagName === 'TEXTAREA') {
-					d.textContent = s.value;
-				}
+		/// The children a node DRAWS, which are not always its DOM children. A shadow host draws its
+		/// shadow tree and not its light children (the Typst preview's pages are an `<svg>` in one,
+		/// `www/js/typstwatch.js`), and `cloneNode` copies no shadow root, so a capture of the
+		/// preview came back as an empty box. A `<slot>` draws what is assigned to it, else its own
+		/// fallback.
+		function kidsOf(s) {
+			if (s.shadowRoot) return s.shadowRoot.childNodes || [];
+			if (s.tagName === 'SLOT' && typeof s.assignedNodes === 'function') {
+				var a = s.assignedNodes({ flatten: true });
+				if (a && a.length) return a;
 			}
-			return clone;
+			return s.childNodes || [];
+		}
+
+		/// How many elements `el` draws, shadow trees included: the node gate's count.
+		function drawnCount(el) {
+			var n = 0;
+			(function walk(s) {
+				var k = kidsOf(s);
+				for (var i = 0; i < k.length; i++) {
+					if (k[i].nodeType !== 1) continue;
+					n++;
+					walk(k[i]);
+				}
+			})(el);
+			return n;
+		}
+
+		/// A drawn node's copy that the SVG image can draw itself, or null when it draws nothing.
+		/// An `<img>` is loaded inside the SVG image, which fetches nothing, so its pixels are put
+		/// in as a data URL; a `<canvas>` becomes an `<img>` of its pixels; a form control's value
+		/// is pinned as an attribute. A `<style>` from a shadow tree is dropped, since its rules
+		/// are scoped to that tree and the computed style is inlined already.
+		function copyOf(s, d, shadow) {
+			if (s.tagName === 'CANVAS') {
+				try {
+					var img = document.createElement('img');
+					img.setAttribute('src', s.toDataURL('image/png'));
+					img.setAttribute('style', d.getAttribute('style') || '');
+					return img;
+				} catch (e) { return d; }	// a tainted canvas stays a blank box; the shot goes on
+			}
+			if (s.tagName === 'IMG' && s.complete && s.naturalWidth > 0
+				&& !/^data:/.test(String(s.currentSrc || s.src || ''))) {
+				try {
+					var c = document.createElement('canvas');
+					c.width = s.naturalWidth;
+					c.height = s.naturalHeight;
+					c.getContext('2d').drawImage(s, 0, 0);
+					d.setAttribute('src', c.toDataURL('image/png'));
+					d.removeAttribute('srcset');
+				} catch (e) { /* cross-origin: left as it is, and it draws nothing */ }
+				return d;
+			}
+			if (s.tagName === 'INPUT') {
+				if (s.type === 'checkbox' || s.type === 'radio') {
+					if (s.checked) d.setAttribute('checked', 'checked');
+				} else if (s.value != null) {
+					d.setAttribute('value', s.value);
+				}
+				return d;
+			}
+			if (s.tagName === 'TEXTAREA') { d.textContent = s.value; return d; }
+			return null;
+		}
+
+		/// Clone `el` and inline the computed style of it and every node it draws, shadow trees
+		/// included (`kidsOf`).
+		function cloneStyled(el) {
+			function walk(s, shadow) {
+				if (s.nodeType === 3) return s.cloneNode(false);
+				if (s.nodeType !== 1 || DROP[s.tagName] || (shadow && s.tagName === 'STYLE')) return null;
+				var d = s.cloneNode(false);
+				inlineStyle(s, d);
+				var leaf = copyOf(s, d, shadow);
+				if (leaf) return leaf;
+				var k = kidsOf(s), inner = shadow || !!s.shadowRoot;
+				for (var i = 0; i < k.length; i++) {
+					var c = walk(k[i], inner);
+					if (c) d.appendChild(c);
+				}
+				return d;
+			}
+			return walk(el, false);
 		}
 
 		/// The viewport's worth of `el` (D-20261006-14, the Lens's picture of a device): only what
@@ -146,12 +195,13 @@
 		/// its scroll, since the clone starts unscrolled; a frame becomes a labelled box, because
 		/// a frame cannot be drawn from outside it (its picture, when it sends one, goes on top).
 		function cloneView(el, opts) {
-			var vw = window.innerWidth, vh = window.innerHeight, seen = 0;
+			var box = opts.clip || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+			var seen = 0;
 			var label = typeof opts.frame_label === 'string' ? opts.frame_label : '';
-			function off(r) { return r.bottom <= 0 || r.right <= 0 || r.top >= vh || r.left >= vw; }
-			function walk(s) {
+			function off(r) { return r.bottom <= box.top || r.right <= box.left || r.top >= box.bottom || r.left >= box.right; }
+			function walk(s, shadow) {
 				if (s.nodeType === 3) return s.cloneNode(false);
-				if (s.nodeType !== 1 || DROP[s.tagName]) return null;
+				if (s.nodeType !== 1 || DROP[s.tagName] || (shadow && s.tagName === 'STYLE')) return null;
 				var r = s.getBoundingClientRect();
 				var d = s.cloneNode(false);
 				var cs = getComputedStyle(s);
@@ -181,26 +231,12 @@
 					box.textContent = label;
 					return box;
 				}
-				if (s.tagName === 'CANVAS') {
-					try {
-						var img = document.createElement('img');
-						img.setAttribute('src', s.toDataURL('image/png'));
-						img.setAttribute('style', d.getAttribute('style') || '');
-						return img;
-					} catch (e) { return d; }
-				}
-				if (s.tagName === 'INPUT') {
-					if (s.type === 'checkbox' || s.type === 'radio') {
-						if (s.checked) d.setAttribute('checked', 'checked');
-					} else if (s.value != null) {
-						d.setAttribute('value', s.value);
-					}
-					return d;
-				}
-				if (s.tagName === 'TEXTAREA') { d.textContent = s.value; return d; }
+				var leaf = copyOf(s, d, shadow);
+				if (leaf) return leaf;
 				var sx = s === el ? 0 : s.scrollLeft, sy = s === el ? 0 : s.scrollTop;
-				for (var c = s.firstChild; c; c = c.nextSibling) {
-					var k = walk(c);
+				var kids = kidsOf(s), inner = shadow || !!s.shadowRoot;
+				for (var j = 0; j < kids.length; j++) {
+					var k = walk(kids[j], inner);
 					if (!k) continue;
 					if ((sx || sy) && k.nodeType === 1) {
 						k.style.setProperty('transform',
@@ -210,10 +246,11 @@
 				}
 				return d;
 			}
-			var clone = walk(el);
+			var clone = walk(el, false);
 			var at = el.getBoundingClientRect();
-			// The root's own place in the window: a scrolled page puts its top above zero.
-			clone.style.setProperty('transform', 'translate(' + at.left + 'px,' + at.top + 'px)');
+			// The root's own place in the box: a scrolled page puts its top above zero.
+			clone.style.setProperty('transform', 'translate(' + ((at.left || 0) - box.left) + 'px,'
+				+ ((at.top || 0) - box.top) + 'px)');
 			clone.style.setProperty('transform-origin', '0 0');
 			return clone;
 		}
@@ -223,13 +260,15 @@
 		/// `opts`: `max_w` caps the output width (default TARGET_MAX_W, scaling the whole
 		/// picture down to fit); `background` paints behind a see-through view; `scale`
 		/// forces a device-pixel ratio instead of the fitted one; `viewport` draws only the window's
-		/// worth of `el` at the window's size (`cloneView`), labelling a frame `frame_label`.
+		/// worth of `el` at the window's size (`cloneView`), labelling a frame `frame_label`, or
+		/// only what falls in `clip` (`{ left, top, right, bottom }`, window pixels) at its size.
 		function rasterise(el, opts) {
 			opts = opts || {};
 			var vp = opts.viewport === true;
 			var rect = el.getBoundingClientRect();
-			var w = Math.max(1, Math.ceil(vp ? window.innerWidth : rect.width));
-			var h = Math.max(1, Math.ceil(vp ? window.innerHeight : rect.height));
+			var clip = opts.clip;
+			var w = Math.max(1, Math.ceil(clip ? clip.right - clip.left : vp ? window.innerWidth : rect.width));
+			var h = Math.max(1, Math.ceil(clip ? clip.bottom - clip.top : vp ? window.innerHeight : rect.height));
 			var maxW = opts.max_w > 0 ? opts.max_w : TARGET_MAX_W;
 			var scale = opts.scale > 0 ? opts.scale : Math.min(1, maxW / w);
 			var cw = Math.max(1, Math.round(w * scale));
@@ -241,7 +280,7 @@
 					+ 'and liable to come back as an empty image. Pass a smaller "max_w", or name '
 					+ 'a narrower selector.');
 			}
-			var bg = backdrop(el, opts.background);
+			var bg = backdrop(el, opts.background, opts.fallback);
 
 			var clone = vp ? cloneView(el, opts) : cloneStyled(el);
 			clone.style.margin = '0';
@@ -324,7 +363,7 @@
 				img.src = url;
 			});
 		}
-		return { rasterise: rasterise, MAX_NODES: MAX_NODES };
+		return { rasterise: rasterise, MAX_NODES: MAX_NODES, drawnCount: drawnCount, backdrop: backdrop };
 	}
 
 	var R = rasteriser();
@@ -337,25 +376,114 @@
 		return !!(c && typeof c.render === 'function');
 	}
 
+	/// Is `el` drawn in the window now: displayed, visible, and with some of its box on screen?
+	function shown(el) {
+		if (!el || !el.getBoundingClientRect) return false;
+		var cs = getComputedStyle(el);
+		if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+		return !!clipOf(el);
+	}
+
+	/// The part of `el`'s box inside the window, in window pixels, or null when none is.
+	function clipOf(el) {
+		var r = el.getBoundingClientRect();
+		var l = r.left || 0, t = r.top || 0;
+		var c = {
+			left:   Math.max(0, l),
+			top:    Math.max(0, t),
+			right:  Math.min(window.innerWidth, r.right != null ? r.right : l + r.width),
+			bottom: Math.min(window.innerHeight, r.bottom != null ? r.bottom : t + r.height),
+		};
+		return c.right - c.left >= 1 && c.bottom - c.top >= 1 ? c : null;
+	}
+
+	var VIEW_NAME = /^[a-z][a-z0-9_-]*$/;
+
+	/// The views `in` can name right now, in the order the daimon should read them: the panels on
+	/// screen by their `data-panel` names (the Typst preview is `preview`, a file is `doc`), then
+	/// `screen` (the window as drawn) and `crystal` (a Diamond's page, drawn afresh).
+	function viewsNow() {
+		var out = [];
+		var ps = document.querySelectorAll ? document.querySelectorAll('.panel[data-panel]') : [];
+		for (var i = 0; i < ps.length; i++) {
+			var n = ps[i].getAttribute('data-panel');
+			if (n && VIEW_NAME.test(n) && out.indexOf(n) < 0 && shown(ps[i])) out.push(n);
+		}
+		out.push('screen');
+		if (crystalDriver()) out.push('crystal');
+		return out;
+	}
+
+	/// The sentence every refusal ends with, so the daimon's next call can name a real view.
+	function viewsLine() {
+		return ' Views on screen now: ' + viewsNow().join(', ')
+			+ '. Call capture with in:"<view>" (and a selector inside it if you need less).';
+	}
+
+	/// A panel named by `in`, when it is on screen, else null.
+	function viewEl(name) {
+		if (!VIEW_NAME.test(name)) return null;
+		var el = document.querySelector('.panel[data-panel="' + name + '"]');
+		return el && shown(el) ? el : null;
+	}
+
 	/// Resolve the request's selector to one element, or throw in the daimon's language.
 	///
 	/// A selector that matches nothing is very often a selector for the Diamond's page, which
 	/// is not in this document at all: it runs in a sandboxed iframe with an opaque origin, so
-	/// no query here can reach it. The refusal says so, and names the option that does.
+	/// no query here can reach it. The refusal says so, and names the views that can be drawn.
 	function target(sel) {
 		if (!sel || !String(sel).trim()) return document.body;
 		var el = document.querySelector(String(sel));
 		if (!el) {
 			throw new Error(
-				"Nothing on the page matches the selector '" + sel + "'."
+				"Nothing on the page matches the selector '" + sel + "'. Selectors are the app's own DOM, "
+				+ 'which you need not know: name a view instead.' + viewsLine()
 				+ (crystalDriver()
-					? ' This captures the app\'s own view. If the selector is for a Diamond\'s page, that page '
-						+ 'lives in a sandboxed frame no selector here can reach: call capture again with '
-						+ 'in:"crystal" and the same selector, which draws it afresh and measures it. '
-						+ 'Otherwise capture the whole view by leaving the selector out, or name one that exists.'
-					: ' Capture the whole view by leaving the selector out, or name one that exists.'));
+					? ' A Diamond\'s page lives in a sandboxed frame no selector here can reach: in:"crystal" '
+						+ 'draws it afresh and measures it.'
+					: ''));
 		}
 		return el;
+	}
+
+	/// `in:<view>`: a panel on screen (or `screen`, the whole window) drawn as it is now, only
+	/// what is inside the window, at its size on screen. A selector narrows it to one element
+	/// inside the panel.
+	function captureView(req, name) {
+		var root = name === 'screen' ? document.body : viewEl(name);
+		if (!root) {
+			return Promise.reject(new Error('No view called ' + JSON.stringify(name) + ' is on screen.' + viewsLine()));
+		}
+		var el = root;
+		if (req.selector != null && String(req.selector).trim()) {
+			el = root.querySelector(String(req.selector));
+			if (!el) {
+				return Promise.reject(new Error("Nothing in the " + name + " view matches the selector '"
+					+ req.selector + "'. Leave the selector out to capture the whole view." + viewsLine()));
+			}
+		}
+		var clip = name === 'screen' && el === root ? null : clipOf(el);
+		if (name !== 'screen' && !clip) {
+			return Promise.reject(new Error('That part of the ' + name + ' view is scrolled out of sight.' + viewsLine()));
+		}
+		var shot;
+		try {
+			shot = rasterise(el, { viewport: true, clip: clip, max_w: req.max_w, background: req.background,
+				scale: req.scale, frame_label: 'a Diamond page: capture in:"crystal"' });
+		} catch (e) {
+			var m = String((e && e.message) || e);
+			if (/elements on screen/.test(m)) {
+				m = 'The ' + name + ' view holds more than ' + MAX_NODES + ' elements on screen, too many to '
+					+ 'draw without freezing the app. Name a selector inside it.' + viewsLine();
+			}
+			return Promise.reject(new Error(m));
+		}
+		return shot.then(envelope);
+	}
+
+	function envelope(result) {
+		return JSON.stringify({ ok: true, png_b64: result.b64, w: result.w, h: result.h, bytes: result.bytes });
 	}
 
 	/// `in:"crystal"`: draw the Diamond's own page afresh in a hidden sandboxed frame, at one
@@ -405,7 +533,7 @@
 	/// The whole surface to the wasm edge: hand it a JSON request, get a JSON string back.
 	///
 	/// Request : { "selector"?: CSS, "max_w"?: int, "background"?: CSS colour, "scale"?: number,
-	///             "in"?: "crystal" (then see `renderCrystal`) }
+	///             "in"?: "crystal" (then see `renderCrystal`), "screen" or a view (`captureView`) }
 	/// Answer  : { "ok": true, "png_b64": ..., "w": int, "h": int, "bytes": int }
 	/// A refusal rejects the promise with an Error whose message src/wasm/shot.rs surfaces
 	/// verbatim, exactly as DaimondAsk and DaimondDoc do.
@@ -414,9 +542,9 @@
 		try { req = JSON.parse(String(reqJson || '{}')); } catch (e) { req = {}; }
 		if (req.in === 'crystal') return renderCrystal(req);
 		if (req.in != null && req.in !== '' && req.in !== 'app') {
-			return Promise.reject(new Error(
-				'"in" is "crystal" (a Diamond page, measured from inside its frame) or left out '
-				+ '(the app\'s own view); ' + JSON.stringify(String(req.in)) + ' is neither.'));
+			var name = String(req.in).trim().toLowerCase();
+			try { return captureView(req, name); }
+			catch (e) { return Promise.reject(e); }
 		}
 		var el;
 		try { el = target(req.selector); }
@@ -429,14 +557,13 @@
 		// deep in `rasterise` used to escape as an uncaught exception and trap the wasm
 		// instance (src/wasm/shot.rs calls `capture` with no catch); a subtree this
 		// size never reaches that code path at all.
-		var n = el.querySelectorAll('*').length;
+		var n = R.drawnCount(el);
 		if (n > MAX_NODES) {
 			return Promise.reject(new Error(
 				(el === document.body ? 'That is the whole page -- ' : 'That selector -- ')
 				+ n + ' elements -- is above the ' + MAX_NODES + ' the self-capture rasteriser '
-				+ 'can style and serialise without freezing the app. Name the smallest selector '
-				+ '(an #id or a specific class) that shows the change; never capture the whole '
-				+ 'page, the transcript (#chat-output) or the chat pane.'));
+				+ 'can style and serialise without freezing the app. Name a view, which draws only '
+				+ 'what is on screen, or the smallest selector that shows the change.' + viewsLine()));
 		}
 
 		// Throw-to-reject guard -- `rasterise` does real work synchronously before it
@@ -454,19 +581,13 @@
 		} catch (e) {
 			return Promise.reject(e);
 		}
-		return shot.then(function (result) {
-			return JSON.stringify({
-				ok:      true,
-				png_b64: result.b64,
-				w:       result.w,
-				h:       result.h,
-				bytes:   result.bytes,
-			});
-		});
+		return shot.then(envelope);
 	}
 
 	window.DaimondShot = {
 		capture:   capture,
+		views:     viewsNow,
+		backdrop:  R.backdrop,	// what is behind an element as drawn: a crystal capture's fallback	// the names `in` takes now, for the tool's refusals and the Lens
 		rasterise: rasterise,	// exported for www/js tests and dev probes
 		// The rasteriser's own source, which `crystal.js` runs inside a Diamond's page.
 		rasteriserSource: rasteriser.toString(),

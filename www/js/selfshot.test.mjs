@@ -54,6 +54,8 @@ class FakeNode {
 		this.id = '_n' + (seq++);
 		this._rect = { width: 100, height: 50 };
 	}
+	get nodeType() { return 1; }
+	get childNodes() { return this.children; }
 	get parentElement() { return this.parentNode; }
 	appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
 	removeChild(c) {
@@ -104,19 +106,26 @@ const doc = {
 	createElementNS: (ns, tag) => new FakeNode(tag),
 	querySelector:   (sel) => {
 		const s = String(sel);
+		const m = /^\.panel\[data-panel="([^"]+)"\]$/.exec(s);
+		if (m) return panels.find((p) => p.attrs['data-panel'] === m[1]) || null;
 		return s.charAt(0) === '#' ? (registry.get(s.slice(1)) || null) : null;
 	},
+	querySelectorAll: (sel) => (String(sel) === '.panel[data-panel]' ? panels.slice() : []),
 };
+const panels = [];
 
 // getComputedStyle: no properties to copy (length 0), an opaque background so
 // `backdrop()` resolves on the first probe without needing a real cascade.
-function getComputedStyle() {
-	return { length: 0, backgroundColor: 'rgb(255,255,255)', getPropertyValue: () => '' };
+function getComputedStyle(el) {
+	return { length: 0, backgroundColor: el && el._bg ? el._bg : 'rgb(255,255,255)', getPropertyValue: () => '',
+		display: el && el._hidden ? 'none' : 'block', visibility: 'visible' };
 }
 
+let lastSvg = null;
 class FakeXMLSerializer {
-	serializeToString() { return '<svg-stub/>'; }
+	serializeToString(n) { lastSvg = n; return '<svg-stub/>'; }
 }
+function tagsIn(n, out = []) { out.push(n.tagName); for (const c of n.children || []) tagsIn(c, out); return out; }
 
 // Image: resolves onload (or onerror) on a macrotask, so the Promise executor
 // in `rasterise` is genuinely exercised rather than short-circuited.
@@ -134,7 +143,7 @@ class FakeImage {
 	get src() { return this._src; }
 }
 
-const win = {};
+const win = { innerWidth: 1280, innerHeight: 800 };
 function loadScript(rel) {
 	const body_ = readFileSync(join(HERE, rel), 'utf8');
 	const fn = new Function('window', 'document', 'getComputedStyle', 'XMLSerializer', 'Image', body_);
@@ -205,6 +214,59 @@ async function main() {
 	try { await boomPromise; } catch (e) { boomErr = e; }
 	check('it surfaces as a rejected promise instead', !!boomErr && /boom-rect/.test(boomErr.message),
 		boomErr && boomErr.message);
+
+	// ---- (f) capture by view name (2026-10-12): the daimon names what it wants to see ----
+	// The Typst preview: a panel whose pages are an <svg> in a shadow root, as typstwatch.js mounts it.
+	const preview = new FakeNode('ASIDE');
+	preview.attrs['data-panel'] = 'preview';
+	preview._rect = { left: 640, top: 40, right: 1280, bottom: 800, width: 640, height: 760 };
+	const host = new FakeNode('DIV');
+	host._rect = { left: 640, top: 40, right: 1280, bottom: 800, width: 640, height: 760 };
+	const page = new FakeNode('SVG');
+	page._rect = { left: 660, top: 60, right: 1260, bottom: 780, width: 600, height: 720 };
+	host.shadowRoot = { childNodes: [page] };
+	preview.appendChild(host);
+	const hiddenDoc = new FakeNode('ASIDE');
+	hiddenDoc.attrs['data-panel'] = 'doc';
+	hiddenDoc._hidden = true;
+	panels.push(preview, hiddenDoc);
+	check('the views on screen are the shown panels, then screen', Shot.views().join(',') === 'preview,screen', Shot.views().join(','));
+	let vErr = null, vJson = null;
+	try { vJson = await Shot.capture(JSON.stringify({ in: 'preview' })); } catch (e) { vErr = e; }
+	check('in:"preview" captures the preview panel', !vErr && !!vJson && JSON.parse(vJson).ok === true, vErr && vErr.message);
+	check('at the panel\'s size on screen', !!vJson && JSON.parse(vJson).w === 640 && JSON.parse(vJson).h === 760, vJson && vJson.slice(0, 0) + (vJson ? JSON.parse(vJson).w + 'x' + JSON.parse(vJson).h : ''));
+	check('and the shadow root\'s pages are drawn, not an empty box', !!lastSvg && tagsIn(lastSvg).includes('SVG') && tagsIn(lastSvg).filter((t) => t === 'SVG').length >= 2,
+		lastSvg && tagsIn(lastSvg).join(' '));
+	let uErr = null;
+	try { await Shot.capture(JSON.stringify({ in: 'document-viewer' })); } catch (e) { uErr = e; }
+	check('an unknown view is refused, listing the views on screen', !!uErr && /Views on screen now: preview, screen/.test(uErr.message), uErr && uErr.message);
+	let hErr = null;
+	try { await Shot.capture(JSON.stringify({ in: 'doc' })); } catch (e) { hErr = e; }
+	check('a panel that is not shown is not a view', !!hErr && /No view called "doc"/.test(hErr.message), hErr && hErr.message);
+	let sErr = null;
+	try { await Shot.capture(JSON.stringify({ selector: '.doc-viewer' })); } catch (e) { sErr = e; }
+	check('a guessed selector is refused, listing the views on screen', !!sErr && /Views on screen now: preview, screen/.test(sErr.message), sErr && sErr.message);
+	let wErr = null;
+	try { await Shot.capture('{}'); } catch (e) { wErr = e; }
+	check('the whole page over the cap is refused, listing the views', !!wErr && /whole page/.test(wErr.message) && /Views on screen now/.test(wErr.message), wErr && wErr.message);
+	let scErr = null, scJson = null;
+	const kept = body.children.splice(0);
+	body._rect = { left: 0, top: 0, right: 1280, bottom: 800, width: 1280, height: 800 };
+	body.appendChild(preview);
+	try { scJson = await Shot.capture(JSON.stringify({ in: 'screen' })); } catch (e) { scErr = e; }
+	check('in:"screen" draws the window at its size', !scErr && !!scJson && JSON.parse(scJson).w === 1280 && JSON.parse(scJson).h === 800, scErr ? scErr.message : scJson && JSON.parse(scJson).w + 'x' + JSON.parse(scJson).h);
+	body.children.splice(0); kept.forEach((k) => body.appendChild(k));
+
+	// ---- (g) a see-through page is drawn over what is behind it in the app (2026-10-12) ----
+	const clear = new FakeNode('BODY'); clear._bg = 'rgba(0, 0, 0, 0)';
+	const savedBg = body._bg; body._bg = 'rgba(0, 0, 0, 0)';
+	check('a see-through view takes the colour it is told is behind it', typeof Shot.backdrop === 'function'
+		&& Shot.backdrop(clear, '', 'rgb(20, 24, 31)') === 'rgb(20, 24, 31)', Shot.backdrop && Shot.backdrop(clear, '', 'rgb(20, 24, 31)'));
+	check('and white only when told nothing', !!Shot.backdrop && Shot.backdrop(clear, '') === '#ffffff');
+	body._bg = savedBg;
+	const csrc = readFileSync(join(HERE, 'crystal.js'), 'utf8');
+	check('a crystal capture sends the app\'s colour behind the page as the fallback',
+		/fallback: appBackdrop\(\)/.test(csrc) && /getElementById\('crystal-body'\)/.test(csrc) && /fallback:\s+typeof m\.fallback/.test(csrc));
 
 	console.log(failures === 0 ? '\nALL PASS' : ('\n' + failures + ' FAILURE(S)'));
 	if (failures) process.exitCode = 1;

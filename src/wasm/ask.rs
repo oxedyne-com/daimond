@@ -21,6 +21,7 @@
 //! fail loudly rather than let the model report a question nobody can see.
 
 use crate::llm::extract_json_bool;
+use crate::llm::extract_json_string;
 use crate::wasm::js_str;
 use crate::wasm::refusal;
 
@@ -83,9 +84,7 @@ pub async fn put(payload: &str) -> Outcome<()> {
     // while a page that says nothing here has said nothing about a card the model is about to
     // claim is on screen.
     if !extract_json_bool(&json, "drawn").unwrap_or(false) {
-        return Err(err!(
-            "The page did not draw the question, so there is nothing on screen to tap. Ask in \
-            prose instead, giving the options, your recommendation and the reason for it.";
+        return Err(err!("{}", crate::tools::ask_not_drawn(extract_json_string(&json, "reason").as_deref());
             IO, Invalid));
     }
     Ok(())

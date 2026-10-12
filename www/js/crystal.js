@@ -118,6 +118,16 @@
 	/// A string from anything, without `null` becoming the word.
 	function str(v) { return v == null ? '' : String(v); }
 
+	/// The colour behind a Diamond's page in the app, as the owner sees it: the page is drawn
+	/// transparent over `#crystal-body`, so a capture made inside the frame finds no colour of
+	/// its own and must be told this one (2026-10-12, light theme text on a white fallback).
+	function appBackdrop() {
+		try {
+			var el = document.getElementById('crystal-body') || document.body;
+			return window.DaimondShot && DaimondShot.backdrop ? String(DaimondShot.backdrop(el)).slice(0, 64) : '';
+		} catch (e) { return ''; }
+	}
+
 	/// An array from anything, so a malformed crystal renders rather than throws.
 	function arr(v) { return Array.isArray(v) ? v : []; }
 
@@ -1061,6 +1071,7 @@
 				raster.rasterise(t, {
 					max_w: m.max_w > 0 ? Math.min(Number(m.max_w), 4000) : 0,
 					background: typeof m.background === 'string' ? m.background.slice(0, 64) : '',
+					fallback:   typeof m.fallback === 'string' ? m.fallback.slice(0, 64) : '',
 				}).then(function (r) {
 					out.png_b64 = r.b64; out.w = r.w; out.h = r.h;
 					post(out);
@@ -1718,7 +1729,7 @@
 				asked = ++probeSeq;
 				say({ cmd: 'probe', id: asked, sel: sel, png: wantPng, proof: wantProof, look: looks,
 					max_w: Number(req.max_w) > 0 ? Math.min(Number(req.max_w), 4000) : 0,
-					background: str(req.background).slice(0, 64) });
+					background: str(req.background).slice(0, 64), fallback: appBackdrop() });
 				replyT = setTimeout(function () {
 					end(reject, new Error('The crystal page did not answer within ' + Math.round(PROBE_PNG_MS / 1000)
 						+ ' s. Its script may be stuck; read its source instead.'));

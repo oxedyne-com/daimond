@@ -254,9 +254,10 @@ const BUDGET_MOBILE = 768;
 /// The least headroom assumed for the next rebuild before any has been measured.
 const HEADROOM_MIN = 128;
 
-/// What a trapped compiler says.  Either of these means the wasm-bindgen borrow is
-/// held and nothing short of a reload will free it.
-const TRAPPED = /recursive use of an object|unreachable/i;
+/// What a trapped compiler says.  The first two mean the wasm-bindgen borrow is
+/// held, the third that the Austenite worker itself has stopped (typst.js), and
+/// nothing short of a reload brings any of them back.
+const TRAPPED = /recursive use of an object|unreachable|compiler worker stopped/i;
 
 /// How many rebuilds may run in a row on a change nothing could confirm before the
 /// loop stops and says so.
@@ -380,9 +381,26 @@ let rinit = null;		// the renderer's wasm exports, for `rheap`
 // only ever compared and keyed AS STRINGS -- never `Number()`/`parseInt`, which would
 // collide `010` with `10` and lose the identity the whole delta rests on. Only a page's
 // width and height, which are lengths, are parsed as numbers.
-let cache = new Map();		// string id -> { svg, w, h, node }: the pages held, by identity
+//
+// ONLY THE PAGES NEAR THE READER ARE HELD (PG, fe2o3 887ef23d). Every page in `order` has
+// an entry, for its size, but its `svg` is kept only while it is within `HOLD_PAGES` of
+// the band: the build asks for `want: [from, to]` around the reader and gets the changed
+// pages inside it alone, `known` is the ids whose svg is held, and a page that scrolls
+// into view unheld is drawn as a blank sheet and fetched back with `renderPage(id)`
+// (`fetchPages`). Holding every page cost 696 MB of page heap on a 300-page book before
+// 2cc295d5 and 56 MB after it (au_preview_measure.md); the engine keeps the frames for
+// about 35 KB a page against about 190 KB of svg.
+//
+// A page never sent has no size of its own until it is fetched, so it borrows one (`est`)
+// from the page that held its place before, else its nearest neighbour; the stack is
+// re-laid when the fetched page says otherwise. The delta carries no page sizes, which is
+// what an exact layout of unseen pages would need.
+let cache = new Map();		// string id -> { svg, w, h, est, node }: every page in `order`; `svg` null when let go
 let order = [];			// string ids in document order; `order[i]` is the i-th sheet
 let ver = -1;			// the last `version` applied, so a stale async return is dropped
+const HOLD_PAGES = 8;		// pages held either side of the band, and asked for either side of the reader
+const FIRST_WANT = 2 * HOLD_PAGES + 2;	// pages asked for before anything is laid out
+let fetching = new Set();	// ids asked of `renderPage` and not yet answered
 
 /// Everything the loop knows, in one object so `state()` cannot drift from it.
 const S = {
@@ -993,7 +1011,19 @@ function unmount() {
 /// produced is what the reader is looking at, and taking it away to show nothing is
 /// the blank this whole file exists to avoid.
 function standIn() {
-	for (const id of ['pv-view', 'doc-embed']) {
+	// A FILE THE VIEWER WAS SHOWING IS PUT ASIDE, NOT HIDDEN UNDER THE PAGES
+	// (PDF-PANEL, 12 Oct 2026). It used to be remembered and hidden like the
+	// embed, which left its header naming `hachiko.pdf` over the live layout of
+	// `hachiko.typ` -- a panel saying one file and showing another -- and handed
+	// it back on `unmount` as though nothing had happened. The viewer's own door
+	// lets go of it, and the header names what is now under it: the source.
+	const files = window.DaimondFiles;
+	if (files && files.previewAside) files.previewAside();
+	const pv = document.getElementById('pv-view');
+	if (pv) pv.style.display = 'none';
+	const name = document.getElementById('pv-name');
+	if (name && S.path) name.textContent = S.path;
+	for (const id of ['doc-embed']) {
 		const el = document.getElementById(id);
 		if (!el) continue;
 		// What it had is recorded ONCE, the first time; the hiding happens every
@@ -1274,7 +1304,9 @@ function parseSvg(svg) {
 			+ String(el && el.textContent).slice(0, 200));
 	}
 	el.removeAttribute('style');
-	return document.importNode(el, true);
+	// Adopted, not imported: the parsed tree MOVES into this document, where an import
+	// would copy it and leave the parser's copy, a whole page of nodes, to the collector.
+	return document.adoptNode(el);
 }
 
 /// The sheets for the pages around the reader, as one node ready to insert.
@@ -1458,10 +1490,10 @@ function drawBand(top, deep, scale, a, b) {
 /// The scale is the only thing that changes; the layout is the compiler's and does
 /// not depend on how wide the panel is. So this is a repaint, not a rebuild — the
 /// reader's page and offset are in points and survive it untouched.
-function resized() {
+function resized(at) {
 	if (!host || !(vec || order.length)) return;
 	if (vec && !renderer) return;
-	const was = where();
+	const was = (at && typeof at.page === 'number') ? at : where();
 	S.scale = scaleFor(S.docW);
 	const pages = host.querySelector('.tl-pages');
 	pages.style.width  = (S.docW * S.scale) + 'px';
@@ -1663,32 +1695,149 @@ function rootSize(svg) {
 ///     resend rather than a special path.
 ///   * each `changed` page is cached by its id as an opaque STRING; a new svg for an id
 ///     drops its parsed node so the next band re-parses it.
-///   * `order` is the document, by id; every id in it must now be in the cache.
+///   * `order` is the document, by id; every id in it must now be HELD -- or, when the
+///     delta answered a window (`d.want`, the `[from, to)` the build asked for), every id
+///     inside it. A page outside the window is laid out at its size from `d.sizes`
+///     (one `[w, h]` a page, in `order`'s order, sent whether or not its svg is), so the
+///     stack is exact before the page is fetched; only a delta without `sizes` makes
+///     a page keep the size it had, or borrow one.
 ///   * any cached id not in `order` is PRUNED -- a page deleted from the middle stops
 ///     being held, and its id leaves `known` so the compiler stops diffing against it.
 function deltaCore(d) {
 	d = d || {};
 	if (typeof d.version === 'number' && d.version <= ver) return { drew: false };
 	if (typeof d.version === 'number') ver = d.version;
-	if (d.reset) cache.clear();
+	// A reset lets every svg go; a page's size is its id's and stays true.
+	if (d.reset) for (const e of cache.values()) { e.svg = null; e.node = null; }
 	const changed = Array.isArray(d.changed) ? d.changed : [];
 	for (const c of changed) {
 		if (!c) continue;
 		const id = String(c.id);
 		const svg = String(c.svg == null ? '' : c.svg);
 		const size = rootSize(svg);
-		cache.set(id, { svg: svg, w: size.w, h: size.h, node: null });
+		cache.set(id, { svg: svg, w: size.w, h: size.h, est: false, node: null });
 	}
 	const ord = (Array.isArray(d.order) ? d.order : []).map(String);
-	for (const id of ord) {
-		if (!cache.has(id)) {
-			throw new Error('delta named a page it did not send: ' + id);
+	const sz = sizesOf(d.sizes, ord.length);
+	const win = wantOf(d.want);
+	// What the build said it held. A page let go of while the compile ran (a scroll
+	// trims) was not resent, and is fetched back by the band, not refused.
+	const knew = new Set(Array.isArray(d.known) ? d.known.map(String) : []);
+	for (let i = 0; i < ord.length; i++) {
+		const e = cache.get(ord[i]);
+		const inside = !win || (i >= win[0] && i < win[1]);
+		if (inside && !(e && e.svg != null) && !(e && knew.has(ord[i]))) {
+			throw new Error('delta named a page it did not send: ' + ord[i]);
+		}
+		if (sz) {
+			// The engine's own size for the page, held or not: the layout's truth.
+			if (e) { e.w = sz[i][0]; e.h = sz[i][1]; e.est = false; }
+			else cache.set(ord[i], { svg: null, w: sz[i][0], h: sz[i][1], est: false, node: null });
+		} else if (!e) {
+			const like = borrowSize(ord, i);
+			cache.set(ord[i], { svg: null, w: like.w, h: like.h, est: true, node: null });
 		}
 	}
 	order = ord;
 	const keep = new Set(order);
 	for (const k of Array.from(cache.keys())) if (!keep.has(k)) cache.delete(k);
 	return { drew: true };
+}
+
+/// A `want: [from, to]` as two whole numbers in order, or null for anything else --
+/// which the engine reads as no window, so every page was sent.
+function wantOf(w) {
+	if (!Array.isArray(w) || w.length !== 2) return null;
+	const a = w[0], b = w[1];
+	return (Number.isInteger(a) && Number.isInteger(b) && a >= 0 && a <= b) ? [a, b] : null;
+}
+
+/// A delta's `sizes` as `[w, h]` pairs of positive numbers, one for each of the `n`
+/// pages in `order`, or null when it is absent or does not match -- which falls back to
+/// the sizes read off the svgs, and borrowed for a page never sent.
+function sizesOf(v, n) {
+	if (!Array.isArray(v) || v.length !== n) return null;
+	const out = [];
+	for (const p of v) {
+		const w = Array.isArray(p) ? +p[0] : NaN, h = Array.isArray(p) ? +p[1] : NaN;
+		if (!(w > 0) || !(h > 0)) return null;
+		out.push([w, h]);
+	}
+	return out;
+}
+
+/// The size an unsent page `ord[i]` is laid out at until it is fetched, when the delta
+/// carried no `sizes`: that of the page
+/// in its place in the OLD order, else the nearest page with a size, else A4.
+function borrowSize(ord, i) {
+	const was = order[i] != null ? cache.get(order[i]) : null;
+	if (was && was.h > 0) return { w: was.w, h: was.h };
+	for (let k = 1; k < ord.length; k++) {
+		for (const j of [i - k, i + k]) {
+			const e = j >= 0 && j < ord.length ? cache.get(ord[j]) : null;
+			if (e && e.h > 0) return { w: e.w, h: e.h };
+		}
+	}
+	return { w: 595.28, h: 841.89 };
+}
+
+/// The `want` the next build asks for: the reader's pages and `HOLD_PAGES` either side,
+/// as `[from, to)` in the current order, or the first pages before anything is laid out.
+function wantWindow() {
+	const sc = scroller();
+	if (!order.length || !S.lays || !S.lays.length || !sc) return [0, FIRST_WANT];
+	const scale = S.scale || 1;
+	const a = pageAt(sc.scrollTop / scale), b = pageAt((sc.scrollTop + sc.clientHeight) / scale);
+	return [Math.max(0, a - HOLD_PAGES), b + HOLD_PAGES + 1];
+}
+
+/// Let go of the svg of every page more than `HOLD_PAGES` from the band `p0..p1`.
+function trimHeld(p0, p1) {
+	const keep = new Set();
+	for (let i = Math.max(0, p0 - HOLD_PAGES); i <= Math.min(order.length - 1, p1 + HOLD_PAGES); i++) keep.add(order[i]);
+	for (const [id, e] of cache) {
+		if (e.svg != null && !keep.has(id)) { e.svg = null; e.node = null; }
+	}
+}
+
+/// Fetch back, one at a time, the pages in `ids` the band wanted and does not hold, then
+/// redraw the band -- re-laying the stack first if a page's own size was not the one it
+/// borrowed. A miss (`gone`: a newer delta no longer has it; `uncompiled`; `range`)
+/// leaves the blank sheet up for the next delta to fill, and is never thrown.
+async function fetchPages(ids) {
+	const want = ids.filter(function (id) { return !fetching.has(id); });
+	if (!want.length || !window.DaimondTypst || typeof window.DaimondTypst.renderPage !== 'function') return;
+	for (const id of want) fetching.add(id);
+	let got = 0, moved = false;
+	try {
+		for (const id of want) {
+			const e = cache.get(id);
+			if (!e || e.svg != null) continue;	// pruned or already sent by a delta meanwhile
+			const r = await window.DaimondTypst.renderPage(id);
+			if (!r || r.error != null || typeof r.svg !== 'string') {
+				if (r && r.code !== 'gone') console.warn('typstwatch: page ' + id + ' could not be fetched: ' + (r && (r.code || r.error)));
+				continue;
+			}
+			const now = cache.get(id);
+			if (!now) continue;			// the page left `order` while it was drawn
+			// A size the delta stated, or one read off the page's own svg earlier, is
+			// already true (an id is its content); only a BORROWED size is replaced.
+			const size = now.est ? rootSize(r.svg) : { w: now.w, h: now.h };
+			if (size.w !== now.w || size.h !== now.h) moved = true;
+			now.svg = r.svg; now.w = size.w; now.h = size.h; now.est = false; now.node = null;
+			got++;
+		}
+	} finally {
+		for (const id of want) fetching.delete(id);
+	}
+	if (!got || !host || !order.length || vec) return;
+	if (moved) { const was = where(); deltaGeometry(); resized(was); return; }
+	band = null;
+	const sc = scroller();
+	if (!sc) return;
+	const scale = S.scale || 1;
+	const top = sc.scrollTop / scale, deep = sc.clientHeight / scale;
+	drawBand(top, deep, scale, pageAt(top), pageAt(top + deep));
 }
 
 /// Rebuild `S`'s geometry from the cache and the order.
@@ -1722,8 +1871,15 @@ function deltaGeometry() {
 /// The Austenite counterpart of `bandNode`: each page is a self-contained SVG, so there
 /// are no shared glyph defs to hang in the first sheet and no whole-document viewBox to
 /// crop against -- the cached svg is placed as its own sheet at its own laid-out top, and
-/// only the pages in the band are parsed. A parsed node is memoised on its cache entry
-/// and cloned on use, so a scroll never re-parses a page it has already drawn.
+/// only the pages in the band are parsed. A parsed page is memoised on its cache entry
+/// and its SHEET IS REUSED, moved into the new band rather than cloned, so a scroll or a
+/// compile that left a page alone neither re-parses it nor copies it.
+///
+/// WHY NOT A CLONE (measured 12 Oct, au-preview4): cloning every band page on every draw
+/// left the previous band -- ~11,000 SVG nodes on a 300-page book, ~30 MB -- as garbage
+/// on Blink's heap, which V8's own small heap never pressed it to collect. The tab rose
+/// ~30 MB a keystroke even when the edit was on a page off screen, and a forced
+/// collection gave all of it back. Moving the one live copy leaves no garbage behind.
 ///
 /// # Arguments
 /// * `top`   - The top of the visible area, in LAID-OUT points.
@@ -1734,27 +1890,45 @@ function bandNodeSvg(top, deep, scale) {
 	if (last < 0) throw new Error('There are no pages to draw.');
 	const p0 = Math.max(0, pageAt(Math.max(0, top)) - MARGIN_PAGES);
 	const p1 = Math.min(last, pageAt(Math.max(0, top + deep)) + MARGIN_PAGES);
+	// Parse first, move second: a page that will not parse throws here, before any
+	// sheet has been taken out of the band on screen, so that band stays as it was.
+	for (let i = p0; i <= p1; i++) {
+		const e = cache.get(order[i]);
+		if (e && e.svg != null && !e.node) e.node = parseSvg(e.svg);	// once, on the first band that shows it
+	}
 	const wrap = document.createElement('div');
 	wrap.className = 'tl-band';
+	const missing = [];
 	for (let i = p0; i <= p1; i++) {
 		const e = cache.get(order[i]);
 		if (!e) continue;			// `order` is validated against the cache, so unreachable
-		if (!e.node) e.node = parseSvg(e.svg);	// parsed once, on the first band that shows it
-		const svg = e.node.cloneNode(true);
 		const w = e.w || S.docW;
-		svg.setAttribute('width', String(w * scale));
-		svg.setAttribute('height', String(e.h * scale));
-		svg.setAttribute('preserveAspectRatio', 'xMidYMin meet');
-		const sheet = document.createElement('div');
+		const held = e.svg != null;
+		// The sheet this page was last drawn in, if its svg is still the one in it.
+		const was = held && e.node.parentNode;
+		const sheet = (was && was.className === 'tl-sheet') ? was : document.createElement('div');
 		sheet.className = 'tl-sheet';
 		sheet.setAttribute('data-page', String(i + 1));
 		sheet.style.top    = (S.lays[i] * scale) + 'px';
 		sheet.style.width  = (w * scale) + 'px';
 		sheet.style.height = (e.h * scale) + 'px';
-		sheet.appendChild(svg);
-		wrap.appendChild(sheet);
+		if (!held) {
+			// LET GO OF, OR NEVER SENT: a blank sheet of its size now, the page itself
+			// when `fetchPages` has it back.
+			sheet.setAttribute('data-pending', '1');
+			missing.push(order[i]);
+		} else {
+			const svg = e.node;
+			svg.setAttribute('width', String(w * scale));
+			svg.setAttribute('height', String(e.h * scale));
+			svg.setAttribute('preserveAspectRatio', 'xMidYMin meet');
+			if (sheet !== was) sheet.appendChild(svg);
+		}
+		wrap.appendChild(sheet);		// moves a reused sheet out of the old band
 	}
 	band = { p0, p1 };
+	trimHeld(p0, p1);
+	if (missing.length) fetchPages(missing);
 	return wrap;
 }
 
@@ -1812,7 +1986,9 @@ async function applyDelta(d) {
 /// The ids this view is holding, as opaque strings -- what `build` feeds the compiler as
 /// `known` so it can answer with only what changed. An empty array asks for a full send.
 function knownIds() {
-	return Array.from(cache.keys());
+	const out = [];
+	for (const [id, e] of cache) if (e.svg != null) out.push(id);
+	return out;
 }
 
 /// A read-only look at the delta cache, for the tests and the A/B verifier.
@@ -1823,8 +1999,8 @@ function deltaPeek() {
 	return {
 		ver:   ver,
 		order: order.slice(),
-		ids:   Array.from(cache.keys()),
-		size:  cache.size,
+		ids:   knownIds(),
+		size:  knownIds().length,
 		svg:   function (id) { const e = cache.get(String(id)); return e ? e.svg : null; },
 	};
 }
@@ -2470,8 +2646,13 @@ async function build(force) {
 			if (project && project.error) {
 				out = project;
 			} else {
+				// The pages around the reader alone (PG); the rest come back by
+				// `renderPage` as they scroll in. The window rides on the answer so
+				// `deltaCore` knows which pages it must have been sent.
+				project.want = wantWindow();
 				out = await window.DaimondTypst.compileProjectDelta(project);
 				if (out && !out.error && project && project.watch) out.watch = project.watch;
+				if (out && !out.error) { out.want = project.want; out.known = project.known; }
 			}
 		} else {
 			out = await m.typst_compile_project_vector(S.path);
@@ -3171,7 +3352,7 @@ function state() {
 		// none); `order` is the page ids in document order, for a verifier to hold
 		// against `changed`.
 		engine:   engineName(),
-		cached:   cache.size,
+		cached:   knownIds().length,
 		version:  ver,
 		order:    order.slice(),
 		// WHAT THE VIEW IS HOLDING, in bytes: the vector artifact every band is drawn
@@ -3180,7 +3361,7 @@ function state() {
 		// first thing let go when a phone is backgrounded, so it is worth being able to
 		// read rather than infer.
 		holds:    vec ? vec.length
-			: order.reduce(function (n, id) { const e = cache.get(id); return n + (e ? e.svg.length : 0); }, 0),
+			: order.reduce(function (n, id) { const e = cache.get(id); return n + (e && e.svg != null ? e.svg.length : 0); }, 0),
 		// THE TWO WAYS THE RENDERER'S ROUNDING SHOWS, both in points, so a check can
 		// hold one against the other. `drift` is the renderer's own total height less
 		// the exact sum of the page heights, taken in `draw` before anything is drawn;

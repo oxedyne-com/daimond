@@ -1416,6 +1416,39 @@ pub fn model_note(model: &str, host: &str, dispatches: bool) -> String {
 		if dispatches { ", and how many workers you dispatch at once," } else { "" })
 }
 
+/// What day it is where the user is, said on every turn.
+///
+/// A model knows no date but its training's, and dates what it writes from that: on 2026-10-12 a
+/// daimon stamped a `DECISIONS.md` ruling 2026-02-25 (D-20261011-34).  ISO 8601 whatever the page
+/// shows the user -- someone who reads years as Holocene (D-20261006-34) still keeps ISO in their
+/// files, and a model writes the form it is shown.  The day and the zone and never the time, so
+/// the system message is byte-stable across a day's turns and its cache with it.
+///
+/// # Arguments
+/// * `weekday` - The day's English name, which a model asked about "Friday" otherwise works out
+///   wrongly; empty to leave it out.
+/// * `offset_min` - Minutes AHEAD of UTC, so Perth is 480 (JavaScript's `getTimezoneOffset` is
+///   the negation).
+pub fn today_note(date: &str, weekday: &str, zone: &str, offset_min: i32) -> String {
+	let date = date.trim();
+	if date.is_empty() {
+		return String::new();
+	}
+	let sign = if offset_min < 0 { '-' } else { '+' };
+	let off = offset_min.unsigned_abs();
+	let utc = fmt!("UTC{}{:02}:{:02}", sign, off / 60, off % 60);
+	let place = match zone.trim() {
+		"" => utc,
+		z  => fmt!("{}, {}", z, utc),
+	};
+	let day = match weekday.trim() {
+		"" => String::new(),
+		w  => fmt!("{} ", w),
+	};
+	fmt!("## Today\n\nToday is {}{} where the user is ({}). Date anything you write from this, \
+		in ISO 8601 (YYYY-MM-DD), never from what you remember.", day, date, place)
+}
+
 /// The fingerprint a product records of the instructions it was made under: `sp1:` and the first
 /// eight hex digits of the SHA-256 of `text`.
 ///
@@ -3339,6 +3372,35 @@ mod tests {
 		assert!(other.contains("accounts/fireworks/models/glm-5p2"), "{}", other);
 		assert!(other.contains("api.fireworks.ai"), "{}", other);
 		assert!(!other.contains("claude"), "a switched model left the old one standing: {}", other);
+	}
+
+	#[test]
+	fn test_the_agent_is_told_todays_date_in_iso_and_where() {
+		// A daimon dated a decision 2026-02-25 on 12 October (D-20261011-34): nothing told it
+		// the day, so it wrote one from its training.
+		let s = today_note("2026-10-12", "Monday", "Australia/Perth", 480);
+		assert!(s.contains("2026-10-12"), "{}", s);
+		assert!(s.contains("Monday"), "{}", s);
+		assert!(s.contains("Australia/Perth"), "{}", s);
+		assert!(s.contains("UTC+08:00"), "{}", s);
+		assert!(s.contains("ISO 8601"), "{}", s);
+		// West of Greenwich, and a half-hour zone, both spelt as the offset they are.
+		assert!(today_note("2026-10-11", "", "America/New_York", -240).contains("UTC-04:00"));
+		assert!(today_note("2026-10-12", "", "Asia/Kolkata", 330).contains("UTC+05:30"));
+		// No zone name the browser would give: the offset alone still places the day.
+		let bare = today_note("2026-10-12", "", "", 0);
+		assert!(bare.contains("(UTC+00:00)"), "{}", bare);
+	}
+
+	#[test]
+	fn test_no_date_is_not_described_and_the_line_holds_no_time() {
+		assert_eq!("", today_note("", "Monday", "Australia/Perth", 480));
+		assert_eq!("", today_note("  ", "", "", 0));
+		// The day, never the hour: a time would change the system message on every turn and
+		// throw away the prompt cache each time.
+		let s = today_note("2026-10-12", "Monday", "Australia/Perth", 480);
+		assert!(!s.contains("T0") && !s.contains(" AM") && !s.contains(" PM"), "{}", s);
+		assert!(s.len() < 220, "the date line is {} bytes:\n{}", s.len(), s);
 	}
 
 	#[test]

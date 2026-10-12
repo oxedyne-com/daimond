@@ -48,9 +48,8 @@ const BREAKS = {
 	paintlie: [{
 		file: 'js/daimond.js',
 		find: "\t\t\tvar handed = !!(o && askDrawable(o) && activeRunnerTurn());\n"
-			+ "\t\t\treturn Promise.resolve(JSON.stringify({\n"
-			+ "\t\t\t\tdrawn: handed || (_askJust && !!_askCard),\n"
-			+ "\t\t\t}));",
+			+ "\t\t\tvar drawn = handed || (_askJust && !!_askCard);\n"
+			+ "\t\t\treturn Promise.resolve(JSON.stringify(drawn ? { drawn: true } : { drawn: false, reason: askUnseenWhy(o) }));",
 		with: "\t\t\treturn Promise.resolve(JSON.stringify({ drawn: !!(o && askDrawable(o)) }));",
 	}],
 };
@@ -145,6 +144,9 @@ const pre = await p.evaluate(
 	JSON.stringify(Q));
 ok(pre.drawn === false,
 	'a drawable payload with no card painted answers drawn:false', JSON.stringify(pre));
+// 2026-10-12: and says why, so the daimon's refusal opens with the cause.
+ok(pre.drawn !== false || /a question is drawn only on a screen showing the conversation/.test(pre.reason || ''),
+	'and the refusal carries the reason', pre.reason);
 
 // ══ 2. The chat face, end to end: paint, and the engine's own put ══
 clearMockLog();

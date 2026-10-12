@@ -1051,8 +1051,8 @@
 	// tool-call rounds, and is there so something on the line MOVES.
 	// Nothing here says anything about how long any of it has taken.
 	'chat.busy':           'Thinking…',
-	'chat.busy_tool':      'Running {tool}, step {n}…',
-	'chat.busy_next':      'Step {n} done, thinking…',
+	'chat.busy_tool':      'Running {tool}, tool call {n}…',
+	'chat.busy_next':      'Tool call {n} done, thinking…',
 	// The road went under a tool call, not the far end. Said while the ladder climbs,
 	// because two minutes of silent retrying looks exactly like a hung turn.
 	'chat.busy_road':      'The connection dropped — trying {name} again ({n} of {of})…',

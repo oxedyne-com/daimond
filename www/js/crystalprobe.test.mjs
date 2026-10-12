@@ -484,7 +484,7 @@ async function main() {
 	check('the answer is ok, with the table AND the picture', j.ok === true && j.table === 'T\nrow' && j.png_b64 === png && j.w === 640 && j.h === 480, JSON.stringify(j).slice(0, 120));
 	let bad = '';
 	try { await Shot.capture(JSON.stringify({ in: 'elsewhere' })); } catch (e) { bad = e.message; }
-	check('an unknown "in" is refused and names "crystal"', /"crystal"/.test(bad), bad);
+	check('an unknown "in" is refused and lists the views, crystal among them', /Views on screen now: .*\bcrystal\b/.test(bad), bad);
 	let gone = '';
 	try { await Shot.capture(JSON.stringify({ selector: '.pad' })); } catch (e) { gone = e.message; }
 	check('a missing host selector says a Diamond page is in a sandboxed frame and names in:"crystal"',

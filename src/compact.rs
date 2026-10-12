@@ -248,6 +248,19 @@ const _: () = assert!(WORKER_WALL_CLOCK_MS < GATHER_TIMEOUT_S * 1_000);
 /// away.  Two fifths of the budget is several full rounds of tool calls at typical sizes.
 pub const KEEP: f64 = 0.4;
 
+/// Fraction of the budget a fold shrinks the conversation to, below the line that triggers it.
+///
+/// A fold that ends just under its own trigger is re-triggered by the next round's tool result,
+/// and on 2026-10-12 that was sixteen folds in sixteen rounds, each paying a summary.  Folding to
+/// three quarters leaves several rounds of headroom before the next one.
+pub const FOLD_TARGET: f64 = 0.75;
+
+/// Fraction of the budget a fold must free to be worth its summary.
+///
+/// A fold whose cut covers less than this, or a pass that left the conversation above
+/// [`FOLD_TARGET`], is not repeated until the carry has grown by this much again.
+pub const MIN_FOLD_GAIN: f64 = 0.10;
+
 /// Messages always kept verbatim however big they are, so a fold cannot leave a turn with
 /// nothing but a summary and the user's own sentence.
 pub const MIN_KEEP_MESSAGES: usize = 6;
@@ -906,11 +919,11 @@ pub fn pairing_is_whole(msgs: &[ChatMessage]) -> bool {
 
 /// Where the verbatim tail begins: the index of the first message to keep.
 ///
-/// Walks back from the end taking messages until `keep_bytes` is spent, then walks back
-/// further over any tool replies, because a reply may never be the first kept message: its
-/// call would have been folded away and the provider would reject the whole request.  That
-/// backward step keeps a WHOLE block rather than dropping the rest of it, so a fold errs
-/// towards keeping too much, never towards keeping something unanswerable.
+/// Walks back from the end taking messages until `keep_bytes` is spent, then off any tool
+/// reply it stopped on, because a reply may never be the first kept message: its call would
+/// have been folded away and the provider would reject the whole request.  The step is back
+/// to the call, keeping the WHOLE block, where that fits `hard_bytes`; where it does not and a
+/// message follows the block, it is forward past the block instead, so the block is folded.
 ///
 /// `min_keep` is a preference, not a promise, and `hard_bytes` is why.  Six messages is the
 /// right number when messages are ordinary; when two of them are twenty-kilobyte replies it
@@ -956,10 +969,24 @@ pub fn tail_start(
 		acc += c;
 		i -= 1;
 	}
-	// A tool reply cannot open the kept tail; step back to the assistant turn that asked
-	// for it, taking the rest of its block along.
-	while i > 0 && matches!(msgs[i], ChatMessage::Tool { .. }) {
-		i -= 1;
+	// A tool reply cannot open the kept tail.  Step back to the assistant turn that asked for
+	// it, taking the rest of its block along -- unless that drags the tail past `hard_bytes`
+	// and a message follows the block, in which case the cut moves FORWARD to that message,
+	// which keeps every call beside its reply just as well.  Stepping back regardless kept a
+	// block bigger than the budget through every fold: on 2026-10-12 one reply's 390 reads
+	// pinned sixteen folds in a row to the note in front of them.  A block still in flight,
+	// with nothing after it, is kept whole and left to elision.
+	if i < n && matches!(msgs[i], ChatMessage::Tool { .. }) {
+		let mut back = i;
+		while back > 0 && matches!(msgs[back], ChatMessage::Tool { .. }) {
+			back -= 1;
+		}
+		let mut fwd = i;
+		while fwd < n && matches!(msgs[fwd], ChatMessage::Tool { .. }) {
+			fwd += 1;
+		}
+		let grown: u64 = msgs[back..i].iter().map(|m| msg_bytes(m, open)).sum();
+		i = if acc + grown > hard_bytes && fwd < n { fwd } else { back };
 	}
 	i
 }
@@ -1577,7 +1604,7 @@ fn structured_body(n: &FoldNotes, capped: bool, filed: bool) -> String {
 /// Matched on the opening of [`notice`], which is the one sentence every notice carries and the
 /// same tell `dev/verify_foldreload.mjs` reads.  A user message that merely quotes it would be
 /// searched as a fold, which costs a line of context and nothing else.
-fn is_fold_notice(m: &ChatMessage) -> bool {
+pub fn is_fold_notice(m: &ChatMessage) -> bool {
 	match m {
 		ChatMessage::User { content, .. } =>
 			content.as_text().starts_with("[Daimond folded the earlier part"),
@@ -3983,6 +4010,41 @@ mod tests {
 		// messages, and replacing one of them with a note explaining the fold is pure loss.
 		let three = vec![user("hello"), says(&"x".repeat(50_000)), user("and?")];
 		assert_eq!(tail_start(&three, 100, MIN_KEEP_MESSAGES, 100, &shut()), 0);
+	}
+
+	#[test]
+	fn test_a_fold_cuts_past_a_block_bigger_than_the_budget_00() {
+		// Lens turn `mv42uu3m-9m-0hlao`: a note, one reply carrying 390 identical reads of 4,156 B,
+		// then two newer rounds.  The step back over the replies dragged every later cut to 1,
+		// so each fold summarised only the previous note and kept the 1.6 MB block.
+		let mut m = vec![says("[fold note]")];
+		let calls: Vec<ToolCall> = (0..390).map(|i| ToolCall { id: fmt!("c{}", i),
+			name: "file_read".into(), arguments: "{\"path\":\"diamonds/x/hachiko.typ\"}".into() })
+			.collect();
+		m.push(ChatMessage::Assistant { content: MessageContent::text(""), tool_calls: calls });
+		for i in 0..390 { m.push(replies(&fmt!("c{}", i), &"x".repeat(4_156))); }
+		m.push(asks("e1", "file_edit", "{}")); m.push(replies("e1", "ok"));
+		m.push(asks("t1", "typst_compile", "{}")); m.push(replies("t1", "ok"));
+		let hard = 420_000u64;	// about 120k tokens at 0.27-0.29 tok/B
+		let cut = tail_start(&m, hard * 2 / 5, MIN_KEEP_MESSAGES, hard, &shut());
+		assert!(cut >= 392, "the 390-reply block was kept: cut {}", cut);
+		assert!(!matches!(m[cut], ChatMessage::Tool { .. }), "the tail opens on a reply");
+		let tail: u64 = m[cut..].iter().map(|x| msg_bytes(x, &shut())).sum();
+		assert!(tail <= hard, "kept tail {} over the hard ceiling {}", tail, hard);
+		assert!(fold(&m, cut, fmt!("note")).is_ok(), "the cut does not pair");
+	}
+
+	#[test]
+	fn test_a_block_still_in_flight_is_kept_whole_00() {
+		// The newest thing in the conversation is the oversized block: there is no message after
+		// it to cut at, so the step back stands and elision is what shrinks it.
+		let mut m = vec![user("go"), says("ok"), user("read it")];
+		let calls: Vec<ToolCall> = (0..40).map(|i| ToolCall { id: fmt!("c{}", i),
+			name: "file_read".into(), arguments: "{}".into() }).collect();
+		m.push(ChatMessage::Assistant { content: MessageContent::text(""), tool_calls: calls });
+		for i in 0..40 { m.push(replies(&fmt!("c{}", i), &"x".repeat(4_000))); }
+		let cut = tail_start(&m, 20_000, MIN_KEEP_MESSAGES, 50_000, &shut());
+		assert_eq!(cut, 3, "the block in flight must be kept whole with its call");
 	}
 
 	// ── The ledger ───────────────────────────────────────────────────────────

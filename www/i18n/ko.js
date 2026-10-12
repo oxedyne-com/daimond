@@ -443,8 +443,8 @@
 	'chat.send':           '보내기',
 	'chat.busy':           '생각하는 중…',
 	'chat.thinking':           '추론',
-	'chat.busy_tool':      '{tool} 실행 중, {n}단계…',
-	'chat.busy_next':      '{n}단계 완료, 생각하는 중…',
+	'chat.busy_tool':      '{tool} 실행 중, 도구 호출 {n}…',
+	'chat.busy_next':      '도구 호출 {n} 완료, 생각하는 중…',
 	'chat.busy_road':       '연결이 끊겼습니다 — {name} 다시 시도 중 ({of}회 중 {n}회)…',
 	'chat.busy_writing':   '답변을 쓰는 중…',
 	// One command's own line, when the turn's fence withheld the network from it.

@@ -294,10 +294,16 @@ try {
 			{ role: 'assistant', content: 'restored', mid: 'tl-r2', ts: now + 1 }] }]);
 	fs.writeFileSync(bkPath, JSON.stringify(backup));
 	const ownBefore = (await storeCounts(P))[ownId];
-	await P.click('#user-row');
-	await P.waitForTimeout(400);
+	// THE USER ROW TOGGLES THE DRAWER, and Export leaves it open: a second click here shut it, so
+	// "Import a backup" was never on screen and the file chooser never came (red in the nightly of
+	// 2026-10-11, and here on Chromium and WebKit). Opened only when it is not already.
+	const importBtn = 'button.admin-item:has-text("Import a backup")';
+	if (!(await P.isVisible(importBtn))) {
+		await P.click('#user-row');
+		await P.waitForTimeout(400);
+	}
 	const ch = P.waitForEvent('filechooser', { timeout: 15000 });
-	await P.click('button.admin-item:has-text("Import a backup")');
+	await P.click(importBtn);
 	await (await ch).setFiles(bkPath);
 	let said = '';
 	try {

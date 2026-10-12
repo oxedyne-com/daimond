@@ -961,6 +961,33 @@
 	/// "my key is merely old" — only the first needs a new one.
 	function creditsGen() { return mintGen; }
 
+	/// Make one request on `provider`'s key, healing a refused credits key once.
+	///
+	/// For a caller with no agent to rebuild -- a one-shot request such as an images-model look
+	/// -- that would otherwise meet the 401 every tab but the last to mint gets: the gateway
+	/// keeps one live key per account slot, which bounds what a leaked or runaway key can draw
+	/// to one float, so a mint on another device revokes this tab's key by design. The chat
+	/// heals that in its turn loop (`canRemint`); this is the same heal for everyone else.
+	///
+	/// `send(r)` gets `resolve(provider, model)` and answers `{ ok, status, ... }`. A 401, 402
+	/// or 403 on the credits row takes the live key (or mints one, coalesced, under `node`'s
+	/// pause) and sends again, once. Answers what `send` last answered, with `reminted` set when
+	/// it retried and `remintError` when the fresh key could not be had; null when there is no
+	/// usable key at all.
+	async function sendOnKey(provider, model, node, send) {
+		var gen = mintGen, r = resolve(provider, model);
+		if (!r) return null;
+		var res = await send(r);
+		if (provider !== CREDITS || !res || [401, 402, 403].indexOf(res.status | 0) < 0) return res;
+		try { await remint(gen, node); }
+		catch (e) { res.remintError = String((e && e.message) || e); return res; }
+		var r2 = resolve(provider, model);
+		if (!r2) { res.remintError = 'no key after the mint'; return res; }
+		var again = await send(r2);
+		if (again) again.reminted = true;
+		return again;
+	}
+
 	// ── Worker slots: a key per parallel worker ─────────────────────
 	// The chat spends slot 0 — the key `mint`/`plain[CREDITS]` above hold. Each
 	// parallel worker spends its OWN slot (>=1), so no two share a key: a shared
@@ -1268,7 +1295,8 @@
 	/// lists as taking pictures, the one whose look costs least at its quoted rates, as
 	/// `{ provider, model, usd, familiar }`, or null when none is both seeing and priced. A model
 	/// quoted at nothing is passed over, since a free endpoint is rate-limited and a look must not
-	/// wait on it, and so is a batch variant; ties go to the provider's id, then the model's. `skip` (`{ provider, model }`)
+	/// wait on it, and so is a batch variant; ties go to a provider the account already chats on,
+	/// then the provider's id, then the model's. `skip` (`{ provider, model }`)
 	/// is a model that may not describe its own pictures.
 	///
 	/// The floor: a catalogue lists hundreds of seeing models, and the cheapest of them all is
@@ -1277,10 +1305,16 @@
 	/// list of `{ provider, model }`, the Diamonds' own) -- and `familiar` says so; only when none
 	/// of those makers offers a seeing priced model is the catalogue-wide cheapest taken.
 	function cheapestSeeing(skip, uses) {
-		var makers = {};
+		var makers = {}, rows = {};
 		[getDefault(), getDraft()].concat(uses || []).forEach(function (u) {
-			if (u && u.model) makers[makerOf(u.provider, u.model)] = true;
+			if (u && u.model) { makers[makerOf(u.provider, u.model)] = true; rows[u.provider || ''] = true; }
 		});
+		// A tie goes first to a provider the account already chats on, whose key is the one
+		// in daily use: the same model at the same price on another row (2026-10-12, credits
+		// beside openrouter) is a second key that can be stale while the first is live.
+		var beats = function (c, b) {
+			return !b || c.usd < b.usd || (c.usd === b.usd && rows[c.provider] && !rows[b.provider]);
+		};
 		var best = null, near = null;
 		Object.keys(store.providers).sort().forEach(function (pid) {
 			var p = store.providers[pid];
@@ -1293,8 +1327,9 @@
 				if (/:batch$/.test(mid)) return;
 				if (skip && skip.provider === pid && skip.model === mid) return;
 				var usd = (LOOK_IN * r.in + LOOK_OUT * r.out) / 1e6 + (typeof r.img === 'number' ? r.img : 0);
-				if (!best || usd < best.usd) best = { provider: pid, model: mid, usd: usd, familiar: false };
-				if (makers[makerOf(pid, mid)] && (!near || usd < near.usd)) near = { provider: pid, model: mid, usd: usd, familiar: true };
+				var c = { provider: pid, model: mid, usd: usd };
+				if (beats(c, best)) best = { provider: pid, model: mid, usd: usd, familiar: false };
+				if (makers[makerOf(pid, mid)] && beats(c, near)) near = { provider: pid, model: mid, usd: usd, familiar: true };
 			});
 		});
 		return near || best;
@@ -3792,6 +3827,7 @@
 		CREDITS:        CREDITS,
 		syncCredits:    syncCredits,
 		remint:         remint,
+		sendOnKey:      sendOnKey,
 		// Raise a live key's cap in place, sized to the turn — the F1 charge-for-nothing fix.
 		ensure:         ensure,
 		ensureActive:   ensureActive,

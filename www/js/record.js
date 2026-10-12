@@ -519,14 +519,8 @@
 		for (var i = 0; i < steps.length; i++) if (!steps[i].after) steps[i].after = live;
 		var rec = dump();
 		try {
-			var blob = new Blob([JSON.stringify(rec, null, '\t')], { type: 'application/json' });
-			var a = document.createElement('a');
-			a.href = URL.createObjectURL(blob);
-			a.download = 'daimond-recording-' + rec.at.replace(/[:T]/g, '-').replace('Z', '') + '.json';
-			document.body.appendChild(a);
-			a.click();
-			a.remove();
-			setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+			DaimondViewer.handOver(JSON.stringify(rec, null, '\t'), 'application/json',
+				'daimond-recording-' + rec.at.replace(/[:T]/g, '-').replace('Z', '') + '.json');
 		} catch (e) { /* the object is still there for `dump()` */ }
 		return rec;
 	}

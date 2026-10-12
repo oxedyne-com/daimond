@@ -1512,7 +1512,7 @@ pub async fn absorb_fold_notes(id: &str, notes: &crate::agent::compact::FoldNote
 ///
 /// Local rather than UTC: the dates in `DECISIONS.md` are read by a person against their own
 /// diary, and a ruling made on a Monday evening in Perth is not a Sunday one.
-fn today() -> String {
+pub(crate) fn today() -> String {
     let d = js_sys::Date::new_0();
     fmt!("{:04}-{:02}-{:02}",
         d.get_full_year(), d.get_month() + 1, d.get_date())

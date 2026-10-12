@@ -47,8 +47,13 @@ const r1 = await p.evaluate(async () => {
 check('a turn is reconstructed with its prompt, turn id and chat',
 	r1.tA && r1.tA.userText === 'do the thing' && r1.tA.turnId === 'tA' && r1.tA.chatId === 'cA',
 	JSON.stringify(r1.tA && { u: r1.tA.userText, t: r1.tA.turnId, c: r1.tA.chatId }));
-check('the streamed text is whole and in order, across the tool boundary',
-	r1.tA && r1.tA.text === 'Working on it', r1.tA && r1.tA.text);
+// SPLIT AT EVERY TOOL, and in order: the prose before a call is the working that led to it and
+// travels with it as `said`; `text` is the reply, the prose after the last call. Joined, a
+// recovered answer ran every round on into the next -- "…now.Here is…" (D-20261011-34).
+check('the streamed text is split at each tool, in order: working before a call, the reply after the last',
+	r1.tA && r1.tA.text === ' on it' && r1.tA.tools[0] && r1.tA.tools[0].said === 'Wor'
+		&& r1.tA.tools[1] && r1.tA.tools[1].said === 'king',
+	r1.tA && JSON.stringify({ text: r1.tA.text, said: r1.tA.tools.map(t => t.said) }));
 check('a completed tool carries its result and is marked done',
 	r1.tA && r1.tA.tools[0] && r1.tA.tools[0].name === 'file_write' && r1.tA.tools[0].done === true && r1.tA.tools[0].result === 'wrote x',
 	JSON.stringify(r1.tA && r1.tA.tools[0]));

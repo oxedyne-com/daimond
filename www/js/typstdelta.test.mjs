@@ -247,6 +247,28 @@ console.log('\n— H: a delta that names an unsent page is refused —');
 	check('H3 the pages that were up are left alone', after.order.join(',') === before.order.join(',') && after.size === before.size);
 }
 
+// ── I: a windowed delta lays out unsent pages at the sizes it states ─────────
+console.log('\n— I: `sizes` lays out the pages a window did not send —');
+{
+	reset();
+	// Five pages, only the first two sent; the third is landscape and never sent.
+	await W.applyDelta({ version: 1, reset: true, order: ['1', '2', '3', '4', '5'], want: [0, 2],
+		sizes: [[420, 595], [420, 595], [595, 420], [420, 595], [420, 595]],
+		changed: [changed('1', 420, 595), changed('2', 420, 595)] });
+	const gap = W.state().gap;
+	const b3 = W.pageBox(3), b4 = W.pageBox(4);
+	check('I1 an unsent page takes its stated height, not a neighbour\'s', b3 && b3.height === 420, JSON.stringify(b3));
+	check('I2 the page after it sits at the exact running sum',
+		b4 && b4.top === 595 + 595 + 420 + 3 * gap, JSON.stringify({ top: b4 && b4.top, want: 595 + 595 + 420 + 3 * gap }));
+	check('I3 only the sent pages are held', W.deltaPeek().size === 2, String(W.deltaPeek().size));
+	// A sizes list that does not match the order is ignored: the borrowed size stands.
+	reset();
+	await W.applyDelta({ version: 1, reset: true, order: ['1', '2', '3'], want: [0, 1],
+		sizes: [[420, 595]], changed: [changed('1', 420, 595)] });
+	const c3 = W.pageBox(3);
+	check('I4 a sizes list of the wrong length is ignored and the size is borrowed', c3 && c3.height === 595, JSON.stringify(c3));
+}
+
 // ── surface: the fields the panel and the verifier read ──────────────────────
 console.log('\n— surface: state() carries the delta fields —');
 {

@@ -442,8 +442,8 @@
 	'chat.send':           '送信',
 	'chat.busy':           '考えています…',
 	'chat.thinking':           '思考',
-	'chat.busy_tool':      '{tool} を実行中、ステップ {n}…',
-	'chat.busy_next':      'ステップ {n} が完了、考えています…',
+	'chat.busy_tool':      '{tool} を実行中、ツール呼び出し {n}…',
+	'chat.busy_next':      'ツール呼び出し {n} が完了、考えています…',
 	'chat.busy_road':       '接続が切れました — {name} を再試行しています（{of} 回中 {n} 回目）…',
 	'chat.busy_writing':   '回答を書いています…',
 	// One command's own line, when the turn's fence withheld the network from it.

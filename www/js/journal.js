@@ -225,7 +225,8 @@
 	// ── Recovery ────────────────────────────────────────────────────
 
 	/// Read the whole journal back, grouped per TURN into what was in flight when the tab died.
-	/// Returns { turns: [ {turnId, chatId, userText, text, tools, closed} ], agents: [ {runId, rec, text} ] }.
+	/// Returns { turns: [ {turnId, chatId, userText, text, tools, closed} ], agents: [ {runId, rec, text} ] }, where
+	/// `text` is the prose after the last tool and each tool carries the prose before it as `said`.
 	/// A turn is returned only if it never closed — i.e. it was interrupted — and can be placed in a
 	/// chat (its chatId is known). Because each turn is its own stream, successive turns of one chat
 	/// never conflate, and one turn's failed prune can never hide another's interruption.
@@ -265,7 +266,11 @@
 			// note (`pre`) and app mark (`app`), so a recovered question is the same record too.
 			if (e.type === 'turn_open')       { c.userText = e.text || ''; c.meta = e.meta || null; }
 			else if (e.type === 'delta')      { c.text += (e.text || ''); }
-			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, name: e.name, args: e.args, result: null, outcome: '', done: false }); }
+			// THE PROSE BEFORE A CALL GOES WITH THE CALL (`said`), and `text` starts again: it is
+			// the model's working on its way to the tool, and `text` is the reply -- the round
+			// after the last tool. Joined, every round ran on into one recovered answer with
+			// nothing between them, "…now.Here is…" (D-20261011-34); `runTurn` keeps the same rule.
+			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, name: e.name, args: e.args, result: null, outcome: '', done: false, said: c.text }); c.text = ''; }
 			// `e.outcome` is the engine's word; `e.failed` is what a record written before this
 			// field carried, and is passed through UNREAD so the caller can tell "not stored" from
 			// "stored as done" -- which is the difference between §4's named exception and a guess.

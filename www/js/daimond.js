@@ -3709,12 +3709,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			partial:  true,        // chats only; no workspace files, no Diamonds
 			chats:    list,
 		};
-		var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
-		var a = document.createElement('a');
-		a.href = URL.createObjectURL(blob);
-		a.download = 'daimond-chats-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.json';
-		a.click();
-		setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+		DaimondViewer.handOver(JSON.stringify(out, null, 2), 'application/json',
+			'daimond-chats-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.json');
 	}
 
 	/// Group a number with commas, for a count of characters in a marker.
@@ -18368,11 +18364,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// and `handed` uses the broadcast's own predicate so the two can
 			// never disagree.
 			var handed = !!(o && askDrawable(o) && activeRunnerTurn());
-			return Promise.resolve(JSON.stringify({
-				drawn: handed || (_askJust && !!_askCard),
-			}));
+			var drawn = handed || (_askJust && !!_askCard);
+			return Promise.resolve(JSON.stringify(drawn ? { drawn: true } : { drawn: false, reason: askUnseenWhy(o) }));
 		},
 	};
+
+	/// Why a question was not drawn, in the daimon's language, so its refusal opens with the
+	/// cause rather than a bare "did not draw" (2026-10-12: the owner was on the crystal face and
+	/// the daimon was told only about a key it had not sent). The rule itself stands (2026-09-12):
+	/// a question is drawn only on a screen showing the conversation that asks it.
+	function askUnseenWhy(o) {
+		if (!askDrawable(o)) {
+			return 'the question cannot be drawn as given: it needs a question and 2 to 4 options, '
+				+ 'each with a label and a meaning, and a recommendation naming one of them';
+		}
+		var face = centreMode === 'focus' ? 'a Diamond\'s page (its crystal face)' : 'another conversation';
+		var where = document.visibilityState === 'hidden'
+			? 'the app is not on screen at all'
+			: 'the person is looking at ' + face + ', not at yours';
+		return where + ', and a question is drawn only on a screen showing the conversation that asks it';
+	}
 
 	function renderToolCall(name, args, callId, ts) {
 		// The answer, not a step. Only ever a STORED call -- see `renderSaid`, which says
@@ -30419,6 +30430,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// lines are the reading that used to be applied to EVERY record: the
 				// boolean decides done from not-done, and only a not-done is put to the
 				// text to be split.
+				// The working that led to this call, on the record before it, as `runTurn` put it.
+				if (tl.said) logThinking(chat, tl.said);
 				var oc = !tl.done ? 'done'
 					: tl.outcome ? tl.outcome
 					: !tl.failed ? 'done'
@@ -38055,7 +38068,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// indicator has something that MOVES on it. A caption that never changes
 		// cannot tell a turn on its ninth file read from one that died on its
 		// first, and that is the whole of the complaint being answered here.
-		var step = 0;
+		var callN = 0;
+		// THE ENGINE'S OWN ROUND COUNT, from its `ended`.  `callN` counts tool calls, and until
+		// 2026-10-12 it was reported as `rounds`: one reply carrying 390 reads read as "438
+		// rounds" over 37 model calls.  Both travel now, each under its own name.
+		var turnRounds = 0;
 		var writing = false;   // prose is arriving, so the caption has said so once
 		var sawError = false, threw = false;
 		// The road went and the turn was handed back badged, rather than written off.
@@ -38167,7 +38184,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// hidden it will not change even then -- so the dots stay up and say
 				// which tool and which round. Counted before the ownership guard so a
 				// chat left running in the background is found on the right step.
-				step += 1;
+				callN += 1;
 				writing = false;
 				// TRAINING WHEELS — the debug feed's `round`, one per tool-call round.
 				// `ctx` is `last_prompt_tokens`: what the LAST request actually sent,
@@ -38182,7 +38199,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// rather than `last_prompt_tokens` / `cached_tokens`, which draw zero
 				// while a turn is in flight.
 				rounds.add({
-					turn: String(umid), r: step,
+					turn: String(umid), r: callN,
 					ctx:  (app && app.live_last_prompt_tokens) || 0,
 					win:  (app && app.context_window) || 0,
 					ca:   (app && app.live_cached_tokens) || 0,
@@ -38194,8 +38211,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// query and the content, which is the whole of what this design
 				// exists to keep off the wire.
 				tel('tool.run', telOrd('TOOLS', ev.name || ''));
-				busySay(chat, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
-					{ tool: ev.name || '?', n: step }));
+				busySay(chat, tOr('chat.busy_tool', 'Running {tool}, tool call {n}…',
+					{ tool: ev.name || '?', n: callN }));
 				if (!owns()) return;
 				renderToolCall(ev.name || '', ev.args || '', ev.id || '', pendingTool && pendingTool.ts);
 			} else if (ev.type === 'tool_result') {
@@ -38207,7 +38224,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// TRAINING WHEELS — the debug feed's `tool`. The engine's own outcome
 				// word, the SIZES of the arguments and the result, and nothing of
 				// either's content: a tool result is a file read or a command's output.
-				dsEvent('tool', lensToolRow(ev, pendingTool && pendingTool.args, umid, step,
+				dsEvent('tool', lensToolRow(ev, pendingTool && pendingTool.args, umid, callN,
 					{ dia: chat.diamondId, chat: chat.id }));
 				// Stored WITH the outcome, so the history exception above stops growing.
 				if (pendingTool) {
@@ -38252,7 +38269,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The tool is back and the model has it; the wait now is on the model.
 				// Saying so is what distinguishes a turn that is still going from one
 				// that stopped on the tool it last named.
-				busySay(chat, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
+				busySay(chat, tOr('chat.busy_next', 'Tool call {n} done, thinking…', { n: callN }));
 				if (!owns()) return;
 				renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
 			} else if (ev.type === 'versions') {
@@ -38311,7 +38328,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (endLog) pendingEnd = endLog;
 				// TRAINING WHEELS — the debug feed's `ended`, after any rounds still folding.
 				rounds.flush();
-				dsEvent('ended', { turn: String(umid), rounds: step, how: endedHow(ev.how, ev.why) });
+				turnRounds = ev.rounds | 0;
+				dsEvent('ended', { turn: String(umid), rounds: turnRounds, calls: callN,
+					how: endedHow(ev.how, ev.why) });
 				// HOW THE LAST TURN ENDED, IN THE ENGINE'S OWN WORD, kept where something
 				// outside the turn can read it. `dsEvent` writes into DEBUG_SHARE's upload
 				// buffer and the transcript keeps only a rendered line, so until this there
@@ -38325,7 +38344,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// itself -- and on a worker task that is the only turn there is.
 				var wasT = chat._lastTurn || {};
 				chat._lastTurn = {
-					rounds: step, how: String(ev.how || ''), legs: turnLegs,
+					rounds: turnRounds, how: String(ev.how || ''), legs: turnLegs,
 					// Blocked beside `failed` (see `endedHow`), else absent.
 					why: ev.why === 'blocked' ? 'blocked' : undefined,
 					calls: ev.calls | 0, refused: ev.refused | 0, failed: ev.failed | 0,
@@ -38338,7 +38357,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// see `TurnEnd::ReasonedOnly` (src/agent.rs). Same reasoning as
 					// `malformed`, immediately above.
 					reasoned: ev.reasoned | 0,
-					rounds_total: (wasT.rounds_total | 0) + step,
+					rounds_total: (wasT.rounds_total | 0) + turnRounds,
 					legs_total:   (wasT.legs_total   | 0) + turnLegs,
 					turns:        (wasT.turns        | 0) + 1,
 				};
@@ -38364,8 +38383,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// asked for. A structured fold that quietly stopped parsing would otherwise
 				// show as an ordinary fold for ever, which is the reading the measurement
 				// most needs; an engine too old to say answers 'prose', which it was.
-				dsEvent('fold', { turn: String(umid), r: step, folded: ev.folded || 0,
-					kept: ev.kept || 0, trigger: 'real', shape: ev.shape || 'prose' });
+				// Shortening alone (`folded` 0) is told to the user but is not a fold.
+				if (ev.folded | 0) dsEvent('fold', { turn: String(umid), r: callN, folded: ev.folded || 0,
+					kept: ev.kept || 0, trigger: 'real', shape: ev.shape || 'prose',
+					// Where it cut and whether a summary was paid for: a fold over nothing but
+					// the last note reads as `cut 1, summarised 1`, which the lens could not see.
+					cut: ev.cut | 0, summarised: ev.summarised ? 1 : 0 });
 				try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(umid)); }
 				catch (e) { /* the feed must never break a turn */ }
 				// Persisted, so a reload still shows that the history was folded --
@@ -38407,7 +38430,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// had nothing to catch. A warn, always, recovered or not: a fault the
 				// app papers over quietly is a fault nobody measures.
 				var leakKey = ev.recovered ? 'recovered_leak' : 'leak';
-				var lp = { turn: String(umid), r: step };
+				var lp = { turn: String(umid), r: callN };
 				lp[leakKey] = 1;
 				dsEvent('round', lp);
 				try {
@@ -38437,7 +38460,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// TRAINING WHEELS — the debug feed's `truncated`. Proposal 15, 2026-09-15:
 				// until now this set a local flag and told nobody outside the tab, so a
 				// provider's own length cut was unobservable to `dev/lens.mjs errors`.
-				dsEvent('truncated', { turn: String(umid), r: step });
+				dsEvent('truncated', { turn: String(umid), r: callN });
 			} else if (ev.type === 'round_meta') {
 				// THE ROUND'S OWN TRACE FACTS: an id to ask the provider about afterwards,
 				// and the finish-reason words behind `truncated` and every other ending.
@@ -38446,7 +38469,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// reader filtering the feed should not have to know the field name to
 				// find it. See `AgentEvent::RoundMeta` (src/protocol.rs).
 				dsEvent(ev.stalled ? 'stalled' : 'round_meta', {
-					turn: String(umid), r: step,
+					turn: String(umid), r: callN,
 					gen: String(ev.gen || '').slice(0, 40),
 					finish: String(ev.finish || '').slice(0, 24),
 					nfinish: String(ev.nfinish || '').slice(0, 24),
@@ -38952,7 +38975,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// model; nothing has to be joined to learn it.
 					m:    String(chat.model || '').slice(0, 48),
 					prov: String(chat.provider || '').slice(0, 24),
-					r:    step,
+					// `r` the engine's model rounds, `k` the tool calls they asked for; see `turnRounds`.
+					r:    turnRounds,
+					k:    callN,
 					p:    turnP  || 0,
 					c:    turnC  || 0,
 					ca:   turnCa || 0,
@@ -40795,15 +40820,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!ev || !ev.type) return;
 				wmeter.see(ev);
 				if (ev.type === 'text') {
-					run.text += (ev.content || '');
+					// A NEW ROUND'S PROSE IS A NEW PARAGRAPH. `run.text` is the worker's whole
+					// narration across its rounds, and a round's words used to run straight on
+					// from the last round's -- "…files now.Here is…" on the tile and in a
+					// recovered run (drive 2026-10-12, D-20261011-34). The break is put on the
+					// journal's copy too, so a run recovered from it reads the same.
+					var wpiece = ev.content || '';
+					if (run._brk && wpiece) { wpiece = '\n\n' + wpiece; run._brk = false; }
+					run.text += wpiece;
 					// The text SINCE THE LAST TOOL RESULT -- reset below, every time one
 					// arrives. By the time the run ends this is exactly the worker's final
 					// answer, whether or not it ran any tools at all: see `gather`, which
 					// reports this (capped) rather than the whole of `run.text`.
 					run._tail = (run._tail || '') + (ev.content || '');
-					if (window.DaimondJournal) DaimondJournal.agentDelta(run.id, ev.content || '');
+					if (window.DaimondJournal) DaimondJournal.agentDelta(run.id, wpiece);
 				}
 				else if (ev.type === 'tool_call') {
+					run._brk = !!run.text;	// the next round's prose opens a paragraph
 					run.tools.push({ name: ev.name || '', status: 'running' });
 					run._wargs = ev.args || '';		// for Recent, at its result; never stored
 					wstep += 1;
@@ -41018,7 +41051,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// since the recovery fold sums deltas and would otherwise show both attempts.
 					// The ending goes with them: the dead attempt's tally is not this
 					// worker's, and one left standing would be read as the retry's.
-					run.text = ''; run.tools = []; run.ended = null; run._tail = ''; run._segs = [];
+					run.text = ''; run.tools = []; run.ended = null; run._tail = ''; run._segs = []; run._brk = false;
 					if (window.DaimondJournal) {
 						try {
 							await DaimondJournal.clearAgent(run.id);
@@ -46642,10 +46675,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					parts.push(new Blob([b]));
 					at += b.length;
 				}
-				var a = document.createElement('a');
-				a.href = URL.createObjectURL(new Blob(parts, { type: (info && info.mime) || 'application/octet-stream' }));
-				a.download = name || path.split('/').pop() || 'file';
-				a.click(); URL.revokeObjectURL(a.href);
+				DaimondViewer.handOver(new Blob(parts, { type: (info && info.mime) || 'application/octet-stream' }),
+					'', name || path.split('/').pop() || 'file');
 			} catch (e) { noteFolderLost(e); fileMsg(friendlyError(e), true, msgEl); }
 		}
 
@@ -46862,6 +46893,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// (S-HAND #4). The bytes are still read by `path`; only the caption changes.
 			var shown = String(label || path);
 			DaimondViewer.close();          // whatever was open lets go of its blob URLs
+			// THE FILE OPENED TAKES THE PANEL FROM THE LIVE PAGES (PDF-PANEL, 12 Oct
+			// 2026). One panel shows one thing. The live view used to keep running
+			// behind the viewer: both drew in the same tile, and its next stand-in hid
+			// the viewer, so opening `hachiko.pdf` beside `hachiko.typ` showed the
+			// live layout of the source under the PDF's name -- the export could not
+			// be seen in-app, and the viewer's Download went with it. A `.pdf` is a
+			// document to read whatever sits beside it, so the watch stops here; ⚙
+			// Compile on the source is what arms it again.
+			try { if (window.DaimondTypstWatch) DaimondTypstWatch.stop(); }
+			catch (e) { /* no live view is the ordinary case */ }
 			pvFile = path; pvStore = !!store;
 			docEmbed(false);
 			pvEl.style.display = '';
@@ -47087,8 +47128,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (nameEl) nameEl.textContent = path;                 // escaped
 			renderFileBody();
 			DaimondPanels.markUsed('doc');       // it now has something to hold
-			docFilling++;
-			try { DaimondPanels.show('doc'); } finally { docFilling--; }
+			// A QUIET redraw refreshes the document where it stands and does not bring
+			// the panel forward: see `reshow`, whose file may be off screen.
+			if (!(opts && opts.quiet)) {
+				docFilling++;
+				try { DaimondPanels.show('doc'); } finally { docFilling--; }
+			}
 			DaimondPanels.reflow();
 			viewEl.querySelector('[data-act="back"]').addEventListener('click', closeView);
 			// ── Attaching a file to the open Diamond ──────────────────────
@@ -47104,11 +47149,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			await wireHold(path, viewEl.querySelector('[data-act="attach"]'));
 
 			viewEl.querySelector('[data-act="download"]').addEventListener('click', function () {
-				var blob = new Blob([curContent], { type: 'text/plain' });
-				var a = document.createElement('a');
-				a.href = URL.createObjectURL(blob);
-				a.download = path.split('/').pop() || 'file.txt';
-				a.click(); URL.revokeObjectURL(a.href);
+				DaimondViewer.handOver(curContent, 'text/plain', path.split('/').pop() || 'file.txt');
 			});
 			// Edit ⇄ Save: swap the <pre> for a textarea; Save writes via the
 			// file_write tool (honouring the active workspace root — OPFS or FSA).
@@ -49332,7 +49373,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { disk = await readRaw(curFile); }
 				catch (e) { return; }   // unreadable now; the redraw would only say so twice
 				if (disk === curContent) return;
-				return openFile(curFile, { store: storeFile });
+				// OFF SCREEN IT IS REFRESHED, NOT BROUGHT BACK (PDF-PANEL, 12 Oct 2026).
+				// `curFile` outlives the panel being on screen: open `hachiko.pdf` and the
+				// Preview takes the seat the source had, with the source still named here.
+				// A write to `hachiko.typ` then brought its editor forward and pushed the
+				// PDF the reader had just opened off the screen. The text is still redrawn,
+				// so the source is current when it is next looked at.
+				var seen = !!(viewEl && viewEl.getClientRects().length);
+				return openFile(curFile, { store: storeFile, quiet: !seen });
 			},
 			/// Which file the document panel is holding, or ''. The answer only this
 			/// closure has, and the question a follower has to ask before it writes.
@@ -49533,6 +49581,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// answers is the engine's own view and not the tree's copy of it.
 	window.DaimondFiles = {
 		folder:  function () { try { return Files.folder(); } catch (e) { return null; } },
+		// The viewer lets go of the Preview panel: the live pages taking it ask here.
+		previewAside: function () { try { Files.previewAside(); } catch (e) { /* no viewer yet */ } },
 		// The open folder's id on this device, for `dev/verify_m2_samename.mjs`.
 		folderId: function () { try { return Files.folderId(); } catch (e) { return ''; } },
 		// The folders this device knows, handed to the engine again: `versions.js` asks before
@@ -55233,26 +55283,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var own = diamondModels()[id] || {};
 		var to = id ? imagesModelFor(id, { provider: own.provider || '', model: own.model || '' }) : null;
 		if (!to) return JSON.stringify({ ok: false, none: true });
+		// The model AND the row it went to, since the same model can sit on two rows with
+		// different keys (2026-10-12: credits' stale key beside openrouter's live one).
+		var who = 'the images model ' + to.model + ' on '
+			+ (window.DaimondModels && DaimondModels.providerName ? DaimondModels.providerName(to.provider) : to.provider)
+			+ (to.provider ? ' (' + to.provider + ')' : '');
+		var fail = function (why) {
+			var msg = who + ' ' + why;
+			try { console.warn('[look] ' + msg); } catch (e) {}
+			return JSON.stringify({ ok: false, error: msg });
+		};
 		try {
-			var r = window.DaimondModels && DaimondModels.resolve(to.provider, to.model);
-			if (!r) return JSON.stringify({ ok: false, error: 'the images model ' + to.model + ' has no usable key' });
-			var url = r.baseUrl, key = r.apiKey, png = String(req.png_b64 || ''), anth = /\/v1\/messages\b/.test(url);
-			var body = anth
-				? { model: r.model, max_tokens: 400, messages: [{ role: 'user', content: [
-					{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
-					{ type: 'text', text: String(req.prompt || '') }] }] }
-				: { model: r.model, max_tokens: 400, stream: false, messages: [{ role: 'user', content: [
-					{ type: 'text', text: String(req.prompt || '') },
-					{ type: 'image_url', image_url: { url: 'data:image/png;base64,' + png } }] }] };
-			var headers = { 'content-type': 'application/json' };
-			var auth = DaimondModels.authHeaders ? DaimondModels.authHeaders(url, key) : { authorization: 'Bearer ' + key };
-			for (var k in auth) { if (auth.hasOwnProperty(k)) headers[k] = auth[k]; }
-			var res = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body) });
-			var raw = await res.text(), j = {};
-			try { j = JSON.parse(raw); } catch (e) { j = {}; }
+			var png = String(req.png_b64 || ''), anth = false;
+			// A credits key revoked by a mint on another device is healed here as the chat heals
+			// it: the live key is taken, or one minted, and the look sent again once.
+			var res = window.DaimondModels && await DaimondModels.sendOnKey(to.provider, to.model,
+				DaimondPause.id('root', 'diamonds', id, 'self'), async function (r) {
+				var url = r.baseUrl;
+				anth = /\/v1\/messages\b/.test(url);
+				var body = anth
+					? { model: r.model, max_tokens: 400, messages: [{ role: 'user', content: [
+						{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
+						{ type: 'text', text: String(req.prompt || '') }] }] }
+					: { model: r.model, max_tokens: 400, stream: false, messages: [{ role: 'user', content: [
+						{ type: 'text', text: String(req.prompt || '') },
+						{ type: 'image_url', image_url: { url: 'data:image/png;base64,' + png } }] }] };
+				var headers = { 'content-type': 'application/json' };
+				var auth = DaimondModels.authHeaders ? DaimondModels.authHeaders(url, r.apiKey) : { authorization: 'Bearer ' + r.apiKey };
+				for (var k in auth) { if (auth.hasOwnProperty(k)) headers[k] = auth[k]; }
+				var hr = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body) });
+				var raw = await hr.text(), j = {};
+				try { j = JSON.parse(raw); } catch (e) { j = {}; }
+				return { ok: hr.ok, status: hr.status, raw: raw, j: j };
+			});
+			if (!res) return fail('has no usable key');
+			var j = res.j || {};
 			if (!res.ok) {
-				var why = (j.error && (j.error.message || j.error)) || raw || ('HTTP ' + res.status);
-				return JSON.stringify({ ok: false, error: to.model + ' answered ' + res.status + ': ' + String(why).slice(0, 160) });
+				var why = (j.error && (j.error.message || j.error)) || res.raw || ('HTTP ' + res.status);
+				return fail('answered ' + res.status + (res.reminted ? ' on a fresh key' : '') + ': '
+					+ String(why).slice(0, 160)
+					+ (res.remintError ? '; a fresh key could not be had: ' + String(res.remintError).slice(0, 120) : ''));
 			}
 			var text = anth
 				? ((j.content || []).filter(function (c) { return c && c.type === 'text'; }).map(function (c) { return c.text; }).join(' '))
@@ -55265,11 +55335,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var rate = !cost && DaimondModels.rateFor ? DaimondModels.rateFor(to.provider, to.model) : null;
 			if (rate) cost = (pt * rate.inPerM + ct * rate.outPerM) / 1e6;
 			recordSpend(to.model, pt, ct, 0, cost, to.provider, id, '', { im: 1 });
-			if (!text.trim()) return JSON.stringify({ ok: false, error: to.model + ' answered with no words' });
+			if (!text.trim()) return fail('answered with no words');
 			return JSON.stringify({ ok: true, text: text, model: to.model, tokens: pt + ct,
 				nano_usd: Math.round(cost * 1e9), dflt: to.dflt || '' });
 		} catch (e) {
-			return JSON.stringify({ ok: false, error: String((e && e.message) || e).slice(0, 160) });
+			return fail('could not be asked: ' + String((e && e.message) || e).slice(0, 160));
 		}
 	}
 	window.DaimondVision = { look: lookAt };
@@ -60679,6 +60749,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		setCrystalBusy(diamondId, true);
 		crystalSay(t('crystal.steering'), true);
 
+		// `replyText` is THE CURRENT ROUND'S PROSE ONLY, reset on every `tool_call` by the rule
+		// `runTurn`'s `turnText` keeps; see the `tool_call` arm below.
 		var dispatched = [], rejected = 0, replyText = '';
 		// The mid the detached answer WILL carry, minted up front and published for the
 		// streamed live-answer row, so a watcher's provisional answer and the message
@@ -60842,7 +60914,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// gather round running behind an ordinary chat leaves the right words for
 		// the moment the user comes back to this Diamond -- and touches no other
 		// chat's dots, since it only draws when the record IS the current one.
-		var step = 0;        // tool-call rounds so far, for the caption
+		var callN = 0;       // tool calls so far, for the caption
+		var steerRounds = 0; // the engine's own model rounds, from its `ended`
 		var writing = false; // prose is arriving, so the caption has said so once
 		var sawError = false;
 		var steerLegs = 0;   // legs past the round cap; see the `continued` arm
@@ -60887,7 +60960,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// which the engine uses for a turn it reported the failure of itself: a
 				// reader has to be able to tell a turn that failed loudly from one that
 				// never got as far as saying anything.
-				dsEvent('ended', { turn: String(dumid), rounds: step,
+				dsEvent('ended', { turn: String(dumid), rounds: steerRounds, calls: callN,
 					how: (out === 'error') ? 'threw' : 'quiet', dia: 1 });
 			}
 			// The turn's own growth, read only here -- before the turn and after it,
@@ -60907,7 +60980,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// this Diamond's own provider and model, read at the top of the turn.
 				m:    String(dsPair.model || '').slice(0, 48),
 				prov: String(dsPair.provider || '').slice(0, 24),
-				r:    step,
+				r:    steerRounds,
+				k:    callN,
 				p:    Math.max(0, p1 - dsP0),
 				c:    Math.max(0, c1 - dsC0),
 				ca:   Math.max(0, a1 - dsA0),
@@ -60972,7 +61046,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!writing) { writing = true; busySay(rec, tOr('chat.busy_writing', 'Writing the answer…')); }
 				if (onScreen()) appendAssistantText(ev.content || '', undefined, undefined, { mid: dmid });
 			} else if (ev.type === 'tool_call') {
-				step += 1;
+				// PROSE BEFORE A TOOL CALL IS WORKING, NOT THE ANSWER: the rule `runTurn`'s own
+				// `tool_call` arm keeps, and the daimon's loop did not. Every round's prose ran
+				// on into one reply with nothing between them -- "…unchanged.Now let me verify",
+				// "…for v3.Done" -- and a sentence a model said before a tool and again after it
+				// was printed twice in that reply, on the crystal face and in the stored answer
+				// (drive 2026-10-12, D-20261011-34). On the record as working, in order before
+				// the call it led to, and the answer is the last round's prose alone.
+				if (replyText) {
+					logThinking(rec, replyText);
+					replyText = '';
+					if (detached) { try { _liveTurn[String(detached.turnId)] = replyText; } catch (e) { /* bounded map */ } }
+				}
+				callN += 1;
 				writing = false;
 				// TRAINING WHEELS — the debug feed's `round`, the DAIMON's agentic loop.
 				// Keyed on the Diamond's own record, which is the turn here; the chat
@@ -60983,7 +61069,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// getters rather than `last_prompt_tokens` / `cached_tokens`, which
 				// draw zero while a turn is in flight.
 				rounds.add({
-					turn: String(dumid), r: step,
+					turn: String(dumid), r: callN,
 					ctx:  (rec.app && rec.app.live_last_prompt_tokens) || 0,
 					win:  (rec.app && rec.app.context_window) || 0,
 					ca:   (rec.app && rec.app.live_cached_tokens) || 0,
@@ -60991,8 +61077,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					tool: String(ev.name || '').slice(0, 40),
 					dia:  1,
 				});
-				busySay(rec, tOr('chat.busy_tool', 'Running {tool}, step {n}…',
-					{ tool: ev.name || '?', n: step }));
+				busySay(rec, tOr('chat.busy_tool', 'Running {tool}, tool call {n}…',
+					{ tool: ev.name || '?', n: callN }));
 				if ((ev.name || '') === 'spawn_agent' && !steerInTurn) {
 					var spec = null;
 					try { spec = JSON.parse(ev.args || '{}'); } catch (e) { spec = null; }
@@ -61023,7 +61109,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// `dia` is the Diamond's id: truthy, as the bare `1` it replaced, and now
 				// naming which Diamond.
 				var toolRow = lensToolRow(ev,
-					last && last.role === 'tool_log' ? last.args : '', dumid, step,
+					last && last.role === 'tool_log' ? last.args : '', dumid, callN,
 					{ dia: diamondId, chat: rec.id });
 				toolRow.dia = String(diamondId || '') || 1;
 				dsEvent('tool', toolRow);
@@ -61042,7 +61128,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					}
 					touchMsg(last);
 				}
-				busySay(rec, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
+				busySay(rec, tOr('chat.busy_next', 'Tool call {n} done, thinking…', { n: callN }));
 				if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
 			} else if (ev.type === 'thinking') {
 				// Persisted like a fold, and for the same reason: a reload that dropped it
@@ -61083,17 +61169,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				rounds.flush();
 				endedSeen = true;
 				lastHow = String(ev.how || '');
-				dsEvent('ended', { turn: String(dumid), rounds: step, how: endedHow(ev.how, ev.why), dia: 1 });
+				steerRounds = ev.rounds | 0;
+				dsEvent('ended', { turn: String(dumid), rounds: steerRounds, calls: callN,
+					how: endedHow(ev.how, ev.why), dia: 1 });
 				// The daimon's half of `chat._lastTurn`. Kept by Diamond, since a daimon has
 				// no chat record of its own; see `DaimondCore.lastTurn`.
 				var wasS = _lastSteer[diamondId] || {};
 				_lastSteer[diamondId] = {
-					rounds: step, how: String(ev.how || ''), legs: steerLegs,
+					rounds: steerRounds, how: String(ev.how || ''), legs: steerLegs,
 					calls: ev.calls | 0, refused: ev.refused | 0, failed: ev.failed | 0,
 					// Rounds thrown away to a reply that reasoned and answered nothing;
 					// see `chat._lastTurn`'s own `reasoned` field, above.
 					reasoned: ev.reasoned | 0,
-					rounds_total: (wasS.rounds_total | 0) + step,
+					rounds_total: (wasS.rounds_total | 0) + steerRounds,
 					legs_total:   (wasS.legs_total   | 0) + steerLegs,
 					turns:        (wasS.turns        | 0) + 1,
 				};
@@ -61102,12 +61190,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// the daimon's OWN turn -- the surface proposal 15 was driving -- had no
 				// event handler here and reached neither the transcript nor the feed. See
 				// the same arm in `runTurn`.
-				dsEvent('truncated', { turn: String(dumid), r: step, dia: 1 });
+				dsEvent('truncated', { turn: String(dumid), r: callN, dia: 1 });
 			} else if (ev.type === 'round_meta') {
 				// See the same arm in `runTurn`. The daimon's own turn is where proposal
 				// 15's round happened, so this is the arm that actually matters.
 				dsEvent(ev.stalled ? 'stalled' : 'round_meta', {
-					turn: String(dumid), r: step,
+					turn: String(dumid), r: callN,
 					gen: String(ev.gen || '').slice(0, 40),
 					finish: String(ev.finish || '').slice(0, 24),
 					nfinish: String(ev.nfinish || '').slice(0, 24),
@@ -61133,8 +61221,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} else if (ev.type === 'compacted') {
 				// TRAINING WHEELS — the debug feed's `fold`, the daimon's half. REAL, so
 				// the feed's own drop-inference stands down for this turn.
-				dsEvent('fold', { turn: String(dumid), r: step, folded: ev.folded || 0,
-					kept: ev.kept || 0, trigger: 'real', dia: 1, shape: ev.shape || 'prose' });
+				// Shortening alone (`folded` 0) is told to the user but is not a fold.
+				if (ev.folded | 0) dsEvent('fold', { turn: String(dumid), r: callN, folded: ev.folded || 0,
+					kept: ev.kept || 0, trigger: 'real', dia: 1, shape: ev.shape || 'prose',
+					cut: ev.cut | 0, summarised: ev.summarised ? 1 : 0 });
 				try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(dumid)); }
 				catch (e) { /* the feed must never break a turn */ }
 				// The fold notes2 asks for by name: *"automatically and visibly folded at
@@ -61312,8 +61402,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A PAUSE CAUGHT IT PART WAY (FU QA, FB): the engine's ending says stopped, and
 			// the person did not press Stop, so it is said as paused. Not an error.
 			if (rec._pausedMid) {
-				pendingSteerEnd = pendingSteerEnd || { role: 'end_log', offered: 0, rounds: step,
-					calls: 0, refused: 0, failed: 0, missing: [], mid: newMid(), ts: Date.now() };
+				pendingSteerEnd = pendingSteerEnd || { role: 'end_log', offered: 0, rounds: steerRounds,
+					calls: callN, refused: 0, failed: 0, missing: [], mid: newMid(), ts: Date.now() };
 				pendingSteerEnd.how = 'paused';
 				delete pendingSteerEnd.why;		// a pause is not a stop with a reason
 			}
@@ -64129,12 +64219,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					crystalPage: crystalPage, tags: tagsOf(arr[i]) });
 			}
 		} catch (e) { /* export what we have */ }
-		var blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
-		var a = document.createElement('a');
-		a.href = URL.createObjectURL(blob);
-		a.download = 'daimond-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-		a.click();
-		setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+		DaimondViewer.handOver(JSON.stringify(out, null, 2), 'application/json',
+			'daimond-backup-' + new Date().toISOString().slice(0, 10) + '.json');
 	}
 
 	// A Diamond's link sidecar among a backup's files, the Diamond's id captured. The

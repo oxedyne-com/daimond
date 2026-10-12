@@ -2837,6 +2837,22 @@ fn wire_json(
             .collect::<Vec<_>>().join(",")))
 }
 
+/// Today's line for a turn's briefing, on this browser's clock and in its zone: the same day
+/// `diamond::today` stamps a decision with, so the date the model is told and the date the app
+/// writes cannot differ.
+fn today_line() -> String {
+    const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    let d = js_sys::Date::new_0();
+    let day = DAYS.get(d.get_day() as usize).copied().unwrap_or("");
+    let opts = js_sys::Intl::DateTimeFormat::new(&js_sys::Array::new(), &js_sys::Object::new())
+        .resolved_options();
+    let zone = js_sys::Reflect::get(&opts, &JsValue::from_str("timeZone")).ok()
+        .and_then(|v| v.as_string()).unwrap_or_default();
+    // `getTimezoneOffset` counts minutes BEHIND UTC; the note takes them ahead.
+    let ahead = -(d.get_timezone_offset() as i32);
+    crate::prompts::today_note(&diamond::today(), day, &zone, ahead)
+}
+
 /// Note in `cache` what a restore left at each of `paths`, read back off the disk: its bytes
 /// ([`crate::tools::note_restored`]), or, where `deleted` says the acts were deletes and browser
 /// storage has nothing there, that it deleted the file (RD2). One this door cannot read notes
@@ -2979,8 +2995,8 @@ impl DaimondApp {
     }
 
 
-    /// What this turn is told beyond its role: which model is carrying it, and what machine it can
-    /// reach.
+    /// What this turn is told beyond its role: which model is carrying it, what day it is, and
+    /// what machine it can reach.
     ///
     /// Composed per TURN and not at construction, because both halves move under a built agent --
     /// the fence depends on the Diamond's bounds and on whether the turn has read a stranger's
@@ -3014,6 +3030,14 @@ impl DaimondApp {
                 }
                 s.push_str(&machine);
             }
+        }
+        // WHAT DAY IT IS, which no model knows; see `prompts::today_note`.
+        let today = today_line();
+        if !today.is_empty() {
+            if !s.is_empty() {
+                s.push_str("\n\n");
+            }
+            s.push_str(&today);
         }
         // WHERE THE TURN IS, before anything else it may need to know.
         //
@@ -4271,8 +4295,10 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("interjected"));
             set("content", &JsValue::from_str(text));
         }
-        AgentEvent::Compacted { folded, kept, note, structured, model, sp } => {
+        AgentEvent::Compacted { folded, kept, note, structured, model, sp, cut, summarised } => {
             set("type", &JsValue::from_str("compacted"));
+            set("cut", &JsValue::from_f64(*cut as f64));
+            set("summarised", &JsValue::from_bool(*summarised));
             // Who wrote the summary, absent where no model was asked: the fold's product record.
             if !model.is_empty() {
                 set("model", &JsValue::from_str(model));

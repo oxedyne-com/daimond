@@ -142,12 +142,12 @@ needs_live_gateway() {          # name -> 0 if it declares a gateway ALREADY up
 # over the whole tree, and it is the one command to run after writing a verifier.
 declarations_all() {
 	local f n d why bad=0
-	for f in dev/verify_*.mjs dev/refluxduo.mjs; do
+	for f in dev/verify_*.mjs dev/refluxduo.mjs dev/probe_imagesmodel.mjs; do
 		n=$(basename "$f" .mjs)
 		d=$(gateway_decl "$n"); why=$(decl_problem "$n")
 		if [ -n "$why" ]; then bad=$((bad+1)); echo "BAD   $n  — $why"; fi
 	done
-	echo "gateway declarations: $(ls dev/verify_*.mjs | wc -l) verifiers and refluxduo, $bad with a problem"
+	echo "gateway declarations: $(ls dev/verify_*.mjs | wc -l) verifiers, refluxduo and probe_imagesmodel, $bad with a problem"
 	[ "$bad" = 0 ]
 }
 
@@ -284,6 +284,14 @@ needs_input() {                 # name -> prints why it cannot run, or nothing
 		# it on every gate, several times a day, and nobody would notice until the
 		# key was empty. So the SUITE refuses it and a daimon asking for it by name
 		# through `verify` still gets the run.
+		# The images model's LIVENESS PROBE: the one check that sees a retired model id or a
+		# provider route gone dark, which no mock can. It asks a real provider on the probe key,
+		# and that key EXPIRED on 2026-10-12. OWNER STEP: replace the key in
+		# ~/.config/oxedyne/daimond/openrouter.key, then set DAIMOND_IMAGES_PROBE=1 (and, once it
+		# runs green, drop this guard). Until then it is skipped loudly rather than reported red
+		# for a key, not a model; run by hand it says "probe key expired" and exits 3.
+		probe_imagesmodel)
+			[ -n "${DAIMOND_IMAGES_PROBE:-}" ] || echo "OWNER STEP: the probe key expired 2026-10-12; replace ~/.config/oxedyne/daimond/openrouter.key and set DAIMOND_IMAGES_PROBE=1" ;;
 		verify_reflux)
 			[ -n "${DAIMOND_REFLUX_PAID:-}" ] || echo "spends real money at a real provider; set DAIMOND_REFLUX_PAID=1 to let a suite run it (it exits 2 rather than pass)" ;;
 	esac
@@ -964,7 +972,7 @@ if [ $# -gt 0 ]; then
 	ALL="$*"
 else
 	ALL=$(cd dev && ls verify_*.mjs | sed 's/\.mjs$//')
-	ALL="$ALL refluxduo"
+	ALL="$ALL refluxduo probe_imagesmodel"
 fi
 PHASE1=""; PHASE2=""; UNDECLARED=""
 for name in $ALL; do

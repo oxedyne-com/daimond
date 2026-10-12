@@ -14,7 +14,9 @@
      (b) the cheapest seeing priced model wins, the free and the
          text-only are passed over, a per-picture price counts;
      (c) the model that refused may be skipped, ties are by ids,
-         and a provider with no key offers nothing.
+         and a provider with no key offers nothing;
+     (e) a tie goes to the provider the account chats on (a stale
+         credits key beside a live openrouter one, 2026-10-12).
 
    No browser: the stand-in covers what models.js touches.
      node www/js/defaulteyes.test.mjs
@@ -135,6 +137,19 @@ async function main() {
 	M.setDefault('pb', 'q/chat'); await settle();
 	const q = M.cheapestSeeing();
 	check('no familiar maker offering a seeing model: the catalogue-wide cheapest', !!q && q.model === 'z/eyes-cheapest' && q.familiar === false, JSON.stringify(q));
+
+	console.log('(e) a tie goes to the provider the account already chats on');
+	M.addProvider('p0', { url: 'https://0.example/api/v1', name: 'Zero' });
+	await M.setKey('p0', 'k-0');
+	await M.fetchModels('p0'); await settle();
+	const e1 = M.cheapestSeeing();
+	check('the same model at the same price: the chat provider\'s row, not the first id', !!e1 && e1.provider === 'pb' && e1.model === 'z/eyes-cheapest', JSON.stringify(e1));
+	M.setDefault('pb', 'a/chat'); await settle();
+	const e2 = M.cheapestSeeing();
+	check('and so among the familiar', !!e2 && e2.provider === 'pb' && e2.model === 'a/eyes-cheap', JSON.stringify(e2));
+	M.setDefault('p0', 'a/chat'); await settle();
+	const e3 = M.cheapestSeeing();
+	check('the chat moving moves the tie with it', !!e3 && e3.provider === 'p0' && e3.model === 'a/eyes-cheap', JSON.stringify(e3));
 
 	console.log('\n' + (failures ? ('FAILED ' + failures + ' of ' + checks) : ('ok: ' + checks + ' checks')));
 	process.exit(failures ? 1 : 0);

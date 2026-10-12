@@ -1091,7 +1091,19 @@ pub enum AgentEvent {
     ///
     /// `model` and `sp` say who wrote the summary -- the model as sent and the fingerprint of the
     /// compactor's instructions -- and are empty where the fold shortened without summarising.
-    Compacted { folded: usize, kept: usize, note: String, structured: bool, model: String, sp: String },
+    ///
+    /// `cut` is where the fold cut and `summarised` whether a summary was asked for, so the feed
+    /// can tell a fold that freed the history from one that re-summarised a note.
+    Compacted {
+        folded:     usize,
+        kept:       usize,
+        note:       String,
+        structured: bool,
+        model:      String,
+        sp:         String,
+        cut:        usize,
+        summarised: bool,
+    },
     /// A picture could not be put in front of this model.
     ///
     /// Its own variant and not an error: the turn goes on without the picture.  The app did
@@ -1313,8 +1325,10 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("interjected"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Compacted { folded, kept, note, model, sp, .. } => {
+            Self::Compacted { folded, kept, note, model, sp, cut, summarised, .. } => {
                 m.insert(dat!("type"), dat!("compacted"));
+                m.insert(dat!("cut"), Dat::U64(*cut as u64));
+                m.insert(dat!("summarised"), Dat::Bool(*summarised));
                 m.insert(dat!("folded"), Dat::U64(*folded as u64));
                 m.insert(dat!("kept"), Dat::U64(*kept as u64));
                 m.insert(dat!("content"), dat!(note.clone()));
@@ -2586,6 +2600,7 @@ mod tests {
         let ev = AgentEvent::Compacted {
             folded: 41, kept: 7, note: fmt!("Folded 41 earlier messages."),
             structured: true, model: fmt!("glm-5"), sp: fmt!("sp1:0123abcd"),
+            cut: 41, summarised: true,
         };
         let dm = ev.to_datmap();
         assert_eq!(dm.get(&dat!("type")), Some(&dat!("compacted")));

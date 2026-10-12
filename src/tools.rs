@@ -13700,6 +13700,17 @@ fn probe_sel_label(sel: &str) -> String {
     }
 }
 
+/// The refusal for a question the page did not draw: the page's reason first, when it gave one,
+/// so the daimon learns the cause before the remedy (2026-10-12).
+pub(crate) fn ask_not_drawn(reason: Option<&str>) -> String {
+    let head = match reason.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(r) => fmt!("The question was not drawn: {}.", r.trim_end_matches('.')),
+        None    => "The page did not draw the question.".to_string(),
+    };
+    fmt!("{} There is nothing on screen to tap. Ask in prose instead, giving the options, your \
+        recommendation and the reason for it.", head)
+}
+
 /// What stands in for pictures of a Diamond's page that the model running the turn is not proven
 /// to read: `said`, then the Diamond's images model's description of each at `(width, path, PNG)`,
 /// ending where `capture` has always ended, on the table.
@@ -18112,7 +18123,8 @@ impl Tool {
     /// # Arguments
     /// * `tool` - The tool about to run.
     /// * `args_json` - Its arguments, as the model sent them.
-    fn write_targets(tool: &Tool, args_json: &str) -> Outcome<Vec<String>> {
+    /// * `daimon` - The Diamond the turn acts for, which a default path is placed inside.
+    fn write_targets(tool: &Tool, args_json: &str, daimon: Option<&str>) -> Outcome<Vec<String>> {
         Ok(match tool {
             // `file_fetch` counts as a write: it puts bytes at a path, and a bounded turn that
             // could materialise a file inside Daimond's own directory has written one.
@@ -18137,7 +18149,7 @@ impl Tool {
                     Vec::new()
                 },
             Tool::Capture =>
-                vec![Self::capture_out(args_json)],
+                vec![Self::capture_out(args_json, daimon)],
             // Its picture lands inside the Diamond, where its daimon may always write.
             Tool::CrystalLook => Vec::new(),
             Tool::FileMove =>
@@ -18191,7 +18203,8 @@ impl Tool {
     ///
     /// # Arguments
     /// * `args_json` - The arguments as the model sent them.
-    pub fn path_claims(&self, args_json: &str) -> Vec<(String, PathClaim)> {
+    /// * `daimon` - The Diamond the turn acts for, which a default path is placed inside.
+    pub fn path_claims(&self, args_json: &str, daimon: Option<&str>) -> Vec<(String, PathClaim)> {
         let named = |key: &str, claim: PathClaim| -> Option<(String, PathClaim)> {
             match extract_json_string(args_json, key) {
                 Some(p) if !p.trim().is_empty() => Some((p, claim)),
@@ -18216,7 +18229,7 @@ impl Tool {
             // A Diamond's page is drawn at several widths and a width whose picture could not be
             // drawn leaves no file, so nothing is claimed for it; the app's view always writes one.
             Tool::Capture if Self::capture_in_crystal(args_json) => Vec::new(),
-            Tool::Capture => vec![(Self::capture_out(args_json), PathClaim::Left)],
+            Tool::Capture => vec![(Self::capture_out(args_json, daimon), PathClaim::Left)],
             Tool::CrystalLook => Vec::new(),
             // A move states both halves, and the audit needs both: without the `Removed` half a
             // file moved away from a path an earlier call wrote would be reported as a write that
@@ -18514,7 +18527,7 @@ impl Tool {
         if let Some(refusal) = self.pack_refusal() {
             return Ok(Some(refusal_line(&refusal)));
         }
-        let writes = res!(Self::write_targets(self, args_json));
+        let writes = res!(Self::write_targets(self, args_json, ctx.daimon().as_deref()));
         let read   = res!(Self::read_target(self, args_json));
         // `artefact_add` and `typst_compile` name a path that is neither a bounds target nor a
         // read the guard checks -- the compile's PDF is the write it is judged on -- so both are
@@ -18664,14 +18677,20 @@ impl Tool {
         Ok(fmt!("{}.pdf", stem))
     }
 
-    /// Where a `capture` call will write its PNG: `path` when the model named one, else
-    /// `dev/shots/self.png`, the convention `DAIMOND.md` already reads screenshots from.
+    /// Where a `capture` call will write its PNG: `path` when the model named one, else inside
+    /// the Diamond the turn acts for (`diamonds/<id>/shots/self.png`), else `dev/shots/self.png`,
+    /// the convention `DAIMOND.md` already reads screenshots from.
     ///
-    /// One function, so the guard, the dispatch and the result all name the same file.
-    fn capture_out(args_json: &str) -> String {
-        match extract_json_string(args_json, "path") {
-            Some(p) if !p.trim().is_empty() => p.trim().to_string(),
-            _                               => "dev/shots/self.png".to_string(),
+    /// One function, so the guard, the dispatch and the result all name the same file.  The
+    /// Diamond's default is inside the Diamond for the reason `capture_outs`' is: a Diamond's
+    /// daimon may write only there, and until 2026-10-12 every capture it took without a path
+    /// stopped its turn on a write prompt for `dev/shots` -- a guessed view's refusal included,
+    /// which never reached the model while the prompt waited.
+    fn capture_out(args_json: &str, daimon: Option<&str>) -> String {
+        match (extract_json_string(args_json, "path"), daimon) {
+            (Some(p), _) if !p.trim().is_empty() => p.trim().to_string(),
+            (_, Some(id))                        => fmt!("diamonds/{}/shots/self.png", id),
+            _                                    => "dev/shots/self.png".to_string(),
         }
     }
 
@@ -18963,7 +18982,7 @@ impl Tool {
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
             Tool::SocialRead  => "THIS IS HOW YOU SEE WHAT PEOPLE ARE SAYING ABOUT DAIMOND, and whether something has already been reported. Six views. 'proposals': what anybody has asked for or reported about Daimond itself -- bugs, requests, complaints -- newest first, each with its number, state and votes for and against. 'proposal': ONE in full with its discussion; give 'n'. 'notes': what was written on this device and not sent. 'messages': what other people sent this account. 'people': who this account can reach. 'feed': what the people this account follows have posted to their followers. SO WHEN THE USER REPORTS A DEFECT IN DAIMOND, OR ASKS FOR SOMETHING, THIS IS WHERE IT GOES: read the proposals to see whether somebody has already said it, then use social_send. There is no external issue tracker and no web page to fetch: this panel IS how something about Daimond gets reported, and reading it takes no permission.",
             Tool::SocialSend  => "Publish on Daimond's Social panel, in the user's name, where other people read it. Four acts. 'propose' opens one, with 'title' and 'body' -- this is how a defect in Daimond reaches the people who build it. 'vote' backs or opposes an open one: 'n' and 'd' as 'for', 'against' or 'withdraw'. 'comment' says something on one: 'n' and 'said'. 'feed_post' publishes 'body' to this account's own followers, and needs Daimond Pro. Read with social_read first, so you have the number and do not repeat a proposal already there. EVERY CALL IS PUT TO THE USER BEFORE IT GOES OUT: they see exactly what would be published and say yes or no, and the yes covers that one publication. Write it for them to read. If they decline, do not send it again -- say what you wanted to publish and why. A dispatched worker cannot publish at all: say in your report what should be published and let the daimon put it.",
-            Tool::Capture     => "Photograph the app's OWN current view to a PNG in the workspace, to LOOK at a change you made (your shell and workers cannot launch a browser). NAME THE SMALLEST SELECTOR THAT SHOWS THE CHANGE -- an '#id' or a specific class -- NEVER the whole page, '#chat-output' or the chat pane (over ~3000 elements is refused, naming the count). THE HAND-OFF: dispatch a vision-capable worker with the path; it file_reads it with \"as\":\"image\" and confirms the change appears and nothing else looks broken. If it does not report back the change is UNVERIFIED: say so, never infer a pass. YOUR DIAMOND'S PAGE is in a sandboxed frame no selector reaches: in:\"crystal\" draws it at 390 and 1440 with a TEXT TABLE of its blocks' size, display, grid/flex and overflow (a selector: its matches); to measure parts, crystal_look. Browser build only.",
+            Tool::Capture     => "Photograph the app's own view to a workspace PNG, to LOOK at a change you made (your shell and workers cannot launch a browser). NAME A VIEW, not a guessed selector: in:\"preview\" (document preview), in:\"doc\" (an open file), any panel on screen by name (\"web\", \"graph\", \"term\", \"ai\", ...), or in:\"screen\" (the whole window). Only views on screen are drawn; a refusal lists them. A selector narrows a view to one element (no view: the app's DOM); the whole page (over ~3000 elements) is refused. THE HAND-OFF: dispatch a vision-capable worker with the path; it file_reads it \"as\":\"image\" and confirms the change shows and nothing else broke. Unreported, it is UNVERIFIED: say so, never infer a pass. YOUR DIAMOND'S PAGE is in a sandboxed frame: in:\"crystal\" draws it at 390 and 1440 with a TEXT TABLE of its blocks' size, display, grid/flex and overflow (a selector: its matches); to measure parts, crystal_look. Browser build only.",
             Tool::CrystalLook => "Draw your Diamond's page as its owner sees it, your edits included, at 1440 (default) or 390, and MEASURE up to 8 'targets' (a CSS selector, or 'text:' and an element's words): box, font-size, line-height, weight, padding, colours, border, and a picture if you can see. Look BEFORE a visual edit and AFTER (an edit after a look re-measures by itself); answer with the difference, e.g. 'both 40 px; were 39 and 39'. Browser build only.",
             Tool::Ask         => "Put ONE decision to the user as options they answer with a single tap. THIS IS HOW YOU ASK THEM SOMETHING: a decision answered by typing is a decision put off, so reach for this wherever you would otherwise stop and ask which of these, or shall I go on. ONE at a time, never a list; where more follow, set 'n' and 'of'. Each option has a short 'label' (the button's words) and a 'means': what choosing it concretely does, with an example and the trade-off. 'recommend' must match one 'label' EXACTLY. 'it depends' is not an answer: say what it depends on and pick the branch you believe applies. 'why' is one sentence citing THEIR world -- their constraint, cost or users -- not a general virtue. 'if_silent' says what you will do if they answer nothing; they may also answer in their own words and reject every option. YOUR TURN ENDS WHEN YOU CALL THIS: do not restate the question afterwards. Their answer arrives next, opening 'Chose:' with the label or 'Other:' with words of their own.",
             Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat -- this is for showing them something; the other file tools only hand bytes to you. A PDF is drawn page by page by the browser's own viewer, so say 'it is on screen now', never 'I cannot display a PDF'. Pictures (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF, SVG) are drawn, sound and video get a player, HTML is rendered, JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and source opens in an editor the user can type in. A format with no viewer is shown as a paged hex dump naming it, so this never fails: never conclude Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so call it again with the same path after you rewrite or recompile it. 'page' opens a PDF at a page. Show a file when they asked to see one, when you have just produced a document, or when looking beats describing.",
@@ -19082,7 +19101,7 @@ impl Tool {
             Tool::SocialSend => r#"{"type":"object","properties":{"act":{"type":"string","enum":["propose","vote","comment","feed_post"],"description":"Open a new proposal, vote on one, comment on one, or post to your followers."},"title":{"type":"string","description":"For 'propose': ONE line saying what this is about, the line everybody reads first."},"body":{"type":"string","description":"For 'propose': what happened and what was expected instead, up to 20000 characters with the title. For 'feed_post': the words to publish, up to 4096 bytes."},"n":{"type":"integer","description":"For 'vote' and 'comment': the proposal's number, as social_read lists it."},"d":{"type":"string","enum":["for","against","withdraw"],"description":"For 'vote': which way. 'withdraw' takes back a vote this account already cast."},"said":{"type":"string","description":"For 'comment': what to say on the proposal."}},"required":["act"]}"#,
             Tool::Ask => r#"{"type":"object","properties":{"question":{"type":"string","description":"The decision in ONE sentence of plain words, naming the thing it decides"},"options":{"type":"array","minItems":2,"maxItems":4,"items":{"type":"object","properties":{"label":{"type":"string","description":"The words on the button, short enough to sit beside the others"},"means":{"type":"string","description":"What choosing it concretely does -- what they see, get or pay -- with an example where one is possible, and the trade-off"}},"required":["label","means"]},"description":"Fewer is not a decision; more is a list."},"recommend":{"type":"string","description":"The label of the option you recommend, exactly"},"why":{"type":"string","description":"One sentence citing their own constraint, cost or users"},"if_silent":{"type":"string","description":"What you will do if they answer nothing"},"n":{"type":"integer","description":"Which decision of several this is; omit for one."},"of":{"type":"integer","description":"How many decisions in all"}},"required":["question","options","recommend","why","if_silent"]}"#,
             Tool::FileShow => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to put on screen, e.g. 'notes/report.pdf'; never absolute"},"page":{"type":"integer","description":"Which page to open a PDF at, 1-based. Omit for the start of the document."}},"required":["path"]}"#,
-            Tool::Capture => r#"{"type":"object","properties":{"selector":{"type":"string","description":"ALMOST ALWAYS GIVE THIS: the SMALLEST element showing the change. With in:\"crystal\", none outlines the page."},"in":{"type":"string","enum":["crystal"],"description":"\"crystal\": your Diamond's own page."},"width":{"type":"integer","description":"in:\"crystal\" viewport px (default 390 and 1440)."},"path":{"type":"string","description":"Workspace-relative PNG path (default 'dev/shots/self.png')."},"max_w":{"type":"integer","description":"Picture width cap, px (default 1600)."},"background":{"type":"string","description":"CSS colour behind a see-through view."}},"required":[]}"#,
+            Tool::Capture => r#"{"type":"object","properties":{"in":{"type":"string","description":"A view name."},"selector":{"type":"string","description":"One element in the view; with in:\"crystal\", none outlines the page."},"width":{"type":"integer","description":"in:\"crystal\" viewport px."},"path":{"type":"string","description":"Workspace PNG path (default your Diamond's shots/self.png, else dev/shots/self.png)."},"max_w":{"type":"integer","description":"Width cap, px (default 1600)."},"background":{"type":"string","description":"CSS colour behind a see-through view."}},"required":[]}"#,
             Tool::CrystalLook => r#"{"type":"object","properties":{"targets":{"type":"array","maxItems":8,"items":{"type":"string"},"description":"'.go' or 'text:Edit group'."},"width":{"type":"integer","enum":[1440,390]}},"required":["targets"]}"#,
             Tool::SheetRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx, e.g. 'books/ledger.xlsx'; never absolute"},"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet; file_read on the workbook lists the names."},"range":{"type":"string","description":"Which cells, like 'A1:H40'. Omit for the first 100 rows. A range larger than the sheet is clipped to it rather than refused."}},"required":["path"]}"#,
             Tool::DocEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .docx or .odt, e.g. 'notes/report.docx'; never absolute"},"edits":{"type":"array","description":"The replacements to make, in order. Each is applied to the document as the one before it left it.","items":{"type":"object","properties":{"find":{"type":"string","description":"The exact text to look for, as the document holds it"},"replace":{"type":"string","description":"What to put in its place. Empty removes the text."},"nth":{"type":"integer","description":"Which occurrence to change, counted from 1 through the whole document. Omit to change every one."}},"required":["find","replace"]}}},"required":["path","edits"]}"#,
@@ -23713,7 +23732,7 @@ impl Tool {
     /// agent's own, not another's edit to guard against.
     #[cfg(target_arch = "wasm32")]
     async fn capture_view(args_json: &str, ctx: &ToolContext) -> Outcome<String> {
-        let raw = Self::capture_out(args_json);
+        let raw = Self::capture_out(args_json, ctx.daimon().as_deref());
         let (path, lic) = match res!(Self::capture_door(ctx, &raw)) {
             Ok(d)    => d,
             Err(why) => return Ok(why),
@@ -29111,8 +29130,12 @@ impl ToolRegistry {
             let known = schema_property_names(t.parameters());
             // A key the tool reads although its schema does not offer it is not unknown:
             // `capture` measures the `targets` a `crystal_look`, or the engine's own look, hands it.
+            // `ask` reads `app`: the app's own Decision when a turn is blocked (`blocked_ask_args`)
+            // carries it, so the page draws that card in the user's language; flagging it told
+            // the daimon the app's key was its mistake (2026-10-12).
             let unoffered: &[&str] = match t {
                 Tool::Capture	=> &["targets"],
+                Tool::Ask		=> &["app"],
                 _				=> &[],
             };
             let unknown: Vec<String> = crate::llm::json_top_level_keys(args_json).into_iter()
@@ -29267,7 +29290,7 @@ mod tests {
         assert!(schema.contains(r#""required":["targets"]"#), "{}", schema);
         let says = Tool::CrystalLook.description();
         assert!(says.contains("BEFORE") && says.contains("AFTER") && says.contains("were 39 and 39"), "{}", says);
-        assert!(Tool::CrystalLook.path_claims("{}").is_empty());
+        assert!(Tool::CrystalLook.path_claims("{}", None).is_empty());
 
         let req = match Tool::look_args(r#"{"targets":[".go"," text:Log it "]}"#, "d1") {
             Ok(r)  => r,
@@ -29333,7 +29356,14 @@ mod tests {
         assert_eq!(Tool::capture_outs(one, "d1"), vec![(600, "dev/shots/life-600.png".to_string())]);
         assert_eq!(Tool::capture_outs(r#"{"in":"crystal","width":50,"path":"a/b"}"#, "d1"),
             vec![(200, "a/b-200.png".to_string())], "a width is held to 200..4000, a bare path gets .png");
-        assert_eq!(Tool::capture_out(app), "dev/shots/self.png", "the app's view keeps its own default");
+        assert_eq!(Tool::capture_out(app, None), "dev/shots/self.png", "the app's view keeps its own default");
+        assert_eq!(Tool::capture_out(app, Some("d1")), "diamonds/d1/shots/self.png",
+            "a Diamond's view lands inside the Diamond, where its daimon may write without asking");
+        assert_eq!(Tool::capture_out(r#"{"path":"dev/a.png"}"#, Some("d1")), "dev/a.png", "a named path is kept");
+        assert_eq!(Tool::write_targets(&Tool::Capture, r#"{"in":"preview"}"#, Some("d1")).expect("targets"),
+            vec!["diamonds/d1/shots/self.png".to_string()], "the guard sees the file the dispatch writes");
+        assert_eq!(Tool::Capture.path_claims(r#"{"in":"preview"}"#, Some("d1")),
+            vec![("diamonds/d1/shots/self.png".to_string(), PathClaim::Left)], "and so does the audit");
         let req = Tool::crystal_req(both, "d1", "<p>\"x\"</p>", "{\"title\":\"t\"}", 390, true);
         assert!(req.contains(r#""in":"crystal""#) && req.contains(r#""width":390"#)
             && req.contains(r#""selector":".tile""#) && req.contains(r#""page":"<p>\"x\"</p>""#)
@@ -29351,6 +29381,19 @@ mod tests {
         assert!(Tool::Capture.description().contains(r#"in:"crystal""#),
             "the model is told the option exists");
         assert!(Tool::Capture.parameters().contains(r#""in""#));
+        // The view vocabulary (2026-10-12): the daimon names what it wants to see and never
+        // has to guess the DOM; the schema no longer fences `in` to "crystal".
+        assert!(Tool::Capture.description().contains(r#"in:"preview""#)
+            && Tool::Capture.description().contains(r#"in:"screen""#),
+            "the model is told the views");
+        assert!(!Tool::Capture.parameters().contains(r#""enum":["crystal"]"#),
+            "the schema must take a view name");
+        assert!(Tool::capture_req(r#"{"in":"preview"}"#).contains(r#""in":"preview""#));
+        // An ask the page did not draw says why first (2026-10-12).
+        let why = ask_not_drawn(Some("the person is looking at a Diamond's page (its crystal face), not at yours"));
+        assert!(why.starts_with("The question was not drawn: the person is looking at"), "{}", why);
+        assert!(why.contains("Ask in prose"), "{}", why);
+        assert!(ask_not_drawn(None).starts_with("The page did not draw the question."));
         assert!(Tool::capture_handoff("these paths").contains("UNVERIFIED"));
     }
 
@@ -30105,6 +30148,21 @@ mod tests {
             "the array Kimi's edits never survive is still in the schema: {}", def);
         assert!(def.contains("\"required\":[\"path\",\"old_string\",\"new_string\"]"),
             "the pair is not required in the narrowed schema: {}", def);
+    }
+
+    /// The app's own `ask` -- the Decision a blocked turn puts, carrying `app` -- is not echoed
+    /// back to the daimon as a key it invented, while a key nobody reads still is (2026-10-12).
+    #[test]
+    fn test_the_apps_own_ask_key_is_not_flagged_as_invented_00() {
+        let reg = ToolRegistry::new(Tool::daimon(), ctx());
+        let refused = || MessageContent::text(&fmt!("{}: not drawn", REFUSAL_OPENING));
+        let own = reg.guided("ask", &crate::agent::blocked_ask_args(), refused());
+        let own = own.as_text();
+        assert!(!own.contains("Unknown key"), "the app's own 'app' key was flagged: {}", own);
+        let made_up = reg.guided("ask", r#"{"app":"blocked","question":"q","colour":"red"}"#, refused());
+        let made_up = made_up.as_text();
+        assert!(made_up.contains("Unknown key(s) 'colour'") && !made_up.contains("'app',"),
+            "an invented key is no longer named, or 'app' is named with it: {}", made_up);
     }
 
     /// An unknown model is offered exactly what shipped before any of this.
@@ -42345,7 +42403,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             "a chat keeps what it deletes and cannot put it back when the user asks");
         // The fence sees the write, and the audit is told a file was left there.
         assert_eq!(vec![("notes/a.md".to_string(), PathClaim::Left)],
-            Tool::FileRevert.path_claims(r#"{"path":"notes/a.md"}"#));
+            Tool::FileRevert.path_claims(r#"{"path":"notes/a.md"}"#, None));
         // ON REQUEST ONLY, which is the whole of what keeps it from being used as a way out of a
         // change the model has decided against.
         assert!(Tool::FileRevert.description().contains("ONLY WHEN THE USER ASKS"));
@@ -45908,7 +45966,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert!(Tool::daimon().contains(&Tool::Outline), "a daimon cannot map a file");
         assert_eq!("outline", Tool::Outline.name());
         assert_eq!(Some(Tool::Outline), Tool::from_name("outline"));
-        assert!(Tool::write_targets(&Tool::Outline, r#"{"path":"a.rs"}"#)
+        assert!(Tool::write_targets(&Tool::Outline, r#"{"path":"a.rs"}"#, None)
             .expect("targets").is_empty(), "outline claims a write");
         assert_eq!(Some(fmt!("a.rs")),
             Tool::read_target(&Tool::Outline, r#"{"path":"a.rs"}"#).expect("target"),
@@ -46885,7 +46943,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
     fn test_the_new_office_tools_are_fenced_like_a_write() {
         for tool in [Tool::DocEdit, Tool::SheetWrite] {
             let args = r#"{"path":"secrets/keys.docx","edits":[]}"#;
-            let targets = Tool::write_targets(&tool, args).expect("targets");
+            let targets = Tool::write_targets(&tool, args, None).expect("targets");
             assert_eq!(targets, vec!["secrets/keys.docx".to_string()],
                 "{} does not declare the path it changes, so the guard never sees it", tool.name());
         }
@@ -47509,31 +47567,31 @@ mod claim_tests {
 	fn test_a_calls_claim_is_read_off_its_arguments_00() {
 		assert_eq!(
 			vec![(fmt!("notes/a.txt"), PathClaim::Left)],
-			Tool::FileWrite.path_claims(r#"{"path":"notes/a.txt","content":"hi"}"#));
+			Tool::FileWrite.path_claims(r#"{"path":"notes/a.txt","content":"hi"}"#, None));
 		assert_eq!(
 			vec![(fmt!("notes/a.txt"), PathClaim::Left)],
 			Tool::FileEdit.path_claims(
-				r#"{"path":"notes/a.txt","old_string":"a","new_string":"b"}"#));
+				r#"{"path":"notes/a.txt","old_string":"a","new_string":"b"}"#, None));
 		// A delete states the opposite, and the audit needs it stated: without it, a file written
 		// and then tidied away in the same turn would be reported as a write that never happened.
 		assert_eq!(
 			vec![(fmt!("scratch.txt"), PathClaim::Removed)],
-			Tool::FileDelete.path_claims(r#"{"path":"scratch.txt"}"#));
+			Tool::FileDelete.path_claims(r#"{"path":"scratch.txt"}"#, None));
 		assert_eq!(
 			vec![(fmt!("a.txt"), PathClaim::Removed), (fmt!("b.txt"), PathClaim::Left)],
-			Tool::FileMove.path_claims(r#"{"path":"a.txt","to":"b.txt"}"#));
+			Tool::FileMove.path_claims(r#"{"path":"a.txt","to":"b.txt"}"#, None));
 		// The PDF, by the same function the guard and the result use, rather than the source.
 		assert_eq!(
 			vec![(fmt!("doc/paper.pdf"), PathClaim::Left)],
-			Tool::TypstCompile.path_claims(r#"{"path":"doc/paper.typ"}"#));
+			Tool::TypstCompile.path_claims(r#"{"path":"doc/paper.typ"}"#, None));
 		// Reading claims nothing about the store, and neither does searching it.
-		assert!(Tool::FileRead.path_claims(r#"{"path":"notes/a.txt"}"#).is_empty());
-		assert!(Tool::FileSearch.path_claims(r#"{"query":"needle"}"#).is_empty());
+		assert!(Tool::FileRead.path_claims(r#"{"path":"notes/a.txt"}"#, None).is_empty());
+		assert!(Tool::FileSearch.path_claims(r#"{"query":"needle"}"#, None).is_empty());
 		// Arguments that name no path yield no claim rather than an error. A call whose path
 		// cannot be read is one the dispatcher refuses a moment later, and a claim invented from a
 		// half-parsed object would be a finding about a file nobody named.
-		assert!(Tool::FileWrite.path_claims("{}").is_empty());
-		assert!(Tool::FileWrite.path_claims(r#"{"path":"   "}"#).is_empty());
+		assert!(Tool::FileWrite.path_claims("{}", None).is_empty());
+		assert!(Tool::FileWrite.path_claims(r#"{"path":"   "}"#, None).is_empty());
 		// A CALL CUT OFF AT THE OUTPUT LIMIT still carries a whole `path` -- the cut fell in the
 		// content after it -- so this function reads one and it is the OUTCOME that keeps the
 		// claim out of the audit: the note such a call gets back opens "Error", so it is booked
@@ -47541,7 +47599,7 @@ mod claim_tests {
 		// `agent::tests::test_a_call_that_never_ran_claims_nothing_00`.
 		assert_eq!(
 			vec![(fmt!("src/big.rs"), PathClaim::Left)],
-			Tool::FileWrite.path_claims(r#"{"path":"src/big.rs","content":"fn main() {"#));
+			Tool::FileWrite.path_claims(r#"{"path":"src/big.rs","content":"fn main() {"#, None));
 	}
 
 	/// **A shell, a build, a verifier and a worker reach files nobody wrote down.**

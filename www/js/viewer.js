@@ -975,12 +975,22 @@
 
 	// ── Handing a document back to the user ─────────────────────────
 	//
-	// THE ROUTE IS THE APP'S OWN AND IS NOT INVENTED HERE. Every other place
-	// Daimond gives somebody a file -- the preview panel's ⤓, the document
-	// panel's, the chat backup -- builds one `Blob`, mints an object URL, clicks a
-	// synthetic `<a download>` and revokes the URL straight after. This is the
-	// same three lines, so there is one handover in the app to change rather than
-	// two to keep in step.
+	// ONE HAND-OVER FOR THE WHOLE APP, published as `DaimondViewer.handOver`. Every
+	// place Daimond gives somebody a file -- the preview panel's Download, the
+	// document panel's, the chat and full backups, a share, a template, a
+	// recording -- goes through it. They used to be seven copies of the same
+	// three lines, and the three lines were wrong in the same way everywhere
+	// (PDF-PANEL, 12 Oct 2026):
+	//
+	//   * the URL was revoked on the line after `click()`. The click only QUEUES
+	//     the download; WebKit reads the blob after that, finds the URL gone and
+	//     saves nothing. The URL now lives a minute.
+	//   * the `<a>` was never in the document. Firefox ignores a click on a
+	//     detached anchor, and WebKit is not promised to honour one.
+	//   * an installed iOS app (`navigator.standalone`) has no downloads shelf:
+	//     an `<a download>` there opens the bytes in a sheet with no way back, or
+	//     does nothing. The system share sheet is its door ("Save to Files"), so
+	//     a file goes there when the sheet can carry it.
 	//
 	// It deliberately does NOT go through `mint`. Those URLs are revoked by
 	// `close`, and `show` calls `close` before it draws, so a download holding a
@@ -992,15 +1002,37 @@
 	/// A file name with its extension taken off.
 	function stemOf(name) { return String(name).replace(/\.[^./]+$/, '') || String(name); }
 
-	/// Give `bytes` to the user as a file called `name`.
-	function handOver(bytes, mime, name) {
-		var a = document.createElement('a');
-		a.href = URL.createObjectURL(
-			new Blob([bytes], { type: mime || 'application/octet-stream' }));
-		a.download = name;
-		a.rel = 'noopener';
-		a.click();
-		URL.revokeObjectURL(a.href);
+	var HANDOVER_KEEP_MS = 60000;	// how long a download's URL outlives the click
+
+	/// Give `data` -- a `Blob`, bytes, or a string -- to the user as a file called `name`.
+	function handOver(data, mime, name) {
+		var type = mime || (data && data.type) || 'application/octet-stream';
+		var blob = (data instanceof Blob) ? data : new Blob([data], { type: type });
+		var file = String(name || 'file');
+		var shelf = function () {
+			var a = document.createElement('a');
+			a.href = URL.createObjectURL(blob);
+			a.download = file;
+			a.rel = 'noopener';
+			a.style.display = 'none';
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			setTimeout(function () { URL.revokeObjectURL(a.href); }, HANDOVER_KEEP_MS);
+		};
+		var sheet = null;
+		try {
+			if (window.navigator.standalone === true && navigator.share && navigator.canShare
+				&& typeof File === 'function') {
+				var f = new File([blob], file, { type: type });
+				if (navigator.canShare({ files: [f] })) sheet = f;
+			}
+		} catch (e) { sheet = null; }	// no File constructor, or a sheet that cannot say
+		if (!sheet) { shelf(); return; }
+		// Cancelling the sheet is the user's answer, not a failure to fall back from.
+		navigator.share({ files: [sheet] }).catch(function (e) {
+			if (!e || e.name !== 'AbortError') shelf();
+		});
 	}
 
 	/// Which formats may be edited, and which wasm door does it.
@@ -1873,6 +1905,8 @@
 		// here beside the table it is answered from rather than restated by every
 		// caller -- one caller restating it is what put a PDF in a <pre>.
 		editable:      editable,
+		// The one way the app gives somebody a file: see the note above `handOver`.
+		handOver:      handOver,
 		KIND_HANDLERS: Object.freeze(KIND_HANDLERS),
 		// The second lock, published for the same reason the first one is: a test
 		// can then see that no deck has an editor WITHOUT rendering one, and a

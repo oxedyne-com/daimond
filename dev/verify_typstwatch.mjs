@@ -1062,12 +1062,15 @@ try {
 			// A DIRECT CHILD: the shared glyph outlines ride in the first sheet made, and
 			// the page group is the one the sheet itself holds.
 			const g = svg && svg.querySelector(':scope > g[class*="typst-page"]');
-			if (!svg || !g) continue;
+			if (!svg) continue;
 			const vb = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
-			const m = /translate\(\s*[-\d.]+\s*,\s*([-\d.]+)/
+			// Austenite draws each page as its own SVG, its ink in the page's own
+			// coordinates with no page group: there the crop must start at the page's
+			// origin, so its ink is at 0 and the viewBox has to say 0 too.
+			const m = g && /translate\(\s*[-\d.]+\s*,\s*([-\d.]+)/
 				.exec(g.getAttribute('transform') || '');
 			out.push({ page: Number(sh.getAttribute('data-page')),
-				crop: vb[1], ink: m ? parseFloat(m[1]) : NaN });
+				crop: vb[1], ink: g ? (m ? parseFloat(m[1]) : NaN) : 0 });
 		}
 		return out;
 	});

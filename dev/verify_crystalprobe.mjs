@@ -282,7 +282,8 @@ const own = 'diamonds/' + id + '/shots/self.png';
 const t5 = await daimon({ selector: '.tile', path: own });
 check('the app\'s own capture of .tile says the page is in a sandboxed frame and names in:"crystal"', /sandboxed frame/.test(t5) && /in:"crystal"/.test(t5) && /'\.tile'/.test(t5), t5.slice(0, 200));
 const t6 = await daimon({ in: 'elsewhere', path: own });
-check('an unknown "in" is refused by name', /"in" is "crystal"/.test(t6), t6.slice(0, 140));
+// Since 2026-10-12 `in` names a view, so the refusal names the one asked for and lists the views on screen, crystal among them.
+check('an unknown "in" is refused by name, listing the views on screen', /No view called "elsewhere"/.test(t6) && /Views on screen now: [^.]*\bcrystal\b/.test(t6), t6.slice(0, 200));
 
 
 // ── (6) the picture reaches the daimon: its own model first, then the images model, else one line ──

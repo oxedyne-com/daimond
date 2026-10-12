@@ -439,8 +439,8 @@
 	'chat.send':           '发送',
 	'chat.busy':           '思考中…',
 	'chat.thinking':           '思考过程',
-	'chat.busy_tool':      '正在运行 {tool}，第 {n} 步…',
-	'chat.busy_next':      '第 {n} 步完成，思考中…',
+	'chat.busy_tool':      '正在运行 {tool}，第 {n} 次工具调用…',
+	'chat.busy_next':      '第 {n} 次工具调用完成，思考中…',
 	'chat.busy_road':       '连接已断开 — 正在重试 {name}（第 {n} 次，共 {of} 次）…',
 	'chat.busy_writing':   '正在写回答…',
 	// One command's own line, when the turn's fence withheld the network from it.

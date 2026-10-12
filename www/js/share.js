@@ -907,12 +907,7 @@
 				'There is nothing to share: name a diamond or the files to send.'));
 		}
 		var name = filename(made);
-		var a = document.createElement('a');
-		a.href = URL.createObjectURL(new Blob([made.sealed], { type: MIME }));
-		a.download = name;
-		a.rel = 'noopener';
-		a.click();
-		URL.revokeObjectURL(a.href);
+		DaimondViewer.handOver(made.sealed, MIME, name);
 		log('saved', name, made.sealed.length, 'bytes');
 		return name;
 	}
@@ -1184,12 +1179,7 @@
 		var stem = String(name || 'template')
 			.replace(/[^A-Za-z0-9 _-]+/g, '').trim().replace(/\s+/g, '-').slice(0, 40);
 		var file = (stem || 'template') + TEMPLATE_EXT;
-		var a = document.createElement('a');
-		a.href = URL.createObjectURL(new Blob([text], { type: TEMPLATE_MIME }));
-		a.download = file;
-		a.rel = 'noopener';
-		a.click();
-		URL.revokeObjectURL(a.href);
+		DaimondViewer.handOver(text, TEMPLATE_MIME, file);
 		log('saved template', file, text.length, 'bytes');
 		return file;
 	}

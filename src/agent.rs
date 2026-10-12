@@ -151,6 +151,12 @@ pub struct Agent {
     /// steering turn whose 200-message prior folded to 27 died at the slice with the promise
     /// never settled; see [`Agent::turn_start`].
     turn_start:          Cell<usize>,
+    /// Estimated tokens below which this turn does not fold again unless forced.
+    ///
+    /// Set where a pass could not take the conversation below `compact::FOLD_TARGET`, or freed
+    /// less than `compact::MIN_FOLD_GAIN`, to the carry it left plus that gain: a fold that
+    /// cannot make progress is not retried on every round.  Cleared at the top of each turn.
+    fold_rest:           Cell<u64>,
     /// Whether the turn in flight has been orphaned: whatever dispatched this agent has
     /// ended, so nothing is holding a promise on what it is about to say.
     ///
@@ -221,6 +227,23 @@ impl Fold {
 	/// Does this fold carry news about how big the window really is?
 	fn teaches_window(self) -> bool {
 		matches!(self, Self::Refused)
+	}
+}
+
+
+/// What a pass of [`Agent::fold_if_needed`] did to the request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refit {
+	Untouched,	// nothing moved
+	Shortened,	// the sent copy was shortened, nothing folded
+	Folded,		// the record was folded
+}
+
+impl Refit {
+
+	/// Did the request change, so a refused one is worth sending again?
+	pub fn changed(self) -> bool {
+		!matches!(self, Self::Untouched)
 	}
 }
 
@@ -399,11 +422,12 @@ impl Claims {
 	/// Record one dispatched call.
 	///
 	/// A call that was refused or that broke states nothing about the store, so its paths are not
-	/// taken: a write the fence stopped is not a file anybody should be looking for.
-	fn record(&mut self, name: &str, args: &str, outcome: crate::tools::CallOutcome) {
+	/// taken: a write the fence stopped is not a file anybody should be looking for.  `daimon` is
+	/// the Diamond the turn acts for, inside which a call's default path is placed.
+	fn record(&mut self, name: &str, args: &str, outcome: crate::tools::CallOutcome, daimon: Option<&str>) {
 		let tool = crate::tools::Tool::from_name(name);
 		let paths = match tool {
-			Some(t) if outcome == crate::tools::CallOutcome::Done => t.path_claims(args),
+			Some(t) if outcome == crate::tools::CallOutcome::Done => t.path_claims(args, daimon),
 			_ => Vec::new(),
 		};
 		// A refused shell ran nothing, so it cannot have moved a file.  Anything else that
@@ -466,6 +490,7 @@ impl Agent {
             fold_prompt:     Rc::new(RefCell::new(String::new())),
             prior_end:       Cell::new(0),
             turn_start:      Cell::new(0),
+            fold_rest:       Cell::new(0),
             orphaned:        Cell::new(false),
             ending:          Rc::new(RefCell::new(None)),
             diamond:         Rc::new(RefCell::new(String::new())),
@@ -978,7 +1003,7 @@ impl Agent {
         // that answer next, so the newest turn keeps its results and everything older is retired.
         let keep = self.limits.borrow().retire_keep_turns;
         self.prior_end.set(compact::prior_end(&session.messages, keep));
-        self.fold_if_needed(session, &mut working, 0, Fold::ByHand, on_event).await
+        self.fold_if_needed(session, &mut working, 0, Fold::ByHand, on_event).await.changed()
     }
 
     /// Set what the model folding this agent's conversations is told.
@@ -1211,6 +1236,7 @@ impl Agent {
         // recorded on the agent rather than left to the caller, because a fold later in the turn
         // moves it; see `Agent::turn_start`.
         self.turn_start.set(session.messages.len());
+        self.fold_rest.set(0);
         // Append the user message to the persisted history.
         session.messages.push(ChatMessage::user_noted(user_msg, pre));
 
@@ -1370,7 +1396,8 @@ impl Agent {
                 Err(e) => {
                     if !refolded && self.overflowed(&e, sent) {
                         refolded = true;
-                        if self.fold_if_needed(session, &mut working, 0, Fold::Refused, on_event).await {
+                        if self.fold_if_needed(session, &mut working, 0, Fold::Refused, on_event).await
+                            .changed() {
                             continue;
                         }
                     }
@@ -1764,7 +1791,8 @@ impl Agent {
             // Fold before the request rather than after the refusal. Checked every round,
             // because a single turn of fifty file reads can outgrow the window on its own,
             // without any earlier turn being large at all.
-            if self.fold_if_needed(session, &mut working, schema, Fold::IfNeeded, on_event).await {
+            if self.fold_if_needed(session, &mut working, schema, Fold::IfNeeded, on_event).await
+                == Refit::Folded {
                 round_at.clear();
             }
             round_at.push(working.len());
@@ -1841,7 +1869,8 @@ impl Agent {
                         // that looks like the prompt being too long.
                         if !refolded && self.overflowed(&e, sent + schema) {
                             refolded = true;
-                            if self.fold_if_needed(session, &mut working, schema, Fold::Refused, on_event).await {
+                            if self.fold_if_needed(session, &mut working, schema, Fold::Refused,
+                                on_event).await.changed() {
                                 sent = compact::conversation_bytes(&working, &self.llm.open_folds());
                                 continue;
                             }
@@ -2160,7 +2189,15 @@ impl Agent {
             // read it there rather than inferring it from here.  Everything this loop does with
             // a result it does in the model's own order, whatever ran together underneath.
             let names: Vec<&str> = resp.tool_calls.iter().map(|t| t.name.as_str()).collect();
+            // SETTLED BEFORE ANYTHING RUNS, and ahead of `held`: a duplicate or a call past the
+            // cap never reaches a tool, `with_folds`, the setbacks, the claims or the page, so a
+            // call that never ran is never recorded as done.  It still gets its `ToolResult` and
+            // its reply, so the pairing holds.  See [`settle_calls`].
+            let settled = settle_calls(&resp.tool_calls, resp.truncated);
+            let mut outcomes: Vec<Option<crate::tools::CallOutcome>> =
+                vec![None; resp.tool_calls.len()];
             for span in batch::batches(&names) {
+                let base = span.start; // index of the group's first call in the reply
                 // A HALT SET WHILE AN EARLIER CALL OF THIS ROUND RAN stops the calls after it.
                 // Their assistant turn is already in the session, so the calls left unanswered
                 // are paired off as a road failure's are (`abandon_round`).
@@ -2197,13 +2234,21 @@ impl Agent {
                 // answered as a refusal, so the conversation stays well formed, and the turn ends
                 // at the seam with the choice put to the user.  Only the same call, arguments and
                 // all: a corrected one is sent.
-                let held: Vec<Option<(String, String)>> = group.iter()
-                    .map(|tc| setbacks.held(&tc.name, &tc.arguments)
-                        .map(|head| (held_said(&tc.name, head), held_told(&tc.name, head))))
+                let pre: Vec<bool> = (0..group.len())
+                    .map(|n| settled[base + n] != Settled::Run)
+                    .collect();
+                let held: Vec<Option<(String, String)>> = group.iter().zip(pre.iter())
+                    .map(|(tc, p)| if *p { None } else {
+                        setbacks.held(&tc.name, &tc.arguments)
+                            .map(|head| (held_said(&tc.name, head), held_told(&tc.name, head)))
+                    })
                     .collect();
                 let truncated = resp.truncated;
                 let outs: Vec<Outcome<MessageContent>> = if group.len() == 1 {
-                    if let Some((said, _)) = &held[0] {
+                    if pre[0] {
+                        // Answered in the record loop below, once the original's outcome is known.
+                        vec![Ok(MessageContent::text(String::new()))]
+                    } else if let Some((said, _)) = &held[0] {
                         vec![Ok(MessageContent::text(crate::tools::refusal_line(said)))]
                     } else {
                         vec![self.one_call(registry, &group[0], truncated, on_event).await]
@@ -2211,9 +2256,12 @@ impl Agent {
                 } else {
                     sinks = group.iter().map(|_| Vec::new()).collect();
                     let futs: Vec<_> = group.iter().zip(sinks.iter_mut()).zip(held.iter())
-                        .map(|((tc, sink), h)| {
+                        .zip(pre.iter())
+                        .map(|(((tc, sink), h), p)| {
                             async move {
-                                if let Some((said, _)) = h {
+                                if *p {
+                                    Ok(MessageContent::text(String::new()))
+                                } else if let Some((said, _)) = h {
                                     Ok(MessageContent::text(crate::tools::refusal_line(said)))
                                 } else {
                                     self.call_buffered(registry, tc, truncated, sink).await
@@ -2266,6 +2314,31 @@ impl Agent {
                             return Err(e);
                         }
                     };
+                    // A SETTLED CALL is answered here and nowhere else: its event and its reply,
+                    // with the outcome of the call that answers for it, and nothing recorded.
+                    let said = match settled[base + n] {
+                        Settled::Run		=> None,
+                        Settled::Same(j)	=> {
+                            let o = outcomes[j].unwrap_or(crate::tools::CallOutcome::Failed);
+                            Some((same_call_reply(&resp.tool_calls[j].id, o), o))
+                        },
+                        Settled::Unrun		=> Some((unrun_call_note(self.reply_cap()),
+                            crate::tools::CallOutcome::Failed)),
+                    };
+                    if let Some((text, outcome)) = said {
+                        outcomes[base + n] = Some(outcome);
+                        on_event(AgentEvent::ToolResult {
+                            name:   tc.name.clone(),
+                            result: text.clone(),
+                            outcome,
+                            paused: String::new(),
+                            class:  String::new(),
+                        });
+                        let reply = ChatMessage::tool(tc.id.clone(), MessageContent::text(text));
+                        working.push(reply.clone());
+                        session.messages.push(reply);
+                        continue;
+                    }
                     // The event carries the TEXT of the result and not the image. Everything
                     // downstream of it -- the panel, the journal's write-ahead log, the
                     // transcript on screen -- renders a string, and an image inside that string
@@ -2325,7 +2398,8 @@ impl Agent {
                     // AND THE AUDIT IS KEPT FROM THE SAME VERDICT, not from a second reading of
                     // it. The paths come from the ARGUMENTS the model sent, which name the file
                     // it meant whatever the reply says about it.
-                    claims.record(&tc.name, &tc.arguments, outcome);
+                    claims.record(&tc.name, &tc.arguments, outcome, registry.ctx.daimon().as_deref());
+                    outcomes[base + n] = Some(outcome);
                     // ASKED OF THE RESULT, and of every call in the round rather than of the
                     // first: a round may carry several, and the question may not be the one that
                     // came back first.
@@ -2830,7 +2904,7 @@ impl Agent {
         why:        Fold,
         on_event:   &mut impl FnMut(AgentEvent),
     )
-        -> bool
+        -> Refit
     {
         // THE FOLDS THE USER HAS OPEN, taken once for the whole fold. Every size below is a
         // size on the wire, and a closed fold's detail is not on the wire: `msg_bytes` asks the
@@ -2861,8 +2935,14 @@ impl Agent {
         // is back under. See `compact::needs_fold`.
         let est = self.gauge.tokens(compact::conversation_bytes(working, &open) + schema);
         if !compact::needs_fold(est, session.last_prompt_tokens, budget, why.forces()) {
-            return false;
+            return Refit::Untouched;
         }
+        // AN EARLIER PASS THIS TURN COULD NOT GET UNDER THE TARGET, so the same pass is not run
+        // again until the carry has grown by a fold's worth.  See `Agent::fold_rest`.
+        if !why.forces() && est < self.fold_rest.get() {
+            return Refit::Untouched;
+        }
+        let gain = (budget as f64 * compact::MIN_FOLD_GAIN) as u64;
 
         let mut folded  = 0usize;
         let mut trouble = String::new();
@@ -2890,6 +2970,20 @@ impl Agent {
         if cut == 0 && why.at_the_cap() {
             cut = compact::capped_cut(&session.messages, ceiling, &open);
         }
+        // A FOLD THAT FREES TOO LITTLE IS NOT PAID FOR.  A cut over nothing but an earlier fold
+        // note re-summarises a summary, and one that frees less than a tenth of the budget, net
+        // of the note it writes, is re-triggered by the next tool result: on 2026-10-12 that was
+        // sixteen paid summaries in sixteen rounds, each folding one message or none.  A forced
+        // fold is asked for whatever it frees, so only the first test binds it.
+        if cut > 0 {
+            let only_notes = session.messages[..cut].iter().all(compact::is_fold_notice);
+            let freed = compact::conversation_bytes(&session.messages[..cut], &open);
+            let worth = self.gauge.bytes(gain + compact::FOLD_MAX_TOKENS as u64);
+            if only_notes || (!why.forces() && freed < worth) {
+                cut = 0;
+            }
+        }
+        let mut summarised = false;
         if cut > 0 {
             // Built before the summarising call, so a call that fails still leaves a
             // truthful record: which files were read, which were written, what ran, and
@@ -2901,6 +2995,7 @@ impl Agent {
             by_model = if model.trim().is_empty() { self.llm.model.clone() } else {
                 model.trim().to_string() };
             by_sp = crate::prompts::fingerprint(&self.fold_prompt());
+            summarised = true;
             let raw = match self.summarise(&rendered, &model, session, why, shape).await {
                 Ok(s)  => Ok(s),
                 Err(e) => Err(fmt!("{}", e)),
@@ -2989,18 +3084,33 @@ impl Agent {
         if self.limits.borrow().retire_prior {
             compact::retire_upto(&mut sent, self.prior_end.get().min(session.messages.len()));
         }
-        let mut elided = compact::elide_bulk(&mut sent, ceiling,
+        //
+        // TO THE TARGET, NOT TO THE LINE.  Shortened only until it was under the trigger, the
+        // conversation crossed it again with the next round's tool result and folded again; see
+        // `compact::FOLD_TARGET`.  The second pass, which reaches the newest messages, goes only
+        // as far as the line: the newest work is cut only when it would not otherwise fit.
+        let target = self.gauge.bytes((budget as f64 * compact::FOLD_TARGET) as u64)
+            .saturating_sub(schema);
+        let mut elided = compact::elide_bulk(&mut sent, target,
             compact::MIN_KEEP_MESSAGES, &open);
         elided += compact::elide_bulk(&mut sent, ceiling, 1, &open);
-        let changed = folded > 0 || elided > 0;
-        if !changed {
+        // Measured on what will be SENT, since that is what the sentence below is about.
+        let after = compact::conversation_bytes(&sent, &open);
+        // NO PROGRESS, NO REPEAT: left above the target, or freed less than a fold's worth, the
+        // turn does not run this again until it has grown by that much.  See `fold_rest`.
+        let was = compact::conversation_bytes(working, &open);
+        let left = self.gauge.tokens(after + schema);
+        if after > target || was.saturating_sub(after) < self.gauge.bytes(gain) {
+            self.fold_rest.set(left.max(est) + gain);
+        } else {
+            self.fold_rest.set(0);
+        }
+        if folded == 0 && elided == 0 {
             // And `working` is left exactly as it was, elisions and all. Rebuilding it from the
             // session on the way out of a fold that changed nothing would throw away an earlier
             // round's shortening and hand the caller a request over the budget again.
-            return false;
+            return Refit::Untouched;
         }
-        // Measured on what will be SENT, since that is what the sentence below is about.
-        let after = compact::conversation_bytes(&sent, &open);
 
         // Rebuild the turn's list: the system prompt this turn was built with, then the
         // conversation as it now stands, shortened to fit. The two are kept in lockstep for
@@ -3055,8 +3165,13 @@ impl Agent {
             structured,
             model: by_model,
             sp: by_sp,
+            cut,
+            summarised,
         });
-        true
+        // SHORTENING ALONE IS NOT A FOLD.  The user is still told (the 2026-08-28 ruling), but the
+        // record is untouched and nothing was summarised, so the caller does not treat it as one
+        // and the page does not file it in the feed as a fold; see `Refit`.
+        if folded == 0 { Refit::Shortened } else { Refit::Folded }
     }
 
     /// File a fold's notes into this Diamond's three markdown files.
@@ -3480,7 +3595,8 @@ impl PageLog {
 			Some(t)	=> t,
 			None	=> return,
 		};
-		let page = tool.path_claims(args).iter()
+		// No Diamond is named: only a default path depends on it, and a default is never the page.
+		let page = tool.path_claims(args, None).iter()
 			.any(|(p, _)| crate::tools::is_crystal_page_path(p));
 		if !page {
 			return;
@@ -3603,7 +3719,7 @@ fn held_told(name: &str, head: &str) -> String {
 ///
 /// It only asks: the reason is the turn's text, drawn just above it.  `app` marks it as the
 /// app's own, so the page draws it in the user's language (r543 QA F-A2-3).
-fn blocked_ask_args() -> String {
+pub(crate) fn blocked_ask_args() -> String {
 	fmt!(r#"{{"app":"blocked","question":"I could not get past this. How should I go on?","options":[{{"label":"Try another way","means":"I change approach rather than repeat what failed, for example a smaller step or a different tool."}},{{"label":"Stop here","means":"I leave things as they are and report what was done and what is left."}}],"recommend":"Try another way","why":"Sending the same thing again would fail the same way and cost another round.","if_silent":"I leave things as they are."}}"#)
 }
 
@@ -3643,6 +3759,71 @@ pub fn truncated_call_note(max_tokens: u32) -> String {
          via sh -c) or web_fetch it with 'to' set to a path, and name the path. Chunking data \
          through yourself is never the answer.",
         max_tokens)
+}
+
+/// How many different calls a reply cut at its output limit may have run.
+///
+/// Measured on 2026-10-12 over the lens archive: of 1,042 rounds seen one by one, the largest
+/// batch was 9 calls (six `spawn_agent` and three `run`), and 97% carried five or fewer.  Lens
+/// turn `mv42uu3m` was cut carrying 390 calls.  Sixteen is the largest honest batch with room to
+/// spare, so a reply past it is a model looping in its own output, not a plan.  Applied only to a
+/// cut reply: a whole one ended where the model meant it to.
+pub const TRUNCATED_CALL_CAP: usize = 16;
+
+/// What a round does with each of the calls one reply carried.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Settled {
+	Run,		// dispatched as usual
+	Same(usize),	// identical to the earlier call at this index, whose reply answers it
+	Unrun,		// past `TRUNCATED_CALL_CAP` on a cut reply
+}
+
+/// Settle a reply's calls before any of them runs.
+///
+/// Lens turn `mv42uu3m-9m-0hlao` (2026-10-12): one reply, cut at its output limit, carried 390
+/// identical reads of one 4 kB file.  Every one ran, and the 1.6 MB of replies they made is what
+/// the turn then folded over and over.  A call identical to an earlier one in the same reply --
+/// the name and the arguments, verbatim -- is answered by a pointer to it.  On a cut reply, the
+/// different calls past [`TRUNCATED_CALL_CAP`] are not run either.
+pub fn settle_calls(calls: &[crate::protocol::ToolCall], truncated: bool) -> Vec<Settled> {
+	let mut first: std::collections::HashMap<(&str, &str), usize> =
+		std::collections::HashMap::new();
+	let mut out = Vec::with_capacity(calls.len());
+	for (i, tc) in calls.iter().enumerate() {
+		let key = (tc.name.as_str(), tc.arguments.as_str());
+		if let Some(j) = first.get(&key) {
+			out.push(Settled::Same(*j));
+			continue;
+		}
+		let distinct = first.len();
+		first.insert(key, i);
+		out.push(if truncated && distinct >= TRUNCATED_CALL_CAP {
+			Settled::Unrun
+		} else {
+			Settled::Run
+		});
+	}
+	out
+}
+
+/// The reply to a call identical to an earlier one in the same reply, kept under 200 B, which
+/// opens as the earlier call's did so the outcome reads the same.
+fn same_call_reply(id: &str, outcome: crate::tools::CallOutcome) -> String {
+	let said = fmt!("same call as {}, with the same arguments, so it was not run again; that \
+		call's reply answers this one.", id);
+	match outcome {
+		crate::tools::CallOutcome::Done		=> fmt!("The {}", said),
+		crate::tools::CallOutcome::Refused	=> crate::tools::refusal_line(&fmt!("the {}", said)),
+		crate::tools::CallOutcome::Failed	=> crate::tools::error_line(&fmt!("the {}", said)),
+	}
+}
+
+/// The reply to a call past [`TRUNCATED_CALL_CAP`] on a reply cut at its output limit.
+fn unrun_call_note(max_tokens: u32) -> String {
+	crate::tools::error_line(&fmt!("not run. Your reply was cut off at the output limit of {} \
+		tokens carrying more than {} different tool calls, so this call and those after it were \
+		not run. Nothing was changed. Send them again, a few per reply.",
+		max_tokens, TRUNCATED_CALL_CAP))
 }
 
 
@@ -6336,8 +6517,8 @@ mod tests {
             panic!("the fixture file must exist for the control half to mean anything: {}", e);
         }
         let mut claims = Claims::default();
-        claims.record("file_write", r#"{"path":"there.txt","content":"x"}"#, CallOutcome::Done);
-        claims.record("file_write", r#"{"path":"ghost.txt","content":"x"}"#, CallOutcome::Done);
+        claims.record("file_write", r#"{"path":"there.txt","content":"x"}"#, CallOutcome::Done, None);
+        claims.record("file_write", r#"{"path":"ghost.txt","content":"x"}"#, CallOutcome::Done, None);
 
         let a = dead_agent();
         let end = a.audit(TurnEnd::Answered, 1, &claims, Some(&registry)).await;
@@ -6355,9 +6536,9 @@ mod tests {
         let registry = one_tool();
         let mut claims = Claims::default();
         claims.record("file_write", r#"{"path":"stopped.txt","content":"x"}"#,
-            CallOutcome::Refused);
+            CallOutcome::Refused, None);
         claims.record("file_write", r#"{"path":"src/big.rs","content":"fn main() {"#,
-            CallOutcome::Failed);
+            CallOutcome::Failed, None);
         let a = dead_agent();
         let end = a.audit(TurnEnd::Answered, 1, &claims, Some(&registry)).await;
         assert!(end.missing.is_empty(),
@@ -6411,7 +6592,7 @@ mod tests {
 
         // The control: with no shell in the turn, the missing file IS reported.
         let mut alone = Claims::default();
-        alone.record("file_write", write, CallOutcome::Done);
+        alone.record("file_write", write, CallOutcome::Done, None);
         let end = a.audit(TurnEnd::Answered, 1, &alone, Some(&registry)).await;
         assert_eq!(vec![fmt!("ghost.txt")], end.missing,
             "the control half does not report the file, so the half below proves nothing: {:?}",
@@ -6419,8 +6600,8 @@ mod tests {
 
         // The same turn, having also run a command.
         let mut with_shell = Claims::default();
-        with_shell.record("file_write", write, CallOutcome::Done);
-        with_shell.record("shell", r#"{"command":"rm ghost.txt"}"#, CallOutcome::Done);
+        with_shell.record("file_write", write, CallOutcome::Done, None);
+        with_shell.record("shell", r#"{"command":"rm ghost.txt"}"#, CallOutcome::Done, None);
         let end = a.audit(TurnEnd::Answered, 1, &with_shell, Some(&registry)).await;
         assert!(end.missing.is_empty(),
             "the app claimed to know what a shell command did not do: {:?}", end);
@@ -6428,8 +6609,8 @@ mod tests {
         // A command the fence turned away ran nothing, so it explains nothing and silences
         // nothing. Without this the whole check would be switched off by any refused shell call.
         let mut refused_shell = Claims::default();
-        refused_shell.record("file_write", write, CallOutcome::Done);
-        refused_shell.record("shell", r#"{"command":"rm ghost.txt"}"#, CallOutcome::Refused);
+        refused_shell.record("file_write", write, CallOutcome::Done, None);
+        refused_shell.record("shell", r#"{"command":"rm ghost.txt"}"#, CallOutcome::Refused, None);
         let end = a.audit(TurnEnd::Answered, 1, &refused_shell, Some(&registry)).await;
         assert_eq!(vec![fmt!("ghost.txt")], end.missing,
             "a refused command switched the audit off: {:?}", end);
@@ -8280,5 +8461,148 @@ fn test_agent_message_building() {
             assert!(bodies[2].contains(COVER_PNG_B64),
                 "{}: the request after the fold dropped the picture", what);
         }
+    }
+
+    // ── Fold churn, lens turn mv42uu3m (2026-10-12) ─────────────────────
+
+    /// A registry holding `file_read` over a scratch workspace holding `files`, each `n` bytes.
+    fn read_tools(files: &[(&str, usize)]) -> crate::tools::ToolRegistry {
+        let mut r = no_tools();
+        for (name, n) in files {
+            let path = r.ctx.workspace.root().join(name);
+            if let Err(e) = std::fs::write(&path, "x".repeat(*n)) {
+                panic!("the fixture {} could not be written: {}", name, e);
+            }
+        }
+        r.tools = vec![crate::tools::Tool::FileRead];
+        r
+    }
+
+    /// One streamed reply asking for `n` identical reads of `path`, ended as `finish`.
+    fn same_reads(n: usize, path: &str, finish: &str) -> crate::llm::tests::Reply {
+        let args = fmt!("{{\\\"path\\\":\\\"{}\\\"}}", path);
+        let mut chunks = Vec::new();
+        for i in 0..n {
+            chunks.push(fmt!(
+                "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":{},\
+                 \"id\":\"r{}\",\"type\":\"function\",\"function\":{{\"name\":\"file_read\",\
+                 \"arguments\":\"{}\"}}}}]}}}}]}}\n\n", i, i, args));
+        }
+        chunks.push(fmt!("data: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"{}\"}}]}}\n\n",
+            finish));
+        chunks.push("data: [DONE]\n\n".to_string());
+        crate::llm::tests::Reply::Sse { chunks, reset_after: None }
+    }
+
+    /// The turn's shape after its first fold: a note, one reply carrying 390 reads of 4,156 B
+    /// each, then two newer rounds.
+    fn bombed_session() -> Session {
+        let mut session = Session::new(fmt!("s"), fmt!("bombed"), fmt!("model"));
+        session.messages.push(ChatMessage::user(
+            fmt!("[Daimond folded the earlier part of this conversation] earlier work")));
+        session.messages.push(ChatMessage::Assistant {
+            content:    MessageContent::text(""),
+            tool_calls: (0..390).map(|i| crate::protocol::ToolCall { id: fmt!("h{}", i),
+                name: fmt!("file_read"), arguments: fmt!("{{\"path\":\"hachiko.typ\"}}") })
+                .collect(),
+        });
+        for i in 0..390 {
+            session.messages.push(ChatMessage::tool(fmt!("h{}", i), "x".repeat(4_156)));
+        }
+        for id in ["e1", "t1"] {
+            session.messages.push(ChatMessage::Assistant {
+                content:    MessageContent::text(""),
+                tool_calls: vec![crate::protocol::ToolCall { id: fmt!("{}", id),
+                    name: fmt!("file_edit"), arguments: fmt!("{{}}") }],
+            });
+            session.messages.push(ChatMessage::tool(fmt!("{}", id), fmt!("ok")));
+        }
+        session
+    }
+
+    #[tokio::test]
+    async fn test_b_a_bombed_turn_folds_once_and_stays_folded_00() {
+        // Arm B: on a 1M window the budget is the 120k cap.  Six rounds of one 5 kB read each
+        // follow; before the fix every one of them folded the previous note and nothing else.
+        let mut script = vec![completion(structured_fold_reply())];
+        for i in 0..6 {
+            script.push(tool_round(&[("file_read", &fmt!("{{\"path\":\"a{}.typ\"}}", i))]));
+        }
+        script.push(plain_answer());
+        let (port, seen) = crate::llm::tests::start_stub(script).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(1_048_576);
+        let budget = a.limits.borrow().budget(a.reply_cap());
+        let files: Vec<(String, usize)> = (0..6).map(|i| (fmt!("a{}.typ", i), 5_000)).collect();
+        let named: Vec<(&str, usize)> = files.iter().map(|(f, n)| (f.as_str(), *n)).collect();
+        let registry = read_tools(&named);
+        let mut session = bombed_session();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let ran = a.run_turn(&mut session, fmt!("carry on"), &registry,
+            &mut |ev| events.push(ev)).await;
+        assert!(ran.is_ok(), "the turn failed: {:?}", ran.err());
+
+        let folds = events.iter().filter(|e| matches!(e, AgentEvent::Compacted { .. })).count();
+        assert_eq!(folds, 1, "one fold frees the block; {} folded", folds);
+        let bodies = sent_bodies(&seen);
+        let summaries = bodies.iter().filter(|b| b.contains("folding the earlier part")).count();
+        assert!(summaries <= 1, "{} summarising calls were paid", summaries);
+        let first = bodies.iter().position(|b| b.contains("folding the earlier part"))
+            .unwrap_or(0);
+        let line = (budget as f64 * compact::FOLD_TARGET) as u64;
+        for (k, b) in bodies.iter().enumerate().skip(first + 1) {
+            let t = a.gauge.tokens(b.len() as u64);
+            assert!(t <= line, "request {} carried about {} tokens against a line of {}", k, t, line);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_c_a_reply_of_identical_calls_runs_one_00() {
+        // Arm C: one reply, cut at its output limit, carrying 390 identical reads.
+        let (port, _seen) = crate::llm::tests::start_stub(
+            vec![same_reads(390, "hachiko.typ", "length"), plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(1_048_576);
+        let registry = read_tools(&[("hachiko.typ", 4_156)]);
+        let mut session = Session::new(fmt!("s"), fmt!("degenerate"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("read it"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let replies: Vec<usize> = session.messages.iter().filter_map(|m| match m {
+            ChatMessage::Tool { content, .. } => Some(content.text_len()),
+            _ => None,
+        }).collect();
+        assert_eq!(replies.len(), 390, "every call is answered, so pairing holds");
+        assert_eq!(replies.iter().filter(|n| **n >= 4_156).count(), 1,
+            "the file was read more than once");
+        assert_eq!(replies.iter().filter(|n| **n < 200).count(), 389,
+            "a duplicate carried more than a pointer: {:?}", &replies[..4]);
+        assert_eq!(compact::orphan_count(&session.messages), 0);
+    }
+
+    #[test]
+    fn test_settle_calls_dedupes_and_caps_a_cut_reply_00() {
+        let call = |i: usize, path: &str| crate::protocol::ToolCall { id: fmt!("c{}", i),
+            name: fmt!("file_read"), arguments: fmt!("{{\"path\":\"{}\"}}", path) };
+        // Whole reply: duplicates point back, nothing is capped.
+        let mut calls: Vec<_> = (0..20).map(|i| call(i, &fmt!("f{}", i))).collect();
+        calls.push(call(20, "f3"));
+        let s = settle_calls(&calls, false);
+        assert!(s[..20].iter().all(|x| *x == Settled::Run));
+        assert_eq!(s[20], Settled::Same(3));
+        // Cut reply: different calls past the cap are not run; a duplicate still points back.
+        let s = settle_calls(&calls, true);
+        assert!(s[..TRUNCATED_CALL_CAP].iter().all(|x| *x == Settled::Run));
+        assert!(s[TRUNCATED_CALL_CAP..20].iter().all(|x| *x == Settled::Unrun));
+        assert_eq!(s[20], Settled::Same(3));
+        for o in [crate::tools::CallOutcome::Done, crate::tools::CallOutcome::Refused,
+            crate::tools::CallOutcome::Failed]
+        {
+            let r = same_call_reply("call_0123456789abcdef0123456789abcdef", o);
+            assert!(r.len() < 200, "{} B: {}", r.len(), r);
+            assert_eq!(crate::tools::call_outcome(&r), o, "{}", r);
+        }
+        assert!(unrun_call_note(4_096).contains("output limit"));
     }
 }

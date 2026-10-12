@@ -353,8 +353,8 @@
 	'chat.send': 'Senden',
 	'chat.busy': 'Denkt nach…',
 	'chat.thinking': 'Überlegungen',
-	'chat.busy_tool': 'Führt {tool} aus, Schritt {n}…',
-	'chat.busy_next': 'Schritt {n} fertig, denkt nach…',
+	'chat.busy_tool': 'Führt {tool} aus, Werkzeugaufruf {n}…',
+	'chat.busy_next': 'Werkzeugaufruf {n} fertig, denkt nach…',
 	'chat.busy_road':  'Verbindung unterbrochen — {name} wird erneut versucht ({n} von {of})…',
 	'chat.busy_writing': 'Schreibt die Antwort…',
 	// One command's own line, when the turn's fence withheld the network from it.

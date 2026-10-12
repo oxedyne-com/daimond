@@ -81,8 +81,15 @@
 		if (!S || typeof S.rasterise !== 'function') return Promise.reject(new Error('no rasteriser'));
 		var C = window.DaimondCrystal;
 		var frames = C && typeof C.shotFrames === 'function' ? C.shotFrames() : Promise.resolve([]);
-		var main = S.rasterise(document.body, { viewport: true, frame_label: label });
-		return Promise.all([main, frames]).then(function (got) {
+		// THE PAGE FIRST, THEN THE WINDOW.  The page answers inside a window of its own
+		// (`SHOT_MS`, 1.5 s), and the window's rasterise holds this thread for about as long, so
+		// asked together the page's answer waited behind it and the box stayed labelled
+		// (verify_lens_shot, 2026-10-12: 1.16 s on a pass, over 1.5 s on two fails).  The page
+		// draws in tens of milliseconds on its own.
+		return frames.then(function (fs0) {
+			return S.rasterise(document.body, { viewport: true, frame_label: label })
+				.then(function (m) { return [m, fs0]; });
+		}).then(function (got) {
 			var m = got[0], fs = got[1] || [];
 			return loadImage(m.dataUrl).then(function (base) {
 				var cv = document.createElement('canvas');
