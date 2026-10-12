@@ -72,18 +72,44 @@ test('the match cap stops the walk and says so', async () => {
 	assert.equal(st.capped, true);
 });
 
-test('a root visits no more entries than its cap, and the next root still runs', async () => {
-	const big = { '': Array.from({ length: 500 }, (_, i) => f('note' + String(i).padStart(3, '0') + '.md')) };
-	const { hits, st } = await all({
-		query: 'note',
-		maxResults: 1000,
-		list: door({ big, m: { '': [f('notebook.txt', 1)] } }),
-		roots: [{ id: 'big', path: '', cap: 50 }, { id: 'm', path: '', cap: 50 }],
+test('a deep file past a wide folder is found: no root stops at a visit count (WS-SEARCH)', async () => {
+	// ~/usr held a third of a million entries; a per-root cap of 3000 never reached a file six deep.
+	const tree = { '': [d('wide'), d('zz')], 'zz': [d('a')], 'zz/a': [d('b')], 'zz/a/b': [d('c')], 'zz/a/b/c': [f('hachiko.json', 7)] };
+	tree['wide'] = Array.from({ length: 5000 }, (_, i) => f('w' + i + '.md'));
+	const { hits, st } = await all({ query: 'hachiko', list: door({ s: tree }), roots: [{ id: 's', path: '' }] });
+	assert.deepEqual(hits.map((h) => h.path), ['zz/a/b/c/hachiko.json']);
+	assert.equal(st.capped, false);
+	assert.equal(st.stopped, false);
+	assert.equal(st.visited, 5000 + 6);
+});
+
+test('four hits in a walk that ran to its end: not "showing first", not stopped', async () => {
+	const tree = { '': [d('notes'), d('big')], 'notes': [1, 2, 3, 4].map((i) => f('four-' + i + '.md')) };
+	tree['big'] = Array.from({ length: 4200 }, (_, i) => f('x' + i));
+	const { hits, st } = await all({ query: 'four', list: door({ s: tree }), roots: [{ id: 's', path: '' }] });
+	assert.equal(hits.length, 4);
+	assert.equal(st.capped, false, 'the result limit was not reached');
+	assert.equal(st.stopped, false, 'the walk was not stopped');
+});
+
+test('the walk limit is its own flag: it stops the walk and counts what was searched', async () => {
+	const tree = { '': Array.from({ length: 500 }, (_, i) => f('note' + i)) };
+	const { hits, st } = await all({ query: 'zzz', maxVisits: 120, list: door({ s: tree, m: { '': [f('zzz.md')] } }), roots: [{ id: 's', path: '' }, { id: 'm', path: '' }] });
+	assert.equal(hits.length, 0, 'the second root is not reached once the walk is stopped');
+	assert.equal(st.stopped, true);
+	assert.equal(st.capped, false);
+	assert.equal(st.visited, 120);
+});
+
+test('times are asked only of a folder holding a hit, and travel with the hit', async () => {
+	const tree = { '': [d('a'), d('b')], 'a': [f('hit.md'), f('x')], 'b': [f('y'), f('z')] };
+	const asked = [];
+	const { hits } = await all({
+		query: 'hit', list: door({ s: tree }), roots: [{ id: 's', path: '' }],
+		times: async (root, dir) => { asked.push(dir); return { 'hit.md': 42 }; },
 	});
-	assert.equal(hits.filter((h) => h.root === 'big').length, 50);
-	assert.deepEqual(hits.filter((h) => h.root === 'm').map((h) => h.path), ['notebook.txt']);
-	assert.equal(st.capped, true);
-	assert.equal(st.visited, 51);
+	assert.deepEqual(asked, ['a']);
+	assert.equal(hits[0].at, 42);
 });
 
 test('a folder that cannot be listed is passed over, not fatal', async () => {

@@ -42,7 +42,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, steerDiamond, shot, errors } from './harness.mjs';
+import { open, steerDiamond, shot, errors, signInAs, connectMock } from './harness.mjs';
+import { makePagePro } from './pro.mjs';
+import { GW_URL } from './ports.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -103,7 +105,16 @@ async function serveBreaks(page) {
 	}
 }
 
-const s = await open({ name: 'steerqueue', route: serveBreaks });
+// Sync needs Pro on this gateway: without it /api/sync answers 402 and the
+// console check below reads that as the app throwing. So sign in by hand and grant
+// Pro before the first push, as verify_handoff_permit does -- the 402 is prevented,
+// never filtered. No clearDiamonds: a fresh profile holds only the seeded Diamonds,
+// and its reload pushed (and, with Pro, synced away) the very rail this picks from.
+const s = await open({ name: 'steerqueue', route: serveBreaks, signIn: false, connect: false });
+await signInAs(s, 'steerqueue');
+const pro = await makePagePro(s.page, new URL('../gateway', import.meta.url).pathname, GW_URL);
+console.log('  note  setup Pro: ' + JSON.stringify(pro));
+await connectMock(s);
 const p = s.page;
 
 // Open a Diamond and put it on the chat face, which is where the composer is.

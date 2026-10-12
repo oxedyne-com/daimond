@@ -543,6 +543,18 @@ await p.waitForTimeout(1600);
 	// The flat record the app wrote until 2026-09-15, written by hand and read
 	// back through the real loader. On Auto at 2200px the grid is two columns,
 	// so the round robin is work/agents | mail/spend.
+	// A record that old is met by a tab with no view of its own: the open panels
+	// are per tab since 2026-10-12, and this tab's would otherwise win. Cleared
+	// before the app's own scripts run on the reload, so a save racing the
+	// unload cannot write it back (it did, once in two runs).
+	await p.addInitScript(() => {
+		try {
+			if (!localStorage.getItem('vdd-forget-tab-view')) return;
+			localStorage.removeItem('vdd-forget-tab-view');
+			Object.keys(sessionStorage).filter((k) => /daimond-tab-view$/.test(k))
+				.forEach((k) => sessionStorage.removeItem(k));
+		} catch (e) { /* none */ }
+	});
 	await p.evaluate(() => {
 		const l = JSON.parse(localStorage.getItem('daimond-layout') || '{}');
 		l.open = Object.assign({}, l.open,
@@ -550,6 +562,7 @@ await p.waitForTimeout(1600);
 		l.dock = ['work', 'mail', 'agents', 'spend'];
 		l.grid = 'auto';
 		localStorage.setItem('daimond-layout', JSON.stringify(l));
+		localStorage.setItem('vdd-forget-tab-view', '1');
 	});
 	await p.reload({ waitUntil: 'domcontentloaded' });
 	await p.waitForTimeout(2600);

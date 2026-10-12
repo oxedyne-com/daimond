@@ -110,7 +110,11 @@ async function until(pg, fn, arg, ms = 30000, step = 250) {
 // refusal and since aeae1bcb (CONSENT-ROUTE) asks A each time, waiting out 60 s unanswered:
 // (4), (5) and (6) then counted a reply the turn no longer gave. The fence (3) has its own
 // short turn, and a turn's answer is counted by its turn id, not by its wording.
-const ESCAPE_PATH = '../../daimon_escape.txt';
+// The fence's write is a canonical workspace path OUTSIDE the Diamond's own dir, so the fence
+// asks A before it refuses. It was '../../daimon_escape.txt', but since PATHTYPE 55f5cb8c every
+// '..' is refused at the guard in one sentence, before the fence is reached: nobody is asked,
+// and (3) saw {"a":[],"b":[]} (R3 12 Oct).
+const ESCAPE_PATH = 'docs/daimon_escape.txt';
 const STEER = '@rounds 3/1200 file_list {"path":"."}';
 const ANSWER = 'Called 3 time';            // the mock's post-rounds reply, shown beside the count
 const FENCE_STEER = `@rounds 1/1200 file_write {"path":"${ESCAPE_PATH}","content":"nope"}`;

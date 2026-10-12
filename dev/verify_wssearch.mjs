@@ -14,8 +14,11 @@
 //   5  a query matching more than the cap draws the cap and the quiet "showing first N" line;
 //   6  emptying the box puts the folder back.
 //
-// WSS_BASE=1 serves every www file this tree changed from 50f074cb, so the gate can be seen RED on
-// the unchanged page. Run with the world up (`bash dev/world.sh 101 --up`); no gateway.
+// WSS_BASE=1 serves every www file this tree changed from 50f074cb (or WSS_BASE_REF), so the gate can
+// be seen RED on the unchanged page.
+//
+//   7  WS-SEARCH (12 Oct): past a folder of 4100 files, a file four folders down is still found, and
+//      four true results draw four rows with no "Showing first 4"; the names-only listing is timed. Run with the world up (`bash dev/world.sh 101 --up`); no gateway.
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +26,7 @@ import { open } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
-const BASE = '50f074cb';
+const BASE = process.env.WSS_BASE_REF || '50f074cb';	// WSS_BASE_REF: the base of a later fix
 
 let bad = 0;
 const check = (ok, what, detail) => {
@@ -184,6 +187,48 @@ try {
 	rows = await hits(page);
 	const capWords = await T('files.search_capped', { n: 100 });
 	check(rows.length === 100 && capped === capWords && capWords === 'Showing first 100', 'a query past the cap draws the cap and says "Showing first 100"', `${rows.length} rows, "${capped}"`);
+
+	// 7 -- no silent walk cap: a deep file past a wide folder is found, and four hits are four.
+	const seed = await page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const t0 = performance.now();
+		for (let i = 0; i < 4100; i++) await m.store_write('wide/w' + String(i).padStart(4, '0') + '.md', 'x');
+		for (let i = 0; i < 200; i++) await m.store_write('dirs/d' + String(i).padStart(3, '0') + '/k.md', 'x');
+		await m.store_write('zz/a/b/c/hachiko-e5.json', '{}');
+		for (let i = 1; i <= 4; i++) await m.store_write('notes/four-e5-' + i + '.md', 'x');
+		const seeded = performance.now() - t0;
+		// The names-only listing, timed: one folder of 4100, then 200 folders of one.
+		let t = performance.now();
+		const n1 = String(await m.list_names('wide', false)).split('\n').filter(Boolean).length;
+		const perEntry = (performance.now() - t) / 4100;
+		t = performance.now();
+		for (let i = 0; i < 200; i++) await m.list_names('dirs/d' + String(i).padStart(3, '0'), false);
+		const perDir = (performance.now() - t) / 200;
+		return { n1, seeded: Math.round(seeded), perEntry, perDir };
+	}).catch((e) => ({ err: String(e) }));
+	if (seed.err) check(false, 'the wide store is seeded', seed.err);
+	else {
+		// ~/usr measured natively 12 Oct: 347,816 entries in 31,542 folders.
+		const est = (347816 * seed.perEntry + 31542 * seed.perDir) / 1000;
+		console.log(`TIMING  names-only listing: ${(seed.perEntry * 1000).toFixed(1)} us/entry, ${seed.perDir.toFixed(2)} ms/folder; ~/usr's shape -> ~${est.toFixed(1)} s (seeded in ${seed.seeded} ms)`);
+	}
+	await type(page, '');
+	await wait(400);
+	await type(page, 'hachiko-e5');
+	rows = await waitFor(page, (s) => s.some((r) => /hachiko-e5\.json/.test(r.text)), 30000);
+	check(rows.some((r) => /hachiko-e5\.json/.test(r.text) && r.dir === 'zz/a/b/c/'), 'past a folder of 4100 files, a file four folders down is found', rows.map((r) => r.text).join(' | '));
+	await type(page, 'four-e5');
+	await waitFor(page, (s) => s.length >= 4, 30000);
+	await wait(3000);	// the old page dropped its busy note at the first hit, and capped on the walk later
+	const four = await page.evaluate(async () => {
+		for (let i = 0; i < 300 && document.querySelector('#panel-work .files-tree .files-loading, #panel-work .files-tree .loading'); i++) await new Promise((r) => setTimeout(r, 100));
+		return {
+			rows: document.querySelectorAll('#panel-work .files-tree .files-row').length,
+			capped: (document.querySelector('#panel-work .files-capped') || {}).textContent || '',
+			busy: !!document.querySelector('#panel-work .files-tree .files-loading, #panel-work .files-tree .loading'),
+		};
+	});
+	check(four.rows === 4 && !four.capped && !four.busy, 'four true results draw four rows and no "Showing first" line', JSON.stringify(four));
 
 	// 6
 	await type(page, '');

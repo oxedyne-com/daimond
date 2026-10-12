@@ -79,6 +79,7 @@ function doors(sp, model2) {
 		loadMsgTombs: () => ({}), msgTombstone: (mids) => sp.tombstoned.push(...mids), touchChat() {}, persistChats() {}, renderHistory() {},
 		ChatStore: { compact() {} }, newMid: () => 'n' + (++sp.seq), peerUiStateFor: () => '', selfDeviceId: () => 'D1', leaseClockNow: () => T0,
 		answerAgain() { sp.again++; },
+		diamonds: [], currentDiamond: null, runSteer: () => { sp.steered++; return Promise.resolve(); },
 		runTurn: (chat, text, opts) => {
 			sp.ran.push({ text, opts });
 			const id = (opts && opts.mid) || 'fresh';
@@ -87,14 +88,14 @@ function doors(sp, model2) {
 			return Promise.resolve();
 		},
 	};
-	const body = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'retryTurn') + '\nreturn retryTurn;';
+	const body = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryTurn') + '\nreturn retryTurn;';
 	const w = Object.assign({}, win, st);
 	return new Function('window', ...Object.keys(st), 'DaimondLedger', 'DaimondProvenance', body)(w, ...Object.values(st), L, P);
 }
 
 function scene(spendHeld) {
 	box.clear();
-	const sp = { tombstoned: [], ran: [], seq: 0, again: 0 };
+	const sp = { tombstoned: [], ran: [], seq: 0, again: 0, steered: 0 };
 	const chat = { id: 'c1', model: 'model-a', provider: 'pv1', messages: [
 		ask('t1', T0, 'an earlier question'), ans('t1', 'a1', T0 + 1, 'model-a'),
 		ask('t9', T0 + 2, 'write the summary'), ans('t9', 'a9', T0 + 3, 'model-a'),

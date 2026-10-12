@@ -66,8 +66,8 @@ const BREAKS = {
 	}],
 	nochatclear: [{
 		file: 'js/daimond.js',
-		find: "			localStorage.removeItem(OPEN_DIAMOND_KEY);   // a chat is where you are now",
-		with: "			/* --break nochatclear */",
+		find: "		tabViewSet({ chat: chat && chat.id ? chat.id : '', diamond: '', face: '' });",
+		with: "		tabViewSet({ chat: chat && chat.id ? chat.id : '' });   // --break nochatclear",
 	}],
 };
 
@@ -99,9 +99,9 @@ async function serveBreaks(page) {
 const where = (p) => p.evaluate(() => {
 	const d = window.DaimondDiamond && window.DaimondDiamond.current
 		? window.DaimondDiamond.current() : null;
+	// This tab's own view (per tab since 2026-10-12, see verify_viewpertab.mjs).
 	let openChat = '', openDiamond = '';
-	try { openChat    = localStorage.getItem('daimond-open-chat')    || ''; } catch (e) {}
-	try { openDiamond = localStorage.getItem('daimond-open-diamond') || ''; } catch (e) {}
+	try { const v = DaimondTabView.get(); openChat = v.chat || ''; openDiamond = v.diamond || ''; } catch (e) {}
 	return {
 		diamond: d ? (d.id || '') : '',
 		name:    d ? (d.name || '') : '',

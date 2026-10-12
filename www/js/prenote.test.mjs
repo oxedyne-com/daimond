@@ -126,7 +126,7 @@ const calls_ = { interject: [], rendered: 0, gave: [], committed: [] };	// what 
 function scope() {
 	const mid = { n: 0 };
 	const stubs = { newMid: () => 'mi' + (++mid.n), nowTs: () => Date.now(), commitRatings: (id) => { calls_.committed.push(id); return false; },
-		giveUpSent: (c, w) => { calls_.gave.push(w); }, syncSendMode: () => {}, renderQueue: () => { calls_.rendered++; } };
+		giveUpSent: (c, w) => { calls_.gave.push(w); }, syncSendMode: () => {}, renderQueue: () => { calls_.rendered++; }, journalQueue: () => {} };
 	return new Function('window', 'DaimondRatings', ...Object.keys(stubs), have.map((n) => src[n]).join('\n') + '\nreturn { ' + have.join(', ') + ' };')(win, R, ...Object.values(stubs));
 }
 const miss = (n) => () => { throw new Error(n + ' missing'); };
@@ -263,14 +263,21 @@ console.log('\nThe three paths set it, and nothing else does');
 	const rt = calls(SRC, 'runTurn').filter((c) => c.owner !== 'runTurn');
 	const withPerson = rt.filter((c) => /person:\s*true/.test(c.text));
 	// retryRouted is retryTurn's own tail for a refused permit's Retry, run here when no peer takes it.
-	same('the person flag reaches runTurn from three places only (the composer, drainQueue, retryTurn)', withPerson.map((c) => c.owner).sort(), ['drainQueue', 'retryRouted', 'retryTurn', 'sendPressed']);
+	// retryTurn reaches runTurn through `askAgain`, which hands its options on untouched (a daimon
+	// turn's Retry goes to runSteer there instead, D-20261012-07).
+	same('the person flag reaches runTurn from the composer, drainQueue and retryTurn only (a lost run\'s fenced retry through runRetryHere)', withPerson.map((c) => c.owner).sort(), ['drainQueue', 'retryRouted', 'runRetryHere', 'sendPressed']);
+	// retryRouted too since R3 3c (7c939256): a daimon's routed Retry the hand-off declines is
+	// asked again here, as the person, as its send would be.
+	same('retryTurn and retryRouted ask again as the person', calls(SRC, 'askAgain').filter((c) => /person:\s*true/.test(c.text)).map((c) => c.owner), ['retryTurn', 'retryRouted']);
+	check('and askAgain passes its options to runTurn as given', /return runTurn\(chat, text, opts\)/.test(lift(SRC, 'askAgain') || ''));
 	const none = rt.filter((c) => !/person:\s*true/.test(c.text)).map((c) => c.text.replace(/\s+/g, ' ').slice(0, 60));
 	check('a Continue, a gather round and a peer turn pass no person flag (so they take no pre)',
 		none.length >= 3 && none.every((t) => !/person/.test(t)), none);
 	// the steer: how.said only from the composer and the Diamond queue
 	const steers = calls(SRC, 'runSteer').filter((c) => /said:\s*true/.test(c.text)).map((c) => c.owner);
 	const dsteer = calls(SRC, 'doSteer').filter((c) => /said:\s*true/.test(c.text)).map((c) => c.owner);
-	same('how.said is passed by drainSteerQueue to runSteer', steers, ['drainSteerQueue']);
+	// askAgain is a daimon turn's Retry: his own words, asked again as he typed them.
+	same('how.said is passed by drainSteerQueue and a Retry (askAgain) to runSteer', steers.sort(), ['askAgain', 'drainSteerQueue']);
 	same('how.said is passed by the composer to doSteer, and by nothing else', dsteer, ['sendPressed']);
 	check('doSteer hands how on to runSteer', /return runSteer\(currentDiamond, presetArg, depthArg, null, how\)/.test(lift(SRC, 'doSteer') || ''));
 	// the bubble: appendUserMessage takes (text, ts, prod) and no site hands it a note
@@ -515,6 +522,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	// One helper finds a turn's messages; no message is marked after it has joined the chat.
 	const helper = lift(SRC, 'turnMessagesOf');
 	const fns = ['continueTurn', 'retryTurn', 'answerAgain'].map((n) => lift(SRC, n));
+	const ask = lift(SRC, 'askAgain');			// retryTurn's way to the model (a chat's runTurn, a daimon's runSteer)
 	check('the three doors are in daimond.js', fns.every(Boolean));
 	const spy = () => ({ tombstoned: [], ran: [], journal: [] });
 	function doors(sp, over) {
@@ -523,9 +531,10 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 			DaimondLease: { record: () => null }, DaimondJournal: { clearTurn: (id) => sp.journal.push(id) },
 			loadMsgTombs: () => ({}), msgTombstone: (mids) => sp.tombstoned.push(...mids), touchChat() {}, persistChats() {}, renderHistory() {},
 			runTurn: (chat, text, opts) => { sp.ran.push({ text, opts, had: (chat.messages || []).map((m) => m.mid) }); }, ChatStore: { compact() {} },
-			newMid: () => 'nmid', CONTINUE_NUDGE: '__nudge__', handoffTargetLabel: () => '', peerUiStateFor: () => '', selfDeviceId: () => 'SELF', turnHold: () => '', _askCard: null };
+			newMid: () => 'nmid', CONTINUE_NUDGE: '__nudge__', handoffTargetLabel: () => '', peerUiStateFor: () => '', selfDeviceId: () => 'SELF', turnHold: () => '', _askCard: null,
+			diamonds: [], currentDiamond: null, runSteer: () => false };
 		Object.assign(st, over || {});
-		const body = (helper ? helper + '\n' : '') + fns.filter(Boolean).join('\n') + '\nreturn { continueTurn, retryTurn, answerAgain };';
+		const body = (helper ? helper + '\n' : '') + (ask ? ask + '\n' : '') + fns.filter(Boolean).join('\n') + '\nreturn { continueTurn, retryTurn, answerAgain };';
 		return new Function('window', 'DaimondRatings', ...Object.keys(st), body)(Object.assign({}, st), R, ...Object.values(st));
 	}
 	// The transcript of a chat not resident at boot: the question has the turn's id for its mid and NO iturn mark; the answer carries it.

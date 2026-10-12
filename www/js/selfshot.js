@@ -168,13 +168,30 @@
 			return null;
 		}
 
+		/// Is `s` one of the elements the picture must draw empty: another conversation's rail
+		/// row or file panel (CAPTURE-FENCE QA A F2)? `blank` is the caller's list, or none.
+		function blanked(s, el, blank) {
+			return s !== el && !!blank && blank.indexOf(s) >= 0;
+		}
+
+		/// `s` as its own box and nothing inside it: styled, sized as it lays out, and empty.
+		function emptied(s, d) {
+			var r = s.getBoundingClientRect();
+			inlineStyle(s, d);
+			d.style.setProperty('box-sizing', 'border-box');
+			d.style.setProperty('width', r.width + 'px');
+			d.style.setProperty('height', r.height + 'px');
+			return d;
+		}
+
 		/// Clone `el` and inline the computed style of it and every node it draws, shadow trees
-		/// included (`kidsOf`).
-		function cloneStyled(el) {
+		/// included (`kidsOf`). An element in `blank` keeps its box and loses its contents.
+		function cloneStyled(el, blank) {
 			function walk(s, shadow) {
 				if (s.nodeType === 3) return s.cloneNode(false);
 				if (s.nodeType !== 1 || DROP[s.tagName] || (shadow && s.tagName === 'STYLE')) return null;
 				var d = s.cloneNode(false);
+				if (blanked(s, el, blank)) return emptied(s, d);
 				inlineStyle(s, d);
 				var leaf = copyOf(s, d, shadow);
 				if (leaf) return leaf;
@@ -206,13 +223,8 @@
 				var d = s.cloneNode(false);
 				var cs = getComputedStyle(s);
 				if (cs.display === 'none') { d.setAttribute('style', 'display:none'); return d; }
-				if (s !== el && off(r)) {
-					inlineStyle(s, d);
-					d.style.setProperty('box-sizing', 'border-box');
-					d.style.setProperty('width', r.width + 'px');
-					d.style.setProperty('height', r.height + 'px');
-					return d;
-				}
+				if (s !== el && off(r)) return emptied(s, d);
+				if (blanked(s, el, opts.blank)) return emptied(s, d);
 				if (++seen > MAX_NODES) {
 					throw new Error('the view holds more than ' + MAX_NODES + ' elements on screen');
 				}
@@ -261,7 +273,8 @@
 		/// picture down to fit); `background` paints behind a see-through view; `scale`
 		/// forces a device-pixel ratio instead of the fitted one; `viewport` draws only the window's
 		/// worth of `el` at the window's size (`cloneView`), labelling a frame `frame_label`, or
-		/// only what falls in `clip` (`{ left, top, right, bottom }`, window pixels) at its size.
+		/// only what falls in `clip` (`{ left, top, right, bottom }`, window pixels) at its size;
+		/// every element in `blank` is drawn as its empty box.
 		function rasterise(el, opts) {
 			opts = opts || {};
 			var vp = opts.viewport === true;
@@ -282,7 +295,7 @@
 			}
 			var bg = backdrop(el, opts.background, opts.fallback);
 
-			var clone = vp ? cloneView(el, opts) : cloneStyled(el);
+			var clone = vp ? cloneView(el, opts) : cloneStyled(el, opts.blank);
 			clone.style.margin = '0';
 			clone.style.setProperty('box-sizing', 'border-box');
 
@@ -450,7 +463,7 @@
 	/// `in:<view>`: a panel on screen (or `screen`, the whole window) drawn as it is now, only
 	/// what is inside the window, at its size on screen. A selector narrows it to one element
 	/// inside the panel.
-	function captureView(req, name) {
+	function captureView(req, name, blank) {
 		var root = name === 'screen' ? document.body : viewEl(name);
 		if (!root) {
 			return Promise.reject(new Error('No view called ' + JSON.stringify(name) + ' is on screen.' + viewsLine()));
@@ -463,6 +476,7 @@
 					+ req.selector + "'. Leave the selector out to capture the whole view." + viewsLine()));
 			}
 		}
+		if (theirs(el, blank)) return Promise.reject(new Error(THEIRS + viewsLine()));
 		var clip = name === 'screen' && el === root ? null : clipOf(el);
 		if (name !== 'screen' && !clip) {
 			return Promise.reject(new Error('That part of the ' + name + ' view is scrolled out of sight.' + viewsLine()));
@@ -470,7 +484,7 @@
 		var shot;
 		try {
 			shot = rasterise(el, { viewport: true, clip: clip, max_w: req.max_w, background: req.background,
-				scale: req.scale, frame_label: 'a Diamond page: capture in:"crystal"' });
+				scale: req.scale, frame_label: 'a Diamond page: capture in:"crystal"', blank: blank });
 		} catch (e) {
 			var m = String((e && e.message) || e);
 			if (/elements on screen/.test(m)) {
@@ -481,6 +495,47 @@
 		}
 		return shot.then(envelope);
 	}
+
+	/// Why the screen may not be drawn for `owner`, or '' where it may (FIRE-B QA F1, 2026-10-12).
+	///
+	/// Everything but `crystal` draws what is on screen NOW, and a turn runs on whatever the person
+	/// has opened since it started: a daimon's capture taken after its user moved to another
+	/// Diamond photographed that one into its own folder. So the screen is drawn for a turn only
+	/// while its own place is on it and the app is visible -- the rule a question's paint keeps,
+	/// asked of `window.DaimondScreen` in daimond.js rather than copied. `owner` is the turn's
+	/// keeper; none is the person's own door (a dev probe), which may draw what it likes.
+	///
+	/// And each VIEW has an owner, not only the centre (CAPTURE-FENCE QA A F1, 2026-10-12): `view`
+	/// is the panel `in` names, which `unseen` refuses when it shows another conversation's file.
+	function fence(owner, view) {
+		if (owner == null || owner === '') return '';
+		var s = window.DaimondScreen;
+		var why = s ? s.unseen(String(owner), view || '') : 'this page cannot tell what is on screen';
+		if (!why) return '';
+		return 'Nothing was photographed: ' + why + ', and capture draws the screen only while your own '
+			+ 'conversation is on it.'
+			+ (String(owner).indexOf('chat:') === 0 ? ''
+				: ' in:"crystal" draws your Diamond\'s page off screen at any time.');
+	}
+
+	/// What on the page draws a conversation other than `owner`'s: its rail rows, and a file
+	/// panel opened in it (CAPTURE-FENCE QA A F2). A picture of the screen or the rail draws
+	/// each as its empty box. None for the person's own door, which may draw what it likes.
+	function foreignTo(owner) {
+		if (owner == null || owner === '') return [];
+		var s = window.DaimondScreen;
+		return s && typeof s.foreign === 'function' ? s.foreign(String(owner)) : [];
+	}
+
+	/// Is `el` inside, or itself, something `blank` names? A selector there would photograph
+	/// another conversation's pixels whole, so it is refused rather than drawn empty.
+	function theirs(el, blank) {
+		for (var i = 0; i < blank.length; i++) if (blank[i] === el || blank[i].contains(el)) return true;
+		return false;
+	}
+
+	var THEIRS = 'Nothing was photographed: that part of the screen shows another conversation, and capture '
+		+ 'draws only your own.';
 
 	function envelope(result) {
 		return JSON.stringify({ ok: true, png_b64: result.b64, w: result.w, h: result.h, bytes: result.bytes });
@@ -541,14 +596,18 @@
 		var req;
 		try { req = JSON.parse(String(reqJson || '{}')); } catch (e) { req = {}; }
 		if (req.in === 'crystal') return renderCrystal(req);
-		if (req.in != null && req.in !== '' && req.in !== 'app') {
-			var name = String(req.in).trim().toLowerCase();
-			try { return captureView(req, name); }
+		var name = req.in != null && req.in !== '' && req.in !== 'app' ? String(req.in).trim().toLowerCase() : '';
+		var unseen = fence(req.for, name);
+		if (unseen) return Promise.reject(new Error(unseen));
+		var blank = foreignTo(req.for);
+		if (name) {
+			try { return captureView(req, name, blank); }
 			catch (e) { return Promise.reject(e); }
 		}
 		var el;
 		try { el = target(req.selector); }
 		catch (e) { return Promise.reject(e); }
+		if (theirs(el, blank)) return Promise.reject(new Error(THEIRS + viewsLine()));
 
 		// Node gate -- counted BEFORE any clone or style work, so a huge subtree (the
 		// whole page via a blank selector, the transcript, the chat pane) is refused
@@ -577,6 +636,7 @@
 				max_w:      req.max_w,
 				background: req.background,
 				scale:      req.scale,
+				blank:      blank,
 			});
 		} catch (e) {
 			return Promise.reject(e);

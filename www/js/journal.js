@@ -173,6 +173,13 @@
 	function toolDone(turnId, chatId, callId, result, outcome) {
 		return push(stamp({ type: 'tool_done', stream: turnId, chatId: chatId, callId: callId, result: result, outcome: String(outcome || '') }), true);
 	}
+	/// What the person typed into this turn and is not yet in the stored conversation: the
+	/// steers queued behind it, the ones said into it, in the order typed. The whole list each
+	/// time, so the last entry is the truth. A reload hands it back to the composer and never
+	/// sends it (D-20261012-07): a steer is his to send again, not the app's to spend.
+	function queueSet(turnId, chatId, items) {
+		return push(stamp({ type: 'queue', stream: turnId, chatId: chatId, items: (items || []).slice() }), true);
+	}
 	function turnError(turnId, chatId, message) {
 		return push(stamp({ type: 'turn_error', stream: turnId, chatId: chatId, message: message }), true);
 	}
@@ -228,7 +235,7 @@
 	// ── Recovery ────────────────────────────────────────────────────
 
 	/// Read the whole journal back, grouped per TURN into what was in flight when the tab died.
-	/// Returns { turns: [ {turnId, chatId, userText, text, tools, closed} ], agents: [ {runId, rec, text} ] }, where
+	/// Returns { turns: [ {turnId, chatId, userText, text, tools, queue, closed, at, lastAt} ], agents: [ {runId, rec, text} ] }, where
 	/// `text` is the prose after the last tool and each tool carries the prose before it as `said`.
 	/// A turn is returned only if it never closed — i.e. it was interrupted — and can be placed in a
 	/// chat (its chatId is known). Because each turn is its own stream, successive turns of one chat
@@ -262,22 +269,26 @@
 			}
 			var tid = e.stream;
 			if (!tid) return;
-			var c = turns[tid] || (turns[tid] = { turnId: tid, chatId: '', userText: '', text: '', tools: [], closed: false, meta: null });
-			if (e.chatId) c.chatId = e.chatId;   // present on every turn event, so placement survives a lost open
+			var c = turns[tid] || (turns[tid] = { turnId: tid, chatId: '', userText: '', text: '', tools: [], queue: [], closed: false, meta: null, at: 0, lastAt: 0 });
+			if (e.chatId) c.chatId = e.chatId;
+			// WHEN each part happened, as the event was written, so a recovered turn is put back
+			// in the order it ran rather than all at the one instant of the recovery.
+			if (e.t > c.lastAt) c.lastAt = e.t;   // present on every turn event, so placement survives a lost open
 			// `meta` carries the answer's mid and its `prod`, so a recovered answer is the same
 			// product under the same record as the one the turn was writing, and the question's
 			// note (`pre`) and app mark (`app`), so a recovered question is the same record too.
-			if (e.type === 'turn_open')       { c.userText = e.text || ''; c.meta = e.meta || null; }
+			if (e.type === 'turn_open')       { c.userText = e.text || ''; c.meta = e.meta || null; c.at = e.t || 0; }
 			else if (e.type === 'delta')      { c.text += (e.text || ''); }
 			// THE PROSE BEFORE A CALL GOES WITH THE CALL (`said`), and `text` starts again: it is
 			// the model's working on its way to the tool, and `text` is the reply -- the round
 			// after the last tool. Joined, every round ran on into one recovered answer with
 			// nothing between them, "…now.Here is…" (D-20261011-34); `runTurn` keeps the same rule.
-			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, mid: e.mid || '', name: e.name, args: e.args, result: null, outcome: '', done: false, said: c.text }); c.text = ''; }
+			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, mid: e.mid || '', name: e.name, args: e.args, result: null, outcome: '', done: false, said: c.text, at: e.t || 0 }); c.text = ''; }
 			// `e.outcome` is the engine's word; `e.failed` is what a record written before this
 			// field carried, and is passed through UNREAD so the caller can tell "not stored" from
 			// "stored as done" -- which is the difference between §4's named exception and a guess.
 			else if (e.type === 'tool_done')  { for (var i = c.tools.length - 1; i >= 0; i--) { if (c.tools[i].callId === e.callId) { c.tools[i].result = e.result; c.tools[i].outcome = String(e.outcome || ''); c.tools[i].failed = !!e.failed; c.tools[i].done = true; break; } } }
+			else if (e.type === 'queue')      { c.queue = Array.isArray(e.items) ? e.items : []; }
 			else if (e.type === 'turn_close') { c.closed = true; }
 			else if (e.type === 'turn_error') { c.closed = true; }   // errored is terminal, not interrupted
 		});
@@ -297,6 +308,7 @@
 		delta:     delta,
 		toolOpen:  toolOpen,
 		toolDone:  toolDone,
+		queueSet:  queueSet,
 		turnError: turnError,
 		turnClose: turnClose,
 		clearTurn: clearTurn,

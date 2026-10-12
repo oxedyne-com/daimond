@@ -54,7 +54,9 @@ impl Node {
 	/// colons of its own and splitting on the last would truncate every link to
 	/// a page.  An empty kind or an empty rest is not a reference.
 	pub fn parse(s: &str) -> Option<Self> {
-		let t = s.trim();
+		// Only the kind side is forgiving: the rest is kept exactly, so a path
+		// with a stray space reads as itself and the place check refuses it.
+		let t = s.trim_start();
 		let (kind, rest) = match t.find(':') {
 			Some(i) => (&t[..i], &t[i + 1..]),
 			None    => return None,

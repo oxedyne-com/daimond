@@ -4389,6 +4389,78 @@
 		return { ran: true, parked: !terminal, terminal: terminal, why: why, parkCount: out.next, trace: trace };
 	}
 
+	/// THE CLOCK EVERY LEASE CALL OF AN ERRAND READS (SIM-4). Every take, renew, complete and
+	/// release reads THIS, never a raw `Date.now()`: two devices whose raw clocks disagree by
+	/// more than the 90s TTL must still agree on whether a lease is live, or the one further
+	/// ahead reads a peer's still-running lease as dead and re-runs -- and re-bills -- the
+	/// turn. `d.relayNow` is the SAME gateway-corrected clock the age verdict reads;
+	/// `authorityNow` (this device's own `DaimondPresence`-corrected clock) is the fallback
+	/// while a caller (a direct take-if-vacant test, `runCompileErrand`'s sibling) supplies none.
+	function depsClock(d) {
+		return function leaseClock() {
+			var r = (typeof d.relayNow === 'function') ? d.relayNow() : d.relayNow;
+			if (r != null) return r;
+			return (typeof d.now === 'function') ? d.now() : authorityNow();
+		};
+	}
+
+	/// How a runner's turn ENDS, finished or interrupted: the final frame, the report, the
+	/// lease settled done, the ack, the lease released, and the parcel. `e` is the errand,
+	/// or a lease record standing in for it (`reportFor`). Answers the parcel's version.
+	///
+	/// `leaseSettled`: the lease was already ended by the device that sent the turn (its
+	/// Stop settles it, `leaseRevokeCas`), so this run writes it no more.
+	async function finishTurn(e, d, rep, trace, leaseClock, leaseSettled) {
+		var tid = String((e && e.turnId) || ''), finalTail = '';
+		if (d.finalFrame) {
+			try { finalTail = String((await d.finalFrame(tid)) || ''); trace.push('final-frame'); }
+			catch (err) { /* a dropped final frame only means the parcel is the first sight */ }
+		}
+		try {
+			await d.post(reportFor(e, Object.assign({ status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }, rep || {})));
+			trace.push('report');
+		} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
+		if (!leaseSettled) { await settleLease('turn', tid, d.selfId, 'done', d.cas, leaseClock); trace.push('complete'); }
+		try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
+		catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
+		if (!leaseSettled) { await settleLease('turn', tid, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
+		// THE PARCEL, AFTER THE LEASE IS FREE. Awaited only where the caller asked
+		// for it (`awaitPush`, which the tests do so the sequence is assertable);
+		// otherwise started and left to land, because the originator is no longer
+		// waiting on any part of it.
+		var parcelVersion = 0;
+		var pushing = (async function () {
+			try { return (await d.pushResult()) | 0; }
+			catch (err) { return 0; }
+		})();
+		if (d.awaitPush) { parcelVersion = (await pushing) | 0; trace.push('push'); }
+		else { pushing.then(function () { trace.push('push'); }, function () {}); }
+		return parcelVersion;
+	}
+
+	/// A RUN OF THIS TURN THAT A RELOAD HERE CUT SHORT, ENDED AND REPORTED (r545 F-C2-1; R3 F3).
+	///
+	/// The one door both of the runner's recoveries go through: `runErrand` when the errand
+	/// is collected again, and the boot recovery (`recoverInterrupted`) when it is not -- a
+	/// runner that reloads holds no work claim on the errand's row any more, so a re-collect
+	/// is not something its recovery may wait on. `d.interrupted` folds the journal's open
+	/// run into the chat and answers true; the turn then ends as it stood, with no model
+	/// request and no tool call: reported done and interrupted to the device that sent it,
+	/// whose Retry decides whether it runs again. Answers the run's result, or null when this
+	/// device holds no open run of the turn.
+	async function reportInterrupted(e, deps, ctx, trace) {
+		var d = deps || {};
+		trace = trace || [];
+		if (!d.interrupted) return null;
+		var cut = false;
+		try { cut = !!(await d.interrupted(e, ctx)); }
+		catch (err) { cut = false; }
+		if (!cut) return null;
+		trace.push('interrupted');
+		var pv = await finishTurn(e, d, { interrupted: 1 }, trace, depsClock(d));
+		return { ran: false, done: true, interrupted: true, parcelVersion: pv, trace: trace };
+	}
+
 	async function runErrand(errand, deps) {
 		var d = deps || {}, e = errand || {};
 		var turnId = String(e.turnId);
@@ -4403,11 +4475,7 @@
 		// second, separate clock); `authorityNow` (this device's own
 		// `DaimondPresence`-corrected clock) is the fallback while a caller (a
 		// direct take-if-vacant test, `runCompileErrand`'s sibling) supplies none.
-		function leaseClock() {
-			var r = (typeof d.relayNow === 'function') ? d.relayNow() : d.relayNow;
-			if (r != null) return r;
-			return (typeof d.now === 'function') ? d.now() : authorityNow();
-		}
+		var leaseClock = depsClock(d);
 		diag('collect errand', 'turn=' + turnId
 			+ ' by=' + String(e.dispatchedBy || '').slice(0, 8)
 			+ ' self=' + String(d.selfId || '').slice(0, 8)
@@ -4643,6 +4711,7 @@
 		// churn. The check is owned HERE (not in the injected runTurn) and stopped on
 		// EVERY exit (the finally), so it can neither outlive the errand nor leak a timer.
 		var revoked = false, checkStopped = false, checkTimer = null, progressTimer = null;
+		var stoppedThere = false;		// the revoke is the sender's Stop (settled), not a take-back
 		var progFlight = null, progLast = 0;		// the frame in flight; when the last one left
 		var checkStart = leaseNow(leaseClock);
 		var maxLife = (d.maxLeaseLifeMs != null) ? d.maxLeaseLifeMs : MAX_LEASE_LIFE_MS;
@@ -4711,10 +4780,14 @@
 			if (!cur && leaseNow(leaseClock) <= leaseMs(e.deadline)) return;
 			if (!cur || cur.holder !== String(d.selfId) || cur.mode === 'released') {
 				revoked = true;
-				trace.push('abort');
+				// A STOP PRESSED ON THE DEVICE THAT SENT THE TURN (D-20261011-21, R3 F1 ruled a):
+				// this run's own lease, released SETTLED. It ends as a Stop pressed here ends it,
+				// the partial kept and marked stopped by the person, and is sent home.
+				stoppedThere = !!cur && cur.holder === String(d.selfId) && cur.mode === 'released' && !!cur.settled;
+				trace.push(stoppedThere ? 'stopped' : 'abort');
 				diag('collect REVOKED', 'turn=' + turnId + ' why=' + (!cur ? 'absent'
-					: cur.holder !== String(d.selfId) ? 'holder' : 'released'));
-				try { if (d.abort) d.abort('lease_revoked'); } catch (err) { /* idempotent */ }
+					: cur.holder !== String(d.selfId) ? 'holder' : stoppedThere ? 'stopped' : 'released'));
+				try { if (d.abort) d.abort(stoppedThere ? 'user' : 'lease_revoked'); } catch (err) { /* idempotent */ }
 			}
 		}
 		// What the engine's journal events call: a nudge, never a forced read.
@@ -4722,38 +4795,23 @@
 		// Steps 4's tail: the final frame, the report, the lease, the ack and the parcel,
 		// as a finished run and an interrupted one both end. Answers the parcel's version.
 		async function complete(rep) {
-			var finalTail = '';
 			// A streaming frame still in flight lands first, so it can never arrive after
 			// the final frame and stand in for the finished turn.
 			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
-			if (d.finalFrame) {
-				try { finalTail = String((await d.finalFrame(turnId)) || ''); trace.push('final-frame'); }
-				catch (err) { /* a dropped final frame only means the parcel is the first sight */ }
-			}
-			try {
-				await d.post(reportFor(e, Object.assign({ status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }, rep || {})));
-				trace.push('report');
-			} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
-			await settleLease('turn', turnId, d.selfId, 'done', d.cas, leaseClock); trace.push('complete');
-			try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
-			catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
-			await settleLease('turn', turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release');
-			// THE PARCEL, AFTER THE LEASE IS FREE. Awaited only where the caller asked
-			// for it (`awaitPush`, which the tests do so the sequence is assertable);
-			// otherwise started and left to land, because the originator is no longer
-			// waiting on any part of it.
-			var parcelVersion = 0;
-			var pushing = (async function () {
-				try { return (await d.pushResult()) | 0; }
-				catch (err) { return 0; }
-			})();
-			if (d.awaitPush) { parcelVersion = (await pushing) | 0; trace.push('push'); }
-			else { pushing.then(function () { trace.push('push'); }, function () {}); }
-			return parcelVersion;
+			return finishTurn(e, d, rep, trace, leaseClock);
 		}
 		// What an adopted lease view calls (`_leaseWatch`): a read of the door, but only
 		// when the view no longer says this device runs the turn, so a lease change on
 		// another turn costs no request.
+		// A run its sender stopped ends as a finished one does -- final frame, report, ack,
+		// parcel -- so the partial the Stop kept reaches the sender, as a Stop pressed here
+		// sends it; only the lease is not written, the sender's Stop having settled it.
+		async function endStopped() {
+			stopCheck();
+			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
+			var spv = await finishTurn(e, d, { stopped: 1 }, trace, leaseClock, true);
+			return { ran: true, done: true, stopped: true, parcelVersion: spv, trace: trace };
+		}
 		function leaseWatched() {
 			var r = _leases[turnId];
 			if (!r || r.holder !== String(d.selfId) || r.mode === 'released') liveness(true);
@@ -4803,16 +4861,8 @@
 			// folds it into the chat and answers true), the turn ends here as it stood:
 			// interrupted, with no model request and no tool call, and the person who sent
 			// it decides whether to run it again.
-			if (d.interrupted) {
-				var cut = false;
-				try { cut = !!(await d.interrupted(e, ctx)); }
-				catch (err) { cut = false; }
-				if (cut) {
-					trace.push('interrupted');
-					var ipv = await complete({ interrupted: 1 });
-					return { ran: false, done: true, interrupted: true, parcelVersion: ipv, trace: trace };
-				}
-			}
+			var ir = await reportInterrupted(e, d, ctx, trace);
+			if (ir) return ir;
 
 			// 3. Transition claimed -> running ONCE -- a semantic state change for the UI
 			// footer ("running" vs "picking this up"), one write, before the turn goes
@@ -4865,6 +4915,8 @@
 					pre: (typeof e.pre === 'string') ? e.pre : '' });
 				trace.push('run');
 			} catch (err) {
+				// Stopped by the sender: ended as a Stop here ends it (`endStopped`).
+				if (stoppedThere) return await endStopped();
 				// Revoked -> the lease is already whoever took it back's; touch nothing,
 				// do NOT ack -- the errand is theirs now.
 				if (revoked) return { ran: true, aborted: true, why: 'revoked', trace: trace };
@@ -4896,6 +4948,7 @@
 				// errand and the lease EXPIRES (at its deadline). The phone reclaims (§2.5).
 				return { ran: true, error: true, why: String(err && err.message || err), trace: trace };
 			}
+			if (stoppedThere) return await endStopped();
 			if (revoked) return { ran: true, aborted: true, why: 'revoked', trace: trace };
 			// PARK could also be signalled without the turn throwing (egressAllowed
 			// returned a refusal and the turn wound down on its own). Park takes
@@ -6095,6 +6148,7 @@
 		/// a hard-abort on revoke and ack only after commit. Pure over injected deps.
 		syncCas:    syncCas,
 		runErrand:  runErrand,
+		reportInterrupted: reportInterrupted,
 		/// A stand-down whose errand stays on the relay for one more collect.
 		standDownUndecided: standDownUndecided,
 		busyDepth: busyDepth,

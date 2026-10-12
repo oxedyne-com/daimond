@@ -177,6 +177,23 @@
 		return p.root !== 'machine' || !p.name || p.name === r.name;
 	}
 
+	/// Can a MARK be in force in the workspace named by `key`? `fits` on the place it names, or
+	/// a machine folder or file FLAGGED to travel (`share` on the row) seen from the browser
+	/// workspace, where its copy lands at the same path. The one rule every mark test asks.
+	///
+	/// MARK-FITS, 2026-10-12. On a phone the browser store is the only workspace, and a folder
+	/// shared from the desktop arrives there; asked of the reference alone, the desktop's
+	/// `[machine:…]` mark fit nowhere on the phone, so a write there met the first-use question
+	/// instead of "here too? Allowed on <desktop>", and Allow wrote a second `holds` row beside
+	/// the one already made. Taking the flag off narrows the row, and its press here lapses.
+	function reaches(row, key) {
+		if (!row) return false;
+		if (fits(row.to, key)) return true;
+		var p = parseRef(row.to);
+		return row.share === true && p.root === 'machine' && (p.kind === 'file' || p.kind === 'dir')
+			&& rootOf(key).kind === 'browser';
+	}
+
 	function str(v) { return typeof v === 'string' ? v : ''; }
 
 	/// A reference as the store spells it -- `Node::parse`, then `to_ref` -- or
@@ -339,7 +356,7 @@
 	/// `rel` is `holds` only where both the row and the entry say so; the share
 	/// is on only where both do.
 	function force(rec, owner, row, root, seeds) {
-		if (!isMark(row) || !ownedBy(owner, row) || !fits(row.to, root)) return null;
+		if (!isMark(row) || !ownedBy(owner, row) || !reaches(row, root)) return null;
 		var list = (rec && own(rec.d, owner)) || [];
 		for (var i = 0; i < list.length; i++) {
 			var e = list[i];
@@ -354,7 +371,7 @@
 	/// would bring into force? A row whose root is another workspace is neither
 	/// in force nor waiting: it lives elsewhere.
 	function waiting(rec, owner, row, root, seeds) {
-		return isMark(row) && ownedBy(owner, row) && fits(row.to, root) && !force(rec, owner, row, root, seeds);
+		return isMark(row) && ownedBy(owner, row) && reaches(row, root) && !force(rec, owner, row, root, seeds);
 	}
 
 	/// A chat holding's grant here, `{ ws, read }`, or null. The record's `path`
@@ -592,6 +609,7 @@
 		parseRef: parseRef,
 		rootKey: rootKey,
 		fits: fits,
+		reaches: reaches,
 		isStorePath: isStorePath,
 		isAppStatePath: isAppStatePath,
 		isKeeperRecordPath: isKeeperRecordPath,
@@ -611,7 +629,7 @@
 		/// otherwise: a confirmation never carries the share flag.
 		grant: function (owner, row, root, opts) {
 			if (!keyed(here(root))) return false;
-			if (!isDiamondId(owner) || !isMark(row) || !ownedBy(owner, row) || !fits(row.to, here(root))) return false;
+			if (!isDiamondId(owner) || !isMark(row) || !ownedBy(owner, row) || !reaches(row, here(root))) return false;
 			return change(function (rec) {
 				return putEntry(rec, owner, row, here(root), row.rel, !!(opts && opts.share));
 			}).ok;

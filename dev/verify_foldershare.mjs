@@ -1215,11 +1215,11 @@ await B.page.evaluate(async (a) => {
 	const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
 	window.__askSeen = [];
 	window.__askTurn = app.steer_crystal(a.id,
+		// (id, instruction, toolkits, prior, on_event): since HIST-SAFE U2 the engine reads the
+		// marks and the unconfirmed list itself; the old lists are refused.
 		'@tool file_write ' + JSON.stringify({ path: a.p, content: 'from B' }),
-		JSON.stringify(b.attached || []), JSON.stringify(b.read_only || []),
 		JSON.stringify(b.toolkits || []), [],
-		(ev) => { if (ev.type === 'tool_result') window.__askSeen.push(String(ev.content || '')); },
-		JSON.stringify(b.unconfirmed || []))
+		(ev) => { if (ev.type === 'tool_result') window.__askSeen.push(String(ev.content || '')); })
 		.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
 }, { id: did, p: ASKED, mock: MOCK });
 const asked = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 })
@@ -1244,6 +1244,46 @@ check('a write under the shared folder on B asks for the mark here too, saying i
 		&& !!onDev && onDev !== 'another device'
 		&& askEnd.seen.some((t) => /^Refused/.test(t)),
 	(askText || 'no ask on B').slice(0, 200) + ' | ' + (askEnd.seen[0] || askEnd.end).slice(0, 100));
+
+// AND ALLOW PRESSES A'S MARK HERE, rather than writing a second (MARK-FITS, 2026-10-12). Asked
+// of its reference alone, A's `[machine:…]` mark fit nowhere on B, so the ask above was the
+// first-use question and its Allow added a `holds` row of B's own beside A's.
+const ALLOWED = SCOPE + '/allowed_on_b.md';
+await B.page.evaluate(async (a) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const b = await DaimondDiamond.bounds(a.id);
+	const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
+	window.__allowTurn = app.steer_crystal(a.id,
+		'@tool file_write ' + JSON.stringify({ path: a.p, content: 'allowed on B' }),
+		JSON.stringify(b.toolkits || []), [], () => {})
+		.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
+}, { id: did, p: ALLOWED, mock: MOCK });
+const asked2 = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 })
+	.then(() => true, () => false);
+let askText2 = '';
+if (asked2) {
+	askText2 = await B.page.evaluate(() => {
+		const c = [...document.querySelectorAll('.modal.dlg[data-ask="place"] .dlg-card')].pop();
+		return c ? c.textContent.replace(/\s+/g, ' ').trim() : '';
+	});
+	await B.page.waitForSelector('.dlg-card .dlg-ok:not([disabled])', { timeout: 3000 }).catch(() => {});
+	await B.page.evaluate(() => {
+		const c = [...document.querySelectorAll('.modal.dlg[data-ask="place"] .dlg-card')].pop();
+		c.querySelector('.dlg-ok').click();
+	});
+}
+const allowEnd = await B.page.evaluate(async (a) => {
+	const end = await window.__allowTurn;
+	const links = JSON.parse(await DaimondCore.diamondApp().links_touching('diamond:' + a.id) || '[]');
+	const rows = links.filter((l) => /^dir:/.test(String(l.other || '')) && String(l.other).endsWith(']' + a.scope));
+	const b = await DaimondDiamond.bounds(a.id);
+	return { end, rows: rows.map((l) => String(l.other)), attached: b.attached || [] };
+}, { id: did, scope: SCOPE });
+check('and Allow there presses A\'s mark on B: still one row for the folder, now in force on B',
+	asked2 && /here too\?/.test(askText2) && allowEnd.rows.length === 1
+		&& /\[machine:/.test(allowEnd.rows[0]) && allowEnd.attached.indexOf(SCOPE) >= 0,
+	`${allowEnd.rows.length} row(s) [${allowEnd.rows.join(', ')}], in force on B: ${allowEnd.attached.indexOf(SCOPE) >= 0}`
+		+ ' | ' + askText2.slice(0, 80));
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1476,10 +1516,18 @@ await writeOnB(FREED, FREED_BIG);					// and now it is too big to ride there
 // in the test as in the code.
 const freed = await B.page.evaluate(async (p) => {
 	await window.DaimondCore.collectSync();			// offloads it; the fork point keeps it
+	// Which leg refuses the free, if one does (diagnostic only, not a guard): the commit
+	// block's reason, the version the index is whole at and the mailbox version, either side.
+	const legs = () => ({
+		blocked: (window.DaimondCore.syncCommitBlockedReason && window.DaimondCore.syncCommitBlockedReason()) || '',
+		whole: window.DaimondCloud.wholeAt ? window.DaimondCloud.wholeAt() : 'n/a',
+		ver: window.DaimondSync && window.DaimondSync.version ? window.DaimondSync.version() : 'n/a' });
+	const pre = legs();
 	const before = await window.DaimondCloud.isHeld(p);
 	const res = await window.DaimondCloud.evict(p);
+	const post = legs();
 	const col = await window.DaimondCore.collectSync();
-	return { before: before, res: String(res), held: await window.DaimondCloud.isHeld(p),
+	return { pre: pre, post: post, before: before, res: String(res), held: await window.DaimondCloud.isHeld(p),
 		away: window.DaimondCloud.awayPaths()[p] | 0,
 		inline: !!(col.files && col.files[p] != null),
 		complete: col.filesComplete,
@@ -1488,7 +1536,8 @@ const freed = await B.page.evaluate(async (p) => {
 check('the phone offloads a file and then frees its own copy, keeping only the reference',
 	freed.before === true && freed.held === false && freed.away > 0 && freed.inline === false
 	&& freed.complete === true,
-	`${freed.res.slice(0, 70)}; held=${freed.held} away=${freed.away} B, census complete ${freed.complete}`);
+	`${freed.res.slice(0, 70)}; held=${freed.held} away=${freed.away} B, census complete ${freed.complete}`
+	+ `; legs before ${JSON.stringify(freed.pre)} after ${JSON.stringify(freed.post)}`);
 check('and raises NO tombstone for it — a file in cloud storage is not a file that went',
 	freed.tombed === false, freed.tombed ? 'a tombstone for a file it still has in the cloud' : '');
 await push(B); await pull(A);

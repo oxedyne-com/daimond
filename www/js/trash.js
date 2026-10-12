@@ -381,11 +381,25 @@
 		_damaged = window.DaimondStore.damaged(KEY) || !isRecord(raw);
 		if (_damaged) { log('the stored trash record is damaged; nothing will be written over it'); return _items; }
 		var items = raw.items || {};
+		// An ENTRY that is there but is not one damages the whole record, as the engine's
+		// `trashed_ids` reads it: dropping it read a trashed Diamond as live (U2 QA F3).
+		if (Object.keys(items).some(function (id) { return !isEntry(items[id]); })) {
+			_damaged = true;
+			_items = {};
+			log('a stored trash entry is damaged; nothing will be written over the record');
+			return _items;
+		}
 		Object.keys(items).forEach(function (id) {
 			var r = clean(items[id]);
 			if (r) _items[id] = r;
 		});
 		return _items;
+	}
+
+	/// Is this a trash entry: a map whose `at` and `back`, where present, are numbers?
+	function isEntry(v) {
+		var stamp = function (x) { return x === undefined || (typeof x === 'number' && isFinite(x)); };
+		return !!v && typeof v === 'object' && !Array.isArray(v) && stamp(v.at) && stamp(v.back);
 	}
 
 	/// Is this a trash record: a map whose `items`, where present, is a map?

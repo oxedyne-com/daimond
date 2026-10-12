@@ -300,20 +300,16 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	out.gBig      = await turn(['vault'], 'file_delete', { path: 'vault/big.txt' });
 	out.gBigKept  = (await read('vault/big.txt')) !== null;
 
-	// Every spelling of one path is that path, kept and put back.
+	// Every other spelling of one path is refused, naming the one spelling, and touches
+	// nothing (PATHTYPE, D-20261012-07: a path is written one way only).
 	out.gSpell = [];
 	for (const [name, spell] of [['p1.md', './vault/p1.md'], ['p2.md', 'vault//p2.md'],
 		['p3.md', 'vault/zz/../p3.md'], ['p4.md', 'vault/p4.md/']]) {
 		const path = 'vault/' + name, text = 'only copy ' + name;
 		await mod.write_file(path, text);
 		const del = await turn(['vault'], 'file_delete', { path: spell });
-		const gone = (await read(path)) === null;
-		const m = await newest();
-		const e = m && (m.files || []).find((f) => f.path === path);
-		const kept = !!e && !!e.gone && e.was === await sha(text);
-		const rev = await turn(['vault'], 'file_revert', { path });
-		out.gSpell.push({ spell, del: del.slice(0, 120), gone, kept, rev: rev.slice(0, 120),
-			back: (await read(path)) === text });
+		out.gSpell.push({ spell, del: del.slice(0, 480), still: (await read(path)) === text,
+			canon: spell.includes('..') ? "uses '..'" : "Write it as '" + path + "'" });
 	}
 
 	// The daimon cannot reach its own undo record, with any write verb.
@@ -544,9 +540,9 @@ for (const [where, g] of [['folder', r.gFolder], ['sandbox', r.gSbx]]) {
 check('G. a file too large to keep is refused to a daimon', /^Refused/.test(r.gBig), r.gBig.slice(0, 160));
 check('G. and is still there', r.gBigKept === true);
 for (const g of r.gSpell) {
-	check(`G. '${g.spell}' is deleted and kept as the one file it names`,
-		g.gone && g.kept, g.del);
-	check(`G. '${g.spell}': file_revert puts it back`, g.back === true, g.rev);
+	check(`G. '${g.spell}' is refused, naming the one spelling`,
+		/^Refused/.test(g.del) && g.del.includes(g.canon), g.del);
+	check(`G. '${g.spell}': the file it would name is untouched`, g.still === true);
 }
 check('G. a captured delete has a row to attack', r.gStore.row === true);
 check('G. the daimon cannot delete a body of its own version store',

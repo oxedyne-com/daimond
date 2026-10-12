@@ -3843,12 +3843,13 @@ const VERSION_LOCK: &str = "daimond-version-";
 /// takes seconds -- and short enough that a person is told while they are still looking.
 pub const VERSION_WAIT_MS: u64 = 60_000;
 
-/// The sentence an act gets when the version store stayed held past [`VERSION_WAIT_MS`].
-fn version_wait_refusal(id: &str) -> Error<ErrTag> {
+/// The sentence an act gets when the version store stayed held past [`VERSION_WAIT_MS`], naming
+/// the Diamond as `named`.
+fn version_wait_refusal(named: &str) -> Error<ErrTag> {
     err!(
         "Diamond '{}': Daimond's version store for it has been busy with another change for over \
          {} seconds, so nothing was changed or recorded. Try again in a moment; if it stays busy, \
-         close the other tabs of Daimond, or reload this one.", id, VERSION_WAIT_MS / 1000;
+         close the other tabs of Daimond, or reload this one.", named, VERSION_WAIT_MS / 1000;
         Lock, Timeout)
 }
 
@@ -3863,12 +3864,12 @@ pub async fn hold_versions(id: &str) -> Outcome<VersionHold> {
         Lock::Held(release) => Ok(VersionHold { release: Some(release), _local: None }),
         Lock::NoManager     => match mint_turn(id, VERSION_WAIT_MS).await {
             Some(turn) => Ok(VersionHold { release: None, _local: Some(turn) }),
-            None       => Err(version_wait_refusal(id)),
+            None       => Err(version_wait_refusal(&diamond_named(id).await)),
         },
-        Lock::TimedOut | Lock::Busy => Err(version_wait_refusal(id)),
+        Lock::TimedOut | Lock::Busy => Err(version_wait_refusal(&diamond_named(id).await)),
         Lock::Refused(why)  => Err(err!(
             "Diamond '{}': the browser would not lock Daimond's version store for it ({}), so \
-             nothing was changed or recorded.", id, why; Lock)),
+             nothing was changed or recorded.", diamond_named(id).await, why; Lock)),
     }
 }
 
@@ -4775,6 +4776,8 @@ struct Restoring {
     done:   Vec<Change>,                        // what each act on the person's files kept and left
     notes:  Vec<String>,                        // the notes of the copies those acts took
     named:  Option<std::collections::BTreeSet<String>>, // the own files the open put to the person
+    own:    Routes,                             // the Diamond's own files, as the open saw them
+    hold:   Option<std::rc::Rc<VersionHold>>,   // the store, from the restore's first write to its end
     _lock:  RestoreLock,                        // held while open, so another tab leaves its notes
     _claim: RestoreClaim,                       // the Diamond's one restore
 }
@@ -4941,7 +4944,27 @@ pub struct Closed {
     pub missing:  Vec<String>,
     pub refused:  Vec<String>,                  // one JSON object a file
     pub wrote:    Vec<String>,                  // the engine's own writes, which the read cache forgets
-    pub crystal:  bool,                         // the crystal and page came back in the same version
+    pub crystal:  Crystal,                      // what became of the crystal and page
+    pub changed:  Vec<String>,                  // own files changed since he decided: put to him, restore still open
+}
+
+/// What a restore's close did with the crystal and its page, said by the engine so no caller
+/// infers it (hist-safe U3, QA B B1, 2026-10-12).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Crystal {
+    Restored,                                   // put back in the same version as the files
+    Same,                                       // today's already matches the version's
+    Untouched,                                  // not the restore's to put back: one path, or an undo of files
+}
+
+impl Crystal {
+    pub fn said(&self) -> &'static str {
+        match self {
+            Self::Restored  => "restored",
+            Self::Same      => "same",
+            Self::Untouched => "untouched",
+        }
+    }
 }
 
 impl Closed {
@@ -4953,9 +4976,9 @@ impl Closed {
             let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
             items.join(",")
         };
-        fmt!("{{\"version\":{},\"recorded\":{},\"crystal\":{},\"restored\":[{}],\"missing\":[{}],\"refused\":[{}]{}}}",
-            self.at, match self.recorded { Some(v) => v as i64, None => -1 }, self.crystal,
-            quote(&self.restored), quote(&self.missing), self.refused.join(","),
+        fmt!("{{\"version\":{},\"recorded\":{},\"crystal\":\"{}\",\"restored\":[{}],\"missing\":[{}],\"refused\":[{}],\"changed\":[{}]{}}}",
+            self.at, match self.recorded { Some(v) => v as i64, None => -1 }, self.crystal.said(),
+            quote(&self.restored), quote(&self.missing), self.refused.join(","), quote(&self.changed),
             match machine {
                 Some(m) => fmt!(",\"machine\":[{}]", m.join(",")),
                 None    => String::new(),
@@ -4967,7 +4990,7 @@ impl Closed {
 ///
 /// The lock's name is new, so nothing waits for it.  Where the browser has no lock manager, or
 /// will not grant it, the restore is open without one, as every restore was before.
-async fn restore_begin(id: &str, plan: Plan, routes: Routes,
+async fn restore_begin(id: &str, plan: Plan, routes: Routes, own: Routes,
     named: Option<std::collections::BTreeSet<String>>, claim: RestoreClaim) -> u64
 {
     let ticket = RESTORE_NEXT.with(|n| { let t = n.get(); n.set(t + 1); t });
@@ -4980,6 +5003,8 @@ async fn restore_begin(id: &str, plan: Plan, routes: Routes,
             done:   Vec::new(),
             notes:  Vec::new(),
             named,
+            own,
+            hold:   None,
             _lock:  RestoreLock(None),
             _claim: claim,
         });
@@ -5106,15 +5131,22 @@ pub fn restore_answer(ticket: u64, paths: &[String], yes: bool) -> Outcome<()> {
                 "The restore {} has ended, so there is no question to answer. Nothing was changed.",
                 ticket; Missing, Data)),
         };
-        // Every path checked before any is recorded, so an answer lands whole or not at all.
+        // Every path checked before any is recorded, so an answer lands whole or not at all.  The
+        // Diamond's own files are answered by the same rule as the person's (hist-safe U3 F2).
         for p in paths.iter() {
-            if !x.routes.contains_key(&crate::tools::normalise(p)) {
+            let key = crate::tools::normalise(p);
+            if !x.routes.contains_key(&key) && !x.own.contains_key(&key) {
                 return Err(err!("'{}' is no file restore {} asked about, so its answer was not \
                     recorded. Nothing was changed.", p, ticket; Missing, Data));
             }
         }
         for p in paths.iter() {
-            if let Some(h) = x.routes.get_mut(&crate::tools::normalise(p)) {
+            let key = crate::tools::normalise(p);
+            let h = match x.routes.get_mut(&key) {
+                Some(h) => Some(h),
+                None    => x.own.get_mut(&key),
+            };
+            if let Some(h) = h {
                 h.yes = if yes { Some(h.asked.clone().unwrap_or_else(|| h.seen.clone())) } else { None };
             }
         }
@@ -5156,7 +5188,8 @@ pub async fn restore_keep(ticket: u64, path: &str, now: Option<&[u8]>, deleting:
             "The restore that '{}' belonged to has ended, so nothing was changed.", path;
             Missing, Data)),
     };
-    res!(end_run(None, &id, path).await);
+    let hold = res!(restore_held(ticket).await);
+    res!(end_run(Some(&*hold), &id, path).await);
     let before = match now {
         Some(b) => b,
         None    => return Ok(()),           // nothing stands there, so nothing is lost
@@ -5167,8 +5200,10 @@ pub async fn restore_keep(ticket: u64, path: &str, now: Option<&[u8]>, deleting:
     let note = fmt!("{}/{}", pending_dir(&id), name);
     let hash = versions::hash_of(before);
     // The body first, as `pend` writes it: a failure half way leaves a body nothing names.
-    // Outside the version hold: claimed for every tab's sweep until the note names the body.
-    let mut w = res!(Writing::claim(&id, &[hash.clone()]).await);
+    // UNDER THE RESTORE'S HOLD, so no tab's sweep can meet it (hist-safe U3, M9b, 2026-10-12): it
+    // was claimed as a write outside the hold, and the claim asked for the store the restore
+    // already holds, so every act on his files waited on its own restore and was refused.
+    let mut w = Writing::begin(&id);
     let text = fmt!(
         r#"{{"page":"{}","path":"{}","was":"{}","deleting":{},"mark":{}{},"restore":{},"ts":{}}}"#,
         json_escape(&page), json_escape(path), hash, deleting, theirs(&id, path),
@@ -5342,17 +5377,20 @@ pub async fn versions_restore_open(id: &str, plan: Plan) -> Outcome<Opened> {
     // files row, or the crystal's own snapshot (the crystal panel restores by its numbers), and an
     // undo of a restore that put back only the crystal, which has neither, is still a version.
     let at = plan.version();
+    // A version kept before the crystal became data is one too, by its `NNNN.md` (hist-safe U3,
+    // QA B B2): counting only the other two refused every restore of one as "no version".
     let snap = fmt!("{:04}.json", at);
+    let legacy = fmt!("{:04}.md", at);
     let listed = version_entries(id).await.into_iter()
         .any(|(name, is_dir, _)| !is_dir
-            && (versions::manifest_version(&name) == Some(at) || name == snap));
+            && (versions::manifest_version(&name) == Some(at) || name == snap || name == legacy));
     let known = listed || match &plan {
         Plan::Undo(of, _) => restored_crystal(id, *of).await,
         _                 => false,
     };
     if !known {
         return Err(err!("Diamond '{}' has no version {} in its history, so there is nothing to \
-            restore. Nothing was changed.", id, at; Missing, Data));
+            restore. Nothing was changed.", diamond_named(id).await, at; Missing, Data));
     }
     // ONE RESTORE OF A DIAMOND AT A TIME, across tabs (hist-safe R3), claimed before anything is
     // read or recorded, and given back with the restore or on any refusal below.
@@ -5566,9 +5604,55 @@ pub async fn versions_restore_open(id: &str, plan: Plan) -> Outcome<Opened> {
         });
         routes.insert(crate::tools::normalise(&spelled), handed);
     }
+    // WHAT STANDS AT EACH OF THE DIAMOND'S OWN FILES NOW (hist-safe U3 F2, 2026-10-12): what the
+    // close's write or delete there is bound to, by the rule the person's files are.  The close read
+    // them only as it wrote, so a second tab's save made while a question was open was deleted, or
+    // written over, unasked.
+    let mine: Vec<String> = want.iter()
+        .filter(|(p, _)| is_safe_rel(p) && !theirs(id, p))
+        .map(|(p, _)| p.clone())
+        .collect();
+    let mut own_seen: Routes = Routes::new();
+    for ch in versions_changes(id, &mine).await.into_iter() {
+        let seen = match &ch.after {
+            Body::Held(b) => versions::Seen::of(Some(b)),
+            Body::Gone    => versions::Seen::Absent,
+            _             => versions::Seen::Unread,
+        };
+        own_seen.insert(crate::tools::normalise(&ch.path), Handed {
+            path:   ch.path.clone(),
+            folder: None,
+            seen,
+            looks:  false,
+            asked:  None,
+            yes:    None,
+            ask:    None,
+        });
+    }
+    // THE CRYSTAL AND ITS PAGE ARE THE DIAMOND'S OWN FILES TOO (hist-safe U3, QA A Q2,
+    // 2026-10-12): another tab's crystal written while a question was open was replaced by the
+    // version's unasked.  What stands at each now is what the close's crystal is bound to.
+    for path in [crystal_data_path(id), crystal_page_path(id)] {
+        let seen = match opfs::read_file(FileRoot::Opfs, &path).await {
+            Ok(b)  => versions::Seen::of(Some(&b)),
+            Err(_) => match opfs::exists(FileRoot::Opfs, &path).await {
+                Ok(false) => versions::Seen::Absent,
+                _         => versions::Seen::Unread,
+            },
+        };
+        own_seen.insert(crate::tools::normalise(&path), Handed {
+            path,
+            folder: None,
+            seen,
+            looks:  false,
+            asked:  None,
+            yes:    None,
+            ask:    None,
+        });
+    }
     // Only what the question named may go at the close (D-26 B F4); a one-file press asked nothing
     // and its own path is the person's pick.
-    let ticket = restore_begin(id, plan, routes, if asks { Some(named) } else { None },
+    let ticket = restore_begin(id, plan, routes, own_seen, if asks { Some(named) } else { None },
         claim).await;
     Ok(Opened { ticket, machine, own })
 }
@@ -5600,7 +5684,20 @@ pub async fn versions_restore_close(id: &str, ticket: u64) -> Outcome<Closed> {
 /// [`versions_restore_close`], leaving the Diamond's own files the version did not have where
 /// `keep_new`: the person's answer to the open's `own` question (D-20261009-29 item 2).
 pub async fn versions_restore_close_keeping(id: &str, ticket: u64, keep_new: bool) -> Outcome<Closed> {
-    let r = match RESTORES.with(|r| {
+    let open = |r: &std::cell::RefCell<std::collections::BTreeMap<u64, Restoring>>| {
+        matches!(r.borrow().get(&ticket), Some(x) if x.id == id)
+    };
+    if !RESTORES.with(open) {
+        return Err(restore_not_open(id, ticket).await);
+    }
+    // THE STORE IS HELD BEFORE THE RESTORE IS TAKEN OFF THE BOOK (hist-safe U3, QA B B1,
+    // 2026-10-12): it was taken first, so a store another tab held past the wait ended the restore
+    // half done -- the door's acts on his files landed, the Diamond's own files and crystal never
+    // came -- and nothing could finish it.  Refused now, it stays open, to close again or end.
+    // Where an act on his files wrote, the restore holds it already ([`restore_held`]).
+    let had = RESTORES.with(|r| r.borrow().get(&ticket).map(|x| x.hold.is_some()).unwrap_or(false));
+    let hold = res!(restore_held(ticket).await);
+    let mut r = match RESTORES.with(|r| {
         let mut all = r.borrow_mut();
         match all.get(&ticket) {
             Some(x) if x.id == id => all.remove(&ticket),
@@ -5608,19 +5705,15 @@ pub async fn versions_restore_close_keeping(id: &str, ticket: u64, keep_new: boo
         }
     }) {
         Some(r) => r,
-        None    => return Err(err!(
-            "Diamond '{}' has no restore {} open on this page, so there is nothing to finish.",
-            id, ticket; Missing, Data)),
+        None    => return Err(restore_not_open(id, ticket).await),  // closed or ended while waiting
     };
-    let hold = res!(hold_versions(id).await);
     let mut changes:  Vec<Change> = Vec::new();
     let mut restored: Vec<String> = Vec::new();
     let mut missing:  Vec<String> = Vec::new();
     let mut refused:  Vec<String> = Vec::new();
     let mut wrote:    Vec<String> = Vec::new();
-    let plan = &r.plan;
     let held = versions_manifests(id).await;
-    let want = match restore_plan(id, &held, plan, folder_of) {
+    let want = match restore_plan(id, &held, &r.plan, folder_of) {
         Ok(w)  => w,
         Err(_) => Vec::new(),       // its record was pruned since it opened: nothing to put back
     };
@@ -5642,6 +5735,14 @@ pub async fn versions_restore_close_keeping(id: &str, ticket: u64, keep_new: boo
         };
         today.insert(ch.path, now);
     }
+    // EACH ACT WEIGHED BEFORE ANY IS TAKEN, and bound to the bytes he decided on (hist-safe U3 F2,
+    // 2026-10-12): those the open saw, or those he said yes to since.  The close compared only with
+    // what it read as it wrote, so a second tab's save made while his question was open was deleted
+    // under a "Delete them" given about other bytes, or written over unasked.  A file changed since
+    // is put to him by name before anything of it goes, as the person's own files are
+    // ([`versions::bound`], [`restore_answer`]); one he chose to keep is left as it stands.
+    let mut acts:    Vec<(String, Option<Vec<u8>>, Option<Vec<u8>>, versions::Seen)> = Vec::new();
+    let mut changed: Vec<String> = Vec::new();
     for (p, state) in want.iter() {
         if !mine.contains(p) {
             continue;
@@ -5668,9 +5769,10 @@ pub async fn versions_restore_close_keeping(id: &str, ticket: u64, keep_new: boo
                     json_escape(why)));
                 continue;
             },
-            At::Held { hash, .. } => match res!(versions_body(id, hash).await) {
-                Some(b) => Some(b),
-                None    => { missing.push(p.clone()); continue; },
+            At::Held { hash, .. } => match versions_body(id, hash).await {
+                Ok(Some(b)) => Some(b),
+                Ok(None)    => { missing.push(p.clone()); continue; },
+                Err(e)      => return Err(restore_reopen(ticket, r, had, e)),   // nothing written yet
             },
         };
         // A FILE THAT COULD NOT BE READ WHOLE IS LEFT: there is no copy of it to keep, and
@@ -5680,71 +5782,149 @@ pub async fn versions_restore_close_keeping(id: &str, ticket: u64, keep_new: boo
                 json_escape("it could not be read whole, so it was left as it stands")));
             continue;
         }
-        if let Err(e) = end_run(Some(&hold), id, p).await {
-            refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p),
+        let key = crate::tools::normalise(p);
+        let decided = match r.own.get(&key) {
+            Some(h) if h.asked.is_some() && h.yes.is_none() => {
+                refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p),
+                    json_escape("it changed while the restore was open, so it was left as it stands")));
+                continue;
+            },
+            Some(h) => h.yes.clone().unwrap_or_else(|| h.seen.clone()),
+            None    => versions::Seen::Unread,
+        };
+        match versions::bound(&decided, before.as_deref(), body.as_deref()) {
+            versions::Bound::Same    => continue,
+            versions::Bound::Changed => { changed.push(p.clone()); continue; },
+            versions::Bound::Go      => {},
+        }
+        acts.push((p.clone(), before, body, seen));
+    }
+    // THE CRYSTAL AND ITS PAGE BY THE SAME RULE (hist-safe U3, QA A Q2, 2026-10-12): each is bound
+    // to what stood there at the open, or to his yes since; changed, it is put to him with the
+    // files, and kept where he keeps it -- the crystal is then not the restore's to put back.
+    let put = match restore_crystal(id, &r.plan).await {
+        Ok(x)  => x,
+        Err(e) => return Err(restore_reopen(ticket, r, had, e)),
+    };
+    let mut keep_crystal = false;
+    if let Some(Some((data, page))) = &put {
+        let puts = [
+            (crystal_data_path(id), Some(data.as_bytes())),
+            (crystal_page_path(id), if page.trim().is_empty() { None } else { Some(page.as_bytes()) }),
+        ];
+        for (path, body) in puts.iter() {
+            let body = match body {
+                Some(b) => *b,
+                None    => continue,        // no page in the version: today's is left
+            };
+            let now = opfs::read_file(FileRoot::Opfs, path).await.ok();
+            let decided = match r.own.get(&crate::tools::normalise(path)) {
+                Some(h) if h.asked.is_some() && h.yes.is_none() => { keep_crystal = true; continue; },
+                Some(h) => h.yes.clone().unwrap_or_else(|| h.seen.clone()),
+                None    => versions::Seen::Unread,
+            };
+            if versions::bound(&decided, now.as_deref(), Some(body)) == versions::Bound::Changed {
+                let seen = versions::Seen::of(now.as_deref());
+                today.insert(path.clone(), (now, seen));
+                changed.push(path.clone());
+            }
+        }
+    }
+    // ASKED BEFORE ANY OF THEM GOES: the restore stays open, nothing of its own files written, and
+    // what stands at each changed file now is what his next answer is bound to.
+    if !changed.is_empty() {
+        for p in changed.iter() {
+            if let Some(h) = r.own.get_mut(&crate::tools::normalise(p)) {
+                h.asked = Some(today.get(p).map(|t| t.1.clone()).unwrap_or(versions::Seen::Unread));
+                h.yes = None;
+            }
+        }
+        // Nothing written yet: the store is let go while he answers, unless an act already wrote.
+        drop(hold);
+        if !had {
+            r.hold = None;
+        }
+        let at = r.plan.version();
+        RESTORES.with(|x| { x.borrow_mut().insert(ticket, r); });
+        return Ok(Closed {
+            at,
+            recorded: None,
+            restored: Vec::new(),
+            missing,
+            refused:  Vec::new(),
+            wrote:    Vec::new(),
+            crystal:  Crystal::Untouched,
+            changed,
+        });
+    }
+    // THE CRYSTAL AND ITS PAGE IN THE SAME VERSION AS THE FILES (D-20261009-29 item 1): the page
+    // wrote the crystal after the files came back, so one Restore made two rows and no single
+    // row's Undo put the Diamond back.  Minted under the hold the files are recorded under, and
+    // BEFORE any of them is written (hist-safe U3, QA B B1): a crystal that cannot be written
+    // leaves the restore open and nothing of it applied, where it was said to the page as "not
+    // the engine's", and the page wrote the crystal itself over files it had not seen.
+    let note = r.plan.note();
+    let mut at: Option<u64> = None;
+    let crystal = match put {
+        _ if keep_crystal => Crystal::Untouched,
+        None       => Crystal::Untouched,
+        Some(None) => Crystal::Same,
+        Some(Some((data, page))) => {
+            let now = now_ms() as u64;
+            let parent = match read_meta(id).await {
+                Ok(m)  => m.version as i64,
+                Err(_) => -1,
+            };
+            let shown = if page.trim().is_empty() { None } else { Some(page.as_str()) };
+            let version = match snapshot_held(&hold, id, &data, shown, now).await {
+                Ok(v)  => v,
+                Err(e) => return Err(restore_reopen(ticket, r, had, e)),
+            };
+            let rec = LogRecord {
+                id:        generate_session_id(),
+                ts:        now,
+                kind:      "restore",
+                agent:     "user".to_string(),
+                task:      "restore crystal and files".to_string(),
+                parent,
+                version,
+                delta_ref: String::new(),
+                note:      note.clone(),
+            };
+            if append_log(id, &rec).await.is_ok() {
+                at = Some(version);
+            }
+            Crystal::Restored
+        },
+    };
+    for (p, before, body, seen) in acts.into_iter() {
+        if let Err(e) = end_run(Some(&*hold), id, &p).await {
+            refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(&p),
                 json_escape(&e.plain())));
             continue;
         }
         let landed = match &body {
             // A file made AFTER `at` is removed, which is the half of "put it back" a per-path
             // restore never needs and a whole-version one cannot do without.
-            None    => res!(opfs::delete_file_if(FileRoot::Workspace, p, &seen).await),
-            Some(b) => res!(opfs::write_file_if(FileRoot::Workspace, p, b, Some(&seen)).await),
+            None    => res!(opfs::delete_file_if(FileRoot::Workspace, &p, &seen).await),
+            Some(b) => res!(opfs::write_file_if(FileRoot::Workspace, &p, b, Some(&seen)).await),
         };
         if landed.is_some() {
-            refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p),
+            refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(&p),
                 json_escape("it changed while the restore was open, so it was left as it stands")));
             continue;
         }
         restored.push(p.clone());
         wrote.push(p.clone());
         match body {
-            None    => changes.push(Change { before, ..Change::gone(p) }),
-            Some(b) => changes.push(Change { before, ..Change::of(p, b) }),
+            None    => changes.push(Change { before, ..Change::gone(&p) }),
+            Some(b) => changes.push(Change { before, ..Change::of(&p, b) }),
         }
     }
     // WHAT THE DOOR'S ACTS ON THE PERSON'S FILES LANDED, each with the copy it kept at the act.
     for ch in r.done.into_iter() {
         restored.push(ch.path.clone());
         changes.push(ch);
-    }
-    let note = r.plan.note();
-    // THE CRYSTAL AND ITS PAGE IN THE SAME VERSION AS THE FILES (D-20261009-29 item 1): the page
-    // wrote the crystal after the files came back, so one Restore made two rows and no single
-    // row's Undo put the Diamond back.  Minted under the hold the files are recorded under.
-    let mut at: Option<u64> = None;
-    let put = restore_crystal(id, plan).await;
-    let mut crystal = put.is_some();
-    if let Some(Some((data, page))) = put {
-        let now = now_ms() as u64;
-        let parent = match read_meta(id).await {
-            Ok(m)  => m.version as i64,
-            Err(_) => -1,
-        };
-        let shown = if page.trim().is_empty() { None } else { Some(page.as_str()) };
-        match snapshot_held(&hold, id, &data, shown, now).await {
-            Ok(version) => {
-                let rec = LogRecord {
-                    id:        generate_session_id(),
-                    ts:        now,
-                    kind:      "restore",
-                    agent:     "user".to_string(),
-                    task:      "restore crystal and files".to_string(),
-                    parent,
-                    version,
-                    delta_ref: String::new(),
-                    note:      note.clone(),
-                };
-                if append_log(id, &rec).await.is_ok() {
-                    at = Some(version);
-                }
-            },
-            Err(e) => {
-                crystal = false;    // the page writes it, as before
-                refused.push(fmt!("{{\"path\":\"crystal.json\",\"why\":\"{}\"}}",
-                    json_escape(&e.plain())));
-            },
-        }
     }
     let recorded = versions_record_held(&hold, id, at, Cause::Restore, "", &note, changes).await;
     drop(hold);
@@ -5758,42 +5938,137 @@ pub async fn versions_restore_close_keeping(id: &str, ticket: u64, keep_new: boo
         missing,
         refused,
         wrote,
+        changed:  Vec::new(),
     })
 }
 
 /// The crystal and page a restore puts back with the files: for the whole of version `v`, as at
 /// `v`; for the undo of a restore that put a crystal back, as at the version before it.  `None`
-/// where the crystal is not the engine's to put back -- a one-path restore, an undo of anything
-/// else, a version kept before snapshots (its markdown is the page's to migrate) -- and
-/// `Some(None)` where it is, and today's already matches.
-async fn restore_crystal(id: &str, plan: &Plan) -> Option<Option<(String, String)>> {
+/// where the crystal is not the restore's to put back -- a one-path restore, an undo of anything
+/// else, a version that kept files and no crystal -- and `Some(None)` where it is, and today's
+/// already matches.  A version that holds a crystal and cannot be read is refused, never taken
+/// for one that has none.
+///
+/// **A version kept before the crystal became data is the engine's too** (hist-safe U3, QA B B2,
+/// 2026-10-12): its `NNNN.md` is converted as the migration converts a crystal
+/// ([`migrate_crystal_data`]) and put back in the restore's own version.  The page did it, apart,
+/// after the files, and only where the engine answered "not mine" -- which a refused close
+/// answered too.
+async fn restore_crystal(id: &str, plan: &Plan) -> Outcome<Option<Option<(String, String)>>> {
     let snaps = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await;
     let at = match plan {
         Plan::At(v, None, _) => *v,
         Plan::Undo(r, _) => {
             if !restored_crystal(id, *r).await {
-                return None;
+                return Ok(None);
             }
             match snaps.iter().map(|(n, _)| *n).filter(|n| n < r).max() {
                 Some(n) => n,
-                None    => return None,
+                None    => return Ok(None),
             }
         },
-        Plan::At(_, Some(_), _) => return None,
+        Plan::At(_, Some(_), _) => return Ok(None),
     };
-    if !snaps.iter().any(|(n, _)| *n == at) {
-        return None;
-    }
-    let data = match read_version(id, at).await {
-        Ok(d)  => d,
-        Err(_) => return None,
+    let data = if snaps.iter().any(|(n, _)| *n == at) {
+        res!(read_version(id, at).await)
+    } else if res!(opfs::exists(FileRoot::Opfs, &version_legacy_path(id, at)).await) {
+        let md = res!(read_version(id, at).await);
+        crate::tools::crystal_from_markdown(&md).to_json()
+    } else {
+        return Ok(None);
     };
     let page = read_version_page(id, at).await.unwrap_or_default();
     let today = read_crystal_data(id).await.unwrap_or_default();
     if data == today && (page.trim().is_empty() || page == page_on_disk(id).await) {
-        return Some(None);
+        return Ok(Some(None));
     }
-    Some(Some((data, page)))
+    Ok(Some(Some((data, page))))
+}
+
+/// Put the restore `ticket` back on the book, open, and answer `e`: a close that could not take
+/// the crystal has written nothing of the Diamond's, so it can be closed again or ended.  The
+/// store stays held where an act on his files wrote before the close (`had`), and goes otherwise.
+fn restore_reopen(ticket: u64, mut r: Restoring, had: bool, e: Error<ErrTag>) -> Error<ErrTag> {
+    if !had {
+        r.hold = None;
+    }
+    RESTORES.with(|x| { x.borrow_mut().insert(ticket, r); });
+    e
+}
+
+/// The version store of the open restore `ticket`, held from the restore's first write -- of his
+/// files, the Diamond's own or the crystal -- to its close or end, and taken here where it is not
+/// held yet.
+///
+/// **No restore is applied in part** (hist-safe U3, lead ruling 2026-10-12): the store was taken
+/// at the close, after the door's acts had written his files, so a store another tab held past
+/// the wait left his files restored and the Diamond's own files and crystal not, and "Leave it"
+/// left that half.  Held before the first write, a busy store refuses before anything is
+/// written, and nothing else mints between the first act and the record.  Every act of the
+/// restore and its close pass this hold on, so none asks for the store again.
+pub async fn restore_held(ticket: u64) -> Outcome<std::rc::Rc<VersionHold>> {
+    let (id, had) = match RESTORES.with(|r| r.borrow().get(&ticket).map(|x| (x.id.clone(), x.hold.clone()))) {
+        Some(x) => x,
+        None    => return Err(err!(
+            "Restore {} is not open on this page, so nothing was changed.", ticket; Missing, Data)),
+    };
+    if let Some(h) = had {
+        return Ok(h);
+    }
+    let hold = std::rc::Rc::new(res!(hold_versions(&id).await));
+    // Another call of this restore may have taken it while this one waited; the first one stands.
+    RESTORES.with(|r| match r.borrow_mut().get_mut(&ticket) {
+        Some(x) => match &x.hold {
+            Some(h) => Ok(h.clone()),
+            None    => { x.hold = Some(hold.clone()); Ok(hold) },
+        },
+        None => Err(err!("Restore {} ended while it waited for the version store, so nothing was \
+            changed.", ticket; Missing, Data)),
+    })
+}
+
+/// Take the version store for the open restore `ticket` of `id` before its first write
+/// ([`restore_held`]): the page asks once the person has decided, so a busy store is put to him
+/// before anything is written.
+pub async fn versions_restore_hold(id: &str, ticket: u64) -> Outcome<()> {
+    if restore_store(ticket).as_deref() != Some(id) {
+        return Err(restore_not_open(id, ticket).await);
+    }
+    res!(restore_held(ticket).await);
+    Ok(())
+}
+
+/// The refusal of a close or an end of a restore that is not open on this page.
+async fn restore_not_open(id: &str, ticket: u64) -> Error<ErrTag> {
+    err!("Diamond '{}' has no restore {} open on this page, so there is nothing to finish.",
+        diamond_named(id).await, ticket; Missing, Data)
+}
+
+/// End the restore `ticket` without closing it, where its close was refused and the person chose
+/// to leave it: nothing of the Diamond's own files or crystal is written, and the copies its acts
+/// on his files kept stay noted, for the next turn end to adopt.
+pub async fn versions_restore_end(id: &str, ticket: u64) -> Outcome<()> {
+    let gone = RESTORES.with(|r| {
+        let mut all = r.borrow_mut();
+        match all.get(&ticket) {
+            Some(x) if x.id == id => all.remove(&ticket),
+            _                     => None,
+        }
+    });
+    match gone {
+        Some(_) => Ok(()),
+        None    => Err(err!("Diamond '{}' has no restore {} open on this page, so there is nothing \
+            to end.", diamond_named(id).await, ticket; Missing, Data)),
+    }
+}
+
+/// The Diamond as the person knows it, by its name; its id where it has none or none can be read.
+/// A sentence he is shown names the Diamond this way (hist-safe U3, QA B B3).
+async fn diamond_named(id: &str) -> String {
+    match read_meta(id).await {
+        Ok(m) if !m.name.trim().is_empty() => m.name,
+        _                                   => id.to_string(),
+    }
 }
 
 /// Did version `v` of `id` put a crystal back ([`restore_crystal`]): is its log line a `restore`?
@@ -5819,7 +6094,13 @@ pub async fn versions_restore(id: &str, at: u64, path: Option<&str>)
     -> Outcome<(String, Vec<String>)>
 {
     let opened = res!(versions_restore_open(id, Plan::At(at, path.map(|p| p.to_string()), None)).await);
-    let closed = res!(versions_restore_close(id, opened.ticket).await);
+    let mut closed = res!(versions_restore_close(id, opened.ticket).await);
+    // NOBODY TO ASK, SO A FILE CHANGED SINCE THE OPEN IS KEPT (hist-safe U3 F2): each is answered
+    // no and left as it stands.  A path answered no is never put again, so this ends.
+    while !closed.changed.is_empty() {
+        res!(restore_answer(opened.ticket, &closed.changed, false));
+        closed = res!(versions_restore_close(id, opened.ticket).await);
+    }
     Ok((closed.said(None), closed.wrote))
 }
 

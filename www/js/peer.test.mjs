@@ -1893,6 +1893,9 @@ function buildS61Sandbox(P, spy) {
 		persistChats:       () => { spy.persisted++; },
 		renderHistory:      () => { spy.rendered++; },
 		runTurn:            (chat, text, opts) => spy.ranTurn.push({ text: text, opts: opts }),
+		diamonds:           [],
+		currentDiamond:     null,
+		runSteer:           () => false,
 		newMid:             () => 'n1',
 		ChatStore:          { compact: (id) => spy.compacted.push(id) },
 		CONTINUE_NUDGE:     '__continue_nudge__',
@@ -1907,6 +1910,7 @@ function buildS61Sandbox(P, spy) {
 		daimondFuncSource('continueTurn'),
 		daimondFuncSource('retryTurn'),
 		daimondFuncSource('answerAgain'),
+		daimondFuncSource('askAgain'),
 	].join('\n')
 	+ '\nwindow.continueTurn = continueTurn;\nwindow.retryTurn = retryTurn;\nwindow.answerAgain = answerAgain;\n';
 	const fn = new Function('window', 'with (window) {\n' + src + '\n}');
@@ -3750,8 +3754,13 @@ async function runRunnerAcceptance(P, L, check) {
 			abort: () => { abortFired = true; },
 			pushResult: async () => 9, post: async () => {}, ack: async () => {},
 		});
+		// The revoke is the sender's own Stop (its lease, released SETTLED), so since R3 F1
+		// the run ends as a Stop pressed here does: partial sent home, no lease written.
 		check('STOP: an adopted revoke aborts a quiet turn with no tick and no event',
-			res.aborted === true && abortFired === true && reads === 1, JSON.stringify(res.trace) + ' reads=' + reads);
+			res.stopped === true && abortFired === true && reads === 1, JSON.stringify(res.trace) + ' reads=' + reads);
+		check('STOP: the sender\'s Stop ends as a Stop -- reported and acked, the settled lease left alone',
+			res.trace.indexOf('stopped') >= 0 && res.trace.indexOf('report') >= 0 && res.trace.indexOf('ack') >= 0
+			&& res.trace.indexOf('complete') < 0 && res.trace.indexOf('release') < 0, JSON.stringify(res.trace));
 		check('STOP: the runner stops watching once its run ends',
 			timer.handles.filter((h) => h.live).length === 0);
 	}

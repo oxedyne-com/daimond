@@ -186,7 +186,9 @@ try {
 	// One steer_crystal call, chained: `prior` is exactly what the last call returned, the
 	// same object the browser would persist and hand back next time.
 	const steer = (instruction, prior) => withTimeout(page.evaluate(async (a) => {
-		const out = await window.__vf.steer_crystal(a.id, a.instruction, '[]', '[]', '[]',
+		// (id, instruction, toolkits, prior, on_event): since HIST-SAFE U2 the engine reads the
+		// marks itself, and the old (attached, read_only, toolkits) lists are refused.
+		const out = await window.__vf.steer_crystal(a.id, a.instruction, '[]',
 			a.prior, () => {});
 		return Array.from(out || []).map((m) => ({
 			role: m.role, content: m.content || '',
@@ -248,8 +250,22 @@ try {
 			instruction = `@text turn ${n} noted`;
 		}
 
+		// A REPORT TICK'S WORKER NEEDS A TURN THE PAGE HOLDS. Since 96b6ff1f (2026-09-13) the
+		// page starts a worker only for a turn it is hosting (`Workers.holdTurn`, the engine
+		// told the tag by `set_turn_tag`), as a Diamond's own steer does (`steerTurn` in
+		// daimond.js). This run drives a bare engine, so every spawn was refused, "this page is
+		// not running a turn", and T3 and T7 read UNVERIFIED (TRI-1c, 2026-09-27). It holds
+		// the turn as the steer path does, and lets it go after.
+		const tag = (tick && tick.backing === 'report') ? 'nf' + n + '-' + Date.now().toString(36) : '';
+		if (tag) {
+			await page.evaluate((a) => {
+				window.__vf.set_turn_tag(a.dia, a.tag);
+				window.DaimondCore.workers().holdTurn(a.tag, { diamondId: a.dia, diamondName: 'Neverforget', depth: 0 });
+			}, { dia, tag });
+		}
 		const t0 = Date.now();
 		prior = await steer(instruction, prior);
+		if (tag) await page.evaluate((t) => window.DaimondCore.workers().releaseTurn(t), tag);
 		console.log(`  .. turn ${n}/40 done in ${Date.now() - t0}ms (${instruction.slice(0, 40)})`);
 		if (PAD_BEFORE.has(n)) {
 			// A fold happened iff the notice landed: its own opening sentence, unmistakable.
@@ -317,7 +333,7 @@ try {
 
 	// ── C. THE BRIEFING ──────────────────────────────────────────────
 	const wire = await page.evaluate(async (i) => {
-		const w = JSON.parse(await window.__vf.wire_system(i, '[]', '[]', '[]'));
+		const w = JSON.parse(await window.__vf.wire_system(i, '[]'));
 		return String((w && w.machine) || '');
 	}, dia);
 	const briefLine = (wire.match(/\d+ objectives?, \d+ open tasks?[^\n]*/) || [''])[0];

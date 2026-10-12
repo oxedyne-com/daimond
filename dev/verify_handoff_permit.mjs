@@ -427,6 +427,132 @@ try {
 		const SHIFT = (ms) => { window.__realNow = window.__realNow || Date.now; const n = window.__realNow; Date.now = () => n.call(Date) + ms; };
 		const UNSHIFT = () => { if (window.__realNow) Date.now = window.__realNow; };
 
+		// ── QA96 (post-deploy A): B asks, A answers -- while B reloads, and twice ──
+		const qtag = Date.now().toString(36).slice(-4);
+		const doorOf = (pg, tid) => pg.evaluate(async (t) => {
+			try { const g = await DaimondSync.leaseGet(); const r = (g.leases || {})[t]; const v = DaimondLease.record(t);
+				const sm = (x) => x ? { h: String(x.holder || '').slice(0, 6), m: x.mode, st: x.settled ? 1 : 0, live: DaimondLease.live(x, DaimondLease.authorityNow()) ? 1 : 0 } : null;
+				return { door: sm(r), view: sm(v) }; } catch (e) { return { err: String(e) }; }
+		}, tid).catch((e) => ({ err: String(e).slice(0, 60) }));
+		const btnOfQ = (pg) => pg.evaluate(() => { const el = document.getElementById('chat-send'); return !el ? '' : el.classList.contains('stop') ? 'stop' : 'send'; }).catch(() => '?');
+		const grantsQ = (p) => ((p && p.sealed) || []).filter((x) => x.t === 'consent-grant');
+		const wroteN = (r, d) => r.results.filter((c) => /^Wrote /.test(c) && c.includes(d)).length;
+		const sawN = (d) => { try { return (mockLog() || []).filter((r) => JSON.stringify(r).includes(d)).length; } catch (e) { return -1; } };
+		// The turn's id is A's sent row's (the user message carrying the directive): B's own
+		// `__pv` record is reset by its reload, and its asks with it (R3 F3, `door null`).
+		const sentTid = (d) => daimonMsgs(A.page, dia).then((ms) => ((ms.find((m) => m.role === 'user' && m.content.includes(d)) || {}).mid || ''));
+		const settleQ = async (tag, r, d) => {
+			const tid = (await sentTid(d)) || (asksOf(r)[0] || {}).turnId || '';
+			let last = '';
+			for (let i = 0; i < 40; i++) {
+				await syncAll();
+				const s = JSON.stringify([await btnOfQ(A.page), await btnOfQ(B.page), (await answers(A.page, dia)).length, (await doorOf(A.page, tid)).door]);
+				if (s !== last) { note(tag + ' settle t=' + (i * 3) + 's btnA/btnB/answersA/door ' + s); last = s; }
+				if (/^\["send","send"/.test(s) && !/"live":1/.test(s)) break;
+				await sleep(3000);
+			}
+			const dA = await doorOf(A.page, tid), dB = await doorOf(B.page, tid);
+			note(tag + ' tid=' + tid + ' doorA=' + JSON.stringify(dA) + ' doorB=' + JSON.stringify(dB) + ' wrote=' + wroteN(r, d) + ' modelSaw=' + sawN(d)
+				+ ' holds ' + JSON.stringify([r.holdsBefore, r.holdsAfter]) + ' marks ' + JSON.stringify([r.marksBefore, r.marksAfter]) + ' results=' + JSON.stringify(r.results.map((c) => c.slice(0, 90))));
+			check(tag + ' the lease settles on both devices', !(dA.door && dA.door.live) && !(dA.view && dA.view.live) && !(dB.view && dB.view.live), JSON.stringify([dA, dB]));
+			check(tag + ' both Send buttons read send', (await btnOfQ(A.page)) === 'send' && (await btnOfQ(B.page)) === 'send');
+			check(tag + ' at most one answer lands on A', r.copies <= 1, 'copies ' + r.copies);
+			check(tag + ' the file is written at most once', wroteN(r, d) <= 1, 'wrote ' + wroteN(r, d));
+			check(tag + ' a place yes writes no holds link and no marks-here entry anywhere', noRows(r), JSON.stringify([r.holdsBefore, r.holdsAfter, r.marksBefore, r.marksAfter]));
+			return tid;
+		};
+
+		if (on('Q2')) {
+		// Q2: Allow pressed twice and then Not now, in one tick, on A's card.
+		console.log('\nQ2 — place, A answers twice (go, go, no in one tick)');
+		const dq2 = 'q2' + qtag;
+		const q2 = await steer(PLACEIN(dq2, 'two.md'), async () => {
+			const at = await waitCard(A.page, '^Let .*change', 30000);
+			const g0 = grantsQ(await pv(A.page)).length;
+			const clicked = at >= 0 ? await A.page.evaluate(() => {
+				const c = [...document.querySelectorAll('#pending-list .pend-card')].find((x) => /^Let .*change/.test(((x.querySelector('.pend-line') || {}).textContent || '').trim()));
+				const go = c && c.querySelector('.pend-go'), no = c && c.querySelector('.pend-no');
+				if (!go) return 'no card';
+				go.click(); go.click(); if (no) no.click(); return 'go,go,' + (no ? 'no' : '-');
+			}) : 'no card';
+			for (let i = 0; i < 6; i++) { await sleep(500); }
+			return { at, clicked, sealed: grantsQ(await pv(A.page)).length - g0, verdicts: grantsQ(await pv(A.page)).slice(g0).map((x) => x.verdict + '/' + x.choice) };
+		}, 100000);
+		note('Q2 ' + sum(q2) + ' during=' + JSON.stringify(q2.duringOut));
+		check('Q2 the ask opened on A', !!q2.duringOut && q2.duringOut.at >= 0, JSON.stringify(q2.duringOut));
+		check('Q2 A seals exactly one grant for the triple press', !!q2.duringOut && q2.duringOut.sealed === 1, JSON.stringify(q2.duringOut));
+		check('Q2 the first answer (Allow) wins: written once, never told not now', wroteN(q2, dq2) === 1 && !notNow(q2), JSON.stringify(q2.results));
+		check('Q2 the answer lands once', q2.landed && q2.copies === 1, sum(q2));
+		await settleQ('Q2', q2, dq2);
+		}
+
+		if (on('Q1')) {
+		// Q1: A presses Allow at the same moment B (the runner, waiting on the ask) reloads.
+		console.log('\nQ1 — place, A answers while B reloads');
+		const dq1 = 'q1' + qtag;
+		const q1Send = Date.now();
+		const q1 = await steer(PLACEIN(dq1, 'one.md'), async ({ t0 }) => {
+			const at = await waitCard(A.page, '^Let .*change', 30000);
+			const rl = B.page.reload({ waitUntil: 'domcontentloaded' }).catch((e) => 'reload ' + e);
+			const pressed = at >= 0 ? await press(A.page, '^Let .*change', 'go') : false;
+			await rl;
+			await signInAs(B, 'hplead').catch((e) => note('Q1 signIn ' + e));
+			await ready(B.page).catch(() => {});
+			await connectMock(B).catch(() => {});
+			await instrument(B.page);
+			const seenCards = [];
+			for (let i = 0; i < 20; i++) { for (const c of await cards(A.page)) { const k = c.line.slice(0, 60) + (c.retry ? ' [retry]' : ''); if (!seenCards.some((x) => x.k === k)) seenCards.push({ k, t: Date.now() - t0 }); } await A.page.evaluate(() => { try { window.DaimondPost.collect(); } catch (e) {} }).catch(() => {}); await sleep(1000); if ((await answers(A.page, dia)).length > 0 && i > 3) break; }
+			return { at, pressed, seenCards };
+		}, 90000);
+		note('Q1 ' + sum(q1) + ' during=' + JSON.stringify(q1.duringOut) + ' grantsA=' + JSON.stringify(grantsQ(q1.pvA).map((x) => x.verdict + '/' + x.to.slice(0, 6))));
+		check('Q1 the ask opened on A and Allow was pressed', !!q1.duringOut && q1.duringOut.at >= 0 && q1.duringOut.pressed, JSON.stringify(q1.duringOut));
+		note('Q1 ms=' + q1.ms + ' results(full)=' + JSON.stringify(q1.results));
+		// Where the turn went across B's reload: both rings, the hand-off's own rows only.
+		for (const [k, pg] of [['A', A.page], ['B', B.page]]) {
+			// From the send, not the ring's tail: a mailbox's polls fill the tail (R3 F3 diag).
+			const rows = await pg.evaluate((t) => ((window.DaimondDiag && DaimondDiag.rows()) || [])
+				.filter((r) => (+r.ts || 0) >= t && !/mbox: collect seen/.test(r.tag + ' ' + (r.data || '')))
+				.filter((r) => /errand|claim|interrupt|runner|lease|recover|journal|park|consent|permit|grant|ask|stand|reconstruct|hand/i.test(r.tag + ' ' + (r.data || '')))
+				.map((r) => '+' + ((+r.ts || 0) - t) + 'ms ' + r.tag + ': ' + String(r.data || '').slice(0, 160)), q1Send).catch(() => []);
+			for (const l of rows.slice(0, 80)) note('Q1 ring ' + k + ' ' + l);
+		}
+		for (const l of (q1.pvB.trail || []).slice(-40)) console.log('    B | ' + String(l).slice(0, 220));
+		for (const l of (q1.pvA.trail || []).slice(-25)) console.log('    A | ' + String(l).slice(0, 220));
+		const tq1 = await settleQ('Q1', q1, dq1);
+		// The run B's reload cut short ends honestly (R3 F3): B reports it interrupted, and A
+		// shows the turn Interrupted with its Retry -- not a hang on Stop, not a re-run.
+		const intrQ1 = await A.page.evaluate(([did, t]) => {
+			try {
+				const rec = window.DaimondDiamond.conversation(did);
+				const ms = (rec && rec.messages) || [];
+				const rows = ms.filter((m) => m && m.interrupted && String(m.iturn || '') === t).map((m) => m.why || '');
+				const f = [...document.querySelectorAll('.turn-interrupted')].pop();
+				const btn = f && f.querySelector('button');
+				return { rows, tile: btn ? btn.textContent : '' };
+			} catch (e) { return { err: String(e) }; }
+		}, [dia, tq1]).catch((e) => ({ err: String(e).slice(0, 60) }));
+		const reportedQ1 = await B.page.evaluate(() => ((window.DaimondDiag && DaimondDiag.rows()) || [])
+			.filter((r) => /runner restart interrupted|handoff run interrupted/.test(r.tag)).map((r) => r.tag + ' ' + r.data)).catch(() => []);
+		note('Q1 interrupted A=' + JSON.stringify(intrQ1) + ' B=' + JSON.stringify(reportedQ1));
+		check('Q1 B ends the cut-short run interrupted and reports it', reportedQ1.some((l) => /reported|not rerun/.test(l)), JSON.stringify(reportedQ1));
+		check('Q1 A shows the turn Interrupted with Retry', !!intrQ1.rows && intrQ1.rows.length >= 1 && /retry/i.test(intrQ1.tile || ''), JSON.stringify(intrQ1));
+		const runsQ1 = sawN(dq1);
+		check('Q1 the turn is never rerun from round 0 after the reload (model saw the directive once)', runsQ1 <= 1, 'model requests ' + runsQ1);
+		// The person answered: the model is never told they did not (QA A F3).
+		const liedQ1 = (mockLog() || []).filter((r) => { const j = JSON.stringify(r); return j.includes(dq1) && /didn.t answer in time/.test(j); }).length;
+		check('Q1 the model is never told the user did not answer', liedQ1 === 0, liedQ1 + ' requests say "didn\'t answer in time"');
+		// Afterwards: a fresh turn in a fresh folder must ASK again -- the reload-time Allow is not a standing grant.
+		const dq1b = 'q1b' + qtag;
+		const q1b = await steer(PLACEIN(dq1b, 'next.md'), async () => {
+			const at = await waitCard(A.page, '^Let .*change', 40000);
+			const pressed = at >= 0 ? await press(A.page, '^Let .*change', 'go') : false;
+			return { at, pressed };
+		}, 100000);
+		note('Q1b ' + sum(q1b) + ' during=' + JSON.stringify(q1b.duringOut));
+		check('Q1b the next turn asks on A again and its Allow writes once', !!q1b.duringOut && q1b.duringOut.at >= 0 && wroteN(q1b, dq1b) === 1, sum(q1b) + ' ' + JSON.stringify(q1b.results));
+		await settleQ('Q1b', q1b, dq1b);
+		}
+
 		if (on('P1')) {
 		// ── P1 (B-F1): the RUNNER's posture never grants a permit on someone else's turn ──
 		console.log('\nP1 — place, the runner is in the step-away posture and hidden');

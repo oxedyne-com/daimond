@@ -1280,6 +1280,20 @@ pub async fn list_dir_stamped(root: FileRoot, path: &str)
     read_entries(&dir).await
 }
 
+/// As [`list_dir`] with neither sizes nor times: `(name, is_dir)` per entry, decoded, unsorted.
+///
+/// **A walk that only matches names pays no `getFile()`.**  [`read_entries`] opens every file for
+/// its size and stamp, one browser round trip per file, so the Workspace search over a real folder
+/// of a third of a million entries spent minutes on numbers it never drew (WS-SEARCH, 2026-10-12).
+pub async fn list_dir_names(root: FileRoot, path: &str) -> Outcome<Vec<(String, bool)>> {
+    let handle = res!(resolve_root(root, path).await);
+    let dir = res!(descend_dir(&handle, path).await);
+    Ok(res!(stored_entries(&dir).await)
+        .into_iter()
+        .map(|(name, _, is_dir)| (fsname::decode(&name), is_dir))
+        .collect())
+}
+
 /// Delete the one regular file at `path` under `root`, and nothing else.
 ///
 /// **The only removal a model's `file_delete` reaches.**  It asks for a FILE handle before it

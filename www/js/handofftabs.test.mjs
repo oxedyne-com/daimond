@@ -117,6 +117,7 @@ const LIFTED = [
 	extractFn(APP, 'recoverOneLocally'),
 	extractFn(APP, 'claimTurnHere'),
 	extractFn(APP, 'releaseOwnStaleLeases'),
+	extractFn(APP, 'endRunnerTurn'),		// R3 F3: the self-release ends a journal-held run first (none here: false)
 	'var _engineHeld = new WeakMap();',
 	extractFn(APP, 'ensureApp'),
 	extractFn(APP, 'applySight'),		// T2: ensureApp puts the model list's picture support on the app

@@ -140,6 +140,10 @@
 	font-size: var(--fs-xs); color: var(--text-muted);
 	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* In a Can change row the place is a state word ("Gone", "Read only"), not a folder: the name gives way, never the word. */
+.files-focus .r .place { flex: none; }
+/* A marked path that is no longer there (WS-GONE): the name muted, "Gone" in its place. */
+.files-focus .r.gone .nm { color: var(--text-muted); }
 :is(.files-focus .r, .files-hit) .meta {
 	flex: none; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs);
 	color: var(--text-muted); white-space: nowrap;
@@ -182,7 +186,7 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Touch: a phone has no hover, so the ghost ◈ is always drawn, at 44px, and the ⋯
    gives way to the long-press. */
 @media (max-width: 760px), (pointer: coarse) {
-	:is(.files-focus .r, .files-row) { min-height: 44px; padding-right: 0; }
+	:is(.files-focus .r, .files-row) { min-height: 44px; }
 	.dm { width: 44px; height: 44px; }
 	.files-row .dm.ghost { visibility: visible; }
 	.files-row .files-more { display: none; }
@@ -233,6 +237,13 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 	min-height: 30px; padding: 0 10px; cursor: pointer;
 }
 .files-focus .r { cursor: default; }
+/* Touch: the row's right edge is its 44px ◈, so it keeps no padding there. After the base row
+   rule above, which as an equal-specificity later rule put 10px back on a focus row: the
+   Workspace's "Its own folder" row was then 0 12px on a phone where every tree row is
+   0 0 0 12px (R3 by-role, 12 Oct). */
+@media (max-width: 760px), (pointer: coarse) {
+	:is(.files-focus .r, .files-row) { padding-right: 0; }
+}
 .files-row:hover { background: var(--bg-hover); }
 .files-name { flex: 1; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* A folder row does NOT name itself in the accent (r526 residual, the lead's

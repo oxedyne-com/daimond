@@ -10,6 +10,8 @@
 //! helpers used by the LLM client — no `serde`.
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_file::relpath::Fault;
+use oxedyne_fe2o3_file::relpath::RelPath;
 // `Media` names a file's format from its extension, which is how `file_read` tells a Word document
 // from any other ZIP: every Office format IS a ZIP and the bytes alone cannot separate them.
 use oxedyne_fe2o3_stds::media::Media;
@@ -6841,6 +6843,69 @@ fn absolute_path_refusal(tool: &Tool, path: &str) -> Option<String> {
         path, tool.name(), inside))
 }
 
+/// The refusal for a tool path that is not one canonical relative path, or `None` where it is.
+///
+/// Every path a tool names is judged here once, through [`RelPath`], before anything trims,
+/// resolves or normalises it (PATHTYPE, R3, D-20261012-07).  A second spelling of a place is a
+/// second name for it: `" ../x.md"` got a consent that read as a climb and wrote a folder named
+/// `" .."`, and [`normalise`] read `../B/x.png` as `B/x.png` (CAPTURE-FENCE QA B F1, F2).  So a
+/// non-canonical path is refused rather than mended, and the refusal names the one spelling to
+/// write where there is one.  `""` and `"."` name the workspace root and pass.
+pub(crate) fn path_refusal(tool: &Tool, path: &str) -> Option<String> {
+    if path.is_empty() || path == "." {
+        return None;
+    }
+    let fault = match RelPath::fault(path) {
+        Some(f) => f,
+        None    => return None,
+    };
+    match fault {
+        Fault::Absolute     => absolute_path_refusal(tool, path),
+        Fault::EdgeSpace    => padded_name_refusal(tool.name(), path),
+        Fault::DotDot       => Some(dotdot_refusal(tool.name(), path)),
+        _                   => {
+            // The one spelling, offered only where it is the same place without resolving a
+            // `..` or guessing at a control character.
+            let fix = normalise(path);
+            let hint = match fault {
+                Fault::Dot | Fault::EmptySegment | Fault::Backslash
+                    if !fix.is_empty() && RelPath::is_canonical(&fix) =>
+                    fmt!(" Write it as '{}'.", fix),
+                _ => String::new(),
+            };
+            Some(fmt!("'{}' is not a workspace path as written: {}, so {} did nothing. Nothing \
+                was read or changed. A path is written one way only: names from the workspace \
+                root joined by single '/', with no '.', '..' or trailing '/'.{}",
+                path, fault, tool.name(), hint))
+        },
+    }
+}
+
+/// The refusal for a path one of whose names starts or ends with whitespace, or `None`.
+///
+/// `" ../x.md"` was not refused and not trimmed: the consent asked to approve what read as a climb,
+/// an allow wrote a literal `" .."` folder, and `capture`, which trimmed first, refused the same
+/// spelling (CAPTURE-FENCE QA B F1, 2026-10-12).  One string is judged and acted on, and a padded
+/// name in it is refused rather than mended, because it is almost always a slip and a quiet trim
+/// would teach the model nothing.  A space INSIDE a name is an ordinary name.
+pub(crate) fn padded_name_refusal(tool: &str, raw: &str) -> Option<String> {
+    raw.split(|c| c == '/' || c == '\\')
+        .find(|seg| seg.trim() != *seg)
+        .map(|seg| fmt!("'{}' has a name that starts or ends with a space or other blank ({:?}), \
+            so {} did nothing. Nothing was read or changed. Names are not trimmed: write the path \
+            again without the stray space.", raw, seg, tool))
+}
+
+/// The one sentence for a path with a `..` segment, whichever tool was asked (CAPTURE-FENCE QA B
+/// F2, 2026-10-12).  It quotes `raw` as the model wrote it -- never a path derived from it -- and
+/// says that nothing happened, so the model neither retries the same path nor hunts for a
+/// permission it does not need.  Every `..` is refused, not only one that climbs above the root:
+/// a resolved spelling is a second name for a place (PATHTYPE).
+pub(crate) fn dotdot_refusal(tool: &str, raw: &str) -> String {
+    fmt!("'{}' uses '..', which no workspace path contains, so {} did nothing. Nothing was read \
+        or changed. Paths start at the workspace root, e.g. 'notes/a.md'.", raw, tool)
+}
+
 /// The refusal `file_delete` gives before it touches anything, or `None` where the path may go on.
 ///
 /// 2026-09-22: a daimon on a folder-mounted Diamond, its moves refused, called `file_delete` with
@@ -6853,28 +6918,17 @@ fn absolute_path_refusal(tool: &Tool, path: &str) -> Option<String> {
 /// # Arguments
 /// * `raw` - The path as the model wrote it.
 fn delete_path_refusal(raw: &str) -> Option<String> {
-    let t = raw.trim();
+    let t = raw;
     if t.starts_with('/') || t.starts_with('\\') || t.get(1..2) == Some(":") {
         return Some(fmt!(
             "'{}' is an absolute path, and file_delete takes one file named relative to the \
             workspace, e.g. 'notes/old.md'. Nothing was deleted.", raw));
     }
-    let mut depth: i64 = 0;
-    for seg in t.split(|c| c == '/' || c == '\\') {
-        match seg {
-            "" | "." => {},
-            ".."     => {
-                depth -= 1;
-                if depth < 0 {
-                    return Some(fmt!(
-                        "'{}' climbs out of the workspace with '..', and file_delete removes only \
-                        a file inside it. Nothing was deleted.", raw));
-                }
-            },
-            _        => depth += 1,
-        }
+    // Defence in depth: the guard has answered this already, in the same words.
+    if let Some(why) = path_refusal(&Tool::FileDelete, t) {
+        return Some(why);
     }
-    if depth == 0 {
+    if normalise(t).is_empty() {
         return Some(fmt!(
             "'{}' names the workspace itself, which is a folder. {}", raw, DELETE_ASK));
     }
@@ -7119,7 +7173,11 @@ fn restore_same_line(raw: &str) -> String {
 /// or another Diamond's (hist-safe QA A F1, 2026-10-12).  Every act belongs to an open restore.
 #[cfg(any(target_arch = "wasm32", test))]
 pub fn restore_ended_refusal(raw: &str) -> String {
-    refusal_line(&fmt!("The restore '{}' was part of has ended, so nothing was changed.", raw))
+    // An act with no path says so without one (hist-safe U3, QA B B4): it read "''".
+    if raw.trim().is_empty() {
+        return refusal_line("The restore this change belonged to has ended, so nothing was changed.");
+    }
+    refusal_line(&fmt!("The restore that '{}' belonged to has ended, so nothing was changed.", raw))
 }
 
 /// The refusal a restore's act meets at a file the person was asked about and has not said yes to
@@ -7345,6 +7403,17 @@ impl PathClass {
 fn link_escape_refusal(tool: &str, raw: &str) -> String {
     fmt!("'{}' passes through a link to a place outside the workspace, so {} will not act on it. \
         Nothing was changed. If it matters, tell the user what you wanted to do there.", raw, tool)
+}
+
+/// `raw` resolved for an act that follows links, or the refusal where a link carries it out of
+/// the workspace: the one on-disk check every native read and write asks, as move and delete ask
+/// `pin` (CAPTURE-FENCE QA B F4, 2026-10-12).
+#[cfg(not(target_arch = "wasm32"))]
+fn followed(ctx: &ToolContext, tool: &str, raw: &str) -> Outcome<Result<std::path::PathBuf, String>> {
+    Ok(match res!(ctx.workspace.resolve_followed(raw)) {
+        Some(p) => Ok(p),
+        None    => Err(refusal_line(&link_escape_refusal(tool, raw))),
+    })
 }
 
 /// The refusal for a `file_move` that would put a folder inside itself.
@@ -18175,7 +18244,7 @@ impl Tool {
             // use, so the guard checks the file the capture actually lands.
             // Only a path the model named: the default is inside the Diamond, where it may write.
             Tool::Capture if Self::capture_in_crystal(args_json) =>
-                if extract_json_string(args_json, "path").map_or(false, |p| !p.trim().is_empty()) {
+                if extract_json_string(args_json, "path").map_or(false, |p| !p.is_empty()) {
                     Self::capture_outs(args_json, "").into_iter().map(|(_, p)| p).collect()
                 } else {
                     Vec::new()
@@ -18193,7 +18262,7 @@ impl Tool {
             // forgets cannot write; the entry is here so the refusal comes before the fetch is
             // paid for, and so the guard and the audit name the path the call will change.
             Tool::WebFetch => extract_json_string(args_json, "to")
-                .filter(|to| !to.trim().is_empty())
+                .filter(|to| !to.is_empty())
                 .into_iter()
                 .collect(),
             // A DAIMON IS NOT FENCED OUT OF THE GRAPH BY ITS WORKSPACE BOUNDS, and the paragraph
@@ -18571,8 +18640,29 @@ impl Tool {
         // The convention BEFORE the bounds: an absolute path measured against an allow-list is
         // refused as out of scope, which sends the model hunting a permission problem it has not
         // got, when what it wrote was simply the wrong kind of path.
-        for path in writes.iter().chain(read.iter()).chain(named.iter()) {
-            if let Some(refusal) = absolute_path_refusal(self, path) {
+        // Judged as the model WROTE them: a crystal capture's targets are derived per width, and a
+        // refusal quoting `../cry-390.png` names a path nobody wrote (CAPTURE-FENCE QA B F2).
+        let mut said: Vec<String> = match self {
+            Tool::Capture if Self::capture_in_crystal(args_json) =>
+                extract_json_string(args_json, "path").filter(|p| !p.is_empty()).into_iter().collect(),
+            _ => writes.clone(),
+        };
+        said.extend(read.iter().cloned());
+        said.extend(named.iter().cloned());
+        // Every entry of `paths`, not only `path` (CAPTURE-FENCE QA B F3): an entry the door never
+        // saw was stopped later by the OPFS jail, in that edge's words and not this door's.
+        if let Tool::FileRead = self {
+            said.extend(extract_json_string_array(args_json, "paths").unwrap_or_default());
+        }
+        // A run's or a project check's folder is a path the model wrote like any other.
+        if let Tool::Run | Tool::Verify = self {
+            said.extend(extract_json_string(args_json, "cwd"));
+        }
+        // One canonical relative path each, BEFORE the licence: the fence normalises, and a
+        // normalised `../B/x` is `B/x` -- a consent prompt for a path nobody asked for, and a yes
+        // to a write that could never land (PATHTYPE: `path_refusal`).
+        for path in &said {
+            if let Some(refusal) = path_refusal(self, path) {
                 return Ok(Some(refusal_line(&refusal)));
             }
         }
@@ -18699,8 +18789,8 @@ impl Tool {
     fn typst_out(args_json: &str) -> Outcome<String> {
         let path = res!(Self::arg(args_json, "path"));
         let out = extract_json_string(args_json, "out").unwrap_or_default();
-        if !out.trim().is_empty() {
-            return Ok(out.trim().to_string());
+        if !out.is_empty() {
+            return Ok(out);
         }
         let stem = match path.rfind('.') {
             Some(i) => &path[..i],
@@ -18720,9 +18810,9 @@ impl Tool {
     /// which never reached the model while the prompt waited.
     fn capture_out(args_json: &str, daimon: Option<&str>) -> String {
         match (extract_json_string(args_json, "path"), daimon) {
-            (Some(p), _) if !p.trim().is_empty() => p.trim().to_string(),
-            (_, Some(id))                        => fmt!("diamonds/{}/shots/self.png", id),
-            _                                    => "dev/shots/self.png".to_string(),
+            (Some(p), _) if !p.is_empty() => p,
+            (_, Some(id))                 => fmt!("diamonds/{}/shots/self.png", id),
+            _                             => "dev/shots/self.png".to_string(),
         }
     }
 
@@ -18737,8 +18827,8 @@ impl Tool {
     /// Diamond's daimon may write only there and its first picture must not be refused.
     fn capture_outs(args_json: &str, id: &str) -> Vec<(u32, String)> {
         let base = match extract_json_string(args_json, "path") {
-            Some(p) if !p.trim().is_empty() => p.trim().to_string(),
-            _                               => fmt!("diamonds/{}/shots/crystal.png", id),
+            Some(p) if !p.is_empty() => p,
+            _                        => fmt!("diamonds/{}/shots/crystal.png", id),
         };
         let (stem, ext) = match base.rfind('.') {
             Some(i) if i > base.rfind('/').map_or(0, |s| s + 1) => (&base[..i], &base[i..]),
@@ -18753,9 +18843,11 @@ impl Tool {
 
     /// The request `capture` hands the driver for the app's own view: only the fields it
     /// understands, so a stray argument cannot change what is photographed.  An `in` it does not
-    /// know is passed on, so the DRIVER refuses it by name.
+    /// know is passed on, so the DRIVER refuses it by name.  `owner` is the turn's keeper (a
+    /// Diamond's id or `chat:<id>`), which the page's fence draws for only while that
+    /// conversation's own place is on screen (`window.DaimondScreen`).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    fn capture_req(args_json: &str) -> String {
+    fn capture_req(args_json: &str, owner: Option<&str>) -> String {
         let selector   = extract_json_string(args_json, "selector").unwrap_or_default();
         let background = extract_json_string(args_json, "background").unwrap_or_default();
         let within     = extract_json_string(args_json, "in").unwrap_or_default();
@@ -18769,6 +18861,9 @@ impl Tool {
         }
         if max_w > 0 {
             req.push_str(&fmt!(r#","max_w":{}"#, max_w));
+        }
+        if let Some(o) = owner {
+            req.push_str(&fmt!(r#","for":"{}""#, json_escape(o)));
         }
         req.push('}');
         req
@@ -19609,7 +19704,11 @@ impl Tool {
     /// Create a directory and its parents (native).
     #[cfg(not(target_arch = "wasm32"))]
     fn dir_create(args_json: &str, ctx: &ToolContext) -> Outcome<String> {
-        let path = res!(ctx.workspace.resolve(&res!(Self::arg(args_json, "path"))));
+        let raw = res!(Self::arg(args_json, "path"));
+        let path = match res!(followed(ctx, "dir_create", &raw)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(why),
+        };
         res!(std::fs::create_dir_all(&path)
             .map_err(|e| err!(e, "Creating '{}'.", path.display(); IO, File)));
         Ok(fmt!("Created {}.", path.display()))
@@ -22059,7 +22158,7 @@ impl Tool {
                 left.push(path.clone());
                 continue;
             }
-            if let Some(why) = absolute_path_refusal(&Tool::FileRead, path) {
+            if let Some(why) = path_refusal(&Tool::FileRead, path) {
                 out.push_str(&fmt!("== {} == {}\n\n", path, why));
                 continue;
             }
@@ -23750,7 +23849,13 @@ impl Tool {
         // And WHICH TURN, so a turn this device runs for another can be told apart from one
         // asked here: its file goes to the asking device's screen and this one is left alone
         // (D-20261006-27).
-        let owner = ctx.daimon().unwrap_or_default();
+        //
+        // WHO is the turn's KEEPER -- a Diamond's id or `chat:<id>` -- the same name `capture` fences
+        // on (CAPTURE-FENCE, lead ruling on rc-b's per-view owner, 2026-10-12).  It was the daimon's
+        // Diamond, which a chat does not have, so a chat's turn left running while the person opened
+        // a Diamond named nobody, took that Diamond's screen, and the Diamond's own capture drew the
+        // chat's file.  Named, the show waits for its own conversation and its panel is stamped with it.
+        let owner = ctx.keeper().or_else(|| ctx.daimon()).unwrap_or_default();
         let shown = res!(crate::wasm::doc::show(&path, page, &owner, &ctx.turn_tag()).await);
         Ok(Self::show_result(&path, &shown))
     }
@@ -23769,7 +23874,7 @@ impl Tool {
             Ok(d)    => d,
             Err(why) => return Ok(why),
         };
-        let shot = res!(crate::wasm::shot::capture(&Self::capture_req(args_json)).await);
+        let shot = res!(crate::wasm::shot::capture(&Self::capture_req(args_json, ctx.keeper().as_deref())).await);
         if let Err(why) = res!(Self::capture_land(ctx, &raw, &path, &lic, &shot.png).await) {
             return Ok(why);
         }
@@ -25210,7 +25315,7 @@ impl Tool {
                 left.push(path.clone());
                 continue;
             }
-            if let Some(why) = absolute_path_refusal(&Tool::FileRead, path) {
+            if let Some(why) = path_refusal(&Tool::FileRead, path) {
                 out.push_str(&fmt!("== {} == {}\n\n", path, why));
                 continue;
             }
@@ -25220,8 +25325,13 @@ impl Tool {
                 out.push_str(&fmt!("== {} == {}\n\n", path, ctx.refusal(path, false)));
                 continue;
             }
-            let abs = match ctx.workspace.resolve(path) {
-                Ok(a)  => a,
+            let abs = match ctx.workspace.resolve_followed(path) {
+                Ok(Some(a)) => a,
+                Ok(None)    => {
+                    out.push_str(&fmt!("== {} == not read: {}\n\n", path,
+                        link_escape_refusal("file_read", path)));
+                    continue;
+                },
                 Err(e) => {
                     out.push_str(&fmt!("== {} == not read: {}\n\n", path, e.plain()));
                     continue;
@@ -25279,7 +25389,10 @@ impl Tool {
             return Self::read_many(args, &asked, ctx);
         }
         let path = res!(Self::arg(args, "path"));
-        let abs = res!(ctx.workspace.resolve(&path));
+        let abs = match res!(followed(ctx, "file_read", &path)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(MessageContent::text(why)),
+        };
         // A DIRECTORY, said as a directory. `std::fs::read` on one answers "Is a directory"
         // through the OS, which reaches the model wrapped in two error frames and a file name
         // and reads as the path being wrong. Watched happening: a daimon adding one key to
@@ -25326,7 +25439,10 @@ impl Tool {
     #[cfg(not(target_arch = "wasm32"))]
     fn sheet_read(args: &str, ctx: &ToolContext) -> Outcome<String> {
         let path = res!(Self::arg(args, "path"));
-        let abs = res!(ctx.workspace.resolve(&path));
+        let abs = match res!(followed(ctx, "sheet_read", &path)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(why),
+        };
         let data = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "sheet_read: cannot read '{}'.", path; IO, File, Read)));
         let view = res!(sheet_view(&path, &data, args));
@@ -25337,7 +25453,10 @@ impl Tool {
     fn file_write(args: &str, ctx: &ToolContext) -> Outcome<String> {
         let path = res!(Self::arg(args, "path"));
         let content = res!(Self::arg(args, "content"));
-        let abs = res!(ctx.workspace.resolve(&path));
+        let abs = match res!(followed(ctx, "file_write", &path)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(why),
+        };
         if let Some(parent) = abs.parent() {
             res!(std::fs::create_dir_all(parent)
                 .map_err(|e| err!(e, "file_write: cannot create parent dirs for '{}'.", path; IO, File)));
@@ -25361,7 +25480,10 @@ impl Tool {
         let path = res!(Self::arg(args, "path"));
         let media = res!(office_kind(&path).ok_or_else(|| err!(
             "doc_edit: '{}' does not name a document. It edits .docx and .odt; ordinary text files             are edited with file_edit.", path; Invalid, Input)));
-        let abs = res!(ctx.workspace.resolve(&path));
+        let abs = match res!(followed(ctx, "doc_edit", &path)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(why),
+        };
         let bytes = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "doc_edit: cannot read '{}'.", path; IO, File, Read)));
         let (out, note) = res!(doc_edited(&path, media, &bytes, args));
@@ -25377,7 +25499,10 @@ impl Tool {
         let media = res!(office_kind(&path).ok_or_else(|| err!(
             "sheet_write: '{}' does not name a spreadsheet. It writes .xlsx and .ods.", path;
             Invalid, Input)));
-        let abs = res!(ctx.workspace.resolve(&path));
+        let abs = match res!(followed(ctx, "sheet_write", &path)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(why),
+        };
         let bytes = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "sheet_write: cannot read '{}'.", path; IO, File, Read)));
         let (out, note) = res!(sheet_written(&path, media, &bytes, args));
@@ -25390,7 +25515,10 @@ impl Tool {
     fn file_edit(args: &str, ctx: &ToolContext) -> Outcome<String> {
         let path = res!(Self::arg(args, "path"));
         let hunks = res!(edit_hunks(args, &path));
-        let abs = res!(ctx.workspace.resolve(&path));
+        let abs = match res!(followed(ctx, "file_edit", &path)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(why),
+        };
         let data = res!(std::fs::read_to_string(&abs)
             .map_err(|e| err!(e, "file_edit: cannot read '{}'.", path; IO, File, Read)));
         let (updated, relaxed) = res!(file_edited(&path, &data, &hunks));
@@ -25415,7 +25543,10 @@ impl Tool {
     #[cfg(not(target_arch = "wasm32"))]
     fn file_list(args: &str, ctx: &ToolContext) -> Outcome<String> {
         let path = extract_json_string(args, "path").unwrap_or_else(|| ".".to_string());
-        let abs = res!(ctx.workspace.resolve(&path));
+        let abs = match res!(followed(ctx, "file_list", &path)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(why),
+        };
         let mut entries = res!(std::fs::read_dir(&abs)
             .map_err(|e| err!(e, "file_list: cannot list '{}'.", path; IO, File, Read)))
             .filter_map(|e| e.ok())
@@ -25568,9 +25699,9 @@ impl Tool {
         // one the user named first before it spends its budget on the others.
         let mut stack: Vec<std::path::PathBuf> = Vec::new();
         for st in starts.iter().rev() {
-            match ctx.workspace.resolve(st) {
-                Ok(p)  => stack.push(p),
-                Err(e) => return Err(e),
+            match res!(followed(ctx, "file_search", st)) {
+                Ok(p)    => stack.push(p),
+                Err(why) => return Ok(why),
             }
         }
         'walk: while let Some(dir) = stack.pop() {
@@ -25685,7 +25816,10 @@ impl Tool {
             Some(l) => l,
             None    => return Ok(outline_no_scanner(&path)),
         };
-        let abs = res!(ctx.workspace.resolve(&path));
+        let abs = match res!(followed(ctx, "outline", &path)) {
+            Ok(p)    => p,
+            Err(why) => return Ok(why),
+        };
         if abs.is_dir() {
             return Err(err!(
                 "outline: '{}' is a directory, not a file. file_list answers what is in it.",
@@ -25732,12 +25866,12 @@ impl Tool {
         // Each directory with the start its walk came from ([`glob_hits`]).
         let mut stack: Vec<(std::path::PathBuf, String)> = Vec::new();
         for st in starts.iter().rev() {
-            match ctx.workspace.resolve(st) {
-                Ok(p)  => {
+            match res!(followed(ctx, "file_glob", st)) {
+                Ok(p)    => {
                     let from = ctx.workspace.display_rel(&p);
                     stack.push((p, from));
                 },
-                Err(e) => return Err(e),
+                Err(why) => return Ok(why),
             }
         }
         'walk: while let Some((dir, from)) = stack.pop() {
@@ -29412,11 +29546,11 @@ mod tests {
         let table = Tool::crystal_req(both, "d1", "<p>x</p>", "{}", 390, false);
         assert!(table.contains(r#""png":false"#) && table.ends_with('}'),
             "a re-measure asks the driver for the table alone: {}", table);
-        let req = Tool::capture_req(app);
+        let req = Tool::capture_req(app, None);
         assert!(!req.contains(r#""in""#) && !req.contains("page"),
             "the app's own view sends neither: {}", req);
         // An `in` the driver does not know is passed on, so the DRIVER refuses it by name.
-        assert!(Tool::capture_req(r#"{"in":"elsewhere"}"#).contains(r#""in":"elsewhere""#));
+        assert!(Tool::capture_req(r#"{"in":"elsewhere"}"#, None).contains(r#""in":"elsewhere""#));
         assert!(Tool::Capture.description().contains(r#"in:"crystal""#),
             "the model is told the option exists");
         assert!(Tool::Capture.parameters().contains(r#""in""#));
@@ -29427,7 +29561,11 @@ mod tests {
             "the model is told the views");
         assert!(!Tool::Capture.parameters().contains(r#""enum":["crystal"]"#),
             "the schema must take a view name");
-        assert!(Tool::capture_req(r#"{"in":"preview"}"#).contains(r#""in":"preview""#));
+        assert!(Tool::capture_req(r#"{"in":"preview"}"#, None).contains(r#""in":"preview""#));
+        // The fence's key (FIRE-B QA F1): the page draws for a turn only while its own place is
+        // on screen, so the request names whose turn it is.
+        assert!(Tool::capture_req(r#"{"in":"screen"}"#, Some("d1")).ends_with(r#","for":"d1"}"#));
+        assert!(!Tool::capture_req(r#"{"in":"screen"}"#, None).contains(r#""for""#));
         // An ask the page did not draw says why first (2026-10-12).
         let why = ask_not_drawn(Some("the person is looking at a Diamond's page (its crystal face), not at yours"));
         assert!(why.starts_with("The question was not drawn: the person is looking at"), "{}", why);
@@ -31297,6 +31435,48 @@ mod tests {
 
     /// A mark's own path is the user's grant: no tool removes, moves or renames it, nor moves a
     /// folder that holds one.  On 2026-09-22 the four folders a daimon removed were its marks.
+    /// **EVERY TOOL PATH IS ONE CANONICAL RELATIVE PATH** (PATHTYPE, R3, D-20261012-07).
+    /// `" ../x.md"` got a consent that read as a climb and wrote a folder named `" .."`, while
+    /// capture trimmed the same spelling and refused it (CAPTURE-FENCE QA B F1); a trimmed or
+    /// resolved spelling is a second name for a place. The guard parses each path once, through
+    /// `fe2o3_file::relpath::RelPath`, and the act is handed only what passed.
+    #[test]
+    fn test_every_tool_path_is_one_canonical_relative_path_00() {
+        let c = ctx();
+        let mut bad = Vec::new();
+        for (t, a) in [
+            (Tool::FileWrite,  r#"{"path":" ../x.md","content":"x"}"#),
+            (Tool::FileWrite,  r#"{"path":".. /x.md","content":"x"}"#),
+            (Tool::FileWrite,  r#"{"path":"..\t/x.md","content":"x"}"#),
+            (Tool::FileDelete, r#"{"path":" ../x.md"}"#),
+            (Tool::FileMove,   r#"{"path":"a.md","to":" ../x.md"}"#),
+            (Tool::Capture,    r#"{"path":" ../sp.png"}"#),
+            (Tool::FileWrite,  r#"{"path":" secret/f.txt","content":"x"}"#),
+            (Tool::FileWrite,  r#"{"path":"secret /f.txt","content":"x"}"#),
+            (Tool::FileWrite,  r#"{"path":"chatc/../secret/f.txt","content":"x"}"#),
+            (Tool::FileWrite,  r#"{"path":"secret//f.txt","content":"x"}"#),
+            (Tool::FileWrite,  r#"{"path":"./secret/f.txt","content":"x"}"#),
+            (Tool::FileWrite,  r#"{"path":"secret\\f.txt","content":"x"}"#),
+            (Tool::FileRead,   r#"{"path":"../x.md"}"#),
+            (Tool::FileList,   r#"{"path":"code/"}"#),
+        ] {
+            let got = t.guard(a, &c).expect("guard");
+            if !got.as_deref().is_some_and(|g| g.starts_with("Refused")) {
+                bad.push(fmt!("{} {} was not refused: {:?}", t.name(), a, got));
+            }
+        }
+        assert!(bad.is_empty(), "{} case(s):\n{}", bad.len(), bad.join("\n"));
+        for (t, a) in [
+            (Tool::FileWrite, r#"{"path":"a..b.md","content":"x"}"#),
+            (Tool::FileWrite, r#"{"path":"notes/a b.md","content":"x"}"#),
+            (Tool::FileList,  r#"{"path":"."}"#),
+            (Tool::FileList,  r#"{}"#),
+            (Tool::FileRead,  r#"{"path":".hidden/x.md"}"#),
+        ] {
+            assert_eq!(None, t.guard(a, &c).expect("guard"), "{} {} was refused", t.name(), a);
+        }
+    }
+
     #[test]
     fn test_a_marks_own_path_is_never_removed_or_moved_00() {
         let mut c = ctx();
@@ -31307,7 +31487,6 @@ mod tests {
         };
         for (t, a) in [
             (Tool::FileDelete, r#"{"path":"notes/plan.md"}"#),
-            (Tool::FileDelete, r#"{"path":"./notes//plan.md"}"#),
             (Tool::FileMove,   r#"{"path":"code","to":"code2"}"#),
             (Tool::FileMove,   r#"{"path":"code/lib/x","to":"code/y"}"#),
             (Tool::FileMove,   r#"{"path":"diamonds/d1","to":"d2"}"#),
@@ -31316,6 +31495,11 @@ mod tests {
             assert!(got.starts_with("Refused") && got.contains("places this turn was given"),
                 "{} {} was not refused as a mark: {:?}", t.name(), a, got);
         }
+        // Another spelling of a mark is refused before the marks are asked (PATHTYPE), and the
+        // refusal names the one spelling.
+        let other = said(Tool::FileDelete, r#"{"path":"./notes//plan.md"}"#);
+        assert!(other.starts_with("Refused") && other.contains("Write it as 'notes/plan.md'"),
+            "{:?}", other);
         // A folder the fence lets it move, which HOLDS a mark: the mark would go with it.
         let holds = said(Tool::FileMove, r#"{"path":"code/lib","to":"code/lib2"}"#);
         assert!(holds.contains("holds one of the places"), "{:?}", holds);
@@ -35479,7 +35663,7 @@ mod tests {
         for args in [
             r#"{"path":"proj","recursive":"true"}"#,
             r#"{"path":"proj"}"#,
-            r#"{"path":"proj/sub/","recursive":"true"}"#,
+            r#"{"path":"proj/sub","recursive":"true"}"#,
             r#"{"path":"empty"}"#,
         ] {
             let out = Tool::FileDelete.execute_sync(args, &c).expect("a refusal is a result");
@@ -35538,6 +35722,53 @@ mod tests {
         assert!(outside.join("victim.txt").is_file(), "a file outside the workspace was removed");
         assert!(!outside.join("mine.txt").exists(), "a file was moved out of the workspace");
         assert!(c.workspace.root().join("mine.txt").is_file());
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    /// Read and write follow a link, so they ask the same on-disk question move and delete do,
+    /// with the leaf's target included: through a linked folder, or a file that is itself a link
+    /// to a place outside, nothing is read or written there (CAPTURE-FENCE QA B F4, 2026-10-12).
+    #[cfg(unix)]
+    #[test]
+    fn test_read_and_write_refuse_a_symlink_escape_00() {
+        let c = ctx();
+        let outside = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_tools_outside_rw") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
+        std::fs::write(outside.join("s.md"), "OUTSIDE-SECRET").expect("seed");
+        let root = c.workspace.root().to_path_buf();
+        std::os::unix::fs::symlink(&outside, root.join("lnk")).expect("link");
+        std::os::unix::fs::symlink(outside.join("s.md"), root.join("leaf.md")).expect("leaf");
+        std::os::unix::fs::symlink(outside.join("gone.md"), root.join("dangle.md")).expect("dangle");
+        std::fs::write(root.join("in.md"), "IN").expect("in");
+        std::os::unix::fs::symlink(root.join("in.md"), root.join("near.md")).expect("near");
+        let said = |r: Outcome<MessageContent>| match r {
+            Ok(m)  => m.as_text().to_string(),
+            Err(e) => fmt!("ERR {}", e),
+        };
+        for (tool, args) in [
+            (Tool::FileRead,  r#"{"path":"lnk/s.md"}"#),
+            (Tool::FileRead,  r#"{"path":"leaf.md"}"#),
+            (Tool::FileRead,  r#"{"paths":["in.md","leaf.md"]}"#),
+            (Tool::FileWrite, r#"{"path":"lnk/s.md","content":"OWNED"}"#),
+            (Tool::FileWrite, r#"{"path":"lnk/new.md","content":"OWNED"}"#),
+            (Tool::FileWrite, r#"{"path":"leaf.md","content":"OWNED"}"#),
+            (Tool::FileWrite, r#"{"path":"dangle.md","content":"OWNED"}"#),
+            (Tool::FileEdit,  r#"{"path":"leaf.md","old_string":"OUTSIDE","new_string":"OWNED"}"#),
+            (Tool::DirCreate, r#"{"path":"lnk/made"}"#),
+            (Tool::FileList,  r#"{"path":"lnk"}"#),
+        ] {
+            let out = said(tool.execute_sync_guarded(args, &c));
+            assert!(out.contains("passes through a link to a place outside the workspace"),
+                "{} {}: {}", tool.name(), args, out);
+            assert!(!out.contains("OUTSIDE-SECRET"), "{} {} read outside: {}", tool.name(), args, out);
+        }
+        assert_eq!(std::fs::read_to_string(outside.join("s.md")).expect("s"), "OUTSIDE-SECRET");
+        assert!(!outside.join("new.md").exists() && !outside.join("gone.md").exists()
+            && !outside.join("made").exists(), "a write landed outside the workspace");
+        // A link that stays inside is an ordinary path.
+        assert!(said(Tool::FileRead.execute_sync_guarded(r#"{"path":"near.md"}"#, &c)).contains("IN"));
         let _ = std::fs::remove_dir_all(&outside);
     }
 
@@ -39379,6 +39610,109 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             .expect("a relative write must still work");
         assert_eq!("1\tx\n",
             Tool::FileRead.execute_sync_guarded(r#"{"path":"a.txt"}"#, &c).expect("read").as_text());
+    }
+
+    /// A path that climbs above the workspace root is refused at the door, in `file_read`'s
+    /// words, before the fence's licence is asked -- the licence normalises, and a normalised
+    /// `../B/shots/x.png` is `B/shots/x.png`, which asked the user's consent to change a place
+    /// nobody named (FIRE-B QA F3, 2026-10-12).  A `..` that stays inside is untouched.
+    #[test]
+    fn test_a_path_climbing_out_of_the_workspace_is_refused_before_any_consent_00() {
+        let c = ctx();
+        for (tool, args) in [
+            (Tool::Capture,   r#"{"in":"screen","path":"../B/shots/x.png"}"#),
+            (Tool::Capture,   r#"{"path":"shots/../../../x.png"}"#),
+            (Tool::FileWrite, r#"{"path":"../../x.png","content":"x"}"#),
+            (Tool::FileRead,  r#"{"path":"../B/notes.md"}"#),
+        ] {
+            let out = tool.guard(args, &c).expect("guard")
+                .unwrap_or_else(|| panic!("{} let {} through", tool.name(), args));
+            assert!(out.starts_with("Refused:") && out.contains("uses '..'"),
+                "{} {}: {}", tool.name(), args, out);
+        }
+        // PATHTYPE: a '..' that stays inside is a second spelling of a place, and refused too.
+        let out = Tool::FileWrite.guard(r#"{"path":"a/../b.txt","content":"x"}"#, &c)
+            .expect("guard").unwrap_or_default();
+        assert!(out.starts_with("Refused:") && out.contains("uses '..'"), "{}", out);
+    }
+
+    /// A path segment padded with whitespace is refused at the door for every tool, in one
+    /// sentence, and never trimmed: `" ../x.md"` asked the user to approve what read as a climb and
+    /// then wrote a literal `" .."` folder, while `capture` trimmed first and refused it -- one
+    /// spelling, two meanings (CAPTURE-FENCE QA B F1, 2026-10-12).  The guard and the act now read
+    /// one string, and that string is refused rather than quietly mended, so the model learns its
+    /// path was wrong.
+    #[test]
+    fn test_a_whitespace_padded_path_segment_is_refused_by_every_tool_00() {
+        let c = ctx();
+        for (tool, args) in [
+            (Tool::FileWrite,  r#"{"path":" ../x.md","content":"x"}"#),
+            (Tool::FileWrite,  r#"{"path":".. /x.md","content":"x"}"#),
+            (Tool::FileWrite,  "{\"path\":\"..\\t/x.md\",\"content\":\"x\"}"),
+            (Tool::FileWrite,  r#"{"path":"notes/a.md ","content":"x"}"#),
+            (Tool::FileDelete, r#"{"path":" ../x.md"}"#),
+            (Tool::FileMove,   r#"{"path":"ok.md","to":" ../x.md"}"#),
+            (Tool::FileRead,   r#"{"path":"notes /a.md"}"#),
+            (Tool::Capture,    r#"{"in":"screen","path":" ../sp.png"}"#),
+            (Tool::Capture,    r#"{"in":"crystal","path":"shots/ c.png"}"#),
+            (Tool::TypstCompile, r#"{"path":"a.typ","out":" ../a.pdf"}"#),
+        ] {
+            let out = tool.guard(args, &c).expect("guard")
+                .unwrap_or_else(|| panic!("{} let {} through", tool.name(), args));
+            assert!(out.starts_with("Refused:") && out.contains("space")
+                && out.contains("Nothing was read or changed"),
+                "{} {}: {}", tool.name(), args, out);
+        }
+        // A space INSIDE a name is an ordinary name.
+        assert_eq!(None, Tool::FileWrite.guard(r#"{"path":"my notes/a b.md","content":"x"}"#, &c)
+            .expect("guard"));
+        // The act reads the string the guard judged: no trim on capture's way to its file.
+        assert_eq!(" x.png", Tool::capture_out(r#"{"path":" x.png"}"#, None));
+    }
+
+    /// One sentence for a climb above the root, for every tool: it quotes the path the model
+    /// WROTE (a crystal capture used to quote its own `../cry-390.png`), names the tool, and says
+    /// nothing was read or changed (CAPTURE-FENCE QA B F2, 2026-10-12).  `file_delete`'s own copy,
+    /// kept as defence in depth, is the same sentence.
+    #[test]
+    fn test_a_climb_out_is_said_in_one_sentence_quoting_the_path_written_00() {
+        let c = ctx();
+        for (tool, args, raw) in [
+            (Tool::FileWrite,  r#"{"path":"../x.md","content":"x"}"#,  "../x.md"),
+            (Tool::FileDelete, r#"{"path":"a/../../x.md"}"#,           "a/../../x.md"),
+            (Tool::FileMove,   r#"{"path":"ok.md","to":"../x.md"}"#,   "../x.md"),
+            (Tool::Capture,    r#"{"in":"crystal","path":"../cry.png"}"#, "../cry.png"),
+            (Tool::Capture,    r#"{"in":"screen","path":"../s.png"}"#, "../s.png"),
+            (Tool::FileRead,   r#"{"path":"../B/notes.md"}"#,          "../B/notes.md"),
+        ] {
+            let out = tool.guard(args, &c).expect("guard")
+                .unwrap_or_else(|| panic!("{} let {} through", tool.name(), args));
+            assert_eq!(out, refusal_line(&dotdot_refusal(tool.name(), raw)), "{} {}", tool.name(), args);
+            assert!(out.contains(&fmt!("'{}' uses '..'", raw))
+                && out.contains(tool.name()) && out.contains("Nothing was read or changed")
+                && !out.contains("-390"), "{}", out);
+        }
+        assert_eq!(delete_path_refusal("../x.md"), Some(dotdot_refusal("file_delete", "../x.md")));
+    }
+
+    /// Every entry of `file_read`'s `paths` is put to the guard, not only `path`: a climbing entry
+    /// was stopped later by the OPFS jail in that edge's words (CAPTURE-FENCE QA B F3).
+    #[test]
+    fn test_every_entry_of_file_read_paths_is_guarded_00() {
+        let c = ctx();
+        for args in [
+            r#"{"paths":["ok.md","../x.md"]}"#,
+            r#"{"paths":["../x.md"]}"#,
+            r#"{"paths":["a.md","/etc/passwd"]}"#,
+            r#"{"paths":["ok.md"," ../x.md"]}"#,
+            r#"{"paths":["a.md","sub/../b.md"]}"#,
+        ] {
+            let out = Tool::FileRead.guard(args, &c).expect("guard")
+                .unwrap_or_else(|| panic!("file_read let {} through", args));
+            assert!(out.starts_with("Refused:"), "{}: {}", args, out);
+        }
+        assert_eq!(None, Tool::FileRead.guard(r#"{"paths":["a.md","sub/b.md"]}"#, &c)
+            .expect("guard"));
     }
 
     /// An absolute `cwd` is refused with the doubled path it would have become and, where the
@@ -48141,6 +48475,23 @@ mod tests_restore {
         assert!(unproven_left(fail(Some(String::new())), "  ").is_some());
         let m = CrystalPassed { version: 3, at: 1, page: crystal_page_mark(bad), data: "d".into(), debug: 0 };
         assert_eq!(CrystalPassed::from_json(&m.to_json()), Some(m));
+    }
+
+    // hist-safe U3 F4: "The restore 'notes.md' was part of has ended" read as a garden path.
+    #[test]
+    fn test_restore_ended_refusal_reads_once_00() {
+        let said = restore_ended_refusal("notes.md");
+        assert!(said.contains("The restore that 'notes.md' belonged to has ended, so nothing was changed."),
+            "{}", said);
+    }
+
+    /// An act with no path says so without one, never "''" (hist-safe U3, QA B B4).
+    #[test]
+    fn test_restore_ended_refusal_without_path_01() {
+        let said = restore_ended_refusal("");
+        assert!(!said.contains("''"), "{}", said);
+        assert!(said.contains("The restore this change belonged to has ended, so nothing was changed."),
+            "{}", said);
     }
 }
 

@@ -513,6 +513,27 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 		&& ls.getItem(M.KEY) === kept && !!M.force(A, row(), BR));
 }
 
+// ── MARK-FITS: a desktop's flagged folder, on a phone ──────────────
+//
+// 2026-10-12. The phone's only workspace is its browser store, where a folder flagged on the
+// desktop arrives at the same path. Its `[machine:…]` mark must wait there for the press that
+// "here too?" asks for, and come into force on that press; an unflagged one lives on the
+// desktop alone.
+{
+	const { _core: C, grant, force } = tab(storage()).M;
+	const desk = (o) => row(Object.assign({ to: 'dir:[machine:usr@0123456789abcdef]TheOrder/Onthearche', share: true }, o || {}));
+	const none = { v: 1, d: {}, c: {} };
+	check('a flagged machine mark waits in the browser workspace', C.waiting(none, A, desk(), BR, []) === true);
+	check('an unflagged one does not: its folder never arrives here', C.waiting(none, A, desk({ share: false }), BR, []) === false);
+	const rec = { v: 1, d: {}, c: {} };
+	C.putEntry(rec, A, desk(), BR, 'holds', false);
+	const fz = C.force(rec, A, desk(), BR, []);
+	check('pressed here, it is in force here, unshared until ⇄ here', !!fz && fz.rel === 'holds' && fz.share === false, JSON.stringify(fz));
+	check('and lapses when the flag comes off', C.force(rec, A, desk({ share: false }), BR, []) === null);
+	check('the press is a grant the browser door takes', grant(A, desk(), BR) === true && !!force(A, desk(), BR));
+	check('it never reaches another machine folder', C.waiting(none, A, desk({ to: 'dir:[machine:home@0123456789abcdef]x' }), MU, []) === false);
+}
+
 console.log(failures === 0
 	? `\nmarkshere: all ${checks} checks passed`
 	: `\nmarkshere: ${failures} of ${checks} checks FAILED`);

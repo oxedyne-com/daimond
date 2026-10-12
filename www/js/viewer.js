@@ -1840,8 +1840,8 @@
 	/// * `page` - Which page to open a PDF at, or nothing to leave it where this
 	///   file was last aimed -- which is what makes a rebuilt document come back
 	///   in the reader's place rather than at page 1.
-	/// * `owner` - The conversation asking, or nothing when the caller cannot say.
-	///   See `mayTakeScreen`.
+	/// * `owner` - The conversation asking, as the turn's keeper names it (a Diamond's
+	///   id or `chat:<id>`), or nothing when the caller cannot say. See `mayTakeScreen`.
 	/// * `turn` - The engine's tag for the turn asking, or nothing. See `askerOf`.
 	async function showToUser(path, page, owner, turn) {
 		var asker = askerOf(owner, turn);
@@ -1877,7 +1877,9 @@
 		// re-show keeps an earlier aim, and a model told the argument back would
 		// tell the user page 1 while they are looking at page 214.
 		v.page = aimPage(path);
-		await opener(path);
+		// And whose it is: the panel it fills is stamped with the asking conversation, so a
+		// capture by another one leaves it out (CAPTURE-FENCE, 2026-10-12).
+		await opener(path, owner ? { owner: String(owner) } : undefined);
 		return JSON.stringify(v);
 	}
 

@@ -123,6 +123,199 @@ await say('@tool capture ' + JSON.stringify({ in: 'document-viewer' }));
 const no = await answerTo('document-viewer');
 ok(/Views on screen now: .*\bpreview\b/.test(no), 'a guessed view is refused, naming the views on screen', no.slice(0, 240));
 
+// ── THE FENCE (2026-10-12, FIRE-B QA F1/F3) ────────────────────────────────────────────────────────────────────────
+// A capture draws the screen only while the daimon's OWN Diamond is on it and the app is visible: a turn started in A
+// and left running while the person opened B photographed B's workspace into A's folder. And a path that climbs out of
+// the workspace is refused before any consent prompt, as file_read refuses it, rather than asking to change a clamped
+// path that is not the one asked for.
+const newDiamond = async (name) => {
+	await p.evaluate(() => document.getElementById('new-diamond-btn').click());
+	await p.waitForSelector('.dlg-card', { timeout: 8000 });
+	await p.evaluate((nm) => {
+		const card = [...document.querySelectorAll('.dlg-card')].filter((c) => c.getClientRects().length).pop();
+		const inp = card.querySelector('input.dlg-input');
+		inp.value = nm;
+		inp.dispatchEvent(new Event('input', { bubbles: true }));
+		card.querySelector('.dlg-ok').click();
+	}, name);
+	await p.waitForTimeout(1200);
+	await p.click('#dview-chat');
+	await p.waitForTimeout(500);
+};
+const exists = (path) => p.evaluate(async (pa) => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	try { await m.read_file(pa); return true; } catch (e) { return false; }
+}, path);
+
+// A turn in A whose capture lands after the person has moved to B's chat face.
+clearMockLog();
+const bgPath = 'diamonds/' + id + '/shots/bg.png';
+await p.fill('#chat-input', '@rounds 2/5000 capture ' + JSON.stringify({ in: 'screen', path: bgPath }));
+await p.click('#chat-send');
+await sleep(400);
+await newDiamond('Seeview B');
+const idB = await p.evaluate(async () => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	const d = JSON.parse(await app.list_diamonds()).find((x) => x.name === 'Seeview B');
+	return d ? d.id : '';
+});
+const bg = await answerTo('shots/bg.png', 30000);
+ok(!!bg && !/^Photographed/.test(bg) && /in:"crystal"/.test(bg),
+	'a capture from A while B is on screen is refused, pointing to in:"crystal"', bg.slice(0, 300));
+ok(!(await exists(bgPath)), 'and nothing of B was written into A', bgPath);
+await sleep(6000);	// the turn's last paced round
+
+// The page's own door, asked directly: every way in to the screen (a view, a selector, the whole window) for A
+// while B is up; and B's own capture, which must still draw.
+const door = await p.evaluate(async ([a, b]) => {
+	const out = {};
+	const tryOne = async (k, req) => {
+		try { out[k] = JSON.parse(await window.DaimondShot.capture(JSON.stringify(req))).ok ? 'drew' : 'no'; }
+		catch (e) { out[k] = 'refused: ' + String(e && e.message || e).slice(0, 160); }
+	};
+	await tryOne('screenA', { in: 'screen', for: a });
+	await tryOne('selectorA', { selector: '#chat-input', for: a });
+	await tryOne('screenB', { in: 'screen', for: b });
+	// The app off screen: nothing is the person's own view then, not even B's.
+	Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+	await tryOne('hiddenB', { in: 'screen', for: b });
+	delete document.visibilityState;
+	return out;
+}, [id, idB]);
+ok(/^refused/.test(door.screenA) && /^refused/.test(door.selectorA),
+	'the page refuses A every view of the screen while B is up', JSON.stringify(door));
+ok(door.screenB === 'drew', 'B, on screen, still draws its own', JSON.stringify(door));
+ok(/^refused: .*not on screen/.test(door.hiddenB || ''), 'nothing draws while the app is not on screen', JSON.stringify(door));
+
+// ── EVERY VIEW HAS AN OWNER (CAPTURE-FENCE QA A F1/F2, rc-b rulings, 2026-10-12) ─────────────────────────────────────
+// The fence guarded the centre only. A's .typ was open in Doc and Preview when the person opened B, and B's own
+// `capture in:"preview"` saved A's document into B's folder; a capture of the screen or the rail drew every other
+// Diamond's name and every other chat's title and last words. A file panel belongs to the conversation it was opened
+// in and closes when the person opens another, as the Work panel follows it; the screen and the rail draw another
+// conversation's rows blank. Every picture is serialised once, so the last serialisation is the picture's words.
+const shoot = (b, reqs) => p.evaluate(async ([b, reqs]) => {
+	const ser = XMLSerializer.prototype.serializeToString;
+	let last = '';
+	XMLSerializer.prototype.serializeToString = function (n) { last = ser.call(this, n); return last; };
+	const out = { views: window.DaimondShot.views().join(',') };
+	for (const [k, req] of reqs) {
+		last = '';
+		try { out[k] = JSON.parse(await window.DaimondShot.capture(JSON.stringify(Object.assign({ for: b }, req)))).ok ? 'drew' : 'no'; }
+		catch (e) { out[k] = 'refused: ' + String(e && e.message || e).slice(0, 160); }
+		// Text nodes only: a row's own words, not an attribute that happens to hold them.
+		out[k + 'Words'] = (last.match(/>[^<]+</g) || []).map((x) => x.slice(1, -1).trim()).filter(Boolean);
+	}
+	XMLSerializer.prototype.serializeToString = ser;
+	return out;
+}, [b, reqs]);
+const switched = await shoot(idB, [['preview', { in: 'preview' }], ['doc', { in: 'doc' }], ['screen', { in: 'screen' }]]);
+ok(!/^drew/.test(switched.preview) && !/^drew/.test(switched.doc),
+	'B cannot photograph the preview or the document A opened before the switch', JSON.stringify([switched.views, switched.preview, switched.doc]));
+ok(!switched.screenWords.includes('Seeview') && switched.screenWords.includes('Seeview B'),
+	'B\'s picture of the screen leaves out A\'s row and keeps its own', JSON.stringify(switched.screenWords.filter((w) => /Seeview/.test(w))));
+
+// A chat whose title and last words are its own; then back to B, whose rail capture must show none of them.
+await p.click('#new-session-btn');
+await p.waitForTimeout(500);
+clearMockLog();
+await p.fill('#chat-input', 'SENTINELCCC hello from chat');
+await p.click('#chat-send');
+for (const t0 = Date.now(); Date.now() - t0 < 15000 && !mockLog().length; await sleep(250)) { /* the chat's turn reaches the mock */ }
+await sleep(1500);
+await p.click('.diamond-box[data-id="' + idB + '"]');
+await p.waitForTimeout(700);
+await p.click('#dview-chat').catch(() => {});
+await p.waitForTimeout(500);
+const back = await shoot(idB, [['rail', { in: 'rail' }], ['screen', { in: 'screen' }]]);
+const theirs = (ws) => ws.filter((w) => /SENTINELCCC/.test(w) || w === 'Seeview');
+ok(back.rail === 'drew' && theirs(back.railWords).length === 0 && back.railWords.includes('Seeview B'),
+	'B\'s rail capture shows no other chat\'s or Diamond\'s words, and its own row', JSON.stringify([back.rail.slice(0, 80), theirs(back.railWords)]));
+ok(back.screen === 'drew' && theirs(back.screenWords).length === 0,
+	'nor does its picture of the whole screen', JSON.stringify([back.screen.slice(0, 80), theirs(back.screenWords)]));
+
+// ── A SHOW FROM ANOTHER CONVERSATION'S TURN (CAPTURE-FENCE, lead ruling on rc-b's per-view owner, 2026-10-12) ──────
+// A chat's turn left running while the person opened B called file_show. The show named no owner (a chat's daimon has
+// no Diamond), so it took B's screen, and the Doc panel -- claimed for B at the switch -- let B's capture draw the
+// chat's file. The show carries the TURN's keeper, so it waits for its own conversation, and the panel is stamped with it.
+await p.evaluate(async () => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	await m.write_file('notes/chatonly.md', '# SENTINELFFF\n\nThe chat\'s own file.\n');
+});
+const chatId = await p.evaluate(() => {
+	const b = [...document.querySelectorAll('.session-box[data-id]:not(.diamond-box)')]
+		.find((x) => /SENTINELCCC/.test(x.textContent));
+	return b ? b.dataset.id : '';
+});
+ok(!!chatId, 'the chat is on the rail', chatId);
+await p.click('.session-box[data-id="' + chatId + '"]');
+await p.waitForTimeout(700);
+clearMockLog();
+await p.fill('#chat-input', '@rounds 2/5000 file_show ' + JSON.stringify({ path: 'notes/chatonly.md' }));
+await p.click('#chat-send');
+await sleep(400);
+await p.click('.diamond-box[data-id="' + idB + '"]');
+await p.waitForTimeout(700);
+await p.click('#dview-chat').catch(() => {});
+const shownBg = await answerTo('chatonly.md', 30000);
+await sleep(1000);
+const bgShow = await shoot(idB, [['doc', { in: 'doc' }], ['screen', { in: 'screen' }]]);
+const ffs = (ws) => ws.filter((w) => /SENTINELFFF|chatonly/.test(w));
+const onB = await p.evaluate(() => (document.getElementById('panel-doc') || {}).textContent || '');
+ok(!!shownBg && !/SENTINELFFF/.test(onB),
+	'the chat\'s show, made while B is up, does not take B\'s screen', shownBg.slice(0, 200));
+ok(!/^drew/.test(bgShow.doc) || ffs(bgShow.docWords).length === 0,
+	'B\'s capture of the Doc panel does not draw the chat\'s file', JSON.stringify([bgShow.doc.slice(0, 80), ffs(bgShow.docWords)]));
+ok(ffs(bgShow.screenWords).length === 0,
+	'nor does B\'s picture of the screen', JSON.stringify(ffs(bgShow.screenWords)));
+await sleep(5000);	// the chat turn's last paced round
+// Held for its own conversation: opening the chat puts the file in front of the person, once.
+await p.click('.session-box[data-id="' + chatId + '"]');
+await p.waitForTimeout(1500);
+const atChat = await p.evaluate(() => {
+	const pn = document.getElementById('panel-doc');
+	return { open: !!(pn && pn.getClientRects().length), owner: pn ? pn.getAttribute('data-owner') : '',
+		words: pn ? pn.textContent.includes('SENTINELFFF') : false };
+});
+ok(atChat.open && atChat.words && atChat.owner === 'chat:' + chatId,
+	'and the show waits for the chat: opening it shows the file, in a panel stamped with the chat', JSON.stringify(atChat));
+
+// ── THE GRAPH NAMES EVERY DIAMOND (CAPTURE-FENCE, lead ruling, 2026-10-12) ────────────────────────────────────────────
+// The Graph panel draws a box per Diamond with its name, so it is other conversations' pixels as the rail is: a capture
+// for B draws every other Diamond's box empty and keeps B's own.
+await p.click('.diamond-box[data-id="' + idB + '"]');
+await p.waitForTimeout(700);
+await p.click('#dview-chat').catch(() => {});
+await p.evaluate(() => { window.DaimondPanels.show('graph'); if (window.DaimondGraph) window.DaimondGraph.refresh(); });
+await p.waitForTimeout(1500);
+const named = await p.evaluate(() => [...document.querySelectorAll('#panel-graph .graph-node-name')].map((x) => x.textContent));
+ok(named.includes('Seeview') && named.includes('Seeview B'), 'the Graph on screen names A and B', JSON.stringify(named));
+const gr = await shoot(idB, [['graph', { in: 'graph' }], ['screen', { in: 'screen' }]]);
+ok(gr.graph === 'drew' && !gr.graphWords.includes('Seeview') && gr.graphWords.includes('Seeview B'),
+	'B\'s capture of the Graph leaves A\'s box empty and keeps its own', JSON.stringify([gr.graph.slice(0, 80), gr.graphWords.filter((w) => /Seeview/.test(w))]));
+ok(gr.screen === 'drew' && !gr.screenWords.includes('Seeview'),
+	'nor does its picture of the screen name A', JSON.stringify(gr.screenWords.filter((w) => /Seeview/.test(w))));
+await p.evaluate(() => window.DaimondPanels.hide('graph'));
+
+// A path that climbs out of the workspace: refused before any consent prompt.
+clearMockLog();
+const esc = '../' + id + '/shots/esc.png';
+await p.fill('#chat-input', '@tool capture ' + JSON.stringify({ in: 'screen', path: esc }));
+await p.click('#chat-send');
+let asked = false, escSaid = '';
+for (const t0 = Date.now(); Date.now() - t0 < 20000 && !escSaid; await sleep(250)) {
+	asked = asked || await p.evaluate(() => [...document.querySelectorAll('.dlg-card')]
+		.some((c) => c.getClientRects().length && c.querySelector('.dlg-pre')));
+	if (asked) {
+		await p.evaluate(() => { const c = [...document.querySelectorAll('.dlg-card .dlg-cancel')].pop(); if (c) c.click(); });
+	}
+	escSaid = await answerTo('shots/esc.png', 300);
+}
+ok(!asked, 'a workspace-escaping capture path asks no consent', esc);
+// One sentence for every tool, quoting the path as written and saying nothing happened (CAPTURE-FENCE QA B F2).
+ok(escSaid.includes("'" + esc + "' uses '..'") && /Nothing was read or changed/.test(escSaid),
+	"and is refused in the one '..' sentence, quoting the path written", escSaid.slice(0, 240));
+
 ok(errs.length === 0, 'nothing was thrown', errs.join(' | '));
 console.log(bad ? `\nverify_seeview: ${bad} failed.` : '\nverify_seeview: all checks passed');
 await s.close();

@@ -44,6 +44,9 @@ function makeTab(answer) {
 			ticket: 't-restore',
 			machine: [{ path: 'x.md', gone: true, kept: true, left: false, hash: 'h1' }],
 		}),
+		// The store is taken once the person has decided, before the first write
+		// (hist-safe U3): with no hold here, the Undo's yes asked Try again forever.
+		versions_restore_hold: async () => '{}',
 		versions_restore_close: async () => JSON.stringify(
 			{ version: 1, recorded: 1, restored: [], missing: [], refused: [] }),
 		// Called only where `askGone` answered yes: a no refuses every `gone`

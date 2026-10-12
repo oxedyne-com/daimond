@@ -18,6 +18,7 @@ use crate::diamond_link::Link;
 use crate::diamond_link::Node;
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_file::relpath::RelPath;
 use oxedyne_fe2o3_jdat::Dat;
 use oxedyne_fe2o3_jdat::map::DaticleMap;
 
@@ -49,7 +50,9 @@ pub struct Ref {
 	pub path:    String,
 }
 
-/// The one parse of a reference (`parseRef`).
+/// The one parse of a reference (`parseRef`).  The path is kept exactly as written: whitespace
+/// is a legal part of a folder name, so a trim made a mark on `" sp"` a grant on `sp` (U2 QA F1).
+/// Whether it is a place is [`Ref::place`]'s question.
 pub fn parse_ref(s: &str) -> Ref {
 	let i = match s.find(':') {
 		Some(i) if i > 0 => i,
@@ -78,7 +81,7 @@ pub fn parse_ref(s: &str) -> Ref {
 	};
 	let (root, name, used) = match head(rest) {
 		Some(h) => h,
-		None    => return Ref { kind, path: rest.trim().to_string(), ..Ref::default() },
+		None    => return Ref { kind, path: rest.to_string(), ..Ref::default() },
 	};
 	let mut name = name.unwrap_or_default();
 	let mut devices = Vec::new();
@@ -93,7 +96,16 @@ pub fn parse_ref(s: &str) -> Ref {
 			name.truncate(at);
 		}
 	}
-	Ref { kind, root: Some(root), name, devices, path: rest[used..].trim().to_string() }
+	Ref { kind, root: Some(root), name, devices, path: rest[used..].to_string() }
+}
+
+impl Ref {
+	/// The place this reference names, `None` where its path is not one canonical relative path
+	/// (`code/../secret`, `/secret`, `secret/`, `./secret`, `" secret"`, ...).  THE ONE TEST OF A
+	/// MARK'S PATH: [`fits`] asks it, so a damaged row or holding is neither in force nor waiting.
+	pub fn place(&self) -> Option<RelPath> {
+		RelPath::parse(&self.path).ok()
+	}
 }
 
 /// A workspace as the record names it: `browser`, or `machine:<name>#<folder id>`.
@@ -154,10 +166,11 @@ pub fn is_store_path(path: &str) -> bool {
 		.iter().any(|d| under(path, d))
 }
 
-/// Can a reference be opened from the workspace `key` names (`fits`)?
+/// Can a reference be opened from the workspace `key` names (`fits`)?  Only a reference to a
+/// place: a path that is not canonical is damaged, and fails closed.
 pub fn fits(r: &str, key: &str) -> bool {
 	let p = parse_ref(r);
-	if p.kind != "file" && p.kind != "dir" {
+	if (p.kind != "file" && p.kind != "dir") || p.place().is_none() {
 		return false;
 	}
 	reachable(&p, &root_of(key))
@@ -455,12 +468,30 @@ pub fn trashed_ids(raw: &str) -> Option<Vec<String>> {
 		None              => return Some(Vec::new()),	// a trash never written to
 		Some(_)           => return None,
 	};
-	Some(items.iter().filter_map(|(k, v)| match (k, v) {
-		(Dat::Str(id), Dat::Map(r))
-			if num(r.get(&Dat::Str(fmt!("at")))) > num(r.get(&Dat::Str(fmt!("back"))))
-			=> Some(id.clone()),
-		_ => None,
-	}).collect())
+	// An entry that is there but is not one -- `at` as a string, the entry a bare word --
+	// damages the whole record, as a damaged record does: dropping it read a trashed
+	// Diamond as live (U2 QA F3). Absent `at` or `back` is a Diamond never trashed or restored.
+	let stamp = |r: &DaticleMap, k: &str| match r.get(&Dat::Str(k.to_string())) {
+		None    => Some(0.0),
+		Some(d) => match d {
+			Dat::U8(_) | Dat::U16(_) | Dat::U32(_) | Dat::U64(_) | Dat::U128(_)
+			| Dat::I8(_) | Dat::I16(_) | Dat::I32(_) | Dat::I64(_) | Dat::I128(_)
+			| Dat::F32(_) | Dat::F64(_) => Some(num(Some(d))),
+			_                           => None,
+		},
+	};
+	let mut out = Vec::new();
+	for (k, v) in items.iter() {
+		let (id, r) = match (k, v) {
+			(Dat::Str(id), Dat::Map(r)) => (id, r),
+			_                           => return None,
+		};
+		match (stamp(r, "at"), stamp(r, "back")) {
+			(Some(at), Some(back)) => if at > back { out.push(id.clone()); },
+			_                      => return None,
+		}
+	}
+	Some(out)
 }
 
 /// A grant in force here.
@@ -542,7 +573,7 @@ pub fn parse_holds(json: &str) -> Vec<Hold> {
 
 /// A chat holding's grant here, `(ws, read)`, or `None` (`chatForce`).
 pub fn chat_force(rec: &Record, chat: &str, a: &Hold, root: &str) -> Option<(bool, bool)> {
-	if a.path.is_empty() || parse_ref(&a.r).path != a.path || !fits(&a.r, root) {
+	if parse_ref(&a.r).path != a.path || !fits(&a.r, root) {
 		return None;
 	}
 	for e in rec.c.get(chat).map(|l| l.as_slice()).unwrap_or(&[]) {
@@ -560,7 +591,7 @@ pub fn chat_force(rec: &Record, chat: &str, a: &Hold, root: &str) -> Option<(boo
 
 /// Does this holding claim a workspace mark or a Read not in force here (`chatWaiting`)?
 pub fn chat_waiting(rec: &Record, chat: &str, a: &Hold, root: &str) -> bool {
-	if a.path.is_empty() || parse_ref(&a.r).path != a.path || !fits(&a.r, root) {
+	if parse_ref(&a.r).path != a.path || !fits(&a.r, root) {
 		return false;
 	}
 	let (ws, read) = chat_force(rec, chat, a, root).unwrap_or((false, false));
@@ -622,14 +653,11 @@ pub fn reach<F: Fn(&str) -> bool>(
 			None    => continue,
 		};
 		let p = parse_ref(&other);
-		if (p.kind != "file" && p.kind != "dir") || p.path.is_empty() || under(&p.path, &own) {
-			continue;
-		}
-		// Only a canonical path is a place. The bounds normalise what they are given, so
-		// `code/../secret`, nested under `code` by its prefix, would reach `secret`, and
-		// `/etc` or `code/..` would reach what no mark names. Fail closed: a row whose path
-		// is not already canonical is damaged, not a grant.
-		if crate::tools::normalise(&p.path) != p.path {
+		// Only a place is a row: the bounds normalise what they are given, so `code/../secret`,
+		// nested under `code` by its prefix, would reach `secret`. `force` and `waiting` already
+		// refuse such a row through `fits`; it is left out here as well so a damaged row is not
+		// even a candidate beside a sound one of the same thing.
+		if (p.kind != "file" && p.kind != "dir") || p.place().is_none() || under(&p.path, &own) {
 			continue;
 		}
 		// A door onto a Diamond in the trash is shut.
@@ -896,5 +924,82 @@ mod tests {
 		assert!(read_record(&out2).map(|r| !r.d.contains_key("0da1")).unwrap_or(false));
 		assert!(drop_entry(&out2, "0da1", "b").is_none());
 		assert!(drop_entry("not json", "0da1", "a").is_none());
+	}
+
+
+	/// PATHTYPE (R3, D-20261012-07): a mark's path is kept exactly as written, and only a
+	/// canonical one is a place. A trim let a mark on the real folder `" sp"` go into force as
+	/// `sp` (HIST-SAFE U2 post-deploy QA F1, arm C1x).
+	#[test]
+	fn marks_a_path_is_kept_exactly_and_only_a_canonical_one_is_a_place() {
+		let none = |_: &str| false;
+		let mut bad = Vec::new();
+		for (r, want) in [("dir:[browser] sp", " sp"), ("dir:secret ", "secret ")] {
+			if parse_ref(r).path != want {
+				bad.push(fmt!("parse_ref({:?}).path = {:?}", r, parse_ref(r).path));
+			}
+		}
+		for to in ["dir:[browser] sp", "dir:[browser] secret", "dir:[browser]secret ",
+			"dir:[browser]\tsecret"]
+		{
+			let js = to.replace('\t', "\\t");
+			let l = fmt!("{{\"id\":\"l1\",\"from\":\"diamond:{}\",\"to\":\"{}\",\"rel\":\"holds\",\"by\":\"user\"}}",
+				D, js);
+			let links = vec![(D.to_string(), Link::from_json(&l).unwrap_or_else(|| panic!("link {}", l)))];
+			let raw = fmt!("{{\"v\":1,\"d\":{{\"{}\":[{{\"id\":\"l1\",\"to\":\"{}\",\"rel\":\"holds\",\"root\":\"browser\"}}]}}}}",
+				D, js);
+			let rec = read_record(&raw).unwrap_or_else(|| panic!("record {}", raw));
+			let r = reach(&rec, D, &links, "browser", none);
+			if !r.places().is_empty() || !r.unconfirmed.is_empty() {
+				bad.push(fmt!("the mark {:?} reached {:?}", to, r));
+			}
+			if fits(to, "browser") {
+				bad.push(fmt!("{:?} fits as a place", to));
+			}
+		}
+		assert!(bad.is_empty(), "{} case(s):\n{}", bad.len(), bad.join("\n"));
+	}
+
+	/// PATHTYPE: a chat holding is in force only on a canonical path (HIST-SAFE U2 post-deploy
+	/// QA F2, arm C2x: these four let a chat write `secret/c1..c4.txt`).
+	#[test]
+	fn marks_a_chat_holding_is_in_force_only_on_a_canonical_path() {
+		let chat = "c1";
+		let hold = |path: &str| {
+			let r = fmt!("dir:[browser]{}", path);
+			let mut rec = Record::default();
+			rec.c.insert(chat.to_string(), vec![ChatEntry { r: r.clone(), path: path.to_string(),
+				ws: true, read: false, root: fmt!("browser") }]);
+			(rec, Hold { r, path: path.to_string(), ws: true, read: false })
+		};
+		let mut bad = Vec::new();
+		for path in ["chatc/../secret", "/secret", "secret/", "./secret", " secret", "secret ",
+			"\tsecret", ".", "chatc/..", "chatc//x", "a\\b"]
+		{
+			let (rec, a) = hold(path);
+			if chat_force(&rec, chat, &a, "browser").is_some() {
+				bad.push(fmt!("{:?} is in force", path));
+			}
+			if chat_waiting(&rec, chat, &a, "browser") {
+				bad.push(fmt!("{:?} waits for a press", path));
+			}
+		}
+		assert!(bad.is_empty(), "{} case(s):\n{}", bad.len(), bad.join("\n"));
+		let (rec, a) = hold("chatc");
+		assert_eq!(chat_force(&rec, chat, &a, "browser"), Some((true, false)));
+	}
+
+	/// PATHTYPE LOW (HIST-SAFE U2 post-deploy QA F3): an entry that is there but is not a trash
+	/// entry damages the record (UNREAD), as a damaged record does; it is never read as live.
+	#[test]
+	fn marks_a_malformed_trash_entry_is_a_damaged_trash() {
+		for bad in ["{\"items\":{\"aa\":{\"at\":\"1760000000000\"}}}", "{\"items\":{\"aa\":\"trashed\"}}",
+			"{\"items\":{\"aa\":{\"at\":1760000000000,\"back\":\"0\"}}}", "{\"items\":{\"aa\":7}}"]
+		{
+			assert_eq!(trashed_ids(bad), None, "{:?} read as a trash record: {:?}", bad, trashed_ids(bad));
+		}
+		// An entry restored, or never trashed, is still well formed.
+		assert_eq!(trashed_ids("{\"items\":{\"aa\":{\"k\":\"d\",\"at\":5,\"back\":9},\"bb\":{\"k\":\"d\"}}}"),
+			Some(Vec::new()));
 	}
 }

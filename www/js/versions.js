@@ -303,7 +303,7 @@
 
 	/// Write back the machine half of a restore, under its ticket. Answers the paths
 	/// it refused, to be added to the engine's own list.
-	async function writeMachine(id, entries, ticket, isUndo) {
+	async function writeMachine(id, entries, ticket, isUndo, take) {
 		var refused = [];
 		if (!(entries || []).length) return refused;
 		// THE DIAMOND'S REACH AS IT IS NOW, and not as it was when the file was
@@ -379,6 +379,8 @@
 			return e && e.over === true && !e.gone && !e.skipped && e.left !== true && e.unread !== true;
 		});
 		var takeOver = overs.length ? await answer(overs, await askTheirs(overs, isUndo)) : true;
+		// Decided: the version store before the first write ([`restoreAt`]'s `take`).
+		if (take && !(await take())) return refused;
 		// A ROW FROM A FOLDER THE ENGINE CANNOT PLACE HERE IS PUT TO THE PERSON (release
 		// 5.2's HR, 2026-09-25): one kept before Daimond recorded which folder a file came
 		// from, or one recorded in a folder this device does not know -- on another device,
@@ -492,23 +494,64 @@
 	/// in src/wasm/diamond.rs).
 	var BUSY = /A restore of this Diamond is waiting for your answer/;
 
+	/// An engine refusal as the person reads it, through the shared `plainError`.
+	/// The engine throws its whole chain (ANSI colour, source frames, error kinds);
+	/// the dialog showed the sentence but the API's `why` carried the chain (hist-safe
+	/// U3, 2026-10-12), so every `why` a restore returns or asks with is made here.
+	function plain(e) {
+		var raw = String(e && e.message || e);
+		return core() && DaimondCore.plainError ? DaimondCore.plainError(raw) : bare(raw);
+	}
+
+	/// Text with the engine's ANSI colour taken out, and nothing else changed.
+	function bare(s) { return String(s).replace(/\u001b\[[0-9;]*m/g, ''); }
+
 	/// Ask the person once more whether a restore may write over files that changed
 	/// since they were asked, or since the restore opened: by their editor, a
 	/// daimon, another tab. Resolves true only on their yes; Keep is the default,
 	/// and with no dialog the answer is no.
+	///
+	/// ONE FILE IS "IT" AND THE BODY SAYS WHAT THE TITLE DOES NOT (hist-safe U3 F3,
+	/// 2026-10-12): the body restated the title word for word, said "1 of your files
+	/// ... them", and said "since you were asked" of a file no question had named.
 	async function askChanged(list) {
 		var names = list.map(function (e) { return String(e.path); });
 		var shown = names.slice(0, 8).join(', ') + (names.length > 8 ? ', …' : '');
+		var one = names.length === 1;
 		try {
 			if (!core() || !DaimondCore.confirm) return false;
 			var yes = await DaimondCore.confirm(
-				tOr('versions.changed_ask',
-					'{n} of your files changed since you were asked: {paths}. Their current contents are kept in History. Replace them anyway?',
-					{ n: names.length, paths: shown }),
-				tOr('versions.over_allow', 'Replace them'),
-				{ title: tOr('versions.changed_title', 'Your files changed since you were asked'), danger: true,
-					cancelLabel: tOr('versions.over_keep', 'Leave my files'),
+				one
+					? tOr('versions.changed_ask.one',
+						'{path} changed after this restore began. History keeps its current contents.',
+						{ path: names[0] })
+					: tOr('versions.changed_ask.other',
+						'These changed after this restore began: {paths}. History keeps their current contents.',
+						{ n: names.length, paths: shown }),
+				one ? tOr('versions.changed_allow.one', 'Replace it')
+					: tOr('versions.changed_allow.other', 'Replace them'),
+				{ title: one
+						? tOr('versions.changed_title.one', 'Replace a changed file?')
+						: tOr('versions.changed_title.other', 'Replace {n} changed files?', { n: names.length }),
+					danger: true,
+					cancelLabel: one ? tOr('versions.changed_keep.one', 'Leave it')
+						: tOr('versions.changed_keep.other', 'Leave them'),
 					ask: 'restore-changed', guard: true });
+			return yes === true;
+		} catch (e) { return false; }
+	}
+
+	/// Put a refused close's reason to the person: Try again, or Leave it, which
+	/// ends the restore with nothing of the Diamond's own files or crystal written.
+	/// With no dialog the answer is Leave it.
+	async function askRetry(why) {
+		try {
+			if (!core() || !DaimondCore.confirm) return false;
+			var yes = await DaimondCore.confirm(why,
+				tOr('versions.close_retry', 'Try again'),
+				{ title: tOr('versions.close_title', 'The restore has not finished'),
+					cancelLabel: tOr('versions.close_leave', 'Leave it'),
+					ask: 'restore-retry' });
 			return yes === true;
 		} catch (e) { return false; }
 	}
@@ -538,9 +581,12 @@
 	/// behind is given.
 	function settled(e, r, refused) {
 		if (r && r.outcome === 'done') return;
-		var said = (r && r.text) ? String(r.text) : '';
+		// `said` is the door's own sentence, kept word for word for whoever reads the
+		// outcome; `why` is the person's, so a hand's failure (the engine's whole error
+		// chain) is put in the shared plainError's words, as every refusal is.
+		var said = (r && r.text) ? bare(r.text) : '';
 		var why = (r && r.outcome === 'failed' && r.text)
-			? said
+			? plain(said)
 			: /bytes Daimond keeps a copy of|larger than the machine hand returns whole/.test(said)
 				? tOr('versions.too_big', 'Too large to keep')
 				: /carries text only|was written in a different folder/.test(said) || UNPLACED.test(said) || CHANGED.test(said)
@@ -674,8 +720,9 @@
 	/// and the paths it restored. It restored `res.version` again until 2026-09-25,
 	/// which changed nothing. Nothing to commit -- the restore is already on disk.
 	function offerUndo(id, res, text) {
-		if (!res || !window.DaimondUndo) return;
-		if (!(res.restored || []).length || !(Number(res.recorded) > 0)) return;
+		if (!res || res.outcome !== 'restored' || !window.DaimondUndo) return;
+		if (!(res.restored || []).length && res.crystal !== 'restored') return;
+		if (!(Number(res.recorded) > 0)) return;
 		var back = Number(res.recorded), paths = (res.restored || []).slice();
 		DaimondUndo.able({
 			text: text,
@@ -710,25 +757,88 @@
 		catch (e) {
 			// ONE RESTORE OF A DIAMOND AT A TIME (hist-safe R3): another, in this tab or
 			// another, is waiting for the person's answer, and this one is refused, said.
-			if (BUSY.test(String(e && e.message || e)) && core() && DaimondCore.toast) {
-				DaimondCore.toast(tOr('versions.restore_busy',
-					'A restore of this Diamond is waiting for your answer. Answer it first; nothing was changed.'), true);
+			if (BUSY.test(String(e && e.message || e))) {
+				if (core() && DaimondCore.toast) {
+					DaimondCore.toast(tOr('versions.restore_busy',
+						'A restore of this Diamond is waiting for your answer. Answer it first; nothing was changed.'), true);
+				}
+				return { outcome: 'busy' };
 			}
-			return null;
+			return { outcome: 'refused', why: plain(e) };
 		}
-		if (!opened) return null;
-		var refused = [], res = null, keepNew = false;
+		if (!opened) return { outcome: 'refused', why: '' };
+		var refused = [], res = null, keepNew = false, why = null;
+		// The close, with every file changed since he decided put to him first.
+		var close = async function () {
+			var r = parse(await eng.versions_restore_close(String(id), opened.ticket, keepNew), null);
+			// THE DIAMOND'S OWN FILES BY THE RULE HIS FOLDER'S GO BY (hist-safe U3 F2,
+			// 2026-10-12): one changed since he decided -- another tab's save while a
+			// question was open -- is put to him by name, Keep the default, and the
+			// engine holds his answer against what stands there now. Nothing of the
+			// Diamond's own files is written until every one is answered.
+			while (r && (r.changed || []).length) {
+				var pre = 'diamonds/' + id + '/';
+				var yes = await askChanged(r.changed.map(function (p) {
+					p = String(p);
+					return { path: p.indexOf(pre) === 0 ? p.slice(pre.length) : p };
+				}));
+				await eng.versions_restore_answer(opened.ticket, JSON.stringify(r.changed), !!yes);
+				r = parse(await eng.versions_restore_close(String(id), opened.ticket, keepNew), null);
+			}
+			return r;
+		};
+		// THE STORE IS TAKEN BEFORE THE FIRST WRITE, AND HELD TO THE END (hist-safe U3,
+		// lead ruling 2026-10-12). It was taken at the close, after his files were
+		// written, so a store another tab held left his files restored and the
+		// Diamond's own files and crystal not. Once he has decided, the engine takes
+		// it; busy, its reason is put to him before anything is written, Try again
+		// asks again, and Leave it ends the restore with nothing changed.
+		var left = null;
+		var take = async function () {
+			for (;;) {
+				try { await eng.versions_restore_hold(String(id), opened.ticket); return true; }
+				catch (e) {
+					var w = plain(e);
+					if (!(await askRetry(w))) { left = w; return false; }
+				}
+			}
+		};
 		try {
 			// THE DIAMOND'S OWN NEWER FILES ARE ASKED ABOUT, KEEP THE DEFAULT
 			// (D-20261009-29 item 2): a capp's logs went with no question at all.
 			if ((opened.own || []).length) keepNew = !(await askOwn(opened.own, !!undo, id));
-			refused = await writeMachine(id, opened.machine || [], opened.ticket, !!undo);
+			refused = await writeMachine(id, opened.machine || [], opened.ticket, !!undo, take);
 		}
 		finally {
-			try { res = parse(await eng.versions_restore_close(String(id), opened.ticket, keepNew), null); }
-			catch (e) { res = null; }
+			if (left === null) {
+				try { res = await close(); }
+				catch (e) { why = plain(e); }
+			}
 		}
-		res = res || { version: Number(n), recorded: -1, restored: [], missing: [], refused: [] };
+		if (left !== null) {
+			try { await eng.versions_restore_end(String(id), opened.ticket); }
+			catch (e) { /* ended already: nothing of it is open */ }
+			return { outcome: 'refused', why: left, told: true,
+				machine: opened.machine || [], refused: refused };
+		}
+		// A CLOSE THE ENGINE REFUSED IS NOT A RESTORE (hist-safe U3, QA B B1, 2026-10-12).
+		// It was taken for one with nothing in it, called `premigration`, and the page
+		// wrote v's crystal over today's files under no word at all. The engine leaves
+		// the restore open with nothing of the Diamond's written; its reason is put to
+		// him, Try again closes it again, and Leave it ends it.
+		while (why !== null) {
+			if (!(await askRetry(why))) {
+				try { await eng.versions_restore_end(String(id), opened.ticket); }
+				catch (e) { /* ended already: nothing of it is open */ }
+				return { outcome: 'refused', why: why, told: true,
+					machine: opened.machine || [], refused: refused };
+			}
+			why = null;
+			try { res = await close(); }
+			catch (e) { why = plain(e); }
+		}
+		if (!res) return { outcome: 'refused', why: '' };
+		res.outcome = 'restored';
 		res.machine = opened.machine || [];
 		res.refused = (res.refused || []).concat(refused);
 		return res;
@@ -749,20 +859,28 @@
 		// refuses it for any other version.
 		if (!id || !ready() || !(Number(n) > 0) || !Array.isArray(paths)) return null;
 		var res = await restoreAt(id, Number(n), '', paths);
-		if (!res) return null;
+		if (res.outcome !== 'restored') return null;
 		return { restored: res.restored || [], refused: res.refused || [], recorded: res.recorded };
 	}
 
 	/// Restore the WHOLE version: the crystal as it stood, and every file to its
 	/// state at `n`. Asks once — it is the only Restore that does, because it moves
 	/// everything at once and the per-file one is undoable by toast.
+	///
+	/// ANSWERS WHAT HAPPENED, BY ITS `outcome` (hist-safe U3 F1, 2026-10-12), never an
+	/// overloaded null: `restored`, the files with the crystal and page, whose fate the
+	/// engine says in `crystal` (`restored`, `same`, `untouched`), a version kept as
+	/// markdown included; `busy`, refused while another restore of the Diamond waits
+	/// for an answer, nothing changed and said; `refused` (`why`), nothing of the
+	/// Diamond's changed, `told` where the reason was put to him already; `declined`,
+	/// the person said no. A caller that took null for "the engine could not" wrote
+	/// v's crystal over a refused restore, under "nothing was changed".
 	/// # Arguments
 	/// * `opts.ask` - `false` where the caller has already asked. The History
-	///   panel's whole-version Restore does, because it puts the CRYSTAL back in
-	///   the same breath (the engine restores files and nothing else) and two
-	///   dialogs for one press is one too many.
+	///   panel's whole-version Restore does: two dialogs for one press is one too
+	///   many.
 	async function restore(id, n, opts) {
-		if (!id || !ready()) return null;
+		if (!id || !ready()) return { outcome: 'refused', why: '' };
 		var ok = true;
 		try {
 			if (opts && opts.ask === false) ok = true;
@@ -773,7 +891,7 @@
 					{ title: tOr('crystal.restore_title', 'Restore a version'), danger: false });
 			}
 		} catch (e) { ok = false; }
-		if (!ok) return null;
+		if (!ok) return { outcome: 'declined' };
 		var res = await restoreAt(id, n, '');
 		offerUndo(id, res, tOr('versions.restored_v', 'Restored v{v}', { v: n }));
 		return res;

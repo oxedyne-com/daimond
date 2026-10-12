@@ -53,8 +53,9 @@ extern "C" {
     /// `page` is a `JsValue` so it can be `undefined`, which is the driver's word for "the top"
     /// and is not the same as page 1 asked for deliberately.
     ///
-    /// `owner` names the conversation asking, so the driver can decline to take a screen that
-    /// belongs to another one.  An empty string means the caller could not say, and the driver
+    /// `owner` names the conversation asking -- the turn's keeper, a Diamond's id or `chat:<id>` --
+    /// so the driver can decline to take a screen that belongs to another one, and stamp the panel
+    /// it fills with its owner.  An empty string means the caller could not say, and the driver
     /// reads that as the user's own act.
     ///
     /// `turn` is the page's tag for the turn asking, so the driver can tell a turn this device
@@ -84,7 +85,7 @@ fn panel() -> Outcome<Panel> {
 /// # Arguments
 /// * `path` - The workspace-relative path, already scoped and already checked by the guard.
 /// * `page` - Which page to open a paged document at, or `None` for the top.
-/// * `owner` - The Diamond whose daimon is asking, or empty for a chat or the user.
+/// * `owner` - The turn's keeper (a Diamond's id or `chat:<id>`), or empty for the user's own act.
 /// * `turn` - The page's tag for the turn asking, or empty when there is none.
 pub async fn show(path: &str, page: Option<u32>, owner: &str, turn: &str) -> Outcome<Shown> {
     let p = res!(panel());

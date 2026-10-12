@@ -128,6 +128,8 @@ const H_SEED = {
 	p8l: { 'f.txt': 'p8l original' },
 	p6: { 'f.txt': 't1' },
 	p5: { 'f.txt': 'u1' },
+	pb1440: { 'f.txt': 'pb original' },
+	pb390: { 'f.txt': 'pb original' },
 };
 const PROFILE = scratch('pw', 'histgate');
 fs.rmSync(PROFILE, { recursive: true, force: true });
@@ -293,6 +295,51 @@ try {
 		await glue(page, 'write_file', 'p1/f.txt', 'HIS EDIT');
 	}
 
+	// ── PB: "Restore before" reached by the pointer, at a computer's width and a phone's ──
+	// QA (hist-safe U1 post-deploy) pressed it with element.click(), because a pointer click timed out at
+	// both widths. The cause was the probe's, not the page's: History had been opened by a DOM click on
+	// the Diamond face while the daimon face was up, so its rows were drawn inside a hidden view. This
+	// arm takes the person's route, every step a real pointer click (Playwright waits for the control to
+	// be visible, stable and the one the event lands on), and fails on any step it cannot take.
+	if (want('PB')) {
+		console.log('\nPB. "Restore before" by the pointer at 1440 and 390: the Diamond face, History, files, the button');
+		for (const [W, H] of [[1440, 900], [390, 844]]) {
+			await page.setViewportSize({ width: W, height: H });
+			const dir = 'pb' + W, rel = dir + '/f.txt';
+			const { id, clipped } = await folderFile('QA PB ' + W, dir);
+			const v = await steerWrite(id, rel, 'daimon wrote ' + W);
+			check(`PB-${W} setup`, clipped && wrote(v, rel), `clipped ${clipped}`);
+			// His own edit after the daimon's, so the press must ask before it writes.
+			await glue(page, 'write_file', rel, 'HIS PB ' + W);
+			await captureAsks(page); await answer(page, false);
+			await closeModals(page);
+			const miss = [];
+			const tap = async (name, loc) => {
+				try { await loc.click({ timeout: 5000 }); return true; }
+				catch (e) { miss.push(name + ': ' + String(e.message).split('\n').filter((l) => /intercept|visible|outside|stable/.test(l)).slice(-2).join(' ')); return false; }
+			};
+			// The steer leaves the daimon face up; History lives on the Diamond face.
+			if (await page.locator('#crystal-view').isHidden()) {
+				if (!(await page.locator('#dview-crystal').isVisible())) await tap('more menu', page.locator('#chead-more'));
+				await tap('Diamond face', page.locator('#dview-crystal'));
+				await page.waitForTimeout(600);
+			}
+			await tap('History', page.locator('.crystal-act:visible', { hasText: /History/ }).first());
+			await page.waitForTimeout(1000);
+			const row = page.locator('#crystal-view .hist-row').filter({ has: page.locator('.hist-ver', { hasText: new RegExp('^v' + (v ? v.v : 0) + '$') }) }).first();
+			await tap('files', row.locator('.hist-files-n').first());
+			await page.waitForTimeout(600);
+			await tap('Restore before', row.locator(`.hist-file[data-path="${rel}"] .hist-file-before`).first());
+			await page.waitForTimeout(1500);
+			const a = await asks(page);
+			check(`PB-${W}: every step taken by the pointer`, miss.length === 0, JSON.stringify(miss));
+			check(`PB-${W}: the press asks about his file by name, and No writes nothing`,
+				a.some((x) => x.msg.includes(rel)) && (await onDisk(page, rel)) === 'HIS PB ' + W,
+				`asks ${JSON.stringify(a.map((x) => x.opts.ask))} disk ${await showDisk(rel)}`);
+		}
+		await page.setViewportSize({ width: 1440, height: 900 });
+	}
+
 	if (want('P2')) {
 		console.log('\nP2. acts beside an open restore question of the same Diamond');
 		const { id, clipped } = await folderFile('QA P2', 'p2');
@@ -401,8 +448,9 @@ try {
 		const bad3 = await page.evaluate((a) => DaimondVersions.restore(a.id, a.v, { ask: false, path: 'p6/none.txt' }).catch((e) => 'threw ' + e), { id, v: v.v });
 		console.log('    early errors: ' + JSON.stringify([bad1, bad2, bad3]).slice(0, 300));
 		// QA A F6: a version the history does not hold is refused, never opened as a real restore.
+		// `restore` answers by its outcome since hist-safe U3 F1; `undoVersion` still answers null.
 		check('P6: a restore or undo of a version the history does not hold is refused',
-			bad1 === null && bad2 === null, JSON.stringify([bad1, bad2]).slice(0, 200));
+			!!bad1 && bad1.outcome === 'refused' && bad2 === null, JSON.stringify([bad1, bad2]).slice(0, 200));
 		const after = await page.evaluate((a) => DaimondVersions.undoVersion(a.id, a.v, ['p6/f.txt']).catch((e) => 'threw ' + e), { id, v: v.v });
 		check('P6: after three failed opens, a restore still opens (not refused busy)', after !== null && !/threw/.test(String(after)),
 			JSON.stringify(after).slice(0, 200));

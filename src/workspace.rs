@@ -142,6 +142,52 @@ impl Workspace {
         Ok(Some(real))
     }
 
+    /// Resolve `rel` for an act that FOLLOWS links -- a read, a write, a listing, a folder made --
+    /// or `None` where a link carries it outside the root.
+    ///
+    /// [`resolve_real`](Self::resolve_real) proves the folders on the way and leaves the leaf as
+    /// it is, which is right for a delete or a move: they act on the link.  A read or a write acts
+    /// on what the leaf points at, so here the leaf is followed too, and a link whose target is
+    /// not there yet must still point inside, or the write would create it outside.  Until
+    /// 2026-10-12 the native read and write asked only [`resolve`](Self::resolve), and both went
+    /// through `lnk -> /outside` (CAPTURE-FENCE QA B F4).  The answer is the lexical path, which
+    /// is what the callers quote back; like `resolve_real` it is a check, and the act follows it.
+    pub fn resolve_followed(&self, rel: &str) -> Outcome<Option<PathBuf>> {
+        let lex = res!(self.resolve(rel));
+        let mut real = match res!(self.resolve_real(rel)) {
+            Some(r) => r,
+            None    => return Ok(None),
+        };
+        let root = res!(std::fs::canonicalize(&self.root)
+            .map_err(|e| err!(e, "Workspace: canonicalise {:?} failed.", self.root; IO, File)));
+        // A chain of links is followed hop by hop; the kernel's own bound on a chain is 40.
+        for _ in 0..40 {
+            match std::fs::symlink_metadata(&real) {
+                Ok(m) if m.file_type().is_symlink() => {},
+                _                                    => return Ok(Some(lex)),
+            }
+            if let Ok(t) = std::fs::canonicalize(&real) {
+                return Ok(if t.starts_with(&root) { Some(lex) } else { None });
+            }
+            // Dangling: where it points must be inside, its folder proved on disk.
+            let to = res!(std::fs::read_link(&real)
+                .map_err(|e| err!(e, "Workspace: cannot read the link '{}'.", rel; IO, File)));
+            let next = match real.parent() {
+                Some(p) => p.join(to),
+                None    => return Ok(None),
+            };
+            let (dir, name) = match (next.parent(), next.file_name()) {
+                (Some(d), Some(n)) => (d.to_path_buf(), n.to_os_string()),
+                _                  => return Ok(None),
+            };
+            real = match std::fs::canonicalize(&dir) {
+                Ok(d) if d.starts_with(&root) => d.join(name),
+                _                             => return Ok(None),
+            };
+        }
+        Ok(None)
+    }
+
     /// Resolve `rel` as [`resolve_real`](Self::resolve_real) does, then hold its parent folder
     /// open, so a delete or rename acts in THAT folder whatever is swapped into the path after
     /// the check.  `None` where the path leads out of the root, or where a folder on the way was

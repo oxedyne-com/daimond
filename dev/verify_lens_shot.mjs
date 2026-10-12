@@ -302,7 +302,13 @@ async function pageShare(page, file, rect) {
 		check('a Diamond with a one-colour page exists', !!did, made.why);
 		// The frame draws itself only when the device was opted in before the page opened.
 		// And opened on it, the way the app comes back to the Diamond a person left open.
-		await A.page.evaluate((id) => { try { localStorage.setItem('daimond-open-diamond', id); } catch (e) { /* none */ } }, did);
+		// This tab's own view (TAB_VIEW_KEY), read by the reload below.
+		await A.page.evaluate((id) => { try {
+			const k = (window.DaimondAccounts ? DaimondAccounts.prefix() : '') + 'daimond-tab-view';
+			const v = JSON.parse(sessionStorage.getItem(k) || '{}');
+			v.diamond = id; v.chat = ''; v.face = '';
+			sessionStorage.setItem(k, JSON.stringify(v));
+		} catch (e) { /* none */ } }, did);
 		await A.page.reload({ waitUntil: 'domcontentloaded' });
 		await signInAs(A, 'lensown');
 		const shown = await showCrystal(A.page);

@@ -51,6 +51,19 @@ for (const bad of ['{"items":{', 'null', '[]', '{"items":[]}', '{"items":7}', '{
 	check(`${bad}: a parcel is not adopted over it`, threw && m.get(KEY) === bad, m.get(KEY));
 }
 
+// ── A malformed ENTRY damages the record too (PATHTYPE) ────────────
+// `at` as a string, the entry a bare word: the engine's `trashed_ids` reads
+// these as UNREAD; dropping the entry here read a trashed Diamond as live.
+for (const bad of ['{"v":1,"items":{"aa":{"k":"d","at":"5","back":0}}}',
+	'{"v":1,"items":{"aa":"trashed"}}', '{"v":1,"items":{"aa":{"k":"d","at":5,"back":null}}}',
+	'{"v":1,"items":{"aa":[5]}}']) {
+	fresh(bad);
+	check(`${bad}: damaged`, dmg() === true);
+	check(`${bad}: a put is refused`, T.put('bb', 'diamond') === false && m.get(KEY) === bad, m.get(KEY));
+}
+fresh('{"v":1,"items":{"aa":{"k":"d","at":5}}}');
+check('an absent `back` is a Diamond never restored, not damage', dmg() === false && T.has('aa'));
+
 // ── The explicit reset is the one way out ──────────────────────────
 fresh('{"items":{');
 check('resetDamaged writes an empty record', rst() === true && dmg() === false

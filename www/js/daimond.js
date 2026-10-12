@@ -1019,19 +1019,108 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// tile brought it back — which is exactly what was reported, with the record
 	// never having left the disk.
 	//
-	// localStorage rather than sessionStorage, because the case this is for is a
-	// phone whose app was KILLED and relaunched, and sessionStorage does not
-	// survive that. The cost is that two windows of one account share the mark
-	// and each reload lands on whichever selected last; opening the wrong chat of
-	// two you have open is a smaller fault than losing the one you were reading.
-	var OPEN_CHAT_KEY = 'daimond-open-chat';
-	// AND THE DIAMOND, for exactly the reason the chat is remembered. A reload
-	// restored the chat you were reading and dropped the Diamond you were in,
-	// so a Diamond came back as an empty "+ New chat" on the crystal face --
-	// every reload, on the one surface Daimond is developed from. Whichever was
-	// selected last wins: `selectChat` clears this and `selectDiamond` clears
-	// the chat key, so there is one answer to "where was I" and not two.
+	// ── WHERE THIS TAB IS: one owner, and it is per tab (2026-10-12) ─────────
+	//
+	// The open chat or Diamond, the face it is on and the open panels were kept
+	// in localStorage, which every tab of the origin shares. So a BACKGROUND tab
+	// that moved -- a Diamond opened, a daimon showing a file in Doc -- rewrote
+	// "where was I" for the tab being read, and that tab's next reload obeyed
+	// it: the owner's tab came back on another tab's Diamond with an empty Doc
+	// panel open. `dev/verify_viewpertab.mjs` holds the rule.
+	//
+	// So the view lives in sessionStorage, which survives a reload of THIS tab
+	// and dies with it. A tab with no view of its own -- a new tab, or a phone
+	// whose app was killed, the case that put this in localStorage to begin
+	// with -- seeds from the DEVICE's last view, and only a FOCUSED tab writes
+	// that: on every move it makes, and again whenever it gains focus. A tab in
+	// the background never does, so the device's answer is always the last tab
+	// the user was actually looking at.
+	//
+	// Whichever was selected last wins within the record: a chat clears the
+	// Diamond and a Diamond clears the chat, so there is one answer to "where
+	// was I" and not two. The panels' device copy is the layout's own
+	// `open`/`stage`/`dock` (DaimondPanels), written under the same focus rule.
+	var TAB_VIEW_KEY     = 'daimond-tab-view';		// sessionStorage, per account: this tab's view
+	var LAST_VIEW_KEY    = 'daimond-last-view';		// localStorage: the focused tab's view, the seed for a new tab
+	var OPEN_CHAT_KEY    = 'daimond-open-chat';		// legacy device keys: read once to seed, removed on the first publish
 	var OPEN_DIAMOND_KEY = 'daimond-open-diamond';
+	var tabView = null;		// this tab's view, read once
+
+	/// sessionStorage is not under the accounts shim, so the account goes in the
+	/// key by hand: an account switch is a reload of this same tab.
+	function tabViewKey() {
+		var pre = '';
+		try { pre = window.DaimondAccounts ? (DaimondAccounts.prefix() || '') : ''; } catch (e) { /* no accounts module */ }
+		return pre + TAB_VIEW_KEY;
+	}
+
+	function cleanView(v) {
+		v = (v && typeof v === 'object') ? v : {};
+		var out = {
+			chat:    typeof v.chat === 'string' ? v.chat : '',
+			diamond: typeof v.diamond === 'string' ? v.diamond : '',
+			face:    (v.face === 'chat' || v.face === 'crystal') ? v.face : '',
+		};
+		if (v.panels && typeof v.panels === 'object') out.panels = v.panels;
+		return out;
+	}
+
+	function tabViewGet() {
+		if (tabView) return tabView;
+		var v = null;
+		try { v = JSON.parse(sessionStorage.getItem(tabViewKey()) || 'null'); } catch (e) { /* none, or private mode */ }
+		if (v && typeof v === 'object') return (tabView = cleanView(v));
+		// No view of its own: seed from the device. No panels in the seed -- the
+		// layout already is the device's copy of them, and `load` reads it.
+		var d = readJson(LAST_VIEW_KEY, null);
+		if (!d) {
+			d = {};
+			try {
+				var oc = localStorage.getItem(OPEN_CHAT_KEY) || '';
+				var od = localStorage.getItem(OPEN_DIAMOND_KEY) || '';
+				if (od) d.diamond = od; else d.chat = oc;
+			} catch (e) { /* private mode */ }
+		}
+		tabView = cleanView(d);
+		delete tabView.panels;
+		writeTabView();
+		return tabView;
+	}
+
+	function writeTabView() {
+		try { sessionStorage.setItem(tabViewKey(), JSON.stringify(tabView)); } catch (e) { /* private mode: this tab forgets */ }
+	}
+
+	/// Is this the tab the user is looking at? Only it may speak for the device.
+	function tabForeground() {
+		try { return document.visibilityState !== 'hidden' && document.hasFocus(); } catch (e) { return false; }
+	}
+
+	function publishLastView() {
+		var v = tabViewGet();
+		try {
+			localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({ chat: v.chat, diamond: v.diamond, face: v.face }));
+			localStorage.removeItem(OPEN_CHAT_KEY);
+			localStorage.removeItem(OPEN_DIAMOND_KEY);
+		} catch (e) { /* quota or private mode: a new tab falls back to the newest chat */ }
+	}
+
+	function tabViewSet(patch) {
+		var v = tabViewGet();
+		Object.keys(patch).forEach(function (k) { v[k] = patch[k]; });
+		writeTabView();
+		if (tabForeground()) publishLastView();
+	}
+
+	/// Gaining focus makes this tab the device's answer again, panels included.
+	function tabGainedFocus() {
+		if (!tabForeground()) return;
+		publishLastView();
+		try { window.dispatchEvent(new Event('daimond:tabfocus')); } catch (e) { /* old engine */ }
+	}
+	window.addEventListener('focus', tabGainedFocus);
+	document.addEventListener('visibilitychange', tabGainedFocus);
+	window.DaimondTabView = { get: function () { return cleanView(tabViewGet()); }, foreground: tabForeground };
 
 	/// A message id minted by the scheme that named a message by its POSITION ALONE.
 	///
@@ -11883,8 +11972,89 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Returns
 	/// True only when `rec`'s thread is the one on screen.
 	function daimonOnScreen(rec) {
-		return !!(rec && current && current.id === rec.id && centreMode === 'daimon');
+		return ownOnScreen(rec) && centreMode === 'daimon';
 	}
+
+	/// Is THIS conversation's own place what the Centre is drawing: an ordinary chat's
+	/// thread, or either face of the Diamond a daimon belongs to? `daimonOnScreen` is
+	/// this and the conversation face besides, so the two cannot drift apart.
+	function ownOnScreen(rec) {
+		if (!rec || !current || current.id !== rec.id) return false;
+		return rec.diamondId ? (centreMode === 'daimon' || centreMode === 'focus') : centreMode === 'chat';
+	}
+
+	/// Why `rec`'s own place is not what the person sees, in the daimon's language, or
+	/// '' when it is and the app is on screen. `askUnseenWhy` and capture's fence both
+	/// answer from this, so a question and a picture are refused for the same reasons.
+	///
+	/// # Arguments
+	/// * `rec` - A chat record, or nothing.
+	/// * `face` - Whether the conversation face itself is needed (a question), or any
+	///   face of the Diamond will do (a picture of the screen).
+	function unseenWhy(rec, face) {
+		if (document.visibilityState === 'hidden') return 'the app is not on screen at all';
+		if (face ? daimonOnScreen(rec) : ownOnScreen(rec)) return '';
+		var other = centreMode === 'focus' ? 'a Diamond\'s page (its crystal face)' : 'another conversation';
+		return 'the person is looking at ' + other + ', not at yours';
+	}
+
+	/// The conversation the person has open, as a turn's keeper names it: a Diamond's id
+	/// (either face), `chat:<id>` for an ordinary chat, or '' for none.
+	function convKey() {
+		if (currentDiamond) return currentDiamond.id;
+		return current ? (current.diamondId || 'chat:' + current.id) : '';
+	}
+
+	/// Mark a panel as showing what the open conversation put in it (CAPTURE-FENCE QA A F1,
+	/// 2026-10-12): the Doc and Preview panels belong to the conversation they were filled in.
+	/// `who` names the conversation whose turn filled it, when a turn did (`file_show`).
+	function ownPanel(name, who) {
+		var el = document.getElementById('panel-' + name);
+		if (el) el.setAttribute('data-owner', who || convKey());
+	}
+
+	/// The fence on a picture of the screen (FIRE-B QA F1, 2026-10-12): it draws only while
+	/// the asking conversation's own place is on screen and the app is visible -- a turn left
+	/// running while the person opened another Diamond photographed THAT one into its own
+	/// folder. `owner` is the turn's keeper: a Diamond's id, or `chat:<id>`.
+	///
+	/// Every VIEW has an owner too (CAPTURE-FENCE QA A, rc-b rulings, 2026-10-12). The centre is
+	/// the open conversation's; a file panel is the conversation's it was filled in (`ownPanel`);
+	/// a rail row is its own Diamond's or chat's; the rest (Web, the Guide) is app chrome. So
+	/// `unseen` refuses a named view owned by another conversation, and `foreign` lists what a
+	/// picture of the screen or the rail draws empty. A conversation this device holds no record
+	/// of is "another conversation" too, as it is on a runner: the person is not looking at it.
+	window.DaimondScreen = {
+		unseen: function (owner, view) {
+			var o = String(owner || '');
+			var rec = o.indexOf('chat:') === 0
+				? chats.find(function (c) { return c.id === o.slice(5); })
+				: chats.find(function (c) { return c.diamondId === o; });
+			var why = unseenWhy(rec || null, false);
+			if (why) return why;
+			var p = /^[a-z][a-z0-9_-]*$/.test(String(view || ''))
+				? document.querySelector('.panel[data-panel="' + view + '"][data-owner]') : null;
+			return p && p.getAttribute('data-owner') !== o
+				? 'the ' + view + ' view shows a file opened in another conversation' : '';
+		},
+		foreign: function (owner) {
+			var o = String(owner || '');
+			var out = [];
+			document.querySelectorAll('.session-box[data-id]').forEach(function (el) {
+				var k = el.classList.contains('diamond-box') ? el.dataset.id : 'chat:' + el.dataset.id;
+				if (k !== o) out.push(el);
+			});
+			document.querySelectorAll('.panel[data-owner]').forEach(function (el) {
+				if (el.getAttribute('data-owner') !== o) out.push(el);
+			});
+			// The Graph draws a box per Diamond with its name: another conversation's pixels,
+			// as its rail row is (lead ruling, 2026-10-12). The asking Diamond's own box stays.
+			document.querySelectorAll('#panel-graph g.graph-node[data-diamond-id]').forEach(function (el) {
+				if (el.getAttribute('data-diamond-id') !== o) out.push(el);
+			});
+			return out;
+		},
+	};
 	// ── Which Diamonds are working ─────────────────────────────
 	//
 	// ONE BOOLEAN FOR THE WHOLE APP UNTIL 2026-08-28, and that is the whole of
@@ -13242,6 +13412,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		function save() {
+			// Which panels are open is part of where THIS TAB is (TAB_VIEW_KEY), so
+			// it is kept per tab first. The layout -- shared by every tab, and the
+			// device's copy of the open panels a new tab starts from -- is written
+			// only by the tab the user is looking at: a background tab that opened
+			// Doc for a daimon's file must not open it in the tab being read.
+			tabViewSet({ panels: { open: open, stage: stage, dock: dock } });
+			if (!tabForeground()) return;
 			try {
 				localStorage.setItem(KEY, JSON.stringify({
 					open: open, stage: stage, dock: dock,
@@ -13257,9 +13434,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}));
 			} catch (e) { /* layout is a nicety; never break on quota */ }
 		}
+		/// The open panels as this tab left them, laid over the device's layout.
 		function load() {
 			var st = readJson(KEY, null);
-			if (!st) { pinned = DEFAULT_PINNED.filter(def); return; }
+			var tp = tabViewGet().panels;
+			if (!st && !tp) { pinned = DEFAULT_PINNED.filter(def); return; }
+			if (!st) pinned = DEFAULT_PINNED.filter(def);
+			if (tp) st = Object.assign({}, st || {}, { open: tp.open, stage: tp.stage, dock: tp.dock });
 			if (st.open)   Object.keys(st.open).forEach(function (k) { if (def(k)) open[k] = !!st.open[k]; });
 			if (st.widths) Object.keys(st.widths).forEach(function (k) { widths[k] = st.widths[k]; });
 			// The whole range is legal: the appliers clamp to what fits, so a handle
@@ -14657,7 +14838,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return true;
 		}
 
+		/// A tab gaining focus becomes the device's answer for the open panels.
+		/// Only those three are written, onto the layout as it stands: this tab's
+		/// widths and pins may be older than another tab's.
+		function publishOpen() {
+			var st = readJson(KEY, null) || {};
+			st.open = open; st.stage = stage; st.dock = dock;
+			try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* layout is a nicety */ }
+		}
+
 		function init() {
+			window.addEventListener('daimond:tabfocus', publishOpen);
 			mainEl  = document.getElementById('main');
 			tagsEl  = document.getElementById('panel-tags');
 			stageEl = document.getElementById('stage');
@@ -18412,10 +18603,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return 'the question cannot be drawn as given: it needs a question and 2 to 4 options, '
 				+ 'each with a label and a meaning, and a recommendation naming one of them';
 		}
-		var face = centreMode === 'focus' ? 'a Diamond\'s page (its crystal face)' : 'another conversation';
-		var where = document.visibilityState === 'hidden'
-			? 'the app is not on screen at all'
-			: 'the person is looking at ' + face + ', not at yours';
+		var where = unseenWhy(null, true);
 		return where + ', and a question is drawn only on a screen showing the conversation that asks it';
 	}
 
@@ -24634,7 +24822,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// sends the note it was always going to and a recovered preset keeps its mark.
 	function recoverUserRecord(chat, iturn, t) {
 		var meta = (t && t.meta) || {};
-		return pushUserRecord(chat, { role: 'user', content: (t && t.userText) || '', mid: iturn, iturn: iturn, ts: nowTs() },
+		// At the time the turn opened, so the turn folded in after it sits where it was asked.
+		return pushUserRecord(chat, { role: 'user', content: (t && t.userText) || '', mid: iturn, iturn: iturn, ts: (t && +t.at) || nowTs() },
 			meta.app !== true, typeof meta.pre === 'string' ? meta.pre : '');
 	}
 
@@ -25561,6 +25750,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				: (m.content ? t('turn.interrupted')  : t('turn.interrupted_early')));
 		var btn = document.createElement('button');
 		btn.className = 'ti-continue';
+		// A DAIMON TURN IS RETRIED, not continued (D-20261010-22: "Retry now, Resume
+		// later"). Continue re-enters through the chat path, which a Diamond's daimon
+		// does not run on; Retry asks his question again through `runSteer`.
+		if (current && current.diamondId && !m.why) {
+			btn.textContent = t('turn.retry');
+			btn.addEventListener('click', function () { continueTurn(current, m.iturn, m.itext, false, true); });
+			foot.appendChild(label); foot.appendChild(btn);
+			div.appendChild(foot);
+			return;
+		}
 		btn.textContent = t('turn.continue');
 		btn.title = t('turn.continue_help');
 		btn.addEventListener('click', function () { continueTurn(current, m.iturn, m.itext); });
@@ -26914,15 +27113,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// holds it open (`recoverInterrupted` leaves a handed-off turn to this). Folded
 			// into the reconstructed chat as interrupted, its rows named for that run, and
 			// the turn ends without running again.
-			interrupted: async function (er) {
+			// The boot recovery (`recoverRunnerTurn`) reconstructs nothing and hands it the
+			// chat it holds as `c`.
+			interrupted: async function (er, c) {
 				var tid = String((er && er.turnId) || '');
-				if (!tid || !window.DaimondJournal || !ctx || !ctx.chat) return false;
+				var cx = ctx || c;
+				if (!tid || !window.DaimondJournal || !cx || !cx.chat) return false;
 				var rec;
 				try { rec = await DaimondJournal.recover(); } catch (e) { return false; }
 				var t = null;
 				(rec.turns || []).forEach(function (x) { if (x && String(x.turnId) === tid && x.meta && x.meta.ho) t = x; });
 				if (!t) return false;
-				var chat = ctx.chat;
+				var chat = cx.chat;
 				chat.messages = chat.messages || [];
 				foldJournalTurn(chat, t, { runner: true });
 				if (t.meta.run) dropOtherRunRows(chat, tid, String(t.meta.run), null);
@@ -27032,8 +27234,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			},
 			abort: function (why) {
 				try { if (ctx && ctx.chat) Workers.cancelAwaits(ctx.chat.id); } catch (e) { /* best effort */ }
-				// The reason first, so the engine's `ended` event finds it when the stop lands.
-				if (ctx && ctx.chat) { ctx.chat._stopWhy = String(why || ''); abortTurn(ctx.chat); }
+				// The reason first, so the engine's `ended` event finds it when the stop lands. A
+				// 'user' stop is the sender's Stop (R3 F1): marked as a Stop pressed here marks it.
+				if (ctx && ctx.chat) {
+					if (why === 'user') ctx.chat._aborted = true;
+					ctx.chat._stopWhy = String(why || '');
+					abortTurn(ctx.chat);
+				}
 			},
 			pushResult: async function () {
 				// A DAIMON'S session is written by `runSteer` itself, straight from
@@ -28415,7 +28622,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Stop a turn another device is running (D-20261011-21): revoke its lease SETTLED.
 	/// The runner's liveness check reads the revoke and aborts within one gap, and the
 	/// settled stamp makes every take refuse the turn, so no backstop, recovery or other
-	/// collector runs it again. A runner stopped this way sends no partial answer back.
+	/// collector runs it again. The runner reads the settled revoke as this person's Stop
+	/// (R3 F1): its partial answer is kept, marked stopped, and sent back, exactly as a
+	/// Stop pressed on the runner itself ends the turn.
 	async function peerStopTurn(turnId) {
 		var tid = String(turnId || '');
 		if (!tid || _peerStopping[tid] || !window.DaimondLease || !DaimondLease.revoke) return;
@@ -28744,6 +28953,58 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// An `error` report goes with each release, so the originator is told WHY it is
 	/// being handed back rather than left to infer it from a state change.
+	/// END A HANDED-OFF RUN THIS DEVICE WAS RUNNING WHEN IT WENT AWAY (R3 F3), the caller
+	/// holding the turn's work claim. The journal holds the run open (`runTurn`, or
+	/// `runSteer`'s detached branch for a daimon), so it is folded back Interrupted and
+	/// reported, and the lease settled done, by the same door the errand's re-collect takes
+	/// (`DaimondPeer.reportInterrupted`): the sender reads "interrupted" with its Retry,
+	/// never a re-run and never a hand-back. Answers whether it ended the turn; false when
+	/// the journal holds no run of it here, or the chat is not on this device.
+	async function endRunnerTurn(tid, lr) {
+		if (!window.DaimondJournal || !window.DaimondPeer || !DaimondPeer.reportInterrupted) return false;
+		var rec;
+		try { rec = await DaimondJournal.recover(); } catch (e) { return false; }
+		var t = null;
+		(rec.turns || []).forEach(function (x) { if (x && String(x.turnId) === String(tid) && x.meta && x.meta.ho) t = x; });
+		if (!t) return false;
+		var chat = null;
+		for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === t.chatId) { chat = chats[i]; break; }
+		if (!chat) return false;
+		var l = lr || {};
+		var e = { turnId: String(tid), chatId: t.chatId, eid: l.eid, dispatchedBy: l.dispatchedBy };
+		var res = null;
+		try { res = await DaimondPeer.reportInterrupted(e, peerRunErrandDeps({}), { chat: chat }); }
+		catch (err) { res = null; }
+		diag('runner restart interrupted', 'turn=' + String(tid).slice(0, 12) + ' ' + (res ? 'reported' : 'not reported'));
+		if (res) { try { renderDispatchedBadges(); } catch (err) { /* no tiles up */ } }
+		return !!res;
+	}
+
+	/// The boot half of the runner's recovery (R3 F3): every handed-off run the journal holds
+	/// open whose lease THIS device still holds live is ended here, at once. It used to wait
+	/// for the errand to be collected again, and a runner that reloads keeps no hold on the
+	/// errand's row, so it never was: the sender sat on Stop to the lease's deadline. A door
+	/// that cannot be read is asked again a few times; a lease that is another device's, or
+	/// gone, leaves the entry to the errand and the deadline.
+	async function recoverRunnerTurns(tids, tries) {
+		if (!tids.length || !window.DaimondPeer || !DaimondPeer.readTwice || !DaimondPeer.syncCas) return;
+		var door = null;
+		try { door = await DaimondPeer.readTwice(DaimondPeer.syncCas(peerSyncShim())); } catch (e) { door = null; }
+		if (!door || door.unread) {
+			if ((tries | 0) < 6) setTimeout(function () { recoverRunnerTurns(tids, (tries | 0) + 1); }, 10000);
+			return;
+		}
+		var snap = door.leases || {}, self = selfDeviceId();
+		for (var i = 0; i < tids.length; i++) {
+			var tid = tids[i], lr = snap[tid];
+			if (!lr || String(lr.holder) !== self || !DaimondLease.live(lr, leaseClockNow())) continue;
+			var claim = await claimTurnHere(tid);
+			if (!claim) continue;				// a run of it is already under way here
+			try { await endRunnerTurn(tid, lr); }
+			finally { claim.release(); }
+		}
+	}
+
 	async function releaseOwnStaleLeases() {
 		try {
 			if (!window.DaimondPeer || !DaimondPeer.staleOwnLeaseDecision) return 0;
@@ -28766,6 +29027,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					continue;
 				}
 				try {
+					if (await endRunnerTurn(tid, snap[tid])) { freed++; continue; }
 					diag('lease self-release', 'turn=' + tid + ' by=' + String(self).slice(0, 8));
 					// REPORT then RELEASE, the order every other hand-back keeps, so the
 					// account of the stop is on its way before the turn becomes claimable.
@@ -30279,6 +30541,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so no record can carry the badge without the id and this cannot fire
 		// today. One field away from that is not a margin worth keeping.
 		if (!iturn) return;
+		if (chat.diamondId) fresh = true;		// a daimon turn is asked again; Resume is FLOW
 		// ASKED BEFORE ANYTHING MOVES. A turn a pause caught part way comes back with this
 		// button (`brakeHeld`), and Continue is a new dispatch: while the pause holds it is
 		// refused in the words every door uses, and the badge stays for when play is pressed.
@@ -30359,6 +30622,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				answerAgain(chat, iturn);
 				return;
 			}
+			// A RUN THE RUNNER LOST IS ASKED AGAIN AS A SEND IS (HANDOFF post-QA B, F-B1/F-B2).
+			// Both devices draw its Retry, so it goes through the routed retry door: the switch
+			// decides where it runs, as at Send, and the new turn is named from the lost one, so
+			// two devices' Retries name ONE turn and its lease lets one of them run it.
+			if (!chat.diamondId && mine.some(function (m) { return m.interrupted && m.why === 'runner'; })) {
+				retryTurn(chat, iturn, text, { route: true, lost: true });
+				return;
+			}
 			// NOTHING ARRIVED, so there is nothing to keep: the old path, and here it is
 			// right. Tombstone the turn so the append-only merge cannot resurrect it beside
 			// the retry, drop it from this tab, and ask the question again.
@@ -30372,7 +30643,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// mid was tombstoned just above; re-run under it, the new prompt was swept with the
 			// old one and every device kept an answer with no question (noresurrect (4)).
 			if (contOpts && contOpts.turnId) contOpts = Object.assign({}, contOpts, { turnId: newMid() });
-			runTurn(chat, text, contOpts);
+			askAgain(chat, text, contOpts);
 			return;
 		}
 		// The badge and the button come off, and the partial becomes an ordinary answer. Nothing
@@ -30545,7 +30816,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// retracted and billed again here.
 		var tombs = loadMsgTombs();
 		if (mine.every(function (m) { return tombs[m.mid]; })) return false;
-		var nmid = newMid();	// the replacing turn's id
+		// A LOST RUN'S RETRY IS NAMED FROM IT (F-B1): every device that presses it names the
+		// same turn, and a device already holding a row of that turn -- another device's
+		// Retry, synced -- has nothing left to ask.
+		var lost = !!(ropts && ropts.lost);
+		var nmid = lost ? lostRetryMid(iturn) : newMid();	// the replacing turn's id
+		if (lost && (chat.messages || []).some(function (x) {
+			return x && (String(x.mid) === nmid || String(x.iturn || '') === nmid);
+		})) return false;
 		try {
 			if (window.DaimondLedger && DaimondLedger.markRetried) {
 				var ans = null;
@@ -30566,16 +30844,126 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { if (window.DaimondJournal) DaimondJournal.clearTurn(iturn); }
 		catch (e) { /* the continuation opens an entry of its own */ }
 		renderHistory(chat.messages);
-		if (ropts && ropts.route) return retryRouted(chat, text, nmid);
-		return runTurn(chat, text, Object.assign({}, ropts || { person: true }, { mid: nmid }));
+		// A DAIMON'S RETRY KEEPS ITS ROUTE TOO (R3 3c): it goes to the send door's hand-off
+		// first, so a phone hands it to the runner again and the permit is asked again where
+		// it was asked; only a hand-off that declines runs it here, through `runSteer`.
+		if (ropts && ropts.route) return retryRouted(chat, text, nmid, lost);
+		return askAgain(chat, text, Object.assign({}, ropts || { person: true }, { mid: nmid }));
 	}
 
 	/// A retry ASKED AGAIN WHERE IT WAS ASKED (a refused permit's Retry): the turn goes the
 	/// way a send goes, so a phone hands it to the peer again and the permit is asked of
 	/// this device again, rather than run here where the question never arises.
-	async function retryRouted(chat, text, nmid) {
+	/// Ask `text` again as a new turn of `chat`. A Diamond's daimon conversation is run by
+	/// `runSteer`, never `runTurn`: the chat path would answer it as an ordinary chat, on
+	/// the wrong app, outside the Diamond.
+	function askAgain(chat, text, opts) {
+		if (chat && chat.diamondId) {
+			var f = diamonds.find(function (x) { return x.id === chat.diamondId; })
+				|| (currentDiamond && currentDiamond.id === chat.diamondId ? currentDiamond : null);
+			if (!f) return false;
+			return runSteer(f, text, 0, null, { person: true, said: true });
+		}
+		return runTurn(chat, text, opts);
+	}
+
+	async function retryRouted(chat, text, nmid, lost) {
 		if (await maybeAutoDispatch(chat, text, '', nmid)) return true;
+		// A daimon declined by the hand-off steers here, as its send does (`askAgain`): the
+		// chat run below would answer it outside the Diamond.
+		if (chat.diamondId) return askAgain(chat, text, { person: true, mid: nmid });
+		if (lost) return runRetryHere(chat, text, nmid);
 		return runTurn(chat, text, { person: true, mid: nmid });
+	}
+
+	/// The id of the turn that retries the lost run `iturn`: derived, never drawn, so the
+	/// Retry pressed on each device names one turn (F-B1).
+	function lostRetryMid(iturn) { return String(iturn) + '-rt'; }
+
+
+	/// Run here the retry of a run the runner lost, FENCED as a hand-off's run is (F-B1).
+	///
+	/// Its Retry is on every device that holds the chat, and each press names the same turn
+	/// (`lostRetryMid`). So the run holds that turn's work claim (`claimTurnHere`), which
+	/// stands it down beside a runner's collect of the same turn on this device, and takes
+	/// its lease, which stands down a press on any other device: the loser reads the turn
+	/// as held, not as one to ask. The removal of the lost run is then flushed PARCEL-FIRST,
+	/// before the turn starts (a push waits over a live turn), so a device that has not
+	/// pressed loses its Retry within a beat rather than when this run ends.
+	///
+	/// A lease door that cannot be read decides nothing: the question goes back into the
+	/// composer, said, rather than run unfenced or vanish.
+	async function runRetryHere(chat, text, nmid) {
+		var claim = await claimTurnHere(nmid);
+		if (!claim) {
+			diag('retry stand-down', 'turn=' + nmid + ' a run of it is under way on this device');
+			return false;
+		}
+		var self = selfDeviceId(), cas = null, won = false, watch = null;
+		try {
+			if (window.DaimondLease && DaimondLease.take && window.DaimondPeer && DaimondPeer.syncCas) {
+				cas = DaimondPeer.syncCas(peerSyncShim());
+				var took = await DaimondLease.take(nmid, { holder: self, ts: Date.now() }, cas, leaseClockNow);
+				if (!took || !took.won) {
+					var why = String((took && took.why) || '?');
+					diag('retry stand-down', 'turn=' + nmid + ' lease ' + why + ' holder=' + String((took && took.holder) || '').slice(0, 8));
+					if (DaimondPeer.standDownUndecided && DaimondPeer.standDownUndecided(why)) {
+						if (ownsChat(chat) && chatInput && !chatInput.value.trim()) { chatInput.value = text; syncSendMode(); }
+						toast(t('turn.retry_undecided'), true);
+					}
+					return false;
+				}
+				won = true;
+				watch = watchRetryLease(chat, nmid, self, cas);
+			}
+			try { if (window.DaimondSync && DaimondSync.flush) await DaimondSync.flush(); }
+			catch (e) { /* the removal travels with the turn's own push */ }
+			return await runTurn(chat, text, { person: true, mid: nmid });
+		} finally {
+			if (watch) watch();
+			if (won) {
+				try {
+					await DaimondPeer.settleLease('turn', nmid, self, 'done', cas, leaseClockNow);
+					await DaimondPeer.settleLease('turn', nmid, self, 'released', cas, leaseClockNow);
+				} catch (e) { /* the lease ages out at its deadline */ }
+			}
+			claim.release();
+		}
+	}
+
+	/// Keep the lease of a retry run here, and STOP the run when it is taken from it.
+	///
+	/// The device that lost the lease draws Stop on this run (`peerHeldTurnOf`), and its
+	/// press revokes the lease settled (`peerStopTurn`). So the run renews its lease while it
+	/// runs, as a runner's does, and reads its own record each beat: a lease no longer this
+	/// device's -- revoked, settled, or another holder's -- ends the run as a Stop here would.
+	/// Returns the function that ends the watch.
+	function watchRetryLease(chat, tid, self, cas) {
+		var ended = false, beats = 0;
+		function stop(why) {
+			if (ended) return;
+			end();
+			diag('retry stopped', 'turn=' + tid + ' ' + why);
+			if (!chat._generating) return;
+			chat._aborted = true;
+			chat._stopWhy = 'user';
+			syncSendMode();
+			try { Workers.cancelAwaits(chat.id); } catch (e) { /* best effort */ }
+			abortTurn(chat);
+		}
+		var timer = setInterval(function () {
+			if (ended) return;
+			var r = null;
+			try { r = DaimondLease.record(tid); } catch (e) { r = null; }
+			if (r && (String(r.holder || '') !== String(self) || r.mode === 'released' || r.settled)) { stop('lease ' + String(r.mode || '?')); return; }
+			beats++;
+			if (beats % Math.max(1, Math.round((DaimondLease.RENEW_EVERY_MS || 30000) / 3000)) !== 0 || !DaimondLease.renew) return;
+			DaimondLease.renew(tid, self, cas, leaseClockNow).then(function (res) {
+				if (res && !res.ok && res.why === 'revoked') stop('renew revoked');
+			}, function () { /* the next beat renews again */ });
+		}, 3000);
+		function end() { ended = true; clearInterval(timer); }
+		return end;
 	}
 
 	/// Put the last question back in the composer, and run NOTHING.
@@ -30676,6 +31064,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var iturn = t.turnId, jmeta = t.meta || {}, runner = !!(opts && opts.runner);
 		var byMid = {};
 		chat.messages.forEach(function (m) { if (m && m.mid) byMid[String(m.mid)] = m; });
+		// THE TURN GOES BACK IN THE ORDER IT RAN. Each row takes the time its journal event
+		// was written, never earlier than the row before it: stamped all at the one instant
+		// of the recovery, the store's (ts, mid) order put the answer above its own tools,
+		// or above the question, by the toss of the mids (D-20261012-07).
+		var clock = +((byMid[String(iturn)] || {}).ts) || 0;
+		var tick = function (want) { clock = Math.max(+want || 0, clock + 1); return clock; };
 		// The tools that ran, in order; one still open when the tab died is shown as such.
 		// A row the journal names by mid (`toolOpen`'s `mid`) and the chat already holds --
 		// a handed-off run's, which the asker holds too -- is that row, never a second one.
@@ -30707,20 +31101,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				: outcomeOfStoredText(tl.result || '') === 'refused' ? 'refused' : 'failed';
 			if (have) {
 				if (!have.outcome) { have.content = tl.done ? (tl.result || '') : '(interrupted)'; have.outcome = oc; touchMsg(have); }
+				clock = Math.max(clock, +have.ts || 0);
 				return;
 			}
 			// The working that led to this call, on the record before it, as `runTurn` put it.
-			if (tl.said) logThinking(chat, tl.said);
+			if (tl.said) {
+				var n0 = chat.messages.length;
+				logThinking(chat, tl.said);
+				if (chat.messages.length > n0) chat.messages[n0].ts = tick(tl.at);
+			}
 			chat.messages.push({ role: 'tool_log', name: tl.name || '', args: tl.args || '',
 				content: tl.done ? (tl.result || '') : '(interrupted)',
-				outcome: oc, mid: tl.mid || newMid(), iturn: iturn, ts: nowTs() });
+				outcome: oc, mid: tl.mid || newMid(), iturn: iturn, ts: tick(tl.at) });
 		});
 
 		// The partial reply, badged interrupted, carrying the prompt so Continue can re-run it.
 		// Under the mid and the record the turn stamped at its start, so a recovered answer
 		// is the same product as the one that was streaming.
 		var recAns = { role: 'assistant', content: t.text || '', mid: jmeta.amid || newMid(),
-			interrupted: true, iturn: iturn, itext: t.userText || '', ts: nowTs() };
+			interrupted: true, iturn: iturn, itext: t.userText || '', ts: tick(t.lastAt) };
 		if (jmeta.prod && jmeta.amid) recAns.prod = [jmeta.prod];
 		if (runner) { recAns.why = 'runner'; if (jmeta.run) recAns.run = String(jmeta.run); }
 		var old = jmeta.amid ? byMid[String(jmeta.amid)] : null;
@@ -30752,23 +31151,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The turns folded back in here, cleared from the journal only once the
 		// store says they are on disk. See the clear below.
 		var recovered = [];
+		var runnerTurns = [];		// handed-off runs this device was running (`recoverRunnerTurns`)
 		var tombs = loadMsgTombs();
 		(rec.turns || []).forEach(function (t) {
 			var cid = t.chatId, iturn = t.turnId;
-			// A HANDED-OFF TURN IS THE ERRAND'S (r545 F-C2-1). The asker re-sends it after a
-			// reload here, and `peerRunErrandDeps().interrupted` folds it into the turn it
-			// is, as the asker's: folded here first, it would be a local turn of this
-			// device's. One past the hand-off deadline will never be sent again, so goes.
+			// A HANDED-OFF TURN IS THE ASKER'S (r545 F-C2-1; R3 F3): folded here as a local
+			// turn it would be this device's. It is ended through the runner's own door
+			// (`recoverRunnerTurns`, below, when this device still holds its lease), the door
+			// a re-collected errand also takes. One past the hand-off deadline goes.
 			var hm = t.meta || {};
 			if (hm.ho) {
 				var dl = (window.DaimondPeer && DaimondPeer.DISPATCH_DEADLINE_MS) || 15 * 60 * 1000;
 				if (Date.now() - (+hm.at || 0) > dl) DaimondJournal.clearTurn(iturn);
+				else runnerTurns.push(String(iturn));
 				return;
 			}
 			var chat = null;
 			for (var i = 0; i < chats.length; i++) if (chats[i].id === cid) { chat = chats[i]; break; }
 			if (!chat) { DaimondJournal.clearTurn(iturn); return; }   // the chat itself is gone
 			chat.messages = chat.messages || [];
+			// What he queued behind the turn goes back in the box, unsent, whatever became
+			// of the turn itself: this entry is its only copy (D-20261012-07).
+			giveBackQueue(chat, iturn, t.queue);
 			if (chat.messages.some(function (m) { return m.iturn === iturn; })) { DaimondJournal.clearTurn(iturn); return; }   // already recovered
 			// The answer the turn was writing, by the mid it was minted under: a local turn's
 			// answer carries no `iturn`, so without this a turn whose answer landed and whose
@@ -30834,6 +31238,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		if (touchedAny) { persistChats(); renderSessionList(); }
 		if (touchedCurrent && current) renderHistory(current.messages);
+		if (runnerTurns.length) recoverRunnerTurns(runnerTurns, 0);
 		if (rec.agents && rec.agents.length) { try { Workers.persist(); Workers.render(); } catch (e) { /* panel not up */ } }
 		// THE JOURNAL IS CLEARED LAST, behind the write it is waiting on.
 		//
@@ -32232,12 +32637,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		moveComposerTo(chat);
 		current = chat;
 		undoCheck();
-		// Remembered so the next boot comes back here. See OPEN_CHAT_KEY.
-		try {
-			localStorage.setItem(OPEN_CHAT_KEY, chat && chat.id ? chat.id : '');
-			localStorage.removeItem(OPEN_DIAMOND_KEY);   // a chat is where you are now
-		}
-		catch (e) { /* private mode: the boot falls back to the newest chat */ }
+		// Remembered so this tab's next boot comes back here; a chat is where you
+		// are now, so the Diamond goes. See TAB_VIEW_KEY.
+		tabViewSet({ chat: chat && chat.id ? chat.id : '', diamond: '', face: '' });
 		currentDiamond = null;                       // a chat is not a Diamond
 		signalDiamondChanged();
 		// The streaming refs point into the outgoing chat's DOM, which is about
@@ -32280,6 +32682,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 		syncComposer();   // reflect THIS chat's own generating state
+		// A file this chat's turn asked to show while the person was elsewhere, as a
+		// Diamond's is taken when it opens (`takeDeferred`): once, now.
+		if (window.DaimondViewer && DaimondViewer.takeDeferred && chat && chat.id) {
+			var waiting = DaimondViewer.takeDeferred('chat:' + chat.id);
+			if (waiting) {
+				Promise.resolve(Files.open(waiting)).catch(function () {
+					/* the file may have been moved or deleted since; nothing to say */
+				});
+			}
+		}
 		renderChatAttachments();
 		syncComposerAttachPrefix();
 		updateActiveSession();
@@ -36405,16 +36817,58 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 
-	/// The newest dispatched placeholder in `c` whose turn another device holds now, or null.
+	/// The turn of `c` another device holds now, as `{ iturn }`, or null.
+	///
+	/// ONE RULE, wherever the turn runs (HANDOFF post-QA B, lead ruling): a turn is held by
+	/// a peer when another device holds its live lease. Read off the newest dispatched
+	/// placeholder (a hand-off, its state classified with its report and ask), and off the
+	/// newest user row, whose turn a device may run Here under a lease of its own -- a lost
+	/// run's Retry pressed on two devices, where the one that lost the lease reads Stop on
+	/// the winner's run rather than idle.
+	///
+	/// That retry's own rows reach the other device only when it ends (a push waits over a
+	/// live turn), and the lost run's rows leave it at the start. So the run a chat lost is
+	/// remembered while its rows are on screen (`_lostRunOf`), and the retry's lease, named
+	/// from it (`lostRetryMid`), is read for the chat after the rows have gone.
 	function peerHeldTurnOf(c) {
 		var ms = (c && c.messages) || [];
+		var userSeen = false, lostSeen = false;
 		for (var i = ms.length - 1; i >= 0; i--) {
 			var m = ms[i];
-			if (!m || m.why !== 'dispatched' || !m.iturn) continue;
+			if (!m) continue;
+			if (!lostSeen && c.id && m.interrupted && m.why === 'runner' && m.iturn) {
+				lostSeen = true;
+				_lostRunOf[String(c.id)] = String(m.iturn);
+			}
+			if (!userSeen && m.role === 'user') {
+				userSeen = true;
+				var tid = String(m.iturn || m.mid || '');
+				try { if (tid && (_peerStopping[tid] || peerLeaseHeld(tid))) return { iturn: tid }; }
+				catch (e) { /* a lease that cannot be read holds nothing */ }
+			}
+			if (m.why !== 'dispatched' || !m.iturn) continue;
 			try { if (_peerStopping[String(m.iturn)] || PEER_HELD[peerUiStateFor(m)]) return m; }
 			catch (e) { /* a state that cannot be read holds nothing */ }
 		}
+		var lost = c && c.id ? _lostRunOf[String(c.id)] : '';
+		if (lost) {
+			var rt = lostRetryMid(lost);
+			try { if (_peerStopping[rt] || peerLeaseHeld(rt)) return { iturn: rt }; }
+			catch (e) { /* a lease that cannot be read holds nothing */ }
+		}
 		return null;
+	}
+	/// Per chat id, the newest run of it the runner lost, seen on this device (`peerHeldTurnOf`).
+	var _lostRunOf = {};
+
+	/// Does a device other than this one hold turn `tid`'s live lease?
+	function peerLeaseHeld(tid) {
+		if (!window.DaimondLease || !DaimondLease.holder) return false;
+		var h = DaimondLease.holder(tid);
+		if (!h || String(h) === String(selfDeviceId())) return false;
+		// A run that has finished holds nothing: `done` stays live until its release lands.
+		var r = DaimondLease.record ? DaimondLease.record(tid) : null;
+		return !(r && r.mode === 'done');
 	}
 	/// Is the CURRENT chat mid-turn? Generation is per-chat now, so a turn
 	/// running in one chat no longer freezes the others.
@@ -36551,6 +37005,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// The app's toast, for a classic script with a sentence to say: History's
 		/// refusal of a second restore of one Diamond (hist-safe R3).
 		toast:           function (text, isErr) { toast(String(text || ''), !!isErr); },
+		/// An engine refusal as the sentence the person reads: History's refused close.
+		plainError:      function (raw) { return friendlyError(raw); },
 		/// Re-read the Diamonds and redraw the rail. Published for
 		/// `verify_diamondwalk`, which has to ask for several walks at once to
 		/// prove they coalesce into one.
@@ -37809,9 +38265,56 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Hold a message until the turn in flight has finished. `words`, where the box held
 	/// something other than `text` (a `/concise` prefix is added on the way), is what the
 	/// composer gives up for it.
+	/// Write what is waiting on a chat's running turn into that turn's journal entry, so a
+	/// reload hands it back to the composer (`giveBackQueue`) rather than losing it
+	/// (D-20261012-07). In the order typed: what the turn already took (`_jsaid`), what was
+	/// said into it, then the queue. Only while the journalled turn (`_jturn`) runs: after
+	/// it closes its entry is gone, and a write then would open a stream with no turn in it.
+	function journalQueue(chat) {
+		if (!chat || !chat._jturn || !chat._generating || !window.DaimondJournal) return;
+		var items = (chat._jsaid || []).concat(chat._interject || [], chat._queue || []);
+		var sig = chat._jturn + '\n' + JSON.stringify(items);
+		if (sig === chat._jqSig) return;
+		chat._jqSig = sig;
+		try { DaimondJournal.queueSet(chat._jturn, chat.id, items); } catch (e) { /* no IDB: the queue lives as long as the tab */ }
+	}
+
+	/// A journalled turn begins: what waits on it is written under its id from here on.
+	function journalTurnBegins(chat, turnId) {
+		chat._jturn = String(turnId || '');
+		chat._jsaid = [];
+		chat._jqSig = '';
+		journalQueue(chat);
+	}
+
+	/// Hand words a reload cut off back to `chat`'s composer, unsent (D-20261012-07): into
+	/// the box when that chat is on screen, else into its kept draft, ahead of anything
+	/// already there. Once per turn in this tab, however often recovery runs.
+	var _queueGiven = {};
+	function giveBackQueue(chat, turnId, items) {
+		if (!chat || !items || !items.length || _queueGiven[turnId]) return;
+		_queueGiven[turnId] = true;
+		var text = items.join('\n\n');
+		var k = chatDraftKey(chat);
+		var join = function (had) { had = String(had || ''); return had.trim() ? text + '\n\n' + had : text; };
+		if (chatInput && (chat === current || (!!k && chatInput.dataset.draftKey === k))) {
+			chatInput.value = join(chatInput.value);
+			fitComposer();
+			syncSendMode();
+			try { if (k && window.DaimondDrafts) DaimondDrafts.set(k, chatInput.value); } catch (e) { /* storage blocked */ }
+		} else {
+			var kept = '';
+			try { kept = (k && window.DaimondDrafts) ? (DaimondDrafts.get(k) || '') : ''; } catch (e) { kept = ''; }
+			chat._draft = join(chat._draft || kept);
+			try { if (k && window.DaimondDrafts) DaimondDrafts.set(k, chat._draft); } catch (e) { /* storage blocked */ }
+		}
+		toast(t('chat.queue_returned'), true);
+	}
+
 	function enqueueMessage(chat, text, words) {
 		chat._queue = chat._queue || [];
 		chat._queue.push(text);
+		journalQueue(chat);
 		giveUpSent(chat, words === undefined ? text : words);
 		syncSendMode();
 		renderQueue();
@@ -37839,6 +38342,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat._interject.push(text);
 		notes.push({ pre: pre, at: at });
 		chat._interjectNote = notes;
+		journalQueue(chat);
 		giveUpSent(chat, words === undefined ? text : words);
 		syncSendMode();
 		renderQueue();
@@ -37857,6 +38361,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var kept = (chat._interjectNote || []).splice(at, 1)[0];
 			if (kept && typeof kept.pre === 'string') told = kept.pre;
 		}
+		// Taken by the turn, but saved only when it ends: still his to get back.
+		if (chat._jturn) { chat._jsaid = (chat._jsaid || []).concat([said]); journalQueue(chat); }
 		var rec = pushUserRecord(chat, { role: 'user', interject: true, content: said, mid: newMid(), ts: Date.now() }, true, told);
 		if (rec && rec.mid) heldNote(chat, chat.app, rec.mid);		// the engine took it at its seam
 		return rec;
@@ -37885,6 +38391,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (left.length && !locked && chats.indexOf(chat) !== -1) {
 			chat._queue = (chat._queue || []).length ? left.concat(chat._queue) : left;
 		}
+		journalQueue(chat);
 		if (current === chat) renderQueue();
 	}
 
@@ -37924,6 +38431,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// machinery counts questions by, so a bubble wearing it would be a turn that
 	/// does not exist -- shifting every turn number a fold maps through.
 	function renderQueue() {
+		journalQueue(current);		// every change to the queue on screen redraws it, so lands here
 		if (!chatOutput) return;
 		var waiting = (current && current._interject) || [];
 		var q       = (current && current._queue) || [];
@@ -38479,6 +38987,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (J) J.turnOpen(umid, chat.id, text, jmeta);
 
 		chat._generating = true;
+		if (J) journalTurnBegins(chat, umid);
 		// The press that asked for this turn is let go now the turn is under way (`holdSend`).
 		if (typeof opts.onStart === 'function') { try { opts.onStart(); } catch (e) { /* the turn goes on */ } }
 		busySay(chat, tOr('chat.busy', 'Thinking…'));
@@ -44635,9 +45144,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// machine folder when one is open. The walk is `js/wssearch.js`'s; what is here is
 		// where it walks and how a hit is drawn, kept apart from the panel's other drawing.
 		var searchWalk = null;			// the walk under way; the next keystroke cancels it
-		var SEARCH_MAX		= 100;		// rows drawn before "showing first N"
-		var SEARCH_STORE_CAP	= 4000;		// entries the browser store may cost one keystroke
-		var SEARCH_FOLDER_CAP	= 3000;		// and a machine folder
+		var SEARCH_MAX		= 100;		// result limit: rows drawn before "Showing first N"
+		var SEARCH_WALK_MAX	= 500000;	// walk limit: entries looked at, said aloud when reached
 
 		/// An empty box shows the folder in view; anything else searches the whole workspace.
 		async function applyFilter() {
@@ -44665,13 +45173,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (card) card.classList.toggle('files-searching', !!on);
 		}
 
-		/// One directory for the walk, with times, from the store or the machine folder.
+		/// One directory for the walk, names alone, from the store or the machine folder: a
+		/// folder's times are asked only where it holds a hit (`searchTimes`), since opening
+		/// every file of a real folder for its time cost minutes (WS-SEARCH, 12 Oct).
 		async function searchList(root, dir) {
-			var raw = String(await Wasm.list_stamped(dir, root.id === 'folder') || '');
+			var raw = String(await Wasm.list_names(dir, root.id === 'folder') || '');
 			return raw.split('\n').filter(Boolean).map(function (line) {
 				var b = line.split('\t');
-				return { name: b[0], dir: b[1] === 'dir', at: parseInt(b[3], 10) || 0 };
+				return { name: b[0], dir: b[1] === 'dir' };
 			});
+		}
+
+		async function searchTimes(root, dir) {
+			var raw = String(await Wasm.list_stamped(dir, root.id === 'folder') || '');
+			var at = {};
+			raw.split('\n').filter(Boolean).forEach(function (line) {
+				var b = line.split('\t');
+				at[b[0]] = parseInt(b[3], 10) || 0;
+			});
+			return at;
 		}
 
 		function searchFiles(q) {
@@ -44679,21 +45199,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			searchMode(true);
 			drawnKey = null;
 			treeEl.innerHTML = '';
-			var busy = listNote('loading', t('files.loading'));
+			// "Searching…" stays below the hits until the walk ends, so a short list is not
+			// read as the whole answer while the walk is still going.
+			var busy = listNote('loading', t('files.searching'));
 			treeEl.appendChild(busy);
 			var own = ownDir();
 			var roots = [];
-			if (own) roots.push({ id: 'store', path: own, cap: SEARCH_STORE_CAP });
-			roots.push({ id: 'store', path: '', cap: SEARCH_STORE_CAP, skip: own ? [own] : [] });
-			if (folderOpen()) roots.push({ id: 'folder', path: '', cap: SEARCH_FOLDER_CAP });
+			if (own) roots.push({ id: 'store', path: own });
+			roots.push({ id: 'store', path: '', skip: own ? [own] : [] });
+			if (folderOpen()) roots.push({ id: 'folder', path: '' });
 			var shown = 0;
 			var w = window.DaimondWsSearch.walk({
-				query: q, roots: roots, maxResults: SEARCH_MAX, list: searchList,
+				query: q, roots: roots, maxResults: SEARCH_MAX, maxVisits: SEARCH_WALK_MAX,
+				list: searchList, times: searchTimes,
 				onHit: function (h) {
 					if (searchWalk !== w) return;
-					if (busy.parentNode) busy.remove();
 					shown++;
-					treeEl.appendChild(searchRow(h, own));
+					treeEl.insertBefore(searchRow(h, own), busy.parentNode ? busy : null);
 				},
 			});
 			searchWalk = w;
@@ -44711,6 +45233,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					more.className = 'files-capped';
 					more.textContent = t('files.search_capped', { n: shown });
 					treeEl.appendChild(more);
+				}
+				// The walk limit is its own line: how much was searched, and that the rest was not.
+				if (st.stopped) {
+					var part = document.createElement('div');
+					part.className = 'files-capped files-stopped';
+					part.textContent = t('files.search_stopped', { n: st.visited.toLocaleString(DaimondI18n.locale ? DaimondI18n.locale() : undefined) });
+					treeEl.appendChild(part);
 				}
 			});
 		}
@@ -45321,6 +45850,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			document.dispatchEvent(new CustomEvent('daimond-links-changed'));
 		}
 
+		/// Which of these marked paths no longer exist? One `file_list` per parent folder, not
+		/// one per path. A parent that cannot be listed answers "not gone": a stat that cannot
+		/// see the parent has no business saying the child is not in it.
+		///
+		/// WS-GONE (12 Oct): this was `statAttachments`, and round 2 (1f6228e1) dropped it with
+		/// the old attach rows, so a deleted marked folder stood in Can change as if it were
+		/// there. The 8 Oct design's `Gone` row reads it again.
+		async function goneOf(paths) {
+			var byParent = {}, gone = {};
+			(paths || []).forEach(function (p) {
+				var cut = p.lastIndexOf('/');
+				var parent = cut < 0 ? '' : p.slice(0, cut);
+				(byParent[parent] = byParent[parent] || []).push(p);
+			});
+			await Promise.all(Object.keys(byParent).map(async function (parent) {
+				var names = null;
+				try {
+					var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: parent || '.' }));
+					if (res && res.outcome === 'done') {
+						names = {};
+						parseListing(res.text).forEach(function (e) { names[e.name] = 1; });
+					}
+				} catch (e) { /* names stays null: unreadable parent, not a verdict */ }
+				byParent[parent].forEach(function (p) {
+					if (names && !names[p.slice(p.lastIndexOf('/') + 1)]) gone[p] = true;
+				});
+			}));
+			return gone;
+		}
+
 		/// Draw the focus section for whatever is in focus, or hide it.
 		async function renderFocus() {
 			if (!focusEl) return;
@@ -45340,6 +45899,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					ring = (c && c.recent) || [];
 					title = (c && c.name) || t('role.chat');
 				}
+				// Read before the section is touched, as every read here is.
+				var gone = b ? await goneOf(b.attached) : {};
 			} catch (e) { b = null; }
 			if (seq !== focusSeq) return;
 			focusEl.textContent = '';
@@ -45379,7 +45940,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (u.focus !== f.id) return;
 				var at = can.findIndex(function (r) { return (r.kind === 'kit' ? 'kit:' + r.kit : r.path) === key; });
 				if (at >= 0) { can[at] = Object.assign({}, can[at], { taken: key }); return; }
-				var r = Object.assign({}, u.row, { taken: key, gone: true });
+				var r = Object.assign({}, u.row, { taken: key, dropped: true });
 				if (u.idx >= 0 && u.idx <= can.length) can.splice(u.idx, 0, r); else can.push(r);
 			});
 			can.forEach(function (r) {
@@ -45397,11 +45958,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					row = focusRow('dir', t('dws.own_folder'));
 					row.title = r.path;
 					focusMark(row, 'fixed', t('dws.own_folder'));
+					// A row that looks like every other row opens like one (OWN-FOLDER-INERT): the
+					// tree goes to the folder. A store path, so every reader finds it in the store.
+					sysRowAsButton(row, t('dws.own_folder'), function () { goDir(r.path); });
 				} else {
 					var base = r.path.slice(r.path.lastIndexOf('/') + 1) || r.path;
 					row = focusRow(/\.[^./]+$/.test(base) ? 'file' : 'dir', base);
 					row.title = r.path;
-					if (r.ro) focusText(row, 'place', t('dws.readonly'));
+					// Marked and no longer there: a muted row that still offers its take-away.
+					var lost = r.kind === 'mark' && !r.taken && !!gone[r.path];
+					if (lost) { row.classList.add('gone'); focusText(row, 'place', t('dws.gone')); }
+					else if (r.ro) focusText(row, 'place', t('dws.readonly'));
 					if (r.taken) { /* the Undo below stands in for the ◈ */ }
 					else if (r.kind === 'ghost') {
 						var why = t('dws.confirm_here', { where: t('dws.another_device') });
@@ -45413,7 +45980,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					}
 				}
 				// A row gone from the fence is not one of its rows (N1) while its Undo stands.
-				row.dataset.kind = r.gone ? 'taken' : r.kind;
+				row.dataset.kind = r.dropped ? 'taken' : r.kind;
 				if (r.path) row.dataset.path = r.path;
 				if (r.taken) {
 					row.classList.add('taken');
@@ -45507,6 +46074,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// not reload its marks: the attach cache moves only WITH the focus, which
 		/// the paperclip in the tree still toggles (`toggleAttachHold`).
 		function onDiamondChanged() {
+			followConversation();
 			var id = currentDiamond ? currentDiamond.id : null;
 			var same = (id === lastDiamondId);
 			lastDiamondId = id;
@@ -47527,8 +48095,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// answer at all the honest move is the text path, whose own read reports
 			// why the file could not be opened. The viewer would draw a header naming
 			// no format over a dump of nothing.
+			// The panel it lands in is stamped with whose it is: the turn that asked
+			// (`opts.owner`, from `file_show`), or the open conversation for his own act.
+			var who = (opts && typeof opts.owner === 'string') ? opts.owner : '';
 			if (!blank && info && !DaimondViewer.editable(info)) {
 				await showViewedFile(path, info, store);
+				ownPanel('preview', who);
 				return;
 			}
 			// Read through the door THIS open came through (passed to readRaw, not the module
@@ -47587,6 +48159,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!(opts && opts.quiet)) {
 				docFilling++;
 				try { DaimondPanels.show('doc'); } finally { docFilling--; }
+				ownPanel('doc', who);			// a quiet redraw is the same file, still its owner's
 			}
 			DaimondPanels.reflow();
 			viewEl.querySelector('[data-act="back"]').addEventListener('click', closeView);
@@ -49510,11 +50083,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// away back in front of him the moment he reopened the file.
 				draftDrop(curFile);
 			}
+			shutView();
+		}
+
+		/// Put the document away without asking: what was typed is already kept as a draft
+		/// (`draftKeep`, every keystroke), and opening the file again offers it back.
+		function shutView() {
 			viewEl.style.display = 'none';
 			curFile = null; editing = false;
 			docRelabel = null;                   // no view, no words of its own to put right
 			syncLineNo();                        // after the file is let go, not before
 			DaimondPanels.hide('doc');
+		}
+
+		// ── A FILE PANEL FOLLOWS ITS CONVERSATION (CAPTURE-FENCE QA A F1, 2026-10-12) ──
+		//
+		// The Work panel follows the open conversation; the Doc and Preview panels did not, so
+		// Diamond A's document stayed on screen beside B's thread, and B's own capture of the
+		// preview saved A's document into B's folder. rc-b's ruling (2): they close when the
+		// person opens another conversation, as the Work panel moves. The first conversation
+		// of the session only claims them, so a document the boot puts back stays.
+		var panelsOwner = null;		// convKey() the Doc and Preview were last claimed for
+
+		function followConversation() {
+			var k = convKey();
+			if (panelsOwner !== null && k !== panelsOwner) {
+				if (_pdfUrl || _docPdf || pvFile || watchedPath()) closePreview();
+				if (curFile || viewEl.style.display !== 'none') shutView();
+			}
+			panelsOwner = k;
+			ownPanel('doc');
+			ownPanel('preview');
 		}
 		// ── The System section: Daimond's own store ──────────────────
 		//
@@ -50074,15 +50673,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		Files.reshow(p);
 	});
 
-	// And who the screen belongs to right now, which only this module knows. A
-	// Diamond in view answers its own id; a chat answers the empty string, which
-	// is also what a daimon that acts for no Diamond names itself -- so an
-	// ordinary chat's show is never refused for want of an id. See
-	// `mayTakeScreen` in js/viewer.js for what is done with the answer.
+	// And who the screen belongs to right now, which only this module knows: the
+	// open conversation as a turn's keeper names it (`convKey`), a Diamond's id or
+	// `chat:<id>`. A chat answered the empty string until 2026-10-12, which a chat's
+	// turn also named itself, so a chat's show took whatever Diamond was open (see
+	// `file_show` in src/tools.rs). See `mayTakeScreen` in js/viewer.js for what is
+	// done with the answer.
 	if (window.DaimondViewer && DaimondViewer.screenOwner) {
-		DaimondViewer.screenOwner(function () {
-			return (currentDiamond && currentDiamond.id) || '';
-		});
+		DaimondViewer.screenOwner(convKey);
 	}
 	// And whether the turn asking runs here for ANOTHER device, whose screen it then is
 	// (D-20261006-27). See `runnerAskerOf`.
@@ -50966,6 +51564,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var all = diamondViews();
 		all[id] = (view === 'chat') ? 'chat' : 'crystal';
 		try { localStorage.setItem(DIAMOND_VIEW_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+		// The face this TAB is on, for its own reload. See TAB_VIEW_KEY.
+		if (currentDiamond && currentDiamond.id === id) tabViewSet({ face: all[id] });
 	}
 
 	function forgetDiamondView(id) {
@@ -54258,15 +54858,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `moveComposerTo`.
 		moveComposerTo(daimonChat(f));
 		currentDiamond = f;
-		// Remembered so the next boot comes back here. See OPEN_DIAMOND_KEY.
-		try { localStorage.setItem(OPEN_DIAMOND_KEY, f && f.id ? f.id : ''); }
-		catch (e) { /* private mode: the boot falls back to the newest chat */ }
 		signalDiamondChanged();
 		updateActiveDiamond();
 		sessionNameEl.textContent = f.name;
 		setDiamondWhen(f);
 		var want = (view === 'chat' || view === 'crystal') ? view : diamondView(f.id);
 		if (view) setDiamondView(f.id, want);
+		// Remembered so this tab's next boot comes back here, on this face. See TAB_VIEW_KEY.
+		tabViewSet({ diamond: f && f.id ? f.id : '', chat: '', face: want });
 		// A Diamond that carries an arrangement is worked in it. Only an arrangement
 		// the user deliberately saved exists, so this never closes a panel behind
 		// their back on a Diamond they never arranged.
@@ -57695,65 +58294,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// restore is undoable by its own toast; this one moves everything at once, so
 	/// the sentence names what is kept -- today's state, as a version of its own.
 	///
-	/// THE CRYSTAL IS RESTORED HERE AND NOT IN RUST where the engine has no file
-	/// versions: a build without them still has the version chain this panel was
-	/// written for, and the crystal half must keep working on it.
+	/// THE ENGINE PUTS BACK ALL OF IT, in the one version the restore records
+	/// (D-20261009-29 item 1; hist-safe U3, QA B B2, 2026-10-12): the files, the
+	/// crystal and the page, a version kept as markdown converted as the migration
+	/// converts one. The page wrote the crystal itself wherever the engine's answer
+	/// lacked one, and a refused close lacked one too, so v's crystal went over
+	/// today's files under no word. Nothing here writes a crystal.
 	async function restoreWholeVersion(id, v) {
 		if (diamondTurning(id)) {
 			var f = diamonds.find(function (x) { return x.id === id; }) || {};
 			noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
 			return;
 		}
-		var was = '';
-		try { was = await diamondApp().read_version(id, v); }
-		catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
+		if (!(window.DaimondVersions && DaimondVersions.ready())) {
+			noticeDialog(t('crystal.restore_failed'), '');
+			return;
+		}
 		var ok = await confirmDialog(
 			t('versions.restore_ask', { v: v }),
 			t('crystal.restore_v', { v: v }),
 			{ title: t('crystal.restore_title'), danger: false });
 		if (!ok) return;
-		// THE FILES FIRST, and the crystal below. The engine's `versions_restore`
-		// puts the FILES back and deliberately touches no crystal -- it has no
-		// business minting a crystal version -- so "Restore v12" would otherwise
-		// leave today's memory over v12's files, which is a state that never
-		// existed. Asked once, up there, and not again here.
-		if (window.DaimondVersions && DaimondVersions.ready()) {
-			var done = await DaimondVersions.restore(id, v, { ask: false });
-			// THE ENGINE PUT THE CRYSTAL AND PAGE BACK WITH THE FILES, in the one
-			// version the restore recorded (D-20261009-29 item 1), so its Undo puts
-			// all of it back. An engine without that, or a version kept as markdown,
-			// leaves the crystal to the page below, as before.
-			if (done && done.crystal === true) {
-				await refreshDiamondAfterChange();
-				return;
-			}
+		// Asked once, up there, and not again inside.
+		var done = await DaimondVersions.restore(id, v, { ask: false });
+		if (done.outcome === 'refused' && !done.told) {
+			noticeDialog(t('crystal.restore_failed'), done.why ? friendlyError(done.why) : '');
+			return;
 		}
-		// A pre-migration version is markdown, and writing markdown into `crystal.json`
-		// would leave the Diamond holding a file nothing downstream can read. It goes
-		// through the same migration a legacy crystal does on the way in.
-		//
-		// The page as it was then, restored with it. "Restore v12" means the Diamond
-		// as it stood at v12, and a Diamond is its memory AND the page that draws it;
-		// leaving today's page over v12's data is a state that never existed. A page is
-		// only snapshotted at the versions where it changed, so `read_version_page`
-		// walks back to the highest at or below this one that has one.
-		//
-		// BOTH HALVES IN ONE VERSION. Written separately they take a version each, so
-		// one press of Restore left two rows in the history -- and the history is the
-		// record of a Diamond's discontinuities, so a reader counting them counts one
-		// restore as two.
-		var wasPage = '';
-		try { wasPage = await diamondApp().read_version_page(id, v); }
-		catch (e) { wasPage = ''; }
-		try {
-			if (wasPage && wasPage.trim()) {
-				await diamondApp().write_crystal_both(id, crystalJson(was), wasPage);
-			} else {
-				await diamondApp().write_crystal_data(id, crystalJson(was));
-			}
-		}
-		catch (e) { noticeDialog(t('crystal.restore_failed'), friendlyError(e)); return; }
-		await refreshDiamondAfterChange();
+		if (done.outcome === 'restored') await refreshDiamondAfterChange();
 	}
 
 	/// The Diamond's tags: the user's own filing system, edited here.
@@ -61132,6 +61700,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `how` - `{ person: true }` for a person's queued steer, whose pause is confirmed
 	///   against the mailbox before it is refused. `{ said: true }` for words a person typed
 	///   (the composer, a queued steer), which alone take the note (`pushUserRecord`).
+	/// A daimon turn's ending is in the snapshot: close its journal entry once the store has
+	/// it, never before, or a tab gone in between loses the turn the journal was keeping.
+	function steerJournalClose(J, turnId, rec) {
+		if (!J) return;
+		var close = function () {
+			try { J.turnClose(turnId, rec.id, rec.promptTokens || 0, rec.completionTokens || 0); }
+			catch (e) { /* recovery finds the answer by its mid and clears the entry then */ }
+		};
+		try { ChatStore.settled().then(close, close); } catch (e) { close(); }
+	}
+
 	async function runSteer(f, presetArg, depthArg, detached, how) {
 		if (!f) return '';
 		// A STEER TYPED WHILE THIS DIAMOND'S OWN TURN IS IN FLIGHT USED TO VANISH.
@@ -61246,6 +61825,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so a bundle whose engine has the pair keeps its workers off the post-turn path, and
 		// one whose engine has not behaves exactly as it always has.
 		var steerInTurn = false, steerTurn = '';
+		var sJ = null;			// the journal, while this turn is journalled in it
 		if (mine()) setCrystalReply('');   // clear any previous one-shot answer
 
 		// ── The daimon's conversation ────────────────────────────────
@@ -61294,14 +61874,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var srec = pushUserRecord(rec, { role: 'user', content: instruction, mid: dumid, ts: its }, !!(how && how.said));
 			steerPre = (typeof srec.pre === 'string') ? srec.pre : '';
 			if (onScreen()) appendUserMessage(instruction, its, undefined, undefined, srec.app === true);
+			// HIS MESSAGE IS SAVED BEFORE A TOKEN IS SPENT, and the turn opened in the
+			// write-ahead journal, as `runTurn` does for a chat (D-20261012-07). It used to
+			// live in memory until the turn ended, so a reload part way took the message,
+			// the rounds already billed and any steer queued behind it. `recoverInterrupted`
+			// folds an unclosed entry back as an interrupted turn with Retry. A handed-off
+			// run (`detached`) is the asker's turn, and its errand recovers it there.
+			persistChats();
+			if (window.DaimondJournal) {
+				var jmeta = { model: rec.model, provider: rec.provider, amid: dmid, daimon: 1 };
+				if (steerPre) jmeta.pre = steerPre;
+				if (srec.app === true) jmeta.app = true;
+				sJ = window.DaimondJournal;
+				sJ.turnOpen(dumid, rec.id, instruction, jmeta);
+			}
 		} else {
 			steerPre = (typeof detached.pre === 'string') ? detached.pre : storedPre(rec, dumid);
+			// A HANDED-OFF DAIMON RUN IS JOURNALLED AND NAMED, as a chat's is in `runTurn`
+			// (r545 F-C2-1; HANDOFF post-QA A, F3). It was not journalled at all, so a runner
+			// that reloaded part way found no open run in the errand's `interrupted` door and
+			// ran the whole turn again from round 0: every request and tool call twice, and a
+			// permit asked again whose first answer was then lost. `ho` keeps the boot
+			// recovery's hands off it; the errand folds it and reports it Interrupted.
+			if (window.DaimondJournal) {
+				_turnRun[dumid] = beginTurnRun(rec, dumid);
+				var hmeta = { model: rec.model, provider: rec.provider, amid: dmid, daimon: 1,
+					run: _turnRun[dumid].id, ho: 1, at: Date.now() };
+				if (steerPre) hmeta.pre = steerPre;
+				sJ = window.DaimondJournal;
+				sJ.turnOpen(dumid, rec.id, instruction, hmeta);
+			}
 		}
 		// The composer's Send becomes Stop while a daimon turn runs, and `anyGen()` --
 		// which is what stops a reload, a sign-out or an update landing on top of work
 		// in flight -- counts it. Both read `_generating`, so a daimon turn that did not
 		// set it was a turn the rest of the app could not see was happening.
 		rec._generating = true;
+		if (sJ) journalTurnBegins(rec, dumid);
 		rec._pausedMid = '';		// set by `brakeHeld` when a pause catches this turn running
 		// THE TURN'S TAG IS MINTED THE MOMENT IT GOES BUSY (engine QA E1), before the first
 		// await below. A Stop or a pause landing in between names it (`abortTurn`); the engine
@@ -61503,6 +62112,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The conductor's own words — a question, a refusal, or an account
 				// of what it did. Kept, so a text-only turn is not silently dropped.
 				replyText += (ev.content || '');
+				if (sJ) sJ.delta(dumid, rec.id, ev.content || '');
 				// STREAM THE PROSE to a watching dispatcher. A background runner's answer is
 				// in neither the stored transcript nor an on-screen buffer until the turn
 				// ends, so without this the phone's progress frame shows tool tiles and then
@@ -61561,9 +62171,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Recorded whichever tool it was, including `spawn_agent`: the chat view
 				// is the account of what the daimon did, and a fan-out is the largest
 				// thing it does.
-				var toolTs = Date.now();
+				var toolTs = Date.now(), toolMid = newMid();
 				rec.messages.push({ role: 'tool_log', name: ev.name || '', args: ev.args || '', callId: ev.id || '',
-					content: '', mid: newMid(), ts: toolTs });
+					content: '', mid: toolMid, ts: toolTs });
+				if (sJ) sJ.toolOpen(dumid, rec.id, ev.id || toolMid, ev.name || '', ev.args || '', toolMid);
 				if (onScreen()) renderToolCall(ev.name || '', ev.args || '', ev.id || '', toolTs);
 			} else if (ev.type === 'tool_result') {
 				// TRAINING WHEELS — the debug feed's `tool`, the daimon's half, built
@@ -61584,6 +62195,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (last && last.role === 'tool_log' && !last.content) {
 					last.content = ev.content || '';
 					last.outcome = ev.outcome || '';
+					if (sJ) sJ.toolDone(dumid, rec.id, last.callId || last.mid, ev.content || '', ev.outcome || '');
 					if (ev.paused) last.paused = String(ev.paused);
 					// A finished write goes into this Diamond's Recent.
 					if (ev.outcome === 'done') noteRecent({ diamond: diamondId }, last.name, last.args);
@@ -61876,6 +62488,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} catch (e) { /* the app is mid-turn nowhere here */ }
 			touchChat(rec);
 			persistChats();
+			steerJournalClose(sJ, dumid, rec);
 		// A daimon can now draw and drop links itself, and every other caller of
 		// `signalLinksChanged` is a user action — so without this the Graph pane
 		// and the Diamond's Links section stay stale until something unrelated
@@ -61904,6 +62517,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			rec.messages.push({ role: failRole(e), content: friendlyError(e),
 				mid: newMid(), ts: Date.now() });
 			persistChats();
+			steerJournalClose(sJ, dumid, rec);
 			crystalSay(friendlyError(e));
 			rec._generating = false;
 			rec._runApp = null;
@@ -62301,16 +62915,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// nothing was ever lost. A daimon's record is skipped in both halves: it has
 		// no tile, so opening one would put a conversation on screen that the rail
 		// says does not exist.
-		var want = '';
-		try { want = localStorage.getItem(OPEN_CHAT_KEY) || ''; } catch (e) { /* private mode */ }
+		// THIS TAB's view, not the device's: see TAB_VIEW_KEY. Taken whole, now.
+		var tv = tabViewGet();
+		var want = tv.chat;
 		// READ BEFORE `selectChat` BELOW, which clears it. The restore itself
 		// cannot run until `loadDiamonds` has read the rail, and by then the
 		// chat this boot opened has already forgotten the Diamond on the user's
 		// behalf -- so a boot with any stored chat lost the Diamond every time,
 		// and one with none did not. That is why it passed here and failed in
 		// the gate: the fixture, not the feature.
-		var wantDiamond = '';
-		try { wantDiamond = localStorage.getItem(OPEN_DIAMOND_KEY) || ''; } catch (e) { /* private mode */ }
+		var wantDiamond = tv.diamond;
+		var wantFace    = tv.face;
 		var openChat = chats.find(function (c) { return !c.diamondId && c.id === want; });
 		// Failing that, the newest — which is the tile at the top of the rail, and
 		// so the one somebody looking at the rail would expect to be reading.
@@ -62345,16 +62960,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (!wantF) return;
 					var f = diamonds.find(function (x) { return x.id === wantF; });
 					// Gone, or trashed: fall back to the chat already on screen rather
-					// than to an empty stage, and forget the id so it stops being asked.
-					if (!f) {
-						try { localStorage.removeItem(OPEN_DIAMOND_KEY); } catch (e) {}
-						return;
-					}
-					// No `view`: `selectDiamond` reads the face this Diamond was last
-					// left on from `diamondView`, which is already persisted per Diamond.
-					// It also writes the key back, which `selectChat` removed on the
-					// way past -- so a second reload finds it exactly as this one did.
-					return selectDiamond(f);
+					// than to an empty stage. `selectChat` above has already cleared the
+					// Diamond from this tab's view, so it stops being asked.
+					if (!f) return;
+					// On the face THIS TAB left it on. The per-Diamond memory
+					// (`diamondView`) is shared by every tab and answers only when the
+					// tab recorded none. `selectDiamond` writes the Diamond back into the
+					// view, which `selectChat` cleared on the way past -- so a second
+					// reload finds it exactly as this one did.
+					return selectDiamond(f, wantFace || undefined);
 				});
 		});
 		// `load` marks every parked consent expired, because what a tile holds is a

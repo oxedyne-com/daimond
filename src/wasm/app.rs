@@ -2595,8 +2595,9 @@ impl DaimondApp {
             .map_err(to_js_err)
     }
 
-    /// Close the restore `ticket` opened: `{version, recorded, crystal, restored, missing, refused}`.
-    /// Called whatever became of its acts, so the copies they kept are recorded.
+    /// Close the restore `ticket` opened: `{version, recorded, crystal, restored, missing, refused,
+    /// changed}`, `crystal` one of `restored`, `same` or `untouched`.  Refused where the store
+    /// stays busy, and the restore is then still open, to close again or end.
     ///
     /// # Arguments
     /// * `keep_new` - The person kept the Diamond's own files the open named under `own`, so they
@@ -2610,6 +2611,20 @@ impl DaimondApp {
         // [`DaimondApp::versions_restore`].
         note_restores(&self.registry.ctx.read_seen, &closed.wrote, true).await;
         Ok(closed.said(None))
+    }
+
+    /// Take the version store for the restore `ticket` before its first write, once the person has
+    /// decided: refused, in words, where it stays busy, and nothing is written
+    /// ([`diamond::versions_restore_hold`]).
+    pub async fn versions_restore_hold(&self, id: String, ticket: f64) -> Result<(), JsValue> {
+        diamond::versions_restore_hold(&id, ticket as u64).await.map_err(to_js_err)
+    }
+
+    /// End the restore `ticket` without closing it, where its close was refused and the person
+    /// left it: nothing of the Diamond's own files or crystal is written
+    /// ([`diamond::versions_restore_end`]).
+    pub async fn versions_restore_end(&self, id: String, ticket: f64) -> Result<(), JsValue> {
+        diamond::versions_restore_end(&id, ticket as u64).await.map_err(to_js_err)
     }
 
     /// Bring the store back inside its ceilings now, rather than at the next write:

@@ -974,6 +974,14 @@ if (want('F11')) {
 	// 3 and 4. The copies: one file wiped, one wiped and then deleted, and one wiped then
 	// deleted in the same turn -- then later turns' EDITS of large files, the churn that pruned
 	// the re-check's copies.
+	// The captures below are F11's own conversation's pictures, so its own place is what the
+	// person sees while they are taken: a picture of the screen draws only while the asking
+	// conversation is on screen (CAPTURE-FENCE), and F11's Diamond was made in the engine, not
+	// opened. Open it, on its daimon face, as a person would before asking it for a picture.
+	await p.evaluate(() => window.DaimondCore.loadDiamonds());
+	await p.click('.diamond-box[data-id="' + id11 + '"]');
+	await p.click('#dview-chat');
+	await p.waitForTimeout(500);
 	const f11 = await p.evaluate(async (id) => {
 		const { mod, app, read, turn } = __k;
 		app.set_open_deletes_ask(64);

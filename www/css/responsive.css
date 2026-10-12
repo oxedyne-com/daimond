@@ -187,7 +187,8 @@
 	/* Give lists a little more row height for touch. A file row's comes from its
 	   44px min-height (files.css), which its 44px ◈ fills, so it takes no padding. */
 	.session-box { padding: 10px 11px; }
-	.files-row, .files-focus .r { padding: 0 12px; }
+	/* The left inset only: the right edge is the 44px ◈'s (files.css, touch). */
+	.files-row, .files-focus .r { padding-left: 12px; }
 
 	/* A thumb's floor. The shared touch block below lifts the small controls to
 	   ~34px, which suits a dense tablet dock; on a phone, where these are the
