@@ -279,7 +279,7 @@ try {
 
 		// Become device B: forget this Diamond and its offload bookkeeping.
 		await app.delete_diamond(targetId);
-		try { localStorage.removeItem('daimond-chunk-map'); } catch (e) {}
+		try { localStorage.removeItem('daimond-chunk-map-v2'); } catch (e) {}
 		try { localStorage.removeItem('daimond-diamond-tombs'); } catch (e) {}   // so it is brand-new, not deleted
 		window.DaimondCloud.contentForget('@d/' + targetId);
 
@@ -314,8 +314,9 @@ try {
 	// ── 3b. The RESIDUAL: an actively message-UNIONED large chat ──
 	// The agent flagged this. When a large chat unions (neither transcript wins),
 	// the receiver stores neither side's manifest — so each device offloads its
-	// OWN copy of the union. Same content hashes → same content KEY, but a fresh IV
-	// per device → DIFFERENT chunk addresses. Characterise precisely.
+	// OWN copy of the union. Same content hashes → same content KEY, and since
+	// UNBLOCK-4 (the convergent chunk seal) the SAME chunk addresses too, so the two
+	// copies are one in the store. Characterise precisely.
 	console.log('\n— invariant 3b: the message-union residual —');
 
 	const residual = await page.evaluate(async () => {
@@ -352,7 +353,7 @@ try {
 
 		// Simulate the OTHER device computing the SAME union: offload the identical
 		// bytes after wiping the chunk-map (a device that never offloaded these).
-		try { localStorage.removeItem('daimond-chunk-map'); } catch (e) {}
+		try { localStorage.removeItem('daimond-chunk-map-v2'); } catch (e) {}
 		const otherUnionManifest = await window.DaimondChunks.offloadBytes('c:' + cid, new TextEncoder().encode(JSON.stringify(unionMsgs)));
 
 		const addrB = (bUnionManifest.chunks || []).map(c => c.addr);
@@ -372,15 +373,15 @@ try {
 	check('the union merged both transcripts', residual.unionMsgCount === 760, `${residual.unionMsgCount} messages`);
 	check('two devices computing the identical union land the SAME content key',
 		residual.sameKey, `${residual.keyU_B.slice(0,10)} vs ${residual.keyU_other.slice(0,10)}`);
-	check('but at DIFFERENT chunk addresses (fresh IV per device) — the residual divergence',
-		residual.sameKey && !residual.sameAddrs,
+	check('and at the SAME chunk addresses (convergent seal, UNBLOCK-4) — one copy in the store',
+		residual.sameKey && residual.sameAddrs,
 		`sameKey=${residual.sameKey} sameAddrs=${residual.sameAddrs}`);
 	note(`device-B union addrs ${JSON.stringify(residual.addrB)}`);
 	note(`other-device union addrs ${JSON.stringify(residual.addrOther)}`);
-	note('CONSEQUENCE: each device offloads the union under addresses of its own, so two');
-	note('copies of one transcript sit in the store. The SWEEP half of that is closed —');
-	note('the committing index now names the peer\'s addresses too (invariant 8) — and what');
-	note('is left is the duplication itself, which costs storage and never a transcript.');
+	note('Until UNBLOCK-4 each device offloaded the union under addresses of its own (a');
+	note('fresh IV per seal), so two copies of one transcript sat in the store, and each');
+	note('push released the other\'s. The chunk IV is now derived from the account key and');
+	note('the plaintext, so both devices name one copy.');
 
 	// ═══════════════════════════════════════════════════════════════
 	// INVARIANT 4 — the iOS parcel ceiling
@@ -600,10 +601,12 @@ try {
 			ds:        window.__ds,
 		};
 	}, swept);
+	// The re-offload seals the same plaintext to the same address (the convergent
+	// seal), so what heals is the address being HELD again, not a new one.
 	check('A1. the manifest naming a swept chunk is re-offloaded',
-		healed.puts > 0 && healed.nowAddrs[0] !== swept.before[0],
+		healed.puts > 0 && healed.allHeld && healed.nowAddrs.includes(swept.before[0]),
 		`${healed.puts} put(s), ${swept.before[0].slice(0, 8)}… → ${(healed.nowAddrs[0] || '').slice(0, 8)}…`);
-	check('A1. and the parcel carries the NEW address, every piece of it held',
+	check('A1. and the parcel carries the healed addresses, every piece of it held',
 		healed.refAddrs.length > 0
 			&& JSON.stringify(healed.refAddrs) === JSON.stringify(healed.nowAddrs)
 			&& healed.allHeld,

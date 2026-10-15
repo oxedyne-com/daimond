@@ -255,10 +255,10 @@
 
 	// ── The chunk map ──────────────────────────────────────────
 	// Plaintext chunk hash -> the content address its ciphertext was stored
-	// under. Because a seal draws a fresh IV every time, encrypting the same
-	// bytes twice yields different ciphertext and a different address; without
-	// this map, changing one byte of a large file would re-upload all of it.
-	// With it, only the chunks that actually changed are re-encrypted.
+	// under. The seal is convergent, so the address could be recomputed, but
+	// only by re-encrypting the chunk; the map lets an unchanged chunk be named
+	// from its plaintext hash alone, so only the chunks that changed are
+	// re-encrypted and sent.
 	//
 	// It is a CACHE, never a source of truth: an address is used only after the
 	// gateway confirms it still holds it, so a stale entry costs one re-upload
@@ -266,10 +266,31 @@
 	// Entries are `plaintextHash -> [address, ciphertextSize]`. The size is kept
 	// because a reused chunk is never re-encrypted, so its length would otherwise
 	// be unknown — and the manifest's sizes are what the gateway bills against.
-	var MAP_KEY  = 'daimond-chunk-map';
-	var MAP_MAX  = 5000;		// entries; roughly 600 KB of localStorage, which is shared.
+	//
+	// VERSIONED BY SEAL (UNBLOCK-4, 15 Oct 2026). Until then each chunk was sealed
+	// under a random IV, so every device's map held its own addresses, and reusing
+	// them for as long as the gateway held them kept two devices of one account on
+	// two copies for ever. The seal is now convergent (`wrapChunk`), but only for a
+	// chunk the map does not already name. So the map moved to a new key, and the
+	// old one is DROPPED, not migrated: its addresses are the problem. Dropping it
+	// also owes one re-offload (`STALE_KEY`, below), or the unchanged large files
+	// would be skipped as unchanged and keep their old addresses.
+	var MAP_KEY     = 'daimond-chunk-map-v2';
+	var OLD_MAP_KEY = 'daimond-chunk-map';	// the random-IV build's map
+	var MAP_MAX     = 5000;		// entries; roughly 600 KB of localStorage, which is shared.
+
+	/// Retire the random-IV build's map, once, on the first read after the upgrade.
+	function retireOldMap() {
+		try {
+			if (localStorage.getItem(OLD_MAP_KEY) === null) return;
+			localStorage.removeItem(OLD_MAP_KEY);
+			localStorage.setItem(STALE_KEY, '1');
+			log('chunk seal upgraded: old address map dropped, large files will be offloaded again');
+		} catch (e) { /* private mode or quota: nothing was cached, or one skipped re-offload */ }
+	}
 
 	function readMap() {
+		retireOldMap();
 		try { return JSON.parse(localStorage.getItem(MAP_KEY) || '{}') || {}; }
 		catch (e) { return {}; }
 	}
@@ -293,7 +314,7 @@
 	// ── Surviving a passphrase change ──────────────────────────
 	//
 	// THIS FILE SEALS AT REST, NOT IN FLIGHT, so it takes part. `offloadFile`
-	// wraps each chunk with `DaimondIdentity.wrapBytes` and the ciphertext then
+	// wraps each chunk with `DaimondIdentity.wrapChunk` and the ciphertext then
 	// LIVES ON THE GATEWAY, addressed by its own hash, for as long as the file is
 	// in the cloud store. A passphrase change re-derives the key, and every chunk
 	// already up there is sealed under the old one for ever.
@@ -328,8 +349,13 @@
 	/// reload.
 	var STALE_KEY = 'daimond-chunk-stale';
 
-	/// Is a re-offload owed after a passphrase change?
+	/// Is a re-offload owed, after a passphrase change or the seal upgrade?
 	function staleSinceRekey() {
+		// THE UPGRADE IS NOTICED HERE, NOT ONLY IN AN OFFLOAD. The collect asks this
+		// before it skips the unchanged large files, and only an offload reads the map,
+		// so an idle upgraded device never retired the old map, never owed the
+		// re-offload, and kept its random-IV copies for ever.
+		retireOldMap();
 		try { return localStorage.getItem(STALE_KEY) === '1'; } catch (e) { return false; }
 	}
 
@@ -345,6 +371,7 @@
 	/// the plaintext is the file on disk.
 	function forgetMapAfterRekey() {
 		try { localStorage.removeItem(MAP_KEY); } catch (e) { /* private mode: nothing was cached */ }
+		try { localStorage.removeItem(OLD_MAP_KEY); } catch (e) { /* likewise */ }
 		try { localStorage.setItem(STALE_KEY, '1'); } catch (e) { /* quota: one skipped re-offload */ }
 		log('passphrase changed: chunk map dropped, large files will be offloaded again');
 		return { failed: [] };
@@ -387,7 +414,14 @@
 	/// both fingerprints the file and finds the chunks already in the store. The
 	/// second encrypts and uploads only what is genuinely missing.
 	async function offloadFile(path, file) {
-		var size = file.size;
+		return await offloadPieces(path, file.size, async function (a, b) {
+			return new Uint8Array(await file.slice(a, b).arrayBuffer());
+		});
+	}
+
+	/// The two-pass body `offloadFile` and `offloadBytes` share. `read(a, b)` answers the
+	/// plaintext bytes `[a, b)` as a Uint8Array; it is asked for one chunk at a time.
+	async function offloadPieces(path, size, read) {
 		var CH   = chunkSizeFor(size);
 		var n    = Math.max(1, Math.ceil(size / CH));
 		var map  = readMap();
@@ -397,8 +431,7 @@
 		for (i = 0; i < n; i++) {
 			off = i * CH;
 			len = Math.min(CH, size - off);
-			var slice = new Uint8Array(await file.slice(off, off + Math.max(0, len)).arrayBuffer());
-			phash.push(await sha256Hex(slice));
+			phash.push(await sha256Hex(await read(off, off + Math.max(0, len))));
 		}
 		// The file's identity is the hash of its chunk hashes -- computed without
 		// ever holding the file, which a plain hash of the contents could not be.
@@ -412,7 +445,7 @@
 		(await missing(known)).forEach(function (a) { gone[a] = 1; });
 
 		// Pass two: encrypt and upload only what is missing.
-		var chunks = [], batch = [], batchBytes = 0, reused = 0;
+		var chunks = [], batch = [], batchBytes = 0, reused = 0, sent = 0;
 		for (i = 0; i < n; i++) {
 			var have = map[phash[i]];
 			if (have && !gone[have[0]]) {
@@ -422,19 +455,20 @@
 			}
 			off = i * CH;
 			len = Math.min(CH, size - off);
-			var plain = new Uint8Array(await file.slice(off, off + Math.max(0, len)).arrayBuffer());
-			var ct    = await DaimondIdentity.wrapBytes(plain);
+			var plain = await read(off, off + Math.max(0, len));
+			var ct    = await DaimondIdentity.wrapChunk(plain);	// convergent: one address per account
 			var addr  = await sha256Hex(ct);
 			map[phash[i]] = [addr, ct.length];
 			chunks.push({ addr: addr, size: ct.length });
 			batch.push({ addr: addr, blob: b64urlEncode(ct) });
 			batchBytes += ct.length;
+			sent += ct.length;
 			if (batchBytes >= UPLOAD_BATCH_BYTES) { await putChunks(batch); batch = []; batchBytes = 0; }
 		}
 		if (batch.length) await putChunks(batch);
 		writeMap(map);
 
-		log('offloaded', path, n, 'chunks,', reused, 'reused');
+		log('offloaded', path, n, 'chunks,', reused, 'reused,', sent, 'new bytes');
 		return {
 			v:      2,
 			size:   size,				// plaintext bytes, so a reader knows the file.
@@ -444,22 +478,21 @@
 	}
 
 	/// Offload an in-memory byte array and return its manifest, the same shape
-	/// and the same stable-address machinery `offloadFile` gives a file on disk.
+	/// and the same stable-address machinery `offloadFile` gives a file on disk, so
+	/// a Diamond or a transcript that has not moved keeps its addresses and its
+	/// manifest is byte-identical between two collects. `label` is for the log.
 	///
-	/// A Blob answers everything `offloadFile` asks of its argument — `.size`,
-	/// `.slice(a, b)` returning something with `.arrayBuffer()` — so the whole
-	/// two-pass body is reused verbatim: the plaintext-hash→address map still
-	/// makes an unchanged payload keep its addresses, which is what lets a
-	/// Diamond or a transcript that has not moved produce a byte-identical
-	/// manifest between two collects. The one thing a Blob has not got is a name,
-	/// so `label` is passed only for the log line.
+	/// THE BYTES ARE READ IN PLACE, a `subarray` view per chunk (UNBLOCK-4, 15 Oct
+	/// 2026). This wrapped them in `new Blob([bytes])`, which copies the whole payload
+	/// into the browser process's blob storage and holds it there until a V8 collection
+	/// the tab's small JS heap never prompts: a 5.9 MB transcript offloaded on every
+	/// collect of a turn grew the renderer and the browser together by hundreds of MB,
+	/// and systemd-oomd killed Chrome on a 7 GB machine.
 	///
-	/// Peak memory is the bytes plus one chunk plus one upload batch. The caller
-	/// is expected to hand this ONE item's bytes at a time and let them go, so a
-	/// store of many Diamonds is never in memory at once — that is the whole
-	/// reason the payload moves out of the inline parcel.
+	/// Peak memory is the bytes plus one sealed chunk plus one upload batch. The
+	/// caller hands this ONE item's bytes at a time and lets them go.
 	async function offloadBytes(label, bytes) {
-		return await offloadFile(label, new Blob([bytes]));
+		return await offloadPieces(label, bytes.length, async function (a, b) { return bytes.subarray(a, b); });
 	}
 
 	// ── Materialise ────────────────────────────────────────────

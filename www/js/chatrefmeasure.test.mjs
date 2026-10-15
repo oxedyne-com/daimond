@@ -23,7 +23,7 @@
      2. the figure is written back, so the next collect measures nothing;
      3. the form of a mixed store is the same whether or not the mirror knew the sizes, over
         generated stores and budgets (the property the bug broke);
-     4. a quiet collect loads the inline set and nothing else;
+     4. a quiet collect loads nothing: the inline set is packed from the copy the last one held (UNBLOCK-4);
      5. a large unmeasured chat whose manifest still stands is loaded ONCE, not measured and
         then loaded again to fingerprint, and re-offloads nothing;
      6. the measuring pass holds one transcript at a time;
@@ -66,6 +66,7 @@ function world(specs, opts) {
 		if (s.known) { sum.bytes = sr.length; sum.fp = fileHash(sr); } else { sum.fp = ''; }
 		mirror.push(sum);
 		if (s.manifest) manifests['@c/' + s.id] = { v: 1, size: sr.length, key: 'K-' + fileHash(sr), chunks: ['k-' + s.id], fp: fileHash(sr) };
+		if (s.stale) { const so = ser(s.msgs.slice(0, -1)); manifests['@c/' + s.id] = { v: 1, size: so.length, key: 'K-' + fileHash(so), chunks: ['k-old-' + s.id], fp: fileHash(so) }; }
 	});
 	const ChatStore = {
 		stored:       () => mirror,
@@ -88,22 +89,24 @@ function world(specs, opts) {
 			});
 		},
 	};
+	const fault = { offload: !!opts.offloadFail, index: !!opts.indexFail };	// a 507 on /api/chunk; a contentSet lost to quota
 	win.DaimondChunks = { offloadBytes: async (tag, bytes) => {
+		if (fault.offload) throw new Error('putChunks: 507 Insufficient Storage');
 		const s = new TextDecoder().decode(bytes); offloaded.push(tag);
 		return { v: 1, size: s.length, key: 'K-' + fileHash(s), chunks: ['k-' + tag] };
 	} };
 	win.DaimondCloud = {
 		available:     () => true,
 		contentGet:    (k) => manifests[k] || null,
-		contentSet:    (k, m) => { manifests[k] = m; return true; },
+		contentSet:    (k, m) => { if (fault.index) return false; manifests[k] = m; return true; },
 		contentForget: () => {},
 		contentReap:   () => {},
 	};
-	const { collectChatsRefs } = sliceDaimond(win, ['collectChatsRefs'], {
+	const { collectChatsRefs, dropInlineHeld } = sliceDaimond(win, ['collectChatsRefs', 'dropInlineHeld'], {
 		ChatStore, storedChats: () => ChatStore.stored(), noteCloudIndexStuck: () => {},
 	}).fns;
 	const form = (parcel) => parcel.map((e) => e.id + (e.messages ? ':I' : (e.messagesRef ? ':R' : ':?'))).sort().join(' ');
-	return { collect: collectChatsRefs, form, mirror, offloaded, writes, fileHash,
+	return { collect: collectChatsRefs, drop: dropInlineHeld, form, mirror, offloaded, writes, fileHash, fault, manifests,
 		stats: () => ({ loads, peak, perId }), reset: () => { loads = 0; peak = 0; perId = {}; offloaded.length = 0; writes.length = 0; } };
 }
 
@@ -133,7 +136,9 @@ console.log('1. a merged small chat with no figure');
 	const second = await w.collect();
 	check('2. the next collect has the same form', w.form(second) === 'a:I b:I o6kv1:I', w.form(second));
 	check('2. and measures and writes nothing back', w.writes.length === 0, 'wrote ' + w.writes.length);
-	check('4. and loads the inline set and nothing else', w.stats().loads === 3, 'loads ' + w.stats().loads);
+	check('4. and loads nothing, the inline set included', w.stats().loads === 0, 'loads ' + w.stats().loads);
+	w.drop(); w.reset(); await w.collect();
+	check('4. a lock or account switch drops the held plaintext, so the next collect reads the inline set', w.stats().loads === 3, 'loads ' + w.stats().loads);
 }
 
 // ── 3. the property ────────────────────────────────────────────────────────
@@ -180,7 +185,7 @@ console.log('5. a large unmeasured chat with a manifest it still matches');
 	check('and the large chat is loaded once, not measured then loaded again', w.stats().perId.big === 1, 'big loaded ' + w.stats().perId.big + ' time(s)');
 	w.reset();
 	const second = await w.collect();
-	check('the quiet collect reuses the reference with no load: only the inline chat is read', w.stats().loads === 1 && w.form(second) === 'big:R sm:I',
+	check('the quiet collect reuses the reference and the inline copy with no load', w.stats().loads === 0 && w.form(second) === 'big:R sm:I',
 		'loads ' + w.stats().loads + ' ' + w.form(second));
 	check('and measures and writes nothing', w.writes.length === 0 && w.offloaded.length === 0, 'wrote ' + w.writes.length);
 }
@@ -252,6 +257,43 @@ console.log('9. a failed read in pass 2 is neither fingerprinted nor offloaded')
 	bare.reset();
 	const c = await bare.collect();
 	check('the next round reads it and sends it as a reference', bare.form(c) === 'big:R sm:I' && bare.offloaded.length === 1, bare.form(c) + ' offloaded ' + bare.offloaded.join(','));
+}
+
+// ── 10. an offload or index write that fails never inlines the transcript ──
+// UNBLOCK-4 FIX 2b (diag_addendum §2). A 507 from /api/chunk made `packRef` put each big chat's
+// WHOLE transcript inline, outside the budget: 25.6 MB of parcel against an 8 MiB door, refused
+// by the client on every round. Now the chat reuses its last stored manifest (a stale ref is a
+// gap, never a deletion) or waits a round, and the parcel stays within the inline budget.
+console.log('10. a failed offload or index write keeps the parcel within the inline budget');
+{
+	const BUDGET = 2 * 1024 * 1024, META = 64 * 1024;
+	const big = (t) => msgs(t, 4, 400 * 1024);						// three ~1.6 MB transcripts
+	const smalls = Array.from({ length: 6 }, (_, i) => ({ id: 's' + i, at: 50 + i, msgs: msgs('s' + i, 2, 3000) }));
+	const inlineBytes = (p) => p.reduce((n, e) => n + (e.messages ? ser(e.messages).length : 0), 0);
+	const wire = (p) => ser(p).length;
+	for (const mode of ['offloadFail', 'indexFail']) {
+		for (const kind of ['stale', 'none', 'unknown']) {
+			const specs = ['b1', 'b2', 'b3'].map((id, i) => ({ id, at: 10 + i, msgs: big(id),
+				known: kind !== 'unknown', stale: kind !== 'none' })).concat(smalls.map((x) => Object.assign({ known: true }, x)));
+			const w = world(specs, { [mode]: true });
+			const p = await w.collect(BUDGET);
+			const label = mode + '/' + (kind === 'stale' ? 'a stored manifest' : kind === 'none' ? 'no manifest' : 'unmeasured, stored manifest');
+			check(label + ': no big chat rides inline', !p.some((e) => /^b/.test(e.id) && e.messages), w.form(p));
+			check(label + ': the parcel is within the inline budget plus metadata', inlineBytes(p) <= BUDGET && wire(p) <= BUDGET + META,
+				'inline ' + inlineBytes(p) + ' wire ' + wire(p));
+			if (kind === 'none') check(label + ': the big chats wait a round', w.form(p) === 's0:I s1:I s2:I s3:I s4:I s5:I', w.form(p));
+			else check(label + ': each big chat reuses its stored manifest', ['b1', 'b2', 'b3'].every((id) => {
+				const e = ONE(p, id); return e && e.messagesRef && e.messagesRef.chunks[0] === 'k-old-' + id; }), w.form(p));
+			check(label + ': no fingerprint is recorded against the stale manifest',
+				!w.writes.some((f) => /^b/.test(f.id) && w.manifests['@c/' + f.id] && f.fp === w.manifests['@c/' + f.id].fp), '');
+			// The fault clears: the next round offloads the current transcripts.
+			w.fault.offload = false; w.fault.index = false; w.reset();
+			const q = await w.collect(BUDGET);
+			check(label + ': once the store takes chunks again the current transcripts go as fresh refs',
+				['b1', 'b2', 'b3'].every((id) => { const e = ONE(q, id); return e && e.messagesRef && e.messagesRef.chunks[0] === 'k-c:' + id; }),
+				w.form(q) + ' offloaded ' + w.offloaded.join(','));
+		}
+	}
 }
 
 console.log(failures ? '\nFAILED ' + failures + '/' + checks : '\nALL PASS (' + checks + ' checks)');

@@ -10130,6 +10130,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return x < y ? -1 : (x > y ? 1 : 0);
 	}
 
+	// The transcripts the last collect packed inline, `id -> { fp, messages }`, so a quiet
+	// collect packs them again without a read. Only the inline set, so the inline budget bounds it.
+	var inlineHeld = {};
+	// Up to the whole inline budget of decrypted transcript: dropped the moment the
+	// identity locks, so a locked tab holds no plaintext for the next collect.
+	function dropInlineHeld() { inlineHeld = {}; }
+	try { window.addEventListener('daimond:lock', dropInlineHeld); } catch (e) { /* no window */ }
+
 	/// Every stored chat, packed for the parcel, with a heavy transcript moved
 	/// out to chunks and only a reference left inline.
 	///
@@ -10194,66 +10202,158 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// as a reference, so its stored FORM followed a bookkeeping field instead of its
 		// size: a peer pushed it back inline a round later, and the last device online
 		// left the reference standing at the gateway with nothing to ask for another round.
-		// So the transcript is loaded here, ONE AT A TIME and released before the next,
-		// serialised, and the figure goes to `noteFps` with the seed the summary held when
-		// the collect began (a save since drops it). Each chat is measured once: every
-		// later collect finds the figure on the summary and loads nothing for it. A load
-		// that fails -- a throw, or the reader's own `failed` flag on the empty transcript it
-		// hands back for a read it could not make -- leaves the chat unmeasured, the
-		// conservative side (a ref, measured in pass 2), so measuring cannot fail a collect
-		// that would otherwise have gone through.
+		// So the transcript is loaded here, ONE AT A TIME, serialised, and the figure goes
+		// to `noteFps` with the seed the summary held when the collect began (a save since
+		// drops it). A load that fails -- a throw, or the reader's own `failed` flag on the
+		// empty transcript it hands back for a read it could not make -- leaves the chat
+		// unmeasured, the conservative side (a ref, measured in pass 2), so measuring
+		// cannot fail a collect that would otherwise have gone through.
+		//
+		// A MEASURED TRANSCRIPT IS PACKED FROM THE READ THAT MEASURED IT (UNBLOCK-4). It
+		// was released here and read again in pass 2, so a chat whose figure a merge had
+		// wiped -- the turn's own chat, every collect of a turn -- was read, serialised and
+		// hashed twice. Measuring and ranking are one walk in the same order, so the chat's
+		// place is known while its transcript is in hand: one that rides inline is kept for
+		// pass 2 (bounded by the inline budget), and one that cannot is packed as a ref now
+		// and released.
 		// Off when nothing can be offloaded -- the budget cannot bind with nowhere to move
 		// a transcript to.
-		var inline = {}, meas = {}, fixes = [];
+		var inline = {}, meas = {}, early = {}, kept = {}, fixes = [];
 		if (canOffload) {
 			var order = sums.slice().sort(freshestFirst);
+			var spent = 0;
 			for (var q = 0; q < order.length; q++) {
 				var u = order[q];
-				if (!u || !u.id || typeof u.bytes === 'number') continue;
-				var useed = u.seed || '';			// before the await, for `noteFps`
-				try {
-					var gotU = await ChatStore.loadMessages(u.id);
-					// The reader never throws: a read it could not make comes back EMPTY and
-					// flagged `failed`, and measuring that would size the chat at 2 bytes.
-					if (gotU.failed) { gotU = null; continue; }
-					var serU = JSON.stringify(gotU.messages || []);
-					gotU = null;						// released before the next chat
-					meas[u.id] = { bytes: serU.length, fp: fileHash(serU) };
-					fixes.push({ id: u.id, bytes: meas[u.id].bytes, fp: meas[u.id].fp, seed: useed });
-					serU = null;
-				} catch (e) { /* stays unmeasured: a ref this round, measured in pass 2 */ }
-			}
-			var spent = 0;
-			for (var r = 0; r < order.length; r++) {
-				var s = order[r];
-				var b = (s && typeof s.bytes === 'number') ? s.bytes : ((s && meas[s.id]) ? meas[s.id].bytes : Infinity);
-				if (b <= SYNC_FILE_MAX && spent + b <= budget) { inline[s.id] = 1; spent += b; }
+				if (!u || !u.id) continue;
+				var b = (typeof u.bytes === 'number') ? u.bytes : Infinity;
+				if (typeof u.bytes !== 'number') {
+					var useed = u.seed || '';			// before the await, for `noteFps`
+					try {
+						var gotU = await ChatStore.loadMessages(u.id);
+						// The reader never throws: a read it could not make comes back EMPTY and
+						// flagged `failed`, and measuring that would size the chat at 2 bytes.
+						if (!gotU.failed) {
+							var msgsU = gotU.messages || [];
+							var serU = JSON.stringify(msgsU);
+							b = serU.length;
+							meas[u.id] = { bytes: b, fp: fileHash(serU) };
+							fixes.push({ id: u.id, bytes: b, fp: meas[u.id].fp, seed: useed });
+							if (b <= SYNC_FILE_MAX && spent + b <= budget) kept[u.id] = { fp: meas[u.id].fp, messages: msgsU };
+							else early[u.id] = await packRef(u, msgsU, serU, meas[u.id].fp, DaimondCloud.contentGet('@c/' + u.id));
+							msgsU = null;
+							serU = null;
+						}
+						gotU = null;						// released before the next chat
+					} catch (e) { /* stays unmeasured: a ref this round, measured in pass 2 */ }
+				}
+				if (b <= SYNC_FILE_MAX && spent + b <= budget) { inline[u.id] = 1; spent += b; }
 			}
 		}
 
-		// PASS 2 -- STREAM. Exactly one transcript is resident at any moment: it is
-		// loaded, packed (inline) or offloaded (ref), then RELEASED before the next chat.
-		// The model's own conversation never travels (collectSync stripped it), so
-		// `session` is nulled as it was in the inline map.
-		var live = {}, out = [];
+		// The transcript (serialised `serial`, fingerprint `fp`) as a REF: the stored
+		// manifest when it names this serial, otherwise a fresh offload. Null when the
+		// chat sits this round out.
+		//
+		// A FAILED OFFLOAD OR INDEX WRITE NEVER MOVES THE TRANSCRIPT INLINE (UNBLOCK-4).
+		// It did, outside the budget: a 507 on /api/chunk put three big chats in the
+		// parcel whole, 25.6 MB against the 8 MiB door, so the client refused every push
+		// and nothing synced until the store had room. Now the chat names its last stored
+		// manifest, as a failed read does in pass 2 -- a stale ref is a gap, and the
+		// transcript is an append-only union, so a gap is never read as a deletion -- or,
+		// with none, waits a round. The fingerprint still differs from the stored one, so
+		// the next collect tries the offload again.
+		async function packRef(sum, msgs, serial, fp, stored) {
+			var ckey = '@c/' + sum.id;
+			var entry = slimChat(sum);
+			entry.session = null;
+			var ref;
+			if (stored && stored.fp === fp && Array.isArray(stored.chunks)) {
+				ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
+			} else {
+				var mani;
+				try { mani = await DaimondChunks.offloadBytes('c:' + sum.id, new TextEncoder().encode(serial)); }
+				catch (e) {
+					try { console.warn('[sync] chat ' + sum.id + ' not offloaded, ' + (stored ? 'last manifest reused' : 'waits a round'), e); } catch (e2) {}
+					return lastRef();
+				}
+				// A `contentSet` lost to quota leaves the parcel naming a `messagesRef`
+				// whose chunks the next commit -- built from the index that never took
+				// them -- does not declare, so the gateway sweeps them and the far device
+				// gets an EMPTY chat, re-swept every round. So on a failed index write the
+				// chat names its last stored manifest, which the index does hold, and the
+				// collector retries next round; `indexDurable` also blocks the commit until
+				// the write lands, and storageAlarm says so.
+				if (!DaimondCloud.contentSet(ckey, {
+						v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, fp: fp })) {
+					noteCloudIndexStuck();
+					return lastRef();
+				}
+				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
+			}
+			entry.messages = null;
+			entry.messagesRef = ref;
+			return entry;
+
+			function lastRef() {
+				if (!stored || !Array.isArray(stored.chunks)) return null;
+				entry.messages = null;
+				entry.messagesRef = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
+				return entry;
+			}
+		}
+
+		// PASS 2 -- STREAM. At most one transcript beyond the inline set is resident at
+		// any moment: it is loaded, packed (inline) or offloaded (ref), then RELEASED
+		// before the next chat. The model's own conversation never travels (collectSync
+		// stripped it), so `session` is nulled as it was in the inline map.
+		//
+		// A QUIET COLLECT READS NOTHING FROM THE DATABASE (UNBLOCK-4). A ref is reused on
+		// the summary's fingerprint against the stored manifest's, and an inline
+		// transcript on the summary's fingerprint against the copy the last collect
+		// packed (`inlineHeld`, the inline set alone, so bounded by the inline budget).
+		// Inline transcripts were read afresh on every collect, the whole set every time
+		// the sync loop ran: on gilgamesh 23-28 reads per collect, doubled whenever two
+		// collects overlapped, every ~10-40 s of a turn.
+		var live = {}, out = [], held = {};
 		for (var j = 0; j < sums.length; j++) {
 			var sum = sums[j], id = sum.id;
 			var seed0 = sum.seed || '';		// the entry as this collect found it, for `noteFps`
 			live[id] = 1;
 			var ckey = '@c/' + id;
+			if (id in early) { if (early[id]) out.push(early[id]); continue; }	// packed by the read that measured it
 			var stored = canOffload ? DaimondCloud.contentGet(ckey) : null;
+			// The summary's own fingerprint, or the one pass 1 just took from the store.
+			var fpHave = sum.fp || (meas[id] ? meas[id].fp : '');
 
-			// INLINE (or nowhere to offload): the transcript rides in the parcel, so it
-			// is loaded here. A chat that had a manifest and now rides inline drops it,
-			// so its chunks are swept.
+			// INLINE (or nowhere to offload): the transcript rides in the parcel. A chat
+			// that had a manifest and now rides inline drops it, so its chunks are swept.
 			if (!canOffload || inline[id]) {
-				var gotI = await ChatStore.loadMessages(id);
 				var entryI = slimChat(sum);
-				entryI.messages = gotI.messages || [];
 				entryI.session = null;
+				var hI = kept[id] || inlineHeld[id];
+				if (canOffload && hI && fpHave && hI.fp === fpHave) {
+					// `fileHash` is a content hash, so an equal pair is identical bytes, the
+					// trust the ref reuse below makes. A copy per parcel, so a consumer that
+					// edits the array cannot reach the held one.
+					entryI.messages = hI.messages.slice();
+					held[id] = hI;
+				} else {
+					var gotI = await ChatStore.loadMessages(id);
+					entryI.messages = gotI.messages || [];
+					// Kept for the next collect only with the fingerprint of what was read,
+					// and only within the budget: with nowhere to offload the inline set is
+					// every chat, and holding that would be the whole store.
+					if (canOffload && !gotI.failed) {
+						var serI = JSON.stringify(entryI.messages);
+						var fpI = fileHash(serI);
+						fixes.push({ id: id, bytes: serI.length, fp: fpI, seed: seed0 });
+						held[id] = { fp: fpI, messages: entryI.messages.slice() };
+						serI = null;
+					}
+					gotI = null;						// released before the next chat
+				}
 				if (stored && DaimondCloud.contentForget) DaimondCloud.contentForget(ckey);
 				out.push(entryI);
-				gotI = null;						// released before the next chat
 				continue;
 			}
 
@@ -10262,10 +10362,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// stored manifest) equals the manifest's, so the transcript has not changed
 			// and the manifest still names it. `fileHash` is a content hash, so an equal
 			// pair is identical bytes -- the same trust the fresh-fp reuse below makes.
-			// NOTHING is read from the database for this chat.
-			// A chat measured in pass 1 vouches with the fingerprint it just took from the
-			// store, so a stored manifest that still matches is reused without a second load.
-			var fpHave = sum.fp || (meas[id] ? meas[id].fp : '');
+			// Nothing is read from the database for this chat.
 			if (stored && fpHave && stored.fp === fpHave && Array.isArray(stored.chunks)) {
 				var entryR = slimChat(sum);
 				entryR.messages = null;
@@ -10298,43 +10395,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			got = null;
 			var serial = JSON.stringify(msgs);
 			var fp = fileHash(serial);
-			var entry = slimChat(sum);
-			entry.session = null;
-			var ref;
-			if (stored && stored.fp === fp && Array.isArray(stored.chunks)) {
-				ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
-			} else {
-				var mani;
-				try { mani = await DaimondChunks.offloadBytes('c:' + id, new TextEncoder().encode(serial)); }
-				catch (e) { entry.messages = msgs; out.push(entry); msgs = null; serial = null; continue; }	// offload failed: ride inline this round
-				// A `contentSet` lost to quota leaves the parcel naming a `messagesRef`
-				// whose chunks the next commit -- built from the index that never took
-				// them -- does not declare, so the gateway sweeps them and the far device
-				// gets an EMPTY chat, re-swept every round. So on a failed index write the
-				// transcript rides inline this round and the collector retries next round;
-				// `indexDurable` also blocks the commit until the write lands, and
-				// storageAlarm says so.
-				if (!DaimondCloud.contentSet(ckey, {
-						v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, fp: fp })) {
-					noteCloudIndexStuck();
-					entry.messages = msgs;
-					out.push(entry);
-					msgs = null;
-					serial = null;
-					continue;
-				}
-				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
-			}
+			var entry = await packRef(sum, msgs, serial, fp, stored);
 			// Record the AUTHORITATIVE fingerprint and byte length -- of the exact serial
-			// just offloaded -- on the summary, so the next collect reuses this manifest
-			// with no load. Batched and flushed once below.
+			// just read -- on the summary, so the next collect reuses this manifest with no
+			// load. A reused stale manifest keeps its own fp, so the two differ and the
+			// next collect retries the offload. Batched and flushed once below.
 			fixes.push({ id: id, bytes: serial.length, fp: fp, seed: seed0 });
-			entry.messages = null;
-			entry.messagesRef = ref;
-			out.push(entry);
+			if (entry) out.push(entry);
 			msgs = null;
 			serial = null;
 		}
+		inlineHeld = held;
 		if (fixes.length && ChatStore.noteFps) { try { ChatStore.noteFps(fixes); } catch (e) { /* reuse just costs a load next round */ } }
 		// Drop manifests for chats that are gone, so their chunks stop being named
 		// live. Writes only on a real deletion; a no-op collect leaves it be.
@@ -63264,6 +63335,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And the trash, for the same reason and with the same guard: one
 		// account's deleted chats must never show in another's panel.
 		try { if (window.DaimondTrash) DaimondTrash.reset(); } catch (e) { /* ignore */ }
+		// And the inline transcripts the last collect held, which a lock drops only
+		// when the identity was unlocked.
+		dropInlineHeld();
 		// And whatever this tab still owes the box: an owed record retried after the
 		// switch would land under the next account's namespace.
 		DaimondStore.reset();
@@ -64499,6 +64573,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And the trash, for the same reason and with the same guard: one
 		// account's deleted chats must never show in another's panel.
 		try { if (window.DaimondTrash) DaimondTrash.reset(); } catch (e) { /* ignore */ }
+		// And the inline transcripts the last collect held, which a lock drops only
+		// when the identity was unlocked.
+		dropInlineHeld();
 		// And whatever this tab still owes the box: an owed record retried after the
 		// switch would land under the next account's namespace.
 		DaimondStore.reset();

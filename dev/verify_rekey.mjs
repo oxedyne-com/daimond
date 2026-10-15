@@ -498,7 +498,7 @@ function stripped(src, keepText) {
 	return out;
 }
 
-const SEALS  = /DaimondIdentity\s*\??\.\s*wrap(?:Bytes)?\s*\(/;
+const SEALS  = /DaimondIdentity\s*\??\.\s*wrap(?:Bytes|Chunk)?\s*\(/;
 /// A COMPUTED reach into the identity module. The property name may be a string this
 /// scan has already blanked, so what is caught is the bracket itself — `DaimondIdentity
 /// ['wrap']` and a variable-keyed call alike. Nothing in the app does this today, so it
@@ -817,8 +817,10 @@ try {
 	check('the scan follows the spellings a seal is actually written in',
 		sawSeal([fx('js/h.js', 'await DaimondIdentity\n\t.wrap(v)'),
 			fx('js/i.js', "await DaimondIdentity?.wrap(v)"),
-			fx('js/j.js', "await DaimondIdentity['wrapBytes'](v)")]).length === 3,
-		'a line break, an optional chain and a computed name are all still a seal');
+			fx('js/j.js', "await DaimondIdentity['wrapBytes'](v)"),
+			// UNBLOCK-4: the convergent chunk seal is a seal under the passphrase too.
+			fx('js/k.js', 'await DaimondIdentity.wrapChunk(v)')]).length === 4,
+		'a line break, an optional chain, a computed name and the chunk seal are all still a seal');
 	// WHAT IT CANNOT SEE, and no check is written for it because a check that asserted
 	// the limitation would go red the day somebody removed it: a seal reached through
 	// an ALIAS — `var W = DaimondIdentity.wrap; await W(v)` — is invisible to any
@@ -880,7 +882,7 @@ try {
 		// the passphrase about to go: nothing may offer it for reuse afterwards. A
 		// plausible entry rather than an empty map, because a check on a map that was
 		// empty to begin with would pass whatever the change did.
-		localStorage.setItem('daimond-chunk-map', JSON.stringify({
+		localStorage.setItem('daimond-chunk-map-v2', JSON.stringify({
 			['0'.repeat(64)]: ['f'.repeat(64), 4096],
 		}));
 		localStorage.removeItem('daimond-chunk-stale');
@@ -1022,7 +1024,7 @@ try {
 	// offered for reuse. The address map goes, and the debt is recorded so that
 	// `collectChunked` offloads again rather than skipping the files as unchanged.
 	const chunkState = await page.evaluate(() => ({
-		map:   Storage.prototype.getItem.call(localStorage, 'daimond-chunk-map'),
+		map:   Storage.prototype.getItem.call(localStorage, 'daimond-chunk-map-v2'),
 		stale: !!(window.DaimondChunks && DaimondChunks.staleSinceRekey && DaimondChunks.staleSinceRekey()),
 	}));
 	check('THE CHUNK ADDRESSES SEALED UNDER THE OLD PASSPHRASE ARE NOT REUSED',

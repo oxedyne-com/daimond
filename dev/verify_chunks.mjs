@@ -648,7 +648,7 @@ if (NO_GATEWAY) {
 			const mod = await import('../pkg/oxedyne_daimond.js');
 			const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 			await app.run_tool('file_delete', JSON.stringify({ path: 'big-note.txt' }));
-			localStorage.removeItem('daimond-chunk-map');	// a fresh device has never offloaded.
+			localStorage.removeItem('daimond-chunk-map-v2');	// a fresh device has never offloaded.
 			localStorage.removeItem('daimond-sync-version');
 			localStorage.removeItem('daimond-sync-filebase');
 			await window.DaimondSync.pull();

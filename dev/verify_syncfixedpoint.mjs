@@ -13,13 +13,15 @@
 // proves that is correct), and a device that DOES commit. So:
 //
 //   A — folder-mounted. Offloads its chats and Diamonds; commits nothing, and
-//       its file census is empty, so it cannot put a file back either.
+//       its file census is empty, so it cannot put a file back either. It runs
+//       the RANDOM-IV seal (see `oldSeal`): a device not yet upgraded.
 //   B — the sandbox. Unions A's content, and commits the account's live set.
 //
 // Six properties, in the order they broke:
 //
 //   (i)   A'S CHUNKS SURVIVE B'S COMMIT. Two devices that compute the same union
-//         land it at different addresses (a fresh IV per seal), so B's index
+//         land it at different addresses when one seals with a fresh IV (every
+//         device before UNBLOCK-4, and any not yet reloaded since), so B's index
 //         names only its own -- unless it also names A's, which is what a
 //         `.peer.<device>` slot is for. The gateway sweeps every chunk the
 //         committing index does not name, so without that slot B's commit
@@ -49,9 +51,12 @@
 //         other for ever. Two rounds, then the same ten simulated minutes, and nobody
 //         pushes. `dev/verify_foldershare.mjs` is the rest of that feature.
 //   (viii) AND A FILE HELD BY TWO DEVICES IS NAMED BY WHICHEVER COMMITS. Two devices
-//         holding one file at identical bytes hold it at DIFFERENT ADDRESSES: an
-//         address is the hash of ciphertext and the seal takes a fresh IV, so each
-//         upload lands somewhere of its own. The merge kept our manifest and dropped
+//         holding one file at identical bytes held it at DIFFERENT ADDRESSES: an
+//         address is the hash of ciphertext and the seal took a fresh IV, so each
+//         upload landed somewhere of its own. The convergent seal (UNBLOCK-4) ends
+//         that for new uploads, but not for the copies already up there, so this
+//         is driven by a random-IV device and then UPGRADED: its next offload must
+//         land on the other device's addresses, and both slots must close. The merge kept our manifest and dropped
 //         theirs, `chunks.js`'s commit builds the live set out of this index alone, and
 //         the gateway sweeps every chunk the committing index does not name. That is
 //         the whole of the phone's 222-file loss of 2026-09-13: a folder-mounted
@@ -417,6 +422,12 @@ async function patchedSource(page) {
 /// property on a global read at call time -- so replacing it IS the code path.
 async function wireCloud(s, dev) {
 	await s.page.exposeFunction('__cloudCall', async (p, method, body) => serve(dev, p, method, body));
+	await installCloud(s, dev);
+}
+
+/// The in-page half of `wireCloud`, again after a reload: an exposed function
+/// survives a navigation, and the page's own globals do not.
+async function installCloud(s, dev) {
 	await s.page.evaluate((dev) => {
 		window.__dev = dev;
 		window.__lines = [];
@@ -432,6 +443,40 @@ async function wireCloud(s, dev) {
 			return { status: r.status, json: async () => r.json };
 		};
 	}, dev);
+}
+
+// ── THE RANDOM-IV BUILD, ON ONE DEVICE ──────────────────────────────────
+//
+// Until UNBLOCK-4 (2026-10-15) every chunk was sealed under a fresh IV, so two
+// devices holding identical bytes held them at two sets of addresses. The
+// convergent seal (`wrapChunk`) ends that for new uploads, but every device in the
+// field already holds random-IV copies and a map naming them, and a fleet part way
+// through the upgrade has both kinds of device at once. Two current devices can no
+// longer produce the divergent state that (i), (ii) and (viii) repair, so one
+// device in each runs the old seal: its page's `wrapChunk` IS `wrapBytes`, as
+// `www/js/sivchunk.test.mjs`'s B1 arm builds it. In the page, not a served edit,
+// because `page.route` does not fire under WebKit.
+const oldSeal = (s) => s.page.evaluate(() => {
+	window.DaimondIdentity.wrapChunk = window.DaimondIdentity.wrapBytes;
+});
+
+/// Upgrade an old-seal device to this build. The map it wrote moves to the random-IV
+/// build's key, which is what that build left on disk, and the page reloads into the
+/// real seal: the new `chunks.js` must drop that map and offload again.
+async function upgradeSeal(s, dev) {
+	const had = await s.page.evaluate(() => {
+		const m = localStorage.getItem('daimond-chunk-map-v2');
+		if (m === null) return false;
+		localStorage.removeItem('daimond-chunk-map-v2');
+		localStorage.setItem('daimond-chunk-map', m);
+		return true;
+	});
+	if (!had) throw new Error(`${dev} has no 'daimond-chunk-map-v2': chunks.js's map key moved, so the upgrade below would prove nothing`);
+	await s.page.reload({ waitUntil: 'domcontentloaded' });
+	await ready(s);
+	await signInAs(s, 'syncfp');
+	await ready(s);
+	await installCloud(s, dev);
 }
 
 /// Wait until the app's sync seams are on the page.
@@ -497,6 +542,7 @@ check('two contexts hold ONE account — the same key, so one mailbox opens for 
 
 await wireCloud(A, 'A');
 await wireCloud(B, 'B');
+await oldSeal(A);		// a desktop still on the random-IV build: see `oldSeal`
 
 const devIds = {
 	a: await A.page.evaluate(() => window.DaimondCore.syncSelfDeviceId()),
@@ -1208,10 +1254,12 @@ await A2.close().catch(() => {});
 // A and B above are a folder-mounted desktop and a phone, which is the owner's
 // topology and the one where only one device commits. This is the other one, and it
 // is the one that cost 222 files: TWO devices that may both commit, holding one file
-// at identical bytes. Identical bytes are not identical addresses -- an address is the
-// hash of CIPHERTEXT and the seal takes a fresh IV per device -- so each device's
-// index names a set of its own, the merge kept ours and dropped theirs, and the
-// gateway sweeps every chunk the committing index does not name.
+// at identical bytes. Identical bytes were not identical addresses -- an address is the
+// hash of CIPHERTEXT and the seal took a fresh IV per device -- so each device's
+// index named a set of its own, the merge kept ours and dropped theirs, and the
+// gateway swept every chunk the committing index did not name. C is that device: it
+// runs the random-IV seal (`oldSeal`) until the end of the section, where it is
+// upgraded and must converge on B's addresses.
 console.log('\n— (viii) two committers, one file, two sets of addresses —');
 
 if (!OPFS) {
@@ -1240,6 +1288,7 @@ await ready(C);
 await clearDiamonds(C);
 await ready(C);
 await wireCloud(C, 'C');
+await oldSeal(C);
 
 // C'S SIGN-IN ROUND FINISHES BEFORE ANYTHING IS SEEDED. Wired in, C completes its unlock
 // against this cloud, and three things in that nudge sync: the models store opening, the
@@ -1299,7 +1348,7 @@ const mB = await seedX(B);
 await B.page.waitForTimeout(400);
 const mC = await seedX(C);
 await C.page.waitForTimeout(400);
-check('(viii) one file, the same content key on both devices, at DIFFERENT addresses',
+check('(viii) one file, the same content key on both devices, at DIFFERENT addresses — C seals with a fresh IV',
 	!!mB && !!mC && mB.key === mC.key && mB.addrs.length > 0
 	&& mB.addrs.join() !== mC.addrs.join(),
 	!mB || !mC ? 'one of them offloaded nothing'
@@ -1404,6 +1453,42 @@ check('(viii) and after two more rounds every address either device names for th
 	&& refs.B.addrs >= 4 && refs.C.addrs >= 4,
 	`B ${refs.B.keys} key(s)/${refs.B.addrs} addresses, ${refs.B.missing} missing; `
 	+ `C ${refs.C.keys} key(s)/${refs.C.addrs} addresses, ${refs.C.missing} missing`);
+
+// AND C IS UPGRADED, which is the step every device in the field takes. Its first
+// load of the convergent build drops the random-IV map and owes one re-offload, and
+// that re-offload must land on B's addresses: one copy of the file for the account,
+// both peer slots closed, and C's random-IV copy let go by the next commit.
+await upgradeSeal(C, 'C');
+for (let r = 0; r < 2; r++) {
+	await push(C); await pull(B); await push(B); await pull(C);
+}
+const up = {};
+for (const [label, s_] of [['B', B], ['C', C]]) {
+	up[label] = await s_.page.evaluate((p) => {
+		const ix = window.DaimondCloud.index();
+		return { addrs: ((ix[p] || {}).chunks || []).map(c => c.addr).sort(),
+			slots: Object.keys(ix).filter(k => k.indexOf(p + '.peer.') === 0),
+			oldMap: localStorage.getItem('daimond-chunk-map') !== null };
+	}, XP);
+}
+check('(viii) upgraded, C drops the random-IV map',
+	up.C.oldMap === false, up.C.oldMap ? '`daimond-chunk-map` still there' : 'gone');
+check('(viii) and re-seals the file at B\'s addresses — one copy for the account',
+	up.C.addrs.length > 0 && up.C.addrs.join() === mB.addrs.join() && up.B.addrs.join() === mB.addrs.join(),
+	`C ${up.C.addrs.length} address(es), B ${up.B.addrs.length}, `
+	+ (up.C.addrs.join() === up.B.addrs.join() ? 'the same' : 'different'));
+check('(viii) and both peer slots for that file close — nothing of the other\'s is novel',
+	up.B.slots.length === 0 && up.C.slots.length === 0,
+	`B ${up.B.slots.length} slot(s), C ${up.C.slots.length}`);
+const conv = await B.page.evaluate(async (a) => {
+	const pr = await window.DaimondChunks.presence(a.mine.concat(a.old));
+	const miss = (pr && pr.missing) || [];
+	return { mine: a.mine.filter(x => miss.indexOf(x) >= 0).length,
+		old: a.old.filter(x => miss.indexOf(x) < 0).length };
+}, { mine: mB.addrs, old: addrsC });
+check('(viii) every address of the one copy is held, and C\'s random-IV copy is let go',
+	conv.mine === 0 && conv.old === 0,
+	`${conv.mine} of ${mB.addrs.length} missing; ${conv.old} of ${addrsC.length} old address(es) still held`);
 
 await C.close().catch(() => {});
 

@@ -137,8 +137,8 @@ function sourceGuards() {
 		check('a transcript is released after use (msgs = null in the ref arm)',
 			body.includes('msgs = null;'), 'no release of the loaded transcript');
 		check('the inline set is ranked from summary bytes, and a summary with none is measured, not assumed large',
-			body.includes('typeof s.bytes === \'number\'') && body.includes('spent + b <= budget')
-			&& body.includes('meas[u.id] = { bytes: serU.length'),
+			body.includes('typeof u.bytes === \'number\'') && body.includes('spent + b <= budget')
+			&& body.includes('meas[u.id] = { bytes: b, fp: fileHash(serU) }'),
 			'ranking still reads an unmeasured summary as too large to ride inline');
 		check('a ref whose summary fp matches the manifest is reused WITHOUT a load',
 			body.includes('stored.fp === fpHave') && body.includes('var fpHave = sum.fp ||'), 'reuse-without-load path absent');

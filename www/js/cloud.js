@@ -993,14 +993,21 @@
 	/// is affordable at any size — which matters, because it is what stands
 	/// between a user and the deletion of their only local copy.
 	async function fileKey(file, chunkSize) {
+		return await keyOfPieces(file.size, chunkSize, async function (a, b) {
+			return new Uint8Array(await file.slice(a, b).arrayBuffer());
+		});
+	}
+
+	/// The content key over `size` bytes that `read(a, b)` answers a chunk at a time,
+	/// the shared body of `fileKey` and `textKey`.
+	async function keyOfPieces(size, chunkSize, read) {
 		var CH = chunkSize || 256 * 1024;
-		var n = Math.max(1, Math.ceil(file.size / CH));
+		var n = Math.max(1, Math.ceil(size / CH));
 		var hashes = '';
 		for (var i = 0; i < n; i++) {
 			var off = i * CH;
-			var len = Math.min(CH, file.size - off);
-			var slice = new Uint8Array(await file.slice(off, off + Math.max(0, len)).arrayBuffer());
-			hashes += await sha256Bytes(slice);
+			var len = Math.min(CH, size - off);
+			hashes += await sha256Bytes(await read(off, off + Math.max(0, len)));
 		}
 		return await sha256Bytes(new TextEncoder().encode(hashes));
 	}
@@ -1818,9 +1825,12 @@
 
 	/// The content key of `text`, as an offload of it as a file would compute it: what an
 	/// inline copy of a path is compared with, against a deletion recorded here.
+	/// The text is encoded once and hashed in place, never copied into a Blob, which
+	/// would hold it in the browser process until a collection (UNBLOCK-4).
 	async function textKey(text) {
-		var b = new Blob([String(text)]);
-		return fileKey(b, window.DaimondChunks ? DaimondChunks.chunkSizeFor(b.size) : 0);
+		var b = new TextEncoder().encode(String(text));
+		return keyOfPieces(b.length, window.DaimondChunks ? DaimondChunks.chunkSizeFor(b.length) : 0,
+			async function (x, y) { return b.subarray(x, y); });
 	}
 
 	/// Drop a path from this device's index, and every path beneath it. Says nothing to

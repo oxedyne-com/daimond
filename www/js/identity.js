@@ -73,6 +73,8 @@
 	var SALT_BYTES        = 16;		// Per-install random salt length.
 	var IV_BYTES          = 12;		// AES-GCM nonce length.
 	var AES_BITS          = 256;		// AES-GCM key length.
+	var CHUNK_KEY_INFO    = 'daimond chunk-iv key v1';	// HKDF label, see chunkKeyFromBits.
+	var CHUNK_IV_LABEL    = 'daimond chunk-iv v1\u0000';	// HMAC input prefix, see wrapChunk.
 
 	// ── localStorage keys ──────────────────────────────────────
 	// All identity state is namespaced under `daimond-id-`. None of these
@@ -159,6 +161,7 @@
 	var _wrapKey = null;	// AES-GCM CryptoKey deriving from the passphrase.
 	var _signKey = null;	// Device private signing key (non-extractable).
 	var _sealKey = null;	// Device private SEALING key (non-extractable). See ensureSealingKey.
+	var _chunkKey = null;	// HMAC key for chunk IVs, HKDF of the wrap bits. See wrapChunk.
 	// The wrapping key from BEFORE the last epoch change on this device, held for the
 	// length of the session and never persisted. It closes the lost-edit race: a device
 	// that pushed a parcel at the old epoch just before the change lands is opened with
@@ -396,6 +399,23 @@
 			{ name: 'AES-GCM' },
 			false,
 			['encrypt', 'decrypt'],
+		);
+	}
+
+	/// The HMAC key `wrapChunk` derives a chunk's IV with, from the SAME PBKDF2 bits
+	/// as the wrapping key but under its own HKDF label, so the encryption key is
+	/// never itself used as a MAC key. Derived at each of the five places the
+	/// wrapping key is set, because the AES key object is not extractable and the
+	/// bits are not kept: a passphrase change therefore changes every chunk address,
+	/// which is what the chunk map's drop on a rekey already expects.
+	async function chunkKeyFromBits(bits) {
+		var base = await crypto.subtle.importKey('raw', bits, { name: 'HKDF' }, false, ['deriveKey']);
+		return await crypto.subtle.deriveKey(
+			{ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: utf8(CHUNK_KEY_INFO) },
+			base,
+			{ name: 'HMAC', hash: 'SHA-256', length: 256 },
+			false,				// non-extractable.
+			['sign'],
 		);
 	}
 
@@ -975,10 +995,11 @@
 
 		// Fresh per-install salt.
 		var salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-		var bits, wrapKey, wrapped;
+		var bits, wrapKey, chunkKey, wrapped;
 		try {
-			bits    = await deriveWrapBits(passphrase, salt);
-			wrapKey = await wrapKeyFromBits(bits);
+			bits     = await deriveWrapBits(passphrase, salt);
+			wrapKey  = await wrapKeyFromBits(bits);
+			chunkKey = await chunkKeyFromBits(bits);
 			wrapped = await seal(wrapKey, gen.pkcs8);
 		} catch (e) {
 			wipe(bits);
@@ -1039,6 +1060,7 @@
 		wipe(_signSeed);
 		wipe(_sealScalar);
 		_wrapKey     = wrapKey;
+		_chunkKey    = chunkKey;
 		_signKey     = sk.key;
 		_signSeed    = sk.seed;
 		_sealKey     = null;
@@ -1252,6 +1274,7 @@
 		var salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
 		var newBits = await deriveWrapBits(newPass, salt);
 		var newKey = await wrapKeyFromBits(newBits);
+		var newChunkKey = await chunkKeyFromBits(newBits);
 		var wrapped = await seal(newKey, pkcs8);
 
 		// The passphrase is already proven (the open above), so an import failure
@@ -1376,6 +1399,7 @@
 		// OLD passphrase. Re-wrapping is `DaimondRekey`'s job, and it is a
 		// registry precisely so that this function names nobody.
 		_wrapKey  = newKey;
+		_chunkKey = newChunkKey;
 		_signKey  = signKey;
 		_signSeed = signSeed;
 		// The remembered material is the OLD key, which opens nothing now. Replaced
@@ -1537,6 +1561,9 @@
 		}
 		if (!bits) { return { ok: false, reason: 'gap' }; }
 		var newKey = key;			// the key at epoch `target`
+		var newChunkKey;
+		try { newChunkKey = await chunkKeyFromBits(bits); }
+		catch (ex) { zero(); return { ok: false, reason: 'bad' }; }
 
 		// PROVE it: the record's wrapped private key must open under the derived key.
 		// A chain that produced the wrong key fails here rather than leaving the device
@@ -1602,6 +1629,7 @@
 		// from `target-1` (Gap 3b).
 		if (!keepPrev) _prevWrapKey = penultKey;
 		_wrapKey  = newKey;
+		_chunkKey = newChunkKey;
 		_signKey  = sk.key;
 		_signSeed = sk.seed;
 		rememberSession(bits, alg);
@@ -1684,8 +1712,12 @@
 		var alg     = (rec && rec.alg) || localStorage.getItem(K_ALG) || 'Ed25519';
 		if (!rec || !rec.k || !privRaw) { forgetSession(); return { ok: false, reason: 'none' }; }
 
-		var wrapKey;
-		try { wrapKey = await wrapKeyFromBits(b64dec(rec.k)); }
+		var wrapKey, chunkKey;
+		try {
+			var restoredBits = b64dec(rec.k);
+			wrapKey  = await wrapKeyFromBits(restoredBits);
+			chunkKey = await chunkKeyFromBits(restoredBits);
+		}
 		catch (e) { forgetSession(); return { ok: false, reason: 'stale' }; }
 
 		var pkcs8;
@@ -1702,6 +1734,7 @@
 		if (!sk) return { ok: false, reason: 'unsupported' };
 
 		_wrapKey  = wrapKey;
+		_chunkKey = chunkKey;
 		_signKey  = sk.key;
 		_signSeed = sk.seed;
 		announceWhenReady('unlock');
@@ -1734,8 +1767,9 @@
 			return { ok: false };
 		}
 
-		var bits    = await deriveWrapBits(passphrase, b64dec(saltRaw));
-		var wrapKey = await wrapKeyFromBits(bits);
+		var bits     = await deriveWrapBits(passphrase, b64dec(saltRaw));
+		var wrapKey  = await wrapKeyFromBits(bits);
+		var chunkKey = await chunkKeyFromBits(bits);
 
 		var pkcs8;
 		try {
@@ -1752,6 +1786,7 @@
 		}
 
 		_wrapKey   = wrapKey;
+		_chunkKey  = chunkKey;
 		_signKey   = sk.key;
 		_signSeed  = sk.seed;
 		// What a reload of this tab comes back on, where the device says so. Written
@@ -1794,6 +1829,7 @@
 	function lock() {
 		var was = isUnlocked();
 		_wrapKey = null;
+		_chunkKey = null;
 		_signKey = null;
 		_sealKey = null;
 		// The previous epoch's key is a session-only race guard (see changePassphrase /
@@ -2000,6 +2036,40 @@
 		var pt = await crypto.subtle.decrypt(
 			{ name: 'AES-GCM', iv: buf.slice(0, IV_BYTES) }, _wrapKey, buf.slice(IV_BYTES));
 		return new Uint8Array(pt);
+	}
+
+	/// Seal one chunk of a file offloaded to the gateway, CONVERGENTLY: the same
+	/// plaintext gives the same bytes, and so the same content address, on every
+	/// device of this account. `unwrapBytes` opens it, since the IV travels in front
+	/// of the ciphertext as it always has.
+	///
+	/// UNBLOCK-4 (15 Oct 2026). With a random IV each device stored its own copy of
+	/// every chunk under its own address, and each push released the other devices'
+	/// copies, so an account with a 63 MB live set held over a gigabyte of releases
+	/// and was refused at its ceiling. The IV is now SIV-style: the first 12 bytes of
+	/// HMAC-SHA256 under `_chunkKey` of a domain label and the plaintext's SHA-256.
+	///
+	/// This is for chunks only, and deliberately not `wrapBytes`: the same key seals
+	/// envelopes, leases and progress that may repeat, and a deterministic IV there
+	/// would show the gateway when two of them were equal. What it shows here, that
+	/// two of this account's chunks are equal, the address already told it. It fails
+	/// closed: with no chunk key it throws, and never falls back to a random IV.
+	async function wrapChunk(plainBytes) {
+		requireUnlocked();
+		if (!_chunkKey) throw new Error('No chunk key: refusing to seal a chunk without one.');
+		var ph    = new Uint8Array(await crypto.subtle.digest('SHA-256', plainBytes));
+		var label = utf8(CHUNK_IV_LABEL);
+		var msg   = new Uint8Array(label.length + ph.length);
+		msg.set(label, 0);
+		msg.set(ph, label.length);
+		var mac = new Uint8Array(await crypto.subtle.sign('HMAC', _chunkKey, msg));
+		var iv  = mac.slice(0, IV_BYTES);
+		var ct  = new Uint8Array(await crypto.subtle.encrypt(
+			{ name: 'AES-GCM', iv: iv }, _wrapKey, plainBytes));
+		var out = new Uint8Array(iv.length + ct.length);
+		out.set(iv, 0);
+		out.set(ct, iv.length);
+		return out;
 	}
 
 	/// As wrapBytes, but BINDS the ciphertext to a purpose string, passed as the
@@ -2381,6 +2451,7 @@
 		// The byte-shaped seal, for the file pipeline.
 		wrapBytes:    wrapBytes,
 		unwrapBytes:  unwrapBytes,
+		wrapChunk:    wrapChunk,
 		wrapBytesAad:   wrapBytesAad,
 		unwrapBytesAad: unwrapBytesAad,
 		reset:        reset,
