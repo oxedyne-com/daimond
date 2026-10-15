@@ -79,7 +79,7 @@ function doors(sp, model2) {
 		loadMsgTombs: () => ({}), msgTombstone: (mids) => sp.tombstoned.push(...mids), touchChat() {}, persistChats() {}, renderHistory() {},
 		ChatStore: { compact() {} }, newMid: () => 'n' + (++sp.seq), peerUiStateFor: () => '', selfDeviceId: () => 'D1', leaseClockNow: () => T0,
 		answerAgain() { sp.again++; },
-		diamonds: [], currentDiamond: null, runSteer: () => { sp.steered++; return Promise.resolve(); },
+		diag() {}, diamonds: [], currentDiamond: null, runSteer: () => { sp.steered++; return Promise.resolve(); },
 		runTurn: (chat, text, opts) => {
 			sp.ran.push({ text, opts });
 			const id = (opts && opts.mid) || 'fresh';
@@ -88,7 +88,7 @@ function doors(sp, model2) {
 			return Promise.resolve();
 		},
 	};
-	const body = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryTurn') + '\nreturn retryTurn;';
+	const body = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'tailAfter') + '\n' + lift(SRC, 'sessionCut') + '\n' + lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryTurn') + '\nreturn retryTurn;';
 	const w = Object.assign({}, win, st);
 	return new Function('window', ...Object.keys(st), 'DaimondLedger', 'DaimondProvenance', body)(w, ...Object.values(st), L, P);
 }

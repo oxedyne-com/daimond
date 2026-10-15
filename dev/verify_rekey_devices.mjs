@@ -301,8 +301,8 @@ async function pullForged(page, rec, garbageSealed) {
 	return st;
 }
 
-const P_ON_A = 'custom:http://127.0.0.1:9191/v1/chat/completions';
-const P_ON_B = 'custom:http://127.0.0.1:9192/v1/chat/completions';
+const P_ON_A = 'custom:http://127.0.0.1:7901/v1/chat/completions';
+const P_ON_B = 'custom:http://127.0.0.1:7902/v1/chat/completions';
 const K_ON_A = 'a-side-provider-key-4f21c';
 const K_ON_B = 'b-side-provider-key-9de37';
 
@@ -696,7 +696,7 @@ try {
 		const d3 = await A.page.evaluate(async () => {
 			// A change so the frame is not skipped as unchanged.
 			try {
-				const id = 'custom:http://127.0.0.1:9199/v1/chat/completions';
+				const id = 'custom:http://127.0.0.1:7909/v1/chat/completions';
 				if (!DaimondModels.providers().some(p => p.id === id)) DaimondModels.addProvider(id, { name: 'd3', url: id.slice(7) });
 				await DaimondModels.setKey(id, 'd3-progress-key');
 			} catch (e) {}
@@ -731,7 +731,7 @@ try {
 			// A distinct change, measured AND pushed with nothing altered between the two,
 			// so the estimate and the real body describe the very same parcel.
 			try {
-				const id = 'custom:http://127.0.0.1:9198/v1/chat/completions';
+				const id = 'custom:http://127.0.0.1:7908/v1/chat/completions';
 				if (!DaimondModels.providers().some(p => p.id === id)) DaimondModels.addProvider(id, { name: 'd6', url: id.slice(7) });
 				await DaimondModels.setKey(id, 'd6-wire-key');
 			} catch (e) {}
@@ -869,8 +869,8 @@ try {
 		check('D2: NEITHER read the divergence as corruption (no decrypt/parse fork)',
 			forkA.length === 0 && forkB.length === 0, 'A=' + forkA.length + ' B=' + forkB.length, true);
 		// Each device's post-change edit reaches the other, opened under the shared key.
-		const P_DVA = 'custom:http://127.0.0.1:9197/v1/chat/completions';
-		const P_DVB = 'custom:http://127.0.0.1:9196/v1/chat/completions';
+		const P_DVA = 'custom:http://127.0.0.1:7907/v1/chat/completions';
+		const P_DVB = 'custom:http://127.0.0.1:7906/v1/chat/completions';
 		await addProviderAndPush(dvA.dev.page, P_DVA, 'dvA', 'dvA-edit-key');
 		await dvB.dev.page.evaluate(async () => { try { await DaimondSync.pull(); } catch (e) {} });
 		await sleep(300);
@@ -1006,7 +1006,7 @@ try {
 			g3.rekeyBehind === false && g3.stalledWhy !== 'rekey',
 			'rekeyBehind=' + g3.rekeyBehind + ' why=' + g3.stalledWhy, true);
 		// It reads dvW's post-change edit, opened under the crossed-to key.
-		const P_G3 = 'custom:http://127.0.0.1:9195/v1/chat/completions';
+		const P_G3 = 'custom:http://127.0.0.1:7905/v1/chat/completions';
 		await addProviderAndPush(dvW.dev.page, P_G3, 'g3w', 'g3-edit-key');
 		await dvL.dev.page.evaluate(async () => { try { await DaimondSync.pull(); } catch (e) {} });
 		await sleep(300);

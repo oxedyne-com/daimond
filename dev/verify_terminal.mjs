@@ -21,6 +21,7 @@
 // is required to go red, then restored and required to go green. A check that has only ever
 // been seen passing has not been seen working.
 
+import { port, WORLD } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,8 +41,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
 // EADDRINUSE, because world 2 was up in the main tree. The verifier was blameless
 // and the number was the bug. Add a row to the port register in dev/world.sh
 // before deriving any port.
-const WORLD = Number(process.env.DAIMOND_PORT || 8777) - 8777;
-const PORT  = Number(process.env.TERMDEMO_PORT || (8940 + WORLD));
+const PORT  = port('termdemo');
 
 let bad = 0, n = 0;
 const out = [];

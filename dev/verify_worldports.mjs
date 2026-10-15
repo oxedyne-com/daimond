@@ -22,12 +22,12 @@
 //      own port, and never reaches the neighbour that does have one.
 //   4. The refusal a caller reads says whose port it is, not merely that
 //      something is absent.
-//   5. No two rows of the port register collide for any world 0..9.
+//   5. No two rows of the port register (dev/ports.json) collide for any world 0..99.
 //   5a. AND NOTHING ELSE IN THE REGISTER CLAIMS A DAIMON WORLD'S PORTS. The hand's
 //      `verify` verb stands a world out of the band the register reserves for it,
 //      chosen by the hand and never by a model, so a row that lands in that band is
 //      a lane a daimon's browser will drive mid-turn with nothing saying so. The
-//      band is read out of the register's own row rather than written down twice.
+//      band is read out of the register's own bands rather than written down twice.
 //   7. AND `DAIMOND_WORLD_ROOT` MOVES A WORLD'S SCRATCH. The verb points it inside
 //      the granted tree, because ~/.cache is outside every fence and a daimon that
 //      cannot read serve.out cannot act on what it says. An env block that named
@@ -54,9 +54,10 @@
 //   node dev/verify_worldports.mjs --break worldroot # 7 fails: the scratch ignores the variable
 //   node dev/verify_worldports.mjs                   # and then, clean
 //
-// The register rows are 8480 + 2N (two app servers) and 9480 + 2N (their two
-// gateways); see dev/world.sh, which is where a port is claimed. Check 6 borrows
-// a whole spare WORLD instead -- the first of 21..30 whose ports are free -- so
+// Its own ports are the rows worldports_app and worldports_gw (two app servers,
+// their two gateways) of dev/ports.json, which is where a port is claimed. Check 6
+// borrows a whole spare WORLD instead -- the first of the band "worldports borrow"
+// whose ports are free -- so
 // that it drives the real `world.sh --up` rather than a second copy of it.
 
 import fs from 'node:fs';
@@ -65,10 +66,10 @@ import http from 'node:http';
 import path from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { REGISTER, WORLD, portOf, registerFaults, bandWorlds } from './ports.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
-const WORLD = Math.max(0, Number(process.env.DAIMOND_PORT || 8777) - 8777);
 // Both spellings are in the tree -- `--break name` and `--break=name` -- and a
 // parser that quietly took the next argv entry read node's own path as a break
 // name on the very first run of this file.
@@ -81,8 +82,8 @@ const BREAK = (() => {
 	return next && !next.startsWith('-') ? next : '';
 })();
 
-const APP_A = 8480 + 2 * WORLD, APP_B = 8481 + 2 * WORLD;
-const GW_A  = 9480 + 2 * WORLD, GW_B  = 9481 + 2 * WORLD;
+const APP_A = portOf('worldports_app', WORLD, 0), APP_B = portOf('worldports_app', WORLD, 1);
+const GW_A  = portOf('worldports_gw', WORLD, 0),  GW_B  = portOf('worldports_gw', WORLD, 1);
 
 // The stand-in's own word for itself. A 401 alone would not distinguish "the
 // neighbour refused me" from "my own gateway refused me", and that ambiguity is
@@ -186,95 +187,61 @@ async function main() {
 
 	// A caller that has already chosen one has asked for a gateway and must keep it.
 	check('a caller that sets DAIMOND_GW_PORT itself keeps it',
-		worldEnv(3, { DAIMOND_GW_PORT: '9911' }).DAIMOND_GW_PORT === '9911',
-		worldEnv(3, { DAIMOND_GW_PORT: '9911' }).DAIMOND_GW_PORT);
+		worldEnv(3, { DAIMOND_GW_PORT: '9911' }).DAIMOND_GW_PORT === '9911',	// portlint: ok, a caller's own choice
+		worldEnv(3, { DAIMOND_GW_PORT: '9911' }).DAIMOND_GW_PORT);	// portlint: ok
 
 	// ── 2. The register does not collide with itself ──────────────────────
 	//
-	// Read out of `dev/world.sh`'s own table rather than restated here. A second
-	// copy of the register would be a second thing to keep in step, which is the
-	// failure the table was written to end.
-	let regPath = path.join(HERE, 'world.sh');
+	// Read out of `dev/ports.json` (K1) and judged by `registerFaults`, the one
+	// rule `dev/portlint.mjs` also applies -- over every world 0..max, not the
+	// 0..9 the old comment table was written for: worlds 60..65, 81..86 and 96..97
+	// are taken every night, and 9187 was world 88's mock and a verifier's own port
+	// at once. `--break collide` adds a row one port above the mock's.
+	let reg5 = REGISTER;
 	if (BREAK === 'collide') {
-		regPath = path.join(OUT, 'world-collide.sh');
-		const txt = fs.readFileSync(path.join(HERE, 'world.sh'), 'utf8');
-		fs.writeFileSync(regPath, txt.replace(
-			'#   9099 + N   mock provider           dev/world.sh',
-			'#   9099 + N   mock provider           dev/world.sh\n'
-			+ '#   9100 + N   a deliberately colliding row  --break collide'));
+		reg5 = structuredClone(REGISTER);
+		reg5.rows.push({ name: 'collide', base: REGISTER.rows.find(r => r.name === 'mock').base + 1,
+			stride: 1, owner: '--break collide', files: [] });
 	}
-	const rows = [];
-	for (const line of fs.readFileSync(regPath, 'utf8').split('\n')) {
-		const m = /^#\s+(\d{4})(?:\s*\+\s*(\d*)N)?\s{2,}(\S.*?)\s*$/.exec(line);
-		if (!m) continue;
-		rows.push({ base: Number(m[1]), step: m[2] === undefined ? 0 : Number(m[2] || 1),
-			what: m[3].slice(0, 46) });
-	}
-	check('the port register is machine-readable at all', rows.length >= 12, `${rows.length} row(s)`);
-	const seen = new Map(); const clashes = [];
-	for (const r of rows) {
-		for (let n = 0; n <= 9; n++) {
-			const p = r.base + r.step * n;
-			const prev = seen.get(p);
-			if (prev && prev !== r.what) clashes.push(`:${p} ${prev} / ${r.what}`);
-			else seen.set(p, r.what);
-		}
-	}
-	// 0..9 because that is the band of world numbers the register's own rows are
-	// written for -- `dev/gate.sh` defaults to 9 and the lanes take 0..9. Higher
-	// numbers are borrowed rather than assigned, and the borrower checks the ports
-	// are free before it takes one.
-	check('no two register rows claim one port for any world 0..9',
+	check('the port register is machine-readable at all', reg5.rows.length >= 12, `${reg5.rows.length} row(s)`);
+	const clashes = registerFaults(reg5);
+	check(`no two register rows claim one port for any world 0..${reg5.worlds.max}`,
 		clashes.length === 0, clashes.slice(0, 3).join(' | '));
 
 	// ── 2a. The daimon band, which nothing else may reach into ────────────
 	//
-	// The band is READ OUT OF THE REGISTER's own row, not written down here: the
-	// row is the reservation, and a copy of it in this file would be the second
-	// place to forget. `--break daimonband` puts a row inside the band, which is
-	// exactly the mistake the row exists against -- and it uses a copy of its own,
-	// so that this check and check 5 above are damaged by different breaks.
-	let bandPath = path.join(HERE, 'world.sh');
+	// The band is READ OUT OF THE REGISTER, not written down here: the band entry
+	// is the reservation, and a copy of it in this file would be the second place
+	// to forget. `--break daimonband` puts a row inside the band, which is exactly
+	// the mistake the band exists against -- and on a copy of its own, so that
+	// this check and check 5 above are damaged by different breaks.
+	let reg5a = REGISTER;
 	if (BREAK === 'daimonband') {
-		bandPath = path.join(OUT, 'world-daimonband.sh');
-		const txt = fs.readFileSync(path.join(HERE, 'world.sh'), 'utf8');
-		fs.writeFileSync(bandPath, txt.replace(
-			'#   9099 + N   mock provider           dev/world.sh',
-			'#   9099 + N   mock provider           dev/world.sh\n'
-			+ '#   9140 + N   a row inside the daimon band  --break daimonband'));
+		const first = bandWorlds('daimon')[0];
+		reg5a = structuredClone(REGISTER);
+		reg5a.rows.push({ name: 'daimonband', base: REGISTER.rows.find(r => r.name === 'mock').base + first,
+			stride: 1, owner: '--break daimonband', files: [] });
 	}
-	const bandSrc = fs.readFileSync(bandPath, 'utf8');
-	const band = /^#\s+worlds (\d+)\.\.(\d+), LESS (\d+)\s/m.exec(bandSrc);
+	let mine = [];
+	try { mine = bandWorlds('daimon', reg5a); } catch { /* reported below */ }
 	check('the register reserves a band of world numbers for the daimon',
-		!!band, band ? `${band[1]}..${band[2]} less ${band[3]}`
-			: 'no "worlds A..B, LESS C" row in dev/world.sh');
-	if (band) {
-		const skip  = Number(band[3]);
-		const mine  = [];
-		for (let n = Number(band[1]); n <= Number(band[2]); n++) if (n !== skip) mine.push(n);
-		// world.sh's own three rows are what a daimon world IS, so they are not
-		// intruders in it. Every other row is.
-		const ours  = /dev\/world\.sh|THIS WORLD/;
-		const bandRows = [];
-		for (const line of bandSrc.split('\n')) {
-			const m = /^#\s+(\d{4})(?:\s*\+\s*(\d*)N)?\s{2,}(\S.*?)\s*$/.exec(line);
-			if (!m) continue;
-			bandRows.push({ base: Number(m[1]), step: m[2] === undefined ? 0 : Number(m[2] || 1),
-				what: m[3].slice(0, 46) });
-		}
+		mine.length > 0, mine.length ? `${mine[0]}..${mine[mine.length - 1]} (${mine.length} worlds)`
+			: 'no band named daimon in dev/ports.json');
+	if (mine.length) {
+		// The world's own three rows are what a daimon world IS, so they are not
+		// intruders in it. Every other row is, for any world number it is read with:
+		// a row is a family of ports and any member of it landing in the band is the
+		// collision.
+		const own = ['app', 'mock', 'gateway'];
+		const theirs = new Set();
+		for (const n of mine) for (const r of own) theirs.add(portOf(r, n));
 		const intruders = [];
-		for (const n of mine) {
-			for (const p of [8777 + n, 9099 + n, 9700 + n]) {
-				for (const r of bandRows) {
-					if (ours.test(r.what)) continue;
-					// Over every world number a row could be read with, not just n:
-					// a row is a family of ports and any member of it landing in the
-					// band is the collision.
-					for (let m2 = 0; m2 <= 49; m2++) {
-						if (r.base + r.step * m2 === p) {
-							intruders.push(`world ${n} :${p} — ${r.what}`);
-						}
-					}
+		for (const r of reg5a.rows) {
+			if (own.includes(r.name)) continue;
+			for (let m2 = 0; m2 <= reg5a.worlds.max; m2++) {
+				for (let i = 0; i < (r.span || 1); i++) {
+					const p = r.base + r.stride * m2 + i;
+					if (theirs.has(p)) intruders.push(`:${p} — row ${r.name} world ${m2}`);
 				}
 			}
 		}
@@ -286,8 +253,8 @@ async function main() {
 	for (const [name, p] of [['A app', APP_A], ['B app', APP_B], ['A gw', GW_A], ['B gw', GW_B]]) {
 		if (!await free(p)) {
 			console.log(`SKIP verify_worldports — :${p} (${name}) is held by something else. `
-				+ 'This file needs four ports of its own; see the 8480 + 2N and 9480 + 2N rows '
-				+ 'in dev/world.sh, or run it in a world of its own.');
+				+ 'This file needs four ports of its own; see the worldports_app and worldports_gw '
+				+ 'rows in dev/ports.json, or run it in a world of its own.');
 			process.exit(0);
 		}
 	}
@@ -374,13 +341,14 @@ async function main() {
 	// environment, which is why it could not have caught the handoff bug: the
 	// fault was in the one line this file was not exercising. So a whole spare
 	// world, brought up the way every lane brings one up.
-	let spareN = 21;
-	for (; spareN <= 30; spareN++) {
-		if (await free(8777 + spareN) && await free(9099 + spareN) && await free(9700 + spareN)) break;
+	const borrow = bandWorlds('worldports borrow');
+	let spareN = 0;
+	for (const n of borrow) {
+		if (await free(portOf('app', n)) && await free(portOf('mock', n)) && await free(portOf('gateway', n))) { spareN = n; break; }
 	}
-	if (spareN > 30) {
-		check('a spare world 21..30 was free for the handoff check', false,
-			'every one of worlds 21..30 has a port held; nothing was measured');
+	if (!spareN) {
+		check(`a spare world ${borrow[0]}..${borrow[borrow.length - 1]} was free for the handoff check`, false,
+			'every world of the borrow band has a port held; nothing was measured');
 		return;
 	}
 	let worldSh = path.join(HERE, 'world.sh');

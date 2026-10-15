@@ -296,6 +296,20 @@
 			// back rather than running an incomplete conversation (S-HAND #3). null from an
 			// older dispatcher, which `holdsThread` reads as "fall back to holdsTurn".
 			thread:  o.thread || null,
+			// THE ROWS THE SENDER REMOVED and has not yet shipped in a parcel (a Retry's
+			// retracted answer), by mid. The runner leaves them out of the thread it judges
+			// and runs, and records the same removal, so the errand never waits on the
+			// parcel carrying the tombstones (UNBLOCK-1). [] from an older sender.
+			gone:    triedList(o.gone),
+			// THE HANDED-OFF TURNS OF THIS CHAT STILL RUNNING OR QUEUED when this one was
+			// sent, whose answers the sender's thread therefore lacks (`openTurn`). The runner
+			// they were queued at answers them first, so its copy may hold those answers
+			// beyond the thread and still match (UNBLOCK-1 3b). [] when none, and from an
+			// older sender.
+			behind:  triedList(o.behind),
+			// THE DEVICE THE SENDER ELECTED, which alone takes the turn while it is
+			// listening (D-20261009-23). '' from an older sender, judged by the nomination.
+			to:      String(o.to || ''),
 			// THE QUESTIONS THE DISPATCHING DEVICE CAN ANSWER for a handed-off turn
 			// (CONSENT-ROUTE, 10 Oct): a write outside the Diamond, a toolkit on first use, a
 			// command in the ask mode. A runner routes one of these to that device only when
@@ -1137,9 +1151,14 @@
 	/// no content, only the shape of the prefix a model would be fed. Only user|assistant|
 	/// tool travel to a model; a half turn (interrupted) and a render-only provisional row
 	/// are not history and are skipped, exactly as `seedFrom` skips them.
-	function threadSig(chat, turnId) {
+	/// `gone` (optional) lists mids the sender has removed and the copy may still hold.
+	/// `behind` (optional) lists turns whose answer rows are left out, as the sender's
+	/// thread lacked them (`openTurn`).
+	function threadSig(chat, turnId, gone, behind) {
 		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
 		var id   = String(turnId || '');
+		var out  = goneSet(gone);
+		var skip = goneSet(behind);
 		var parts = [], n = 0;
 		for (var i = 0; i < msgs.length; i++) {
 			var m = msgs[i];
@@ -1147,10 +1166,59 @@
 			if (m.role === 'user' && String(m.mid || '') === id) break;	// stop AT the turn's user message
 			if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'tool') continue;
 			if (m.interrupted || m.provisional) continue;
+			if (out[String(m.mid || '')]) continue;			// removed by the sender
+			if (m.role !== 'user' && skip[String(m.iturn || '')]) continue;	// a queued-behind answer
 			parts.push(m.role + ':' + String(m.mid || ''));
 			n++;
 		}
 		return { n: n, sig: fnv1a(parts.join('\n')) };
+	}
+
+	/// The mids of an errand's `gone` list as a lookup.
+	function goneSet(gone) {
+		var out = {};
+		triedList(gone).forEach(function (mid) { out[mid] = 1; });
+		return out;
+	}
+
+	/// The handed-off turns of `chat` still unanswered ahead of `turnId`, oldest first.
+	/// Walking back from it, each turn counts while it is marked dispatched and the sender
+	/// holds no model-facing row of its answer; the first that is not ends the run. A turn
+	/// sent now queues behind them all on their runner, which will hold their answers by
+	/// the time it takes this one (UNBLOCK-1 3b).
+	function openTurn(chat, turnId) {
+		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
+		var id = String(turnId || ''), asked = [], sent = {}, done = {}, i, m, t;
+		for (i = 0; i < msgs.length; i++) {
+			m = msgs[i];
+			if (!m) continue;
+			if (m.role === 'user' && String(m.mid || '') === id) break;
+			if (m.role === 'user') asked.push(String(m.iturn || m.mid || ''));	// a hand-off's prompt has the turn id for its mid
+		}
+		for (i = 0; i < msgs.length; i++) {
+			m = msgs[i];
+			t = m ? String(m.iturn || '') : '';
+			if (!t) continue;
+			if (m.why === REASON_DISPATCHED) sent[t] = 1;
+			else if ((m.role === 'assistant' || m.role === 'tool') && !m.interrupted && !m.provisional) done[t] = 1;	// answered here
+		}
+		var out = [];
+		for (i = asked.length - 1; i >= 0; i--) {
+			t = asked[i];
+			if (!t || !sent[t] || done[t]) break;
+			out.unshift(t);
+		}
+		return out;
+	}
+
+	/// Does this copy's thread match the errand's, as it stands or less the answers to the
+	/// turns the errand queued behind? The second reading is taken only where one is named.
+	function threadMatches(view, e) {
+		var want = e.thread, mine = threadSig(view, e.turnId, e.gone);
+		if (mine.n === (want.n | 0) && mine.sig === (want.sig >>> 0)) return true;
+		if (!Array.isArray(e.behind) || e.behind.length === 0) return false;
+		var less = threadSig(view, e.turnId, e.gone, e.behind);
+		return less.n === (want.n | 0) && less.sig === (want.sig >>> 0);
 	}
 
 	/// Does this chat hold EXACTLY the thread the errand was dispatched from -- the same
@@ -1164,8 +1232,7 @@
 		// A non-resident chat shows a summary, not its transcript: it holds no thread yet.
 		if (chat && chat._loaded === false) return false;
 		if (!e.thread || typeof e.thread.n !== 'number') return holdsTurn(chat, e.turnId);
-		var mine = threadSig(chat, e.turnId);
-		return mine.n === (e.thread.n | 0) && mine.sig === (e.thread.sig >>> 0);
+		return threadMatches(chat, e);
 	}
 
 	/// Can this device rebuild the errand's thread, and if not, can it ever? `state` is
@@ -1187,13 +1254,13 @@
 		var resident = !!chat && chat._loaded !== false;
 		var base = resident && Array.isArray(chat.messages) ? chat.messages : [];
 		var view = { messages: base.concat(seedGraft({ messages: base }, e)) };
-		var mine = threadSig(view, e.turnId);
+		var mine = threadSig(view, e.turnId, e.gone);
 		if (!e.thread || typeof e.thread.n !== 'number') {
 			return { state: holdsTurn(view, e.turnId) ? 'match' : 'behind', have: mine.n, want: -1 };
 		}
 		var wantN = e.thread.n | 0;
 		var out = { have: mine.n, want: wantN };
-		if (mine.n === wantN && mine.sig === (e.thread.sig >>> 0)) out.state = 'match';
+		if (threadMatches(view, e)) out.state = 'match';
 		else if (chat && !resident) out.state = 'behind';		// load it, then ask again
 		else if (mine.n < wantN) out.state = 'behind';
 		else out.state = typeof held === 'number' && held < (e.parcelVersion | 0) ? 'behind' : 'final';
@@ -1248,6 +1315,9 @@
 			throw new Error('the thread cannot be taken from a chat whose transcript is not loaded');
 		}
 		var thread = (o.thread !== undefined) ? o.thread : threadSig(c, turnId);
+		var gone   = triedList(o.gone);		// removals not yet in a parcel
+		var to     = String(o.to || '');		// the elected runner
+		var behind = openTurn(c, turnId);		// the running turns this one queues behind
 		return {
 			// MARK FIRST, then post, then push. The durable `why:'dispatched'`
 			// placeholder is written BEFORE the errand is posted, so a refused post is a
@@ -1276,6 +1346,7 @@
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
+					gone: gone, to: to, behind: behind,
 					auto: o.auto === true,
 				});
 			},
@@ -1284,7 +1355,7 @@
 				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt, pre: pre,
 				model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
-				seed: seed, thread: thread, tried: tried,
+				seed: seed, thread: thread, tried: tried, gone: gone, to: to, behind: behind,
 			},
 		};
 	}
@@ -2487,16 +2558,19 @@
 		var exclude = o.exclude || {};
 
 		// (a) THE PREFERRED WORKER by its raw nominated id, when that id is itself a LIVE,
-		// non-mobile presence entry. Judged on the BARE BEAT (not recGenuine) -- the SAME
-		// liveness the CLAIM arbitration uses (nominationStandDown / lastSeen) -- so a
-		// beating nominee whose serviced_at is stale in this snapshot is still seated on the
-		// nominee (repro_nominee_stolen), and one last known within the presume window (an
-		// unconfirmed cold snapshot) is trusted live (repro_nominee_unconfirmed). A ghost id
-		// absent from presence simply misses this, and the label match below recovers it.
+		// non-mobile presence entry. LIVE is `recGenuine`: beating AND, where the record
+		// reports it, listening for errands (UNBLOCK-1). A tab that beats but has stopped
+		// parking cannot collect the errand, so seating it made the sender wait out its
+		// backstop. The claim side judges the nominee by the same test
+		// (nominationStandDown), and the errand names the device elected here (`to`), so
+		// seat and claim cannot disagree the way repro_nominee_stolen did. One last known
+		// within the presume window (an unconfirmed cold snapshot) is trusted live
+		// (repro_nominee_unconfirmed). A ghost id absent from presence misses this, and the
+		// label match below recovers it.
 		if (nom && nom !== self && !exclude[nom]) {
 			var nr = p[nom];
 			if (nr && !recMobileView(nr) && meetsRequire(nr, o.require)
-				&& (n - leaseMs(nr.lastSeen)) <= nomWin && !busyHere(nom, nr)) {
+				&& recGenuine(nr, n, nomWin) && !busyHere(nom, nr)) {
 				var presumed = (n - leaseMs(nr.lastSeen)) > w;		// seated on trust, not a fresh beat
 				var nb = String(nr.build || '');
 				var nomStale = !!(cur && nb && nb !== cur);
@@ -2526,7 +2600,7 @@
 				if (id === self || exclude[id]) continue;
 				var r = p[id];
 				if (!r || recMobileView(r) || !meetsRequire(r, o.require)) continue;
-				if ((n - leaseMs(r.lastSeen)) > w) continue;
+				if (!recGenuine(r, n, w)) continue;		// beating and listening, as (a)
 				if (normLabel(r.name) !== pref) continue;
 				if (busyHere(id, r)) continue;
 				byLabel.push({ deviceId: id, name: (r.name || ''), lastSeen: leaseMs(r.lastSeen), build: String(r.build || '') });
@@ -2544,20 +2618,20 @@
 		// no nominee record and argonaut's `serviced_at` stale -- (a) missed for want of the
 		// record, (b) excluded it as a phantom, and the phone ran the turn itself.
 		//
-		// The posture OUTRANKS the servicing stamp on purpose. `serviced_at` answers "is this
-		// tab collecting errands right now", which a runner holding a wake lock can fail
-		// momentarily (a backoff round, a reload, a throttled tick) without ceasing to be the
-		// runner; the posture answers "is this machine arranged to collect", which is the
-		// question seating asks. Money-safety is untouched either way -- the lease CAS is
-		// still the single-runner arbiter, and the dispatcher-side recovery timer reclaims a
-		// turn nobody ran. It sits BELOW the star, so an explicit nomination still wins.
+		// The posture no longer outranks the servicing stamp (UNBLOCK-1): a machine arranged
+		// to collect that has not collected within the window cannot take the errand, and
+		// seating it made the sender wait out its backstop. `serviced_at` is stamped on each
+		// beat while a park round completed in the last 90 s, so a momentary gap (a backoff
+		// round, a throttled tick) does not age it out. An old gateway that relays no
+		// `serviced_at` still seats on the beat (recGenuine). It sits BELOW the star, so an
+		// explicit nomination still wins.
 		var runners = [];
 		for (var id3 in p) {
 			if (!Object.prototype.hasOwnProperty.call(p, id3)) continue;
 			if (id3 === self || exclude[id3]) continue;
 			var r3 = p[id3];
 			if (!r3 || !recRunner(r3) || recMobileView(r3) || !meetsRequire(r3, o.require)) continue;
-			if ((n - leaseMs(r3.lastSeen)) > w) continue;
+			if (!recGenuine(r3, n, w)) continue;		// beating and listening, as (a)
 			if (busyHere(id3, r3)) continue;
 			runners.push({ deviceId: id3, name: (r3.name || ''), lastSeen: leaseMs(r3.lastSeen), build: String(r3.build || '') });
 		}
@@ -2719,7 +2793,7 @@
 			// somewhere else, so a silent runner is visible rather than merely bypassed.
 			var nom  = String(o.nominatedId || '');
 			var nrec = nom ? p[nom] : null;
-			var nomLive = !!(nrec && (n - leaseMs(nrec.lastSeen)) <= w);
+			var nomLive = recGenuine(nrec, n, w);	// reachable = listening (rulings §1)
 			var fallback = !onRunner && nom && !nomLive;
 			return {
 				where:      onRunner ? 'runner' : 'desktop',
@@ -2742,7 +2816,7 @@
 		var nom2  = String(o.nominatedId || '');
 		var nrec2 = nom2 ? p[nom2] : null;
 		var why = (d.reason === 'chat-local') ? 'chat-local'
-			: (nom2 && !(nrec2 && (n - leaseMs(nrec2.lastSeen)) <= w)) ? 'runner-silent'
+			: (nom2 && !recGenuine(nrec2, n, w)) ? 'runner-silent'
 			: 'no-desktop';
 		return {
 			where:    'local',
@@ -2784,8 +2858,13 @@
 			var rec = (presence || {})[runner.deviceId];
 			var w = o.freshWindowMs || DISPATCH_FRESH_MS;
 			if (plan.reason === 'nominee-presumed' && o.presumeNomineeWindowMs > w) w = o.presumeNomineeWindowMs;
-			// Reachable while `now - lastSeen <= w` (electTarget), so the first moment it is not.
-			if (rec) until = leaseMs(rec.lastSeen) + w + 1;
+			// Reachable while it beats and listens within `w` (electTarget, recGenuine), so
+			// the first moment either stamp ages out.
+			if (rec) {
+				var last = leaseMs(rec.lastSeen);
+				if (rec.servicedAt != null) last = Math.min(last, leaseMs(rec.servicedAt));
+				until = last + w + 1;
+			}
 		}
 		return { runner: runner, choice: here ? 'here' : 'runner', until: until };
 	}
@@ -3024,8 +3103,28 @@
 		if (!rec) return false;						// nominee absent from presence -> offline
 		if (rec.busy > 0) return false;				// busy nominee -> an idle device claims (H1)
 		var n = now == null ? Date.now() : now;
-		var w = windowMs || DISPATCH_FRESH_MS;
-		return (n - leaseMs(rec.lastSeen)) <= w;	// stand down only while the nominee is FRESH
+		// Stand down only while the nominee is LIVE by the test the seat uses (recGenuine):
+		// one that beats but no longer listens never collects, so deferring to it stalls.
+		return recGenuine(rec, n, windowMs || DISPATCH_FRESH_MS);
+	}
+
+	/// Should this device stand down from an errand ADDRESSED to another device? The
+	/// sender's switch named one runner, and only it takes the turn (D-20261009-23): not
+	/// a second idle desktop, and not while the named runner is busy, since a turn
+	/// addressed to a busy runner is queued there on purpose (O3). The 14:03 fault (13 Oct)
+	/// was gilgamesh taking a turn named for a busy argonaut. Answers true (stand down),
+	/// false (this is the addressee: claim, whoever the nominee is) or null when the
+	/// errand names nobody, names a runner that already handed it back, or names one no
+	/// longer live -- then the nomination decides, as before.
+	function addresseeStandDown(errand, selfId, presence, now, windowMs) {
+		var e = errand || {};
+		var to = String(e.to || '');
+		if (!to) return null;
+		if (to === String(selfId || '')) return false;
+		if (triedList(e.tried).indexOf(to) >= 0) return null;
+		var rec = (presence || {})[to];
+		var n = now == null ? Date.now() : now;
+		return recGenuine(rec, n, windowMs || DISPATCH_FRESH_MS) ? true : null;
 	}
 
 	// ════════════════════════════════════════════════════════════
@@ -3601,13 +3700,13 @@
 	}
 
 	/// Is a stand-down undecided, so that the errand stays on the relay for one more collect
-	/// rather than being acked away? Standing down for the nominated runner is, and so is a take
+	/// rather than being acked away? Standing down for the nominated runner or the addressee is, and so is a take
 	/// that could not read the door or won no try at it: nobody holds the turn, and a stand-down
 	/// that dropped the errand would leave the sender to find out at its deadline. A stand-down
 	/// for a live foreign claim, a settled or aged-out turn, or a refusal that will not change
 	/// is decided, and the errand goes.
 	function standDownUndecided(why) {
-		return why === 'nominee' || why === 'unread' || why === 'exhausted' || why === 'busy-hold';
+		return why === 'nominee' || why === 'addressee' || why === 'unread' || why === 'exhausted' || why === 'busy-hold';
 	}
 
 	/// Is another live, idle, non-mobile, servicing desktop beside these, one that would
@@ -3624,7 +3723,9 @@
 			if (top != null && !(id < top)) continue;
 			var r = p[id];
 			if (!r || recMobileView(r) || r.busy > 0) continue;
-			if (recRunner(r) ? (n - leaseMs(r.lastSeen)) <= w : recGenuine(r, n, w)) return true;
+			// Listening, whatever its posture: a runner-posture desk that beats but has stopped
+			// collecting never claims, so holding a row for it stalls the turn to the backstop.
+			if (recGenuine(r, n, w)) return true;
 		}
 		return false;
 	}
@@ -4602,9 +4703,13 @@
 		var tried = triedList(e.tried);
 		var nomE  = String(d.nominatedId || '');
 		if (nomE && tried.indexOf(nomE) >= 0) nomE = '';
+		// THE ADDRESSEE (D-20261009-23): true = another live device was named, so leave it
+		// the turn; false = this device was named; null = the nomination decides.
+		var addr = d.allowSelf ? null : addresseeStandDown(e, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs);
 		var busyN = (!d.allowSelf && d.busyFor) ? busyDepth(d.busyFor(e)) : 0;
 		if (busyN > 0) {
-			var mine = nomE ? nomE === String(d.selfId)
+			var mine = addr !== null ? addr === false
+				: nomE ? nomE === String(d.selfId)
 				: !busyHoldsFor(d.presence, d.selfId, [e.dispatchedBy].concat(tried), leaseNow(leaseClock), d.freshWindowMs);
 			diag('collect busy', 'turn=' + turnId + ' depth=' + busyN + ' -> ' + (mine ? 'ANSWER busy' : 'hold for an idle device'));
 			if (!mine) {
@@ -4647,7 +4752,12 @@
 				+ ' present=' + (_rec ? 'Y' : 'N') + ' beat=' + _beat
 				+ ' -> ' + (_stand ? 'STAND DOWN for nominee' : 'proceed to claim'));
 		}
-		if (!d.allowSelf && nominationStandDown(nomE, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs)) {
+		if (addr === true) {
+			diag('collect addressee', 'turn=' + turnId + ' named ' + String(e.to).slice(0, 8) + ' -> STAND DOWN');
+			trace.push('stood-down-for-addressee');
+			return { ran: false, why: 'addressee', trace: trace };
+		}
+		if (addr === null && !d.allowSelf && nominationStandDown(nomE, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs)) {
 			trace.push('stood-down-for-nominee');
 			return { ran: false, why: 'nominee', trace: trace };
 		}
@@ -5599,17 +5709,43 @@
 		var msgs = Array.isArray(messages) ? messages : [];
 		var id   = String(turnId || '');
 		if (!id) return [];
-		var at = -1;
-		for (var i = 0; i < msgs.length; i++) {
-			var m = msgs[i];
-			if (m && m.role === 'user' && (String(m.mid || '') === id || String(m.iturn || '') === id)) { at = i; break; }
-		}
-		if (at < 0) return [];
+		var asked = msgs.some(function (m) {
+			return m && m.role === 'user' && (String(m.mid || '') === id || String(m.iturn || '') === id);
+		});
+		if (!asked) return [];
 		var out = [];
-		for (var j = at + 1; j < msgs.length; j++) {
-			if (msgs[j] && msgs[j].role === 'user') break;		// the next turn's, not this one's
-			var row = progressRow(msgs[j], true);
+		turnSpan(msgs, id).forEach(function (m) {
+			var row = progressRow(m, true);
 			if (row) out.push(row);
+		});
+		return out;
+	}
+
+	/// The rows of turn `turnId`, in document order: every row tagged `iturn === turnId`, and
+	/// every row between its user message and the next that is tagged with no other turn held
+	/// here. A row tagged with another held turn is that turn's wherever it stands: on a runner,
+	/// a prompt queued behind a running turn lands before that turn's answer, which was then
+	/// taken for the queued turn's, dropped as another run's and sent as its answer (UNBLOCK-1
+	/// 3d). A tag naming no turn held here is read by position, as an untagged row is.
+	function turnSpan(messages, turnId) {
+		var msgs = Array.isArray(messages) ? messages : [];
+		var id = String(turnId || ''), held = {}, out = [], inSpan = false, i, m, t;
+		if (!id) return out;
+		for (i = 0; i < msgs.length; i++) {
+			m = msgs[i];
+			if (!m || m.role !== 'user') continue;
+			if (m.mid) held[String(m.mid)] = 1;
+			if (m.iturn) held[String(m.iturn)] = 1;
+		}
+		for (i = 0; i < msgs.length; i++) {
+			m = msgs[i];
+			if (!m) continue;
+			if (m.role === 'user') {
+				inSpan = String(m.mid || '') === id || String(m.iturn || '') === id;
+				continue;
+			}
+			t = String(m.iturn || '');
+			if (t === id || (inSpan && !(t && held[t]))) out.push(m);
 		}
 		return out;
 	}
@@ -5619,8 +5755,7 @@
 	/// run the runner lost (a reload mid-turn) leaves nothing behind beside the one that
 	/// stands. `[{ mid, provisional }]`, in transcript order.
 	///
-	/// The turn's span is every row tagged `iturn === turnId` and every row between its
-	/// user message and the next user message. Two kinds go: a row carrying a `run` that
+	/// The turn's span is `turnSpan`. Two kinds go: a row carrying a `run` that
 	/// is not `keepRun`, and, where `keepMids` is given (a final frame that is whole), a
 	/// provisional row whose mid the frame does not hold. A row with no `run` was written
 	/// by a build older than the field, or by the asker itself (the dispatched
@@ -5629,20 +5764,13 @@
 		var msgs = Array.isArray(messages) ? messages : [];
 		var id = String(turnId || ''), keep = String(keepRun || '');
 		if (!id) return [];
-		var out = [], inSpan = false;
-		for (var i = 0; i < msgs.length; i++) {
-			var m = msgs[i];
-			if (!m) continue;
-			if (m.role === 'user') {
-				inSpan = String(m.mid || '') === id || String(m.iturn || '') === id;
-				continue;
-			}
-			if (!inSpan && String(m.iturn || '') !== id) continue;
-			if (!m.mid) continue;
+		var out = [];
+		turnSpan(msgs, id).forEach(function (m) {
+			if (!m.mid) return;
 			var stale = (keep && m.run && String(m.run) !== keep)
 				|| (keepMids && m.provisional && !keepMids[String(m.mid)]);
 			if (stale) out.push({ mid: String(m.mid), provisional: !!m.provisional });
-		}
+		});
 		return out;
 	}
 
@@ -5979,6 +6107,7 @@
 		frameWorkers:  frameWorkers,
 		turnRows:      turnRows,
 		otherRunRows:  otherRunRows,
+		turnSpan:      turnSpan,
 		frameRun:      frameRun,
 		refRows:       refRows,
 		PROGRESS_MSG_CHARS: PROGRESS_MSG_CHARS,
@@ -6137,6 +6266,7 @@
 		/// the account's nominated always-on runner? Pure; runErrand consults it before
 		/// the lease take, and daimond.js supplies the nominee id + live presence.
 		nominationStandDown: nominationStandDown,
+		addresseeStandDown:  addresseeStandDown,
 		REASON_DISPATCHED:    REASON_DISPATCHED,
 		DISPATCH_DEADLINE_MS: DISPATCH_DEADLINE_MS,
 		/// The TIGHTER window the auto-dispatch decision uses (under the display

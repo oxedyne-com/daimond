@@ -58,6 +58,7 @@
 //     beta opened, which is what `dev/gwbin.mjs` builds for every gateway-driving
 //     verifier in the tree.
 
+import { port } from './ports.mjs';
 import fs   from 'node:fs';
 import os   from 'node:os';
 import path from 'node:path';
@@ -93,9 +94,9 @@ const ROOT = path.join(HERE, '..');
 // while the same file passes 32 checks standalone. A collision by construction,
 // not a flake. So the knobs are its own, and the world it runs in cannot reach in
 // and move them; `gate.sh` derives them from the world number.
-const GW_PORT  = Number(process.env.DAIMOND_RELAY_GW_PORT || 9502);
+const GW_PORT  = port('relay_gw');
 const GW_URL   = `http://127.0.0.1:${GW_PORT}`;
-const APP_PORT = Number(process.env.DAIMOND_RELAY_PORT || 8782);	// world 5
+const APP_PORT = port('relay_app');
 const APP_URL  = `http://localhost:${APP_PORT}`;
 const SCRATCH  = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
 const WORK     = path.join(SCRATCH, 'verify_relay_e2e-gw');

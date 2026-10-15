@@ -455,7 +455,7 @@ console.log('\nThe turn-starting exports, the journal and the runner carry it');
 	// The tail is appended where the engine is laid in (`seedEngine`) and where a live one is brought up to the chat (`reconcileEngine`).
 	const rt = lift(SRC, 'runTurn') || '', rs = lift(SRC, 'runSteer') || '', ea = (lift(SRC, 'seedEngine') || '') + '\n' + (lift(SRC, 'reconcileEngine') || '');
 	const runs = rt.match(/app\.run_turn\([^;]*\);/g) || [];
-	check('every run_turn of a chat turn hands the engine the turn\'s note', runs.length === 3 && runs.every((r) => /^app\.run_turn\(text, onEvent, turnPre \|\| undefined\);$/.test(r)), runs);
+	check('every run_turn of a chat turn hands the engine the turn\'s note', runs.length === 3 && runs.every((r) => /^app\.run_turn\(text, onEvent, turnPre \|\| undefined, umid \? String\(umid\) : undefined\);$/.test(r)), runs);
 	check('the turn\'s note is the one a replay was handed, else the record\'s own', /var turnPre = \(typeof opts\.told === 'string'\) \? opts\.told\s*: /.test(rt) && /reusePrompt \|\| urec/.test(rt));
 	check('a worker and the triage reader take none', !/run_turn\([^)]*pre/i.test(SRC.slice(SRC.indexOf('run.app.run_turn(task, sink)') - 40, SRC.indexOf('run.app.run_turn(task, sink)') + 60)));
 	const open = rt.indexOf('J.turnOpen(');
@@ -522,6 +522,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	// One helper finds a turn's messages; no message is marked after it has joined the chat.
 	const helper = lift(SRC, 'turnMessagesOf');
 	const fns = ['continueTurn', 'retryTurn', 'answerAgain'].map((n) => lift(SRC, n));
+	const cut = lift(SRC, 'tailAfter') + '\n' + lift(SRC, 'sessionCut');	// a retraction cuts the stored session (1e)
 	const ask = lift(SRC, 'askAgain');			// retryTurn's way to the model (a chat's runTurn, a daimon's runSteer)
 	check('the three doors are in daimond.js', fns.every(Boolean));
 	const spy = () => ({ tombstoned: [], ran: [], journal: [] });
@@ -532,9 +533,9 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 			loadMsgTombs: () => ({}), msgTombstone: (mids) => sp.tombstoned.push(...mids), touchChat() {}, persistChats() {}, renderHistory() {},
 			runTurn: (chat, text, opts) => { sp.ran.push({ text, opts, had: (chat.messages || []).map((m) => m.mid) }); }, ChatStore: { compact() {} },
 			newMid: () => 'nmid', CONTINUE_NUDGE: '__nudge__', handoffTargetLabel: () => '', peerUiStateFor: () => '', selfDeviceId: () => 'SELF', turnHold: () => '', _askCard: null,
-			diamonds: [], currentDiamond: null, runSteer: () => false };
+			diamonds: [], currentDiamond: null, runSteer: () => false, diag() {} };
 		Object.assign(st, over || {});
-		const body = (helper ? helper + '\n' : '') + (ask ? ask + '\n' : '') + fns.filter(Boolean).join('\n') + '\nreturn { continueTurn, retryTurn, answerAgain };';
+		const body = (helper ? helper + '\n' : '') + cut + '\n' + (ask ? ask + '\n' : '') + fns.filter(Boolean).join('\n') + '\nreturn { continueTurn, retryTurn, answerAgain };';
 		return new Function('window', 'DaimondRatings', ...Object.keys(st), body)(Object.assign({}, st), R, ...Object.values(st));
 	}
 	// The transcript of a chat not resident at boot: the question has the turn's id for its mid and NO iturn mark; the answer carries it.

@@ -1,1 +1,1 @@
-{"build":"ee7eb7af46f0","note":"Devices share one stored copy of each large file; a big chat is never sent whole; a locked app lets go of its chats."}
+{"build":"1e913295e966","note":"A turn sent to another device runs there first time; queued follow-ups keep their answers; Retry removes only its turn."}

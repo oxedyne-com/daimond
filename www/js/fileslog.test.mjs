@@ -145,11 +145,11 @@ async function main() {
 			/filesEv = ev/.test(armSrc) && /indexOf\('chat:'\) === 0/.test(armSrc) && !/appendFilesLog|chat\.messages\.push/.test(armSrc), armSrc);
 		check('offerTurnUndo is the 5.2.9 toast: it reads `files` and never `made`', !/\bmade\b/.test(lift(SRC, 'offerTurnUndo') || 'made'), '');
 		const iFlog = SRC.indexOf('var flog = await filesLogOf(chat, fev, umid)');
-		const iKeep = SRC.indexOf('await app.end_keeper_turn(', arm), iEnd = SRC.indexOf('chat.messages.push(stampAfter(chat.messages, pendingEnd))', arm);
+		const iKeep = SRC.indexOf('await app.end_keeper_turn(', arm), iEndRel = SRC.slice(arm).search(/pushRunRow\(chat, [\w.]+, stampAfter\(chat\.messages, pendingEnd\)\)/), iEnd = iEndRel < 0 ? -1 : arm + iEndRel;
 		check('it is written after the Diamond store\'s turn end and before the ending', iKeep > 0 && iFlog > iKeep && iEnd > iFlog, { iKeep, iFlog, iEnd });
 		const tryEnd = SRC.indexOf('} finally {', arm);
 		check('and in the `finally`, so a turn that wrote a file and then failed still has its row', tryEnd > 0 && iFlog > tryEnd, { tryEnd, iFlog });
-		check('it is pushed, then drawn only where this chat is on screen', /chat\.messages\.push\(flog\); if \(owns\(\)\) appendFilesLog\(flog\)/.test(SRC));
+		check('it is pushed with its turn tag (pushRunRow, UNBLOCK-1 F2), then drawn only where this chat is on screen', /pushRunRow\(chat, [\w.]+, flog\); if \(owns\(\)\) appendFilesLog\(flog\)/.test(SRC));
 		check('the event is spent after it is read (a second path to the row would write it twice)', /var fev = filesEv; filesEv = null;/.test(SRC) && (SRC.match(/filesLogOf\(/g) || []).length === 2, (SRC.match(/filesLogOf\(/g) || []).length);
 		check('only runTurn makes one: no other caller of filesLogOf, and nothing else pushes a files_log', (SRC.match(/role:\s*'files_log'/g) || []).length === 1, (SRC.match(/role:\s*'files_log'/g) || []).length);
 		check('a failure to build it never fails the turn', /try \{\s*var flog = await filesLogOf[\s\S]{0,260}catch \(eF\)/.test(SRC));

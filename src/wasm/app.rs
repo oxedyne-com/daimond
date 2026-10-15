@@ -250,11 +250,14 @@ impl DaimondApp {
     ///   once ahead of the words where the request is built and never shown as `content`.  Last and
     ///   optional, so a caller that says nothing starts a turn with none -- which is what a
     ///   trigger, a preset, a gather round, a Continue and a worker do.
+    /// * `mid` - The transcript row this message was said as, kept on the session's user message
+    ///   so the page pairs its rows with the model's list by id (see [`ChatMessage::marked`]).
     pub async fn run_turn(
         &self,
         user_msg: String,
         on_event: js_sys::Function,
         pre:      Option<String>,
+        mid:      Option<String>,
     )
         -> Result<(), JsValue>
     {
@@ -292,7 +295,7 @@ impl DaimondApp {
         let ran = {
             let mut session = self.session.borrow_mut();
             self.agent.run_turn_noted(&mut session, user_msg, pre.unwrap_or_default(),
-                &self.registry, &mut sink).await
+                mid.unwrap_or_default(), &self.registry, &mut sink).await
         };
         // WHAT A CHAT'S TURN REPLACED OR REMOVED BECOMES A VERSION OF THE CHAT'S STORE, whichever
         // way the turn went -- a turn that deleted a file and then died has still deleted it.  A
@@ -1100,7 +1103,8 @@ impl DaimondApp {
                 // A person's message keeps the app's note the page stored beside it, so the model
                 // reads the same history after a reload as before it.
                 "user"      => session.messages.push(ChatMessage::user_noted(
-                    content, js_prop(&item, "pre").unwrap_or_default())),
+                    content, js_prop(&item, "pre").unwrap_or_default())
+                    .marked(js_prop(&item, "mid").unwrap_or_default())),
                 "assistant" => session.messages.push(ChatMessage::assistant(content)),
                 _ => continue,
             }
@@ -1217,11 +1221,14 @@ impl DaimondApp {
     /// * `content` - What was said.
     /// * `pre` - The app's note stored beside a user message, if it had one.  Ignored for an
     ///   assistant's.
-    pub fn append_message(&self, role: String, content: String, pre: Option<String>) {
+    /// * `mid` - The transcript row a user message is, as [`DaimondApp::run_turn`] takes it.
+    pub fn append_message(&self, role: String, content: String, pre: Option<String>,
+        mid: Option<String>)
+    {
         let mut session = self.session.borrow_mut();
         match role.as_str() {
             "user"      => session.messages.push(ChatMessage::user_noted(
-                content, pre.unwrap_or_default())),
+                content, pre.unwrap_or_default()).marked(mid.unwrap_or_default())),
             "assistant" => session.messages.push(ChatMessage::assistant(content)),
             _ => {},
         }
@@ -3665,7 +3672,8 @@ impl DaimondApp {
             (false, true)  => viewer,
             (false, false) => fmt!("{}\n\n{}", pre, viewer),
         };
-        let ran = agent.run_turn_noted(&mut session, instruction, pre, &registry, &mut sink).await;
+        let ran = agent.run_turn_noted(&mut session, instruction, pre, String::new(), &registry,
+            &mut sink).await;
         self.absorb_usage(&session);
         // WHERE THIS TURN'S OWN MESSAGES START, so its ledger can be read apart from every turn
         // before it -- `ledger_of` over the whole session would answer the same "files written"
@@ -4343,13 +4351,16 @@ fn message_to_js(msg: &ChatMessage) -> JsValue {
             set("role", &JsValue::from_str("system"));
             set("content", &JsValue::from_str(&content.as_text()));
         }
-        ChatMessage::User { content, pre } => {
+        ChatMessage::User { content, pre, mid } => {
             set("role", &JsValue::from_str("user"));
             set("content", &JsValue::from_str(&content.as_text()));
             // Beside the words and only when there is one, as the JDAT form does, so the page's
             // bubble reads `content` alone and an ordinary message keeps the shape it had.
             if !pre.is_empty() {
                 set("pre", &JsValue::from_str(pre));
+            }
+            if !mid.is_empty() {
+                set("mid", &JsValue::from_str(mid));
             }
         }
         ChatMessage::Assistant { content, tool_calls } => {
@@ -4393,7 +4404,8 @@ fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
     match js_prop(item, "role").unwrap_or_default().as_str() {
         "system" => Some(ChatMessage::system(content)),
         "user"   => Some(ChatMessage::user_noted(
-            content, js_prop(item, "pre").unwrap_or_default())),
+            content, js_prop(item, "pre").unwrap_or_default())
+            .marked(js_prop(item, "mid").unwrap_or_default())),
         "tool"   => match js_prop(item, "tool_call_id") {
             Some(id) if !id.is_empty() => Some(ChatMessage::tool(id, content)),
             _ => None,

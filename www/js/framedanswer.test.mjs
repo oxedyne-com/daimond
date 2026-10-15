@@ -91,7 +91,7 @@ const lifted = new Function('env', [
 ].join('\n'));
 const settledLease = new Function(extractFn(psrc, 'settledLease') + '\nreturn settledLease;')();
 const otherRunRows = (psrc.indexOf('function otherRunRows(') >= 0)
-	? new Function(extractFn(psrc, 'otherRunRows') + '\nreturn otherRunRows;')() : null;
+	? new Function(extractFn(psrc, 'turnSpan') + '\n' + extractFn(psrc, 'otherRunRows') + '\nreturn otherRunRows;')() : null;
 
 function world(lease) {
 	const env = {

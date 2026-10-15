@@ -41,6 +41,7 @@
 // Headless, and it needs nothing running: no extension, no hand binary, no dev
 // server. `www/pkg` must be built, because the engine's own refusal is checked
 // through the real `pty_request`.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -252,19 +253,19 @@ const server = http.createServer((req, res) => {
 	return send('text/html; charset=utf-8', PAGE);
 });
 
-/// The first free port from `from`, so a dev server already holding one is left
-/// alone rather than fought over.
-async function listen(from) {
-	for (let port = from; port < from + 40; port++) {
-		try {
-			await new Promise((resolve, reject) => {
-				server.once('error', reject);
-				server.listen(port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
-			});
-			return port;
-		} catch (e) { if (e.code !== 'EADDRINUSE') throw e; }
+/// Binds exactly `at`, this world's own row in dev/ports.json (K1). A holder is
+/// refused, not stepped past: walking on is how two worlds came to share a port.
+async function listen(at) {
+	try {
+		await new Promise((resolve, reject) => {
+			server.once('error', reject);
+			server.listen(at, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+		});
+		return at;
+	} catch (e) {
+		if (e.code !== 'EADDRINUSE') throw e;
+		throw new Error(`:${at} (this world's row in dev/ports.json) is already held.`);
 	}
-	throw new Error(`No free port from ${from}.`);
 }
 
 // ── The engine under test has to be this tree's ─────────────────────
@@ -285,7 +286,7 @@ refuse(whyStaleWasm(path.join(WWW, 'pkg/oxedyne_daimond_bg.wasm'), path.join(ROO
 	holds:   '`pty_request`, whose refusal is the subject of this file,',
 }));
 
-const PORT = await listen(Number(process.env.WSIDENT_PORT || 8811));
+const PORT = await listen(port('wsident'));
 const APP  = `http://127.0.0.1:${PORT}`;
 
 const b = await chromium.launch({ executablePath: CHROME, headless: true,

@@ -1195,7 +1195,7 @@ impl Agent {
         registry:   &ToolRegistry,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
-        self.run_turn_noted(session, user_msg, String::new(), registry, on_event).await
+        self.run_turn_noted(session, user_msg, String::new(), String::new(), registry, on_event).await
     }
 
     /// [`run_turn`](Self::run_turn) for a message that carries an app note.
@@ -1207,11 +1207,14 @@ impl Agent {
     ///
     /// # Arguments
     /// * `pre` - The app's note for this message, empty for none.
+    /// * `mid` - The transcript row the message was said as, empty for none; see
+    ///   [`ChatMessage::marked`].
     pub async fn run_turn_noted(
         &self,
         session:    &mut Session,
         user_msg:   String,
         pre:        String,
+        mid:        String,
         registry:   &ToolRegistry,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
@@ -1238,7 +1241,7 @@ impl Agent {
         self.turn_start.set(session.messages.len());
         self.fold_rest.set(0);
         // Append the user message to the persisted history.
-        session.messages.push(ChatMessage::user_noted(user_msg, pre));
+        session.messages.push(ChatMessage::user_noted(user_msg, pre).marked(mid));
 
         // Build the working conversation: system prompt + history.
         let mut working = Vec::with_capacity(session.messages.len() + 1);
@@ -4101,7 +4104,7 @@ mod tests {
         let a = Agent::new(llm, "You are Daimond.");
         let mut session = Session::new(fmt!("s1"), fmt!("noted"), fmt!("model"));
         let ran = a.run_turn_noted(&mut session, fmt!("Now fix the lexer."), NOTE.to_string(),
-            &registry, &mut |_| {}).await;
+            String::new(), &registry, &mut |_| {}).await;
         assert!(ran.is_ok(), "{:?}", ran.err());
         let note = crate::llm::json_escape(NOTE);
         let bodies = sent_bodies(&seen);

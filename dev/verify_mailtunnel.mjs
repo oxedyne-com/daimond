@@ -38,6 +38,7 @@
 // is: it dials plain TCP and copies bytes, so the TLS is genuinely end to end.
 // Needs outbound network for the real-provider checks, which are reported as
 // skipped rather than passed when it is absent.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -55,11 +56,11 @@ const APP  = path.resolve(HERE, '..');
 // artefacts go under its own named subdirectory of a shared root it does not own.
 const WORK = path.join(os.homedir(), '.cache', 'daimond', 'laneC');
 
-const PORT      = 8785;   // the dev server for this run
-const RELAY     = 9421;   // the stub /api hop the dev server proxies to
-const TLS_FIX   = 8796;   // a local TLS server with a self-signed certificate
+const PORT      = port('mailtunnel', 0);   // the dev server for this run
+const RELAY     = port('mailtunnel', 1);   // the stub /api hop the dev server proxies to
+const TLS_FIX   = port('mailtunnel', 2);   // a local TLS server with a self-signed certificate
 const CLEAR_FIX = 8797;   // a local plain server that answers nothing
-const CA_FIX    = 8798;   // a local TLS server presenting a CA as its own leaf
+const CA_FIX    = port('mailtunnel', 3);   // a local TLS server presenting a CA as its own leaf
 
 const ok = [], bad = [], skip = [];
 const check = (name, pass, detail) => {
@@ -125,7 +126,7 @@ const ROUTES = {
 	// walking another's path.
 	'c4401.test':      { close: [4401, 'auth'] },
 	'c4402.test':      { close: [4402, 'pro'] },
-	'c4403port.test':  { close: [4403, 'port'] },
+	'c4403port.test':  { close: [4403, 'port'] },	// portlint: ok, a dial target the fixture refuses, never bound
 	'c4403host.test':  { close: [4403, 'host'] },
 	'c4403unres.test': { close: [4403, 'unresolved'] },
 	'c4429cred.test':  { close: [4429, 'credits'] },
@@ -432,7 +433,7 @@ try {
 	const pairs = [
 		['c4401.test',      4401, 'auth',       /signed this device out/],
 		['c4402.test',      4402, 'pro',        /part of Pro/],
-		['c4403port.test',  4403, 'port',       /993, 143, 465 and 587/],
+		['c4403port.test',  4403, 'port',       /993, 143, 465 and 587/],	// portlint: ok, a dial target the fixture refuses, never bound
 		['c4403host.test',  4403, 'host',       /has bound/],
 		['c4403unres.test', 4403, 'unresolved', /does not resolve/],
 		['c4429cred.test',  4429, 'credits',    /credits ran out/],

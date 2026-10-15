@@ -78,5 +78,29 @@ console.log('\nThe frame carries the run, and the lost run\'s ending');
 	check('frameRun names the frame\'s run', typeof P.frameRun === 'function' && P.frameRun([{ mid: 'a' }, row]) === 'r1' && P.frameRun([{ mid: 'a' }]) === '');
 }
 
+console.log('\nA turn queued behind a running one: its prompt lands before the answer ahead of it (UNBLOCK-1 3d)');
+{
+	// On the runner, q6 arrived while turn 5 ran, so turn 5's answer stands after q6. It is
+	// tagged with turn 5 and stamped with turn 5's run: never turn 6's to drop or to send.
+	const q5 = { role: 'user', mid: 'u5', content: 'q5' };
+	const q6 = { role: 'user', mid: 'u6', content: 'q6' };
+	const a5 = { role: 'assistant', mid: 'a5', iturn: 'u5', content: 'a5', run: 'r5', ts: 3 };
+	const a6 = { role: 'assistant', mid: 'a6', iturn: 'u6', content: 'a6', run: 'r6', ts: 4 };
+	const msgs = [q5, q6, a5, a6];
+	const out = P.otherRunRows(msgs, 'u6', 'r6');
+	check('another turn\'s answer standing in this turn\'s span is not this turn\'s other run', out.length === 0, JSON.stringify(out));
+	const rows = P.turnRows(msgs, 'u6').map((r) => r.mid);
+	check('nor is it in this turn\'s final frame', JSON.stringify(rows) === '["a6"]', JSON.stringify(rows));
+	const q7 = { role: 'user', mid: 'u7', content: 'q7' };
+	const late = P.turnRows([q5, q6, q7, a5, a6], 'u6').map((r) => r.mid);
+	check('and a row tagged with this turn past the next prompt is', JSON.stringify(late) === '["a6"]', JSON.stringify(late));
+	const stale = { role: 'assistant', mid: 'a6x', iturn: 'u6', content: 'old', run: 'r0', ts: 2 };
+	const kept = P.otherRunRows([q5, q6, a5, stale, a6], 'u6', 'r6').map((g) => g.mid);
+	check('[ctl] this turn\'s own row of another run still goes', JSON.stringify(kept) === '["a6x"]', JSON.stringify(kept));
+	const loose = { role: 'end_log', mid: 'e6', content: '', run: 'r0' };
+	const pos = P.otherRunRows([q5, q6, loose, a6], 'u6', 'r6').map((g) => g.mid);
+	check('[ctl] an untagged row is this turn\'s by position, as before', JSON.stringify(pos) === '["e6"]', JSON.stringify(pos));
+}
+
 console.log(failures ? '\n' + failures + ' FAILED' : '\nALL PASS');
 process.exitCode = failures ? 1 : 0;

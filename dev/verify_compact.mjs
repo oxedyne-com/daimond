@@ -19,6 +19,7 @@
 //
 //   node dev/verify_compact.mjs
 
+import { port, WORLD } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -30,10 +31,9 @@ const { open, newChat, transcript, shot, connectMock } = await import(path.join(
 
 // The refusing provider follows the world, so two worlds neither fight over the
 // port nor read one another's log.  A world is numbered by its offset from 8777.
-const WORLD = Number(process.env.DAIMOND_PORT || 8777) - 8777;
 const LOG   = process.env.DAIMOND_CTX_LOG
 	|| path.join(HERE, WORLD ? `ctxmock-${WORLD}.log` : 'ctxmock.log');
-const PORT  = Number(process.env.DAIMOND_CTX_PORT || 9188 + WORLD);
+const PORT  = port('ctxmock');
 // THE WINDOW IS MEASURED, NOT WRITTEN DOWN, and that is the whole of this file's
 // calibration. It was `const LIMIT = 12000`, chosen when the fixed cost of a request --
 // the system prompt plus every tool's schema -- sat just under it, so a short

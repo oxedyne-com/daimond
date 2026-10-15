@@ -15,6 +15,7 @@
 // Every request is logged as a JSON line to ctxmock.log, whole, so a test can check
 // what the model was really shown -- including whether the tool calls in it were paired.
 
+import { port } from './ports.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +25,7 @@ const HERE  = path.dirname(fileURLToPath(import.meta.url));
 // The port and the log are settable so this can belong to a numbered world (see
 // dev/world.sh); a shared log makes every assertion read another agent's traffic.
 const LOG   = process.env.DAIMOND_CTX_LOG || path.join(HERE, 'ctxmock.log');
-const PORT  = Number(process.argv[2] || process.env.DAIMOND_CTX_PORT || 9188);
+const PORT  = Number(process.argv[2] || port('ctxmock'));
 const LIMIT = Number(process.argv[3] || 12000);   // tokens
 
 const MODELS = ['mock/fast', 'mock/thinker'];

@@ -479,6 +479,16 @@ export async function open(opts = {}) {
 		// never sees a request a service worker answers, so a worker could serve the page
 		// this tree's files behind the route's back.
 		serviceWorkers = 'allow',
+		// THE WINDOW, for a session that is a particular device (dev/rig/devices.mjs).
+		// Left unset, the 1500x950 every verifier was written against.
+		viewport  = { width: 1500, height: 950 },
+		// THE EXECUTABLE PLAYWRIGHT STARTS, for a rig device: dev/rig/capped.sh, which
+		// execs the real browser inside that device's own capped scope. Either engine.
+		// Left unset, Chromium is CHROME and WebKit is Playwright's own.
+		executable = null,
+		// Extra environment for the browser process -- how capped.sh is told which
+		// device it is starting and what to cap it at.
+		launchEnv = null,
 	} = opts;
 
 	// Before a browser is even launched: is the mock this run will read the mock
@@ -530,7 +540,7 @@ export async function open(opts = {}) {
 	// The Wayland variables go for a headless run as well as a headed one. A
 	// headless Chromium that finds a compositor still talks to it, and the frame
 	// stalls this comment is about are the same stalls in a different costume.
-	const env = cleanDisplayEnv(process.env);
+	const env = { ...cleanDisplayEnv(process.env), ...(launchEnv || {}) };
 	if (!headed) {
 		delete env.DISPLAY;
 	} else {
@@ -568,25 +578,26 @@ export async function open(opts = {}) {
 		browser = await webkit.launchPersistentContext(profileDir, {
 			headless:   !headed,
 			env,
-			viewport:   { width: 1500, height: 950 },
+			...(executable ? { executablePath: executable } : {}),
+			viewport,
 			hasTouch:   touch,
 			...(ua ? { userAgent: ua } : {}),
 			...(timezoneId ? { timezoneId: timezoneId } : {}),
-			...(video ? { recordVideo: { dir: video, size: { width: 1500, height: 950 } } } : {}),
+			...(video ? { recordVideo: { dir: video, size: viewport } } : {}),
 			serviceWorkers: 'allow',	// 'block' is the init script below
 		});
 	} else if (engine === 'chromium') {
 		browser = await chromium.launchPersistentContext(profileDir, {
-			executablePath: CHROME,
+			executablePath: executable || CHROME,
 			headless:       false,		// the flag above decides; MV3 needs a real browser
 			args,
 			env,
-			viewport:       { width: 1500, height: 950 },
+			viewport,
 			hasTouch:       touch,
 			...(isMobile ? { isMobile: true } : {}),
 			...(ua ? { userAgent: ua } : {}),
 			...(timezoneId ? { timezoneId: timezoneId } : {}),
-			...(video ? { recordVideo: { dir: video, size: { width: 1500, height: 950 } } } : {}),
+			...(video ? { recordVideo: { dir: video, size: viewport } } : {}),
 			serviceWorkers,
 		});
 	} else {

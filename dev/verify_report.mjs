@@ -44,6 +44,7 @@
 //   --break=noroster   the report is filed without the roster   -> §2 one check
 //   --break=anyone     C's refusal is read as an acceptance     -> §3 one check
 
+import { port } from './ports.mjs';
 import fs   from 'node:fs';
 import os   from 'node:os';
 import path from 'node:path';
@@ -69,9 +70,9 @@ const ROOT = path.join(HERE, '..');
 // which is `verify_terminal`'s demo server, and the two would have met the day
 // somebody ran them side by side. `dev/gate.sh` derives both from the world
 // number, on the same rule as verify_redeem's and verify_relay_e2e's.
-const GW_PORT  = Number(process.env.DAIMOND_REPORT_GW_PORT || 9900);
+const GW_PORT  = port('report_gw');
 const GW_URL   = `http://127.0.0.1:${GW_PORT}`;
-const APP_PORT = Number(process.env.DAIMOND_REPORT_PORT || 8960);
+const APP_PORT = port('report_app');
 const APP_URL  = `http://localhost:${APP_PORT}`;
 const SCRATCH  = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
 const WORK     = path.join(SCRATCH, 'verify_report-gw');

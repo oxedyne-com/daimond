@@ -9,6 +9,7 @@
 // So the lock is tested from the outside: after locking, can anything still name a key, and can
 // any built agent still reach a provider? Asking the app whether it FEELS locked would prove
 // nothing; the question is whether the key is gone.
+import { port } from './ports.mjs';
 import { open, chat, errors } from './harness.mjs';
 import http from 'node:http';
 import { guardRan } from './verdict.mjs';
@@ -45,8 +46,9 @@ const srv = http.createServer((req, res) => {
 		}));
 	});
 });
-srv.listen(9121, '127.0.0.1');
-const URL = 'http://127.0.0.1:9121/v1/chat/completions';
+const LOCK_PORT = port('lockkeys');
+srv.listen(LOCK_PORT, '127.0.0.1');
+const URL = `http://127.0.0.1:${LOCK_PORT}/v1/chat/completions`;
 
 const s = await open({ name: 'lockkeys', connect: false });
 const p = s.page;

@@ -214,7 +214,7 @@ ${HELPER}say('the edited fixture ran', true);
 // verb's half of the arrangement against the real `dev/world.sh`: the identity
 // probe, the pid files, the teardown that refuses to report success over a held
 // port. A scripted stand-in would measure a script this file wrote.
-const WORLD_FILES = ['world.sh', 'serve.mjs', 'mockllm.mjs'];
+const WORLD_FILES = ['world.sh', 'serve.mjs', 'mockllm.mjs', 'ports.json'];
 for (const f of WORLD_FILES) {
 	fs.copyFileSync(path.join(HERE, f), path.join(DEV, f));
 }
@@ -285,7 +285,7 @@ git('add', 'dev/verify_fixlive.mjs', 'dev/verify_fixdead.mjs', 'dev/verify_fixcl
 	// The world's three files and the two verifiers that use it. COMMITTED, because
 	// the verb asks whose bytes each of the three is before it stands anything --
 	// the rule that guards a verifier guards what its world is made of.
-	'dev/world.sh', 'dev/serve.mjs', 'dev/mockllm.mjs', 'dev/harness.mjs',
+	'dev/world.sh', 'dev/serve.mjs', 'dev/mockllm.mjs', 'dev/ports.json', 'dev/harness.mjs',
 	'dev/verify_needsworld.mjs', 'dev/verify_worldseen.mjs', 'dev/verify_fixsleep.mjs',
 	'www/index.html');
 // COMMITTED and not merely added, because the check this damages is about the
@@ -686,14 +686,14 @@ const free = (port) => new Promise((res) => {
 
 /// The daimon band, read out of the fixture's own copy of the register.
 ///
-/// Not written down here: the row in `dev/world.sh` is the reservation, and a
+/// Not written down here: the band in `dev/ports.json` is the reservation, and a
 /// second copy of it is the staleness the register exists against.
 const BAND = (() => {
-	const m = /^#\s+worlds (\d+)\.\.(\d+), LESS (\d+)\s/m
-		.exec(fs.readFileSync(path.join(DEV, 'world.sh'), 'utf8'));
-	if (!m) return [];
+	const reg = JSON.parse(fs.readFileSync(path.join(DEV, 'ports.json'), 'utf8'));
+	const b = reg.bands.find(x => x.name === 'daimon');
+	if (!b) return [];
 	const out = [];
-	for (let n = Number(m[1]); n <= Number(m[2]); n++) if (n !== Number(m[3])) out.push(n);
+	for (let n = b.from; n <= b.to; n++) if (!(b.less || []).includes(n)) out.push(n);
 	return out;
 })();
 

@@ -809,7 +809,7 @@ pub fn msg_bytes(m: &ChatMessage, open: &OpenSet) -> u64 {
 			n += m.content().text_len() as u64 + tool_call_id.len() as u64;
 		},
 		// A note is sent joined to the words ([`crate::protocol::join_notes`]), so it is weight.
-		ChatMessage::User { content, pre } => {
+		ChatMessage::User { content, pre, .. } => {
 			n += content.text_len() as u64;
 			if !pre.is_empty() {
 				n += pre.len() as u64 + 2;	// and the blank line between

@@ -67,6 +67,7 @@
 // compositor and opened a real window on the owner's desktop while he was
 // working. `dev/display.mjs`, imported below, takes both variables out, so the
 // command above is now true as written.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -739,21 +740,21 @@ const server = http.createServer((req, res) => {
 	return send('text/html; charset=utf-8', PAGE);
 });
 
-/// The first free port from `from`, so a dev server already holding one is left
-/// alone rather than fought over.
-async function listen(from) {
-	for (let port = from; port < from + 40; port++) {
-		try {
-			await new Promise((resolve, reject) => {
-				server.once('error', reject);
-				server.listen(port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
-			});
-			return port;
-		} catch (e) { if (e.code !== 'EADDRINUSE') throw e; }
+/// Binds exactly `at`, this world's own row in dev/ports.json (K1). A holder is
+/// refused, not stepped past: walking on is how two worlds came to share a port.
+async function listen(at) {
+	try {
+		await new Promise((resolve, reject) => {
+			server.once('error', reject);
+			server.listen(at, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+		});
+		return at;
+	} catch (e) {
+		if (e.code !== 'EADDRINUSE') throw e;
+		throw new Error(`:${at} (this world's row in dev/ports.json) is already held.`);
 	}
-	throw new Error(`No free port from ${from}.`);
 }
-const PORT = await listen(Number(process.env.PTYEDGE_PORT || 8797));
+const PORT = await listen(port('ptyedge'));
 const APP  = `http://127.0.0.1:${PORT}`;
 
 // ┌───────────────────────────────────────────────────────────────┐

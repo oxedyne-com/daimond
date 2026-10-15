@@ -21,6 +21,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). Run it headed, under xvfb:
 //	xvfb-run -a node dev/verify_ext_i18n.mjs
+import { port } from './ports.mjs';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -51,7 +52,7 @@ const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/d
 // The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
 // so this stays standalone and does not load the harness.
 const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
-const SITE_PORT = Number(process.env.EXTI18N_PORT || 9123);
+const SITE_PORT = port('ext_i18n');
 const SITE = `http://127.0.0.1:${SITE_PORT}`;
 
 const ok = [], bad = [];

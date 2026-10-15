@@ -23,6 +23,7 @@
 //   node dev/verify_runner_launcher.mjs
 //
 // No server, no browser, no gateway.
+import { port } from './ports.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -84,10 +85,11 @@ const FEATURES = ['IntensiveWakeUpThrottling', 'CalculateNativeWinOcclusion',
 	check('no remote debugging port unless asked for', !/--remote-debugging-port/.test(r.out));
 }
 {
-	const r = run(['--dry-run', '--debug-port', '9333']);
-	check('--debug-port reaches the command', r.out.includes('--remote-debugging-port=9333'));
-	const e = run(['--dry-run'], { DAIMOND_RUNNER_DEBUG: '9444' });
-	check('so does DAIMOND_RUNNER_DEBUG', e.out.includes('--remote-debugging-port=9444'));
+	const DBG = [port('runner_debug', 0), port('runner_debug', 1)];
+	const r = run(['--dry-run', '--debug-port', String(DBG[0])]);
+	check('--debug-port reaches the command', r.out.includes('--remote-debugging-port=' + DBG[0]));
+	const e = run(['--dry-run'], { DAIMOND_RUNNER_DEBUG: String(DBG[1]) });
+	check('so does DAIMOND_RUNNER_DEBUG', e.out.includes('--remote-debugging-port=' + DBG[1]));
 }
 {
 	const r = run(['--dry-run', '--url', 'https://example.test/app', '--profile', '/tmp/p-x']);

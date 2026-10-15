@@ -37,6 +37,7 @@
 // ROOT path is refused by the chat fence as an ordinary tool result, which reads
 // as neither a write nor a cut: see `freshChat`.
 
+import { port, WORLD } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
@@ -48,7 +49,6 @@ import { guardRan } from './verdict.mjs';
 const HERE    = path.dirname(fileURLToPath(import.meta.url));
 // The cap mock is a world fixture like the LLM mock, so its port and log follow
 // the world's.  `dev/world.sh` numbers a world by its offset from port 8777.
-const WORLD    = Number(process.env.DAIMOND_PORT || 8777) - 8777;
 // 9250, NOT 9098. `9098 + WORLD` is `9099 + (WORLD - 1)`, which is the MOCK LLM
 // PORT OF THE WORLD NEXT DOOR: in world 18 the cap mock's port was world 17's
 // mockllm. The guard below found something answering /v1/models there, so no
@@ -58,7 +58,7 @@ const WORLD    = Number(process.env.DAIMOND_PORT || 8777) - 8777;
 // mockllm's plain reply. Measured 2026-08-14 in world 18, with world 17 live.
 // 9250 + WORLD is clear of every other fixture in this tree (compact 9188+N,
 // pickers 9160+2N, applications 9400+N).
-const CAP_PORT = Number(process.env.DAIMOND_CAP_PORT || 9250 + WORLD);
+const CAP_PORT = port('replylen');
 const CAP_LOG  = process.env.DAIMOND_CAP_LOG
 	|| path.join(HERE, WORLD ? `mockcap-${WORLD}.log` : 'mockcap.log');
 const CAP_URL = `http://127.0.0.1:${CAP_PORT}/v1/chat/completions`;

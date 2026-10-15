@@ -8,12 +8,14 @@
    `version()`, which is the version the mailbox stood at BEFORE the refusal:
    a version that does not hold what the caller had just added.
 
-   The load-bearing caller is the dispatcher's dropped-seed path (daimond.js
-   `dispatchToPeer`, 2b). Its errand names `parcelVersion` for the runner to
+   The load-bearing caller was the dispatcher's dropped-seed path (daimond.js
+   `dispatchToPeer`, 2b). Its errand named `parcelVersion` for the runner to
    pull to, and the runner's catch-up (`reconstructFromErrand`) pulls while
    `have < want`, so a stale `want` let it pull once, read itself caught up,
    and stop pulling for the chat it was waiting on. 0 is the errand's "no
    target version", on which the runner keeps pulling until the chat arrives.
+   Since UNBLOCK-1 (15 Oct) no errand waits on a flush at all: every one is
+   posted first at v0, and the parcel follows in the background.
 
    The real `dispatchToPeer` and the runner's `pushResult` are lifted from
    daimond.js with a brace-balanced scan and run over stubs of the transport.
@@ -89,7 +91,7 @@ async function dispatchWith(fl, auto) {
 		REASON_DISPATCHED: 'dispatched',
 		// As peer.js builds it: the errand carries the asker's posture, a strict boolean (B-F1).
 		buildDispatch: (chat, o) => { plan.auto = o.auto === true; return plan; },
-		sealFittingErrand: async () => ({ body: { envelope: 'seedless-v0' }, seedDropped: true, plan }),
+		sealFittingErrand: async () => { errandAuto = plan.errand(0).auto; return { body: { envelope: 'seedless-v0' }, seedDropped: true, plan }; },
 		sealForSelf: async (errand) => { sealedAt = errand.parcelVersion; errandAuto = errand.auto; return { envelope: 'sealed-v' + errand.parcelVersion }; },
 	};
 	const Post = { post: async (body) => { posted = body; return { ok: true }; } };
@@ -98,38 +100,39 @@ async function dispatchWith(fl, auto) {
 	const make = new Function('window', 'DaimondPeer', 'DaimondPost', 'DaimondSync', 'DaimondModels',
 		'diag', 'turnHold', 'selfDeviceId', 'markTurnDispatched', 't', 'touchChat', 'persistChats',
 		'ownsChat', 'renderHistory', 'recoverOneLocally', 'storedPre', 'autonomousPosture',
+		'msgTombsOwed', 'msgTombsShipped', 'dsEvent',
 		dispatchSrc + '\nreturn dispatchToPeer;');
 	const fn = make(win, Peer, Post, S, {}, noop, () => null, () => 'dev-a', noop, (k) => k, noop, noop,
-		() => false, noop, noop, () => '', () => auto === true);
+		() => false, noop, noop, () => '', () => auto === true, () => [], noop, noop);
 	const chat = { id: 'c1', messages: [], provider: '', model: '' };
 	const out = await fn(chat, 'turn-1', 'hello', [], {});
 	return { out, sealedAt, posted, errandAuto, calls: S.calls };
 }
 
-console.log('\nDISPATCH: the dropped-seed errand names only a version a flush confirmed\n');
-{
-	const r = await dispatchWith({ ok: false, version: 4, why: 'too_large' });
-	check('flush refused for size: the errand is sealed at v0, no target (1640b9a0: v4, the pre-refusal version)',
-		r.sealedAt === 0, 'sealed at v' + r.sealedAt);
-	check('[ctl] the errand was posted', !!r.posted && r.out && r.out.ok === true, JSON.stringify(r.out));
+console.log('\nDISPATCH: the dropped-seed errand is posted first, at v0, whatever the flush does\n');
+for (const [name, fl] of [['refused for size', { ok: false, version: 4, why: 'too_large' }],
+		['unconfirmed', { ok: false, version: 4, why: 'not_confirmed' }],
+		['confirmed at v7', { ok: true, version: 7 }],
+		['threw', new Error('offline')]]) {
+	const r = await dispatchWith(fl);
+	check('flush ' + name + ': the posted errand is the v0 seal, never a version from the flush',
+		!!r.posted && r.posted.envelope === 'seedless-v0' && r.sealedAt === null && r.out && r.out.ok === true,
+		[r.posted, r.sealedAt]);
 }
 {
-	const r = await dispatchWith({ ok: false, version: 4, why: 'not_confirmed' });
-	check('flush could not confirm (the mailbox kept moving): sealed at v0 (1640b9a0: v4)',
-		r.sealedAt === 0, 'sealed at v' + r.sealedAt);
+	// UNBLOCK-1's failing-first check: a flush that never finishes must not hold the errand.
+	const t0 = Date.now();
+	const r = await Promise.race([dispatchWith(new Promise(() => {})), new Promise((res) => setTimeout(() => res(null), 1000))]);
+	check('UNBLOCK-1: with the flush never finishing, the errand is posted within 1 s',
+		!!(r && r.posted) && Date.now() - t0 < 1000, r ? 'posted' : 'not posted in 1 s');
 }
 {
 	const r = await dispatchWith({ ok: true, version: 7 });
-	check('[ctl] a confirmed flush: sealed at its version, v7', r.sealedAt === 7, 'sealed at v' + r.sealedAt);
 	check('[ctl] a device not in the autonomous posture: the errand says so', r.errandAuto === false, 'auto ' + r.errandAuto);
 }
 {
 	const r = await dispatchWith({ ok: true, version: 7 }, true);
 	check('the errand carries the asking device\'s autonomous posture (B-F1)', r.errandAuto === true, 'auto ' + r.errandAuto);
-}
-{
-	const r = await dispatchWith(new Error('offline'));
-	check('[ctl] a flush that throws: sealed at v0', r.sealedAt === 0, 'sealed at v' + r.sealedAt);
 }
 
 // ── RESULT ──────────────────────────────────────────────────────

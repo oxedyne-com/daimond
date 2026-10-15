@@ -76,6 +76,7 @@
 // Needs playwright-core (resolved via dev/harness.mjs) and node. No dev server, no Rust: the page
 // and the module are served from disk through page.route, and the forge is the mock, proxied.
 
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -268,7 +269,7 @@ const trackerSrc = () => FILES.get('js/tracker.js') ?? fs.readFileSync(path.join
 // bytes rather than an effect: that the id is the FILE's and not a constant, that the credential
 // rode in x-ore-voice, and that a build.json with no id posts NOTHING at all.
 
-const CAP_PORT = 8453;
+const CAP_PORT = port('tracker_cap');
 const captured = [];
 const capSrv = http.createServer((req, res) => {
 	const chunks = [];
@@ -338,7 +339,7 @@ async function nodePhase() {
 
 // ── The forge, spawned and proxied ───────────────────────────────────
 
-const MOCK_PORT = 8452;
+const MOCK_PORT = port('tracker_mock');
 let mockProc = null;
 
 /// The build id the stand-in gateway injects as a ship stamp onto every DONE proposal's detail,

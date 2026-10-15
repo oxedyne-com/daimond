@@ -26,6 +26,7 @@
 // (DAIMOND_MOCK_PORT, default 9099). Starts its own second provider on :9300 and stops
 // it at the end.
 
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -59,8 +60,7 @@ const PARCEL_MAX = (() => {
 // bound 9101 and took world 2's provider out from under whoever was driving it,
 // and the gate's world 9 sits on world 7's. `dev/world.sh` hands out 8777+N and
 // 9099+N; 9300+N meets neither for any world worth numbering.
-const PORT2  = Number(process.env.DAIMOND_MOCK2_PORT
-	|| 9300 + (Number(process.env.DAIMOND_PORT || 8777) - 8777));
+const PORT2  = port('second_provider');
 const URL2   = `http://127.0.0.1:${PORT2}/v1/chat/completions`;
 const KEY2   = 'key-two-only-mock2-holds-this';
 const MODEL2 = 'mock2/worker';

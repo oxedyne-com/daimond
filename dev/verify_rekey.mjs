@@ -383,7 +383,7 @@ const VOICE = 'V01ceSecretForTheForge-abcdefghijklmnopqrs';
 // A SECOND provider, so "several providers survive" is a question with an answer. The
 // first is the one `connectMock` configured, and it is also the default — which is why
 // the check on it can read `ready()` and `resolve()` and the check on this one cannot.
-const P2_ID   = 'custom:http://127.0.0.1:9199/v1/chat/completions';
+const P2_ID   = 'custom:http://127.0.0.1:7909/v1/chat/completions';
 const P2_NAME = 'Second provider';
 const P2_KEY  = 'second-provider-key-6f3ba';
 // The push token: the one secret in this file re-sealed BELOW the API key block.

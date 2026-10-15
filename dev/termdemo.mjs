@@ -17,6 +17,7 @@
 // Nothing here is installed and nothing is imported from outside the repo. The
 // verifier drives this same page: see dev/verify_terminal.mjs.
 
+import { port } from './ports.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -369,7 +370,8 @@ const DEMO_JS = String.raw`
 `;
 
 /// Serve the demo. Returns the server, listening.
-export function start(port = 8778) {
+export function start(at = port('termdemo')) {
+	const port = at;
 	const server = http.createServer((req, res) => {
 		const url = decodeURIComponent((req.url || '/').split('?')[0]);
 		const send = (body, type, code = 200) => {
@@ -399,7 +401,7 @@ export function start(port = 8778) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-	const port = Number(process.env.TERMDEMO_PORT || 8778);
+	const port = port('termdemo');
 	start(port);
 	console.log(`Daimond terminal demo → http://localhost:${port}`);
 	console.log(`  recordings: ${FIXTURES.map(f => f[0]).join(', ')}`);

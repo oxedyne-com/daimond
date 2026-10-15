@@ -55,6 +55,7 @@
 // It needs a built gateway binary. It does NOT need dev/serve.mjs, a browser,
 // or the gateway on :9002.
 
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -199,7 +200,7 @@ async function refusal(port, body) {
 	}
 
 	// ── Fixture A: the operator has set the credits tier to serper ──
-	const A_PORT = 9013;
+	const A_PORT = port('search_gateway', 0);
 	const upA = await start(bin, fixture('serper', A_PORT, 'serper'), A_PORT);
 	check('a gateway starts with the credits tier set to serper', upA, bin);
 	if (!upA) { cleanup(); process.exit(1); }
@@ -291,7 +292,7 @@ async function refusal(port, body) {
 		got.status === 405, 'HTTP ' + got.status);
 
 	// ── Fixture B: a well-configured engine with no key set ──
-	const B_PORT = 9014;
+	const B_PORT = port('search_gateway', 1);
 	const upB = await start(bin, fixture('nokey', B_PORT, 'brave'), B_PORT);
 	check('a second gateway starts with brave chosen and no key set', upB);
 	if (upB) {

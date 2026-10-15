@@ -1904,6 +1904,7 @@ function buildS61Sandbox(P, spy) {
 		selfDeviceId:       () => 'SELF',
 		turnHold:           () => '',						// nothing paused here
 		_askCard:           null,
+		diag:               () => {},
 	};
 	const src = [
 		daimondFuncSource('turnMessagesOf'),
@@ -1911,6 +1912,8 @@ function buildS61Sandbox(P, spy) {
 		daimondFuncSource('retryTurn'),
 		daimondFuncSource('answerAgain'),
 		daimondFuncSource('askAgain'),
+		daimondFuncSource('tailAfter'),
+		daimondFuncSource('sessionCut'),		// a retraction cuts the stored session (1e)
 	].join('\n')
 	+ '\nwindow.continueTurn = continueTurn;\nwindow.retryTurn = retryTurn;\nwindow.answerAgain = answerAgain;\n';
 	const fn = new Function('window', 'with (window) {\n' + src + '\n}');
@@ -2370,6 +2373,202 @@ async function runNominationAcceptance(P, L, check) {
 		check('runErrand: the NOMINEE claims and runs its errand exactly once',
 			res.ran === true && ran === 1 && sync.leases()['t-nom-a'].holder === NOMINEE);
 	}
+
+	// ── UNBLOCK-1 (D-20261009-23, the 14:03 fault of 13 Oct): ONLY THE NAMED RUNNER TAKES
+	// THE TURN. The errand carries `to`, the device the switch named. A second idle desktop
+	// stands down for it even while it is busy (the turn is queued there on purpose, O3),
+	// and the addressee claims even over a different nominee. A named runner that is no
+	// longer live leaves the nomination to decide, as before.
+	{
+		const runAs = async (self, to, presence, tid) => {
+			L.forget();
+			const sync = makeLeaseSync({});
+			let ran = 0;
+			const errand = sentErrand(P, { turnId: tid, chatId: 'c', prompt: 'p', eid: 'e-' + tid, deadline: 0,
+				dispatchedBy: 'PHONE', to: to });
+			const res = await P.runErrand(errand, {
+				selfId: self, cas: P.syncCas(sync),
+				nominatedId: NOMINEE, presence: presence, freshWindowMs: W,
+				finished:    async () => false,
+				reconstruct: async () => ({ chat: {}, app: {} }),
+				runTurn:     async () => { ran++; },
+				abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => NOW,
+			});
+			return { res, ran, lease: sync.leases()[tid] };
+		};
+		const busyNom = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - 1000, servicedAt: NOW - 1000, busy: 1 },
+			[OTHER]: { name: 'gilgamesh', lastSeen: NOW - 1000, servicedAt: NOW - 1000 } };
+		const a = await runAs(OTHER, NOMINEE, busyNom, 't-to-busy');
+		check('UNBLOCK-1: a second idle desktop does NOT take a turn named for the busy runner',
+			a.res.ran === false && a.ran === 0 && !a.lease, JSON.stringify([a.res.why, a.ran]));
+		check('UNBLOCK-1: the stand-down is undecided, so the errand stays on the relay for the addressee',
+			P.standDownUndecided(a.res.why) === true, a.res.why);
+		const idleNom = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - 1000, servicedAt: NOW - 1000 },
+			[OTHER]: { name: 'gilgamesh', lastSeen: NOW - 1000, servicedAt: NOW - 1000 } };
+		const b = await runAs(OTHER, OTHER, idleNom, 't-to-other');
+		check('UNBLOCK-1: the addressee claims and runs even though another device is the nominee',
+			b.res.ran === true && b.ran === 1 && b.lease && b.lease.holder === OTHER, JSON.stringify([b.res.why, b.ran]));
+		const c = await runAs(NOMINEE, OTHER, idleNom, 't-to-other-nom');
+		check('UNBLOCK-1: the nominee leaves a turn named for another live device alone',
+			c.res.ran === false && c.ran === 0, JSON.stringify([c.res.why, c.ran]));
+		const goneNom = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - (W + 60000), servicedAt: NOW - (W + 60000) },
+			[OTHER]: { name: 'gilgamesh', lastSeen: NOW - 1000, servicedAt: NOW - 1000 } };
+		const d = await runAs(OTHER, NOMINEE, goneNom, 't-to-gone');
+		check('[ctl] a named runner that has gone quiet: an awake device claims (the fallback stands)',
+			d.res.ran === true && d.ran === 1, JSON.stringify([d.res.why, d.ran]));
+
+		// THE WHOLE ROUTE: the switch's choice becomes the errand's `to`, and that device claims.
+		// The nominee is live and listening but busy with ANOTHER chat, so the election seats the
+		// idle runner-posture desk. The errand must name that desk, not the starred nominee: a
+		// `to` naming the nominee made the elected desk stand down and the nominee bounce it.
+		const route = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - 1000, servicedAt: NOW - 1000, busy: 1 },
+			[OTHER]: { name: 'gilgamesh', lastSeen: NOW - 1000, servicedAt: NOW - 1000, runner: true } };
+		const el = P.autoDispatchDecision({ id: 'c-route', messages: [] }, route, {
+			selfId: 'PHONE', nominatedId: NOMINEE, isPhone: true, freshWindowMs: W,
+			queueOn: '', toggle: null, runnerOnly: true }, NOW);
+		const to = P.peerIdOf(el.peer);
+		check('UNBLOCK-1 route: the switch seats the idle runner-posture desk over the busy nominee',
+			el.dispatch === true && el.reason === 'runner-posture' && to === OTHER, JSON.stringify([el.reason, to]));
+		const re = await runAs(OTHER, to, route, 't-route-elected');
+		check('UNBLOCK-1 route: the elected desk claims and runs the errand that names it',
+			re.res.ran === true && re.ran === 1 && re.lease && re.lease.holder === OTHER, JSON.stringify([re.res.why, re.ran]));
+		const rn = await runAs(NOMINEE, to, route, 't-route-nominee');
+		check('UNBLOCK-1 route: the busy nominee leaves it alone',
+			rn.res.ran === false && rn.ran === 0, JSON.stringify([rn.res.why, rn.ran]));
+		// The send path wires that same id into the errand: `runTo` from the election's seat,
+		// and `to` from `runTo`, never from the tile's nominee (`toId`).
+		// A runner-posture desk that beats but has stopped listening never collects, so a busy
+		// device does not hold a row for it (`idleDeskBeside`), and a nominee in that state is
+		// named as the reason a seat went elsewhere (`seatPlan`).
+		const deafDesk = { ['A' + OTHER]: { name: 'deaf', lastSeen: NOW - 1000, servicedAt: NOW - 5 * 60 * 1000, runner: true } };
+		check('UNBLOCK-1: a busy device does not hold back for a runner-posture desk that is not listening',
+			P.busyHoldsFor(deafDesk, 'Z' + OTHER, ['PHONE'], NOW, W) === false);
+		const hearDesk = { ['A' + OTHER]: { name: 'hear', lastSeen: NOW - 1000, servicedAt: NOW - 1000, runner: true } };
+		check('[ctl] a busy device holds back for a listening runner-posture desk ahead of it',
+			P.busyHoldsFor(hearDesk, 'Z' + OTHER, ['PHONE'], NOW, W) === true);
+		const deafNom = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - 1000, servicedAt: NOW - 5 * 60 * 1000 },
+			[OTHER]: { name: 'gilgamesh', lastSeen: NOW - 1000, servicedAt: NOW - 1000 } };
+		const sp = P.seatPlan({ id: 'c-sp', messages: [] }, deafNom, {
+			selfId: 'PHONE', nominatedId: NOMINEE, isPhone: true, freshWindowMs: W }, NOW);
+		check('UNBLOCK-1: a seat bypassing a beating but deaf nominee says runner-silent',
+			sp.dispatch === true && sp.deviceId === OTHER && sp.why === 'runner-silent', JSON.stringify(sp));
+		check('UNBLOCK-1 route: the send passes the elected device as runTo',
+			/runTo:\s*DaimondPeer\.peerIdOf\(d\.peer\)/.test(DAIMOND_SRC));
+		check('UNBLOCK-1 route: the errand\'s to is runTo, not the tile\'s toId',
+			/\bto:\s*\(opts && opts\.runTo\) \|\| ''/.test(DAIMOND_SRC) && !/\bto:\s*\(opts && opts\.toId\)/.test(DAIMOND_SRC));
+	}
+
+	// ── UNBLOCK-1: "reachable" on the switch is the send's test, and includes listening. ──
+	{
+		const chat = { id: 'c-sw', messages: [] };
+		const deaf = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - 1000, servicedAt: NOW - 5 * 60 * 1000, mobile: false } };
+		const live = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - 1000, servicedAt: NOW - 1000, mobile: false } };
+		const sw = P.seatSwitch(chat, deaf, { selfId: 'PHONE', nominatedId: NOMINEE }, NOW);
+		check('UNBLOCK-1: the switch hides a runner that beats but is not listening for errands',
+			sw.runner === null && sw.choice === 'here', JSON.stringify(sw));
+		check('UNBLOCK-1: and nobody stands down for it',
+			P.nominationStandDown(NOMINEE, OTHER, deaf, NOW, W) === false);
+		const sl = P.seatSwitch(chat, live, { selfId: 'PHONE', nominatedId: NOMINEE }, NOW);
+		check('[ctl] a listening runner is offered, reachable until its older stamp ages out',
+			sl.runner && sl.runner.deviceId === NOMINEE && sl.until === NOW - 1000 + W + 1, JSON.stringify(sl));
+		const unrep = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - 1000, mobile: false } };
+		check('[ctl] a gateway that relays no serviced_at still seats on the beat',
+			!!P.seatSwitch(chat, unrep, { selfId: 'PHONE', nominatedId: NOMINEE }, NOW).runner);
+	}
+
+	// ── UNBLOCK-1: a removal rides the errand (`gone`), so the runner needs no parcel. ──
+	{
+		const full = [
+			{ role: 'user', content: 'q1', mid: 'u1' },
+			{ role: 'assistant', content: 'a1', mid: 'a1' },
+			{ role: 'user', content: 'q2', mid: 'u2' },
+		];
+		// The sender retracted a1 (a Retry) and sends u2; the runner still holds a1.
+		const sender = { id: 'c-gone', messages: [full[0], full[2]] };
+		const runner = { id: 'c-gone', messages: full.slice(), _loaded: true };
+		const plan = P.buildDispatch(sender, { turnId: 'u2', chatId: 'c-gone', prompt: 'q2', gone: ['a1'] });
+		const errand = plan.errand(0);
+		check('UNBLOCK-1: the errand carries the unflushed removal',
+			Array.isArray(errand.gone) && errand.gone.length === 1 && errand.gone[0] === 'a1', JSON.stringify(errand.gone));
+		check('UNBLOCK-1: a runner still holding the removed row matches the thread without a parcel',
+			P.holdsThread(runner, errand) === true
+			&& P.threadReadiness(runner, errand, 0).state === 'match', JSON.stringify(P.threadReadiness(runner, errand, 0)));
+		const noGone = P.buildDispatch(sender, { turnId: 'u2', chatId: 'c-gone', prompt: 'q2' }).errand(0);
+		check('[ctl] without `gone` that runner does not match (the 12 Oct permit 3c case)',
+			P.holdsThread(runner, noGone) === false);
+	}
+	// ── UNBLOCK-1 3b: a turn queued behind this chat's running turn runs on that runner. ──
+	// The sender fingerprints turn 4 while turn 3 is still running on B, so its thread ends at
+	// q3 and the dispatched placeholder; B claims turn 4 after it answered turn 3, so it holds
+	// a3 (and its tool row) as well. Those rows are the answer to the turn the errand queued
+	// behind, the only rows the runner may hold beyond the sender's thread (rulings §1).
+	{
+		const pre = [
+			{ role: 'user', content: 'q1', mid: 'u1' },
+			{ role: 'assistant', content: 'a1', mid: 'a1', iturn: 'u1' },
+			{ role: 'user', content: 'q3', mid: 'u3' },
+		];
+		const placeholder = { role: 'assistant', content: '', mid: 'p3', iturn: 'u3', interrupted: true, why: 'dispatched' };
+		const ans3 = [
+			{ role: 'tool', content: 'ran', mid: 't3', iturn: 'u3' },
+			{ role: 'assistant', content: 'a3', mid: 'a3', iturn: 'u3', ranOn: 'B' },
+		];
+		const q4 = { role: 'user', content: 'q4', mid: 'u4' };
+		const sender = { id: 'c-q', messages: pre.concat([placeholder, q4]) };
+		const errand = P.buildDispatch(sender, { turnId: 'u4', chatId: 'c-q', prompt: 'q4' }).errand(0);
+		check('3b: the errand names the running turn it was queued behind', JSON.stringify(errand.behind) === '["u3"]', JSON.stringify(errand.behind));
+		const runner = { id: 'c-q', messages: pre.concat(ans3, [q4]), _loaded: true };
+		check('3b: a runner holding only that turn\'s answer beyond the thread matches it',
+			P.holdsThread(runner, errand) === true && P.threadReadiness(runner, errand, 0).state === 'match',
+			JSON.stringify(P.threadReadiness(runner, errand, 0)));
+		const tooFar = { id: 'c-q', messages: pre.concat(ans3, [{ role: 'user', content: 'q5', mid: 'u5' },
+			{ role: 'assistant', content: 'a5', mid: 'a5', iturn: 'u5' }, q4]), _loaded: true };
+		check('[ctl] 3b: a runner holding a further turn as well does not match',
+			P.holdsThread(tooFar, errand) === false && P.threadReadiness(tooFar, errand, 0).state === 'final');
+		const other = { id: 'c-q', messages: pre.concat([{ role: 'assistant', content: 'x', mid: 'x1', iturn: 'u1' }], [q4]), _loaded: true };
+		check('[ctl] 3b: an extra answer to an earlier turn does not match', P.holdsThread(other, errand) === false);
+		const answered = { id: 'c-q', messages: pre.concat([placeholder], ans3, [q4]) };
+		const e2 = P.buildDispatch(answered, { turnId: 'u4', chatId: 'c-q', prompt: 'q4' }).errand(0);
+		check('[ctl] 3b: a sender that holds the answer queues behind nothing, and the runner matches as before',
+			e2.behind.length === 0 && P.holdsThread(runner, e2) === true, JSON.stringify(e2.behind));
+		const local = { id: 'c-q', messages: pre.concat([q4]) };
+		const e3 = P.buildDispatch(local, { turnId: 'u4', chatId: 'c-q', prompt: 'q4' }).errand(0);
+		check('[ctl] 3b: an unanswered turn that was never handed off is not one to queue behind',
+			e3.behind.length === 0 && P.holdsThread(runner, e3) === false, JSON.stringify(e3.behind));
+	}
+	// ── UNBLOCK-1 3b, second follow-up: turns 4 AND 5 queued behind turn 3 running on B. ──
+	// The sender fingerprints turn 5 with neither a3 nor a4 in its thread; B takes it after
+	// answering both, so every handed-off turn still unanswered ahead of 5 is named.
+	{
+		const pre = [
+			{ role: 'user', content: 'q1', mid: 'u1' },
+			{ role: 'assistant', content: 'a1', mid: 'a1', iturn: 'u1' },
+			{ role: 'user', content: 'q3', mid: 'u3' },
+		];
+		const p3 = { role: 'assistant', content: '', mid: 'p3', iturn: 'u3', interrupted: true, why: 'dispatched' };
+		const q4 = { role: 'user', content: 'q4', mid: 'u4' };
+		const p4 = { role: 'assistant', content: '', mid: 'p4', iturn: 'u4', interrupted: true, why: 'dispatched' };
+		const q5 = { role: 'user', content: 'q5', mid: 'u5' };
+		const ans3 = [
+			{ role: 'tool', content: 'ran', mid: 't3', iturn: 'u3' },
+			{ role: 'assistant', content: 'a3', mid: 'a3', iturn: 'u3', ranOn: 'B' },
+		];
+		const ans4 = [{ role: 'assistant', content: 'a4', mid: 'a4', iturn: 'u4', ranOn: 'B' }];
+		const sender = { id: 'c-q', messages: pre.concat([p3, q4, p4, q5]) };
+		const e5 = P.buildDispatch(sender, { turnId: 'u5', chatId: 'c-q', prompt: 'q5' }).errand(0);
+		const named = Array.isArray(e5.behind) ? e5.behind.slice().sort().join(',') : JSON.stringify(e5.behind);
+		check('3b: a second follow-up names both running turns it queued behind', named === 'u3,u4', named);
+		const runner = { id: 'c-q', messages: pre.concat(ans3, [q4], ans4, [q5]), _loaded: true };
+		check('3b: the runner holding both answers matches turn 5',
+			P.holdsThread(runner, e5) === true && P.threadReadiness(runner, e5, 0).state === 'match',
+			JSON.stringify(P.threadReadiness(runner, e5, 0)));
+		const mid = { id: 'c-q', messages: pre.concat(ans3, [q4], [q5]), _loaded: true };
+		check('3b: the runner holding only a3 so far matches turn 5 too', P.holdsThread(mid, e5) === true);
+		const sender4a = { id: 'c-q', messages: pre.concat([p3], ans3, [q4, p4, q5]) };
+		const e5a = P.buildDispatch(sender4a, { turnId: 'u5', chatId: 'c-q', prompt: 'q5' }).errand(0);
+		const n5a = Array.isArray(e5a.behind) ? e5a.behind.join(',') : JSON.stringify(e5a.behind);
+		check('[ctl] 3b: a turn answered on the sender is not named again', n5a === 'u4', n5a);
+	}
 	// A non-nominee with the nominee OFFLINE claims and runs (fallback = any awake).
 	{
 		L.forget();
@@ -2767,8 +2966,12 @@ async function runPresenceAcceptance(P, PR, check) {
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.dispatch === true && d.reason === 'nominee' && d.peer.deviceId === 'argonaut'; })());
 	check('a STALE nominee (beat aged out) runs local',
 		P.autoDispatchDecision(quickChat, stale, { selfId: 'phone', nominatedId: 'argonaut' }, T).dispatch === false);
-	check('a BEATING nominee is seated DIRECTLY even when its serviced_at is stale (fix A) -- backstop recovers a phantom',
-		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.dispatch === true && d.reason === 'nominee' && d.peer.deviceId === 'argonaut'; })());
+	// UNBLOCK-1 (D-20261013-02) supersedes fix A: a nominee that beats but no longer
+	// listens cannot collect the errand, so it is not seated; the claim side defers to it
+	// by the same test (nominationStandDown) and the errand names its addressee, so seat
+	// and claim still agree.
+	check('a BEATING nominee whose serviced_at is stale is NOT seated (UNBLOCK-1: reachable means listening)',
+		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', nominatedId: 'argonaut' }, T); return !(d.peer && d.peer.deviceId === 'argonaut'); })());
 	check('this device IS the nominee -> it does not dispatch a turn to itself',
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'argonaut', nominatedId: 'argonaut' }, T).dispatch === false);
 	// The REAL regression (a hung daimon turn, 2026-09-17): `handoffTarget`'s own
@@ -2802,11 +3005,17 @@ async function runPresenceAcceptance(P, PR, check) {
 	// beside a machine that had said it was arranged to take one.
 	const armedP = { argonaut: { name: 'argonaut', lastSeen: T, servicedAt: T - 5 * 60 * 1000,
 		mobile: false, runner: true } };
-	check('an ARMED runner is seated with NO nominee record and a STALE servicing stamp',
-		(() => { const d = P.autoDispatchDecision(quickChat, armedP, { selfId: 'phone', isPhone: true }, T);
+	// UNBLOCK-1: the posture seats a machine with NO nominee record, but only while it
+	// listens; an armed runner whose servicing stamp is stale cannot collect the errand.
+	const armedLive = { argonaut: Object.assign({}, armedP.argonaut, { servicedAt: T - 5000 }) };
+	check('an ARMED, listening runner is seated with NO nominee record',
+		(() => { const d = P.autoDispatchDecision(quickChat, armedLive, { selfId: 'phone', isPhone: true }, T);
 			return d.dispatch === true && d.reason === 'runner-posture' && d.peer.deviceId === 'argonaut'; })());
+	check('an ARMED runner with a STALE servicing stamp is NOT seated (UNBLOCK-1)',
+		(() => { const d = P.autoDispatchDecision(quickChat, armedP, { selfId: 'phone', isPhone: true }, T);
+			return !(d.peer && d.peer.deviceId === 'argonaut'); })());
 	check('the posture is WORKER-GRADE: it takes an ordinary quick turn from a DESKTOP too',
-		(() => { const d = P.autoDispatchDecision(quickChat, armedP, { selfId: 'gilgamesh' }, T);
+		(() => { const d = P.autoDispatchDecision(quickChat, armedLive, { selfId: 'gilgamesh' }, T);
 			return d.dispatch === true && d.reason === 'runner-posture'; })());
 	check('an armed runner whose BEAT has aged out is NOT seated (the posture is not a promise)',
 		(() => { const cold = { argonaut: Object.assign({}, armedP.argonaut, { lastSeen: T - P.DISPATCH_FRESH_MS - 60000 }) };
@@ -2913,8 +3122,8 @@ async function runPresenceAcceptance(P, PR, check) {
 			serviced: false, serviced_at: 0 } }, sNow);
 		check('rollout(b): a seq-217 explicit-not-servicing runner is EXCLUDED by recGenuine (non-nominee protection intact)',
 			P.recGenuine(PR.snapshot().argonaut, Date.now(), win) === false);
-		check('rollout(b): as the BEATING NOMINEE it is still seated (fix A); the backstop recovers it if it never services',
-			(() => { const d = dispatch(); return d.dispatch === true && d.reason === 'nominee' && d.peer && d.peer.deviceId === 'argonaut'; })());
+		check('rollout(b): as the NOMINEE it is not seated either (UNBLOCK-1: it is not listening)',
+			(() => { const d = dispatch(); return !(d.peer && d.peer.deviceId === 'argonaut'); })());
 		// (c) GENUINE seq-217 runner: fresh serviced_at -> eligible.
 		PR.forget();
 		PR.ingest({ argonaut: { name: 'Argonaut', last_seen: sNow - 5000, attended: false, attended_at: 0,
@@ -4178,7 +4387,7 @@ async function runLeaseFollowupAcceptance(phone, check) {
 		await timers[1].fn();
 		check('M1: the timer re-collects once', collects === 1, String(collects));
 		check('M1: the errand handler asks for the re-collect on every undecided stand-down',
-			/standDownUndecided\(res\.why\)\)\s*\{\s*scheduleStandDownRecollect\(res\.why === 'nominee' \? undefined : UNDECIDED_RECOLLECT_MS\)/.test(DAIMOND_SRC));
+			/standDownUndecided\(res\.why\)\)\s*\{\s*scheduleStandDownRecollect\(res\.why === 'nominee' \|\| res\.why === 'addressee' \? undefined : UNDECIDED_RECOLLECT_MS\)/.test(DAIMOND_SRC));
 	}
 
 	// L2. A revoke that finds the lease already vacant adopts what the door says.

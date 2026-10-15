@@ -19,6 +19,7 @@
 // A gateway and a dev server of its own, on ports of their own, so this can run
 // while other lanes hold :9002 and :8777. The store is empty, because the rows
 // it counts would otherwise be somebody else's afternoon.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,8 +33,8 @@ const ROOT    = path.join(HERE, '..');
 // 9418/8793 rather than 9412/8791: verify_redeem.mjs owns :9412 and
 // verify_ptyedge.mjs owns :9422/:8797, so both the original pair and the obvious
 // replacement collide inside one suite run.  These two are unused across dev/.
-const GW_PORT = Number(process.env.DAIMOND_GW_PORT || 9418);
-const APP_PORT = Number(process.env.DAIMOND_PORT || 8793);
+const GW_PORT = Number(process.env.DAIMOND_GW_PORT || port('betatier_gw'));
+const APP_PORT = Number(process.env.DAIMOND_PORT || port('betatier_app'));
 const GW      = `http://127.0.0.1:${GW_PORT}`;
 const APP     = `http://localhost:${APP_PORT}`;
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');

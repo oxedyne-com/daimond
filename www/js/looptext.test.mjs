@@ -133,7 +133,7 @@ test('a recovered turn answers with the prose after its last tool, and keeps the
 		"The capture's outline shows the table."]);
 	// And the page puts each `said` on the record as working, before its call.
 	const rec = block(APP, APP.indexOf('(t.tools || []).forEach(function (tl)'));
-	const said = rec.indexOf('logThinking(chat, tl.said)'), log = rec.indexOf("role: 'tool_log'");
+	const said = rec.indexOf('logThinking(chat, tl.said, iturn)'), log = rec.indexOf("role: 'tool_log'");
 	assert.ok(said !== -1 && said < log, 'the recovered working is not put before its call');
 });
 

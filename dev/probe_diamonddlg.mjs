@@ -1,4 +1,5 @@
 // A look at the New Diamond dialog, with two providers seeded.
+import { port } from './ports.mjs';
 import { open, shot } from './harness.mjs';
 import http from 'node:http';
 
@@ -20,16 +21,16 @@ function provider(port, models) {
 	srv.listen(port, '127.0.0.1');
 	return srv;
 }
-const a = provider(9111, ['llama-3.3-70b-instruct', 'qwen-2.5-coder-32b']);
-const b = provider(9112, ['deepseek-v3', 'llama-3.3-70b-instruct']);
+const a = provider(port('diamonddlg', 0), ['llama-3.3-70b-instruct', 'qwen-2.5-coder-32b']);
+const b = provider(port('diamonddlg', 1), ['deepseek-v3', 'llama-3.3-70b-instruct']);
 
 const s = await open({ name: 'focusdlg', connect: false });
 const p = s.page;
 await p.waitForTimeout(1200);
 await p.evaluate(async () => {
 	const M = window.DaimondModels;
-	M.addProvider('fireworks', { name: 'Fireworks AI', url: 'http://127.0.0.1:9111/v1/chat/completions' });
-	M.addProvider('groq',      { name: 'Groq',         url: 'http://127.0.0.1:9112/v1/chat/completions' });
+	M.addProvider('fireworks', { name: 'Fireworks AI', url: `http://127.0.0.1:${port('diamonddlg', 0)}/v1/chat/completions` });
+	M.addProvider('groq',      { name: 'Groq',         url: `http://127.0.0.1:${port('diamonddlg', 1)}/v1/chat/completions` });
 	await M.setKey('fireworks', 'k1');
 	await M.setKey('groq', 'k2');
 	await M.fetchModels('fireworks');

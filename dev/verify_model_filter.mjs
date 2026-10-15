@@ -24,6 +24,7 @@
 // account, device-local). It is READ here and never written by opening or choosing.
 //
 //   node dev/verify_model_filter.mjs        (inside a world: bash dev/world.sh N --up)
+import { port } from './ports.mjs';
 import http from 'node:http';
 import { open, shot, APP } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
@@ -48,8 +49,7 @@ const until = async (fn, ms = 6000) => {
 // Names no model id contains, so a provider-name query can only match through the
 // provider. Ids are listed A to Z by the app, so the order a person sees today is
 // alphabetical -- and the usage below puts kimi-k3 FIRST, the reverse of it.
-const PORT = Number(process.env.DAIMOND_MOCK2_PORT
-	|| 9300 + (Number(process.env.DAIMOND_PORT || 8777) - 8777));
+const PORT = port('second_provider');
 const IDS = {
 	a: ['moonshotai/kimi-k3', 'moonshotai/kimi-k2', 'moonshotai/kimi-k1',
 		'deepseek/deepseek-v4', 'qwen/qwen3-max'],

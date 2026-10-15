@@ -2,6 +2,7 @@
 // #17 vision pass — screenshot the fold running on the chat face.
 // Reuses world 4 (app :8781, mock :9103). Delays the reducer round so the
 // "Fold: reducing" stage is visible, then screenshots.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import { open, connectMock, scratch, shot } from './harness.mjs';
 
@@ -9,8 +10,8 @@ import { open, connectMock, scratch, shot } from './harness.mjs';
 // actually commits and settles rather than echoing the transcript back.
 fs.writeFileSync('/home/jason/usr/code/web/apps/oxedyne/daimond/dev/mockllm-4.log.fold', 'structured');
 
-process.env.DAIMOND_APP = process.env.DAIMOND_APP || 'http://localhost:8781';
-process.env.DAIMOND_MOCK = process.env.DAIMOND_MOCK || 'http://127.0.0.1:9103/v1/chat/completions';
+process.env.DAIMOND_APP = process.env.DAIMOND_APP || 'http://localhost:' + port('app');
+process.env.DAIMOND_MOCK = process.env.DAIMOND_MOCK || `http://127.0.0.1:${port('mock')}/v1/chat/completions`;
 process.env.DAIMOND_SCRATCH = process.env.DAIMOND_SCRATCH
 	|| '/home/jason/usr/code/web/apps/oxedyne/daimond/.scratch';
 

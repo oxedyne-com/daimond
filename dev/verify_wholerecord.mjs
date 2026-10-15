@@ -20,6 +20,7 @@
 //
 //   node dev/verify_wholerecord.mjs
 
+import { port, WORLD } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -30,10 +31,9 @@ const ROOT = path.dirname(HERE);
 const H = await import(path.join(HERE, 'harness.mjs'));
 const { open, newChat, transcript, shot, connectMock, storedChats, signInAs } = H;
 
-const WORLD = Number(process.env.DAIMOND_PORT || 8777) - 8777;
 const LOG   = process.env.DAIMOND_WHOLE_LOG
 	|| path.join(HERE, WORLD ? `wholemock-${WORLD}.log` : 'wholemock.log');
-const PORT  = Number(process.env.DAIMOND_WHOLE_PORT || 9800 + WORLD);
+const PORT  = port('wholerecord');
 const MOCK  = `http://127.0.0.1:${PORT}/v1/chat/completions`;
 const MODEL = 'mock/fast';
 const NAME  = 'wholerecord';

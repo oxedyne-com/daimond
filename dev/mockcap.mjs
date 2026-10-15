@@ -36,6 +36,7 @@
 // test is "the cap is enforced and the cut lands mid-string", which does not
 // depend on the tokeniser being exact.
 
+import { port } from './ports.mjs';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -43,7 +44,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOG  = process.env.DAIMOND_CAP_LOG || path.join(HERE, 'mockcap.log');
-const PORT = Number(process.argv[2] || process.env.DAIMOND_CAP_PORT || 9098);
+const PORT = Number(process.argv[2] || port('replylen'));
 
 /// Characters per token, for the cap arithmetic.
 const CHARS_PER_TOKEN = 4;

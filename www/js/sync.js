@@ -2921,7 +2921,11 @@
 			// back safely (no attended peer -> park; no serviced signal -> the bare beat
 			// stands and the dispatcher-side recovery timer is the backstop).
 			var body = { device_id: String(deviceId || ''), name: String(name || ''), attended: !!attended };
-			if (servicing) body.servicing = true;
+			// SENT BOTH WAYS (UNBLOCK-1). Omitted when false, a runner that stopped listening
+			// said nothing, the gateway left `serviced_at` out, and `recGenuine` fell back to
+			// the bare beat, so the switch kept offering a desk that would never collect. An
+			// explicit false is stored as the stale marker (`serviced_at: 0`).
+			body.servicing = !!servicing;
 			// The nominated machine's own posture (runner.js): set up to stay awake and
 			// listening, so every other device can tell the nomination from a machine that
 			// is actually arranged to honour it. Sent only when true, so an ordinary

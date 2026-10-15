@@ -55,6 +55,7 @@
 // carries itself, so there is no compositor, no DISPLAY and no page to wait on.
 // It starts a gateway of its own on a port of its own, so it does not have to
 // wait for whoever is holding :9002 -- see `buildWorkDir` below.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -97,7 +98,7 @@ const ROOT = path.join(HERE, '..');
 // survived only because `dev/run_all.sh` runs a verifier at a time. The register
 // in `dev/world.sh` held both rows and neither reader saw the overlap; the check
 // in `dev/verify_worldports.mjs` reads the register and found it on its first run.
-const PORT    = Number(process.env.DAIMOND_GW_PORT || 9420);
+const PORT    = Number(process.env.DAIMOND_GW_PORT || port('passcode_gw'));
 const GW      = `http://127.0.0.1:${PORT}`;
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
 const WORK    = path.join(SCRATCH, 'verify_passcode-gw');

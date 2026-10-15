@@ -24,6 +24,7 @@
 //
 // The mock's own latency defaults to zero, so a run measures what Daimond adds.
 
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -53,7 +54,7 @@ const TASK   = String(arg('task',
 	+ '%DIR%/f6.txt %DIR%/f7.txt %DIR%/f8.txt %DIR%/f9.txt %DIR%/f10.txt %DIR%/f11.txt'));
 const KEY    = process.env.OPENROUTER_API_KEY || '';
 const REALURL = String(arg('realurl', 'https://openrouter.ai/api/v1/chat/completions'));
-const PORT   = Number(process.env.LAT_PORT || 9906);
+const PORT   = port('latency');
 const LOG    = path.join(HERE, `latmock-${LABEL}.log`);
 const OUT    = path.join(HERE, `latency-${LABEL}.json`);
 

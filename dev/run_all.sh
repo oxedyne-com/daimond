@@ -656,14 +656,11 @@ hand_bin_default() {
 # server. NOT the ambient DAIMOND_PORT: that names the server the REST of this suite
 # already has running (see this file's header), and verify_handmeterless starts a second
 # server of its own and refuses outright if the port it is given is already answering --
-# so handed the ambient one it never runs at all. Offset by the shell's own pid so two
-# lanes racing this suite at once do not reach for the same port.
+# so handed the ambient one it never runs at all. Its row in dev/ports.json is this
+# world's alone (K1), so two lanes racing this suite cannot reach for the same port;
+# one already held is the verifier's to refuse, not ours to step past.
 free_port_for_handmeterless() {
-	local base=$((8850 + ($$ % 100))) p
-	for p in $(seq "$base" $((base + 50))); do
-		ss -ltn 2>/dev/null | grep -q ":$p " || { echo "$p"; return; }
-	done
-	echo 0
+	node dev/ports.mjs handmeterless
 }
 
 # Env-var assignments to run a verifier under, beyond its CLI args (`args_for`) -- empty

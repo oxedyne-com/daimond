@@ -262,6 +262,7 @@
 // Needs dev/serve.mjs and node. No gateway and no Rust: the gateway's half of
 // the path is reproduced here, from the source, and the forge's half is the
 // mock.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -289,19 +290,19 @@ const check = (name, pass, detail) => {
 // ── The forges ───────────────────────────────────────────────────────
 
 const FORGE = {
-	main:  { port: 8437, args: ['--count', '12'] },
-	pages: { port: 8438, args: ['--count', '50'] },
+	main:  { port: port('improve', 0), args: ['--count', '12'] },
+	pages: { port: port('improve', 1), args: ['--count', '50'] },
 	// A forge that reads `from` as a LOWER bound. Not a straw man: it is what
 	// both implementations of this contract wrote first, and it is the shape
 	// that makes the obvious paging loop never terminate.
-	wrong: { port: 8439, args: ['--count', '50', '--break', 'fromascends'] },
+	wrong: { port: port('improve', 2), args: ['--count', '50', '--break', 'fromascends'] },
 	// A listing with no tally on it. NOT the forge as it stands -- it answers
 	// `votes` now, on both shapes -- and kept for exactly that reason: run beside
 	// the tallied forge above, the pair is what proves the control reads the
 	// RECORD and not a constant somebody will forget to change.
-	dark:  { port: 8440, args: ['--break', 'novotes'] },
+	dark:  { port: port('improve', 3), args: ['--break', 'novotes'] },
 	// The one token no path the panel takes can reach naturally.
-	unsup: { port: 8441, args: ['--refuse', 'unsupported'] },
+	unsup: { port: port('improve', 4), args: ['--refuse', 'unsupported'] },
 };
 
 const started = [];

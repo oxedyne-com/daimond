@@ -104,6 +104,7 @@
 //   node dev/verify_triage.mjs
 //   node dev/verify_triage.mjs --break foldsent
 
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -136,8 +137,8 @@ const PLAN_FILE = path.join(HERE, 'fixtures', 'triage_plan_18.json');
 
 // ── The forge and the model, both this run's own ─────────────────────
 
-const FORGE_PORT = 8443;
-const MOCK_PORT  = Number(process.env.TRIAGE_MOCK_PORT || 9143);
+const FORGE_PORT = port('triage_forge');
+const MOCK_PORT  = port('triage_mock');
 const MOCK_URL   = `http://127.0.0.1:${MOCK_PORT}/v1/chat/completions`;
 const MOCK_LOG   = scratch('triage', 'mockllm-triage.log');
 

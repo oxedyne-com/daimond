@@ -1244,13 +1244,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		Object.keys(out).forEach(function (id) { if (OLD_LEGACY.test(id)) delete out[id]; });
 		return out;
 	}
-	// When this page last removed a message, and when a dispatch last flushed after that:
-	// a hand-off posted between the two must ship its parcel first (dispatchToPeer 2b).
-	var msgTombAt = 0, msgTombFlushedAt = 0;
+	// The removals this page made that no confirmed flush has shipped yet, mid -> when. A
+	// hand-off carries them on the errand (`gone`), so the runner leaves them out of the
+	// thread without waiting on the parcel that carries the tombstones (UNBLOCK-1). Kept to
+	// the newest MSG_TOMB_OWED_MAX: one the cap drops has long since gone out in a parcel.
+	var msgTombOwed = {};
+	var MSG_TOMB_OWED_MAX = 256;
 	function msgTombstone(mids) {
 		if (!mids || !mids.length) return Promise.resolve(false);
-		msgTombAt = Date.now();
-		return persistTombs(MSG_TOMBS_KEY, mids.filter(Boolean), msgTombAt);
+		var at = Date.now();
+		var ids = mids.filter(Boolean).map(String);
+		ids.forEach(function (mid) { msgTombOwed[mid] = at; });
+		var owed = Object.keys(msgTombOwed);
+		if (owed.length > MSG_TOMB_OWED_MAX) {
+			owed.sort(function (a, b) { return msgTombOwed[a] - msgTombOwed[b]; });
+			owed.slice(0, owed.length - MSG_TOMB_OWED_MAX).forEach(function (mid) { delete msgTombOwed[mid]; });
+		}
+		return persistTombs(MSG_TOMBS_KEY, ids, at);
+	}
+	/// The owed removals, oldest first, for an errand's `gone`.
+	function msgTombsOwed() {
+		return Object.keys(msgTombOwed).sort(function (a, b) { return msgTombOwed[a] - msgTombOwed[b]; });
+	}
+	/// A flush that began at `since` and was confirmed has shipped every removal made before it.
+	function msgTombsShipped(since) {
+		Object.keys(msgTombOwed).forEach(function (mid) { if (msgTombOwed[mid] < since) delete msgTombOwed[mid]; });
 	}
 
 	// Every message carries an id, so two tabs appending to the same chat union
@@ -17058,12 +17076,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// A `think_log` is only ever grown while it is the LAST message, and every other
 	/// kind of event pushes something after it, so being last is what says the round is
 	/// still reasoning.
-	function logThinking(conv, text) {
+	function logThinking(conv, text, turnId) {
 		if (!text) return;
 		var msgs = conv.messages;
 		var last = msgs.length ? msgs[msgs.length - 1] : null;
-		if (last && last.role === 'think_log') { last.content = (last.content || '') + text; touchMsg(last); return; }
-		msgs.push({ role: 'think_log', content: text, mid: newMid(), ts: Date.now() });
+		if (last && last.role === 'think_log' && String(last.iturn || '') === String(turnId || '')) {
+			last.content = (last.content || '') + text; touchMsg(last); return;
+		}
+		var row = { role: 'think_log', content: text, mid: newMid(), ts: Date.now() };
+		if (turnId) row.iturn = String(turnId);		// its turn's, as every row a turn writes (check_fix5 H1)
+		msgs.push(row);
 	}
 
 	/// The model's own working, in a tile that OPENS while the round runs and shuts once
@@ -26358,6 +26380,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			auto:   autonomousPosture(),
 			tried:  (opts && Array.isArray(opts.handedBack)) ? opts.handedBack : [],	// Q19
 			parkCount: parkCount,
+			// The removals no parcel has carried yet, so the errand need not wait on one
+			// (UNBLOCK-1), and the device the switch elected, which alone takes the turn.
+			// `runTo`, not the tile's `toId`: the tile names the starred nominee, while the
+			// election may seat another desk (a nominee busy elsewhere), and a `to` naming
+			// the nominee made the elected desk stand down and the nominee bounce the turn.
+			gone:   msgTombsOwed(),
+			to:     (opts && opts.runTo) || '',
 		};
 		// A THREAD IS NEVER FINGERPRINTED FROM AN UNLOADED CHAT (D2). Every hand-off --
 		// a send, a re-dispatch, a parked re-run -- comes through here, so it is made
@@ -26441,47 +26470,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			return { ok: false, why: whyBig, refused: true };
 		}
-		// 2b. SEEDLESS => PARCEL FIRST. When the tail was too large to ride even shortened,
-		//     the runner cannot start from the errand: its readiness is `holdsThread`, which
-		//     needs the parcel. So flush the parcel FIRST, re-seal the errand naming the real
-		//     version, THEN post -- the documented fallback. This is NOT the seq-223 wait
-		//     returning: it fires ONLY on a dropped seed, where posting first bought nothing
-		//     but a reconstruct stall. A shortened-but-present seed keeps today's post-first
-		//     order (a synced runner grafts and completes at once; an unsynced one is caught
-		//     by `holdsThread` and handed back). A flush that fails posts at v=0 anyway --
-		//     `holdsThread` still refuses a stale run, so the worst case is a hand-back.
-		//     v=0, and never `version()` after a failed flush: the mailbox's version then
-		//     predates the chat, and a runner handed it stops pulling once it reaches it.
-		//     A REMOVAL NOT YET FLUSHED is the same case for a seeded errand: a seed only
-		//     adds rows, so a thread that lost rows (a Retry retracts the refused turn, then
-		//     sends) is reachable only through the parcel carrying the tombstones. Posted
-		//     first, a runner still holding the removed rows judged the thread FINAL and
-		//     handed it back (permit 3c, 12 Oct). Flushed first, the errand names the version
-		//     and the runner below it is only behind: it pulls, then matches.
+		// 2b. THE ERRAND IS NEVER BEHIND THE PARCEL (UNBLOCK-1, D-20261013-02). A whole-
+		//     account flush ahead of the post (7ae6427e for an unflushed removal, 448f951b for
+		//     a dropped seed) outlasted the sender's 95 s backstop on a slow link, so the
+		//     sender ran the turn itself and the errand landed late or never (13 Oct, four
+		//     of six Life log hand-offs). What that flush bought now rides the errand: the
+		//     removals as `gone`, which the runner leaves out of the thread it judges and
+		//     runs, and the thread as `thread`, which a seedless runner already holding the
+		//     conversation matches at once. A runner that lacks it waits on the parcel below
+		//     or hands the turn back -- the documented fallback, never a stalled send.
 		var seedDropped = !!sealed.seedDropped;
-		var tombFirst   = !seedDropped && msgTombAt > msgTombFlushedAt;
-		var parcelFirst = seedDropped || tombFirst;
-		if (parcelFirst) {
-			var vFlushed = 0, tFirst = Date.now();
-			try {
-				var flp = DaimondSync.flush ? await DaimondSync.flush() : null;
-				if (flp && flp.ok) { vFlushed = flp.version | 0; if (tombFirst) msgTombFlushedAt = tFirst; }
-				else diag('dispatch parcel-first unconfirmed', 'turn=' + turnId + ' '
-					+ ((flp && flp.why) || 'no flush') + '; posting at v=0');
-			} catch (e) {
-				diag('dispatch parcel-first FAILED', 'turn=' + turnId + ' flush threw; posting at v=0');
-			}
-			if (tombFirst) diag('dispatch parcel-first', 'turn=' + turnId + ' a removal not yet flushed; v=' + vFlushed
-				+ ' in ' + (Date.now() - tFirst) + 'ms');
-			try { body = await DaimondPeer.sealForSelf(sealed.plan.errand(vFlushed)); }
-			catch (e) { /* keep the v=0 body already sealed above */ }
-		}
 		// 3. POST THE ERRAND. It carries the prompt, the model, the scope, the pause
 		//    snapshot and (where it fit) the thread, so a peer that claims reads
 		//    everything the turn needs without waiting for a parcel. `parcelVersion` is 0 on
-		//    a seed-bearing dispatch -- the receiver reads that as "no target version" and
-		//    its progress-based catch-up handles it -- or the flushed version when the seed
-		//    was dropped (2b), so the runner's `holdsThread` pull has a real target.
+		//    every dispatch -- the receiver reads that as "no target version" and its
+		//    progress-based catch-up handles it.
 		var res = await DaimondPost.post(body);
 		if (!res || !res.ok) {
 			// A REFUSED POST IS NOT A LOST TURN (the D-20260918-27 / 413 failure). Stamp
@@ -26507,10 +26510,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// dropped-because-too-large seed flagged -- so a thread that outgrew the door is
 		// visible rather than inferred.
 		var seedMsgs = (sealed.plan.fields.seed && sealed.plan.fields.seed.msgs) ? sealed.plan.fields.seed.msgs.length : 0;
+		var goneN = (sealed.plan.fields.gone || []).length;
 		diag('dispatch posted', 'turn=' + turnId + ' post=' + (Date.now() - tPost) + 'ms'
 			+ ' send->posted=' + (Date.now() - t0) + 'ms seed=' + seedMsgs + 'msg'
-			+ (sealed.seedDropped ? '(dropped:too-large)' : '') + '/'
-			+ String((body && body.envelope) || '').length + 'B');
+			+ (seedDropped ? '(dropped:too-large)' : '') + '/'
+			+ String((body && body.envelope) || '').length + 'B gone=' + goneN);
+		// The lens sees the stage too, so "elected, then never posted" is read off the
+		// feed rather than inferred (diag.md fix 3).
+		dsEvent('handoff', {
+			act:  'post',
+			turn: String(turnId).slice(0, 24),
+			to:   String(dispatchOpts.to || '').slice(0, 12),
+			ms:   Date.now() - t0,
+			seed: seedMsgs,
+			drop: seedDropped ? 1 : 0,
+			gone: goneN,
+			b:    String((body && body.envelope) || '').length,
+		});
 		// 4. PUSH THE PARCEL, IN THE BACKGROUND. Everything the turn may reach for that
 		//    the errand does not carry -- the workspace, the Diamonds, the models, the
 		//    ledger -- and the durable copy of this turn's own prompt. When the seed was
@@ -26519,16 +26535,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		//    runner is not waiting for it, and neither should the person who sent the
 		//    turn. Its cost is logged when it lands, so a slow parcel stays visible.
 		var tFlush = Date.now();
-		// SKIPPED when 2b already flushed the parcel synchronously ahead of the post (a
-		// dropped seed or an unflushed removal), so a second flush here would be redundant.
-		// Any other seed-bearing dispatch flushes in the BACKGROUND: no runner waits on it.
-		if (!parcelFirst) (async function () {
+		(async function () {
 			var v = 0;
 			try {
 				// An unconfirmed flush logs v=0: its rounds already pushed, and the work it
 				// could not land is owed, so the retry ladder carries it.
 				var fl = DaimondSync.flush ? await DaimondSync.flush() : null;
-				if (fl && fl.ok) v = fl.version | 0;
+				if (fl && fl.ok) { v = fl.version | 0; msgTombsShipped(tFlush); }
 				else if (!DaimondSync.flush) await DaimondSync.push();
 			} catch (e) {
 				// NOT a dispatch failure any more. The errand is already on the relay and
@@ -26536,10 +26549,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// copy, which the next ordinary push sends.
 				diag('dispatch parcel FAILED', 'turn=' + turnId
 					+ ' push/flush threw after ' + (Date.now() - tFlush) + 'ms');
+				dsEvent('handoff', { act: 'parcel', turn: String(turnId).slice(0, 24), ok: 0, ms: Date.now() - tFlush });
 				return;
 			}
 			diag('dispatch parcel', 'turn=' + turnId + ' v=' + v
 				+ ' flush=' + (Date.now() - tFlush) + 'ms (background, after the post)');
+			dsEvent('handoff', { act: 'parcel', turn: String(turnId).slice(0, 24), ok: v > 0 ? 1 : 0, v: v, ms: Date.now() - tFlush });
 		})();
 		return { ok: true, turnId: turnId, parcelVersion: 0 };
 	}
@@ -26874,6 +26889,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			eThread.cause = 'thread';			// the sender's tile names it (D2)
 			throw eThread;
 		}
+		// THE SENDER'S REMOVALS, HONOURED (UNBLOCK-1). The errand names the rows the sender
+		// removed and has not yet shipped (`gone`); the prefix above was proven without them,
+		// so they leave this copy now -- the same removal, recorded as the same tombstone the
+		// parcel will bring -- and the model is fed the sender's thread, not a retracted turn.
+		honourGone(chat, errand);
 		// THE PREFIX IS PROVEN; the turn's own user message may still be absent (the seed
 		// was clipped below it, or the parcel delivered the prefix but not the turn). The
 		// prompt is on the errand, so complete the thread: write the turn's user message
@@ -27591,7 +27611,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// reschedules. Bounds the fallback stall to about one freshness window
 			// rather than the dispatcher's much longer deadline.
 			if (res && DaimondPeer.standDownUndecided(res.why)) {
-				scheduleStandDownRecollect(res.why === 'nominee' ? undefined : UNDECIDED_RECOLLECT_MS);
+				scheduleStandDownRecollect(res.why === 'nominee' || res.why === 'addressee' ? undefined : UNDECIDED_RECOLLECT_MS);
 			}
 			return res;
 		});
@@ -28434,21 +28454,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { id: newMid(), tid: String(turnId), pre: pre };
 	}
 
-	/// The rows of turn `turnId` in `chat`: its user message's and every row up to the
-	/// next user message, plus any row tagged with the turn wherever it stands.
+	/// The rows of turn `turnId` in `chat` (`DaimondPeer.turnSpan`).
 	function turnSpan(chat, turnId) {
-		var id = String(turnId || ''), out = [], inSpan = false;
-		var msgs = (chat && chat.messages) || [];
-		for (var i = 0; i < msgs.length; i++) {
-			var m = msgs[i];
-			if (!m) continue;
-			if (m.role === 'user') {
-				inSpan = String(m.mid || '') === id || String(m.iturn || '') === id;
-				continue;
-			}
-			if (inSpan || String(m.iturn || '') === id) out.push(m);
-		}
-		return out;
+		return DaimondPeer.turnSpan((chat && chat.messages) || [], turnId);
 	}
 
 	/// Stamp the running run's id on every row of its turn it wrote and has not yet
@@ -30227,7 +30235,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// runs the turn locally (money-safe via the lease), so there is no DOM-only
 			// `appendError` to be wiped and no dead turn to recover from nothing.
 			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
-				{ toId: advId, toName: advName, t0: tSend, diamondId: String(chat.diamondId || ''),
+				{ toId: advId, toName: advName, runTo: DaimondPeer.peerIdOf(d.peer), t0: tSend, diamondId: String(chat.diamondId || ''),
 					tried: electedTried(d) }
 			).then(function (r) { if (!r || !r.ok) sayIfUnhanded(chat, umid, r); },
 				function (e) { sayIfUnhanded(chat, umid, { ok: false, why: String((e && e.message) || e) }); });
@@ -30705,6 +30713,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// right. Tombstone the turn so the append-only merge cannot resurrect it beside
 			// the retry, drop it from this tab, and ask the question again.
 			msgTombstone(mine.map(function (m) { return m.mid; }));
+			sessionCut(chat, mine);
 			chat.messages = (chat.messages || []).filter(function (x) { return mine.indexOf(x) === -1; });
 			chat.app = null;
 			touchChat(chat); persistChats();
@@ -30801,6 +30810,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var mine = turnMessagesOf(chat, iturn);
 		if (!mine.length) return;
 		msgTombstone(mine.map(function (m) { return m.mid; }));
+		sessionCut(chat, mine);
 		chat.messages = (chat.messages || []).filter(function (x) { return mine.indexOf(x) === -1; });
 		chat.app = null;
 		touchChat(chat); persistChats();
@@ -30906,6 +30916,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		} catch (e) { /* the ledger is best-effort; the retry still runs */ }
 		msgTombstone(mine.map(function (m) { return m.mid; }));
+		sessionCut(chat, mine);
 		chat.messages = (chat.messages || []).filter(function (x) { return mine.indexOf(x) === -1; });
 		chat.app = null;
 		touchChat(chat); persistChats();
@@ -31178,7 +31189,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The working that led to this call, on the record before it, as `runTurn` put it.
 			if (tl.said) {
 				var n0 = chat.messages.length;
-				logThinking(chat, tl.said);
+				logThinking(chat, tl.said, iturn);
 				if (chat.messages.length > n0) chat.messages[n0].ts = tick(tl.at);
 			}
 			chat.messages.push({ role: 'tool_log', name: tl.name || '', args: tl.args || '',
@@ -31244,7 +31255,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// What he queued behind the turn goes back in the box, unsent, whatever became
 			// of the turn itself: this entry is its only copy (D-20261012-07).
 			giveBackQueue(chat, iturn, t.queue);
-			if (chat.messages.some(function (m) { return m.iturn === iturn; })) { DaimondJournal.clearTurn(iturn); return; }   // already recovered
+			// Already recovered: its interrupted answer stands. Any row of the turn is not enough, since a local turn tags
+			// every row it writes as it runs (check_fix5 H1), and those are what a dying tab leaves.
+			if (chat.messages.some(function (m) { return m.iturn === iturn && m.interrupted; })) { DaimondJournal.clearTurn(iturn); return; }
 			// The answer the turn was writing, by the mid it was minted under: a local turn's
 			// answer carries no `iturn`, so without this a turn whose answer landed and whose
 			// close did not would be recovered on top of itself.
@@ -36477,7 +36490,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (clean !== sess.msgs) {
 				diag('session duplicates dropped', 'chat=' + String(chat.id || '').slice(0, 12) + ' '
 					+ (sess.msgs.length - clean.length) + ' of ' + sess.msgs.length);
-				sess = chat.session = Object.assign({}, sess, { msgs: clean });
+				sess = chat.session = Object.assign({}, sess, { msgs: clean, marks: {} });	// the places moved
+			}
+		}
+		// Turns another tab took after this session was stored, as `tailAfter` finds them. One laid on by id whose prompt
+		// stands before a prompt the session holds would be read after that later turn (check_fix5 L1): the model's
+		// history cannot be inserted into, so the engine is laid from the transcript instead, as `sessionPlan` does for
+		// `order`.
+		var tail = [];
+		if (sess && sess.msgs && sess.msgs.length) {
+			tail = tailAfter(chat, sess);
+			var lastHeld = -1, ids = {};
+			sess.msgs.forEach(function (x) { if (x && x.role === 'user' && x.mid) ids[String(x.mid)] = 1; });
+			(chat.messages || []).forEach(function (m, n) { if (m && m.role === 'user' && ids[String(m.mid || '')] === 1) lastHeld = n; });
+			var early = tail.some(function (m) {
+				return m.role === 'user' && (!exceptMid || String(m.mid) !== String(exceptMid)) && chat.messages.indexOf(m) < lastHeld;
+			});
+			// An untagged row (an old-build peer's answer) standing after a prompt the tail lays on by id, above the
+			// marker, is dropped by the tail, so the model would read that prompt with no answer (check_fix6 M1). Its
+			// turn is not guessed: the engine is laid from the transcript, as `sessionCut` does for an untagged held row.
+			// Once laid so, the session holds every prompt, so the rule does not fire again.
+			var inTail = new Set(tail), byId = -1, lost = false;
+			(chat.messages || []).forEach(function (m, n) {
+				if (lost || !m) return;
+				if (m.role === 'user') {
+					if (inTail.has(m) && (!exceptMid || String(m.mid) !== String(exceptMid))) byId = n;
+					return;
+				}
+				lost = byId >= 0 && m.role === 'assistant' && m.content && !m.iturn && !m.provisional
+					&& !inTail.has(m) && m.mid !== sess.upto;
+			});
+			if (early || lost) {
+				diag('session out of order', 'chat=' + String(chat.id || '').slice(0, 12) + (early
+					? ' a turn it never heard stands before one it holds'
+					: ' an untagged answer follows a turn laid on by id') + '; the engine is laid from the transcript');
+				sess = null;
 			}
 		}
 		if (sess && sess.msgs && sess.msgs.length && chat.app.restore_session) {
@@ -36497,11 +36544,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// sent it again through `run_turn`: the model read it twice, and
 			// `captureSession` kept the copy for every later request in the chat.
 			if (chat.app.append_message) {
-				tailAfter(chat, sess).forEach(function (m) {
+				tail.forEach(function (m) {
 					if (exceptMid && String(m.mid) === String(exceptMid)) return;
 					try {
 						chat.app.append_message(m.role, m.content || '',
-							(m.role === 'user' && typeof m.pre === 'string' && m.pre) ? m.pre : undefined);
+							(m.role === 'user' && typeof m.pre === 'string' && m.pre) ? m.pre : undefined,
+							(m.role === 'user' && m.mid) ? String(m.mid) : undefined);
 					} catch (e) { /* skip one */ }
 				});
 			}
@@ -36586,7 +36634,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (plan.act === 'append' && typeof app.append_message === 'function') {
 				plan.add.forEach(function (m) {
 					app.append_message(m.role, m.content || '',
-						(m.role === 'user' && typeof m.pre === 'string' && m.pre) ? m.pre : undefined);
+						(m.role === 'user' && typeof m.pre === 'string' && m.pre) ? m.pre : undefined,
+						(m.role === 'user' && m.mid) ? String(m.mid) : undefined);
 					h.mids[String(m.mid)] = 1;
 				});
 				return app;
@@ -36658,13 +36707,133 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				at--;
 			}
 			var last = at >= 0 ? all[at] : null;
+			var list = Array.prototype.slice.call(msgs);
+			// WHERE EACH TURN STARTS in the list, by its prompt's mid, so a retracted turn can
+			// be cut out at its own prompt and the turns before it keep their tool-call ids and
+			// the fold (`sessionCut`). The engine's user entries carry the row they were said as
+			// (`run_turn` and `append_message` take its mid), and the marks are read from those
+			// and NEVER from the words: two queued turns that both say "continue" paired by text
+			// filed the running turn's place under the queued one (check_fix3 F1). A folded turn,
+			// an entry from an older build and a turn this engine never heard carry no mid here,
+			// so they get no mark. A prompt held twice is marked at its first copy.
+			var marks = {};
+			for (var j = 0; j < list.length; j++) {
+				var e = list[j];
+				if (e && e.role === 'user' && e.mid && marks[String(e.mid)] === undefined) marks[String(e.mid)] = j;
+			}
 			chat.session = {
 				v:      1,
-				msgs:   Array.prototype.slice.call(msgs),
+				msgs:   list,
 				upto:   last ? (last.mid || '') : '',
 				uptoTs: last ? (last.ts  || 0)  : 0,
+				marks:  marks,
 			};
 		} catch (e) { /* the chat is fine without it; the next turn writes another */ }
+	}
+
+	/// Cut the stored session back to before the first of `rows` it holds, which are about to leave the transcript.
+	///
+	/// The session is a cache of the transcript in the model's own form and carries no message ids, so it is cut where
+	/// the retracted turn's prompt begins (`marks`, written by `captureSession`). What stands before that point -- the
+	/// fold, earlier turns' tool-call ids -- is kept, and the marker moves to the row before that prompt, so whatever
+	/// of the transcript remains after it is laid on as prose. Where the turn has no mark (folded, or a session stored by
+	/// an older build) the session goes to the cleared form and the next engine is laid from the transcript alone:
+	/// emptied rather than nulled, so a stored copy's `!c.session` fill-in does not bring it back. A row only in its tail
+	/// it never held, so it is kept. Called before the rows are filtered out, since both are found by position.
+	function sessionCut(chat, rows) {
+		var sess = chat && chat.session;
+		if (!sess || !Array.isArray(sess.msgs) || !sess.msgs.length || !rows || !rows.length) return false;
+		// What the engine may hold is everything up to the marker, by position: an answer an older build laid on without
+		// its prompt (check_fix4 G1) stands above the marker, and the id rule of `tailAfter` would call it unheard.
+		var tail = {};
+		tailAfter(chat, { upto: sess.upto, uptoTs: sess.uptoTs }).forEach(function (m) { tail[String(m.mid)] = 1; });
+		var held = rows.filter(function (m) {
+			return m && m.content && (m.role === 'user' || m.role === 'assistant') && tail[String(m.mid)] !== 1;
+		});
+		if (!held.length) return false;
+		// The cut stands at the earliest prompt among the held rows' turns. A row's turn is its tag's (`iturn`, the rule
+		// `turnSpan` keeps), so a turn's answer that landed below a queued prompt is still its own turn's (check_fix3
+		// F3). An untagged row, from a build before every row was tagged, has no turn by id: the nearest prompt above it
+		// is a guess that a queued prompt makes wrong (check_fix5 H1), so it finds none, and the session is laid again
+		// from the transcript.
+		var all = chat.messages || [], marks = sess.marks || {}, cut = sess.msgs.length, from = all.length;
+		var promptOf = function (m) {
+			if (m.role === 'user') return all.indexOf(m);
+			var t = String(m.iturn || '');
+			for (var p = 0; t && p < all.length; p++) {
+				var q = all[p];
+				if (q && q.role === 'user' && (String(q.mid || '') === t || String(q.iturn || '') === t)) return p;
+			}
+			return -1;
+		};
+		// A mark is good only while it stands on its own prompt's entry: anything else (a stale index) is no mark.
+		var marked = function (mid) {
+			var at = marks[mid];
+			return (typeof at === 'number' && at >= 0 && at < sess.msgs.length && sess.msgs[at]
+				&& sess.msgs[at].role === 'user' && String(sess.msgs[at].mid || '') === mid) ? at : -1;
+		};
+		// Is every user entry from the first marked one on carried by id? Then a turn after a marked one that has no mark
+		// is a turn the engine never heard (a queued prompt that landed before the running turn's answer), and there is
+		// nothing of it to cut.
+		var first = -1, whole = true;
+		for (var e = 0; e < sess.msgs.length; e++) {
+			var x = sess.msgs[e];
+			if (!x || x.role !== 'user') continue;
+			if (x.mid && first < 0 && marked(String(x.mid)) === e) first = e;
+			if (first >= 0 && !x.mid) { whole = false; break; }
+		}
+		var firstAt = -1;	// the transcript place of the first marked turn's prompt
+		if (first >= 0) {
+			var fm = String(sess.msgs[first].mid);
+			for (var f = 0; f < all.length; f++) if (all[f] && all[f].role === 'user' && String(all[f].mid || '') === fm) { firstAt = f; break; }
+		}
+		held.forEach(function (m) {
+			var i = promptOf(m);
+			var at = i >= 0 ? marked(String(all[i].mid || '')) : -1;
+			if (at < 0) {
+				var id = i >= 0 ? String(all[i].mid || '') : '';
+				if (m.role === 'user' && id && whole && firstAt >= 0 && i > firstAt && !sess.msgs.some(function (x) {
+					return x && x.role === 'user' && String(x.mid || '') === id;
+				})) return;	// a prompt this engine never heard; a held answer of its turn is still cut (check_fix4 G1)
+				cut = -1; return;
+			}
+			if (cut >= 0 && at < cut) { cut = at; from = i; }
+		});
+		if (cut === sess.msgs.length) return false;	// nothing held was the engine's
+		// The new marker: the last row before the cut prompt that the list accounts for, as `captureSession` picks one.
+		var b = from - 1;
+		while (b >= 0 && !(all[b] && all[b].content && (all[b].role === 'user' || all[b].role === 'assistant')
+			&& !(all[b].role === 'assistant' && all[b].interrupted))) b--;
+		var prev = b >= 0 ? all[b] : null;
+		var keep = (cut > 0 && prev) ? sess.msgs.slice(0, cut) : [];	// no row to stand on: the tail would be the whole chat
+		if (!keep.length) {
+			chat.session = { v: 1, msgs: [], upto: '', uptoTs: 0, marks: {} };
+			diag('session cut', 'chat=' + String(chat.id || '').slice(0, 12) + ' it held ' + held.length
+				+ ' retracted row(s) ' + (cut < 0 ? 'with no mark' : 'from its start') + '; the engine is laid from the transcript');
+			return true;
+		}
+		var left = {};
+		Object.keys(marks).forEach(function (k) { if (marks[k] < cut) left[k] = marks[k]; });
+		chat.session = { v: 1, msgs: keep, upto: prev.mid || '', uptoTs: prev.ts || 0, marks: left };
+		diag('session cut', 'chat=' + String(chat.id || '').slice(0, 12) + ' it held ' + held.length
+			+ ' retracted row(s); kept ' + cut + ' of ' + sess.msgs.length + ' model message(s)');
+		return true;
+	}
+
+	/// Take the rows an errand names as removed by its sender (`gone`) out of this copy of the chat, under the same
+	/// tombstone the parcel will bring.
+	function honourGone(chat, errand) {
+		var goneIds = Array.isArray(errand.gone) ? errand.gone.map(String) : [];
+		if (!goneIds.length) return;
+		var goneHere = (chat.messages || []).filter(function (m) { return m && m.mid && goneIds.indexOf(String(m.mid)) >= 0; });
+		if (!goneHere.length) return;
+		try { msgTombstone(goneHere.map(function (m) { return m.mid; })); } catch (e) { /* the filter still stands here */ }
+		sessionCut(chat, goneHere);
+		chat.messages = chat.messages.filter(function (m) { return goneHere.indexOf(m) === -1; });
+		chat.app = null;			// rebuilt from the transcript it now holds
+		touchChat(chat); persistChats();
+		diag('reconstruct gone', 'chat=' + chat.id + ' turn=' + errand.turnId
+			+ ' removed ' + goneHere.length + ' row(s) the sender retracted');
 	}
 
 	/// The screen messages a stored session does not already account for.
@@ -36672,7 +36841,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// By position while the marker is still in the transcript, and by timestamp when it
 	/// is not — a message can be tombstoned out from under the marker (continuing an
 	/// interrupted turn does exactly that), and falling back to the clock is what stops
-	/// the tail from replaying the whole conversation a second time.
+	/// the tail from replaying the whole conversation a second time. Above the marker, a
+	/// turn whose prompt the stored list does not hold by id is in the tail too.
 	function tailAfter(chat, sess) {
 		var msgs = chat.messages || [];
 		var from = -1;
@@ -36681,11 +36851,40 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (msgs[i] && msgs[i].mid === sess.upto) { from = i; break; }
 			}
 		}
-		var tail = (from >= 0)
-			? msgs.slice(from + 1)
-			: msgs.filter(function (m) { return m && (m.ts || 0) > ((sess && sess.uptoTs) || 0); });
-		return tail.filter(function (m) {
-			return m && m.content && (m.role === 'user' || m.role === 'assistant');
+		var uptoTs = (sess && sess.uptoTs) || 0;
+		var after = function (m, n) { return from >= 0 ? n > from : (m.ts || 0) > uptoTs; };
+		// THE ENGINE'S OWN IDS, where the stored list carries them from its first prompt on. A turn whose prompt it does
+		// not hold is laid on whole wherever its rows stand: a queued prompt that landed above the marker (above the
+		// running turn's answer) was skipped by position while its answer below the marker went in, so the model read an
+		// answer with no question before it (check_fix4 G2). Before the first id, or in a list from an older build, the
+		// marker alone decides, since a folded or unmarked turn cannot be told from an unheard one.
+		//
+		// BY ID ONLY. A prompt is its turn by its mid and any other row by its tag (`iturn`), which every row a turn
+		// writes carries (`pushRunRow`). An untagged row, from a build before the tag, goes by the marker alone: placed
+		// in the turn of the nearest prompt above it, a local answer below a queued prompt made that prompt's turn look
+		// held, and a rule matching held answers by their words dropped new answers that repeated an old one (check_fix5
+		// H1, H2).
+		var list = (sess && Array.isArray(sess.msgs)) ? sess.msgs : [];
+		var heard = {}, first = '', whole = true;
+		for (var j = 0; j < list.length; j++) {
+			var x = list[j];
+			if (!x || x.role !== 'user') continue;
+			if (x.mid) { heard[String(x.mid)] = 1; if (!first) first = String(x.mid); }
+			else if (first) { whole = false; break; }
+		}
+		var at = {}, firstAt = -1;	// each prompt's place in the transcript, by its id
+		for (var k = 0; k < msgs.length; k++) {
+			var q = msgs[k];
+			if (q && q.role === 'user' && q.mid && at[String(q.mid)] === undefined) at[String(q.mid)] = k;
+		}
+		if (first && whole && at[first] !== undefined) firstAt = at[first];
+		return msgs.filter(function (m, n) {
+			if (!m || !m.content || (m.role !== 'user' && m.role !== 'assistant')) return false;
+			if (after(m, n)) return true;
+			if (firstAt < 0 || m.provisional) return false;
+			var id = m.role === 'user' ? String(m.mid || '') : String(m.iturn || '');	// the row's turn, by id
+			var p = id ? at[id] : undefined;
+			return p !== undefined && p > firstAt && heard[id] !== 1;
 		});
 	}
 
@@ -38827,6 +39026,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Run one turn of a chat, journalling every step so a tab that dies mid-turn loses nothing but
 	/// the split-second in flight. This is the shared core of both the composer and the Continue
 	/// button: `text` is the user's message; the rest is durability.
+	/// Put a row a turn wrote into its chat, tagged with its prompt's id (check_fix3 F2, check_fix5 H1).
+	///
+	/// A handed-off run's answer was the only row it tagged, so its tool, error, fold, vision, leak, files and end rows
+	/// were read by position, and a queued prompt that landed before the answer took them as its own turn's
+	/// (`turnSpan`). A local turn tagged nothing, so the same queued prompt took its answer too, and the engine's tail
+	/// dropped the prompt (`tailAfter`). Every row `runTurn` writes goes through here with `umid`, the prompt's id, which
+	/// is the errand's `turnId` when there is one. A row already tagged keeps its tag.
+	// The prompt of turn `umid` carries its own id, as `continueTurn` and the retract doors need; the latest copy
+	// is tagged, and null when the prompt cannot be found. No other row is touched: every row the turn writes carries
+	// the id already (`pushRunRow`), and tagging by position from the prompt to the chat's end took a prompt another
+	// device sent during the run, and its answer, into this turn, to be tombstoned on every device (check_fix6 M2).
+	function tagPrompt(chat, umid) {
+		for (var i = chat.messages.length - 1; i >= 0; i--) {
+			var m = chat.messages[i];
+			if (m && m.role === 'user' && m.mid === umid) {
+				if (m.iturn !== umid) { m.iturn = umid; touchMsg(m); }
+				return m;
+			}
+		}
+		return null;
+	}
+
+	function pushRunRow(chat, turnId, row) {
+		if (turnId && row && !row.iturn) row.iturn = String(turnId);
+		chat.messages.push(row);
+		return row;
+	}
+
 	async function runTurn(chat, text, opts) {
 		opts = opts || {};
 		// A NEW TURN CLOSES THE UNDO WINDOW (§8). Anything still open is committed
@@ -39158,7 +39385,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// door" the comment on `demoteToWorking` already draws — so the
 				// segment survives a reload instead of vanishing, and `turnText` (and
 				// the `_liveTurn` progress frame it feeds) starts the next round clean.
-				if (turnText) { logThinking(chat, turnText); turnText = ''; if (umid) _liveTurn[String(umid)] = turnText; }
+				if (turnText) { logThinking(chat, turnText, umid); turnText = ''; if (umid) _liveTurn[String(umid)] = turnText; }
 				pendingCallId = 't' + (++toolSeq);
 				// A tool call's arguments ARE a JSON string, so a reply that stops at
 				// the length limit part-way through one arrives as a MALFORMED CALL,
@@ -39181,7 +39408,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					else rejectedSpawns += 1;
 				}
 				pendingTool = { role: 'tool_log', name: ev.name || '', args: ev.args || '', callId: ev.id || '', content: '', mid: newMid(), ts: Date.now() };
-				chat.messages.push(pendingTool);
+				pushRunRow(chat, umid, pendingTool);
 				// Write-ahead: the intent to run this tool is on disk before the tool returns, so
 				// recovery can tell a tool that finished from one caught in the act.
 				if (J) J.toolOpen(umid, chat.id, pendingCallId, ev.name || '', ev.args || '', pendingTool.mid);
@@ -39305,7 +39532,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				//
 				// Kept on the record so a reload still shows it, and drawn only when
 				// this conversation is the one on screen.
-				logThinking(chat, ev.content || '');
+				logThinking(chat, ev.content || '', umid);
 				if (!owns()) return;
 				appendThinking(ev.content || '', true, Date.now());
 			} else if (ev.type === 'ended') {
@@ -39373,7 +39600,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// persisted, in the app's voice: the picture was left out and this is the
 				// model that would not look. Silence here is what let a daimon answer
 				// confidently about a cover nobody had shown it.
-				chat.messages.push({ role: 'vision_log',
+				pushRunRow(chat, umid, { role: 'vision_log',
 					content: blindLine(ev.model || chat.model || '', ev.source),
 					mid: newMid(), ts: Date.now() });
 				if (!owns()) return;
@@ -39406,7 +39633,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						folded: ev.folded || 0, kept: ev.kept || 0, mid: foldMid, ts: foldTs };
 					var fprod = foldProd(chat, app, ev, foldMid, umid);
 					if (fprod) foldRow.prod = [fprod];
-					chat.messages.push(foldRow);
+					pushRunRow(chat, umid, foldRow);
 					if (!owns()) return;
 					appendCompacted(ev.content || '', ev.folded, ev.kept, foldTs);
 				}
@@ -39453,7 +39680,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					turnText = '';
 					if (umid) _liveTurn[String(umid)] = turnText;
 					var leakTs = Date.now();
-					chat.messages.push({ role: 'leak_log', content: String(ev.fragment || ''),
+					pushRunRow(chat, umid, { role: 'leak_log', content: String(ev.fragment || ''),
 						mid: newMid(), ts: leakTs });
 					if (!owns()) return;
 					appendLeak(String(ev.fragment || ''), leakTs);
@@ -39549,7 +39776,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					&& (capRefused(ev.content) || opaqueRefusal(ev.content))) {
 					capFail = true; return;
 				}
-				chat.messages.push({ role: 'error_log', content: friendlyError(ev.content || 'Error'), mid: newMid(), ts: Date.now() });
+				pushRunRow(chat, umid, { role: 'error_log', content: friendlyError(ev.content || 'Error'), mid: newMid(), ts: Date.now() });
 				if (J) J.turnError(umid, chat.id, friendlyError(ev.content || 'Error'));
 				// TRAINING WHEELS — the debug feed's `turn.error`: the engine's own sentence,
 				// whole, with the Diamond, chat and turn it broke (D-20261008-02).
@@ -39625,7 +39852,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				try {
 					heldRun(chat, app, umid);
-					await app.run_turn(text, onEvent, turnPre || undefined);
+					await app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined);
 				} catch (e) {
 					if (capFail) {
 						// The provider would not do the reply length asked for — or said
@@ -39641,7 +39868,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						app = await rebuildAppWithout(chat, umid);
 						// Tagged, and confined, inside `rebuildAppWithout`.
 						heldRun(chat, app, umid);
-						await app.run_turn(text, onEvent, turnPre || undefined);
+						await app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined);
 						// Only NOW is the smaller ask believed. Recording the cap before
 						// the retry would teach the app a ceiling from any unrelated 400 —
 						// a bad key, a malformed request — and every later turn on that
@@ -39667,7 +39894,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						app = await rebuildAppWithout(chat, umid);
 						// Tagged, and confined, inside `rebuildAppWithout`.
 						heldRun(chat, app, umid);
-						await app.run_turn(text, onEvent, turnPre || undefined);
+						await app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined);
 					} else {
 						throw e;
 					}
@@ -39684,38 +39911,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// (FU QA, FB). The words that arrived are kept under the badge the road's
 					// hand-back draws, with Continue beside it; Continue asks the pause first,
 					// so it runs only once the person presses play. Every message of the turn
-					// carries its id, from the prompt forward, for the reason the road's
-					// hand-back gives -- and none does where the prompt cannot be found.
+					// carries its id, for the reason the road's hand-back gives: its rows
+					// from `pushRunRow`, its prompt here.
 					pausedBack = true;
-					var pFrom = -1;
-					for (var pi = chat.messages.length - 1; pi >= 0; pi--) {
-						var pm = chat.messages[pi];
-						if (pm.role === 'user' && pm.mid === umid) { pFrom = pi; break; }
-					}
-					for (var pj = Math.max(pFrom, 0); pFrom >= 0 && pj < chat.messages.length; pj++) {
-						if (chat.messages[pj].iturn !== umid) { chat.messages[pj].iturn = umid; touchMsg(chat.messages[pj]); }
-					}
-					chat.messages.push({ role: 'assistant', content: turnText, mid: amid,
+					tagPrompt(chat, umid);
+					pushRunRow(chat, umid, { role: 'assistant', content: turnText, mid: amid,
 						interrupted: true, why: 'paused', iturn: umid, itext: text,
 						ranOn: selfDeviceId(), ts: Date.now() });
 				} else if (turnText) {
 				var amsg = { role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() };
 				if (aprod) amsg.prod = [aprod];
 				ansMsg = amsg;
-				// An ERRAND run carries a turnId (the ordinary turn path passes none), so
-				// group the answer with its turn. Without this a locally-recovered errand
-				// answer had no `iturn`: the finished-guards (peerRunErrandDeps.finished,
-				// dispatchedTurnFinished) that match on iturn could not see it — risking a
-				// re-run — and the "handed off then ran here" provenance had nothing to
-				// hang on. See dropDispatchedPlaceholder.
-				if (opts.turnId) amsg.iturn = String(opts.turnId);
+				// Grouped with its turn by the prompt's id, an errand's (`turnId`) or a local one's. Without it a
+				// locally-recovered errand answer had no `iturn`: the finished-guards (peerRunErrandDeps.finished,
+				// dispatchedTurnFinished) that match on iturn could not see it, risking a re-run, and the "handed off
+				// then ran here" provenance had nothing to hang on (see dropDispatchedPlaceholder). A local answer
+				// with none was put in the turn of a prompt queued above it (check_fix5 H1).
+				amsg.iturn = String(umid);
 				// A hand-off run HERE after the fact ([Run here] on a dispatched turn):
 				// carry where it was sent, so the answer draws "Ran here — hand-off to X
 				// didn't finish" instead of reading as a plain local turn (appendAssistantText).
 				if (opts.handoffFellBack) amsg.handoffFellBack = String(opts.handoffFellBack);
 				if (opts.handoffBusy) amsg.handoffBusy = String(opts.handoffBusy);	// the seat was busy (Q19)
 				if (opts.handoffThread) amsg.handoffThread = String(opts.handoffThread);	// it lacked the thread (D2)
-				chat.messages.push(amsg);
+				pushRunRow(chat, umid, amsg);
 				heldNote(chat, app, amid);		// the engine wrote this answer into its own session
 			}
 				stampMessages(chat.messages, chat.id);
@@ -39780,7 +39999,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							+ ' tokens, so a tool call arrived incomplete and could not run. '
 							+ 'Raise the reply length in Settings, or ask for a smaller change')
 						: t('err.reply_cut', { max: fmtTok(maxOutFor(chat.model, chat.provider)) });
-					chat.messages.push({ role: 'error_log', content: cutMsg, mid: newMid(), ts: Date.now() });
+					pushRunRow(chat, umid, { role: 'error_log', content: cutMsg, mid: newMid(), ts: Date.now() });
 					if (owns()) appendError(cutMsg);
 				}
 				// The turn is complete and now lives in the snapshot; fold it out of the journal.
@@ -39831,16 +40050,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// untagged, so pressing Continue sent it again and the thread ended up
 					// holding the question twice.
 					//
-					// Tagged from the prompt forward rather than by mid alone, so the tool logs
-					// this turn wrote go with it: a Continue that removed the question and left
-					// the tool calls would re-run against a transcript describing work the new
-					// turn has not done.
-					for (var mi = chat.messages.length - 1; mi >= 0; mi--) {
-						var mm = chat.messages[mi];
-						if (mm.iturn !== umid) { mm.iturn = umid; touchMsg(mm); }
-						if (mm.role === 'user' && mm.mid === umid) break;
-					}
-					chat.messages.push({
+					// The tool logs this turn wrote go with it, since `pushRunRow` tagged them: a
+					// Continue that removed the question and left the tool calls would re-run
+					// against a transcript describing work the new turn has not done. Only the
+					// prompt is tagged here (`tagPrompt`, check_fix6 M2).
+					tagPrompt(chat, umid);
+					pushRunRow(chat, umid, {
 						role:        'assistant',
 						content:     partial,
 						mid:         newMid(),
@@ -39855,7 +40070,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					persistChats();
 				} else {
 					if (!sawError) {
-						chat.messages.push({ role: failRole(e), content: friendlyError(e), mid: newMid(), ts: Date.now() });
+						pushRunRow(chat, umid, { role: failRole(e), content: friendlyError(e), mid: newMid(), ts: Date.now() });
 						if (J) J.turnError(umid, chat.id, friendlyError(e));
 						appendFailure(e);
 					}
@@ -39886,7 +40101,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var fev = filesEv; filesEv = null;
 					try {
 						var flog = await filesLogOf(chat, fev, umid);
-						if (flog) { chat.messages.push(flog); if (owns()) appendFilesLog(flog); }
+						if (flog) { pushRunRow(chat, umid, flog); if (owns()) appendFilesLog(flog); }
 					} catch (eF) { /* a display row never fails the turn */ }
 				}
 				// LAST, after the catch above has read the partial answer and after any
@@ -39947,7 +40162,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// -- the louder one calling a lost connection an error (UX run, annoyance 4).
 				// One ending, one sentence.
 				if (pendingEnd && !handedBack && !pausedBack) {
-					chat.messages.push(stampAfter(chat.messages, pendingEnd));
+					pushRunRow(chat, umid, stampAfter(chat.messages, pendingEnd));
 					if (owns()) appendEnding(pendingEnd, true, chat);
 				}
 				pendingEnd = null;
@@ -40082,7 +40297,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var said = notStartedWords(dispatched.length, gate.why);
 				try { if (app.append_message) app.append_message('user', said); }
 				catch (e) { /* an older engine cannot be told; the transcript still says it */ }
-				chat.messages.push({ role: 'error_log', content: said,
+				pushRunRow(chat, umid, { role: 'error_log', content: said,
 					mid: newMid(), ts: Date.now() });
 				captureSession(chat, app);
 				touchChat(chat); persistChats();

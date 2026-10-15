@@ -556,7 +556,7 @@ impl MessageContent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChatMessage {
     System { content: MessageContent },
-    User { content: MessageContent, pre: String },	// `pre`: the app's note, empty for none
+    User { content: MessageContent, pre: String, mid: String },	// `pre`: the app's note; `mid`: the transcript row; empty for none
     /// Assistant turn, with whatever tool calls it asked for.
     ///
     /// The calls are part of the message and are persisted with it.  They used to be
@@ -578,12 +578,25 @@ impl ChatMessage {
 
     /// A user message.
     pub fn user<C: Into<MessageContent>>(content: C) -> Self {
-        Self::User { content: content.into(), pre: String::new() }
+        Self::User { content: content.into(), pre: String::new(), mid: String::new() }
     }
 
     /// A user message that carries an app note beside the person's words.
     pub fn user_noted<C: Into<MessageContent>>(content: C, pre: String) -> Self {
-        Self::User { content: content.into(), pre }
+        Self::User { content: content.into(), pre, mid: String::new() }
+    }
+
+    /// The same message tied to the transcript row it was said as, by that row's id.  Every other
+    /// role, and an empty id, comes back unchanged.
+    ///
+    /// The page pairs its transcript with this list by the id and never by the words, because two
+    /// turns can say the same thing ("continue", twice) and a pairing by text then files one
+    /// turn's place under the other's.
+    pub fn marked(self, mid: String) -> Self {
+        match self {
+            Self::User { content, pre, .. } if !mid.is_empty() => Self::User { content, pre, mid },
+            other => other,
+        }
     }
 
     /// An assistant message that asked for nothing.
@@ -626,7 +639,7 @@ impl ChatMessage {
                 m.insert(dat!("role"), dat!("system"));
                 m.insert(dat!("content"), content.to_dat());
             }
-            Self::User { content, pre } => {
+            Self::User { content, pre, mid } => {
                 m.insert(dat!("role"), dat!("user"));
                 m.insert(dat!("content"), content.to_dat());
                 // Written only when there is a note, so an ordinary message's map is the shape
@@ -635,6 +648,9 @@ impl ChatMessage {
                 // back later as something the person said.
                 if !pre.is_empty() {
                     m.insert(dat!("pre"), dat!(pre.clone()));
+                }
+                if !mid.is_empty() {
+                    m.insert(dat!("mid"), dat!(mid.clone()));
                 }
             }
             Self::Assistant { content, tool_calls } => {
@@ -679,7 +695,11 @@ impl ChatMessage {
                     Some(Dat::Str(s)) => s.clone(),
                     _                 => String::new(),
                 };
-                Ok(Self::User { content, pre })
+                let mid = match m.get(&dat!("mid")) {
+                    Some(Dat::Str(s)) => s.clone(),
+                    _                 => String::new(),
+                };
+                Ok(Self::User { content, pre, mid })
             }
             "assistant" => {
                 // Absent is an assistant turn that asked for nothing, and every snapshot
@@ -727,6 +747,14 @@ impl ChatMessage {
         }
     }
 
+    /// The transcript row a user message was said as: empty for none, and for every other role.
+    pub fn mid(&self) -> &str {
+        match self {
+            Self::User { mid, .. } => mid,
+            _                      => "",
+        }
+    }
+
     /// What this message carries, whole.
     pub fn content(&self) -> &MessageContent {
         match self {
@@ -752,7 +780,8 @@ impl ChatMessage {
     pub fn with_content(&self, content: MessageContent) -> Self {
         match self {
             Self::System { .. } => Self::System { content },
-            Self::User { pre, .. } => Self::User { content, pre: pre.clone() },
+            Self::User { pre, mid, .. } =>
+                Self::User { content, pre: pre.clone(), mid: mid.clone() },
             Self::Assistant { tool_calls, .. } =>
                 Self::Assistant { content, tool_calls: tool_calls.clone() },
             Self::Tool { tool_call_id, .. } =>
@@ -781,8 +810,8 @@ pub fn join_notes(msgs: &[ChatMessage]) -> std::borrow::Cow<'_, [ChatMessage]> {
         return std::borrow::Cow::Borrowed(msgs);
     }
     std::borrow::Cow::Owned(msgs.iter().map(|m| match m {
-        ChatMessage::User { content, pre } if !pre.is_empty() =>
-            ChatMessage::User { content: content.led_by(pre), pre: String::new() },
+        ChatMessage::User { content, pre, mid } if !pre.is_empty() =>
+            ChatMessage::User { content: content.led_by(pre), pre: String::new(), mid: mid.clone() },
         other => other.clone(),
     }).collect())
 }
@@ -2091,6 +2120,25 @@ mod content_tests {
         odd.insert(dat!("content"), dat!("hi"));
         odd.insert(dat!("pre"), dat!(NOTE));
         assert_eq!("", ChatMessage::from_datmap(&odd).expect("reads").pre());
+    }
+
+    /// A user message keeps the transcript row it was said as through the store, a note's join
+    /// and an elision, so the page can pair two prompts with the same words by id (check_fix3 F1).
+    #[test]
+    fn test_a_user_message_keeps_its_row_id_through_the_store_and_the_join() {
+        let msg = ChatMessage::user_noted("continue".to_string(), NOTE.to_string())
+            .marked("u5".to_string());
+        assert_eq!("u5", msg.mid());
+        let m = msg.to_datmap();
+        assert_eq!(Some(&dat!("u5")), m.get(&dat!("mid")), "the id was not stored: {:?}", m);
+        let back = ChatMessage::from_datmap(&m).expect("read back");
+        assert_eq!(msg, back);
+        assert_eq!("u5", join_notes(&[msg.clone()])[0].mid(), "the join dropped the id");
+        assert_eq!("u5", msg.with_content(MessageContent::from("x".to_string())).mid());
+        // No id writes no field, and only a user message takes one.
+        assert!(ChatMessage::user("continue".to_string()).marked(String::new())
+            .to_datmap().get(&dat!("mid")).is_none());
+        assert_eq!("", ChatMessage::assistant("a".to_string()).marked("u5".to_string()).mid());
     }
 
     /// The elision a fold makes keeps the note with the message it belongs to.

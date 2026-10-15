@@ -28,6 +28,7 @@
 //
 //   eval "$(bash dev/world.sh 39 --up)"
 //   eval "$(bash dev/world.sh 39 --env)"
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,7 +118,7 @@ async function installBreak() {
 }
 await installBreak();
 
-await page.goto(process.env.DAIMOND_APP || 'http://localhost:8816', { waitUntil: 'domcontentloaded' });
+await page.goto(process.env.DAIMOND_APP || 'http://localhost:' + port('app'), { waitUntil: 'domcontentloaded' });
 await signInAs(s, 'attachtidy');
 // A resolvable model, so `createDiamond`'s validation lets the dialog through --
 // this is not about a turn ever running, only about the Diamond getting made.

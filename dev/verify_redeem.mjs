@@ -73,6 +73,7 @@
 // It owns world 9 (the app on :8786) and :9412, and starts both itself: the dev
 // server has to be pointed at THIS gateway rather than at :9002, which
 // `dev/world.sh` does not do. Headless, with DISPLAY dropped by the harness.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -97,8 +98,8 @@ const WWW  = path.join(ROOT, 'www');
 // Reading that would make this verifier try to seize the suite's own port,
 // find it held, and refuse -- so the two knobs it honours are its own, and
 // the world it is run in cannot reach in and move them.
-const APP_PORT = Number(process.env.DAIMOND_REDEEM_PORT || 8786);
-const GW_PORT  = Number(process.env.DAIMOND_REDEEM_GW_PORT || 9412);
+const APP_PORT = port('redeem_app');
+const GW_PORT  = port('redeem_gw');
 const SCRATCH  = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond/w9');
 process.env.DAIMOND_PORT    = String(APP_PORT);
 process.env.DAIMOND_APP     = `http://localhost:${APP_PORT}`;

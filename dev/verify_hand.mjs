@@ -35,6 +35,7 @@ const CHROME = process.env.DAIMOND_CHROME
 
 import { fileURLToPath } from 'node:url';
 import { guardRan } from './verdict.mjs';
+import { port } from './ports.mjs';
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
 // run under `xvfb-run` still went to the compositor and opened a window on the owner's
@@ -75,10 +76,11 @@ fs.chmodSync(MOCK, 0o755);
 const PROFILE	= path.join(SCRATCH, 'verify-hand');
 // The stub page only has to be on an origin the manifest lets speak to the
 // extension. It is not the app: nothing here needs the app -- and it is not the
-// dev server either, so the two must not fight over its port. The port is CHOSEN
-// below, from the first free one, and the dev build is then generated to trust
-// whichever that was. That is what lets this run beside `dev/serve.mjs`.
-const FIRST	= Number(process.env.HAND_PORT || 8877);
+// dev server either, so the two must not fight over its port. The port is this
+// world's `hand` row in dev/ports.json (K1), the stub and its hostile twin side
+// by side, and the dev build is then generated to trust it. That is what lets
+// this run beside `dev/serve.mjs`, and beside itself in another world.
+const FIRST	= port('hand');
 const EXTID	= 'mpliijponglmmffjnonahhignkpkhmij';
 let PORT	= FIRST;
 let HOSTILE_PORT = 0;
@@ -191,25 +193,23 @@ async function serve(port, host) {
 	return s;
 }
 
-/// Takes the first free port from `from`, so a dev server that already holds one
-/// is left alone rather than fought over.
-async function serveFree(from) {
-	for (let port = from; port < from + 40; port++) {
-		try {
-			return { s: await serve(port, '127.0.0.1'), port };
-		} catch (e) {
-			if (e.code !== 'EADDRINUSE') { throw e; }
-		}
+/// Binds exactly `at`, this world's own port. A holder is refused, not stepped
+/// past: walking to the next free port is how two worlds came to share one.
+async function serveAt(at) {
+	try {
+		return { s: await serve(at, '127.0.0.1'), port: at };
+	} catch (e) {
+		if (e.code !== 'EADDRINUSE') { throw e; }
+		console.error(`:${at} (row hand in dev/ports.json) is already held. Free it, or set HAND_PORT.`);
+		process.exit(2);
 	}
-	console.error(`No free port from ${from}. Set HAND_PORT.`);
-	process.exit(2);
 }
 
 const servers	= [];
-const first	= await serveFree(FIRST);
+const first	= await serveAt(FIRST);
 servers.push(first.s);
 PORT		= first.port;
-const second	= await serveFree(PORT + 1);
+const second	= await serveAt(PORT + 1);
 servers.push(second.s);
 HOSTILE_PORT	= second.port;
 

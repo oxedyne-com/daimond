@@ -122,6 +122,7 @@
 // run this at once, and neither is the world's own gateway port -- a store this
 // run counts rows in cannot be one anything else is allowed to write to.
 
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
@@ -148,14 +149,13 @@ const ROOT = path.join(HERE, '..');
 // suite run this verifier quietly abandoned its own 9400 + N row and started its
 // gateway on the world's gateway port instead, which is the one port in the
 // register it must not be on. Its knob is its own now.
-const WORLD    = Math.max(0, Number(process.env.DAIMOND_PORT || 8777) - 8777);
-const PORT     = Number(process.env.DAIMOND_APPL_GW_PORT || (9440 + WORLD));
-const APP_PORT = Number(process.env.DAIMOND_APP_PORT || (8500 + WORLD));
+const PORT     = port('applications_gw');
+const APP_PORT = port('applications_app');
 // The loopback SMTP server this run points the gateway at. Numbered off the
 // world like the other two, and deliberately NOT 587 or 465 — a gateway will
 // only dial an odd port with `invite_dev_insecure` set, and this run proves that
 // switch is doing something by needing it.
-const MAIL_PORT = Number(process.env.DAIMOND_MAIL_PORT || (9600 + WORLD));
+const MAIL_PORT = port('applications_mail');
 const GW       = `http://127.0.0.1:${PORT}`;
 const APP      = `http://localhost:${APP_PORT}`;
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');

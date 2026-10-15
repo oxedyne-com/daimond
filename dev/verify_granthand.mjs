@@ -33,6 +33,7 @@
 // Needs nothing running: it serves ext/ itself and stubs the two chrome APIs
 // i18n.js reaches for, so the strings come from _locales exactly as they do in
 // the browser.
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
@@ -47,7 +48,7 @@ const OUT = path.join(os.homedir(), '.cache/daimond/grant-shots');
 fs.mkdirSync(OUT, { recursive: true });
 
 const PROVE = process.argv.includes('--prove');
-const PORT = Number(process.env.GRANT_PORT || 9187);
+const PORT = port('granthand');
 const BASE = `http://127.0.0.1:${PORT}`;
 /// The viewport the window has AFTER grant.js has sized it to its own first
 /// screen -- 520 is what the wordiest language asks for. background.js opens at

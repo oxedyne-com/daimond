@@ -477,12 +477,13 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 {
 	const RT = grabFn('function retryTurn(');			// lane B: contract §9
 	const ER = grabFn('function editResend(');		// lane B: contract §9
-	const TM = grabFn('function turnMessagesOf(');	// the finder retryTurn asks for its turn's messages
+	const TM = grabFn('function turnMessagesOf(')	// the finder retryTurn asks for its turn's messages
+		+ '\n' + grabFn('function tailAfter(') + '\n' + grabFn('function sessionCut(');	// and the session cut (1e)
 	check('daimond.js defines retryTurn(chat, iturn, text)', !!RT, RT ? '' : 'not found');
 	check('and editResend(chat, iturn, text)', !!ER, ER ? '' : 'not found');
 	const names = ['loadMsgTombs', 'msgTombstone', 'touchChat', 'persistChats', 'renderHistory',
 		'runTurn', 'ChatStore', 'window', 'DaimondJournal', 'DaimondPeer', 'DaimondLease', 'newMid',
-		'selfDeviceId', 'chatInput', 'syncSendMode'];
+		'selfDeviceId', 'chatInput', 'syncSendMode', 'diag'];
 	const spies = () => {
 		const calls = { runTurn: [], msgTombstone: [], compact: [] };
 		const stubs = {
@@ -494,6 +495,7 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 			DaimondPeer: null, DaimondLease: null, selfDeviceId: () => 'me', newMid: () => 'n1',
 			chatInput: { value: '', focus() { this.focused = true; } },
 			syncSendMode: () => {},		// the composer's Send/Stop face; no button here
+			diag: () => {},
 		};
 		return { stubs, calls };
 	};

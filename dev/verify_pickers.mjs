@@ -9,6 +9,7 @@
 // not that the right words are on screen. It is that the request lands at the right BASE URL with
 // the right KEY — which is checked here by pointing two "providers" at two different mock servers
 // and seeing which one the traffic goes to.
+import { port, WORLD } from './ports.mjs';
 import { open, shot, errors, MOCK, PASS, storedChats } from './harness.mjs';
 import http from 'node:http';
 import { guardRan } from './verdict.mjs';
@@ -92,8 +93,7 @@ function provider(port, models, tag) {
 // `EADDRINUSE 127.0.0.1:9102` inside the release gate while a six-hour-old world 3
 // held the port, and the bare Node stack read as a product failure. Two ports are
 // wanted, so the world claims a PAIR, in a band no world's own numbering reaches.
-const WORLD = Number(process.env.DAIMOND_PORT || 8777) - 8777;
-const PORT_A = Number(process.env.DAIMOND_PICKER_PORT || 9160 + WORLD * 2);
+const PORT_A = port('pickers');
 const PORT_B = PORT_A + 1;
 
 const A = provider(PORT_A, ['alpha-large', 'shared-model'], 'ALPHA');

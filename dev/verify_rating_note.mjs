@@ -28,6 +28,7 @@
 //   trigger N6        an app-made record (trigger, preset, gather, Continue nudge) takes a note
 //
 //   eval "$(bash dev/world.sh N --env)"; RC_SLOT=<slot>-note node dev/verify_rating_note.mjs [--break twice] [--only N1,N2]
+import { port } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -154,11 +155,11 @@ async function freshAnswered(s, text) {
 
 // ── M. the mock reads the note's own boundary ───────────────────────────
 await section('M', async () => {
-	const port = 19000 + Math.floor(Math.random() * 900), log = scratch('note_mock.log');
-	const p = spawn(process.execPath, [path.join(HERE, 'mockllm.mjs'), String(port)], { env: { ...process.env, DAIMOND_MOCK_LOG: log }, stdio: 'ignore' });
+	const mport = port('rating_note_mock'), log = scratch('note_mock.log');
+	const p = spawn(process.execPath, [path.join(HERE, 'mockllm.mjs'), String(mport)], { env: { ...process.env, DAIMOND_MOCK_LOG: log }, stdio: 'ignore' });
 	try {
-		await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${port}/__world`)).status > 0; } catch (e) { return false; } }, 8000, 200);
-		const ask = async (text) => { const r = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' },
+		await waitFor(async () => { try { return (await fetch(`http://127.0.0.1:${mport}/__world`)).status > 0; } catch (e) { return false; } }, 8000, 200);
+		const ask = async (text) => { const r = await fetch(`http://127.0.0.1:${mport}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' },
 			body: J({ model: 'mock/fast', messages: [{ role: 'user', content: text }] }) }); const j = await r.json(); return (j.choices && j.choices[0].message.content) || ''; };
 		const note = (w) => '[Daimond: the user rated your answer of 09:05 −1 (wrong): "' + w + '".]\n\n';
 		check('M: a note whose words hold `]` and a blank line is cut at its own end: the `@text` body after it is answered', (await ask(note('a]\n\nb') + '@text MOCK-BODY-1')) === 'MOCK-BODY-1', J(await ask(note('a]\n\nb') + '@text MOCK-BODY-1')));

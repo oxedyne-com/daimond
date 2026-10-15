@@ -57,6 +57,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { guardRan } from './verdict.mjs';
+import { port as portOfRow } from './ports.mjs';
 
 const { chromium } = await import('./pw.mjs');
 const CHROME = process.env.DAIMOND_CHROME
@@ -220,14 +221,15 @@ async function serveStub(port) {
 	return s;
 }
 
-/// The first free port from `from`, so a dev server already holding one is left
-/// alone rather than fought over.
-async function stubOnFreePort(from) {
-	for (let port = from; port < from + 40; port++) {
-		try { return { s: await serveStub(port), port }; }
-		catch (e) { if (e.code !== 'EADDRINUSE') throw e; }
+/// The stub on exactly this world's `pty_stub` row (K1). A holder is refused,
+/// not stepped past: walking on is how two worlds came to share a port.
+async function stubOnRow() {
+	const port = portOfRow('pty_stub');
+	try { return { s: await serveStub(port), port }; }
+	catch (e) {
+		if (e.code !== 'EADDRINUSE') throw e;
+		throw new Error(`:${port} (row pty_stub in dev/ports.json) is already held.`);
 	}
-	throw new Error(`No free port from ${from}.`);
 }
 
 // ── The bridge ──────────────────────────────────────────────────────
@@ -322,7 +324,7 @@ async function serve(name, args, port) {
 
 // ── Phase one: the relay, the wire, and a real host ─────────────────
 
-const stub = await stubOnFreePort(8977);
+const stub = await stubOnRow();
 const b = await chromium.launchPersistentContext(path.join(WORK, 'profile'), {
 	executablePath:	CHROME,
 	headless:	false,

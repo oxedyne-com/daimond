@@ -57,6 +57,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { guardRan } from './verdict.mjs';
+import { port } from './ports.mjs';
 
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
@@ -144,19 +145,21 @@ fs.chmodSync(JOURNAL, 0o700);
 // written to a shared directory, so it is COPIED here before a break touches it:
 // patching the shared one would damage every other harness on this machine.
 const { extDev } = await import(pathToFileURL(path.join(HERE, 'extdev.mjs')).href);
+// This world's own row in dev/ports.json (K1); a holder is refused, not stepped past.
 const PORT = await (async () => {
-	for (let p = 8837; p < 8877; p++) {
-		try {
-			await new Promise((res, rej) => {
-				const s = http.createServer(() => {});
-				s.once('error', rej);
-				s.listen(p, '127.0.0.1', () => s.close(res));
-			});
-			return p;
-		} catch (e) { if (e.code !== 'EADDRINUSE') throw e; }
+	const p = port('handstop');
+	try {
+		await new Promise((res, rej) => {
+			const s = http.createServer(() => {});
+			s.once('error', rej);
+			s.listen(p, '127.0.0.1', () => s.close(res));
+		});
+		return p;
+	} catch (e) {
+		if (e.code !== 'EADDRINUSE') throw e;
+		console.error(`:${p} (row handstop in dev/ports.json) is already held; refusing`);
+		process.exit(2);
 	}
-	console.error('no free port from 8837');
-	process.exit(2);
 })();
 const SHARED_EXT = await extDev(PORT);
 const EXT = path.join(BASE, 'ext');
