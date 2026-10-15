@@ -662,10 +662,9 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* The rail no longer resizes its two panes: the Status strip is fixed and the
    Admin panel overlays, so the drag handle has nothing to size. */
 #handle-split { display: none; }
-/* The rail is not a modal card: four money buttons in a column this narrow have
-   to wrap rather than shrink to an unreadable width. */
-.admin-body .credits-packs { flex-wrap: wrap; }
-.admin-body .credit-pack { flex: 1 1 calc(50% - 4px); }
+/* Four money buttons in a column as narrow as the rail or a phone wrap two to a
+   row rather than shrink to an unreadable width or run off the edge. */
+.settings-section .credits-packs > .credit-pack { flex: 1 1 calc(50% - 4px); }
 
 /* A view in the Admin body: the same furniture as a dialog, without the backdrop. */
 .admin-view-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; }
@@ -3675,7 +3674,9 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 /* Inserted between the balance and the pack buttons; without its own bottom
    margin it sat flush on the packs row. */
 #credits-see-spend { margin: 2px 0 12px; }
-.credits-packs { display: flex; gap: 8px; }
+/* Wrapped everywhere, not only in the rail: a phone's sheet is as narrow, and
+   four money buttons on one line ran off its edge. */
+.credits-packs { display: flex; flex-wrap: wrap; gap: 8px; }
 /* `.settings-section button` is accent-filled, which would make four money
    buttons shout in red. Money is stated, not sold: quiet by default, and the
    accent kept for hover, where it means "this is the one you are choosing". */
@@ -3755,6 +3756,14 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
    exact billed dollars recede beside it. */
 .credit-pack .pack-local  { font-weight: 600; }
 .credit-pack .pack-billed { opacity: 0.72; font-size: var(--fs-2xs); }
+/* Any other amount: a field, the dollars it bills, and its buy button, on a
+   row of its own under the presets. */
+.credits-packs .credit-other { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; }
+.credit-other input { flex: 1 1 0; width: 0; min-width: 0; }
+.credit-other .credit-buy { flex: 0 0 auto; cursor: pointer; }
+.credit-other .credit-buy:disabled { opacity: 0.6; cursor: default; }
+.credit-other .pack-billed { opacity: 0.72; font-size: var(--fs-2xs); font-family: var(--font-mono); white-space: nowrap; }
+.credit-other .pack-billed:empty { display: none; }
 /* The billing sentence under the pack grid spans the full row of the flex
    container it sits in. */
 .credits-packs .pack-note {

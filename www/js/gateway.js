@@ -81,9 +81,13 @@
 		} catch (e) { /* telemetry may never break a checkout */ }
 	}
 
-	/// The credit packs the gateway will accept. The price is server-owned; this
-	/// is only what we offer, and the gateway re-checks it against its allowlist.
-	var PACKS = [1000, 2000, 5000, 10000];
+	/// What a top-up may cost, as the gateway states it on `GET
+	/// /api/checkout/credits`: `{ presets, min, max }` in US cents, or null until
+	/// it has answered. The gateway owns the amounts and re-checks every POST;
+	/// this copy draws the drawer and refuses early (UNBLOCK-19/20). Asked once
+	/// per unlock, so an operator's new range is read on the next one.
+	var offer = null;
+	var offering = null;
 
 	/// The API contract version this build speaks. Bumped in lockstep with the
 	/// gateway's GATEWAY_API/MIN_CLIENT_API (gateway/src/handlers/common.rs)
@@ -905,6 +909,7 @@
 	async function bootstrapOnce() {
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false;
 		state.role = undefined;			// a new unlock is a new question
+		offer      = null;			// and the amounts on sale are asked again
 		state.pro  = null;			// re-asked for whoever unlocked now
 		// And so is the beta standing. Cleared BEFORE the round rather than
 		// overwritten after it: a bootstrap that fails halfway must leave this
@@ -1131,15 +1136,47 @@
 		return state.credits;
 	}
 
-	/// Start a hosted Stripe Checkout for a credit pack. The gateway owns the
-	/// price; we send only which pack, and it validates that against its
-	/// allowlist before creating the session.
-	async function buyCredits(packMinor) {
+	/// The presets and the range, asked of the gateway once and kept. Needs no
+	/// session: the amounts on sale are the same for everybody.
+	async function creditOffer() {
+		if (offer) return offer;
+		if (offering) return await offering;
+		offering = (async function () {
+			var j = await get('/api/checkout/credits');
+			var presets = (Array.isArray(j.presets) ? j.presets : [])
+				.map(function (p) { return Math.round(+p); })
+				.filter(function (p) { return isFinite(p) && p > 0; });
+			offer = { presets: presets, min: Math.round(+j.min_minor), max: Math.round(+j.max_minor) };
+			return offer;
+		})();
+		try { return await offering; }
+		finally { offering = null; }
+	}
+
+	/// Why this amount (US cents) may not be bought, as a sentence, or null
+	/// when it may. The gateway's own rule, said before the round trip: a whole
+	/// number of cents inside its range.
+	function creditRefusal(minor) {
+		if (!offer) return t('credits.offer_unavailable');
+		var n = +minor;
+		if (!isFinite(n) || n !== Math.floor(n) || n < offer.min || n > offer.max) {
+			return t('credits.out_of_range', { min: fmtBilled(offer.min, 'usd'), max: fmtBilled(offer.max, 'usd') });
+		}
+		return null;
+	}
+
+	/// Start a hosted Stripe Checkout for a credit top-up of `minor` US cents,
+	/// a preset or a figure the reader typed. The gateway owns the price and
+	/// re-checks the amount against its range before creating the session.
+	async function buyCredits(minor) {
+		try { await creditOffer(); } catch (e) { /* refused below, in words */ }
+		var why = creditRefusal(minor);
+		if (why) throw new Error(why);
 		if (!state.authed) {
 			var ok = await bootstrap();
 			if (!ok) throw new Error(t('gateway.acct_unreachable'));
 		}
-		var j = await post('/api/checkout/credits', { pack_minor: packMinor });
+		var j = await post('/api/checkout/credits', { pack_minor: minor });
 		if (!j.url) throw new Error(t('gateway.session_no_url'));
 		// Reaching for the offer, which is the signal; buying is the next one and
 		// is reported on the way back from Stripe. Which offer, as a number --
@@ -1444,7 +1481,11 @@
 		operatorRole:   operatorRole,
 		logout:         logout,
 		fmtBilled:      fmtBilled,
-		packs:          function () { return PACKS.slice(); },
+		/// The gateway's presets, or none until `creditOffer` has answered.
+		packs:          function () { return offer ? offer.presets.slice() : []; },
+		creditOffer:    creditOffer,
+		creditRefusal:  creditRefusal,
+		hasOffer:       function () { return !!offer; },
 		state:          function () { return Object.assign({}, state); },
 		/// The contract version this build speaks, for a caller making its own
 		/// gateway request. There is one copy of this number and it lives here.

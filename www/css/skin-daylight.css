@@ -678,24 +678,24 @@
    Edit, Dismiss, Keep, Remove; 5.3.2) are the same button. */
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) {
+	.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); background: transparent;
 	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 27px; line-height: 19px;
 	text-decoration: none;
 }
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb):hover { background: var(--dl-hover); color: var(--text-primary); }
+	.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb):hover { background: var(--dl-hover); color: var(--text-primary); }
 /* The bare + is the same 27px box as the worded chips, but round, its glyph centred. */
 :root[data-skin="daylight"] .attach-add.icon { width: 27px; height: 27px; padding: 0; border-radius: 50%; }
 /* The primary text button: the role's size, filled in the accent. Subscribe,
    Unlock, Save and Save a card each drew a size of their own (14px, 37px). */
-:root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent),
-:root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover { background: var(--accent); color: var(--on-fill, #fff); }
+:root[data-skin="daylight"] :is(.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent),
+:root[data-skin="daylight"] :is(.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover { background: var(--accent); color: var(--on-fill, #fff); }
 /* The Pending tile's press row stretched each glyph press across the card (`.pend-act { flex: 1 }`); the worded ones are text buttons and
    keep the button's own width, left to right like Crystal's Edit and History. */
 :root[data-skin="daylight"] .pend-verb { flex: none; }
-:root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover:not(:disabled) { background: var(--accent-hover); }
+:root[data-skin="daylight"] :is(.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover:not(:disabled) { background: var(--accent-hover); }
 :root[data-skin="daylight"] .files-card,
 :root[data-skin="daylight"] .files-mode,
 :root[data-skin="daylight"] .files-path,
@@ -1402,7 +1402,7 @@
 	:root[data-skin="daylight"] :is(.dlg-ok, .dlg-cancel, .tile-fold, .tile-keep, .compose-btn, .compose-send, .railhead > .railbtn,
 		.crystal-act:not(.crystal-form-x), .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 		.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-		.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) { min-height: 44px; min-width: 44px; }
+		.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) { min-height: 44px; min-width: 44px; }
 	/* Toggle options (the head's face switch keeps the head block's 30px box and overlay, so the Diamond head stays 96px): */
 	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
 		.files-mode-chip, .imp-chip, .tile-dlg-level) { height: 44px; min-height: 44px; }

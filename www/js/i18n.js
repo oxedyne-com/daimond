@@ -571,6 +571,25 @@
 		return out;
 	}
 
+	/// A figure the reader typed in the display currency, as `niceTiers` draws a
+	/// preset: the local amount, and the whole US cents that will be charged for
+	/// it. Null for nothing, zero or less, so an empty field is not a purchase.
+	function tierFor(local) {
+		var v = +local;
+		if (!isFinite(v) || v <= 0) return null;
+		var ccy  = currency();
+		var dec  = decimalsOf(ccy);
+		var minor = Math.round((v / RATE[ccy]) * 100);
+		return {
+			local: v,
+			localText: ccy === 'USD' ? moneyMinor(minor, 'usd')
+				: intlFixed(v, ccy, (dec === 0 || v === Math.round(v)) ? 0 : 2),
+			billedMinor: minor,
+			billedText: 'US$' + (minor / 100).toFixed(2),
+			ccy: ccy,
+		};
+	}
+
 	/// A figure in a named currency at a fixed number of decimals.
 	function intlFixed(v, ccy, dp) {
 		try {
@@ -906,6 +925,7 @@
 		pricesText:   pricesText,
 		pricesHtml:   pricesHtml,
 		niceTiers:    niceTiers,
+		tierFor:      tierFor,
 		snap:         snap,
 		onChange:     onChange,
 	};

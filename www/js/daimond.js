@@ -44937,6 +44937,49 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	}
 
+	/// Any amount in the gateway's range, typed in the display currency and
+	/// billed as the presets are: the dollars charged are shown beside it.
+	function otherAmount(note) {
+		var row = document.createElement('div');
+		row.className = 'credit-other';
+		var inp = document.createElement('input');
+		inp.type = 'text';
+		inp.id = 'credit-other-input';
+		inp.setAttribute('inputmode', 'decimal');
+		inp.autocomplete = 'off';
+		inp.placeholder = usdDisplay() ? t('credits.other') : t('credits.other') + ' · ' + DaimondI18n.currency();
+		inp.setAttribute('aria-label', inp.placeholder);
+		var bil = document.createElement('span');
+		bil.className = 'pack-billed';
+		var buy = document.createElement('button');
+		// The row's one primary action, drawn as Subscribe and Unlock are; the packs beside it are amounts.
+		buy.className = 'credit-buy';
+		buy.textContent = t('credits.buy');
+		buy.disabled = true;
+		// Either separator, so "12,50" reads as twelve and a half wherever typed.
+		var tier = function () { return DaimondI18n.tierFor(inp.value.trim().replace(',', '.')); };
+		inp.addEventListener('input', function () {
+			var tr = tier();
+			buy.disabled = !tr;
+			note.textContent = '';
+			bil.textContent = (tr && !usdDisplay()) ? tr.billedText : '';
+		});
+		inp.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !buy.disabled) buy.click(); });
+		buy.addEventListener('click', async function () {
+			var tr = tier();
+			if (!tr) return;
+			var why = DaimondGateway.creditRefusal(tr.billedMinor);
+			if (why) { note.textContent = why; return; }
+			buy.disabled = true;
+			try { await DaimondGateway.buyCredits(tr.billedMinor); }   // navigates to Stripe
+			catch (e) { note.textContent = friendlyError(e); buy.disabled = false; }
+		});
+		row.appendChild(inp);
+		row.appendChild(bil);
+		row.appendChild(buy);
+		return row;
+	}
+
 	function renderCredits() {
 		var sec  = document.getElementById('credits-section');
 		var bal  = document.getElementById('credits-balance');
@@ -45000,10 +45043,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		seeSpend.textContent = t('credits.see_spend');
 
 		wrap.innerHTML = '';
+		// The amounts on sale are the gateway's (UNBLOCK-19/20): asked once, then
+		// drawn. Until it answers there is nothing to offer; if it cannot, say so.
+		if (!DaimondGateway.hasOffer()) {
+			DaimondGateway.creditOffer().then(renderCredits, function () {
+				note.textContent = t('credits.offer_unavailable');
+			});
+			return;
+		}
 		// A shop offers €10, not €9.26. The tiers are snapped to round prices in
 		// whatever currency is on show, and the dollar amount that will actually
 		// reach the card is printed beside each one. With dollars selected these
-		// are the gateway's own tiers, unchanged.
+		// are the gateway's own presets, unchanged.
 		var tiers = DaimondI18n.niceTiers(DaimondGateway.packs());
 		tiers.forEach(function (tier) {
 			var b = document.createElement('button');
@@ -45032,6 +45083,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			wrap.appendChild(b);
 		});
+		wrap.appendChild(otherAmount(note));
 		if (!usdDisplay()) {
 			var pn = document.createElement('p');
 			pn.className = 'cfg-fieldnote pack-note';

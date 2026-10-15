@@ -1637,7 +1637,7 @@ const ALLOW = [
 	// current element wear one.
 	{ role: '*', m: /\.(on|active|current|selected|is-on|tag-inc)\b|aria-current/, p: ['col', 'bg', 'fw'], why: 'the current or selected state is drawn apart on purpose, by colour, fill and weight, never by a border' },
 	{ role: '*', m: /\.danger\b/, p: ['col'], why: 'a destructive action is drawn in the danger colour' },
-	{ role: '*', m: /\.dlg-ok\b|#chat-send\b|\.compose-send\b|\.ti-continue\b|#push-save\b|#beta-open\b|\.crystal-act\.primary\b|\.pro-buy\b|\.tools-buy\b|\.mail-unlock\b|\.ar-save\b|\.ar-card-btn\.accent\b/, p: ['col', 'bg', 'bd', 'fw', 'rad'], why: 'the one primary action of a dialog, the composer, an interrupted turn or the crystal form is filled -- the send button’s own round primary keeps its radius too' },
+	{ role: '*', m: /\.dlg-ok\b|#chat-send\b|\.compose-send\b|\.ti-continue\b|#push-save\b|#beta-open\b|\.crystal-act\.primary\b|\.pro-buy\b|\.credit-buy\b|\.tools-buy\b|\.mail-unlock\b|\.ar-save\b|\.ar-card-btn\.accent\b/, p: ['col', 'bg', 'bd', 'fw', 'rad'], why: 'the one primary action of a dialog, the composer, an interrupted turn or the crystal form is filled -- the send button’s own round primary keeps its radius too' },
 	{ role: 'meta', m: /\.crollup-count\b/, p: ['col', 'fw', 'ff'], why: 'the tool-count badge is filled in the outcome colour (ok, warn, fail)' },
 	{ role: '*', m: / :focus$/, p: ['bd', 'sh'], why: 'the focused field shows the accent edge; every field takes it on focus' },
 	{ role: 'close-button', m: /about-card/, p: ['col', 'bg', 'rad'], why: 'the About card closes over its picture, so its × is a dark disc (app.css .about-card > .ui-head .ui-close)' },
@@ -2112,6 +2112,9 @@ const VSLOTS = [
 	['steer list day',           '#panel-modeldash', '.steer-row', '.steer-foot .steer-meta', { text: ['Added 4 Oct 2026', 'This diamond: Thesis, chapter 4 \u00b7 All models \u00b7 Added Oct 4, 12026', 'Dieser Diamant: Thesis, chapter 4 \u00b7 Alle Modelle \u00b7 Hinzugef\u00fcgt am 4. Okt. 12026'] }, /Keep answers under/, 'models'],
 	// THREAD-READY (d): the hand-off line takes the column's width and wraps; the time and the copy control keep their places.
 	['hand-off line',            '#chat-output', '.ctile.chat-msg-handoff', '.ctile-who', V_HANDOFF, null, 'handoff'],
+	// UNBLOCK-19/20: the credits drawer's "other" amount. The field, the dollars billed beside it and its Buy keep their places for any amount.
+	['credit other amount',      'OVERLAY', '.credit-other', '#credit-other-input', { val: ['5', '1234.56', '123456789012.99'] }, null, 'credits'],
+	['credit other billed',      'OVERLAY', '.credit-other', '.pack-billed', ['US$5.00', 'US$1,234.56', 'US$123,456,789,012.99'], null, 'credits'],
 ];
 // Whole surfaces re-read in each locale: every label at once, en against de and fr.
 const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags'], ['chat files row', '#chat-output', 'files'], ['file popup', 'OVERLAY', 'filepop'],
@@ -2296,8 +2299,16 @@ async function vSetup(kind) {
 		await wait(1000); await ev(() => { const l = document.querySelector('.tile-dlg-card [data-steer-list]'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(300);
 	}
 	if (kind === 'newdia') { await click('#new-diamond-btn'); await wait(700); }
+	if (kind === 'credits') {
+		// As the app opens it (openCredits): the drawer's Credits view, with the "other" row in view.
+		await ev(() => { try { window.DaimondAdmin.credits(''); } catch (e) {} }); await wait(900);
+		// The drawer on a desk, a modal on a phone (DaimondAdmin.credits: toPanel or toModal), so the row is found wherever it is drawn.
+		const hit = await ev(() => { const r = [...document.querySelectorAll('.credit-other')].find((e) => e.getClientRects().length); if (!r) return false; r.scrollIntoView({ block: 'center' }); return true; });
+		if (hit !== true) return 'no "other" amount row in the Credits drawer';
+		await wait(300);
+	}
 	if (kind === 'admin') { await click('#user-row'); await wait(700); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(500); }
-	if (['cog', 'newdia', 'admin', 'ratepop', 'headmore', 'filepop', 'steeredit', 'steercog'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
+	if (['cog', 'newdia', 'admin', 'credits', 'ratepop', 'headmore', 'filepop', 'steeredit', 'steercog'].includes(kind)) { const ov = kind === 'admin' || kind === 'credits' && await ev(() => !!document.querySelector('#admin .credit-other')) ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
 }
 async function vShot(name, clip) {
 	if (!clip) return '';
