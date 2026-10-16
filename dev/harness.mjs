@@ -489,6 +489,13 @@ export async function open(opts = {}) {
 		// Extra environment for the browser process -- how capped.sh is told which
 		// device it is starting and what to cap it at.
 		launchEnv = null,
+		// THE ORIGIN THIS SESSION OPENS, for a rig device that reaches the world
+		// through its own shaper (dev/rig/net/shaper.mjs) rather than straight at the
+		// dev server. Left unset, the world's APP, as before.
+		app       = APP,
+		// The provider address `connect` points the session at. The rig's is the
+		// device's shaper `/llm/...`. Left unset, the world's MOCK.
+		mock      = MOCK,
 	} = opts;
 
 	// Before a browser is even launched: is the mock this run will read the mock
@@ -714,7 +721,7 @@ export async function open(opts = {}) {
 
 	if (route) await route(page);
 	await page.addInitScript(PRESS_MARK);
-	await page.goto(APP, { waitUntil: 'domcontentloaded' });
+	await page.goto(app, { waitUntil: 'domcontentloaded' });
 
 	// A WEBKIT SESSION WITHOUT OPFS IS REFUSED, before sign-in seeds anything. Without the
 	// storage features every Diamond write fails, the first boot still records that it
@@ -732,7 +739,7 @@ export async function open(opts = {}) {
 
 	if (signIn) await signInAs(s, name);
 	if (signIn && !defaults) await clearDiamonds(s);
-	if (signIn && connect) await connectMock(s);
+	if (signIn && connect) await connectMock(s, { baseUrl: mock });
 
 	s.close = async () => { await browser.close(); };
 	return s;

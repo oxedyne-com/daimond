@@ -13,6 +13,10 @@
    against the run's tag), and Continue / Answer again refuse while the chat's errand
    is in flight.
 
+   L-R1 (check_l). A fan-out's gather round runs inside the errand and re-tags the chat, so
+   the run's tag went stale and a kill landing in a gather round skipped it. Every round
+   of the errand's turn now carries its tag (`runnerRoundTagged`).
+
    Every declaration of a lifted name is lifted, in source order, so a duplicate
    shadows here exactly as it does in the page.   `node www/js/runnerchat.test.mjs`
    ============================================================ */
@@ -50,7 +54,7 @@ function extractAll(src, name) {
 }
 
 const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const names = ['activeRunnerTurn', 'runnerTurnByTag', 'runnerTurnOf', 'runnerTurnOfReq',
+const names = ['runnerTagged', 'runnerRoundTagged', 'activeRunnerTurn', 'runnerTurnByTag', 'runnerTurnOf', 'runnerTurnOfReq',
 	'chatIsActiveErrand', 'turnPhase', 'stopGeneration', 'endRunnerLocal', 'continueStopped', 'answerAgain'];
 const found = {};
 const decls = [];
@@ -94,6 +98,7 @@ function harness() {
 			runnerTurnOfReq: typeof runnerTurnOfReq === 'function' ? runnerTurnOfReq : null,
 			turnPhase: turnPhase, stopGeneration: stopGeneration,
 			endRunnerLocal: endRunnerLocal, continueStopped: continueStopped, answerAgain: answerAgain,
+			runnerRoundTagged: typeof runnerRoundTagged === 'function' ? runnerRoundTagged : function () {},
 		};`)(env);
 	return { api, env };
 }
@@ -174,6 +179,41 @@ function harness() {
 	check('K-R1: Continue runs once the errand is done', env.runs.length === 1 && chat.app === null);
 	api.answerAgain(chat, 'T0');
 	check('K-R1: Answer again reads the turn once the errand is done', env.retracted.length === 1);
+}
+
+// ── L-R1: a gather round of the errand carries the errand's tag, so a kill landing in
+//    the round ends it. ──
+for (const why of ['lease_cap', 'user']) {
+	const { api, env } = harness();
+	const chat = { id: 'chatY', _generating: true, _turnTag: 'tagRound0', _busy: 'x', messages: [] };
+	api.ctx.T1 = { turnId: 'T1', chatId: 'chatY', tag: '', chat: chat };
+	api.runnerRoundTagged('chatY', 'T1', 'tagRound0', 0);
+	check('L-R1: round 0 is tagged by its turnId', api.ctx.T1.tag === 'tagRound0');
+	chat._turnTag = 'tagGather';		// the gather round, run as runTurn(c, instruction)
+	api.runnerRoundTagged('chatY', '', 'tagGather', 1);
+	check('L-R1: the gather round re-tags the run', api.ctx.T1.tag === 'tagGather', api.ctx.T1.tag);
+	await api.endRunnerLocal(chat, { turnId: 'T1' }, why);
+	check('L-R1: ' + why + ' during gather kills the round', env.killed.length === 1 && env.killed[0].why === why);
+	check('L-R1: ' + why + ' during gather forces it down', chat._generating === false && chat._busy === '');
+	if (why === 'user') check('L-R1: and labels it a user Stop', chat._aborted === true && chat._stopWhy === 'user');
+}
+
+// ── L-R1: only a gather round of the errand's own chat re-tags; a depth-0 turn (a
+//    Continue after the run) does not, so K-R1 still spares it. ──
+{
+	const { api } = harness();
+	api.ctx.T1 = { turnId: 'T1', chatId: 'chatY', tag: 'tagRound0' };
+	api.runnerRoundTagged('chatY', '', 'tagNext', 0);
+	check('L-R1: a depth-0 turn does not re-tag the run', api.ctx.T1.tag === 'tagRound0');
+	api.runnerRoundTagged('chatX', '', 'tagX', 1);
+	check('L-R1: another chat\'s gather round does not re-tag the run', api.ctx.T1.tag === 'tagRound0');
+}
+
+// ── L-R1 wiring: runTurn and runSteer both tag through runnerRoundTagged. ──
+{
+	const body = (n) => { const d = extractAll(src, n); return d.length ? d[0].text : ''; };
+	check('L-R1: runTurn tags every round', /runnerRoundTagged\(chat\.id, opts\.turnId, chat\._turnTag, Workers\.gatherDepth\[chat\.id\]/.test(body('runTurn')));
+	check('L-R1: runSteer tags every round', /runnerRoundTagged\(rec\.id, detached && detached\.turnId, steerTurn, depth\)/.test(body('runSteer')));
 }
 
 if (failures) { console.log(failures + ' FAILURE(S)'); process.exitCode = 1; }

@@ -2880,9 +2880,10 @@
 			var run = function () { return runWork(w); };
 			// A turn for another chat, collected while this device is busy, is decided NOW
 			// and not behind the running turn, so its sender hears `busy` at once instead
-			// of waiting out its backstop (H1, C1).
+			// of waiting out its backstop (H1, C1). A turn for a chat that already has work
+			// here starts now too, so it takes its lease and queues in the chat (BUSY-SELF F1).
 			var now = false;
-			try { now = !!(window.DaimondPeer && DaimondPeer.decideNow && DaimondPeer.decideNow(w.peer)); }
+			try { now = !!(window.DaimondPeer && DaimondPeer.startsNow && DaimondPeer.startsNow(w.peer)); }
 			catch (e) { now = false; }
 			if (now) return run();
 			var p = _workChain.then(run, run);

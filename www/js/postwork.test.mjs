@@ -132,7 +132,7 @@ function makeTab(box, opts) {
 	opts = opts || {};
 	const local = opts.local || new Map();
 	const locks = opts.locks;
-	const stat = { runs: [], notes: [], settled: [], acked: [] };
+	const stat = { runs: [], notes: [], settled: [], acked: [], busy: [] };
 
 	const gwFetch = (url, o) => {
 		const q = String(url).split('?')[1] || '';
@@ -176,13 +176,20 @@ function makeTab(box, opts) {
 	win.DaimondPeer = {
 		peek: async (env) => {
 			const s = String(env);
-			if (s.startsWith('ERRAND:')) return { t: 'errand', turnId: s.slice(7), dispatchedBy: 'dev-phone' };
+			// 'ERRAND:<turn>@<chat>' names the errand's chat; with no '@' it has none.
+			if (s.startsWith('ERRAND:')) {
+				const [tid, cid] = s.slice(7).split('@');
+				return { t: 'errand', turnId: tid, chatId: cid || '', dispatchedBy: 'dev-phone' };
+			}
 			if (s.startsWith('REPORT:')) return { t: 'report', turnId: s.slice(7) };
 			return null;
 		},
 		isOwnDispatch: () => false,
 		standDownUndecided: realStandDownUndecided,		// peer.js's own rule, lifted below
 		isWork: (p) => !!p && p.t === 'errand',
+		// peer.js `startsNow`'s answers: an errand whose chat already has work here
+		// (a turn of it running) starts at once, off the work chain (BUSY-SELF F1).
+		startsNow: (p) => !!p && p.t === 'errand' && !!p.chatId && stat.busy.includes(p.chatId),
 		workKey: (p) => 'turn:' + p.turnId,
 		verifyEnvelope: async (p) => !(opts.forged && opts.forged.includes(p.turnId)),
 		// THE COLLECTOR'S DOOR, in the real one's shape: a forgery is dropped here, then
@@ -195,7 +202,9 @@ function makeTab(box, opts) {
 			if (outcome !== 'done') {
 				return { routed: true, verified: true, result: { ran: false, why: outcome } };
 			}
-			await opts.turn(p.turnId);
+			if (p.chatId) stat.busy.push(p.chatId);
+			try { await opts.turn(p.turnId); }
+			finally { if (p.chatId) stat.busy.splice(stat.busy.indexOf(p.chatId), 1); }
 			const s = await win.DaimondPost.settle(p.turnId);
 			stat.settled.push(p.turnId + ':' + !!(s && s.settled));
 			const a = await win.DaimondPost.ack();
@@ -396,6 +405,42 @@ async function main() {
 		await ticks(40);
 		check('the forgery is not run', tab.stat.runs.length === 0, JSON.stringify(tab.stat.runs));
 		check('and does not pin the cursor', !box.has(1), 'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)));
+	}
+
+	// ── (6) a second errand for a chat already running here starts at once (BUSY-SELF F1) ──
+	// Behind the running turn on the work chain it reached no `runErrand`, so took no lease,
+	// and the sender's backstop ran it on the sender. Started at once, it takes the lease
+	// and waits in daimond.js's `queueBehind`, which orders the turns of one chat.
+	console.log('\na second errand for the chat running here starts at once, off the work chain');
+	if (!inline) {
+		const box = makeBox([{ seq: 1, kind: 'post', addr: 'e1', envelope: 'ERRAND:T0@X' }]);
+		const locks = makeLocks();
+		const gates = { T0: makeGate(), T1: makeGate(), T2: makeGate() };
+		const tab = makeTab(box, { locks, turn: (t) => gates[t].wait() });
+		await ticks();
+		const P = tab.P();
+		await within(P.round());
+		await ticks();
+		check('T0 runs', JSON.stringify(tab.stat.runs) === '["T0"]', JSON.stringify(tab.stat.runs));
+		box.rows.push({ seq: 2, kind: 'post', addr: 'e2', envelope: 'ERRAND:T1@X' });
+		await within(P.round());
+		await ticks();
+		check('T1 (same chat) reaches the runner while T0 runs', tab.stat.runs.includes('T1'), JSON.stringify(tab.stat.runs));
+		box.rows.push({ seq: 3, kind: 'post', addr: 'e3', envelope: 'ERRAND:T2' });
+		await within(P.round());
+		await ticks();
+		check('a chatless errand still waits on the chain', !tab.stat.runs.includes('T2'), JSON.stringify(tab.stat.runs));
+		gates.T1.open();
+		gates.T0.open();
+		await ticks(80);
+		check('T2 runs once the chain is free', tab.stat.runs.includes('T2'), JSON.stringify(tab.stat.runs));
+		gates.T2.open();
+		await ticks(80);
+		check('each ran once and every row left the relay',
+			tab.stat.runs.length === 3 && !box.has(1) && !box.has(2) && !box.has(3),
+			'runs ' + JSON.stringify(tab.stat.runs) + ', rows ' + JSON.stringify(box.rows.map((x) => x.seq)));
+	} else {
+		console.log('  ..   (skipped under --break inline)');
 	}
 
 	console.log('\n' + checks + ' checks, ' + failures + ' failed');

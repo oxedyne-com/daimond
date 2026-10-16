@@ -2909,7 +2909,7 @@
 	}
 
 	async function beatPresence(deviceId, name, attended, servicing, runner, mobile,
-		hand, folder, busy) {
+		hand, folder, busy, busyChats) {
 		if (!canBeat()) return null;
 		try {
 			// `attended` is the attention signal (foreground + recent interaction) a
@@ -2954,6 +2954,10 @@
 			// The turns this machine is running or holding, 0 when idle (H1). Sent EXPLICITLY,
 			// 0 included, because an idle machine must be able to unsay a busy one.
 			if (typeof busy === 'number') body.busy = Math.max(0, busy | 0);
+			// The chats that load is in, ids only, [] included; the gateway bounds the list.
+			if (typeof busy === 'number' && Array.isArray(busyChats)) {
+				body.busy_chats = busyChats.filter(function (c) { return typeof c === 'string' && c; });
+			}
 			// The running build id, so the gateway (once it relays this field) can show the
 			// fleet's build spread in its log and every device can de-prefer a peer on a
 			// superseded build at hand-off. A gateway that does not carry the field ignores

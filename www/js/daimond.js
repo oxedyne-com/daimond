@@ -20597,6 +20597,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// can name the turn a live consent belongs to, seal the ask home, and (on a park)
 	// abort exactly that turn. Cleared on every exit.
 	var _runnerCtx    = Object.create(null);	// turnId -> { turnId, eid, chatId, dispatchedBy, parkCount, abort }
+	var _runnerSeq    = 0;			// the order runner turns arrived in
 	// The peer-held turns a Stop has been pressed on, until the revoke has answered
 	// (`peerStopTurn`), and the placeholder states that mean another device holds a turn.
 	var _peerStopping = Object.create(null);
@@ -20630,31 +20631,137 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// once). Like `askingTurn`, it FAILS TOWARDS SAFETY: not knowing which turn is
 	/// asking costs a refused act, never a wrong turn parked or a stranger's consent
 	/// spent. A runner runs its dispatched turns one at a time in the common case.
+	/// A turn queued behind this device's own work in its chat is not running yet, so
+	/// it is not the one asking.
 	function activeRunnerTurn() {
-		var ids = Object.keys(_runnerCtx);
+		var ids = Object.keys(_runnerCtx).filter(function (k) { return !_runnerCtx[k].queued; });
 		return ids.length === 1 ? _runnerCtx[ids[0]] : null;
 	}
 
-	/// How many turns this device is running or holding for chats OTHER than `chatId`
-	/// ('' counts them all): what the beat's `busy` says, and what a collected errand is
-	/// answered on (H1, C1). The chat named is not busy for itself: a second turn there
-	/// queues behind the first (O3). A Diamond's fold and the worker pool count as one.
-	function busyForChat(chatId) {
-		var id = String(chatId || ''), n = 0;
-		var seen = Object.create(null);
+	/// The work this device is running or holding, as `{ busy, busyChats }`: one unit per
+	/// chat, a Diamond's own turn, fold and workers belonging to its chat, plus each message
+	/// waiting in a queue that will drain (`liveQueue`). What the beat says (H1) and what
+	/// `busyForChat` reads.
+	///
+	/// ONE UNIT PER CHAT, NOT A FALLBACK (UNBLOCK-1 BUSY-SELF). This was a count over the
+	/// OTHER chats, then `anyCrystalBusy()` or a live worker as a last "1" -- and a Diamond
+	/// chat's own turn sets its Diamond running, so a runner answered "busy with another
+	/// chat" for the chat it was running and handed the turn back (busy3, diag_busy3.md).
+	function busyHere() {
+		var units = Object.create(null), on = Object.create(null), queued = 0;
+		var ofDiamond = Object.create(null);		// diamondId -> its chat's id
+		chats.forEach(function (c) { if (c && c.id && c.diamondId) ofDiamond[c.diamondId] = String(c.id); });
+		function add(chatId, diamondId, alone) {
+			var cid = String(chatId || '') || ofDiamond[String(diamondId || '')] || '';
+			var key = cid ? 'c:' + cid : diamondId ? 'd:' + diamondId : alone;
+			units[key] = 1;
+			if (cid) on[cid] = 1;
+		}
 		chats.forEach(function (c) {
-			var cid = String((c && c.id) || '');
-			if (!cid || cid === id) return;
-			if (c._generating) { seen[cid] = 1; n++; }
-			n += waitingOn(c) | 0;
+			if (!c || !c.id) return;
+			var w = liveQueue(c);
+			if (c._generating || w) add(c.id);
+			queued += w;
+		});
+		Object.keys(_runnerCtx).forEach(function (k) { add(_runnerCtx[k].chatId, '', 'r:' + k); });
+		Object.keys(crystalRunning).forEach(function (d) { if (crystalRunning[d]) add('', d); });
+		try {
+			(Workers.runs || []).forEach(function (r) {
+				if (r && (r.status === 'queued' || r.status === 'running')) add(r.chatId, r.diamondId, 'workers');
+			});
+		} catch (e) { /* no worker pool: no worker is busy */ }
+		return { busy: Object.keys(units).length + queued, busyChats: Object.keys(on) };
+	}
+
+	/// How busy this device is for a turn of `chatId` ('' asks for the whole count): what a
+	/// collected errand is answered on (H1, C1), by the rule every sender's switch applies
+	/// to this device's beat (`DaimondPeer.busyForRec`). A chat it is already running is not
+	/// busy for itself: a second turn there queues behind the first (O3).
+	function busyForChat(chatId) {
+		return DaimondPeer.busyForRec(busyHere(), chatId);
+	}
+
+	/// The turns of this device's own in the errand's chat that are under way: the chat's
+	/// journalled turn (a chat turn or a daimon steer) while it generates, and every other
+	/// runner turn of that chat. Their rows are ones the sender may not have seen.
+	function ownTurns(errand) {
+		var e = errand || {}, cid = String(e.chatId || ''), tid = String(e.turnId || ''), out = [];
+		if (!cid) return out;
+		chats.forEach(function (c) {
+			if (c && String(c.id) === cid && c._generating && c._jturn && c._jturn !== tid) out.push(String(c._jturn));
 		});
 		Object.keys(_runnerCtx).forEach(function (k) {
-			var cid = String(_runnerCtx[k].chatId || '');
-			if (cid && cid !== id && !seen[cid]) { seen[cid] = 1; n++; }
+			if (k !== tid && _runnerCtx[k].chatId === cid) out.push(k);
 		});
-		try { if (!n && (anyCrystalBusy() || (typeof Workers !== 'undefined' && Workers && Workers.active > 0))) n = 1; }
-		catch (e) { /* not busy on what cannot be read */ }
-		return n;
+		return out;
+	}
+
+	/// Does this device still hold work in the errand's chat that the errand must wait out
+	/// (UNBLOCK-1 BUSY-SELF)? Its turn, a queue that will drain (`liveQueue`), its Diamond (a daimon queues
+	/// behind its own Diamond and nobody else's), its workers, and runner turns of the chat
+	/// that began before this one: one lease each, run in the order they came.
+	function chatHasWork(errand) {
+		var e = errand || {}, cid = String(e.chatId || ''), tid = String(e.turnId || '');
+		if (!cid) return false;
+		var me = _runnerCtx[tid], seq = me ? me.seq : Infinity;
+		for (var i = 0; i < chats.length; i++) {
+			var c = chats[i];
+			if (!c || String(c.id) !== cid) continue;
+			if (c._generating || liveQueue(c) > 0) return true;
+			if (c.diamondId && crystalRunning[c.diamondId]) return true;
+			var did = String(c.diamondId || '');
+			var runs = (Workers && Workers.runs) || [];
+			for (var j = 0; j < runs.length; j++) {
+				var r = runs[j];
+				if (!r || (r.status !== 'queued' && r.status !== 'running')) continue;
+				if (String(r.chatId || '') === cid || (!r.chatId && did && String(r.diamondId || '') === did)) return true;
+			}
+			if (Workers && Workers.roundPending && Workers.roundPending[cid]) return true;
+			var bk = Object.keys((Workers && Workers.batches) || {});
+			for (var q = 0; q < bk.length; q++) if (String(Workers.batches[bk[q]].chatId || '') === cid) return true;
+		}
+		var ks = Object.keys(_runnerCtx);
+		for (var k = 0; k < ks.length; k++) {
+			var rc = _runnerCtx[ks[k]];
+			if (ks[k] !== tid && rc.chatId === cid && (rc.seq | 0) < seq) return true;
+		}
+		return false;
+	}
+
+	/// Will a chat's queue drain on its own? Only while its turn would be started here: a chat
+	/// on screen (a daimon's while its Diamond is), no open question holding the queue, and
+	/// the turn ahead of it not failed. Otherwise the queue is PARKED until the person comes
+	/// back to it (`drainQueue`, `drainSteerQueue`), and nothing is running.
+	function queueDrains(c) {
+		if (!c || c._queueFailed || askHolds()) return false;
+		return c.diamondId ? !!(currentDiamond && currentDiamond.id === c.diamondId) : current === c;
+	}
+
+	/// How many messages wait in a chat's queue as live work: all of them while it drains,
+	/// none while it is parked (BUSY-SELF F2). A parked queue counted as work offered this
+	/// device for the chat and held a runner turn's lease to its deadline, then "Interrupted".
+	function liveQueue(c) {
+		var w = waitingOn(c) | 0;
+		return w > 0 && queueDrains(c) ? w : 0;
+	}
+
+	/// Wait, holding the errand's lease, until this device's own work in its chat has
+	/// ended: idle on two looks running, so a queued message that starts the moment a turn
+	/// ends is waited out too. `gone()` true (the lease taken back, the deadline past) ends
+	/// it at once. Answers the own turns seen meanwhile, for the thread check.
+	async function queueBehind(errand, gone) {
+		var tid = String((errand && errand.turnId) || '');
+		var rc = _runnerCtx[tid], seen = ownTurns(errand), idle = 0;
+		if (rc) rc.queued = true;
+		try {
+			while (idle < 2) {
+				if (typeof gone === 'function' && gone()) break;
+				await new Promise(function (res) { setTimeout(res, 250); });
+				ownTurns(errand).forEach(function (k) { if (seen.indexOf(k) < 0) seen.push(k); });
+				idle = chatHasWork(errand) ? 0 : idle + 1;
+			}
+		} finally { if (rc) rc.queued = false; }
+		return { own: seen };
 	}
 
 	/// Register / retire a runner's active turn around its run.
@@ -20662,6 +20769,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var tid = String((errand && errand.turnId) || '');
 		if (!tid) return;
 		_runnerCtx[tid] = {
+			seq: ++_runnerSeq, queued: false,	// arrival order; waiting behind own work (`queueBehind`)
 			turnId: tid, eid: String(errand.eid || ''), chatId: String(errand.chatId || ''),
 			dispatchedBy: String(errand.dispatchedBy || ''), parkCount: errand.parkCount | 0,
 			asks: Array.isArray(errand.asks) ? errand.asks.slice() : [],	// permits the sender can answer
@@ -20678,6 +20786,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function runnerTagged(turnId, tag) {
 		var rc = _runnerCtx[String(turnId || '')];
 		if (rc && tag) rc.tag = String(tag);
+	}
+
+	/// Tag a turn of chat `chatId` for the runner: by its `turnId` when it has one, else, for
+	/// a gather round (`depth` > 0), by the errand this device runs for the chat. A gather
+	/// round re-tags the chat inside the errand, and a run whose tag went stale skipped the
+	/// round when its kill landed (check_l L-R1). A depth-0 turn is never the errand's.
+	function runnerRoundTagged(chatId, turnId, tag, depth) {
+		if (turnId) return runnerTagged(turnId, tag);
+		if ((depth | 0) <= 0) return;
+		var rc = runnerTurnOf(chatId);
+		if (rc) runnerTagged(rc.turnId, tag);
 	}
 
 	// A turn may ask for this many panels before the oldest are dropped from its frames.
@@ -26882,7 +27001,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { return (window.DaimondSync && DaimondSync.version) ? (DaimondSync.version() | 0) : undefined; }
 		catch (e) { return undefined; }
 	}
-	async function peerReady(errand) {
+	async function peerReady(errand, own) {
 		var e = errand || {};
 		if (!e.thread || typeof e.thread.n !== 'number') return { ok: true };	// an older sender: judged after the claim
 		function find() {
@@ -26892,7 +27011,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		async function judge() {
 			var c = find();
 			if (c && c._loaded === false) { try { await loadChatMessages(c); } catch (err) { /* behind, below */ } }
-			return DaimondPeer.threadReadiness(c, e, syncHeld());
+			return DaimondPeer.threadReadiness(c, e, syncHeld(), own);
 		}
 		var by = Date.now() + PRECLAIM_PULL_MS;
 		var v = await judge();
@@ -26910,7 +27029,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { ok: false, why: why };
 	}
 
-	async function peerReconstruct(errand) {
+	async function peerReconstruct(errand, own) {
 		var want    = (errand && errand.parcelVersion) | 0;
 		var startAt = Date.now();
 		var absBy   = startAt + RECONSTRUCT_ABS_CAP_MS;
@@ -26963,8 +27082,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// these pulls are the net for a device whose channel is down, from the wake
 		// floor up to a few seconds apart, and back to the floor on any movement.
 		var pullGap = RECONSTRUCT_PULL_MIN_MS, pullAt = 0;
-		function threadReady(c) { return !!(c && c._loaded && DaimondPeer.holdsThread(c, errand)); }
-		function chatHeldN(c) { return (c && c._loaded) ? DaimondPeer.threadReadiness(c, errand, syncHeld()).have : -1; }
+		function threadReady(c) { return !!(c && c._loaded && DaimondPeer.holdsThread(c, errand, own)); }
+		function chatHeldN(c) { return (c && c._loaded) ? DaimondPeer.threadReadiness(c, errand, syncHeld(), own).have : -1; }
 		while (true) {
 			chat = findErrandChat();
 			// READY means the chat is resident AND HOLDS THIS THREAD -- the same model-facing
@@ -26978,14 +27097,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A MISMATCH THAT CAN NEVER CONVERGE IS NOT A THREAD STILL ARRIVING (D2). A
 			// resident copy holding as many model-facing rows as the errand names, and not
 			// the same ones, will never match: hand it back now, with its reason, below.
-			if (chat && chat._loaded && DaimondPeer.threadReadiness(chat, errand, syncHeld()).state === 'final') break;
+			if (chat && chat._loaded && DaimondPeer.threadReadiness(chat, errand, syncHeld(), own).state === 'final') break;
 			// Present but a NON-RESIDENT summary (empty transcript beside a real msgCount,
 			// seq 213): make it resident before building the agent, or ensureApp would seed
 			// the runner from an empty transcript.
 			if (chat && !chat._loaded) {
 				try { await loadChatMessages(chat); } catch (e) { /* retry within the window */ }
 				if (threadReady(chat)) break;
-				if (chat._loaded && DaimondPeer.threadReadiness(chat, errand, syncHeld()).state === 'final') break;
+				if (chat._loaded && DaimondPeer.threadReadiness(chat, errand, syncHeld(), own).state === 'final') break;
 			}
 			var now = Date.now();
 			var heldN = chatHeldN(chat);
@@ -27047,10 +27166,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the thread. Nothing ran here, so there is no charge. (An older dispatcher's errand
 		// carries no `thread`, so `holdsThread` falls back to `holdsTurn` and this preserves
 		// the pre-fix reach for a mixed fleet.)
-		if (!DaimondPeer.holdsThread(chat, errand)) {
-			var mineSig = DaimondPeer.threadSig(chat, errand.turnId);
+		if (!DaimondPeer.holdsThread(chat, errand, own)) {
+			var mineSig = DaimondPeer.threadSig(chat, errand.turnId, null, own, own);
 			var wantN   = (errand.thread && (errand.thread.n | 0)) || 0;
-			var differs = DaimondPeer.threadReadiness(chat, errand, syncHeld()).state === 'final';
+			var differs = DaimondPeer.threadReadiness(chat, errand, syncHeld(), own).state === 'final';
 			diag('reconstruct UNDELIVERABLE', 'chat=' + chat.id + ' thread ' + (differs ? 'MISMATCH' : 'incomplete')
 				+ ': have ' + mineSig.n + ' of ' + wantN + ' model-facing messages after '
 				+ Math.round((Date.now() - startAt) / 1000) + 's');
@@ -27404,8 +27523,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					diamondId: String((er && er.diamondId) || (held && held.diamondId) || '') });
 				return node ? { node: node, why: DaimondModels.pauseError(node).message } : null;
 			},
-			ready:       function (er) { return peerReady(er); },
-			reconstruct: async function (er) { ctx = await peerReconstruct(er); return ctx; },
+			ownTurns:    function (er) { return ownTurns(er); },
+			queueBehind: function (er, gone) { return queueBehind(er, gone); },
+			ready:       function (er, own) { return peerReady(er, own); },
+			reconstruct: async function (er, own) { ctx = await peerReconstruct(er, own); return ctx; },
 			// A run of this turn a reload here cut short (r545 F-C2-1): the journal still
 			// holds it open (`recoverInterrupted` leaves a handed-off turn to this). Folded
 			// into the reconstructed chat as interrupted, its rows named for that run, and
@@ -27748,6 +27869,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { /* an older peer.js holds on the deadline alone */ }
 		try { if (DaimondPeer.onBusyProbe) DaimondPeer.onBusyProbe(busyForChat); }
 		catch (e) { /* an older peer.js: a busy runner reaches the errand when it is free */ }
+		try { if (DaimondPeer.onChatWorkProbe) DaimondPeer.onChatWorkProbe(chatHasWork); }
+		catch (e) { /* an older peer.js: a second turn of a chat waits on the work chain */ }
 		// The lease `holder` this peer writes: the PER-DEVICE id, so its claim is
 		// distinguishable from a paired twin's (a key-derived id would collide and let
 		// both run the turn). Read at each errand, not captured here, so a device that
@@ -27801,7 +27924,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A BUSY ANSWER IS NOT A RUN (H1): it is decided before anything starts, and it
 			// must not register as this device's active turn beside the one it is running.
 			var busyNow = !!(DaimondPeer.decideNow && DaimondPeer.decideNow(errand));
-			if (!busyNow) runnerCtxBegin(errand);
+			// BEAT AS THE TURN BEGINS AND ENDS (BUSY-SELF F1). The beat names the chats this
+			// device is busy with, and a sender that has not synced this turn reads its lease
+			// as another chat's (`presenceWithLeaseBusy`), so until the beat names the chat it
+			// passed this device over for the chat's next turn and ran it itself.
+			if (!busyNow) {
+				runnerCtxBegin(errand);
+				try { presenceTick(); } catch (e) { /* best-effort: the next beat names it */ }
+			}
 			var res;
 			try { res = await DaimondPeer.runErrand(errand, peerRunErrandDeps({ row: row })); }
 			finally { if (!busyNow) runnerCtxEnd(errand && errand.turnId); }
@@ -27809,8 +27939,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// errand emits no presence beat, so a backgrounded nominee's throttled ~45s beat
 			// can drift past the 90s window between consecutive turns, and the next turn's
 			// stand-down then reads it offline and a fallback grabs the turn. Beat the instant
-			// a turn ends, so back-to-back turns in a chat stay with this device.
-			if (res && res.ran) { try { presenceTick(); } catch (e) { /* best-effort liveness */ } }
+			// a turn ends, so back-to-back turns in a chat stay with this device -- and the
+			// chat leaves the beat's busy list with it.
+			if (!busyNow) { try { presenceTick(); } catch (e) { /* best-effort liveness */ } }
 			// STOOD DOWN for the nominated runner (or UNDECIDED: the take could not read the
 			// lease door, or won no try at it): the errand is HELD on the relay
 			// (takeRow), not acked, so it survives for the nominee. But the 45s presence
@@ -30827,10 +30958,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var hnd  = selfHoldsHand();
 			// HOW BUSY THIS MACHINE IS: the turns it is running or holding (H1). The election
 			// on every other device passes a busy machine over for an idle one.
-			var bsy = 0;
-			try { bsy = busyForChat(''); } catch (e) { bsy = 0; }
+			// The chats that load is in ride with it, so a sender offers this machine for a
+			// chat it is already running (the turn queues) and passes it over for others.
+			var bsy = 0, bchats = [];
+			try { var bh = busyHere(); bsy = DaimondPeer.busyForRec(bh, ''); bchats = bh.busyChats; } catch (e) { bsy = 0; bchats = []; }
 			_beatBusy = bsy > 0;
-			DaimondPresence.beat(id, name, Date.now(), att, svc, null, run, mob, hnd, fold, bsy);
+			DaimondPresence.beat(id, name, Date.now(), att, svc, null, run, mob, hnd, fold, bsy, bchats);
 			// A beat the door could not take yet is OWED, not made. After a reload the first
 			// beat comes at unlock, before the gateway has signed this device in, so it sent
 			// nothing -- and the next was a whole interval away. For those 45 s every other
@@ -30842,7 +30975,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (window.DaimondSync && DaimondSync.beatPresence
 					&& (!DaimondSync.canBeat || DaimondSync.canBeat())) {
 					sent = true;
-					DaimondSync.beatPresence(id, name, att, svc, run, mob, hnd, fold, bsy);
+					DaimondSync.beatPresence(id, name, att, svc, run, mob, hnd, fold, bsy, bchats);
 				}
 			} catch (e) { /* the next beat carries it */ }
 			_beatOwed = !sent;
@@ -36727,7 +36860,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var st = window.DaimondHandMode ? DaimondHandMode.standingNet() : '';
 			if (st && chat.app.set_net_answer) chat.app.set_net_answer(st);
 		} catch (e) { /* an older engine has no setter; it simply asks */ }
-		armEngine(chat, exceptMid);
+		// A LOUD ARM LEAVES NOTHING HALF-BUILT (check_l L-R2). Kept, `chat.app` with no `_held`
+		// sent the next send to `reconcileEngine`, which returns on no record, onto an empty
+		// engine. Dropped, every send rebuilds and stays loud until the fault is gone.
+		try { armEngine(chat, exceptMid); }
+		catch (e) { chat.app = null; chat._held = null; throw e; }
 		return chat.app;
 	}
 
@@ -39472,7 +39609,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// or a pause names to stop THIS turn (`abortTurn`), and a daimon conversation's app is
 		// shared with every Diamond on its model. `null` is this client's own conversation.
 		chat._turnTag = String(umid);
-		if (opts.turnId) runnerTagged(opts.turnId, chat._turnTag);
+		runnerRoundTagged(chat.id, opts.turnId, chat._turnTag, Workers.gatherDepth[chat.id] | 0);
 		try { if (app.set_turn_tag) app.set_turn_tag(null, chat._turnTag); } catch (e) { /* older engine */ }
 		if (inTurnWorkers) {
 			try {
@@ -62663,7 +62800,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// steer since load, named none and stopped every other Diamond on the model.
 		steerTurn = 'dt' + newMid();
 		rec._turnTag = steerTurn;
-		if (detached) runnerTagged(detached.turnId, steerTurn);
+		runnerRoundTagged(rec.id, detached && detached.turnId, steerTurn, depth);
 		// The Stop button aborts `current.app`, and a daimon's turn does not run on its
 		// own app -- it runs on the Diamond's, which is shared by every Diamond on the
 		// same model. Pointing the record at it is what makes Stop reach this turn;

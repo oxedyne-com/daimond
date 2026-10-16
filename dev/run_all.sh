@@ -428,6 +428,9 @@ budget_floor() {
 		verify_handoff_noresurrect|verify_syncfixedpoint) echo 600 ;;
 		# Two devices paired, two turns, then a sync leg and the panels: 150 s red on world 99 (9 Oct).
 		verify_handoff_intent)            echo 300 ;;
+		# Phone and runner in real browsers, with waits on beats and backstops: both ran out of
+		# the 180 s default on world 64 (16 Oct); lanes had been running them by hand at 1500.
+		verify_handoff_first|verify_handoff_fault) echo 1200 ;;
 		# 5.3.2 (rating U5-U7), measured by lane V on world 88 (2026-10-05): verify_steering 214 s green and 339 s on 5.3.1 where
 		# every section fails slowly; verify_ratings_digest 222 s (411 s under a break); verify_optimiser is its old 29 checks
 		# and then OP1 to OP5, whose second device is a paired account.

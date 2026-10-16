@@ -379,5 +379,26 @@ console.log('\n— E: decideNow takes a busy errand out of the work chain —');
 	if (has) check('E5 a non-errand envelope is never decided now', P.decideNow({ t: 'report', chatId: 'c3' }) === false);
 }
 
+console.log('\n— E6: startsNow also starts an errand whose chat has work here (BUSY-SELF F1) —');
+{
+	const has = typeof P.startsNow === 'function' && typeof P.onChatWorkProbe === 'function';
+	check('E6 peer.js exposes startsNow and onChatWorkProbe', has);
+	if (has) {
+		const x = (t) => sentErrand(P, { turnId: t, chatId: 'cx', eid: 'e-' + t, dispatchedBy: SELF });
+		P.onBusyProbe(() => 0);
+		check('E6 no chat-work probe and idle: on the chain', P.startsNow(x('t-a')) === false);
+		let work = true;
+		P.onChatWorkProbe((er) => work && er.chatId === 'cx');
+		check('E6 the chat has work here: starts now', P.startsNow(x('t-b')) === true);
+		check('E6 but it is not a busy answer', P.decideNow(x('t-b')) === false);
+		work = false;
+		check('E6 no work in the chat: on the chain', P.startsNow(x('t-c')) === false);
+		P.onBusyProbe(() => 1);
+		check('E6 busy for another chat: starts now (the busy answer)', P.startsNow(x('t-d')) === true);
+		check('E6 a non-errand envelope never starts now', P.startsNow({ t: 'report', chatId: 'cx' }) === false);
+		P.onBusyProbe(() => 0);
+	}
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall busy-election checks passed');
 if (failures) process.exit(1);

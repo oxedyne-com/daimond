@@ -2386,6 +2386,12 @@ impl LlmClient {
                         img.media.mime(), img.base64()));
                 }
             }
+            // An assistant turn that said nothing and asked for nothing -- a round stopped before
+            // its first byte, in a session saved before that stopped being stored -- is not
+            // carried: a strict provider (Anthropic behind a router) refuses an empty one.
+            if let ChatMessage::Assistant { content, tool_calls } = msg {
+                if tool_calls.is_empty() && content.as_text().trim().is_empty() { continue; }
+            }
             if !first { out.push(','); }
             first = false;
             if marks.contains(&i) {
@@ -2565,10 +2571,6 @@ impl LlmClient {
                     }
                 }
                 ChatMessage::Assistant { content, tool_calls } => {
-                    if !pending.is_empty() {
-                        msgs.push(fmt!("{{\"role\":\"user\",\"content\":[{}]}}", pending.join(",")));
-                        pending.clear();
-                    }
                     let mut blocks: Vec<String> = Vec::new();
                     // The reasoning that led to these tool calls, first and
                     // verbatim.  Absent for a turn that asked for nothing.
@@ -2577,7 +2579,8 @@ impl LlmClient {
                     }
                     // Assistant turns are the model's own words; an image cannot appear in one.
                     let said = content.as_text();
-                    if !said.is_empty() {
+                    // Whitespace alone is refused as a text block as surely as nothing is.
+                    if !said.trim().is_empty() {
                         // The same fold strip the OpenAI side applies.  Applied at one site and
                         // not the other, the same conversation would cost different amounts
                         // through different endpoints, silently.
@@ -2597,8 +2600,14 @@ impl LlmClient {
                             json_escape(&tc.id), json_escape(&tc.name), args));
                     }
                     // An assistant turn with no content at all is not a message
-                    // the API will take, and it says nothing the model needs.
+                    // the API will take, and it says nothing the model needs.  Nor does it
+                    // end the user message being assembled: the words either side of it are
+                    // one user turn, not two in a row.
                     if !blocks.is_empty() {
+                        if !pending.is_empty() {
+                            msgs.push(fmt!("{{\"role\":\"user\",\"content\":[{}]}}", pending.join(",")));
+                            pending.clear();
+                        }
                         msgs.push(fmt!("{{\"role\":\"assistant\",\"content\":[{}]}}", blocks.join(",")));
                     }
                 }
@@ -7933,6 +7942,53 @@ pub mod tests {
         let marks = body.matches("\"cache_control\":{\"type\":\"ephemeral\"}").count();
         assert!(marks <= 4, "over Anthropic's own breakpoint ceiling: {} in {}", marks, body);
         assert_eq!(2, marks, "expected exactly a system and a tool-result breakpoint: {}", body);
+    }
+
+    /// A session saved with an empty assistant message -- a round stopped before its first byte,
+    /// stored that way until 2026-10-16 -- replays without it.  On the OpenAI dialect it went out
+    /// as `"content":""`, which Anthropic behind a router refuses, so the next send in that chat
+    /// failed.
+    #[test]
+    fn test_an_empty_assistant_message_is_not_sent_openai_00() {
+        let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
+        let messages = vec![
+            ChatMessage::user("first".to_string()),
+            ChatMessage::assistant(String::new()),
+            ChatMessage::user("second".to_string()),
+            ChatMessage::assistant("  \n".to_string()),
+            ChatMessage::user("third".to_string()),
+        ];
+        let body = client.build_body(&messages, None, true);
+        assert!(!body.contains("\"role\":\"assistant\""), "an empty assistant went out: {}", body);
+        assert_eq!(3, body.matches("\"role\":\"user\"").count(), "{}", body);
+        // A real reply, and a call with no words, still travel.
+        let messages = vec![
+            ChatMessage::user("first".to_string()),
+            ChatMessage::assistant("partial".to_string()),
+            ChatMessage::assistant_calling(String::new(),
+                vec![ToolCall { id: "c1".to_string(), name: "file_read".to_string(),
+                    arguments: "{}".to_string() }]),
+            ChatMessage::tool("c1".to_string(), "x".to_string()),
+        ];
+        let body = client.build_body(&messages, None, true);
+        assert_eq!(2, body.matches("\"role\":\"assistant\"").count(), "{}", body);
+    }
+
+    /// The Anthropic dialect already dropped the empty turn; it now also keeps the user's words
+    /// either side of it as ONE user turn, and drops a whitespace-only one, which the API refuses
+    /// as a text block as surely as an empty one.
+    #[test]
+    fn test_an_empty_assistant_message_is_not_sent_anthropic_00() {
+        let client = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
+        let messages = vec![
+            ChatMessage::user("first".to_string()),
+            ChatMessage::assistant(" \n".to_string()),
+            ChatMessage::user("second".to_string()),
+        ];
+        let body = client.build_anthropic_body(&messages, None, true);
+        assert!(!body.contains("\"role\":\"assistant\""), "an empty assistant went out: {}", body);
+        assert_eq!(1, body.matches("\"role\":\"user\"").count(), "two user turns in a row: {}", body);
+        assert!(body.contains("first") && body.contains("second"), "{}", body);
     }
 
     /// A run of SEVERAL tool results in one round still marks only the last of them -- the block

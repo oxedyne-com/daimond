@@ -79,6 +79,7 @@
 		{"name": "pty_stub", "base": 28100, "stride": 1, "owner": "verify_pty", "files": [ "dev/verify_pty.mjs" ]},
 		{"name": "startgateway", "base": 28200, "stride": 1, "owner": "breakproof_startgateway", "files": [ "dev/breakproof_startgateway.sh" ], "why": "the stranger gateway this proof starts"},
 		{"name": "rating_note_mock", "base": 28300, "stride": 1, "owner": "verify_rating_note", "files": [ "dev/verify_rating_note.mjs" ], "why": "section M's own mock"},
-		{"name": "handmeterless", "base": 28400, "stride": 1, "owner": "verify_handmeterless", "files": [ "dev/run_all.sh" ], "why": "its own throwaway dev server; never the ambient DAIMOND_PORT"}
+		{"name": "handmeterless", "base": 28400, "stride": 1, "owner": "verify_handmeterless", "files": [ "dev/run_all.sh" ], "why": "its own throwaway dev server; never the ambient DAIMOND_PORT"},
+		{"name": "rig_shaper", "base": 28500, "stride": 3, "span": 3, "owner": "daimond-rig", "files": [ "dev/rig/net/shaper.mjs" ], "why": "one shaping proxy per rig device: argonaut, gilgamesh, iphone"}
 	]
 }

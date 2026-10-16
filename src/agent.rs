@@ -1365,7 +1365,12 @@ impl Agent {
                     // finished turn from a hung one. Whatever the cause, saying so is
                     // strictly better than saying nothing.
                     let silent = content.trim().is_empty();
-                    session.messages.push(ChatMessage::assistant(content));
+                    // A STOP BEFORE THE FIRST BYTE leaves nothing said, and an empty assistant
+                    // message is not one a strict provider takes on replay: the next send in the
+                    // chat would be refused.  A partial answer is still kept.
+                    if !(silent && resp.aborted) {
+                        session.messages.push(ChatMessage::assistant(content));
+                    }
                     if silent && !resp.aborted {
                         on_event(AgentEvent::Error(
                             "The model ended its turn without saying anything.".to_string()));
@@ -1955,10 +1960,14 @@ impl Agent {
             // ENDED is the same ending: a halt set as the round's last bytes arrived, or by the
             // round's own trace event, leaves tool calls this turn must not run.
             if resp.aborted || self.llm.halted() {
-                session.messages.push(ChatMessage::Assistant {
-                    content: MessageContent::text(crate::llm::seamed(resp.content)),
-                    tool_calls: Vec::new(),
-                });
+                // Nothing at all arrived before the Stop: no message, because an empty
+                // assistant turn is one a strict provider refuses when the chat is replayed.
+                if !resp.content.trim().is_empty() {
+                    session.messages.push(ChatMessage::Assistant {
+                        content: MessageContent::text(crate::llm::seamed(resp.content)),
+                        tool_calls: Vec::new(),
+                    });
+                }
                 let ending = self.audit(TurnEnd::Stopped, rounds, &claims, Some(registry)).await;
                 self.ended(ending, on_event);
                 on_event(AgentEvent::Done);
@@ -4367,6 +4376,63 @@ mod tests {
         let _ = a.run_turn(&mut session, fmt!("go"), &registry, &mut |_| {}).await;
         assert_eq!(Some(TurnEnd::Stopped), a.ending().map(|e| e.how));
         assert_eq!(0, crate::llm::tests::connections(&seen));
+    }
+
+    /// Run one turn against `reply`, firing the turn's halt `after_ms` into it.
+    async fn stopped_turn(registry: &crate::tools::ToolRegistry, reply: crate::llm::tests::Reply,
+        after_ms: u64) -> (Agent, Session)
+    {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![reply]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_stream_idle_ms(1_000);
+        let halt = a.llm.halt();
+        let mut session = Session::new(fmt!("s1"), fmt!("stop"), fmt!("model"));
+        let mut quiet = |_: AgentEvent| {};
+        let (ran, ()) = tokio::join!(
+            a.run_turn(&mut session, fmt!("go"), registry, &mut quiet),
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(after_ms)).await;
+                halt.fire();
+            });
+        assert!(ran.is_ok(), "a stopped turn is a clean stop: {:?}", ran.err());
+        assert_eq!(Some(TurnEnd::Stopped), a.ending().map(|e| e.how));
+        (a, session)
+    }
+
+    /// The assistant messages a session holds, as (text, calls).
+    fn said(session: &Session) -> Vec<(String, usize)> {
+        session.messages.iter().filter_map(|m| match m {
+            ChatMessage::Assistant { tool_calls, .. } => Some((m.text().to_string(), tool_calls.len())),
+            _ => None,
+        }).collect()
+    }
+
+    /// A Stop that lands before the round's first byte leaves NO assistant message, on either
+    /// path: an empty one is replayed on the next send, and a strict provider refuses it (U1 D2:
+    /// `export_session()` gave `["assistant",""]` after a stop 400 ms into `@slow 2000`).
+    #[tokio::test]
+    async fn test_a_stop_before_the_first_byte_stores_no_empty_reply_00() {
+        for registry in [no_tools(), one_tool()] {
+            let quiet = crate::llm::tests::Reply::Stall { chunks: Vec::new(), idle_ms: 4_000 };
+            let (_a, session) = stopped_turn(&registry, quiet, 300).await;
+            assert_eq!(Vec::<(String, usize)>::new(), said(&session),
+                "a stop before any reply stored one (tools: {})", !registry.is_empty());
+        }
+    }
+
+    /// A Stop that lands mid-answer still keeps what had arrived, on either path.
+    #[tokio::test]
+    async fn test_a_stop_mid_answer_keeps_the_partial_reply_00() {
+        for registry in [no_tools(), one_tool()] {
+            let chunks = vec![
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Half an ans\"}}]}\n\n".to_string()];
+            let slow = crate::llm::tests::Reply::Stall { chunks, idle_ms: 4_000 };
+            let (_a, session) = stopped_turn(&registry, slow, 500).await;
+            assert_eq!(vec![(fmt!("Half an ans"), 0)], said(&session),
+                "the partial reply was lost (tools: {})", !registry.is_empty());
+        }
     }
 
     #[tokio::test]

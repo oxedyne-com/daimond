@@ -214,6 +214,30 @@ console.log('\nreconcileEngine, one case at a time');
 	check('fresh arm: a throw before the restore stays loud', !!thrown && /dedupe broke/.test(String(thrown && thrown.message)), String(thrown));
 }
 
+{
+	// check_l L-R2: the real `ensureApp`. A loud arm failure leaves no half-built engine behind, so the next send
+	// rebuilds and is loud again, rather than finding `chat.app`, reconciling against no record and running on an
+	// empty engine.
+	const nop = () => {};
+	const pageStub = Object.assign({}, stub, {
+		dedupeSession: () => { throw new Error('dedupe broke'); },
+		appCfgFor: () => ({ baseUrl: '', apiKey: '', model: 'm', provider: 'p' }), creditsGen: () => 0,
+		Notes: null, Instructions: { compose: (a) => a }, SYSTEM_PROMPT: () => '', DaimondApp: Engine,
+		maxOutFor: () => 0, cfg: { tools: false }, noteAppProv: nop, promptPrint: () => '', DaimondModels: { noteUse: nop },
+		applyRoundLimit: nop, applyFoldSettings: nop, applyProviderRouting: nop, applySight: nop, applyEffort: nop, applyCrystalCap: nop,
+	});
+	const page = sliceDaimond(makeWindow({}), ['ensureApp'].concat(NAMES), pageStub).fns;
+	const e = newChat();
+	e.messages = [U('u1', 1, 'q1'), A('a1', 2, 'r1')];
+	e.session = { msgs: [{ role: 'user', content: 'q1' }, { role: 'assistant', content: 'r1' }], upto: 'a1' };
+	for (const n of [1, 2]) {
+		let thrown = null;
+		try { page.ensureApp(e); } catch (x) { thrown = x; }
+		check('ensureApp arm ' + n + ': a loud arm failure throws', !!thrown && /dedupe broke/.test(String(thrown && thrown.message)), String(thrown));
+		check('ensureApp arm ' + n + ': and leaves no engine or record behind', e.app === null && !e._held, 'app=' + !!e.app + ' held=' + !!e._held);
+	}
+}
+
 // ── The property ─────────────────────────────────────────────────────────
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const cov = { scenarios: 0, starts: 0, none: 0, append: 0, seed: 0, order: 0, holes: 0, reloads: 0, midTurnSync: 0, build: 0 };

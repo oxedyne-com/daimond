@@ -1,6 +1,6 @@
 // gateway: live
-// verify_handoff_fault.mjs — UNBLOCK-7 F2-F4 fault seed, in real browsers on the real
-// gateway: a phone (WebKit, iPhone UA, touch) hands a turn to its nominated runner
+// verify_handoff_fault.mjs — UNBLOCK-7 F2-F4 fault seed, in real browsers on the
+// real gateway: a phone (WebKit, iPhone UA, touch) hands a turn to its nominated runner
 // (Chromium desktop), and the runner's web tool fails mid-turn. A mock `@tool web_open`
 // reaches the runner's `DaimondWeb.open`, stubbed to
 //

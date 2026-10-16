@@ -1226,6 +1226,10 @@ const server = http.createServer((req, res) => {
 		const refused = images > 0 && isBlindModel(payload.model);
 		log({
 			at:        new Date().toISOString(),
+			// WHICH RIG DEVICE ASKED, stamped by its shaper (dev/rig/net/shaper.mjs).
+			// Absent outside the rig. The provider address syncs between devices, so
+			// the shaper names the device from the page's Origin, not from the URL.
+			...(req.headers['x-rig-device'] ? { rigDevice: req.headers['x-rig-device'] } : {}),
 			model:     payload.model,
 			stream:    !!payload.stream,
 			tools:     (payload.tools || []).map(t => t.function?.name).filter(Boolean),

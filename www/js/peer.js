@@ -865,6 +865,25 @@
 	function decideNow(env) {
 		return !!(env && env.t === T_ERRAND && busyFor(env.chatId) > 0);
 	}
+
+	/// Does this device already hold work in the errand's chat -- its turn, queue, Diamond,
+	/// workers or another runner turn of it? Registered by the app (`chatHasWork`); absent,
+	/// a chat never has work.
+	var _chatWorkProbe = null;
+	function onChatWorkProbe(fn) { _chatWorkProbe = fn; }
+
+	/// Must this collected envelope start NOW rather than behind the work chain (post.js
+	/// `startWork`)? A busy answer does (`decideNow`), and so does a turn for a chat that
+	/// already has work here (BUSY-SELF F1): behind the chain it reached no `runErrand`, took
+	/// no lease, and the sender's backstop ran it on the sender. Started now, it takes the
+	/// lease and waits in the app's `queueBehind`, which orders the turns of one chat. Asked
+	/// before the turn registers, so its own run is not counted.
+	function startsNow(env) {
+		if (!env || env.t !== T_ERRAND) return false;
+		if (decideNow(env)) return true;
+		if (!_chatWorkProbe || !env.chatId) return false;
+		try { return !!_chatWorkProbe(env); } catch (e) { return false; }
+	}
 	function onReport(fn) { _onReport = fn; }
 	function onAsk(fn)    { _onAsk = fn; }
 	function onGrant(fn)  { _onGrant = fn; }
@@ -1180,12 +1199,14 @@
 	/// are not history and are skipped, exactly as `seedFrom` skips them.
 	/// `gone` (optional) lists mids the sender has removed and the copy may still hold.
 	/// `behind` (optional) lists turns whose answer rows are left out, as the sender's
-	/// thread lacked them (`openTurn`).
-	function threadSig(chat, turnId, gone, behind) {
+	/// thread lacked them (`openTurn`). `asked` (optional) lists turns whose prompt rows
+	/// are left out too: a runner's own turns the sender had not yet seen asked.
+	function threadSig(chat, turnId, gone, behind, asked) {
 		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
 		var id   = String(turnId || '');
 		var out  = goneSet(gone);
 		var skip = goneSet(behind);
+		var ask  = goneSet(asked);
 		var parts = [], n = 0;
 		for (var i = 0; i < msgs.length; i++) {
 			var m = msgs[i];
@@ -1195,6 +1216,7 @@
 			if (m.interrupted || m.provisional) continue;
 			if (out[String(m.mid || '')]) continue;			// removed by the sender
 			if (m.role !== 'user' && skip[String(m.iturn || '')]) continue;	// a queued-behind answer
+			if (m.role === 'user' && (ask[String(m.mid || '')] || ask[String(m.iturn || '')])) continue;	// an unseen own prompt
 			parts.push(m.role + ':' + String(m.mid || ''));
 			n++;
 		}
@@ -1240,12 +1262,22 @@
 
 	/// Does this copy's thread match the errand's, as it stands or less the answers to the
 	/// turns the errand queued behind? The second reading is taken only where one is named.
-	function threadMatches(view, e) {
-		var want = e.thread, mine = threadSig(view, e.turnId, e.gone);
-		if (mine.n === (want.n | 0) && mine.sig === (want.sig >>> 0)) return true;
-		if (!Array.isArray(e.behind) || e.behind.length === 0) return false;
-		var less = threadSig(view, e.turnId, e.gone, e.behind);
-		return less.n === (want.n | 0) && less.sig === (want.sig >>> 0);
+	/// `own` (optional) lists the runner's own turns in the chat that were in flight when
+	/// the errand came (UNBLOCK-1 BUSY-SELF): the sender may have seen none of their rows,
+	/// their prompts only, or all of them, so each of those readings is tried as well.
+	function threadMatches(view, e, own) {
+		var want = e.thread, b = triedList(e.behind), o = triedList(own);
+		var reads = [[null, null]];
+		if (b.length) reads.push([b, null]);
+		if (o.length) {
+			var bo = b.concat(o);
+			reads.push([o, null], [bo, null], [o, o], [bo, o]);
+		}
+		for (var i = 0; i < reads.length; i++) {
+			var t = threadSig(view, e.turnId, e.gone, reads[i][0], reads[i][1]);
+			if (t.n === (want.n | 0) && t.sig === (want.sig >>> 0)) return true;
+		}
+		return false;
 	}
 
 	/// Does this chat hold EXACTLY the thread the errand was dispatched from -- the same
@@ -1254,12 +1286,12 @@
 	/// undeliverable rather than running the model against a stale or truncated conversation.
 	/// An errand without `thread` (an older dispatcher) falls back to `holdsTurn`, the
 	/// pre-fix readiness, so a mixed-build fleet still hands off in both directions.
-	function holdsThread(chat, errand) {
+	function holdsThread(chat, errand, own) {
 		var e = errand || {};
 		// A non-resident chat shows a summary, not its transcript: it holds no thread yet.
 		if (chat && chat._loaded === false) return false;
 		if (!e.thread || typeof e.thread.n !== 'number') return holdsTurn(chat, e.turnId);
-		return threadMatches(chat, e);
+		return threadMatches(chat, e, own);
 	}
 
 	/// Can this device rebuild the errand's thread, and if not, can it ever? `state` is
@@ -1276,18 +1308,21 @@
 	/// (`held < errand.parcelVersion`) may still lose rows to a deletion in flight (a Retry
 	/// tombstones the old answer and dispatches before that parcel lands), so it is only
 	/// `behind`, never `final`. Without `held` the rows alone judge, as before.
-	function threadReadiness(chat, errand, held) {
+	/// `own` names the runner's own in-flight turns in the chat (`threadMatches`); behind
+	/// and final are judged with every row of theirs left out, as the sender may lack them.
+	function threadReadiness(chat, errand, held, own) {
 		var e = errand || {};
 		var resident = !!chat && chat._loaded !== false;
 		var base = resident && Array.isArray(chat.messages) ? chat.messages : [];
 		var view = { messages: base.concat(seedGraft({ messages: base }, e)) };
-		var mine = threadSig(view, e.turnId, e.gone);
+		var o = triedList(own);
+		var mine = threadSig(view, e.turnId, e.gone, o, o);
 		if (!e.thread || typeof e.thread.n !== 'number') {
 			return { state: holdsTurn(view, e.turnId) ? 'match' : 'behind', have: mine.n, want: -1 };
 		}
 		var wantN = e.thread.n | 0;
 		var out = { have: mine.n, want: wantN };
-		if (threadMatches(view, e)) out.state = 'match';
+		if (threadMatches(view, e, o)) out.state = 'match';
 		else if (chat && !resident) out.state = 'behind';		// load it, then ask again
 		else if (mine.n < wantN) out.state = 'behind';
 		else out.state = typeof held === 'number' && held < (e.parcelVersion | 0) ? 'behind' : 'final';
@@ -1962,7 +1997,7 @@
 	/// unlike the posture: it is a boot-time fact about the machine, so a beat that cannot
 	/// say keeps what the device already said rather than unsaying it.
 	function presenceBeat(deviceId, name, now, attended, servicing, build, runner, mobile,
-		hand, folder, busy) {
+		hand, folder, busy, busyChats) {
 		var id = String(deviceId || '');
 		if (!id) return false;
 		var n = now == null ? Date.now() : now;
@@ -1999,8 +2034,15 @@
 		// HOW MANY TURNS THIS MACHINE IS RUNNING OR HOLDING, 0 when idle (H1). LIVE like the
 		// placement pair, and absent when the beat cannot say: the election reads absence
 		// as "not known to be busy", and the runner's own busy answer to an errand covers it.
-		if (busy != null) _presence[id].busy = busyDepth(busy);
-		else if (prev && typeof prev.busy === 'number') _presence[id].busy = prev.busy;
+		// The chats that load is in ride with it, so they never disagree.
+		if (busy != null) {
+			_presence[id].busy = busyDepth(busy);
+			var bc = chatIds(busyChats);
+			if (bc) _presence[id].busyChats = bc;
+		} else if (prev && typeof prev.busy === 'number') {
+			_presence[id].busy = prev.busy;
+			if (prev.busyChats) _presence[id].busyChats = prev.busyChats;
+		}
 		return true;
 	}
 
@@ -2127,6 +2169,11 @@
 			// ABSENT when the gateway or the peer does not send it: unknown is not idle,
 			// but neither is it busy, and the runner answers a busy errand itself.
 			if (rec.busy != null) recOut.busy = busyDepth(rec.busy);
+			// The chats that load is in, so the switch offers a runner busy with THIS chat
+			// (the turn queues there) and passes over one busy with others. ABSENT when not
+			// sent: such a peer is busy by its count, as before.
+			var rbc = chatIds(rec.busy_chats != null ? rec.busy_chats : rec.busyChats);
+			if (rbc) recOut.busyChats = rbc;
 			next[String(id)] = recOut;
 		}
 		var before = JSON.stringify(_presence);
@@ -2536,6 +2583,14 @@
 		return !!(rec && rec.runner);
 	}
 
+	/// A beat's chat ids, strings only, or null when it sent no list (it cannot say).
+	function chatIds(v) {
+		if (!Array.isArray(v)) return null;
+		var out = [];
+		for (var i = 0; i < v.length; i++) if (typeof v[i] === 'string' && v[i]) out.push(v[i]);
+		return out;
+	}
+
 	/// A beat's `busy` as a depth: the turns that machine is running or holding. An old
 	/// boolean true reads as one.
 	function busyDepth(v) {
@@ -2544,13 +2599,30 @@
 		return (k > 0 && isFinite(k)) ? Math.floor(k) : 0;
 	}
 
+	/// How busy a device is for a turn of `chatId`, from what it says about itself
+	/// (`{ busy, busyChats }`, its beat or its own state): 0 when `chatId` is among the chats
+	/// it is busy with, since a second turn there queues behind the first (O3), else its
+	/// whole depth. The ONE rule the runner's errand answer, its beat and every sender's
+	/// switch apply, so the seat and the claim cannot disagree (UNBLOCK-1 BUSY-SELF). A
+	/// record that cannot name its chats (an older build) is busy by its count.
+	function busyForRec(rec, chatId) {
+		var n = busyDepth(rec && rec.busy);
+		if (!n) return 0;
+		var id = String(chatId || '');
+		var on = (rec && Array.isArray(rec.busyChats)) ? rec.busyChats : [];
+		for (var i = 0; id && i < on.length; i++) if (String(on[i]) === id) return 0;
+		return n;
+	}
+
 	/// Is this peer BUSY for the turn being seated (H1, C1)? A machine running a turn
 	/// collects the next errand only when that turn ends, so seating it made the sender
 	/// wait out its backstop and run the turn itself. The one exception is `queueOn`,
-	/// the device already running this same chat (O3): the turn queues there, visibly.
+	/// the device already running this same chat (O3): the turn queues there, visibly,
+	/// whether its lease says so (`queueOn`) or its beat names the chat (`busyForRec`).
 	function recBusy(rec, id, o) {
 		if (!rec || !(rec.busy > 0)) return false;
-		return !(o && o.queueOn && String(o.queueOn) === String(id));
+		if (o && o.queueOn && String(o.queueOn) === String(id)) return false;
+		return busyForRec(rec, o && o.chatId) > 0;
 	}
 
 	/// Does this presence record MEET the caller's requirement -- a beat field that must
@@ -2729,6 +2801,8 @@
 			// device already running THIS chat stays seated, and a follow-up waits in that
 			// chat's queue behind the running turn (O3, D-20261009-23).
 			queueOn:                o.queueOn,
+			// The chat being seated, read against each peer's `busyChats`.
+			chatId:                 o.chatId != null ? o.chatId : c.id,
 		}, n);
 		box.passed = res.passed || [];
 		var target = res.target;
@@ -4856,6 +4930,11 @@
 			} catch (err) { /* the sender's backstop still ends it */ }
 			return { ran: false, why: 'busy', busy: busyN, trace: trace };
 		}
+		// THIS DEVICE'S OWN WORK IN THE CHAT (UNBLOCK-1 BUSY-SELF). A chat it is running is
+		// not busy for itself, so the turn queues behind that work rather than going back.
+		// Those turns' rows may be ones the sender has not seen, so the thread is judged with
+		// and without them; the ids are asked now, before any of them can end.
+		var own = (!d.allowSelf && typeof d.ownTurns === 'function') ? triedList(d.ownTurns(e)) : [];
 
 		// D1(c) — DEFER TO THE NOMINATED RUNNER. When the account has named an always-on
 		// runner and it is FRESHLY awake, a non-nominee stands down and leaves the claim
@@ -4911,7 +4990,7 @@
 		// Not asked on a local recovery (`allowSelf`): that device holds the thread itself.
 		if (!d.allowSelf && typeof d.ready === 'function') {
 			var rd = null;
-			try { rd = await d.ready(e); } catch (err) { rd = { ok: false, why: String((err && err.message) || err) }; }
+			try { rd = await d.ready(e, own); } catch (err) { rd = { ok: false, why: String((err && err.message) || err) }; }
 			if (rd && rd.ok === false) {
 				var nwhy = String(rd.why || 'this device cannot rebuild the thread');
 				trace.push('not-ready');
@@ -5143,9 +5222,31 @@
 			if (!r || r.holder !== String(d.selfId) || r.mode === 'released') liveness(true);
 		}
 		try {
+			// 1b. QUEUE BEHIND THIS DEVICE'S OWN TURN IN THE CHAT, holding the lease (UNBLOCK-1
+			// BUSY-SELF). Taken FIRST, so the sender's backstop reads the turn as claimed and
+			// stands down however long the turn ahead runs, then rebuilt once that turn has
+			// ended, so the thread holds its answer. The wait ends early on a take-back or past
+			// the deadline: the ticker reads the lease as a running turn's does.
+			if (own.length > 0 && typeof d.queueBehind === 'function') {
+				trace.push('queue');
+				diag('collect QUEUED', 'turn=' + turnId + ' behind ' + own.join(','));
+				var qTick = setT ? setT(function () { liveness(true); if (d.heartbeat) d.heartbeat(); }, RENEW_EVERY_MS) : null;
+				var qEnd = null;
+				try {
+					qEnd = await Promise.race([Promise.resolve(d.queueBehind(e,
+						function () { return revoked || deadWhy != null; })), dead]);
+				} catch (err) { qEnd = null; /* the rebuild below judges the chat as it stands */ }
+				finally { if (qTick != null && clrT) { try { clrT(qTick); } catch (err) {} } }
+				if (qEnd === DEAD) return await endDead();
+				// Taken back while it waited: nothing ran, and the turn is the taker's.
+				if (revoked) return { ran: false, aborted: true, why: stoppedThere ? 'stopped' : 'revoked', trace: trace };
+				// A turn of the chat that began in the wait is own work too.
+				if (qEnd && Array.isArray(qEnd.own)) own = triedList(own.concat(qEnd.own));
+				trace.push('queued');
+			}
 			// 2. RECONSTRUCT the chat and workspace at the errand's version.
 			var ctx;
-			try { ctx = await d.reconstruct(e); trace.push('reconstruct'); }
+			try { ctx = await d.reconstruct(e, own); trace.push('reconstruct'); }
 			catch (err) {
 				// The lease was TAKEN above. A reconstruct that throws must NOT leave it
 				// pinned at 'claimed' to the errand's deadline: on an iOS phone that cannot
@@ -6276,6 +6377,7 @@
 		/// lock, and the key a device runs one of at a time.
 		isWork:  isWork,
 		workKey: workKey,
+		busyForRec: busyForRec,
 		turnWorkKey: turnWorkKey,
 		/// Whether an errand is THIS device's own dispatch -- so the sender's collect
 		/// leaves it on the relay for the peer rather than acking it away.
@@ -6304,6 +6406,8 @@
 		onErrand: onErrand,
 		onBusyProbe: onBusyProbe,
 		decideNow: decideNow,
+		startsNow: startsNow,
+		onChatWorkProbe: onChatWorkProbe,
 		onReport: onReport,
 		/// Register the remote-consent handlers: `onAsk` raises a runner's question on
 		/// an attended device; `onGrant` delivers the answer to the awaiting runner.
