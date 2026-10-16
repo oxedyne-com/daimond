@@ -17,6 +17,11 @@
 //   (4) A ends with exactly one `why: 'runner'` interrupted answer, drawn as
 //       "Interrupted" with a Retry button; Retry runs the turn afresh to one answer.
 //
+//   (7) RUNNER-READY: B reloads mid-turn with its engine held back (its `*_bg.wasm` fetch
+//       delayed WASM_DELAY ms, default 15000), so its collect of its own turn can beat its
+//       boot. A and B still draw "Interrupted" + Retry, B holds the lost run, and nothing
+//       runs again. RED on 61f24a25 at 2 of 2 (reconstruct_diag.md): B handed the turn back
+//       as `error` and A drew "couldn't finish" + [Run here]. `ARM7=0` skips it.
 // RED on 436db66f (the turn reran: starts 2, rounds 0-2 written twice, no runner badge).
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK_PORT), gateway.
 //   node dev/verify_handoff_rerun.mjs            # ROUNDS=10 PACE=1500 AT="3 5"
@@ -248,7 +253,10 @@ try {
 			const l = f.querySelector('.ti-label'), btn = f.querySelector('button');
 			return { label: l ? l.textContent : '', btn: btn ? btn.textContent : '' };
 		}).catch(() => null);
-		check('(4) A draws "Interrupted" with a Retry button', !!tile && /Interrupted\. The device running this/.test(tile.label) && tile.btn === 'Retry',
+		// Since UNBLOCK-7 F3 (06ba5041) a claimed hand-off that went silent names its runner:
+		// "Interrupted on {name}." (turn.peer_interrupted_named); the older runner_lost line
+		// still passes.
+		check('(4) A draws "Interrupted" with a Retry button', !!tile && /Interrupted(\. The device running this| on )/.test(tile.label) && tile.btn === 'Retry',
 			JSON.stringify(tile));
 		await reload(a);
 		await a.page.waitForTimeout(3000);
@@ -299,6 +307,7 @@ try {
 		const GAP = MODE === 'runner' ? G : MODE + ' ' + G;
 		const tag = 'r5' + MODE[0] + G + Math.random().toString(36).slice(2, 6);
 		console.log('\n── (5) ' + MODE + ': Retry on A, then on B ' + G + ' ms later (' + tag + ') ──');
+		for (const s of [a, b]) await s.page.evaluate(() => window.DaimondDiag && DaimondDiag.set(true, 'verify')).catch(() => {});
 		// The hand-off that is lost needs B as the runner; a `here` pass un-names it after.
 		// Named again as its owner would (B is asked "Make this device the runner?" anew, and
 		// that question left open sits over B's chat list), after a `here` pass un-named it.
@@ -321,6 +330,7 @@ try {
 		for (const t = Date.now(); Date.now() - t < 120000 && !(tile && tile.btn === 'Retry');) { tile = await tileOf(a); if (!(tile && tile.btn === 'Retry')) await a.page.waitForTimeout(1000); }
 		await a.page.waitForTimeout(P5 * 3 + 2000);
 		check('(5) gap ' + GAP + ' [ctl] A draws Interrupted + Retry', !!tile && tile.btn === 'Retry', JSON.stringify(tile));
+		if (!(tile && tile.btn === 'Retry')) for (const [n, s] of [['A', a], ['B', b]]) console.log('  ' + n + ' diag: ' + JSON.stringify(await s.page.evaluate(() => (window.DaimondDiag ? DaimondDiag.rows() : []).filter((r) => !/^(pull|apply|store|rail|push|seed)/.test(r.tag)).slice(-40).map((r) => r.tag + ' ' + String(r.data || '').slice(0, 160))).catch(() => [])));
 		await openOnB(b, cid);
 		let tb = null;
 		for (const t = Date.now(); Date.now() - t < 30000 && !(tb && tb.btn === 'Retry');) { tb = await tileOf(b); if (!(tb && tb.btn === 'Retry')) await b.page.waitForTimeout(1000); }
@@ -397,6 +407,55 @@ try {
 		check('(5) gap ' + GAP + ': after both reload, one final and one user row on each', va2.finals === 1 && va2.users === 1 && vb2.finals <= 1 && vb2.users <= 1 && va2.lost + vb2.lost === 0,
 			JSON.stringify({ a: va2, b: vb2 }));
 		check('(5) gap ' + GAP + ': no further model start after the reloads', starts() === s0 + 1, 'starts=' + starts());
+	}
+
+	// (7) RUNNER-READY: a runner reloading with its engine still loading never claims its own
+	// turn before it has started up, and the turn ends Interrupted, never handed back.
+	if (String(process.env.ARM7 ?? '1') === '1') {
+		const R7 = 6, P7 = 1500, AT7 = 2, WD = Number(process.env.WASM_DELAY ?? 15000);
+		const tag = 'r7' + Math.random().toString(36).slice(2, 7);
+		console.log('\n── (7) B reloads at round ' + AT7 + ' with its engine held back ' + WD + ' ms (' + tag + ') ──');
+		const idB = await b.page.evaluate(() => window.DaimondIdentity.deviceId());
+		if (await a.page.evaluate(() => window.DaimondCore.roster.nominee() || '').catch(() => '') !== idB) await nominateRunner(check, a, b);
+		const reqs = () => mockLog().filter((r) => JSON.stringify(r).includes(tag));
+		const starts = () => reqs().filter((r) => { const m = msgsOf(r); const l = m[m.length - 1]; return l && l.role === 'user'; }).length;
+		await a.page.waitForFunction(() => (window.DaimondPresence.awake(window.DaimondIdentity.deviceId(), Date.now()) || []).length >= 1, null, { timeout: 60000, polling: 500 }).catch(() => {});
+		await freshChat(a);
+		const cid = await a.page.evaluate(() => { const f = window.DaimondAttach && DaimondAttach.focus(); return (f && f.kind === 'chat') ? String(f.id) : ''; }).catch(() => '');
+		await send(a.page, '@rounds ' + R7 + '/' + P7 + ' file_write ' + JSON.stringify({ path: 'chats/' + cid + '/work/ctr/' + tag + '-{n}-{c}.txt', content: 'x' }));
+		let ph = null;
+		for (let i = 0; i < 80 && !ph; i++) { ph = placeholders(await storedMsgs(a)).find((m) => String(m.itext || '').includes(tag)) || null; if (!ph) await a.page.waitForTimeout(150); }
+		check('(7) [ctl] A handed the turn off', !!ph, 'ran locally');
+		if (ph) {
+			const tid = String(ph.iturn);
+			for (const t = Date.now(); Date.now() - t < 60000 && reqs().length < AT7 + 1;) await a.page.waitForTimeout(200);
+			// B's console, for the reconstruct throw a failing run names.
+			const bcon = [];
+			const onCon = (m) => { const x = m.text(); if (m.type() === 'error' || /peer:|reconstruct/i.test(x)) bcon.push(m.type() + ': ' + x.slice(0, 240)); };
+			b.page.on('console', onCon);
+			// Held back for this reload only: the route goes once B is back.
+			const hold = async (route) => { await new Promise((r) => setTimeout(r, WD)); await route.continue().catch(() => {}); };
+			if (WD > 0) await b.page.route('**/*_bg.wasm*', hold);
+			await reload(b);
+			if (WD > 0) await b.page.unroute('**/*_bg.wasm*', hold).catch(() => {});
+			let tile = null;
+			for (const t = Date.now(); Date.now() - t < 120000 + WD && !(tile && tile.btn === 'Retry');) { tile = await tileOf(a); if (!(tile && tile.btn === 'Retry')) await a.page.waitForTimeout(1000); }
+			await a.page.waitForTimeout(P7 * 3 + 2000);
+			tile = await tileOf(a);
+			check('(7) A draws Interrupted + Retry, not "couldn\'t finish" + Run here', !!tile && tile.btn === 'Retry', JSON.stringify(tile)
+				+ ' B console: ' + JSON.stringify(bcon.slice(0, 8)));
+			await openOnB(b, cid);
+			let tb = null;
+			for (const t = Date.now(); Date.now() - t < 30000 && !(tb && tb.btn === 'Retry');) { tb = await tileOf(b); if (!(tb && tb.btn === 'Retry')) await b.page.waitForTimeout(1000); }
+			check('(7) B draws Interrupted + Retry', !!tb && tb.btn === 'Retry', JSON.stringify(tb));
+			const vb = view(await chatRows(b, cid), tid, tag);
+			check('(7) B holds the lost run (lost 1), its rounds kept', vb.lost === 1, JSON.stringify(vb));
+			check('(7) nothing ran again: one model start', starts() === 1, 'starts ' + starts());
+			const rec = await b.page.evaluate(() => (window.DaimondDiag ? DaimondDiag.rows() : []).filter((r) => /reconstruct failed/.test(r.tag)).map((r) => r.tag + ' ' + String(r.data || '').slice(0, 160))).catch(() => []);
+			check('(7) B logged no reconstruct failure', rec.length === 0, JSON.stringify(rec));
+			b.page.off('console', onCon);
+			await settle(a.page).catch(() => {});
+		}
 	}
 
 	// (6) R3 F1 (lead ruling a): A's Stop on a turn B runs ends it as a Stop pressed on B

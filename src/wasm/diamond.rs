@@ -955,6 +955,8 @@ async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
         tags:    Vec::new(),
         // Off by default, which is the whole shape of a grant: nobody has said yes yet.
         kits:    Vec::new(),
+        // A person's Diamond until the page marks it a built-in (`mark_built_in`).
+        builtin: String::new(),
     };
     res!(write_meta(&id, &meta).await);
 
@@ -980,6 +982,26 @@ pub async fn rename(id: &str, name: &str) -> Outcome<()> {
     meta.name = name.to_string();
     meta.updated = now;
     meta.bump_touched(now);
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
+/// Mark a Diamond as the built-in seeded at `fixed_id` (NAMES N1).
+///
+/// The marker is content and has to travel, so `touched` moves; `updated` does not, because
+/// marking is not working on it and must not reorder the rail.  A marker that is not a fixed-id
+/// shape is refused rather than stored, and setting the one already there writes nothing.
+pub async fn mark_built_in(id: &str, fixed_id: &str) -> Outcome<()> {
+    let mark = crate::diamond_meta::normalise_builtin(fixed_id);
+    if mark.is_empty() {
+        return Err(err!("'{}' is not a built-in Diamond's id.", fixed_id; Invalid, Input));
+    }
+    let mut meta = res!(read_meta(id).await);
+    if meta.builtin == mark {
+        return Ok(());
+    }
+    meta.builtin = mark;
+    meta.bump_touched(now_ms() as u64);
     res!(write_meta(id, &meta).await);
     Ok(())
 }
@@ -1146,9 +1168,9 @@ pub async fn list() -> Outcome<String> {
     let items: Vec<String> = rows.iter().map(|(id, m)| {
         fmt!(
             "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\
-              \"touched\":{},\"tags\":{},\"toolkits\":{}}}",
+              \"touched\":{},\"builtin\":\"{}\",\"tags\":{},\"toolkits\":{}}}",
             json_escape(id), json_escape(&m.name), m.version, m.updated,
-            m.touched, m.tags_json(), m.kits_json(),
+            m.touched, json_escape(&m.builtin), m.tags_json(), m.kits_json(),
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
@@ -1281,6 +1303,27 @@ pub async fn read_standing(id: &str) -> crate::tools::Standing {
 /// * `id` - The Diamond.
 pub async fn standing_hot_bytes(id: &str) -> usize {
     read_standing(id).await.hot_bytes()
+}
+
+/// The crystal a write's hot part is measured against when the one on disk will not parse: the
+/// newest version that does, or empty where there is none or `old` parses.
+///
+/// Asked by every door on the hot ceiling -- the file tools, [`snapshot_held`] and the fold
+/// ([`crate::agent::compact::fold_landing`]) -- so a mend is measured the same way whoever
+/// writes it ([`crate::tools::crystal_hot_refusal`]).  The
+/// walk is paid only for a broken crystal, which is the one write that needs it.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `old` - The crystal on disk now.
+pub async fn crystal_hot_last_good(id: &str, old: &str) -> String {
+    if crate::tools::crystal_json_fault(old).is_none() {
+        return String::new();
+    }
+    match newest_data_version_where(id, |t| crate::tools::crystal_json_fault(t).is_none()).await {
+        Ok(Some((_, json))) => json,
+        _                   => String::new(),
+    }
 }
 
 /// The three files, created from the shipped templates where this Diamond has none.
@@ -1629,6 +1672,15 @@ async fn newest_legacy_version(id: &str) -> Outcome<Option<(u64, String)>> {
 /// precisely the case the fallback exists for, and stopping at it would hand an agent an empty
 /// crystal to write over work it never saw.
 async fn newest_data_version(id: &str) -> Outcome<Option<(u64, String)>> {
+    newest_data_version_where(id, |_| true).await
+}
+
+/// The newest data version a Diamond can rebuild whose text `keep` accepts, with its text.
+///
+/// The walk [`newest_data_version`] makes, asked a question on the way down.
+async fn newest_data_version_where<F: Fn(&str) -> bool>(id: &str, keep: F)
+    -> Outcome<Option<(u64, String)>>
+{
     let snaps = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await;
     let ns: Vec<u64> = snaps.iter().map(|(n, _)| *n).collect();
     // The version the Diamond is at first, and only then anything filed above it: after an import
@@ -1646,7 +1698,8 @@ async fn newest_data_version(id: &str) -> Outcome<Option<(u64, String)>> {
         // rebuild: decoded lossily it would be drawn, and saved, as the crystal.
         if let Ok(bytes) = follow(id, &chain, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await {
             match crate::tools::utf8_text(&bytes, &fmt!("{} version {}", crystal_data_path(id), n)) {
-                Ok(json) => return Ok(Some((n, json))),
+                Ok(json) if keep(&json) => return Ok(Some((n, json))),
+                Ok(_)    => (),
                 Err(e)   => console_log(&fmt!("Diamond '{}': {}", id, e)),
             }
         }
@@ -1795,7 +1848,10 @@ async fn snapshot_held(
     if crate::tools::crystal_write_refused(data.len(), old.len()) {
         return Err(err!("{}", crate::tools::crystal_cap_message(data.len()); Invalid, Input, Size));
     }
-    if let Some(msg) = crate::tools::crystal_hot_refusal(data, &old, standing_hot_bytes(id).await) {
+    let last_good = crystal_hot_last_good(id, &old).await;
+    if let Some(msg) = crate::tools::crystal_hot_refusal(
+        data, &old, &last_good, standing_hot_bytes(id).await)
+    {
         return Err(err!("{}", msg; Invalid, Input, Size));
     }
     let disk = page_on_disk(id).await;
@@ -2136,7 +2192,8 @@ pub async fn fold_apply(
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
     let files = read_standing(id).await;
-    let land = match crate::agent::compact::fold_landing(id, &old, &files, want) {
+    let last_good = crystal_hot_last_good(id, &old).await;
+    let land = match crate::agent::compact::fold_landing(id, &old, &last_good, &files, want) {
         Ok(l)    => l,
         Err(why) => return Err(err!(
             "{} Nothing was written: the crystal and its files are as they were.", why;

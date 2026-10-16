@@ -67,7 +67,7 @@ import { fileURLToPath } from 'node:url';
 import { open, chat, signInAs, newChat, connectMock, mockLog, errors, shot } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
-import { checker, until, settle, storedMsgs, answersFor, placeholders, send, freshChat } from './handoffpair.mjs';
+import { checker, until, settle, storedMsgs, answersFor, placeholders, send, freshChat, nominateRunner } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -236,7 +236,9 @@ async function pair(lead, mate) {
 	await b.page.waitForTimeout(2000);
 	await settle(b.page);
 	await until(b.page, () => { try { return window.DaimondPost.state().parks > 0; } catch (e) { return false; } }, null, 8000);
-	await b.page.evaluate((n) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), n), mate);
+	// B NOMINATED, as handoffpair's `pair` does: since D-20261009-23 a send goes to the
+	// nominated runner or runs here, so H's hand-off needs it. It ends once A reads B listening.
+	await nominateRunner(check, a, b, mate);
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);
 	const idA = await a.page.evaluate(() => window.DaimondIdentity.deviceId());
@@ -475,7 +477,12 @@ try {
 			// (`compact::MIN_KEEP_MESSAGES`): a fold whose note outweighs what it cut is declined
 			// as one that made the conversation bigger.
 			for (let i = 1; i <= 3; i++) await textTurn(b, ccid, 'F-SHORT-' + i);
-			const foldSince = async () => (await msgsOf(b, ccid)).slice(before).find((m) => m.role === 'fold_log') || null;
+			// A COMPACTOR's fold (`folded` > 0). A fold that only shortened tool results
+			// ("Shortened N long tool results ...", agent.rs) is written by no model, so by design it
+			// carries no record (`foldProd`: null without `ev.model`); taking it for F's fold failed
+			// "F fold_log: carries a record" on base. Such a fold falls through to Fold now below.
+			const foldSince = async () => (await msgsOf(b, ccid)).slice(before)
+				.find((m) => m.role === 'fold_log' && (m.folded | 0) > 0) || null;
 			let fl = await foldSince();
 			if (process.env.PROV_DEBUG) {
 				const ms = await msgsOf(b, ccid);
@@ -853,7 +860,9 @@ try {
 		const logs = (await msgsOf(b, xcid)).filter((m) => m.role === 'files_log').slice(nBefore);
 		check('X3: the turn appended exactly one files_log', logs.length === 1, logs.length + ' new');
 		const fl = logs[0] || null;
-		check('X3: it is { role, mid, ts, prod, delta } with no content (P3: the counts ride the message, so the row draws them with no store)', !!fl && J(Object.keys(fl)) === J(['role', 'mid', 'ts', 'prod', 'delta']), fl ? J(Object.keys(fl)) : 'none');
+		// `iturn` since UNBLOCK-1 (81ebc9da, check_fix5 H1): every row a turn writes carries its
+		// prompt's id. It is an id, not content, so P3 still holds.
+		check('X3: it is { role, mid, ts, prod, delta, iturn } with no content (P3: the counts ride the message, so the row draws them with no store)', !!fl && J(Object.keys(fl)) === J(['role', 'mid', 'ts', 'prod', 'delta', 'iturn']), fl ? J(Object.keys(fl)) : 'none');
 		const fp = (fl && fl.prod) || [];
 		const rn = fp.find((p) => /\/n\.md$/.test(p.h)), ro = fp.find((p) => /\/o\.md$/.test(p.h));
 		check('X3: two records, n.md and o.md', fp.length === 2 && !!rn && !!ro, fp.map((p) => p.h).join(' ; '));

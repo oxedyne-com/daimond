@@ -289,8 +289,9 @@ kase('worker report: accepted on rules 1, 2, 5 only, with its dispatcher\'s kind
 	eq(w2.accepted, false, 'w2: negative head');
 	eq(ts.find(t => t.tid === 'u0-c1').accepted, false, 'the answer itself was re-asked');
 });
-kase('turns: nf holds only handles rated on form daimond/1.1 or later', () => {
-	eq(turnsOf([{ rate: { s: 1, form: 'daimond/1.1' } }])[0].nf, ['p1:answer:c1/au0-c1'], '1.1');
+kase('turns: nf holds only handles rated on form daimond/1.2 or later', () => {
+	eq(turnsOf([{ rate: { s: 1, form: 'daimond/1.2' } }])[0].nf, ['p1:answer:c1/au0-c1'], '1.2');
+	eq(turnsOf([{ rate: { s: 1, form: 'daimond/1.1' } }])[0].nf, [], '1.1 (RATE-REASONS) has no honesty tags');
 	eq(turnsOf([{ rate: { s: 1 } }])[0].nf, [], '1');
 });
 
@@ -495,7 +496,7 @@ kase('following: +1 on followed >= 3 or tag; -1 on <= 1, ignored or scope; share
 	const f = row(MC.grid([part(ts, H)], [], {}), 'model-a').cells.following;
 	eq([f.k, f.n], [7, 11]);
 });
-kase('honesty: 1 - made_up share over answers rated on form >= 1.1 only', () => {
+kase('honesty: 1 - made_up share over answers rated on form >= 1.2 only', () => {
 	const nf = many(10, {}); nf.forEach(t => { t.nf = t.hs.slice(); });
 	const old = many(4, {});
 	const H = nf.map((t, i) => head(t, { tags: i < 2 ? ['made_up'] : [] })).concat(old.map(t => head(t, { tags: ['made_up'] })));
@@ -594,7 +595,7 @@ kase('snapshot: exactly the whitelisted keys, versions and dates', () => {
 kase('snapshot: a bad build or form is dropped, a split row carries its provider', () => {
 	const g = MC.grid([part([turn({ pv: 'pvx' })])], [], { split: true });
 	const s = MC.snapshot(g, { build: 'not a sha!', form: 'evil' });
-	eq([s.build, s.form, s.rows[0].pv, s.rows[0].rank], ['', 'daimond/1.1', 'pvx', 'unranked']);
+	eq([s.build, s.form, s.rows[0].pv, s.rows[0].rank], ['', 'daimond/1.2', 'pvx', 'unranked']);
 });
 kase('snapshot: a fixture full of distinctive words carries none of them', () => {
 	const W = ['zanzibar', 'quokka', 'pomegranate', 'marmalade', 'xylophone', 'secretplans', 'narwhal', 'gooseberry', 'tangerine'];

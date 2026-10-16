@@ -97,7 +97,7 @@
 		   indicator. */
 		padding: calc(8px + var(--safe-t)) 8px calc(8px + var(--safe-b)) calc(8px + var(--safe-l));
 		transform: translateX(-100%);
-		transition: transform .28s cubic-bezier(.32, .72, 0, 1);
+		transition: transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s .28s;
 		box-shadow: 0 0 40px rgba(0, 0, 0, .45);
 		will-change: transform;
 		overflow-y: auto;
@@ -291,9 +291,20 @@
 		height: var(--rail-h) !important;
 	}
 
-	body.drawer-open .panel.rail { transform: translateX(0); }
+	/* The drawer hides by transform, so a closed one would keep its controls in
+	   the Tab order and read to VoiceOver off the left edge. It is hidden here,
+	   in the query that slides it, as #msheet is: the `.28s` delay above holds
+	   `visibility: hidden` back until the close slide ends, and the open rule
+	   unhides at once. A script's `inert` lagged a widened window by its resize
+	   debounce and left the desktop rail dead for that beat (GATEFIX, r568). */
+	body.drawer-open .panel.rail {
+		transform: translateX(0);
+		transition: transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s;
+	}
+	body:not(.drawer-open) .panel.rail { visibility: hidden; }
 	@media (prefers-reduced-motion: reduce) {
-		.panel.rail { transition: none; }
+		.panel.rail,
+		body.drawer-open .panel.rail { transition: none; }
 	}
 
 	/* The scrim dims and catches the tap that closes the drawer. The

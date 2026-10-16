@@ -553,11 +553,11 @@ try {
 	const SAYS = 'MAIL TRIGGER CHECK ' + Date.now().toString(36);
 	const help = await p.evaluate(() => {
 		const box = [...document.querySelectorAll('#diamond-list .diamond-box')]
-			.find((b) => /Help/.test(b.textContent || ''));
+			.find((b) => ((b.querySelector('.session-box-name') || {}).textContent || '').trim() === 'Neil');
 		return box ? { id: box.dataset.id } : null;
 	});
 	if (!help) {
-		check('a Diamond to hang a mail trigger on', false, 'the rail has no Daimond Help');
+		check('a Diamond to hang a mail trigger on', false, 'the rail has no Neil');
 	} else {
 		const taId = await p.evaluate(async (a) => {
 			const T = window.DaimondTriggers;

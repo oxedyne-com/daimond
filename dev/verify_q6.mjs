@@ -193,7 +193,7 @@ if (on('P')) {
 	await p.evaluate((n) => window.DaimondPause.set(n, false), BASE);
 	await sleep(600);
 	const id = await p.evaluate((o) => window.DaimondPendingView.add({ kind: 'proposal', diamondId: o,
-		diamondName: 'Daimond Optimiser', headline: 'Q6 headline', detail: 'Q6 evidence line' }), OPT);
+		diamondName: 'Lucy', headline: 'Q6 headline', detail: 'Q6 evidence line' }), OPT);
 	await sleep(800);
 	const tick = () => p.evaluate((id) => {
 		const box = [...document.querySelectorAll('#pending-list .pend-card')].find((b) => b.dataset.id === id);
@@ -211,7 +211,7 @@ if (on('P')) {
 	const left = await p.evaluate(() => window.DaimondPendingView.items().map((i) => i.kind + ':' + i.headline));
 	check('P1: the tick reaches no provider', clicked && sent === 0, 'clicked=' + clicked + ' requests=' + sent);
 	check('P2: the proposal is still there to tick once play is pressed', left.some((x) => /Q6 headline/.test(x)), JSON.stringify(left));
-	check('P3: and a toast says the Optimiser is paused, by name', said.some((x) => /Daimond Optimiser/.test(x) && /paused/i.test(x)),
+	check('P3: and a toast says the Optimiser is paused, by name', said.some((x) => /Lucy/.test(x) && /paused/i.test(x)),
 		JSON.stringify(said));
 	await p.evaluate((n) => window.DaimondPause.set(n, true), BASE);
 	await sleep(600);
@@ -238,7 +238,7 @@ if (on('R')) {
 	const n1 = await type(p, 'q6 R daimon while paused');
 	const L1 = await lastLine(p);
 	check('R1: a typed turn in the paused Optimiser reaches no provider', n1 === 0, 'requests=' + n1);
-	check('R2: its refusal names the Optimiser and says paused', !!L1 && /Daimond Optimiser/.test(L1.text) && /paused/i.test(L1.text),
+	check('R2: its refusal names the Optimiser and says paused', !!L1 && /Lucy/.test(L1.text) && /paused/i.test(L1.text),
 		JSON.stringify(L1));
 	check('R3: drawn as a note -- no error line, no danger colour, no "Report this", nothing armed',
 		!!L1 && !/chat-msg-error/.test(L1.cls) && !L1.danger && !L1.report && !L1.arms.includes('chat.error'), JSON.stringify(L1));

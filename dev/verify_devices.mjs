@@ -529,9 +529,14 @@ try {
 					&& /\bcop(y|ies)\b|\bwork\b|\balready\b/i.test(b)),
 		};
 	};
+	// The terse copy of 15 Sep (69384d1b, the naive-user audit) cut the note deliberately to
+	// "Devices on this account. Remove one to stop it syncing." -- what the list is and what
+	// removing one does. Either the long truth above or that one passes.
+	const terse = (n) => /\bdevices?\b/i.test(n) && /\baccount\b/i.test(n)
+		&& n.split(/(?<=[.!?:;])\s+/).some(b => /\bremov/i.test(b) && /\bstop/i.test(b) && /sync/i.test(b));
 	const honest = view.notes.map(noteIsHonest)
-		.find(h => h.scope && h.absent && h.limit);
-	check('and the copy says these are devices that SYNC, that one which has not is missing, and what removing one cannot take back',
+		.find(h => h.scope && h.absent && h.limit) || view.notes.find(terse);
+	check('and the copy says what the list is (the account\'s devices) and what removing one does (it stops syncing)',
 		!!honest,
 		view.notes.filter(n => /sync|device/i.test(n)).join(' | ').slice(0, 200));
 	// Two of a user's devices can easily describe themselves identically

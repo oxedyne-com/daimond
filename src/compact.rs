@@ -2883,11 +2883,14 @@ pub struct FoldLanding {
 /// # Arguments
 /// * `id` - The Diamond, for the archive a refusal names.
 /// * `old_crystal` - The crystal as it stands on disk.
+/// * `last_good` - As for [`crate::tools::crystal_hot_refusal`], so the fold door measures a
+///   mend the way the other two do.
 /// * `files` - The three files as they stand on disk.
 /// * `want` - The proposal.
 pub fn fold_landing(
 	id:          &str,
 	old_crystal: &str,
+	last_good:   &str,
 	files:       &crate::tools::Standing,
 	want:        &FoldProposal,
 )
@@ -2921,7 +2924,7 @@ pub fn fold_landing(
 	}
 	let hot = after.hot_bytes();
 	let mut crystal = want.crystal.clone();
-	if let Some(msg) = crate::tools::crystal_hot_refusal(&crystal, old_crystal, hot) {
+	if let Some(msg) = crate::tools::crystal_hot_refusal(&crystal, old_crystal, last_good, hot) {
 		match crate::tools::crystal_demote_to_fit(&crystal, crate::tools::crystal_hot_room(hot)) {
 			Some((text, moved)) => {
 				crystal   = text;
@@ -2929,7 +2932,7 @@ pub fn fold_landing(
 			},
 			None => return Err(msg),
 		}
-		if let Some(msg) = crate::tools::crystal_hot_refusal(&crystal, old_crystal, hot) {
+		if let Some(msg) = crate::tools::crystal_hot_refusal(&crystal, old_crystal, last_good, hot) {
 			return Err(msg);
 		}
 	}
@@ -5536,6 +5539,31 @@ mod tests {
 	}
 
 	#[test]
+	fn test_a_fold_door_measures_a_mend_against_the_last_good_crystal_00() {
+		// HOTCAP on r568: the fold door was added after HOTCAP and asked the rule without the
+		// newest parseable version, so a fold over a broken crystal was demoted against a hot
+		// part of the broken text alone, where the file tools and the store let it land.
+		let files = full_files();
+		let room  = crate::tools::crystal_hot_room(files.hot_bytes());
+		let good  = heavy_crystal(200, 2, room);
+		let cut   = heavy_crystal(200, 1, room);
+		let old   = cut[..cut.len() - 2].to_string();
+		assert!(crate::tools::crystal_json_fault(&old).is_some(), "the old crystal is broken");
+		let want = FoldProposal {
+			crystal: heavy_crystal(210, 2, room - 50),
+			requirements: None, decisions: None, state: None,
+		};
+		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, "", files.hot_bytes()).is_some(),
+			"fixture: without the last good crystal the fold is over the room");
+		let l = match fold_landing("d1", &old, &good, &files, &want) {
+			Ok(l)  => l,
+			Err(m) => panic!("a fold within the last good crystal's hot part was refused: {}", m),
+		};
+		assert!(l.moved.is_empty(), "sections were moved cold: {:?}", l.moved);
+		assert_eq!(l.crystal, want.crystal);
+	}
+
+	#[test]
 	fn test_a_fold_that_cannot_land_is_refused_before_anything_is_written_00() {
 		// D-20261010-01: the files were written and the crystal then refused against their NEW
 		// weight. The plan is asked of the whole fold, so a refusal leaves nothing to write.
@@ -5549,7 +5577,7 @@ mod tests {
 			crystal: heavy_crystal(3 * 1024, 0, 0),
 			requirements: None, decisions: None, state: Some(st),
 		};
-		match fold_landing("d1", &old, &files, &want) {
+		match fold_landing("d1", &old, "", &files, &want) {
 			Ok(l)  => panic!("a 3 KiB summary in 2 KiB of room landed: {:?}", l.moved),
 			Err(m) => assert!(m.contains("bytes"), "the refusal names the ceiling: {}", m),
 		}
@@ -5566,14 +5594,14 @@ mod tests {
 			crystal: heavy_crystal(300, 3, 1_000),
 			requirements: None, decisions: None, state: None,
 		};
-		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, files.hot_bytes()).is_some(),
+		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, "", files.hot_bytes()).is_some(),
 			"the fixture must be over the room");
-		let l = match fold_landing("d1", &old, &files, &want) {
+		let l = match fold_landing("d1", &old, "", &files, &want) {
 			Ok(l)  => l,
 			Err(m) => panic!("a fold a demotion fits was refused: {}", m),
 		};
 		assert!(!l.moved.is_empty(), "nothing was moved cold");
-		assert!(crate::tools::crystal_hot_refusal(&l.crystal, &old, files.hot_bytes()).is_none());
+		assert!(crate::tools::crystal_hot_refusal(&l.crystal, &old, "", files.hot_bytes()).is_none());
 		assert!(l.files.is_empty(), "a file the reducer did not touch is written");
 	}
 
@@ -5588,9 +5616,9 @@ mod tests {
 			crystal: heavy_crystal(3 * 1024, 0, 0),
 			requirements: None, decisions: None, state: Some(grown),
 		};
-		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, files.hot_bytes()).is_none(),
+		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, "", files.hot_bytes()).is_none(),
 			"the fixture must fit beside the old files");
-		assert!(fold_landing("d1", &old, &files, &want).is_err(),
+		assert!(fold_landing("d1", &old, "", &files, &want).is_err(),
 			"the crystal was measured against the files as they were");
 	}
 

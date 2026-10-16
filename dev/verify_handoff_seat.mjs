@@ -37,6 +37,7 @@ import {
 	modelSaw,
 	send,
 	freshChat,
+	untilListening
 } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 
@@ -144,7 +145,7 @@ try {
 	}
 	const idB = await b.page.evaluate(() => window.DaimondIdentity.deviceId());
 	for (const s of [a, b]) await s.page.evaluate((id) => window.DaimondCore.roster.nominate(id), idB);
-	await b.page.evaluate((id) => window.DaimondSync.beatPresence(id, 'seatmate'), idB).catch(() => {});
+	await untilListening(a, b, idB, 120000, 'seatmate');
 	const tag = Math.random().toString(36).slice(2, 8);
 	await freshChat(a);
 

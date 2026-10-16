@@ -84,7 +84,7 @@ function patch(src) {
 const NAMES = ['ratingsKey', 'ratingsWalk', 'ratingsAccount', 'ratingsDigest', 'ratingsDigestSoon', 'importModelCounts', 'writeUsageDigest',
 	'_ratingsMemo', 'MODEL_COUNTS_KEY'];
 const STUBS = ['ChatStore', 'storedChats', 'chats', 'rateForm', 'diamonds', 'Wasm', 'steerRaise'];
-const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1.json'), 'utf8'));
+const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1_1.json'), 'utf8'));
 
 function hashOf(s) { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h.toString(36); }
 

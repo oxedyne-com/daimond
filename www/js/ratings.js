@@ -22,7 +22,8 @@
 (function () {
 	'use strict';
 
-	var FORM_ID   = 'daimond/1';	// the form this build writes
+	var FORM_ID   = 'daimond/1.1';	// the form this build writes (1.1: RATE-REASONS)
+	var FORM_MAJOR = 'daimond/1';	// the major this build reads, and every minor of it
 	var NOTE_MAX  = 8192;			// UTF-8 bytes of the user's words (rating.rs NOTE_MAX)
 	var BURST_MS  = 10000;			// quiet that commits a burst
 	var DIM_IDS   = ['correct', 'followed', 'length', 'style'];
@@ -37,7 +38,9 @@
 	// ── The form ───────────────────────────────────────────────
 
 	/// The form the wasm's `rating_form()` returns, as the widget needs it.
-	/// `tagsFor` gives tag ids in form order; `keyOf` the catalogue key of one.
+	/// `tagsFor` gives tag ids in form order; `quickFor` those of them on the quick row (a tag
+	/// with `quick: false` is in Details only; a form before 1.1 has no flag, so all are quick);
+	/// `keyOf` the catalogue key of one.
 	function form(json) {
 		var f = typeof json === 'string' ? JSON.parse(json) : json;
 		if (!f || typeof f.form !== 'string' || !Array.isArray(f.scale) || !Array.isArray(f.dims) || !Array.isArray(f.tags)) {
@@ -51,6 +54,11 @@
 			tagsFor: function (kind, sd) {
 				return f.tags.filter(function (t) {
 					return t.side === sd && Array.isArray(t.kinds) && t.kinds.indexOf(kind) >= 0;
+				}).map(function (t) { return t.id; });
+			},
+			quickFor: function (kind, sd) {
+				return f.tags.filter(function (t) {
+					return t.side === sd && t.quick !== false && Array.isArray(t.kinds) && t.kinds.indexOf(kind) >= 0;
 				}).map(function (t) { return t.id; });
 			},
 			keyOf: function (id) {
@@ -173,7 +181,7 @@
 		return { role: 'rating_log', mid: String(mid), ts: Math.floor(Number(ts) || 0), rating: rating };
 	}
 
-	function knownForm(f) { return f === FORM_ID || (typeof f === 'string' && f.indexOf(FORM_ID + '.') === 0 && /^\d+$/.test(f.slice(FORM_ID.length + 1))); }
+	function knownForm(f) { return f === FORM_MAJOR || (typeof f === 'string' && f.indexOf(FORM_MAJOR + '.') === 0 && /^\d+$/.test(f.slice(FORM_MAJOR.length + 1))); }
 
 	/// Is this a `rating_log` this build can read? A record from a later build is
 	/// not drawn and not counted.
@@ -427,9 +435,9 @@
 	// The English words for the tags, by id. The note is fixed on the typing device, so a model
 	// in any locale reads the same bytes (plan D7); a test holds this table to `rating.tag.*` in i18n/en.js.
 	var TAG_EN = {
-		wrong: 'Wrong', ignored: 'Ignored instructions', long: 'Too long', short: 'Too short', style: 'Tone or format',
-		tool: 'Tool use', refused: 'Refused or hedged', slow: 'Slow', correct: 'Correct', followed: 'Did as instructed',
-		concise: 'Concise', style_good: 'Good style', broke: 'Broke something', wrong_change: 'Wrong change',
+		missed: 'Missed the point', wrong: 'Incorrect', ignored: 'Ignored instructions', long: 'Too long', short: 'Too short', style: 'Tone or format',
+		tool: 'Tool use', refused: 'Refused or hedged', slow: 'Slow', on_point: 'On point', correct: 'Correct', followed: 'Did as instructed',
+		concise: 'Concise', style_good: 'Good style', broke: 'Broke something', wrong_change: 'Incorrect change',
 		incomplete: 'Incomplete', scope: 'Changed too much', wiped: 'Lost content', clean: 'Clean', complete: 'Complete',
 		lost: 'Lost information', bloated: 'Bloated', faithful: 'Faithful', tidy: 'Tidy', tone: 'Tone', ready: 'Ready to send',
 		not_useful: 'Not useful', already_knew: 'Already knew', useful: 'Useful',

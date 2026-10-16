@@ -206,10 +206,58 @@ async function joinMate(a, lead, mate, route, extra = {}) {
 	await b.page.waitForTimeout(2000);
 	await settle(b.page);
 	await until(b.page, () => { try { return window.DaimondPost.state().parks > 0; } catch (e) { return false; } }, null, 8000);
-	await b.page.evaluate((n) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), n), mate);
+	await beatAsApp(b, mate);
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);
 	return b;
+}
+
+/// Beat a device's presence with the values its own `presenceTick` sends: whether it is
+/// genuinely listening now (`DaimondPost.servicing`), its runner posture and whether it is a
+/// phone. Since UNBLOCK-1 (231e6f01) `servicing` goes on the wire both ways, so a bare
+/// `beatPresence(id, name)` says servicing:false, the gateway stores `serviced_at: 0`, and
+/// every other device's election (`recGenuine`) reads this device as NOT listening and runs
+/// its turns itself. Every verifier beat goes through here (diag HOV, 16 Oct 2026).
+///
+/// # Arguments
+/// * `s` - The session (`{ page }`) or the page itself.
+/// * `name` - The presence name; defaults to `s.name`.
+///
+/// # Returns
+/// Whether the device said it was servicing, or null when the page could not beat.
+export async function beatAsApp(s, name) {
+	const pg = s.page || s;
+	const n = name != null ? name : s.name;
+	return pg.evaluate(async (nm) => {
+		let svc = false, run = false, mob = false;
+		try { svc = !!window.DaimondPost.servicing(window.DaimondPeer.DISPATCH_FRESH_MS); } catch (e) {}
+		try { run = !!window.DaimondRunner.on(); } catch (e) {}
+		try { mob = !!(window.DaimondShell && window.DaimondShell.isMobileDevice && window.DaimondShell.isMobileDevice()); } catch (e) {}
+		await window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), nm, false, svc, run, mob);
+		return svc;
+	}, n).catch(() => null);
+}
+
+/// Wait until A's own election reads B as listening (`recGenuine`: a fresh beat AND a
+/// fresh `serviced_at`), beating B as the app does and refreshing A's presence each round.
+/// A fresh B is not listening until its first park round completes, which took 22-23 s in
+/// diag HOV; the app's own pulse is 45 s apart. `name` is B's presence name (default
+/// `b.name`). Returns whether A read B listening within `ms`.
+export async function untilListening(a, b, idB, ms = 120000, name) {
+	const t0 = Date.now();
+	const seen = () => a.page.evaluate((id) => {
+		try {
+			const rec = window.DaimondPresence.snapshot()[id];
+			return !!(rec && window.DaimondPeer.recGenuine(rec, Date.now(), window.DaimondPeer.DISPATCH_FRESH_MS));
+		} catch (e) { return false; }
+	}, idB).catch(() => false);
+	while (Date.now() - t0 < ms) {
+		await beatAsApp(b, name);
+		await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
+		if (await seen()) return true;
+		await a.page.waitForTimeout(1000);
+	}
+	return false;
 }
 
 /// A third device, C, joined to `a`'s account the way `pair` joins B. For an arm that needs
@@ -243,8 +291,10 @@ export async function nominateRunner(check, a, b, mate) {
 	check('B is the runner, asked and answered yes', armed && onA === idB,
 		'nominee on A=' + (onA === idB ? 'B' : onA) + ' '
 		+ JSON.stringify(await b.page.evaluate(() => window.DaimondRunner.state()).catch(() => null)));
-	await b.page.evaluate((n) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), n), mate).catch(() => {});
-	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
+	// B says what it really is -- listening, the runner, not a phone -- and A waits until its
+	// own election reads B listening, so the first send is not raced against B's first park.
+	const listening = await untilListening(a, b, idB, 120000, mate);
+	check('A reads the runner B as listening', listening);
 	return idB;
 }
 

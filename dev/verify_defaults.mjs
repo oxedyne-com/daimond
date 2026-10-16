@@ -44,8 +44,8 @@ const check = (pass, name, detail) => {
 const names = async () => (JSON.parse(await wasm(async (app) => await app.list_diamonds())))
 	.map((d) => d.name).sort();
 
-const HELP = 'Daimond Help';
-const OPT  = 'Daimond Optimiser';
+const HELP = 'Neil';
+const OPT  = 'Lucy';
 
 // `defaults: false` removes the two the first boot seeds, so this session owns
 // the rail outright and the state below is built rather than inherited.
@@ -97,6 +97,30 @@ try {
 	check(twice.filter((n) => n === HELP).length === 1
 		&& twice.filter((n) => n === OPT).length === 1,
 		'booting again makes no second copy of either', JSON.stringify(twice));
+
+	// ── An account seeded under the old names (NAMES, D-20261015-12) ─
+	// The two built-ins as an earlier build left them: the same fixed ids, wearing
+	// "Daimond Help" and "Daimond Optimiser". The boot renames them in place, keeps
+	// their ids, and seeds no third or fourth Diamond beside them.
+	const ids0 = await wasm(async (app) => {
+		const rows = JSON.parse(await app.list_diamonds()), out = {};
+		for (const [now, was] of [['Neil', 'Daimond Help'], ['Lucy', 'Daimond Optimiser']]) {
+			const row = rows.find((d) => d.name === now);
+			if (row) { await app.rename_diamond(row.id, was); out[now] = row.id; }
+		}
+		return out;
+	});
+	const seededOld = await names();
+	check(seededOld.includes('Daimond Help') && seededOld.includes('Daimond Optimiser') && !seededOld.includes(HELP),
+		'fixture: the store holds the two built-ins under their old names', JSON.stringify(seededOld));
+	await reboot(2500);
+	const renamed = JSON.parse(await wasm(async (app) => await app.list_diamonds()));
+	const byName = (n) => renamed.filter((d) => d.name === n);
+	check(byName(HELP).length === 1 && byName(OPT).length === 1
+		&& byName(HELP)[0].id === ids0.Neil && byName(OPT)[0].id === ids0.Lucy,
+		'the boot renames an old-named built-in to Neil and Lucy, keeping its id', JSON.stringify(renamed.map((d) => [d.name, d.id])));
+	check(!byName('Daimond Help').length && !byName('Daimond Optimiser').length && renamed.length === seededOld.length,
+		'and leaves no old name and no extra Diamond behind', JSON.stringify(renamed.map((d) => d.name)));
 
 	// ── A deletion is a decision, and the app must not argue ─────
 	const gone = await wasm(async (app, name) => {

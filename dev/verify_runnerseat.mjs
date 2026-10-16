@@ -61,8 +61,12 @@ const beatAs = (pg, runner) => pg.evaluate((run) => {
 		&& window.DaimondCore.deviceSelfName(id)) || 'a device';
 	const mob = !!(window.DaimondShell && window.DaimondShell.isMobileDevice
 		&& window.DaimondShell.isMobileDevice());
-	window.DaimondPresence.beat(id, nm, Date.now(), true, false, null, run, mob);
-	return window.DaimondSync.beatPresence(id, nm, true, false, run, mob);
+	// Listening as the app reads it (HOV-REBASE): since UNBLOCK-1 an explicit false is the
+	// gateway's stale marker (`serviced_at: 0`), and `recGenuine` refuses the posture seat.
+	let svc = false;
+	try { svc = !!window.DaimondPost.servicing(window.DaimondPeer.DISPATCH_FRESH_MS); } catch (e) {}
+	window.DaimondPresence.beat(id, nm, Date.now(), true, svc, null, run, mob);
+	return window.DaimondSync.beatPresence(id, nm, true, svc, run, mob);
 }, runner);
 
 let desk = null, phone = null;
@@ -123,6 +127,12 @@ try {
 		!nomOnPhone, 'nominatedId=' + JSON.stringify(nomOnPhone));
 
 	// ── (b) THE DESKTOP BEATS THE POSTURE, AND THE GATEWAY RELAYS IT. ──
+	// The desktop is listening only once its first park round completes (diag HOV: 22-23 s).
+	for (let t0 = Date.now(); Date.now() - t0 < 120000;) {
+		const on = await desk.page.evaluate(() => { try { return !!window.DaimondPost.servicing(window.DaimondPeer.DISPATCH_FRESH_MS); } catch (e) { return false; } });
+		if (on) break;
+		await desk.page.waitForTimeout(1000);
+	}
 	await beatAs(desk.page, true);
 	await desk.page.waitForTimeout(500);
 	await phone.page.evaluate(() => window.DaimondSync.refreshPresence());

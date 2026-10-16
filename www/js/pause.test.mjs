@@ -440,7 +440,7 @@ const held = (P, ids) => ids.every((id) => P.isPaused(id));
 		Cd.P.adopt(A.P.snapshot());
 		Cd.P.unseed(SELF);
 		A.P.adopt(Cd.P.snapshot());
-		check('Q6-1: a pause of the Optimiser by ' + what + ' on another device outlives the repair, on both',
+		check('Q6-1: a pause of Lucy by ' + what + ' on another device outlives the repair, on both',
 			() => Cd.P.isPaused(SELF) && A.P.isPaused(SELF) && A.P.heldByHand(node));
 	}
 }

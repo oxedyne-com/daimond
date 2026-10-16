@@ -111,7 +111,7 @@
 			const delta	= need - have;
 			if (Math.abs(delta) < 4) return;
 			chrome.windows.getCurrent((w) => {
-				if (!w || w.height == null) return;
+				if (chrome.runtime.lastError || !w || w.height == null) return;
 				const room = Math.max(320, (screen.availHeight || 900) - 60);
 				chrome.windows.update(w.id,
 					{ height: Math.max(300, Math.min(w.height + delta + 2, room)) });
@@ -222,7 +222,10 @@
 	/// without sending one is a dismissal, and the broker reads that from the
 	/// window closing, not from here.
 	function answer(how) {
-		chrome.runtime.sendMessage({ type: 'grant', nonce, answer: how }, () => window.close());
+		chrome.runtime.sendMessage({ type: 'grant', nonce, answer: how }, () => {
+			void chrome.runtime.lastError;	// the worker restarted; the ask times out on its own
+			window.close();
+		});
 	}
 
 	$('allow').addEventListener('click', async () => {

@@ -1447,6 +1447,25 @@ pub fn req_json(req: &Req) -> Outcome<String> {
     Ok(res!(req_dat(req).json()))
 }
 
+/// The `"id"` a request text names, read on its own so a request the codec rejects can still
+/// be answered under it (QA B Info 1, 11 Oct 2026: a verify frame with `deny:null` beside an
+/// `ro` list was answered with a null id, and the page waited out its whole timeout).
+///
+/// # Arguments
+/// * `txt` - The payload, without any framing.
+pub fn req_id_of_json(txt: &str) -> Option<String> {
+    if want_strict_json(txt).is_err() {
+        return None;
+    }
+    match Dat::decode_string_with_config(txt, &dec_cfg()) {
+        Ok(obj)	=> match obj.map_get(&Dat::Str("id".to_string())) {
+            Ok(Some(Dat::Str(s)))	=> Some(s.clone()),
+            _			=> None,
+        },
+        Err(_)	=> None,
+    }
+}
+
 /// The request a JSON text carries.
 ///
 /// # Arguments
@@ -1481,10 +1500,9 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
         "verify" => Ok(Req::Verify {
             id:         res!(str_field(&obj, "verify", "id")),
             name:       res!(str_field(&obj, "verify", "name")),
-            // Absent is a page that named no tree, which is every page older than
-            // `verify::BY_ROOT`, and the hand then resolves in the granted root
-            // exactly as it always did.
-            root:       res!(opt_str_field(&obj, "verify", "root")).unwrap_or_default(),
+            // Required: a page that names no tree is refused, never handed the grant
+            // (see `verify::vet_root`).
+            root:       res!(str_field(&obj, "verify", "root")),
             breaks:     res!(breaks_of(&obj)),
             world:      res!(world_of(&obj)),
             // Absent fails closed: a page that predates the field said nothing about the
@@ -2720,11 +2738,11 @@ mod tests {
     /// second would hand back a pass with nothing behind it.
     #[test]
     fn a_verify_asking_for_one_break_must_name_it() -> Outcome<()> {
-        let bad = r#"{"t":"verify","id":"v","name":"graph","breaks":"one","break":null,"timeout_ms":1000}"#;
+        let bad = r#"{"t":"verify","id":"v","name":"graph","root":"","breaks":"one","break":null,"timeout_ms":1000}"#;
         assert!(req_of_json(bad).is_err(), "'one' with no break was accepted");
-        let worse = r#"{"t":"verify","id":"v","name":"graph","breaks":"most","break":null,"timeout_ms":1000}"#;
+        let worse = r#"{"t":"verify","id":"v","name":"graph","root":"","breaks":"most","break":null,"timeout_ms":1000}"#;
         assert!(req_of_json(worse).is_err(), "an invented breaks word was accepted");
-        let good = r#"{"t":"verify","id":"v","name":"graph","breaks":"one","break":"x","timeout_ms":1000}"#;
+        let good = r#"{"t":"verify","id":"v","name":"graph","root":"","breaks":"one","break":"x","timeout_ms":1000}"#;
         assert_eq!(Req::Verify {
             id:         fmt!("v"),
             name:       fmt!("graph"),
@@ -2738,11 +2756,27 @@ mod tests {
         Ok(())
     }
 
+    /// A verify names its tree, and a frame without one is not a verify.
+    ///
+    /// An absent root used to be filled in with the granted root, which took a scoped
+    /// turn's verifier outside its scope.
+    #[test]
+    fn a_verify_with_no_root_is_not_decoded() -> Outcome<()> {
+        let none = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"timeout_ms":1000}"#;
+        assert!(req_of_json(none).is_err(), "a verify with no root was accepted");
+        let some = r#"{"t":"verify","id":"v","name":"graph","root":"/w/repo","breaks":"all","break":null,"timeout_ms":1000}"#;
+        match res!(req_of_json(some)) {
+            Req::Verify { root, .. } => assert_eq!("/w/repo", root),
+            other => return Err(err!("not a verify: {:?}", other; Test, Invalid)),
+        }
+        Ok(())
+    }
+
     /// A verify's read-only and deny rules: absent or null is an older page (`None`), and
     /// either list present makes the rules present, the other then empty.
     #[test]
     fn a_verify_carries_the_turns_rules_and_an_older_page_carries_none() -> Outcome<()> {
-        let head = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"timeout_ms":1000"#;
+        let head = r#"{"t":"verify","id":"v","name":"graph","root":"","breaks":"all","break":null,"timeout_ms":1000"#;
         for (tail, want) in [
             ("}", None),
             (r#","ro":null,"deny":null}"#, None),
@@ -2769,7 +2803,7 @@ mod tests {
     /// is a different thing and is refused.
     #[test]
     fn a_verify_with_no_world_field_asks_the_hand_to_decide() -> Outcome<()> {
-        let old = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"timeout_ms":1000}"#;
+        let old = r#"{"t":"verify","id":"v","name":"graph","root":"","breaks":"all","break":null,"timeout_ms":1000}"#;
         assert_eq!(Req::Verify {
             id:         fmt!("v"),
             name:       fmt!("graph"),
@@ -2782,14 +2816,14 @@ mod tests {
         }, res!(req_of_json(old)));
         for (w, want) in [("stand", World::Stand), ("none", World::None), ("infer", World::Infer)] {
             let txt = fmt!(
-                r#"{{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"world":"{}","timeout_ms":1000}}"#,
+                r#"{{"t":"verify","id":"v","name":"graph","root":"","breaks":"all","break":null,"world":"{}","timeout_ms":1000}}"#,
                 w);
             match res!(req_of_json(&txt)) {
                 Req::Verify { world, .. } => assert_eq!(want, world, "{}", txt),
                 other => return Err(err!("{:?} is not a verify", other; Test, Invalid)),
             }
         }
-        let bad = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"world":"maybe","timeout_ms":1000}"#;
+        let bad = r#"{"t":"verify","id":"v","name":"graph","root":"","breaks":"all","break":null,"world":"maybe","timeout_ms":1000}"#;
         assert!(req_of_json(bad).is_err(), "an invented world word was accepted");
         Ok(())
     }
@@ -2800,7 +2834,7 @@ mod tests {
     /// whatever `run` was given on the same turn.
     #[test]
     fn a_verify_with_no_net_field_gets_no_network() -> Outcome<()> {
-        let base = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"timeout_ms":1000"#;
+        let base = r#"{"t":"verify","id":"v","name":"graph","root":"","breaks":"all","break":null,"timeout_ms":1000"#;
         for (tail, want) in [("}", false), (r#","net":false}"#, false), (r#","net":true}"#, true)] {
             let txt = fmt!("{}{}", base, tail);
             match res!(req_of_json(&txt)) {

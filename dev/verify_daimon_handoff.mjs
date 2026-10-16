@@ -37,7 +37,7 @@
 import { open, chat, signInAs, newChat, connectMock, storedChats, mockLog, clearMockLog, contentText } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
-import { nominateRunner } from './handoffpair.mjs';
+import { nominateRunner, beatAsApp } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 
 const BREAK = (() => {
@@ -236,8 +236,7 @@ try {
 	check('the Diamond synced to the runner B', bHasDia, 'id=' + diaId);
 
 	// B beats presence and A refreshes, so A (a phone) sees an awake peer to hand to.
-	await b.page.evaluate(() => window.DaimondSync.beatPresence(
-		window.DaimondIdentity.deviceId(), 'dhmate'));
+	await beatAsApp(b, 'dhmate');
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);
 	const aSeesB = await a.page.evaluate((self) =>
@@ -251,14 +250,14 @@ try {
 	await nominateRunner(check, a, b, 'dhmate');
 	await a.page.waitForTimeout(400);
 	await a.page.evaluate(() => window.DaimondSync && window.DaimondSync.push && window.DaimondSync.push());
-	await b.page.evaluate(() => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'dhmate'));
+	await beatAsApp(b, 'dhmate');
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1200);
 	const armed = await a.page.evaluate(() => { try { return localStorage.getItem('daimond-handoff-when-away'); } catch (e) { return null; } });
 	check('A is armed to hand off (step-away posture on)', armed === '1', 'armed=' + armed);
 
 	const rerefresh = async () => {
-		await b.page.evaluate(() => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'dhmate')).catch(() => {});
+		await beatAsApp(b, 'dhmate');
 		await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
 		await a.page.waitForTimeout(800);
 	};
@@ -343,7 +342,8 @@ try {
 				// gateway session and the peer transport, then beat presence and collect.
 				await b.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer
 					&& window.DaimondGateway && DaimondGateway.state().authed, null, { timeout: 20000 }).catch(() => {});
-				await b.page.evaluate(() => { try { window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'dhmate'); } catch (e) {} try { window.DaimondPost && window.DaimondPost.collect && window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
+				await beatAsApp(b, 'dhmate');
+				await b.page.evaluate(() => { try { window.DaimondPost && window.DaimondPost.collect && window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
 			}
 			if ((await countAns()) > before) break;
 			await a.page.waitForTimeout(300);
@@ -356,7 +356,8 @@ try {
 			if (consent) await watchAsks();
 			await a.page.evaluate(() => window.DaimondSync && window.DaimondSync.pull && window.DaimondSync.pull(true)).catch(() => {});
 			if (i % 3 === 0) {
-				await b.page.evaluate(() => { try { window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'dhmate'); } catch (e) {} try { window.DaimondPost && window.DaimondPost.collect && window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
+				await beatAsApp(b, 'dhmate');
+				await b.page.evaluate(() => { try { window.DaimondPost && window.DaimondPost.collect && window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
 				await a.page.evaluate(() => { try { document.dispatchEvent(new Event('visibilitychange')); } catch (e) {} try { window.DaimondPost && window.DaimondPost.collect && window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
 			}
 			await a.page.waitForTimeout(400);

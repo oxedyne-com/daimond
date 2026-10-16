@@ -24,7 +24,7 @@
 import { open, chat, signInAs, newChat, connectMock, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
-import { nominateRunner } from './handoffpair.mjs';
+import { nominateRunner, beatAsApp } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 
 const BREAK = (() => {
@@ -112,8 +112,7 @@ try {
 	// B NOMINATED: since D-20261009-23 a send goes to the nominated runner or runs here,
 	// so a phone with no nominee runs the workers itself.
 	await nominateRunner(check, a, b, 'wlmate');
-	await b.page.evaluate(() => window.DaimondSync.beatPresence(
-		window.DaimondIdentity.deviceId(), 'wlmate'));
+	await beatAsApp(b, 'wlmate');
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence
 		&& window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);

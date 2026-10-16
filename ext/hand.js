@@ -1890,6 +1890,12 @@
 		/// by far is a reload, so what it left is HELD for the length of the
 		/// grace and stopped only when nothing comes back for it.
 		function pageGone() {
+			// READ, so Chrome does not report it as unchecked. A page going into the
+			// back/forward cache arrives here with "The page keeping the extension port
+			// is moved into back/forward cache": the commonest way back from that is
+			// Back, the same tab, inside the grace -- a reload in all but name -- so it
+			// parks like any other page that went.
+			void chrome.runtime.lastError;
 			park();
 		}
 
@@ -1910,7 +1916,7 @@
 		let busy = false;
 		for (const r of relays) if (r.busy && r.busy()) { busy = true; break; }
 		if (busy && !awake) {
-			awake = setInterval(() => { chrome.runtime.getPlatformInfo(() => {}); }, AWAKE_MS);
+			awake = setInterval(() => { chrome.runtime.getPlatformInfo(() => { void chrome.runtime.lastError; }); }, AWAKE_MS);
 		} else if (!busy && awake) {
 			clearInterval(awake);
 			awake = null;

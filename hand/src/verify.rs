@@ -49,6 +49,7 @@
 //! on its own: a caller who wants it must match, and both arms hand back the
 //! bad news in the same breath.
 
+use crate::fence::Level;
 use crate::journal::{
     Event,
     Journal,
@@ -476,14 +477,64 @@ pub const FENCED: &str = "verify:fenced";
 pub fn none_here(root: &Path, granted: &Path) -> String {
     let inside = match root == granted {
         true	=> fmt!(""),
-        false	=> fmt!(" That folder is the one marked into this Diamond, inside the hand's \
-            grant of '{}'.", granted.display()),
+        false	=> fmt!(" That folder is the one this request named, inside the hand's grant \
+            of '{}'.", granted.display()),
     };
     fmt!(
         "Refused: '{}' holds no 'dev/verify_*.mjs', so there is nothing in it to verify with.{} \
         This verb runs a REPOSITORY's own verifiers and is not a general test runner; use 'run' \
         for the project's own test command instead. Nothing was run.",
         root.join(DEV_DIR).display(), inside)
+}
+
+/// The sentence refusing a turn's fence rules, or nothing when every one can be enforced.
+///
+/// Asked once, before [`provenance`] (QA A F3, 11 Oct 2026).  Provenance runs git behind a
+/// fence built from these same rules, so a rule the fence cannot take used to surface as "git
+/// could not be run" and the refusal blamed the commit check for a bad rule.  The rule is
+/// held here to the fence's own test ([`crate::fence::canonical`]), and refused as a rule.
+///
+/// A deny that hides the tree itself, its `dev/` or its `.git` leaves no verifier anything to
+/// run and git nothing to answer with, so it is refused here by the rule's own spelling (QA B
+/// B1, 11 Oct 2026).  It used to reach [`provenance`] and come back as "not a git repository".
+///
+/// # Arguments
+/// * `root` - The folder the request named, already canonical.
+/// * `rules` - The read-only and deny lists of `run`'s fence on the same turn.
+pub fn vet_rules(root: &Path, rules: Option<&TurnRules>) -> Option<String> {
+    let r = match rules {
+        Some(r)	=> r,
+        None	=> return None,
+    };
+    for (paths, level) in [(&r.ro, Level::Ro), (&r.deny, Level::Deny)] {
+        for p in paths.iter() {
+            if let Err(e) = crate::fence::canonical(p, level) {
+                return Some(fmt!("Refused: this turn's fence rules cannot be enforced, so no \
+                    verifier is run under them. {} Nothing was run.", e.msgs().join(" ")));
+            }
+        }
+    }
+    let needed = [
+        (root.to_path_buf(),	"the folder itself"),
+        (root.join(DEV_DIR),	"its 'dev/', where the verifier lives"),
+        (root.join(".git"),	"its '.git', which says whether the verifier is the commit's"),
+    ];
+    for q in r.deny.iter() {
+        let hid = match crate::fence::canonical(q, Level::Deny) {
+            Ok(p)	=> p,
+            Err(_)	=> continue, // refused above
+        };
+        for (want, what) in needed.iter() {
+            let want = std::fs::canonicalize(want).unwrap_or_else(|_| want.clone());
+            if want.starts_with(&hid) {
+                return Some(fmt!("Refused: this turn's deny rule '{}' hides '{}' -- {} -- so no \
+                    verifier can run there and git cannot say whose code it is. Nothing was run. \
+                    Ask on a turn whose rules leave that folder visible.",
+                    q, root.display(), what));
+            }
+        }
+    }
+    None
 }
 
 /// The tree one request resolves in, or the sentence refusing it.
@@ -496,15 +547,18 @@ pub fn none_here(root: &Path, granted: &Path) -> String {
 /// inside the grant pointing out of it is otherwise a way past the whole
 /// arrangement.
 ///
-/// An empty `asked` is a page that named none, and gets the granted root -- which
-/// is what every page before this one sent.
+/// An empty `asked` is a page that named no tree, and is refused: the hand never
+/// picks one itself, because the granted root takes a scoped turn's verifier outside
+/// its scope and the hand's own working directory is nobody's tree at all.
 ///
 /// # Arguments
 /// * `granted` - The folder this hand may work in, already canonical.
-/// * `asked` - What the page sent, absolute or empty.
+/// * `asked` - What the page sent, which must be absolute.
 pub fn vet_root(granted: &Path, asked: &str) -> Result<PathBuf, String> {
     if asked.trim().is_empty() {
-        return Ok(granted.to_path_buf());
+        return Err(fmt!(
+            "Refused: the page named no folder for this verifier, and the hand never picks one \
+            itself -- not the folder it was granted and not its own. Nothing was run."));
     }
     let raw = Path::new(asked.trim());
     if !raw.is_absolute() {
@@ -672,7 +726,7 @@ fn trim_for_message(s: &str) -> String {
 /// there is no shell, so `--` before it is belt to the braces.
 ///
 /// # Arguments
-/// * `root` - The granted root, which is where git is asked.
+/// * `root` - The folder the request named, which is where git is asked.
 /// * `file` - The verifier's file name, from the directory entry.
 /// * `rules` - The turn's read-only and deny rules, as the verifier itself gets them.
 pub async fn provenance(
@@ -709,8 +763,8 @@ async fn provenance_asked(ask: &Git<'_>, root: &Path, rel: &str) -> Provenance {
     match ask.status(&["rev-parse", "--git-dir"]).await {
         Ok(Some(0))	=> (),
         Ok(_)		=> return Provenance::Unknown(fmt!(
-            "the folder this hand was granted is not a git repository, so there is no commit \
-            to compare this file with")),
+            "'{}' is not in a git repository, so there is no commit to compare this file with",
+            root.display())),
         Err(e)		=> return Provenance::Unknown(fmt!("git could not be run: {}", e)),
     }
     // Asked without following the link, which is the whole point: `metadata` above
@@ -1426,8 +1480,7 @@ pub fn verifier_fence(root: &Path, scratch: &Path, net: bool, rules: Option<&Tur
     match rules {
         None => ro.push(fmt!("{}", root.display())),
         Some(r) => {
-            let locked = r.ro.iter().any(|q| mroot.starts_with(real(Path::new(q))));
-            if locked {
+            if locking_rule(root, r).is_some() {
                 ro.push(fmt!("{}", root.display()));
             } else {
                 rw.insert(0, fmt!("{}", root.display()));
@@ -1442,6 +1495,28 @@ pub fn verifier_fence(root: &Path, scratch: &Path, net: bool, rules: Option<&Tur
         },
     }
     FenceSpec { rw, ro, deny, net }
+}
+
+/// The turn's read-only rule that covers the whole mark, which makes the verifier read-only.
+pub fn locking_rule<'a>(root: &Path, rules: &'a TurnRules) -> Option<&'a str> {
+    let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let mroot = real(root);
+    rules.ro.iter()
+        .find(|q| mroot.starts_with(real(Path::new(q.as_str()))))
+        .map(|q| q.as_str())
+}
+
+/// The report's one line saying the verifier ran read-only and why, or nothing when it could
+/// write its mark (QA B B2, 11 Oct 2026: a locked run's report read exactly like a writable
+/// one's, so a verifier that failed to write was read as the code's fault).
+pub fn read_only_line(root: &Path, rules: Option<&TurnRules>) -> Option<String> {
+    match rules {
+        None	=> Some(fmt!("This page sent no fence rules, so the verifier ran with this \
+            folder read-only; a write it failed is that and not the code.")),
+        Some(r)	=> locking_rule(root, r).map(|q| fmt!("This folder is read-only on this turn \
+            (rule '{}'), so the verifier ran read-only; a write it failed is that and not the \
+            code.", q)),
+    }
 }
 
 /// What a fenced verify spawn records as in force, as a command's record does.
@@ -1872,6 +1947,16 @@ pub fn hand_line() -> String {
     fmt!("[hand: {}/{} at {}{}]", crate::version(), sha, img.path.display(), newer)
 }
 
+/// A verify refusal with this hand's own line under it, so the page reads which hand refused
+/// rather than guessing its age from a silence (QA B B3, 11 Oct 2026).  Every verify refusal
+/// goes out through this, from the dispatcher and from [`conduct`] alike.
+pub fn stamped(reason: String) -> String {
+    match reason.contains("[hand: ") {
+        true	=> reason,
+        false	=> fmt!("{}\n{}", reason, hand_line()),
+    }
+}
+
 /// The note a verifier that wants a live gateway gets beside its world line.
 pub fn gateway_note(file: &str) -> String {
     fmt!(
@@ -1958,7 +2043,7 @@ impl Drop for WorldGuard {
 pub struct Job {
     /// The caller's identifier, echoed on every response.
     pub id:     String,
-    /// The granted root, which is where the verifier runs.
+    /// The folder the request named, which is where the verifier runs.
     pub root:   PathBuf,
     /// The verifier.
     pub script: Script,
@@ -2518,9 +2603,16 @@ pub async fn conduct(job: Job, tx: Sender<Resp>) -> Outcome<()> {
     // makes that defensible is that the script is the commit's. Asked here rather than
     // in `main.rs` because this function is the crate's public way in, and a gate in the
     // dispatcher is a gate the reproduction walked straight past.
+    //
+    // The fence rules first, because provenance runs git behind them: a rule the fence
+    // cannot take is refused as a rule, not as a failed commit check.
+    if let Some(no) = vet_rules(&job.root, job.rules.as_ref()) {
+        let _ = tx.send(Resp::Refused { id: fmt!("{}", job.id), reason: stamped(no) }).await;
+        return Ok(());
+    }
     let prov = provenance(&job.launcher, &job.root, &job.script.file, job.rules.as_ref()).await;
     if let Some(no) = unfenced_refusal(&prov, &job.script.file) {
-        let _ = tx.send(Resp::Refused { id: fmt!("{}", job.id), reason: no }).await;
+        let _ = tx.send(Resp::Refused { id: fmt!("{}", job.id), reason: stamped(no) }).await;
         return Ok(());
     }
 
@@ -2600,17 +2692,18 @@ pub async fn conduct(job: Job, tx: Sender<Resp>) -> Outcome<()> {
         Err(w)   => {
             let _ = tx.send(Resp::Refused {
                 id:     fmt!("{}", job.id),
-                reason: fmt!(
+                reason: stamped(fmt!(
                     "Refused: the clean run of dev/{} did not happen -- {}. Nothing was \
                     measured, so there is no result to report.\n{}",
-                    job.script.file, w, world_note),
+                    job.script.file, w, world_note)),
             }).await;
             return Ok(());
         },
     };
 
     let shots = shots_since(&job.root, began);
-    let text  = report(&job.script, &prov, &passes, &verdict, &shots, &world_note);
+    let ro    = read_only_line(&job.root, job.rules.as_ref());
+    let text  = report(&job.script, &prov, &passes, &verdict, &shots, &world_note, ro.as_deref());
     let bytes = text.len() as u64;
     let _ = tx.send(Resp::Chunk {
         id:     fmt!("{}", job.id),
@@ -2748,6 +2841,7 @@ async fn measure(
 /// * `shots` - Pictures this sequence wrote, workspace-relative.
 /// * `world` - The `[world: …]` line, which says which dev world this ran in or
 ///   why it ran in none.
+/// * `ro_line` - [`read_only_line`]'s sentence, when the verifier could not write its mark.
 pub fn report(
     script:  &Script,
     prov:    &Provenance,
@@ -2755,6 +2849,7 @@ pub fn report(
     verdict: &Verdict,
     shots:   &[String],
     world:   &str,
+    ro_line: Option<&str>,
 )
     -> String
 {
@@ -2768,6 +2863,10 @@ pub fn report(
         "Run behind the command fence, scoped to this Diamond's folder, and only while these \
         bytes are the commit's -- that was checked against the commit before each run, and a \
         verifier that differs from it is refused rather than reported.\n");
+    if let Some(l) = ro_line {
+        s.push_str(l);
+        s.push('\n');
+    }
     // Early, and above the runs, so that the trimming at the end of this function
     // cannot take it: a report whose numbers came from a world the reader does not
     // know about is a report about somebody else's app.
@@ -3169,7 +3268,7 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             breaks: Vec::new(),
         };
         let verdict = Verdict::Unproven { passed: 0, failed: 0, declared: Vec::new() };
-        let text = report(&script, &Provenance::Committed, &[(p, None)], &verdict, &[], "[world: none]");
+        let text = report(&script, &Provenance::Committed, &[(p, None)], &verdict, &[], "[world: none]", None);
         assert!(text.contains("ERR_CONNECTION_REFUSED"),
             "the death did not reach the report, which is the only thing the model reads: {}",
             text);
@@ -3315,7 +3414,7 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             dead:   Vec::new(),
             unrun:  Vec::new(),
         };
-        let text = report(&script, &Provenance::Committed, &[(clean, None), (brk, Some(what))], &v, &[], "[world: none]");
+        let text = report(&script, &Provenance::Committed, &[(clean, None), (brk, Some(what))], &v, &[], "[world: none]", None);
         let last = match text.lines().filter(|l| !l.is_empty()).last() {
             Some(l) => l,
             None    => return Err(err!("the report is empty"; Test)),
@@ -3339,7 +3438,7 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         clean.fails = (0..40_000).map(|i| fmt!("FAIL a very long check name number {}", i))
             .collect();
         let v = Verdict::Unproven { passed: 1, failed: 0, declared: Vec::new() };
-        let text = report(&script, &Provenance::Committed, &[(clean, None)], &v, &[], "[world: none]");
+        let text = report(&script, &Provenance::Committed, &[(clean, None)], &v, &[], "[world: none]", None);
         assert!(text.len() <= REPORT_MAX, "{} bytes", text.len());
         assert!(text.trim_end().ends_with(']'), "the trailer was cut off");
         assert!(text.contains(TRAILER), "the trailer is gone");
@@ -3414,6 +3513,27 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         Ok(())
     }
 
+    /// A fence rule the fence cannot take is refused as a rule, before any git is run
+    /// (QA A F3: it was refused as "not this repository's committed code").
+    #[test]
+    fn a_relative_fence_rule_is_refused_as_a_rule() {
+        let open = TurnRules { ro: vec![fmt!("/")], deny: vec![fmt!("/no/such/place")] };
+        let here = Path::new("/no/such/tree");
+        assert_eq!(None, vet_rules(here, Some(&open)));
+        assert_eq!(None, vet_rules(here, None));
+        for bad in [
+            TurnRules { ro: vec![fmt!("notes")], deny: Vec::new() },
+            TurnRules { ro: Vec::new(), deny: vec![fmt!("notes/secret")] },
+        ] {
+            let why = vet_rules(here, Some(&bad)).unwrap_or_default();
+            assert!(why.contains("fence rules cannot be enforced"), "not refused as a rule: {}", why);
+            assert!(why.contains("not absolute"), "the rule's fault is not named: {}", why);
+            assert!(!why.contains("committed code") && !why.contains("git"),
+                "the commit check is blamed: {}", why);
+            assert!(why.contains("Nothing was run"), "{}", why);
+        }
+    }
+
     #[test]
     fn a_mark_that_is_not_a_repository_is_refused_with_the_folder_named() -> Outcome<()> {
         let grant = res!(grant_of_two("grant_two_notes"));
@@ -3427,6 +3547,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         assert!(why.contains("notes/dev"), "the refusal does not name the folder: {}", why);
         assert!(why.contains(&fmt!("{}", grant.display())),
             "the refusal does not name the grant it sits in: {}", why);
+        // The hand knows only the folder the page named, never what was marked into a Diamond.
+        assert!(why.contains("the one this request named"), "{}", why);
+        assert!(!why.contains("marked into this Diamond"), "it claims to know the mark: {}", why);
         assert!(why.contains("Nothing was run"), "{}", why);
         Ok(())
     }
@@ -3434,10 +3557,16 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
     #[test]
     fn a_verify_root_is_held_to_the_grant() -> Outcome<()> {
         let grant = res!(grant_of_two("grant_two_vetted"));
-        // Named nothing: the granted root, which is what every page before this sent.
-        match vet_root(&grant, "") {
-            Ok(p)  => assert_eq!(grant, p),
-            Err(e) => return Err(err!("an empty root was refused: {}", e; Test, Invalid)),
+        // Named nothing: refused, never filled in with the grant (or the hand's own cwd).
+        for asked in ["", "   "] {
+            match vet_root(&grant, asked) {
+                Ok(p)  => return Err(err!(
+                    "an empty root {:?} was filled in as {:?}", asked, p; Test, Invalid)),
+                Err(s) => {
+                    assert!(s.contains("named no folder"), "{:?}", s);
+                    assert!(s.contains("Nothing was run"), "{:?}", s);
+                },
+            }
         }
         for (asked, want) in [
             ("alpha",                  "not an absolute path"),
@@ -4535,7 +4664,7 @@ if (@PW@) {
         let clean = pass_of("clean", "  ok   one\n");
         let txt = report(&script, &Provenance::Committed, &[(clean, None)],
             &Verdict::Unproven { passed: 1, failed: 0, declared: Vec::new() }, &[],
-            "[world: none]");
+            "[world: none]", None);
         let first = res!(txt.lines().next().ok_or_else(|| err!("empty report"; Test, Invalid)));
         assert!(first.contains("byte for byte the commit's"),
             "the report's first line must say whose bytes ran: {}", first);
@@ -4598,6 +4727,96 @@ if (@PW@) {
             "the break ran against a file the clean run had rewritten: {}", out);
         assert!(out.contains("stopped being the commit's"),
             "the report does not say why the break never ran: {}", out);
+        Ok(())
+    }
+
+    /// A committed one-check verifier in a fresh repository.
+    fn committed(name: &str) -> Outcome<PathBuf> {
+        let root = res!(tree(name));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", "console.log('  ok   it ran');\n"));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        Ok(root)
+    }
+
+    /// QA B B1 (11 Oct 2026): a refusal names the folder the REQUEST named, and a deny that
+    /// hides the tree, its `dev/` or its `.git` is refused as that rule -- it used to come back
+    /// as "the folder this hand was granted is not a git repository".
+    #[tokio::test]
+    async fn a_deny_over_the_tree_is_refused_by_its_rule_and_a_non_repository_by_its_folder()
+        -> Outcome<()>
+    {
+        let bare = res!(tree("qab_b1_bare"));
+        res!(put(&bare, "probe", "console.log('  ok   it ran');\n"));
+        let marker = PathBuf::from(fmt!("{}", bare.join("..").join("qab_b1.escaped").display()));
+        let a = res!(attempt(&bare, "probe", &marker).await);
+        let why = res!(a.refused.ok_or_else(|| err!(
+            "a verifier in no repository ran"; Test, Invalid)));
+        assert!(why.contains(&fmt!("'{}' is not", bare.display())),
+            "the refusal does not name the folder the request named: {}", why);
+        assert!(!why.contains("granted"), "the refusal blames the grant: {}", why);
+
+        let root = res!(committed("qab_b1_denied"));
+        let parent = res!(root.parent().ok_or_else(|| err!("no parent"; Test, Missing)))
+            .to_path_buf();
+        for hid in [root.clone(), root.join(DEV_DIR), root.join(".git"), parent] {
+            let q = fmt!("{}", hid.display());
+            let rules = TurnRules { ro: Vec::new(), deny: vec![q.clone()] };
+            let a = res!(attempt_ruled(&root, "probe", &marker, true, Some(rules)).await);
+            let why = res!(a.refused.ok_or_else(|| err!(
+                "a verifier ran under a deny on {}", q; Test, Invalid)));
+            assert!(why.contains(&fmt!("deny rule '{}'", q)), "the rule is not named: {}", why);
+            assert!(!why.contains("git repository") && !why.contains("committed code"),
+                "a deny was blamed on git: {}", why);
+            assert!(why.contains("Nothing was run"), "{}", why);
+        }
+        // A deny beside the tree, and one inside it that is neither dev/ nor .git, still run.
+        for q in [fmt!("{}", root.join("notes").display()),
+            fmt!("{}", root.join("..").join("qab_b1_other").display())] {
+            let rules = TurnRules { ro: Vec::new(), deny: vec![q.clone()] };
+            let a = res!(attempt_ruled(&root, "probe", &marker, true, Some(rules)).await);
+            assert!(a.refused.is_none(), "a harmless deny {} was refused: {:?}", q, a.refused);
+        }
+        Ok(())
+    }
+
+    /// QA B B2 (11 Oct 2026): a verifier a read-only rule locks runs read-only, and its report
+    /// says so in one line naming the rule.
+    #[tokio::test]
+    async fn a_verifier_locked_read_only_by_a_rule_says_which_rule() -> Outcome<()> {
+        let root = res!(committed("qab_b2_locked"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("qab_b2.escaped").display()));
+        let q = fmt!("{}", root.display());
+        let rules = TurnRules { ro: vec![q.clone()], deny: Vec::new() };
+        let a = res!(attempt_ruled(&root, "probe", &marker, true, Some(rules)).await);
+        assert!(a.refused.is_none(), "{:?}", a.refused);
+        let lines: Vec<&str> = a.said.lines().filter(|l| l.contains("read-only")).collect();
+        assert_eq!(1, lines.len(), "not one read-only line: {}", a.said);
+        assert!(lines[0].contains(&fmt!("'{}'", q)), "the rule is not named: {}", lines[0]);
+        // A writable run says nothing of the kind.
+        let open = res!(attempt(&root, "probe", &marker).await);
+        assert!(open.refused.is_none(), "{:?}", open.refused);
+        assert!(!open.said.contains("read-only"), "a writable run claimed read-only: {}", open.said);
+        Ok(())
+    }
+
+    /// QA B B3 (11 Oct 2026): a refusal says which hand wrote it, so the page never has to
+    /// guess the hand's age from its silence.
+    #[tokio::test]
+    async fn a_verify_refusal_says_which_hand_refused() -> Outcome<()> {
+        let bare = res!(tree("qab_b3_bare"));
+        res!(put(&bare, "probe", "console.log('  ok   it ran');\n"));
+        let marker = PathBuf::from(fmt!("{}", bare.join("..").join("qab_b3.escaped").display()));
+        let a = res!(attempt(&bare, "probe", &marker).await);
+        let why = res!(a.refused.ok_or_else(|| err!("it ran"; Test, Invalid)));
+        assert!(why.starts_with("Refused:"), "{}", why);
+        assert!(why.contains("[hand: "), "the refusal does not say which hand: {}", why);
+        let bad = TurnRules { ro: vec![fmt!("notes")], deny: Vec::new() };
+        let a = res!(attempt_ruled(&bare, "probe", &marker, true, Some(bad)).await);
+        let why = res!(a.refused.ok_or_else(|| err!("it ran"; Test, Invalid)));
+        assert!(why.contains("[hand: "), "a rule refusal does not say which hand: {}", why);
         Ok(())
     }
 }

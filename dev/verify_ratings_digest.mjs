@@ -115,14 +115,15 @@ const HEADS = [hx1, hx2, hx3, hx4, hf1, hy1, hy2, hy4, hz1, hz2, hz3, hz4];
 const CHAT_IDS = FIX.map((c) => c.id);
 
 // Hand counts: model, scope -> [n, up, down, neutral, made, N more, open negatives, fixed points, leading tags].
+// The digest names a tag by its English word (RATE-REASONS), so the hand count does too.
 // Account glm-5.2: heads x1 +, x2 +2, x3 -, x4 -, f1 - (chat A), z1 +, z3 - (chat C): 7 rated, 3 up, 4 down; made 5 answers + 1 file + 2 = 8.
 // Account kimi-k2.7: y1 +, y2 +, y4 -2 (chat B), z2 -, z4 0 (chat C): 5 rated, 2 up, 2 down, 1 neutral; made 4 + 2 = 6.
 // Floors are 10 and 6 effective ratings; fading makes 11 and 7 the smallest counts that reach them, so 'more' is 11-7, 11-5, 7-5, 7-3.
 const HAND = {
-	'3|glm-5.2':   { n: 7, up: 3, down: 4, zero: 0, made: 8, more: 4, open: 0, fixed: 1, tags: 'long 2, correct 1, wrong 1' },
-	'3|kimi-k2.7': { n: 5, up: 2, down: 2, zero: 1, made: 6, more: 6, open: 1, fixed: 0, tags: 'wrong 1' },
-	'2opt|glm-5.2':    { n: 5, up: 2, down: 3, zero: 0, made: 6, more: 2, open: 0, fixed: 1, tags: 'long 2, correct 1, wrong 1' },
-	'2help|kimi-k2.7': { n: 3, up: 2, down: 1, zero: 0, made: 4, more: 4, open: 1, fixed: 0, tags: 'wrong 1' },
+	'3|glm-5.2':   { n: 7, up: 3, down: 4, zero: 0, made: 8, more: 4, open: 0, fixed: 1, tags: 'Too long 2, Correct 1, Incorrect 1' },
+	'3|kimi-k2.7': { n: 5, up: 2, down: 2, zero: 1, made: 6, more: 6, open: 1, fixed: 0, tags: 'Incorrect 1' },
+	'2opt|glm-5.2':    { n: 5, up: 2, down: 3, zero: 0, made: 6, more: 2, open: 0, fixed: 1, tags: 'Too long 2, Correct 1, Incorrect 1' },
+	'2help|kimi-k2.7': { n: 3, up: 2, down: 1, zero: 0, made: 4, more: 4, open: 1, fixed: 0, tags: 'Incorrect 1' },
 };
 
 // ── The oracle: theta, the positive share and its 90% Wilson interval, from the head list alone ──
@@ -187,10 +188,10 @@ async function seed(page, ids, rev) {
 
 async function diamondIds(page) {
 	await page.evaluate(() => DaimondDiamond.seedDefaults());
-	await page.waitForFunction(() => [...document.querySelectorAll('#diamond-list .session-box-name')].some((n) => /Daimond Optimiser/.test(n.textContent)), null, { timeout: 20000 }).catch(() => {});
+	await page.waitForFunction(() => [...document.querySelectorAll('#diamond-list .session-box-name')].some((n) => /Lucy/.test(n.textContent)), null, { timeout: 20000 }).catch(() => {});
 	return page.evaluate(() => {
 		const of = (re) => { const b = [...document.querySelectorAll('#diamond-list .diamond-box')].find((x) => re.test(x.textContent)); return b ? b.dataset.id : ''; };
-		return { opt: of(/Daimond Optimiser/), help: of(/Daimond Help/) };
+		return { opt: of(/Lucy/), help: of(/Neil/) };
 	});
 }
 
@@ -299,12 +300,12 @@ const SECTIONS = {
 		const fp = POISON.filter((w) => pure.toLowerCase().indexOf(w.toLowerCase()) >= 0);
 		check('RD1', pure.length > 100 && fp.length === 0, 'and neither does DaimondRatingRoll.digestText over the same chats', fp.join(' ') || pure.slice(0, 120));
 		const names = sec.split('\n').filter((l) => l.startsWith('### Diamond: ')).map((l) => l.slice(13));
-		check('RD1', names.length === 2 && names.every((n) => /^Daimond (Optimiser|Help)$/.test(n)), 'Diamond names come from the Diamond list', JSON.stringify(names));
+		check('RD1', names.length === 2 && names.every((n) => /^(Lucy|Neil)$/.test(n)), 'Diamond names come from the Diamond list', JSON.stringify(names));
 	},
 
 	RD2: async () => {
 		const A = await base(), sec = section(A.first.text);
-		const acct = rows(sec, 'Account, every Diamond and chat'), d1 = rows(sec, 'Diamond: Daimond Optimiser'), d2 = rows(sec, 'Diamond: Daimond Help');
+		const acct = rows(sec, 'Account, every Diamond and chat'), d1 = rows(sec, 'Diamond: Lucy'), d2 = rows(sec, 'Diamond: Neil');
 		const want = [
 			['account glm-5.2',   acct['glm-5.2'],   rowOf('glm-5.2', 3)],
 			['account kimi-k2.7', acct['kimi-k2.7'], rowOf('kimi-k2.7', 3)],

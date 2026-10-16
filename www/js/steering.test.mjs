@@ -37,7 +37,7 @@ function load() {
 }
 const win = load();
 const R = win.DaimondRatings, RR = win.DaimondRatingRoll, S = win.DaimondSteering;
-const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1.json'), 'utf8'));
+const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1_1.json'), 'utf8'));
 const SIDES = {};
 FORM.tags.forEach(t => { SIDES[t.id] = t.side; });
 const OPTS = { sides: SIDES };
@@ -533,7 +533,7 @@ kase('parse: reads the entry shape exactly, the scope from the file the entry is
 	eq(r.entries[0], { id: 'n-mfq19-0-abcde', status: 'active', cm: 'glm-5.2', tag: 'long', level: 2, scope: DIAM, at: { t: 7, n: 20 }, kept: 0, line: 'Keep answers under about 200 words unless asked for detail.', to: '' });
 	eq(r.entries[2], { id: 'n-mfq19-3-pqrst', status: 'dismissed', cm: 'glm-5.2', tag: 'switch', level: 2, scope: DIAM, at: { t: 0, n: 25 }, kept: 0, line: '', to: 'glm-5.3' }, 'a switch dismissal');
 	const o = S.parse(FILE_CANON, OPT, true);
-	eq(o.ignored.length, 0, 'the Optimiser holds both levels');
+	eq(o.ignored.length, 0, 'Lucy holds both levels');
 	eq(o.entries[1], { id: 'n-mfq19-1-fghij', status: 'active', cm: 'all', tag: 'wrong', level: 3, scope: '', at: { t: 4, n: 31 }, kept: 31, line: 'Check facts, figures and code before stating them, and say plainly when you are unsure.', to: '' }, 'account level: scope empty, kept read');
 });
 
@@ -801,7 +801,7 @@ kase('F1 join: commutative on the entries, idempotent, associative (the three co
 	eq(S.join(j(a, b), a, DIAM, false), null, 'idempotent: a again adds nothing');
 });
 
-kase('F1 join: the account level joins in the Optimiser\'s file, and a Diamond\'s file keeps level 3 as written', () => {
+kase('F1 join: the account level joins in Lucy\'s file, and a Diamond\'s file keeps level 3 as written', () => {
 	const acc = E('n-a1', { level: 3, scope: '', cm: 'all', line: 'Account line.' });
 	const there = fileOf([acc], OPT, true);
 	const out = S.join('', there, OPT, true);

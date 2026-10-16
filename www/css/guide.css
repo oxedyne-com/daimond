@@ -423,7 +423,7 @@ ol.steps > li h3 { margin-top: 0; }
 
 /* ── The guide's search ──────────────────────────────────────────────────────
    notes2.txt line 96 asks for this as the fallback for a reader who would
-   rather not spend tokens asking Daimond Help. It sits at the end of the
+   rather not spend tokens asking Neil. It sits at the end of the
    header row and takes the leftover width, so it never pushes the nav to a
    second line on a wide screen and drops below it on a narrow one.
 

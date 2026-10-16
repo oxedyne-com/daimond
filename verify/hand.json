@@ -1,13 +1,13 @@
 {
 	"algo": "sha-256",
-	"source": "ccba8795c12611e72fd72c25dcedbf2225dd2bd0ef65b8c00cce0ae81bdee44a",
+	"source": "93bce8fda3febae1ab2bd14a70ae6a265186404dcbe320d37602514ad91f0fb1",
 	"toolchain": "1.90.0",
 	"build": "cargo build --release --locked --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
 	"files": {
 		"Cargo.lock": "922a5a44b8eb84cce11acfe2b4738e6f8efe000b90f9ebfab94f7759d2efad78",
 		"Cargo.toml": "8a2067c4d1bb7596a9c06c390a68a711bb07d1522ed75f5f3d3c6d93a4b1ad47",
-		"README.md": "8b367ae2dcdd480b90ff77afa5d669cd2f08cbe89cf371549445a7659a3bf217",
+		"README.md": "e11093127a2f7bd434f7b2bf7d54dedb1ba830fe09fb93210069edbe1f213d03",
 		"REVIEW.md": "3eec823b57cb2ee7b068fd57d1c9569afddb86eb9578e6f97015230c9f7958c6",
 		"build.rs": "2a19fb68a157585cc79dc3a190d34782d8bfb0997e881349ba4806f57d8265c3",
 		"examples/buildfence.rs": "fc5d6e6cefa29527accb4be42d5b13ce9660b189e7337c6e9e9d7d3923fe563e",
@@ -18,17 +18,18 @@
 		"install/install.test.sh": "dbd28c0c80b9f4363a71aeb737ce0531a9940cff17c6ea8cf7131d83e5044ee5",
 		"install/mock_host.py": "9ce2d2d59f438b1606607b05982ae37de800dda76814683087ec51223df452a5",
 		"install/uninstall.sh": "9e8a84942e53661cc54574e7dd416b8e5fbbc66b6218f7f94bfdbae378f23ef1",
-		"src/codec.rs": "e0811cb52f2c9c89adac1c2ff62558cc2aaa674e261a585c307870387fd7f643",
-		"src/exec.rs": "afee285c882bda07089bae082fbd8350eb92fe8a37d718ef2869875c88aa4ef6",
-		"src/fence.rs": "eb117273aba4830d51b4f7344a80cb000449ca77843415b016213fd707b69195",
+		"src/codec.rs": "7d6303aa580c80f57bb41ce5024ee19230c1865462d9c72d73bdd29e1e396d06",
+		"src/exec.rs": "0bf49a72b9517f51169053304141882c68bacf27438a168316430158a2ecdf6f",
+		"src/fence.rs": "11f909862afa8b74faede63217de00bce3df0149983330c627d71737d1597188",
 		"src/journal.rs": "7a3cbe6884d59b1c6ca92089a626434f8981183f3689a889d5b3e56e5d52d898",
-		"src/lib.rs": "c294d0c35c82101881b2419a90c0cefa48cdc5988abf1c657ab242f9a93f5ca1",
-		"src/main.rs": "4bdc7cf72e92d0a065ba329e42f89cf13f9e329e0c266631278fce3602b54b25",
+		"src/lib.rs": "8935cf1a710aab86ef0a1af634d5c7a4a19518464fc5905fe604d012ab4cfb6a",
+		"src/main.rs": "31cf77ff5ad846c87bb8f5a2e24beb93c076eae430785d757d0c2a2e8eea9659",
 		"src/meter.rs": "f2a3d7a81f919cefb49b0045ef5a101f23cac76c6c41b34d79f8f4d2a353cec7",
 		"src/pty.rs": "152536a79f3bdf08a1fcb5fd38a783a2941b2e628337de722948b1614bbde78f",
 		"src/seccomp.rs": "9c4ab27ecebf6fd6833daff1f53839aa03cd422f5b71928410de6e7ab51bb76a",
-		"src/verify.rs": "eb5295c8c000373a8df39459c830982fc4a9f1a423a379b114f854d8bca409da",
+		"src/verify.rs": "10004704d4f6a0f3e7c3100402b1f0c3bbaf033217160cddc1f28825881d1ce0",
 		"src/wire.rs": "98f95ee5102371001d536bcc03a3b79df992d6da85548b9f4eeeca82026f1ddb",
-		"tests/delete_fence.rs": "4393f41001987c314420943fb967ac072521bcc5a0d3be3890ed2e272bd2fff3"
+		"tests/delete_fence.rs": "4393f41001987c314420943fb967ac072521bcc5a0d3be3890ed2e272bd2fff3",
+		"tests/verify_pin.rs": "1744aaaad53717933e5b15f4dd256f7d6b469bddc771e294c28582972a101e09"
 	}
 }

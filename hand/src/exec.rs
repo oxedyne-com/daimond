@@ -8072,7 +8072,10 @@ mod tests {
             base:   String::new(),
             skip:   Vec::new(),
             budget: 20_000,
-            cap:    2_000_000,
+            // Every file opened, the fixture too: it is the ANSWER that must not have to carry it
+            // whole. A fixed 2,000,000 here was passed by once src/tools.rs grew past it.
+            cap:    res!(u32::try_from(text.len() * 2).map_err(|e| err!(e,
+                "src/tools.rs at {} bytes is past what a search cap can name", text.len(); Test, Size))),
         }).await);
         assert!(ok, "a search of this repository's own source was refused: {}", said);
         assert!(said.contains("tools.rs"),

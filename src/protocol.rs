@@ -1248,6 +1248,14 @@ pub enum AgentEvent {
         // rather than because the provider said it was done; see `ChatOnceResponse::stalled`
         // in `src/llm.rs`.
         stalled:              bool,
+        // The round's timing facts (U3a RM, UNBLOCK-16): body bytes read, milliseconds to the
+        // first of them, the longest quiet after it (the quiet before the end included), and
+        // the round's length from its first request.  A worker's liveness limit is tuned from
+        // them; see `ChatOnceResponse::bytes` in `src/llm.rs`.
+        bytes:                u64,
+        first_ms:             u64,
+        gap_ms:               u64,
+        ms:                   u64,
     },
     /// A chunk of the model's own reasoning, as it arrives.
     ///
@@ -1429,13 +1437,18 @@ impl AgentEvent {
             Self::Truncated => {
                 m.insert(dat!("type"), dat!("truncated"));
             }
-            Self::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled } => {
+            Self::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled,
+                bytes, first_ms, gap_ms, ms } => {
                 m.insert(dat!("type"), dat!("round_meta"));
                 m.insert(dat!("gen"),      dat!(gen_id.clone()));
                 m.insert(dat!("finish"),   dat!(finish_reason.clone()));
                 m.insert(dat!("nfinish"),  dat!(native_finish_reason.clone()));
                 m.insert(dat!("provider"), dat!(provider.clone()));
                 m.insert(dat!("stalled"),  Dat::Bool(*stalled));
+                m.insert(dat!("b"),        Dat::U64(*bytes));
+                m.insert(dat!("f"),        Dat::U64(*first_ms));
+                m.insert(dat!("g"),        Dat::U64(*gap_ms));
+                m.insert(dat!("ms"),       Dat::U64(*ms));
             }
             Self::Done => {
                 m.insert(dat!("type"), dat!("done"));

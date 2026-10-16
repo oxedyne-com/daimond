@@ -971,6 +971,16 @@ pub struct ChatOnceResponse {
     /// The upstream provider OpenRouter routed this call to (`"Novita"`, …).  Empty off
     /// OpenRouter.
     pub provider:             String,
+    /// The round's timing facts, read off the stream by [`StreamWatch`] (U3a RM, UNBLOCK-16):
+    /// the body bytes read, the milliseconds from the request to the first of them, the
+    /// longest quiet after that one (the quiet before the stream ended included), and the
+    /// milliseconds from the round's first request to its end.  They are what a worker's
+    /// liveness limit is tuned from.  Zero on the non-streaming path, and `first_ms` is the
+    /// whole wait where no byte came at all (`bytes` 0 tells the two apart).
+    pub bytes:                u64,
+    pub first_ms:             u64,
+    pub gap_ms:               u64,
+    pub ms:                   u64,
 }
 
 impl ChatOnceResponse {
@@ -1278,6 +1288,20 @@ struct StreamOutcome {
     aborted: bool,
     /// No byte arrived for `stream_idle_ms`, and the connection was given up on.
     stalled: bool,
+    /// The body bytes read; see [`StreamWatch::ended`].
+    bytes:    u64,
+    /// Milliseconds from the request to the first body byte, or the whole wait if none came.
+    first_ms: u64,
+    /// The longest quiet after the first byte, the quiet before the end included.
+    gap_ms:   u64,
+}
+
+impl StreamOutcome {
+    /// The turn was stopped while the request was in flight.
+    #[cfg(target_arch = "wasm32")]
+    const ABORTED: Self = Self { aborted: true, stalled: false, bytes: 0, first_ms: 0, gap_ms: 0 };
+    /// The stream went quiet past its limit and was given up on.
+    const STALLED: Self = Self { aborted: false, stalled: true, bytes: 0, first_ms: 0, gap_ms: 0 };
 }
 
 /// Whether an HTTP status is worth another attempt.
@@ -1458,6 +1482,10 @@ struct StreamWatch {
     accepted:  bool,    // has any `data:` chunk arrived
     thinking:  bool,    // is the model reasoning, with no answer yet
     quiet_cap: u64,     // the most any quiet before real data may last
+    asked:     u64,     // clock when the request went out
+    first_at:  Option<u64>, // clock at the first line
+    gap_max:   u64,     // the longest quiet between lines after the first
+    bytes:     u64,     // body bytes read
 }
 
 impl StreamWatch {
@@ -1475,7 +1503,17 @@ impl StreamWatch {
             accepted:  false,
             thinking:  false,
             quiet_cap: u64::MAX,
+            asked:     now,
+            first_at:  None,
+            gap_max:   0,
+            bytes:     0,
         }
+    }
+
+    // When the request went out, if before the watch began: the first byte is timed from it.
+    fn asked(mut self, asked: u64) -> Self {
+        self.asked = asked.min(self.asked);
+        self
     }
 
     // Bounds the quiet before real data, whatever the ceilings: see [`attempt_wait`].
@@ -1484,9 +1522,31 @@ impl StreamWatch {
         self
     }
 
-    // A line of any kind arrived, a keep-alive comment included.
+    // A line of any kind arrived, a keep-alive comment included.  Also the round's timing
+    // facts: the first byte, and the longest quiet since it.
     fn heard(&mut self, now: u64) {
+        if self.first_at.is_none() {
+            self.first_at = Some(now);
+        } else {
+            self.gap_max = self.gap_max.max(now.saturating_sub(self.last_byte));
+        }
         self.last_byte = now;
+    }
+
+    // `bytes` more of the body were read.
+    fn took(&mut self, bytes: u64) {
+        self.bytes = self.bytes.saturating_add(bytes);
+    }
+
+    // The stream ended at `now` with `how`: the timing facts joined to it.  The quiet from the
+    // last byte to the end counts as a gap, because it is the quiet a liveness limit would cut.
+    fn ended(&self, now: u64, how: StreamOutcome) -> StreamOutcome {
+        let (first_ms, gap_ms) = match self.first_at {
+            None        => (now.saturating_sub(self.asked), 0),
+            Some(first) => (first.saturating_sub(self.asked),
+                self.gap_max.max(now.saturating_sub(self.last_byte))),
+        };
+        StreamOutcome { bytes: self.bytes, first_ms, gap_ms, ..how }
     }
 
     // A `data:` chunk arrived, and the sink has read it.
@@ -1813,7 +1873,7 @@ impl LlmClient {
                 // reason.  It is an error and not an empty `Ok`, because an empty answer
                 // reaches the agent's nudges, which would send ANOTHER request.  A round that
                 // had begun to reason keeps the old way out: it has something to show.
-                Ok(StreamOutcome { aborted: false, stalled: true })
+                Ok(StreamOutcome { aborted: false, stalled: true, .. })
                     if acc.size() == 0 && !self.halted() =>
                 {
                     let secs = now_ms().saturating_sub(turn_began) / 1000;
@@ -1835,7 +1895,7 @@ impl LlmClient {
                         err!("LLM: no data from '{}' in {} s, asked twice.", who, secs;
                             IO, Network, Timeout)).crossed(), images));
                 }
-                Ok(StreamOutcome { aborted, stalled }) => {
+                Ok(StreamOutcome { aborted, stalled, bytes, first_ms, gap_ms }) => {
                     // The native transport cannot cut a read, so a Stop that landed during a
                     // silent wait only shows when the watch gives up: that round is the
                     // person's stop, not a model that ended without a word.
@@ -1845,6 +1905,12 @@ impl LlmClient {
                     let thinking = acc.take_thinking();
                     let mut resp = acc.into_response(aborted, retries);
                     resp.stalled = stalled;
+                    // The timing facts are this attempt's; the round's length counts from its
+                    // first request, retries included.
+                    resp.bytes    = bytes;
+                    resp.first_ms = first_ms;
+                    resp.gap_ms   = gap_ms;
+                    resp.ms       = now_ms().saturating_sub(turn_began);
                     // ANTHROPIC REPORTS NO `cost` AT ALL: the account is billed and the API says
                     // nothing about what one call cost, so `into_response` above always hands
                     // back zero here. The spend cap is inert against that zero and the ledger
@@ -2080,6 +2146,8 @@ impl LlmClient {
             finish_reason:        String::new(),
             native_finish_reason: String::new(),
             provider:             String::new(),
+            // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.
+            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0,
         }.classified()
     }
 
@@ -3091,13 +3159,15 @@ impl LlmClient {
         // Headers arrive before the first token on a streaming request, so the header wait in
         // `open` is the plain idle ceiling; the watch below covers the body.
         let idle_ms = self.stream_idle_ms.get();
+        let asked   = now_ms();
         let (stream, is_chunked, ctype) = match self.open(body, idle_ms).await {
             Ok(v)  => v,
             Err(e) => return Err(e),
         };
         let mut reader = LineReader::new(stream, is_chunked);
-        let mut watch  = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap);
+        let mut watch  = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap).asked(asked);
         let mut lines  = SseLines::new(ctype.as_deref());
+        let mut counted: u64 = 0;   // the reader's byte count already given to the watch
         loop {
             // THE IDLE WATCHDOG. Proposal 15, 2026-09-15: OpenRouter's own export showed a
             // round with `generation_time` 83.7 s that this app sat on for 318 s -- about
@@ -3116,7 +3186,7 @@ impl LlmClient {
                 // this far still reaches the nudge path instead of being thrown away and
                 // the whole request sent again.
                 if watch.expired(now) {
-                    return Ok(StreamOutcome { aborted: false, stalled: true });
+                    return Ok(watch.ended(now, StreamOutcome::STALLED));
                 }
                 if let Some(secs) = watch.tick(now) {
                     on_data(Wire::Silence(secs));
@@ -3126,6 +3196,10 @@ impl LlmClient {
                     break read;
                 }
             };
+            // The read is done with the reader, so its count can be read: the line just read.
+            drop(next);
+            watch.took(reader.read.saturating_sub(counted));
+            counted = reader.read;
             let line = match line {
                 Ok(Some(l)) => l,
                 Ok(None) => break,
@@ -3143,10 +3217,11 @@ impl LlmClient {
                 }
             }
         }
+        let end = now_ms();
         match lines.body() {
             // The headers said 200, or `open` would have refused the reply.
-            Some(b) => self.deliver_body(200, b, on_data),
-            None    => Ok(StreamOutcome::default()),
+            Some(b) => self.deliver_body(200, b, on_data).map(|o| watch.ended(end, o)),
+            None    => Ok(watch.ended(end, StreamOutcome::default())),
         }
     }
 }
@@ -3432,11 +3507,12 @@ impl LlmClient {
         // Headers arrive before the first token on a streaming request, so the first-byte
         // wait is the plain idle ceiling; the watch below covers the rest.
         let idle_ms = self.stream_idle_ms.get();
+        let asked   = now_ms();
         let resp = match self.wasm_fetch(body, idle_ms).await {
             Ok(r) => r,
             Err(e) => {
                 if self.halted() {
-                    return Ok(StreamOutcome { aborted: true, stalled: false });
+                    return Ok(StreamOutcome::ABORTED);
                 }
                 return Err(e);
             }
@@ -3456,7 +3532,7 @@ impl LlmClient {
         // arrive, mirroring the native `LineReader` line discipline.
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
-        let mut watch = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap);
+        let mut watch = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap).asked(asked);
         let status = resp.status();
         let ctype = resp.headers().get("content-type").ok().flatten();
         let mut lines = SseLines::new(ctype.as_deref());
@@ -3481,7 +3557,7 @@ impl LlmClient {
                 // stopped reading from, and a dropped `JsFuture` does not reach the
                 // connection at all.
                 self.halt.tear_down();
-                return Ok(StreamOutcome { aborted: false, stalled: true });
+                return Ok(watch.ended(now, StreamOutcome::STALLED));
             }
             if let Some(secs) = watch.tick(now) {
                 on_data(Wire::Silence(secs));
@@ -3501,7 +3577,7 @@ impl LlmClient {
                 Some(Ok(r)) => { pending = None; r }
                 Some(Err(e)) => {
                     if self.halted() {
-                        return Ok(StreamOutcome { aborted: true, stalled: false });
+                        return Ok(watch.ended(now_ms(), StreamOutcome::ABORTED));
                     }
                     // A stream that broke mid-flight; whether it is safe to try
                     // again is the caller's judgement, not this layer's.
@@ -3526,6 +3602,7 @@ impl LlmClient {
             let chunk = js_sys::Uint8Array::new(&value).to_vec();
             buf.extend_from_slice(&chunk);
             watch.heard(now_ms());
+            watch.took(chunk.len() as u64);
 
             // Drain complete lines (terminated by `\n`) from the buffer.
             loop {
@@ -3537,7 +3614,7 @@ impl LlmClient {
                 let line = String::from_utf8_lossy(&line_bytes[..line_bytes.len() - 1]);
                 match lines.sort(&line) {
                     SseLine::Skip       => continue,
-                    SseLine::Done       => return Ok(StreamOutcome::default()),
+                    SseLine::Done       => return Ok(watch.ended(now_ms(), StreamOutcome::default())),
                     SseLine::Data(data) => {
                         let pulse = on_data(Wire::Data(data));
                         watch.data(now_ms(), pulse);
@@ -3554,9 +3631,10 @@ impl LlmClient {
                 SseLine::Done | SseLine::Skip => {}
             }
         }
+        let end = now_ms();
         match lines.body() {
-            Some(b) => self.deliver_body(status, b, on_data),
-            None    => Ok(StreamOutcome::default()),
+            Some(b) => self.deliver_body(status, b, on_data).map(|o| watch.ended(end, o)),
+            None    => Ok(watch.ended(end, StreamOutcome::default())),
         }
     }
 }
@@ -3653,6 +3731,8 @@ struct LineReader<S: tokio::io::AsyncRead + Unpin> {
     // None means we need to read the next chunk header.
     chunk_remaining: Option<usize>,
     eof:        bool,
+    // Body bytes handed out as lines so far, line endings included.
+    read:       u64,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -3666,6 +3746,7 @@ impl<S: tokio::io::AsyncRead + Unpin> LineReader<S> {
             is_chunked,
             chunk_remaining: None,
             eof: false,
+            read: 0,
         }
     }
 
@@ -3685,6 +3766,7 @@ impl<S: tokio::io::AsyncRead + Unpin> LineReader<S> {
                     let rest = String::from_utf8_lossy(
                         &self.buf[self.buf_pos..]
                     ).to_string();
+                    self.read = self.read.saturating_add((self.buf.len() - self.buf_pos) as u64);
                     self.buf_pos = self.buf.len();
                     return Ok(Some(rest));
                 }
@@ -3708,6 +3790,7 @@ impl<S: tokio::io::AsyncRead + Unpin> LineReader<S> {
             // Strip trailing \r if present.
             let line = if line.ends_with(b"\r") { &line[..line.len()-1] } else { line };
             let s = String::from_utf8_lossy(line).to_string();
+            self.read = self.read.saturating_add((end + 1 - self.buf_pos) as u64);
             self.buf_pos = end + 1; // skip the \n
             // Compact buffer periodically.
             if self.buf_pos > 16384 {
@@ -5577,6 +5660,8 @@ impl StreamAcc {
             finish_reason:        self.finish_reason,
             native_finish_reason: self.native_finish_reason,
             provider:             self.provider,
+            // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.
+            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0,
         }.classified()
     }
 }
@@ -5953,6 +6038,8 @@ impl AnthropicAcc {
             finish_reason:        String::new(),
             native_finish_reason: String::new(),
             provider:             String::new(),
+            // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.
+            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0,
         }.classified()
     }
 }
@@ -9707,6 +9794,38 @@ pub mod tests {
         // the round is over, with whatever it had, not sent again from the top.
         assert_eq!(connections(&seen), 1,
             "a stall must not trigger a full resend of the request");
+    }
+
+    /// THE ROUND'S TIMING FACTS (U3a RM, UNBLOCK-16). A worker's liveness limit is tuned from
+    /// the gaps his real rounds show, so the stream must report them: the bytes it read, how
+    /// long the first one took, and the longest quiet after it -- the trailing quiet before
+    /// the stream ended included, because that is the quiet a liveness limit would cut.
+    #[tokio::test]
+    async fn stream_watch_reports_first_byte_and_longest_gap() {
+        let chunks = vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n".to_string(),
+            "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n".to_string(),
+        ];
+        let bytes: u64 = chunks.iter().map(|c| c.len() as u64).sum();
+        let (port, _seen) = start_stub(vec![Reply::Stall { chunks, idle_ms: 900 }]).await;
+        let client = stub_client(port);
+        // Well above the stub's quiet, so the stream ends on the provider's close and not on
+        // the watchdog.
+        client.set_stream_idle_ms(5_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("the round should end on the close: {}", e),
+        };
+        assert!(!resp.stalled, "a close inside the idle ceiling is not a stall");
+        assert_eq!(resp.content, "hello");
+        assert_eq!(resp.bytes, bytes, "every body byte read is counted, and nothing else");
+        assert!(resp.first_ms < 300, "the first byte came at once, not at {} ms", resp.first_ms);
+        assert!(resp.gap_ms >= 800, "the 900 ms quiet before the close was missed: {} ms",
+            resp.gap_ms);
+        assert!(resp.ms >= resp.gap_ms, "the round ({} ms) is shorter than its own quiet ({} ms)",
+            resp.ms, resp.gap_ms);
     }
 
     /// THE MODEL STALL (r540, T1). OpenRouter holds a request whose provider has gone quiet by

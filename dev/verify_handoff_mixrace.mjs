@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
 	checker, pair, until, storedMsgs, placeholders, modelSaw, send, sendDesk, freshChat,
+	beatAsApp
 } from './handoffpair.mjs';
 import { open, signInAs, connectMock } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
@@ -108,7 +109,7 @@ async function addC(a) {
 	await connectMock(c);
 	await c.page.setViewportSize({ width: 1280, height: 900 });
 	await c.page.waitForTimeout(2000);
-	await c.page.evaluate((n) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), n), 'qa544c');
+	await beatAsApp(c, 'qa544c');
 	return c;
 }
 

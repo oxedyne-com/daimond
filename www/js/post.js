@@ -2895,10 +2895,14 @@
 	/// Run one claimed row, let the row go, and only then give up the claim. Answers
 	/// whether the row is still held.
 	async function runWork(w) {
-		var res = null, stood = false;
-		try { res = await DaimondPeer.absorb(w.peer, w.row); }
-		catch (e) { log('a peer envelope would not apply', e); }
+		var res = null, stood = false, up = await runnerReady();
+		if (up) {
+			try { res = await DaimondPeer.absorb(w.peer, w.row); }
+			catch (e) { log('a peer envelope would not apply', e); }
+		}
 		try {
+			// A RUNNER THAT NEVER STARTED UP works nothing: its row stays held, exactly as a
+			// stand-down's does, so the relay keeps it for a device that can run it.
 			// A non-nominee that STOOD DOWN for the account's nominated always-on runner
 			// leaves the errand on the relay, exactly as an own dispatch is left: acking
 			// past it would drop it before the nominee collects, and a nominee that then
@@ -2908,11 +2912,28 @@
 			// A take that could not read the lease door, or won no try at it, is held the
 			// same way (`standDownUndecided`): nobody has the turn, and acking the row
 			// would drop it for the whole account with no word to the sender.
-			stood = !!(res && res.result && DaimondPeer.standDownUndecided(res.result.why));
+			stood = !up || !!(res && res.result && DaimondPeer.standDownUndecided(res.result.why));
 			if (!stood) await withMailboxLock(function () { return letGo(w.row.seq); });
 		} catch (e) { log('a finished row could not be let go; the next collect decides it', e); }
 		finally { w.claim.release(); }
 		return stood;
+	}
+
+	/// Has this page's runner started up? Answers true once the boot has the engine up and
+	/// the chats loaded (`DaimondCore.runnerReady`, daimond.js), false if that boot failed.
+	///
+	/// RUNNER-READY (2026-10-16). A reloaded runner used to collect its own turn's errand
+	/// while its engine was still compiling: `daimond:unlock` is announced at
+	/// DOMContentLoaded, long before the boot has the wasm and the chats. The reconstruct
+	/// threw on an undefined engine and the turn went back to the sender as `error`, its
+	/// rounds lost (reconstruct_diag.md). So a claimed row waits here, still held, and no
+	/// lease is taken by a page that cannot yet run. A page with no app module (a suite)
+	/// has no such promise and starts at once.
+	async function runnerReady() {
+		var p = window.DaimondCore && DaimondCore.runnerReady;
+		if (!p || typeof p.then !== 'function') return true;
+		try { await p; return true; }
+		catch (e) { log('the runner did not start up; its errands stay held', e); return false; }
 	}
 
 	/// Drop the hold on one row whose work is over, and ack what that frees. Under the

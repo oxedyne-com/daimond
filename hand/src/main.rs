@@ -37,6 +37,8 @@ use daimond_hand::{
     codec::{
         chunk_fit,
         resp_fits,
+        req_id_of_json,
+        req_of_json,
         Fault,
         Frame,
         INBOUND_MAX,
@@ -160,7 +162,7 @@ const MARKER_RESERVE: usize = 128;
 /// somebody else's.
 use daimond_hand::ROOT_FILE;
 use daimond_hand::TERMINAL_ROOT_FILE;
-use daimond_hand::VERIFY_ROOT_FILE;
+use daimond_hand::RETIRED_VERIFY_ROOT_FILE;
 
 /// The variable that names the granted root, which takes precedence over the file.
 const ROOT_VAR: &str = "DAIMOND_HAND_ROOT";
@@ -168,8 +170,8 @@ const ROOT_VAR: &str = "DAIMOND_HAND_ROOT";
 /// The terminal ceiling's variable, for the same reason [`ROOT_VAR`] exists.
 const TERMINAL_ROOT_VAR: &str = "DAIMOND_HAND_TERMINAL_ROOT";
 
-/// The verify root's variable, for the same reason [`ROOT_VAR`] exists.
-const VERIFY_ROOT_VAR: &str = "DAIMOND_HAND_VERIFY_ROOT";
+/// The retired verify pin's variable, named only so a leftover setting can be reported.
+const RETIRED_VERIFY_ROOT_VAR: &str = "DAIMOND_HAND_VERIFY_ROOT";
 
 /// Daimond's own directory inside a workspace.
 ///
@@ -213,8 +215,6 @@ struct Serve {
     term_ceilings: Vec<PathBuf>,
     /// Whether `terminal-root.txt` pinned that list, which is a decision the user already made.
     term_pinned: bool,
-    /// The tree the verify verb resolves in, where the person pinned one.
-    verify_root: Option<PathBuf>,
     /// What is re-executed to apply the fence before a command exists.
     ///
     /// [`Launcher::SelfExe`] everywhere but in a test, where `/proc/self/exe`
@@ -259,6 +259,8 @@ enum Inbound {
     Msg(Req),
     /// A frame that did not become a message, and the sentence saying why.
     Bad {
+        /// The request's own id where the frame named one, so the answer reaches it.
+        id:     Option<String>,
         /// Which named fault the codec raised, where it named one.
         fault:  Option<Fault>,
         /// What was wrong, in a sentence the page can act on.
@@ -310,40 +312,27 @@ fn report() -> Outcome<()> {
     }
     println!();
 
-    // WHAT RUNS OUTSIDE THE FENCE, said to a person before the fence is described --
-    // because a list of what the compartment enforces, printed above a verb that steps
-    // around it, would be a report that told the truth twice and the whole truth never.
-    println!("Verifiers it will run, OUTSIDE the fence:");
-    let vtree = journal::default_dir().ok()
-        .and_then(|d| verify_root(&d));
-    match journal::default_dir().and_then(|d| granted_root(&d)) {
-        Ok(root) => {
-            // The tree the verb actually resolves in: a pinned verify root when
-            // the person wrote one, else the granted root.  The report says the
-            // pin, because a report that listed the wrong folder's verifiers
-            // would be a report of a hand this machine does not have.
-            let vroot = vtree.unwrap_or_else(|| root.clone());
-            if vroot != root {
-                println!("  (pinned by verify-root.txt: {})", vroot.display());
-            }
-            match verify::catalogue(&vroot) {
-                Ok(v) if v.is_empty() => println!(
-                    "  - none: there is no dev/verify_*.mjs in that folder, so the \
-                    verify verb refuses on this machine."),
-                Ok(v) => {
-                    println!("  {} in {}", v.len(), vroot.join(verify::DEV_DIR).display());
-                    println!(
-                        "  Each is run by NAME, looked up in that directory, with an argument \
-                        vector this program builds; a page cannot name a path, a program or an \
-                        argument. They run unfenced deliberately -- a fenced command cannot \
-                        reach the display server, so a verifier that drives a browser cannot \
-                        run at all -- and each run is journalled with fence:none.");
-                },
-                Err(e) => println!("  - none: {}", e.msgs().join(" ")),
-            }
-        },
-        Err(_) => println!("  - none, since no folder is granted."),
+    // WHAT THE VERIFY VERB RUNS, and where. Until 11 Oct 2026 this section was headed
+    // "OUTSIDE the fence" and listed the GRANT's `dev/`: both stopped being true when
+    // verifiers moved behind the verifier fence and each request began naming its own
+    // tree, and a report that misdescribes the verb is worse than none (QA A F3). The
+    // grant's catalogue is not listed, because no Diamond's verify runs there.
+    println!("Verifiers:");
+    // A leftover pin is said here once, because a person reading the report is the
+    // one who can delete it, and nothing else on this machine will say it is there.
+    if let Some(left) = journal::default_dir().ok().and_then(|d| retired_verify_pin(&d)) {
+        println!("  ({}: ignored, feature removed. Each verify runs in the folder its \
+            request names; delete it.)", left);
     }
+    println!(
+        "  Each verify runs behind the verifier fence, in the folder its request names: a \
+        Diamond's own attached folder, which must hold dev/verify_*.mjs. A verifier is run by \
+        NAME, looked up in that folder's dev/, with an argument vector this program builds; a \
+        page cannot name a path, a program or an argument. It may write only in that folder \
+        (read-only where the turn's rules say so) and its own scratch, with read-only access \
+        to the node and headless browser it needs and no display server, and each run is \
+        journalled with the fence that was in force. The granted root is the tree only for a \
+        turn that is not scoped to a Diamond.");
     println!();
 
     println!("What this machine can enforce:");
@@ -689,36 +678,22 @@ fn terminal_ceiling(dir: &Path) -> Option<PathBuf> {
     }
 }
 
-/// The tree the VERIFY verb resolves in, where the person pinned one.
+/// The retired verify pin, where one is still set, said as what was found.
 ///
-/// Same precedence and same failure posture as [`terminal_ceiling`]: the
-/// variable if it names anything, else the file, else nothing and the verb
-/// gets the granted root exactly as every hand before this one did.  A path
-/// that is not an absolute directory is IGNORED with a line on stderr rather
-/// than refused, because a hand that stopped serving over a typo in a file
-/// the person owns would be a hand that cannot be recovered from the browser.
-fn verify_root(dir: &Path) -> Option<PathBuf> {
-    let raw = match std::env::var(VERIFY_ROOT_VAR) {
-        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
-        _ => match named_in_file(dir, VERIFY_ROOT_FILE) {
-            Some(s) => s,
-            None    => return None,
-        },
-    };
-    let p = PathBuf::from(&raw);
-    if !p.is_absolute() {
-        eprintln!("daimond-hand: the verify root '{}' is not an absolute path, so it \
-            was ignored and verify gets the granted root.", raw);
-        return None;
-    }
-    match fs::canonicalize(&p) {
-        Ok(c) if c.is_dir() => Some(c),
-        _ => {
-            eprintln!("daimond-hand: the verify root '{}' is not a directory on this \
-                machine, so it was ignored and verify gets the granted root.", raw);
-            None
+/// The variable and the file are both IGNORED (removed 11 Oct 2026, see
+/// [`RETIRED_VERIFY_ROOT_FILE`]); this only names them so a person can remove them.
+fn retired_verify_pin(dir: &Path) -> Option<String> {
+    let mut found = Vec::new();
+    if let Ok(v) = std::env::var(RETIRED_VERIFY_ROOT_VAR) {
+        if !v.trim().is_empty() {
+            found.push(fmt!("{}={}", RETIRED_VERIFY_ROOT_VAR, v.trim()));
         }
     }
+    let file = dir.join(RETIRED_VERIFY_ROOT_FILE);
+    if file.exists() {
+        found.push(fmt!("{}", file.display()));
+    }
+    if found.is_empty() { None } else { Some(found.join(" and ")) }
 }
 
 /// The first line of `name` beside the journal that is neither blank nor a comment.
@@ -865,6 +840,7 @@ fn read_frames<R: Read>(mut r: R, tx: Sender<Inbound>) {
                 return;
             }
             let sent = tx.blocking_send(Inbound::Bad {
+                id:     None,
                 fault:  Some(Fault::LengthTooBig),
                 detail: fmt!(
                     "A message of {} bytes arrived and this hand reads at most \
@@ -903,13 +879,24 @@ fn read_frames<R: Read>(mut r: R, tx: Sender<Inbound>) {
         whole.extend_from_slice(&pre);
         whole.extend_from_slice(&body);
         let mut cur: &[u8] = &whole;
-        let msg = match FRAMING.read_req(&mut cur) {
-            Ok(Some(req)) => Inbound::Msg(req),
+        // The payload first and the request from it, so a request the codec rejects is still
+        // answered under its own id rather than left to time out.
+        let msg = match FRAMING.read_payload(&mut cur) {
+            Ok(Some(txt)) => match req_of_json(&txt) {
+                Ok(req)	=> Inbound::Msg(req),
+                Err(e)	=> Inbound::Bad {
+                    id:     req_id_of_json(&txt),
+                    fault:  Fault::of(&e),
+                    detail: e.msgs().join("; "),
+                },
+            },
             Ok(None) => Inbound::Bad {
+                id:     None,
                 fault:  None,
                 detail: fmt!("A frame of {} bytes carried no message at all.", n),
             },
             Err(e) => Inbound::Bad {
+                id:     None,
                 fault:  Fault::of(&e),
                 detail: e.msgs().join("; "),
             },
@@ -1393,8 +1380,6 @@ struct Desk {
     term_ceilings: Vec<PathBuf>,
     /// Whether the installer PINNED that list to one folder, rather than offering a choice.
     term_pinned: bool,
-    /// The tree the verify verb resolves in, where the person pinned one.
-    verify_root: Option<PathBuf>,
     /// What the page can check that folder's identity against.
     ws:     Identity,
     /// The operating system, in the wire's own vocabulary.
@@ -1520,15 +1505,6 @@ impl Desk {
         }
         caps.extend(self.sys.caps());
         caps.push(fmt!("root:{}", self.root.display()));
-        // The tree the verify verb resolves in, said only where the person pinned
-        // one and it differs from the granted root, for the same reason
-        // `terminal-root:` is conditional: a page reading no `verify-root:` gets
-        // the behaviour every build before this one had.
-        if let Some(v) = &self.verify_root {
-            if v != &self.root {
-                caps.push(fmt!("verify-root:{}", v.display()));
-            }
-        }
         // The CEILING, not where a terminal opens. Said only where it differs from the
         // granted root, so a page reading no `terminal-root:` gets the behaviour every
         // build before this one had rather than a second name for the same folder.
@@ -1559,14 +1535,12 @@ impl Desk {
             }
         }
         caps.push(self.ws.cap());
-        // Whether this folder holds verifiers at all. A page that knows the answer can say
-        // "not on this computer" once, instead of letting a model find it out one refusal at
-        // a time -- which is what `fence:` beside it is for.  Asked of the GRANT, or of
-        // the person's pin where there is one: a request names the folder the turn is
-        // working in and this line cannot know it, so `verify:none` here means the
-        // grant's own root is not a repository and not that nothing under it is.
-        let vroot = self.verify_root.clone().unwrap_or_else(|| self.root.clone());
-        caps.push(verify::cap(&vroot));
+        // Whether the GRANT holds verifiers: the tree of a turn not scoped to a Diamond,
+        // and the whole answer only for a page older than `verify:by-root` below. A
+        // request names the folder its turn is working in, which this line cannot know,
+        // so `verify:none` means the grant's own root is not a repository and says
+        // nothing about any Diamond's folder; a page reading `by-root` asks per request.
+        caps.push(verify::cap(&self.root));
         // And that the tree is decided PER REQUEST, which is a fact about this hand
         // and not about any folder -- so a page reading it knows it may send the
         // folder the turn is working in, and a page that does not read it keeps the
@@ -1938,34 +1912,30 @@ impl Desk {
         // A run whose record cannot be written is a run that does not happen. The same
         // sentence as `exec`'s, because it is the same promise.
         if !self.sound.load(Ordering::SeqCst) {
-            self.refuse(&id, fmt!(
+            self.refuse(&id, verify::stamped(fmt!(
                 "Refused: the hand's journal cannot be written, and a run that cannot be \
                 written down is not made. Look at the hand's standard error for what the file \
-                system said."));
+                system said.")));
             return Ok(());
         }
 
-        // The tree this hand resolves verifiers in: the one the person pinned at a
-        // shell, else the folder the PAGE says this turn is working in, else the
-        // granted root. Computed ONCE, before anything below, because the lookup,
+        // The tree this hand resolves verifiers in: the folder the PAGE says this
+        // turn is working in; a page that names none is refused (`verify::vet_root`). Computed ONCE, before anything below, because the lookup,
         // the provenance gate, the world's scratch and the spawn's working
         // directory must all answer for the same tree -- a vroot that changed
         // between two of them would resolve a script in one tree and prove it
         // against another.
         //
-        // THE REQUEST DECIDES, AND THE PIN OVERRIDES IT. A grant is not a
+        // THE REQUEST DECIDES, and nothing overrides it. A grant is not a
         // repository in the case this exists for: a person grants the folder their
         // projects live in and marks one of them into a Diamond, so the verifiers
         // are a level below the grant and a root fixed at the grant answers about
-        // a folder nobody asked about. `DAIMOND_HAND_VERIFY_ROOT` stays what it
-        // always was -- a person's pin, made at a shell, which nothing on the wire
-        // may move.
-        let vroot = match &self.verify_root {
-            Some(v) => v.clone(),
-            None    => match verify::vet_root(&self.root, &asked_root) {
-                Ok(p)  => p,
-                Err(s) => { self.refuse(&id, s); return Ok(()); },
-            },
+        // a folder nobody asked about. The person's pin that once overrode the
+        // request (`verify-root.txt`) was removed on 11 Oct 2026: a leftover one sent
+        // every Diamond on a machine to one checkout's `dev/`.
+        let vroot = match verify::vet_root(&self.root, &asked_root) {
+            Ok(p)  => p,
+            Err(s) => { self.refuse(&id, verify::stamped(s)); return Ok(()); },
         };
 
         // ASKED OF THE TREE THIS REQUEST NAMED, not of the grant, and said in a
@@ -1974,25 +1944,25 @@ impl Desk {
         // the page had not made when the hand started; this is where the question
         // is really settled.
         if !verify::available(&vroot) {
-            self.refuse(&id, verify::none_here(&vroot, &self.root));
+            self.refuse(&id, verify::stamped(verify::none_here(&vroot, &self.root)));
             return Ok(());
         }
 
         let script = match verify::resolve(&vroot, &name) {
             Ok(s)  => s,
-            Err(s) => { self.refuse(&id, s); return Ok(()); },
+            Err(s) => { self.refuse(&id, verify::stamped(s)); return Ok(()); },
         };
         let breaks = match verify::chosen(&script, &want) {
             Ok(b)  => b,
-            Err(s) => { self.refuse(&id, s); return Ok(()); },
+            Err(s) => { self.refuse(&id, verify::stamped(s)); return Ok(()); },
         };
         let node = match verify::on_path("node") {
             Some(n) => n,
             None    => {
-                self.refuse(&id, fmt!(
+                self.refuse(&id, verify::stamped(fmt!(
                     "Refused: there is no 'node' on this hand's PATH, and every verifier in \
                     dev/ is a Node script. Nothing was run. Tell the user; the file tools and \
-                    'run' do not need it."));
+                    'run' do not need it.")));
                 return Ok(());
             },
         };
@@ -2354,14 +2324,14 @@ impl Desk {
                         return Ok(Ending::Goodbye);
                     },
                 },
-                Inbound::Bad { fault, detail } => {
+                Inbound::Bad { id, fault, detail } => {
                     // The framing is still in step, so the next request is
                     // still worth serving; the page is told what was wrong.
                     let what = match fault {
                         Some(f)	=> fmt!("{}: {}", f.name(), detail),
                         None	=> detail,
                     };
-                    if !self.say(Resp::Error { id: None, message: what }) {
+                    if !self.say(Resp::Error { id, message: what }) {
                         return Ok(Ending::Stopped(fmt!("the page stopped listening")));
                     }
                 },
@@ -2524,7 +2494,6 @@ where
         root:   cfg.root.clone(),
         term_ceilings: cfg.term_ceilings.clone(),
         term_pinned: cfg.term_pinned,
-        verify_root: cfg.verify_root.clone(),
         ws,
         os,
         runner: Runner::with_launcher(cfg.launcher.clone()).with_start_above(cfg.root.clone()),
@@ -2801,14 +2770,16 @@ fn configure() -> Outcome<Serve> {
     // built before 2026-08-26, and it serves exactly as it did.
     let term_pinned   = terminal_ceiling(&dir).is_some();
     let term_ceilings = terminal_ceilings(&dir, &root);
-    let verify_root   = verify_root(&dir);
+    if let Some(left) = retired_verify_pin(&dir) {
+        eprintln!("daimond-hand: {} is ignored, feature removed: each verify runs in the \
+            folder its request names. Delete it.", left);
+    }
     Ok(Serve {
         journal:  JournalCfg::at(dir),
         fence:    Fence::detect(),
         root,
         term_ceilings,
         term_pinned,
-        verify_root,
         launcher: Launcher::SelfExe,
     })
 }
@@ -3328,7 +3299,6 @@ mod tests {
                 root:     res!(fs::canonicalize(&root)),
                 term_ceilings: vec![res!(fs::canonicalize(&root))],
                 term_pinned: false,
-                verify_root: None,
                 launcher: res!(test_launcher()),
             },
             jdir,
@@ -4187,7 +4157,6 @@ mod tests {
             root:     res!(fs::canonicalize(&root)),
             term_ceilings: vec![res!(fs::canonicalize(&root))],
             term_pinned: false,
-            verify_root: None,
             launcher: res!(test_launcher()),
         };
         let (w, _r) = tokio::io::duplex(1 << 16);
@@ -4324,58 +4293,6 @@ mod tests {
         Ok(())
     }
 
-    /// A verify root the person wrote is honoured, one they did not is absent,
-    /// and one that names nothing on this machine is ignored rather than fatal.
-    #[test]
-    fn a_verify_root_is_the_persons_pin_or_nothing() -> Outcome<()> {
-        let dir = res!(scratch("verify-root-00"));
-        let tree = dir.join("app");
-        res!(fs::create_dir_all(&tree));
-
-        // Absent: every hand before this one, and the verb's fallback.
-        assert!(verify_root(&dir).is_none());
-
-        // Present and real: the pin, canonicalised.
-        res!(fs::write(dir.join(VERIFY_ROOT_FILE),
-            fmt!("{}", tree.display())), IO, File);
-        let got = ok!(verify_root(&dir).ok_or_else(|| err!(
-            "a verify-root.txt naming a real directory was ignored"; Test, Invalid)));
-        assert_eq!(got, res!(fs::canonicalize(&tree)));
-
-        // Present but naming nothing: ignored with a line on stderr, not a
-        // refusal, because a hand that stopped serving over a typo in a file
-        // the person owns could not be recovered from the browser.
-        res!(fs::write(dir.join(VERIFY_ROOT_FILE),
-            "no/such/path/anywhere"), IO, File);
-        assert!(verify_root(&dir).is_none());
-        Ok(())
-    }
-
-    /// A comment header in verify-root.txt does not become the root, matching
-    /// how the installer writes root.txt and the other two read it back.
-    #[test]
-    fn a_verify_root_skips_the_comment_lines() -> Outcome<()> {
-        let dir = res!(scratch("verify-root-01"));
-        let tree = dir.join("app");
-        res!(fs::create_dir_all(&tree));
-        res!(fs::write(dir.join(VERIFY_ROOT_FILE), fmt!(
-            "# pinned by the installer\n# another line\n{}", tree.display())), IO, File);
-        let got = ok!(verify_root(&dir).ok_or_else(|| err!(
-            "the first non-comment line was not read as the verify root"; Test, Invalid)));
-        assert_eq!(got, res!(fs::canonicalize(&tree)));
-        Ok(())
-    }
-
-    /// A relative verify root is ignored rather than joined onto somewhere,
-    /// because a relative root here is a path the person did not mean.
-    #[test]
-    fn a_relative_verify_root_is_ignored() -> Outcome<()> {
-        let dir = res!(scratch("verify-root-02"));
-        res!(fs::write(dir.join(VERIFY_ROOT_FILE), "just/a/name"), IO, File);
-        assert!(verify_root(&dir).is_none());
-        Ok(())
-    }
-
     // ── A grant that holds several repositories ─────────────────────
     //
     // The product's own case, and the one the real-repository bank met on
@@ -4416,7 +4333,7 @@ mod tests {
     /// One verify request naming the tree it means.
     ///
     /// # Arguments
-    /// * `root` - The folder the turn is working in, absolute or empty.
+    /// * `root` - The folder the turn is working in, absolute.
     /// * `name` - The verifier's short name.
     fn verify_in(root: &Path, name: &str) -> Req {
         Req::Verify {
@@ -4498,10 +4415,9 @@ mod tests {
         Ok(())
     }
 
-    /// A mark that is not a repository is refused by name, and the person's pin
-    /// still overrides whatever the page sent.
+    /// A mark that is not a repository is refused by name.
     #[tokio::test]
-    async fn a_mark_with_no_verifiers_is_named_and_a_pin_still_wins() -> Outcome<()> {
+    async fn a_mark_with_no_verifiers_is_named() -> Outcome<()> {
         let (cfg, root) = res!(two_repos("verify-root-05"));
         let rs = res!(asked(cfg.clone(), &[verify_in(&root.join("notes"), "alef")]).await);
         let why = refusal(&rs);
@@ -4509,13 +4425,50 @@ mod tests {
             "a non-repository mark was not named in the refusal: {:?}", why);
         assert!(why.contains("not a general test runner"), "{:?}", why);
 
-        // THE PIN IS A PERSON'S, MADE AT A SHELL, and nothing on the wire moves it.
-        let mut pinned = cfg;
-        pinned.verify_root = Some(res!(fs::canonicalize(root.join("alpha"))));
-        let rs = res!(asked(pinned, &[verify_in(&root.join("beta"), "bet")]).await);
-        let why = refusal(&rs);
-        assert!(why.contains(&fmt!("{}", root.join("alpha").join("dev").display())),
-            "the request's root overrode the person's pin: {:?}", why);
+        Ok(())
+    }
+
+    /// QA B B3 (11 Oct 2026): a refusal the dispatcher writes says which hand wrote it.
+    #[tokio::test]
+    async fn a_dispatcher_refusal_says_which_hand_refused() -> Outcome<()> {
+        let (cfg, root) = res!(two_repos("verify-root-qab-b3"));
+        for req in [verify_in(&root.join("notes"), "alef"), verify_in(&root.join("alpha"), "bet")] {
+            let rs = res!(asked(cfg.clone(), &[req]).await);
+            let why = refusal(&rs);
+            assert!(why.starts_with("Refused:"), "{:?}", why);
+            assert!(why.contains("[hand: "), "the refusal does not say which hand: {:?}", why);
+        }
+        Ok(())
+    }
+
+    /// QA B Info 1 (11 Oct 2026): a frame the codec rejects is answered under its own id,
+    /// so the page's request ends now and not at its timeout.
+    #[tokio::test]
+    async fn a_rejected_frame_is_answered_under_its_own_id() -> Outcome<()> {
+        let (cfg, root) = res!(two_repos("verify-root-qab-info1"));
+        let mut q = verify_in(&root.join("alpha"), "alef");
+        if let Req::Verify { ref mut id, ref mut rules, .. } = q {
+            *id    = fmt!("v-null-deny");
+            *rules = None;
+        }
+        let mut b = Vec::new();
+        res!(FRAMING.write_req(&mut b, &q));
+        let txt = fmt!("{}", String::from_utf8_lossy(&b[LEN_PREFIX..]));
+        let body = txt.replacen("\"ro\": null", "\"ro\": [\"/x\"]", 1);
+        assert_ne!(txt, body, "the fixture did not find the ro field: {}", txt);
+        let mut input = res!(framed(&hello()));
+        input.extend_from_slice(&(body.len() as u32).to_ne_bytes());
+        input.extend_from_slice(body.as_bytes());
+        input.extend_from_slice(&res!(framed(&Req::Bye)));
+        let (w, mut r) = tokio::io::duplex(1 << 18);
+        let task = tokio::spawn(serve(Cursor::new(input), w, cfg));
+        let mut bytes = Vec::new();
+        res!(r.read_to_end(&mut bytes).await.map_err(|e| err!(e, "read"; IO)));
+        let _ = res!(res!(task.await.map_err(|e| err!(e, "join"; IO))));
+        let rs = res!(responses(&bytes));
+        let hit = rs.iter().any(|r| matches!(r,
+            Resp::Error { id: Some(i), .. } if i == "v-null-deny"));
+        assert!(hit, "the rejected frame was not answered under its id: {:?}", rs);
         Ok(())
     }
 }

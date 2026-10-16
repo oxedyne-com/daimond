@@ -297,10 +297,10 @@ try {
 	await page.evaluate(() => DaimondDiamond.seedDefaults());
 	await page.waitForFunction(() =>
 		[...document.querySelectorAll('#diamond-list .session-box-name')]
-			.some(n => /Daimond Help/.test(n.textContent)), null, { timeout: 20000 });
+			.some(n => /Neil/.test(n.textContent)), null, { timeout: 20000 });
 	const helpId = await page.evaluate(() => {
 		const b = [...document.querySelectorAll('#diamond-list .diamond-box')]
-			.find(x => /Daimond Help/.test(x.textContent));
+			.find(x => /Neil/.test(x.textContent));
 		return b ? b.dataset.id : '';
 	});
 	check('a Diamond is there to be woken', !!helpId, helpId || '(none)');

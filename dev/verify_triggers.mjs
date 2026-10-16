@@ -393,7 +393,7 @@ try {
 	await p.evaluate(() => DaimondDiamond.seedDefaults());
 	await p.waitForFunction(() =>
 		[...document.querySelectorAll('#diamond-list .session-box-name')]
-			.some(n => /Daimond Help/.test(n.textContent)), null, { timeout: 20000 }).catch(() => {});
+			.some(n => /Neil/.test(n.textContent)), null, { timeout: 20000 }).catch(() => {});
 
 	// ══ 1. Two Diamonds, both paused ══════════════════════════════════
 	const rail = await p.evaluate(() =>
@@ -411,10 +411,10 @@ try {
 				.map((el) => el.className.split(' ')[0]).join(','),
 			id:    b.dataset.id,
 		})));
-	const help = rail.find(r => /Daimond Help/.test(r.name));
-	const opt  = rail.find(r => /Daimond Optimiser/.test(r.name));
-	check(!!help, 'Daimond Help is there', rail.map(r => r.name).join(', ') || '(none)');
-	check(!!opt, 'Daimond Optimiser is there', rail.map(r => r.name).join(', ') || '(none)');
+	const help = rail.find(r => /Neil/.test(r.name));
+	const opt  = rail.find(r => /Lucy/.test(r.name));
+	check(!!help, 'Neil is there', rail.map(r => r.name).join(', ') || '(none)');
+	check(!!opt, 'Lucy is there', rail.map(r => r.name).join(', ') || '(none)');
 	// Help has NO triggered actions, so it has nothing that spends without being
 	// asked — and therefore no widget and no hold. This read "Help starts
 	// PAUSED", which was right while every Diamond carried a `prompted` action;

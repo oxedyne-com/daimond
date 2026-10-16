@@ -212,6 +212,10 @@ function makeTab(box, opts) {
 			return { routed: true, verified: true, result: { ran: true, done: true } };
 		},
 	};
+	// The app's core, when a case gives one: `runnerReady` is the boot's promise that the
+	// engine is up and the chats are loaded (RUNNER-READY). With none, as in a page with
+	// no app module, work starts at once.
+	if (opts.core) win.DaimondCore = opts.core;
 	win.window = win;
 
 	let src = readFileSync(join(HERE, 'post.js'), 'utf8');
@@ -439,6 +443,51 @@ async function main() {
 		check('each ran once and every row left the relay',
 			tab.stat.runs.length === 3 && !box.has(1) && !box.has(2) && !box.has(3),
 			'runs ' + JSON.stringify(tab.stat.runs) + ', rows ' + JSON.stringify(box.rows.map((x) => x.seq)));
+	} else {
+		console.log('  ..   (skipped under --break inline)');
+	}
+
+	// ── (7) RUNNER-READY: no errand is worked before the runner has started up ──
+	// A reloaded runner collected its own turn's errand while its 7.7 MB engine was still
+	// compiling and its chats unloaded; the reconstruct threw and the turn was handed back
+	// as `error` (reconstruct_diag.md). The claimed row now waits, still held, for the
+	// boot's `DaimondCore.runnerReady`, and a boot that failed works nothing at all.
+	console.log('\na runner that has not started up works no errand; the row stays held until it has');
+	if (!inline) {
+		let ready = null;
+		const runnerReady = new Promise((r) => { ready = r; });
+		const box = makeBox([{ seq: 1, kind: 'post', addr: 'e1', envelope: 'ERRAND:T1@X' }]);
+		const locks = makeLocks();
+		const tab = makeTab(box, { locks, turn: () => Promise.resolve(), core: { runnerReady } });
+		await ticks();
+		const P = tab.P();
+		const r = await within(P.round());
+		check('the round returns while the runner is still starting', r !== PENDING, 'still pending');
+		await ticks(80);
+		check('no errand reaches the runner before it is ready', tab.stat.runs.length === 0, JSON.stringify(tab.stat.runs));
+		check('the errand stays on the relay meanwhile', box.has(1), 'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)));
+		ready();
+		await ticks(80);
+		check('once ready, the errand is run, once', JSON.stringify(tab.stat.runs) === '["T1"]', JSON.stringify(tab.stat.runs));
+		check('and its row leaves the relay', !box.has(1), 'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)));
+	} else {
+		console.log('  ..   (skipped under --break inline)');
+	}
+	console.log('\na runner whose start-up failed works no errand and leaves the row held');
+	if (!inline) {
+		const runnerReady = Promise.reject(new Error('engine failed to load'));
+		runnerReady.catch(() => {});
+		const box = makeBox([{ seq: 1, kind: 'post', addr: 'e1', envelope: 'ERRAND:T1@X' }]);
+		const locks = makeLocks();
+		const tab = makeTab(box, { locks, turn: () => Promise.resolve(), core: { runnerReady } });
+		await ticks();
+		const P = tab.P();
+		await within(P.round());
+		await ticks(80);
+		check('nothing is run', tab.stat.runs.length === 0, JSON.stringify(tab.stat.runs));
+		check('the errand is not acked off the relay', box.has(1), 'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)));
+		check('and the claim is let go', locks.held('daimond-post-work:').length === 0,
+			JSON.stringify(locks.held('daimond-post-work:')));
 	} else {
 		console.log('  ..   (skipped under --break inline)');
 	}

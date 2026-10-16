@@ -2363,7 +2363,9 @@ try {
 	});
 	check('the work the conflict is about really left this device',
 		exhausted.changed.moved === true, exhausted.changed.why);
-	check('a permanent conflict is retried, and bounded', exhausted.posts >= 2 && exhausted.posts <= 6,
+	// The bound tracks sync.js `MAX_CONFLICT_RETRIES` (8 since it was raised from 4), with the
+	// same headroom of two the old `<= 6` gave it.
+	check('a permanent conflict is retried, and bounded', exhausted.posts >= 2 && exhausted.posts <= 10,
 		'posts=' + exhausted.posts + ' over ' + exhausted.attempts + ' push attempts');
 	check('and running out of attempts is SAID, not swallowed',
 		!!(exhausted.chip && exhausted.chip.state === 'stalled' && exhausted.chip.shown),
@@ -2891,10 +2893,13 @@ try {
 	});
 	// Gateway release 1 adds `now` to every sync answer (item B4, the gateway's time that
 	// feeds the offset clock). It is a number and names nothing, so it may be there or not.
+	// Since 4a68a87b the answer also says WHY it woke, `progress` and `lease`, two booleans
+	// (gateway handlers/sync.rs `waited`); they name nothing either.
 	const wakeKeys = Object.keys(bare.json).filter((k) => !(k === 'now' && typeof bare.json.now === 'number'));
 	check('a wake answer carries a version (and the gateway\'s time) and nothing else — no blob, no device, no account',
 		bare.status === 200 && bare.json.waited === true
-			&& wakeKeys.sort().join(',') === 'changed,ok,version,waited',
+			&& wakeKeys.sort().join(',') === 'changed,lease,ok,progress,version,waited'
+			&& typeof bare.json.progress === 'boolean' && typeof bare.json.lease === 'boolean',
 		JSON.stringify(bare.json).slice(0, 160));
 	check('and a wait that nothing moved under says so rather than inventing a change',
 		bare.json.changed === false, 'parked above ' + bare.above + ' — ' + JSON.stringify(bare.json));

@@ -42,6 +42,7 @@
 //   DAIMOND_BROWSER=webkit node dev/verify_handoff_streaming.mjs
 
 import { open, chat, signInAs, newChat, connectMock, servedChats } from './harness.mjs';
+import { untilListening } from './handoffpair.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import { guardRan } from './verdict.mjs';
@@ -152,7 +153,7 @@ try {
 
 	// B parked and awake so it collects and A sees it.
 	await until(b.page, () => { try { return window.DaimondPost.state().parks > 0; } catch (e) { return false; } }, null, 8000);
-	await b.page.evaluate(() => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'strmate'));
+	await untilListening(a, b, idB, 120000, 'strmate');
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);
 	const aSeesB = await a.page.evaluate((self) => (window.DaimondPresence.awake(self, Date.now()) || []).length, idA);

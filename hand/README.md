@@ -267,8 +267,13 @@ Three things keep that checkable rather than merely asserted:
   working in, vetted against the grant the way a command's `cwd` is, and the name,
   the provenance gate, the world's scratch and the spawn's directory all answer
   for it. `verify:by-root` in the handshake is how a page knows it may send one.
-  `DAIMOND_HAND_VERIFY_ROOT`, or `verify-root.txt` beside the journal, is a
-  person's pin made at a shell and overrides whatever the page sent.
+  A request that names no tree is refused; the hand never falls back to the grant
+  or to its own working directory.
+* **There is no verify pin** (removed 11 Oct 2026). `DAIMOND_HAND_VERIFY_ROOT` and
+  `verify-root.txt` beside the journal once overrode whatever the page sent, and a
+  leftover one sent every Diamond on a machine to one checkout's `dev/`. Either one
+  still present is ignored, said on stderr at start, and named once in `--report`
+  as "ignored, feature removed"; delete it.
 
 And the verb **cannot report a bare pass**. It runs the clean pass and each
 declared break, and answers with three numbers: checks passed, breaks confirmed

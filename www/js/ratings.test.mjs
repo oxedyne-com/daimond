@@ -119,20 +119,32 @@ function main() {
 	check('every fixture record reads as a rating_log', msgs.every(R.isRatingMsg));
 
 	// ── The form ────────────────────────────────────────────
-	const fj = readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1.json'), 'utf8');
+	const fj = readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1_1.json'), 'utf8');
 	const F = R.form(fj);
-	check('form reads the exact string U1\'s wasm returns', F.form === 'daimond/1');
+	check('form reads the exact string the wasm returns (rating.rs pins the file)', F.form === 'daimond/1.1' && R.FORM === 'daimond/1.1');
 	same('the scale has five steps, -2 to 2', F.scale.map((s) => s.s), [-2, -1, 0, 1, 2]);
 	same('the scale words are wrong poor fine good great', F.scale.map((s) => s.id), ['wrong', 'poor', 'fine', 'good', 'great']);
 	same('the four dimensions are in form order', F.dims.map((d) => d.id), ['correct', 'followed', 'length', 'style']);
-	same('tagsFor answer down, in form order', F.tagsFor('answer', 'down'),
-		['wrong', 'ignored', 'long', 'short', 'style', 'tool', 'refused', 'slow']);
-	same('tagsFor answer up, in form order', F.tagsFor('answer', 'up'), ['correct', 'followed', 'concise', 'style_good']);
-	same('tagsFor file down', F.tagsFor('file', 'down'), ['style', 'broke', 'wrong_change', 'incomplete', 'scope', 'wiped']);
+	same('tagsFor answer down, in form order: missed leads, tool is still there', F.tagsFor('answer', 'down'),
+		['missed', 'wrong', 'ignored', 'long', 'short', 'style', 'tool', 'refused', 'slow']);
+	same('quickFor answer down: the row is 8, without tool', F.quickFor('answer', 'down'),
+		['missed', 'wrong', 'ignored', 'long', 'short', 'style', 'refused', 'slow']);
+	same('tagsFor answer up, in form order', F.tagsFor('answer', 'up'), ['on_point', 'correct', 'followed', 'concise', 'style_good']);
+	same('tagsFor file down', F.tagsFor('file', 'down'), ['missed', 'style', 'broke', 'wrong_change', 'incomplete', 'scope', 'wiped']);
+	same('quickFor file down: wrong_change is in Details only', F.quickFor('file', 'down'), ['missed', 'style', 'broke', 'incomplete', 'scope', 'wiped']);
+	same('quickFor mail down: missed leads', F.quickFor('mail', 'down'), ['missed', 'wrong', 'long', 'tone']);
+	same('quickFor crystal down: no missed', F.quickFor('crystal', 'down'), ['wrong', 'lost', 'bloated']);
+	check('no quick row is longer than 8', ['answer', 'worker', 'file', 'crystal', 'mail', 'proposal'].every((k) => F.quickFor(k, 'down').length <= 8));
 	same('tagsFor a kind with no tags', F.tagsFor('nothing', 'down'), []);
-	check('keyOf gives the catalogue key the wasm names', F.keyOf('ignored') === 'rating.tag.ignored');
+	check('keyOf gives the catalogue key the wasm names', F.keyOf('ignored') === 'rating.tag.ignored' && F.keyOf('missed') === 'rating.tag.missed');
 	check('keyOf a tag the form does not hold still names a key', F.keyOf('mine') === 'rating.tag.mine');
-	check('form accepts the parsed object as well as the string', R.form(JSON.parse(fj)).form === 'daimond/1');
+	check('form accepts the parsed object as well as the string', R.form(JSON.parse(fj)).form === 'daimond/1.1');
+	// The 1.0 form (an older wasm) has no `quick` flag, so its whole list is the row.
+	const F0 = R.form(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1.json'), 'utf8'));
+	check('the 1.0 form still reads', F0.form === 'daimond/1');
+	same('quickFor on the 1.0 form is its tagsFor', F0.quickFor('answer', 'down'), F0.tagsFor('answer', 'down'));
+	check('a 1.0 record of `wrong` reads, and is told as "Incorrect"', R.isRatingMsg(msgs[0]) && msgs[0].rating.form === 'daimond/1' && R.tagWord('wrong') === 'Incorrect');
+	check('the new tags are told in English', R.tagWord('missed') === 'Missed the point' && R.tagWord('on_point') === 'On point');
 	throws('form refuses text that is not the form', () => R.form('{"nope":1}'));
 
 	// ── Ids ─────────────────────────────────────────────────
@@ -530,7 +542,7 @@ function main() {
 	const G2 = rec3({ h: FH('chat:c7', 2, 'n.md'), role: 'chat', d: '', c: 'c7', t: 'mfq3b-0-klmno', at: 1790000500000, hash: 'cd'.repeat(32), via: 'command' });
 	const G3 = rec3({ h: FH('chat:c7', 2, 'o.md'), role: 'chat', d: '', c: 'c7', t: 'mfq3b-0-klmno', at: 1790000500000, hash: 'ef'.repeat(32), via: '' });
 	const NOTE3 = 'Only touch parse.rs, not "lex.rs".\nÉtape 2: ✓';
-	const u3rate = R.message(R.build({ prod: G1, s: -1, tags: ['scope'], note: NOTE3, src: 'popup', burst: 'r-mfq3c0d1-s1t2u', tools: '', len: 0 }), 'r-mfq3c0d1-s1t2u', 1790000600000);
+	const u3rate = R.message(R.build({ prod: G1, s: -1, tags: ['scope'], note: NOTE3, src: 'popup', burst: 'r-mfq3c0d1-s1t2u', tools: '', len: 0, form: 'daimond/1' }), 'r-mfq3c0d1-s1t2u', 1790000600000);
 	check('build of the fixture\'s file-row rating is its bytes, byte for byte', JSON.stringify(u3rate) === JSON.stringify(u3[0]), JSON.stringify(u3rate).slice(0, 200));
 	check('the fixture\'s files_log records are the v2 shape, via last, one by a command and one by a file tool',
 		JSON.stringify(u3[1].prod) === JSON.stringify([G2, G3]) && u3[1].prod.every((p) => Object.keys(p).pop() === 'via') && u3[1].prod[0].via === 'command' && u3[1].prod[1].via === '');
@@ -584,7 +596,7 @@ function main() {
 		// words verbatim: quotes, a newline, a non-Latin script
 		const words = 'He said "no".\nÉtape 2: ✓ 日本語 — done';
 		const m6 = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-g1', T(2), { s: -2, tags: ['wrong', 'ignored'], note: words })];
-		same('noteFor: the person\'s words go in verbatim, tags in English', note(m6), '[Daimond: the user rated your answer of 10:01 −2 (Ignored instructions, Wrong): "' + words + '".]');
+		same('noteFor: the person\'s words go in verbatim, tags in English', note(m6), '[Daimond: the user rated your answer of 10:01 −2 (Ignored instructions, Incorrect): "' + words + '".]');
 		// the 16 KiB bound: newest kept, older heads summarised
 		const big = 'x'.repeat(R.NOTE_MAX - 8);
 		const m7 = [U('u1', T(0))];

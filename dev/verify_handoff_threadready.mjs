@@ -32,6 +32,7 @@ import {
 	sendDesk,
 	freshChat,
 	reload,
+	beatAsApp
 } from './handoffpair.mjs';
 import { BROWSER } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
@@ -208,7 +209,7 @@ try {
 	// D-20261009-23; the step-away posture is kept as verify_daimon_handoff keeps it.
 	await a.page.evaluate(() => { try { localStorage.setItem('daimond-handoff-when-away', '1'); } catch (e) { /* none */ } });
 	const beat = async () => {
-		await b.page.evaluate(() => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'trmate')).catch(() => {});
+		await beatAsApp(b, 'trmate');
 		await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
 		await a.page.waitForTimeout(1000);
 	};

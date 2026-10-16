@@ -48,7 +48,7 @@ function load() {
 }
 const win = load();
 const R = win.DaimondRatings, RR = win.DaimondRatingRoll;
-const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1.json'), 'utf8'));
+const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1_1.json'), 'utf8'));
 const SIDES = {};
 FORM.tags.forEach(t => { SIDES[t.id] = t.side; });
 const OPTS = { sides: SIDES };
@@ -539,7 +539,8 @@ kase('digestText: a Ratings section with the counts, the interval, trust and the
 	ok(/^## Ratings/m.test(t), 'heading');
 	ok(t.indexOf('model-a') >= 0 && t.indexOf('Thesis') >= 0, 'model and Diamond name');
 	ok(/12 up/.test(t) && /7 down/.test(t), 'counts: ' + t.slice(0, 600));
-	ok(t.indexOf('long') >= 0 && t.indexOf('correct') >= 0, 'leading tags');
+	ok(t.indexOf('Too long') >= 0 && t.indexOf('Correct') >= 0, 'leading tags, in the English words');
+	ok(!/[|,] (long|correct) \d/.test(t), 'leading tags: never a bare id');
 	ok(/19 of 19 made/.test(t), 'exposure');
 });
 

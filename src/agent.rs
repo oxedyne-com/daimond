@@ -1944,16 +1944,20 @@ impl Agent {
                 on_event(AgentEvent::Truncated);
             }
             // THE ROUND'S OWN TRACE FACTS, unconditionally: see `AgentEvent::RoundMeta` for
-            // why a round that answered nothing is exactly the one this has to reach.
-            if !resp.gen_id.is_empty() || !resp.finish_reason.is_empty() || resp.stalled {
-                on_event(AgentEvent::RoundMeta {
-                    gen_id:               resp.gen_id.clone(),
-                    finish_reason:        resp.finish_reason.clone(),
-                    native_finish_reason: resp.native_finish_reason.clone(),
-                    provider:             resp.provider.clone(),
-                    stalled:              resp.stalled,
-                });
-            }
+            // why a round that answered nothing is exactly the one this has to reach.  On EVERY
+            // round, ids or none (U3a RM): its timing facts are what a worker's liveness limit
+            // is tuned from, and a healthy round is the one that sets it.
+            on_event(AgentEvent::RoundMeta {
+                gen_id:               resp.gen_id.clone(),
+                finish_reason:        resp.finish_reason.clone(),
+                native_finish_reason: resp.native_finish_reason.clone(),
+                provider:             resp.provider.clone(),
+                stalled:              resp.stalled,
+                bytes:                resp.bytes,
+                first_ms:             resp.first_ms,
+                gap_ms:               resp.gap_ms,
+                ms:                   resp.ms,
+            });
 
             // Cancelled mid-stream: keep the partial answer already
             // streamed and end the turn cleanly, without an error.  STOPPED AFTER THE STREAM

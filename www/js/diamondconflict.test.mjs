@@ -296,7 +296,7 @@ function build(harness) {
 		wasm: harness.wasm || null,
 		diamonds: harness.diamonds || [],
 		onFetch: harness.onFetch || null,
-		ids: { 'Daimond Optimiser': 'OPT' },
+		ids: { 'Lucy': 'OPT' },
 		window: { DaimondCloud: undefined, DaimondSteering: STEERING },
 		readBase: () => (BREAK === 'nobase' ? {} : JSON.parse(JSON.stringify(baseStore.map))),
 		writeBase: (m) => { if (BREAK !== 'nobase') baseStore.map = JSON.parse(JSON.stringify(m || {})); },

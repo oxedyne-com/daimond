@@ -14,7 +14,8 @@ use oxedyne_fe2o3_jdat::prelude::*;
 use oxedyne_fe2o3_jdat::string::dec::DecoderConfig;
 
 
-pub const FORM: &str		= "daimond/1";	// the form this build writes
+pub const FORM: &str		= "daimond/1.1";	// the form this build writes (1.1: RATE-REASONS)
+const FORM_MAJOR: &str	= "daimond/1";	// the major this build reads, and every minor of it
 pub const HANDLE_V: &str	= "p1";		// the handle grammar's version
 pub const DIM_MAX: u8		= 4;		// a detail dimension runs 0..=DIM_MAX
 pub const NOTE_MAX: usize	= 8 * 1024;	// bytes of the user's own words one rating keeps
@@ -93,6 +94,9 @@ pub struct Tag {
 	pub code:  u16,
 	pub side:  Side,
 	pub kinds: &'static [Kind],
+	/// On the one-tap row after a down tap. False keeps a reason in Details only, for one that
+	/// names an area rather than a fault (`tool`) or one a newer reason replaces on the row.
+	pub quick: bool,
 }
 
 impl Tag {
@@ -103,6 +107,7 @@ impl Tag {
 const AW: &[Kind]	= &[Kind::Answer, Kind::Worker];
 const AWF: &[Kind]	= &[Kind::Answer, Kind::Worker, Kind::File];
 const AWM: &[Kind]	= &[Kind::Answer, Kind::Worker, Kind::Mail];
+const MISSED: &[Kind]	= &[Kind::Answer, Kind::Worker, Kind::File, Kind::Mail];
 const WRONG: &[Kind]	= &[Kind::Answer, Kind::Worker, Kind::Crystal, Kind::Mail, Kind::Proposal];
 const F: &[Kind]	= &[Kind::File];
 const C: &[Kind]	= &[Kind::Crystal];
@@ -111,35 +116,45 @@ const P: &[Kind]	= &[Kind::Proposal];
 
 // §4.2's table.  `wrong` and `style` recur across kinds and keep one code each, so a pooled count
 // of either means the same thing whatever was rated.
+//
+// RATE-REASONS (D-20261015-07, form 1.1): "Wrong" was two faults, so `missed` ("Missed the
+// point") is added and leads every row it is on, and `wrong` keeps code 1 and its meaning,
+// labelled "Incorrect". No id changes meaning, so a 1.0 record reads unchanged. `on_point`
+// mirrors `missed` on the up side. Their codes are 32 and 33, not the next free 29 and 30,
+// because the model-compare plan's MC3 (specs/daimond_model_compare_plan_20261009.md §2.3)
+// already holds 29-31 for `made_up`, `checked` and `unchecked`; MC3 moves to form 1.2. `tool` and `wrong_change` leave the row (`quick: false`) and
+// stay in Details. The order here is the order of every row.
 pub const TAGS: &[Tag] = &[
-	Tag { id: "wrong",		code: 1,	side: Side::Down,	kinds: WRONG },
-	Tag { id: "ignored",		code: 2,	side: Side::Down,	kinds: AW },
-	Tag { id: "long",		code: 3,	side: Side::Down,	kinds: AWM },
-	Tag { id: "short",		code: 4,	side: Side::Down,	kinds: AW },
-	Tag { id: "style",		code: 5,	side: Side::Down,	kinds: AWF },
-	Tag { id: "tool",		code: 6,	side: Side::Down,	kinds: AW },
-	Tag { id: "refused",		code: 7,	side: Side::Down,	kinds: AW },
-	Tag { id: "slow",		code: 8,	side: Side::Down,	kinds: AW },
-	Tag { id: "correct",		code: 9,	side: Side::Up,		kinds: AW },
-	Tag { id: "followed",		code: 10,	side: Side::Up,		kinds: AW },
-	Tag { id: "concise",		code: 11,	side: Side::Up,		kinds: AW },
-	Tag { id: "style_good",		code: 12,	side: Side::Up,		kinds: AW },
-	Tag { id: "broke",		code: 13,	side: Side::Down,	kinds: F },
-	Tag { id: "wrong_change",	code: 14,	side: Side::Down,	kinds: F },
-	Tag { id: "incomplete",		code: 15,	side: Side::Down,	kinds: F },
-	Tag { id: "scope",		code: 16,	side: Side::Down,	kinds: F },
-	Tag { id: "wiped",		code: 17,	side: Side::Down,	kinds: F },
-	Tag { id: "clean",		code: 18,	side: Side::Up,		kinds: F },
-	Tag { id: "complete",		code: 19,	side: Side::Up,		kinds: F },
-	Tag { id: "lost",		code: 20,	side: Side::Down,	kinds: C },
-	Tag { id: "bloated",		code: 21,	side: Side::Down,	kinds: C },
-	Tag { id: "faithful",		code: 22,	side: Side::Up,		kinds: C },
-	Tag { id: "tidy",		code: 23,	side: Side::Up,		kinds: C },
-	Tag { id: "tone",		code: 24,	side: Side::Down,	kinds: M },
-	Tag { id: "ready",		code: 25,	side: Side::Up,		kinds: M },
-	Tag { id: "not_useful",		code: 26,	side: Side::Down,	kinds: P },
-	Tag { id: "already_knew",	code: 27,	side: Side::Down,	kinds: P },
-	Tag { id: "useful",		code: 28,	side: Side::Up,		kinds: P },
+	Tag { id: "missed",		code: 32,	side: Side::Down,	kinds: MISSED,	quick: true },
+	Tag { id: "on_point",		code: 33,	side: Side::Up,		kinds: AW,	quick: true },
+	Tag { id: "wrong",		code: 1,	side: Side::Down,	kinds: WRONG,	quick: true },
+	Tag { id: "ignored",		code: 2,	side: Side::Down,	kinds: AW,	quick: true },
+	Tag { id: "long",		code: 3,	side: Side::Down,	kinds: AWM,	quick: true },
+	Tag { id: "short",		code: 4,	side: Side::Down,	kinds: AW,	quick: true },
+	Tag { id: "style",		code: 5,	side: Side::Down,	kinds: AWF,	quick: true },
+	Tag { id: "tool",		code: 6,	side: Side::Down,	kinds: AW,	quick: false },
+	Tag { id: "refused",		code: 7,	side: Side::Down,	kinds: AW,	quick: true },
+	Tag { id: "slow",		code: 8,	side: Side::Down,	kinds: AW,	quick: true },
+	Tag { id: "correct",		code: 9,	side: Side::Up,		kinds: AW,	quick: true },
+	Tag { id: "followed",		code: 10,	side: Side::Up,		kinds: AW,	quick: true },
+	Tag { id: "concise",		code: 11,	side: Side::Up,		kinds: AW,	quick: true },
+	Tag { id: "style_good",		code: 12,	side: Side::Up,		kinds: AW,	quick: true },
+	Tag { id: "broke",		code: 13,	side: Side::Down,	kinds: F,	quick: true },
+	Tag { id: "wrong_change",	code: 14,	side: Side::Down,	kinds: F,	quick: false },
+	Tag { id: "incomplete",		code: 15,	side: Side::Down,	kinds: F,	quick: true },
+	Tag { id: "scope",		code: 16,	side: Side::Down,	kinds: F,	quick: true },
+	Tag { id: "wiped",		code: 17,	side: Side::Down,	kinds: F,	quick: true },
+	Tag { id: "clean",		code: 18,	side: Side::Up,		kinds: F,	quick: true },
+	Tag { id: "complete",		code: 19,	side: Side::Up,		kinds: F,	quick: true },
+	Tag { id: "lost",		code: 20,	side: Side::Down,	kinds: C,	quick: true },
+	Tag { id: "bloated",		code: 21,	side: Side::Down,	kinds: C,	quick: true },
+	Tag { id: "faithful",		code: 22,	side: Side::Up,		kinds: C,	quick: true },
+	Tag { id: "tidy",		code: 23,	side: Side::Up,		kinds: C,	quick: true },
+	Tag { id: "tone",		code: 24,	side: Side::Down,	kinds: M,	quick: true },
+	Tag { id: "ready",		code: 25,	side: Side::Up,		kinds: M,	quick: true },
+	Tag { id: "not_useful",		code: 26,	side: Side::Down,	kinds: P,	quick: true },
+	Tag { id: "already_knew",	code: 27,	side: Side::Down,	kinds: P,	quick: true },
+	Tag { id: "useful",		code: 28,	side: Side::Up,		kinds: P,	quick: true },
 ];
 
 // The four optional detail dimensions, each 0..=DIM_MAX: (id, code).
@@ -179,8 +194,8 @@ pub fn form_json() -> String {
 	let tags: Vec<String> = TAGS.iter()
 		.map(|t| {
 			let kinds: Vec<String> = t.kinds.iter().map(|k| fmt!("\"{}\"", k.wire())).collect();
-			fmt!("{{\"id\":\"{}\",\"code\":{},\"side\":\"{}\",\"kinds\":[{}],\"key\":\"{}\"}}",
-				t.id, t.code, t.side.wire(), kinds.join(","), t.i18n())
+			fmt!("{{\"id\":\"{}\",\"code\":{},\"side\":\"{}\",\"kinds\":[{}],\"key\":\"{}\",\"quick\":{}}}",
+				t.id, t.code, t.side.wire(), kinds.join(","), t.i18n(), t.quick)
 		})
 		.collect();
 	fmt!("{{\"form\":\"{}\",\"scale\":[{}],\"dims\":[{}],\"tags\":[{}]}}",
@@ -586,7 +601,7 @@ fn is_tag_id(s: &str) -> bool {
 
 /// Is this a form this build reads: `daimond/1`, or a minor version of it?
 fn is_known_form(form: &str) -> bool {
-	form == FORM || form.strip_prefix(FORM)
+	form == FORM_MAJOR || form.strip_prefix(FORM_MAJOR)
 		.and_then(|t| t.strip_prefix('.'))
 		.map(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 		.unwrap_or(false)
@@ -1227,22 +1242,47 @@ mod tests {
 	}
 
 	#[test]
+	fn test_the_form_json_is_the_page_s_fixture_00() {
+		// www/js tests read this file as the wasm's `rating_form()`; a change to the table rewrites it.
+		assert_eq!(form_json(), include_str!("../dev/fixtures/rating_form_daimond1_1.json"));
+	}
+
+	#[test]
 	fn test_the_form_is_the_design_table_00() {
 		let on = |k: Kind, side: Side| -> Vec<&str> {
 			TAGS.iter().filter(|t| t.side == side && t.kinds.contains(&k)).map(|t| t.id).collect()
 		};
 		assert_eq!(on(Kind::Answer, Side::Down),
-			vec!["wrong", "ignored", "long", "short", "style", "tool", "refused", "slow"]);
-		assert_eq!(on(Kind::Worker, Side::Up), vec!["correct", "followed", "concise", "style_good"]);
+			vec!["missed", "wrong", "ignored", "long", "short", "style", "tool", "refused", "slow"]);
+		assert_eq!(on(Kind::Worker, Side::Up),
+			vec!["on_point", "correct", "followed", "concise", "style_good"]);
 		assert_eq!(on(Kind::File, Side::Down),
-			vec!["style", "broke", "wrong_change", "incomplete", "scope", "wiped"]);
+			vec!["missed", "style", "broke", "wrong_change", "incomplete", "scope", "wiped"]);
 		assert_eq!(on(Kind::Crystal, Side::Down), vec!["wrong", "lost", "bloated"]);
-		assert_eq!(on(Kind::Mail, Side::Down), vec!["wrong", "long", "tone"]);
+		assert_eq!(on(Kind::Mail, Side::Down), vec!["missed", "wrong", "long", "tone"]);
 		assert_eq!(on(Kind::Proposal, Side::Up), vec!["useful"]);
+		// RATE-REASONS: the one-tap row, which never holds more than 8 (rulings §16).
+		let quick = |k: Kind| -> Vec<&str> {
+			TAGS.iter().filter(|t| t.side == Side::Down && t.quick && t.kinds.contains(&k))
+				.map(|t| t.id).collect()
+		};
+		assert_eq!(quick(Kind::Answer),
+			vec!["missed", "wrong", "ignored", "long", "short", "style", "refused", "slow"]);
+		assert_eq!(quick(Kind::File), vec!["missed", "style", "broke", "incomplete", "scope", "wiped"]);
+		for k in [Kind::Answer, Kind::Worker, Kind::File, Kind::Crystal, Kind::Mail, Kind::Proposal] {
+			assert!(quick(k).len() <= 8, "{:?} row is {:?}", k, quick(k));
+		}
+		// An id never changes meaning: `wrong` keeps the code every 1.0 record pooled it under.
+		assert_eq!(tag_code("wrong", Kind::Answer), Some(1));
+		assert_eq!(tag_code("missed", Kind::Answer), Some(32));
+		assert_eq!(tag_code("on_point", Kind::Worker), Some(33));
+		assert_eq!(tag_code("missed", Kind::Crystal), None);
 		let json = form_json();
-		assert!(json.starts_with("{\"form\":\"daimond/1\""), "{}", json);
+		assert!(json.starts_with("{\"form\":\"daimond/1.1\""), "{}", json);
 		assert!(json.contains("{\"id\":\"wiped\",\"code\":17,\"side\":\"down\",\"kinds\":[\"file\"],\
-			\"key\":\"rating.tag.wiped\"}"), "{}", json);
+			\"key\":\"rating.tag.wiped\",\"quick\":true}"), "{}", json);
+		assert!(json.contains("{\"id\":\"tool\",\"code\":6,\"side\":\"down\",\"kinds\":[\"answer\",\"worker\"],\
+			\"key\":\"rating.tag.tool\",\"quick\":false}"), "{}", json);
 		assert!(json.contains("{\"s\":-2,\"id\":\"wrong\",\"key\":\"rating.scale.wrong\"}"), "{}", json);
 		// And it is JSON a reader can take.
 		let cfg = DecoderConfig::<(), ()>::json(None);
@@ -1321,7 +1361,7 @@ mod tests {
 			"{\"h\":\"p1:file:d-thesis/v12/src/parse.rs\",\"hash\":\"aaaa"), "{}", json);
 		assert!(json.contains("\"s\":-1,\"clear\":false,\"tags\":[\"scope\",\"style\"],\"dims\":\
 			{\"correct\":-1,\"followed\":1,\"length\":-1,\"style\":-1},\"note\":\"I only asked \
-			for the \\\"test\\\"\",\"form\":\"daimond/1\",\"src\":\"popup\",\"sup\":\
+			for the \\\"test\\\"\",\"form\":\"daimond/1.1\",\"src\":\"popup\",\"sup\":\
 			\"r-mfz3k2a1-ab12c\",\"priv\":false,\"hx\":\"daimond\",\"burst\":\"r-mfz3k2a2-cd34e\",\
 			\"tools\":\"file_read>file_edit\",\"len\":0,\"prod\":{\"h\":"), "{}", json);
 		assert!(json.ends_with("\"run\":\"w-7\",\"via\":\"command\"}}"), "{}", json);
@@ -1400,7 +1440,7 @@ mod tests {
 			swap("\"s\":-1", "\"s\":-3"),
 			swap("\"s\":-1", "\"s\":\"-1\""),
 			swap(&fmt!("\"hash\":\"{}\",\"s\"", "a".repeat(64)), "\"hash\":\"\",\"s\""),
-			swap("\"form\":\"daimond/1\"", "\"form\":\"daimond/2\""),
+			swap("\"form\":\"daimond/1.1\"", "\"form\":\"daimond/2\""),
 			swap("\"src\":\"popup\"", "\"src\":\"shout\""),
 			swap("\"followed\":1", "\"followed\":5"),
 			swap("\"followed\":1", "\"followed\":-2"),
@@ -1421,7 +1461,11 @@ mod tests {
 			assert!(Rating::from_json(&bad).is_err(), "accepted {}", bad);
 		}
 		// A minor version of the same form is read.
-		assert!(Rating::from_json(&swap("\"form\":\"daimond/1\"", "\"form\":\"daimond/1.3\"")).is_ok());
+		assert!(Rating::from_json(&swap("\"form\":\"daimond/1.1\"", "\"form\":\"daimond/1.3\"")).is_ok());
+		// RATE-REASONS: a record an older build wrote, on form 1.0 with `wrong`, still reads, and
+		// `wrong` is still the base tag it pooled under.
+		let old = swap("\"form\":\"daimond/1.1\"", "\"form\":\"daimond/1\"");
+		assert!(Rating::from_json(&old).is_ok(), "{}", old);
 		// The provenance must be of the product rated, and a withdrawal must be empty.
 		let other = Rating { prod: Prod { h: "p1:file:d-thesis/v12/src/lex.rs".to_string(),
 			..rated().prod }, ..rated() };

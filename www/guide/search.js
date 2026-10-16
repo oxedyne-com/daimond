@@ -1,7 +1,7 @@
 /* The guide's search: a box in the header, and results as you type.
  *
  * notes2.txt line 96 asks for it as a fallback -- "some users will choose to
- * burn tokens on Daimond Help but a search facility in the guide is a fallback.
+ * burn tokens on Neil but a search facility in the guide is a fallback.
  * It has to be of decent quality." So it is not a substring scan: it tokenises,
  * requires every term to be present, ranks a heading match above a body match,
  * and shows the sentence the match is in rather than the top of the section.

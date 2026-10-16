@@ -86,7 +86,7 @@ function page(o) {
 	const win = { DaimondSteering: STEERING };
 	const src =
 		'var window = ctx.window, DaimondSteering = window.DaimondSteering, Wasm = ctx.wasm, st = ctx.st;\n' +
-		"var DEFAULT_IDS = { 'Daimond Optimiser': 'OPT' };\n" +
+		"var DEFAULT_IDS = { 'Lucy': 'OPT' };\n" +
 		'var chats = st.chats, current = null, _sharedClients = new WeakSet(), _diamondApps = {};\n' +
 		'var diamonds = [{ id: "OPT", get touched() { return st.stamp.OPT; } }, { id: "D1", get touched() { return st.stamp.D1; } }];\n' +
 		'var Workers = { cancelAwaits: function () {} };\n' +

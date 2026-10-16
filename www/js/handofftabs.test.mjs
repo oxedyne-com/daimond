@@ -184,6 +184,8 @@ function makeTab(name, locks, w) {
 		DaimondModels: { noteUse() {} },
 		// Rating U1: ensureApp tells the app who it is by, which nothing here reads.
 		noteAppProv() {}, promptPrint: () => '',
+		// UNBLOCK-1: recoverOneLocally redraws the tiles and switch, which nothing here draws.
+		redrawRunner() {},
 		applyRoundLimit() {}, applyFoldSettings() {}, applyProviderRouting() {}, applyCrystalCap() {},
 		DaimondApp: class {
 			restore_session(msgs) { stat.restored = { session: msgs.map((m) => m.content) }; return msgs.length; }

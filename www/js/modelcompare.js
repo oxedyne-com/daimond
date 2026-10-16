@@ -38,7 +38,7 @@
 
 	var KIND_V     = 1;						// the kind rules' version, printed on the card
 	var KINDS      = ['mail', 'image', 'code', 'writing', 'research', 'talk'];
-	var FORM_MIN   = 'daimond/1.1';			// the first form with the honesty tags
+	var FORM_MIN   = 'daimond/1.2';			// the first form with the honesty tags (1.1 is RATE-REASONS)
 	var Z90        = 1.6448536269514722;	// two-sided 90%
 	var K          = 5;						// the prior's weight, as U5a
 	var RATE_FLOOR = 10;					// turns (calls for tool errors) a rate needs
@@ -173,7 +173,7 @@
 
 	function formAtLeast(f) {
 		var m = /^daimond\/(\d+)(?:\.(\d+))?$/.exec(str(f));
-		return !!m && (Number(m[1]) > 1 || (Number(m[1]) === 1 && Number(m[2] || 0) >= 1));
+		return !!m && (Number(m[1]) > 1 || (Number(m[1]) === 1 && Number(m[2] || 0) >= 2));
 	}
 
 	/// The turns one chat holds, for `chatPart`: one per answered turn and one per worker report,

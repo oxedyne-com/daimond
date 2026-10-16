@@ -226,7 +226,7 @@ const SECTIONS = {
 			line: (r.querySelector('.steer-line') || {}).textContent || '', meta: (r.querySelector('.steer-foot .steer-meta') || {}).textContent || '', off: !!r.querySelector('.steer-off'),
 			rm: ((r.querySelector('.steer-rm') || {}).textContent || '') })));
 		check('SL2', rows.length === 2 && rows.every((r) => r.line === LONG), 'the Diamond\'s list holds its note and the account\'s, each with the exact line', JSON.stringify(rows));
-		check('SL2', rows.some((r) => /Daimond Help/.test(r.meta)) && rows.some((r) => /account/i.test(r.meta)), 'each row says whose it is, its model and the day', JSON.stringify(rows.map((r) => r.meta)));
+		check('SL2', rows.some((r) => /Neil/.test(r.meta)) && rows.some((r) => /account/i.test(r.meta)), 'each row says whose it is, its model and the day', JSON.stringify(rows.map((r) => r.meta)));
 		check('SL2', rows.every((r) => r.rm === 'Remove'), 'every row has a Remove');
 		// In use: Help runs fast. The Diamond's own note displaces the account's on the same tag, in this Diamond's view.
 		const offs = await page.evaluate(() => [...document.querySelectorAll('.tile-dlg-card [data-steer-list="diamond"] .steer-row')].map((r) => (r.querySelector('.steer-off') || {}).textContent || ''));
@@ -432,8 +432,8 @@ const SECTIONS = {
 		// The dialog is reached through the real Edit press: seed a tile for it.
 		await page.evaluate((line) => {
 			const pre = (window.DaimondAccounts && DaimondAccounts.prefix && DaimondAccounts.prefix()) || '';
-			const it = { id: 'slx1', diamondId: '0da1000000e1', diamondName: 'Daimond Help', headline: 'Add a note for fast', detail: 'x', kind: 'steer', priority: 'low', at: Date.now(),
-				steer: { id: 'note|2|0da1000000e1|fast|long|', kind: 'note', level: 2, scope: '0da1000000e1', name: 'Daimond Help', key: 'fast', tag: 'long', to: '', evidence: {}, line: line, lineKey: '', at: { t: 0, n: 0 } } };
+			const it = { id: 'slx1', diamondId: '0da1000000e1', diamondName: 'Neil', headline: 'Add a note for fast', detail: 'x', kind: 'steer', priority: 'low', at: Date.now(),
+				steer: { id: 'note|2|0da1000000e1|fast|long|', kind: 'note', level: 2, scope: '0da1000000e1', name: 'Neil', key: 'fast', tag: 'long', to: '', evidence: {}, line: line, lineKey: '', at: { t: 0, n: 0 } } };
 			localStorage.setItem(pre + 'daimond-pending', JSON.stringify([it]));
 			window.dispatchEvent(new StorageEvent('storage', { key: pre + 'daimond-pending' }));
 			DaimondPanels.show('pending');

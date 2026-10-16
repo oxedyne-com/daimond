@@ -1,4 +1,5 @@
 // gateway: live
+// RETIRE UNDER RIG U7 (HOV-REBASE, 16 Oct 2026): its phantom-runner cases are forbidden by I3c and covered by rig I2/I4; not repaired (notes/daimond_hoverifiers_20261016/diag.md §3).
 // verify_handoff_selfrecover.mjs — WS-HAND #1/#2 (the MONEY defect), #5 (one tile on
 // a re-seat) and #6 (a refused hand-off is rendered), end to end in REAL contexts.
 //

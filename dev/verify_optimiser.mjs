@@ -571,7 +571,7 @@ const OPS = {
 		const after = await modelOf(page, HELP), writes = await page.evaluate(() => window.__sdm.map((v) => { try { return JSON.parse(v); } catch (e) { return null; } }));
 		opcheck('OP5', !!after && /thinker$/.test(after.model) && (!before || before.model !== after.model), 'Switch changed Help\'s model record from ' + JSON.stringify(before) + ' to mock/thinker', JSON.stringify(after));
 		const last = writes.length ? writes[writes.length - 1] : null;
-		opcheck('OP5', !!last && !!last[HELP] && /thinker$/.test(last[HELP].model) && Object.keys(last[HELP]).sort().join() === 'model,provider,visionModel,visionProvider,workerModel,workerProvider', 'through setDiamondModel: the record\'s one writer, with its whole shape', writes.length + ' write(s) seen; ' + JSON.stringify(last && last[HELP]));
+		opcheck('OP5', !!last && !!last[HELP] && /thinker$/.test(last[HELP].model) && Object.keys(last[HELP]).sort().join() === 'effort,effortModel,effortProvider,model,provider,visionModel,visionProvider,workerModel,workerProvider', 'through setDiamondModel: the record\'s one writer, with its whole shape', writes.length + ' write(s) seen; ' + JSON.stringify(last && last[HELP]));
 		const f = await fileOf(page, HELP);
 		opcheck('OP5', / · switched · diamond · fast /.test(f), 'the switch is on file for its review', JSON.stringify(f.slice(0, 200)));
 		// The Diamond cog shows the model.
@@ -611,7 +611,7 @@ try {
 	await p.evaluate(() => DaimondDiamond.seedDefaults());
 	await p.waitForFunction(() =>
 		[...document.querySelectorAll('#diamond-list .session-box-name')]
-			.some(n => /Daimond Optimiser/.test(n.textContent)), null, { timeout: 20000 })
+			.some(n => /Lucy/.test(n.textContent)), null, { timeout: 20000 })
 		.catch(() => {});
 
 	const ids = await p.evaluate(() => {
@@ -620,7 +620,7 @@ try {
 				.find(x => re.test(x.textContent));
 			return b ? b.dataset.id : '';
 		};
-		return { opt: of(/Daimond Optimiser/), help: of(/Daimond Help/) };
+		return { opt: of(/Lucy/), help: of(/Neil/) };
 	});
 	if (!ids.opt || !ids.help) die('this world did not seed the two default Diamonds');
 
@@ -831,7 +831,7 @@ try {
 	const after = await p.evaluate(() => (DaimondDiamond.current() || {}).id || '');
 	check(after === ids.help,
 		'and the screen did not move — the user is still where they were',
-		after === ids.help ? 'still on Daimond Help' : 'moved to ' + after);
+		after === ids.help ? 'still on Neil' : 'moved to ' + after);
 
 	const landed = await p.evaluate((a) => {
 		const rec = DaimondDiamond.conversation(a.opt) || { messages: [] };
@@ -865,7 +865,7 @@ try {
 	check(!!tile.headline && !MOOD.test(String(tile.headline) + String(tile.detail)),
 		'and nothing on it names anybody’s state of mind',
 		(String(tile.headline + ' ' + tile.detail).match(MOOD) || ['clean'])[0]);
-	check(tile.diamondId === ids.opt && /Optimiser/.test(String(tile.diamondName || '')),
+	check(tile.diamondId === ids.opt && /Lucy/.test(String(tile.diamondName || '')),
 		'and the tile says which Diamond found it', tile.diamondName || '(unnamed)');
 	await shot(s, 'proposal-tile');
 

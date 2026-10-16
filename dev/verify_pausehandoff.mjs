@@ -52,7 +52,7 @@ import { open, chat, signInAs, newChat, connectMock, mockLog, SCRATCH } from './
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import { GWBIN, requireFreshGateway } from './gwbin.mjs';
-import { checker, storedMsgs, placeholders, send, freshChat, settle, until } from './handoffpair.mjs';
+import { checker, storedMsgs, placeholders, send, freshChat, settle, until, nominateRunner } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -218,7 +218,9 @@ async function pairWith(check, lead, mate, routeA, routeB) {
 	await b.page.waitForTimeout(2000);
 	await settle(b.page);
 	await until(b.page, () => { try { return window.DaimondPost.state().parks > 0; } catch (e) { return false; } }, null, 8000);
-	await b.page.evaluate((n) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), n), mate);
+	// B NOMINATED, as handoffpair's `pair` does: since D-20261009-23 a send goes to the
+	// nominated runner or runs here, so the hand-off cases need it. It ends once A reads B listening.
+	await nominateRunner(check, a, b, mate);
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);
 	const idA = await a.page.evaluate(() => window.DaimondIdentity.deviceId());
@@ -452,7 +454,7 @@ try {
 			await freshChat(a);
 			await a.page.evaluate((id) => {
 				DaimondCore.roster.nominate(id);
-				window.__vphReal = { sd: DaimondPeer.nominationStandDown, rp: DaimondSync.refreshPresence };
+				window.__vphReal = { sd: DaimondPeer.nominationStandDown, rp: DaimondSync.refreshPresence, nom: DaimondCore.roster.nominee() };
 				DaimondPeer.nominationStandDown = function () { return false; };
 				DaimondSync.refreshPresence = function () {
 					return new Promise((r) => setTimeout(r, 3000)).then(() => window.__vphReal.rp());
@@ -467,7 +469,7 @@ try {
 			await a.page.evaluate(() => {
 				DaimondPeer.nominationStandDown = window.__vphReal.sd;
 				DaimondSync.refreshPresence = window.__vphReal.rp;
-				DaimondCore.roster.nominate('');
+				DaimondCore.roster.nominate(window.__vphReal.nom || '');	// the pair's nominee, not none
 			});
 			const r = await turnRows(a, 'VPH-G2');
 			check('G2: a second press during the nominee\'s refresh runs the turn once, one prompt', ran('VPH-G2') === 1 && r.prompts === 1, J({ runs: ran('VPH-G2'), prompts: r.prompts }));
@@ -668,7 +670,7 @@ try {
 			await freshChat(a);
 			await a.page.evaluate((id) => {
 				DaimondCore.roster.nominate(id);
-				window.__vphReal = { sd: DaimondPeer.nominationStandDown, rp: DaimondSync.refreshPresence };
+				window.__vphReal = { sd: DaimondPeer.nominationStandDown, rp: DaimondSync.refreshPresence, nom: DaimondCore.roster.nominee() };
 				DaimondPeer.nominationStandDown = function () { return false; };
 				DaimondSync.refreshPresence = function () {
 					return new Promise((r) => setTimeout(r, 3000)).then(() => window.__vphReal.rp());
@@ -689,7 +691,7 @@ try {
 			await a.page.evaluate(() => {
 				DaimondPeer.nominationStandDown = window.__vphReal.sd;
 				DaimondSync.refreshPresence = window.__vphReal.rp;
-				DaimondCore.roster.nominate('');
+				DaimondCore.roster.nominate(window.__vphReal.nom || '');	// the pair's nominee, not none
 			});
 			await settle(a.page);
 			await sleep(2000);

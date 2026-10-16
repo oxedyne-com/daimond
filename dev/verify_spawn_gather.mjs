@@ -271,6 +271,27 @@ check('and the gather row names the runs it read, which is the join',
 	gatherRows.length ? `${gatherRows[0].payload.w} vs ${ends.map(r => r.payload.w).join('|')}`
 		: 'no gather row');
 
+// A WORKER'S ROUNDS REACH THE FEED (U3a RM, UNBLOCK-16). The chat sinks recorded
+// `round_meta` and the worker sink did not, so nothing showed how long a worker's stream
+// went quiet; the worker's liveness limit is tuned from exactly that (`lens gaps`). Each
+// worker writes a row per round, keyed `w`, with the stream's bytes (`b`), ms to the
+// first byte (`f`), the longest quiet after it (`g`) and the round's length (`ms`). `b`
+// answers after `@slow 1500`, so its first byte cannot come before a second.
+const metas = ds.filter(r => r.kind === 'round_meta' || r.kind === 'stalled');
+const metaOf = (name) => {
+	const run = runs.find(r => r.name === name);
+	return run ? metas.filter(r => r.payload.w === String(run.id)) : [];
+};
+const num = (v) => typeof v === 'number' && isFinite(v) && v >= 0;
+const timed = (rows) => rows.length >= 1 && rows.every(r => num(r.payload.b) && num(r.payload.f)
+	&& num(r.payload.g) && num(r.payload.ms) && r.payload.r >= 1) && rows.some(r => r.payload.b > 0);
+check('each worker\'s rounds reach the feed with their timing facts',
+	timed(metaOf('a')) && timed(metaOf('b')),
+	JSON.stringify({ a: metaOf('a').map(r => r.payload), b: metaOf('b').map(r => r.payload) }));
+check('and the slow worker\'s first byte is timed from its request',
+	metaOf('b').some(r => r.payload.f >= 1000 && r.payload.ms >= r.payload.f),
+	JSON.stringify(metaOf('b').map(r => ({ f: r.payload.f, g: r.payload.g, ms: r.payload.ms }))));
+
 // ── Two: a worker the gather could not wait for ─────────────────────────────
 //
 // Nothing is lost by a gather that runs out of time. The result names what is

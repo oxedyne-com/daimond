@@ -72,6 +72,7 @@
 	var deps = {};           // { onChunk, onStart, onEnd, onHeld, onHost, onMeterless, note, client } — supplied by daimond.js
 	var live = {};           // id -> run record
 	var link = null;         // the one port: { port, greeted, waiters, note, gen }
+	var wasLinked = false;   // a link was open when the page was last hidden
 
 	/// How many links this page has opened, which numbers each one (`gen`). A link is one hand
 	/// process and one hello, and every fence the engine builds is built from a hello: `status`
@@ -421,7 +422,11 @@
 		rec.port = port;
 
 		port.onMessage.addListener(function (msg) { fromHand(rec, msg); });
-		port.onDisconnect.addListener(function () { gone(rec); });
+		port.onDisconnect.addListener(function () {
+			// Read so Chrome does not log it as unchecked; `gone` words the ending itself.
+			void chrome.runtime.lastError;
+			gone(rec);
+		});
 
 		rec.timer = setTimeout(function () { helloLate(rec); }, HELLO_WAIT);
 
@@ -1634,7 +1639,24 @@
 	// `dev/verify_handreload.mjs`. Saying `bye` here would end the host at once
 	// and take that grace away from every F5. The extension ends the pair on its
 	// own when the grace runs out and nothing has come back for it.
-	window.addEventListener('pagehide', function () { letGo(false); });
+	window.addEventListener('pagehide', function () { wasLinked = !!link; letGo(false); });
+
+	// BACK AND FORWARD BRING THE SAME DOCUMENT BACK, and Chrome closed its port on the
+	// way into the back/forward cache whether or not the page let go first. A link that
+	// survived into the cache is dead without knowing it: on restore its `postMessage`
+	// neither throws nor arrives, and `onDisconnect` never fires (measured in
+	// `dev/verify_handbfcache.mjs`), so it is ended here by name. And a page that had a
+	// hand takes it back NOW rather than on its next command: the extension holds what
+	// it left running for a grace, and a person who pressed Back and is reading has not
+	// left, so the grace must not run out under them.
+	window.addEventListener('pageshow', function (e) {
+		if (!e || !e.persisted) return;
+		var had = wasLinked || !!link;
+		wasLinked = false;
+		if (link) drop(link, 'The browser put this page away (Back or Forward) and closed its '
+			+ 'link to the machine hand. It has been reopened.');
+		if (had) open().catch(function () { /* said to whoever asks next */ });
+	});
 
 	window.DaimondHand = {
 		init: function (d) {

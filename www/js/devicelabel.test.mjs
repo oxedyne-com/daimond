@@ -70,7 +70,8 @@ function main() {
 	check('en.js names "another device" under devices.another', ANOTHER === 'another device', ANOTHER);
 
 	const harness = `
-		var _beats = {}, _reg = {}, _ls = {};
+		var _beats = {}, _reg = {}, _ls = {}, _self = '';
+		function selfDeviceId() { return _self; }
 		var window = { DaimondPresence: { name: function (id) { return _beats[id] || ''; } } };
 		var DaimondPresence = window.DaimondPresence;
 		var localStorage = {
@@ -85,6 +86,7 @@ function main() {
 			label: deviceLabelFor,
 			beats: function (b) { _beats = b; },
 			roster: function (r) { _reg = r; },
+			self: function (id) { _self = id; },
 			stored: function () { return _ls; },
 			reload: function () { _deviceNames = null; },
 		};
@@ -114,6 +116,9 @@ function main() {
 	const c = api.label(C);
 	check('is "another device"', c === (ANOTHER || 'another device'), c);
 	check('never shows a slice of its id', c.indexOf(C.slice(0, 6)) === -1, c);
+	api.self(C);
+	check('is "This device" when it is this device (UNBLOCK-1)', api.label(C) === 'devices.unknown', api.label(C));
+	api.self('');
 
 	console.log('\n(d) bounded, and the newest name wins');
 	api.roster({ [B]: { label: 'Den desktop' } });

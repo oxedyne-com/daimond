@@ -82,8 +82,8 @@ const BREAKS = {
 	// U4 puts the note on the wire once, as `pre` ahead of the person's words. The break tells it a second time: the newest note's
 	// words are appended to what the agent is sent (the stored user message is untouched, so only W10's wire check can see it).
 	wire:       { section: 'W10', file: 'js/daimond.js',
-		from: "\t\t\t\t\theldRun(chat, app, umid);\n\t\t\t\t\tawait app.run_turn(text, onEvent, turnPre || undefined);\n\t\t\t\t} catch (e) {\n\t\t\t\t\tif (capFail) {",
-		to:   "\t\t\t\t\theldRun(chat, app, umid);\n\t\t\t\t\tawait app.run_turn(text + (function () { var w = chat.messages.filter(function (m) { return m.role === 'rating_log' && m.rating && m.rating.note; }).pop(); return w ? '\\n' + w.rating.note : ''; })(), onEvent, turnPre || undefined);\n\t\t\t\t} catch (e) {\n\t\t\t\t\tif (capFail) {",
+		from: "\t\t\t\t\theldRun(chat, app, umid);\n\t\t\t\t\tawait turnKill(app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined), chat);\n\t\t\t\t} catch (e) {\n\t\t\t\t\tif (capFail) {",
+		to:   "\t\t\t\t\theldRun(chat, app, umid);\n\t\t\t\t\tawait turnKill(app.run_turn(text + (function () { var w = chat.messages.filter(function (m) { return m.role === 'rating_log' && m.rating && m.rating.note; }).pop(); return w ? '\\n' + w.rating.note : ''; })(), onEvent, turnPre || undefined, umid ? String(umid) : undefined), chat);\n\t\t\t\t} catch (e) {\n\t\t\t\t\tif (capFail) {",
 		what: 'the newest rating note is sent to the model with the next message' },
 	popupdirty: { section: 'W8',  file: 'js/daimond.js',
 		from: "st.s = next;",
@@ -113,8 +113,8 @@ const BREAKS = {
 		to:   "nm.title = name; DaimondVersions.manifests(id).then(function (ms) { if (!(ms || []).length) nm.textContent = ''; });",
 		what: 'a file row blanks its name when the store holds no manifest for it' },
 	tiny:       { section: 'FW5', file: 'css/app.css',
-		from: ".ctile-rate-row .ctile-rate button:first-child::after { left: -8px; transform: translateY(-50%); }",
-		to:   ".ctile-rate-row .ctile-rate button:first-child::after { left: -8px; transform: translateY(-50%); }\n@media (pointer: coarse) { .turn-file-rate button::after { width: 20px !important; height: 20px !important; } }",
+		from: ".ctile-rate-row .ctile-rate button:first-child::after { left: calc(var(--rate-ink) - var(--ct-pad-x)); transform: none; }",
+		to:   ".ctile-rate-row .ctile-rate button:first-child::after { left: calc(var(--rate-ink) - var(--ct-pad-x)); transform: none; }\n@media (pointer: coarse) { .turn-file-rate button::after { width: 20px !important; height: 20px !important; } }",
 		what: 'the coarse-pointer overlay on file-row buttons shrinks to 20px' },
 	touch:      { section: 'W17', file: 'js/daimond.js',
 		from: "persistChats();\t\t// and no touchChat: a rating is not a turn",
@@ -164,8 +164,9 @@ async function section(name, fn) {
 // ── The contract, written from the plan and not from the page ───────────
 const KEYS  = 'h,hash,s,clear,tags,dims,note,form,src,sup,priv,hx,burst,tools,len,prod'.split(',');
 const DIMS  = 'correct,followed,length,style'.split(',');
-const DOWN  = [['wrong', 'Wrong'], ['ignored', 'Ignored instructions'], ['long', 'Too long'], ['short', 'Too short'],
-	['style', 'Tone or format'], ['tool', 'Tool use'], ['refused', 'Refused or hedged'], ['slow', 'Slow']];
+// The quick row (form 1.1, RATE-REASONS): `missed` leads, `wrong` reads "Incorrect", and `tool` is in Details only.
+const DOWN  = [['missed', 'Missed the point'], ['wrong', 'Incorrect'], ['ignored', 'Ignored instructions'], ['long', 'Too long'],
+	['short', 'Too short'], ['style', 'Tone or format'], ['refused', 'Refused or hedged'], ['slow', 'Slow']];
 const UP    = [['correct', 'Correct'], ['followed', 'Followed instructions'], ['concise', 'Concise'], ['style_good', 'Good style']];
 const RID   = /^r-[0-9a-z]+-[0-9a-z]{5}$/;
 /// §2.4, exactly. Answers Map<h, headMessage|null>; a cleared head is null.
@@ -368,7 +369,7 @@ await section('W2', async () => {
 	check('W2: s 1, clear false, tags [], hash "", note "", sup "", priv false, hx daimond',
 		k.s === 1 && k.clear === false && J(k.tags) === '[]' && k.hash === '' && k.note === '' && k.sup === '' && k.priv === false && k.hx === 'daimond',
 		J({ s: k.s, clear: k.clear, tags: k.tags, hash: k.hash, note: k.note, sup: k.sup, priv: k.priv, hx: k.hx }));
-	check('W2: src is tap, form is daimond/N, burst is its own mid', k.src === 'tap' && /^daimond\/\d+$/.test(k.form) && k.burst === r.mid, J({ src: k.src, form: k.form, burst: k.burst }));
+	check('W2: src is tap, form is daimond/1.1 (this build), burst is its own mid', k.src === 'tap' && k.form === 'daimond/1.1' && k.burst === r.mid, J({ src: k.src, form: k.form, burst: k.burst }));
 	check('W2: h is the answer\'s handle and prod is byte-equal to DaimondProvenance.of(answer)[0]', k.h === f.m1.prod[0].h && J(k.prod) === f.derived.prod, String(k.h));
 	check('W2: tools and len are the derived values', k.tools === f.derived.tools && k.len === f.derived.len, J({ tools: k.tools, want: f.derived.tools, len: k.len, wantLen: f.derived.len }));
 });
@@ -413,7 +414,7 @@ await section('W4', async () => {
 	const rowLoc = ctl(String(a[2].mid), 'ctile-rate-tags');
 	const stillThere = await has(rowLoc);
 	check('W4: the chip row is still under answer 3 three seconds after the tap', stillThere, 'gone: the burst was committed early');
-	if (stillThere) await rowLoc.locator('.tile-dlg-level').nth(2).click({ force: true, timeout: 5000 });
+	if (stillThere) await rowLoc.locator('.tile-dlg-level').nth(3).click({ force: true, timeout: 5000 });
 	const tLast = await D.page.evaluate(() => Date.now());
 	await sleep(3200);
 	const held = { pending: await pending(cid), written: (await ratings(cid)).length - n0 };
@@ -464,7 +465,7 @@ await section('W6', async () => {
 	let f = await facts(mid);
 	need(f.chips, 'no chip row after a down tap');
 	check('W6: the down tags in form order, with their labels', J(f.chips.map((c) => c.t)) === J(DOWN.map((d) => d[1])), J(f.chips.map((c) => c.t)));
-	await ctl(mid, 'ctile-rate-tags').locator('.tile-dlg-level').nth(2).click({ force: true });
+	await ctl(mid, 'ctile-rate-tags').locator('.tile-dlg-level').nth(3).click({ force: true });
 	f = await facts(mid);
 	check('W6: a toggle presses the chip and writes nothing yet', f.chips.filter((c) => c.on).map((c) => c.t).join() === 'Too long' && (await ratings(cid)).length === n0 && (await pending(cid)) === 1, J(f.chips.filter((c) => c.on)));
 	await flush(cid);
@@ -559,9 +560,9 @@ await section('W8', async () => {
 	const mid = String(m.mid), n0 = (await ratings(cid)).length;
 	await openPopup(mid);
 	check('W8: the scale is five steps in words, in one row', (await stepBtn(0).count()) === 1 && (await D.page.locator('.rate-card .rate-scale .tile-dlg-level').count()) === 5
-		&& J(await D.page.locator('.rate-card .rate-scale .tile-dlg-level').allTextContents()) === J(['Wrong', 'Poor', 'Fine', 'Good', 'Great']), J(await D.page.locator('.rate-card .rate-scale .tile-dlg-level').allTextContents()));
+		&& J(await D.page.locator('.rate-card .rate-scale .tile-dlg-level').allTextContents()) === J(['Useless', 'Poor', 'Fine', 'Good', 'Great']), J(await D.page.locator('.rate-card .rate-scale .tile-dlg-level').allTextContents()));
 	await stepBtn(0).click({ force: true });
-	await tagBtn(1).click({ force: true }); await tagBtn(2).click({ force: true });
+	await tagBtn(2).click({ force: true }); await tagBtn(3).click({ force: true });
 	await openDetails();
 	const nDims = await D.page.locator('.rate-card .rate-dim').count();
 	check('W8: Details holds the four dimensions and the words field', nDims === 4 && (await D.page.locator('.rate-card textarea.rate-said-input').count()) === 1, nDims + ' dims');
@@ -924,7 +925,7 @@ const geom = (s, mid) => s.page.evaluate((mid) => {
 	return { n: groups.length, row: !!row, inHead: !!(g && g.closest('.ctile-lbl')), between: !!g && pos(peek, g) && pos(g, time),
 		sameLine: !!g && !!time && Math.abs((R(g).top + R(g).bottom) / 2 - (R(time).top + R(time).bottom) / 2) <= 3,
 		timeRight: time ? R(time).right : null, userRight: user ? R(user).right : null,
-		lblH: lbl ? R(lbl).height : 0, userLblH: (() => { const u = document.querySelector('#chat-output .ctile[data-t="user"] .ctile-lbl'); return u ? R(u).height : 0; })(), tileH: R(t).height, lblClip: lbl ? lbl.scrollWidth - lbl.clientWidth : 0, copyIn: copy && vis(copy) ? R(copy).right <= R(t).right + 0.5 : true,
+		lblH: lbl ? R(lbl).height : 0, userLblH: (() => { const u = document.querySelector('#chat-output .ctile[data-t="user"] .ctile-lbl'); return u ? R(u).height : 0; })(), tileH: R(t).height, userTileH: (() => { const u = [...document.querySelectorAll('#chat-output .ctile[data-t="user"]')].map((e) => R(e).height); return u.length ? Math.min(...u) : 0; })(), lblClip: lbl ? lbl.scrollWidth - lbl.clientWidth : 0, copyIn: copy && vis(copy) ? R(copy).right <= R(t).right + 0.5 : true,
 		rowUnder: row && body ? R(row).top - R(body).bottom : null, tagsUnder: tags && row ? R(tags).top - R(row).bottom : null };
 }, mid);
 const setModel = (s, mid, name) => s.page.evaluate(({ mid, name }) => { const m = document.querySelector(`#chat-output .ctile[data-mid="${CSS.escape(mid)}"] .ctile-meta`); if (m) m.textContent = name; return m ? m.textContent : ''; }, { mid, name });
@@ -959,7 +960,8 @@ async function layoutRun(s, look, size, mids, form) {
 		check(`L: ${look} ${size} header form: the time's right edge equals a user tile's to 1px`, g.userRight !== null && Math.abs(g.timeRight - g.userRight) <= 1, `${g.timeRight} vs ${g.userRight}`);
 		// R2-01: the group's buttons once carried `margin: 0` over Copy's -2px, which drew the bar 30px tall on every answer.
 		check(`L: ${look} ${size} header form: the label bar is 28px, as a user tile's (R2-01)`, Math.abs(g.lblH - 28) <= 0.5 && Math.abs(g.lblH - g.userLblH) <= 0.5, `${g.lblH}px against a user tile's ${g.userLblH}px`);
-		check(`L: ${look} ${size} header form: a one-line answer tile is 66.5px tall, as a base tile (R2-01)`, Math.abs(g.tileH - 66.5) <= 1, g.tileH + 'px');
+		// Against a live one-line user tile, not a literal: 66.5px was the base tile before the 10 Oct gap rule (1a5fd5ff) made it 62.5.
+		check(`L: ${look} ${size} header form: a one-line answer tile is as tall as a one-line user tile (R2-01)`, g.userTileH > 0 && Math.abs(g.tileH - g.userTileH) <= 1, g.tileH + 'px against ' + g.userTileH + 'px');
 	} else {
 		check(`L: ${look} ${size} row form: exactly one group shows, in the row, directly under the body`, g.row && g.rowUnder !== null && g.rowUnder >= -1 && g.rowUnder <= 16, J(g));
 	}

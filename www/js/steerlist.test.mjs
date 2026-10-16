@@ -42,7 +42,7 @@ for (const f of ['provenance.js', 'ratings.js', 'ratingroll.js', 'steering.js'])
 	new Function('window', readFileSync(join(HERE, f), 'utf8'))(win);
 }
 const R = win.DaimondRatings, RR = win.DaimondRatingRoll, S = win.DaimondSteering;
-const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1.json'), 'utf8'));
+const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1_1.json'), 'utf8'));
 const SIDES = {};
 FORM.tags.forEach(t => { SIDES[t.id] = t.side; });
 const OPTS = { sides: SIDES };

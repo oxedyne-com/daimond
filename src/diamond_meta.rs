@@ -46,6 +46,16 @@ pub struct Meta {
 	/// compiler, which is a permission nobody gave.  What is in here reaches
 	/// `Toolkit::parse` and decides what a COMMAND may touch outside the workspace.
 	pub kits:    Vec<String>,
+	/// Which built-in Diamond this record IS, as the fixed id that built-in is seeded at, or
+	/// empty for every Diamond a person made (NAMES N1, 2026-10-16).
+	///
+	/// A lasting marker in the record itself, because a NAME cannot carry identity: the two
+	/// built-ins are called Neil and Lucy, which are names a person gives their own Diamonds,
+	/// and the boot that matched by name moved such a Diamond into the Built-in group and could
+	/// put it in the Trash.  Set by the page on the copies at the fixed ids and on an older
+	/// copy seeded at a random id, which it recognises by its old seed name and text; never by
+	/// anything a person types.  See [`normalise_builtin`].
+	pub builtin: String,
 }
 
 impl Meta {
@@ -67,9 +77,9 @@ impl Meta {
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
-			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"tags\":{},\"toolkits\":{}}}",
-			json_escape(&self.name), self.version, self.updated, self.touched, self.tags_json(),
-			self.kits_json(),
+			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"tags\":{},\"toolkits\":{}}}",
+			json_escape(&self.name), self.version, self.updated, self.touched,
+			json_escape(&self.builtin), self.tags_json(), self.kits_json(),
 		)
 	}
 
@@ -129,6 +139,9 @@ impl Meta {
 			// which is both the honest reading and the safe one. A toolkit is off by default.
 			kits:    normalise_kits(
 				&extract_json_string_array(s, "toolkits").unwrap_or_default()),
+			// Postdates every Diamond already on a device; absent means a person's own Diamond,
+			// and the page marks the built-ins it can prove on the next boot.
+			builtin: normalise_builtin(&extract_json_string(s, "builtin").unwrap_or_default()),
 		}
 	}
 }
@@ -149,6 +162,21 @@ impl Meta {
 /// is added there, and see `test_every_toolkit_the_engine_knows_is_a_name_the_store_keeps`, which
 /// fails when they disagree.
 const KNOWN_KITS: [&str; 5] = ["rust", "node", "python", "go", "git"];
+
+/// Normalise a built-in marker: a fixed Diamond id is twelve lowercase hex digits, and anything
+/// else is no marker at all, so a damaged or hand-written field cannot make a Diamond a built-in
+/// under some other name.
+///
+/// # Arguments
+/// * `mark` - The marker as stored or offered.
+pub fn normalise_builtin(mark: &str) -> String {
+	let m = mark.trim();
+	if m.len() == 12 && m.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+		m.to_string()
+	} else {
+		String::new()
+	}
+}
 
 /// Normalise a caller's toolkit grants into the form the store holds.
 ///
@@ -307,10 +335,31 @@ mod tests {
 			touched: 1_700_000_009_999,
 			tags:    vec![fmt!("work")],
 			kits: Vec::new(),
+			builtin: String::new(),
 		};
 		let back = Meta::from_json(&meta.to_json());
 		assert_eq!(1_700_000_000_000, back.updated);
 		assert_eq!(1_700_000_009_999, back.touched);
+	}
+
+	#[test]
+	fn test_the_built_in_marker_round_trips_and_is_absent_on_a_persons_diamond() {
+		// NAMES N1: a built-in is known by this marker or its fixed id, never by its name.
+		let meta = Meta {
+			name:    fmt!("Lucy"),
+			version: 1,
+			updated: 1,
+			touched: 1,
+			tags:    Vec::new(),
+			kits:    Vec::new(),
+			builtin: fmt!("0da1000000f2"),
+		};
+		assert_eq!("0da1000000f2", Meta::from_json(&meta.to_json()).builtin);
+		// A record written before the field, and a person's own "Lucy", carry no marker.
+		assert_eq!("", Meta::from_json(r#"{"name":"Lucy","crystal_version":0}"#).builtin);
+		// Nothing but a fixed-id shape is a marker.
+		assert_eq!("", Meta::from_json(r#"{"name":"Lucy","builtin":"yes"}"#).builtin);
+		assert_eq!("", normalise_builtin("0DA1000000F2x"));
 	}
 
 	#[test]
@@ -322,6 +371,7 @@ mod tests {
 			touched: 1_700_000_000_000,
 			tags:    vec![fmt!("work"), fmt!("urgent")],
 			kits: Vec::new(),
+			builtin: String::new(),
 		};
 		let back = Meta::from_json(&meta.to_json());
 		assert_eq!("Ship the thing", back.name);
@@ -332,7 +382,7 @@ mod tests {
 
 	#[test]
 	fn test_a_meta_with_no_tags_round_trips_as_an_empty_array() {
-		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new(), kits: Vec::new() };
+		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new(), kits: Vec::new(), builtin: String::new() };
 		let json = meta.to_json();
 		assert!(json.contains("\"tags\":[]"), "{}", json);
 		assert!(Meta::from_json(&json).tags.is_empty());
@@ -355,7 +405,7 @@ mod tests {
 			fmt!("caf\u{e9} \u{65e5}\u{672c}"),   // multi-byte, passed through raw
 			fmt!("bell\u{7}"),                     // a control character, \u-escaped
 		];
-		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone(), kits: Vec::new() };
+		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone(), kits: Vec::new(), builtin: String::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 
@@ -402,6 +452,7 @@ mod tests {
 			touched: 2,
 			tags:    vec![fmt!("real")],
 			kits: Vec::new(),
+			builtin: String::new(),
 		};
 		assert_eq!(vec![fmt!("real")], Meta::from_json(&meta.to_json()).tags);
 	}
@@ -485,7 +536,7 @@ mod tests {
 		// what the file gives back, or the store drifts from the interface.
 		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tDiamond"), fmt!("work")]);
 		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, touched: 3, tags: tags.clone(),
-			kits: Vec::new() };
+			kits: Vec::new(), builtin: String::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 
@@ -561,7 +612,7 @@ mod tests {
 	fn test_toolkit_grants_round_trip_through_the_stored_json() {
 		let meta = Meta {
 			name: fmt!("N"), version: 2, updated: 3, touched: 3,
-			tags: Vec::new(), kits: vec![fmt!("rust"), fmt!("node")],
+			tags: Vec::new(), kits: vec![fmt!("rust"), fmt!("node")], builtin: String::new(),
 		};
 		assert_eq!(vec![fmt!("rust"), fmt!("node")], Meta::from_json(&meta.to_json()).kits);
 	}

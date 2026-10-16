@@ -109,8 +109,8 @@ for (let c = 0; c < CHATS; c++) {
 	await p.evaluate((id) => { const b = document.querySelector(`[data-close="${id}"]`); if (b) b.click(); }, id);
 	await p.waitForTimeout(300);
 }
-check('the turns landed', (await p.evaluate(() => document.querySelectorAll('#chat-output .msg, #chat-output .chat-msg').length)) > 0,
-	`${await p.evaluate(() => document.querySelectorAll('#chat-output .msg, #chat-output .chat-msg').length)} message node(s)`);
+check('the turns landed', (await p.evaluate(() => document.querySelectorAll('#chat-output .ctile[data-t="user"]').length)) > 0,
+	`${await p.evaluate(() => document.querySelectorAll('#chat-output .ctile[data-t="user"]').length)} message node(s)`);
 
 // A SECOND DEVICE'S RECORDS, arriving through the merge. This is how the four
 // tiles were made: a per-device seed flag plus a minted id, so each device made
@@ -118,7 +118,7 @@ check('the turns landed', (await p.evaluate(() => document.querySelectorAll('#ch
 const minted = await p.evaluate(async () => {
 	const m = await import('/pkg/oxedyne_daimond.js');
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	return [await app.create_diamond('Daimond Help'), await app.create_diamond('Daimond Optimiser')];
+	return [await app.create_diamond('Neil'), await app.create_diamond('Lucy')];
 });
 check('a second device\'s default Diamonds were merged in', minted.length === 2, minted.join(', '));
 

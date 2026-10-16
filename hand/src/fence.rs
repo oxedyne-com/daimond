@@ -1526,7 +1526,7 @@ fn nearest_owner(want: &BTreeMap<PathBuf, Level>, p: &Path) -> Option<PathBuf> {
 /// # Arguments
 /// * `raw` - The path as the spec spelled it.
 /// * `level` - What it was named for.
-fn canonical(raw: &str, level: Level) -> Outcome<PathBuf> {
+pub(crate) fn canonical(raw: &str, level: Level) -> Outcome<PathBuf> {
     let p = Path::new(raw);
     if !p.is_absolute() {
         return Err(err!(

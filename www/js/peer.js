@@ -1534,8 +1534,10 @@
 	///   failed         -- report a failure (a terminal park included), OR the lease
 	///                     expired mid-run with no report (the peer stopped): the `why`
 	///                     sentence + [Run here]
-	/// `ask` is a collected consent-ask envelope for this turn, or null.
-	function uiState(turn, lease, report, selfId, now, ask) {
+	/// `ask` is a collected consent-ask envelope for this turn, or null. `localRun` says
+	/// this device has taken the turn on itself (a hand-off that fell back here) before
+	/// its own claim lands: it reads `claimed`, by this device, never "Sending to <runner>".
+	function uiState(turn, lease, report, selfId, now, ask, localRun) {
 		if (!turn || turn.why !== REASON_DISPATCHED) return 'not-dispatched';
 		var n = now == null ? Date.now() : now;
 		// A report settles it either way, and outlives the lease.
@@ -1573,6 +1575,10 @@
 		// saying "sent" and say what is actually holding it up. Retained beneath the
 		// blocker for a runner on a build that posts the ask but writes no blocker.
 		if (ask && ask.t === T_ASK) return 'awaiting-consent';
+		// THE TURN FELL BACK HERE (UNBLOCK-1 DISPATCH-FAIL): from the moment this device
+		// takes it on, its own claim may take a store round trip (39 s in the rig's stall)
+		// or replace a lapsed one. A live lease, its own included, still says the rest.
+		if (localRun && !liveLease(lease, n)) return 'claimed';
 		// No report yet: read the lease.
 		if (liveLease(lease, n)) {
 			return lease.mode === 'running' ? 'running' : 'claimed';
@@ -2774,6 +2780,11 @@
 	/// excluded); this function owns only the "should we hand off at all" gating -- the
 	/// per-chat opt-out, the always-on-worker rule, the step-away and posture rules, the
 	/// agentic rule, and the mobile-vs-desktop last-resort split.
+	/// Is the chat being seated running a turn on this device itself (`queueOn` is self)?
+	function runsHere(o) {
+		return !!(o && o.queueOn && o.selfId && String(o.queueOn) === String(o.selfId));
+	}
+
 	function autoDispatchDecision(chat, presence, opts, now) {
 		var box = { passed: [] };
 		var d = dispatchDecision(chat, presence, opts, now, box);
@@ -2816,6 +2827,13 @@
 		var toggle = (o.toggle != null) ? !!o.toggle : null;
 		// An explicit opt-out pins the chat here regardless of any peer -- tested first.
 		if (toggle === false) return { dispatch: false, reason: 'chat-local' };
+
+		// THIS CHAT'S TURN IS RUNNING HERE (UNBLOCK-1 DISPATCH-FAIL). A hand-off that fell
+		// back to this device -- a refused post, the backstop, a hand-back, a lease that
+		// lapsed -- is this device's run, and a follow-up queues behind it here (O3), so the
+		// seat is here: the switch never names a runner that is not running the turn
+		// (rulings §1, I9). `queueOn` is the device running the chat (`chatRunningOn`).
+		if (runsHere(o)) return { dispatch: false, reason: 'running-here' };
 
 		// THE PREFERRED WORKER (a live nominee or the star's label) takes EVERY turn, above
 		// the step-away / posture / agentic / quick-local rules -- it is the account's chosen
@@ -2927,7 +2945,7 @@
 		var mob = !!o.selfMobile;
 		var nom2  = String(o.nominatedId || '');
 		var nrec2 = nom2 ? p[nom2] : null;
-		var why = (d.reason === 'chat-local') ? 'chat-local'
+		var why = (d.reason === 'chat-local' || d.reason === 'running-here') ? 'chat-local'
 			: (nom2 && !recGenuine(nrec2, n, w)) ? 'runner-silent'
 			: 'no-desktop';
 		return {
@@ -2960,11 +2978,15 @@
 	/// first moment the runner no longer counts as reachable on the beat it has (0 with no
 	/// runner), so the caller can redraw to "Here" then rather than at the next beat (R4).
 	function seatSwitch(chat, presence, opts, now) {
-		var o = Object.assign({}, opts || {}, { toggle: null });
+		// The runner is found with this device's own run of the chat set aside too, so the
+		// switch still offers the runner the next turn may go back to, unpressed, while the
+		// chat's turn runs here (UNBLOCK-1 DISPATCH-FAIL).
+		var here0 = runsHere(opts);
+		var o = Object.assign({}, opts || {}, { toggle: null }, here0 ? { queueOn: '' } : {});
 		var plan = seatPlan(chat, presence, o, now);
 		var runner = (plan.where === 'runner' && plan.deviceId)
 			? { deviceId: plan.deviceId, label: plan.label } : null;
-		var here = !runner || (opts && opts.toggle === false);
+		var here = !runner || here0 || (opts && opts.toggle === false);
 		var until = 0;
 		if (runner) {
 			var rec = (presence || {})[runner.deviceId];
@@ -3702,6 +3724,11 @@
 			// reads before it takes, so it stands down here on the snapshot in hand.
 			var settledCur = snap && snap.leases ? snap.leases[tid] : null;
 			if (settledCur && settledCur.settled) return { won: false, why: 'settled' };
+			// A RE-TAKE OF THIS DEVICE'S OWN LIVE CLAIM (RUNNER-READY F2). `mergeLeases` keeps a
+			// live lease whose holder is the claimant, so the take wins -- but the run that
+			// claimed it is gone (a reload: the work claim forbids a second run on this device),
+			// and the caller ends that run as Interrupted rather than running the turn again.
+			var retake = !!settledCur && String(settledCur.holder || '') === holder && liveLease(settledCur, now);
 			// The claim expiry is the errand's DEADLINE (real or derived above), not
 			// now + TTL, so the lease stays live for the whole turn WITHOUT a renew -- a
 			// busy turn cannot push a renew (sync.js:1077), so a TTL-capped claim would
@@ -3744,11 +3771,11 @@
 				// -- so after one more look, an unreadable door trusts that answer. Standing down
 				// here left a `claimed` record pinned to the deadline and the sender showing
 				// "picking this up" for the whole of it, on a turn nobody was running.
-				if (conf.unread) { leaseWrite(proposed); return { won: true, holder: holder, deadline: proposed[tid].deadline }; }
+				if (conf.unread) { leaseWrite(proposed); return { won: true, holder: holder, deadline: proposed[tid].deadline, retake: retake }; }
 				leaseWrite(conf.leases || {});
 				var landed = _leases[tid];
 				if (landed && landed.holder === holder && liveLease(landed, leaseNow(nowFn))) {
-					return { won: true, holder: holder, deadline: claim.deadline };
+					return { won: true, holder: holder, deadline: claim.deadline, retake: retake };
 				}
 				return { won: false, holder: landed ? landed.holder : null };
 			}
@@ -4755,7 +4782,23 @@
 		return { ran: false, done: true, interrupted: true, stopped: fin.stopped || undefined, parcelVersion: fin.parcelVersion, trace: trace };
 	}
 
+	/// Errands being run in THIS page, by turn id (RUNNER-READY F2). A re-take of this
+	/// device's own live lease is read as a run a reload cut short, and ended Interrupted
+	/// (`runErrandOnce` 1a); that reading holds only while no run of the turn is under way
+	/// here. Another tab is kept out by the work claim (post.js `claimWork`); this keeps
+	/// out a second call in the same page, which would otherwise settle the lease of the
+	/// run still going.
+	var _errandsHere = Object.create(null);
+
 	async function runErrand(errand, deps) {
+		var tid = String((errand || {}).turnId);
+		if (_errandsHere[tid]) return { ran: false, why: 'local-in-flight', trace: ['local-in-flight'] };
+		_errandsHere[tid] = 1;
+		try { return await runErrandOnce(errand, deps); }
+		finally { delete _errandsHere[tid]; }
+	}
+
+	async function runErrandOnce(errand, deps) {
 		var d = deps || {}, e = errand || {};
 		var turnId = String(e.turnId);
 		var trace = [];
@@ -5222,6 +5265,25 @@
 			if (!r || r.holder !== String(d.selfId) || r.mode === 'released') liveness(true);
 		}
 		try {
+			// 1a. A RE-TAKE OF THIS DEVICE'S OWN LIVE LEASE IS A RECOVERY, NEVER A RUN (rulings §1,
+			// RUNNER-READY F2). The claim on the door is this device's, and no run of the turn is
+			// under way here (the work claim), so the run that took it was cut short by a reload.
+			// It ends HERE, before the reconstruct: the Interrupted fold needs only the chat and
+			// the journal, never the engine, and a reconstruct on a page whose engine was not yet
+			// up threw and handed the turn back as `error`, its rounds lost (reconstruct_diag.md).
+			// With no journal run to fold, the turn is still settled Interrupted: never run again
+			// from round 0, so no tool call the lost run made is made twice. Retry decides.
+			if (took.retake) {
+				trace.push('retake');
+				diag('collect RETAKE', 'turn=' + turnId + ' own live lease: interrupted, not rerun');
+				var rir = await reportInterrupted(e, d, null, trace, deadAt);
+				if (rir) return rir;
+				trace.push('interrupted');
+				var rfin = await finishTurn(e, d, { interrupted: 1 }, trace, depsClock(d), false, deadAt);
+				if (rfin.revoked) return { ran: false, aborted: true, why: 'revoked', trace: trace };
+				return { ran: false, done: true, interrupted: true, stopped: rfin.stopped || undefined,
+					parcelVersion: rfin.parcelVersion, trace: trace };
+			}
 			// 1b. QUEUE BEHIND THIS DEVICE'S OWN TURN IN THE CHAT, holding the lease (UNBLOCK-1
 			// BUSY-SELF). Taken FIRST, so the sender's backstop reads the turn as claimed and
 			// stands down however long the turn ahead runs, then rebuilt once that turn has
@@ -5268,6 +5330,18 @@
 				trace.push(undeliverable ? 'reconstruct-undeliverable' : 'reconstruct-failed');
 				try { if (typeof console !== 'undefined') console.error('peer: reconstruct '
 					+ (undeliverable ? 'undeliverable' : 'failed') + ' for turn ' + turnId + ' -- ' + rwhy); } catch (e2) {}
+				// IN THE DIAGNOSTICS LOG TOO (RUNNER-READY F3). A console line alone left a
+				// reloaded runner's hand-back as silence after `reconstruct start` in every dump.
+				diag('collect reconstruct ' + (undeliverable ? 'undeliverable' : 'failed'), 'turn=' + turnId + ' -- ' + rwhy.slice(0, 200));
+				// A RUN THIS DEVICE ALREADY MADE IS NOT HANDED BACK (RUNNER-READY F3). When the
+				// journal here holds the turn open, the turn was run on this device and a reload
+				// cut it short: it ends Interrupted, as 2b ends it, and the sender's Retry
+				// decides. An `error` would offer [Run here], which re-runs every tool call the
+				// lost run made. The fold needs no reconstruct (the dep finds the chat itself).
+				if (!undeliverable) {
+					var fir = await reportInterrupted(e, d, null, trace, deadAt);
+					if (fir) return fir;
+				}
 				try { if (d.post) await d.post(reportFor(e, {
 					status: undeliverable ? 'undeliverable' : 'error', why: rwhy, by: d.selfId,
 					cause: (undeliverable && err.cause) || '' })); }

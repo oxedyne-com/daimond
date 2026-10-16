@@ -146,11 +146,11 @@ const U2 = {
 		TILE('tool', 'Files', '', '', '<div class="turn-files" data-nlb="files box"><div class="turn-files-head" data-nlb="files head">3 files changed this turn</div><div class="turn-files-rows">'
 			+ FROW('quotes/', 'harlow.md', '+3 \u22121', GRP(true, false, false, 'turn-file-rate ', 'Rate this change'))
 			+ FROW('', 'n.md', '\u00b7', GRP(false, true, true, 'turn-file-rate ', 'Rate this change'))
-			+ SEG('ctile-rate-tags', 'file chip row', ['Broke something', 'Wrong change', 'Incomplete'], 0, ' data-chrome="rate"')
+			+ SEG('ctile-rate-tags', 'file chip row', ['Broke something', 'Incorrect change', 'Incomplete'], 0, ' data-chrome="rate"')
 			+ FROW('a-deliberately-long-directory-name-that-keeps-going-and-going/', 'kitchen-benchtop-quote.md', '+1 \u22120', GRP(false, false, false, 'turn-file-rate ', 'Rate this change'))
 			+ '<button type="button" class="turn-file-more" data-nlb="more button">and 4 more</button></div></div>', '') },
 	'rating tile (a file line)': { host: 'chat', html:
-		TILE('rating', 'You', '', '', '<p class="rate-line" data-nlb="file rate line"><span class="rate-score" data-nlb="file rate score">\u22121</span> on <button type="button" class="rate-jump-link" data-nlb="file jump link">the change to n.md</button> \u00b7 Wrong change \u00b7 <span class="rate-said" data-nlb="file rate said">\u201cIt changed more than I asked.\u201d</span></p>', '') },
+		TILE('rating', 'You', '', '', '<p class="rate-line" data-nlb="file rate line"><span class="rate-score" data-nlb="file rate score">\u22121</span> on <button type="button" class="rate-jump-link" data-nlb="file jump link">the change to n.md</button> \u00b7 Incorrect change \u00b7 <span class="rate-said" data-nlb="file rate said">\u201cIt changed more than I asked.\u201d</span></p>', '') },
 	'rating tile': { host: 'chat', html:
 		TILE('rating', 'You', '', '', '<p class="rate-line" data-nlb="rate line"><span class="rate-score" data-nlb="rate score">−2</span> on <button type="button" class="rate-jump-link" data-nlb="jump link">the answer of 10:04</button> · Long · <span class="rate-said" data-nlb="rate said">“Just the command.”</span></p>'
 			+ '<p class="rate-line"><span class="rate-score">+1</span> on <button type="button" class="rate-jump-link">the answer of 10:06</button></p>', '') },

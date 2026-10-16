@@ -471,7 +471,7 @@ async function runnerHeld(page, id, node) {
 	const refusal = await lastRefusal(page);
 	check('G2: held by hand, the typed turn reaches no provider', g2 === 0, 'requests=' + g2);
 	check('G2: and the refusal names the Diamond, not an internal node id',
-		/Daimond Optimiser/.test(refusal) && !/root\//i.test(refusal), JSON.stringify(refusal));
+		/Lucy/.test(refusal) && !/root\//i.test(refusal), JSON.stringify(refusal));
 
 	// H: the state an earlier build left -- `self` seeded held beside the action, by the
 	// very call it made -- and no record yet of the repair.

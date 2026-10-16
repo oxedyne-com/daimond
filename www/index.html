@@ -342,10 +342,13 @@
 					     nothing of its own to close; the rail's closer is on the
 					     Everything row above. -->
 				</div>
-				<!-- Narrow the rail by tag. A search box stood here too and has
-				     gone: a Diamond is found by what it is filed under, and two
-				     ways of narrowing one short list is one more than it needs. -->
+				<!-- Narrow the rail: a search over names and tags, then the tag
+				     filter. The Agents panel's own find block, same field, same
+				     order (RAIL-SEARCH, D-20261015-11). A search stood here until
+				     6 Aug 2026 and went as one way too many to narrow a short list;
+				     a live rail of nineteen tags and a growing list brought it back. -->
 				<div class="diamond-find">
+					<input type="search" class="diamond-search" id="diamond-search" placeholder="Search diamonds" aria-label="Search diamonds by name or tag" autocomplete="off" data-i18n-placeholder="rail.search" data-i18n-aria-label="rail.search_help">
 					<div class="diamond-filter" id="diamond-filter" style="display:none"></div>
 				</div>
 				<div class="diamond-list" id="diamond-list"></div>

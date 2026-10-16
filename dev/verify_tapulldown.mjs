@@ -103,10 +103,10 @@ try {
 	await p.evaluate(() => DaimondDiamond.seedDefaults());
 	await p.waitForFunction(() =>
 		[...document.querySelectorAll('#diamond-list .session-box-name')]
-			.some(n => /Daimond Help/.test(n.textContent)), null, { timeout: 20000 });
+			.some(n => /Neil/.test(n.textContent)), null, { timeout: 20000 });
 	const id = await p.evaluate(() => {
 		const box = [...document.querySelectorAll('#diamond-list .diamond-box')]
-			.find(b => /Daimond Help/.test(b.textContent));
+			.find(b => /Neil/.test(b.textContent));
 		return box ? box.dataset.id : '';
 	});
 	check(!!id, 'a Diamond to hang actions on', String(id));

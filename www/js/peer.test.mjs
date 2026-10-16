@@ -1174,7 +1174,7 @@ async function main() {
 	// so a peer that also claims never causes a second run or a second
 	// charge. These checks fail on the pre-fix code and pass on the fix.
 	// ══════════════════════════════════════════════════════════
-	await runRecoveryAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
+	await runRecoveryAcceptance(phone.DaimondPeer, phone.DaimondLease, check, phone);
 
 	// ══════════════════════════════════════════════════════════
 	// S6-1 — the LOCAL doors get the same ask-answer guard the dispatched
@@ -1285,7 +1285,7 @@ function makeRealisticSync(L, gw, NOW) {
 	};
 }
 
-async function runRecoveryAcceptance(P, L, check) {
+async function runRecoveryAcceptance(P, L, check, phone) {
 	const NOW = 1700000000000;
 
 	// ── ADVERSARIAL, the money crux: a phone RECOVERS-LOCAL while a PEER also
@@ -1390,6 +1390,87 @@ async function runRecoveryAcceptance(P, L, check) {
 		});
 		check('[ctl] no journal entry: the turn runs once, an ordinary done', ran === 1 && res.ran === true && !res.interrupted
 			&& report && report.status === 'done' && report.interrupted === 0);
+	}
+
+	// ── RUNNER-READY F2 (rulings §1): A RE-TAKE OF THIS DEVICE'S OWN LIVE LEASE IS A
+	//    RECOVERY, NEVER A RUN. A runner that reloads mid-turn collects its errand again and
+	//    finds its own claim on the door. The Interrupted door used to sit BEHIND the
+	//    reconstruct, which needs the engine; a reloaded page whose engine was not yet up
+	//    threw there and handed the turn back as `error` (reconstruct_diag.md). Now the fold
+	//    and the Interrupted settle come first and need no engine, and with no journal run
+	//    the turn is still settled Interrupted, never run from round 0. ──
+	for (const journal of [true, false]) {
+		console.log('\nReload — a re-take of its own live lease ends interrupted before any reconstruct (journal ' + journal + ')');
+		L.forget();
+		const TID = 't-retake-' + journal;
+		const held = { [TID]: { turnId: TID, eid: 'e', holder: 'PHONE', dispatchedBy: 'PHONE', mode: 'claimed',
+			deadline: NOW + 600000, expiry: NOW + 600000, renewedAt: NOW - 5000 } };
+		const sync = makeLeaseSync(held);
+		let ran = 0, built = 0, folded = 0, acked = 0; const reports = [];
+		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: NOW + 600000, dispatchedBy: 'PHONE' });
+		let clk = NOW;
+		const res = await P.runErrand(errand, {
+			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true, awaitPush: true,
+			finished:    async () => false,
+			reconstruct: async () => { built++; throw new Error("Cannot read properties of undefined (reading '__wbindgen_free')"); },
+			interrupted: async () => { folded++; return journal; },
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1,
+			post:  async (r) => { reports.push(r); }, ack: async () => { acked++; },
+			now: () => (clk += 1),
+		});
+		const lz = sync.leases()[TID];
+		check('F2 the fold is asked first (journal ' + journal + ')', folded === 1, 'folded ' + folded);
+		check('F2 no reconstruct and no run (journal ' + journal + ')', built === 0 && ran === 0,
+			'reconstruct ' + built + ', runTurn ' + ran + ', ' + JSON.stringify(res));
+		check('F2 it ends interrupted, not as a hand-back (journal ' + journal + ')',
+			res.ran === false && res.interrupted === true && !res.error, JSON.stringify(res));
+		check('F2 one report, done and marked interrupted, never `error` (journal ' + journal + ')',
+			reports.length === 1 && reports[0].status === 'done' && reports[0].interrupted === 1, JSON.stringify(reports));
+		check('F2 the lease is settled (journal ' + journal + ')', !!lz && lz.mode === 'released' && lz.settled === 1, JSON.stringify(lz));
+	}
+
+	// ── RUNNER-READY F3 (defence): a reconstruct that throws on a turn THIS device already
+	//    ran (its journal holds the run open) is no hand-back. It used to post `error`, and
+	//    the sender drew "couldn't finish" + [Run here], which re-runs every tool call the
+	//    lost run made. It now ends Interrupted. And the failure is in the diagnostics log,
+	//    not only on the console. The control (no journal run) is the old hand-back. ──
+	for (const journal of [true, false]) {
+		console.log('\nReconstruct throws on a fresh take (journal ' + journal + ')');
+		L.forget();
+		const TID = 't-rfail-' + journal;
+		const sync = makeLeaseSync({});
+		const logs = [];
+		const prevDiag = phone.DaimondDiag;
+		phone.DaimondDiag = { on: () => false, log: (tag, d) => logs.push(tag + ' ' + d) };
+		let ran = 0, folded = 0; const reports = [];
+		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: NOW + 600000, dispatchedBy: 'PHONE' });
+		let clk = NOW;
+		const res = await P.runErrand(errand, {
+			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true, awaitPush: true,
+			finished:    async () => false,
+			reconstruct: async () => { throw new Error('engine gone'); },
+			interrupted: async (er, c) => { folded++; return journal && !c; },
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1,
+			post:  async (r) => { reports.push(r); }, ack: async () => {},
+			now: () => (clk += 1),
+		});
+		if (prevDiag === undefined) delete phone.DaimondDiag; else phone.DaimondDiag = prevDiag;
+		const lz = sync.leases()[TID];
+		check('F3 the failure is in the diagnostics log (journal ' + journal + ')',
+			logs.some((l) => /reconstruct failed/.test(l) && l.indexOf(TID) >= 0 && /engine gone/.test(l)), JSON.stringify(logs));
+		check('F3 nothing is run (journal ' + journal + ')', ran === 0, 'runTurn ' + ran);
+		if (journal) {
+			check('F3 a run this device holds open ends Interrupted, never `error`',
+				res.interrupted === true && !res.error && reports.length === 1 && reports[0].status === 'done' && reports[0].interrupted === 1,
+				JSON.stringify({ res, reports }));
+			check('F3 and its lease is settled', !!lz && lz.mode === 'released' && lz.settled === 1, JSON.stringify(lz));
+		} else {
+			check('F3 [ctl] no run held here: the old hand-back, `error`, lease released unsettled',
+				res.error === true && reports.length === 1 && reports[0].status === 'error' && !!lz && lz.mode === 'released' && !lz.settled,
+				JSON.stringify({ res, reports, lz }));
+		}
 	}
 
 	// ── A POISONED RUNNER BACKS OFF (UNBLOCK-7). A page whose engine trapped reloads
@@ -3465,8 +3546,13 @@ async function runMoneySafety(phone, laptop, check) {
 			const sync = makeLeaseSync({});
 			const c = { ran: 0, pushed: 0, acked: 0, answered: false };
 			const deps = mkRun(sync, c);
-			await Promise.all([Pp.runErrand(errand, deps()), Pp.runErrand(errand, deps())]);
-			check('D5(b): WITHOUT the guard the same two recoveries DOUBLE-run (ran === 2) — the guard bites', c.ran === 2);
+			// RUNNER-READY F2: runErrand now keeps a second same-page run of a turn out itself
+			// (a re-take of its own live lease reads as a reloaded run, so a concurrent one
+			// must not reach it); the unguarded pair runs, and bills, once.
+			const [r1, r2] = await Promise.all([Pp.runErrand(errand, deps()), Pp.runErrand(errand, deps())]);
+			check('D5(b): WITHOUT the caller\'s guard runErrand still runs the pair ONCE (ran === 1)', c.ran === 1);
+			check('D5(b): the second is kept out as local-in-flight, not run or settled',
+				(r1.why === 'local-in-flight') !== (r2.why === 'local-in-flight'), JSON.stringify([r1.why, r2.why]));
 		}
 		Lp.forget();
 	}
@@ -4884,7 +4970,7 @@ async function runLeaseFollowupAcceptance(phone, check) {
 				_localRecovering: Object.create(null), diag: () => {}, renderDispatchedBadges: () => {},
 				claimTurnHere: async () => ({ release: () => {} }),
 				errandForRecovery: () => ({ turnId: 'turn-m1' }), peerRunErrandDeps: () => ({}),
-				dropDispatchedPlaceholder: () => {},
+				dropDispatchedPlaceholder: () => {}, redrawRunner: () => {},
 				scheduleDispatchFallback: (...a) => calls.push(a), UNDECIDED_RECOLLECT_MS: 30000,
 				DaimondPeer: { runErrand: async () => { ctxSeen.push(Object.keys(ctx).join()); return res; },
 					standDownUndecided: P.standDownUndecided },

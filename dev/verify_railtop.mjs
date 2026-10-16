@@ -265,7 +265,7 @@ try {
 		`there=${group.there} open=${group.open}`);
 	check(group.last, 'at the foot of the Diamonds list, with nothing after it');
 	check(group.inside.length === 2
-		&& group.inside.some((n) => /Help/.test(n)) && group.inside.some((n) => /Optimiser/.test(n)),
+		&& group.inside.some((n) => /Neil/.test(n)) && group.inside.some((n) => /Lucy/.test(n)),
 		'holding both of them', JSON.stringify(group.inside));
 	check(group.flat.length > 0 && !group.flat.some((n) => /Daimond (Help|Optimiser)/.test(n)),
 		'and neither is left in the flat list above it', JSON.stringify(group.flat));

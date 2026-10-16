@@ -2302,6 +2302,12 @@ impl DaimondApp {
         diamond::rename(&id, &name).await.map_err(to_js_err)
     }
 
+    /// Mark a Diamond as the built-in seeded at `fixed_id`, a lasting marker in its own record,
+    /// so the page never has to recognise a built-in by its name (NAMES N1).
+    pub async fn mark_built_in(&self, id: String, fixed_id: String) -> Result<(), JsValue> {
+        diamond::mark_built_in(&id, &fixed_id).await.map_err(to_js_err)
+    }
+
     /// Set a Diamond's tags, replacing whatever it held.  `tags_json` is a JSON
     /// array of strings, e.g. `["work","urgent"]`.
     ///
@@ -4010,9 +4016,10 @@ impl DaimondApp {
         // them too and a model cannot rewrite a file it has not been shown. Read once, before
         // either round, so the two rounds fold the same delta into the same state.
         let files = diamond::read_standing(id).await;
+        let last_good = diamond::crystal_hot_last_good(id, &crystal).await;
         let mut want = res!(self.reduce_round(id, delta, &crystal, &files, "").await);
         let lost = crate::agent::compact::fold_losses(&crystal, &files, &want);
-        let land = crate::agent::compact::fold_landing(id, &crystal, &files, &want).err();
+        let land = crate::agent::compact::fold_landing(id, &crystal, &last_good, &files, &want).err();
         if !lost.is_empty() || land.is_some() {
             // ONE RETRY, AND ONLY ONE. A reducer that destroys the record twice in a row is
             // not going to be talked round by a third sentence, and the user is waiting.
@@ -4038,7 +4045,7 @@ impl DaimondApp {
                     Diamond instead, or fold a smaller delta.",
                     still.join("; "); Invalid, Data));
             }
-            if let Err(why) = crate::agent::compact::fold_landing(id, &crystal, &files, &again) {
+            if let Err(why) = crate::agent::compact::fold_landing(id, &crystal, &last_good, &files, &again) {
                 return Err(err!(
                     "This fold would not fit in the Diamond, and the reducer's second answer \
                     did not either: {} The crystal and its files are unchanged.", why;
@@ -4557,13 +4564,18 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
         AgentEvent::Truncated => {
             set("type", &JsValue::from_str("truncated"));
         }
-        AgentEvent::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled } => {
+        AgentEvent::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled,
+            bytes, first_ms, gap_ms, ms } => {
             set("type",     &JsValue::from_str("round_meta"));
             set("gen",      &JsValue::from_str(gen_id));
             set("finish",   &JsValue::from_str(finish_reason));
             set("nfinish",  &JsValue::from_str(native_finish_reason));
             set("provider", &JsValue::from_str(provider));
             set("stalled",  &JsValue::from_bool(*stalled));
+            set("b",        &JsValue::from_f64(*bytes as f64));
+            set("f",        &JsValue::from_f64(*first_ms as f64));
+            set("g",        &JsValue::from_f64(*gap_ms as f64));
+            set("ms",       &JsValue::from_f64(*ms as f64));
         }
         AgentEvent::Continued { n, rounds_so_far } => {
             set("type",   &JsValue::from_str("continued"));

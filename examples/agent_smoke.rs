@@ -48,7 +48,10 @@ async fn run() -> Outcome<()> {
         // run's own scratch directory.
         keeper: String::new(),
         // Marked places not yet in force on this device: there are no marks at all.
-        unconfirmed: Vec::new(), by_model: false };
+        unconfirmed: Vec::new(),
+        // The rest as the native handler sets them (`handler.rs`): no turn tag, no live
+        // marks read per call, no restore this call acts for, no author.
+        turn: String::new(), live: None, by_model: false, restoring: 0, by: None };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 
     let mut session = Session::new("smoke".to_string(), "Smoke".to_string(),
@@ -85,9 +88,12 @@ async fn run() -> Outcome<()> {
             // `structured` says whether the fold's own summary counts (a `Notes`
             // compaction) or is prose read by nobody downstream -- worth seeing
             // alongside the note, not folded into it.
-            AgentEvent::Compacted { folded, kept, note, structured } =>
-                println!("\n[compacted] folded {} kept {} structured={} — {}",
-                    folded, kept, structured, note),
+            // `model` and `sp` name who wrote the summary (empty for a fold that only
+            // shortened); `cut` is where it cut and `summarised` whether one was asked for.
+            AgentEvent::Compacted { folded, kept, note, structured, model, sp, cut, summarised } =>
+                println!("\n[compacted] folded {} kept {} cut {} structured={} summarised={} \
+                    by {} ({}) — {}",
+                    folded, kept, cut, structured, summarised, model, sp, note),
             AgentEvent::Truncated => println!("\n[truncated] the provider cut the reply short"),
             // The turn hit its round limit and carried on into another leg rather than
             // stopping there. `n` counts legs from one; `rounds_so_far` is the whole
@@ -115,16 +121,18 @@ async fn run() -> Outcome<()> {
                 println!("\n[stall] {} ({}) gave nothing in {} s; {}", model, provider, secs,
                     if retried { "asking again" } else { "giving up" }),
             AgentEvent::Interjected(text) => println!("\n[interjected] {}", text),
-            AgentEvent::Unseeable { images, model } =>
-                println!("\n[unseeable] {} image(s) withheld from {}", images, model),
+            AgentEvent::Unseeable { images, model, source } =>
+                println!("\n[unseeable] {} image(s) from {} withheld from {}", images, source, model),
             // The working, not the answer.  Printed whole, because a smoke run is read
             // by a person deciding whether the turn went the way they meant.
             AgentEvent::Thinking(text) => println!("\n[thinking] {}", text),
             // What the provider said about the round it just ended, for tracing a cut or a
             // silent stop to its own logs; `stalled` is a round the stream went quiet on.
-            AgentEvent::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled } =>
-                println!("\n[round] {} finish={} native={} provider={}{}", gen_id, finish_reason,
-                    native_finish_reason, provider, if stalled { " (stalled)" } else { "" }),
+            AgentEvent::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled,
+                bytes, first_ms, gap_ms, ms } =>
+                println!("\n[round] {} finish={} native={} provider={}{} bytes={} first={}ms \
+                    gap={}ms round={}ms", gen_id, finish_reason, native_finish_reason, provider,
+                    if stalled { " (stalled)" } else { "" }, bytes, first_ms, gap_ms, ms),
             // How the turn ended, and what it did.  Printed rather than dropped for the
             // reason every other arm here is: a smoke run is read by somebody deciding
             // whether the turn went the way they meant, and "answered with 4 calls, 1
@@ -133,13 +141,16 @@ async fn run() -> Outcome<()> {
             // rather than a real call -- a wire fault, not a refusal, and a smoke run
             // that hid it would read a leaked call as an ordinary answer.
             // `reasoned` counts rounds re-sent because a reply reasoned and answered nothing.
+            // `why` is `blocked` beside a failed turn, and `said` the sentence it ended on.
             AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed,
-                reasoned } =>
-                println!("\n[ended] {} — {} tool(s) offered, {} round(s), {} call(s), \
-                    {} refused, {} failed, {} malformed, {} reasoned{}",
-                    how, offered, rounds, calls, refused, failed, malformed, reasoned,
+                reasoned, why, said } =>
+                println!("\n[ended] {}{} — {} tool(s) offered, {} round(s), {} call(s), \
+                    {} refused, {} failed, {} malformed, {} reasoned{}{}",
+                    how, if why.is_empty() { String::new() } else { format!(" ({})", why) },
+                    offered, rounds, calls, refused, failed, malformed, reasoned,
                     if missing.is_empty() { String::new() }
-                    else { format!(", missing: {}", missing.join(" ")) }),
+                    else { format!(", missing: {}", missing.join(" ")) },
+                    if said.is_empty() { String::new() } else { format!(": {}", said) }),
         }
     };
     res!(agent.run_turn(&mut session, prompt, &registry, &mut on_event).await);

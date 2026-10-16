@@ -403,11 +403,15 @@
 		return c.pos + ' up, ' + c.neg + ' down' + (c.zero ? ', ' + c.zero + ' neutral' : '');
 	}
 
+	// The English word for a tag, the one the model reads in the note (`ratings.js` TAG_EN), so the
+	// Optimiser never reads a bare id such as `wrong`; the id where ratings.js is not loaded.
+	function tagName(t) { var R = ratings(); return R && R.tagWord ? R.tagWord(t) : t; }
+
 	function row(c, roll, extra) {
 		var known = roll.sides, tags = '-';
 		if (known) {
 			var ts = Object.keys(c.tags).filter(function (t) { return known[t]; }).sort(function (a, b) { return c.tags[b] - c.tags[a] || (a < b ? -1 : 1); });
-			if (ts.length) tags = ts.slice(0, 3).map(function (t) { return t + ' ' + c.tags[t]; }).join(', ');
+			if (ts.length) tags = ts.slice(0, 3).map(function (t) { return tagName(t) + ' ' + c.tags[t]; }).join(', ');
 		}
 		var tr = c.trend ? 'newest ' + TREND_W + ': ' + c.trend.recent.pos + ' up; the ' + TREND_W + ' before: ' + c.trend.prior.pos + ' up' : '-';
 		return '| ' + clean(c.key) + ' | ' + c.n + ' of ' + c.made + ' made | ' + countText(c) + ' | ' + num(c.theta) + ' | '

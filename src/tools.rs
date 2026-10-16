@@ -2838,12 +2838,14 @@ pub fn crystal_page_cap_message(new_len: usize) -> String {
 /// * `path` - The workspace-relative path being written.
 /// * `new_text` - What the write would leave on disk.
 /// * `old_text` - What is there now; empty when there is no such file yet.
+/// * `last_good` - As for [`crystal_hot_refusal`].
 /// * `standing_hot` - What this Diamond's three files cost per round ([`Standing::hot_bytes`]).
 #[cfg(any(target_arch = "wasm32", test))]
 fn diamond_cap_refusal(
     path:         &str,
     new_text:     &str,
     old_text:     &str,
+    last_good:    &str,
     standing_hot: usize,
 )
     -> Option<String>
@@ -2855,7 +2857,7 @@ fn diamond_cap_refusal(
         if crystal_write_refused(new_text.len(), old_text.len()) {
             return Some(refusal_line(&crystal_cap_message(new_text.len())));
         }
-        if let Some(msg) = crystal_hot_refusal(new_text, old_text, standing_hot) {
+        if let Some(msg) = crystal_hot_refusal(new_text, old_text, last_good, standing_hot) {
             return Some(refusal_line(&msg));
         }
     }
@@ -2869,6 +2871,75 @@ fn diamond_cap_refusal(
         }
     }
     None
+}
+
+/// Which door is refusing a turn that has no folder on this computer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoFolder {
+    Run,	// a command
+    Verify,	// a named verifier
+}
+
+/// The sentence a turn with no folder on this computer earns, from `run` and `verify` alike.
+///
+/// One function so the two doors cannot drift: a Diamond is named by its id (taken from its
+/// own `diamonds/<id>` bound), told it has no folder here, and told how to attach one.  A chat
+/// gets its own words, because the Diamond sentence would point at a Diamond that does not
+/// exist and at a panel that is not where this is fixed.
+///
+/// # Arguments
+/// * `ctx` - The turn, scoped and with nothing on the machine in scope.
+/// * `door` - Which tool is refusing.
+pub fn no_folder_refusal(ctx: &ToolContext, door: NoFolder) -> String {
+    // Folders attached only to consult are somewhere `run` may start, but never a verify tree
+    // (see `writable_dir`): saying "no folder" there would contradict what the user can see.
+    let consulted = door == NoFolder::Verify && !start_dir(&ctx.no_write).is_empty();
+    if ctx.is_chat_scoped() && consulted {
+        return fmt!("Refused: this chat's workspace holds folders on this computer added only to \
+            consult, and a verifier runs in a folder the chat may change, so there is no tree to \
+            look a verifier up in. Ask the user to add the repository's folder to this chat's \
+            workspace as a folder it may change, with the + in the Workspace group, then verify \
+            again. Nothing was run.");
+    }
+    if ctx.is_chat_scoped() {
+        return match door {
+            NoFolder::Run		=> fmt!(
+                "Refused: this chat's workspace holds nothing on this computer, so there \
+                is nowhere for a command to run. Your own working folder is in Daimond's \
+                storage, which is not a place on this computer. Tell the user which folder \
+                the command needs and ask them to add it to this chat's workspace with the + \
+                in the Workspace group; once it is in, you may work in it freely."),
+            NoFolder::Verify	=> fmt!(
+                "Refused: this chat's workspace holds nothing on this computer, so there \
+                is no tree to look a verifier up in. Your own working folder is in Daimond's \
+                storage, which is not a place on this computer. Ask the user to add the \
+                repository's folder to this chat's workspace with the + in the Workspace \
+                group, then verify again. Nothing was run."),
+        };
+    }
+    let who = match ctx.own_diamond() {
+        Some(id) => fmt!("Diamond '{}'", id),
+        None     => fmt!("this Diamond"),
+    };
+    let (lack, remedy) = match door {
+        NoFolder::Run		=> ("nowhere for a command to run",
+            "Ask the user to attach a folder to this Diamond in the Workspace panel, or name a \
+            'cwd' inside one that is already attached."),
+        NoFolder::Verify	=> ("no tree to look a verifier up in",
+            "Ask the user to attach the repository's folder to this Diamond in the Workspace \
+            panel, then verify again. Nothing was run."),
+    };
+    if consulted {
+        return fmt!("Refused: {} has folders on this computer attached only to consult, and a \
+            verifier runs in a folder the Diamond may change, so there is {}. A consulted \
+            folder is another tree's code, and its verifiers would not be checking this \
+            Diamond's work. Ask the user to attach the repository's folder to this Diamond in \
+            the Workspace panel as a folder it may change, then verify again. Nothing was run.",
+            who, lack);
+    }
+    fmt!("Refused: {} has no folder on this computer attached to it, so there is {}. Its own \
+        files live in Daimond's storage, which is not a place on this computer. {}",
+        who, lack, remedy)
 }
 
 /// The Diamond id in a workspace-relative path under the store, or empty.
@@ -2886,12 +2957,35 @@ pub fn diamond_of_path(path: &str) -> String {
 /// doors and one rule is the arrangement the other two ceilings already have, and the one time
 /// this codebase had two of the three it took a fortnight to notice.
 ///
+/// **A MEND OF A BROKEN CRYSTAL IS MEASURED AGAINST WHAT IT MENDS.**  Until r546 an `old_text`
+/// that would not parse counted as a hot part of 0, so the two-character repair of an 11 KB
+/// crystal with a 4.4 KB hot part was refused on a 2 KB room by every writer (10 Oct, the
+/// Ontheism crystal), and the only way past was to restructure the crystal it was meant to
+/// leave alone.  A write that leaves a broken crystal parseable is now refused only where its
+/// hot part is larger than BOTH what the broken one costs per round now and what the newest
+/// parseable version (`last_good`) cost -- either is a size this Diamond already carried, so a
+/// mend within it grows nothing, and restoring parseability is itself the progress the
+/// "no change is not progress" half of the rule asks for -- AND it adds content
+/// ([`crystal_write_only_mends`]).  The second test is needed because the broken crystal's
+/// own hot part is measured through the lenient decoder, which reads `poses -- "could it"` as
+/// `poses -- couldit`: the exact mend measured eleven bytes over the text it repaired, and the
+/// version before the break (v47 there) held a different summary altogether.
+///
 /// # Arguments
 /// * `new_text` - The crystal the write would leave on disk.
 /// * `old_text` - The crystal there now; empty when there is none.
+/// * `last_good` - The newest version that parses where `old_text` does not
+///   (`crate::wasm::diamond::crystal_hot_last_good`); empty otherwise, or where there is none.
 /// * `standing_hot` - What this Diamond's three files already cost per round
 ///   ([`Standing::hot_bytes`]); 0 where it has none.
-pub fn crystal_hot_refusal(new_text: &str, old_text: &str, standing_hot: usize) -> Option<String> {
+pub fn crystal_hot_refusal(
+    new_text:     &str,
+    old_text:     &str,
+    last_good:    &str,
+    standing_hot: usize,
+)
+    -> Option<String>
+{
     let cap = crystal_hot_room(standing_hot);
     let new_hot = match crystal_split(new_text, cap) {
         Ok(s)  => s.hot_bytes,
@@ -2900,11 +2994,77 @@ pub fn crystal_hot_refusal(new_text: &str, old_text: &str, standing_hot: usize) 
         // refusal about a structure the file does not have.
         Err(_) => return None,
     };
-    let old_hot = crystal_split(old_text, cap).map(|s| s.hot_bytes).unwrap_or(0);
-    if new_hot > cap && new_hot >= old_hot {
-        return Some(crystal_hot_cap_message(new_hot, standing_hot));
+    if new_hot <= cap {
+        return None;
     }
-    None
+    let hot_of = |t: &str| crystal_split(t, cap).map(|s| s.hot_bytes).unwrap_or(0);
+    let old_hot = hot_of(old_text);
+    let mends = crystal_json_fault(old_text).is_some() && crystal_json_fault(new_text).is_none();
+    let refused = match mends {
+        true  => new_hot > old_hot.max(hot_of(last_good))
+            && !crystal_write_only_mends(old_text, new_text),
+        false => new_hot >= old_hot,
+    };
+    match refused {
+        true  => Some(crystal_hot_cap_message(new_hot, standing_hot)),
+        false => None,
+    }
+}
+
+/// Does `new_text` add nothing to `old_text` but JSON structure and escapes?
+///
+/// What a write that ONLY restores parseability looks like: every character of the stretch it
+/// changed is either structure (`"` `,` `:` `{` `}` `[` `]`) or one `old_text` already held
+/// there, in order, an escape counting as the character it stands for -- so `\"` matches a raw
+/// quote and `\n` a raw line break.  Anything may be deleted.  Content added anywhere, a
+/// re-indent included, answers no.
+///
+/// # Arguments
+/// * `old_text` - The crystal that does not parse.
+/// * `new_text` - The write that would replace it.
+pub fn crystal_write_only_mends(old_text: &str, new_text: &str) -> bool {
+    let old: Vec<char> = old_text.chars().collect();
+    let new: Vec<char> = new_text.chars().collect();
+    let pre = old.iter().zip(new.iter()).take_while(|(a, b)| a == b).count();
+    let suf = old[pre..].iter().rev().zip(new[pre..].iter().rev())
+        .take_while(|(a, b)| a == b).count();
+    let was = &old[pre..old.len() - suf];
+    let now = &new[pre..new.len() - suf];
+    let mut j = 0;	// next character of `was` to find
+    let mut i = 0;
+    while i < now.len() {
+        // One unit of the new stretch: an escape stands for the character it encodes.
+        let (unit, width) = match (now[i], now.get(i + 1)) {
+            ('\\', Some(&c)) => match c {
+                'n' => (Some('\n'), 2),
+                't' => (Some('\t'), 2),
+                'r' => (Some('\r'), 2),
+                'b' => (Some('\u{8}'), 2),
+                'f' => (Some('\u{c}'), 2),
+                'u' => {
+                    let hex: String = now.iter().skip(i + 2).take(4).collect();
+                    match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                        Some(ch) if hex.len() == 4 => (Some(ch), 6),
+                        _                          => (None, 1),
+                    }
+                },
+                other => (Some(other), 2),
+            },
+            // An escape put in front of a character the common tail already holds, as the
+            // last quote of a pair is: the character is old, so the backslash is only structure.
+            ('\\', None) => (None, 1),
+            ('"' | ',' | ':' | '{' | '}' | '[' | ']', _) => (None, 1),
+            (c, _) => (Some(c), 1),
+        };
+        if let Some(c) = unit {
+            match was[j..].iter().position(|w| *w == c) {
+                Some(k) => j += k + 1,
+                None    => return false,
+            }
+        }
+        i += width;
+    }
+    true
 }
 
 // The moves that make room in a hot part, said with its first refusal (D-29), and what happens
@@ -2938,6 +3098,7 @@ pub enum CapDoor {
 /// cold is not deleted, it is one outline line away.
 ///
 /// # Arguments
+/// * `last_good` - As for [`crystal_hot_refusal`].
 /// * `hot_refusals` - Hot-part refusals of this Diamond's crystal since one last landed, in this
 ///   turn or the ones before it.
 #[cfg(any(target_arch = "wasm32", test))]
@@ -2945,6 +3106,7 @@ pub fn diamond_cap_door(
     path:         &str,
     new_text:     &str,
     old_text:     &str,
+    last_good:    &str,
     standing_hot: usize,
     hot_refusals: u32,
 )
@@ -2953,14 +3115,16 @@ pub fn diamond_cap_door(
     let hot_first = is_crystal_data_path(path)
         && !crystal_write_refused(new_text.len(), old_text.len());
     if hot_first {
-        if let Some(msg) = crystal_hot_refusal(new_text, old_text, standing_hot) {
+        if let Some(msg) = crystal_hot_refusal(new_text, old_text, last_good, standing_hot) {
             if hot_refusals == 0 {
                 return CapDoor::Refuse { msg: refusal_line(&fmt!("{}{}", msg, HOT_ROOM_MOVES)),
                     hot: true };
             }
             let demoted = crystal_demote_to_fit(new_text, crystal_hot_room(standing_hot));
             return match demoted {
-                Some((text, moved)) => match diamond_cap_refusal(path, &text, old_text, standing_hot) {
+                Some((text, moved)) => match diamond_cap_refusal(
+                    path, &text, old_text, last_good, standing_hot)
+                {
                     None      => CapDoor::Demoted { text, moved },
                     Some(msg) => CapDoor::Refuse { msg, hot: true },
                 },
@@ -2969,7 +3133,7 @@ pub fn diamond_cap_door(
             };
         }
     }
-    match diamond_cap_refusal(path, new_text, old_text, standing_hot) {
+    match diamond_cap_refusal(path, new_text, old_text, last_good, standing_hot) {
         Some(msg) => CapDoor::Refuse { msg, hot: false },
         None      => CapDoor::Pass,
     }
@@ -4521,6 +4685,33 @@ pub fn start_dir(bounds: &[Bound]) -> String {
         };
         let n = normalise(p);
         if !n.is_empty() && !is_store_path(&n) {
+            return n;
+        }
+    }
+    String::new()
+}
+
+/// The first attached folder a turn may WRITE, workspace-relative, or empty when it has none.
+///
+/// The verify tree, chosen apart from [`start_dir`] (QA A F1, 11 Oct 2026).  `run` may start in a
+/// folder attached only to consult, because a command there is still fenced read-only; a verifier
+/// may not, because its result is reported as THIS Diamond's verification and a consulted folder
+/// is another tree's code.  A folder under a [`Bound::NoWrite`] is consulted, however it was
+/// listed, and Daimond's own store is skipped for the reason [`start_dir`] gives.
+///
+/// # Arguments
+/// * `bounds` - The turn's [`Bound`] rules, in the order they were declared.
+pub fn writable_dir(bounds: &[Bound]) -> String {
+    let ro: Vec<String> = bounds.iter()
+        .filter_map(|b| match b { Bound::NoWrite(p) => Some(normalise(p)), _ => None })
+        .collect();
+    for b in bounds {
+        let p = match b {
+            Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p) => p,
+            _ => continue,
+        };
+        let n = normalise(p);
+        if !n.is_empty() && !is_store_path(&n) && !ro.iter().any(|r| under(&n, r)) {
             return n;
         }
     }
@@ -12671,6 +12862,19 @@ impl ToolContext {
             .any(|b| matches!(b, Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_)))
     }
 
+    /// The id of the Diamond this turn is scoped to, read from its own `diamonds/<id>` bound.
+    pub fn own_diamond(&self) -> Option<String> {
+        let from_bound = self.no_write.iter().find_map(|b| match b {
+            Bound::OnlyUnder(p) | Bound::OnlyWriteUnder(p)
+                if under(&normalise(p), STORE_ROOT) => Some(diamond_of_path(p)),
+            _ => None,
+        });
+        match from_bound {
+            Some(id) if !id.is_empty()	=> Some(id),
+            _							=> self.daimon(),
+        }
+    }
+
     /// The Diamond this turn acts for, or `None` when it acts for none.
     ///
     /// The one reader of [`daimon_of`](ToolContext::daimon_of), so that a blank and a name are
@@ -19537,11 +19741,16 @@ impl Tool {
         -> Outcome<(String, String)>
     {
         let id = diamond_of_path(path);
-        let prior = match is_crystal_data_path(path) && !id.is_empty() {
+        let crystal = is_crystal_data_path(path) && !id.is_empty();
+        let prior = match crystal {
             true  => crate::wasm::diamond::hot_refusals(&id).await,
             false => 0,
         };
-        match diamond_cap_door(path, &new, old, Self::standing_hot(ctx, path).await, prior) {
+        let last_good = match crystal {
+            true  => crate::wasm::diamond::crystal_hot_last_good(&id, old).await,
+            false => String::new(),
+        };
+        match diamond_cap_door(path, &new, old, &last_good, Self::standing_hot(ctx, path).await, prior) {
             CapDoor::Pass                    => Ok((new, String::new())),
             CapDoor::Demoted { text, moved } => Ok((text, hot_demote_said(&moved))),
             CapDoor::Refuse { msg, hot }     => {
@@ -26299,21 +26508,8 @@ impl Tool {
                 // Diamond that does not exist and at a panel that is not where this is fixed.
                 // Asked FIRST: both surfaces now carry the same kind of allow-list, so
                 // `is_scoped` is true for a chat too and the order is what tells them apart.
-                if d.is_empty() && ctx.is_chat_scoped() {
-                    return Ok(Exec::Refused(fmt!(
-                        "Refused: this chat's workspace holds nothing on this computer, so there \
-                        is nowhere for a command to run. Your own working folder is in Daimond's \
-                        storage, which is not a place on this computer. Tell the user which folder \
-                        the command needs and ask them to add it to this chat's workspace with the + \
-                        in the Workspace group; once it is in, you may work in it freely.")));
-                }
                 if d.is_empty() && ctx.is_scoped() {
-                    return Ok(Exec::Refused(fmt!(
-                        "Refused: this Diamond has no folder on the machine attached to it, so \
-                        there is nowhere for a command to run. Its own files live in Daimond's \
-                        storage, which is not a place on this computer. Ask the user to attach a \
-                        folder to this Diamond in the Workspace panel, or name a 'cwd' inside one \
-                        that is already attached.")));
+                    return Ok(Exec::Refused(no_folder_refusal(ctx, NoFolder::Run)));
                 }
                 ctx.run_cwd(root_start(&caps))
             }
@@ -26869,30 +27065,43 @@ impl Tool {
         None
     }
 
-    /// The tree this Diamond is about, absolute on the machine, or empty for the granted root.
+    /// The tree this Diamond is about, absolute on the machine, or the sentence refusing it.
     ///
     /// **The folder the user MARKED, and not the folder they granted.**  A grant is commonly the
     /// parent of several repositories -- a person grants `~/projects` and marks one of them into
     /// a Diamond -- so a verify tree fixed at the grant answers about a folder nobody asked
     /// about, which is what refused every call of the real-repository bank on 2026-09-15.
     ///
-    /// Composed exactly as [`Tool::run_exec`] composes a command's working directory, out of
-    /// [`ToolContext::default_cwd`] and the machine's root, so a command and a verifier in one
-    /// turn cannot be about two different trees.  Empty is an unscoped turn, which works at the
-    /// grant, and is also what a page older than this sent.
-    ///
-    /// # Arguments
-    /// * `ctx` - The turn, whose bounds carry the mark.
-    /// * `machine` - The hand's grant, which the mark is relative to.
+    /// Composed as [`ToolContext::default_cwd`] composes a command's working directory, from the
+    /// turn's prefix and then its bounds, with one difference: the bound must be WRITABLE
+    /// ([`writable_dir`]).  A Diamond attached only to consult is refused rather than sent the
+    /// consulted tree, whose verifiers would report on someone else's code as this Diamond's
+    /// (QA A F1, 11 Oct 2026).  **A tree is always named** (11 Oct 2026): an
+    /// unscoped turn sends the grant written out, and a scoped turn with no folder on the machine
+    /// is refused in `run`'s words ([`no_folder_refusal`]).  An empty root used to send the hand
+    /// to its grant, which took a scoped turn's verifier outside its scope.
     #[cfg(any(target_arch = "wasm32", test))]
-    fn verify_root_of(ctx: &ToolContext, machine: &Machine) -> String {
-        let rel = normalise(&ctx.default_cwd());
+    fn verify_root_of(ctx: &ToolContext, machine: &Machine) -> Result<String, String> {
+        if !machine.rooted() {
+            return Err(fmt!(
+                "Refused: the machine hand did not say which folder it was granted, so there is \
+                no tree to look a verifier up in. Nothing was run."));
+        }
+        let grant = machine.root.trim_end_matches('/');
+        let prefix = normalise(&ctx.path_prefix);
+        let rel = match !prefix.is_empty() && !is_store_path(&prefix) {
+            true	=> prefix,
+            false	=> writable_dir(&ctx.no_write),
+        };
         // A Diamond's own directory is in the browser's storage and not on the machine at all
         // (see `is_store_path`), so naming it would send the hand a path it cannot resolve.
-        if rel.is_empty() || is_store_path(&rel) || !machine.rooted() {
-            return String::new();
+        if rel.is_empty() || is_store_path(&rel) {
+            if ctx.is_scoped() {
+                return Err(no_folder_refusal(ctx, NoFolder::Verify));
+            }
+            return Ok(if grant.is_empty() { fmt!("/") } else { grant.to_string() });
         }
-        fmt!("{}/{}", machine.root.trim_end_matches('/'), rel)
+        Ok(fmt!("{}/{}", grant, rel))
     }
 
     /// The wire request one `verify` call becomes, or the sentence refusing it.
@@ -27148,7 +27357,12 @@ impl Tool {
     #[cfg(any(target_arch = "wasm32", test))]
     fn verify_hand_note(caps: &[String], asked_world: bool, out: &str) -> String {
         let mut s = String::new();
-        if asked_world && !out.contains(Self::VERIFY_WORLD) {
+        // A REFUSAL RAN NOTHING, so it carries no numbers whose hand is in question, and its
+        // silence about the hand is not a sign of age: since QA B B3 (11 Oct 2026) a current
+        // hand stamps its `[hand:` line on every verify refusal, and that line is the answer.
+        // Only the handshake's own word below still applies.
+        let refused = out.trim_start().starts_with(REFUSAL_OPENING);
+        if !refused && asked_world && !out.contains(Self::VERIFY_WORLD) {
             s.push_str(
                 "\n[NO WORLD, AND NOTHING SAID SO. This call asked for a dev world and the \
                 report carries no '[world:' line at all -- which is what a hand older than \
@@ -27160,7 +27374,7 @@ impl Tool {
                 thirty-second grace hands the old process back. Reload the page with \
                 nothing running and ask again; if there is still no world line, say so to \
                 the user -- the machine hand needs installing.]");
-        } else if !out.contains(Self::VERIFY_HAND) {
+        } else if !refused && !out.contains(Self::VERIFY_HAND) {
             s.push_str(
                 "\n[The report does not say which hand produced it, so the hand this page is \
                 holding is older than that line. Reload the page with nothing running to \
@@ -27386,7 +27600,10 @@ impl Tool {
         if let Some(r) = Self::verify_gate(&machine.caps) {
             return Ok(r);
         }
-        let root = Self::verify_root_of(ctx, &machine);
+        let root = match Self::verify_root_of(ctx, &machine) {
+            Ok(r)  => r,
+            Err(r) => return Ok(r),
+        };
         // The network `run` would get on this turn, asked the same way: a verifier that could
         // not read another Diamond must not be able to post this one anywhere instead.
         let net = Self::turn_net(ctx, mode(), &fmt!("verify {}", name), &root).await;
@@ -32653,9 +32870,9 @@ mod tests {
             "zero must mean the engine's own ceiling and nothing else");
         // The write the owner was refused: over the OLD default, well under the shipped one.
         let hot = |n: usize| fmt!("{{\"summary\":\"{}\"}}", "h".repeat(n));
-        assert!(crystal_hot_refusal(&hot(4 * 1024 + 512), "", 0).is_none(),
+        assert!(crystal_hot_refusal(&hot(4 * 1024 + 512), "", "", 0).is_none(),
             "a hot part over the retired 4 KiB default was refused with nothing set");
-        assert!(crystal_hot_refusal(&hot(CRYSTAL_HOT_CAP_DEFAULT + 2_048), "", 0).is_some(),
+        assert!(crystal_hot_refusal(&hot(CRYSTAL_HOT_CAP_DEFAULT + 2_048), "", "", 0).is_some(),
             "a hot part over the shipped ceiling was not refused");
         let shipped = crystal_hot_cap_message(CRYSTAL_HOT_CAP_DEFAULT + 2_048, 0);
         assert!(shipped.contains(&fmt!("{}", CRYSTAL_HOT_CAP_DEFAULT)), "{}", shipped);
@@ -32689,21 +32906,21 @@ mod tests {
         set_crystal_hot_cap(1_000_000);
         let bytes = |n: usize| fmt!("{{\"summary\":\"{}\"}}", "m".repeat(n - 16));
 
-        assert!(diamond_cap_refusal(data, &bytes(2_000), "", 0).is_some(),
+        assert!(diamond_cap_refusal(data, &bytes(2_000), "", "", 0).is_some(),
             "2 KB of memory is over 1 KB");
-        assert!(diamond_cap_refusal(page, &bytes(2_000), "", 0).is_none(),
+        assert!(diamond_cap_refusal(page, &bytes(2_000), "", "", 0).is_none(),
             "2 KB of page is under 4 KB");
-        assert!(diamond_cap_refusal(page, &bytes(5_000), "", 0).is_some());
+        assert!(diamond_cap_refusal(page, &bytes(5_000), "", "", 0).is_some());
 
         // Each refusal must name its own ceiling and its own way out, or a daimon acts on the
         // wrong advice: a page cannot move its weight into the Diamond's scope.
-        let m = match diamond_cap_refusal(data, &bytes(2_000), "", 0) {
+        let m = match diamond_cap_refusal(data, &bytes(2_000), "", "", 0) {
             Some(m) => m,
             None    => panic!("2 KB of memory over a 1 KB ceiling must be refused"),
         };
         assert!(m.contains("1000"), "the refusal names the ceiling in force: {}", m);
         assert!(m.contains("scope"), "the memory's way out names the scope: {}", m);
-        let m = match diamond_cap_refusal(page, &bytes(5_000), "", 0) {
+        let m = match diamond_cap_refusal(page, &bytes(5_000), "", "", 0) {
             Some(m) => m,
             None    => panic!("5 KB of page over a 4 KB ceiling must be refused"),
         };
@@ -32712,9 +32929,9 @@ mod tests {
 
         // Anything that is not one of the two answers to neither.
         assert!(diamond_cap_refusal("diamonds/abc123/versions/0007.json",
-            &bytes(90_000), "", 0).is_none());
-        assert!(diamond_cap_refusal("notes/crystal.json", &bytes(90_000), "", 0).is_none());
-        assert!(diamond_cap_refusal("diamonds/abc123/crystal.md", &bytes(90_000), "", 0).is_none(),
+            &bytes(90_000), "", "", 0).is_none());
+        assert!(diamond_cap_refusal("notes/crystal.json", &bytes(90_000), "", "", 0).is_none());
+        assert!(diamond_cap_refusal("diamonds/abc123/crystal.md", &bytes(90_000), "", "", 0).is_none(),
             "the old name is not a live crystal");
 
         set_crystal_cap(0);
@@ -33155,7 +33372,7 @@ mod tests {
     fn test_a_refused_write_names_the_file_the_size_the_cap_and_the_archive_00() {
         let data = "diamonds/abc123/REQUIREMENTS.md";
         let big  = "x".repeat(REQUIREMENTS_CAP + 100);
-        let m = match diamond_cap_refusal(data, &big, "", 0) {
+        let m = match diamond_cap_refusal(data, &big, "", "", 0) {
             Some(m) => m,
             None    => panic!("a write {} bytes over the ceiling was allowed", 100),
         };
@@ -33167,7 +33384,7 @@ mod tests {
         // STATE.md is refused in different words, because its way out is a different one: it has
         // no archive, and what has grown it belongs in one of the other two.
         let st = match diamond_cap_refusal(
-            "diamonds/abc123/STATE.md", &"y".repeat(STATE_CAP + 1), "", 0)
+            "diamonds/abc123/STATE.md", &"y".repeat(STATE_CAP + 1), "", "", 0)
         {
             Some(m) => m,
             None    => panic!("STATE.md over its ceiling was allowed"),
@@ -33176,7 +33393,7 @@ mod tests {
             "STATE.md's refusal does not say where the record belongs instead: {}", st);
         // And the asymmetry every other ceiling here has: an oversized file may be edited DOWN.
         assert!(diamond_cap_refusal(data, &"x".repeat(REQUIREMENTS_CAP + 50),
-            &"x".repeat(REQUIREMENTS_CAP + 100), 0).is_none(),
+            &"x".repeat(REQUIREMENTS_CAP + 100), "", 0).is_none(),
             "a write that SHRINKS an oversized file was refused, which bricks the Diamond");
     }
 
@@ -33299,8 +33516,8 @@ mod tests {
         // which files took the difference.
         let hot = |n: usize| fmt!(r#"{{"summary":"{}"}}"#, "z".repeat(n));
         let just = hot(crystal_hot_cap() - 2_000);
-        assert!(crystal_hot_refusal(&just, "", 0).is_none(), "it fits with no files");
-        let m = match crystal_hot_refusal(&just, "", 4_000) {
+        assert!(crystal_hot_refusal(&just, "", "", 0).is_none(), "it fits with no files");
+        let m = match crystal_hot_refusal(&just, "", "", 4_000) {
             Some(m) => m,
             None    => panic!("the files' share was not charged against the ceiling"),
         };
@@ -33313,7 +33530,7 @@ mod tests {
         assert!(crystal_hot_room(5_000) >= 75,
             "a ceiling under the files' own weight bricked the crystal: {}",
             crystal_hot_room(5_000));
-        assert!(crystal_hot_refusal(r#"{"title":"t"}"#, "", 5_000).is_none(),
+        assert!(crystal_hot_refusal(r#"{"title":"t"}"#, "", "", 5_000).is_none(),
             "a small crystal was refused because the files outweighed a lowered ceiling");
         set_crystal_hot_cap(0);
     }
@@ -33804,7 +34021,7 @@ mod tests {
         let data = "diamonds/abc123/crystal.json";
         let new = hot_recurrence_fixture(400);
         // The first refusal names the moves that make room, and what the next one will do.
-        match diamond_cap_door(data, &new, "", 0, 0) {
+        match diamond_cap_door(data, &new, "", "", 0, 0) {
             CapDoor::Refuse { msg, hot: true } => {
                 assert!(msg.starts_with(REFUSAL_OPENING), "{}", msg);
                 assert!(msg.contains("retire finished items") && msg.contains("link it")
@@ -33814,7 +34031,7 @@ mod tests {
             other => panic!("the first over-budget write was not refused as hot: {:?}", other),
         }
         // The second lands, with the largest hot section made cold and nothing else touched.
-        let (text, moved) = match diamond_cap_door(data, &new, "", 0, 1) {
+        let (text, moved) = match diamond_cap_door(data, &new, "", "", 0, 1) {
             CapDoor::Demoted { text, moved } => (text, moved),
             other => panic!("the second over-budget write was not demoted: {:?}", other),
         };
@@ -33846,7 +34063,7 @@ mod tests {
         let new = fmt!("{{\"title\":\"T\",\"summary\":\"{}\",\"sections\":[\
             {{\"heading\":\"!Hot\",\"body\":\"h\"}}]}}", "s".repeat(400));
         assert_eq!(None, crystal_demote_to_fit(&new, 200), "a demote that cannot fit is no demote");
-        match diamond_cap_door(data, &new, "", 0, 3) {
+        match diamond_cap_door(data, &new, "", "", 0, 3) {
             CapDoor::Refuse { hot: true, .. } => {},
             other => panic!("a summary over the ceiling was not refused: {:?}", other),
         }
@@ -33858,11 +34075,11 @@ mod tests {
         set_crystal_hot_cap(200);
         let data = "diamonds/abc123/crystal.json";
         let fits = hot_recurrence_fixture(10);
-        assert_eq!(CapDoor::Pass, diamond_cap_door(data, &fits, "", 0, 4));
+        assert_eq!(CapDoor::Pass, diamond_cap_door(data, &fits, "", "", 0, 4));
         assert_eq!(None, crystal_demote_to_fit(&fits, 200), "a crystal that fits is left alone");
         // The total ceiling never demotes: it is not the hot part's to fix.
         set_crystal_cap(100);
-        match diamond_cap_door(data, &hot_recurrence_fixture(400), "", 0, 4) {
+        match diamond_cap_door(data, &hot_recurrence_fixture(400), "", "", 0, 4) {
             CapDoor::Refuse { hot: false, .. } => {},
             other => panic!("a write over the total ceiling was demoted: {:?}", other),
         }
@@ -33882,17 +34099,17 @@ mod tests {
             "{{\"summary\":\"short\",\"sections\":[{{\"heading\":\"H\",\"body\":\"{}\"}}]}}",
             "c".repeat(n));
 
-        assert!(diamond_cap_refusal(data, &hot(400), "", 0).is_some(),
+        assert!(diamond_cap_refusal(data, &hot(400), "", "", 0).is_some(),
             "a hot part over the ceiling is refused");
-        assert!(diamond_cap_refusal(data, &cold(4_000), "", 0).is_none(),
+        assert!(diamond_cap_refusal(data, &cold(4_000), "", "", 0).is_none(),
             "four kilobytes of COLD section is not over the hot ceiling");
         // The asymmetry: an already-oversized hot part may still be edited DOWN.
-        assert!(diamond_cap_refusal(data, &hot(400), &hot(900), 0).is_none(),
+        assert!(diamond_cap_refusal(data, &hot(400), &hot(900), "", 0).is_none(),
             "a write that shrinks an oversized hot part is allowed");
-        assert!(diamond_cap_refusal(data, &hot(900), &hot(900), 0).is_some(),
+        assert!(diamond_cap_refusal(data, &hot(900), &hot(900), "", 0).is_some(),
             "no change is not progress");
         // And the store's door asks the same question in the same words.
-        let m = match crystal_hot_refusal(&hot(400), "", 0) {
+        let m = match crystal_hot_refusal(&hot(400), "", "", 0) {
             Some(m) => m,
             None    => panic!("the store's door must refuse the same write"),
         };
@@ -33900,7 +34117,7 @@ mod tests {
         assert!(m.contains("hot"), "and names the flag that resolves it: {}", m);
         assert!(m.contains("crystal_read"), "and where the cold half goes: {}", m);
         // A crystal that will not parse has no hot part to measure, and says nothing about one.
-        assert!(crystal_hot_refusal("{not json", "", 0).is_none());
+        assert!(crystal_hot_refusal("{not json", "", "", 0).is_none());
 
         set_crystal_cap(0);
         set_crystal_hot_cap(0);
@@ -37766,6 +37983,27 @@ mod tests {
         assert!(quiet.contains("does not say which hand produced it"), "{}", quiet);
     }
 
+    /// QA B B3 (11 Oct 2026): a refusal ran nothing, so it carries no numbers whose hand is in
+    /// question, and the seat never tells the daimon to reload over one.  A current hand stamps
+    /// its own `[hand:` line on the refusal, and that line is the answer.
+    #[test]
+    fn test_a_verify_refusal_is_never_called_an_old_hand() {
+        for world in [false, true] {
+            let bare = Tool::verify_hand_note(&[fmt!("verify:dev")], world,
+                "Refused: there is no verifier named 'x' in '/g/a/dev'. Nothing was run.");
+            assert_eq!("", bare, "a refusal was read as an old hand: {}", bare);
+            let stamped = Tool::verify_hand_note(&[fmt!("verify:dev")], world,
+                "Refused: there is no verifier named 'x'. Nothing was run.\n\
+                [hand: 0.1.0/3f9c1a20 at /x]");
+            assert_eq!("", stamped, "{}", stamped);
+        }
+        // An installed hand the page never took is still named on a refusal: that comes from
+        // the handshake, not from a guess.
+        let caps = vec![fmt!("verify:dev"), fmt!("bin:/h/daimond-hand"), fmt!("bin-stale:1")];
+        let stale = Tool::verify_hand_note(&caps, false, "Refused: nope. Nothing was run.");
+        assert!(stale.contains("A NEWER MACHINE HAND IS INSTALLED"), "{}", stale);
+    }
+
     /// The hand's own account of itself reaches the seat, which is the half no report can carry.
     ///
     /// `bin-stale:1` is the hand saying the file it was launched from now holds different
@@ -38003,9 +38241,10 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         let machine = Machine::at("/home/u/projects");
         // Marked on one repository inside a grant that holds several.
         let marked = scoped(&[&fmt!("daimond")], &[]);
-        assert_eq!("/home/u/projects/daimond", Tool::verify_root_of(&marked, &machine));
+        let root = Tool::verify_root_of(&marked, &machine);
+        assert_eq!(Ok(fmt!("/home/u/projects/daimond")), root);
         let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1",
-            &Tool::verify_root_of(&marked, &machine), false, &FenceSpec::default())
+            &root.unwrap_or_default(), false, &FenceSpec::default())
         {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
@@ -38017,16 +38256,79 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         for forbidden in [r#""argv""#, r#""cwd""#, r#""env""#, r#""fence""#] {
             assert!(!spec.contains(forbidden), "{} is on the verify wire: {}", forbidden, spec);
         }
-        // An unscoped turn works at the grant, and says so by naming nothing -- which is also
-        // what a page older than this sent.
-        assert_eq!("", Tool::verify_root_of(&ctx(), &machine));
-        // A Diamond with nothing attached has only its own directory, which is browser storage
-        // and not a folder on the machine.
-        let bare = scoped(&[], &[]);
-        assert_eq!("", Tool::verify_root_of(&bare, &machine),
-            "Daimond's own storage was sent as a tree on the machine");
-        // And a hand that did not say where its grant is cannot be sent a path under it.
-        assert_eq!("", Tool::verify_root_of(&marked, &Machine::at("")));
+        // A hand that did not say where its grant is cannot be sent a path under it.
+        assert!(Tool::verify_root_of(&marked, &Machine::at("")).is_err());
+    }
+
+    /// A Diamond attached to one folder verifies in that folder (a guard for the routing).
+    #[test]
+    fn test_verify_routes_a_single_folder_diamond_to_its_folder() {
+        let machine = Machine::at("/home/u/usr");
+        let one = scoped(&["scratch/daimond-handcheck"], &[]);
+        let root = Tool::verify_root_of(&one, &machine);
+        assert_eq!(Ok(fmt!("/home/u/usr/scratch/daimond-handcheck")), root);
+        let spec = match Tool::verify_spec(r#"{"name":"handcheck"}"#, "v-1",
+            &root.unwrap_or_default(), false, &FenceSpec::default())
+        {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(spec.contains(r#""root":"/home/u/usr/scratch/daimond-handcheck""#), "{}", spec);
+    }
+
+    /// A Diamond with only its own storage is refused by name, never sent an empty root.
+    ///
+    /// Its own directory is browser storage and not a folder on the machine, and an empty root
+    /// used to send the hand to the whole grant -- outside the Diamond's scope.
+    #[test]
+    fn test_verify_refuses_a_diamond_with_no_folder() {
+        match Tool::verify_root_of(&scoped(&[], &[]), &Machine::at("/home/u/usr")) {
+            Ok(r)  => panic!("a Diamond with no folder was sent {:?}", r),
+            Err(s) => {
+                assert!(s.contains("'d1'"), "it does not name the Diamond: {}", s);
+                assert!(s.contains("no folder on this computer"), "{}", s);
+                assert!(s.contains("attach"), "it does not say how to attach one: {}", s);
+                assert!(s.contains("Nothing was run"), "{}", s);
+            },
+        }
+    }
+
+    /// **A verify root comes only from a folder the Diamond may write** (QA A F1, 11 Oct 2026).
+    ///
+    /// `run` starts in a consulted folder when that is all there is, and the verify root used to
+    /// follow it, so a Diamond attached only to consult another repository ran that repository's
+    /// verifiers and reported them as its own.  A consulted folder is never the verify tree: one
+    /// writable folder beside it wins, and with none the Diamond is refused by name.
+    #[test]
+    fn test_verify_root_comes_only_from_a_writable_folder() {
+        let machine = Machine::at("/home/u/usr");
+        for c in [scoped(&[], &["code/other"]), scoped(&["code/other/sub"], &["code/other"])] {
+            match Tool::verify_root_of(&c, &machine) {
+                Ok(r)  => panic!("a Diamond with only consulted folders was sent {:?}", r),
+                Err(s) => {
+                    assert!(s.contains("'d1'"), "it does not name the Diamond: {}", s);
+                    assert!(s.contains("only to consult"), "it does not say why: {}", s);
+                    assert!(s.contains("Nothing was run"), "{}", s);
+                },
+            }
+        }
+        // A writable folder is the tree, wherever the consulted one sits in the bounds.
+        let mut mixed = ctx();
+        mixed.no_write = vec![
+            Bound::OnlyWriteUnder(fmt!("refs")),
+            Bound::NoWrite(fmt!("refs")),
+            Bound::OnlyWriteUnder(fmt!("proj")),
+        ];
+        assert_eq!(Ok(fmt!("/home/u/usr/proj")), Tool::verify_root_of(&mixed, &machine));
+        // `run` keeps its own answer: a consulted folder is still somewhere to start a command.
+        assert_eq!(scoped(&[], &["code/other"]).default_cwd(), fmt!("code/other"));
+    }
+
+    /// An unscoped turn names the grant, written out, and never an empty root.
+    #[test]
+    fn test_verify_names_the_grant_on_an_unscoped_turn() {
+        assert_eq!(Ok(fmt!("/home/u/projects")),
+            Tool::verify_root_of(&ctx(), &Machine::at("/home/u/projects/")));
     }
 
     /// The tool is offered where it can work, is described by its three numbers, and its
@@ -48540,5 +48842,100 @@ mod tests_utf8_text {
         for t in ["{\"title\":\"x\"}", "{", "}", "x", "{\"sections\":[]}"] {
             assert!(!crystal_text_is_blank(t), "{:?} holds something", t);
         }
+    }
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The mend of a broken crystal under the hot ceiling (r546)     │
+// └───────────────────────────────────────────────────────────────┘
+
+#[cfg(test)]
+mod crystal_hot_mend {
+    use super::*;
+
+    const ROOM_2K: usize = CRYSTAL_HOT_CAP_DEFAULT - 2_048;	// standing that leaves a 2 KiB room
+
+    /// A crystal the shape of the Ontheism one on 10 Oct: about 11 KB, a summary that opens with
+    /// a 2.7 KB data-URI logo and quotes a question, one hot section and five cold ones.  With
+    /// `escaped` false the quotes are raw, which is the broken v55; true is its two-character
+    /// mend.  Synthetic throughout: no owner text.
+    fn ont_shaped(escaped: bool, summary_pad: usize) -> String {
+        let mut b64 = String::new();
+        let abc = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for i in 0..2_700usize {
+            b64.push(abc[(i * 37 + i / 7) % 64] as char);
+        }
+        let q = if escaped { "\\\"" } else { "\"" };
+        let summary = fmt!(
+            "![A logo](data:image/svg+xml;base64,{})\\n\\nA reading of what the work poses -- \
+            {}could it be the start of something?{} -- not a claim it makes.{}",
+            b64, q, q, " More of the same.".repeat(summary_pad));
+        let mut secs = fmt!(r#"{{"heading":"Ground","hot":true,"body":"{}"}}"#, "g".repeat(850));
+        for i in 0..5 {
+            secs.push_str(&fmt!(r#",{{"heading":"Part {}","body":"{}"}}"#, i, "c".repeat(1_250)));
+        }
+        fmt!(r#"{{"title":"A Diamond","summary":"{}","sections":[{}],"facts":[],"links":[]}}"#,
+            summary, secs)
+    }
+
+    /// RED on r545 436db66f: the broken crystal counted as a hot part of 0, so its exact mend
+    /// was refused by every door.
+    #[test]
+    fn the_two_character_mend_of_a_broken_crystal_lands_at_every_door() {
+        set_crystal_hot_cap(0);
+        set_crystal_cap(0);
+        let v55 = ont_shaped(false, 0);
+        let fix = ont_shaped(true, 0);
+        assert!(v55.len() > 6_000, "fixture is {} bytes", v55.len());
+        assert!(crystal_json_fault(&v55).is_some(), "the old crystal is broken");
+        assert_eq!(crystal_json_fault(&fix), None, "the mend parses");
+        let hot = match crystal_split(&fix, crystal_hot_room(ROOM_2K)) {
+            Ok(s)  => s.hot_bytes,
+            Err(e) => panic!("{}", e),
+        };
+        assert!(hot > crystal_hot_room(ROOM_2K), "the mend's hot part ({}) is over the room", hot);
+        // The newest parseable version is the crystal as it stood before the quotes broke it.
+        let good = ont_shaped(true, 0);
+        for last_good in ["", good.as_str()] {
+            assert_eq!(crystal_hot_refusal(&fix, &v55, last_good, ROOM_2K), None,
+                "the store's door (hand edit, fold) refused the mend");
+            assert_eq!(diamond_cap_door("diamonds/abc123/crystal.json", &fix, &v55, last_good,
+                ROOM_2K, 0), CapDoor::Pass, "the file tools' door refused the mend");
+        }
+    }
+
+    /// The other half: a mend that GROWS the hot part past both what the broken crystal costs
+    /// and what the last parseable version cost is still refused, and a write that leaves a
+    /// parseable crystal's oversized hot part where it is still is too.
+    #[test]
+    fn a_hot_part_that_grows_is_still_refused() {
+        set_crystal_hot_cap(0);
+        set_crystal_cap(0);
+        let v55  = ont_shaped(false, 0);
+        let good = ont_shaped(true, 0);
+        let grow = ont_shaped(true, 40);
+        let room = crystal_hot_room(ROOM_2K);
+        let hot_of = |t: &str| crystal_split(t, room).map(|s| s.hot_bytes).unwrap_or(0);
+        assert!(hot_of(&grow) > hot_of(&good) && hot_of(&grow) > hot_of(&v55),
+            "fixture: the growth is real ({} vs {} / {})", hot_of(&grow), hot_of(&good), hot_of(&v55));
+        assert!(crystal_hot_refusal(&grow, &v55, &good, ROOM_2K).is_some(),
+            "a mend that also grows the hot part landed");
+        assert!(crystal_hot_refusal(&grow, &v55, "", ROOM_2K).is_some(),
+            "with no parseable version, growth past the broken crystal's cost landed");
+        match diamond_cap_door("diamonds/abc123/crystal.json", &grow, &v55, &good, ROOM_2K, 0) {
+            CapDoor::Refuse { hot: true, .. } => (),
+            other => panic!("the file tools' door let the growth through: {:?}", other),
+        }
+        // The predicate itself: escapes and structure are a mend, a word or a re-indent is not.
+        assert!(crystal_write_only_mends(&v55, &good), "two escapes are only a mend");
+        assert!(crystal_write_only_mends(r#"{"a":"x"#, r#"{"a":"x"}"#), "closing a cut crystal");
+        assert!(crystal_write_only_mends("{\"a\":\"x\ny\"}", r#"{"a":"x\ny"}"#),
+            "escaping a raw line break");
+        assert!(!crystal_write_only_mends(&v55, &grow), "added words are content");
+        assert!(!crystal_write_only_mends(r#"{"a":"x""#, r#"{"a":"xy"}"#), "one letter is content");
+        // A parseable old keeps the old rule: no change is not progress, a shrink is.
+        assert!(crystal_hot_refusal(&good, &good, "", ROOM_2K).is_some(), "no change landed");
+        assert!(crystal_hot_refusal(&grow, &good, "", ROOM_2K).is_some(), "growth landed");
+        assert!(crystal_hot_refusal(&good, &grow, "", ROOM_2K).is_none(), "a shrink was refused");
     }
 }

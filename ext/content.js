@@ -553,7 +553,7 @@
 
 		function tell(reason) {
 			try {
-				chrome.runtime.sendMessage({ type: 'private', reason });
+				chrome.runtime.sendMessage({ type: 'private', reason }, () => void chrome.runtime.lastError);
 			} catch (e) {
 				// The worker is asleep or the context is gone. We have already
 				// detached, which is the part that matters.
@@ -571,7 +571,7 @@
 			if (ev.key && ev.key.length > 1 && ev.key !== 'Backspace') return;	// Tab, arrows, etc.
 			detach();
 			try {
-				chrome.runtime.sendMessage({ type: 'typing' });
+				chrome.runtime.sendMessage({ type: 'typing' }, () => void chrome.runtime.lastError);
 			} catch (e) {
 				// Detached regardless.
 			}
@@ -661,7 +661,7 @@
 				+ 'border:0;border-radius:8px;padding:10px 16px;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer';
 			btn.addEventListener('click', () => {
 				// A trusted click. The broker will verify it arrived internally.
-				try { chrome.runtime.sendMessage({ type: 'resume' }); } catch (e) { /* worker asleep; it re-checks */ }
+				try { chrome.runtime.sendMessage({ type: 'resume' }, () => void chrome.runtime.lastError); } catch (e) { /* worker asleep; it re-checks */ }
 			});
 			root.appendChild(btn);
 			(document.body || document.documentElement).appendChild(host);

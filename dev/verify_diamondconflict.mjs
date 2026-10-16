@@ -426,7 +426,7 @@ try {
 	const optSeed = (s) => s.page.evaluate(async (OPT) => {
 		const app = DaimondCore.diamondApp();
 		await DaimondCore.loadDiamonds();
-		if (!JSON.parse(await app.list_diamonds()).some((d) => d.id === OPT)) await app.create_diamond_at('Daimond Optimiser', OPT);
+		if (!JSON.parse(await app.list_diamonds()).some((d) => d.id === OPT)) await app.create_diamond_at('Lucy', OPT);
 		await DaimondCore.loadDiamonds();
 	}, OPT);
 	const optTick = (s) => s.page.evaluate(async (OPT) => { const m = await import('/pkg/oxedyne_daimond.js'); await m.touch_diamond(OPT); try { await DaimondCore.loadDiamonds(); } catch (e) {} }, OPT);

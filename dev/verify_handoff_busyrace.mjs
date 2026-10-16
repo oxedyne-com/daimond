@@ -38,6 +38,7 @@ import {
 	freshChat,
 	third,
 	answersFor,
+	beatAsApp
 } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 
@@ -184,7 +185,7 @@ try {
 		// A fresh idle beat from each, then every later beat lost on the way.
 		await b.page.unroute(/[?&]presence=1/);
 		for (const [s, n] of [[b, 'racemate'], [c, 'racetrio']]) {
-			await s.page.evaluate((nm) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), nm), n);
+			await beatAsApp(s, n);
 			await s.page.route(/[?&]presence=1/, (r) => (r.request().method() === 'POST' ? r.abort() : r.continue()));
 		}
 		// Each runs it in the chat it is in: B's is its own race chat, which has ended, and C's

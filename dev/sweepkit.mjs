@@ -206,8 +206,11 @@ export const AUDIT = function () {
 		for (const e of p.querySelectorAll('*')) {
 			if (!scrolls(e)) continue;
 			const was = e.scrollTop;
+			// Both ways: a thread pinned to its newest line is at the foot already, so
+			// only an upward step can show that it moves.
 			e.scrollTop = was + 60;
-			const moved = e.scrollTop !== was;
+			let moved = e.scrollTop !== was;
+			if (!moved) { e.scrollTop = was - 60; moved = e.scrollTop !== was; }
 			e.scrollTop = was;
 			if (!moved) {
 				add('SEEN', 'a scrollable region that will not scroll', sel(e),

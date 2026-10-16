@@ -60,8 +60,8 @@ const rs = fs.readFileSync(RATER, 'utf8');
 const tagIds   = [...rs.matchAll(/Tag \{ id: "([a-z_]+)"/g)].map((m) => m[1]);
 const scaleIds = [...rs.matchAll(/\(-?\d,\s*"([a-z]+)"\)/g)].map((m) => m[1]);
 const dimIds   = [...rs.matchAll(/\("([a-z]+)",\s*\d+\),?/g)].map((m) => m[1]);
-check('the form declares 28 tags, 5 scale words and 4 dimensions',
-	tagIds.length === 28 && scaleIds.length === 5 && dimIds.length === 4,
+check('the form declares 30 tags (28, then RATE-REASONS missed and on_point), 5 scale words and 4 dimensions',
+	tagIds.length === 30 && scaleIds.length === 5 && dimIds.length === 4,
 	tagIds.length + '/' + scaleIds.length + '/' + dimIds.length);
 
 // ── The plan's keys, with the English it fixes ──────────────
@@ -92,7 +92,7 @@ const WORDS = {
 	'rating.quote':       '“{text}”',
 	'rating.tags_down':   'What was wrong',
 	'rating.tags_up':     'What went well',
-	'rating.scale.wrong': 'Wrong',
+	'rating.scale.wrong': 'Useless',
 	'rating.scale.poor':  'Poor',
 	'rating.scale.fine':  'Fine',
 	'rating.scale.good':  'Good',
@@ -101,7 +101,8 @@ const WORDS = {
 	'rating.dim.followed': 'Followed the instructions',
 	'rating.dim.length':   'Right length',
 	'rating.dim.style':    'Style',
-	'rating.tag.wrong':        'Wrong',
+	'rating.tag.missed':       'Missed the point',
+	'rating.tag.wrong':        'Incorrect',
 	'rating.tag.ignored':      'Ignored instructions',
 	'rating.tag.long':         'Too long',
 	'rating.tag.short':        'Too short',
@@ -109,12 +110,13 @@ const WORDS = {
 	'rating.tag.tool':         'Tool use',
 	'rating.tag.refused':      'Refused or hedged',
 	'rating.tag.slow':         'Slow',
+	'rating.tag.on_point':     'On point',
 	'rating.tag.correct':      'Correct',
 	'rating.tag.followed':     'Did as instructed',
 	'rating.tag.concise':      'Concise',
 	'rating.tag.style_good':   'Good style',
 	'rating.tag.broke':        'Broke something',
-	'rating.tag.wrong_change': 'Wrong change',
+	'rating.tag.wrong_change': 'Incorrect change',
 	'rating.tag.incomplete':   'Incomplete',
 	'rating.tag.scope':        'Changed too much',
 	'rating.tag.wiped':        'Lost content',
@@ -144,7 +146,7 @@ check('every dimension the form declares has a `rating.dim.<id>` key in the list
 	dimIds.every((id) => ('rating.dim.' + id) in WORDS));
 check('the list holds no tag the form does not declare',
 	KEYS.filter((k) => k.startsWith('rating.tag.')).every((k) => tagIds.includes(k.slice(11))));
-check('the plan lists ' + KEYS.length + ' keys', KEYS.length === 63, String(KEYS.length));
+check('the plan lists ' + KEYS.length + ' keys', KEYS.length === 65, String(KEYS.length));
 
 for (const c of LOCALES) {
 	const gone = KEYS.filter((k) => typeof T[c][k] !== 'string' || T[c][k].trim() === '');
@@ -214,6 +216,16 @@ for (const c of LOCALES) {
 for (const c of LOCALES) {
 	const left = ['modeldash.rate_up_help', 'modeldash.rate_down_help', 'modeldash.rating_counts'].filter((k) => k in T[c]);
 	check(c + ': the retired Models-page keys (button tooltips, the old counts line) are gone', left.length === 0, left.join(' '));
+}
+
+// N3 (16 Oct 2026, lead decision): "Wrong change" was the one reason label still saying "Wrong"
+// after RATE-REASONS made "Wrong" "Incorrect". The label only: the id and code 14 are unchanged.
+const OLD_WRONG_CHANGE = { en: 'Wrong change', de: 'Falsche Änderung', es: 'Cambio erróneo',
+	fr: 'Mauvais changement', ja: '変更が誤り', ko: '잘못된 변경', 'pt-BR': 'Mudança errada', 'zh-Hans': '改错了' };
+for (const c of LOCALES) {
+	check(c + ': `rating.tag.wrong_change` is no longer the old "Wrong change" label',
+		T[c]['rating.tag.wrong_change'] && T[c]['rating.tag.wrong_change'] !== OLD_WRONG_CHANGE[c],
+		String(T[c]['rating.tag.wrong_change']));
 }
 
 console.log('\n' + (failures ? failures + ' of ' + checks + ' checks failed' : 'all ' + checks + ' checks passed'));

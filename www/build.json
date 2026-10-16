@@ -1,1 +1,1 @@
-{"build":"fef7ae3f5706","note":"A turn sent to the runner while busy in that chat now waits there, not refused or bounced; no more empty replies."}
+{"build":"046de7855593","note":"Names and rating reasons, rail search, round data kept, and fixes for hand-off faults and stalled sync."}

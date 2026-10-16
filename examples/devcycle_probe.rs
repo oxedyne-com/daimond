@@ -1525,7 +1525,13 @@ fn one_task(
         keeper:      String::new(),
         // The one mark is made here and now, so nothing waits to be confirmed.
         unconfirmed: Vec::new(),
+        // The rest as the native handler sets them (`handler.rs`): no turn tag, no live
+        // marks read per call, no restore this call acts for, no author.
+        turn:        String::new(),
+        live:        None,
         by_model:    false,
+        restoring:   0,
+        by:          None,
     };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 

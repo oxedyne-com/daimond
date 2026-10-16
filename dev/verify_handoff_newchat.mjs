@@ -27,6 +27,7 @@
 // (DAIMOND_GW_PORT). Pro-gated, granted the one way the gateway trusts (pro.mjs).
 
 import { open, chat, signInAs, newChat, connectMock, shot, servedChats } from './harness.mjs';
+import { untilListening } from './handoffpair.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import { guardRan } from './verdict.mjs';
@@ -133,9 +134,7 @@ try {
 	}, null, 8000);
 
 	// Make sure A sees B awake before it decides to dispatch.
-	await b.page.evaluate(() => window.DaimondSync.beatPresence
-		&& window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(),
-			(window.DaimondIdentity.displayName && window.DaimondIdentity.displayName()) || 'hofmate'));
+	await untilListening(a, b, idB, 120000, await b.page.evaluate(() => (window.DaimondIdentity.displayName && window.DaimondIdentity.displayName()) || 'hofmate'));
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);
 	const aSeesB = await a.page.evaluate((self) =>

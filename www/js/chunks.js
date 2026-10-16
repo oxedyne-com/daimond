@@ -185,7 +185,24 @@
 	/// would re-offload every Diamond, chat and file the account has, on a
 	/// moment's network trouble. Neither answer is right for both, so this
 	/// carries the distinction rather than deciding it.
-	async function presence(addrs) {
+	///
+	/// ONE AT A TIME PER PAGE (CHUNK-HAVE, 2026-10-16). A caller that arrives while
+	/// another's query is out waits for it to settle, then puts its own: every
+	/// caller still asks about every address it named, in batches of
+	/// HAVE_QUERY_BATCH, under the call's own deadline. On 13 Oct one page sent
+	/// three sweeps of the same set within a second, each landed on a gateway
+	/// already working on the others, and all three ran past the 63 s deadline
+	/// (diag_chunkstall.md). The upload's `missing` is this underneath, so it
+	/// waits in the same line. A query that fails or throws frees the next.
+	var haveLane = Promise.resolve();
+	function presence(addrs) {
+		if (!addrs || !addrs.length) return Promise.resolve({ ok: true, missing: [] });	// asks nothing, so waits for nothing
+		var mine = haveLane.then(function () { return presenceNow(addrs); });
+		haveLane = mine.then(function () {}, function () {});
+		return mine;
+	}
+
+	async function presenceNow(addrs) {
 		var out = { ok: true, missing: [] }, list = addrs || [];
 		for (var i = 0; i < list.length; i += HAVE_QUERY_BATCH) {
 			var slice = list.slice(i, i + HAVE_QUERY_BATCH);

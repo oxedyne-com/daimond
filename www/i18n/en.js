@@ -1993,7 +1993,7 @@
 	// The words come through the form's own keys, so each call site names a variable, and the list is
 	// written out here for dev/i18ncheck.mjs: `rateTagWord` (`tagKey`), the popup's steps (`sc.key`) and
 	// its dimensions (`d.key`). ratingi18n.test.mjs reads the same ids from src/rating.rs.
-	// i18n-indirect: daimond.js tagKey = rating.tag.wrong rating.tag.ignored rating.tag.long rating.tag.short rating.tag.style rating.tag.tool rating.tag.refused rating.tag.slow rating.tag.correct rating.tag.followed rating.tag.concise rating.tag.style_good rating.tag.broke rating.tag.wrong_change rating.tag.incomplete rating.tag.scope rating.tag.wiped rating.tag.clean rating.tag.complete rating.tag.lost rating.tag.bloated rating.tag.faithful rating.tag.tidy rating.tag.tone rating.tag.ready rating.tag.not_useful rating.tag.already_knew rating.tag.useful
+	// i18n-indirect: daimond.js tagKey = rating.tag.missed rating.tag.wrong rating.tag.ignored rating.tag.long rating.tag.short rating.tag.style rating.tag.tool rating.tag.refused rating.tag.slow rating.tag.on_point rating.tag.correct rating.tag.followed rating.tag.concise rating.tag.style_good rating.tag.broke rating.tag.wrong_change rating.tag.incomplete rating.tag.scope rating.tag.wiped rating.tag.clean rating.tag.complete rating.tag.lost rating.tag.bloated rating.tag.faithful rating.tag.tidy rating.tag.tone rating.tag.ready rating.tag.not_useful rating.tag.already_knew rating.tag.useful
 	// i18n-indirect: daimond.js sc.key = rating.scale.wrong rating.scale.poor rating.scale.fine rating.scale.good rating.scale.great
 	// i18n-indirect: daimond.js d.key = rating.dim.correct rating.dim.followed rating.dim.length rating.dim.style
 	// The control
@@ -2025,7 +2025,7 @@
 	'rating.tags_down':        'What was wrong',
 	'rating.tags_up':          'What went well',
 	// The scale, five steps in words
-	'rating.scale.wrong':      'Wrong',
+	'rating.scale.wrong':      'Useless',
 	'rating.scale.poor':       'Poor',
 	'rating.scale.fine':       'Fine',
 	'rating.scale.good':       'Good',
@@ -2036,7 +2036,8 @@
 	'rating.dim.length':       'Right length',
 	'rating.dim.style':        'Style',
 	// The tags, all 28 of src/rating.rs
-	'rating.tag.wrong':        'Wrong',
+	'rating.tag.missed':       'Missed the point',
+	'rating.tag.wrong':        'Incorrect',
 	'rating.tag.ignored':      'Ignored instructions',
 	'rating.tag.long':         'Too long',
 	'rating.tag.short':        'Too short',
@@ -2044,12 +2045,13 @@
 	'rating.tag.tool':         'Tool use',
 	'rating.tag.refused':      'Refused or hedged',
 	'rating.tag.slow':         'Slow',
+	'rating.tag.on_point':     'On point',
 	'rating.tag.correct':      'Correct',
 	'rating.tag.followed':     'Did as instructed',
 	'rating.tag.concise':      'Concise',
 	'rating.tag.style_good':   'Good style',
 	'rating.tag.broke':        'Broke something',
-	'rating.tag.wrong_change': 'Wrong change',
+	'rating.tag.wrong_change': 'Incorrect change',
 	'rating.tag.incomplete':   'Incomplete',
 	'rating.tag.scope':        'Changed too much',
 	'rating.tag.wiped':        'Lost content',
@@ -2146,6 +2148,9 @@
 	'rail.no_diamonds':      'No diamonds yet.',
 	'rail.builtin':          'Built-in',
 	'rail.no_match':         'No diamonds match.',
+	'rail.search':           'Search diamonds',
+	'rail.search_help':      'Search diamonds by name or tag',
+	'rail.search_none':      'No match',
 	'rail.no_chats':         'No chats yet.',
 	// A chat tile with nothing behind it is two different things: one nobody
 	// said anything in, and one whose transcript is on another device. The

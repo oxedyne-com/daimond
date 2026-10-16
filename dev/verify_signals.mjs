@@ -183,11 +183,11 @@ if (!process.argv.includes('--pure')) {
 		await p.evaluate(() => DaimondDiamond.seedDefaults());
 		await p.waitForFunction(() =>
 			[...document.querySelectorAll('#diamond-list .session-box-name')]
-				.some(n => /Daimond Optimiser/.test(n.textContent)), null, { timeout: 20000 });
+				.some(n => /Lucy/.test(n.textContent)), null, { timeout: 20000 });
 
 		const id = await p.evaluate(() => {
 			const b = [...document.querySelectorAll('#diamond-list .diamond-box')]
-				.find(x => /Daimond Optimiser/.test(x.textContent));
+				.find(x => /Lucy/.test(x.textContent));
 			return b ? b.dataset.id : '';
 		});
 		check(!!id, 'the Optimiser is there', String(id));
@@ -228,10 +228,10 @@ if (!process.argv.includes('--pure')) {
 		// eighty kilobytes to answer one question.
 		const helpId = await p.evaluate(() => {
 			const b = [...document.querySelectorAll('#diamond-list .diamond-box')]
-				.find(x => /Daimond Help/.test(x.textContent));
+				.find(x => /Neil/.test(x.textContent));
 			return b ? b.dataset.id : '';
 		});
-		check(!!helpId, 'Daimond Help is there', String(helpId));
+		check(!!helpId, 'Neil is there', String(helpId));
 
 		const mirror = await p.evaluate(async () => {
 			const W = await import('/pkg/oxedyne_daimond.js');

@@ -32,6 +32,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { open, signInAs, connectMock, newChat, chat, mockLog, clearMockLog, contentText } from './harness.mjs';
+import { beatAsApp } from './handoffpair.mjs';
 import { armFilter, guardRan } from './verdict.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
@@ -279,7 +280,7 @@ try {
 	// clock is put back it holds its next beat for the shift plus an interval (61 s + 45 s
 	// after F3a), while B refuses an ask from an asker whose beat is over 90 s old.
 	const beat = async () => {
-		await B.page.evaluate(() => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'hpmate')).catch(() => {});
+		await beatAsApp(B, 'hpmate');
 		await A.page.evaluate(() => { const P = window.DaimondPresence; if (P && P.__beatMs == null) { P.__beatMs = P.BEAT_MS; P.BEAT_MS = -1e12; } }).catch(() => {});
 		await sleep(1300);
 		await A.page.evaluate(() => { const P = window.DaimondPresence; if (P && P.__beatMs != null) { P.BEAT_MS = P.__beatMs; delete P.__beatMs; } }).catch(() => {});

@@ -29,6 +29,7 @@ import {
 	sendDesk,
 	freshChat,
 	third,
+	beatAsApp
 } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 
@@ -88,7 +89,7 @@ try {
 	console.log('\nB and C both busy, each read idle, B the nominated runner; A sends');
 	// A fresh idle beat from each, then every later beat lost on the way: the 45 s gap.
 	for (const [s, n] of [[b, 'mutualb'], [c, 'mutualc']]) {
-		await s.page.evaluate((nm) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), nm), n);
+		await beatAsApp(s, n);
 		await s.page.route(/[?&]presence=1/, (r) => (r.request().method() === 'POST' ? r.abort() : r.continue()));
 	}
 	for (const [s, w] of [[b, 'b mutual turn '], [c, 'c mutual turn ']]) {

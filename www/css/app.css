@@ -1279,7 +1279,9 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .diamond-search { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-xs); padding: 4px 8px; }
 .diamond-search:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .diamond-search::placeholder { color: var(--text-muted); }
-.diamond-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.diamond-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
+/* The letters of a Diamond's name that match the rail's search (RAIL-SEARCH): colour only, so a tile keeps its height. */
+.rail-hit { color: var(--accent); }
 /* The tag filter. A column: the row that names it, the pool of tags behind
    that, then the controls that are not tags. The agents panel puts a single chip
    straight in here, and a column of one looks the same as the row it used to
@@ -1800,7 +1802,9 @@ span.arte-open { cursor: default; }
 .lead-disc::before, .lead-ok::before { display: inline-block; margin-right: 0.25em; }
 .lead-disc::before { content: '\25B8'; }
 .lead-disc[aria-expanded="true"]::before { content: '\25BE'; }
-.lead-ok::before { content: '\2714'; }
+/* The tick is drawn, not read: the word beside it, or a check row's aria-checked, says it, and
+   VoiceOver read "tick, checked". The plain line first, for an engine without the `/ ''` form. */
+.lead-ok::before { content: '\2714'; content: '\2714' / ''; }
 .lead-ok:not([role="menuitemcheckbox"]):disabled::before { content: none; }
 /* A menu's check row (`menuitemcheckbox`) keeps the tick's box when unticked, so its words line
    up with its ticked neighbours, as the spaces typed in for it used to do. */

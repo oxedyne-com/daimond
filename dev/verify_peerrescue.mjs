@@ -1,4 +1,5 @@
 // gateway: live
+// RETIRE UNDER RIG U7 (HOV-REBASE, 16 Oct 2026): its phantom-runner cases are forbidden by I3c and covered by rig I2/I4; not repaired (notes/daimond_hoverifiers_20261016/diag.md §3).
 // verify_peerrescue.mjs — the persistent-peer errand round-trip, and the
 // orphan-recovery that rescues a turn no peer ran. Two REAL paired contexts and
 // the REAL gateway, so the hops the node tests can only model (the Channel::Post
