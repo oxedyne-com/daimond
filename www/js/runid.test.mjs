@@ -78,6 +78,29 @@ console.log('\nThe frame carries the run, and the lost run\'s ending');
 	check('frameRun names the frame\'s run', typeof P.frameRun === 'function' && P.frameRun([{ mid: 'a' }, row]) === 'r1' && P.frameRun([{ mid: 'a' }]) === '');
 }
 
+console.log('\nThe lost run names the device it was lost on (check_f234 fix 6, I9)');
+{
+	const intr = { role: 'assistant', mid: 'ai', content: 'part', interrupted: true, why: 'runner', iturn: T, itext: 'q', run: 'r1', lostOn: 'devB', ts: 5 };
+	const row = P.turnRows([{ role: 'user', mid: T, content: 'q' }, intr], T)[0] || {};
+	check('progressRow carries lostOn', row.lostOn === 'devB', JSON.stringify(row));
+	const pr = (P.foldProvisional([{ role: 'user', mid: T, content: 'q' }], T, [row]) || [])[1] || {};
+	check('the provisional copy carries lostOn', pr.lostOn === 'devB', JSON.stringify(pr));
+	const ds = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const at = ds.indexOf('\n\tfunction runnerLostLabel(');
+	check('daimond.js has runnerLostLabel', at >= 0);
+	if (at >= 0) {
+		const end = ds.indexOf('\n\t}\n', at) + 4;
+		const fn = new Function('deviceLabelFor', 't', ds.slice(at, end) + '\nreturn runnerLostLabel;')(
+			(id) => (id === 'devB' ? 'Laptop B' : ''),
+			(k, o) => (k === 'turn.peer_interrupted_named' ? 'Interrupted on ' + o.name + '.' : k));
+		check('a lost run is named "Interrupted on <device>"', fn({ why: 'runner', lostOn: 'devB' }) === 'Interrupted on Laptop B.', fn({ why: 'runner', lostOn: 'devB' }));
+		check('[ctl] an unstamped or unknown device keeps the generic words', fn({ why: 'runner' }) === 'turn.runner_lost' && fn({ why: 'runner', lostOn: 'devZ' }) === 'turn.runner_lost');
+		check('markInterrupted draws it', /m\.why === 'runner'\)[\s\S]{0,200}runnerLostLabel\(m\)/.test(ds));
+	}
+	const stamps = ds.match(/\.why = 'runner';[^\n]*lostOn = selfDeviceId\(\)/g) || [];
+	check('all three runner-lost writes stamp lostOn = selfDeviceId()', stamps.length === 3, String(stamps.length));
+}
+
 console.log('\nA turn queued behind a running one: its prompt lands before the answer ahead of it (UNBLOCK-1 3d)');
 {
 	// On the runner, q6 arrived while turn 5 ran, so turn 5's answer stands after q6. It is

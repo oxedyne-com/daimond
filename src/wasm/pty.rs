@@ -59,7 +59,6 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -71,24 +70,24 @@ extern "C" {
 
     /// Whether a hand is paired, whether this page can carry terminal
     /// messages, and how many sessions are open.
-    #[wasm_bindgen(method)]
-    fn status(this: &Relay) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn status(this: &Relay) -> Result<JsValue, JsValue>;
 
     /// Open a terminal, resolving with `{id, pid}` when one exists.
-    #[wasm_bindgen(method)]
-    fn open(this: &Relay, spec_json: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn open(this: &Relay, spec_json: &str) -> Result<JsValue, JsValue>;
 
     /// Send keystrokes, as base64 of the raw bytes.
-    #[wasm_bindgen(method)]
-    fn input(this: &Relay, id: &str, data_b64: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn input(this: &Relay, id: &str, data_b64: &str) -> Result<JsValue, JsValue>;
 
     /// Tell the kernel the window changed size.
-    #[wasm_bindgen(method)]
-    fn resize(this: &Relay, id: &str, cols: u16, rows: u16) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn resize(this: &Relay, id: &str, cols: u16, rows: u16) -> Result<JsValue, JsValue>;
 
     /// Ask a terminal's program to stop.
-    #[wasm_bindgen(method)]
-    fn close(this: &Relay, id: &str, sig: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn close(this: &Relay, id: &str, sig: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -131,8 +130,8 @@ fn stringify(v: &JsValue) -> Outcome<String> {
 }
 
 /// Await a relay promise, passing a refusal through untouched.
-async fn settle(promise: js_sys::Promise) -> Outcome<String> {
-    match JsFuture::from(promise).await {
+async fn settle(promise: Result<JsValue, JsValue>) -> Outcome<String> {
+    match crate::wasm::settle_call(promise).await {
         Ok(v)  => stringify(&v),
         Err(e) => Err(err!("{}", refusal(&e); IO, Invalid)),
     }
@@ -147,8 +146,8 @@ async fn settle(promise: js_sys::Promise) -> Outcome<String> {
 /// fence -- and an `Err` reaches the reader wrapped in an fe2o3 chain around
 /// the one sentence that matters.  A terminal that will not open has been
 /// refused, so it is handed on as a refusal and rendered as one.
-async fn settle_or_refuse(promise: js_sys::Promise) -> Outcome<String> {
-    match JsFuture::from(promise).await {
+async fn settle_or_refuse(promise: Result<JsValue, JsValue>) -> Outcome<String> {
+    match crate::wasm::settle_call(promise).await {
         Ok(v)  => stringify(&v),
         Err(e) => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e)))),
     }

@@ -12872,7 +12872,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// unload kills the local turn with the page, so the hand-off has the field to
 		// itself. The journal flush above is the fallback for whatever this does not
 		// land in the page's last moments.
-		if (!(e && e.persisted)) handoffInFlightOnStepAway();
+		// Nor from a POISONED page (check_f234 Q4): its reload is the poison's own, and the
+		// runs it ended have reported; a hand-off now would send the dead turn out again.
+		if (!(e && e.persisted) && !_enginePoison) handoffInFlightOnStepAway();
 		// How long the sitting lasted, and the last chance to send anything at
 		// all: the module's own timer is a minute, and this page has moments. The
 		// flush is not awaited (nothing here may wait) -- `keepalive` on the
@@ -12902,7 +12904,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	window.addEventListener('beforeunload', function (e) {
 		_unloading = true;
 		if (window.DaimondJournal) DaimondJournal.flush();
-		if (!anyGen()) return;
+		// A poisoned page reloads on its own timer; a "leave site?" prompt would hold it.
+		if (!anyGen() || _enginePoison) return;
 		// A task is still running. Closing now cannot finish it (there is no background executor),
 		// but the prompt and everything streamed so far are journalled, so this is a courtesy, not
 		// a save: warn, and let the browser show its native "leave site?" prompt.
@@ -12912,6 +12915,103 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	});
 
 	// ── Nothing fails in silence ───────────────────────────────
+	// ── A POISONED ENGINE (UNBLOCK-7 F2) ──────────────────────────
+	// A wasm trap -- a panic, or a JS throw through an import the engine was inside --
+	// leaves the engine's borrow held for ever, so every await on it never settles: the
+	// turn's catch never ran, `_generating` and the crystal's busy flag stayed up, and a
+	// runner held its errand to the lease's end. So each engine await is raced against a
+	// kill (`turnKill`), and a trap poisons the engine once: the runner's runs end through
+	// their own door (`DaimondPeer.poisonRuns`), every await rejects with an interrupted
+	// error so the existing catch exits run, and the page reloads, since nothing in it can
+	// call the engine again. The boot recovery is the net for anything the page could not post.
+	var _enginePoison = '';                     // why the engine trapped; '' while sound
+	var _engineAwaits = [];                     // { rec, kill } per in-flight engine await
+	var POISON_RELOAD_MS = 4000;                // the reports' window before the reload
+	var ENGINE_HUNG_MS = 5000;                  // a killed turn's engine call: grace before the poison
+
+	/// Is this a wasm trap, the error a poisoned engine throws?
+	function isWasmTrap(x) {
+		return !!x && typeof WebAssembly !== 'undefined' && !!WebAssembly.RuntimeError
+			&& x instanceof WebAssembly.RuntimeError;
+	}
+
+	function engineKillError(why) {
+		var e = new Error('Interrupted: the engine stopped (' + String(why || 'killed') + ').');
+		e.interrupted = true;
+		e.poisoned = !!_enginePoison;
+		return e;
+	}
+
+	/// The engine await `p`, raced against a kill of the turn running on `rec` (its chat
+	/// record): `killEngineAwaits(rec)` or the poison rejects it as interrupted.
+	function turnKill(p, rec) {
+		if (_enginePoison) {
+			Promise.resolve(p).then(null, function () { /* the engine's own end is not news */ });
+			return Promise.reject(engineKillError(_enginePoison));
+		}
+		var k = { rec: rec || null, kill: null, settled: false };	// settled: the engine call itself
+		var mark = function () { k.settled = true; };
+		Promise.resolve(p).then(mark, mark);
+		var killed = new Promise(function (res, rej) { k.kill = rej; });
+		_engineAwaits.push(k);
+		var drop = function () { var i = _engineAwaits.indexOf(k); if (i >= 0) _engineAwaits.splice(i, 1); };
+		return Promise.race([p, killed]).then(function (v) { drop(); return v; },
+			function (err) {
+				drop();
+				// A trap that comes back as this await's rejection never reaches the window's
+				// `error` listener (check_f234 Q5), so it poisons here; the caller still sees it.
+				if (isWasmTrap(err)) poisonEngine('trap: ' + String(err.message || ''));
+				throw err;
+			});
+	}
+
+	/// Reject the in-flight engine awaits of the turn on `rec`, or every one when `rec` is
+	/// null. Answers how many.
+	function killEngineAwaits(rec, why) {
+		var hit = _engineAwaits.filter(function (k) { return !rec || k.rec === rec; });
+		for (var i = 0; i < hit.length; i++) {
+			try { hit[i].kill(engineKillError(why)); } catch (e) { /* already settled */ }
+		}
+		return hit.length;
+	}
+
+	/// End the turn on `rec` (every turn when null): kill its engine awaits now, and poison the
+	/// engine if any engine call under them has still not settled `graceMs` later.
+	function endTurnEngine(rec, why, graceMs) {
+		// A killed await frees the turn, not the engine. A call that never settles keeps the
+		// engine's borrow held (check_f234 Q3), so the next turn on it would trap; a call that
+		// settles in the grace was merely slow and the engine is sound.
+		var hit = _engineAwaits.filter(function (k) { return !rec || k.rec === rec; });
+		killEngineAwaits(rec, why);
+		if (!hit.length) return 0;
+		setTimeout(function () {
+			if (hit.some(function (k) { return !k.settled; })) poisonEngine('hung: ' + String(why || 'killed'));
+		}, graceMs != null ? graceMs : ENGINE_HUNG_MS);
+		return hit.length;
+	}
+
+	/// The engine trapped: end every run and turn on it, then reload. Once only.
+	function poisonEngine(why) {
+		if (_enginePoison) return;
+		_enginePoison = String(why || 'trap').slice(0, 200);
+		try { diag('engine POISONED', _enginePoison); } catch (e) { /* the diag ring is display */ }
+		// The runner's runs first, so each ends as aborted before its own engine await
+		// rejects into the run's ordinary failure path.
+		try { if (window.DaimondPeer && window.DaimondPeer.poisonRuns) window.DaimondPeer.poisonRuns('poison'); }
+		catch (e) { /* the reload and the boot recovery still end them */ }
+		killEngineAwaits(null, _enginePoison);
+		setTimeout(function () { try { location.reload(); } catch (e) { /* nothing left to do */ } }, POISON_RELOAD_MS);
+	}
+
+	window.addEventListener('error', function (e) {
+		if (e && isWasmTrap(e.error)) poisonEngine('trap: ' + String(e.error.message || e.message || ''));
+	});
+	try {
+		if (window.DaimondTrail && DaimondTrail.onNote) {
+			DaimondTrail.onNote(function (what, detail) { if (what === 'WASM PANIC') poisonEngine('panic: ' + String(detail || '')); });
+		}
+	} catch (e) { /* an older trail: the window's trap listener still hears it */ }
+
 	// Most of this app is started rather than awaited: a click hands a promise to
 	// nobody. A rejection in one of those used to reach the console and no further,
 	// so a user watched a button do nothing and had no reason to think it had even
@@ -12924,6 +13024,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	window.addEventListener('unhandledrejection', function (e) {
 		if (_unloading) return;                 // the page is going; its dead requests are not news
 		var why = e && (e.reason !== undefined ? e.reason : e);
+		if (isWasmTrap(why)) poisonEngine('trap: ' + String((why && why.message) || why));
 		// D-20260920-02: arm the diag ring BEFORE the toast, so a tap on the
 		// report affordance the toast is about to show already has something
 		// beyond this one line to send.
@@ -20677,7 +20778,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// always fires; the reading/search path composes with the synced policy ABOVE
 	/// this, returning 'allow' before it ever gets here.
 	async function routeConsentAsk(req, host) {
-		var rc = runnerTurnOf(req);
+		var rc = runnerTurnOfReq(req);
 		if (!rc) return 'deny';				// cannot tell which turn: refuse this act, park nothing
 		if (_openAskForTurn(rc.turnId)) return 'deny';	// one open ask per turnId at a time
 		var presence = (window.DaimondPresence && DaimondPresence.snapshot)
@@ -20763,7 +20864,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The runner turn a web act's question belongs to. A tagged question is its own
 	/// turn's or nobody's; one with no tag (the search door, which has no request to
 	/// read) falls back to the one active runner turn, as before.
-	function runnerTurnOf(req) {
+	function runnerTurnOfReq(req) {
 		var tag = String((req && req.turn) || '');
 		return tag ? runnerTurnByTag(tag) : activeRunnerTurn();
 	}
@@ -21888,7 +21989,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// offline), and awaits the answer in memory; on no reachable device or timeout it
 		// parks (abandon + re-run, bounded). Not under `strict`, whose crystal-page
 		// navigation is not a model act.
-		if (!strict && runnerTurnOf(req)) {
+		if (!strict && runnerTurnOfReq(req)) {
 			return await routeConsentAsk(req, host);
 		}
 		// A LOCAL unsupervised WORKER (alone, and no dispatched errand in flight)
@@ -25421,7 +25522,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// seat note appears/clears) and the answer's `handoffRefused` (so its provenance
 			// line survives a redraw). Both change the drawing without changing the id.
 			+ '#' + (m.refused ? 1 : 0) + '#' + (m.handoffRefused ? 1 : 0) + '#' + (m.handoffBusy || '') + '#' + (m.handoffThread || '')
-			+ '#' + (m.toDevice || '') + '#' + (m.seatNote || '')
+			+ '#' + (m.toDevice || '') + '#' + (m.claimedBy || '') + '#' + (m.seatNote || '')
 			+ '#' + (m.name || '') + '#' + (m.callId || '');
 	}
 
@@ -25810,7 +25911,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// What it had done is above; Retry runs the whole turn afresh, a new turn, never a
 		// continuation of a run whose state went with the reload.
 		if (m.why === 'runner') {
-			label.textContent = '⚠ ' + t('turn.runner_lost');
+			label.textContent = '⚠ ' + runnerLostLabel(m);
 			var rb = document.createElement('button');
 			rb.className = 'ti-continue';
 			rb.textContent = t('turn.retry');
@@ -25907,7 +26008,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				: t('turn.peer_consent', { act: act });
 		}
 		else if (st === 'parked')        label.textContent = t('turn.peer_parked');
-		else if (st === 'failed')        label.textContent = pausedBack(m) || t('turn.peer_failed');
+		else if (st === 'failed' || st === 'interrupted') {
+			// INTERRUPTED, NOT REFUSED (UNBLOCK-7 F3): a runner that was cut off -- an aborted
+			// report, a lease that expired under it, or a claim that went silent -- is named,
+			// and the turn offered again. A hand-back (`error`) keeps "couldn't finish".
+			// `interrupted` is the runner's own settled cut (check_f234 fix 1), always named.
+			var iname = interruptedRunner(m, name, st === 'interrupted');
+			if (iname != null) label.textContent = iname ? t('turn.peer_interrupted_named', { name: iname }) : t('turn.peer_interrupted');
+			else label.textContent = pausedBack(m) || t('turn.peer_failed');
+		}
 		else {												// dispatched (pre-claim)
 			// Name the CHOSEN target tentatively while the errand is out but unclaimed,
 			// so the owner sees WHERE it is going -- "Sending to X…", present-progressive,
@@ -25927,7 +26036,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			? DaimondPeer.dispatchControl(st, m)
 			: (st === 'parked' ? 'rerun'
 				: ((st === 'failed' || st === 'no-peer-awake') ? 'runhere' : ''));
-		if (control === 'rerun') {
+		if (control === 'runhere' && st === 'failed' && interruptedRunner(m, name) != null) control = 'retry';
+		if (control === 'retry') {
+			var rt = document.createElement('button');
+			rt.className = 'ti-continue';
+			rt.textContent = t('turn.retry');
+			// ASKED AGAIN AS A SEND IS (ruling D-20261010-22): the switch decides where it runs,
+			// and the new turn is named from the cut one, so two devices' Retries are one turn
+			// under one lease (`retryTurn`'s lost route, as a runner-lost row's Retry).
+			rt.addEventListener('click', function () { retryTurn(current, m.iturn, m.itext, { route: true, lost: true }); });
+			foot.appendChild(rt);
+		} else if (control === 'rerun') {
 			var rr = document.createElement('button');
 			rr.className = 'ti-continue';
 			rr.textContent = t('turn.peer_rerun');
@@ -25948,6 +26067,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			aa.addEventListener('click', function () { answerAgain(current, m.iturn); });
 			foot.appendChild(aa);
 		}
+	}
+
+	/// The runner a failed hand-off was interrupted on: its name, '' when it cannot be named,
+	/// or null when the failure was not an interruption (a hand-back, a refusal). `name` is
+	/// the live lease holder's, when there is one; `cut` says the state already knows it was one.
+	/// The words of a handed-off run the runner lost: "Interrupted on <device>" where the
+	/// row names the runner (`lostOn`, stamped where it wrote the row) and the name is
+	/// known here, else the unnamed sentence (check_f234 fix 6, I9).
+	function runnerLostLabel(m) {
+		var who = (m && m.lostOn) ? deviceLabelFor(m.lostOn) : '';
+		return who ? t('turn.peer_interrupted_named', { name: who }) : t('turn.runner_lost');
+	}
+
+	function interruptedRunner(m, name, cut) {
+		var rep = peerReports[String(m && m.iturn)] || null;
+		var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(m.iturn) : null;
+		cut = cut || (rep ? rep.status === 'aborted' : (!!(lease && lease.mode !== 'released') || !!m.claimedBy));
+		if (!cut) return null;
+		if (name) return name;
+		var who = String((lease && lease.holder) || (rep && rep.by) || m.claimedBy || '');
+		var nm = who ? deviceLabelFor(who) : '';
+		return String(nm || m.toName || '');
 	}
 
 	/// The pause a runner turned this hand-off away for, in the words every door refuses
@@ -27121,6 +27262,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return (c && c.messages) ? DaimondPeer.turnBirthHints(c.messages, String((er && er.turnId) || '')) : [];
 	}
 
+	/// The local half of a runner's dropped run (`endLocal`, UNBLOCK-7 F4) on `chat`, the
+	/// detached chat the run's turn went out on.
+	async function endRunnerLocal(chat, e, why) {
+		if (!chat) return;
+		// THE RUN'S OWN TURN ONLY (check_k K-R1). The door answers a second or more after the
+		// abort, and a Continue pressed meanwhile starts the next turn on this chat. A turn is
+		// tagged before it goes busy, so a chat whose tag is not the run's has closed the run's
+		// turn already: nothing of it is left to kill, and only the relabel below applies.
+		var rc = _runnerCtx[String((e && e.turnId) || '')];
+		var ours = !!(rc && rc.tag && String(chat._turnTag || '') === rc.tag);
+		// THE STOP LABEL FOLLOWS THE VERDICT, NOT THE ABORT (check_f1stop P2): the abort
+		// lands before the lease door says whether the sender's Stop crossed the kill.
+		// A 'user' end is that Stop (R3 F1), marked as a Stop pressed here marks it: on
+		// the turn still closing, and on the stopped row of one that closed already.
+		if (why === 'user') {
+			if (ours && chat._generating) { chat._aborted = true; chat._stopWhy = 'user'; }
+			turnSpan(chat, e && e.turnId).forEach(function (m) {
+				if (m && m.role === 'end_log' && m.how === 'stopped' && m.why !== 'user') { m.why = 'user'; touchMsg(m); }
+			});
+		}
+		// Started, not awaited: a hung engine call poisons after its grace, and the run's
+		// end has settled and posted long before that reload.
+		if (!ours) return;
+		endTurnEngine(chat, why);
+		for (var w = 0; w < 10 && chat._generating; w++) await new Promise(function (r) { setTimeout(r, 50); });
+		if (chat._generating) {
+			chat._generating = false; chat._runApp = null; chat._busy = '';
+			if (chat.diamondId) { try { setCrystalBusy(chat.diamondId, false); } catch (e2) { /* display */ } }
+			try { syncComposer(); } catch (e2) { /* display */ }
+		}
+	}
+
 	/// Build the deps `DaimondPeer.runErrand` runs an errand over. Shared by the
 	/// collector's onErrand handler (a PEER running a dispatched errand) and by the
 	/// dispatching device's own recovery-on-return (`allowSelf`), so BOTH go through
@@ -27133,6 +27306,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var o = opts || {};
 		var ctx = null;
 		return {
+			// A poisoned engine, its page reloading: runErrand stands down unclaimed (UNBLOCK-7).
+			poisoned:  function () { return !!_enginePoison; },
 			// THE TURN'S AGE (E-R1): what `DaimondPeer.turnAgeVerdict` ages a turn by. The
 			// relay's arrival stamp for the row that carried the errand -- none on a
 			// recovery, which ages its own turn on this device's clock -- the relay's clock
@@ -27323,10 +27498,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (tid && stampTurnRun(c.chat, tid)) { touchChat(c.chat); try { persistChats(); } catch (e) { /* the parcel push persists */ } }
 				dropOwnPlaceholderIfAnswered(tid);		// a local recovery's answer is in
 			},
+			// THE LOCAL RUN DROPPED (UNBLOCK-7 F4): the run's engine await is killed, so the
+			// turn's own catch closes it -- the interrupted row, `_generating` and the crystal's
+			// busy flag down. A turn stuck on an await that is not raced is forced down after.
+			endLocal: function (e, why) { return endRunnerLocal(ctx && ctx.chat, e, why); },
 			abort: function (why) {
 				try { if (ctx && ctx.chat) Workers.cancelAwaits(ctx.chat.id); } catch (e) { /* best effort */ }
 				// The reason first, so the engine's `ended` event finds it when the stop lands. A
-				// 'user' stop is the sender's Stop (R3 F1): marked as a Stop pressed here marks it.
+				// 'user' stop is the sender's Stop already read; one read later is labelled by `endLocal`.
 				if (ctx && ctx.chat) {
 					if (why === 'user') ctx.chat._aborted = true;
 					ctx.chat._stopWhy = String(why || '');
@@ -28867,9 +29046,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			for (var j = 0; j < c.messages.length; j++) {
 				var m = c.messages[j];
 				if (m.why !== 'dispatched' || String(m.iturn) !== tid) continue;
-				if (String(m.toDevice) === holder) continue;			// already the claimant
-				m.toDevice = holder;
-				var nm = deviceLabelFor(holder); if (nm) m.toName = nm;
+				// UNBLOCK-7 F3: the claim itself is stamped too (`claimedBy`), so a runner that
+				// later goes silent reads as failed past the deadline, not "no peer awake". Not
+				// skipped when the claimant was already the named target, the usual case.
+				if (String(m.toDevice) === holder && String(m.claimedBy || '') === holder) continue;
+				if (String(m.toDevice) !== holder) {
+					m.toDevice = holder;
+					var nm = deviceLabelFor(holder); if (nm) m.toName = nm;
+				}
+				if (String(m.claimedBy || '') !== holder) { m.claimedBy = holder; m.claimedAt = Date.now(); }
 				touchMsg(m);
 				changed = true;
 			}
@@ -29052,9 +29237,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var l = lr || {};
 		var e = { turnId: String(tid), chatId: t.chatId, eid: l.eid, dispatchedBy: l.dispatchedBy };
 		var res = null;
-		try { res = await DaimondPeer.reportInterrupted(e, peerRunErrandDeps({}), { chat: chat }); }
+		// The claim's own deadline, so a record the door lost before it reads unknown, not revoked.
+		try { res = await DaimondPeer.reportInterrupted(e, peerRunErrandDeps({}), { chat: chat }, null, l.deadline); }
 		catch (err) { res = null; }
-		diag('runner restart interrupted', 'turn=' + String(tid).slice(0, 12) + ' ' + (res ? 'reported' : 'not reported'));
+		diag('runner restart interrupted', 'turn=' + String(tid).slice(0, 12) + ' ' + (res ? (res.why === 'revoked' ? 'revoked' : 'reported') : 'not reported'));
 		if (res) { try { renderDispatchedBadges(); } catch (err) { /* no tiles up */ } }
 		return !!res;
 	}
@@ -30760,7 +30946,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// must still be the newest thing in the chat; a button that outlived a newer turn (another
 	/// device's, merged in) does nothing and goes.
 	function continueStopped(chat, btn, holdRead) {
-		if (!chat || chat._generating) return;
+		// A chat whose errand is still in flight here is the runner's (check_k K-R1).
+		if (!chat || chat._generating || chatIsActiveErrand(chat.id)) return;
 		var ms = chat.messages || [];
 		var last = ms.length ? ms[ms.length - 1] : null;
 		if (!last || last.role !== 'end_log' || !endContinuable(last)) { retireContinue(); return; }
@@ -30794,7 +30981,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// drawn open with its options, as any unanswered question is after a reload, and
 	/// the person answers it fresh -- which sends through the card as it always does.
 	function answerAgain(chat, iturn) {
-		if (!chat || !iturn || chat._generating) return;
+		if (!chat || !iturn || chat._generating || chatIsActiveErrand(chat.id)) return;
 		// A turn a peer still holds is its runner's, as in `continueTurn`.
 		try {
 			if (window.DaimondPeer && DaimondPeer.dispatchState) {
@@ -31203,7 +31390,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var recAns = { role: 'assistant', content: t.text || '', mid: jmeta.amid || newMid(),
 			interrupted: true, iturn: iturn, itext: t.userText || '', ts: tick(t.lastAt) };
 		if (jmeta.prod && jmeta.amid) recAns.prod = [jmeta.prod];
-		if (runner) { recAns.why = 'runner'; if (jmeta.run) recAns.run = String(jmeta.run); }
+		if (runner) { recAns.why = 'runner'; recAns.lostOn = selfDeviceId(); if (jmeta.run) recAns.run = String(jmeta.run); }
 		var old = jmeta.amid ? byMid[String(jmeta.amid)] : null;
 		if (old) {
 			// The answer the run was streaming, badged where it stands.
@@ -36482,7 +36669,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so what the agent read, wrote and ran comes back with it — and it is the
 		// FOLDED list when compaction has run, so a reloaded chat does not spring back
 		// to the full size the screen still shows.
-		var sess = prose ? null : chat.session, seeded = 0;
+		var sess = prose ? null : chat.session, seeded = 0, laid = false;
 		// The prompt copies a hand-off before 5.1 stored, taken out before the model sees
 		// them again; the session is stored clean at this turn's end (`dedupeSession`).
 		if (sess && Array.isArray(sess.msgs)) {
@@ -36556,10 +36743,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} else if (hist.length) {
 			// No usable session: the old path, which is also the path a chat written by
 			// an earlier build takes, and the one a backup from before this store took.
-			chat.app.restore(hist, chat.promptTokens || 0, chat.completionTokens || 0, chat.lastPrompt || 0,
-				chat.cachedTokens || 0, chat.costUsd || 0);
+			// It throws while a turn holds the session (check_last), before it touches it: the
+			// engine keeps what it held, so the failure is the caller's, not an empty engine
+			// whose record would have the next reconcile append the whole chat (check_f1stop P3).
+			try {
+				chat.app.restore(hist, chat.promptTokens || 0, chat.completionTokens || 0, chat.lastPrompt || 0,
+					chat.cachedTokens || 0, chat.costUsd || 0);
+				laid = true;
+			} catch (e) {
+				diag('engine restore failed', 'chat=' + String(chat.id || '').slice(0, 12) + ' ' + String(e && e.message || e).slice(0, 80));
+				// Marked as the restore's own, so `armEngine` forgives this and nothing else.
+				var re = new Error('engine restore failed: ' + String(e && e.message || e));
+				re.restore = true; re.cause = e;
+				throw re;
+			}
 		}
-		if (seeded || hist.length) {
+		if (seeded || laid) {
 			// The wasm counters now hold the restored totals, so meter the
 			// next turn against those rather than against zero. All four, not
 			// two: a cost counter restored to the session total while its `prev`
@@ -36571,14 +36770,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chat.prevCost       = chat.costUsd || 0;
 		}
 		var held = {};
-		hist.forEach(function (m) { held[String(m.mid)] = 1; });
+		if (seeded || laid) hist.forEach(function (m) { held[String(m.mid)] = 1; });
 		return held;
 	}
 
 	/// Record what a freshly built engine was given, so that a later turn can tell what it lacks. Kept on the chat and not
 	/// persisted: it is a fact about the engine object, which does not survive a reload.
 	function armEngine(chat, exceptMid) {
-		chat._held = { app: chat.app, mids: seedEngine(chat, exceptMid, false), ran: false };
+		var mids = {};
+		// A fresh engine whose restore failed holds nothing, and its record says so. Any
+		// other throw is a fault in the seeding itself and leaves `ensureApp` loud.
+		try { mids = seedEngine(chat, exceptMid, false); }
+		catch (e) { if (!(e && e.restore === true)) throw e; mids = {}; }
+		chat._held = { app: chat.app, mids: mids, ran: false };
 	}
 
 	/// What a live engine lacks of its chat, and what to do about it. Pure: the mids the engine holds, whether it has run a
@@ -39852,7 +40056,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				try {
 					heldRun(chat, app, umid);
-					await app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined);
+					await turnKill(app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined), chat);
 				} catch (e) {
 					if (capFail) {
 						// The provider would not do the reply length asked for — or said
@@ -39868,7 +40072,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						app = await rebuildAppWithout(chat, umid);
 						// Tagged, and confined, inside `rebuildAppWithout`.
 						heldRun(chat, app, umid);
-						await app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined);
+						await turnKill(app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined), chat);
 						// Only NOW is the smaller ask believed. Recording the cap before
 						// the retry would teach the app a ceiling from any unrelated 400 —
 						// a bad key, a malformed request — and every later turn on that
@@ -39894,7 +40098,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						app = await rebuildAppWithout(chat, umid);
 						// Tagged, and confined, inside `rebuildAppWithout`.
 						heldRun(chat, app, umid);
-						await app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined);
+						await turnKill(app.run_turn(text, onEvent, turnPre || undefined, umid ? String(umid) : undefined), chat);
 					} else {
 						throw e;
 					}
@@ -40012,7 +40216,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// handing back an empty one.
 				var partial = curAsstText || '';
 				finalizeAssistant();
-				if (_unloading) {
+				if (e && e.interrupted && !_unloading) {
+					// THE ENGINE WAS KILLED UNDER THE TURN (UNBLOCK-7 F2): poisoned by a trap, or
+					// ended by the runner's lease deadline. Interrupted, not an error: the partial
+					// kept, and the turn left OPEN in the journal so the boot after the reload
+					// still recovers it if this row never lands. A handed-off run says so
+					// (`why: 'runner'`), and its asker's Retry runs it afresh.
+					if (J) J.flush();
+					handedBack = true;
+					tagPrompt(chat, umid);
+					var killedRow = { role: 'assistant', content: partial, mid: newMid(), interrupted: true,
+						iturn: umid, itext: text, ts: Date.now() };
+					if (runnerTurnOf(chat.id)) { killedRow.why = 'runner'; killedRow.lostOn = selfDeviceId(); }
+					pushRunRow(chat, umid, killedRow);
+					if (owns()) renderHistory(chat.messages);
+					touchChat(chat);
+					persistChats();
+				} else if (_unloading) {
 					// The page is going away and took the request with it. That is not a failure to
 					// record — leave the turn OPEN in the journal so the next boot recovers it as
 					// interrupted, and write no error over it.
@@ -40090,7 +40310,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// and must not have its captures taken from under it. The engine asks that again
 				// once it holds the store (R4), since a steer can start while this one waits.
 				if (chat.diamondId && app && typeof app.end_keeper_turn === 'function'
-					&& !diamondBusy(chat.diamondId)) {
+					&& !_enginePoison && !diamondBusy(chat.diamondId)) {
 					try { await app.end_keeper_turn(typeof onEvent === 'function' ? onEvent : function () {}); }
 					catch (eK) { /* left for the next turn end, which adopts the notes */ }
 				}
@@ -62741,14 +62961,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// not be asked a follow-up question.
 			// The marks, this device's record of them and what waits for a press are the
 			// engine's to read at the turn (HIST-SAFE U2); only the toolkits travel.
-			var after = await fa.steer_crystal(diamondId, sent,
+			var after = await turnKill(fa.steer_crystal(diamondId, sent,
 				// The toolchains the user ticked on this Diamond. Handed over here because
 				// `compose_daimon` is where a daimon's own bounds are built, and it is not the
 				// place a worker's are: ticking Git granted it to this daimon's workers and not
 				// to the daimon, which is the surface the user granted it on.
 				JSON.stringify(marks.toolkits  || []),
 				(rec.session && rec.session.msgs) || [], onEvent,
-				steerPre || undefined);
+				steerPre || undefined), rec);
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {
 				// A DETACHED turn stamps the answer with the errand's turn id, so the
@@ -62852,8 +63072,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (onScreen()) appendEnding(pendingSteerEnd, false);
 				pendingSteerEnd = null;
 			}
-			rec.messages.push({ role: failRole(e), content: friendlyError(e),
-				mid: newMid(), ts: Date.now() });
+			if (e && e.interrupted) {
+				// THE ENGINE WAS KILLED UNDER THE TURN (UNBLOCK-7 F2): interrupted, not an
+				// error; a handed-off run says so, and Retry asks the instruction again.
+				var killed = { role: 'assistant', content: '', mid: newMid(), interrupted: true,
+					iturn: dumid, itext: instruction, ts: Date.now() };
+				if (detached) { killed.why = 'runner'; killed.lostOn = selfDeviceId(); }
+				rec.messages.push(killed);
+			} else {
+				rec.messages.push({ role: failRole(e), content: friendlyError(e),
+					mid: newMid(), ts: Date.now() });
+			}
 			persistChats();
 			steerJournalClose(sJ, dumid, rec);
 			crystalSay(friendlyError(e));
@@ -69450,7 +69679,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	// Leaving with agents in flight kills them: their fetches die with the page.
 	window.addEventListener('beforeunload', function (e) {
-		if (!Workers.busy()) return;
+		if (!Workers.busy() || _enginePoison) return;		// the poison's reload is not held
 		e.preventDefault();
 		e.returnValue = '';
 	});

@@ -160,7 +160,6 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -171,17 +170,17 @@ extern "C" {
     type Driver;
 
     /// Compile a Typst source string, resolving `{ pdf }` or `{ error }`.
-    #[wasm_bindgen(method)]
-    fn compile(this: &Driver, source: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn compile(this: &Driver, source: &str) -> Result<JsValue, JsValue>;
 
     /// Compile a gathered project, resolving `{ pdf }` or `{ error }`.
-    #[wasm_bindgen(method, js_name = compileProject)]
-    fn compile_project(this: &Driver, project: &JsValue) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = compileProject)]
+    fn compile_project(this: &Driver, project: &JsValue) -> Result<JsValue, JsValue>;
 
     /// Lay a gathered project out without writing it out, resolving
     /// `{ vector }` or `{ error }`.  What the live view draws.
-    #[wasm_bindgen(method, js_name = compileProjectVector)]
-    fn compile_project_vector(this: &Driver, project: &JsValue) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = compileProjectVector)]
+    fn compile_project_vector(this: &Driver, project: &JsValue) -> Result<JsValue, JsValue>;
 
     /// The watcher object `www/js/typstwatch.js` installs at
     /// `window.DaimondTypstWatch`, absent on a page that has no live view.
@@ -189,9 +188,10 @@ extern "C" {
     type Watcher;
 
     /// Tell the watcher a document has just been compiled from the page, so it
-    /// can follow the file from here on.
-    #[wasm_bindgen(method)]
-    fn began(this: &Watcher, path: &str, watch: &JsValue);
+    /// can follow the file from here on.  `catch`, because it runs page code
+    /// (and an older watcher may lack it), and a throw must not unwind through wasm.
+    #[wasm_bindgen(catch, method)]
+    fn began(this: &Watcher, path: &str, watch: &JsValue) -> Result<(), JsValue>;
 }
 
 
@@ -802,7 +802,7 @@ async fn fetch_pack(v: &Vendored) -> Result<Vec<u8>, String> {
         Some(w) => w,
         None    => return Err("there is no browser window to read it with".to_string()),
     };
-    let val = match JsFuture::from(win.fetch_with_request(&req)).await {
+    let val = match crate::wasm::settle_js(win.fetch_with_request(&req)).await {
         Ok(v)  => v,
         Err(e) => return Err(fmt!("{} could not be reached, {}", url, js_str(&e))),
     };
@@ -817,7 +817,7 @@ async fn fetch_pack(v: &Vendored) -> Result<Vec<u8>, String> {
         Ok(p)  => p,
         Err(e) => return Err(fmt!("reading {} failed, {}", url, js_str(&e))),
     };
-    match JsFuture::from(promise).await {
+    match crate::wasm::settle_js(promise).await {
         Ok(b)  => Ok(js_sys::Uint8Array::new(&b).to_vec()),
         Err(e) => Err(fmt!("reading {} failed, {}", url, js_str(&e))),
     }
@@ -1987,7 +1987,7 @@ fn bytes_of(v: &JsValue, field: &str) -> Outcome<Vec<u8>> {
 /// * `source` - The whole Typst document, self-contained.
 pub async fn compile(source: &str) -> Outcome<Vec<u8>> {
     let d = res!(driver());
-    match JsFuture::from(d.compile(source)).await {
+    match crate::wasm::settle_call(d.compile(source)).await {
         Ok(v)  => bytes_of(&v, "pdf"),
         Err(e) => Err(err!("{}", refusal(&e); Invalid, Data)),
     }
@@ -2023,7 +2023,7 @@ pub async fn compile_project(
         },
     };
     let arg = res!(to_js(&project));
-    match JsFuture::from(d.compile_project(&arg)).await {
+    match crate::wasm::settle_call(d.compile_project(&arg)).await {
         Ok(v)  => bytes_of(&v, "pdf"),
         Err(e) => Err(err!("{}", refusal(&e); Invalid, Data)),
     }
@@ -2248,7 +2248,7 @@ async fn page_compile(path: &str, want: Want) -> js_sys::Object {
     // debug dump, in English whatever their locale, in place of a sentence written
     // for them.  The error is read out FIRST and passed through untouched, which is
     // what `bytes_of`'s own doc comment always said happened.
-    match JsFuture::from(promise).await {
+    match crate::wasm::settle_call(promise).await {
         Ok(v) => match driver_error(&v) {
             Some(text) => set("error", &JsValue::from_str(&text)),
             None       => match bytes_of(&v, want.field()) {
@@ -2262,7 +2262,12 @@ async fn page_compile(path: &str, want: Want) -> js_sys::Object {
                     // or every rebuild would arm the loop that produced it.
                     if matches!(want, Want::Pdf) {
                         if let Ok(w) = watcher() {
-                            w.began(path, &watching);
+                            // The compile worked; a watcher that cannot follow it is
+                            // said in the console and the result still goes back.
+                            if let Err(e) = w.began(path, &watching) {
+                                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                                    "typst: the watcher could not follow {}, {}", path, js_str(&e))));
+                            }
                         }
                     }
                 },

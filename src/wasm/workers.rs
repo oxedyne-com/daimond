@@ -24,7 +24,6 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -35,12 +34,12 @@ extern "C" {
     type Pump;
 
     /// Start one worker now, and answer whether it started and under which id.
-    #[wasm_bindgen(method)]
-    fn spawn(this: &Pump, payload: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn spawn(this: &Pump, payload: &str) -> Result<JsValue, JsValue>;
 
     /// Wait for the named runs, and answer with their reports and what is still running.
-    #[wasm_bindgen(method, js_name = awaitReports)]
-    fn await_reports(this: &Pump, payload: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = awaitReports)]
+    fn await_reports(this: &Pump, payload: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -91,7 +90,7 @@ fn answered(v: JsValue) -> Outcome<String> {
 /// * `payload` - `{"name":…,"task":…}` as the tool composed it.
 pub async fn spawn(payload: &str) -> Outcome<String> {
     let p = res!(pump("spawn"));
-    match JsFuture::from(p.spawn(payload)).await {
+    match crate::wasm::settle_call(p.spawn(payload)).await {
         Ok(v)  => answered(v),
         Err(e) => Err(err!("{}", refusal(&e); IO, Invalid)),
     }
@@ -103,7 +102,7 @@ pub async fn spawn(payload: &str) -> Outcome<String> {
 /// * `payload` - `{"ids":[…],"timeout_ms":…,"partial":…}` as the tool composed it.
 pub async fn await_reports(payload: &str) -> Outcome<String> {
     let p = res!(pump("awaitReports"));
-    match JsFuture::from(p.await_reports(payload)).await {
+    match crate::wasm::settle_call(p.await_reports(payload)).await {
         Ok(v)  => answered(v),
         Err(e) => Err(err!("{}", refusal(&e); IO, Invalid)),
     }

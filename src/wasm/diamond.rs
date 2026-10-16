@@ -3967,7 +3967,7 @@ async fn web_lock_in(name: &str, wait_ms: Option<u64>) -> Lock {
             Err(e) => { let _ = reject.call1(&JsValue::NULL, &e); },
         }
     });
-    match wasm_bindgen_futures::JsFuture::from(granted).await {
+    match crate::wasm::settle_js(granted).await {
         Ok(release) if release.is_null() => Lock::Busy,
         Ok(release) => match release.dyn_into::<js_sys::Function>() {
             Ok(f)  => Lock::Held(f),
@@ -4908,7 +4908,7 @@ async fn lock_held(name: &str) -> Option<bool> {
         Ok(Ok(p)) => p,
         _         => return None,
     };
-    let snapshot = match wasm_bindgen_futures::JsFuture::from(asked).await {
+    let snapshot = match crate::wasm::settle_js(asked).await {
         Ok(s)  => s,
         Err(_) => return None,
     };

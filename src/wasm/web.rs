@@ -3,8 +3,12 @@
 //! `DaimondWeb` is the one interface the agent's web tools call, and it
 //! hides which driver is attached (none, an iframe, or the Daimond Hands
 //! extension), so the tools do not change when the extension appears.
-//! Every method returns a `Promise`; each binding below awaits it and
-//! hands back the resolved JSON, stringified.
+//! Every method is meant to return a `Promise`, but the bindings do not rest
+//! on it: each is a `catch` import awaited through [`crate::wasm::settle_call`],
+//! so a synchronous answer is read and a throw becomes a refusal rather than
+//! a trap (UNBLOCK-7: `status` is synchronous, and `.then` on its plain object
+//! wedged every web_click and web_type).  Each binding hands back the
+//! resolved JSON, stringified.
 //!
 //! A rejection carries a plain-English `Error` the model is meant to read
 //! and act on ("No page is open. Call web_open first."), so its `message`
@@ -26,7 +30,6 @@ use oxedyne_fe2o3_text::base64;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -37,41 +40,41 @@ extern "C" {
     type Driver;
 
     /// Which driver is attached, what is open, and who is driving.
-    #[wasm_bindgen(method)]
-    fn status(this: &Driver) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn status(this: &Driver) -> Result<JsValue, JsValue>;
 
     /// Dock the panel and navigate it to `url`.
-    #[wasm_bindgen(method)]
-    fn open(this: &Driver, url: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn open(this: &Driver, url: &str) -> Result<JsValue, JsValue>;
 
     /// Read `url` through the gateway, without a driver. `raw` asks for the bytes
     /// themselves rather than the page stripped to text.
-    #[wasm_bindgen(method)]
-    fn fetch(this: &Driver, url: &str, raw: bool) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn fetch(this: &Driver, url: &str, raw: bool) -> Result<JsValue, JsValue>;
 
     /// The accessibility tree of the open page.
-    #[wasm_bindgen(method)]
-    fn snapshot(this: &Driver) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn snapshot(this: &Driver) -> Result<JsValue, JsValue>;
 
     /// The rendered text of the open page.
-    #[wasm_bindgen(method)]
-    fn read(this: &Driver) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn read(this: &Driver) -> Result<JsValue, JsValue>;
 
     /// Click the node named by `node_ref`.
-    #[wasm_bindgen(method)]
-    fn click(this: &Driver, node_ref: u32) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn click(this: &Driver, node_ref: u32) -> Result<JsValue, JsValue>;
 
     /// Type into the node named by `node_ref` (`type` is a Rust keyword).
-    #[wasm_bindgen(method, js_name = "type")]
-    fn type_into(this: &Driver, node_ref: u32, text: &str, submit: bool) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = "type")]
+    fn type_into(this: &Driver, node_ref: u32, text: &str, submit: bool) -> Result<JsValue, JsValue>;
 
     /// Scroll the open page; `amount` may be `undefined` for the default.
-    #[wasm_bindgen(method)]
-    fn scroll(this: &Driver, dir: &str, amount: JsValue) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn scroll(this: &Driver, dir: &str, amount: JsValue) -> Result<JsValue, JsValue>;
 
     /// Undock the panel and drop the page.
-    #[wasm_bindgen(method)]
-    fn close(this: &Driver) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn close(this: &Driver) -> Result<JsValue, JsValue>;
 }
 
 
@@ -91,8 +94,8 @@ extern "C" {
     ///
     /// Renamed on the Rust side only because [`search`] below is the function callers use; the
     /// JavaScript method is `search`, exactly as the contract names it.
-    #[wasm_bindgen(method, js_name = "search")]
-    fn run_query(this: &Searcher, query: &str, opts: &JsValue) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = "search")]
+    fn run_query(this: &Searcher, query: &str, opts: &JsValue) -> Result<JsValue, JsValue>;
 }
 
 
@@ -128,8 +131,8 @@ fn stringify(v: &JsValue) -> Outcome<String> {
 }
 
 /// Await a driver promise, passing a refusal through untouched.
-async fn settle(promise: js_sys::Promise) -> Outcome<String> {
-    match JsFuture::from(promise).await {
+async fn settle(promise: Result<JsValue, JsValue>) -> Outcome<String> {
+    match crate::wasm::settle_call(promise).await {
         Ok(v)  => stringify(&v),
         Err(e) => Err(err!("{}", refusal(&e); Network, Invalid)),
     }
@@ -319,7 +322,7 @@ pub async fn search(query: &str, kind: &str, limit: Option<u32>) -> Outcome<Sear
     if let Some(n) = limit {
         res!(set(&opts, "limit", JsValue::from_f64(n as f64)));
     }
-    let v = match JsFuture::from(s.run_query(query, opts.as_ref())).await {
+    let v = match crate::wasm::settle_call(s.run_query(query, opts.as_ref())).await {
         Ok(v)  => v,
         Err(e) => return Err(err!("{}", refusal(&e); Network, Invalid)),
     };
@@ -550,12 +553,8 @@ async fn egress_ask_raw(turn: &str, tool: &str, url: &str, detail: &str, alone: 
         Err(_) => return None,
     };
     // The contract says a Promise; a value returned outright is read anyway rather than refused
-    // on a technicality, since it is still an answer.
-    let promise = match ret.dyn_into::<js_sys::Promise>() {
-        Ok(p)  => p,
-        Err(v) => return v.as_string(),
-    };
-    match JsFuture::from(promise).await {
+    // on a technicality, since it is still an answer.  `settle_js` reads both.
+    match crate::wasm::settle_js(ret).await {
         Ok(v)  => v.as_string(),
         Err(_) => None,
     }

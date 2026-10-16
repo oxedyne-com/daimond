@@ -3433,6 +3433,8 @@
 	'turn.peer_running': 'Läuft auf deinem anderen Gerät.',
 	'turn.peer_running_named': '{name} macht das gerade.',
 	'turn.peer_failed': 'Dein anderes Gerät konnte das nicht abschließen.',
+	'turn.peer_interrupted': 'Auf deinem anderen Gerät unterbrochen.',
+	'turn.peer_interrupted_named': 'Auf {name} unterbrochen.',
 	'turn.peer_runhere': 'Hier ausführen',
 	'turn.peer_answeragain': 'Erneut beantworten',
 	'turn.peer_consent': 'Dein anderes Gerät braucht deine Erlaubnis, um {act}.',

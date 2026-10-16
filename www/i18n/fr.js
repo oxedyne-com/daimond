@@ -3441,6 +3441,8 @@
 	'turn.peer_running': 'En cours sur votre autre appareil.',
 	'turn.peer_running_named': '{name} s’en occupe.',
 	'turn.peer_failed': 'Votre autre appareil n’a pas pu terminer cela.',
+	'turn.peer_interrupted': 'Interrompu sur votre autre appareil.',
+	'turn.peer_interrupted_named': 'Interrompu sur {name}.',
 	'turn.peer_runhere': 'Exécuter ici',
 	'turn.peer_answeragain': 'Répondre à nouveau',
 	'turn.peer_consent': 'Votre autre appareil a besoin de votre permission pour {act}.',

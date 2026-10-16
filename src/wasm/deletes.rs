@@ -15,7 +15,6 @@ use crate::llm::json_escape;
 use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 /// The global the page installs to ask the person about a held delete.
@@ -55,12 +54,9 @@ pub async fn ask_to_go_on(keeper: &str, path: &str, count: usize, limit: usize, 
         Ok(v)  => v,
         Err(_) => return false,
     };
-    let answer = match ret.dyn_into::<js_sys::Promise>() {
-        Ok(p)  => match JsFuture::from(p).await {
-            Ok(v)  => v,
-            Err(_) => return false,
-        },
-        Err(v) => v,
+    let answer = match crate::wasm::settle_js(ret).await {
+        Ok(v)  => v,
+        Err(_) => return false,
     };
     answer.as_bool() == Some(true)
 }

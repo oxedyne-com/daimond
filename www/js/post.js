@@ -373,6 +373,31 @@
 		return cat([head, biv, bct]);
 	}
 
+	/// A REFUSAL, TYPED WHERE IT IS RAISED (TAKEROW, 2026-10-16). `takeRow` keeps a row
+	/// that will not open as `bad:<addr>` and lets the ack drop it from the relay, which
+	/// is right only when the record itself is refused: a tag that fails, a record not
+	/// sealed to this device, a record that is malformed. Every other throw -- WebCrypto
+	/// or a key not ready, no message format loaded, a storage error -- is this device
+	/// failing, not the record, and the row must stay on the relay for the next collect.
+	/// So each refusal carries `refusal` (a short code: short, not_sealed, not_for_you,
+	/// damaged, malformed, not_a_post) and an error without one is transient. Read by
+	/// `isRefusal`, never by matching the sentence, which is translated.
+	///
+	/// NEVER THROWS ITSELF. A wasm-bindgen refusal arrives as a bare STRING, and this
+	/// file is strict, so setting a property on it threw a TypeError -- the refusal read
+	/// as transient and a stranger's bad row stalled the box (second check, P1). A
+	/// value that is not an object is wrapped in an Error first.
+	function refused(code, err) {
+		if (!err || (typeof err !== 'object' && typeof err !== 'function')) err = new Error(String(err));
+		try { err.refusal = String(code); }
+		catch (e) { var w = new Error(String(err && err.message || err)); w.refusal = String(code); return w; }
+		return err;
+	}
+	function isRefusal(e) { return !!(e && e.refusal); }
+	/// A GCM tag that failed: WebCrypto's own typed answer for a key or a ciphertext that
+	/// does not match. Anything else a decrypt throws is the engine, not the record.
+	function tagFailed(e) { return !!(e && e.name === 'OperationError'); }
+
 	/// Open a sealed envelope with this device's sealing key, and answer BOTH the
 	/// plaintext artefact and the content key that opened it.
 	///
@@ -382,19 +407,19 @@
 	async function unsealFull(bytes) {
 		var b = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
 		if (b.length < 4 + 32 + 1 + SLOT + IV + 16) {
-			throw new Error(tOr('post.err_short', 'That message is too short to be one.'));
+			throw refused('short', new Error(tOr('post.err_short', 'That message is too short to be one.')));
 		}
 		for (var m = 0; m < 4; m++) {
 			if (b[m] !== MAGIC[m]) {
-				throw new Error(tOr('post.err_not_sealed',
-					'That is not a sealed Daimond message.'));
+				throw refused('not_sealed', new Error(tOr('post.err_not_sealed',
+					'That is not a sealed Daimond message.')));
 			}
 		}
 		var epk = b.slice(4, 36);
 		var n   = b[36];
 		var end = 37 + n * SLOT;
 		if (n === 0 || b.length < end + IV + 16) {
-			throw new Error(tOr('post.err_short', 'That message is too short to be one.'));
+			throw refused('short', new Error(tOr('post.err_short', 'That message is too short to be one.')));
 		}
 		var head = b.slice(0, end);
 		var aad  = cat([new Uint8Array(MAGIC), epk]);
@@ -408,7 +433,12 @@
 		// One shared secret, one key, tried against every slot. The recipient does
 		// not know which slot is theirs, and an envelope that said would be an
 		// envelope that names its readers.
-		var bits = await DaimondIdentity.sharedSecret(epk);
+		// A LOW-ORDER SENDER KEY (all-zero shared secret) is the record's fault: WebCrypto
+		// refuses it with OperationError (Secure Curves), and identity.js's pure-JS path
+		// answers the same name. Anything else here is this device, and transient.
+		var bits;
+		try { bits = await DaimondIdentity.sharedSecret(epk); }
+		catch (e) { throw tagFailed(e) ? refused('malformed', e) : e; }
 		var k    = await slotKey(bits, epk, mine);
 
 		var ck = null;
@@ -419,11 +449,15 @@
 					{ name: 'AES-GCM', iv: b.slice(at, at + IV), additionalData: aad },
 					k, b.slice(at + IV, at + SLOT)));
 				break;
-			} catch (e) { ck = null; }
+			} catch (e) {
+				// Not our slot -- or the engine failing, which is no answer about the slot.
+				if (!tagFailed(e)) throw e;
+				ck = null;
+			}
 		}
 		if (!ck) {
-			throw new Error(tOr('post.err_not_for_you',
-				'This message was not sealed to any key this device holds.'));
+			throw refused('not_for_you', new Error(tOr('post.err_not_for_you',
+				'This message was not sealed to any key this device holds.')));
 		}
 		var bodyKey = await crypto.subtle.importKey(
 			'raw', ck, { name: 'AES-GCM' }, false, ['decrypt']);
@@ -435,12 +469,16 @@
 		// time. This file's own header forbids exactly that, for the reason voice.js
 		// states: a second way of doing this is how one of the two stops being
 		// reviewed.
-		return {
-			plain: new Uint8Array(await crypto.subtle.decrypt(
+		var plain;
+		try {
+			plain = new Uint8Array(await crypto.subtle.decrypt(
 				{ name: 'AES-GCM', iv: b.slice(end, end + IV), additionalData: head },
-				bodyKey, b.slice(end + IV))),
-			ck: ck,
-		};
+				bodyKey, b.slice(end + IV)));
+		} catch (e) {
+			// Our slot opened and the body did not: the head or the body was altered.
+			throw tagFailed(e) ? refused('damaged', e) : e;
+		}
+		return { plain: plain, ck: ck };
 	}
 
 	/// The plaintext artefact alone, which is what most callers want.
@@ -635,14 +673,25 @@
 	/// knows nothing about groups at all. A build with no group module answers no
 	/// to both, and behaves exactly as it did before groups existed.
 	async function openEnvelope(b64, expectAddr) {
-		var opened = await unsealFull(b64dec(b64));
+		var raw;
+		try { raw = b64dec(b64); } catch (e) { throw refused('malformed', e); }
+		var opened = await unsealFull(raw);
 		var plain = opened.plain;
 		var b = bridge();
 		if (!b || typeof b.read !== 'function') {
 			throw new Error(tOr('post.err_no_bridge',
 				'This build cannot compose a message: its message format is not loaded.'));
 		}
-		var got = JSON.parse(b.read(plain));
+		// The format is loaded (just checked). Its REFUSAL is a string (wasm-bindgen's
+		// `Err(JsValue::from_str(..))`), and that alone is the record's fault: malformed.
+		// Anything else it throws -- a trap (RuntimeError, a panic), a TypeError -- is no
+		// verdict on the record, and goes up untyped: transient.
+		var read;
+		try { read = b.read(plain); }
+		catch (e) { if (typeof e === 'string') throw refused('malformed', new Error(e)); throw e; }
+		var got;
+		try { got = JSON.parse(read); } catch (e) { throw refused('malformed', e); }
+		if (!got || typeof got !== 'object') throw refused('malformed', new Error('not a reading'));
 		if (got.kind !== 'post') {
 			// THE READING GOES OUT WITH THE REFUSAL. Refusing is still the right
 			// answer -- nothing but a message may reach the message list -- but a
@@ -656,27 +705,26 @@
 				'That is not a message; it is a {kind}.', { kind: String(got.kind || '?') }));
 			notPost.kind    = String(got.kind || '?');
 			notPost.reading = got;
-			throw notPost;
+			throw refused('not_a_post', notPost);
 		}
 		var mine = await DaimondIdentity.publicKeyRaw();
 		if (!mine || hex(mine) !== String(got.post.to)) {
+			// A group module that THROWS has not answered; that is transient, not a no.
 			var g = null;
-			try {
-				if (window.DaimondGroup && DaimondGroup.accepts) {
-					g = await DaimondGroup.accepts(String(got.post.to), got);
-				}
-			} catch (e) { g = null; }
+			if (window.DaimondGroup && DaimondGroup.accepts) {
+				g = await DaimondGroup.accepts(String(got.post.to), got);
+			}
 			if (!g) {
-				throw new Error(tOr('post.err_not_addressed',
-					'That message is addressed to a different key from this one.'));
+				throw refused('not_for_you', new Error(tOr('post.err_not_addressed',
+					'That message is addressed to a different key from this one.')));
 			}
 			got.gid   = g.gid;
 			got.gname = g.name || '';
 			got.gop   = !!g.op;
 		}
 		if (expectAddr && String(expectAddr) !== String(got.address)) {
-			throw new Error(tOr('post.err_addr_mismatch',
-				'The message the relay named is not the message it carried.'));
+			throw refused('malformed', new Error(tOr('post.err_addr_mismatch',
+				'The message the relay named is not the message it carried.')));
 		}
 		// THE EVIDENCE, carried out beside the reading of it. `art` is the bytes the
 		// signature is over; `ck` is what opened the body. A caller that only wants
@@ -2036,7 +2084,11 @@
 		// no peer module skips the block entirely.
 		if (window.DaimondPeer && DaimondPeer.peek) {
 			var peer = null;
-			try { peer = await DaimondPeer.peek(row.envelope); } catch (e) { peer = null; }
+			// `peek` answers null for a row that is not a peer envelope or that the seal
+			// refuses; it THROWS only when this device could not open it (TAKEROW). Such
+			// a row is not judged -- the message read below would call a DPY row "not
+			// sealed" and drop it -- but left on the relay, and the pass stops.
+			try { peer = await DaimondPeer.peek(row.envelope); } catch (e) { return retry(e, row); }
 			if (peer) {
 				// OUR OWN dispatch: leave it on the relay for the peer to run and ack.
 				// The sender collecting its own post must NOT advance the ack cursor past
@@ -2054,7 +2106,8 @@
 				// cursor advance.
 				if (DaimondPeer.isOwnDispatch && DaimondPeer.isOwnDispatch(peer)) {
 					var ours = false;
-					try { ours = await DaimondPeer.verifyEnvelope(peer); } catch (e) { ours = false; }
+					// A throw is no verdict (TAKEROW): left on the relay, never passed as forged.
+					try { ours = await DaimondPeer.verifyEnvelope(peer); } catch (e) { return retry(e, row); }
 					if (ours) {
 						// HOLD ONLY WHILE THE TURN IS LIVE. An own errand left on the relay is
 						// what a peer runs -- but once THIS device has settled the turn (it ran
@@ -2090,7 +2143,8 @@
 					var claim = await claimWork(DaimondPeer.workKey(peer));
 					if (!claim) return hold(peer.turnId);	// already being run on this device
 					var signed = false;
-					try { signed = await DaimondPeer.verifyEnvelope(peer); } catch (e) { signed = false; }
+					try { signed = await DaimondPeer.verifyEnvelope(peer); }
+					catch (e) { claim.release(); return retry(e, row); }	// no verdict: not dropped
 					if (!signed) {
 						// The forged-errand defence `absorb` applies, applied before the hold,
 						// so a forgery can never pin the ack cursor.
@@ -2106,8 +2160,11 @@
 				// page memory and returns. Nothing folded here may call a locked verb of this
 				// module or wait on the network.
 				var noted = null;
+				// A THROW FROM ABSORB IS NO VERDICT (TAKEROW). Its verify could not check, or
+				// a handler failed: the row is left on the relay and the pass stops. Only a
+				// definite answer -- verified, or a signature checked and wrong -- passes it.
 				try { noted = await DaimondPeer.absorb(peer, row); }
-				catch (e) { log('a peer envelope would not apply', e); }
+				catch (e) { return retry(e, row); }
 				// A NOTE FOR ANOTHER DEVICE STAYS ON THE RELAY FOR IT (2026-09-24). Page
 				// memory is not the mailbox record, so a note this device folds reaches no
 				// other device through the parcel, and the ack is one watermark for the whole
@@ -2199,6 +2256,13 @@
 			// stranger's first message does, and `addShare` is the only thing that
 			// puts any of it on the machine.
 			if (e && e.kind === 'share' && keepShare(st, row, e.reading)) return SHARE;
+			// ONLY A REFUSAL IS KEPT AS BAD (TAKEROW, 2026-10-16). A throw that is not the
+			// seal refusing this record -- no format loaded, a key or WebCrypto not ready,
+			// a storage error -- says nothing about the row, and a `bad:` row here is the
+			// ack's licence to drop the only copy for every device. So nothing is
+			// recorded, the pass stops before `seen` or `through` reach this row, and the
+			// next collect reads it again.
+			if (!isRefusal(e)) return retry(e, row);
 			// KEPT, NOT DROPPED. A row that will not open is still a row the
 			// ack would tell the relay to let go of, so it has to leave a
 			// trace somebody can be shown rather than vanishing between two
@@ -2254,6 +2318,34 @@
 	var ROSTER     = { got: 0, notes: 1, unreadable: 0 };
 	var UNREADABLE = { got: 0, notes: 0, unreadable: 1 };
 	var NOTHING    = { got: 0, notes: 0, unreadable: 0 };
+	/// A row this device could not open, through no fault of the row (TAKEROW). Nothing
+	/// is recorded and `collect` stops the pass on it, so neither `seen` nor `through`
+	/// reaches it and the relay keeps it for the next collect.
+	function retry(e, row) {
+		log('a row could not be opened on this device; left on the relay', e);
+		return { got: 0, notes: 0, unreadable: 0, retry: true,
+			seq: row ? row.seq | 0 : 0, addr: row ? String(row.addr || '') : '',
+			why: String((e && e.message) || e || '').slice(0, 160) };
+	}
+
+	/// A STALL MADE SEEN (TAKEROW). Stopping the pass on a row this device could not
+	/// open is right while the fault is passing; a fault misjudged as passing would
+	/// stall the box for good, and silently. So two passes in a row stopped on the
+	/// same row say so on the debug feed -- `collect.stall`, naming the row and the
+	/// error -- once per row per page load. No UI: the stall is the developer's to see.
+	var _stallSeq = -1, _stallTold = {};
+	function noteStall(took) {
+		if (!took) { _stallSeq = -1; return; }
+		var again = _stallSeq === took.seq;
+		_stallSeq = took.seq;
+		if (!again || _stallTold[took.seq]) return;
+		_stallTold[took.seq] = 1;
+		try {
+			if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+				DEBUG_SHARE.event('collect.stall', { seq: took.seq, addr: took.addr.slice(0, 64), err: took.why });
+			}
+		} catch (e) { /* the feed is not a dependency of the collect */ }
+	}
 	// A diamond, waiting in the tray. None of `collect`'s three counters is about
 	// it -- it is not a message, not a relay notice and not a failure -- so it
 	// adds nothing to them and is counted where it is held, by `shares()`.
@@ -2402,7 +2494,7 @@
 		// must still be on the relay to be run again, and a hold an older build wrote. A
 		// note's row is looked for again -- never folded -- only while its device is awake
 		// (`noteLookAgain`), which is when it can take it: a row gone is a note taken.
-		var prevSeen = st.seen | 0, reread = {}, recheck = {}, present = {}, whole = false;
+		var prevSeen = st.seen | 0, reread = {}, recheck = {}, present = {}, whole = false, stopped = false;
 		var hiSeq = 0;		// the box's high-water, as the collect answers it
 		var ph = Array.isArray(st.holds) ? st.holds : [];
 		var presenceView = null;
@@ -2469,6 +2561,10 @@
 				if (recheck[seq]) continue;		// still there: not taken yet. Looked at, not folded.
 				if (seq <= prevSeen && !reread[seq]) continue;
 				var took = await takeRow(st, row, work);
+				// LEFT FOR THE NEXT COLLECT (TAKEROW): stop here, before `seen` or `through`
+				// moves onto this row, and leave every later row unread. The pass is not
+				// whole, so no hold is judged gone off what it did not read.
+				if (took.retry) { stopped = took; break; }
 				if (reread[seq]) {
 					delete reread[seq];
 					st.holds = st.holds.filter(function (x) { return (x.seq | 0) !== seq; });
@@ -2496,6 +2592,7 @@
 				if (seq > (st.seen | 0)) st.seen = seq;
 				st.through = Math.max(st.through | 0, watermark(st));
 			}
+			if (stopped) break;
 			parkAgain();			// a request that was served proves the session is back
 			more = !!r.json.more;
 			hiSeq = Math.max(hiSeq, r.json.seq | 0);
@@ -2536,7 +2633,8 @@
 			try { if (window.DaimondSync && DaimondSync.nudge) DaimondSync.nudge(); }
 			catch (e) { /* no sync module, or it declined: the ack below still stands */ }
 		}
-		return { ok: true, got: got, notes: notes, unreadable: badRows, more: more };
+		noteStall(stopped || null);
+		return { ok: true, got: got, notes: notes, unreadable: badRows, more: more, stopped: !!stopped };
 	}
 
 	/// Drop this device's OWN hold on `turnId`, because the turn is now settled here (it
@@ -2716,7 +2814,7 @@
 				if (!c.ok) return c;
 				var a = await ackThrough();
 				return { ok: true, got: c.got, notes: c.notes, unreadable: c.unreadable,
-					acked: a.acked | 0, why: a.why || '' };
+					acked: a.acked | 0, why: a.why || '', stopped: !!c.stopped };
 			});
 		} finally { startWork(work); }
 	}
@@ -3170,7 +3268,10 @@
 				var rr = null;
 				try { rr = await round(); }
 				catch (e) { log('a round failed; the next park asks again', e); }
-				if (!rr || (rr.ok === false && rr.why !== 'locked')) {
+				// A PASS STOPPED ON A ROW IT COULD NOT OPEN (TAKEROW) waits on the ladder
+				// too: the box stays above `seen`, so the park answers at once and a stall
+				// was a park, a collect and an ack about once a second (second check, 4).
+				if (!rr || (rr.ok === false && rr.why !== 'locked') || rr.stopped) {
 					await sleep(parkBackoff(++_roundFails));
 					continue;
 				}

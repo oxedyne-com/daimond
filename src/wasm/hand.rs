@@ -24,7 +24,6 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -35,29 +34,29 @@ extern "C" {
     type Relay;
 
     /// Whether a hand is paired, which machine it is, and what it can enforce.
-    #[wasm_bindgen(method)]
-    fn status(this: &Relay) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn status(this: &Relay) -> Result<JsValue, JsValue>;
 
     /// Run one command, resolving when it has finished.
     ///
     /// The relay streams the output to the panel as it arrives; what comes
     /// back here is the whole run, because a tool result is one blob and the
     /// model reads it once.  The live stream is for the person watching.
-    #[wasm_bindgen(method)]
-    fn run(this: &Relay, spec_json: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn run(this: &Relay, spec_json: &str) -> Result<JsValue, JsValue>;
 
     /// What the hand is still running, standing process groups included.
-    #[wasm_bindgen(method)]
-    fn runs(this: &Relay) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn runs(this: &Relay) -> Result<JsValue, JsValue>;
 
     /// The output a page reload left this page holding for one run.
-    #[wasm_bindgen(method)]
-    fn held(this: &Relay, id: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn held(this: &Relay, id: &str) -> Result<JsValue, JsValue>;
 
     /// Signal one run by the identifier it was given, resolving when the
     /// message has been handed over.
-    #[wasm_bindgen(method)]
-    fn signal(this: &Relay, id: &str, sig: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn signal(this: &Relay, id: &str, sig: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -100,8 +99,8 @@ fn stringify(v: &JsValue) -> Outcome<String> {
 }
 
 /// Await a relay promise, passing a refusal through untouched.
-async fn settle(promise: js_sys::Promise) -> Outcome<String> {
-    match JsFuture::from(promise).await {
+async fn settle(promise: Result<JsValue, JsValue>) -> Outcome<String> {
+    match crate::wasm::settle_call(promise).await {
         Ok(v)  => stringify(&v),
         Err(e) => Err(err!("{}", refusal(&e); IO, Invalid)),
     }
@@ -160,7 +159,7 @@ pub async fn status() -> Outcome<String> {
 /// * `spec_json` - The `exec` request, already rendered as the wire's JSON.
 pub async fn run(spec_json: &str) -> Outcome<String> {
     let r = res!(relay());
-    match JsFuture::from(r.run(spec_json)).await {
+    match crate::wasm::settle_call(r.run(spec_json)).await {
         Ok(v)  => stringify(&v),
         Err(e) => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e)))),
     }
@@ -208,7 +207,7 @@ pub async fn file(spec_json: &str) -> Outcome<String> {
         Ok(p)  => p,
         Err(_) => return Ok(no_file_door()),
     };
-    match JsFuture::from(p).await {
+    match crate::wasm::settle_js(p).await {
         Ok(v)  => stringify(&v),
         Err(e) => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e)))),
     }

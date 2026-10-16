@@ -33,7 +33,6 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -44,16 +43,16 @@ extern "C" {
     type Panel;
 
     /// Read one view of the panel, and answer with the text a model reads.
-    #[wasm_bindgen(method)]
-    fn read(this: &Panel, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn read(this: &Panel, req: &str) -> Result<JsValue, JsValue>;
 
     /// Work out exactly what one act would put on the wire, without sending any of it.
-    #[wasm_bindgen(method)]
-    fn compose(this: &Panel, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn compose(this: &Panel, req: &str) -> Result<JsValue, JsValue>;
 
     /// Send what a `compose` composed, named by the token it minted for it.
-    #[wasm_bindgen(method)]
-    fn commit(this: &Panel, token: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn commit(this: &Panel, token: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -90,8 +89,8 @@ fn panel() -> Outcome<Panel> {
 }
 
 /// Settle a driver promise that answers with a string.
-async fn text(p: js_sys::Promise) -> Outcome<String> {
-    let v = match JsFuture::from(p).await {
+async fn text(p: Result<JsValue, JsValue>) -> Outcome<String> {
+    let v = match crate::wasm::settle_call(p).await {
         Ok(v)  => v,
         Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
     };

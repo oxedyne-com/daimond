@@ -51,8 +51,19 @@
 	/// Add one event. `what` is a short fixed string from the app's own code --
 	/// never anything a user or a model typed, so a trail cannot be made to
 	/// carry content by writing it into a chat.
+	// Who hears a note as it is written (UNBLOCK-7 F2): the panic hook writes 'WASM PANIC'
+	// here and nowhere else, so the page learns its engine is poisoned from the trail.
+	var listeners = [];
+	function onNote(fn) { if (typeof fn === 'function') listeners.push(fn); }
+	function tell(what, detail) {
+		for (var i = 0; i < listeners.length; i++) {
+			try { listeners[i](String(what), detail); } catch (e) { /* a listener never breaks the trail */ }
+		}
+	}
+
 	function note(what, detail) {
 		if (!what) return;
+		tell(what, detail);
 		try {
 			var rows = read();
 			rows.push({
@@ -168,6 +179,7 @@
 
 	window.DaimondTrail = {
 		note:     note,
+		onNote:   onNote,
 		text:     text,
 		clear:    clear,
 		rows:     read,

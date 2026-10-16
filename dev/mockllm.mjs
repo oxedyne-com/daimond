@@ -1156,6 +1156,12 @@ const stream = async (res, model, p) => {
 	res.end();
 };
 
+// Every tool schema any request has offered, by name, served by GET /__tools. A union,
+// not the last request's set: several devices share one mock, and which tools a request
+// carried is already in the log by name.
+const toolSchemas = {};
+let toolsAt = null;
+
 const server = http.createServer((req, res) => {
 	if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); return res.end(); }
 
@@ -1177,6 +1183,14 @@ const server = http.createServer((req, res) => {
 		// questions.
 		return sendJson(res, { log: LOG, port: PORT, pid: process.pid,
 			sha: SHA, directives: DIRECTIVES });
+	}
+
+	// THE TOOL SCHEMAS the app has offered, whole. The log keeps only their names (a
+	// schema set is tens of KB and rides every request), but dev/rig/toolsmoke.mjs needs
+	// each tool's `required` to build a valid call, and reading them off the wire is the
+	// only list that cannot drift from what the bridge actually registers.
+	if (req.method === 'GET' && req.url.startsWith('/__tools')) {
+		return sendJson(res, { at: toolsAt, tools: Object.values(toolSchemas) });
 	}
 
 	if (req.method === 'GET' && req.url.startsWith('/v1/models')) {
@@ -1202,6 +1216,10 @@ const server = http.createServer((req, res) => {
 		}
 
 		const messages = payload.messages || [];
+		if (Array.isArray(payload.tools) && payload.tools.length) {
+			for (const t of payload.tools) if (t.function?.name) toolSchemas[t.function.name] = t;
+			toolsAt = new Date().toISOString();
+		}
 		// A blind model refuses a picture; the count is needed either way, because a
 		// verifier reads it back to say which leg carried one.
 		const images  = imageCount(messages);

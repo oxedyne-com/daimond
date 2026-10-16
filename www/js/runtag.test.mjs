@@ -111,7 +111,8 @@ const tagger = lift(SRC, 'tagPrompt');
 check('tagPrompt is a function of daimond.js', !!tagger);
 if (run) {
 	check('runTurn re-tags no row by position (pause and failed-with-partial paths)',
-		!/\.iturn = umid/.test(run) && (run.match(/tagPrompt\(chat, umid\)/g) || []).length === 2,
+		// Three since UNBLOCK-7 F2: the engine killed under the turn hands it back as the road does.
+		!/\.iturn = umid/.test(run) && (run.match(/tagPrompt\(chat, umid\)/g) || []).length === 3,
 		(run.match(/[^\n]*\.iturn = umid[^\n]*/g) || []).map((l) => l.trim()));
 }
 if (tagger) {

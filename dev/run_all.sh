@@ -1144,6 +1144,10 @@ if [ $# -eq 0 ]; then
 	# No browser launch may move Chromium's shared memory onto the disk. With TMPDIR on ~/.cache,
 	# the `disable-dev-shm-usage` switch had every verifier writing 37-60 GB/h to the NVMe (2026-10-09).
 	static_one devshm       bash dev/breakproof_devshm.sh
+	# Every extern import is `catch` and none returns a Promise, no unchecked cast makes one, and
+	# `JsFuture` is named only in `settle_js`: on 2026-10-14 a synchronous `DaimondWeb.status` made
+	# `.then` throw inside the wasm, and every web_click and web_type wedged its runner (UNBLOCK-7).
+	static_one jsfuture     bash dev/breakproof_jsfuture.sh
 fi
 
 # ── Phase 0b: the Rust tests, counted ───────────────────────────────────────

@@ -132,7 +132,41 @@ export const chromium = new Proxy(core.chromium, {
 	},
 });
 
-export const webkit	= core.webkit;
+// WEBKIT GETS SAFARI'S STORAGE (16 Oct 2026).  The Linux WebKit Playwright bundles (WPE,
+// r2311, and r2336 alike) ships the Storage API and the File System API compiled in but
+// switched OFF, so `navigator.storage` is undefined, the app's OPFS root cannot open and no
+// Diamond can be written.  Safari ships them on, so a WebKit run without them is testing a
+// browser nobody has.  `--features` takes effect for persistent contexts only (an ephemeral
+// `newContext()` still has no OPFS); dev/rig/capped.sh execs the real browser with "$@", so
+// the flag passes through the device cap unchanged.  Diagnosis:
+// ~/usr/code/ai/claude/notes/daimond_rig_20261016/diag_webkit_diamond.md.
+export const WEBKIT_SAFARI_FEATURES = '--features=+StorageAPI,+StorageAPIEstimate,+FileSystem,'
+	+ '+FileSystemWritableStream,+AccessHandle';
+
+function safariFeatures(opts = {}) {
+	const args = opts.args || [];
+	if (args.some((a) => a.startsWith('--features='))) {
+		throw new Error(`a WebKit launch passed its own --features; merge it with ${WEBKIT_SAFARI_FEATURES} `
+			+ 'in dev/pw.mjs rather than replacing the storage features Safari ships.');
+	}
+	return { ...opts, args: [ ...args, WEBKIT_SAFARI_FEATURES ] };
+}
+
+const WK_LAUNCH = {
+	launch:			(opts) => core.webkit.launch(safariFeatures(opts)),
+	launchPersistentContext:	(dir, opts) => core.webkit.launchPersistentContext(dir, safariFeatures(opts)),
+	launchServer:		(opts) => core.webkit.launchServer(safariFeatures(opts)),
+};
+
+/// Playwright's WebKit, whose every launch carries `WEBKIT_SAFARI_FEATURES`.
+export const webkit = new Proxy(core.webkit, {
+	get(t, k) {
+		if (Object.hasOwn(WK_LAUNCH, k)) return WK_LAUNCH[k];
+		const v = Reflect.get(t, k, t);
+		return typeof v === 'function' ? v.bind(t) : v;
+	},
+});
+
 export const firefox	= core.firefox;
 export const devices	= core.devices;
 

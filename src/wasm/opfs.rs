@@ -72,7 +72,6 @@ use std::path::{Component, Path};
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
-use wasm_bindgen_futures::JsFuture;
 use web_sys::{
     Blob,
     File,
@@ -429,10 +428,10 @@ async fn disk_name(dir: &FileSystemDirectoryHandle, name: &str) -> String {
     // A browser that refuses the unescaped name REJECTS the promise (the File System Standard
     // says so, and the TypeError this whole module exists for arrived that way), so a lookup
     // costs nothing but an answer of "no".
-    if JsFuture::from(dir.get_file_handle(name)).await.is_ok() {
+    if crate::wasm::settle_js(dir.get_file_handle(name)).await.is_ok() {
         return name.to_string();
     }
-    if JsFuture::from(dir.get_directory_handle(name)).await.is_ok() {
+    if crate::wasm::settle_js(dir.get_directory_handle(name)).await.is_ok() {
         return name.to_string();
     }
     enc
@@ -458,7 +457,7 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
         return Err(err!("OPFS: this browser exposes no getDirectory (an older Safari, or \
             Private Browsing); persistent workspace storage is unavailable here."; IO, Missing));
     }
-    let dir_val = res!(JsFuture::from(storage.get_directory()).await
+    let dir_val = res!(crate::wasm::settle_js(storage.get_directory()).await
         .map_err(|e| err!("OPFS: getDirectory failed: {}.", js_err(&e); IO, File)));
     let dir: FileSystemDirectoryHandle = res!(dir_val.dyn_into()
         .map_err(|_| err!("OPFS: getDirectory did not return a directory handle."; IO, File)));
@@ -477,7 +476,7 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
     // other three doors cannot see.
     let opts = FileSystemGetDirectoryOptions::new();
     opts.set_create(true);
-    let sub_val = res!(JsFuture::from(dir.get_directory_handle_with_options(&ns, &opts)).await
+    let sub_val = res!(crate::wasm::settle_js(dir.get_directory_handle_with_options(&ns, &opts)).await
         .map_err(|e| err!("OPFS: opening account subdirectory '{}' failed: {}.", ns, js_err(&e); IO, File)));
     let sub: FileSystemDirectoryHandle = res!(sub_val.dyn_into()
         .map_err(|_| err!("OPFS: account subdirectory was not a directory handle."; IO, File)));
@@ -557,7 +556,7 @@ async fn descend(
         }
         let opts = FileSystemGetDirectoryOptions::new();
         opts.set_create(true);
-        let next_val = res!(JsFuture::from(
+        let next_val = res!(crate::wasm::settle_js(
                 dir.get_directory_handle_with_options(&name, &opts)).await
             .map_err(|e| err!("OPFS: open/create dir '{}' failed: {}.", name, js_err(&e); IO, File)));
         dir = res!(next_val.dyn_into()
@@ -580,7 +579,7 @@ async fn descend_dir(
     let mut dir = root.clone();
     for want in components {
         let name = disk_name(&dir, &want).await;
-        let next_val = res!(JsFuture::from(dir.get_directory_handle(&name)).await
+        let next_val = res!(crate::wasm::settle_js(dir.get_directory_handle(&name)).await
             .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_err(&e); IO, File, Read)));
         dir = res!(next_val.dyn_into()
             .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File, Read)));
@@ -608,7 +607,7 @@ async fn open_parent(
             leaf = name;
             break;
         }
-        let next_val = res!(JsFuture::from(dir.get_directory_handle(&name)).await
+        let next_val = res!(crate::wasm::settle_js(dir.get_directory_handle(&name)).await
             .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_err(&e); IO, File)));
         dir = res!(next_val.dyn_into()
             .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File)));
@@ -629,11 +628,11 @@ pub(in crate::wasm) async fn write_file(root: FileRoot, path: &str, content: &[u
 /// The bytes of a file handle as they stand committed, which a writable's staged bytes are not
 /// until it closes.
 async fn committed(file: &FileSystemFileHandle, leaf: &str) -> Outcome<Vec<u8>> {
-    let blob_val = res!(JsFuture::from(file.get_file()).await
+    let blob_val = res!(crate::wasm::settle_js(file.get_file()).await
         .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let blob: File = res!(blob_val.dyn_into()
         .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
-    let buf_val = res!(JsFuture::from(blob.array_buffer()).await
+    let buf_val = res!(crate::wasm::settle_js(blob.array_buffer()).await
         .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     Ok(js_sys::Uint8Array::new(&buf_val).to_vec())
 }
@@ -663,7 +662,7 @@ pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: 
             return Err(err!("OPFS: a write of '{}' was bound to bytes that could not be read, so \
                 there is nothing to compare.", path; IO, File, Write, Invalid));
         }
-        let had: Option<FileSystemFileHandle> = match JsFuture::from(dir.get_file_handle(&leaf))
+        let had: Option<FileSystemFileHandle> = match crate::wasm::settle_js(dir.get_file_handle(&leaf))
             .await
         {
             Ok(v)  => v.dyn_into().ok(),
@@ -680,13 +679,13 @@ pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: 
 
     let opts = FileSystemGetFileOptions::new();
     opts.set_create(true);
-    let file_val = res!(JsFuture::from(
+    let file_val = res!(crate::wasm::settle_js(
             dir.get_file_handle_with_options(&leaf, &opts)).await
         .map_err(|e| err!("OPFS: open/create file '{}' failed: {}.", leaf, js_err(&e); IO, File)));
     let file: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File)));
 
-    let writable_val = res!(JsFuture::from(file.create_writable()).await
+    let writable_val = res!(crate::wasm::settle_js(file.create_writable()).await
         .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
     let writable: FileSystemWritableFileStream = res!(writable_val.dyn_into()
         .map_err(|_| err!("OPFS: writable for '{}' had the wrong type.", leaf; IO, File, Write)));
@@ -715,7 +714,7 @@ pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: 
     buf.copy_from(content);
     let write_promise = res!(writable.write_with_buffer_source(&buf)
         .map_err(|e| err!("OPFS: queue write for '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
-    res!(JsFuture::from(write_promise).await
+    res!(crate::wasm::settle_js(write_promise).await
         .map_err(|e| err!("OPFS: write '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
 
     // THE RE-CHECK, with the bytes staged: what is committed now against what the act was bound
@@ -725,7 +724,7 @@ pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: 
         let now = match committed(&file, &leaf).await {
             Ok(b)  => b,
             Err(e) => {
-                let _ = JsFuture::from(writable.abort()).await;
+                let _ = crate::wasm::settle_js(writable.abort()).await;
                 return Err(e);
             },
         };
@@ -734,13 +733,13 @@ pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: 
             _                    => Seen::of(Some(&now)),
         };
         if &found != want {
-            let _ = JsFuture::from(writable.abort()).await;
+            let _ = crate::wasm::settle_js(writable.abort()).await;
             return Ok(Some(found));
         }
     }
 
     // `close` is inherited from `WritableStream` and flushes the file.
-    res!(JsFuture::from(writable.close()).await
+    res!(crate::wasm::settle_js(writable.close()).await
         .map_err(|e| err!("OPFS: close '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
     announce_change(path);
     Ok(None)
@@ -806,7 +805,7 @@ pub(in crate::wasm) async fn create_dir(root: FileRoot, path: &str) -> Outcome<(
         let name = disk_name(&dir, &want).await;
         let opts = FileSystemGetDirectoryOptions::new();
         opts.set_create(true);
-        let next = res!(JsFuture::from(dir.get_directory_handle_with_options(&name, &opts)).await
+        let next = res!(crate::wasm::settle_js(dir.get_directory_handle_with_options(&name, &opts)).await
             .map_err(|e| err!("OPFS: create dir '{}' failed: {}.", name, js_err(&e); IO, File)));
         dir = res!(next.dyn_into()
             .map_err(|_| err!("OPFS: handle for '{}' was not a directory.", name; IO, File)));
@@ -882,7 +881,7 @@ async fn copy_tree(src: &FileSystemDirectoryHandle, dst: &FileSystemDirectoryHan
             if is_dir {
                 let opts = FileSystemGetDirectoryOptions::new();
                 opts.set_create(true);
-                let made_val = res!(JsFuture::from(
+                let made_val = res!(crate::wasm::settle_js(
                         into.get_directory_handle_with_options(&name, &opts)).await
                     .map_err(|e| err!("OPFS: create dir '{}' failed: {}.", name, js_err(&e);
                         IO, File, Write)));
@@ -895,20 +894,20 @@ async fn copy_tree(src: &FileSystemDirectoryHandle, dst: &FileSystemDirectoryHan
             } else {
                 let fh: FileSystemFileHandle = res!(handle.dyn_into()
                     .map_err(|_| err!("OPFS: '{}' was not a file.", name; IO, File, Read)));
-                let file_val = res!(JsFuture::from(fh.get_file()).await
+                let file_val = res!(crate::wasm::settle_js(fh.get_file()).await
                     .map_err(|e| err!("OPFS: get file '{}' failed: {}.", name, js_err(&e);
                         IO, File, Read)));
                 let file: File = res!(file_val.dyn_into()
                     .map_err(|_| err!("OPFS: '{}' did not read as a file.", name; IO, File, Read)));
                 let opts = FileSystemGetFileOptions::new();
                 opts.set_create(true);
-                let out_val = res!(JsFuture::from(
+                let out_val = res!(crate::wasm::settle_js(
                         into.get_file_handle_with_options(&name, &opts)).await
                     .map_err(|e| err!("OPFS: create file '{}' failed: {}.", name, js_err(&e);
                         IO, File, Write)));
                 let out: FileSystemFileHandle = res!(out_val.dyn_into()
                     .map_err(|_| err!("OPFS: '{}' was not a file.", name; IO, File, Write)));
-                let w_val = res!(JsFuture::from(out.create_writable()).await
+                let w_val = res!(crate::wasm::settle_js(out.create_writable()).await
                     .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", name,
                         js_err(&e); IO, File, Write)));
                 let w: FileSystemWritableFileStream = res!(w_val.dyn_into()
@@ -917,10 +916,10 @@ async fn copy_tree(src: &FileSystemDirectoryHandle, dst: &FileSystemDirectoryHan
                 let put = res!(w.write_with_blob(&file)
                     .map_err(|e| err!("OPFS: queue write for '{}' failed: {}.", name, js_err(&e);
                         IO, File, Write)));
-                res!(JsFuture::from(put).await
+                res!(crate::wasm::settle_js(put).await
                     .map_err(|e| err!("OPFS: write '{}' failed: {}.", name, js_err(&e);
                         IO, File, Write)));
-                res!(JsFuture::from(w.close()).await
+                res!(crate::wasm::settle_js(w.close()).await
                     .map_err(|e| err!("OPFS: close '{}' failed: {}.", name, js_err(&e);
                         IO, File, Write)));
                 copied.push((from.clone(), name, false));
@@ -932,7 +931,7 @@ async fn copy_tree(src: &FileSystemDirectoryHandle, dst: &FileSystemDirectoryHan
 
 /// Remove one entry of `dir` by the name it is stored under, never recursively.
 async fn remove_stored(dir: &FileSystemDirectoryHandle, name: &str) -> Outcome<()> {
-    res!(JsFuture::from(dir.remove_entry(name)).await
+    res!(crate::wasm::settle_js(dir.remove_entry(name)).await
         .map_err(|e| err!("OPFS: remove '{}' failed: {}.", name, js_err(&e); IO, File)));
     Ok(())
 }
@@ -942,7 +941,7 @@ pub async fn is_directory(root: FileRoot, path: &str) -> Outcome<bool> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
-    Ok(JsFuture::from(dir.get_directory_handle(&leaf)).await.is_ok())
+    Ok(crate::wasm::settle_js(dir.get_directory_handle(&leaf)).await.is_ok())
 }
 
 /// Read the entire contents of `path` under `root` as bytes.  Errors if
@@ -952,18 +951,18 @@ pub async fn read_file(root: FileRoot, path: &str) -> Outcome<Vec<u8>> {
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
 
-    let file_val = res!(JsFuture::from(dir.get_file_handle(&leaf)).await
+    let file_val = res!(crate::wasm::settle_js(dir.get_file_handle(&leaf)).await
         .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
 
     // `get_file` yields a `File` (a `Blob`); read its bytes via
     // `arrayBuffer`, which returns the whole contents.
-    let blob_val = res!(JsFuture::from(file_handle.get_file()).await
+    let blob_val = res!(crate::wasm::settle_js(file_handle.get_file()).await
         .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file: File = res!(blob_val.dyn_into()
         .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
-    let buf_val = res!(JsFuture::from(file.array_buffer()).await
+    let buf_val = res!(crate::wasm::settle_js(file.array_buffer()).await
         .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let bytes = js_sys::Uint8Array::new(&buf_val).to_vec();
     Ok(bytes)
@@ -998,11 +997,11 @@ pub async fn read_file_range(
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
 
-    let file_val = res!(JsFuture::from(dir.get_file_handle(&leaf)).await
+    let file_val = res!(crate::wasm::settle_js(dir.get_file_handle(&leaf)).await
         .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
-    let blob_val = res!(JsFuture::from(file_handle.get_file()).await
+    let blob_val = res!(crate::wasm::settle_js(file_handle.get_file()).await
         .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file: File = res!(blob_val.dyn_into()
         .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
@@ -1018,7 +1017,7 @@ pub async fn read_file_range(
     // this function exists for, and an i32 offset would wrap silently in the middle of one.
     let part = res!(want.slice_with_f64_and_f64(from, to)
         .map_err(|e| err!("OPFS: slice '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    let buf_val = res!(JsFuture::from(part.array_buffer()).await
+    let buf_val = res!(crate::wasm::settle_js(part.array_buffer()).await
         .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     Ok((js_sys::Uint8Array::new(&buf_val).to_vec(), total))
 }
@@ -1046,11 +1045,11 @@ pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
 
-    let file_val = res!(JsFuture::from(dir.get_file_handle(&leaf)).await
+    let file_val = res!(crate::wasm::settle_js(dir.get_file_handle(&leaf)).await
         .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
-    let blob_val = res!(JsFuture::from(file_handle.get_file()).await
+    let blob_val = res!(crate::wasm::settle_js(file_handle.get_file()).await
         .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let file: File = res!(blob_val.dyn_into()
         .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
@@ -1065,7 +1064,7 @@ pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(
     } else {
         want.clone()
     };
-    let buf_val = res!(JsFuture::from(part.array_buffer()).await
+    let buf_val = res!(crate::wasm::settle_js(part.array_buffer()).await
         .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     Ok((js_sys::Uint8Array::new(&buf_val).to_vec(), total))
 }
@@ -1097,7 +1096,7 @@ pub async fn stamp(root: FileRoot, path: &str) -> Outcome<Option<(f64, f64)>> {
         Ok(v)  => v,
         Err(_) => return Ok(None),
     };
-    let file_val = match JsFuture::from(dir.get_file_handle(&leaf)).await {
+    let file_val = match crate::wasm::settle_js(dir.get_file_handle(&leaf)).await {
         Ok(v)  => v,
         Err(_) => return Ok(None),
     };
@@ -1105,7 +1104,7 @@ pub async fn stamp(root: FileRoot, path: &str) -> Outcome<Option<(f64, f64)>> {
         Ok(h)  => h,
         Err(_) => return Ok(None),
     };
-    let blob_val = match JsFuture::from(file_handle.get_file()).await {
+    let blob_val = match crate::wasm::settle_js(file_handle.get_file()).await {
         Ok(v)  => v,
         Err(_) => return Ok(None),
     };
@@ -1175,7 +1174,7 @@ async fn read_entries(dir: &FileSystemDirectoryHandle)
                 Err(_) => { asks.push(&JsValue::NULL); }	// settles at once, read as no file
             }
         }
-        let settled = res!(JsFuture::from(js_sys::Promise::all_settled(&asks)).await
+        let settled = res!(crate::wasm::settle_js(js_sys::Promise::all_settled(&asks)).await
             .map_err(|e| err!("OPFS: settling a wave of {} file reads failed: {}.",
                 asks.length(), js_err(&e); IO, File, Read)));
         let settled = js_sys::Array::from(&settled);
@@ -1222,7 +1221,7 @@ async fn stored_entries(dir: &FileSystemDirectoryHandle)
     loop {
         let promise = res!(iter.next()
             .map_err(|e| err!("OPFS: directory iterator next() failed: {}.", js_err(&e); IO, File, Read)));
-        let record = res!(JsFuture::from(promise).await
+        let record = res!(crate::wasm::settle_js(promise).await
             .map_err(|e| err!("OPFS: awaiting directory entry failed: {}.", js_err(&e); IO, File, Read)));
 
         // `done` signals iterator exhaustion; treat a missing/unreadable
@@ -1304,11 +1303,11 @@ pub(in crate::wasm) async fn delete_file(root: FileRoot, path: &str) -> Outcome<
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
-    if JsFuture::from(dir.get_file_handle(&leaf)).await.is_err() {
+    if crate::wasm::settle_js(dir.get_file_handle(&leaf)).await.is_err() {
         return Err(err!("OPFS: '{}' is not a file, so it was not removed.", path;
             Invalid, Input, Path));
     }
-    res!(JsFuture::from(dir.remove_entry(&leaf)).await
+    res!(crate::wasm::settle_js(dir.remove_entry(&leaf)).await
         .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
     announce_change(path);
     Ok(())
@@ -1328,7 +1327,7 @@ pub(in crate::wasm) async fn delete_entry(root: FileRoot, path: &str, recursive:
     let (dir, leaf) = res!(open_parent(&handle, components).await);
     let opts = FileSystemRemoveOptions::new();
     opts.set_recursive(recursive);
-    res!(JsFuture::from(dir.remove_entry_with_options(&leaf, &opts)).await
+    res!(crate::wasm::settle_js(dir.remove_entry_with_options(&leaf, &opts)).await
         .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
     // ANNOUNCED ONLY ON SUCCESS, and only here. A removal that failed changed nothing,
     // and a memo dropped for it would be a re-walk bought for no reason.
@@ -1358,7 +1357,7 @@ pub(in crate::wasm) async fn delete_file_if(root: FileRoot, path: &str,
             _            => Some(Seen::Absent),
         }),
     };
-    let had: Option<FileSystemFileHandle> = match JsFuture::from(dir.get_file_handle(&leaf)).await {
+    let had: Option<FileSystemFileHandle> = match crate::wasm::settle_js(dir.get_file_handle(&leaf)).await {
         Ok(v)  => v.dyn_into().ok(),
         Err(_) => None,
     };
@@ -1374,7 +1373,7 @@ pub(in crate::wasm) async fn delete_file_if(root: FileRoot, path: &str,
     }
     let opts = FileSystemRemoveOptions::new();
     opts.set_recursive(false);
-    res!(JsFuture::from(dir.remove_entry_with_options(&leaf, &opts)).await
+    res!(crate::wasm::settle_js(dir.remove_entry_with_options(&leaf, &opts)).await
         .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
     announce_change(path);
     Ok(None)
@@ -1388,10 +1387,10 @@ pub async fn exists(root: FileRoot, path: &str) -> Outcome<bool> {
         Ok(v)  => v,
         Err(_) => return Ok(false),
     };
-    if JsFuture::from(dir.get_file_handle(&leaf)).await.is_ok() {
+    if crate::wasm::settle_js(dir.get_file_handle(&leaf)).await.is_ok() {
         return Ok(true);
     }
-    if JsFuture::from(dir.get_directory_handle(&leaf)).await.is_ok() {
+    if crate::wasm::settle_js(dir.get_directory_handle(&leaf)).await.is_ok() {
         return Ok(true);
     }
     Ok(false)

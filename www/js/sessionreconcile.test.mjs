@@ -177,6 +177,42 @@ console.log('\nreconcileEngine, one case at a time');
 	stranger.app = new Engine(); ensure(stranger);
 	check('an engine this chat did not build is not touched', stranger.app.msgs.length === 0, '');
 }
+{
+	// check_f1stop P3: a restore the held session refuses is a failure, not an empty engine. The engine keeps what it
+	// held, so the next reconcile lays the chat's order once, never the whole chat appended onto what it still holds.
+	const c = newChat();
+	c.messages = [U('u1', 1, 'q1'), A('a1', 2, 'r1')];
+	ensure(c); F.heldRun(c, c.app, 'u9');
+	c.messages.push(U('u9', 9, 'mine')); c.app.append_message('user', 'mine'); c.app.append_message('assistant', 'mine-r'); c.messages.push(A('a9', 10, 'mine-r')); F.heldNote(c, c.app, 'a9');
+	c.messages = sortMsgs(c.messages.concat([U('p1', 5, 'theirs'), A('p2', 6, 'theirs-r')]));
+	const held0 = J(c._held.mids);
+	c.app.restore = function () { throw new Error('session is held (Invalid, Conflict)'); };
+	ensure(c);
+	check('held restore: the engine keeps its session and the record of it', engineProse(c.app).length === 4 && J(c._held.mids) === held0, J(c._held.mids));
+	delete c.app.restore;
+	ensure(c);
+	check('held restore: the next reconcile lays the chat\'s order, each once', J(engineKeys(c.app)) === J(prose(c.messages).map(key)), J(engineKeys(c.app)));
+}
+
+{
+	// check_k: armEngine forgives the restore's own failure on a fresh engine and nothing else. A throw raised before the
+	// restore (here in dedupeSession) stays loud, out of ensureApp, rather than leaving the first send on an empty engine.
+	const c = newChat();
+	c.messages = [U('u1', 1, 'q1'), A('a1', 2, 'r1')];
+	c.app = new Engine();
+	c.app.restore = function () { throw new Error('restore refused'); };
+	let thrown = null;
+	try { F.armEngine(c); } catch (e) { thrown = e; }
+	check('fresh arm: a failed restore is forgiven, and the record holds nothing', !thrown && !!c._held && J(c._held.mids) === '{}', String(thrown));
+	const loud = sliceDaimond(makeWindow({}), NAMES, Object.assign({}, stub, { dedupeSession: () => { throw new Error('dedupe broke'); } })).fns;
+	const d = newChat();
+	d.messages = [U('u1', 1, 'q1'), A('a1', 2, 'r1')];
+	d.session = { msgs: [{ role: 'user', content: 'q1' }, { role: 'assistant', content: 'r1' }], upto: 'a1' };
+	d.app = new Engine();
+	thrown = null;
+	try { loud.armEngine(d); } catch (e) { thrown = e; }
+	check('fresh arm: a throw before the restore stays loud', !!thrown && /dedupe broke/.test(String(thrown && thrown.message)), String(thrown));
+}
 
 // ── The property ─────────────────────────────────────────────────────────
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }

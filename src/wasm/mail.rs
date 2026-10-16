@@ -24,7 +24,6 @@ use oxedyne_fe2o3_text::base64;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -35,25 +34,25 @@ extern "C" {
     type Panel;
 
     /// List the mailboxes, their folders and a folder's recent messages, as model-ready text.
-    #[wasm_bindgen(method, js_name = toolList)]
-    fn tool_list(this: &Panel, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = toolList)]
+    fn tool_list(this: &Panel, req: &str) -> Result<JsValue, JsValue>;
 
     /// Find messages in a folder whose sender or subject matches, as model-ready text.
-    #[wasm_bindgen(method, js_name = toolSearch)]
-    fn tool_search(this: &Panel, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = toolSearch)]
+    fn tool_search(this: &Panel, req: &str) -> Result<JsValue, JsValue>;
 
     /// Hand back one message's raw bytes, base64 in a JSON envelope, for Rust to parse.
-    #[wasm_bindgen(method, js_name = toolReadRaw)]
-    fn tool_read_raw(this: &Panel, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = toolReadRaw)]
+    fn tool_read_raw(this: &Panel, req: &str) -> Result<JsValue, JsValue>;
 
     /// File an already-built draft into the drafts folder the user's Send button reads.
-    #[wasm_bindgen(method, js_name = putDraftRaw)]
-    fn put_draft_raw(this: &Panel, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = putDraftRaw)]
+    fn put_draft_raw(this: &Panel, req: &str) -> Result<JsValue, JsValue>;
 
     /// The address of a mailbox to draft from -- the named one, or the selected one -- or the
     /// empty string when no mailbox is configured.
-    #[wasm_bindgen(method, js_name = toolSender)]
-    fn tool_sender(this: &Panel, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method, js_name = toolSender)]
+    fn tool_sender(this: &Panel, req: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -84,8 +83,8 @@ fn panel() -> Outcome<Panel> {
 }
 
 /// Settle a driver promise that answers with a string.
-async fn text(p: js_sys::Promise) -> Outcome<String> {
-    let v = match JsFuture::from(p).await {
+async fn text(p: Result<JsValue, JsValue>) -> Outcome<String> {
+    let v = match crate::wasm::settle_call(p).await {
         Ok(v)  => v,
         Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
     };

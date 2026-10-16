@@ -29,7 +29,6 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -40,8 +39,8 @@ extern "C" {
     type Asker;
 
     /// Draw one question in the conversation, and answer whether it was drawn.
-    #[wasm_bindgen(method)]
-    fn put(this: &Asker, payload: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn put(this: &Asker, payload: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -66,7 +65,7 @@ fn asker() -> Outcome<Asker> {
 /// * `payload` - The checked question as `ask_step` composed it, as JSON.
 pub async fn put(payload: &str) -> Outcome<()> {
     let a = res!(asker());
-    let v = match JsFuture::from(a.put(payload)).await {
+    let v = match crate::wasm::settle_call(a.put(payload)).await {
         Ok(v)  => v,
         Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
     };

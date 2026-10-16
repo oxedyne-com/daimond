@@ -1331,7 +1331,6 @@ pub(crate) async fn sleep_ms(ms: u64) {
 pub(crate) async fn sleep_ms(ms: u64) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen::JsValue;
-    use wasm_bindgen_futures::JsFuture;
 
     let ms = ms.min(i32::MAX as u64) as i32;
     let promise = js_sys::Promise::new(&mut |resolve: js_sys::Function, _reject| {
@@ -1348,7 +1347,7 @@ pub(crate) async fn sleep_ms(ms: u64) {
             let _ = resolve.call0(&JsValue::NULL);
         }
     });
-    let _ = JsFuture::from(promise).await;
+    let _ = crate::wasm::settle_js(promise).await;
 }
 
 /// Whichever of two same-shaped futures becomes ready first; the other is dropped.
@@ -3259,7 +3258,6 @@ impl LlmClient {
     /// * `resp` - The non-2xx response, whose body is read to exhaustion.
     async fn body_detail(&self, resp: &web_sys::Response, wait_ms: u64) -> String {
         use wasm_bindgen::JsValue;
-        use wasm_bindgen_futures::JsFuture;
 
         let text = match resp.text() {
             // Race the body against the same idle ceiling: a refusal whose body will not
@@ -3267,7 +3265,7 @@ impl LlmClient {
             Ok(p) => {
                 enum Raced { Done(Result<JsValue, JsValue>), Idle }
                 let raced = race(
-                    Box::pin(async move { Raced::Done(JsFuture::from(p).await) }),
+                    Box::pin(async move { Raced::Done(crate::wasm::settle_js(p).await) }),
                     Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
                 ).await;
                 match raced {
@@ -3287,7 +3285,6 @@ impl LlmClient {
     async fn wasm_fetch_raw(&self, body: &str, wait_ms: u64) -> Outcome<web_sys::Response> {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::JsValue;
-        use wasm_bindgen_futures::JsFuture;
         use web_sys::{Headers, Request, RequestInit, RequestMode, Response};
 
         let headers = res!(Headers::new()
@@ -3338,7 +3335,7 @@ impl LlmClient {
         // timeout (see `wasm_fetch`), so this layer stays a plain "did it arrive?".
         enum Raced { Done(Result<JsValue, JsValue>), Idle }
         let raced = race(
-            Box::pin(async move { Raced::Done(JsFuture::from(promise).await) }),
+            Box::pin(async move { Raced::Done(crate::wasm::settle_js(promise).await) }),
             Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
         ).await;
         let resp_val = match raced {
@@ -3356,7 +3353,6 @@ impl LlmClient {
     /// Non-streaming request — await the full response body as text.
     async fn do_request_full(&self, body: &str) -> Result<String, TransportErr> {
         use wasm_bindgen::JsValue;
-        use wasm_bindgen_futures::JsFuture;
 
         // The whole reply arrives in one body here (`chat_once` -> the fold summary), and a
         // non-streaming provider generates the answer before sending a byte, so this path gets
@@ -3375,7 +3371,7 @@ impl LlmClient {
         // so a body that never resolves must end the attempt rather than hang it.
         enum Raced { Done(Result<JsValue, JsValue>), Idle }
         let raced = race(
-            Box::pin(async move { Raced::Done(JsFuture::from(text_promise).await) }),
+            Box::pin(async move { Raced::Done(crate::wasm::settle_js(text_promise).await) }),
             Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
         ).await;
         let text_val = match raced {
@@ -3422,7 +3418,6 @@ impl LlmClient {
     ) -> Result<StreamOutcome, TransportErr>
     {
         use wasm_bindgen::JsValue;
-        use wasm_bindgen_futures::JsFuture;
         use web_sys::{ReadableStream, ReadableStreamDefaultReader};
 
         // Headers arrive before the first token on a streaming request, so the first-byte
@@ -3488,7 +3483,7 @@ impl LlmClient {
             // on the next loop iteration.
             let read = pending.get_or_insert_with(|| {
                 let handle = reader.clone();
-                Box::pin(async move { JsFuture::from(handle.read()).await })
+                Box::pin(async move { crate::wasm::settle_js(handle.read()).await })
             });
             let raced = read_or_nap(read, watch.next_in(now_ms())).await;
             let result = match raced {

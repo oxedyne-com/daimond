@@ -48,7 +48,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extDev, isExtSource } from './extdev.mjs';
-import { PW, chromium, webkit, firstThatOpens } from './pw.mjs';
+import { PW, chromium, webkit, firstThatOpens, WEBKIT_SAFARI_FEATURES } from './pw.mjs';
 import { testCfg } from './testcfg.mjs';
 import { verdict } from './verdict.mjs';
 
@@ -560,10 +560,12 @@ export async function open(opts = {}) {
 	// MV3 extension, so an extension flow under it is refused loudly rather than run
 	// as if the extension were there. Everything after this point -- the page, the
 	// event hooks, addInitScript, route, goto, the sign-in -- is cross-engine
-	// Playwright and needs no branch. The persistent-profile semantics the reload
-	// flows rest on hold under WebKit too: launchPersistentContext keeps this
-	// session's OPFS, IndexedDB and localStorage across a reload just as it does for
-	// Chromium.
+	// Playwright and needs no branch. OPFS exists under WebKit ONLY because dev/pw.mjs
+	// adds `WEBKIT_SAFARI_FEATURES` to every launch: Playwright's Linux WebKit ships the
+	// Storage and File System APIs switched off, and `--features` turns them on for a
+	// persistent context only. With it, launchPersistentContext keeps this session's
+	// OPFS, IndexedDB and localStorage across a reload as Chromium does; the gate after
+	// `goto` below refuses a WebKit session that has no OPFS.
 	let browser;
 	if (engine === 'webkit') {
 		if (extension) {
@@ -713,6 +715,18 @@ export async function open(opts = {}) {
 	if (route) await route(page);
 	await page.addInitScript(PRESS_MARK);
 	await page.goto(APP, { waitUntil: 'domcontentloaded' });
+
+	// A WEBKIT SESSION WITHOUT OPFS IS REFUSED, before sign-in seeds anything. Without the
+	// storage features every Diamond write fails, the first boot still records that it
+	// offered the defaults, and timings come out plausible over an empty list (P1's "26 ms").
+	if (engine === 'webkit') {
+		const gd = await page.evaluate(() => typeof navigator.storage?.getDirectory);
+		if (gd !== 'function') {
+			await browser.close();
+			throw new Error(`open(): this WebKit session has no OPFS (navigator.storage.getDirectory is ${gd}). `
+				+ `Every WebKit launch must carry ${WEBKIT_SAFARI_FEATURES} (dev/pw.mjs), in a persistent context.`);
+		}
+	}
 
 	const s = { browser, page, errs, logs, net, name, foreign: [] };
 
@@ -947,9 +961,11 @@ export async function signInAs(s, name) {
 /// crystal face is up.
 export async function steerDiamond(s, text) {
 	const p = s.page;
+	await revealComposer(p);	// the face switch is under the sheet too
 	const chat = await p.$('#dview-chat');
 	if (chat) { await chat.click({ force: true }); await p.waitForTimeout(400); }
 	await p.waitForSelector('#chat-input', { timeout: 10000 });
+	await revealComposer(p);
 	await p.fill('#chat-input', text);
 	await p.click('#chat-send', { force: true });
 }
@@ -969,6 +985,31 @@ export async function steerDiamond(s, text) {
 /// `{"icons":0,"rows":0,"name":""}` for five gates as a footer that would not
 /// draw. A silent no-op is what let that stand; a caller that asks for a new chat
 /// and is handed an old one now gets a throw with both ids in it.
+/// Is the element drawn inside the viewport? Playwright's `isVisible` says yes to an element
+/// slid off-screen in a closed drawer, which a person cannot see or tap.
+export async function onScreen(page, sel) {
+	return page.evaluate((q) => {
+		const e = document.querySelector(q);
+		if (!e || !e.getClientRects().length) return false;
+		const r = e.getBoundingClientRect();
+		return r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight;
+	}, sel).catch(() => false);
+}
+
+/// Bring the rail on screen the way a person does, when `sel` (a rail control) is not: at
+/// phone width the rail is a drawer behind the header's burger (`#drawer-btn`), and every
+/// rail control is off-screen until it is opened. A no-op wherever the rail is already up.
+export async function revealRail(page, sel) {
+	if (await onScreen(page, sel)) return true;
+	if (!(await onScreen(page, '#drawer-btn'))) return false;
+	await page.click('#drawer-btn', { force: true });
+	for (let t0 = Date.now(); Date.now() - t0 < 3000; ) {
+		if (await onScreen(page, sel)) return true;
+		await page.waitForTimeout(100);
+	}
+	return false;
+}
+
 export async function newChat(s, { reuse = false } = {}) {
 	const { page } = s;
 	/// The chat in focus, or '' when the focus is a Diamond or nothing.
@@ -979,6 +1020,14 @@ export async function newChat(s, { reuse = false } = {}) {
 		} catch (e) { return ''; }
 	});
 	const before = await focusId();
+	// The app's own focus is a chat: reuse it, bringing its composer back first. Testing the
+	// composer's visibility alone made a NEW chat whenever something covered it -- at phone width
+	// spawn_agent swaps in the Agents panel -- so the next `chat()` went into a fresh conversation
+	// the test never read (rig T1c, 16 Oct: chat gather and spawn_agent x3 on the iPhone).
+	if (reuse && before) {
+		await revealComposer(page);
+		return before;
+	}
 	// "A composer is on screen" is NOT "we are in a chat", and the difference
 	// arrived when a Diamond's crystal face gained the shared composer. Before
 	// that, a visible `#chat-input` could only mean a chat; now it also means a
@@ -1000,11 +1049,17 @@ export async function newChat(s, { reuse = false } = {}) {
 	// divider the + button sits under it. A force-click dispatches at the
 	// button's coordinates, so the DRAWER receives it and nothing happens.
 	// Close it the way a user would before reaching for the rail.
+	//
+	// INSIDE THE VIEWPORT, not merely "visible": on a phone the closed Admin drawer is slid
+	// off-screen with its close button still drawn (x=-44 at 393 px wide), Playwright calls
+	// that visible, and the force-click then threw "Element is outside of the viewport" --
+	// so no chat could be made at phone width at all (rig T1, 15 Oct).
 	const drawerClose = page.locator('#admin-close');
-	if (await drawerClose.isVisible().catch(() => false)) {
+	if (await onScreen(page, '#admin-close')) {
 		await drawerClose.click({ force: true });
 		await page.waitForTimeout(200);
 	}
+	await revealRail(page, '#new-session-btn');
 	// force:true throughout — a page animation keeps failing Playwright's
 	// "stable" actionability check, hanging otherwise-fine clicks.
 	// What the + click will land on, so a failure below names its cause.
@@ -1427,6 +1482,52 @@ export function spend(s) {
 /// The page takes a press late under load: the question bubble and the busy Send
 /// came seconds after the click on 2026-10-06 (shard 3), well past the 300 ms this
 /// used to wait. Generous, because a throw here is a fault and a slow machine is not.
+/// Is the element on screen AND the thing a tap at its centre lands on? `onScreen` says yes to a
+/// composer the phone's sheet or Admin pane is drawn over.
+async function tappable(page, sel) {
+	return page.evaluate((q) => {
+		const e = document.querySelector(q);
+		if (!e || !e.getClientRects().length) return false;
+		const r = e.getBoundingClientRect();
+		if (r.right <= 0 || r.bottom <= 0 || r.left >= innerWidth || r.top >= innerHeight) return false;
+		const x = Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1);
+		const y = Math.min(Math.max(r.top + r.height / 2, 0), innerHeight - 1);
+		const hit = document.elementFromPoint(x, y);
+		return !!hit && (hit === e || e.contains(hit) || hit.contains(e));
+	}, sel).catch(() => false);
+}
+
+/// Bring the chat composer back the way a person does, when something has taken its place. At
+/// phone width a tool's result raises a sheet over the chat (file_show the Doc sheet, web_open the
+/// Web sheet), and spawn_agent swaps the chat for the Agents panel (`mshow('agents')`); on a
+/// desktop all of them sit beside the chat and this is a no-op. The sheet's own cross, the bottom
+/// bar's AI chip, the Admin drawer's cross, then Escape, which pops the app's layer stack.
+/// Rig T1b, 16 Oct: without it every send after a sheet or the Agents panel rose timed out.
+export async function revealComposer(page) {
+	for (let i = 0; i < 4; i++) {
+		if (await tappable(page, '#chat-input')) return true;
+		const up = await page.evaluate(() => ({
+			panel:	document.body.dataset.mpanel || '',
+			admin:	!!document.querySelector('#admin.admin-open'),
+		})).catch(() => ({ panel: '', admin: false }));
+		const chip = '#panel-tags .ptag[data-panel="ai"]';
+		if (await tappable(page, '#msheet-close'))	await page.click('#msheet-close');
+		else if (up.panel && up.panel !== 'ai' && await page.$(chip)) {
+			// The bar scrolls sideways; a person swipes it to the chip first.
+			await page.$eval(chip, (c) => c.scrollIntoView({ inline: 'center', block: 'nearest' }));
+			await page.click(chip);
+		}
+		else if (up.admin && await tappable(page, '#admin-close'))	await page.click('#admin-close');
+		else if (up.admin)	await page.keyboard.press('Escape');
+		// A composer not drawn at all (a Diamond's crystal face) is the face switch's business,
+		// and Escape there would leave the Diamond.
+		else if (!(await onScreen(page, '#chat-input')))	return false;
+		else	await page.keyboard.press('Escape');
+		await page.waitForTimeout(350);
+	}
+	return tappable(page, '#chat-input');
+}
+
 export const SEND_REGISTER_MS = 20000;
 
 /// What the page shows of a press of Send: the question bubbles (a turn's own, or one
@@ -1460,6 +1561,7 @@ export async function chat(s, text, { timeout = 30000 } = {}) {
 	// `reuse`: a conversation is several messages in ONE chat. Only a caller who
 	// asks for `newChat` itself is asking for a new one.
 	await newChat(s, { reuse: true });
+	await revealComposer(page);
 	await page.fill('#chat-input', text);
 	const before = await page.evaluate(sendState);
 	await page.click('#chat-send', { force: true });

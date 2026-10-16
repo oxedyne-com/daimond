@@ -10,6 +10,8 @@ use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::prelude::*;
 use oxedyne_fe2o3_sbj::share;
 
+use std::cell::RefCell;
+
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Wall-clock helpers                                             │
@@ -847,6 +849,33 @@ pub struct Session {
 }
 
 impl Session {
+
+    /// Read a session a turn may be holding, failing rather than panicking.
+    ///
+    /// A `RefCell` borrow taken while a turn holds the session mutably panics, and in
+    /// the browser a panic poisons the whole engine.  A read that loses that race (an
+    /// export from a run's end, say, while a killed turn's call is still in flight) is
+    /// only a read that failed (check_final G1, the stray `export_session` panic).
+    pub fn read_held<R, F: FnOnce(&Session) -> R>(cell: &RefCell<Session>, f: F) -> Outcome<R> {
+        match cell.try_borrow() {
+            Ok(s)  => Ok(f(&s)),
+            Err(_) => Err(err!(
+                "The session is held by a turn in flight, so it cannot be read now.";
+                Invalid, Conflict)),
+        }
+    }
+
+    /// Change a session a turn may be holding, failing rather than panicking, as
+    /// [`Session::read_held`] reads one (check_last: `restore`, `restore_session` and
+    /// `append_message` called in the window before a hung turn's poison).
+    pub fn write_held<R, F: FnOnce(&mut Session) -> R>(cell: &RefCell<Session>, f: F) -> Outcome<R> {
+        match cell.try_borrow_mut() {
+            Ok(mut s)   => Ok(f(&mut s)),
+            Err(_)      => Err(err!(
+                "The session is held by a turn in flight, so it cannot be changed now.";
+                Invalid, Conflict)),
+        }
+    }
 
     pub fn new(id: String, name: String, model: String) -> Self {
         Self {
@@ -2212,6 +2241,29 @@ mod content_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── A held session ──
+
+    #[test]
+    fn read_held_fails_rather_than_panics_under_a_turn() {
+        let cell = RefCell::new(Session::new("s".to_string(), "n".to_string(), "m".to_string()));
+        {
+            let _turn = cell.borrow_mut();			// a turn in flight
+            assert!(Session::read_held(&cell, |s| s.messages.len()).is_err());
+        }
+        assert_eq!(Session::read_held(&cell, |s| s.messages.len()).ok(), Some(0));
+    }
+
+    #[test]
+    fn write_held_fails_rather_than_panics_under_a_turn() {
+        let cell = RefCell::new(Session::new("s".to_string(), "n".to_string(), "m".to_string()));
+        {
+            let _turn = cell.borrow();			// even a read in flight refuses a write
+            assert!(Session::write_held(&cell, |s| s.prompt_tokens = 7).is_err());
+        }
+        assert!(Session::write_held(&cell, |s| s.prompt_tokens = 7).is_ok());
+        assert_eq!(Session::read_held(&cell, |s| s.prompt_tokens).ok(), Some(7));
+    }
 
     // ── What a pack will weigh, without building it ──
 

@@ -1080,6 +1080,9 @@ impl DaimondApp {
     /// trailing arguments carry the same risk for the reported cost, and are
     /// trailing and optional so a caller written against the older four-argument
     /// signature keeps working unchanged.
+    ///
+    /// Throws, rather than panicking the engine, while a turn holds the session, as
+    /// [`DaimondApp::restore_session`] and [`DaimondApp::append_message`] do too.
     pub fn restore(
         &self,
         msgs:               js_sys::Array,
@@ -1088,32 +1091,35 @@ impl DaimondApp {
         last_prompt_tokens: f64,
         cached_tokens:      Option<f64>,
         cost_usd:           Option<f64>,
-    ) {
-        let mut session = self.session.borrow_mut();
-        session.messages.clear();
-        for item in msgs.iter() {
-            let content = match js_prop(&item, "content") {
-                Some(c) => c,
-                None    => continue,
-            };
-            // The system prompt is prepended per request from the Agent,
-            // never stored, so a persisted `system` role is dropped here
-            // rather than duplicated into the working conversation.
-            match js_prop(&item, "role").unwrap_or_default().as_str() {
-                // A person's message keeps the app's note the page stored beside it, so the model
-                // reads the same history after a reload as before it.
-                "user"      => session.messages.push(ChatMessage::user_noted(
-                    content, js_prop(&item, "pre").unwrap_or_default())
-                    .marked(js_prop(&item, "mid").unwrap_or_default())),
-                "assistant" => session.messages.push(ChatMessage::assistant(content)),
-                _ => continue,
+    )
+        -> Result<(), JsValue>
+    {
+        Session::write_held(&self.session, |session| {
+            session.messages.clear();
+            for item in msgs.iter() {
+                let content = match js_prop(&item, "content") {
+                    Some(c) => c,
+                    None    => continue,
+                };
+                // The system prompt is prepended per request from the Agent,
+                // never stored, so a persisted `system` role is dropped here
+                // rather than duplicated into the working conversation.
+                match js_prop(&item, "role").unwrap_or_default().as_str() {
+                    // A person's message keeps the app's note the page stored beside it, so the model
+                    // reads the same history after a reload as before it.
+                    "user"      => session.messages.push(ChatMessage::user_noted(
+                        content, js_prop(&item, "pre").unwrap_or_default())
+                        .marked(js_prop(&item, "mid").unwrap_or_default())),
+                    "assistant" => session.messages.push(ChatMessage::assistant(content)),
+                    _ => continue,
+                }
             }
-        }
-        session.prompt_tokens      = prompt_tokens      as u64;
-        session.completion_tokens  = completion_tokens  as u64;
-        session.last_prompt_tokens = last_prompt_tokens as u64;
-        session.cached_tokens      = cached_tokens.unwrap_or(0.0) as u64;
-        session.cost_usd           = cost_usd.unwrap_or(0.0);
+            session.prompt_tokens      = prompt_tokens      as u64;
+            session.completion_tokens  = completion_tokens  as u64;
+            session.last_prompt_tokens = last_prompt_tokens as u64;
+            session.cached_tokens      = cached_tokens.unwrap_or(0.0) as u64;
+            session.cost_usd           = cost_usd.unwrap_or(0.0);
+        }).map_err(to_js_err)
     }
 
     // ── The conversation the MODEL holds ─────────────────────────────────
@@ -1143,15 +1149,16 @@ impl DaimondApp {
     /// Objects rather than a JSON string, so the browser can put the array straight
     /// into IndexedDB, which stores structured values and needs no parse.
     ///
-    /// Read AFTER a turn, never during one: it borrows the session that
-    /// [`DaimondApp::run_turn`] holds mutably, exactly as
-    /// [`DaimondApp::cached_tokens`] does.
-    pub fn export_session(&self) -> js_sys::Array {
-        let out = js_sys::Array::new();
-        for msg in self.session.borrow().messages.iter() {
-            out.push(&message_to_js(msg));
-        }
-        out
+    /// Read AFTER a turn: during one, [`DaimondApp::run_turn`] holds the session mutably
+    /// and this throws (an error, not a panic, so the engine is not poisoned by a read).
+    pub fn export_session(&self) -> Result<js_sys::Array, JsValue> {
+        Session::read_held(&self.session, |s| {
+            let out = js_sys::Array::new();
+            for msg in s.messages.iter() {
+                out.push(&message_to_js(msg));
+            }
+            out
+        }).map_err(to_js_err)
     }
 
     /// Take a conversation exported by [`DaimondApp::export_session`] back, ids and
@@ -1187,7 +1194,7 @@ impl DaimondApp {
         cached_tokens:      Option<f64>,
         cost_usd:           Option<f64>,
     )
-        -> usize
+        -> Result<usize, JsValue>
     {
         let mut restored: Vec<ChatMessage> = Vec::new();
         for item in msgs.iter() {
@@ -1197,14 +1204,15 @@ impl DaimondApp {
         }
         let whole = crate::protocol::pair_up(restored);
         let n = whole.len();
-        let mut session = self.session.borrow_mut();
-        session.messages           = whole;
-        session.prompt_tokens      = prompt_tokens      as u64;
-        session.completion_tokens  = completion_tokens  as u64;
-        session.last_prompt_tokens = last_prompt_tokens as u64;
-        session.cached_tokens      = cached_tokens.unwrap_or(0.0) as u64;
-        session.cost_usd           = cost_usd.unwrap_or(0.0);
-        n
+        Session::write_held(&self.session, |session| {
+            session.messages           = whole;
+            session.prompt_tokens      = prompt_tokens      as u64;
+            session.completion_tokens  = completion_tokens  as u64;
+            session.last_prompt_tokens = last_prompt_tokens as u64;
+            session.cached_tokens      = cached_tokens.unwrap_or(0.0) as u64;
+            session.cost_usd           = cost_usd.unwrap_or(0.0);
+            n
+        }).map_err(to_js_err)
     }
 
     /// Append a message to the restored conversation without going near a model.
@@ -1224,14 +1232,14 @@ impl DaimondApp {
     /// * `mid` - The transcript row a user message is, as [`DaimondApp::run_turn`] takes it.
     pub fn append_message(&self, role: String, content: String, pre: Option<String>,
         mid: Option<String>)
+        -> Result<(), JsValue>
     {
-        let mut session = self.session.borrow_mut();
-        match role.as_str() {
+        Session::write_held(&self.session, |session| match role.as_str() {
             "user"      => session.messages.push(ChatMessage::user_noted(
                 content, pre.unwrap_or_default()).marked(mid.unwrap_or_default())),
             "assistant" => session.messages.push(ChatMessage::assistant(content)),
             _ => {},
-        }
+        }).map_err(to_js_err)
     }
 
     // ── What bounds a turn ───────────────────────────────────────────────

@@ -724,7 +724,17 @@
 			// keys. Only reached on an engine without WebCrypto X25519.
 			var their = (theirPubBytes instanceof Uint8Array)
 				? theirPubBytes : new Uint8Array(theirPubBytes);
-			return new Uint8Array(curveFallback().xSharedSecret(_sealScalar, their));
+			// A key the curve refuses (low order: an all-zero secret) answers as WebCrypto
+			// does, an OperationError, so post.js reads both engines alike.
+			try { return new Uint8Array(curveFallback().xSharedSecret(_sealScalar, their)); }
+			catch (e) {
+				// Only the curve's own refusal; a fallback not loaded (TypeError,
+				// ReferenceError) is this device, and stays as it came.
+				if (e instanceof TypeError || e instanceof ReferenceError) throw e;
+				var op = new Error(String((e && e.message) || e));
+				op.name = 'OperationError';
+				throw op;
+			}
 		}
 		var theirs = await crypto.subtle.importKey(
 			'raw', theirPubBytes, { name: 'X25519' }, false, []);
@@ -1938,8 +1948,14 @@
 	/// input rather than throwing, so a caller branches on one boolean.
 	async function verifySig(pub, sig, data) {
 		var alg  = localStorage.getItem(K_ALG) || 'Ed25519';
-		var pubB = (pub instanceof Uint8Array) ? pub : b64dec(pub);
-		var sigB = (sig instanceof Uint8Array) ? sig : b64dec(sig);
+		// The decodes are input too: a signature that is not base64 is a "no", never a
+		// throw (TAKEROW second check, P3 -- a throw reads as "could not check" and
+		// stalls the collect).
+		var pubB, sigB;
+		try {
+			pubB = (pub instanceof Uint8Array) ? pub : b64dec(pub);
+			sigB = (sig instanceof Uint8Array) ? sig : b64dec(sig);
+		} catch (e) { return false; }
 		var msgB = (typeof data === 'string') ? utf8(data) : data;
 		try {
 			var importAlg = (alg === 'Ed25519')

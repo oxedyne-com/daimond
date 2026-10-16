@@ -23,7 +23,6 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
-use wasm_bindgen_futures::JsFuture;
 
 
 /// The `localStorage` key holding the paths that are in cloud storage and not on this device.
@@ -209,7 +208,7 @@ async fn call(name: &str, arg: &str) -> Outcome<String> {
         .map_err(|e| err!("{} failed: {}.", name, js_str(&e); IO, Network)));
     let promise: js_sys::Promise = res!(ret.dyn_into()
         .map_err(|_| err!("window.{} did not return a promise.", name; Invalid, Output)));
-    let val = res!(JsFuture::from(promise).await
+    let val = res!(crate::wasm::settle_js(promise).await
         .map_err(|e| err!("{} failed: {}.", name, js_str(&e); IO, Network)));
     Ok(val.as_string().unwrap_or_else(|| js_str(&val)))
 }

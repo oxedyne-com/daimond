@@ -38,7 +38,6 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -60,8 +59,8 @@ extern "C" {
     ///
     /// `turn` is the page's tag for the turn asking, so the driver can tell a turn this device
     /// runs for ANOTHER device, whose screen the file then goes to.  An older driver ignores it.
-    #[wasm_bindgen(method)]
-    fn show(this: &Panel, path: &str, page: JsValue, owner: &str, turn: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn show(this: &Panel, path: &str, page: JsValue, owner: &str, turn: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -93,7 +92,7 @@ pub async fn show(path: &str, page: Option<u32>, owner: &str, turn: &str) -> Out
         Some(n) => JsValue::from_f64(n as f64),
         None    => JsValue::UNDEFINED,
     };
-    let v = match JsFuture::from(p.show(path, at, owner, turn)).await {
+    let v = match crate::wasm::settle_call(p.show(path, at, owner, turn)).await {
         Ok(v)  => v,
         Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
     };

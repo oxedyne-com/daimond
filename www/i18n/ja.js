@@ -3468,6 +3468,8 @@
 	'turn.peer_running': 'もう一台の端末で実行中です。',
 	'turn.peer_running_named': '{name} がこれをしています。',
 	'turn.peer_failed': 'もう一台の端末はこれを終えられませんでした。',
+	'turn.peer_interrupted': 'もう一台の端末で中断されました。',
+	'turn.peer_interrupted_named': '{name} で中断されました。',
 	'turn.peer_runhere': 'ここで実行',
 	'turn.peer_answeragain': 'もう一度答える',
 	'turn.peer_consent': 'もう一台の端末が {act} の許可を求めています。',

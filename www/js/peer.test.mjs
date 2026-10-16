@@ -606,9 +606,12 @@ async function main() {
 	check('the report was routed to the peer runner', routedReports.some((r) => r.turnId === 'turn-2'));
 	// The crisp proof that the peer route did not touch the message list: collect's
 	// own tally counts NO message stored from the errand and report rows, and the
-	// non-peer row reached the message path (recorded unreadable, no bridge here).
+	// non-peer row reached the message path -- where, with no message format loaded
+	// here, it is LEFT on the relay and the pass stops (TAKEROW: a format not loaded
+	// is this device not ready, never the row refused, so it is not kept as bad).
 	check('NO message was stored from the errand/report rows (got === 0)', col.got === 0);
-	check('the non-peer row passed THROUGH to the message path (unreadable === 1)', col.unreadable === 1);
+	check('the non-peer row passed THROUGH to the message path (stopped there, not bad)',
+		col.stopped === true && col.unreadable === 0);
 
 	// ══════════════════════════════════════════════════════════
 	// STEP 3 — the lease (money-critical). All against DaimondLease,
@@ -1357,6 +1360,43 @@ async function runRecoveryAcceptance(P, L, check) {
 			&& report && report.status === 'done' && report.interrupted === 0);
 	}
 
+	// ── A POISONED RUNNER BACKS OFF (UNBLOCK-7). A page whose engine trapped reloads
+	//    itself within POISON_RELOAD_MS; an errand it collects in that window used to be
+	//    claimed and die Interrupted. It now stands down before anything: no lease, no
+	//    report, no ack, and `poisoned` is undecided, so the row is held for the reloaded
+	//    page, which runs the turn once under one lease. ──
+	{
+		console.log('\nPoison — a poisoned runner stands down unclaimed; the reloaded page runs it once');
+		L.forget();
+		const sync = makeLeaseSync({});
+		const errand = sentErrand(P, { turnId: 't-poison', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		let ran = 0, acked = 0, built = 0; const reports = [];
+		const deps = (sick) => ({
+			selfId: 'PEER', cas: P.syncCas(sync), poisoned: () => sick,
+			finished:    async () => false,
+			reconstruct: async () => { built++; return { chat: {}, app: {} }; },
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1,
+			post:  async (r) => { reports.push(r); }, ack: async () => { acked++; }, now: () => NOW,
+		});
+		const r1 = await P.runErrand(errand, deps(true));
+		check('poisoned: stands down as `poisoned`, not run', r1.ran === false && r1.why === 'poisoned' && ran === 0 && built === 0,
+			JSON.stringify(r1));
+		check('poisoned: the stand-down is undecided, so the row is held', P.standDownUndecided('poisoned') === true);
+		check('poisoned: no lease taken, no report, no ack', !sync.leases()['t-poison'] && reports.length === 0 && acked === 0,
+			JSON.stringify(sync.leases()) + ' ' + reports.length + ' ' + acked);
+		L.forget();				// the reload: a fresh page
+		const r2 = await P.runErrand(errand, deps(false));
+		check('reloaded: the turn runs once', r2.ran === true && r2.done === true && ran === 1, JSON.stringify(r2));
+		const lz = sync.leases();
+		check('reloaded: one lease, this turn, held by this device, released',
+			Object.keys(lz).join() === 't-poison' && lz['t-poison'].holder === 'PEER' && lz['t-poison'].mode === 'released',
+			JSON.stringify(lz));
+		check('reloaded: one done report for this turn and one ack',
+			reports.length === 1 && reports[0].turnId === 't-poison' && reports[0].status === 'done' && acked === 1,
+			JSON.stringify(reports));
+	}
+
 	// ── UNDELIVERABLE reconstruct: the peer HANDS THE TURN BACK cleanly. When the
 	//    progress-based catch-up gives up (the chat's parcel never synced here), the
 	//    reconstruct throws an `undeliverable` error. runErrand must: report status
@@ -1675,6 +1715,24 @@ async function runRecoveryAcceptance(P, L, check) {
 			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - P.DISPATCH_DEADLINE_MS - 1 }, null, null, 'PHONE', now) === 'no-peer-awake');
 		check('uiState: and one inside it is still "dispatched"',
 			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, null, null, 'PHONE', now) === 'dispatched');
+		// UNBLOCK-7 F3: a hand-off a runner CLAIMED and then went silent on (its lease drained,
+		// no report) is not "no peer awake" -- a peer was awake and took it. Past the deadline
+		// it is failed (Interrupted + Retry); inside it, a missing lease is only not read yet.
+		check('F3 uiState: claimedBy past the deadline is failed, never no-peer-awake',
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - P.DISPATCH_DEADLINE_MS - 1, claimedBy: 'DESK' }, null, null, 'PHONE', now) === 'failed');
+		// check_f234 fix 1 (ruling D-20261010-22): a run cut short reads Interrupted, never done.
+		check('F234 uiState: a settled lease marked cut is interrupted, not done',
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, { mode: 'released', settled: 1, cut: 'deadline', holder: 'DESK', expiry: 0 }, null, 'PHONE', now) === 'interrupted');
+		check('F234 uiState: an aborted report marked cut is interrupted',
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, null, { t: 'report', status: 'aborted', cut: 'poison' }, 'PHONE', now) === 'interrupted');
+		check('F234 uiState: an aborted report with no cut (a refusal) stays failed',
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, null, { t: 'report', status: 'aborted' }, 'PHONE', now) === 'failed');
+		check('F234 uiState: a settled lease with no cut is still done',
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, { mode: 'released', settled: 1, holder: 'DESK', expiry: 0 }, null, 'PHONE', now) === 'done');
+		check('F234 dispatchControl: an interrupted ask answer reopens its question',
+			P.dispatchControl('interrupted', { itext: 'Chose: yes' }) === 'answeragain');
+		check('F3 uiState: claimedBy inside the deadline with no lease read is still dispatched',
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000, claimedBy: 'DESK' }, null, null, 'PHONE', now) === 'dispatched');
 
 		// THE WATCH BOUND (2026-09-23): a handed-off turn is watched for frames only while
 		// some device could still be sending them.
@@ -1903,6 +1961,7 @@ function buildS61Sandbox(P, spy) {
 		peerUiStateFor:     () => 'no-peer-awake',
 		selfDeviceId:       () => 'SELF',
 		turnHold:           () => '',						// nothing paused here
+		chatIsActiveErrand: () => false,					// no errand in flight here
 		_askCard:           null,
 		diag:               () => {},
 	};
@@ -3462,8 +3521,8 @@ async function runHeartbeatContainment(P, L, check) {
 	// ── (B) THE TICKER IS READ-ONLY: a running turn -- even one whose promise NEVER
 	//    settles (the "couldn't finish" errand) -- causes NO parcel write from the
 	//    ticker, so the parcel is a fixed point for the whole turn (the churn source is
-	//    gone, not merely bounded). The lifetime CAP still stops the ticker and aborts a
-	//    hung turn, so no timer fires for ever. Reverting the cap leaves the timer live. ──
+	//    gone, not merely bounded). The lifetime CAP stops the ticker and ENDS a hung turn
+	//    (check_final D2), so no timer fires for ever. Reverting the cap leaves the timer live. ──
 	{
 		L.forget();
 		const sync = makeCountingSync({});
@@ -3487,18 +3546,25 @@ async function runHeartbeatContainment(P, L, check) {
 		// must add nothing more, however many times it fires.
 		const pushesAtRunStart = sync.pushes();
 		const tick = timer.handles[0].fn;
-		for (let i = 0; i < 8; i++) { clock += 40; await tick(); }		// each tick +40ms; cap 100ms
+		for (let i = 0; i < 2; i++) { clock += 40; await tick(); }		// each tick +40ms; still under the 100ms cap
 		check('heartbeat: the liveness ticker is READ-ONLY -- driving it pushes NOTHING (no renew churn)',
 			sync.pushes() === pushesAtRunStart);
+		let ended = null;
+		running.then((r) => { ended = r; });
+		for (let i = 0; i < 6; i++) { clock += 40; await tick(); }		// past the cap
+		for (let i = 0; i < 40 && !ended; i++) await new Promise((r) => setTimeout(r, 0));
 		check('heartbeat: a hung turn does NOT fire for ever -- the cap STOPS the ticker',
 			timer.live() === 0);
 		check('heartbeat: the cap aborts the hung run (best-effort hard stop)', aborted >= 1);
 		check('heartbeat: and names the reason, so the stop line can say why (lease_cap)',
 			whys.length >= 1 && whys[0] === 'lease_cap', JSON.stringify(whys));
+		// check_final D2: the cap ENDS the run (settled and cut), rather than leaving it hung.
+		check('heartbeat: the cap ends the hung run as dead (lease_cap)', !!ended && ended.aborted === true && ended.why === 'lease_cap',
+			JSON.stringify(ended && ended.trace));
+		const pushesAtEnd = sync.pushes();
 		for (let i = 0; i < 6; i++) { clock += 40; await tick(); }		// well past the cap
-		check('heartbeat: past the cap the parcel is still untouched (fixed point during the turn)',
-			sync.pushes() === pushesAtRunStart);
-		void running;						// intentionally never awaited: the turn hung
+		check('heartbeat: past the end the parcel is untouched (fixed point after the settle)',
+			sync.pushes() === pushesAtEnd);
 	}
 
 	// ── (C) CRASH: the error path leaves the lease to EXPIRE, and the fix guarantees it
@@ -3522,6 +3588,449 @@ async function runHeartbeatContainment(P, L, check) {
 		const pushesAfter = sync.pushes();
 		await timer.handles[0].fn();		// the dead ticker fires once more
 		check('heartbeat: a fired-after-crash ticker renews nothing', sync.pushes() === pushesAfter);
+	}
+
+	// ── (D) UNBLOCK-7 F4: A HUNG RUN ENDS AT THE LEASE DEADLINE. The engine await never
+	//    settles (a wedged wasm turn), so without the race the errand held the runner busy
+	//    for ever and the phone saw "no peer awake". Past the deadline the ticker ends it:
+	//    abort, the local run dropped, an `aborted` report home, the errand acked and the
+	//    lease released -- never 'done', so no device reads the turn as finished. ──
+	{
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		let clock = Date.now();
+		const whys = [], posts = [], ended = [];
+		let acked = 0;
+		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', ts: clock, deadline: clock + 4000, dispatchedBy: 'PHONE' });
+		let leaseAtPost = null;
+		const running = P.runErrand(errand, {
+			selfId: 'peerHung', selfName: 'argonaut', cas: P.syncCas(sync), now: () => clock,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise(() => {}),		// never settles
+			abort: (why) => { whys.push(why); },
+			endLocal: async (e, why) => { ended.push(why); },
+			pushResult: async () => 9,
+			post: async (r) => { leaseAtPost = sync.leases()[TID]; posts.push(r); }, ack: async () => { acked += 1; },
+		});
+		let settled = null;
+		running.then((r) => { settled = r; });
+		await new Promise((r) => setTimeout(r, 0));
+		const tick = timer.handles[0].fn;
+		await tick();
+		await new Promise((r) => setTimeout(r, 0));
+		check('F4: inside the deadline a hung run is still running', settled === null);
+		clock = sync.leases()[TID].deadline + 1;		// past the claim's own deadline
+		await tick();
+		for (let i = 0; i < 5 && settled === null; i++) await new Promise((r) => setTimeout(r, 0));
+		check('F4: past the lease deadline the hung run ENDS (runErrand returns)',
+			!!settled && settled.aborted === true && settled.why === 'deadline', JSON.stringify(settled));
+		check('F4: and it aborted the engine, naming the deadline', whys[0] === 'lease_deadline', JSON.stringify(whys));
+		check('F4: the local run is dropped (endLocal)', ended.length === 1 && ended[0] === 'deadline');
+		const rep = posts.find((r) => r && r.t === 'report');
+		check('F4: an ABORTED report goes home, naming the runner',
+			!!rep && rep.status === 'aborted' && /argonaut/.test(String(rep.why)) && rep.to === 'PHONE', JSON.stringify(rep));
+		check('F4: the errand is acked', acked === 1);
+		const lz = sync.leases()[TID];
+		// SETTLED FIRST (check_f234 fix 1): the lease is released settled and marked cut
+		// BEFORE the report goes, so neither a lost report, a lost ack nor a reload can make
+		// the turn re-runnable; every device reads it Interrupted, and Retry decides.
+		check('F4: the lease is SETTLED (released, cut) -- never re-runnable',
+			!!lz && lz.mode === 'released' && !!lz.settled && !!lz.cut, JSON.stringify(lz));
+		check('F4: and it was settled BEFORE the report was posted',
+			!!leaseAtPost && !!leaseAtPost.settled, JSON.stringify(leaseAtPost));
+		check('F4: the report carries the cut mark', !!rep && !!rep.cut, JSON.stringify(rep));
+		check('F4: the sender reads it Interrupted, not done',
+			P.uiState({ why: 'dispatched', iturn: TID, ts: errand.ts, dispatchedBy: 'PHONE' }, lz, null, 'PHONE', clock) === 'interrupted');
+		check('F4: and the ticker is stopped', timer.live() === 0);
+	}
+
+	// ── (E) UNBLOCK-7 F4: A POISONED ENGINE ENDS ITS RUNS AT ONCE, before the deadline,
+	//    through the same door (`poisonRuns`, which daimond.js calls on a wasm trap). ──
+	{
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const posts = [], whys = [];
+		let acked = 0;
+		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15, dispatchedBy: 'PHONE' });
+		const running = P.runErrand(errand, {
+			selfId: 'peerPoison', selfName: 'argonaut', cas: P.syncCas(sync), now: () => 1000,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise(() => {}),
+			abort: (why) => { whys.push(why); },
+			pushResult: async () => 9, post: async (r) => { posts.push(r); }, ack: async () => { acked += 1; },
+		});
+		await new Promise((r) => setTimeout(r, 0));
+		const n = P.poisonRuns('poison');
+		const res = await running;
+		check('F4: poisonRuns reaches the running errand', n === 1);
+		check('F4: a poisoned run ends pre-deadline as aborted', res.aborted === true && res.why === 'poison', JSON.stringify(res));
+		check('F4: with the poison named on the abort', whys[0] === 'engine_poisoned', JSON.stringify(whys));
+		const rep = posts.find((r) => r && r.t === 'report');
+		const lzE = sync.leases()[TID];
+		check('F4: reported aborted, acked and released SETTLED',
+			!!rep && rep.status === 'aborted' && acked === 1 && lzE.mode === 'released' && !!lzE.settled && !!lzE.cut, JSON.stringify(lzE));
+		check('F4: and no run is left to poison', P.poisonRuns('poison') === 0);
+	}
+
+	// ── (F) check_f234 Q1b/Q1d: A POISONED RUN WHOSE REPORT AND ACK ARE BOTH LOST is never
+	//    run again: not by its sender's recovery, and not by a second device that collects the
+	//    unacked errand. The settled lease is the proof, and it is written first. ──
+	{
+		const NOW = Date.now();
+		const TF = 'turn-f234-lost';
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = sentErrand(P, { turnId: TF, chatId: 'c', prompt: 'p', eid: 'eF', deadline: NOW + 10 * 60000, dispatchedBy: 'PHONE' });
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => NOW,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise(() => {}), abort: () => {}, pushResult: async () => 9,
+			post: async () => { throw new Error('relay 503'); },		// the report is lost
+			ack: async () => { throw new Error('relay 503'); },		// and so is the ack
+		});
+		await new Promise((r) => setTimeout(r, 0));
+		P.poisonRuns('poison');
+		const res = await running;
+		const lz = sync.leases()[TF];
+		check('F234 Q1: a poisoned run with its report and ack lost still ends SETTLED',
+			res.aborted === true && !!lz && lz.mode === 'released' && !!lz.settled, JSON.stringify(lz));
+		const ph = { why: 'dispatched', iturn: TF, ts: NOW - 60000, dispatchedBy: 'PHONE', claimedBy: 'DESK' };
+		check('F234 Q1b: report lost -> the sender does NOT re-run it locally',
+			P.recoverDecision(ph, lz, false, 'PHONE', NOW + 1000) === false);
+		check('F234 Q1c: report lost -> the sender\'s tile reads Interrupted',
+			P.uiState(ph, lz, null, 'PHONE', NOW + 1000) === 'interrupted');
+		check('F234 Q1c: and offers Retry', P.dispatchControl('interrupted', ph) === 'retry');
+		L.forget();
+		let ran2 = 0;
+		const out2 = await P.runErrand(errand, {
+			selfId: 'DESK2', cas: P.syncCas(sync), now: () => NOW + 2000,
+			setTimer: () => null, clearTimer: () => {},
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: async () => { ran2++; }, abort: () => {},
+			pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		check('F234 Q1d: ack lost -> a second device that collects the errand does NOT run it',
+			ran2 === 0 && out2.ran === false && out2.why === 'settled', JSON.stringify({ ran2, why: out2.why }));
+	}
+
+	// ── (G) check_f234 Q2: A SENDER CLOCK 16 MINUTES SLOW. Its errand deadline is already
+	//    past on the authority clock, the relay-aged birth is fresh, so the claim is held to
+	//    the age window (`until`). F4 races the CLAIM's deadline, so the healthy run lives. ──
+	{
+		const NOW = Date.now();
+		const TG = 'turn-f234-slow';
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const sent = NOW - 16 * 60000;
+		const errand = sentErrand(P, { turnId: TG, chatId: 'c', prompt: 'p', eid: 'eG', ts: sent, born: sent, deadline: sent + P.DISPATCH_DEADLINE_MS, dispatchedBy: 'PHONE' });
+		let clock = NOW, settled = null, finish = null;
+		const whys = [];
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', cas: P.syncCas(sync), now: () => clock, rowTs: Math.floor(NOW / 1000), relayNow: () => clock,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise((r) => { finish = r; }),		// healthy: answers when told
+			abort: (w) => whys.push(w), pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		running.then((r) => { settled = r; });
+		for (let i = 0; i < 40 && !timer.handles.length && !settled; i++) await new Promise((r) => setTimeout(r, 0));
+		const claim = sync.leases()[TG];
+		check('F234 Q2: the slow sender\'s turn is claimed, held past its stale deadline',
+			!!claim && claim.expiry > clock && errand.deadline < clock, JSON.stringify(claim));
+		clock = NOW + 30000;
+		if (timer.handles[0]) await timer.handles[0].fn();
+		for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+		check('F234 Q2: the healthy run is NOT killed on its first tick', settled === null && whys.length === 0,
+			JSON.stringify({ settled, whys }));
+		if (finish) finish();
+		for (let i = 0; i < 40 && !settled; i++) await new Promise((r) => setTimeout(r, 0));
+		check('F234 Q2: and it finishes done', !!settled && settled.done === true, JSON.stringify(settled && settled.trace));
+		clock = claim.deadline + 1;		// unused past here; the ticker is stopped
+	}
+
+	// ── (H) check_final D1: A TAKE-BACK THE RUNNER HAS NOT YET READ, then the poison. The phone's
+	//    revoke (`claimed` -> `released`, holder unchanged) lands on the door; the run ends dead
+	//    before a liveness read sees it. Its `done` must not overwrite the take-back: the lease
+	//    stays released, unsettled and uncut, and the run ends as revoked -- no report, no ack. ──
+	{
+		const NOW = Date.now();
+		const TH = 'turn-final-d1';
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = sentErrand(P, { turnId: TH, chatId: 'c', prompt: 'p', eid: 'eH', deadline: NOW + 10 * 60000, dispatchedBy: 'PHONE' });
+		const posts = [];
+		let acked = 0;
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => NOW,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise(() => {}), abort: () => {}, pushResult: async () => 9,
+			post: async (r) => { posts.push(r); }, ack: async () => { acked += 1; },
+		});
+		await new Promise((r) => setTimeout(r, 0));
+		const ls = sync.leases(); const cur = ls[TH];
+		ls[TH] = { turnId: TH, eid: cur.eid, holder: cur.holder, dispatchedBy: cur.dispatchedBy, mode: 'released',
+			expiry: 0, deadline: cur.deadline, renewedAt: Math.max(NOW + 10, cur.renewedAt) };
+		sync.commit(sync.version(), ls);			// the phone's take-back, unseen by the runner
+		P.poisonRuns('poison');
+		const res = await running;
+		const lz = sync.leases()[TH];
+		check('D1: a dead run over an unseen take-back leaves it released, UNSETTLED and uncut',
+			!!lz && lz.mode === 'released' && !lz.settled && !lz.cut, JSON.stringify(lz));
+		check('D1: and ends as revoked, with no report and no ack',
+			res.why === 'revoked' && posts.length === 0 && acked === 0, JSON.stringify({ why: res.why, trace: res.trace, posts: posts.length, acked }));
+		check('D1: the done write itself is refused over a released record',
+			(await P.settleLease('turn', TH, 'DESK', 'done', P.syncCas(sync), () => NOW)).why === 'released');
+	}
+
+	// ── (I) check_final D2: THE 30-MINUTE CAP ENDS A HUNG RUN. A claim deadline beyond the cap
+	//    (a fast-clock sender) lets the cap fire first; it must end the run as dead -- aborted,
+	//    settled and cut, reported -- not merely abort it and wait for ever. ──
+	{
+		const NOW = Date.now();
+		const TI = 'turn-final-d2';
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = sentErrand(P, { turnId: TI, chatId: 'c', prompt: 'p', eid: 'eI', deadline: NOW + 40 * 60000, dispatchedBy: 'PHONE' });
+		let clock = NOW, settled = null;
+		const whys = [], posts = [];
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => clock, maxLeaseLifeMs: 20 * 60000,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise(() => {}), abort: (w) => whys.push(w), pushResult: async () => 9,
+			post: async (r) => { posts.push(r); }, ack: async () => {},
+		});
+		running.then((r) => { settled = r; });
+		for (let i = 0; i < 40 && !timer.handles.length; i++) await new Promise((r) => setTimeout(r, 0));
+		clock = NOW + 21 * 60000;
+		for (const h of timer.handles.slice()) { try { await h.fn(); } catch (e) { /* a tick may throw */ } }
+		for (let i = 0; i < 40 && !settled; i++) await new Promise((r) => setTimeout(r, 0));
+		const lz = sync.leases()[TI];
+		const rep = posts.find((r) => r && r.t === 'report');
+		check('D2: a hung run past the lifetime cap ends aborted', !!settled && settled.aborted === true && settled.why === 'lease_cap',
+			JSON.stringify(settled && { why: settled.why, trace: settled.trace }));
+		check('D2: with lease_cap named on the abort', whys[0] === 'lease_cap', JSON.stringify(whys));
+		check('D2: the lease is settled and cut', !!lz && lz.mode === 'released' && !!lz.settled && lz.cut === 'lease_cap', JSON.stringify(lz));
+		check('D2: and an aborted report goes home', !!rep && rep.status === 'aborted' && rep.cut === 'lease_cap', JSON.stringify(rep));
+	}
+
+	// ── (J) check_final residual: A TURN THAT FINISHED IN THE KILL'S MICROTASK WINDOW keeps its
+	//    answer. The poison lands after the run's own promise won the race but before runErrand
+	//    resumed. The value's `then` is read once per resolve step (the runTurn async function,
+	//    the wrapper's adoption, the race), so the third read is the race's own resolve. ──
+	{
+		const NOW = Date.now();
+		const TJ = 'turn-final-res';
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = sentErrand(P, { turnId: TJ, chatId: 'c', prompt: 'p', eid: 'eJ', deadline: NOW + 10 * 60000, dispatchedBy: 'PHONE' });
+		const posts = [];
+		let reads = 0, poisonedAt = 0;
+		const result = {};
+		Object.defineProperty(result, 'then', { get() { reads += 1; if (reads === 3) { poisonedAt = reads; P.poisonRuns('poison'); } return undefined; } });
+		const res = await P.runErrand(errand, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => NOW,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: async () => result, abort: () => {}, pushResult: async () => 9,
+			post: async (r) => { posts.push(r); }, ack: async () => {},
+		});
+		const rep = posts.find((r) => r && r.t === 'report');
+		check('residual: the poison landed after the turn finished', poisonedAt === 3, JSON.stringify({ reads }));
+		check('residual: a turn finished in the kill window ends DONE, not Interrupted',
+			res.done === true && !!rep && rep.status === 'done', JSON.stringify({ res: { why: res.why, trace: res.trace }, rep: rep && rep.status }));
+	}
+
+	// ── (K) D1's class in finishTurn: A TURN THAT FINISHES OVER AN UNSEEN TAKE-BACK. The phone's
+	//    revoke lands while the run is still going and no liveness read sees it; the run then
+	//    finishes. Its `done` is refused (D1), so it must end as revoked as endDead does -- no done
+	//    report, no ack, no parcel -- and leave the lease released, unsettled and uncut. ──
+	{
+		const NOW = Date.now();
+		const TK = 'turn-final-fin';
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = sentErrand(P, { turnId: TK, chatId: 'c', prompt: 'p', eid: 'eK', deadline: NOW + 10 * 60000, dispatchedBy: 'PHONE' });
+		const posts = [];
+		let acked = 0, pushed = 0, finish = null;
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => NOW,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise((r) => { finish = r; }), abort: () => {},
+			pushResult: async () => { pushed += 1; return 9; }, awaitPush: true,
+			post: async (r) => { posts.push(r); }, ack: async () => { acked += 1; },
+		});
+		for (let i = 0; i < 10 && !finish; i++) await new Promise((r) => setTimeout(r, 0));
+		const ls = sync.leases(); const cur = ls[TK];
+		ls[TK] = { turnId: TK, eid: cur.eid, holder: cur.holder, dispatchedBy: cur.dispatchedBy, mode: 'released',
+			expiry: 0, deadline: cur.deadline, renewedAt: Math.max(NOW + 10, cur.renewedAt) };
+		sync.commit(sync.version(), ls);			// the phone's take-back, unseen by the runner
+		finish({});
+		const res = await running;
+		const lz = sync.leases()[TK];
+		check('D1/finish: a run finished over an unseen take-back leaves it released, UNSETTLED and uncut',
+			!!lz && lz.mode === 'released' && !lz.settled && !lz.cut, JSON.stringify(lz));
+		check('D1/finish: and ends as revoked, with no done report, no ack and no parcel',
+			res.why === 'revoked' && !res.done && posts.length === 0 && acked === 0 && pushed === 0,
+			JSON.stringify({ why: res.why, done: res.done, trace: res.trace, posts: posts.length, acked, pushed }));
+	}
+
+	// ── (L) check_last F1: A STOP THAT CROSSES THE FINISH, or the kill. The sender's Stop
+	//    (`released`, settled:1, holder unchanged) lands after the runner's last liveness read.
+	//    It is a Stop, not a take-back (Rulings §1): the run keeps its answer, marked stopped,
+	//    and sends it home -- report, ack, parcel -- and writes the lease no more. ──
+	for (const kind of ['finish', 'poison']) {
+		const NOW = Date.now();
+		const TL = 'turn-last-s1-' + kind;
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = sentErrand(P, { turnId: TL, chatId: 'c', prompt: 'p', eid: 'eL' + kind, deadline: NOW + 10 * 60000, dispatchedBy: 'PHONE' });
+		const log = [];
+		let finish = null, stopWhy = '', endWhy = '';
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => NOW,
+			setTimer: timer.set, clearTimer: timer.clear, awaitPush: true,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise((r) => { finish = r; }), abort: (w) => { stopWhy = w; },
+			endLocal: async (e, w) => { endWhy = w; },
+			pushResult: async () => { log.push('PUSH'); return 9; },
+			post: async (r) => { log.push('POST:' + r.status); }, ack: async () => { log.push('ACK'); },
+		});
+		for (let i = 0; i < 40 && !finish; i++) await new Promise((r) => setTimeout(r, 0));
+		const ls = sync.leases(); const cur = ls[TL];
+		ls[TL] = { turnId: TL, eid: cur.eid, holder: cur.holder, dispatchedBy: cur.dispatchedBy, mode: 'released',
+			expiry: 0, deadline: cur.deadline, renewedAt: Math.max(NOW + 10, cur.renewedAt), settled: 1 };
+		sync.commit(sync.version(), ls);			// the sender's Stop, unseen by the runner
+		if (kind === 'finish') finish({}); else P.poisonRuns('poison');
+		const res = await running;
+		const lz = sync.leases()[TL];
+		check('F1/' + kind + ': a Stop that crossed the ' + kind + ' still reports, acks and pushes, marked stopped',
+			res.stopped === true && log.join(',') === 'POST:done,ACK,PUSH' && (kind === 'finish' || endWhy === 'user'),
+			JSON.stringify({ why: res.why, stopped: res.stopped, stopWhy, endWhy, trace: res.trace, log }));
+		check('F1/' + kind + ': and leaves the Stop as the sender wrote it (released, settled, uncut)',
+			!!lz && lz.mode === 'released' && lz.settled === 1 && !lz.cut, JSON.stringify(lz));
+	}
+	// ── (K1) check_f1stop P2: A KILL WHILE THE LEASE DOOR IS SLOW. The engine is aborted
+	//    before the door answers, so a live provider stream stops spending at once; the Stop
+	//    label, which needs the door's verdict, is the run's `endLocal`, given after it. ──
+	for (const stopped of [false, true]) {
+		const NOW = Date.now();
+		const TK = 'turn-k1-' + (stopped ? 'stop' : 'kill');
+		L.forget();
+		const base = makeCountingSync({});
+		let slow = false, gate = null, open = null;
+		const sync = Object.assign({}, base, {
+			read: async () => {
+				if (slow) { if (!gate) gate = new Promise((r) => { open = r; }); await gate; }
+				return { version: base.version(), leases: base.leases() };
+			},
+		});
+		const timer = makeFakeTimer();
+		const errand = sentErrand(P, { turnId: TK, chatId: 'c', prompt: 'p', eid: 'k1' + TK, deadline: NOW + 10 * 60000, dispatchedBy: 'PHONE' });
+		const log = []; let started = false;
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => NOW,
+			setTimer: timer.set, clearTimer: timer.clear, awaitPush: true,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => { started = true; return new Promise(() => {}); },
+			abort: (w) => log.push('abort:' + w),
+			endLocal: async (e, w) => { log.push('endLocal:' + w); },
+			pushResult: async () => { log.push('PUSH'); return 9; },
+			post: async (r) => { log.push('POST:' + r.status); }, ack: async () => { log.push('ACK'); },
+		});
+		for (let i = 0; i < 60 && !started; i++) await new Promise((r) => setTimeout(r, 0));
+		if (stopped) {
+			const ls = base.leases(); const cur = ls[TK];
+			ls[TK] = { turnId: TK, eid: cur.eid, holder: cur.holder, dispatchedBy: cur.dispatchedBy, mode: 'released',
+				expiry: 0, deadline: cur.deadline, renewedAt: Math.max(NOW + 10, cur.renewedAt), settled: 1 };
+			base.commit(base.version(), ls);		// the sender's Stop, unseen by the runner
+		}
+		slow = true;
+		P.poisonRuns('poison');
+		for (let i = 0; i < 60; i++) await new Promise((r) => setTimeout(r, 0));
+		const beforeDoor = log.slice();
+		slow = false; if (open) open();
+		const res = await running;
+		check('K1/' + (stopped ? 'stop' : 'kill') + ': the engine is aborted before the lease door answers, and nothing else is',
+			beforeDoor.join(',') === 'abort:engine_poisoned', JSON.stringify({ beforeDoor, log, trace: res.trace }));
+		check('K1/' + (stopped ? 'stop' : 'kill') + ': the run is labelled after the verdict, ' + (stopped ? 'as a Stop' : 'as the kill'),
+			log.includes('endLocal:' + (stopped ? 'user' : 'poison')) && !!res.stopped === stopped,
+			JSON.stringify({ log, trace: res.trace, stopped: res.stopped }));
+	}
+	{
+		const NOW = Date.now();
+		check('F1: the done write itself answers stopped over a settled release', await (async () => {
+			L.forget();
+			const sync = makeCountingSync({});
+			const ls = sync.leases();
+			ls['turn-last-v'] = { turnId: 'turn-last-v', eid: 'v', holder: 'DESK', dispatchedBy: 'PHONE', mode: 'released',
+				expiry: 0, deadline: NOW + 60000, renewedAt: NOW, settled: 1 };
+			sync.commit(sync.version(), ls);
+			return (await P.settleLease('turn', 'turn-last-v', 'DESK', 'done', P.syncCas(sync), () => NOW)).why === 'stopped';
+		})());
+	}
+
+	// ── (M) check_last S3: A RECORD THE DOOR LOST BEFORE THE DEADLINE is unknown, not revoked
+	//    (liveness's own rule), so a finished run still reports, acks and pushes. ──
+	{
+		const NOW = Date.now();
+		const TM = 'turn-last-s3';
+		L.forget();
+		const sync = makeCountingSync({});
+		const timer = makeFakeTimer();
+		const errand = sentErrand(P, { turnId: TM, chatId: 'c', prompt: 'p', eid: 'eM', deadline: NOW + 10 * 60000, dispatchedBy: 'PHONE' });
+		const log = [];
+		let finish = null;
+		const running = P.runErrand(errand, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => NOW,
+			setTimer: timer.set, clearTimer: timer.clear, awaitPush: true,
+			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
+			runTurn: () => new Promise((r) => { finish = r; }), abort: () => {},
+			pushResult: async () => { log.push('PUSH'); return 9; },
+			post: async (r) => { log.push('POST:' + r.status); }, ack: async () => { log.push('ACK'); },
+		});
+		for (let i = 0; i < 40 && !finish; i++) await new Promise((r) => setTimeout(r, 0));
+		const ls = sync.leases(); delete ls[TM]; sync.commit(sync.version(), ls);
+		finish({});
+		const res = await running;
+		check('S3: a record absent before the deadline does not drop the finished run',
+			res.done === true && log.join(',') === 'POST:done,ACK,PUSH', JSON.stringify({ why: res.why, trace: res.trace, log }));
+	}
+	// ── (M2) check_f1stop P3a: AN INTERRUPTED RUN ENDS ON THE CLAIM'S DEADLINE, not the errand's.
+	//    A slow sender clock wrote an errand deadline already past here (or the boot path has
+	//    none); a record the door lost before the CLAIM's deadline is still unknown, so the
+	//    interrupted run reports, acks and pushes rather than being dropped as not ours. ──
+	for (const edl of ['past', 'none']) {
+		const NOW = Date.now();
+		const TM = 'turn-f1stop-p3a-' + edl;
+		L.forget();
+		const sync = makeCountingSync({});
+		const e = { turnId: TM, chatId: 'c', eid: 'eP3', dispatchedBy: 'PHONE' };
+		if (edl === 'past') e.deadline = NOW - 60000;
+		const log = [];
+		const res = await P.reportInterrupted(e, {
+			selfId: 'DESK', selfName: 'argonaut', cas: P.syncCas(sync), now: () => NOW, awaitPush: true,
+			interrupted: async () => true,
+			pushResult: async () => { log.push('PUSH'); return 9; },
+			post: async (r) => { log.push('POST:' + r.status); }, ack: async () => { log.push('ACK'); },
+		}, {}, [], NOW + 10 * 60000);
+		check('P3a/' + edl + ': an interrupted run whose record is absent before the claim deadline still reports',
+			!!res && res.done === true && log.join(',') === 'POST:done,ACK,PUSH',
+			JSON.stringify({ res, log }));
 	}
 }
 
@@ -3666,8 +4175,8 @@ async function runRunnerAcceptance(P, L, check) {
 			awaitPush: true,			// so the whole sequence is assertable here
 		});
 		check('the runner completes the errand', res.ran === true && res.done === true);
-		check('the runner order is take,reconstruct,run,final-frame,report,complete,ack,release,push',
-			res.trace.join(',') === 'take,reconstruct,run,final-frame,report,complete,ack,release,push',
+		check('the runner order is take,reconstruct,run,final-frame,complete,report,ack,release,push',
+			res.trace.join(',') === 'take,reconstruct,run,final-frame,complete,report,ack,release,push',
 			res.trace.join(','));
 		check('the answer was folded into the transcript',
 			ctxChat.messages.some((m) => m.role === 'assistant' && m.content === 'the answer is 42'));
@@ -3725,7 +4234,7 @@ async function runRunnerAcceptance(P, L, check) {
 			post: async (rep) => { report = rep; }, ack: async () => {}, awaitPush: true,
 		});
 		check('R5: no final-frame dep -> the turn still completes, in order',
-			res.done === true && res.trace.join(',') === 'take,reconstruct,run,report,complete,ack,release,push');
+			res.done === true && res.trace.join(',') === 'take,reconstruct,run,complete,report,ack,release,push');
 		check('R5: and the report says the answer did NOT travel ahead, so the parcel is the first sight',
 			!!report && report.finalTail === 0);
 	}
@@ -4088,7 +4597,10 @@ async function runLeaseUnreadAcceptance(phone, check) {
 	{
 		const r = rig();
 		let t = T0 + 2000;
-		const o = await run(r, T0 + 5000, () => t, (opts, h) => ticks(opts, h, 6, 2, () => { r.st.empty = 1; t = T0 + 6000; }));
+		// Past the CLAIM's deadline (check_f234 Q2): the take holds the claim to the age window,
+		// later than this errand's own deadline, and the record lives until the claim's.
+		const o = await run(r, T0 + 5000, () => t, (opts, h) => ticks(opts, h, 6, 2, () => {
+			t = r.door.leases()[TID].deadline + 1000; r.st.empty = 1; }));
 		check('U2: the same absent record AFTER the deadline aborts', o.hooks.aborted === true && o.res.aborted === true,
 			JSON.stringify({ aborted: o.hooks.aborted, trace: o.res.trace.join(',') }));
 		check('U2: and the abort is recorded as collect REVOKED why=absent',

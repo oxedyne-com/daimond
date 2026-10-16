@@ -2337,6 +2337,8 @@
 	'turn.peer_running':       'Running on your other device.',
 	'turn.peer_running_named': '{name} is doing this.',
 	'turn.peer_failed':        'Your other device couldn’t finish this.',
+	'turn.peer_interrupted':   'Interrupted on your other device.',
+	'turn.peer_interrupted_named': 'Interrupted on {name}.',
 	'turn.peer_runhere':       'Run here',
 	'turn.peer_answeragain':   'Answer again',
 	'turn.peer_consent':       'Your other device needs your permission to {act}.',

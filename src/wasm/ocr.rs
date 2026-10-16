@@ -18,7 +18,6 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -29,13 +28,13 @@ extern "C" {
     type Driver;
 
     /// POST one `file-parser` chat body to OpenRouter; resolve the raw response text.
-    #[wasm_bindgen(method)]
-    fn chat(this: &Driver, body: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn chat(this: &Driver, body: &str) -> Result<JsValue, JsValue>;
 
     /// Transcribe an image: try Mistral OCR, fall back to a vision model.  Resolves a JSON
     /// string `{"route":"mistral"|"vision","body":<raw response>}`.
-    #[wasm_bindgen(method)]
-    fn image(this: &Driver, mistral_body: &str, vision_body: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn image(this: &Driver, mistral_body: &str, vision_body: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -56,7 +55,7 @@ fn driver() -> Outcome<Driver> {
 /// POST a `file-parser` chat body to OpenRouter and return the raw response body.
 pub async fn openrouter_chat(body: &str) -> Outcome<String> {
     let d = res!(driver());
-    match JsFuture::from(d.chat(body)).await {
+    match crate::wasm::settle_call(d.chat(body)).await {
         Ok(v)  => Ok(v.as_string().unwrap_or_default()),
         Err(e) => Err(err!("{}", refusal(&e); IO, Invalid)),
     }
@@ -66,7 +65,7 @@ pub async fn openrouter_chat(body: &str) -> Outcome<String> {
 /// `"vision"` so the caller parses the body in the right shape.
 pub async fn image_ocr(mistral_body: &str, vision_body: &str) -> Outcome<(String, String)> {
     let d = res!(driver());
-    let v = match JsFuture::from(d.image(mistral_body, vision_body)).await {
+    let v = match crate::wasm::settle_call(d.image(mistral_body, vision_body)).await {
         Ok(v)  => v.as_string().unwrap_or_default(),
         Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
     };

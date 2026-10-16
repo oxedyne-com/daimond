@@ -118,6 +118,16 @@ function makeGate() {
 /// A tab loading the REAL post.js. An envelope 'ERRAND:<turn>' is a foreign errand
 /// (work); 'REPORT:<turn>' is a note. `turn(turnId)` answers the gate a run of that
 /// turn waits on; `outcome` is what the handler answers.
+/// peer.js's `standDownUndecided`, lifted from the source, so a hold here is the hold the
+/// page makes and not a copy of the list that could drift from it.
+const realStandDownUndecided = (() => {
+	const src = readFileSync(join(HERE, 'peer.js'), 'utf8');
+	const at = src.indexOf('\n\tfunction standDownUndecided(');
+	if (at < 0) throw new Error('postwork: standDownUndecided not found in peer.js');
+	const end = src.indexOf('\n\t}', at);
+	return new Function(src.slice(at, end + 3) + '\nreturn standDownUndecided;')();
+})();
+
 function makeTab(box, opts) {
 	opts = opts || {};
 	const local = opts.local || new Map();
@@ -171,7 +181,7 @@ function makeTab(box, opts) {
 			return null;
 		},
 		isOwnDispatch: () => false,
-		standDownUndecided: (why) => why === 'nominee' || why === 'unread' || why === 'exhausted',
+		standDownUndecided: realStandDownUndecided,		// peer.js's own rule, lifted below
 		isWork: (p) => !!p && p.t === 'errand',
 		workKey: (p) => 'turn:' + p.turnId,
 		verifyEnvelope: async (p) => !(opts.forged && opts.forged.includes(p.turnId)),
@@ -182,7 +192,7 @@ function makeTab(box, opts) {
 			if (p.t !== 'errand') { stat.notes.push(p.turnId); return { routed: true, verified: true, result: null }; }
 			stat.runs.push(p.turnId);
 			const outcome = (opts.outcome && opts.outcome[p.turnId]) || 'done';
-			if (outcome === 'nominee' || outcome === 'unread' || outcome === 'exhausted' || outcome === 'holder') {
+			if (outcome !== 'done') {
 				return { routed: true, verified: true, result: { ran: false, why: outcome } };
 			}
 			await opts.turn(p.turnId);
@@ -342,6 +352,36 @@ async function main() {
 			check(why + ': the errand is acked away', !box.has(1), 'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)));
 			check(why + ': and holds nothing', !(st.holds || []).length, 'holds ' + JSON.stringify(st.holds));
 		}
+	}
+
+	// ── (4c) a POISONED runner backs off, and its reload runs the errand once (UNBLOCK-7) ──
+	// A page whose engine trapped reloads itself within POISON_RELOAD_MS. An errand it
+	// collects in that window stands down as `poisoned`, unclaimed and unacked: the row is
+	// held in the mailbox record, which is in localStorage, so the reloaded page (same
+	// storage, same relay box, the old page's locks gone with it) collects it again.
+	console.log('\na poisoned runner holds the errand; the reloaded page runs it once');
+	{
+		const box = makeBox([{ seq: 1, kind: 'post', addr: 'e1', envelope: 'ERRAND:T1' }]);
+		const local = new Map();
+		const sick = makeTab(box, { locks: makeLocks(), local, inline, outcome: { T1: 'poisoned' }, turn: () => Promise.resolve() });
+		await ticks();
+		await within(sick.P().round());
+		await ticks(80);
+		const st = await sick.P().read();
+		check('poisoned: the errand is still on the relay', box.has(1), 'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)));
+		check('poisoned: and held below the cursor', st.through === 0 && (st.holds || []).some((h) => h.seq === 1),
+			'through ' + st.through + ', holds ' + JSON.stringify(st.holds));
+		const fresh = makeTab(box, { locks: makeLocks(), local, inline, turn: () => Promise.resolve() });
+		await ticks();
+		await within(fresh.P().round());
+		await ticks(80);
+		check('reloaded: the page collects the held errand and runs it once', JSON.stringify(fresh.stat.runs) === '["T1"]',
+			JSON.stringify(fresh.stat.runs));
+		check('reloaded: the run acks it off the relay', !box.has(1) && fresh.stat.acked.length === 1,
+			'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)) + ', acked ' + JSON.stringify(fresh.stat.acked));
+		await within(fresh.P().round());
+		await ticks(80);
+		check('reloaded: a later collect does not run it again', fresh.stat.runs.length === 1, JSON.stringify(fresh.stat.runs));
 	}
 
 	// ── (5) a forged errand is dropped, never held ──

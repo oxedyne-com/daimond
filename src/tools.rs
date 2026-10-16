@@ -9850,6 +9850,14 @@ const LINKING_SCRIPTS: &[Linking] = &[
         instead: "It builds the fixture dev/verify_foldershare.mjs shares and is not a check of \
             its own. Ask the user to run that verifier, and say what you wanted shared.",
     },
+    Linking {
+        path: "dev/verify_deploy_provmatch.sh",
+        does: "a symlinked fe2o3 checkout into the fixture directory it checks the deploy \
+            script's crate record against",
+        instead: "It drives dev/deploy.sh, the release's own script, and is a check a release \
+            lane runs, not one you run inside a turn. Ask the user to run it, and say what \
+            you wanted checked about the gateway's crate record.",
+    },
 ];
 
 /// The linking script a path names, where it names one.

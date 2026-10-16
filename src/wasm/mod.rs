@@ -76,6 +76,7 @@ pub mod workers;
 use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::JsValue;
+use wasm_bindgen_futures::JsFuture;
 
 /// Render a JS error value as a human-readable string.
 pub(crate) fn js_str(v: &JsValue) -> String {
@@ -124,6 +125,30 @@ pub(crate) fn refusal(e: &JsValue) -> String {
     match paused_node_of(e) {
         Some(node) => crate::tools::paused_mark(&node, &said),
         None       => said,
+    }
+}
+
+/// Await a JS value as a promise.  **The one door from a JS value into a Rust future:**
+/// `dev/breakproof_jsfuture.sh` refuses a `JsFuture::from` anywhere else.
+///
+/// `JsFuture::from` calls `.then` on what it is handed, so a value that is not a real `Promise`
+/// -- a driver method written synchronously, as `DaimondWeb.status` is -- throws a `TypeError`
+/// from inside the wasm frames.  Nothing catches it, the task's `RefCell` borrow is abandoned,
+/// the next wake panics into `unreachable`, and the turn never ends (UNBLOCK-7, 2026-10-14:
+/// every web_click and web_type wedged its runner).  `Promise.resolve` adopts a promise or a
+/// thenable and wraps a plain value, and a native `Promise` passes through as itself.
+pub(crate) fn settle_js<T: Into<JsValue>>(v: T) -> JsFuture {
+    JsFuture::from(js_sys::Promise::resolve(&v.into()))
+}
+
+/// Await what a `catch` import returned: a throw is the rejection, a value is settled as by
+/// [`settle_js`].  Every extern import the app's JavaScript answers is declared `catch` and
+/// returns `Result<JsValue, JsValue>` rather than `js_sys::Promise`, because the JS side's
+/// word that it returns a promise is not something the boundary can rest on.
+pub(crate) async fn settle_call(r: Result<JsValue, JsValue>) -> Result<JsValue, JsValue> {
+    match r {
+        Ok(v)  => settle_js(v).await,
+        Err(e) => Err(e),
     }
 }
 

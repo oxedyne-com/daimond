@@ -3466,6 +3466,8 @@
 	'turn.peer_running': '다른 기기에서 실행 중이에요.',
 	'turn.peer_running_named': '{name}이(가) 이걸 하고 있어요.',
 	'turn.peer_failed': '다른 기기가 이걸 끝내지 못했어요.',
+	'turn.peer_interrupted': '다른 기기에서 중단됐어요.',
+	'turn.peer_interrupted_named': '{name}에서 중단됐어요.',
 	'turn.peer_runhere': '여기서 실행',
 	'turn.peer_answeragain': '다시 답하기',
 	'turn.peer_consent': '다른 기기가 {act} 허락을 구하고 있어요.',

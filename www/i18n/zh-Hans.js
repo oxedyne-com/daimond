@@ -3456,6 +3456,8 @@
 	'turn.peer_running': '正在你的另一台设备上运行。',
 	'turn.peer_running_named': '{name} 正在做这件事。',
 	'turn.peer_failed': '你的另一台设备没能完成这个。',
+	'turn.peer_interrupted': '在你的另一台设备上中断了。',
+	'turn.peer_interrupted_named': '在 {name} 上中断了。',
 	'turn.peer_runhere': '在这里运行',
 	'turn.peer_answeragain': '重新回答',
 	'turn.peer_consent': '你的另一台设备需要你的许可才能{act}。',

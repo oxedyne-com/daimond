@@ -32,7 +32,6 @@ use oxedyne_fe2o3_text::base64;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
-use wasm_bindgen_futures::JsFuture;
 
 
 #[wasm_bindgen]
@@ -43,8 +42,8 @@ extern "C" {
     type Shooter;
 
     /// Photograph the current view, answering a JSON envelope with the PNG base64 in it.
-    #[wasm_bindgen(method)]
-    fn capture(this: &Shooter, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn capture(this: &Shooter, req: &str) -> Result<JsValue, JsValue>;
 
     /// The driver the app installs at `window.DaimondVision`: it holds the keys and the ledger,
     /// so the one request to a Diamond's images model is made there.
@@ -52,8 +51,8 @@ extern "C" {
     type Looker;
 
     /// Put one picture to the Diamond's images model; answer a JSON envelope.
-    #[wasm_bindgen(method)]
-    fn look(this: &Looker, req: &str) -> js_sys::Promise;
+    #[wasm_bindgen(catch, method)]
+    fn look(this: &Looker, req: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -95,7 +94,7 @@ pub struct Shot {
 ///   optional `max_w`, `background` and `scale`.
 pub async fn capture(req: &str) -> Outcome<Shot> {
     let s = res!(shooter());
-    let v = match JsFuture::from(s.capture(req)).await {
+    let v = match crate::wasm::settle_call(s.capture(req)).await {
         Ok(v)  => v,
         Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
     };
@@ -167,7 +166,7 @@ pub async fn look(id: &str, png: &[u8], prompt: &str) -> Outcome<Looked> {
     let l = obj.unchecked_into::<Looker>();
     let req = fmt!(r#"{{"id":"{}","prompt":"{}","png_b64":"{}"}}"#,
         crate::llm::json_escape(id), crate::llm::json_escape(prompt), base64::encode(png));
-    let json = match JsFuture::from(l.look(&req)).await {
+    let json = match crate::wasm::settle_call(l.look(&req)).await {
         Ok(v)  => v.as_string().unwrap_or_default(),
         Err(e) => return Ok(Looked::Failed(refusal(&e))),
     };
