@@ -117,7 +117,7 @@ const J = JSON.stringify;
 const hasPre = (m) => Object.prototype.hasOwnProperty.call(m, 'pre');
 
 // ── Lifts: the real helpers, in one scope with the real ratings ──
-const names = ['ratingPre', 'pushUserRecord', 'tsPast', 'storedPre', 'landInterjection', 'recoverUserRecord', 'interjectMessage', 'heldNote'];
+const names = ['ratingPre', 'pushUserRecord', 'tsPast', 'storedPre', 'storedPrompt', 'storedEffort', 'landInterjection', 'recoverUserRecord', 'interjectMessage', 'heldNote'];
 const src = {};
 for (const n of names) src[n] = lift(SRC, n);
 check('ratingPre, pushUserRecord, tsPast and storedPre are in daimond.js', ['ratingPre', 'pushUserRecord', 'tsPast', 'storedPre'].every((n) => !!src[n]), names.filter((n) => !src[n]).join(','));
@@ -301,12 +301,22 @@ console.log('\nA replay carries the original pre and computes none');
 	const efr = lift(SRC, 'errandForRecovery'), dtp = lift(SRC, 'dispatchToPeer');
 	check('errandForRecovery and dispatchToPeer are in daimond.js', !!efr && !!dtp);
 	if (efr) {
-		const mk = new Function('window', 'DaimondPeer', 'DaimondSync', 'selfDeviceId', 'storedPre', efr + '\nreturn errandForRecovery;');
-		const f = mk(win, Peer, { version: () => 7 }, () => 'dev-self', S.storedPre);
+		const teo = new Function('diamondEffort', lift(SRC, 'turnEffortOf') + '\nreturn turnEffortOf;')(() => '');
+		const mk = new Function('window', 'DaimondPeer', 'DaimondSync', 'selfDeviceId', 'storedPre', 'storedEffort', 'turnEffortOf', efr + '\nreturn errandForRecovery;');
+		const f = mk(win, Peer, { version: () => 7 }, () => 'dev-self', S.storedPre, S.storedEffort, teo);
 		const e = run(() => f(chat, { iturn: 't1', itext: 'the turn', dispatchedBy: 'devA', ts: T(3) }, false));
 		check('errandForRecovery carries the stored pre beside the prompt', e && e.pre === NOTE && e.prompt === 'the turn', e && e.pre);
 		const e0 = run(() => f(chat, { iturn: 'u1', itext: 'say u1', ts: T(0) }, false));
 		check('a recovered turn whose record took no pre carries none (it is not recomputed)', e0 && e0.pre === '', e0 && e0.pre);
+		const rec = chat.messages.find((x) => x.id === 't1' || x.iturn === 't1');
+		const was = rec && rec.effort;
+		if (rec) rec.effort = 'low';
+		chat.effort = 'high';
+		const ee = run(() => f(chat, { iturn: 't1', itext: 'the turn', ts: T(3) }, false));
+		check('a recovered errand carries the effort its record was sent at, not the chat\'s now', ee && ee.effort === 'low', ee && ee.effort);
+		const en = run(() => f(chat, { iturn: 'nope', itext: 'x', ts: T(3) }, false));
+		check('with no record, a recovered errand falls back to the chat\'s effort', en && en.effort === 'high', en && en.effort);
+		if (rec) rec.effort = was; delete chat.effort;
 	}
 	check('dispatchToPeer puts the stored pre in the errand it builds (every re-dispatch goes through it)',
 		/pre:\s*storedPre\(chat, turnId\)/.test(dtp || ''));
@@ -463,6 +473,20 @@ console.log('\nThe turn-starting exports, the journal and the runner carry it');
 	check('the journal opens a turn with its note and its mark', open > 0 && /pre/.test(rt.slice(open - 400, open + 200)) && /app/.test(rt.slice(open - 400, open + 200)) && /turnPre/.test(rt.slice(open - 400, open + 200)), rt.slice(open - 200, open + 160));
 	check('a steer\'s note is read off its record, or the errand\'s for a runner, and handed to steer_crystal last', /steer_crystal\([\s\S]*JSON\.stringify\(marks\.toolkits\s*\|\| \[\]\),[\s\S]*onEvent,\s*steerPre \|\| undefined\)/.test(rs) && /detached\.pre/.test(rs));
 	check('the detached steer is handed the errand\'s note', /pre:\s*\(ropts && ropts\.pre\)/.test(lift(SRC, 'runSteerDetached') || ''));
+	// A Diamond's turn runs at the Diamond's Effort, on this device and handed off (check_final F1).
+	{
+		const teo = new Function('diamondEffort', lift(SRC, 'turnEffortOf') + '\nreturn turnEffortOf;')((id) => id === 'd1' ? 'high' : '');
+		check('turnEffortOf reads a Diamond\'s thread from the Diamond, a chat from the chat',
+			teo({ diamondId: 'd1', effort: '' }) === 'high' && teo({ effort: 'low' }) === 'low' && teo({}) === '' && teo(null) === '');
+		check('the detached steer is handed the errand\'s Effort', /effort:\s*\(ropts && ropts\.effort\)/.test(lift(SRC, 'runSteerDetached') || ''));
+		const rsx = lift(SRC, 'runSteer') || '';
+		check('runSteer hands every diamondApp the turn\'s Effort, the errand\'s when handed off',
+			/detached\.effort/.test(rsx) && (rsx.match(/diamondApp\(/g) || []).length === (rsx.match(/diamondApp\([^)]*steerEff\)/g) || []).length
+			&& /effort:\s*steerEff/.test(rsx));
+		const da = lift(SRC, 'diamondApp') || '';
+		check('a hand-out with no Effort leaves the shared client\'s as it stands',
+			!/diamondEffort\(/.test(da) && (da.match(/applyEffort\(/g) || []).length === (da.match(/typeof eff === 'string'\) applyEffort\(/g) || []).length);
+	}
 	check('a screen-transcript tail restored into the engine carries each user message\'s note', /append_message\(m\.role, m\.content \|\| '',\s*[^)]*m\.pre/.test(ea), ea.slice(ea.indexOf('append_message') - 20, ea.indexOf('append_message') + 160));
 	// the runner
 	const re = SRC.indexOf('await runTurn(c.chat, prompt, {');

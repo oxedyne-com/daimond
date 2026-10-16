@@ -192,7 +192,9 @@ async function main() {
 		const KEY = 'models-test-diamonds';
 		const dflt = { provider: 'or', model: 'acme/three' };
 		const page = new Function('DaimondModels', 'localStorage', 'readJson', 'DIAMOND_MODELS_KEY', 'dflt',
-			setSrc + effSrc + setEffSrc
+			setSrc + effSrc + setEffSrc + lift('blankDiamondModel')
+			+ (src.match(/\n\tvar DIAMOND_MODEL_HALF[^\n]*\n/) || [''])[0]
+			+ (src.match(/\n\tvar DIAMOND_EFFORT_HALF[^\n]*\n/) || [''])[0]
 			+ '\nfunction diamondModels() { return readJson(DIAMOND_MODELS_KEY, {}) || {}; }'
 			+ '\nfunction diamondModel(id) { var m = diamondModels()[id]; return m && m.model ? m : dflt; }'
 			+ '\nreturn { setDiamondModel: setDiamondModel, diamondEffort: diamondEffort, setDiamondEffort: setDiamondEffort, diamondModel: diamondModel };')(

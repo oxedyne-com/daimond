@@ -854,15 +854,37 @@
 					     with text mid-turn is a correction to send, not a turn to kill.
 					     Emptying the box reaches stop in that mode. -->
 				</div>
-				<!-- WHERE THE NEXT TURN RUNS, chosen by the person (owner, D-20261009-23):
-				     "Here | <runner>" while the nominated runner is reachable, plain "Here"
-				     otherwise. By the input box, where the eyes already are. Sticky per
-				     chat; drawn by `renderSeatSwitch`. -->
-				<div class="dview seat-switch" id="seat-switch" role="group" hidden
-				     data-i18n-aria-label="seat.switch" aria-label="Where the next turn runs">
-					<button class="dview-btn" id="seat-here" type="button" aria-pressed="true"
-					        data-i18n="seat.here">Here</button>
-					<button class="dview-btn" id="seat-runner" type="button" aria-pressed="false" hidden></button>
+				<!-- THE COMPOSER ROW (D-20261014-08): what the next turn is, beside the box it
+				     is typed in (under it on a desktop, above it on a phone). Where it runs, how
+				     hard it thinks, and on a phone the walk-back pair, which `placeWalkPair` moves
+				     in here from the bar. One line at every width: the runner's name gives way
+				     first, then the Effort word. CSS alone hides it while none of its parts is
+				     shown (`:has`), so no drawing has to keep a second flag in step with its parts. -->
+				<div class="composer-row" id="composer-row">
+					<!-- WHERE THE NEXT TURN RUNS, chosen by the person (owner, D-20261009-23):
+					     "Here | <runner>" while the nominated runner is reachable, plain "Here"
+					     otherwise. Sticky per chat; drawn by `renderSeatSwitch`. -->
+					<div class="dview seat-switch" id="seat-switch" role="group" hidden
+					     data-i18n-aria-label="seat.switch" aria-label="Where the next turn runs">
+						<button class="dview-btn" id="seat-here" type="button" aria-pressed="true"
+						        data-i18n="seat.here">Here</button>
+						<button class="dview-btn" id="seat-runner" type="button" aria-pressed="false" hidden></button>
+					</div>
+					<!-- HOW HARD THE NEXT TURN THINKS, per chat and turn by turn: a step down,
+					     the level, a step up, over the levels this chat's model lists. Hidden
+					     for a model that lists none. Drawn by `renderEffortStep`. -->
+					<div class="dview effort-step" id="effort-step" role="group" hidden
+					     data-i18n-aria-label="tile.effort" aria-label="Effort">
+						<button class="dview-btn effort-dn" id="effort-dn" type="button"
+						        data-i18n-aria-label="composer.effort_less" aria-label="Less effort">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>
+						</button>
+						<span class="dview-btn effort-val" id="effort-val" aria-live="polite"></span>
+						<button class="dview-btn effort-up" id="effort-up" type="button"
+						        data-i18n-aria-label="composer.effort_more" aria-label="More effort">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12"/></svg>
+						</button>
+					</div>
 				</div>
 				<!-- Crystal view: the Diamond command surface (steer + fold), shown in
 				     place of the chat when a Diamond is selected. Built in JS. -->

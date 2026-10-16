@@ -27,7 +27,7 @@
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs.
 
 import { open, signInAs, newChat, connectMock, checker } from './harness.mjs';
-import { settle, until, storedMsgs, nominateRunner, ROUTED_SW } from './handoffpair.mjs';
+import { settle, until, storedMsgs, nominateRunner, ROUTED_SW, switchOn, untilScreen } from './handoffpair.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import { guardRan } from './verdict.mjs';
@@ -52,15 +52,6 @@ const switchText = (pg) => pg.evaluate(() => {
 	const el = document.getElementById('seat-switch');
 	if (!el || !el.getClientRects().length) return '';
 	return el.innerText.replace(/\s+/g, ' ').trim();
-}).catch(() => '');
-
-/// Which segment of the switch reads as pressed: 'runner', 'here' or ''.
-const switchOn = (pg) => pg.evaluate(() => {
-	const r = document.getElementById('seat-runner');
-	const h = document.getElementById('seat-here');
-	if (r && r.getClientRects().length && r.getAttribute('aria-pressed') === 'true') return 'runner';
-	if (h && h.getClientRects().length && h.getAttribute('aria-pressed') === 'true') return 'here';
-	return '';
 }).catch(() => '');
 
 /// How many times the transcript on screen shows `words` as an answer (not inside the
@@ -144,18 +135,6 @@ async function joinDesk(a, mate) {
 	return s;
 }
 
-/// Wait for `pred` over the phone's screen, nudging its presence read each round (the
-/// beat cadence is the product's; the read is only brought forward).
-async function untilScreen(a, pred, ms, step = 1000) {
-	const t0 = Date.now();
-	for (;;) {
-		let v = false;
-		try { v = await pred(); } catch (e) { v = false; }
-		if (v || Date.now() - t0 > ms) return v;
-		await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
-		await a.page.waitForTimeout(step);
-	}
-}
 
 /// The phone's dispatch decisions, printed where a hand-off check fails.
 async function dumpDiag(s, what) {

@@ -1383,19 +1383,30 @@ button.tag-pool { cursor: pointer; }
 .crystal-body .crystal-empty { color: var(--text-muted); font-style: italic; }
 .crystal-controls { border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 
-/* THE COMPOSER SITS BELOW THE CRYSTAL, not above it.
-   `.chat-input-bar` comes BEFORE `.crystal-view` in the document, because it
-   was written when only the chat thread ever used it and the crystal carried a
-   steer box of its own. That box is gone and the composer is shared, so on the
-   crystal face the source order puts the box at the top of the page -- above
-   the document it is meant to sit under. Ordered explicitly rather than moved
-   in the markup, because the chat face wants the source order it already has. */
+/* THE COMPOSER ROW (D-20261014-08): under the composer on a desktop and above it on a
+   phone (responsive.css), inside its border so it reads as part of the one control. ONE LINE AT EVERY WIDTH, never wrapped: each text slot
+   says how it gives way. The runner's name is the one that shrinks, to an ellipsis at
+   3em at the least; the Effort word is held between 4em and 8em, past which it ends in
+   an ellipsis; the switch's "Here", the steps and the walk-back squares never shrink. */
+.composer-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; margin: 0 12px 8px; min-width: 0; }
+.composer-row:not(:has(> :not([hidden]))) { display: none; }
 /* WHERE THE NEXT TURN RUNS: the "Here | <runner>" switch (D-20261009-23), the same
-   segmented control as Crystal | Chat, under the composer inside its border so it
-   reads as part of the one control. Sized to its words, not the row. */
-.seat-switch { align-self: flex-start; margin: 0 12px 8px; }
+   segmented control as Crystal | Chat. Sized to its words until the row runs short. */
+.seat-switch { flex: 0 1 auto; min-width: 0; }
 .seat-switch[hidden] { display: none; }
-.seat-switch .dview-btn { padding: 3px 7px; }
+.composer-row .dview-btn { padding: 3px 7px; }
+#seat-here { flex: none; }
+#seat-runner { flex: 0 1 auto; min-width: 3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* HOW HARD IT THINKS: the same segmented control, as − level +. The level holds a
+   fixed least width so a step does not move the + under the finger that pressed it. */
+.effort-step { flex: none; }
+.effort-step[hidden] { display: none; }
+.effort-step .effort-dn, .effort-step .effort-up { flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.effort-step .ic { width: 14px; height: 14px; }
+.effort-step .effort-dn:disabled, .effort-step .effort-up:disabled { opacity: 0.4; cursor: default; }
+.effort-step .effort-val { flex: none; min-width: 4em; max-width: 8em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; color: var(--text-secondary); }
+/* The model's own default, under the level's own name: the same word in muted ink. */
+.effort-step .effort-val.is-default { color: var(--text-muted); }
 /* The same statement inside a hand-off tile, where it is about ONE turn rather than
    about the next one. Indented under the status it qualifies. */
 .seat-note { margin-top: 4px; font-size: var(--fs-xs); color: var(--text-muted); }
@@ -1404,12 +1415,19 @@ button.tag-pool { cursor: pointer; }
    list's own status pill. */
 .handoff-workers { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-xs); color: var(--text-muted); }
 .handoff-workers .hw { display: inline-flex; align-items: center; gap: 6px; }
-:root[data-cfull] .panel.ai .seat-switch { display: none !important; }
+:root[data-cfull] .panel.ai .composer-row { display: none !important; }
 
+/* THE COMPOSER SITS BELOW THE CRYSTAL, not above it.
+   `.chat-input-bar` comes BEFORE `.crystal-view` in the document, because it
+   was written when only the chat thread ever used it and the crystal carried a
+   steer box of its own. That box is gone and the composer is shared, so on the
+   crystal face the source order puts the box at the top of the page -- above
+   the document it is meant to sit under. Ordered explicitly rather than moved
+   in the markup, because the chat face wants the source order it already has. */
 .panel.ai.crystal-face .crystal-view   { order: 1; }
 .panel.ai.crystal-face .mark-notice    { order: 2; }
 .panel.ai.crystal-face .chat-input-bar { order: 2; }
-.panel.ai.crystal-face .seat-switch    { order: 3; }
+.panel.ai.crystal-face .composer-row   { order: 3; }
 
 /* MARKS NOT IN FORCE ON THIS DEVICE. It asks something of the person, so it is drawn
    as the crystal's fallback note is -- a warning band, in the text ink that holds its
@@ -1773,6 +1791,20 @@ span.arte-open { cursor: default; }
    the right edge in both states and the words stay on one line. */
 .attach-head > .foot-toggle { flex: 1 1 0; width: auto; min-width: 0; margin: 0; }
 .foot-toggle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A leading glyph is the control's, drawn by its role, never typed into its words. Typed in
+   ("▸ 0 linked diamonds", "✔ Save") the gap after it was the width of a space in whatever
+   font the browser fell back to for the glyph: 3px in Chromium, 1px in WebKit (gatefix,
+   r566u7's by-role gate). As a box with the disclosures' own 0.25em margin (`.rail-builtin`,
+   `.files-rest-head`, `.cap-more`) it is the same gap in every engine. `lead-disc` follows
+   the control's aria-expanded; `lead-ok` is the confirm tick, gone while the press is busy. */
+.lead-disc::before, .lead-ok::before { display: inline-block; margin-right: 0.25em; }
+.lead-disc::before { content: '\25B8'; }
+.lead-disc[aria-expanded="true"]::before { content: '\25BE'; }
+.lead-ok::before { content: '\2714'; }
+.lead-ok:not([role="menuitemcheckbox"]):disabled::before { content: none; }
+/* A menu's check row (`menuitemcheckbox`) keeps the tick's box when unticked, so its words line
+   up with its ticked neighbours, as the spaces typed in for it used to do. */
+.lead-ok[aria-checked="false"]::before { visibility: hidden; }
 .link-strip { display: block; width: 100%; text-align: left; border: none;
 	color: var(--text-muted); font-family: var(--font-mono);
 	cursor: pointer; }
@@ -3698,6 +3730,14 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .pro-buy:disabled { opacity: 0.6; cursor: default; }
 .pro-err { margin-top: 6px; font-size: var(--fs-sm); color: var(--danger, #c0392b); }
 .pro-owned { color: var(--text-primary); font-size: var(--fs-base); line-height: 1.45; }
+/* Cancel, under the confirmation, is a link (`pro-link`), not a second sell. The class had no rule, so it took
+   `.settings-section button`'s accent fill and 9px 16px -- a filled button saying "Cancel subscription" in the
+   calm box (gatefix, by-role gate: inline-link). It is drawn as the app's other inline links are (`.post-link`),
+   at the selector weight it has to beat, hover included. */
+.settings-section button.pro-link, .settings-section button.pro-link:hover {
+	display: block; margin: 8px 0 0; padding: 0; border: 0; border-radius: 0; background: none;
+	font: inherit; color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
 
 /* ── Credits, in the Models panel ─────────────────────────────────
    Credits are a provider row like any other, with one difference the user must

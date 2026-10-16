@@ -9884,7 +9884,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			JSON.parse(await app.list_diamonds()).forEach(function (d) { if (d && d.id) local[d.id] = d; });
 		} catch (e) { return; }
 		trail('sync apply listed', Object.keys(local).length + ' here, ' + heapNote());
-		var changed = false;
+		var changed = false, modelsMoved = false;
 		// The per-Diamond fork point (S-SYNC #4), read once and written back at the end
 		// if it moved. It advances to every Diamond this round establishes as agreed --
 		// an import lays the two sides on the same copy, and an equal-stamp arrival means
@@ -9941,6 +9941,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				? r.dataRef : null;
 			notePeerRef('@d/' + r.id, dref, false, from);
 			var mine = local[r.id];
+			// THE MODEL RECORD FIRST, ON ITS OWN STAMP (check_f1 B1), on every branch: a press of the
+			// Effort step or a model change moves the record and not the Diamond.
+			if (mine && adoptDiamondModel(r.id, r.model, false)) modelsMoved = true;
 			// STRICTLY newer: equal stamps keep what is here, so a Diamond that
 			// has not moved is not rewritten on every pull.
 			if (mine && !(diamondStamp(r) > diamondStamp(mine))) {
@@ -10124,14 +10127,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			adoptDiamondRef(r, storedAt, from);
 			// Best effort: the model may be one this device has no key for, and
 			// the Diamond then shows as unable to run, which is already a state
-			// the rail draws.
-			if (r.model && (r.model.model || r.model.effort)) setDiamondModel(r.id, r.model);
+			// the rail draws. A Diamond new here takes its record by the old rule too.
+			adoptDiamondModel(r.id, r.model, true);
 		}
 		// Persist the fork point even when nothing else changed -- an equal-stamp round
 		// records agreement without replacing anything, and losing that record would
 		// have the next resume-pull read a one-sided edit as two-sided (S-SYNC #4).
 		if (baseDirty) writeDiamondBase(dbase);
-		if (!changed) return;
+		if (modelsMoved) renderEffortStep();		// the step on a Diamond's face reads the record
+		if (!changed) { if (modelsMoved) bumpDiamonds(); return; }
 		bumpDiamonds();                            // tell the other TABS
 		await onDiamondsChangedElsewhere();        // and this one: same reconciliation
 		signalLinksChanged();                      // links ride with their Diamond, so the graph moved
@@ -13136,6 +13140,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// that rises as a SHEET leaves the conversation underneath, so those are
 		// left alone.
 		if (crystalFull && name !== 'ai' && !MOBILE_GUESTS[name]) setCrystalFull(false);
+		// The rail is reached through the hamburger drawer, not the bar.
+		if (name === 'rail') {
+			if (window.DaimondShell) DaimondShell.openDrawer();
+			DaimondPanels.reflow();
+			return;
+		}
+		// SHOWING A DESTINATION ENDS THE DRAWER'S JOB. The drawer is where a person
+		// picks a chat or a Diamond; once the floor shows what they asked for it is
+		// only in the way, and it covered the composer after New Chat. Done here, at
+		// the one seam, so every route in is covered -- the buttons, the footer chips
+		// and the callers nobody listed -- rather than each button closing it.
+		// BEFORE THE GUESTS, which return early: a sheet rose over a still-open drawer
+		// when the close was below them (an Admin "Edit the ... prompt" row, gatefix
+		// 16 Oct), against the rule this comment states.
+		if (window.DaimondShell) DaimondShell.closeDrawer();
 		// A guest rises as a sheet; the floor beneath it stays the conversation.
 		if (MOBILE_GUESTS[name] && window.DaimondSheet) {
 			document.body.dataset.mpanel = 'ai';
@@ -13146,12 +13165,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (name === 'doc') Files.onDocOpen();
 			return;
 		}
-		// The rail is reached through the hamburger drawer, not the bar.
-		if (name === 'rail') {
-			if (window.DaimondShell) DaimondShell.openDrawer();
-			DaimondPanels.reflow();
-			return;
-		}
 		// WHICH CHIP IS FILLED IN IS NOT SET HERE. The bottom bar used to be four
 		// buttons this function marked; it is the panel chip row now, and what a
 		// filled chip means on a phone is "this is the thing you are looking at",
@@ -13159,12 +13172,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// line. `markHere` in js/mobile.js watches this attribute and answers all
 		// three, so every route into a panel is covered rather than the two that
 		// happen to pass through here.
-		// SHOWING A DESTINATION ENDS THE DRAWER'S JOB. The drawer is where a person
-		// picks a chat or a Diamond; once the floor shows what they asked for it is
-		// only in the way, and it covered the composer after New Chat. Done here, at
-		// the one seam, so every route in is covered -- the buttons, the footer chips
-		// and the callers nobody listed -- rather than each button closing it.
-		if (window.DaimondShell) DaimondShell.closeDrawer();
 		document.body.dataset.mpanel = name;
 		// The bar's own destinations. Spending and the Terminal reach here only on
 		// a page whose sheet script did not load, and are woken anyway: a panel
@@ -15226,6 +15233,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// outside "what will this Diamond actually be allowed to see". Read-only:
 		/// a grant is made by attaching, not by calling this.
 		bounds: function (id) { return Files.bounds(id); },
+		// The model change the settings dialog makes, by id (verify_handoff_effort (6)).
+		changeModel: function (id, p) { return changeDiamondModel(id, diamondModel(id), p); },
 		/// Write `system/usage/digest.md` now, rather than after the next metered turn.
 		///
 		/// Published for `dev/verify_optimiser.mjs`, which has to put a synthetic signal
@@ -18302,7 +18311,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var id = String(callId || '');
 		if (detail.trim()) {
 			var btn = document.createElement('button');
-			btn.className = 'said-more';
+			btn.className = 'said-more lead-disc';
 			btn.setAttribute('aria-expanded', 'false');
 			// The size is on the control on purpose: it is the whole of what the reader needs to
 			// decide whether to open it, and it is the number this tool exists to keep off the wire.
@@ -18311,7 +18320,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// that it is kept here, that it is not re-sent -- is true, worth knowing once, and
 			// noise on every message after the first. It moves to the tooltip, where it is there
 			// when somebody wonders and gone when they do not.
-			btn.textContent = '▸ ' + size;
+			btn.textContent = size;
 			btn.title = t('say.more_help', { n: size });
 			var more = document.createElement('div');
 			more.className = 'said-detail';
@@ -18331,7 +18340,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				more.style.display = open ? '' : 'none';
 				btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-				btn.textContent = (open ? '▾ ' : '▸ ') + size;
+				btn.textContent = size;
 				// The tooltip carries the state's consequence, which CHANGES: open, the model is
 				// holding this too. That is the sentence worth having, and it belongs where it is
 				// read on purpose rather than skimmed past.
@@ -25000,15 +25009,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The note the turn's user message took when it was sent: read, never composed, so a
 	/// re-dispatch or a recovery sends what the model was always going to be told.
 	function storedPre(chat, turnId) {
+		var m = storedPrompt(chat, turnId);
+		return (m && typeof m.pre === 'string') ? m.pre : '';
+	}
+
+	/// The Effort the person's message of `turnId` was sent with (D-20261014-08), or null for a
+	/// record from a build that kept none.
+	function storedEffort(chat, turnId) {
+		var m = storedPrompt(chat, turnId);
+		return (m && typeof m.effort === 'string') ? m.effort : null;
+	}
+
+	/// The Effort a turn sent on `chat` now runs with: on a Diamond's thread the Diamond's own,
+	/// which the composer's step sets (`effortHolder`), and otherwise the chat's. The daimon
+	/// record's own `effort` is never set, so reading it sent a Diamond's turn at '' (check_final F1).
+	function turnEffortOf(chat) {
+		if (!chat) return '';
+		return chat.diamondId ? diamondEffort(chat.diamondId) : (chat.effort || '');
+	}
+
+	/// The person's message a turn answers, by its id or its `iturn`, or null.
+	function storedPrompt(chat, turnId) {
 		var id = String(turnId == null ? '' : turnId), ms = (chat && chat.messages) || [];
-		if (!id) return '';
+		if (!id) return null;
 		for (var i = ms.length - 1; i >= 0; i--) {
 			var m = ms[i];
-			if (m && m.role === 'user' && (String(m.mid) === id || String(m.iturn) === id)) {
-				return (typeof m.pre === 'string') ? m.pre : '';
-			}
+			if (m && m.role === 'user' && (String(m.mid) === id || String(m.iturn) === id)) return m;
 		}
-		return '';
+		return null;
 	}
 
 	/// The person's question of an interrupted turn, rebuilt from the journal when persist-first never
@@ -26505,6 +26533,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// re-dispatch, a parked re-run and a recovery all come through here, and none
 			// composes one: the model hears what the original send was going to tell it.
 			pre: storedPre(chat, turnId),
+			// And the Effort it was sent with, read the same way, so a handed-off turn thinks as
+			// hard as the person asked when they sent it (D-20261014-08).
+			effort: (function () { var e = storedEffort(chat, turnId); return e === null ? turnEffortOf(chat) : e; })(),
 			// THE THREAD, taken from the chat as it stands now -- after `maybeAutoDispatch`
 			// pushed this turn's user message, so the seed ends at the prompt itself.
 			// Built by `buildDispatch` from this same chat; named here only so a caller
@@ -27484,7 +27515,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The errand's own note (sealed with it) is written as given: the runner's copy of the person's
 				// message, if it has to push one, is the person's and carries it.
 				await runTurn(c.chat, prompt, { promptInTranscript: !!(ropts && ropts.promptInTranscript), turnId: ropts && ropts.turnId,
-					told: (ropts && typeof ropts.pre === 'string') ? ropts.pre : undefined });
+					told: (ropts && typeof ropts.pre === 'string') ? ropts.pre : undefined,
+					effort: ropts && ropts.effort });
 				// The turn has ended, but if it fanned out workers the answer is not in
 				// yet: the gather round that reads their reports runs a macrotask later,
 				// and on a runner it runs at all only because `chatShowingOrRunning` now
@@ -29087,6 +29119,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chatId:       String(chat.id || ''),
 			prompt:       String(m.itext == null ? '' : m.itext),
 			pre:          storedPre(chat, m.iturn),		// read from the original record, never composed
+			effort:       (function () { var e = storedEffort(chat, m.iturn); return e === null ? turnEffortOf(chat) : e; })(),
 			model:        { provider: chat.provider || '', model: chat.model || '', url: '' },
 			scope:        Array.isArray(chat.holds) ? chat.holds : [],
 			parcelVersion: (function () { try { return DaimondSync.version() | 0; } catch (e) { return 0; } })(),
@@ -29892,12 +29925,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		here.setAttribute('aria-pressed', onRunner ? 'false' : 'true');
 		if (sw.runner) {
 			run.textContent = deviceLabelFor(sw.runner.deviceId) || sw.runner.label || t('devices.unknown');
+			run.title = run.textContent;	// whole, where the row cuts it short
 			run.dataset.device = sw.runner.deviceId;
 			run.setAttribute('aria-pressed', onRunner ? 'true' : 'false');
 			run.hidden = false;
 		} else {
 			run.hidden = true;
 			run.textContent = '';
+			run.title = '';
 			delete run.dataset.device;
 		}
 		// Forgotten only when the person presses Here: a runner that merely went away
@@ -29943,6 +29978,112 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// from "compile on argonaut" to "compile here" without a beat moving.
 		window.addEventListener('daimond-file-written', function () { redrawDocSeat(); });
 	} catch (e) { /* no window: nothing to draw on */ }
+
+	/// What the composer's Effort step stands for: the chat's own Effort, or on a Diamond's face
+	/// the daimon's, which is the Diamond's own (one door, D-20261014-08 F2).
+	function effortHolder() {
+		if (!current) return null;
+		if (current.diamondId) {
+			var m = diamondModel(current.diamondId);
+			return { diamond: current.diamondId, provider: m.provider || '', model: m.model || '',
+				effort: diamondEffort(current.diamondId) };
+		}
+		return { chat: current, provider: current.provider || '', model: current.model || '',
+			effort: current.effort || '' };
+	}
+
+	/// The step's ladder. A model that names its default stands at that level when the Effort is
+	/// '' (the level's own name, in muted ink); one that names none has a "Default" rung below.
+	function effortLadder(f) {
+		return f.dflt ? f.levels.slice() : [''].concat(f.levels);
+	}
+
+	/// Draw (or hide) the Effort step in the composer row (D-20261014-08): how hard the next
+	/// turn on screen thinks, over its model's levels. Hidden for a model that lists none.
+	function renderEffortStep() {
+		var box = document.getElementById('effort-step');
+		var dn  = document.getElementById('effort-dn');
+		var up  = document.getElementById('effort-up');
+		var val = document.getElementById('effort-val');
+		if (!box || !dn || !up || !val) return;
+		var h = effortHolder(), f = null;
+		if (h) {
+			try { f = DaimondModels.effortsFor(h.provider, h.model); } catch (e) { f = null; }
+		}
+		if (!f || !f.levels || !f.levels.length) { box.hidden = true; return; }
+		var steps = effortLadder(f);
+		var i = Math.max(0, steps.indexOf(h.effort || f.dflt));
+		var lvl = steps[i];
+		var dflt = !h.effort;					// the model's own default, whatever it is named
+		val.textContent = lvl ? t('tile.effort_' + lvl) : t('composer.effort_default');
+		val.title = dflt ? (f.dflt ? t('tile.effort_default_named', { level: t('tile.effort_' + f.dflt) })
+			: t('tile.effort_default')) : t('tile.effort_help');
+		val.classList.toggle('is-default', dflt);
+		dn.disabled = i <= 0;
+		up.disabled = i >= steps.length - 1;
+		box.hidden = false;
+	}
+
+	/// A press of − or +: the Effort moves one step, landing on the model's own default as ''.
+	///
+	/// NO ENGINE CALL HERE (F3). `runTurn` and `diamondApp` put the Effort on the engine at each
+	/// turn's start, and the engine reads it on every request, so a press while a turn runs would
+	/// change that turn's remaining rounds while its record kept the old level. It is the next
+	/// turn's.
+	function stepEffort(by) {
+		var h = effortHolder();
+		if (!h) return;
+		var f = null;
+		try { f = DaimondModels.effortsFor(h.provider, h.model); } catch (e) { return; }
+		if (!f || !f.levels || !f.levels.length) return;
+		var steps = effortLadder(f);
+		var i = Math.max(0, steps.indexOf(h.effort || f.dflt));
+		var j = Math.min(steps.length - 1, Math.max(0, i + by));
+		if (j === i) return;
+		var next = steps[j] === f.dflt ? '' : steps[j];
+		if (h.diamond) {
+			setDiamondEffort(h.diamond, next);
+			// THE DIAMOND'S EFFORT TRAVELS on the record's own stamp, in every parcel round
+			// (`adoptDiamondModel`). Never by touching the Diamond: that won a whole-Diamond race
+			// and put another device's crystal edit off the head (check_f1 B1).
+			bumpDiamonds();
+		} else {
+			h.chat.effort = next;
+			// A metadata scalar, like the model it belongs to (S-SYNC #5).
+			touchChatMeta(h.chat);
+			persistChats();
+		}
+		renderEffortStep();
+	}
+	try {
+		var effDn = document.getElementById('effort-dn');
+		var effUp = document.getElementById('effort-up');
+		if (effDn) effDn.addEventListener('click', function () { stepEffort(-1); });
+		if (effUp) effUp.addEventListener('click', function () { stepEffort(1); });
+		window.addEventListener('daimond:view', function () { renderEffortStep(); });
+	} catch (e) { /* no DOM */ }
+
+	/// The walk-back pair lives in the input bar on a desktop and in the composer row on a
+	/// phone (D-20261014-08), where it is square and no longer floats over the thread. Its
+	/// listeners are bound to the elements, so they survive the move.
+	function placeWalkPair() {
+		var row  = document.getElementById('composer-row');
+		var send = document.getElementById('chat-send');
+		var jump = document.getElementById('chat-jump');
+		var end  = document.getElementById('chat-end');
+		if (!row || !send || !jump || !end) return;
+		if (isMobile()) {
+			if (jump.parentNode !== row) { row.appendChild(jump); row.appendChild(end); }
+		} else if (jump.parentNode !== send.parentNode) {
+			send.parentNode.insertBefore(jump, send);
+			send.parentNode.insertBefore(end, send);
+		}
+	}
+	try {
+		placeWalkPair();
+		if (mobileMq.addEventListener) mobileMq.addEventListener('change', placeWalkPair);
+		else if (mobileMq.addListener) mobileMq.addListener(placeWalkPair);
+	} catch (e) { /* no DOM */ }
 
 	/// Re-label the Doc panel's Compile and Publish buttons, if one is on screen.
 	function redrawDocSeat() {
@@ -30407,7 +30548,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// STAMPED: the runner writes this message too (from the seed or the errand), and
 			// those copies carry no stamp, so the copy this device wrote -- with its `iturn`
 			// and its `ts` -- is the one every device keeps (`msgJoin`).
-			pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: umid, iturn: umid, ts: uts }), true);
+			// The Effort it is sent with is on it too, so the runner and a re-dispatch read the same one.
+			pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: umid, iturn: umid, ts: uts,
+				effort: turnEffortOf(chat) }), true);
 			touchChat(chat); persistChats();
 			// SHOW THE HAND-OFF THE INSTANT IT IS DECIDED, from the DURABLE record.
 			// `dispatchToPeer` now MARKS the turn dispatched FIRST -- before it seals or
@@ -32168,11 +32311,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// than what it is called, because a menu row is read in half a second.
 		var prev = document.createElement('button');
 		prev.type = 'button';
-		prev.className = 'railhead-menu-item';
+		prev.className = 'railhead-menu-item lead-ok';	// the tick is drawn by the role; see `.lead-ok` in app.css
 		prev.setAttribute('role', 'menuitemcheckbox');
 		var on = cfg.chatPreview !== false;
 		prev.setAttribute('aria-checked', on ? 'true' : 'false');
-		prev.textContent = (on ? '✓ ' : ' ') + tOr('rail.show_preview', 'Show the first message');
+		prev.textContent = tOr('rail.show_preview', 'Show the first message');
 		prev.title = tOr('rail.show_preview_help',
 			'Show the first thing you said in each chat, under the time. Turn it off and the rail says only when.');
 		prev.addEventListener('click', function () {
@@ -32713,7 +32856,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		// The reducer runs on the Diamond's OWN model -- the one it was created with -- not on
 		// whatever happens to be starred now.
-		var fa = diamondApp(diamondId);
+		var fa = diamondApp(diamondId, null, diamondEffort(diamondId));
 		try {
 			foldStageSay(frun, 'read');
 			cur = await fa.read_crystal_data(diamondId);
@@ -34436,7 +34579,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			renderSessionList();
 			// A pending chat that can now start, starts (CHAT-01).
 			if (chat.status === 'pending' && current === chat) renderPendingCentre(chat);
-			effortRow.refresh(chat.provider, chat.model, chat.effort);
+			if (current === chat) renderEffortStep();
 			toast(t('tile.chat_model_changed', {
 				from: shortModel(before.model) || t('tile.model_none'),
 				to:   shortModel(res.model),
@@ -34447,61 +34590,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		card.appendChild(r);
 		DaimondModels.picker(sel);
 		r.appendChild(change);
-
-		var effortRow = mountEffortRow(card, 'chat', function (e) {
-			chat.effort = e;
-			// A metadata scalar, like the model it belongs to (S-SYNC #5).
-			touchChatMeta(chat);
-			persistChats();
-			// The engine takes it on the client in hand; no rebuild.
-			if (chat.app) applyEffort(chat.app, chat.provider || '', chat.model || '', e);
-		});
-		effortRow.refresh(chat.provider || '', chat.model || '', chat.effort || '');
+		// The chat's Effort is not here: it is in the composer row, turn by turn (D-20261014-08).
 	}
 
 	/// The quiet half-sentence a model change adds when it cleared an Effort the new model
 	/// does not offer, or '' when nothing was cleared.
 	function effortClearedNote(eff, model) {
 		return (eff && eff.cleared) ? ' ' + t('tile.effort_cleared', { model: shortModel(model) }) : '';
-	}
-
-	/// The Effort row, beside a model row: how hard that model is asked to think, drawn from the
-	/// levels its provider lists for it (`DaimondModels.effortsFor`) and hidden for a model that
-	/// lists none. "Model default" (the provider's own, named where it says which) is ''.
-	/// `onSet` gets the chosen level; `refresh(provider, model, effort)` redraws it for a model.
-	function mountEffortRow(card, kind, onSet) {
-		var r = document.createElement('div');
-		r.className = 'tile-dlg-field tile-dlg-model tile-dlg-effort';
-		var lab = document.createElement('label');
-		lab.className = 'tile-dlg-label';
-		lab.textContent = t('tile.effort');
-		lab.htmlFor = 'tile-effort-' + kind + '-' + _tileDlgSeq;
-		var sel = document.createElement('select');
-		sel.className = 'tile-model';
-		sel.id = lab.htmlFor;
-		sel.title = t('tile.effort_help');
-		sel.addEventListener('change', function () { onSet(sel.value || ''); });
-		r.appendChild(lab); r.appendChild(sel);
-		card.appendChild(r);
-		DaimondModels.picker(sel);
-		return {
-			el: r,
-			refresh: function (provider, model, effort) {
-				var f = DaimondModels.effortsFor(provider || '', model || '');
-				r.hidden = !f;
-				if (!f) return;
-				sel.textContent = '';
-				var add = function (value, text) {
-					var o = document.createElement('option');
-					o.value = value; o.textContent = text;
-					sel.appendChild(o);
-				};
-				add('', f.dflt ? t('tile.effort_default_named', { level: t('tile.effort_' + f.dflt) })
-					: t('tile.effort_default'));
-				f.levels.forEach(function (l) { add(l, t('tile.effort_' + l)); });
-				sel.value = (effort && f.levels.indexOf(effort) >= 0) ? effort : '';
-			},
-		};
 	}
 
 	/// The tile's two colours, and a way back to the theme's own.
@@ -35268,7 +35363,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			await changeDiamondModel(opts.id, before, p);
 			pendingPick   = null;			// the pulldown now matches the model in force
 			change.hidden = true;
-			redrawEffort();
+			renderEffortStep();				// the new model's levels, if this Diamond is on screen
 			if (currentDiamond && currentDiamond.id === opts.id) {
 				await refreshDiamondAfterChange();
 			} else {
@@ -35279,15 +35374,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The Change button, beside the model it thinks with.
 		daimonSel.parentNode.appendChild(change);
 
-		// How hard the daimon thinks, beside the model it thinks with.
-		var daimonEffort = mountEffortRow(card, 'daimon', function (e) {
-			setDiamondEffort(opts.id, e);
-		});
-		var redrawEffort = function () {
-			var m = diamondModel(opts.id);
-			daimonEffort.refresh(m.provider || '', m.model || '', diamondEffort(opts.id));
-		};
-		redrawEffort();
+		// How hard the daimon thinks is the composer's Effort step on the Diamond's face, and
+		// only there: one door (D-20261014-08 F2).
 
 		// The notes this model is told, and Remove: here, where a person looks after the model it thinks with.
 		card.appendChild(secHead(t('steer.title')));
@@ -38091,6 +38179,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// what the composer says about the chat on screen, and the seat is a per-chat
 		// statement: switching chats must not leave the previous chat's line standing.
 		try { renderSeatSwitch(); } catch (e) { /* the next presence beat draws it */ }
+		// And how hard it thinks, which is the chat's too.
+		try { renderEffortStep(); } catch (e) { /* drawn again on the next view */ }
 		// Where a user finds out they may keep typing: the placeholder is on screen
 		// exactly when the box is empty and they are wondering whether to wait. What
 		// then happens to what they type is said by the line above the bubbles, at
@@ -39307,6 +39397,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the transcript and `run_turn` sends it, so it is held out (`reusePrompt`, as `peerReconstruct` holds it out).
 		try { app = ensureApp(chat, reusePrompt ? String(reusePrompt.mid) : undefined); }
 		catch (e) { appendError('Could not start agent: ' + String(e)); return; }
+		// THE EFFORT THIS TURN RUNS WITH (D-20261014-08): the one the dispatcher sent with a
+		// handed-off turn, else the one its stored prompt ran with, else the chat's (a Diamond's
+		// thread: the Diamond's) as it stands now. Always a string, '' being the model's own
+		// default, so the record says which.
+		var turnEffort = typeof opts.effort === 'string' ? opts.effort
+			: (reusePrompt && typeof reusePrompt.effort === 'string' ? reusePrompt.effort : turnEffortOf(chat));
+		applyEffort(app, chat.provider || '', chat.model || '', turnEffort);
 		// THE CONVERSATION IS FENCED, not only the workers it dispatches. The incident this
 		// answers had no worker in it at all. Fails the turn rather than running it unfenced:
 		// a scope that did not take is the one failure here that matters.
@@ -39402,7 +39499,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// its tile says so, in one line (D-20261009-23).
 			var sdn = opts.person ? seatDroppedNote(chat) : '';
 			if (sdn) drawSeatNote(utile, sdn);
-			var urec = { role: 'user', content: text, mid: umid, ts: uts2 };
+			var urec = { role: 'user', content: text, mid: umid, ts: uts2, effort: turnEffort };
 			if (sdn) urec.seatNote = sdn;		// kept, so a redraw keeps the line
 			// A peer turn stamps `iturn` too (the dispatcher's copy carries it), so the two
 			// copies are identical under the turn id and dedup cleanly.
@@ -39446,6 +39543,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			dia:   String(chat.diamondId || ''),
 			model: String(chat.model || '').slice(0, 48),
 			prov:  String(chat.provider || '').slice(0, 24),
+			eff:   turnEffort,
 			ho:    opts.turnId ? 1 : 0,
 		});
 		// The composer stays live: what is typed while this runs is queued, not lost.
@@ -43277,8 +43375,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						acts.appendChild(fold);
 					} else if (run.folded) {
 						var done = document.createElement('span');
-						done.className = 'afolded';
-						done.textContent = '✓ ' + t('agents.folded');
+						done.className = 'afolded lead-ok';
+						done.textContent = t('agents.folded');
 						acts.appendChild(done);
 					}
 
@@ -45474,7 +45572,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		await selectDiamond(f);
 		setCrystalBusy(diamondId, true); setCrystalStatus('Proposing fold…', true);
 		var cur, proposed;
-		var fa = diamondApp(diamondId);            // the Diamond's own model, not the starred one
+		var fa = diamondApp(diamondId, null, diamondEffort(diamondId));	// the Diamond's own model, not the starred one
 		try {
 			cur = await fa.read_crystal_data(diamondId);
 			proposed = await fa.fold_propose(diamondId, delta);
@@ -46606,11 +46704,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var has = on.indexOf(k.name) >= 0;
 				var it = document.createElement('button');
 				it.type = 'button';
-				it.className = 'railhead-menu-item';
+				it.className = 'railhead-menu-item lead-ok';
 				it.setAttribute('role', 'menuitemcheckbox');
 				it.setAttribute('aria-checked', has ? 'true' : 'false');
 				it.dataset.kit = k.name;
-				it.textContent = (has ? '✓ ' : ' ') + k.label;
+				it.textContent = k.label;
 				it.title = t(has ? 'dws.kit_off' : 'dws.kit_on', { kit: k.label, name: currentDiamond.name });
 				it.addEventListener('click', function () { closeWsMenu(); toggleKit(k.name); });
 				menu.appendChild(it);
@@ -48175,7 +48273,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				} else {
 					it.setAttribute('role', 'menuitemcheckbox');
 					it.setAttribute('aria-checked', checked ? 'true' : 'false');
-					it.textContent = (checked ? '✓ ' : ' ') + label;
+					it.classList.add('lead-ok');
+					it.textContent = label;
 				}
 				if (title) it.title = title;
 				if (run) it.addEventListener('click', function (ev) { ev.stopPropagation(); closeRowMenu(); run(); });
@@ -51933,6 +52032,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// the crystal it holds, so it lives in localStorage beside the app rather than in the Diamond's
 	// own OPFS record -- and no Rust has to learn about it.
 	var DIAMOND_MODELS_KEY = 'daimond-diamond-models';
+	// The record's two halves, each synced on its own stamp: `at` and `eat`.
+	var DIAMOND_MODEL_HALF  = ['provider', 'model', 'workerProvider', 'workerModel', 'visionProvider', 'visionModel'];
+	var DIAMOND_EFFORT_HALF = ['effort', 'effortProvider', 'effortModel'];
 
 	function diamondModels() { return readJson(DIAMOND_MODELS_KEY, {}) || {}; }
 
@@ -51951,7 +52053,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Fields absent from `pick` are left as they were, so a caller changing one model does
 	/// not have to carry the other two -- the first version of this took the whole record and
 	/// a dialog that set the worker model alone would have silently cleared the vision one.
-	function setDiamondModel(id, pick) {
+	///
+	/// THE RECORD SYNCS AS A SETTING, ON ITS OWN STAMPS (check_f1 B1). `at` moves when the models
+	/// change and `eat` when the Effort does, and `applyDiamonds` adopts each half of an arriving
+	/// record by its stamp, whichever way the Diamond's own stamp falls. Stamping the whole
+	/// Diamond instead let a press of the Effort step win a whole-Diamond race and put another
+	/// device's crystal edit off the head; one stamp for the record would let a press revert a
+	/// model changed elsewhere. `at` here is given only where a change is not the user's (a
+	/// dropped level) and must not outrank theirs.
+	function setDiamondModel(id, pick, at) {
 		if (!id || !pick) return;
 		var all = diamondModels();
 		var was = (all[id] && typeof all[id] === 'object') ? all[id] : {};
@@ -51961,11 +52071,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var model  = keep('model', pick.model);
 		var effort = keep('effort', pick.effort);
 		// A Diamond on the default holds a record only for its Effort, and never a model: a
-		// pinned model would stop it following the default.
-		if (!model && !effort) {
-			if (!all[id] || all[id].model) return;	// a Diamond with no primary is not a record
-			delete all[id];
-		} else all[id] = {
+		// pinned model would stop it following the default. Back at the default Effort it keeps
+		// a tombstone, so the clearing travels and outranks an older level elsewhere (B2). The
+		// tombstone blanks the Effort half only: a worker or vision model pinned under the
+		// default primary stays (check_b1).
+		var next = {
 			provider:       keep('provider', pick.provider),
 			model:          model,
 			workerProvider: keep('workerProvider', pick.workerProvider),
@@ -51976,9 +52086,70 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			effortProvider: effort ? keep('effortProvider', pick.effortProvider) : '',	// the model
 			effortModel:    effort ? keep('effortModel', pick.effortModel) : '',		// it was set for
 		};
+		var bare = DIAMOND_MODEL_HALF.concat(DIAMOND_EFFORT_HALF).every(function (k) { return !next[k]; });
+		if (bare && (!all[id] || all[id].model)) return;	// a Diamond with no primary is not a record
+		var moved = function (half) { return half.some(function (k) { return (was[k] || '') !== next[k]; }); };
+		var mm = moved(DIAMOND_MODEL_HALF), em = moved(DIAMOND_EFFORT_HALF);
+		// An unchanged half keeps its stamp: a call that restates it must not outrank a change
+		// made elsewhere.
+		if (!mm && !em) return;
+		// Each moved half outranks the stamp it replaces, whatever this clock says (stamp.js).
+		var stamp = function (prev) { return at !== undefined ? at : DaimondStamp.next(prev); };
+		next.at  = mm ? stamp(was.at)  : (+was.at || 0);
+		next.eat = em ? stamp(was.eat) : (+was.eat || 0);
+		all[id] = next;
 		try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 		// Another model is another client, and the notes are chosen per model (C6).
 		try { if (typeof Notes === 'object' && Notes) Notes.reapply(id); } catch (e) { /* the notes are not up yet */ }
+	}
+
+	function blankDiamondModel() {
+		var r = {};
+		DIAMOND_MODEL_HALF.concat(DIAMOND_EFFORT_HALF).forEach(function (k) { r[k] = ''; });
+		return r;
+	}
+
+	/// The record this device holds once the one arriving from another device is merged in, or
+	/// null where nothing here moves.
+	///
+	/// Each half by its own stamp, strictly newer. An absent record never clears a present one,
+	/// and an unstamped half (a build before the stamps) never beats a stamped one. Where a half
+	/// is stamped on neither side, the old rule stands for that half: a strictly newer Diamond
+	/// being imported brings it, when it says something. Per half, because one Effort stamp here
+	/// must not turn the old rule off for an old build's model change (check_b1).
+	function mergeDiamondModel(mine, theirs, importing) {
+		if (!theirs || typeof theirs !== 'object') return null;
+		var m = (mine && typeof mine === 'object') ? mine : {};
+		var str = function (o, k) { return typeof o[k] === 'string' ? o[k] : ''; };
+		var ta = +theirs.at || 0, te = +theirs.eat || 0, ma = +m.at || 0, me = +m.eat || 0;
+		var out = blankDiamondModel(), moved = false;
+		var take = function (half, t, mn) {
+			var theirsWins = (t || mn) ? t > mn
+				: importing && half.some(function (k) { return str(theirs, k); });
+			var from = theirsWins ? theirs : m;
+			half.forEach(function (k) { out[k] = str(from, k); });
+			if (theirsWins) moved = true;
+		};
+		take(DIAMOND_MODEL_HALF, ta, ma);
+		take(DIAMOND_EFFORT_HALF, te, me);
+		if (!moved) return null;
+		out.at  = Math.max(ta, ma);
+		out.eat = Math.max(te, me);
+		// An Effort paired with no model in force is the model's own default: kept as a level.
+		if (!out.effort) { out.effortProvider = ''; out.effortModel = ''; }
+		return out;
+	}
+
+	/// Merge the arriving record in (`mergeDiamondModel`). Did anything here move?
+	function adoptDiamondModel(id, theirs, importing) {
+		if (!id) return false;
+		var all = diamondModels();
+		var next = mergeDiamondModel(all[id], theirs, importing);
+		if (!next) return false;
+		all[id] = next;
+		try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+		try { if (typeof Notes === 'object' && Notes) Notes.reapply(id); } catch (e) { /* the notes are not up yet */ }
+		return true;
 	}
 
 	/// The daimon's Effort on the model this Diamond runs on now. A level the model in force does
@@ -51988,7 +52159,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!rec || !rec.effort || typeof DaimondModels !== 'object' || !DaimondModels) return '';
 		var m = diamondModel(id);
 		var r = DaimondModels.effortInForce(rec, m.provider || '', m.model || '');
-		if (r.dropped) setDiamondModel(id, { effort: '' });
+		if (r.dropped) setDiamondModel(id, { effort: '' }, +rec.eat || 0);	// not the user's change
 		return r.effort;
 	}
 
@@ -53310,16 +53481,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { if (typeof Notes === 'object' && Notes) Notes.applyTo(app, diamondId, model); } catch (e) { /* the turn goes unsteered */ }
 	}
 
-	function diamondApp(diamondId, pick) {
+	/// `eff`, a string, is the Effort the work this hand-out starts thinks at (a turn's, or a
+	/// fold's). Without it the client's Effort is left as it stands.
+	function diamondApp(diamondId, pick, eff) {
 		var m = pick && pick.model ? pick : diamondModel(diamondId);
 		var a = appCfgFor(m);
 		var k = diamondAppKey(a);
-		// One client serves every Diamond on its model, so each Diamond's own Effort is put on it
-		// at every hand-out, the cached one included.
-		var eff = (pick && pick.model) ? (pick.effort || '') : diamondEffort(diamondId);
+		// ONE CLIENT SERVES EVERY DIAMOND ON ITS MODEL, so the Effort is put on it by the hand-outs
+		// that start model work, and only by those. Put on at every hand-out, a sync's
+		// `diamondApp().export_diamond` mid-turn set the turn's later rounds to the default, and
+		// a handed-off turn ran at '' from its first request (check_final F1).
+		if (typeof eff !== 'string' && pick && pick.model) eff = pick.effort || '';
 		if (_diamondApps[k]) {
 			noteSteer(_diamondApps[k], diamondId, a.model);
-			applyEffort(_diamondApps[k], a.provider || '', a.model || '', eff);
+			if (typeof eff === 'string') applyEffort(_diamondApps[k], a.provider || '', a.model || '', eff);
 			return _diamondApps[k];
 		}
 
@@ -53353,7 +53528,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		applyFoldSettings(app, a.provider || '');
 		applyProviderRouting(app, a.provider || '', a.model || '');
 		applySight(app, a.provider || '', a.model || '');
-		applyEffort(app, a.provider || '', a.model || '', eff);
+		if (typeof eff === 'string') applyEffort(app, a.provider || '', a.model || '', eff);
 		applyCrystalCap(app);
 		_diamondApps[k] = app;
 		_sharedClients.add(app);
@@ -56385,8 +56560,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var actions = document.createElement('div');
 		actions.className = 'crystal-memory-bar';
 		var save = document.createElement('button');
-		save.className = 'crystal-act primary';
-		save.textContent = '✔ ' + t('common.save');
+		save.className = 'crystal-act primary lead-ok';
+		save.textContent = t('common.save');
 		save.addEventListener('click', async function () {
 			var next = null;
 			var at = null;
@@ -56416,11 +56591,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { r = await saveCrystalEdit(id, broken ? String(rawText || '') : d, next, prefer); }
 			catch (e) {
 				noticeDialog(t('crystal.save_failed'), friendlyError(e));
-				save.disabled = false; save.textContent = '✔ ' + t('common.save');
+				save.disabled = false; save.textContent = t('common.save');
 				return;
 			}
 			if (!r.written && r.conflicts.length) {
-				save.disabled = false; save.textContent = '✔ ' + t('common.save');
+				save.disabled = false; save.textContent = t('common.save');
 				var old = raw.querySelector('.crystal-conflict');
 				if (old) old.remove();
 				raw.insertBefore(crystalConflictBox(r.conflicts, function (side) { memCommit(next, side); }), actions);
@@ -57995,8 +58170,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var bar = document.createElement('div');
 		bar.className = 'crystal-bar';
 		var save = document.createElement('button');
-		save.className = 'crystal-act primary';
-		save.textContent = '✔ ' + t('common.save');
+		save.className = 'crystal-act primary lead-ok';
+		save.textContent = t('common.save');
 		var toJson = document.createElement('button');
 		toJson.className = 'crystal-act';
 		toJson.textContent = tOr('crystal.edit_json', 'Edit as JSON');
@@ -58072,11 +58247,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { r = await saveCrystalEdit(id, base, draft, prefer); }
 			catch (e) {
 				noticeDialog(t('crystal.save_failed'), friendlyError(e));
-				save.disabled = false; save.textContent = '✔ ' + t('common.save');
+				save.disabled = false; save.textContent = t('common.save');
 				return;
 			}
 			if (!r.written && r.conflicts.length) {
-				save.disabled = false; save.textContent = '✔ ' + t('common.save');
+				save.disabled = false; save.textContent = t('common.save');
 				var old = staleHost.querySelector('.crystal-conflict');
 				if (old) old.remove();
 				staleHost.appendChild(crystalConflictBox(r.conflicts, function (side) { commit(side); }));
@@ -59232,10 +59407,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 			var head = document.createElement('button');
 			head.type = 'button';
-			head.className = 'arte-daimon-toggle';
+			head.className = 'arte-daimon-toggle lead-disc';
 			head.setAttribute('aria-expanded', arteDaimonOpen ? 'true' : 'false');
-			head.textContent = (arteDaimonOpen ? '▾ ' : '▸ ')
-				+ tn('dws.added_by_daimon', daimonLinks.length);
+			head.textContent = tn('dws.added_by_daimon', daimonLinks.length);
 			head.addEventListener('click', function () {
 				arteDaimonOpen = !arteDaimonOpen;
 				renderArtefacts();
@@ -61379,7 +61553,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var strip = document.getElementById('link-strip');
 		var body  = document.getElementById('link-body');
 		if (!strip || !body) return;
-		strip.textContent = (linkOpen ? '▾ ' : '▸ ') + tn('link.count', links.length);
+		strip.textContent = tn('link.count', links.length);
 		strip.title = t('link.strip_help');
 		strip.setAttribute('aria-expanded', linkOpen ? 'true' : 'false');
 		body.style.display = linkOpen ? '' : 'none';
@@ -61944,7 +62118,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		linkSec.className = 'link-sec';
 		linkSec.id = 'link-sec';
 		var linkStrip = document.createElement('button');
-		linkStrip.className = 'link-strip foot-toggle';
+		linkStrip.className = 'link-strip foot-toggle lead-disc';
 		linkStrip.id = 'link-strip';
 		linkStrip.type = 'button';
 		linkStrip.setAttribute('aria-expanded', 'false');
@@ -62172,6 +62346,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			turnId:     String((ropts && ropts.turnId) || ''),
 			onProgress: (ropts && ropts.onProgress) || null,
 			pre:        (ropts && ropts.pre),
+			effort:     (ropts && ropts.effort),	// the level the asker sent the turn with
 		});
 	}
 
@@ -62426,10 +62601,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the push -- and the on-screen draw of it -- is the local-caller's alone.
 		// The note this steer sends with its words: read off its record, or off the errand for a runner.
 		var steerPre = '';
+		// THE EFFORT THIS TURN RUNS AT, set once and handed to every `diamondApp` below. A
+		// handed-off turn thinks at the asker's level, from the errand or its stored record, not
+		// at this device's copy of the Diamond's, which can be older (check_final F1).
+		var steerEff = diamondEffort(f.id);
+		if (detached) {
+			var hEff = typeof detached.effort === 'string' ? detached.effort : storedEffort(rec, dumid);
+			if (typeof hEff === 'string') steerEff = hEff;
+		}
 		if (!detached) {
 			commitRatings(rec.id, { });		// as `runTurn` does: ratings first, then the question
 			// Only what a person typed (`how.said`) takes the note: a trigger, a preset and a gather round do not.
-			var srec = pushUserRecord(rec, { role: 'user', content: instruction, mid: dumid, ts: its }, !!(how && how.said));
+			// Stamped with the Diamond's Effort, as `maybeAutoDispatch` stamps a handed-off one, so a
+			// re-dispatch or a recovery of this turn reads the level it was sent with.
+			var srec = pushUserRecord(rec, { role: 'user', content: instruction, mid: dumid, ts: its,
+				effort: steerEff }, !!(how && how.said));
 			steerPre = (typeof srec.pre === 'string') ? srec.pre : '';
 			if (onScreen()) appendUserMessage(instruction, its, undefined, undefined, srec.app === true);
 			// HIS MESSAGE IS SAVED BEFORE A TOKEN IS SPENT, and the turn opened in the
@@ -62483,7 +62669,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// same model. Pointing the record at it is what makes Stop reach this turn;
 		// aborting is idempotent, and a Diamond's app is rebuilt by `diamondApp` on the
 		// next use, so a stopped daimon does not leave a poisoned client behind.
-		rec.app = diamondApp(f.id);
+		rec.app = diamondApp(f.id, null, steerEff);
 		rec._runApp = rec.app;		// and what Stop and a pause reach, whatever becomes of `rec.app`
 		// TRAINING WHEELS — the debug feed's `turn.start`, THE DAIMON'S. The chat path
 		// has emitted one since the feed existed and this path never did, so the lens
@@ -62898,7 +63084,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (onScreen()) appendError(ev.content || '');
 			}
 		};
-		var fa = diamondApp(diamondId);            // the Diamond steers with its own model
+		var fa = diamondApp(diamondId, null, steerEff);	// the Diamond steers with its own model, at the turn's Effort
 		// The toolchains the user ticked on this Diamond, read fresh for THIS turn. The
 		// marks themselves are the engine's to read at the turn (HIST-SAFE U2), from the
 		// same `marks::reach` that `Files.bounds` answers with, so the daimon and the
@@ -65035,7 +65221,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (money) {
 			var save = await confirmDialog(
 				DaimondI18n.fillPrices(document.createElement('span'), t('forget.credits_body', { held: money })),
-				t('home.export_backup'),
+				t('forget.export'),	// a dialog's action, in its Title case; the Admin row says it as a sentence
 				{ title: t('forget.credits_title'), danger: false, cancelLabel: t('forget.skip') });
 			if (save) {
 				try { await doExport(); }
@@ -69262,6 +69448,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// redrew when the thing that changed the store happened to remember to ask -- so
 					// unlocking with the Models panel open left every provider still reading "sealed".
 					DaimondModels.render();
+					// So is the composer's Effort step: a fetched model list is what names its levels.
+					try { renderEffortStep(); } catch (e) { /* drawn again on the next view */ }
 				},
 				// The one thing a credits row can offer that a key row cannot: the way to fix it.
 				// The models panel does not own the credits form, so it asks for it rather than

@@ -613,6 +613,9 @@
 	'tile.effort': 'Effort',
 	'tile.effort_help': 'How hard the model thinks before it answers. Only the levels this model offers are listed.',
 	'tile.effort_default': 'Model default',
+	'composer.effort_default': 'Default',
+	'composer.effort_less': 'Less effort',
+	'composer.effort_more': 'More effort',
 	'tile.effort_default_named': 'Model default ({level})',
 	'tile.effort_cleared': 'Effort is back to the default: {model} does not offer that level.',
 	// i18n-family: tile.effort_ = one-way none minimal low medium high xhigh max -- the reasoning rungs (models.js EFFORT_LADDER); help, default and cleared share the prefix
@@ -3209,6 +3212,7 @@
 	'forget.held_both':      'a balance of {amount} and Daimond Pro',
 	'forget.held_balance':   'a balance of {amount}',
 	'forget.held_pro':       'Daimond Pro',
+	'forget.export':         'Export a Backup',
 	'forget.skip':           'Skip',
 	'forget.title':          'Forget this account?',
 	'forget.ok':             'Erase Everything',

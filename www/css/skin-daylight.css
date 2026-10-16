@@ -423,7 +423,9 @@
    (two classes), which silently outranked `.files-view-head > span > button`
    (§2/cluster 5) for the one button -- `.files-btn.attach-btn` -- that wears
    both a head-tool's and this row's class. */
-:root[data-skin="daylight"] :is(.device-rename, .device-nominate, .copy-id, .ctile-copy, .attach-btn,
+/* `.device-remove` is the device row's third icon button and was left out, so it kept app.css's 24px beside its
+   20px neighbours (by-role gate, icon-button h, once a second device is listed: gatefix 16 Oct). */
+:root[data-skin="daylight"] :is(.device-rename, .device-nominate, .device-remove, .copy-id, .ctile-copy, .attach-btn,
 	.crystal-form-x, .tile-cog, .ctile-rate-up, .ctile-rate-down, .ctile-rate-more, .mail-refresh) {
 	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
 }
@@ -1220,7 +1222,14 @@
 	}
 	/* The first worded button sits flush to the panel's left edge (its ink lines up with the file name), so a
 	   centred 44px overlay would run off the screen and the viewport clips it to 43px. It is anchored to the
-	   button's left edge instead, as the first arrow of a rating row is (app.css). */
+	   button's left edge instead, as the first arrow of a rating row is (app.css).
+	   AND ITS BOX IS THE FLOOR WIDE. Anchored at its left edge, a 44px overlay on a narrower box runs past its
+	   right edge into the gap: "Edit" is 40.2px at x=1, so its overlay ran to x=45, 0.23px short of Download at
+	   45.23, and WebKit's snapped hit test gave that column to Download (tap 43x45, gatefix 16 Oct). A tool that
+	   cannot spend its overhang on the left has no room to spend it on the right either, so the box carries the
+	   44px itself: it grows to the right (inline-flex, content at the start), the ink stays on the file name's
+	   line, and the overlay is the box. */
+	:root[data-skin="daylight"] .files-view-head > span > .files-btn:first-child { min-width: 44px; }
 	:root[data-skin="daylight"] .files-view-head > span > .files-btn:first-child::after {
 		left: 0; transform: translateY(-50%);
 	}
@@ -1265,10 +1274,6 @@
 	:root[data-skin="daylight"] .chead { padding: 8px 4px 4px 16px; min-height: 52px; }
 	:root[data-skin="daylight"] .ctitle { font-size: var(--dl-md); font-weight: 600; }
 	:root[data-skin="daylight"] { --tx-inset: 12px; }
-	/* The foot of the thread clears the floating chevrons (see responsive.css): the thread's own 12px below its last
-	   tile, with an attachment strip showing between it and the bar, and the room the chevrons take when none does. */
-	:root[data-skin="daylight"] .chat-output { padding-bottom: 68px; }
-	:root[data-skin="daylight"] .chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 16px; }
 	/* Both of these were off the seven-step scale, and the "your turn" one
 	   also put the phone back in the condensed display face batch 1 took the
 	   computer out of. Removed: both tiles now take the shared `.ctile-body`
@@ -1280,16 +1285,10 @@
 	:root[data-skin="daylight"] .railhead > button,
 	:root[data-skin="daylight"] .chead-right > :is(button, .chip-btn, .mode-chip),
 	:root[data-skin="daylight"] .astat-id > button { height: 36px; min-height: 36px; }
-	/* The floating ˄˅ jump buttons kept a grey ring (sweep item 18). */
-	:root[data-skin="daylight"] .chat-input-bar #chat-jump,
-	:root[data-skin="daylight"] .chat-input-bar #chat-end { border-color: transparent; box-shadow: 0 2px 10px rgb(20 12 16 / 0.16); }
-	/* QA round 2, M2 (still open after the first fix): the row was two lines,
-	   but Daylight's flat strip still centred "Icons +" inside the floating
-	   #chat-jump/#chat-end buttons' own band. 24px of bottom padding lifts
-	   the row's centre clear of them; re-proved with elementFromPoint at the
-	   "+" button's own centre, not by eye. */
-	:root[data-skin="daylight"] .chat-attach-strip { padding: 0 8px 24px 16px; }
+	:root[data-skin="daylight"] .chat-attach-strip { padding: 0 8px 0 16px; }
 	:root[data-skin="daylight"] .chat-input-bar { padding: 4px 8px 12px 12px; }
+	/* The row above the box (responsive.css): no rule here, as the bar has none, and the bar's insets. */
+	:root[data-skin="daylight"] .panel.ai .composer-row { border-top: 0; padding: 4px 8px 0 12px; }
 	:root[data-skin="daylight"] .ai,
 	:root[data-skin="daylight"] .web,
 	:root[data-skin="daylight"] .doc,
@@ -1301,11 +1300,11 @@
 /* The attach row, while it holds nothing: its note and its two controls on
    one line over the field.
 
-   DESK ONLY (QA round 2, M2). Folded onto one line at any width, "Icons +"
-   sat at the row's right edge, directly under the phone's floating jump
-   buttons (`#chat-jump`/`#chat-end`), so the "+" was the one control in the
-   app a thumb could not reach. Below the phone breakpoint the row keeps
-   base's two lines, which is what leaves those buttons clear. */
+   DESK ONLY (QA round 2, M2). It was kept off phones while the jump buttons
+   (`#chat-jump`/`#chat-end`) floated over the row's right edge, which put
+   the "+" under them; they now sit in the composer row, so that reason is
+   gone. Below the phone breakpoint the row still keeps base's two lines:
+   folding it there would change what a phone shows, a separate call. */
 @media (min-width: 761px) {
 	:root[data-skin="daylight"] .ws-group:has(> .ws-body > .ws-empty:only-child) {
 		display: flex;
@@ -1346,7 +1345,7 @@
 /* `.chead-left > #diamond-view .dview-btn` (app.css) outranks the toggle-option
    rule above on specificity (an id), so its own 30px padding is repeated here.
    The seat switch by the composer is the same control, drawn the same. */
-:root[data-skin="daylight"] :is(#diamond-view, #seat-switch) .dview-btn { padding: 6px 8px; }
+:root[data-skin="daylight"] :is(#diamond-view, #seat-switch, #effort-step) .dview-btn { padding: 6px 8px; }
 :root[data-skin="daylight"] .theme-pick:hover,
 :root[data-skin="daylight"] .pop select:hover { border-color: transparent; background-color: var(--bg-hover); }
 /* A chat tile's name sits on the same edge as a diamond's. A Pending tile's headline is the same label button (5.3.2): its
@@ -1420,8 +1419,11 @@
 	:root[data-skin="daylight"] .dlg-tick { align-items: center; min-height: 44px; }
 	/* A colour swatch is a field of colour: 44px tall. */
 	:root[data-skin="daylight"] .tile-dlg-swatch { min-height: 44px; }
-	/* The floating jump buttons are 44px wide, as they are 46px tall. */
-	:root[data-skin="daylight"] :is(.chat-input-bar #chat-jump, .chat-input-bar #chat-end) { width: 44px; }
+	/* The walk-back pair in the composer row: Send's 46px squares (D-20261014-08). */
+	:root[data-skin="daylight"] :is(.composer-row #chat-jump, .composer-row #chat-end) {
+		width: 46px; min-width: 46px; background: var(--bg-tertiary);
+	}
+	:root[data-skin="daylight"] :is(.composer-row #chat-jump, .composer-row #chat-end):hover { background: var(--dl-hover); }
 	/* Icon-size controls: their own box, the house overlay. */
 	/* `z-index: 1`: a neighbour that makes its own stacking context (the active tile's preview is `opacity: .7`) is painted over an
 	   overlay at `z-index: auto`, so it took the lower half of a tile's cog and x. (The rating arrows wear U2's own overlay, app.css.) */
@@ -1566,9 +1568,9 @@
 	:root[data-skin="daylight"] .panel.ai .chead #diamond-view { order: 5; margin: 7px 0 7px -8px; overflow: visible; }
 	:root[data-skin="daylight"] .panel.ai .chead #diamond-view .dview-btn { margin-block: 0; min-width: 44px; }
 	/* The seat switch by the composer is the face switch's control, so it keeps the same 30px box, 44px width and 44px overlay. */
-	:root[data-skin="daylight"] .panel.ai #seat-switch { overflow: visible; }
-	:root[data-skin="daylight"] .panel.ai #seat-switch .dview-btn { position: relative; min-width: 44px; }
-	:root[data-skin="daylight"] .panel.ai #seat-switch .dview-btn::before {
+	:root[data-skin="daylight"] .panel.ai :is(#seat-switch, #effort-step) { overflow: visible; }
+	:root[data-skin="daylight"] .panel.ai :is(#seat-switch, #effort-step) .dview-btn { position: relative; min-width: 44px; }
+	:root[data-skin="daylight"] .panel.ai :is(#seat-switch, #effort-step) .dview-btn::before {
 		content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%);
 	}
 	:root[data-skin="daylight"] .panel.ai .chead #chead-when { order: 6; margin-left: 8px; }

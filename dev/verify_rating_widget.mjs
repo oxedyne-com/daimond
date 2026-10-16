@@ -1232,7 +1232,7 @@ await section('FW5', async () => {
 	console.log('  (FW5 rows, y ranges: ' + J(await P.page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => { const q = (e) => e ? Math.round(e.getBoundingClientRect().top) + '-' + Math.round(e.getBoundingClientRect().bottom) : '';
 		return { row: q(r), name: q(r.querySelector('.turn-file-name')), delta: q(r.querySelector('.turn-file-delta')), group: q(r.querySelector(':scope > .turn-file-rate')), btns: [...r.querySelectorAll('.turn-file-rate button')].map(q), align: getComputedStyle(r).alignItems, disp: getComputedStyle(r).display }; }), FWROW)) + ')');
 	const ownSel = `${FWROW} .ctile-rate-up, ${FWROW} .ctile-rate-down, ${FWROW} .ctile-rate-more`;
-	// Nothing is hidden: the walk-back chevrons (#chat-jump, #chat-end) are measured with the rest, and P's foot on the thread (68px) clears them.
+	// Nothing is hidden: the walk-back chevrons (#chat-jump, #chat-end) are measured with the rest, and the thread must still clear them now they sit in the composer row.
 	for (const look of ['obsidian', 'porcelain']) { await wear(P, look); await tapAreas(P, 'FW5 ' + look + ' file rows: up, down, details', ownSel); await snap(P, look, '390x844', 'file_rows'); }
 	const h = await P.page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => r.getBoundingClientRect().height), FWROW);
 	check('FW5: a file row is at least 44px tall on a coarse pointer, so no two rows\' squares overlap', h.length > 0 && h.every((x) => x >= 43.5), J(h));

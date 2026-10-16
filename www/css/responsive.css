@@ -124,65 +124,20 @@
 	#chat-send, #chat-stop, #chat-jump, #chat-end { min-width: 46px; width: 46px; height: 46px; font-size: var(--fs-2xl); }
 
 	/* ── The box you type in gets the room ────────────────────────
-	   Measured on a 390px phone: the bar is 372 wide and the text box got 170 of
-	   it, because Send and the two walk-back chevrons take 46 each plus gaps —
-	   three buttons eating more of the row than the thing the row is for.
-
-	   The two CHEVRONS ARE NOT COMPOSITION. They walk the transcript; they have
-	   nothing to do with the message being written, and on the one screen where
-	   space is scarce they were charging full price for it. So on a phone they
-	   leave the bar and float at the foot of the thread, where what they act on
-	   actually is. Absolute, so the DOM and every handler are untouched — this is
-	   a placement, not a rebuild.
-
-	   The text box then takes the width they gave up: 170px becomes about 280.
-	   Nothing is lost and nothing new is drawn, which is what "without eating
-	   screen real estate" has to mean. */
-	.chat-input-bar { position: relative; }
-	.chat-input-bar #chat-jump,
-	.chat-input-bar #chat-end {
-		position: absolute;
-		bottom: calc(100% + 10px);
-		width: 40px; min-width: 40px; height: 40px;
-		border-radius: 50%;
-		/* Reading over the thread rather than sitting in a bar, so it needs its
-		   own ground: over a message bubble a transparent button is a floating
-		   glyph nobody can tell is pressable. */
-		background: var(--bg-secondary);
-		border: 1px solid var(--border);
-		box-shadow: 0 2px 8px rgb(0 0 0 / 0.28);
-		opacity: 0.94;
-		z-index: 3;
-	}
-	.chat-input-bar #chat-jump { right: 62px; }
-	.chat-input-bar #chat-end  { right: 12px; }
-	/* WHAT THEY FLOAT OVER, which the first attempt got wrong and a screenshot
-	   caught: they cleared the composer and landed squarely on the attachments
-	   strip, hiding the end of "Mark one in with the paperclip". The strip is not
-	   always there — a Diamond with folders marked in draws rows instead — so
-	   lifting the buttons by a fixed amount would clear it in one state and float
-	   them into the middle of the thread in the other.
-	   Keeping the anchor and giving the strip room on its right is the version
-	   that is correct in both: nothing moves, and no words go under a button.
-
-	   The room goes on the BODY and not on the strip, which was the second thing
-	   a screenshot caught: padding the whole strip dragged the group's own `+`
-	   button 104px in from the edge it belongs on. The head row is a title and a
-	   button, neither of which the chevrons ever reach; only the body sits under
-	   them. */
-	.chat-attach-strip .ws-body,
-	.chat-attach-strip .attach-body { padding-right: 100px; }
-	/* A FOLDED GROUP'S BAND is the strip's only row, so it lies on the chevrons' own row and its `+` sat under `#chat-end`
-	   (hit 0x0 on a 390px phone). It takes the room the bodies take, on the same figure. Open, the band heads a list and
-	   is clear of them, and the `+` keeps the edge it belongs on. */
-	.chat-attach-strip .ws-group.folded > .attach-head { padding-right: calc(5px + 100px); }
-
-	/* THE FOOT OF THE THREAD CLEARS THE CHEVRONS. They float 10px above the bar and stand 40px tall, so with no attachment
-	   strip between the thread and the bar (a Diamond's own chat) they lie over the last 56px of the thread, and the last row
-	   of a Files tile, scrolled to the end, had its 44px squares covered by up to 11px (bar rule 8, V's FW5). The thread keeps
-	   that room below its last tile; with the strip showing, the strip is what they float over and the thread ends above them. */
-	.chat-output { padding-bottom: 68px; }
-	.chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 16px; }
+	   The two CHEVRONS ARE NOT COMPOSITION: they walk the transcript. On a phone
+	   `placeWalkPair` moves them out of the bar into the composer row (D-20261014-08),
+	   as Send's 46px squares at the row's end, so no strip has to make room for them.
+	   THE ROW SITS ABOVE THE BOX (D-20261016-04): between the thread and the bar, it
+	   takes its height from the thread when it appears, never from under Send, so Send
+	   holds still and the row collapses to nothing while none of its parts is shown.
+	   The bar's rule moves to the row's top while the row is drawn. */
+	.composer-row #chat-jump,
+	.composer-row #chat-end { flex: none; }
+	.composer-row #chat-jump { margin-left: auto; }
+	.panel.ai:not(.crystal-face) .chat-input-bar { order: 1; }
+	.panel.ai.crystal-face .chat-input-bar { order: 4; }
+	.panel.ai .composer-row { margin: 0; padding: 8px 10px 0; border-top: 1px solid var(--border); }
+	.panel.ai .chat-input-bar:has(~ .composer-row > :not([hidden])) { border-top: 0; }
 
 	/* Give lists a little more row height for touch. A file row's comes from its
 	   44px min-height (files.css), which its 44px ◈ fills, so it takes no padding. */

@@ -272,6 +272,8 @@
 			// The note ahead of the person's words (U4), composed once on the device that sent the
 			// message and kept apart from `prompt`; '' for none. The runner joins it in the engine.
 			pre:     String(o.pre == null ? '' : o.pre),
+			// The Effort the turn runs with (D-20261014-08), '' for the model's own default.
+			effort:  String(o.effort || ''),
 			model:   o.model || null,		// { provider, model, url } -- models.js:127-129
 			scope:   o.scope || null,		// the workspace fence -- scopeChatTo, daimond.js:17553
 			pause:   o.pause || null,		// pause-tree snapshot at dispatch -- §1.1
@@ -1307,6 +1309,7 @@
 		var eid      = o.eid || newId();
 		var prompt   = String(o.prompt == null ? '' : o.prompt);
 		var pre      = String(o.pre == null ? '' : o.pre);		// the note beside it (U4), '' for none
+		var effort   = String(o.effort || '');				// the Effort it runs with, '' for the default
 		// The peer must run the model the CHAT chose, not the peer's own default.
 		var model    = o.model || { provider: c.provider || '', model: c.model || '', url: String(o.url || '') };
 		// The Diamond the chat belongs to, so the runner services a daimon turn through
@@ -1367,7 +1370,7 @@
 			errand: function (parcelVersion) {
 				return makeErrand({
 					eid: eid, turnId: turnId, chatId: chatId, diamondId: diamondId,
-					prompt: prompt, pre: pre, model: model,
+					prompt: prompt, pre: pre, effort: effort, model: model,
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
@@ -1377,7 +1380,7 @@
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
 			fields: {
-				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt, pre: pre,
+				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt, pre: pre, effort: effort,
 				model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
 				seed: seed, thread: thread, tried: tried, gone: gone, to: to, behind: behind,
@@ -5237,7 +5240,8 @@
 				// existing user message (mid === turnId) the runner anchors to.
 				var turnP = (async function () {
 					return d.runTurn(ctx, e.prompt, { onProgress: nudge, promptInTranscript: true, turnId: turnId,
-						pre: (typeof e.pre === 'string') ? e.pre : '' });
+						pre: (typeof e.pre === 'string') ? e.pre : '',
+						effort: (typeof e.effort === 'string') ? e.effort : undefined });
 				})();
 				turnP.then(null, function () { /* a run raced out by `dead` may still reject */ });
 				// Decided by which end came first, not by `deadWhy` alone: a turn that finished in

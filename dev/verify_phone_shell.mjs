@@ -72,10 +72,11 @@ const BREAKS = {
 		from: 'scroll-padding-inline: var(--fade);',
 		to:   'scroll-padding-inline: 0;',
 		what: 'the footer strip scrolls a chip in with no padding, so it stands under the fade' },
-	// Showing a destination no longer closes the drawer (`mshow` in daimond.js), as on 5.2.8.
+	// Showing a destination no longer closes the drawer (`mshow` in daimond.js), as on 5.2.8; that takes the sheet
+	// guests with it, which is how an Admin prompt row left the drawer open before gatefix moved the close up.
 	drawer: { section: 'DR', file: 'js/daimond.js',
-		from: '\t\tif (window.DaimondShell) DaimondShell.closeDrawer();\n\t\tdocument.body.dataset.mpanel = name;',
-		to:   '\t\tdocument.body.dataset.mpanel = name;',
+		from: '\t\tif (window.DaimondShell) DaimondShell.closeDrawer();\n\t\t// A guest rises as a sheet;',
+		to:   '\t\t// A guest rises as a sheet;',
 		what: 'showing a destination leaves the drawer open over it' },
 	// `openPop` no longer hides the other popovers, as before QA1 F1: the mode chip and "more" stand open together.
 	pops:   { section: 'HP', file: 'js/workspace.js',
@@ -730,6 +731,38 @@ await section('DR', async () => {
 	check('DR: a footer chip to Workspace, pressed with the drawer open, closes it and shows Workspace', !st.drawer && (st.mpanel === 'work' || st.sheet), J(st));
 	await shot('DR_workspace_chip', { x: 0, y: 0, width: 390, height: 844 });
 	await ev(() => { const c = document.querySelector('#mnav .ptag[data-panel="ai"]'); if (c) c.click(); }); await sleep(700);
+	// An Admin "Edit the ... prompt" row opens the Doc SHEET. A destination that rises as a sheet returned from `mshow`
+	// before the drawer was closed, so the sheet stood over a still-open drawer, and in the gate's mouse crawl the next
+	// Admin control was under a `div.modal` (admin: home, 16 Oct). The row must take the drawer down, and with the sheet
+	// gone the next row must be what a tap on it reaches.
+	await locale('en'); await toChat(); await closeDrawer();
+	const promptRows = () => ev(() => [...document.querySelectorAll('#admin button')]
+		.filter((b) => b.getClientRects().length && /^Edit the .* prompt/.test(b.textContent.trim()))
+		.map((b) => { const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, label: b.textContent.trim() }; }));
+	const coverAt = (p) => ev((q) => {
+		const h = document.elementFromPoint(q.x, q.y), m = h && h.closest('div.modal');
+		const row = h && h.closest('#admin button');
+		return { hit: h ? (h.id || h.className || h.tagName) : null, row: row ? row.textContent.trim() : null, modal: m ? (m.id || m.className) : null };
+	}, p);
+	await openDrawer(); await tap('#user-row'); await sleep(600);
+	let rows = await promptRows();
+	need(rows.length >= 2, `Admin shows ${rows.length} "Edit the ... prompt" rows; two are needed`);
+	await S.page.touchscreen.tap(rows[0].x, rows[0].y); await sleep(1500);
+	const ep = await ev(() => ({ drawer: document.body.classList.contains('drawer-open'), sheet: document.body.classList.contains('sheet-open'),
+		modals: [...document.querySelectorAll('div.modal')].filter((m) => m.getClientRects().length && getComputedStyle(m).display !== 'none').map((m) => m.id || m.className) }));
+	check(`DR: "${rows[0].label}" closes the drawer under the Doc sheet it opens`, !ep.drawer && ep.modals.length === 0, J(ep));
+	await shot('DR_admin_prompt', { x: 0, y: 0, width: 390, height: 844 });
+	await ev(() => { if (window.DaimondSheet && DaimondSheet.isOpen()) DaimondSheet.close(); }); await sleep(700);
+	await closeDrawer(); await openDrawer();
+	const adminAt = () => ev(() => { const a = document.getElementById('admin'), r = a && a.getBoundingClientRect();
+		return { drawer: document.body.classList.contains('drawer-open'), sheet: document.body.classList.contains('sheet-open'), cls: a && a.className, rect: r && [r.left, r.top, r.width, r.height].map(Math.round), vis: a && getComputedStyle(a).visibility, disp: a && getComputedStyle(a).display }; });
+	const before = await adminAt();
+	rows = await promptRows();
+	if (rows.length < 2) { await tap('#user-row'); await sleep(600); rows = await promptRows(); }
+	need(rows.length >= 2, `a person who opens the drawer and presses their name again does not get Admin back: ${J({ before, after: await adminAt() })}`);
+	const cov = await coverAt(rows[1]);
+	check(`DR: and afterwards "${rows[1].label}" is what a tap on it reaches, under no modal`, cov.row === rows[1].label && !cov.modal, J(cov));
+	await closeDrawer(); await toChat();
 	// A fan-out is not a person's tap. `Workers.dispatch` (what the model's spawn_agent reaches) lands in the middle of a turn
 	// and reveals the Agents panel, so it can land while a person is in the drawer choosing another chat. It must open the
 	// panel and leave the drawer, and the floor under it, alone. The panel is shut first so that the engine has to open it.

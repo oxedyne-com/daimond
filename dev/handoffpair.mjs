@@ -283,3 +283,25 @@ export async function pair(check, lead, mate, opts = {}) {
 	check('A sees B as an awake peer', aSeesB >= 1, 'awake peers: ' + aSeesB);
 	return { a, b, idA };
 }
+
+/// Which segment of the switch reads as pressed: 'runner', 'here' or ''.
+export const switchOn = (pg) => pg.evaluate(() => {
+	const r = document.getElementById('seat-runner');
+	const h = document.getElementById('seat-here');
+	if (r && r.getClientRects().length && r.getAttribute('aria-pressed') === 'true') return 'runner';
+	if (h && h.getClientRects().length && h.getAttribute('aria-pressed') === 'true') return 'here';
+	return '';
+}).catch(() => '');
+
+/// Wait for `pred` over the phone's screen, nudging its presence read each round (the
+/// beat cadence is the product's; the read is only brought forward).
+export async function untilScreen(a, pred, ms, step = 1000) {
+	const t0 = Date.now();
+	for (;;) {
+		let v = false;
+		try { v = await pred(); } catch (e) { v = false; }
+		if (v || Date.now() - t0 > ms) return v;
+		await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence()).catch(() => {});
+		await a.page.waitForTimeout(step);
+	}
+}

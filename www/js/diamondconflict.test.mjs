@@ -257,6 +257,9 @@ function build(harness) {
 		'function mergeTombMap() { return {}; }\n' +
 		'function notePeerRef() {}\n' +
 		'function setDiamondModel() {}\n' +
+		'function adoptDiamondModel() { return false; }\n' +
+		'function renderEffortStep() {}\n' +
+		'function diamondModels() { return {}; }\n' +
 		'function bumpDiamonds() {}\n' +
 		'async function onDiamondsChangedElsewhere() {}\n' +
 		// The Lens's word on an arrival's prune (versionsprune.test.mjs asserts it).

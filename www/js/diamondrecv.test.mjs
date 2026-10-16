@@ -139,7 +139,7 @@ function device(name, skew) {
 		DaimondMarksHere: { dropAll: () => false, settle: (owner, text, loser) => { settled[owner] = String(text || '') + '\n' + String(loser || ''); return false; },
 			drop: (owner, lid, to) => { drops.push(owner + ' ' + lid + ' ' + to); return false; }, parseSidecar: MH.parseSidecar },
 		notePeerRef: () => {}, bumpDiamonds: () => {},
-		onDiamondsChangedElsewhere: async () => {}, signalLinksChanged: () => {}, setDiamondModel: () => {},
+		onDiamondsChangedElsewhere: async () => {}, signalLinksChanged: () => {}, setDiamondModel: () => {}, adoptDiamondModel: () => false, renderEffortStep: () => {},
 		storageAlarm: () => {}, tOr: (k, x) => x, DaimondCloud: undefined, DaimondChunks: undefined,
 		mergeTombMap: (k, t) => Object.assign({}, t || {}),
 	};

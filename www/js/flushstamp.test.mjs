@@ -76,6 +76,8 @@ function syncStub(fl) {
 
 // ── DISPATCH ────────────────────────────────────────────────────
 const dispatchSrc = extractFn('dispatchToPeer');
+// The real helper, over a stub Diamond Effort: the fixtures here are plain chats.
+const turnEffortOf = new Function('diamondEffort', extractFn('turnEffortOf') + '\nreturn turnEffortOf;')(() => '');
 
 /// Runs the real `dispatchToPeer` over a dropped seed; answers the version the
 /// posted errand was sealed at.
@@ -99,11 +101,11 @@ async function dispatchWith(fl, auto) {
 	const noop = () => {};
 	const make = new Function('window', 'DaimondPeer', 'DaimondPost', 'DaimondSync', 'DaimondModels',
 		'diag', 'turnHold', 'selfDeviceId', 'markTurnDispatched', 't', 'touchChat', 'persistChats',
-		'ownsChat', 'renderHistory', 'recoverOneLocally', 'storedPre', 'autonomousPosture',
-		'msgTombsOwed', 'msgTombsShipped', 'dsEvent',
+		'ownsChat', 'renderHistory', 'recoverOneLocally', 'storedPre', 'storedEffort', 'autonomousPosture',
+		'msgTombsOwed', 'msgTombsShipped', 'dsEvent', 'turnEffortOf',
 		dispatchSrc + '\nreturn dispatchToPeer;');
 	const fn = make(win, Peer, Post, S, {}, noop, () => null, () => 'dev-a', noop, (k) => k, noop, noop,
-		() => false, noop, noop, () => '', () => auto === true, () => [], noop, noop);
+		() => false, noop, noop, () => '', () => null, () => auto === true, () => [], noop, noop, turnEffortOf);
 	const chat = { id: 'c1', messages: [], provider: '', model: '' };
 	const out = await fn(chat, 'turn-1', 'hello', [], {});
 	return { out, sealedAt, posted, errandAuto, calls: S.calls };

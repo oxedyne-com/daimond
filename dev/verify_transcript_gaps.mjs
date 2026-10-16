@@ -33,7 +33,7 @@
 //   node dev/verify_transcript_gaps.mjs --dump     print every entry and what was measured
 //   GAPS_SHOTS=<dir> ...                           phone and desktop pictures in Obsidian and Porcelain
 import { open, chat, newChat, errors, signInAs, scratch } from './harness.mjs';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -46,13 +46,24 @@ const ENGINES = (process.env.GAPS_ENGINES || 'chromium,webkit').split(',');
 
 if (!process.env.GAPS_ONE) {
 	let fails = 0, passes = 0;
+	// Each engine's run is passed through as it is written, not buffered to its end: buffered, a caller's log sat silent for
+	// minutes per engine and read as a hang (16 Oct). The copy kept here is what the count is read from.
+	const runOne = (eng) => new Promise((res) => {
+		const c = spawn(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
+			env: { ...process.env, DAIMOND_BROWSER: eng, GAPS_ONE: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+		let out = '', err = '';
+		c.stdout.on('data', (b) => { out += b; process.stdout.write(b); });
+		c.stderr.on('data', (b) => { err += b; process.stderr.write(b); });
+		c.on('close', (status) => res({ status, txt: out + err }));
+		c.on('error', (e) => res({ status: -1, txt: out + err + '\n' + e.message }));
+	});
 	for (const eng of ENGINES) {
+		const t0 = Date.now();
 		console.log('\n=== ' + eng + ' ===');
-		const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
-			env: { ...process.env, DAIMOND_BROWSER: eng, GAPS_ONE: '1' }, encoding: 'utf8', maxBuffer: 256 << 20 });
-		const txt = (r.stdout || '') + (r.stderr || '');
-		process.stdout.write(txt);
+		const r = await runOne(eng);
+		const txt = r.txt;
 		const m = txt.match(/(\d+) passed, (\d+) failed\s*$/);
+		console.log(`=== ${eng} ended: exit ${r.status}, ${m ? m[1] + ' passed, ' + m[2] + ' failed' : 'no count'}, ${Math.round((Date.now() - t0) / 1000)} s ===`);
 		if (m) { passes += +m[1]; fails += +m[2]; }
 		if (!m || (r.status !== 0 && +m[2] === 0)) fails += 1;		// a run that died without its count
 	}
@@ -475,6 +486,7 @@ for (const S of SESSIONS) {
 			if (measured.has(now)) continue;
 			measured.add(now);
 			const cfg = `${ENGINE} ${S.kind} ${w} ${now}` + (now.endsWith('/' + skin) ? '' : ` (asked ${skin})`);
+			console.log(`  at ${cfg}`);
 			await wait(60);
 			const d = await measure();
 			judge(cfg + ' rest', d, { width: w });

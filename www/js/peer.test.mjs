@@ -685,6 +685,18 @@ async function main() {
 		&& opened9.deadline === T0 + phone.DaimondPeer.DISPATCH_DEADLINE_MS
 		&& opened9.dispatchedBy === 'devPHONE');
 
+	// THE EFFORT A TURN RUNS WITH rides the errand (D-20261014-08), so a handed-off turn
+	// thinks as hard as the person asked when they sent it. '' is the model's own default.
+	const planE = phone.DaimondPeer.buildDispatch(dchat, {
+		turnId: 'turn-9', prompt: 'do the thing', effort: 'high', dispatchedBy: 'devPHONE', now: T0 });
+	const openedE = await laptop.DaimondPeer.openEnvelope(
+		(await phone.DaimondPeer.sealForSelf(planE.errand(0))).envelope);
+	check('EF1: buildDispatch carries the Effort, and it survives seal and open on the peer',
+		planE.fields.effort === 'high' && openedE.effort === 'high', JSON.stringify(openedE.effort));
+	check('EF2: an errand built with no Effort carries \'\', the model\'s own default',
+		phone.DaimondPeer.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p' }).effort === ''
+		&& plan.fields.effort === '');
+
 	const P = phone.DaimondPeer;			// the seam every pure check below drives
 
 	// ── THE SEED. What makes errand-first safe: the thread rides the envelope, so a
@@ -889,6 +901,26 @@ async function main() {
 		});
 		check('B7: the runner reconstructs and RUNS the clipped-seed turn once',
 			res.ran === true && res.done === true && ran === 1 && pushed === 1 && acked === 1);
+
+		// EF3: the runner hands the errand's Effort to the turn it runs; an errand from an
+		// older sender, with none, hands nothing, and the runner falls back to the record's.
+		const ranWith = [];
+		for (const [eid, eff] of [['EF3-a', 'low'], ['EF3-b', undefined]]) {
+			L.forget();
+			const e3 = Object.assign({}, openedBig, { eid: eid });
+			if (eff === undefined) delete e3.effort; else e3.effort = eff;
+			const r3 = await phone.DaimondPeer.runErrand(e3, {
+				selfId: 'devLAPTOP', cas: phone.DaimondPeer.syncCas(makeLeaseSync({})),
+				finished:    async () => false,
+				reconstruct: async () => ({ chat: big, app: {} }),
+				runTurn:     async (ctx, prompt, o) => { ranWith.push(o && o.effort); },
+				abort: () => {}, pushResult: async () => 1,
+				post:  async () => {}, ack: async () => {}, now: () => T0 + 2000,
+			});
+			if (!r3 || !r3.ran) ranWith.push('not run: ' + JSON.stringify(r3));
+		}
+		check('EF3: the runner runs the turn with the errand\'s Effort, and with none from an older sender',
+			ranWith.length === 2 && ranWith[0] === 'low' && ranWith[1] === undefined, JSON.stringify(ranWith));
 
 		// B8 — SEEDLESS only when the seed cannot ride at all: here the PROMPT alone is
 		// larger than the door, so the char budget goes negative and the ladder drops

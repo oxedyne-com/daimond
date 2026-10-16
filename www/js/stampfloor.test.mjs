@@ -114,6 +114,22 @@ await skewCase('device name: Desk, then Kitchen', async (now) => {
 		read: () => (f.loadDevices()[ID] || {}).label };
 }, 'Desk', 'Kitchen');
 
+console.log('\nstampfloor: a Diamond\'s model-and-Effort record, each half (daimond.js closures, lifted; check_b1)');
+for (const [label, write, read, first, second] of [
+	['Diamond Effort: high, then low', (f, v) => f.setDiamondModel('d', { effort: v }), (r) => r.effort, 'high', 'low'],
+	['Diamond model: X, then Y', (f, v) => f.setDiamondModel('d', { provider: 'p', model: v }), (r) => r.model, 'X', 'Y'],
+]) {
+	await skewCase(label, async (now) => {
+		const w = makeWindow({ now });
+		const f = sliceDaimond(w, ['diamondModels', 'setDiamondModel', 'adoptDiamondModel'], { Notes: undefined }).fns;
+		return { w,
+			write: (v) => write(f, v),
+			snap: () => JSON.parse(JSON.stringify(f.diamondModels().d || null)),
+			adopt: (r) => f.adoptDiamondModel('d', r, false),
+			read: () => read(f.diamondModels().d || {}) };
+	}, first, second);
+}
+
 // ── A Diamond edit on the slow device, as far as the JS side reaches ──────────
 // The wasm store stamps an edit `touched = now` with no floor (A2 floors it); what
 // the JS side decides is whether the pull that follows keeps the local edit. It
@@ -141,7 +157,7 @@ async function diamondCase(skew) {
 		const f = sliceDaimond(w, ['applyDiamonds'], {
 			ChatStore: { putTombs: () => Promise.resolve(true) }, diamondApp: () => app, trail: () => {}, heapNote: () => '',
 			DaimondMarksHere: { dropAll: () => false, settle: () => false }, notePeerRef: () => {}, bumpDiamonds: () => {},
-			onDiamondsChangedElsewhere: async () => {}, signalLinksChanged: () => {}, setDiamondModel: () => {},
+			onDiamondsChangedElsewhere: async () => {}, signalLinksChanged: () => {}, setDiamondModel: () => {}, adoptDiamondModel: () => false, renderEffortStep: () => {},
 			storageAlarm: () => {}, tOr: (k, x) => x, DaimondCloud: undefined, DaimondChunks: undefined,
 		}).fns;
 		return { store, f, w,

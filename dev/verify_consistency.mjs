@@ -26,7 +26,7 @@ import { open, chat, newChat, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import { checkGaps } from './sectiongap.mjs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -957,7 +957,7 @@ async function carrySurfaces(wk) {
 		await click('#dview-crystal'); await wait(1400); await grab('p_diamond_crystal');
 		await mendFace('p_diamond_crystal_mend');
 		await click('#dview-chat'); await wait(900); await grab('p_diamond_chat');
-		// The thread at its end: the last tile is the tail note, and its 44px squares must clear #chat-jump and #chat-end (the 68px foot, 260f7dea).
+		// The thread at its end: the last tile is the tail note, and its 44px squares must clear #chat-jump and #chat-end (in the composer row since D-20261014-08).
 		await page.waitForSelector('#chat-output .turn-files .turn-file-rate', { timeout: 8000, state: 'attached' }).catch(() => {});
 		if (await ev(() => document.querySelectorAll('#chat-output .turn-files .turn-file-rate').length)) {
 			await unfold('#chat-output .turn-files');
@@ -1368,7 +1368,8 @@ const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleW
 // WebKit is seeded by pairing it to PROF's own account as a SECOND DEVICE, not
 // a fresh one, so its chats are real and arrive by sync. Pattern:
 // dev/verify_markshere_sync.mjs's `pairedDevice`. If pairing cannot run under
-// this harness at all, WebKit is excluded in full rather than measured empty.
+// this harness at all, WebKit is recorded as unmeasured rather than measured empty,
+// and an unmeasured engine fails the report (VC-WEBKIT).
 //
 // TWO FACTS THIS RESTS ON (G2, 2026-10-01; before them `all` on a gateway world
 // died at exit 4 and `varlen webkit` on a click timeout):
@@ -1436,8 +1437,8 @@ async function phone(wk) {
 	if (wk) {
 		try { ({ lead, s } = await webkitPair()); }
 		catch (e) {
-			log('webkit pairing unavailable under this harness, excluding WebKit in full:', e.message);
-			excluded = 'webkit-*: no seeded content (' + e.message.split('\n')[0] + ')';
+			log('webkit: FAIL, the WebKit device could not be paired, so WebKit is not measured:', e.message);
+			excluded = 'the WebKit device could not be paired (' + e.message.split('\n')[0] + ')';
 		}
 	} else {
 		s = await open({ name: 'alex', profile: PROF, touch: true, connect: false, isMobile: true });
@@ -1493,7 +1494,8 @@ const ROLES = [
 	// (ahead of toggle-option below, whose `-toggle\b` would otherwise claim it).
 	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-prov-head'))],
 	['toggle-option',   'sentence', (it) => it.ctrl && (has(it, 'dview-btn') || within(it, /\.seg\b|\.size-row|-toggle\b|\.files-scope|\.imp-chips|\.net-row|\.tile-dlg-seg|\.files-mode\b/) && !has(it, 'files-mode-btn') || has(it, 'grid-opt'))],
-	['composer-button', 'none',     (it) => it.ctrl && (within(it, /chat-input-bar|msheet-ask/) && !/^(input|textarea)$/.test(it.tag))],
+	// The walk-back pair is the composer's wherever it sits: in the bar on a computer, in the composer row on a phone (D-20261014-08).
+	['composer-button', 'none',     (it) => it.ctrl && ((within(it, /chat-input-bar|msheet-ask/) || /#chat-(jump|end)\b/.test(it.sig)) && !/^(input|textarea)$/.test(it.tag))],
 	// G16: the bar's own icon-only tools (hamburger, section fold) are a
 	// role of their own -- 30px on desk, 36px on phone -- ahead of `head-tool`,
 	// whose regex otherwise claims `.rail-fold` for a row it does not belong to.
@@ -1637,7 +1639,7 @@ const ALLOW = [
 	// current element wear one.
 	{ role: '*', m: /\.(on|active|current|selected|is-on|tag-inc)\b|aria-current/, p: ['col', 'bg', 'fw'], why: 'the current or selected state is drawn apart on purpose, by colour, fill and weight, never by a border' },
 	{ role: '*', m: /\.danger\b/, p: ['col'], why: 'a destructive action is drawn in the danger colour' },
-	{ role: '*', m: /\.dlg-ok\b|#chat-send\b|\.compose-send\b|\.ti-continue\b|#push-save\b|#beta-open\b|\.crystal-act\.primary\b|\.pro-buy\b|\.credit-buy\b|\.tools-buy\b|\.mail-unlock\b|\.ar-save\b|\.ar-card-btn\.accent\b/, p: ['col', 'bg', 'bd', 'fw', 'rad'], why: 'the one primary action of a dialog, the composer, an interrupted turn or the crystal form is filled -- the send button’s own round primary keeps its radius too' },
+	{ role: '*', m: /\.dlg-ok\b|#chat-send\b|#msheet-ask-send\b|\.compose-send\b|\.ti-continue\b|#push-save\b|#beta-open\b|\.crystal-act\.primary\b|\.pro-buy\b|\.credit-buy\b|\.tools-buy\b|\.mail-unlock\b|\.ar-save\b|\.ar-card-btn\.accent\b/, p: ['col', 'bg', 'bd', 'fw', 'rad'], why: 'the one primary action of a dialog, the composer, an interrupted turn or the crystal form is filled -- the send button’s own round primary keeps its radius too' },
 	{ role: 'meta', m: /\.crollup-count\b/, p: ['col', 'fw', 'ff'], why: 'the tool-count badge is filled in the outcome colour (ok, warn, fail)' },
 	{ role: '*', m: / :focus$/, p: ['bd', 'sh'], why: 'the focused field shows the accent edge; every field takes it on focus' },
 	{ role: 'close-button', m: /about-card/, p: ['col', 'bg', 'rad'], why: 'the About card closes over its picture, so its × is a dark disc (app.css .about-card > .ui-head .ui-close)' },
@@ -1716,14 +1718,17 @@ function report() {
 	const caps = ['desk', 'phone', 'webkit'].map((n) => `${OUT}/cap_${n}.json`).filter((f) => fs.existsSync(f)).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
 	if (!caps.length) { log('no captures in', OUT); process.exit(2); }
 	const items = caps.flatMap((c) => c.items), faults = caps.flatMap((c) => c.faults), missing = caps.flatMap((c) => c.missing), surfaces = caps.flatMap((c) => c.surfaces);
-	// Recorded, printed, and never scored as a pass or a fail (WebKit's own
-	// Workspace, CRF2, or the whole engine when pairing cannot run at all).
+	// Recorded, printed, and never scored as a pass or a fail: a SURFACE the harness cannot reach (WebKit's own Workspace, CRF2).
 	const notCovered = caps.flatMap((c) => c.notCovered || []);
 	const tiles = caps.flatMap((c) => c.tiles || []);
 	const taps = caps.flatMap((c) => c.tap || []);
 	const sends = caps.flatMap((c) => c.send || []);
 	// A run that never saved its WebKit pass (exit 4, or `desk` alone) did not cover WebKit, and says so.
 	if (!fs.existsSync(`${OUT}/cap_webkit.json`)) notCovered.push({ label: 'webkit', reason: 'no WebKit capture in this run (the pass did not finish, or was not run)', surface: 'webkit-*' });
+	// A WHOLE ENGINE unmeasured is a fault, not a note (VC-WEBKIT, 16 Oct). Until then a run whose WebKit pairing failed filed
+	// "PASS: every role consistent (not covered: webkit ×1)", so every `all`, the base's included, was green on Chromium alone:
+	// the world had no gateway, `/api/account` met serve.mjs's 502, and the Pro grant never ran.
+	const engines = notCovered.filter((n) => /^\w+-\*$/.test(n.surface));
 	const cfgOf = (s) => s.split('/')[0];
 	// One instance = one element (config + signature + text), seen on one or more surfaces.
 	const inst = new Map();
@@ -1838,9 +1843,10 @@ function report() {
 	// letter's own side bearing (the K of Keep, the A of Add) moves the ink a pixel between tiles.
 	const GLYROLE = (it) => /^summary\b|\btagf-toggle\b|#sys-head\b|\barte-strip\b|\bastat-val\b|#sync-rest\b|\bcrystal-act\b|\bpend-verb\b|#current-session-name\b/.test(it.sig);
 	const RIGHTALIGN = (it) => /\bastat-aside\b|\brel-when\b|\bpptw-head-state\b/.test(it.sig);
-	// The "Here | <runner>" switch (D-20261009-23) sits by the input box, inset 12 px to the composer box edge; it is placed by the composer, not by
-	// the panel title, so its text is not compared to the panel's text edge. Its segments are still compared by role, as Crystal | Chat's are.
-	const COMPOSER_PART = (it) => /#seat-switch\b|#seat-here\b|#seat-runner\b/.test(it.sig);
+	// The composer row (D-20261014-08) -- the "Here | <runner>" switch (D-20261009-23), the Effort step and, on a phone, the walk-back pair -- sits by
+	// the input box, inset 12 px to the composer box edge; it is placed by the composer, not by the panel title, so its text is not compared to the
+	// panel's text edge. Its parts are still compared by role, as Crystal | Chat's are.
+	const COMPOSER_PART = (it) => /#composer-row\b|#seat-switch\b|#seat-here\b|#seat-runner\b|#effort-(step|dn|val|up)\b/.test(it.sig);
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
 	const textBySurf = new Map(); for (const o of items) { if (!o.view || o.tx == null || o.tcy == null) continue; if (!textBySurf.has(o.surface)) textBySurf.set(o.surface, []); textBySurf.get(o.surface).push(o); }
@@ -2003,8 +2009,10 @@ function report() {
 	for (const f of sends) md.push(`| ${f.kind} | \`${f.el}\` | \`${f.by}\` | ${f.state} | ${f.box.join(' ')} | ${(f.was || []).join(' ')} | ${f.surface} |`);
 	fs.writeFileSync(`${OUT}/report.md`, md.join('\n'));
 	log('report', `${OUT}/report.md`, JSON.stringify(summary));
-	const bad = unexplained.length + C.length + Lx.length + missing.length + Tx.length + sends.length;
-	return { bad, notCovered, parts: { style: unexplained.length, casing: C.length, layout: Lx.length, missing: missing.length, tap: Tx.length, send: sends.length } };
+	for (const e of engines) log(`FAIL: ${e.label} was not measured: ${e.reason}`);
+	const bad = unexplained.length + C.length + Lx.length + missing.length + Tx.length + sends.length + engines.length;
+	return { bad, notCovered: notCovered.filter((n) => !engines.includes(n)), parts: { style: unexplained.length, casing: C.length, layout: Lx.length, missing: missing.length, tap: Tx.length, send: sends.length, engine: engines.length },
+		unmeasured: engines.map((e) => e.label) };
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -2391,8 +2399,8 @@ async function varlenRun(which) {
 			({ lead, s } = await webkitPair());
 			if (!(await webkitSync(lead, s))) throw new Error('the paired content did not arrive within 60 s');
 		} catch (e) {
-			log('varlen webkit: pairing unavailable, NOT COVERED:', e.message.split('\n')[0]);
-			fs.writeFileSync(`${OUT}/varlen_webkit.json`, JSON.stringify([{ name: 'webkit (all slots)', cfg: 'webkit', notCovered: 'pairing/seeding unavailable under this harness: ' + e.message.split('\n')[0] }]));
+			log('varlen webkit: FAIL, the WebKit device could not be paired, so WebKit is not measured:', e.message.split('\n')[0]);
+			fs.writeFileSync(`${OUT}/varlen_webkit.json`, JSON.stringify([{ name: 'webkit (all slots)', cfg: 'webkit', unmeasured: 'the WebKit device could not be paired: ' + e.message.split('\n')[0] }]));
 			if (s) await s.close().catch(() => {}); if (lead) await lead.close().catch(() => {}); return;
 		}
 	} else s = await open({ name: 'alex', profile: PROF, ...(which === 'phone' ? { touch: true, connect: false, isMobile: true } : {}) });
@@ -2492,6 +2500,7 @@ function varlenReport() {
 	for (const r of recs) {
 		if (r.na) { out.push({ name: r.name, cfg: r.cfg, na: r.na }); continue; }
 		if (r.notCovered) { out.push({ name: r.name, cfg: r.cfg, notCovered: r.notCovered }); continue; }
+		if (r.unmeasured) { out.push({ name: r.name, cfg: r.cfg, unmeasured: r.unmeasured }); continue; }	// a whole engine: a fault
 		if (r.locale) {
 			const en = r.locale.en;
 			for (const loc of ['de', 'fr']) { const m = r.locale[loc]; if (!m) continue;
@@ -2517,6 +2526,7 @@ function varlenReport() {
 	for (const o of out) {
 		if (o.na) { md.push(`- **${o.name}** (${o.cfg}): not applicable -- ${o.na}`); continue; }
 		if (o.notCovered) { md.push(`- **${o.name}** (${o.cfg}): NOT COVERED -- ${o.notCovered}`); continue; }
+		if (o.unmeasured) { md.push(`- **${o.name}** (${o.cfg}): FAULT, NOT MEASURED -- ${o.unmeasured}`); continue; }
 		const ch = o.changes.map((c) => `${c.where}:${c.part}${c.text ? '"' + c.text.slice(0, 14) + '"' : ''}[${c.kinds.join('+')}${c.dx ? ' dx' + c.dx : ''}${c.dy ? ' dy' + c.dy : ''}${c.dw ? ' dw' + c.dw : ''}${c.dh ? ' dh' + c.dh : ''}]`);
 		md.push(`- **${o.name}** ${o.variant} (${o.cfg})${o.own ? ` own: lines ${o.own.ln.join('→')}${o.own.ov ? ' ' + o.own.ov : ''}${o.own.sh < 100 ? ' shown ' + o.own.sh + '%' : ''}${o.own.past ? ' past-tile ' + o.own.past + 'px' : ''} tile dh${o.own.dh} dw${o.own.dw}${o.own.over ? ' tile-overflow ' + o.own.over : ''}` : ''}${o.hscroll ? ' PAGE-HSCROLL ' + o.hscroll : ''}${o.ctxOver ? ' CTX-OVERFLOW ' + o.ctxOver : ''}`);
 		if (o.verdict) md.push('  - VERDICT ' + (o.verdict.length ? 'FAULT: ' + o.verdict.join('; ') : 'ok'));
@@ -2528,7 +2538,9 @@ function varlenReport() {
 	const vs = out.filter((o) => o.verdict), vf = vs.filter((o) => o.verdict.length);
 	log(`varlen verdicts: ${vs.length} readings with a verdict (${[...new Set(vs.map((o) => o.name))].join(', ') || 'none'}), ${vf.length} fault(s)`);
 	for (const o of vf) log('  FAULT', o.cfg, o.name, o.variant, o.verdict.join('; '));
-	return vf.length;
+	const um = out.filter((o) => o.unmeasured);
+	for (const o of um) log('  FAULT', o.cfg, 'not measured:', o.unmeasured);
+	return vf.length + um.length;
 }
 
 
@@ -2604,6 +2616,22 @@ function diffRuns() {
 }
 
 // ── Main ────────────────────────────────────────────────────────────────
+// WebKit is measured only through a paired second device, and pairing needs THIS WORLD'S gateway (sync is Pro, Pro is a signed
+// webhook, `// gateway: live`). Asked before the first browser opens, so a run that cannot measure WebKit says so in seconds rather
+// than after twenty minutes of Chromium, and never files a by-role verdict for one engine as if it were both.
+async function needGateway(why) {
+	const whsec = path.join(GWDIR, 'keys/stripe/sandbox/whsec');
+	const up = await fetch(`${GW_URL}/api/health`, { signal: AbortSignal.timeout(5000) }).then((r) => r.status, (e) => e.cause ? e.cause.code || e.message : e.message);
+	const lack = [];
+	if (up !== 200) lack.push(`no gateway answers ${GW_URL}/api/health (${up}); start this world's own on DAIMOND_GW_PORT=${new URL(GW_URL).port}`);
+	if (!fs.existsSync(whsec)) lack.push(`no sandbox webhook secret at ${whsec}; link gateway/keys to the sandbox keys the world's gateway runs on`);
+	if (!lack.length) return;
+	log(`FAIL: ${why} needs this world's gateway to pair the WebKit device, and WebKit cannot be measured:`);
+	for (const l of lack) log('  ' + l);
+	process.exit(2);
+}
+if (['all', 'webkit', 'tap'].includes(MODE)) await needGateway(`\`${MODE}\``);
+if (MODE === 'varlen' && ['all', 'webkit'].includes(process.argv[3] || 'all')) await needGateway(`\`varlen ${process.argv[3] || 'all'}\``);
 if (MODE === 'diff') diffRuns();
 if (MODE === 'varlen') {
 	const w = process.argv[3] || 'all';
@@ -2640,23 +2668,32 @@ else if (MODE === 'webkit') await phone(true);
 else if (MODE === 'tap') { if (!fs.existsSync(PROF)) await seed(); await phone(false); await phone(true); }
 if (MODE === 'all') { await seed(); await desk(); await phone(false); await phone(true); }
 if (MODE === 'report' || MODE === 'all' || MODE === 'tap') {
-	const rep = report(), { notCovered, parts } = rep;
+	const rep = report(), { notCovered, parts, unmeasured } = rep;
 	let bad = rep.bad;
 	// The transcript's gaps are one rule (D-20261010-16), measured by its own gate in both engines against the same
 	// world. `all` runs it, so the by-role evidence deploy.sh step 0h asks for cannot be green with a gap off the rule.
 	if (MODE === 'all') {
-		const g = spawnSync('node', [path.join(import.meta.dirname, 'verify_transcript_gaps.mjs')], { encoding: 'utf8', maxBuffer: 64 << 20 });
-		const txt = String(g.stdout) + String(g.stderr);
+		// Streamed line by line as `[cons] gaps ...`, not buffered: a spawnSync here (and one inside the gaps gate) left the log
+		// silent for the gate's ~6 minutes, and dk postgates read the silence as a hang (16 Oct). The kept copy is what is counted.
+		const g = await new Promise((res) => {
+			const c = spawn('node', [path.join(import.meta.dirname, 'verify_transcript_gaps.mjs')], { stdio: ['ignore', 'pipe', 'pipe'] });
+			const buf = { out: '', err: '' }, part = { out: '', err: '' };
+			const eat = (k) => (b) => { const t = String(b); buf[k] += t; const ls = (part[k] + t).split('\n'); part[k] = ls.pop(); for (const l of ls) if (l.trim()) log('gaps', l); };
+			c.stdout.on('data', eat('out')); c.stderr.on('data', eat('err'));
+			const end = (status, extra = '') => { for (const k of ['out', 'err']) if (part[k].trim()) log('gaps', part[k]); res({ status, txt: buf.out + buf.err + extra }); };
+			c.on('close', (status) => end(status));
+			c.on('error', (e) => end(-1, '\n' + e.message));
+		});
+		const txt = g.txt;
 		const off = [...txt.matchAll(/^\w+: measured .*?; (\d+) off the rule/gm)].reduce((n, m) => n + Number(m[1]), 0);
 		const fails = (txt.match(/^  FAIL .*$/gm) || []);
 		// A run that died, or failed a check that is not a measure, still counts: never 0 on a gate that did not pass.
 		parts.gaps = g.status === 0 ? 0 : Math.max(off, fails.length, 1);
-		for (const l of txt.split('\n').filter((l) => /^\w+: measured|^  FAIL |^ALL ENGINES/.test(l))) log('gaps', l.trim());
 		bad += parts.gaps;
 	}
 	const covGroups = new Map(); for (const n of notCovered) covGroups.set(n.label, (covGroups.get(n.label) || 0) + 1);
 	const covStr = covGroups.size ? ` (not covered: ${[...covGroups.entries()].map(([k, n]) => `${k} ×${n}`).join(', ')})` : '';
-	const verdict = bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap}, send ${parts.send}${parts.gaps != null ? `, transcript gaps ${parts.gaps}` : ''})${covStr}` : `PASS: every role consistent${covStr}`;
+	const verdict = bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap}, send ${parts.send}${parts.engine ? `, engine not measured ${unmeasured.join(' ')}` : ''}${parts.gaps != null ? `, transcript gaps ${parts.gaps}` : ''})${covStr}` : `PASS: every role consistent${covStr}`;
 	log(verdict);
 	// `all` is the by-role gate: it files its verdict under the www tree for deploy.sh step 0h. The writer refuses a dirty or moved tree, and a FAIL files a red record.
 	if (MODE === 'all') {

@@ -28,7 +28,7 @@
 //     name, an empty workspace and the longest locale;
 //   * by role: the chat's toggle is an `.arte-strip` and sits where a diamond's footer puts one,
 //     its box on the footer's text edge; and on a 390x844 phone the `+` on the band is clear
-//     of the floating chevrons (`#chat-end`, `#chat-jump`) with both of them in view.
+//     of the walk-back squares (`#chat-end`, `#chat-jump`) with both of them in view.
 //
 // Both looks, both sizes. Run with the world up (`bash dev/world.sh N --up`); no gateway.
 import fs from 'node:fs';
@@ -163,7 +163,7 @@ const READ = () => {
 		out.add = r(ca.querySelector('.attach-add'));
 		// The footer's text edge: where the strip's content starts, which is where a toggle's box belongs.
 		out.edge = ca.getBoundingClientRect().x + parseFloat(getComputedStyle(ca).paddingLeft);
-		// The `+` against the two floating chevrons. They are hidden while the thread has nowhere to walk to, so they are shown for
+		// The `+` against the two walk-back squares. They are hidden while the thread has nowhere to walk to, so they are shown for
 		// the reading (and put back) to answer for the state in which they are there: the layout must not depend on it.
 		const add = ca.querySelector('.attach-add'), jumps = ['chat-end', 'chat-jump'].map((i) => document.getElementById(i)).filter(Boolean);
 		const was = jumps.map((e) => e.hidden);
@@ -303,7 +303,7 @@ for (const c of ['none', 'three', 'many']) for (const lk of LOOKS) for (const k 
 	// By role: the toggle is an `.arte-strip`, and a diamond's footer draws that with its box on the footer's text edge.
 	check(Math.abs(tg.rect.x - x.edge) < 0.5, `${tag}: the toggle's box is on the footer's text edge`, `x ${f1(tg.rect.x)} against ${f1(x.edge)}`);
 	if (k === 'phone') {
-		// At 390x844 the chevrons float over the band's own row; the `+` has to be pressable with them in view.
+		// At 390x844 the walk-back squares sit in the composer row; the `+` has to be pressable with them in view.
 		const hits = x.jumps.filter((j) => j.rect && x.add && j.rect.x < x.add.r && j.rect.r > x.add.x && j.rect.y < x.add.b && j.rect.b > x.add.y);
 		check(x.innerW === 390 && x.innerH === 844 && x.jumps.length === 2 && !hits.length && !x.addCover.length,
 			`${tag}: the + is not overlapped by #chat-end or #chat-jump`, `${x.innerW}x${x.innerH}, overlapped by ${hits.map((j) => j.id).join(',') || 'none'}, covered at ${x.addCover.join(',') || 'no point'}`);
