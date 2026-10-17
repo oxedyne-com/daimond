@@ -64,6 +64,13 @@ oxedyne_fe2o3_ore		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "3453
 # the server says so.  `default-features = false` drops the post-quantum schemes that
 # rest on C, leaving the pure-Rust subset -- Ed25519, SHA3 -- a browser can compile.
 oxedyne_fe2o3_sbj		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "34537c5cb62bddcfbbb69b5e7abc274fe4daca82", default-features = false }
+# The seal (`seal`): the X25519 + HKDF + AES-256-GCM records a post, a peer envelope and the
+# account wrap travel in, one code path for the browser and the native runner.  Already in the
+# graph through `fe2o3_sbj`; `mode2` without the default `pq`/`batch` keeps the C-backed schemes
+# out, so it compiles to wasm32 as it stands.  `zeroize` (also already in the graph through it)
+# clears the one-call secrets -- the ephemeral X25519 scalar and the body key -- when they drop.
+oxedyne_fe2o3_crypto		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "34537c5cb62bddcfbbb69b5e7abc274fe4daca82", default-features = false, features = ["mode2"] }
+zeroize				= "1.4.2"
 
 # The sans-io half of `fe2o3_mail` -- RFC 5322 message reading and draft building -- behind
 # the model's mail tools (`mail_read`, `mail_draft`).  `default-features = false` drops the
