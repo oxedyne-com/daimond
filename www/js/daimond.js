@@ -120,6 +120,26 @@ function kindName(el, kind, name) {
 	return el;
 }
 
+/// A path drawn in one line as icon, muted folder and name, where the folder gives way
+/// first and the name is cut only when it alone is wider than the row (UNBLOCK-13): a
+/// long folder used to end the line in "…" and cut the file's own name, the one part
+/// the reader needs. The layout is `.pn`'s, in files.css.
+function pathName(el, kind, pre, name) {
+	el.textContent = '';
+	el.classList.add('pn');
+	el.appendChild(kindIcon(kind));
+	if (pre) {
+		var i = document.createElement('i');
+		i.textContent = pre;
+		el.appendChild(i);
+	}
+	var fn = document.createElement('span');
+	fn.className = 'fn';
+	fn.textContent = name;
+	el.appendChild(fn);
+	return el;
+}
+
 /// Whether a failed direct file call failed BECAUSE the open folder was taken away.
 ///
 /// The mirror of `folder_loss_reported` in `src/tools.rs`: the workspace root is a
@@ -16490,6 +16510,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	// A tile opts in with `_awaits`, a function that says whether it still awaits. It is
 	// pinned while `_slot` is set. `_awaits` is read again at the next tile drawn.
+	//
+	// THE STATE OF A RUNNING TURN STANDS LAST (D-20261014-02, UNBLOCK-6): "the user is
+	// looking at the end of the transcript for the state/progress, this needs to always be
+	// at the end of the transcript". A PROGRESS tile -- the turn indicator, and the live
+	// hand-off tile of a turn running elsewhere ("<device> is on it", `_progress`) -- is
+	// pinned too, so the turn's Thinking, Tools and answer tiles land above it as they
+	// arrive. While a Decision is open, the Decision is that state: it stands below the
+	// progress tiles. The foot reads: content, progress, Decisions, queue box.
 
 	/// The first of the tiles pinned to the foot of the thread, or null.
 	function firstAwaiting() {
@@ -16503,7 +16531,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return first;
 	}
 
-	/// The element pinned tiles are drawn above: the turn indicator, else the queue box.
+	/// The first pinned Decision at the foot of the thread -- a pinned tile that is not a
+	/// progress tile -- or null.
+	function firstDecision() {
+		var first = null;
+		for (var n = chatOutput.lastChild; n; n = n.previousSibling) {
+			if (n.nodeType !== 1) continue;
+			if (n === spinnerEl || n.id === 'chat-queued') continue;
+			if (!n._slot) break;
+			if (!n._progress) first = n;
+		}
+		return first;
+	}
+
+	/// The element the content of the thread ends above: the turn indicator, else the queue box.
 	function tailAnchor() {
 		return (spinnerEl && spinnerEl.parentNode === chatOutput) ? spinnerEl : document.getElementById('chat-queued');
 	}
@@ -16519,7 +16560,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var last = lastContent();
 		if (last && last._body && last.classList.contains('crollup') && last.id !== 'wire-head') last._body.appendChild(slot);
 		else chatOutput.insertBefore(slot, firstAwaiting() || tailAnchor());
-		chatOutput.insertBefore(node, tailAnchor());
+		// A progress tile stands above any open Decision; a Decision stands last of all.
+		var q = document.getElementById('chat-queued');
+		chatOutput.insertBefore(node, (node._progress && firstDecision()) || q);
+		placeFurniture();
 	}
 
 	/// Return a pinned tile to its slot. A slot inside a rollup splits the rollup there:
@@ -18054,14 +18098,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
-	/// Keep the queue box and the turn indicator beneath everything said so far.
+	/// Keep the queue box and the turn indicator beneath everything said so far, and the
+	/// indicator above an open Decision, which is the turn's state while it waits.
 	///
 	/// Sinking the indicator above each new tool tile would leave the thread saying
 	/// "running file_read" halfway up itself while the real work went on below.
 	function placeFurniture() {
 		var q = document.getElementById('chat-queued');
 		if (spinnerEl && spinnerEl.parentNode === chatOutput) {
-			if (q) chatOutput.insertBefore(spinnerEl, q);
+			var at = firstDecision() || q;
+			if (at) chatOutput.insertBefore(spinnerEl, at);
 			else chatOutput.appendChild(spinnerEl);
 		}
 	}
@@ -26724,6 +26770,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { return ''; }
 	}
 
+	/// Is a hand-off tile in display state `st` the state of a turn still running? Done,
+	/// failed and interrupted are how a turn ended, not how it is going.
+	function handoffLive(st) {
+		return st !== 'done' && st !== 'failed' && st !== 'interrupted' && st !== 'not-dispatched';
+	}
+
 	/// Draw a turn HANDED TO A PEER as its own hand-off tile, live for the whole
 	/// wait: a header naming the device, a spinner and the §5 status/control in the
 	/// body. This is what a handed-off turn looks like in the flow from the moment
@@ -26779,8 +26831,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		drawHandoffWorkers(tile, m.iturn);
 		tagTurn(tile);
-		// It awaits the reader while the runner is blocked on a question or a consent.
-		tile._awaits = function () { return !!blockerFor(m.iturn); };
+		// It is the running turn's state, so it stands last while the turn is live
+		// (UNBLOCK-6), and awaits the reader while the runner is blocked on a question or
+		// a consent. Settled, or its answer in, it goes back to the head of its turn.
+		tile._progress = true;
+		tile._awaits = function () {
+			if (blockerFor(m.iturn)) return true;
+			if (!handoffLive(peerUiStateFor(m))) return false;
+			try { return !(current && dispatchedAnswerPresent(current, m)); } catch (e) { return true; }
+		};
 		postToChat(tile);
 	}
 
@@ -46662,7 +46721,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var b = document.createElement('button');
 				b.type = 'button';
 				b.className = 'path-crumb';
-				b.textContent = label;
+				// The words in a box of their own, which clips; the button does not, so its
+				// touch overlay (skin-daylight.css) is never cut down to a narrowed crumb.
+				var w = document.createElement('span');
+				w.className = 'crumb-t';
+				w.textContent = label;
+				b.appendChild(w);
+				b.dataset.path = path;
 				if (isLast) {
 					b.disabled = true;
 					b.setAttribute('aria-current', 'location');
@@ -46684,6 +46749,67 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				acc = acc ? (acc + '/' + segs[i]) : segs[i];
 				crumb(segs[i], acc, i === segs.length - 1);
 			}
+			fitCrumbs(el, go);
+			// The line is fitted again whenever its width changes: a panel dragged
+			// wider gets its folders back, and a dialog laid out after it was built
+			// is fitted once it has a width at all.
+			if (!el._fitObs && typeof ResizeObserver === 'function') {
+				var lastW = -1;
+				el._fitObs = new ResizeObserver(function () {
+					if (el.clientWidth === lastW) return;
+					lastW = el.clientWidth;
+					fitCrumbs(el, el._fitGo);
+				});
+				el._fitObs.observe(el);
+			}
+			el._fitGo = go;
+		}
+
+		/// The crumb line on ONE line, cut in the middle (UNBLOCK-13, D-20261015-16).
+		///
+		/// It wrapped: five folders deep, the line stood two and three lines tall in a
+		/// row drawn one line high, over the Filter field. Now the folders after the root
+		/// give way, nearest the root first, to one "…" that goes to the last of them; the
+		/// root and the folder you are in keep their places, and only when those two alone
+		/// do not fit does their own text end in an ellipsis (files.css).
+		function fitCrumbs(el, go) {
+			if (!el) return;
+			var old = el.querySelector('.path-more');
+			if (old) { el.removeChild(old.nextSibling); el.removeChild(old); }
+			var kids = Array.prototype.slice.call(el.children);
+			kids.forEach(function (k) { k.hidden = false; });
+			// Measured at full width: a crumb that may shrink would otherwise take up the
+			// overflow and hide it from the measure.
+			el.classList.add('fitting');
+			try { foldCrumbs(el, kids, go); } finally { el.classList.remove('fitting'); }
+		}
+
+		function foldCrumbs(el, kids, go) {
+			if (!el.clientWidth || el.scrollWidth <= el.clientWidth) return;
+			var cr = kids.filter(function (k) { return k.classList.contains('path-crumb'); });
+			if (cr.length < 3) return;
+			// "…" stands where the first folder after the root stood.
+			var more = document.createElement('button');
+			more.type = 'button';
+			more.className = 'path-crumb path-more';
+			var w = document.createElement('span');
+			w.className = 'crumb-t';
+			w.textContent = '\u2026';
+			more.appendChild(w);
+			var sep = cr[0].nextSibling.cloneNode(true);
+			el.insertBefore(more, cr[1]);
+			el.insertBefore(sep, cr[1]);
+			var gone = [];
+			for (var i = 1; i < cr.length - 1; i++) {
+				cr[i].hidden = true;
+				cr[i].nextSibling.hidden = true;		// its separator
+				gone.push(cr[i]);
+				if (el.scrollWidth <= el.clientWidth) break;
+			}
+			var to = gone[gone.length - 1].dataset.path;
+			more.title = gone.map(function (g) { return g.textContent; }).join(' / ');
+			more.setAttribute('aria-label', more.title);
+			more.addEventListener('click', function () { go(to); });
 		}
 
 		/// The crumb line: where you are, headed by the open store, and + New beside it --
@@ -46704,6 +46830,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				openNewMenu(b);
 			});
 			pathEl.appendChild(b);
+			fitCrumbs(pathEl, goDir);		// again, with + New in the line
 		}
 
 		/// + New: a file or a folder named in place, an upload, and on Chromium in the
@@ -46892,14 +47019,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			row.dataset.root = h.root;
 			var nm = document.createElement('span');
 			nm.className = 'files-name';
-			nm.appendChild(kindIcon('file'));
-			if (pl.dir) {
-				var at = document.createElement('i');
-				at.textContent = pl.dir;
-				nm.appendChild(at);
-			}
-			nm.appendChild(document.createTextNode(h.name));
-			row.appendChild(nm);
+			row.appendChild(pathName(nm, 'file', pl.dir, h.name));
 			if (pl.own) {
 				var place = document.createElement('span');
 				place.className = 'place';
@@ -47432,14 +47552,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `.files-name`, so both kinds of row start their words at one edge.
 			var nm = document.createElement('span');
 			nm.className = 'nm';
-			nm.appendChild(kindIcon(kind));
-			if (pre) {
-				var i = document.createElement('i');
-				i.textContent = pre;
-				nm.appendChild(i);
-			}
-			nm.appendChild(document.createTextNode(name));
-			row.appendChild(nm);
+			row.appendChild(pathName(nm, kind, pre, name));
 			return row;
 		}
 

@@ -1,1 +1,1 @@
-{"build":"461b39b7f232","note":"Posts, peer messages and the account wrap are sealed by the Rust engine in the browser, one code path with the runner."}
+{"build":"954a5295a9fe","note":"Long paths stay on one line with the file name whole; the progress tile and an open decision always come last."}

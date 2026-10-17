@@ -1002,6 +1002,7 @@ dependencies = [
  "oxedyne_fe2o3_sbj",
  "oxedyne_fe2o3_stds",
  "oxedyne_fe2o3_syntax",
+ "oxedyne_fe2o3_test",
  "oxedyne_fe2o3_text",
  "ring",
  "rustls",

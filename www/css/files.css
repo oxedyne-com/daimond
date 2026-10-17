@@ -92,6 +92,15 @@
 .files-focus .r[role="button"] { cursor: pointer; }
 .files-focus .r[role="button"]:hover { background: var(--bg-hover); }
 .files-focus .r .nm { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A path in one line (UNBLOCK-13): icon, muted folder, name. The folder gives way first, so the
+   cut falls in the middle of the path, and the name is cut only when it alone is wider than the
+   row. The name does not shrink at all (a shrink weighed against the folder still took a pixel,
+   and a pixel is an ellipsis); its cap is the row less the icon, 1.1em and 4px (app.css). */
+.pn { display: flex; align-items: center; }
+.pn > .kind-ic { flex: none; }
+.pn > :is(i, .fn) { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pn > i { flex: 0 1 auto; }
+.pn > .fn { flex: none; max-width: calc(100% - 1.1em - 4px); }
 :is(.files-focus .r .nm, .files-hit .files-name) i { font-style: normal; color: var(--text-muted); }
 :is(.files-focus .r, .files-hit) .place {
 	flex: 0 1 auto; min-width: 0;
@@ -161,8 +170,20 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 	font-family: var(--font-mono); font-size: var(--fs-2xs);
 	border-bottom: 1px solid var(--border);
 	flex: none;
-	display: flex; flex-wrap: wrap; align-items: center;
+	display: flex; align-items: center;
 }
+/* One line (UNBLOCK-13): `fitCrumbs` folds the middle folders into "…"; past that the root
+   gives way first and the folder you are in last. The words clip inside `.crumb-t`, never the
+   button, whose touch overlay (skin-daylight.css) stays whole. The System section's path is
+   the same line. */
+:is(.files-path, .sys-path) { flex-wrap: nowrap; white-space: nowrap; min-width: 0; }
+:is(.files-path, .sys-path) > [hidden] { display: none; }
+:is(.files-path, .sys-path) > :is(.path-crumb, .path-sep) { flex: none; }
+:is(.files-path, .sys-path) > .path-crumb:first-child { flex: 0 1000 auto; }
+:is(.files-path, .sys-path) > .path-crumb[aria-current] { flex: 0 1 auto; }
+:is(.files-path, .sys-path) > .path-crumb:is(:first-child, [aria-current]) { min-width: 0; display: inline-flex; }
+:is(.files-path, .sys-path).fitting > * { flex: none !important; }
+.crumb-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* One folder in the path line, or the whole trail's root. A plain button reset
    rather than a link -- there is nowhere to navigate TO, only a tree to relist --
@@ -412,7 +433,7 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .sys-path {
 	padding: 0 12px 4px; font-family: var(--font-mono); font-size: var(--fs-3xs);
 	color: var(--text-muted);
-	display: flex; flex-wrap: wrap; align-items: center;
+	display: flex; align-items: center;
 }
 /* A row that can take focus has to SHOW it. These became focusable the hour they
    were written -- they are `role="button"` -- and a focus ring is the other half

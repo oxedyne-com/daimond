@@ -9,8 +9,10 @@
 //
 // WHAT AWAITS (lead ruling 2026-10-08): an unanswered ask card whose question is current, or the
 // hand-off tile while it carries a blocker. They are drawn after the last content tile, in their
-// own order, above the turn indicator and the queue box. They return to their stored place when
-// answered, or when the blocker goes. Display only: the stored messages are the same either way.
+// own order, below the turn indicator and above the queue box. They return to their stored place
+// when answered, or when the blocker goes. Display only: the stored messages are the same either way.
+// A hand-off tile is the running turn's state, so it also stands last for as long as the turn is
+// live, and goes home once it is settled (UNBLOCK-6, D-20261014-02).
 //
 // THE ARMS, all on the real DOM, from seeded chats (the same `renderHistory` the live turn,
 // a reload and a hand-off viewer share):
@@ -18,7 +20,8 @@
 //      answered by a tap it sits where the question was asked, and the group has split in two.
 //   2. TWO ASKS keep their own order at the foot; answered in the reverse order each returns to
 //      its own place.
-//   3. THE HAND-OFF TILE held on a blocker is last; with the blocker gone it is back in place.
+//   3. THE HAND-OFF TILE held on a blocker is last; with the blocker gone and the turn still
+//      running it stays last (UNBLOCK-6); settled, it is back in place.
 //   4. A STALE ASK (asked hours ago) is not awaiting: it stands where it was asked.
 //   5. NOTHING AWAITING: a thread with no ask is unchanged.
 //   6. THE NEXT MESSAGE ANSWERS IT (owner ruling D-20261009-20, superseding the r541 QA B F5
@@ -241,7 +244,17 @@ await page.evaluate(() => { window.__blk = {}; });
 await openByName('DL hand-off');
 await page.waitForTimeout(900);
 u = await read();
-check('3b the blocker gone: the tile is back in place and the group has split',
+check('3b the blocker gone, the turn still running: the hand-off tile is still LAST (UNBLOCK-6)',
+	lastIs(u, 'handoff') && u[1] === 'group:4', JSON.stringify(u));
+await page.evaluate(() => {
+	const L = window.DaimondLease;
+	L.record = () => ({ mode: 'released', settled: true, cut: true, holder: 'peerdev', expiry: 0 });
+	L.holder = () => null;
+});
+await openByName('DL hand-off');
+await page.waitForTimeout(900);
+u = await read();
+check('3c settled: the tile is back in place and the group has split',
 	u.slice(0, 4).join('|') === 'user|group:2|handoff|group:2', JSON.stringify(u));
 
 // ── 4. A STALE ASK is not awaiting ──
