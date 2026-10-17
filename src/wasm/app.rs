@@ -2316,6 +2316,20 @@ impl DaimondApp {
         diamond::remove_link(&owner, &link_id).await.map_err(to_js_err)
     }
 
+    /// Remove the one hand-written link -- a row with no id -- that runs `from` to `to` (both
+    /// references) as `rel`.  Refused when none or several match.
+    pub async fn remove_bare_link(
+        &self,
+        owner:   String,
+        from:    String,
+        to:      String,
+        rel:     String,
+    )
+        -> Result<bool, JsValue>
+    {
+        diamond::remove_bare_link(&owner, &from, &to, &rel).await.map_err(to_js_err)
+    }
+
     /// Take into a Diamond's sidecar every link another device's copy of it
     /// holds and this one does not.  True when something was written, which is
     /// also when the Diamond was stamped.

@@ -53,14 +53,14 @@ function all(e, pred) { const out = []; walk(e, (x) => { if (pred(x)) out.push(x
 
 const T0 = 1_790_000_000_000, H = 3600 * 1000;
 const NEED_STUB = ['readJson', 'PENDING_KEY', 'PRIORITIES', 'NOTICED_KEY', 'NOTICED_MAX', 'settleConsent', '_parked', 'nudgeSync',
-	't', 'toast', 'relTime', 'selectDiamond', 'diamonds', 'steerTile'];
+	't', 'toast', 'relTime', 'selectDiamond', 'diamonds', 'steerTile', 'tombMapNow', 'DIAMOND_TOMBS_KEY', 'trashed'];
 
 function page() {
 	const win = makeWindow({ now: T0 });
 	loadScript(win, 'alerts.js');
 	const list = el('div'), count = el('span');
 	win.document = { getElementById: (id) => (id === 'pending-list' ? list : id === 'pending-count' ? count : null), createElement: el };
-	const st = { selected: [], toasts: [] };
+	const st = { selected: [], toasts: [], tombs: {}, trash: {} };
 	const stub = {
 		readJson: (k, d) => { try { const v = win.localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
 		PENDING_KEY: 'daimond-pending', PRIORITIES: ['high', 'normal', 'low'], NOTICED_KEY: 'daimond-pending-noticed', NOTICED_MAX: 64,
@@ -70,6 +70,9 @@ function page() {
 		selectDiamond: (f, view) => { st.selected.push([f.id, view]); },
 		diamonds: [{ id: 'mail', name: 'Email' }],
 		steerTile: () => {},
+		DIAMOND_TOMBS_KEY: 'daimond-diamond-tombs',
+		tombMapNow: (k) => (k === 'daimond-diamond-tombs' ? st.tombs : {}),
+		trashed: (id) => !!st.trash[id],
 	};
 	// Lift Pending alone: every other declaration it names is stubbed, as undefined unless given.
 	const reach = liftSource(['Pending'], NEED_STUB).ordered.filter((n) => n !== 'Pending');
@@ -150,6 +153,22 @@ kase('a quiet alert leaves the panel after 24 h; pending_clear takes either kind
 	JSON.parse(win.DaimondPendingTool.clear('mail', JSON.stringify({ key: 'n' })));
 	P.fresh(); P.render();
 	eq(list.children.filter((c) => /pend-card/.test(c.className)).length, 0, 'cleared');
+});
+
+kase('a trashed Diamond\'s alerts are hidden and come back on restore; a destroyed one\'s are gone', () => {
+	const { win, P, list, count, st } = page();
+	raise(win, 'k', 'h', true);
+	st.trash.mail = 1;
+	P.fresh(); P.render();
+	eq(list.children.filter((c) => /pend-card/.test(c.className)).length, 0, 'hidden while in the trash');
+	eq(count.textContent, '', 'and off the chip');
+	delete st.trash.mail;
+	P.fresh(); P.render();
+	eq(count.textContent, '1', 'restored: still up, counted again');
+	st.tombs.mail = T0;
+	P.fresh(); P.render();
+	eq(count.textContent, '', 'destroyed (tombstoned): off the chip');
+	eq(list.children.filter((c) => /pend-card/.test(c.className)).length, 0, 'and off the panel');
 });
 
 kase('add refuses kind alert: only the daimon raises one', () => {

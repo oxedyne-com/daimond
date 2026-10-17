@@ -291,6 +291,30 @@ console.log('\nC/P. an unknown section rides on verbatim; a known one left out i
 		JSON.stringify(s3.alerts));
 }
 
+console.log('\nR. (QA r569qa1) after a reload, an unknown section still rides on in the first push\n');
+{
+	const tab = makeTab();
+	tab.unlocked = true;
+	const S = tab.win.DaimondSync;
+	tab.parcel = parcel({});
+	await S.push();
+	const newer = Object.assign(parcel({}), { zeta: { from: 'a newer build', n: 1 } });
+	foreign(tab, newer);
+	await S.pull();
+	// The page reloads: the same storage, the same mailbox, nothing pulled yet this life
+	// (the boot pull's GET failed on a flaky network, or is still in flight).
+	const re = makeTab(new Map(tab.store));
+	re.mailbox = tab.mailbox;
+	re.posts = tab.posts.slice();
+	re.unlocked = true;
+	re.parcel = parcel({ chats: [{ id: 'c-after-reload', messages: [] }] });	// a change of its own
+	await re.win.DaimondSync.push();
+	const sentR = own(re).length > own(tab).length ? unseal(own(re)[own(re).length - 1].blob) : null;
+	check('R1. the reloaded page pushed its change', !!sentR, own(re).length + ' POST(s)');
+	check('R2. and the newer build\'s section is still in the mailbox', !!sentR && !!sentR.zeta,
+		sentR ? JSON.stringify(Object.keys(sentR)) : '');
+}
+
 await wait(10);
 console.log('\n' + (failures ? failures + ' FAILED' : 'all passed') + '\n');
 process.exit(failures ? 1 : 0);

@@ -296,9 +296,13 @@ console.log('\nB. the push — an idle device with only a seen-refresh sends not
 
 	// Five minutes on, with nothing else whatever having happened: exactly what
 	// touchSelfDevice does to an idle device on every collect past SEEN_REFRESH_MS.
+	// Past the idle-pull throttle: the first push read the mailbox before sending (`heardOk`),
+	// so a second round inside IDLE_PULL_MIN_MS of it would rightly not read again.
+	const realNow = Date.now;
+	Date.now = () => realNow() + 6000;
 	const before = tab.gets;
 	tab.parcel = parcel({ selfSeen: 1000 + 5 * 60 * 1000 });
-	await S.push();
+	try { await S.push(); } finally { Date.now = realNow; }
 	check('B2. A SEEN-REFRESH ALONE SENDS NOTHING — the whole of the idle-churn fix',
 		tab.posts.length === 1, tab.posts.length + ' POST(s)');
 	check('B2. and the round is not wasted: it takes the throttled idle pull instead',

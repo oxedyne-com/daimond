@@ -67,9 +67,9 @@ function world(act) {
 	W.ta = Object.assign(DaimondTriggers.blank('mail'), {
 		id: 'm1', mailbox: 'alerts@oxegen.io', folder: 'INBOX', instruction: 'Watch the server alerts.' });
 	const body = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail', 'mailClaimId', 'claimMailArrival',
-		'settleMailClaim', 'keepMailClaim', 'seedMailMark', 'mailMarkKey', 'mailGen', 'judgeTriggeredTurn', 'quietTurnEnd'].map((n) => extractFn(APP, n)).join('\n');
+		'settleMailClaim', 'keepMailClaim', 'seedMailMark', 'mailMarkKey', 'mailGen', 'judgeTriggeredTurn', 'quietTurnEnd', 'followVerdicts'].map((n) => extractFn(APP, n)).join('\n');
 	W.api = new Function('W', 'DaimondTriggers', `
-		var window = W.win, diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _lastSteer = {};
+		var window = W.win, diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _mailTries = {}, MAIL_TRIES_MAX = 3, _lastSteer = {}, FOLLOW_MAX_MS = 20 * 60 * 1000;
 		function t(k, v) { return k + (v ? ' ' + JSON.stringify(v) : ''); }
 		var document = { getElementById: function () { return null; } };
 		function diamondBusy() { return false; }
@@ -132,14 +132,15 @@ test('a real failure raises one needs-him alert even with twenty already up', as
 	assert.equal(JSON.parse(tool.raise('B', JSON.stringify({ key: 'srv20', headline: 'One more', needs: true }))).full, true,
 		'the daimon\'s twenty-first alert was not refused');
 	await W.api.fire(ARRIVED);
-	const failed = W.win.DaimondAlerts.live().filter((a) => a.key === 'turn-failed');
+	const failed = W.win.DaimondAlerts.live().filter((a) => a.key === 'turn-failed.mail');
 	assert.equal(failed.length, 1, 'the failure was lost past the live limit');
 	assert.equal(failed[0].needs, true, 'a failed turn does not need the person');
 	assert.equal(W.win.DaimondAlerts.count(), 21, 'the badge does not count the failure');
 	// The page's key is the page's: the model can neither raise it nor take it down.
 	assert.equal(JSON.parse(tool.raise('B', JSON.stringify({ key: 'turn-failed', headline: 'x', needs: false }))).ok, false);
 	assert.equal(JSON.parse(tool.clear('B', JSON.stringify({ key: 'turn-failed' }))).ok, false);
-	assert.equal(W.win.DaimondAlerts.live().filter((a) => a.key === 'turn-failed').length, 1);
+	assert.equal(JSON.parse(tool.clear('B', JSON.stringify({ key: 'turn-failed.mail' }))).ok, false);
+	assert.equal(W.win.DaimondAlerts.live().filter((a) => a.key === 'turn-failed.mail').length, 1);
 });
 
 test('mail that needs him raises exactly one Pending item and posts nothing in the chat', async () => {
@@ -187,7 +188,7 @@ test('a mail turn that ends silent with no failed call raises turn-failed', asyn
 	await W.api.fire(ARRIVED);
 	const up = W.win.DaimondAlerts.live();
 	assert.equal(up.length, 1, 'an empty mail ending reached no one: ' + JSON.stringify(up));
-	assert.equal(up[0].key, 'turn-failed');
+	assert.equal(up[0].key, 'turn-failed.mail');
 	assert.equal(up[0].needs, true);
 });
 

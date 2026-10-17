@@ -113,11 +113,11 @@ function device(name, door, turns) {
 		id: 'm1', mailbox: 'alerts@oxegen.io', folder: 'INBOX', instruction: 'Triage the alert.',
 	});
 	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail',
-		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn'];
+		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
-	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor'].map((n) => extractVar(APP, n)).join('\n');
+	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'FOLLOW_MAX_MS'].map((n) => extractVar(APP, n)).join('\n');
 	W.api = new Function('W', 'DaimondTriggers', 'window', 'door', 'CLOCK', `
-		var diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _lastSteer = {};
+		var diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _mailTries = {}, MAIL_TRIES_MAX = 3, _lastSteer = {};
 		var _triggers = { A: { v: 1, actions: [] }, B: { v: 1, actions: [W.mailB] } };
 		var DaimondLease = window.DaimondLease, DaimondPeer = window.DaimondPeer;
 		var document = { getElementById: function () { return null; } };

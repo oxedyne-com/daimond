@@ -393,6 +393,25 @@ fn report_nudge() -> String {
 	 what you did and what stops you.".to_string()
 }
 
+// The pending-only turn's word, named in its note and both its nudges.
+const PENDING_ENDS: &str = "pending_raise, pending_clear or pending_none";
+
+/// What a pending-only turn's message is led by: its words go to Pending, never its chat.
+fn pending_only_note() -> String {
+	fmt!("This turn reports only through the Pending panel: post no reply, and end with {}.", PENDING_ENDS)
+}
+
+/// [`report_nudge`] for a pending-only turn, which ends on a pending call rather than a report.
+fn pending_report_nudge() -> String {
+	fmt!("You stopped without a word on Pending. If the task is not done, continue it; \
+		otherwise end with {}.", PENDING_ENDS)
+}
+
+/// [`reasoned_only_nudge`] for a pending-only turn.
+fn pending_reasoned_nudge() -> String {
+	fmt!("You reasoned but called no tool; end now with {}.", PENDING_ENDS)
+}
+
 /// One dispatched tool call, as the audit sees it.
 #[derive(Clone, Debug)]
 struct Claim {
@@ -400,6 +419,7 @@ struct Claim {
 	opaque:		bool,										// see [`crate::tools::Tool::opaque`]
 	paths:		Vec<(String, crate::tools::PathClaim)>,
 	alerted:	bool,										// a pending_raise/pending_clear that landed
+	pending:	bool,										// any completed pending_raise/_clear/_none
 }
 
 /// The turn's tool log, and the findings that can be read out of it.
@@ -451,7 +471,17 @@ impl Claims {
 		let alerted = matches!(tool, Some(crate::tools::Tool::PendingRaise) | Some(crate::tools::Tool::PendingClear))
 			&& outcome == crate::tools::CallOutcome::Done
 			&& crate::tools::pending_landed(result);
-		self.calls.push(Claim { outcome, opaque, paths, alerted });
+		let pending = matches!(tool, Some(crate::tools::Tool::PendingRaise)
+				| Some(crate::tools::Tool::PendingClear) | Some(crate::tools::Tool::PendingNone))
+			&& outcome == crate::tools::CallOutcome::Done;
+		self.calls.push(Claim { outcome, opaque, paths, alerted, pending });
+	}
+
+	/// Did a pending-only turn give its word on Pending?  A completed `pending_raise`,
+	/// `pending_clear` or `pending_none`, whether or not the panel changed: `pending_none` says
+	/// in terms that nothing needed it, which is what an empty reply alone cannot say.
+	fn reported(&self) -> bool {
+		self.calls.iter().any(|c| c.pending)
 	}
 
 	/// Did this turn report on the Pending panel?  Then an empty final reply is not silence:
@@ -1073,21 +1103,24 @@ impl Agent {
     ///
     /// A triggered daimon turn -- mail arriving, a schedule firing -- has no person waiting on
     /// its reply (D-20261016-17, rulings section 16: "Post nothing in this chat").  Its word is
-    /// a `pending_raise`, or nothing at all.  So for such a turn an empty, unreasoned final reply
-    /// over at least one call, all of which went through, is a quiet [`TurnEnd::Answered`]: no "report what you did" nudge,
-    /// which is what made the model post routine mail in the chat (review R569 R4), and no
-    /// "ended without a reply" card.  A Failed or Refused call keeps the nudges and the
-    /// `Silent` ending, so a real failure is still seen.
+    /// a `pending_raise`, a `pending_clear`, or `pending_none` (offered in such a turn alone).  An
+    /// empty final reply after one of them completed, with no call failed or refused, is a quiet
+    /// [`TurnEnd::Answered`], whatever the model reasoned: no "report what you did" nudge, which
+    /// is what made the model post routine mail in the chat (review R569 R4), and no "ended
+    /// without a reply" card.  Without one the turn is nudged, then ends `Silent` or
+    /// `ReasonedOnly`, and the arrival stays owed.
     pub fn set_pending_only(&self, on: bool) {
         self.pending_only.set(on);
     }
 
     /// May this turn end on an empty reply without a word?
     fn quiet_end(&self, claims: &Claims) -> bool {
-        // At least one call went through: an empty reply with no call at all is the
-        // empty-completion class, a turn that never tried, and stays `Silent` (CHECK_ABC B1).
+        // Its word is a completed pending call (MAIL-FIX2 item 2): reasoning does not matter, and
+        // an empty reply with no such call stays `Silent` / `ReasonedOnly`, failed and owed (B-1).
+        // A failed or refused call keeps the nudges, so a precautionary clear does not spare a
+        // failing turn them (review AP-3).
         self.pending_only.get()
-            && claims.tally(crate::tools::CallOutcome::Done) > 0
+            && claims.reported()
             && claims.tally(crate::tools::CallOutcome::Failed) == 0
             && claims.tally(crate::tools::CallOutcome::Refused) == 0
     }
@@ -1281,6 +1314,15 @@ impl Agent {
         // `Limits`. Written every turn rather than once, so an arm that changes it between two
         // turns of one conversation is obeyed by the second of them.
         registry.ctx.set_compound(self.limits.borrow().compound);
+        // AND WHETHER THIS TURN REPORTS ON PENDING ALONE, which offers `pending_none` and leads its
+        // message with the note that names its three endings (MAIL-FIX2 item 2).
+        let pending_only = self.pending_only.get();
+        registry.ctx.set_pending_only(pending_only);
+        let pre = match (pending_only, pre.is_empty()) {
+            (false, _)    => pre,
+            (true, true)  => pending_only_note(),
+            (true, false) => fmt!("{}\n\n{}", pending_only_note(), pre),
+        };
         // AND WHAT THE ASK WANTS THE DIAMOND'S PAGE TO DRAW, for the load proof an edit of the page
         // takes (K1): an infographic ask must draw graphics, not only words.
         registry.ctx.set_ask(&user_msg);
@@ -2102,16 +2144,14 @@ impl Agent {
             }
             if resp.tool_calls.is_empty() {
                 let empty_reply = resp.content.trim().is_empty();
-                // A TURN THAT REPORTS ON PENDING AND ENDED EMPTY WITH NOTHING FAILED IS DONE.
+                // A TURN THAT REPORTS ON PENDING, GAVE ITS WORD THERE AND ENDED EMPTY IS DONE.
                 // Its silence is the routine-mail outcome the ruling asks for, so neither nudge
-                // below may ask it to say something.
-                // A round that reasoned is a thought cut off, not silence: it keeps the
-                // reasoned-only nudge, so a `pending_raise` it was about to make is not lost
-                // (CHECK_ABC B2).
-                let quiet = empty_reply
-                    && reasoned_only == 0
-                    && resp.thinking.trim().is_empty()
-                    && self.quiet_end(&claims);
+                // below may ask it to say something.  Reasoning no longer decides it: a reasoning
+                // model always sends some, and routine mail ended `reasoned_only`, a false alert
+                // re-run and billed again (post-QA r569qa2 item 2).  A cut-off thought made no
+                // pending call, so it is still nudged (CHECK_ABC B2).
+                let quiet = empty_reply && self.quiet_end(&claims);
+                let pending_only = self.pending_only.get();
                 // A TOOL-USING WORKER THAT ENDED WITH AN EMPTY FINAL REPLY.  It did the work --
                 // `claims.calls` is non-empty -- and then said nothing, so no report is written;
                 // the fan-out that dispatched it reads that silence as "nothing found" and
@@ -2130,7 +2170,7 @@ impl Agent {
                     };
                     working.push(said.clone());
                     session.messages.push(said);
-                    let nudge = report_nudge();
+                    let nudge = if pending_only { pending_report_nudge() } else { report_nudge() };
                     working.push(ChatMessage::user(nudge.clone()));
                     session.messages.push(ChatMessage::user(nudge));
                     continue;
@@ -2157,7 +2197,7 @@ impl Agent {
                     working.push(said.clone());
                     session.messages.push(said);
                     if reasoned_only == 1 {
-                        let nudge = reasoned_only_nudge();
+                        let nudge = if pending_only { pending_reasoned_nudge() } else { reasoned_only_nudge() };
                         working.push(ChatMessage::user(nudge.clone()));
                         session.messages.push(ChatMessage::user(nudge));
                         continue;
@@ -5025,7 +5065,8 @@ mod tests {
     /// 2026-10-05: a Flash turn ended on an empty reply after reading three budget notices.
     #[test]
     fn test_the_nudges_carry_no_budget_words_00() {
-        for nudge in [report_nudge(), reasoned_only_nudge(), leak_nudge("any-model")] {
+        for nudge in [report_nudge(), reasoned_only_nudge(), leak_nudge("any-model"),
+                      pending_report_nudge(), pending_reasoned_nudge(), pending_only_note()] {
             for word in ["budget", "rounds left", "us$", "spend", "cost", "if short",
                          "most of the output"] {
                 assert!(!nudge.to_lowercase().contains(word),
@@ -7299,7 +7340,14 @@ mod tests {
 
     /// Runs a pending-only turn over `script`: its ending, and how many rounds were asked for.
     async fn pending_only_turn(script: Vec<crate::llm::tests::Reply>) -> (TurnEnding, usize) {
-        let registry = one_tool();
+        let (end, bodies) = pending_only_turn_seen(script).await;
+        (end, bodies.len())
+    }
+
+    /// [`pending_only_turn`], answering every request body the turn sent.
+    async fn pending_only_turn_seen(script: Vec<crate::llm::tests::Reply>) -> (TurnEnding, Vec<String>) {
+        let mut registry = one_tool();
+        registry.tools.push(crate::tools::Tool::PendingNone);
         let (port, seen) = crate::llm::tests::start_stub(script).await;
         let mut llm = crate::llm::tests::stub_client(port);
         llm.retry.max_attempts = 1;
@@ -7309,8 +7357,8 @@ mod tests {
         let mut session = Session::new(fmt!("s1"), fmt!("mail"), fmt!("model"));
         let _ = a.run_turn(&mut session, fmt!("new mail arrived"), &registry, &mut |_| {}).await;
         let end = a.ending().expect("the turn said nothing about how it ended");
-        let asked = match seen.lock() { Ok(g) => g.bodies.len(), Err(e) => panic!("{}", e) };
-        (end, asked)
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        (end, bodies)
     }
 
     /// R569 R4 (D-20261016-17, rulings section 16): routine mail with nothing to raise ends in
@@ -7319,9 +7367,28 @@ mod tests {
     /// what raised a false "turn failed" alert.
     #[tokio::test]
     async fn test_a_pending_only_turn_ends_quietly_on_an_empty_reply_00() {
-        let (end, asked) = pending_only_turn(call_then_empty("file_write")).await;
+        let (end, asked) = pending_only_turn(call_then_empty("pending_none")).await;
         assert_eq!(TurnEnd::Answered, end.how, "routine mail did not end quietly: {:?}", end);
         assert_eq!(2, asked, "the turn was nudged to report ({} rounds requested)", asked);
+    }
+
+    /// MAIL-FIX2 item 2: a call that went through is not the turn's word on Pending.  A
+    /// pending-only turn that wrote a file and then fell silent is told to end on a pending call,
+    /// and is owed if it never does.
+    #[tokio::test]
+    async fn test_mailfix2_pending_only_turn_with_no_pending_call_is_nudged_00() {
+        let (end, bodies) = pending_only_turn_seen(call_then_empty("file_write")).await;
+        assert_eq!(3, bodies.len(), "a turn with no pending call ended quietly: {:?}", end.how);
+        assert!(bodies[2].contains("pending_none"), "the nudge does not name the pending calls");
+    }
+
+    /// MAIL-FIX2 item 2 and its note: the turn's message is led by the pending-only note, and
+    /// `pending_none` is offered to it.
+    #[tokio::test]
+    async fn test_mailfix2_pending_only_turn_carries_its_note_and_pending_none_00() {
+        let (_, bodies) = pending_only_turn_seen(call_then_empty("pending_none")).await;
+        assert!(bodies[0].contains("reports only through the Pending panel"), "the note is missing");
+        assert!(bodies[0].contains("\"pending_none\""), "pending_none was not offered");
     }
 
     /// The other side of the same rule: a call that went wrong is not routine, so a pending-only
@@ -7356,6 +7423,39 @@ mod tests {
         script[1] = sse_reasoning_only("I should raise this one for him with pending_raise");
         let (end, asked) = pending_only_turn(script).await;
         assert!(asked >= 3, "a reasoned-only round ended quietly ({} rounds requested): {:?}", asked, end.how);
+    }
+
+    /// POST-QA r569qa2: ROUTINE MAIL ON A REASONING MODEL.  Every round of a model that thinks
+    /// (Anthropic `thinking_delta`, OpenRouter `reasoning`, DeepSeek `reasoning_content`) carries
+    /// reasoning, so its routine end -- mail read, nothing to raise, an empty reply finished on
+    /// `stop` exactly as rulings section 16 asks -- is never `quiet`.  It is nudged twice, and a
+    /// model that keeps to "post nothing" ends `ReasonedOnly`, which the page counts as a failed
+    /// mail turn: a needs-him `turn-failed` on Pending and the arrival never marked answered.
+    #[tokio::test]
+    async fn test_postqa2_pending_only_routine_mail_on_a_reasoning_model_ends_quietly_00() {
+        let mut script = call_then_empty("pending_none");
+        script[1] = sse_reasoning_only("Routine mail. Nothing needs him, so I raise nothing and post nothing.");
+        script[2] = sse_reasoning_only("Nothing to raise; the ruling says post nothing in this chat.");
+        script.push(sse_reasoning_only("Still nothing to raise."));
+        let (end, asked) = pending_only_turn(script).await;
+        assert_eq!(TurnEnd::Answered, end.how,
+            "routine mail on a reasoning model ended {:?} after {} rounds", end.how, asked);
+        assert_eq!(2, asked, "the quiet end was nudged first ({} rounds)", asked);
+    }
+
+    /// MAIL-FIX2 item 2: reasoning with no call at all is no word on Pending.  Nudged once, it
+    /// ends `ReasonedOnly`, which the page counts failed, so the arrival stays owed (B-1).
+    #[tokio::test]
+    async fn test_mailfix2_pending_only_reasoning_with_no_call_ends_reasoned_only_00() {
+        let script = vec![
+            sse_reasoning_only("Routine mail; nothing needs him."),
+            sse_reasoning_only("Still nothing to raise."),
+            sse_reasoning_only("Nothing."),
+        ];
+        let (end, bodies) = pending_only_turn_seen(script).await;
+        assert_eq!(TurnEnd::ReasonedOnly, end.how, "reasoning with no call ended {:?}", end.how);
+        assert_eq!(2, bodies.len());
+        assert!(bodies[1].contains("pending_none"), "the nudge does not name the pending calls");
     }
 
     #[test]

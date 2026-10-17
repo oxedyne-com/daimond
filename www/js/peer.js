@@ -3787,6 +3787,12 @@
 			// charge (S-HAND #1). The proof of completion is in the lease, which every taker
 			// reads before it takes, so it stands down here on the snapshot in hand.
 			var settledCur = snap && snap.leases ? snap.leases[tid] : null;
+			// A TOMBSTONE PAST ITS LIFE IS GONE (post-QA r569qa2 Q4). `mergeLeases` drops a dead
+			// record at the next write, but the door holds it until some write lands, and on a
+			// quiet account none may for hours: every take until then read it and stood down, so
+			// a failed mail turn was retried only when an unrelated write happened to drain it.
+			// A dead record decides nothing (`deadLease`), so it is read as the drain would.
+			if (settledCur && deadLease(settledCur, now)) settledCur = null;
 			// It adopts what it read, as every stand-down does: the mark raised with the
 			// tombstone is what tells this device the arrival was answered (r569).
 			if (settledCur && settledCur.settled) {

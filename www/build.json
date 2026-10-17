@@ -1,1 +1,1 @@
-{"build":"3bb79fbc0a96","note":"A sync that loses a chunk now stops and keeps the existing file, and agents no longer fail on a recursive engine call."}
+{"build":"0164862304e7","note":"Mail alerts survive a stopped turn, routine mail raises no false failure, and sync and links no longer lose data."}

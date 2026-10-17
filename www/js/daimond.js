@@ -8810,7 +8810,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `fileHash`, see `collectChunked`), so bytes here that ARE that version are the older one,
 	/// settled as above; bytes it cannot place stand, and theirs is filed beside them.
 	/// Returns the paths where a folder's own bytes stand (`materialiseShared` leaves them).
-	async function settleAdopted(plan, was, fromDevice) {
+	/// `judged`, for a folder, is told the File each path's judgement was made on, or
+	/// `JUDGED_ABSENT`: `materialiseTo` writes over that and nothing else (FIRE SYNC-ABORT3).
+	async function settleAdopted(plan, was, fromDevice, judged) {
 		var stand = {};
 		if (!window.DaimondCloud || !DaimondCloud.localState) return stand;
 		var folder = !!(plan && plan.folder), ix = DaimondCloud.index();
@@ -8825,6 +8827,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (folder && !withinShare(plan, p)) continue;
 			var f = null;
 			try { f = await syncFileAt(plan, p); } catch (e) { f = null; }
+			if (folder && judged) judged[p] = f || DaimondCloud.JUDGED_ABSENT;
 			if (!f) continue;										// not held here: a reference, nothing to settle
 			var st = await DaimondCloud.localState(p, f, r, { folder: heldLoc(plan), base: l || null });
 			if (st.state === 'same') continue;
@@ -8948,13 +8951,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// second-hand copy would name whatever we uploaded before our last change.
 		DaimondCloud.merge(incoming, base || {}, deviceId(), fromDevice, remoteTombs);
 		// THE BYTES IN THE SAME STEP AS THE MANIFEST, before anything reads the index again.
-		var stand = await settleAdopted(plan, was, fromDevice);
+		var judged = {};
+		var stand = await settleAdopted(plan, was, fromDevice, judged);
 		_chunkedWhole = !dropped && !!remoteChunked && typeof remoteChunked === 'object';
 		// The deletions the records name were carried out by `applyFiles`, which runs first,
 		// for every copy here, inline or offloaded (`honourFileRecords`): one step, one law.
 		await DaimondCloud.refreshPaths();
 		if (folder) {
-			var made = await materialiseShared(plan, was, fromDevice, stand);
+			var made = await materialiseShared(plan, was, fromDevice, stand, judged);
 			// The panel's conflict list is the merge's, both halves of it: `applyFiles`
 			// runs first in `applySync` and set the inline ones.
 			if (made.length) _lastConflicts = _lastConflicts.concat(made);
@@ -9009,7 +9013,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// cost the disk a modification time for nothing -- which is the one thing the
 	/// shared folder is built not to spend (see `put` in js/cloud.js). The test is the
 	/// content key, re-derived by streaming, so it is affordable at any size.
-	async function materialiseShared(plan, was, fromDevice, stand) {
+	///
+	/// A FILE IS WRITTEN OVER ONLY AS IT WAS JUDGED. The downloads run one after another, long
+	/// after `settleAdopted` judged each path (`judged`); a save made since, or a file created
+	/// where the judgement found none, is not this merge's to replace. `materialiseTo` refuses
+	/// it at the open and again just before the close, and the collect sends it as an edit.
+	async function materialiseShared(plan, was, fromDevice, stand, judged) {
 		var out = [];
 		if (!window.DaimondCloud || !DaimondCloud.materialiseTo || !window.DaimondChunks) return out;
 		var handle = sharedFolderHandle();
@@ -9051,12 +9060,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A disk copy this device's note places at an older version (`stale`) is brought
 			// up to the manifest; one changed here, or one it cannot place, stands, and the
 			// collect sends it.
+			// What this write may replace: the File judged for it, `JUDGED_ABSENT`, or, for a path
+			// no judgement reached, the `f` read below.
+			var jf = isSynced ? DaimondCloud.JUDGED_ABSENT
+				: (judged && Object.prototype.hasOwnProperty.call(judged, p) ? judged[p] : undefined);
 			if (!isSynced && was && was[p] && was[p].hash === m.hash) {
 				var fw = null;
 				try { fw = await DaimondCloud.fileUnderRoot(handle, p); } catch (e) { fw = null; }
 				if (!fw || !DaimondCloud.localState) continue;
 				var sw = await DaimondCloud.localState(p, fw, m, { folder: heldLoc(plan) });
 				if (sw.state !== 'stale' || !DaimondCloud.mayDrop(p, m, sw.baseVer, sw.live)) continue;
+				jf = fw;
 			}
 			// A CONFLICT COPY OF CONTENT ALREADY BESIDE THE FILE IS NOT WRITTEN AGAIN. An older
 			// page that re-offers its stale copy on every round would otherwise leave one more
@@ -9079,7 +9093,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					+ ' one shared folder may take');
 				continue;
 			}
-			var res = await DaimondCloud.materialiseTo(handle, p, dest, heldLoc(plan));
+			// A path no judgement reached is written over only as `f`, the File the decisions above
+			// were made on, so a save made while it was hashed is not taken as the baseline.
+			if (jf === undefined) jf = f || DaimondCloud.JUDGED_ABSENT;
+			var res = await DaimondCloud.materialiseTo(handle, p, dest, heldLoc(plan), jf);
 			if (String(res).indexOf('OK') !== 0) { console.warn('sync: ' + dest + ': ' + res); continue; }
 			if (add > 0 && root !== null) spent[root] = (spent[root] | 0) + add;
 			if (!isSynced) continue;
@@ -10171,7 +10188,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// force meanwhile. Read as `settle` reads it, so the two name one entry.
 					for (var pd = 0; pd < plan.drop.length; pd++) {
 						var gr = DaimondMarksHere.parseSidecar(plan.drop[pd].line)[0];
-						try { await removeLinkHere({ owner: r.id, id: plan.drop[pd].id, to: gr ? gr.to : '' }); }
+						try { await removeLinkHere({ owner: r.id, id: plan.drop[pd].id, from: gr ? gr.from : '',
+							to: gr ? gr.to : '', rel: gr ? gr.rel : '' }); }
 						catch (e) {}
 					}
 					if (plan.add.trim()) { try { await app.union_links(r.id, plan.add); } catch (e) {} }
@@ -41785,7 +41803,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var ids = self.dispatch(live.diamondId || '', live.diamondName || '',
 						[{ name: name, task: task }], tainted, pick, live.depth | 0,
 						{ chatId: live.chatId || '', chatName: live.chatName || '',
-							turnId: turn });
+							turnId: turn, how: live.how || null });
 					if (!ids || !ids.length) {
 						return JSON.stringify({ started: false,
 							why: 'the worker pump would not take it' });
@@ -42244,6 +42262,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				chatId: chatId, chatName: chatName, turnId: turnId,
 				depth: (depth | 0), expected: specs.length, ids: [],
 			};
+			// A PENDING-ONLY TURN'S FAN-OUT IS PART OF THAT TURN (post-QA r569qa2 Q3). Its report
+			// comes back as a round of the same mail turn: it posts nothing in the chat, and the
+			// arrival is marked answered only once that round is judged (`followVerdicts`). So the
+			// batch carries the turn's `how`, and owes it one ending, whichever way it goes.
+			var how = (owner && owner.how && owner.how.follow) ? owner.how : null;
+			if (how) {
+				var bt = this.batches[batch];
+				bt.how = how;
+				how.follow.push(new Promise(function (res) { bt.follow = res; }));
+			}
 			specs.forEach(function (spec) {
 				// `pick.chosen`, NOT `pick.model`. Every caller passes a pair with a model in
 				// it -- a conversation that cannot name one cannot dispatch at all -- so
@@ -42433,11 +42461,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var terminal = function (s) { return self.isTerminal(s); };
 			if (!mine.every(function (r) { return terminal(r.status); })) return;
 			delete this.batches[batch];			// once only, whatever follows
+			// The ending this batch owes a pending-only turn: `answered` when the turn read the
+			// reports itself, the report-back round's own ending when one runs, `stopped` when
+			// the person held the pump, and `failed` when the reports went unread.
+			var owe = function (how) { if (b.follow) b.follow({ how: how }); };
 
 			// A report the turn already read is not delivered again. It is in that turn's own
 			// tool result, and a second copy would be read as a second finding.
 			mine = mine.filter(function (r) { return !r.gathered; });
-			if (!mine.length) return;
+			if (!mine.length) { owe('answered'); return; }
 
 			// The reports themselves, composed before any decision about where they
 			// go. Both surfaces get the same text, because it is the same thing.
@@ -42489,6 +42521,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// silently — which is exactly how a chat's answers used to vanish.
 			if (b.chatId) {
 				self.deliverToChat(b, mine, instruction, parts, substance);
+				owe('answered');
 				return;
 			}
 
@@ -42503,6 +42536,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var names = mine.slice().reverse().map(function (r) { return r.name || r.id; });
 			var held  = 'Worker ' + names.join(', ') + ' finished. Report' + (one ? '' : 's')
 				+ ' below, unread because ';
+			// A PENDING-ONLY TURN'S REPORTS NEVER REACH THE CHAT (rulings §16: the Email Diamond
+			// posts nothing there). Unread, they go into the daimon's own conversation alone, for
+			// the next mail turn, and the turn's `turn-failed` on Pending is the visible half.
+			var quiet = !!b.how;
 			// NOTHING WAS SAID, so there is nothing to spend a turn reading. The reports go
 			// into the conversation exactly as the four below put them -- at no cost, to be read
 			// at the top of whatever turn runs next -- and the daimon is told WHY they are empty,
@@ -42519,12 +42556,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				this.tellDaimon(b.diamondId, held + (didWork
 					? 'it wrote no final report. Its work is in its files: read them; do not re-dispatch.'
 					: 'it did nothing. Re-dispatch with a narrower task if it still matters.')
-					+ '\n\n' + parts.join('\n\n'));
+					+ '\n\n' + parts.join('\n\n'), quiet);
+				owe('failed');
 				return;
 			}
 			if (workersHeld()) {			// the pump is held: no new spending
 				this.tellDaimon(b.diamondId, held + 'the worker pump was paused.'
-					+ '\n\n' + parts.join('\n\n'));
+					+ '\n\n' + parts.join('\n\n'), quiet);
+				owe('stopped');
 				return;
 			}
 			if (b.depth >= this.MAX_GATHER_DEPTH) {
@@ -42532,7 +42571,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					+ this.MAX_GATHER_DEPTH + ' rounds, so there is no report back.');
 				this.tellDaimon(b.diamondId, held + 'this was round '
 					+ this.MAX_GATHER_DEPTH + ' of ' + this.MAX_GATHER_DEPTH
-					+ '. Do not dispatch again.\n\n' + parts.join('\n\n'));
+					+ '. Do not dispatch again.\n\n' + parts.join('\n\n'), quiet);
+				owe('failed');
 				return;
 			}
 			// The Diamond must still EXIST; whether the user is LOOKING at it no longer
@@ -42544,10 +42584,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Diamond nobody returns to then never read it. The batch is deleted above --
 			// once only -- so there is no re-gather to lose either.)
 			var dGath = diamonds.find(function (x) { return x.id === b.diamondId; });
-			if (!dGath) return;			// the Diamond is gone; the reports remain on their tiles
+			if (!dGath) { owe('answered'); return; }	// the Diamond is gone, and its mail with it
 			if (!diamondCanRun(b.diamondId)) {
 				this.tellDaimon(b.diamondId, held + 'this diamond has no model to run on.'
-					+ '\n\n' + parts.join('\n\n'));
+					+ '\n\n' + parts.join('\n\n'), quiet);
+				owe('failed');
 				return;
 			}
 			// Exactly-once, belt-and-braces: the runs are marked read here as well as the
@@ -42567,15 +42608,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// lose the report for good. If no idle moment comes within the window, the report
 			// is preserved in the conversation (`tellDaimon`) to be read at the next turn --
 			// the no-cost fallback -- rather than lost.
-			var GATHER_IDLE_TRIES = 40;		// ~60s of 1.5s polls before the preserve fallback
+			// A pending-only turn's round waits for the Diamond to be free, within the time the
+			// turn waits for its reports (`FOLLOW_MAX_MS`): a second mail turn holding it is no
+			// reason to leave this one's reports unread and its arrival failed.
+			var GATHER_IDLE_TRIES = b.how
+				? Math.ceil(FOLLOW_MAX_MS / 1500)	// a pending-only turn's whole follow window
+				: 40;					// ~60s of 1.5s polls before the preserve fallback
 			var deliverGather = function (tries) {
 				if (diamondBusy(b.diamondId)) {
 					if (tries > 0) { setTimeout(function () { deliverGather(tries - 1); }, 1500); return; }
 					self.tellDaimon(b.diamondId, held + 'the diamond was busy.'
-						+ '\n\n' + parts.join('\n\n'));
+						+ '\n\n' + parts.join('\n\n'), quiet);
+					owe('failed');
 					return;
 				}
-				runSteer(dGath, instruction, b.depth + 1);
+				// A mail turn's report-back round is that turn still (Q3): pending-only, so it
+				// posts nothing in the chat, and its ending is what the batch owes the turn.
+				if (!b.follow) { runSteer(dGath, instruction, b.depth + 1); return; }
+				var before = _lastSteer[b.diamondId];
+				var ended = function () {
+					var e = _lastSteer[b.diamondId];
+					b.follow(e && e !== before ? e : { how: 'failed' });
+				};
+				Promise.resolve(runSteer(dGath, instruction, b.depth + 1, null, b.how))
+					.then(ended, function () { b.follow({ how: 'failed' }); });
 			};
 			setTimeout(function () { deliverGather(GATHER_IDLE_TRIES); }, 0);
 		},
@@ -42611,7 +42667,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// # Arguments
 		/// * `diamondId` - The Diamond whose daimon asked for the workers.
 		/// * `text` - What to tell it. Written as a statement of what did NOT happen.
-		tellDaimon: function (diamondId, text) {
+		/// * `quiet` - The conversation's half only, nothing in the transcript: the reports of
+		///   a pending-only turn, which posts nothing in its chat (rulings §16).
+		tellDaimon: function (diamondId, text, quiet) {
 			if (!diamondId || !text) return false;
 			var f = diamonds.find(function (x) { return x.id === diamondId; });
 			if (!f) return false;
@@ -42621,12 +42679,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				rec.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };
 			}
 			rec.session.msgs.push({ role: 'user', content: text });
-			rec.messages.push({ role: 'note_log', content: text, mid: newMid(), ts: Date.now() });
+			if (!quiet) rec.messages.push({ role: 'note_log', content: text, mid: newMid(), ts: Date.now() });
 			touchChat(rec);
 			persistChats();
 			// Only where the reader is actually looking, for the reason `deliverToChat`
 			// gives: `appendNote` writes into whatever thread is on screen.
-			if (current && current.id === rec.id) appendNote(text);
+			if (!quiet && current && current.id === rec.id) appendNote(text);
 			return true;
 		},
 
@@ -44990,6 +45048,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var al = [];
 			try { al = (window.DaimondAlerts && DaimondAlerts.live()) || []; } catch (e) { al = []; }
 			var self = this;
+			// NOT A DIAMOND'S THAT IS GONE (QA r569qa1 #3). One in the trash is hidden, not taken
+			// down, so a restore brings back what is still up; one destroyed, here or on another
+			// device, is out of reach for good (its alerts are dismissed by `destroyDiamond`).
+			var dtombs = tombMapNow(DIAMOND_TOMBS_KEY);
+			al = al.filter(function (a) { return !dtombs[a.diamond] && !trashed(a.diamond); });
 			al.forEach(function (a) {
 				var d = diamonds.find(function (x) { return x.id === a.diamond; });
 				self.items.push({
@@ -46958,9 +47021,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try {
 				// A removal takes this device's entry with the row; an add records the
 				// press here, from the row read back as the store holds it (R2).
-				if (link) await removeLinkHere(link);
+				if (link) {
+					try { await removeLinkHere(link); }
+					catch (e) { dropRefused(e); }
+				}
 				else await grantHoldHere(id, path, dir);
-			} catch (e) { /* already gone, or already there: the repaint tells the truth */ }
+			} catch (e) { /* already there: the repaint tells the truth */ }
 			// One signal, and everything that draws links redraws: this tree through
 			// refreshAttached, the strip above the steer box, and the graph.
 			signalLinksChanged();
@@ -48841,7 +48907,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// A waiting mark is brought into force by its press, never taken off by it.
 				if (!link || markWaiting(link)) return;
 				try { await removeLinkHere(link); }
-				catch (e) { /* already gone: the repaint tells the truth */ }
+				catch (e) { dropRefused(e); signalLinksChanged(); return; }
 				holdUndo(path, { kind: 'mark', path: path, ro: link.rel === 'consulted' }, async function () {
 					try {
 						await markHere(id, await diamondApp().add_link(id, 'diamond:' + id,
@@ -49081,7 +49147,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var row = await ownLinkById(id, await diamondApp().add_link(id, 'diamond:' + id,
 					l.other || l.to, rel, l.note || '', 'user', l.share === true));
 				if (!row || !DaimondMarksHere.grant(id, row, rootHere(), { share: !!a.share })) marksNotSaved();
-				else await removeLinkHere(l);
+				else {
+					try { await removeLinkHere(l); }
+					catch (e) { dropRefused(e); }
+				}
 			} catch (e) { /* the repaint tells the truth */ }
 			signalLinksChanged();
 		}
@@ -53138,6 +53207,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The mail turns this page is running now, by claim id: its own claim, held live by its
 	/// renew, is not one to take again (and then release) from under the running turn.
 	var _mailRunning = {};
+	// The failed runs of each arrival on this device, by claim id, and the bound on them
+	// (post-QA r569qa2 Q4; see `settleMailClaim`). In memory: a reload counts afresh, so it
+	// bounds the cost of one page's life, and it holds one small entry per failed arrival.
+	var MAIL_TRIES_MAX = 3;
+	var _mailTries = {};
 
 	// ── One turn per arrival, however many devices are open (MO-1) ──
 	//
@@ -53195,6 +53269,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!tid || !self || !window.DaimondLease || !DaimondLease.take
 			|| !window.DaimondPeer || !DaimondPeer.syncCas) return { go: true };
 		if (_mailRunning[tid]) return { go: false };
+		if ((_mailTries[tid] | 0) >= MAIL_TRIES_MAX) return { drop: true };	// tried enough here (Q4)
 		var lo = 0, hi = 0;
 		occasion.uids.forEach(function (x) {
 			if (+x > hi) hi = +x;
@@ -53252,10 +53327,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// A TURN THAT RAN AND FAILED (`answered` false, review R569 B-1) settles the claim but
 	/// leaves the mark down. The settled claim keeps this tid from running again at once; it
-	/// drains after the lease life, and `owedByMark` owes the arrival again, so a failure seen
-	/// on Pending is retried a bounded number of times rather than marked answered for good.
-	async function settleMailClaim(claim, went, answered) {
+	/// is read as gone after the lease life (`leaseTakeFromCas`), and `owedByMark` owes the
+	/// arrival again. Each device runs one arrival at most `MAIL_TRIES_MAX` times (`_mailTries`,
+	/// post-QA r569qa2 Q4), so a failure seen on Pending is retried a bounded number of times
+	/// rather than marked answered for good: past the bound it waits for the next arrival,
+	/// whose turn reads the whole mailbox and whose answer raises the mark over it. A turn the
+	/// person `stopped` is not counted: it failed at nobody's hand but theirs.
+	async function settleMailClaim(claim, went, answered, stopped) {
 		if (!claim || !claim.tid) return;
+		if (went && !answered && !stopped) _mailTries[claim.tid] = (_mailTries[claim.tid] | 0) + 1;
 		try {
 			if (went && answered && claim.mark) {
 				await DaimondLease.mark(claim.mark.key, claim.mark.gen, claim.mark.upTo, claim.cas, leaseClockNow);
@@ -53489,7 +53569,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// A turn that threw may still have run, so it settles as one that went; it answered
 				// the arrival only when it ran through and the judgement found no failure (B-1).
 				try { out = await steerFromTrigger(f, msg.text, t); }
-				finally { stop(); if (claim) await settleMailClaim(claim, !out || out.went, !!out && out.went && !out.failed); }
+				finally {
+					stop();
+					if (claim) await settleMailClaim(claim, !out || out.went, !!out && out.went && !out.failed, !!out && out.stopped);
+				}
 				if (!out.went) { oweMail(id, occasion); continue; }
 				fired.push({ id: id, actionId: t.id });
 				// One turn answers whatever has arrived, so a folder this turn has answered is
@@ -54587,26 +54670,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `before` - `_lastSteer[f.id]` before the turn: the same record after it means the
 	///   engine never reported an ending, which is a turn that did not run through.
 	/// * `threw` - The turn threw.
-	/// * `mail` - A mail turn: routine quiet ends `answered`, so an empty or cut-off ending
-	///   (`silent`, `reasoned_only`) answered nothing and is a failure outright. Any other
-	///   triggered turn counts it a failure only over a call that failed or was refused.
-	function judgeTriggeredTurn(f, before, threw, mail) {
+	/// * `mail` - A mail turn: only `answered` answered it (a whitelist, post-QA r569qa2 Q1).
+	///   Routine mail ends `answered` on its `pending_none`, so anything else -- `silent`,
+	///   `reasoned_only`, a `capped` turn whose rounds ran out, a `stopped` one halted by a lock,
+	///   a pause or Stop -- reached no verdict and is owed again. All raise `turn-failed` but
+	///   `stopped`: the person halted it, the turn is owed, and this device's pause floor keeps a
+	///   paused device from re-running it while a live one still owes it. Any other triggered
+	///   turn counts `silent` / `reasoned_only` a failure only over a call that failed or was
+	///   refused.
+	/// * `more` - The endings of the turn's report-back rounds (`followVerdicts`): a mail turn
+	///   that dispatched agents answered nothing until the round that reads their reports did.
+	function judgeTriggeredTurn(f, before, threw, mail, more) {
 		var end = f ? _lastSteer[f.id] : null;
-		var how = (threw || !end || end === before) ? 'failed' : String(end.how || '');
-		var hard = !!{ failed: 1, malformed: 1, spend_cap: 1 }[how];
-		var soft = !!{ silent: 1, reasoned_only: 1 }[how]
-			&& (!!mail || ((end.failed | 0) + (end.refused | 0)) > 0);
-		var failed = hard || soft;
+		var ends = [(threw || !end || end === before) ? { how: 'failed' } : end].concat(more || []);
+		var failed = false, tell = false;
+		ends.forEach(function (e) {
+			var how = String(e.how || '');
+			var hard = !!{ failed: 1, malformed: 1, spend_cap: 1 }[how];
+			var soft = !!{ silent: 1, reasoned_only: 1 }[how]
+				&& (!!mail || ((e.failed | 0) + (e.refused | 0)) > 0);
+			if (!(hard || soft || (!!mail && how !== 'answered'))) return;
+			failed = true;
+			if (how !== 'stopped') tell = true;	// halted by the person: owed, nothing to tell him
+		});
 		var A = window.DaimondAlerts;
 		if (!A || !A.raise || !f) return failed;
+		// A MAIL TURN'S FAILURE IS ITS OWN ALERT (FIRE MAIL-FIX2 r2, check defect 2). Only an
+		// answered mail turn may take it down: a timer turn that ran well says nothing about an
+		// arrival held out past `MAIL_TRIES_MAX`, whose one trace this alert is.
+		var key = mail ? 'turn-failed.mail' : 'turn-failed';
 		try {
 			if (!failed) {
-				A.clear(f.id, 'turn-failed');
+				A.clear(f.id, key);
 				return failed;
 			}
+			if (!tell) return failed;
 			var name = String(f.name || '').slice(0, 60);
 			var at = new Date(), when = ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2);
-			A.raise(f.id, 'turn-failed', t('pending.turn_failed', { name: name }),
+			A.raise(f.id, key, t('pending.turn_failed', { name: name }),
 				t('pending.turn_failed_detail', { name: name, when: when }), true);
 		} catch (e) { /* the turn's own thread still holds what happened */ }
 		return failed;
@@ -54632,7 +54733,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A MAIL TURN REPORTS ON THE PENDING PANEL ALONE (rulings §16), so the engine lets it end
 		// in silence when nothing went wrong (`Agent::set_pending_only`, review R569 R4).
 		var mail = !!(ta && ta.kind === 'mail');
-		var how = mail ? { pendingOnly: true } : undefined;
+		var how = mail ? { pendingOnly: true, follow: [] } : undefined;
 		if (diamondBusy(f.id)) return no;           // this Diamond's own turn is already running
 		// A QUESTION OPEN IN ITS THREAD HOLDS IT (Q18, D-20261009-20). Its words are not the
 		// person's, so they may not reach the daimon as the answer. Refused, the action keeps the
@@ -54649,8 +54750,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var before = _lastSteer[f.id], reply = '';
 		try { reply = off ? await runSteer(f, text, undefined, null, how) : await doSteer(text, undefined, how); }
 		catch (e) { if (judged) judgeTriggeredTurn(f, before, true, mail); throw e; }
-		var failed = judged ? judgeTriggeredTurn(f, before, false, mail) : false;
-		return { went: true, reply: reply, failed: failed };
+		var end = _lastSteer[f.id];
+		var stopped = !!end && end !== before && end.how === 'stopped';
+		// The report-back rounds overwrite `_lastSteer`, so the turn's own ending is judged as
+		// it stood here: the record is restored for the judgement, which reads it.
+		var more = mail ? await followVerdicts(how) : [];
+		if (more.length) {
+			_lastSteer[f.id] = end;
+			stopped = stopped || more.some(function (e) { return e.how === 'stopped'; });
+		}
+		var failed = judged ? judgeTriggeredTurn(f, before, false, mail, more) : false;
+		return { went: true, reply: reply, failed: failed, stopped: stopped };
+	}
+
+	/// The endings a pending-only turn's fan-outs owe it, each batch's report-back round
+	/// judged with the turn (post-QA r569qa2 Q3). A round that dispatches again adds to the
+	/// list as it runs, so it is read until nothing more is owed. Bounded by
+	/// `FOLLOW_MAX_MS` in all: a worker parked on a person's answer is not finished, and the
+	/// arrival is then owed again rather than held for ever, the claim with it.
+	var FOLLOW_MAX_MS = 20 * 60 * 1000;
+	async function followVerdicts(how) {
+		var out = [];
+		if (!how || !how.follow || !how.follow.length) return out;
+		var timer = null, late = new Promise(function (res) {
+			timer = setTimeout(function () { res({ how: 'failed', late: true }); }, FOLLOW_MAX_MS);
+		});
+		try {
+			for (var i = 0; i < how.follow.length; i++) {
+				var e = await Promise.race([how.follow[i], late]);
+				out.push(e);
+				if (e.late) break;
+			}
+		} finally { clearTimeout(timer); }
+		return out;
 	}
 
 	/// Can this Diamond actually think? That is a question about ITS provider's key, not the starred
@@ -56104,6 +56236,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return false;
 		}
 		tombMark(DIAMOND_TOMBS_KEY, [id], _dat);   // durable now: safe to overlay and delete
+		// Its alerts are taken down, synced, so no badge counts what no daimon is left to clear.
+		try {
+			if (window.DaimondAlerts) DaimondAlerts.live().forEach(function (a) {
+				if (a.diamond === id) DaimondAlerts.dismiss(a.id);
+			});
+		} catch (e) { /* the tombstone hides them anyway (Pending.fresh) */ }
 		// A destroyed Diamond's arrangement has nothing left to restore, and the
 		// layout blob is rewritten whole on every change, so leaving it would
 		// grow the write for ever.
@@ -60972,7 +61110,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					box.style.height = Math.min(box.scrollHeight, 120) + 'px';
 				},
 				onDrop: async function () {
-					try { await removeLinkHere(l); } catch (e) { /* already gone */ }
+					try { await removeLinkHere(l); } catch (e) { dropRefused(e); }
 					// Dropping an artefact removes a link, so it is a link change too.
 					signalLinksChanged();
 					renderArtefacts();
@@ -61005,10 +61143,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			drop.textContent = t('dws.drop_all');
 			drop.title = t('dws.drop_all_help');
 			drop.addEventListener('click', async function () {
+				// One refusal said, not one per row.
+				var refused = null;
 				for (var i = 0; i < daimonLinks.length; i++) {
 					try { await removeLinkHere(daimonLinks[i]); }
-					catch (e) { /* already gone */ }
+					catch (e) { refused = refused || e; }
 				}
+				if (refused) dropRefused(refused);
 				signalLinksChanged();
 				renderArtefacts();
 			});
@@ -61030,7 +61171,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						state:  '',			// never `holds`: nothing here is Note/Read
 						onOpen: function () { openArtefact(kind, path); },
 						onDrop: async function () {
-							try { await removeLinkHere(l); } catch (e) { /* already gone */ }
+							try { await removeLinkHere(l); } catch (e) { dropRefused(e); }
 							signalLinksChanged();
 							renderArtefacts();
 						},
@@ -61350,10 +61491,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Take a link off, made here: the row, and this device's entry for it. The one
 	/// door every removal on this device goes through. The entry goes first, so a
 	/// removal that fails leaves a mark waiting rather than in force.
+	///
+	/// A hand-written row has no id, and the store refuses a blank one (it named every
+	/// such row at once), so that row goes by its content (`remove_bare_link`), and its
+	/// entry only once the store has taken it: a refusal leaves the mark as it was and
+	/// is thrown to the caller.
 	async function removeLinkHere(link) {
 		if (!link) return false;
-		DaimondMarksHere.drop(link.owner, link.id || '', link.to || link.other || '');
+		var to = link.to || link.other || '';
+		if (!(link.id && String(link.id).trim())) {
+			var gone = await diamondApp().remove_bare_link(link.owner, link.from || '', to, link.rel || '');
+			DaimondMarksHere.drop(link.owner, '', to);
+			return gone;
+		}
+		DaimondMarksHere.drop(link.owner, link.id, to);
 		return await diamondApp().remove_link(link.owner, link.id);
+	}
+
+	/// Say a removal `removeLinkHere` was refused, as the link card's Drop says it. A
+	/// hand-written row the store cannot single out used to go quietly.
+	function dropRefused(e) {
+		noticeDialog(t('link.drop_failed'), friendlyError(e));
 	}
 
 	/// How to say where an unreachable attachment actually lives -- and, for a
@@ -64737,7 +64895,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& typeof Workers.awaitReports === 'function') {
 				Workers.holdTurn(steerTurn, {
 					diamondId: diamondId, diamondName: diamondName,
-					depth: (depth | 0),
+					depth: (depth | 0), how: (how && how.pendingOnly) ? how : null,
 				});
 				steerInTurn = true;
 			}
@@ -64988,7 +65146,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// every report by dispatching again runs out of room rather than
 				// fanning out for ever.
 				Workers.dispatch(diamondId, diamondName, dispatched, daimonTainted,
-					diamondWorkerModel(diamondId), (depth | 0));
+					diamondWorkerModel(diamondId), (depth | 0),
+					(how && how.pendingOnly) ? { how: how } : undefined);
 			}
 		} else if (rejected) {
 			crystalSay(rejected === 1

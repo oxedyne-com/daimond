@@ -6505,13 +6505,27 @@ pub async fn remove_link_by_model(owner: &str, link_id: &str) -> Outcome<Unlink>
 /// This device's press of the row goes in the same act, before the row does: a press left
 /// standing would put the row back in force, with no press, the moment a sync merge returned it
 /// (QA B F4, 2026-10-12).  A press that cannot be dropped refuses the removal.
+///
+/// A blank id is refused ([`crate::diamond_link::remove_in`]): it would name every hand-written
+/// row at once.  Those go by [`remove_bare_link`].
 pub async fn remove_link(owner: &str, link_id: &str) -> Outcome<bool> {
     let links = res!(read_links(owner).await);
-    let kept: Vec<Link> = links.iter().filter(|l| l.id != link_id).cloned().collect();
-    if kept.len() == links.len() {
-        return Ok(false);
-    }
+    let kept = match res!(crate::diamond_link::remove_in(&links, link_id)) {
+        Some(k) => k,
+        None    => return Ok(false),
+    };
     res!(crate::wasm::marks::forget_press(owner, link_id));
+    res!(write_links_for(owner, &kept).await);
+    touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
+    Ok(true)
+}
+
+/// Remove the one hand-written (id-less) row of a Diamond's sidecar that runs `from` to `to` as
+/// `rel`, refusing when none or several do ([`crate::diamond_link::remove_bare_in`]).  No press
+/// is dropped: a press is keyed by an id, and this row has none.
+pub async fn remove_bare_link(owner: &str, from: &str, to: &str, rel: &str) -> Outcome<bool> {
+    let links = res!(read_links(owner).await);
+    let kept = res!(crate::diamond_link::remove_bare_in(&links, from, to, rel));
     res!(write_links_for(owner, &kept).await);
     touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
     Ok(true)

@@ -352,6 +352,51 @@ pub fn model_unlink(links: &[Link], id: &str) -> Unlink {
 	Unlink::Removed(links.iter().filter(|l| l.id != id).cloned().collect())
 }
 
+/// Take the link `id` out of `links` for the USER: the sidecar without it, or `None` when no row
+/// has that id.
+///
+/// **A blank id is refused.**  A hand-written row carries a blank id, so matching one took every
+/// such row in the sidecar at once (D1k4/5 second check, defect 1).  A row with no id is named by
+/// what it says instead; see [`remove_bare_in`].
+///
+/// # Arguments
+/// * `links` - The owner's sidecar, as read.
+/// * `id` - The link the user named.
+pub fn remove_in(links: &[Link], id: &str) -> Outcome<Option<Vec<Link>>> {
+	if id.trim().is_empty() {
+		return Err(err!(
+			"A blank link id names no link: a hand-written link has none, so it is removed by \
+			its ends and relation instead."; Invalid, Input));
+	}
+	let kept: Vec<Link> = links.iter().filter(|l| l.id != id).cloned().collect();
+	if kept.len() == links.len() {
+		return Ok(None);
+	}
+	Ok(Some(kept))
+}
+
+/// Take out the ONE row with no id that runs `from` to `to` as `rel`; see [`remove_in`].
+///
+/// A row with an id is never matched here: it has a name, and is removed by it.  None matching,
+/// or more than one, is refused rather than guessed at -- two identical hand-written rows cannot
+/// be told apart by anything the caller could send.
+///
+/// # Arguments
+/// * `links` - The owner's sidecar, as read.
+/// * `from` - The row's `from` end, as a reference.
+/// * `to` - The row's `to` end, as a reference.
+/// * `rel` - The row's relation, as stored.
+pub fn remove_bare_in(links: &[Link], from: &str, to: &str, rel: &str) -> Outcome<Vec<Link>> {
+	let hit = |l: &Link| l.id.trim().is_empty()
+		&& l.from.to_ref() == from && l.to.to_ref() == to && l.rel == rel;
+	match links.iter().filter(|l| hit(l)).count() {
+		1 => Ok(links.iter().filter(|l| !hit(l)).cloned().collect()),
+		// These reach the user as they are, so they are short and name no reference.
+		0 => Err(err!("No such hand-written link."; Missing, Input)),
+		_ => Err(err!("Identical hand-written links: remove one in the sidecar."; Invalid, Input)),
+	}
+}
+
 /// Parse a whole sidecar, skipping blank and unreadable lines.
 ///
 /// A line that will not parse is dropped rather than failing the read: a
@@ -855,6 +900,85 @@ mod tests {
 		assert!(union_links(&mine, &stale).is_none(), "the stale copy is the same record");
 		assert_eq!("supersedes", mine[0].rel);
 		assert_eq!("revised here", mine[0].note);
+	}
+
+	// ── The user's remove: a blank id names no row ──────────────────
+
+	fn bare(from: &str, to: &str, rel: &str) -> Link {
+		let mut l = link(from, to, rel);
+		l.id = fmt!("");
+		l
+	}
+
+	fn two_bare_one_named() -> Vec<Link> {
+		let mut k1 = link("diamond:a", "diamond:c", "cites");
+		k1.id = fmt!("k1");
+		vec![
+			bare("diamond:a", "diamond:b", "informs"),
+			bare("diamond:b", "diamond:c", "informs"),
+			k1,
+		]
+	}
+
+	#[test]
+	fn test_a_blank_id_removes_nothing() {
+		// Every hand-written row carries a blank id, so matching one took them all.
+		let links = two_bare_one_named();
+		assert!(remove_in(&links, "").is_err());
+		assert!(remove_in(&links, "  ").is_err());
+	}
+
+	#[test]
+	fn test_an_id_removes_only_its_row() {
+		let links = two_bare_one_named();
+		let kept = remove_in(&links, "k1").expect("an id is asked").expect("k1 is there");
+		assert_eq!(2, kept.len());
+		assert!(kept.iter().all(|l| l.id.is_empty()));
+		assert!(remove_in(&links, "k9").expect("an id is asked").is_none());
+	}
+
+	#[test]
+	fn test_a_bare_row_goes_by_its_content() {
+		let links = two_bare_one_named();
+		let kept = remove_bare_in(&links, "diamond:a", "diamond:b", "informs")
+			.expect("exactly one row matches");
+		assert_eq!(2, kept.len());
+		assert_eq!("diamond:b", kept[0].from.to_ref());
+		assert_eq!("k1", kept[1].id);
+		// The rows left are the bytes they were.
+		assert_eq!(write_links(&links[1..]), write_links(&kept));
+	}
+
+	#[test]
+	fn test_a_bare_remove_refuses_none_or_several() {
+		let links = two_bare_one_named();
+		// No such row; and the id row's content does not count, since it has an id.
+		assert!(remove_bare_in(&links, "diamond:a", "diamond:b", "cites").is_err());
+		assert!(remove_bare_in(&links, "diamond:a", "diamond:c", "cites").is_err());
+		let twins = vec![
+			bare("diamond:a", "diamond:b", "informs"),
+			bare("diamond:a", "diamond:b", "informs"),
+		];
+		assert!(remove_bare_in(&twins, "diamond:a", "diamond:b", "informs").is_err());
+	}
+
+	/// The refusals reach the user as they are (`graph.write_failed`), so they say it in a few
+	/// words and carry no `diamond:<hex>` reference.
+	#[test]
+	fn test_a_bare_refusal_is_short_and_names_no_ref() {
+		let links = two_bare_one_named();
+		let twins = vec![
+			bare("diamond:a", "diamond:b", "informs"),
+			bare("diamond:a", "diamond:b", "informs"),
+		];
+		for e in [
+			remove_bare_in(&links, "diamond:a", "diamond:c", "cites").unwrap_err(),
+			remove_bare_in(&twins, "diamond:a", "diamond:b", "informs").unwrap_err(),
+		] {
+			let s = fmt!("{}", e);
+			assert!(!s.contains("diamond:"), "names a ref: {}", s);
+			assert!(!s.contains("hand-written links run"), "the long form: {}", s);
+		}
 	}
 
 	// ── The sidecar: hand-editable, so forgiving ─────────────────────

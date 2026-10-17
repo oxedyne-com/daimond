@@ -43,6 +43,16 @@ function extractMethod(src, name) {
 	const m = new RegExp('\\n\\t+' + name + ': async function \\(').exec(src);
 	return m ? balanced(src, m.index + 1) : '';
 }
+function extractObjMethod(src, name) {
+	const m = new RegExp('\\n\\t+' + name + ': function \\(').exec(src);
+	return m ? balanced(src, m.index + 1) : '';
+}
+// The lines of `Workers.dispatch` that tie a batch to the pending-only turn that dispatched it.
+function dispatchFollow(src) {
+	const a = src.indexOf('\t\t\tvar how = (owner && owner.how && owner.how.follow)');
+	const b = a < 0 ? -1 : src.indexOf('\t\t\tspecs.forEach(', a);
+	return a < 0 || b < 0 ? '' : src.slice(a, b);
+}
 function extractVar(src, name) {
 	const m = new RegExp('\\n\\t+var ' + name + ' *=[^;]*;').exec(src);
 	return m ? m[0] : '';
@@ -118,17 +128,18 @@ function device(name, door, turns, held) {
 	W.held = held || { uidValidity: 7, lastUid: 42 };
 	peer.DaimondMail = { held: () => W.held };
 	W.peer = peer;
-	W.A = { id: 'A', name: 'Work' }; W.B = { id: 'B', name: 'Email' };
+	W.A = { id: 'A', name: 'Work' }; W.B = { id: 'B', name: 'Email', messages: [] };
+	W.polls = [];		// the report-back round's 1.5 s idle polls, run by hand
 	W.mailB = Object.assign(DaimondTriggers.blank('mail'), {
 		id: 'm1', mailbox: 'alerts@oxegen.io', folder: 'INBOX', instruction: 'Triage the alert.',
 	});
 	W.tick = async () => { if (!W.dead) for (const fn of [...W.timers.values()]) await fn(); };
 	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail', 'mailMarkKey',
 		'mailClaimId', 'claimMailArrival', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks',
-		'judgeTriggeredTurn'];
+		'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
-	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor'].map((n) => extractVar(APP, n)).join('\n');
-	W.api = new Function('W', 'DaimondTriggers', 'window', 'door', 'CLOCK', 'setInterval', 'clearInterval', `
+	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'MAIL_TRIES_MAX', '_mailTries', 'FOLLOW_MAX_MS'].map((n) => extractVar(APP, n)).join('\n');
+	W.api = new Function('W', 'DaimondTriggers', 'window', 'door', 'CLOCK', 'setInterval', 'clearInterval', 'setTimeout', `
 		var diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _lastSteer = {};
 		var _triggers = { A: { v: 1, actions: [] }, B: { v: 1, actions: [W.mailB] } };
 		var DaimondLease = window.DaimondLease, DaimondPeer = window.DaimondPeer, DaimondMail = window.DaimondMail;
@@ -145,14 +156,46 @@ function device(name, door, turns, held) {
 		async function selectDiamond(f) { currentDiamond = f; }
 		function t(k) { return k; }
 		W.show = function (f) { currentDiamond = f; };
-		async function runSteer(f, text) {
-			W.turns.push({ on: W.name, in: f.id });
+		async function runSteer(f, text, depth, detached, how) {
+			W.turns.push({ on: W.name, in: f.id, how: how, depth: depth });
+			if (W.round) W.round(W.turns.length, how, Workers);
 			if (W.hold) await W.hold;
 			// What the engine's \`ended\` event records: a turn that ran through, unless W.end says.
-			_lastSteer[f.id] = Object.assign({ how: 'answered', calls: 0, failed: 0, refused: 0 }, W.end || {});
+			_lastSteer[f.id] = Object.assign({ how: 'answered', calls: 0, failed: 0, refused: 0 }, W.end || {},
+				(W.endFor && W.endFor(W.turns.length)) || {});
 			return '';
 		}
-		async function doSteer(text) { return runSteer(currentDiamond, text); }
+		async function doSteer(text, depth, how) { return runSteer(currentDiamond, text, depth, null, how); }
+		// The worker pool, far enough for a turn's fan-out: the REAL \`gather\`, and the REAL lines
+		// of \`dispatch\` that tie a batch to the turn that dispatched it.
+		function workerEndingNote() { return ''; }
+		function reportBody(r) { return r.report || ''; }
+		function withCommas(s) { return s; }
+		function reportHasSubstance(r) { return !!r.report; }
+		function workersHeld() { return false; }
+		function setCrystalStatus() {}
+		function touchChat() {}
+		function persistChats() {}
+		function newMid() { return 'm' + (++W.seq); }
+		function appendNote(text) { (W.noted = W.noted || []).push(text); }
+		var current = W.B;
+		var Workers = {
+			batches: {}, runs: [], liveTurns: {}, MAX_GATHER_DEPTH: 3, batchSeq: 0,
+			isTerminal: function (s) { return s === 'done' || s === 'error'; },
+			${extractObjMethod(APP, 'tellDaimon')},
+			deliverToChat: function () { W.delivered = true; },
+			${extractObjMethod(APP, 'gather')},
+			fanOut: function (owner) {
+				var batch = 'b' + (++this.batchSeq);
+				this.batches[batch] = { diamondId: 'B', diamondName: 'Email', chatId: '', chatName: '',
+					turnId: '', depth: 0, expected: 1, ids: [] };
+				${dispatchFollow(APP)}
+				var run = { id: 'w' + this.batchSeq, name: 'w' + this.batchSeq, batch: batch, status: 'running' };
+				this.runs.push(run);
+				return run;
+			},
+		};
+		W.workers = Workers;
 		${vars}
 		${body}
 		W.owed = function () { return Object.keys(_mailOwed).length; };
@@ -165,7 +208,8 @@ function device(name, door, turns, held) {
 		};
 		return Triggers;`)(W, DaimondTriggers, peer, door, CLOCK,
 		(fn) => { const id = ++W.seq; W.timers.set(id, fn); return id; },
-		(id) => { W.timers.delete(id); });
+		(id) => { W.timers.delete(id); },
+		(fn, ms) => (ms === 1500 ? W.polls.push(fn) : setTimeout(fn, ms)));
 	return W;
 }
 
@@ -352,7 +396,7 @@ for (const [where, end] of [
 		D.end = end;
 		await D.api.fire(ARRIVED);
 		assert.equal(turns.length, 1);
-		assert.deepEqual(seen.raised, ['turn-failed'], 'the failed mail turn reached no one');
+		assert.deepEqual(seen.raised, ['turn-failed.mail'], 'the failed mail turn reached no one');
 		assert.deepEqual(answeredMark(door), [], 'a failed turn marked the arrival answered for good');
 	});
 }
@@ -363,7 +407,7 @@ test('B-1: a mail turn that ends answered marks the arrival and raises nothing',
 	const seen = alertsOn(D);
 	await D.api.fire(ARRIVED);
 	assert.deepEqual(seen.raised, []);
-	assert.deepEqual(seen.cleared, ['turn-failed']);
+	assert.deepEqual(seen.cleared, ['turn-failed.mail']);
 	assert.equal(answeredMark(door).length, 1, 'an answered arrival was not marked');
 });
 
@@ -382,4 +426,187 @@ test('B-1: an arrival whose turn failed is owed again once its claim drains, and
 	await D.api.retryMail();
 	assert.equal(turns.length, 2, 'the failed arrival was never owed again');
 	assert.equal(answeredMark(door).length, 1, 'the retried turn did not mark the arrival');
+});
+
+// POST-QA r569qa2 (2026-10-17): a mail turn cut off before it finished answered nothing either.
+// `stopped` is the engine's word for a turn halted mid-flight -- the person's lock (`lockApp`
+// aborts every generating record, the daimon's included), a pause caught mid-turn (`brakeHeld`),
+// or Stop -- and `capped` is a turn whose round budget ran out "with work still going". Neither
+// reached its `pending_raise`, so neither may mark the arrival answered for every device.
+for (const end of [{ how: 'stopped', calls: 1 }, { how: 'capped', calls: 4 }]) {
+	test('POSTQA2: a mail turn ending ' + end.how + ' leaves the arrival unanswered for the other device', async () => {
+		const door = makeDoor(), turns = [];
+		const P = device('desk', door, turns), D = device('phone', door, turns);
+		alertsOn(P); alertsOn(D);
+		P.end = end;
+		await P.api.fire(ARRIVED);			// the desk's turn is cut off (locked, paused, capped)
+		assert.equal(turns.length, 1);
+		assert.deepEqual(answeredMark(door), [], 'a turn cut off as ' + end.how + ' marked the arrival answered for good');
+		CLOCK.now += 17 * 60 * 1000;
+		const cas = D.peer.DaimondPeer.syncCas(door);
+		await D.peer.DaimondLease.mark('mark:mail:Z::', 1, 1, cas, () => CLOCK.now);	// a write drains
+		await D.api.fire(ARRIVED);
+		await D.api.retryMail();
+		assert.equal(turns.length, 2, 'nobody ever answered the arrival: ' + JSON.stringify(turns));
+	});
+}
+test('POSTQA2: a mail turn that ran out of rounds is put in front of him', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	const seen = alertsOn(D);
+	D.end = { how: 'capped', calls: 4 };
+	await D.api.fire(ARRIVED);
+	assert.deepEqual(seen.raised, ['turn-failed.mail'], 'a capped mail turn reached no one');
+});
+
+// MAIL-FIX2 Q4 (2026-10-17): a failed arrival's settled claim used to stand on the door until an
+// unrelated write drained it, so on a quiet account it was never retried, and on a busy one it
+// was retried without end. Past its life it is read as gone, and each device runs it a bounded
+// number of times.
+test('Q4: a failed arrival is owed again after its claim life with no other write on the door', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	alertsOn(D);
+	D.end = { how: 'silent', calls: 0 };
+	await D.api.fire(ARRIVED);
+	CLOCK.now += 17 * 60 * 1000;
+	D.end = null;
+	await D.api.retryMail();
+	assert.equal(turns.length, 2, 'the failed arrival waited for an outside write');
+	assert.equal(answeredMark(door).length, 1, 'the retried turn did not mark the arrival');
+});
+
+test('Q4: one device runs a failing arrival at most MAIL_TRIES_MAX times', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	alertsOn(D);
+	D.end = { how: 'reasoned_only', calls: 0 };
+	await D.api.fire(ARRIVED);
+	for (let i = 0; i < 6; i++) {
+		CLOCK.now += 17 * 60 * 1000;
+		await D.api.fire(ARRIVED);
+		await D.api.retryMail();
+	}
+	assert.equal(turns.length, 3, 'a failing arrival was retried without bound: ' + turns.length);
+	assert.deepEqual(answeredMark(door), [], 'giving up marked the arrival answered');
+});
+
+test('Q4: a turn the person stopped is not counted against the bound, and raises nothing', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	const seen = alertsOn(D);
+	D.end = { how: 'stopped', calls: 1 };
+	for (let i = 0; i < 4; i++) {
+		await D.api.fire(ARRIVED);
+		CLOCK.now += 17 * 60 * 1000;
+	}
+	assert.equal(turns.length, 4, 'a stopped turn used up the retries');
+	assert.deepEqual(seen.raised, [], 'a stopped turn raised an alert');
+	D.end = null;
+	await D.api.fire(ARRIVED);
+	assert.equal(answeredMark(door).length, 1);
+});
+
+// MAIL-FIX2 Q3 (2026-10-17): a mail turn that dispatched an agent answered nothing until the round
+// that reads its report did. That round used to run as an ordinary turn after the mark had risen,
+// posting in the Email chat and judged by nobody. Now it is a round of the same pending-only turn,
+// and the arrival is marked only once it is judged answered.
+const finish = (W, run, report) => { run.status = 'done'; run.report = report; W.workers.gather(run.batch); };
+
+test('Q3: a mail turn that dispatched an agent is marked only after its report-back round answers', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	const seen = alertsOn(D);
+	let run = null;
+	D.round = (n, how) => { if (n === 1) run = D.workers.fanOut({ how: how }); };
+	const pf = D.api.fire(ARRIVED);
+	await settle();
+	assert.ok(run, 'the mail turn dispatched nothing');
+	assert.deepEqual(answeredMark(door), [], 'the arrival was marked answered before its agent reported');
+	finish(D, run, 'The disk on jarrah is at 61%; nothing is wrong.');
+	await pf;
+	assert.equal(turns.length, 2, 'the report never came back to the turn: ' + JSON.stringify(turns));
+	assert.ok(turns[1].how && turns[1].how.pendingOnly, 'the report-back round was not pending-only, so it posts in the chat');
+	assert.equal(D.delivered, undefined);
+	assert.equal(answeredMark(door).length, 1, 'the answered turn did not mark the arrival');
+	assert.deepEqual(seen.raised, []);
+});
+
+test('Q3: a report-back round that fails leaves the arrival owed and puts it in front of him', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	const seen = alertsOn(D);
+	let run = null;
+	D.round = (n, how) => { if (n === 1) run = D.workers.fanOut({ how: how }); };
+	D.endFor = (n) => (n === 2 ? { how: 'reasoned_only', calls: 0 } : null);
+	const pf = D.api.fire(ARRIVED);
+	await settle();
+	finish(D, run, 'The certificate on karri expired an hour ago.');
+	await pf;
+	assert.equal(turns.length, 2);
+	assert.deepEqual(answeredMark(door), [], 'a failed report-back round marked the arrival answered');
+	assert.deepEqual(seen.raised, ['turn-failed.mail'], 'the failed report-back round reached no one');
+});
+
+test('Q3: an agent that reports nothing leaves the arrival owed', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	const seen = alertsOn(D);
+	let run = null;
+	D.round = (n, how) => { if (n === 1) run = D.workers.fanOut({ how: how }); };
+	const pf = D.api.fire(ARRIVED);
+	await settle();
+	finish(D, run, '');
+	await pf;
+	assert.equal(turns.length, 1, 'an empty report was read back');
+	assert.deepEqual(answeredMark(door), [], 'an unread report marked the arrival answered');
+	assert.deepEqual(seen.raised, ['turn-failed.mail']);
+});
+
+// FIRE MAIL-FIX2 r2 (check item 3, 2026-10-17): a mail turn's report-back round that cannot run
+// put the agents' reports in the Email chat, which posts nothing there (rulings §16). They go into
+// the daimon's own conversation alone, for the next mail turn, and turn-failed is what he sees.
+const chatNotes = (W) => W.B.messages.filter((m) => m.role === 'note_log');
+const sessionSaid = (W) => ((W.B.session && W.B.session.msgs) || []).map((m) => m.content).join('\n');
+
+test('MAIL-FIX2 r2: an unread mail report goes into the daimon\'s conversation, never the Email chat', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	const seen = alertsOn(D);
+	let run = null;
+	D.round = (n, how) => { if (n === 1) run = D.workers.fanOut({ how: how }); };
+	const pf = D.api.fire(ARRIVED);
+	await settle();
+	finish(D, run, '');
+	await pf;
+	assert.deepEqual(chatNotes(D), [], 'the agents\' reports were posted in the Email chat');
+	assert.equal(D.noted, undefined, 'the agents\' reports were drawn in the Email thread');
+	assert.match(sessionSaid(D), /Worker w1 finished/, 'the next mail turn will not read the reports');
+	assert.deepEqual(seen.raised, ['turn-failed.mail'], 'the unread report reached no one');
+});
+
+test('MAIL-FIX2 r2: a mail report-back round waits out a busy Diamond, past a minute, and then runs', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('phone', door, turns);
+	const seen = alertsOn(D);
+	let run = null;
+	D.round = (n, how) => { if (n === 1) run = D.workers.fanOut({ how: how }); };
+	const pf = D.api.fire(ARRIVED);
+	await settle();
+	D.busy.add('B');					// a second mail turn holds the Diamond
+	finish(D, run, 'The disk on jarrah is at 61%; nothing is wrong.');
+	await settle();
+	for (let i = 0; i < 80; i++) {			// two minutes of 1.5 s polls
+		const p = D.polls.splice(0);
+		assert.equal(p.length, 1, 'the round stopped waiting after ' + (i * 1.5) + ' s');
+		p[0]();
+	}
+	assert.deepEqual(chatNotes(D), [], 'a busy Diamond put the reports in the Email chat');
+	assert.equal(turns.length, 1);
+	D.busy.delete('B');
+	D.polls.splice(0).forEach((fn) => fn());
+	await pf;
+	assert.equal(turns.length, 2, 'the report-back round never ran');
+	assert.equal(answeredMark(door).length, 1, 'the answered round did not mark the arrival');
+	assert.deepEqual(seen.raised, []);
 });

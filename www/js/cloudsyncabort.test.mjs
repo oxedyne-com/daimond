@@ -160,10 +160,11 @@ console.log('\nmaterialiseTo: a merge into the open folder\n');
 
 console.log('\nfetchDown: a file pulled onto this device\n');
 {
-	// The look says absent, then another tab's file is there by the time of the write.
+	// The look says absent, then another tab's file is there by the time of the write: it
+	// is not written over (OPFS-LOCK5, FIRE SYNC-ABORT3), so the missing chunk is never reached.
 	const opfs = dir(new Map([['gap.txt', enc(MINE)]]), { 'gap.txt': 1 });
 	const r = await said(tab(opfs).fetch('gap.txt', false));
-	check('(a) a missing chunk over an EXISTING file is the same error', GAP_DOWN.test(r), r);
+	check('(a) a file appearing at the path is not fetched over', r === 'OK: gap.txt is already on this device.', r);
 	check('(a) and the file is still there', opfs.files.has('gap.txt'));
 	check('(a) with its exact bytes', opfs.files.has('gap.txt') && dec(opfs.files.get('gap.txt')) === MINE,
 		opfs.files.has('gap.txt') ? JSON.stringify(dec(opfs.files.get('gap.txt'))) : 'deleted');
@@ -184,7 +185,7 @@ console.log('\nfetchDown: a file pulled onto this device\n');
 {
 	const opfs = dir(new Map([['boom.txt', enc(MINE)]]), { 'boom.txt': 1 });
 	const r = await said(tab(opfs).fetch('boom.txt', false));
-	check('(a) a fetch that THROWS mid-file over an existing file is an error', /^Error: boom\.txt could not be fetched/.test(r), r);
+	check('(a) a file appearing at the path is not fetched over, so nothing throws', r === 'OK: boom.txt is already on this device.', r);
 	check('(a) and leaves its exact bytes', dec(opfs.files.get('boom.txt') || enc('deleted')) === MINE);
 }
 

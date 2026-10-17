@@ -53,10 +53,10 @@ function world(mailB) {
 	const A = { id: 'A', name: 'Work' }, B = { id: 'B', name: 'Email' };
 	W.A = A; W.B = B;
 	const body = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail',
-		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn'].map((n) => extractFn(APP, n)).join('\n');
+		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'].map((n) => extractFn(APP, n)).join('\n');
 	const fire = extractMethod(APP, 'fire'), retry = extractMethod(APP, 'retryMail');
 	W.api = new Function('W', 'DaimondTriggers', `
-		var diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _lastSteer = {}, MAIL_FLOOR_KEY = 'daimond.mail.floor', _mailFloor = null;
+		var diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _mailTries = {}, MAIL_TRIES_MAX = 3, _lastSteer = {}, MAIL_FLOOR_KEY = 'daimond.mail.floor', _mailFloor = null, FOLLOW_MAX_MS = 20 * 60 * 1000;
 		function t(k, v) { return k + (v ? ' ' + JSON.stringify(v) : ''); }
 		var _triggers = {
 			A: { v: 1, actions: [] },
@@ -187,7 +187,7 @@ test('a background mail turn that fails raises a turn-failed alert naming its Di
 		assert.equal(W.turns.length, 1);
 		const r = ALERTS.find((a) => a.op === 'raise');
 		assert.ok(r, 'a ' + how + ' background turn reached no one: ' + JSON.stringify(ALERTS));
-		assert.equal(r.d, 'B'); assert.equal(r.k, 'turn-failed'); assert.equal(r.n, true);
+		assert.equal(r.d, 'B'); assert.equal(r.k, 'turn-failed.mail'); assert.equal(r.n, true);
 		assert.ok(r.h.includes('Email'), 'the alert does not name the Diamond: ' + r.h);
 	}
 });
@@ -197,7 +197,7 @@ test('a background mail turn that ends well clears the turn-failed alert', async
 	const W = world(mailTA('m1'));
 	W.how = 'answered';
 	await W.api.fire(ARRIVED);
-	assert.deepEqual(ALERTS.map((a) => a.op + ':' + a.d + ':' + a.k), ['clear:B:turn-failed']);
+	assert.deepEqual(ALERTS.map((a) => a.op + ':' + a.d + ':' + a.k), ['clear:B:turn-failed.mail']);
 });
 
 // The shape against fire/alertpending's REAL alerts.js (cd0f018e), when that tree is at hand:
@@ -225,4 +225,32 @@ test('the turn-failed alert passes fire/alertpending\'s own bounds', async (tt) 
 	assert.equal(was, 'new', 'the real alerts.js refused the alert');
 	assert.equal(win.DaimondAlerts.count(), 1);
 	assert.equal(win.DaimondAlerts.clear('B', 'turn-failed'), true);
+});
+
+// FIRE MAIL-FIX2 r2 (check defect 2, 2026-10-17): an arrival held out past MAIL_TRIES_MAX has
+// turn-failed as its one trace, and a timer turn of the same Diamond that ran well took it down.
+// A mail turn's failure is now its own alert, which only an answered mail turn clears.
+test('MAIL-FIX2 r2: a timer turn that ends well leaves a mail turn\'s failure up; only an answered mail turn clears it', () => {
+	const live = new Set();
+	const win = { DaimondAlerts: {
+		raise: (d, k) => { live.add(d + ' ' + k); return 'new'; },
+		clear: (d, k) => live.delete(d + ' ' + k),
+	} };
+	const J = new Function('window', `
+		var _lastSteer = {};
+		function t(k) { return k; }
+		${extractFn(APP, 'judgeTriggeredTurn')}
+		return { judge: judgeTriggeredTurn, steer: _lastSteer };`)(win);
+	const B = { id: 'B', name: 'Email' };
+	const turn = (how, mail) => {
+		const before = J.steer.B;
+		J.steer.B = { how, calls: 1, failed: 0, refused: 0 };
+		return J.judge(B, before, false, mail);
+	};
+	assert.equal(turn('silent', true), true, 'the failed mail turn was not judged failed');
+	assert.equal(live.size, 1, 'the failed mail turn raised nothing');
+	assert.equal(turn('answered', false), false);
+	assert.equal(live.size, 1, 'a timer turn that ran well took down the mail turn\'s failure');
+	assert.equal(turn('answered', true), false);
+	assert.equal(live.size, 0, 'an answered mail turn left its failure up');
 });

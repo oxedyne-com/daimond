@@ -60,10 +60,10 @@ function card(q) {
 function world() {
 	const W = { sent: [], steered: [], rendered: 0, unpinned: [], armed: null, out: new El('chat-output') };
 	const names = ['askClose', 'askMarkAnswered', 'askHolds', 'drainQueue', 'armAskIdleBound', 'askCurrent',
-		'askOpenIn', 'steerFromTrigger', 'judgeTriggeredTurn'];
+		'askOpenIn', 'steerFromTrigger', 'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
 	W.api = new Function('W', `
-		var ASK_CHOSE = 'Chose: ', ASK_OTHER = 'Other: ', ASK_SILENT_MAX_MS = 3600000;
+		var ASK_CHOSE = 'Chose: ', ASK_OTHER = 'Other: ', ASK_SILENT_MAX_MS = 3600000, FOLLOW_MAX_MS = 20 * 60 * 1000;
 		var _askCard = null, current = null, _unloading = false, chats = [], _lastSteer = {};
 		var chatOutput = W.out;
 		var document = { createElement: function (t) { return new W.El(''); }, body: W.out };

@@ -557,6 +557,32 @@
 
 	// ── Reading the store ──────────────────────────────────────
 
+	/// A hand-written row has no id, and every such row would share the blank one: picked by it, a
+	/// removal took all of them. It is keyed here by what it says, so it can be drawn, picked and
+	/// removed alone — by that content (`removeCall`), never by the key, which the store has never
+	/// heard of. Two identical rows share a key, and the store refuses to choose between them.
+	function bareKey(l) {
+		if (!l || (l.id && String(l.id).trim())) return l;
+		l.bare = true;
+		l.id = '~bare|' + (l.owner || '') + '|' + (l.from || '') + '|' + (l.to || '') + '|' + (l.rel || '');
+		return l;
+	}
+
+	/// The store call that removes link `l` through reader `a`: by its id, or — for a hand-written
+	/// row, which has none — by its ends and relation, which the store accepts only when exactly
+	/// one id-less row says them (`remove_bare_link`).
+	function removeCall(a, l) {
+		if (l.bare) return a.remove_bare_link(l.owner, l.fromRef, l.toRef, l.rel || '');
+		return a.remove_link(l.owner, l.id);
+	}
+
+	/// Whether the editor offers Save: a new link, or one with an id. A hand-written row has none
+	/// for the store to revise it by, so it is offered Reverse and Delete only, and the refusal
+	/// never has to be said.
+	function canRevise(isNew, l) {
+		return !!isNew || !(l && l.bare);
+	}
+
 	/// Everything the picture is drawn from, in a fixed order.
 	function load() {
 		return reader().then(function (a) {
@@ -571,7 +597,7 @@
 				try { return !(window.DaimondTrash && DaimondTrash.has(d && d.id)); }
 				catch (e) { return true; }
 			});
-			var links    = JSON.parse(raw[1] || '[]');
+			var links    = JSON.parse(raw[1] || '[]').map(bareKey);
 			// The rail is ordered by when a Diamond was last worked on, which
 			// changes under the picture. Ordered by id it does not.
 			diamonds.sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
@@ -2488,7 +2514,7 @@
 		cancel.type = 'button';
 		cancel.id = 'graph-edit-cancel';
 		cancel.addEventListener('click', function () { closeEditor(); });
-		row.appendChild(ok);
+		if (canRevise(isNew, l)) row.appendChild(ok);
 		row.appendChild(cancel);
 		if (!isNew) {
 			// Turning a link round is a NEW RECORD, since the store refuses to
@@ -2600,7 +2626,7 @@
 		return reader().then(function (a) {
 			return a.add_link(l.to, 'diamond:' + l.to, 'diamond:' + l.from, l.rel || '', l.note || '', 'user');
 		}).then(function (id) {
-			return reader().then(function (a) { return a.remove_link(l.owner, l.id); })
+			return reader().then(function (a) { return removeCall(a, l); })
 				.then(function () { return id; });
 		}).then(function (id) {
 			selEdge = id || null;
@@ -2613,7 +2639,7 @@
 
 	function dropLink(l) {
 		return reader().then(function (a) {
-			return a.remove_link(l.owner, l.id);
+			return removeCall(a, l);
 		}).then(function () {
 			announce();
 		}).catch(function (e) {
@@ -2631,6 +2657,7 @@
 	/// and makes it after normalising, so "  INFORMS  " over `informs` correctly
 	/// writes nothing and does not stamp the Diamond for having done nothing.
 	function replaceLink(l, rel, note) {
+		if (!canRevise(false, l)) return Promise.resolve();	// the editor offers it no Save
 		return reader().then(function (a) {
 			return a.update_link(l.owner, l.id, rel || '', note || '');
 		}).then(function () {
@@ -2902,6 +2929,7 @@
 		return {
 			id: hit.id, owner: hit.owner, rel: hit.rel || '', note: hit.note || '',
 			from: diamondOf(hit.from), to: diamondOf(hit.to),
+			bare: !!hit.bare, fromRef: hit.from, toRef: hit.to,
 		};
 	}
 

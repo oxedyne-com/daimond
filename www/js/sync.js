@@ -476,6 +476,12 @@
 	// nobody has told it, which at the moment means the look and nothing else.
 	// See collectParcel.
 	var pulledOk      = false;
+	// This page has had an answer from the mailbox: a pull that came back >= 0, which a
+	// parcel it cannot open (carried over) counts as, as well as one it merged. Nothing is
+	// published before it (push, pushProgress): `carried` lives in memory only, so a page
+	// that pushed before it had read once would send a parcel without the sections a
+	// newer build put there, and the CAS would take it (QA r569qa1 #1).
+	var heardOk       = false;
 	// The file store came back (cloud.js `daimond:file-store`), so the version this device
 	// already adopted is merged once more: the rounds that ran without a store merged every
 	// section but the files'. pullOnce's already-adopted skip would decline it until the mailbox moved.
@@ -1948,7 +1954,11 @@
 		// The merge reads and writes the cloud index; wait for it to have loaded out
 		// of IndexedDB (and migrated off the box) before the first one.
 		if (window.DaimondCloud && DaimondCloud.ready) { try { await DaimondCloud.ready(); } catch (e) { /* fallback path stays active */ } }
-		try { return await pullOnce(quiet); }
+		try {
+			var r = await pullOnce(quiet);
+			if (r >= 0) heardOk = true;
+			return r;
+		}
 		finally { notePulled(); }
 	}
 
@@ -2413,7 +2423,8 @@
 		try {
 			// NOTHING OVER A BASE A 409 PROVED STALE. The work waits on a read (`readOwed`),
 			// so this round reads first, as the owed retry does, and sends only once it lands.
-			if (readOwed) {
+			// NOR BEFORE THIS PAGE HAS READ THE MAILBOX ONCE (`heardOk`): the same read.
+			if (readOwed || !heardOk) {
 				var r0 = await pull(true);
 				if (r0 < 0) { failKind = 'read'; restStatus(); return; }
 				if (lastFailed.length) { failKind = 'conflict'; jam('merge'); return; }
@@ -2869,6 +2880,7 @@
 		if (failedVersion > serverVersion) return;	// a sure 409 over a version that would not merge (see push())
 		if (Date.now() - lastProgressAt < PROGRESS_PUSH_MIN_MS) return;	// throttle the trickle
 		if (inFlight) return;			// a round is running; the next tick tries again
+		if (!heardOk) { schedule(); return; }	// not before this page has read the mailbox (see `heardOk`)
 		var progLoc = await fileLoc();
 		if (serverVersion > 0 && !locMerged(progLoc)) { schedule(); return; }	// merges first (QFB4-1)
 		if (inFlight) return;
@@ -4584,7 +4596,8 @@
 		entitled    = true;			// a fresh session may have just bought the tier.
 		sessionGone = false;		// and there is demonstrably a session again.
 		loadVersion();
-		await pull();
+		// Through the gate: a raw pull here ran beside a scheduled push (QA r569qa1 #1).
+		await gatedPull();
 		schedule();					// push whatever this device adds over the pulled base.
 		// And open the channel that means the next catch-up needs no trigger here
 		// at all. After the first pull, so it parks on a version this device has

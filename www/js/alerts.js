@@ -180,7 +180,11 @@
 	}
 
 	/// Is `key` one of the page's own, which the model may not touch and `LIVE_MAX` does not count?
-	function pageKey(key) { return Object.prototype.hasOwnProperty.call(PAGE_KEYS, String(key || '')); }
+	// A page key, or a page key's per-device form `<key>.<device>` (see `note`).
+	function pageKey(key) {
+		var k = String(key || ''), dot = k.indexOf('.');
+		return Object.prototype.hasOwnProperty.call(PAGE_KEYS, dot > 0 ? k.slice(0, dot) : k);
+	}
 
 	/// Does `diamond` already hold `LIVE_MAX` live alerts of its daimon's?
 	function full(diamond) {
@@ -252,15 +256,47 @@
 	/// words still up are kept ahead of the new ones, a blank line between, and past `DETAIL_MAX`
 	/// characters the oldest are dropped first, so the newest always shows. A note taken down or
 	/// lapsed starts afresh. Answers as `raise` does; null for a key that is not the page's.
+	///
+	/// ONE NOTE PER DEVICE (QA r569qa1 #2). The note is held under `<key>.<device>`: a register
+	/// per key, so two devices appending to one note before either synced lost the earlier
+	/// device's words to the later stamp. Each device appends only to its own. Bounded at
+	/// `NOTE_DEVICES` live notes per Diamond and key: past that, the oldest other device's note
+	/// is taken down, stamped, as a clear.
 	function note(diamond, key, headline, text) {
-		if (!pageKey(key)) return null;
+		var base = String(key || '');
+		if (!pageKey(base) || base.indexOf('.') >= 0) return null;
 		var add = String(text || '').trim();
 		if (!add) return null;
-		var prev = read().items[nsKey(String(diamond || ''), String(key))];
+		var NOTE_DEVICES = 4;
+		var dmd = String(diamond || ''), mine = base + '.' + noteDevice();
+		var items = read().items, prev = items[nsKey(dmd, mine)];
 		var held = (prev && isLive(prev)) ? prev.detail : '';
 		var cps = Array.from(held ? held + '\n\n' + add : add);
 		if (cps.length > DETAIL_MAX) cps = ['\u2026'].concat(cps.slice(cps.length - DETAIL_MAX + 1));
-		return raise(diamond, key, headline, cps.join(''), false);
+		var others = Object.keys(items).filter(function (id) {
+			var it = items[id];
+			return it.diamond === dmd && it.key !== mine && it.key.indexOf(base + '.') === 0 && isLive(it);
+		}).sort(function (x, y) { return items[x].at - items[y].at || (x < y ? -1 : 1); });
+		others.slice(0, Math.max(0, others.length - (NOTE_DEVICES - 1))).forEach(function (id) {
+			clear(dmd, items[id].key);
+		});
+		return raise(dmd, mine, headline, cps.join(''), false);
+	}
+
+	// This device's part of a note key: the identity's device id (updater.js `selfId`), or,
+	// with none, a random one kept on this device. Cut to what a key may hold.
+	function noteDevice() {
+		var id = '';
+		try { id = String((window.DaimondIdentity && DaimondIdentity.deviceId && DaimondIdentity.deviceId()) || ''); }
+		catch (e) { id = ''; }
+		if (!id) { try { id = String(localStorage.getItem('daimond-id-device') || ''); } catch (e) { id = ''; } }
+		if (!id) {
+			try {
+				id = String(localStorage.getItem('daimond-alerts-device') || '');
+				if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem('daimond-alerts-device', id); }
+			} catch (e) { id = 'here'; }
+		}
+		return id.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 16) || 'here';
 	}
 
 	/// Take one alert of `diamond`'s down because the condition is over. True if one was up.
