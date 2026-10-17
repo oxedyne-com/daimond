@@ -1,1 +1,1 @@
-{"build":"0164862304e7","note":"Mail alerts survive a stopped turn, routine mail raises no false failure, and sync and links no longer lose data."}
+{"build":"77d39777880e","note":"An old false mail failure leaves Pending, and mail agents that never start post nothing in the Email chat."}

@@ -40,7 +40,12 @@ const dec = (b) => new TextDecoder().decode(b);
 
 /// A flat stand-in directory. `hide` names answer "absent" to their first `n` plain
 /// lookups, which is a file another tab wrote between `fetchDown`'s look and its write.
+// Every write advances the file's `lastModified`, as a real folder does (FLOW QA1-FID).
+let tick = 1000;
 function dir(files, hide = {}) {
+	const mt = new Map(), put = files.set.bind(files);
+	for (const k of files.keys()) mt.set(k, ++tick);
+	files.set = (k, v) => { mt.set(k, ++tick); return put(k, v); };
 	const d = {
 		kind: 'directory', files,
 		async getDirectoryHandle() { throw absent(); },
@@ -52,7 +57,7 @@ function dir(files, hide = {}) {
 				async getFile() {
 					const b = files.get(name);
 					if (!b) throw absent();
-					return { name, size: b.length, lastModified: 1, text: async () => dec(b),
+					return { name, size: b.length, lastModified: mt.get(name), text: async () => dec(b),
 						arrayBuffer: async () => b.slice().buffer, slice: (a, z) => new Blob([b.slice(a, z)]) };
 				},
 				async createWritable() {

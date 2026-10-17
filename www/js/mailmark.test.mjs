@@ -407,7 +407,8 @@ test('B-1: a mail turn that ends answered marks the arrival and raises nothing',
 	const seen = alertsOn(D);
 	await D.api.fire(ARRIVED);
 	assert.deepEqual(seen.raised, []);
-	assert.deepEqual(seen.cleared, ['turn-failed.mail']);
+	// And the r569 mail failure under the bare key, on a Diamond with no other kind of action (MAIL-FU3).
+	assert.deepEqual(seen.cleared, ['turn-failed.mail', 'turn-failed']);
 	assert.equal(answeredMark(door).length, 1, 'an answered arrival was not marked');
 });
 

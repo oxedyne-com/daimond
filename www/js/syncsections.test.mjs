@@ -315,6 +315,34 @@ console.log('\nR. (QA r569qa1) after a reload, an unknown section still rides on
 		sentR ? JSON.stringify(Object.keys(sentR)) : '');
 }
 
+console.log('\nR3. (QA r569cqa1) a reloaded page whose first read FAILS publishes nothing\n');
+{
+	const tab = makeTab();
+	tab.unlocked = true;
+	tab.parcel = parcel({});
+	await tab.win.DaimondSync.push();
+	foreign(tab, Object.assign(parcel({}), { zeta: { from: 'a newer build', n: 1 } }));
+	const re = makeTab(new Map(tab.store));
+	re.mailbox = tab.mailbox;
+	re.posts = tab.posts.slice();
+	re.unlocked = true;
+	re.parcel = parcel({ chats: [{ id: 'c-after-reload', messages: [] }] });
+	const real = re.win.DaimondGateway.gwFetch;
+	let down = true;
+	re.win.DaimondGateway.gwFetch = async (path, opts) => {
+		if (down && (!opts || opts.method === 'GET')) return { status: 503, json: async () => ({}) };
+		return real(path, opts);
+	};
+	const before = re.posts.length;
+	await re.win.DaimondSync.push();
+	check('R3a. a push whose first read fails sends no parcel', re.posts.length === before, (re.posts.length - before) + ' POST(s)');
+	down = false;
+	await re.win.DaimondSync.push();
+	const sent = re.posts.length > before ? unseal(re.posts[re.posts.length - 1].blob) : null;
+	check('R3b. once the read lands, the push carries the newer build\'s section', !!sent && !!sent.zeta,
+		sent ? JSON.stringify(Object.keys(sent)) : 'no POST');
+}
+
 await wait(10);
 console.log('\n' + (failures ? failures + ' FAILED' : 'all passed') + '\n');
 process.exit(failures ? 1 : 0);

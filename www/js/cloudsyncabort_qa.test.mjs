@@ -38,7 +38,14 @@ const dec = (b) => new TextDecoder().decode(b);
 
 /// A flat stand-in directory. `hide` names answer "absent" to their first `n` plain
 /// lookups, which is a file another tab wrote between `fetchDown`'s look and its write.
+/// EVERY WRITE ADVANCES THE FILE'S `lastModified` (FLOW QA1-FID, post-QA r569cqa1 T1), a
+/// test's own `files.set` included, as a real folder does: with one fixed stamp the re-checks
+/// below were proven on size alone, and a same-size save was invisible to them.
+let tick = 1000;
 function dir(files, hide = {}) {
+	const mt = new Map(), put = files.set.bind(files);
+	for (const k of files.keys()) mt.set(k, ++tick);
+	files.set = (k, v) => { mt.set(k, ++tick); return put(k, v); };
 	const d = {
 		kind: 'directory', files,
 		async getDirectoryHandle() { throw absent(); },
@@ -50,7 +57,7 @@ function dir(files, hide = {}) {
 				async getFile() {
 					const b = files.get(name);
 					if (!b) throw absent();
-					return { name, size: b.length, lastModified: 1, text: async () => dec(b),
+					return { name, size: b.length, lastModified: mt.get(name), text: async () => dec(b),
 						arrayBuffer: async () => b.slice().buffer, slice: (a, z) => new Blob([b.slice(a, z)]) };
 				},
 				async createWritable() {
@@ -113,6 +120,7 @@ function tabWin(opfs, ix = IX) {
 	return win;
 }
 const MINE = 'my own words, not to be lost';
+const SAME = 'First half Second half';		// the size of 'first half second half', other words
 const said = async (p) => { try { return await p; } catch (e) { return 'THREW ' + (e && e.message); } };
 const GAP_TO = /^Error: gap\.txt could not be written; cloud storage no longer holds all of its parts\.$/;
 const GAP_DOWN = /^Error: gap\.txt could not be fetched; cloud storage no longer holds all of its parts\.$/;
@@ -217,6 +225,29 @@ console.log('\n(x1) a removal re-checks the copy it judged, immediately before i
 	check('(x1) evict: an unchanged copy is freed', /^OK: freed/.test(r) && !opfs.files.has('full.txt'), r);
 }
 
+{
+	// The same, with a save of the very size of the copy it replaces: only the mtime moved.
+	const opfs = dir(new Map());
+	const win = tabWin(opfs, { 'full.txt': M_FULL });
+	await said(win.DaimondCloud.fetch('full.txt', false));
+	win.DaimondChunks.presence = async () => { opfs.files.set('full.txt', enc(SAME)); return { ok: true, missing: [] }; };
+	const M_NEW = { v: 2, size: 22, bytes: 22, key: 'kn', ver: 'vnew', anc: ['kf'], sn: [], chunks: [{ addr: 'b1', size: 11 }, { addr: 'b2', size: 11 }] };
+	win.DaimondStore.put('daimond-cloud-index', { 'full.txt': M_NEW });
+	const r = await said(win.DaimondCloud.settleStale('full.txt'));
+	const now = opfs.files.has('full.txt') ? dec(opfs.files.get('full.txt')) : null;
+	check('(x1) settleStale unpinned: a SAME-SIZE save during the presence wait survives, said "kept"', now === SAME && /^kept: /.test(r), r + ' -> ' + JSON.stringify(now));
+}
+{
+	const opfs = dir(new Map());
+	const win = tabWin(opfs, { 'full.txt': M_FULL });
+	await said(win.DaimondCloud.fetch('full.txt', false));
+	await keyed(win, opfs);
+	win.DaimondChunks.chunkSizeFor = () => { opfs.files.set('full.txt', enc(SAME)); return 11; };
+	const r = await said(win.DaimondCloud.evict('full.txt'));
+	const now = opfs.files.has('full.txt') ? dec(opfs.files.get('full.txt')) : null;
+	check('(x1) evict: a SAME-SIZE save after the verification survives, not said OK', now === SAME && !/^OK/.test(r), r + ' -> ' + JSON.stringify(now));
+}
+
 console.log('\n(d3) a stamp that faults at the open of a NEW path\n');
 // The first getFile after the placeholder is made throws, so the write has no stamp of it.
 function faulty(d) {
@@ -277,6 +308,15 @@ console.log('\n(h2) the merge writes over nothing it did not judge\n');
 	folder.files.set('full.txt', enc(MINE));
 	const r = await said(w.materialiseTo(folder, 'full.txt', 'full.txt', true, judged));
 	check('(h2) a save between the judgement and the open is kept, said "kept"', /^kept: /.test(r) && dec(folder.files.get('full.txt') || enc('deleted')) === MINE, r);
+}
+{
+	// The same, with a save of the very size of the copy judged: only the mtime moved.
+	const folder = dir(new Map([['full.txt', enc('old stale copy')]]));
+	const w = tab(dir(new Map()));
+	const judged = await w.fileUnderRoot(folder, 'full.txt');
+	folder.files.set('full.txt', enc('his own words!'));
+	const r = await said(w.materialiseTo(folder, 'full.txt', 'full.txt', true, judged));
+	check('(h2) a SAME-SIZE save between the judgement and the open is kept, said "kept"', /^kept: /.test(r) && dec(folder.files.get('full.txt') || enc('deleted')) === 'his own words!', r);
 }
 {
 	// The merge found the path absent; he creates the file before materialiseTo opens it.

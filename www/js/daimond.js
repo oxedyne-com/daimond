@@ -54655,6 +54655,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Judge how a triggered turn ended, once, and put a failed one on the Pending panel, taking
 	/// it down when one ends well. Answers whether the turn failed, alert panel or not.
 	///
+	// THE r569 MAIL FAILURE IS RETIRED (FIRE MAIL-FU3, post-QA r569cqa2 CQA2-2). r569 raised a mail
+	// turn's failure under the bare `turn-failed`, and a routine mail on a reasoning model raised it
+	// falsely; r569c keys a mail failure `turn-failed.mail`, so nothing took the old one down. On a
+	// Diamond whose every action is a mail action no turn raises the bare key any more, so one that
+	// is up there is r569's, and it is cleared: here at each Diamond walk, and by an answered mail
+	// turn (`judgeTriggeredTurn`). The clear is a stamped register riding the sync parcel, so it
+	// lands once for the account and every device agrees; after it, this finds nothing up and
+	// writes nothing. Not one-shot by a flag: a tab still on r569 may raise it again until it
+	// reloads, and this takes that down too. A Diamond with no actions read is left alone -- a
+	// read that failed reads as no actions.
+	function retireR569MailFailures() {
+		var A = window.DaimondAlerts;
+		if (!A || !A.live || !A.clear) return;
+		A.live().forEach(function (a) {
+			if (a.key !== 'turn-failed') return;
+			var acts = Triggers.of(a.diamond);
+			if (acts.length && acts.every(function (t) { return t && t.kind === 'mail'; })) A.clear(a.diamond, 'turn-failed');
+		});
+	}
+
 	/// A turn run off screen answers into a thread nobody is looking at, and a failed one --
 	/// no credit, a revoked key, a provider down, a turn that said nothing -- cannot report
 	/// itself, so without this the fault is seen nowhere (MO-3; rulings §16, Pending is the
@@ -54702,6 +54722,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (!failed) {
 				A.clear(f.id, key);
+				// The r569 mail failure, on a Diamond with no other kind of action (`retireR569MailFailures`).
+				var acts = (mail && typeof Triggers !== 'undefined' && Triggers.of) ? Triggers.of(f.id) : [];
+				if (mail && !acts.some(function (a) { return !a || a.kind !== 'mail'; })) A.clear(f.id, 'turn-failed');
 				return failed;
 			}
 			if (!tell) return failed;
@@ -54976,6 +54999,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// rather than on a timer, because this is every occasion on which the
 				// set can change.
 				try { await Triggers.reload(); } catch (e) { /* the module is not up */ }
+				try { retireR569MailFailures(); } catch (e) { /* the next walk asks again */ }
 				try { noteTriggersHeldHere(); } catch (e) { /* a notice must not stop the walk */ }
 				// The notes travel in the Diamonds too, so this is every occasion on which they can change.
 				// Not waited for: a rail does not wait on a file, and a turn built before they are read is
@@ -65094,13 +65118,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (onCrystal()) hideCrystalSpinner();
 		syncComposer();
 		setCrystalBusy(diamondId, false);
+		// A PENDING-ONLY TURN'S AGENTS THAT NEVER START (FIRE MAIL-FU3, post-QA r569cqa2 CQA2-1).
+		// The daimon is still told, in its conversation only: a mail turn posts nothing in its chat
+		// (rulings §16). And the turn is owed an ending that is not `answered`, because what it asked
+		// for was never done (`followVerdicts`): `stopped` where the person held the spending, so the
+		// arrival stays owed with nothing to tell him, and `failed` where the app refused.
+		var quiet = !!(how && how.pendingOnly);
+		var owe = function (end) {
+			if (how && how.follow) how.follow.push(Promise.resolve({ how: end }));
+		};
 		// A turn that died part-way may still have asked for agents before it died.
 		// Starting them would be spending on the strength of a turn that failed, which
 		// is precisely what the user cannot see from here.
 		if (sawError && dispatched.length) {
 			crystalSay(t('crystal.dispatch_after_error'));
 			Workers.tellDaimon(diamondId, notStartedWords(dispatched.length,
-				'the turn that asked for them ended badly'));
+				'the turn that asked for them ended badly'), quiet);
+			owe('failed');
 		} else if (dispatched.length > diamondWorkerCap(diamondId)) {
 			// A PER-DIAMOND WORKER CAP, and for the Optimiser it is zero. The
 			// instruction already tells it not to dispatch, and an instruction is
@@ -65112,7 +65146,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// believing its workers had begun, and nothing else it can read says
 			// otherwise.
 			Workers.tellDaimon(diamondId, notStartedWords(dispatched.length,
-				'this diamond does not dispatch workers'));
+				'this diamond does not dispatch workers'), quiet);
+			owe('failed');
 		} else if (dispatched.length) {
 			// The spend gate: a large fan-out pauses here for a look before
 			// a single worker is enqueued. A normal dispatch clears silently.
@@ -65126,7 +65161,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// begin the moment it does. Nothing else it can read would ever
 				// contradict that, so a status line here is a fact kept from the only
 				// reader who acts on it.
-				Workers.tellDaimon(diamondId, notStartedWords(dispatched.length, cleared.why));
+				Workers.tellDaimon(diamondId, notStartedWords(dispatched.length, cleared.why), quiet);
+				owe('stopped');
 			} else {
 				crystalSay(dispatched.length === 1
 					? 'Dispatched 1 agent.'

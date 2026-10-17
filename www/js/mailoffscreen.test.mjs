@@ -197,7 +197,8 @@ test('a background mail turn that ends well clears the turn-failed alert', async
 	const W = world(mailTA('m1'));
 	W.how = 'answered';
 	await W.api.fire(ARRIVED);
-	assert.deepEqual(ALERTS.map((a) => a.op + ':' + a.d + ':' + a.k), ['clear:B:turn-failed.mail']);
+	// And the r569 mail failure under the bare key, on a Diamond with no other kind of action (MAIL-FU3).
+	assert.deepEqual(ALERTS.map((a) => a.op + ':' + a.d + ':' + a.k), ['clear:B:turn-failed.mail', 'clear:B:turn-failed']);
 });
 
 // The shape against fire/alertpending's REAL alerts.js (cd0f018e), when that tree is at hand:
