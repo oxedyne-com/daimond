@@ -144,6 +144,7 @@
 	.session-box { padding: 10px 11px; }
 	/* The left inset only: the right edge is the 44px ◈'s (files.css, touch). */
 	.files-row, .files-focus .r { padding-left: 12px; }
+	.files-focus :is(.sh, .gl) { padding-left: 12px; padding-right: 12px; }
 
 	/* A thumb's floor. The shared touch block below lifts the small controls to
 	   ~34px, which suits a dense tablet dock; on a phone, where these are the
@@ -217,8 +218,7 @@
 	.tagf-pool .tag-chip,
 	.tagf-active .tag-chip,
 	.session-box-meta .tag-chip { padding-top: 3px; padding-bottom: 3px; }
-	.files-mode-btn,
-	.files-mode-chip { min-height: 24px; padding-top: 4px; padding-bottom: 4px; }
+	.files-mode-btn { min-height: 24px; padding-top: 4px; padding-bottom: 4px; }
 	.tile-fold { padding-top: 5px; padding-bottom: 5px; }
 	/* The wordmark keeps its 20px ink and gains a 24px target around it. */
 	.brand { display: flex; align-items: center; min-height: 24px; }

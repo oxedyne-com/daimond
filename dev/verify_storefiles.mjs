@@ -10,7 +10,7 @@
 //   S5   an OLDER copy on the desktop never replaces a NEWER one on the phone, and the newer one reaches the desktop;
 //   S6   a Diamond's own file still travels (the rail that already worked).
 // Usage: node dev/verify_storefiles.mjs
-import { open, signInAs, scratch } from './harness.mjs';
+import { open, signInAs, scratch, workMenu } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 const GWDIR = new URL('../gateway', import.meta.url).pathname;
@@ -49,11 +49,10 @@ async function mount(D) {
 		dir.queryPermission = async () => 'granted'; dir.requestPermission = async () => 'granted'; window.showDirectoryPicker = async () => dir; });
 	await D.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
 	await D.page.waitForTimeout(700);
-	await D.page.evaluate(() => { const chips = [...document.querySelectorAll('.files-mode-chip')];
-		const m = chips.find((c) => /machine/.test(c.className) || c.querySelector('[data-icon="machine"]')) || chips[1]; if (m) m.click(); });
+	await workMenu(D.page, 'head', 'machine');
 	await D.page.waitForTimeout(2500);
 	return D.page.evaluate(async () => { const mod = await import('/pkg/oxedyne_daimond.js');
-		return { chips: [...document.querySelectorAll('.files-mode-chip')].map((c) => c.className.replace(/files-mode-chip ?/, '') + ':' + c.textContent.trim().slice(0, 12)).join(','),
+		return { root: ((document.querySelector('#panel-work .files-path button, #panel-work .files-path span') || {}).textContent || '').trim().slice(0, 24),
 			msg: ((document.querySelector('.files-mode-msg, #files-mode-msg, [class*="mode-msg"]') || {}).textContent || '').trim().slice(0, 120),
 			mode: mod.workspace_mode(), handle: !!(window.DaimondFiles && DaimondFiles.folder()), roots: (await DaimondFiles.shareRoots()).length }; });
 }

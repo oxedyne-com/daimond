@@ -152,18 +152,9 @@
 	// each in turn, which costs microseconds and means the envelope discloses the
 	// NUMBER of recipients and not who they are.
 
-	/// Magic, so a blob that is not one of these is refused rather than decoded.
-	var MAGIC = [0x44, 0x50, 0x53, 0x31];		// "DPS1"
-
-	/// AES-GCM nonce width, matching identity.js.
-	var IV = 12;
-
-	/// A slot: nonce, then the 32-byte content key with its 16-byte tag.
-	var SLOT = IV + 32 + 16;
-
-	/// The domain this seal's key derivation runs in. A tag that is not a prefix
-	/// of any other tag, so two derivations can never collide.
-	var SEAL_INFO = 'daimond.post.seal.v1';
+	// The bytes are written and read by the Rust seal (`src/seal/post.rs`, through
+	// `window.DaimondSeal`, daimond.js), the one implementation the native runner shares;
+	// the layout above is documented there. Nothing in this file encrypts.
 
 	/// The schema every message is signed under. The purpose tag is inside the
 	/// signing input, so a signature over a card can never be read as one over a
@@ -303,20 +294,50 @@
 
 	// ── Sealing ────────────────────────────────────────────────
 
-	/// Derive one slot key from a shared secret.
+	/// The seal bridge, or a throw a person can read when this build has none.
 	///
-	/// The raw ECDH output is not uniformly distributed, so it is the INPUT to a
-	/// derivation and never a key. The recipient's own public key is in the salt,
-	/// which binds a slot to the party it was made for: a slot lifted out of one
-	/// envelope and dropped into another derives a different key and does not open.
-	async function slotKey(sharedBits, epk, theirPub) {
-		var base = await crypto.subtle.importKey('raw', sharedBits, 'HKDF', false, ['deriveKey']);
-		return await crypto.subtle.deriveKey(
-			{ name: 'HKDF', hash: 'SHA-256', salt: cat([epk, theirPub]), info: utf8(SEAL_INFO) },
-			base,
-			{ name: 'AES-GCM', length: 256 },
-			false,
-			['encrypt', 'decrypt']);
+	/// Every DaimondSeal entry point awaits the wasm being instantiated, so a send made
+	/// before boot has finished waits for it rather than failing. A call made while the
+	/// page is still loading -- before daimond.js, a module script, has even run and
+	/// published the bridge -- waits for DOMContentLoaded or load, whichever comes
+	/// first; module scripts run before both.
+	async function sealer() {
+		var S = (typeof window !== 'undefined') && window.DaimondSeal;
+		if (!S && typeof document !== 'undefined' && document.readyState !== 'complete') {
+			await new Promise(function (r) {
+				document.addEventListener('DOMContentLoaded', r, { once: true });
+				window.addEventListener('load', r, { once: true });
+			});
+			S = window.DaimondSeal;
+		}
+		if (!S || typeof S.sealPost !== 'function') {
+			throw new Error(tOr('post.err_no_bridge',
+				'This build cannot compose a message: its message format is not loaded.'));
+		}
+		return S;
+	}
+
+	/// A refusal from the seal, as the sentence this file has always thrown for it, and
+	/// TYPED (S1 D2): the wasm puts its code on the error (`refusal`, src/wasm/seal.rs),
+	/// the bridge carries it as `code` and `refusal`, and the sentence keeps it through
+	/// `refused` -- so `isRefusal` tells a record that will never open from a seal that
+	/// failed (not loaded, boot failed, a trap), which carries no code and is transient.
+	function sealRefusal(e) {
+		switch (e && e.code) {
+			case 'short':        return refused(e.code, new Error(tOr('post.err_short', 'That message is too short to be one.')));
+			case 'not_sealed':   return refused(e.code, new Error(tOr('post.err_not_sealed', 'That is not a sealed Daimond message.')));
+			case 'not_for_you':  return refused(e.code, new Error(tOr('post.err_not_for_you',
+				'This message was not sealed to any key this device holds.')));
+			case 'no_recipient': return refused(e.code, new Error(tOr('post.err_no_recipient',
+				'A sealed message needs at least one recipient key.')));
+			case 'too_many':     return refused(e.code, new Error(tOr('post.err_too_many',
+				'A message can be sealed to at most {n} people at once.', { n: SLOTS_MAX })));
+			case 'bad_key':      return refused(e.code, new Error(tOr('post.err_bad_key',
+				'One of the recipients has no usable key, so nothing was sent.')));
+			case 'damaged':      return refused(e.code, new Error(tOr('post.err_damaged',
+				'This message was changed after it was sealed, or put together from two, so it was not opened.')));
+			default:             return e;
+		}
 	}
 
 	/// Seal bytes to a list of 32-byte X25519 public keys.
@@ -340,37 +361,9 @@
 					'One of the recipients has no usable key, so nothing was sent.'));
 			}
 		}
-
-		var pair = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
-		var epk  = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
-
-		// The content key: one per message, sealed once per slot.
-		var ck  = crypto.getRandomValues(new Uint8Array(32));
-		var aad = cat([new Uint8Array(MAGIC), epk]);
-
-		var slots = [];
-		for (i = 0; i < recipients.length; i++) {
-			var theirs = await crypto.subtle.importKey(
-				'raw', recipients[i], { name: 'X25519' }, false, []);
-			var bits = new Uint8Array(await crypto.subtle.deriveBits(
-				{ name: 'X25519', public: theirs }, pair.privateKey, 256));
-			var k  = await slotKey(bits, epk, recipients[i]);
-			var iv = crypto.getRandomValues(new Uint8Array(IV));
-			var ct = new Uint8Array(await crypto.subtle.encrypt(
-				{ name: 'AES-GCM', iv: iv, additionalData: aad }, k, ck));
-			slots.push(cat([iv, ct]));
-		}
-
-		var head = cat([new Uint8Array(MAGIC), epk, new Uint8Array([recipients.length])]
-			.concat(slots));
-		// The body is bound to the WHOLE head, so a slot cannot be swapped in from
-		// another envelope without the body ceasing to open.
-		var bodyKey = await crypto.subtle.importKey(
-			'raw', ck, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-		var biv = crypto.getRandomValues(new Uint8Array(IV));
-		var bct = new Uint8Array(await crypto.subtle.encrypt(
-			{ name: 'AES-GCM', iv: biv, additionalData: head }, bodyKey, plainBytes));
-		return cat([head, biv, bct]);
+		try {
+			return await (await sealer()).sealPost(recipients, plainBytes);
+		} catch (e) { throw sealRefusal(e); }
 	}
 
 	/// A REFUSAL, TYPED WHERE IT IS RAISED (TAKEROW, 2026-10-16). `takeRow` keeps a row
@@ -403,82 +396,31 @@
 	///
 	/// Throws with a sentence a person can read. A slot that does not open is not
 	/// an error -- most slots in a group message are somebody else's -- so the
-	/// refusal comes only when NONE of them does.
+	/// refusal comes only when NONE of them does. The sealing key stays in
+	/// identity.js: it makes the agreement with the envelope's ephemeral key and
+	/// the seal is handed those 32 bytes, never the key.
+	///
+	/// THE CONTENT KEY COMES BACK OUT WITH THE PLAINTEXT: report.js has to hand an
+	/// operator the sealed form AND the key that opens it, or the report is
+	/// unverifiable, and must not implement the seal a second time to get it.
 	async function unsealFull(bytes) {
 		var b = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
-		if (b.length < 4 + 32 + 1 + SLOT + IV + 16) {
-			throw refused('short', new Error(tOr('post.err_short', 'That message is too short to be one.')));
-		}
-		for (var m = 0; m < 4; m++) {
-			if (b[m] !== MAGIC[m]) {
-				throw refused('not_sealed', new Error(tOr('post.err_not_sealed',
-					'That is not a sealed Daimond message.')));
-			}
-		}
-		var epk = b.slice(4, 36);
-		var n   = b[36];
-		var end = 37 + n * SLOT;
-		if (n === 0 || b.length < end + IV + 16) {
-			throw refused('short', new Error(tOr('post.err_short', 'That message is too short to be one.')));
-		}
-		var head = b.slice(0, end);
-		var aad  = cat([new Uint8Array(MAGIC), epk]);
-
+		var S = await sealer();
+		var epk;
+		try { epk = await S.postEpk(b); } catch (e) { throw sealRefusal(e); }
 		var mine = window.DaimondIdentity ? DaimondIdentity.sealingKeyRaw() : null;
 		if (!mine) {
 			throw new Error(tOr('post.err_no_sealing_key',
 				'This device has no sealing key, so it cannot open a sealed message. '
 				+ 'Unlock Daimond once and one will be made.'));
 		}
-		// One shared secret, one key, tried against every slot. The recipient does
-		// not know which slot is theirs, and an envelope that said would be an
-		// envelope that names its readers.
 		// A LOW-ORDER SENDER KEY (all-zero shared secret) is the record's fault: WebCrypto
 		// refuses it with OperationError (Secure Curves), and identity.js's pure-JS path
 		// answers the same name. Anything else here is this device, and transient.
 		var bits;
 		try { bits = await DaimondIdentity.sharedSecret(epk); }
 		catch (e) { throw tagFailed(e) ? refused('malformed', e) : e; }
-		var k    = await slotKey(bits, epk, mine);
-
-		var ck = null;
-		for (var i = 0; i < n; i++) {
-			var at = 37 + i * SLOT;
-			try {
-				ck = new Uint8Array(await crypto.subtle.decrypt(
-					{ name: 'AES-GCM', iv: b.slice(at, at + IV), additionalData: aad },
-					k, b.slice(at + IV, at + SLOT)));
-				break;
-			} catch (e) {
-				// Not our slot -- or the engine failing, which is no answer about the slot.
-				if (!tagFailed(e)) throw e;
-				ck = null;
-			}
-		}
-		if (!ck) {
-			throw refused('not_for_you', new Error(tOr('post.err_not_for_you',
-				'This message was not sealed to any key this device holds.')));
-		}
-		var bodyKey = await crypto.subtle.importKey(
-			'raw', ck, { name: 'AES-GCM' }, false, ['decrypt']);
-		// THE CONTENT KEY COMES BACK OUT WITH THE PLAINTEXT, and that is the whole
-		// of why this function was split in two. It used to be recovered here and
-		// thrown away, so a caller that needed it later -- report.js, which has to
-		// hand an operator the sealed form AND the key that opens it, or the report
-		// is unverifiable -- had only one way to get it: implement the seal a second
-		// time. This file's own header forbids exactly that, for the reason voice.js
-		// states: a second way of doing this is how one of the two stops being
-		// reviewed.
-		var plain;
-		try {
-			plain = new Uint8Array(await crypto.subtle.decrypt(
-				{ name: 'AES-GCM', iv: b.slice(end, end + IV), additionalData: head },
-				bodyKey, b.slice(end + IV)));
-		} catch (e) {
-			// Our slot opened and the body did not: the head or the body was altered.
-			throw tagFailed(e) ? refused('damaged', e) : e;
-		}
-		return { plain: plain, ck: ck };
+		try { return await S.openPost(b, bits, mine); } catch (e) { throw sealRefusal(e); }
 	}
 
 	/// The plaintext artefact alone, which is what most callers want.
@@ -2471,6 +2413,17 @@
 	async function collect(work) {
 		var st = await read();
 		if (!st) return { ok: false, why: 'locked' };
+		// A SEAL THAT FAILED TO BOOT TAKES NO ROW (S1 D2). Every row opens through the
+		// wasm seal; one not yet up is waited for, and one whose boot failed is this
+		// device failing, not the rows -- so the pass stops before any row, nothing is
+		// recorded or acked, and the next collect after a reload takes them all.
+		if (window.DaimondSeal && window.DaimondSeal.ready) {
+			try { await window.DaimondSeal.ready; }
+			catch (e) {
+				log('the seal did not start; no row taken, all left on the relay', e);
+				return { ok: true, got: 0, notes: 0, unreadable: 0, more: false, stopped: true };
+			}
+		}
 		// NOT `unread`: that is the exported tally, and a local of the same name
 		// here would hide it from `announce` below.
 		var got = 0, notes = 0, badRows = 0, more = false;

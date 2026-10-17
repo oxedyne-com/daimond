@@ -151,9 +151,9 @@ await pause(1500);
 // The clip is `visibility: hidden` until the pointer is on its row, so the row
 // is hovered and the WHOLE row is cropped: a paperclip on its own on a black
 // square teaches a reader nothing about where to find one.
-await p.hover('.files-row:has(.attach-btn)', { force: true }).catch(() => {});
+await p.hover('.files-row:has([data-act="mark"]:not([hidden]))', { force: true }).catch(() => {});
 await pause(400);
-await grab('vocab-paperclip.png', '.files-row:has(.attach-btn)', { pad: 8 });
+await grab('vocab-paperclip.png', '.files-row:has([data-act="mark"]:not([hidden]))', { pad: 8 });
 
 // ── The Go to box ────────────────────────────────────────────────────
 // Ctrl-K is deliberately ignored while the caret is in a text field, and after

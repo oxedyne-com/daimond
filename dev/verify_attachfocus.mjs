@@ -63,7 +63,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, shot, newChat, errors } from './harness.mjs';
+import { open, shot, newChat, errors, workMenu } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -250,7 +250,7 @@ await page.waitForTimeout(300);
 async function openWorkspace() {
 	await page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
 	await page.waitForTimeout(500);
-	await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+	await workMenu(page, 'head', 'refresh');
 	await page.waitForTimeout(800);
 }
 
@@ -288,7 +288,7 @@ await openWorkspace();
 const docsRow0 = await rowFor('docs');   // a folder row, at the root
 check('a folder row exists to check', !!docsRow0, docsRow0 ? '' : 'no "docs" row');
 const folderBtnHidden = docsRow0
-	? await docsRow0.$eval('.attach-btn', b => b.style.display === 'none').catch(() => 'no .attach-btn at all')
+	? await docsRow0.$eval('[data-act="mark"]', b => b.hidden).catch(() => 'no ◈ at all')
 	: 'no row';
 check('WITH NOTHING IN FOCUS, the folder row’s control is hidden', folderBtnHidden === true,
 	JSON.stringify(folderBtnHidden));
@@ -299,7 +299,7 @@ if (notesRow0) { await notesRow0.$eval('.files-name', e => e.click()); await pag
 const specRow0 = await rowFor('spec.md');
 check('a file row exists to check', !!specRow0, specRow0 ? '' : 'no "spec.md" row');
 const fileBtnHidden = specRow0
-	? await specRow0.$eval('.attach-btn', b => b.style.display === 'none').catch(() => 'no .attach-btn at all')
+	? await specRow0.$eval('[data-act="mark"]', b => b.hidden).catch(() => 'no ◈ at all')
 	: 'no row';
 check('WITH NOTHING IN FOCUS, the FILE row’s control is hidden too', fileBtnHidden === true,
 	JSON.stringify(fileBtnHidden));
@@ -334,9 +334,9 @@ await openWorkspace();
 const docsRow = await rowFor('docs');
 check('the "docs" row is offered now a Diamond is in focus', !!docsRow, docsRow ? '' : 'no row');
 if (docsRow) {
-	const shown = await docsRow.$eval('.attach-btn', b => b.style.display !== 'none').catch(() => false);
+	const shown = await docsRow.$eval('[data-act="mark"]', b => !b.hidden).catch(() => false);
 	check('and its control is no longer hidden', shown === true, String(shown));
-	await docsRow.$eval('.attach-btn', b => b.click());
+	await docsRow.$eval('[data-act="mark"]', b => b.click());
 	await page.waitForTimeout(900);
 }
 const dLinks = await page.evaluate(async (id) => {
@@ -474,7 +474,7 @@ if (!specRow) {
 }
 const specRow2 = (await rowFor('spec.md')) || specRow;
 check('the file row is reachable to attach', !!specRow2, specRow2 ? '' : 'no row');
-if (specRow2) { await specRow2.$eval('.attach-btn', b => b.click()); await page.waitForTimeout(600); }
+if (specRow2) { await specRow2.$eval('[data-act="mark"]', b => b.click()); await page.waitForTimeout(600); }
 
 const linksAfterChatAttach = await totalDiamondLinks();
 check('WITH A CHAT IN FOCUS, attaching writes NOTHING to any Diamond’s store',

@@ -125,8 +125,8 @@ test('Compose is bound once, at boot, and what it holds is let go when its draft
 test('Workspace Refresh is bound through the helper and its result is said where the panel keeps notes', () => {
 	const d = read('js', 'daimond.js');
 	assert.equal(count(d, /querySelector\('\[data-act="refresh"\]'\)\.addEventListener/g), 0, 'a bare click on Refresh');
-	assert.match(d, /DaimondAnswer\.control\(\s*panel\.querySelector\('\[data-act="refresh"\]'\)/);
-	assert.match(d, /showModeMsg\(t\('files\.refreshed'\)/);
+	// Since WS2 P4 Refresh is an item of the Workspace head ⋯, and its press still ends in the note.
+	assert.match(d, /item\('refresh', t\('common\.refresh'\), async function \(\) \{\s*if \(await list\(curDir\)\) showModeMsg\(t\('files\.refreshed'\), false, 3000\);/);
 });
 
 test('a note meant to pass takes its own leave', () => {
@@ -156,11 +156,9 @@ test('the delegating host of the Improve board is not read as a control of its o
 
 test('no new chip is given a click that has no answer: a chip with a handler is a role=button with a key', () => {
 	const d = read('js', 'daimond.js');
-	const at = d.indexOf('function modeChip(');
-	const body = d.slice(at, d.indexOf('return c;', at));
-	assert.match(body, /setAttribute\('role', 'button'\)/);
-	assert.match(body, /setAttribute\('tabindex', '0'\)/);
-	assert.match(body, /ev\.key === 'Enter'/);
+	// WS2 P4 took the mode row's chips into the head ⋯, whose items are buttons: no chip is left to bind.
+	assert.equal(d.indexOf('function modeChip('), -1, 'a mode-row chip came back');
+	assert.equal(count(d, /files-mode-chip/g), 0, 'a mode-row chip came back');
 });
 
 // ── U6 (r535): dead controls by role ───────────────────────────────────
@@ -190,9 +188,9 @@ test('every place the composer\'s words change by script re-asks Send, since a s
 	}
 });
 
-test('all three Refresh buttons are built through the helper and end in a note on their panel', () => {
+test('the three Refreshes end in a note on their panel, the two buttons built through the helper', () => {
 	const d = read('js', 'daimond.js'), s = read('js', 'spend.js'), m = read('js', 'modeldash.js');
-	assert.match(d, /DaimondAnswer\.control\(\s*panel\.querySelector\('\[data-act="refresh"\]'\)/);
+	assert.match(d, /item\('refresh', t\('common\.refresh'\), async function \(\) \{\s*if \(await list\(curDir\)\) showModeMsg\(t\('files\.refreshed'\)/);
 	for (const [ src, act ] of [ [ s, 'spend-refresh' ], [ m, 'modeldash-refresh' ] ]) {
 		assert.match(src, new RegExp('DaimondAnswer\\.control\\(\\s*panel\\.querySelector\\(\'\\[data-act="' + act + '"\\]\'\\)'), act + ' is not built through control');
 		assert.equal(count(src, new RegExp('closest\\(\'\\[data-act="' + act + '"\\]\'\\)', 'g')), 0, act + ' still has a delegated bare click');

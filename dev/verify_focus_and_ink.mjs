@@ -394,7 +394,7 @@ const SCENES = {
 /// "clean": it measured a view nobody asked for. Every entry is checked, and a
 /// scene that does not arrive is named, loudly, in the run's output.
 const SCENE_MARK = {
-	work:    '.files-mode-chip',
+	work:    '#panel-work .files-path .path-crumb',
 	models:  '.models-credit-input',
 	menu:    '#settings-menu .pop-head',
 	tools:   '.tools-row, .tool-row, #panel-tools',
@@ -882,8 +882,6 @@ const WAS = `
 :root { --text-muted: #877D70; }
 :root[data-theme="light"] { --text-muted: #787068; }
 :root[data-theme="lollypop"] { --text-muted: #8A5E85; }
-.files-mode-chip.ghost { opacity: 0.55; color: var(--text-secondary); }
-.files-mode-chip.ghost .ic { opacity: 1; }
 .settings-section .models-credit-input::placeholder { color: var(--text-secondary); opacity: .7; }
 `;
 {
@@ -918,8 +916,8 @@ const WAS = `
 	}
 	check(back.some((f) => /pop-note|pop-head|cfg-.*-note|dview-btn/.test(f.sel)),
 		'the quiet rung at its old value is named again');
-	check(back.some((f) => /files-mode-chip/.test(f.sel)),
-		'the ghosted Cloud chip at its old opacity is named again');
+	// The ghosted Cloud chip's old opacity was the third defect here; Workspace round 2 P4 removed the chip
+	// (Cloud is a head ⋯ item now), so there is no element left to put it back on.
 	check(back.some((f) => /models-credit-input::placeholder/.test(f.sel)),
 		'the dimmed placeholder at its old declaration is named again');
 	await page.evaluate(() => { const e = document.getElementById('was-revert'); if (e) e.remove(); });
@@ -1040,6 +1038,14 @@ await SCENES.work();
 //    That is measured below rather than asserted from the spec.
 {
 	await page.evaluate(() => {
+		// A plain stop just before the probe, so the Shift+Tab / Tab pair in `mouseThenKey` turns
+		// on it. Without it the previous stop is whatever the page ends with -- since Workspace
+		// round 2 P4 a tree row, whose own ⋯ shows when the row has focus and so takes the Tab.
+		const pre = document.createElement('button');
+		pre.id = 'probe-ring-pre';
+		pre.textContent = 'pre';
+		pre.style.cssText = 'position:fixed; left:20px; top:330px; z-index:99999;';
+		document.body.appendChild(pre);
 		const b = document.createElement('button');
 		b.id = 'probe-ring';
 		b.textContent = 'ring';
@@ -1081,7 +1087,7 @@ await SCENES.work();
 	check(!!none && hasRing(none.rest) === false, 'the ringless probe really has no ring at rest');
 
 	await page.evaluate(() => {
-		['probe-ring', 'probe-ring-style'].forEach((id) => { const e = document.getElementById(id); if (e) e.remove(); });
+		['probe-ring', 'probe-ring-pre', 'probe-ring-style'].forEach((id) => { const e = document.getElementById(id); if (e) e.remove(); });
 	});
 
 	// 5. The measurement the whole `:focus` question turns on: does Chromium

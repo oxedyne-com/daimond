@@ -24,7 +24,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099). No gateway.
-import { open, errors } from './harness.mjs';
+import { open, errors, workMenu, workMenuItems, WORK_MENU } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -83,20 +83,20 @@ const mode = () => p.evaluate(async () => {
 	return mod.workspace_mode();
 });
 
-/// Click a chip in the mode row by its icon: 0 is Browser, 1 is Machine.
-const chip = (i) => p.evaluate((i) => {
-	const chips = [...document.querySelectorAll('.files-mode-chip')];
-	if (chips[i]) chips[i].click();
-	return chips.length;
-}, i);
+/// The store switch in the Workspace head ⋯: 0 is browser storage, 1 a folder on this computer.
+/// Waits for the switch to land (a folder's activation is not instant under load), up to 10 s.
+const chip = async (i) => {
+	let pressed = false;
+	for (let n = 0; n < 10 && !pressed; n++) {
+		pressed = await workMenu(p, 'head', ['browser', 'machine'][i]);
+		if (!pressed) await p.waitForTimeout(300);
+	}
+	for (let n = 0; n < 50 && (await mode()) !== ['opfs', 'folder'][i]; n++) await p.waitForTimeout(200);
+	return pressed;
+};
 
-/// Click one of the two transfer buttons by its label.
-const transfer = (re) => p.evaluate((re) => {
-	const btns = [...document.querySelectorAll('.files-mode-btn')];
-	const b = btns.find(x => new RegExp(re, 'i').test(x.textContent || ''));
-	if (b) b.click();
-	return btns.map(x => x.textContent);
-}, re);
+/// One of the two transfers in the Workspace head ⋯: 'import' or 'savecopy'.
+const transfer = (act) => workMenu(p, 'head', act);
 
 /// The mode row's own status line, which is all the user is told.
 const modeMsg = () => p.evaluate(() => {
@@ -173,17 +173,18 @@ check('and the agent reads the folder\'s file, not the sandbox\'s',
 
 await chip(0);
 await p.waitForTimeout(900);
+const offered = await workMenuItems(p, 'head');
 check('back in the sandbox, both transfers are offered',
-	(await transfer('nothing-matches')).length === 2, (await transfer('nothing-matches')).join(' | '));
+	offered.includes('import') && offered.includes('savecopy'), offered.join(' | '));
 
 // ── Save a copy, with the folder reconnecting under it ───────────────────
 
 // The picker takes a moment, and the app reconnects the folder in that moment —
 // which is what the boot reconnect does. The transfer is already running.
+await p.evaluate(`window.__workMenu = ${WORK_MENU}`);
 await p.evaluate(() => {
 	window.__reconnectThenPick = (which) => async () => {
-		const chips = [...document.querySelectorAll('.files-mode-chip')];
-		if (chips[1]) chips[1].click();
+		window.__workMenu(['head', 'machine']);
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		for (let i = 0; i < 60 && mod.workspace_mode() !== 'folder'; i++) {
 			await new Promise(r => setTimeout(r, 50));
@@ -192,7 +193,7 @@ await p.evaluate(() => {
 	};
 	window.showDirectoryPicker = window.__reconnectThenPick('savedest');
 });
-await transfer('save a copy');
+await transfer('savecopy');
 await waitForSaved();
 
 check('the reconnect really did land mid-transfer', (await mode()) === 'folder', await mode());
@@ -209,7 +210,7 @@ check('and what it says it saved is what it saved',
 await chip(0);
 await p.waitForTimeout(900);
 await p.evaluate(() => { window.showDirectoryPicker = window.__reconnectThenPick('mach-src'); });
-await transfer('import a folder|copy in a folder');
+await transfer('import');
 await p.waitForSelector('.dlg-ok', { timeout: 15000 });
 await p.click('.dlg-ok');
 await p.waitForTimeout(2500);
@@ -234,14 +235,14 @@ check('and nothing was written into the sandbox instead', strayed === 'clean', s
 await chip(0);
 await p.waitForTimeout(900);
 await p.evaluate(() => { window.showDirectoryPicker = async () => window.__dirs.sanddest; });
-await transfer('save a copy');
+await transfer('savecopy');
 await p.waitForTimeout(3000);
 const sandSaved = await listDir('.sanddest');
 check('in the sandbox, a save-a-copy still copies the sandbox out',
 	sandSaved.includes('sand.md:SANDBOX-PAYLOAD'), sandSaved.slice(0, 4).join(' '));
 
 await p.evaluate(() => { window.showDirectoryPicker = async () => window.__dirs['sand-src']; });
-await transfer('import a folder|copy in a folder');
+await transfer('import');
 await p.waitForSelector('.dlg-ok', { timeout: 15000 });
 await p.click('.dlg-ok');
 await p.waitForTimeout(2500);

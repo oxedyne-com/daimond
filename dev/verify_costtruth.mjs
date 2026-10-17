@@ -173,7 +173,9 @@ await p.evaluate(async (ns) => {
 
 const NAME = 'ns-probe.txt';
 const chooser = p.waitForEvent('filechooser', { timeout: 8000 });
-await p.click('[data-act="upload"]', { force: true });
+// + New's Upload (Workspace round 2 P4), pressed as a person does: a file chooser opens only on a real press.
+await p.click('#panel-work .files-path [data-act="new"]', { force: true });
+await p.click('.railhead-menu[data-menu="new"] [data-act="upload"]', { force: true });
 await (await chooser).setFiles({
 	name: NAME, mimeType: 'text/plain', buffer: Buffer.from('written under a namespace'),
 });

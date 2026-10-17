@@ -10,28 +10,27 @@
 // silently drops is a file he cannot see he has.
 //
 // The filter was there for clutter, and clutter is a design problem. So the
-// answer is one shut row at the foot of the tree, carrying a count, with
-// everything the panel used to withhold inside it -- and his own files exactly
-// where they were, at the top.
+// answer is a switch: the head ⋯'s Show hidden files (Workspace round 2 P4; it
+// was a shut row with a count at the foot of the tree until then), off on first
+// paint, which draws everything the panel used to withhold below his own files
+// -- and his own files exactly where they were, at the top.
 //
 // ── WHAT IT ASSERTS, WHICH IS THE PROPERTY AND NOT THE FIX ───────────────────
 //
-// Not "the row exists". Three properties, and each can hold while another
+// Not "the switch exists". Three properties, and each can hold while another
 // breaks:
 //
 //   * NOTHING IS CONCEALED. Every dotfile at a level is reachable from that
 //     level, and a file inside one opens and reads like any other.
 //   * HIS OWN FILES ARE NOT MOVED. The tidying is not paid for by burying his
 //     work one click deeper.
-//   * THE ROW IS HONEST ABOUT ITS SIZE. The count says what opening it costs,
-//     and a `.git` of three hundred objects is ONE row here, not three hundred
-//     -- the tree lists one directory at a time and opening the row lists
-//     nothing at all.
+//   * SHOWING THEM COSTS NOTHING. A `.git` of three hundred objects is ONE row
+//     here, not three hundred -- the tree lists one directory at a time and
+//     the switch lists nothing at all.
 //
 //   node dev/verify_ownfiles.mjs
 //   node dev/verify_ownfiles.mjs --break nogroup       # the defect, restored
 //   node dev/verify_ownfiles.mjs --break openbydefault # tidy claim, untidy panel
-//   node dev/verify_ownfiles.mjs --break nocount       # a triangle with no size on it
 //   node dev/verify_ownfiles.mjs --break nopersist     # shut again on every reload
 //
 // A `--break` run EXPECTS to fail: exit 0 when something reddened, 1 when
@@ -42,7 +41,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, shot, errors } from './harness.mjs';
+import { open, signInAs, shot, errors, workMenu, workMenuItems } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -72,15 +71,10 @@ const BREAKS = {
 		find: "\t\t\ttry { return localStorage.getItem(LS_RESTGROUP) === '1'; }",
 		with: "\t\t\ttry { return true; }   // --break openbydefault",
 	}],
-	nocount: [{
-		file: 'js/daimond.js',
-		find: "\t\t\tn.textContent = tn('files.rest_count', rest.length);",
-		with: "\t\t\tn.textContent = '';   // --break nocount",
-	}],
 	nopersist: [{
 		file: 'js/daimond.js',
-		find: "\t\t\t\ttry { localStorage.setItem(LS_RESTGROUP, restOpen ? '1' : '0'); }",
-		with: "\t\t\t\ttry { /* --break nopersist */ }",
+		find: "\t\t\ttry { localStorage.setItem(LS_RESTGROUP, restShown ? '1' : '0'); }",
+		with: "\t\t\ttry { /* --break nopersist */ }",
 	}],
 };
 
@@ -147,10 +141,7 @@ check('0 the fixture is written', seeded === true);
 async function openWorkspace() {
 	await p.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
 	await sleep(500);
-	await p.evaluate(() => {
-		const b = document.querySelector('#panel-work [data-act="refresh"]');
-		if (b) b.click();          // NOT page.click: a forced click is inert headless
-	});
+	await workMenu(p, 'head', 'refresh');   // the page's own click: a forced page.click is inert headless
 	await sleep(1200);
 }
 
@@ -160,32 +151,38 @@ const tree = () => p.evaluate(() => {
 	if (!t) return null;
 	const clean = el => ((el.querySelector('.files-name') || {}).textContent || '')
 		.replace(/^[^A-Za-z0-9._-]+/, '').trim();
-	const head = t.querySelector('.files-rest-head');
-	const body = t.querySelector('.files-rest-body');
-	const countEl = t.querySelector('.files-rest-count');
+	// Laid out, not merely in the DOM: a row that is there but styled away would
+	// pass a query and still not be on the screen.
+	const rows = [...t.children].filter(c => c.classList.contains('files-row') && !!c.offsetParent).map(clean);
+	const hid = (n) => n.charAt(0) === '.' || ['mail', 'prompts', 'chats', 'system'].includes(n);
+	const first = rows.findIndex(hid);
 	return {
-		row:      !!head,
-		label:    head ? (head.querySelector('.files-rest-label') || {}).textContent : '',
-		count:    countEl ? countEl.textContent : '',
-		expanded: head ? head.getAttribute('aria-expanded') : null,
-		// `hidden` AND laid out: a body that is `hidden` but styled visible would
-		// pass the attribute and still be on the screen.
-		shown:    body ? !!body.offsetParent : null,
-		// Direct children of the tree are the top level; the row's own wrapper is
-		// a sibling of them, so its contents cannot leak into this list.
-		top:      [...t.children].filter(c => c.classList.contains('files-row')).map(clean),
-		inside:   body ? [...body.querySelectorAll('.files-row')].map(clean) : [],
-		// Is the row LAST, under his own files rather than over them?
-		last:     !!head && t.lastElementChild === head.parentElement,
+		rows,
+		mine:   rows.filter(n => !hid(n)),
+		hidden: rows.filter(hid),
+		// Are the hidden rows LAST, under his own files rather than among them?
+		last:   first < 0 || rows.slice(first).every(hid),
 	};
 });
 
-/// Press the row's head, from inside the page.
-async function toggleRest() {
-	await p.evaluate(() => {
-		const h = document.querySelector('#panel-work .files-rest-head');
-		if (h) h.click();
+/// The head ⋯'s Show hidden files: on screen, and whether it is ticked.
+const switchState = async () => {
+	const has = (await workMenuItems(p, 'head')).includes('hidden');
+	const on = await p.evaluate(() => {
+		const b = document.querySelector('#panel-work [data-act="ws-more"]');
+		if (!b) return null;
+		b.click();
+		const it = document.querySelector('.railhead-menu[data-menu="head"] [data-act="hidden"]');
+		const v = it ? it.getAttribute('aria-checked') : null;
+		if (document.querySelector('.railhead-menu[data-menu="head"]')) b.click();
+		return v;
 	});
+	return { has, on };
+};
+
+/// Press the head ⋯'s Show hidden files.
+async function toggleRest() {
+	await workMenu(p, 'head', 'hidden');
 	await sleep(500);
 }
 
@@ -203,64 +200,55 @@ async function clickRow(name) {
 
 await openWorkspace();
 
-// ── 1. The row is there, shut, and under his own files ───────────────────────
+// ── 1. The switch is there, and off on first paint ───────────────────────────
 const t0 = await tree();
-check('1a the tree carries the row', !!t0 && t0.row === true);
-check('1b AND IT IS SHUT ON FIRST PAINT',
-	!!t0 && t0.expanded === 'false' && t0.shown === false,
-	t0 ? `aria-expanded=${t0.expanded} laid out=${t0.shown}` : 'no tree');
-check('1c and it sits at the foot of the tree, under his own files',
-	!!t0 && t0.last === true);
+const sw0 = await switchState();
+check('1a the head ⋯ offers Show hidden files', sw0.has === true);
+check('1b AND IT IS OFF ON FIRST PAINT',
+	sw0.on === 'false' && !!t0 && t0.hidden.length === 0,
+	`aria-checked=${sw0.on} hidden rows ${t0 ? JSON.stringify(t0.hidden) : 'no tree'}`);
 await shot(s, 'ownfiles-shut');
 
 // ── 2. His own files did not move ────────────────────────────────────────────
 //
 // The whole tidying is worthless if it was paid for by burying his work.
 check('2a HIS OWN FILES ARE AT THE TOP LEVEL',
-	!!t0 && t0.top.includes('notes.md') && t0.top.includes('myproject'),
-	t0 ? JSON.stringify(t0.top) : '');
-check('2b and none of them was swept into the row',
-	!!t0 && !t0.inside.includes('notes.md') && !t0.inside.includes('myproject'),
-	t0 ? JSON.stringify(t0.inside) : '');
-check('2c while it is shut, nothing of the rest is on the screen',
-	!!t0 && !t0.top.includes('.daimond') && !t0.top.includes('.git') && t0.shown === false);
+	!!t0 && t0.mine.includes('notes.md') && t0.mine.includes('myproject'),
+	t0 ? JSON.stringify(t0.rows) : '');
+check('2b while the switch is off, nothing of the rest is on the screen',
+	!!t0 && !t0.rows.includes('.daimond') && !t0.rows.includes('.git') && !t0.rows.includes('mail'),
+	t0 ? JSON.stringify(t0.rows) : '');
 
-// ── 3. The count, which is what says whether opening it costs anything ───────
+// ── 3. Showing them costs nothing ────────────────────────────────────────────
 //
-// Read BEFORE the row is opened: it is a promise about what is inside, and a
-// count computed after the fact would be no promise at all.
-const promised = t0 && /(\d+)/.test(t0.count) ? parseInt(t0.count.match(/(\d+)/)[1], 10) : -1;
-check('3a the row says how many entries it holds', promised > 0, t0 ? JSON.stringify(t0.count) : '');
-
 // Timed, because "it does not walk" is a claim about cost and the honest way to
-// make it is with a clock. The rows inside the row were built from the SAME
-// listing the tree was drawn from -- one `file_list` of the current directory,
-// which happened before the row existed -- so pressing it lays out what is
-// already in the DOM and asks the engine for nothing.
+// make it is with a clock. The hidden rows are built from the SAME listing the
+// tree was drawn from -- one `file_list` of the current directory, which
+// happened before the switch was pressed -- so pressing it lays out what is
+// already held and asks the engine for nothing.
 const pressed = Date.now();
 await toggleRest();
 const tookMs = Date.now() - pressed - 500;   // less the settle `toggleRest` sleeps
 const t1 = await tree();
-check('3b OPENING IT REVEALS EXACTLY WHAT IT PROMISED',
-	!!t1 && t1.inside.length === promised,
-	t1 ? `promised ${promised}, showed ${t1.inside.length}` : '');
-check('3c and a fat .git is ONE entry in it, not its contents',
-	!!t1 && t1.inside.includes('.git') && t1.inside.length < 20,
-	t1 ? `${t1.inside.length} rows for a .git of ${GIT_OBJECTS} objects` : '');
-check('3d and opening it lists nothing: no directory is walked to fill it',
-	tookMs < 150, `${tookMs} ms to open over a .git of ${GIT_OBJECTS} objects`);
+check('3a a fat .git is ONE row, not its contents',
+	!!t1 && t1.hidden.includes('.git') && t1.hidden.length < 20,
+	t1 ? `${t1.hidden.length} hidden rows for a .git of ${GIT_OBJECTS} objects` : '');
+check('3b and showing them lists nothing: no directory is walked to fill them',
+	tookMs < 150, `${tookMs} ms to show over a .git of ${GIT_OBJECTS} objects`);
 
 // ── 4. Nothing is concealed ──────────────────────────────────────────────────
 check('4a `.daimond` IS THERE, WHICH IS THE WHOLE REQUEST',
-	!!t1 && t1.inside.includes('.daimond'), t1 ? JSON.stringify(t1.inside) : '');
+	!!t1 && t1.hidden.includes('.daimond'), t1 ? JSON.stringify(t1.rows) : '');
 check('4b and so is every other dotfile the panel used to drop',
-	!!t1 && ['.git', '.gitignore', '.env'].every(n => t1.inside.includes(n)),
-	t1 ? JSON.stringify(t1.inside) : '');
-check('4c and Daimond’s own working folders are in it too, not among his files',
-	!!t1 && t1.inside.includes('mail') && t1.inside.includes('prompts')
-		&& !t1.top.includes('mail') && !t1.top.includes('prompts'),
-	t1 ? `inside ${JSON.stringify(t1.inside)} / top ${JSON.stringify(t1.top)}` : '');
-check('4d the row is open and laid out', !!t1 && t1.expanded === 'true' && t1.shown === true);
+	!!t1 && ['.git', '.gitignore', '.env'].every(n => t1.hidden.includes(n)),
+	t1 ? JSON.stringify(t1.rows) : '');
+check('4c and Daimond’s own working folders are shown with them',
+	!!t1 && t1.hidden.includes('mail') && t1.hidden.includes('prompts'),
+	t1 ? JSON.stringify(t1.rows) : '');
+check('4d they follow his own files, which did not move',
+	!!t1 && t1.last === true && t1.mine.includes('notes.md') && t1.mine.includes('myproject'),
+	t1 ? JSON.stringify(t1.rows) : '');
+check('4e and the switch says it is on', (await switchState()).on === 'true');
 await shot(s, 'ownfiles-open');
 
 // ── 5. Once open it is an ordinary tree ──────────────────────────────────────
@@ -268,9 +256,9 @@ check('5a `.daimond` can be walked into', await clickRow('.daimond'));
 await sleep(900);
 const t2 = await tree();
 check('5b and it lists like any other folder',
-	!!t2 && t2.top.includes('skills'), t2 ? JSON.stringify(t2.top) : '');
+	!!t2 && t2.rows.includes('skills'), t2 ? JSON.stringify(t2.rows) : '');
 check('5c a folder walked into is listed one level at a time',
-	!!t2 && t2.top.length <= 4, t2 ? `${t2.top.length} rows` : '');
+	!!t2 && t2.rows.length <= 4, t2 ? `${t2.rows.length} rows` : '');
 check('5d and its contents can be walked in turn', await clickRow('skills'));
 await sleep(900);
 check('5e A FILE INSIDE IT OPENS', await clickRow('mine.md'));
@@ -323,27 +311,26 @@ async function reboot() {
 const saved = await p.evaluate(() => {
 	try { return localStorage.getItem('daimond-files-rest'); } catch (e) { return null; }
 });
-check('6a the open state is written down where the panel’s other state is',
+check('6a the switch is written down where the panel’s other state is',
 	saved === '1', JSON.stringify(saved));
 
 check('6b the session came back from a reload', await reboot());
 await openWorkspace();
 const t3 = await tree();
-check('6c IT COMES BACK OPEN AFTER A RELOAD',
-	!!t3 && t3.expanded === 'true' && t3.shown === true,
-	t3 ? `aria-expanded=${t3.expanded} laid out=${t3.shown}` : 'no tree');
+check('6c THE HIDDEN FILES ARE STILL SHOWN AFTER A RELOAD',
+	!!t3 && t3.hidden.includes('.daimond'), t3 ? JSON.stringify(t3.rows) : 'no tree');
 check('6d and his own files are still at the top level where he left them',
-	!!t3 && t3.top.includes('notes.md'), t3 ? JSON.stringify(t3.top) : '');
+	!!t3 && t3.mine.includes('notes.md'), t3 ? JSON.stringify(t3.rows) : '');
 
-// Shut it again, and that is remembered too — the preference is a preference in
+// Off again, and that is remembered too — the preference is a preference in
 // both directions, not a one-way door.
 await toggleRest();
 check('6e the session came back from the second reload', await reboot());
 await openWorkspace();
 const t4 = await tree();
-check('6f and shutting it again is remembered as well',
-	!!t4 && t4.expanded === 'false' && t4.shown === false,
-	t4 ? `aria-expanded=${t4.expanded}` : 'no tree');
+check('6f and turning it off again is remembered as well',
+	!!t4 && t4.hidden.length === 0 && t4.mine.includes('notes.md'),
+	t4 ? JSON.stringify(t4.rows) : 'no tree');
 
 // ── 7. The console ───────────────────────────────────────────────────────────
 const errs = errors(s).filter(e => !/favicon|404|401|402|502|Bad Gateway|Account service|net::ERR/.test(e));

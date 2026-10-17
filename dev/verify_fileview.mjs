@@ -66,7 +66,7 @@
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and a wasm built since
 // `file_probe` landed. No gateway, no mock LLM.
 import fs from 'node:fs';
-import { open, scratch } from './harness.mjs';
+import { open, scratch, workMenu } from './harness.mjs';
 
 const PROFILE = scratch('pw', 'fileview');
 fs.rmSync(PROFILE, { recursive: true, force: true });
@@ -581,10 +581,7 @@ try {
 	await page.waitForTimeout(600);
 	// The tree was drawn before those writes, so it is relisted through the
 	// panel's own Refresh rather than by calling in.
-	await page.evaluate(() => {
-		const r = document.querySelector('.files-actions [data-act="refresh"]');
-		if (r) r.click();
-	});
+	await workMenu(page, 'head', 'refresh');
 	await page.waitForTimeout(800);
 
 	/// Click a row in the Workspace tree and say what the PREVIEW panel then holds.

@@ -28,7 +28,7 @@
 //   node dev/verify_inlinesplit.mjs --break nosplit    # no placement of a held split copy (S13): C2P fails
 //   node dev/verify_inlinesplit.mjs --break renameedit # a kept edit re-names V1's manifest as newest: the ancestor returns
 //   --trace                                            # each device's notes/p* index entries, round by round (C2*)
-import { open, signInAs, scratch, markHere } from './harness.mjs';
+import { open, signInAs, scratch, markHere, workMenu } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import fs from 'node:fs';
@@ -142,7 +142,7 @@ const folderNow = (s) => s.page.evaluate(() => (window.DaimondFiles && DaimondFi
 async function toMachine(s, dir) {
 	await armPicker(s, dir);
 	await s.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work')); await sleep(500);
-	await s.page.evaluate(() => { const c = [...document.querySelectorAll('.files-mode-chip')]; if (c[1]) c[1].click(); });
+	await workMenu(s.page, 'head', 'machine');
 	const t0 = Date.now();
 	while (Date.now() - t0 < 15000) { if ((await folderNow(s)) === dir) return true; await sleep(200); }
 	return false;

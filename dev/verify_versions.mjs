@@ -70,7 +70,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { open, shot, scratch, errors, signInAs, steerDiamond, storedChats, pressRowMark } from './harness.mjs';
+import { open, shot, scratch, errors, signInAs, steerDiamond, storedChats, pressRowMark, workMenu } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -860,7 +860,7 @@ try {
 	await writeWorkspace(page, 'live/site.txt', 'v1 on the site');
 	await page.evaluate(() => DaimondPanels.show('work'));
 	await page.waitForTimeout(700);
-	await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+	await workMenu(page, 'head', 'refresh');
 	await page.waitForTimeout(1000);
 	// THE ROW'S ◈, which is where marking a folder lives now; the row paperclip this pressed
 	// moved into the Doc panel's toolbar, so the old lookup found nothing to press.

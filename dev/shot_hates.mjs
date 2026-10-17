@@ -24,7 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, newChat } from './harness.mjs';
+import { open, newChat, workMenu } from './harness.mjs';
 
 const SHOTS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'shots');
 
@@ -93,7 +93,7 @@ await shotOf('#chat-attachments', 'footer');
 // something to do.
 await page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
 await sleep(700);
-await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+await workMenu(page, 'head', 'refresh');
 await sleep(800);
 await page.evaluate(() => {
 	const row = [...document.querySelectorAll('#panel-work .files-row')]

@@ -120,17 +120,24 @@
 	// open rather than opening something. The open path also reads a legacy `DPY1`
 	// (the same key, no AAD, the first-hour form) and a legacy post.js `DPS1` X25519
 	// envelope, so a hand-off in flight across a rollout is never dropped.
-	var PEER_AAD    = 'daimond/peer/env/1';						// the envelope's GCM domain
-	var SYM_MAGIC   = new Uint8Array([0x44, 0x50, 0x59, 0x32]);	// "DPY2" -- AAD-bound
-	var SYM_MAGIC_1 = new Uint8Array([0x44, 0x50, 0x59, 0x31]);	// "DPY1" -- legacy, no AAD
+	// The tags and the AAD are the Rust seal's (`src/seal/peer.rs`), reached through
+	// `window.DaimondSeal` (daimond.js); the AES-GCM under the account key stays with
+	// identity.js, which holds that key.
+	var PEER_AAD = 'daimond/peer/env/1';	// the envelope's GCM domain (peer::AAD)
 
-	/// Do the first four bytes match this scheme tag?
-	function tagged(bytes, tag) {
-		if (!bytes || bytes.length < tag.length) return false;
-		for (var i = 0; i < tag.length; i++) {
-			if (bytes[i] !== tag[i]) return false;
+	/// The seal bridge; its calls wait for the wasm, so an early hand-off waits too
+	/// (and one made while the page still parses waits for the module to publish it).
+	async function sealBridge() {
+		if (!window.DaimondSeal && typeof document !== 'undefined' && document.readyState !== 'complete') {
+			await new Promise(function (r) {
+				document.addEventListener('DOMContentLoaded', r, { once: true });
+				window.addEventListener('load', r, { once: true });
+			});
 		}
-		return true;
+		if (!window.DaimondSeal || typeof window.DaimondSeal.scheme !== 'function') {
+			throw new Error('peer: the seal is not loaded, so nothing can be sealed or opened.');
+		}
+		return window.DaimondSeal;
 	}
 
 	/// Concatenate byte arrays into one Uint8Array.
@@ -670,7 +677,7 @@
 		// tells this scheme from a legacy one without a trial decrypt; the purpose
 		// (not the tag bytes) is bound in as AAD, which domain-separates this key's
 		// uses -- a body for another purpose fails to open here, and vice versa.
-		var sealed = cat([SYM_MAGIC, await window.DaimondIdentity.wrapBytesAad(plain, PEER_AAD)]);
+		var sealed = await (await sealBridge()).peerFrame(await window.DaimondIdentity.wrapBytesAad(plain, PEER_AAD));
 		// The delivery address is the account's public key in the BASE64URL form the
 		// gateway binds an account to (identity.js:publicKeyB64url). It is NOT the hex
 		// of the raw key: the gateway looks a delivery up by the b64url string, so a
@@ -765,14 +772,15 @@
 		// legacy, same key, no AAD) both open under this account's symmetric key; a
 		// GCM failure is "sealed under a different account key" -- named, not left as
 		// a raw OperationError -- the symmetric analogue of post.js's "not for you".
-		var sym = tagged(bytes, SYM_MAGIC) ? SYM_MAGIC : (tagged(bytes, SYM_MAGIC_1) ? SYM_MAGIC_1 : null);
+		var scheme = await (await sealBridge()).scheme(bytes);
+		var sym = (scheme === 'DPY2' || scheme === 'DPY1') ? scheme : null;
 		if (sym) {
 			if (!window.DaimondIdentity || !window.DaimondIdentity.unwrapBytesAad) {
 				throw new Error('peer: no identity, so a sealed peer body cannot be opened.');
 			}
-			var body = bytes.subarray(sym.length);
+			var body = bytes.subarray(4);
 			try {
-				return sym === SYM_MAGIC
+				return sym === 'DPY2'
 					? await window.DaimondIdentity.unwrapBytesAad(body, PEER_AAD)
 					: await window.DaimondIdentity.unwrapBytes(body);	// DPY1 legacy, drop next release
 			} catch (e) {

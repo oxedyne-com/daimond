@@ -42,7 +42,7 @@ let mode = 'opfs', folder = '';
 while (Date.now() - t0 < 240000) {
 	const st = await p.evaluate(async () => {
 		const mod  = await import('../pkg/oxedyne_daimond.js');
-		const chip = document.querySelector('.files-mode-chip');
+		const chip = document.querySelector('#panel-work .files-path .path-crumb');   // the store's name heads the crumb line (P4)
 		return { mode: mod.workspace_mode(), chip: chip ? chip.textContent.trim() : '' };
 	}).catch(() => ({ mode: 'opfs', chip: '' }));
 	if (st.mode === 'folder') { mode = st.mode; folder = st.chip; break; }

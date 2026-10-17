@@ -1157,6 +1157,10 @@ if [ $# -eq 0 ]; then
 	# `JsFuture` is named only in `settle_js`: on 2026-10-14 a synchronous `DaimondWeb.status` made
 	# `.then` throw inside the wasm, and every web_click and web_type wedged its runner (UNBLOCK-7).
 	static_one jsfuture     bash dev/breakproof_jsfuture.sh
+	# No seal is implemented in www/js outside the key holders (identity.js, passkey.js): DPS1,
+	# DPY2 and the account wrap are written and read by src/seal/ through window.DaimondSeal, the
+	# one implementation the native runner shares (S1 SEAL, 16 Oct 2026).
+	static_one sealjs       bash dev/breakproof_sealjs.sh
 fi
 
 # ── Phase 0b: the Rust tests, counted ───────────────────────────────────────

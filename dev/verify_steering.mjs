@@ -27,7 +27,7 @@
 //
 // A break whose every anchor does not match exactly once exits 2. The engine's own lint and clause order are Rust and cannot be broken
 // from here (lane V runs no cargo): each break damages the PAGE side of the same guarantee, so the wire check goes red.
-import { open, scratch, signInAs, newChat, connectMock, chat, mockLog, clearMockLog, contentText, APP } from './harness.mjs';
+import { open, scratch, signInAs, newChat, connectMock, chat, mockLog, clearMockLog, contentText, APP, workMenu } from './harness.mjs';
 import { pair, settle, send, freshChat, storedMsgs, answersFor, placeholders, until } from './handoffpair.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
@@ -291,8 +291,7 @@ async function mount(D) {
 		dir.queryPermission = async () => 'granted'; dir.requestPermission = async () => 'granted'; window.showDirectoryPicker = async () => dir; });
 	await D.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
 	await D.page.waitForTimeout(700);
-	await D.page.evaluate(() => { const chips = [...document.querySelectorAll('.files-mode-chip')];
-		const m = chips.find((c) => /machine/.test(c.className) || c.querySelector('[data-icon="machine"]')) || chips[1]; if (m) m.click(); });
+	await workMenu(D.page, 'head', 'machine');
 	await D.page.waitForTimeout(2500);
 	return D.page.evaluate(async () => { const mod = await import('/pkg/oxedyne_daimond.js'); return { mode: mod.workspace_mode(), handle: !!(window.DaimondFiles && DaimondFiles.folder()) }; });
 }

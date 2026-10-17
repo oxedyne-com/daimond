@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
-import { open } from './harness.mjs';
+import { open, WORK_MENU } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
 import { guardRan } from './verdict.mjs';
@@ -232,6 +232,7 @@ try {
 	// inside the tree being copied.
 	await page.evaluate(() => { try { DaimondPanels.open('work'); } catch (e) { /* already */ } });
 	await page.waitForTimeout(800);
+	await page.evaluate(`window.__workMenu = ${WORK_MENU}`);
 	const exported = await page.evaluate(async () => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
@@ -244,10 +245,8 @@ try {
 		const realPicker = window.showDirectoryPicker;
 		window.showDirectoryPicker = async () => dest;
 		try {
-			const btns = Array.from(document.querySelectorAll('#panel-work .files-mode-btn'));
-			const save = btns.find(b => /Save a copy/i.test(b.textContent));
-			if (!save) return { ran: false };
-			save.click();
+			// Save a copy, in the Workspace head ⋯.
+			if (!window.__workMenu(['head', 'savecopy'])) return { ran: false };
 			// Give the walk time to finish; it writes file by file.
 			for (let i = 0; i < 60; i++) {
 				await new Promise(r => setTimeout(r, 250));

@@ -45,7 +45,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, errors, scratch, signInAs, storedChats, markHere } from './harness.mjs';
+import { open, errors, scratch, signInAs, storedChats, markHere, workMenu } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -329,15 +329,10 @@ const folder = await p.evaluate(async () => {
 });
 check('a folder is ready to be picked', folder === true);
 
-// Open the Workspace panel and press the Machine chip, which is where the mode
-// row puts "open a folder".
+// Open the Workspace panel and press the head ⋯'s Open a folder on this computer.
 await p.evaluate(() => window.DaimondPanels && window.DaimondPanels.open && window.DaimondPanels.open('work'));
 await p.waitForTimeout(600);
-await p.evaluate(() => {
-	const chips = [...document.querySelectorAll('.files-mode-chip')];
-	const machine = chips.find(c => /machine/.test(c.className) || c.querySelector('[data-icon="machine"]')) || chips[1];
-	if (machine) machine.click();
-});
+await workMenu(p, 'head', 'machine');
 await p.waitForTimeout(1200);
 
 const mode = await p.evaluate(async () => {
@@ -489,11 +484,8 @@ check('and the file nobody deleted is untouched throughout',
 
 // Prove the parcel a folder-mode device sends is harmless on the far side, by
 // feeding it to the merge on a device that holds files.
-// Back to the sandbox the way a user goes back: the Browser chip in the mode row.
-await p.evaluate(() => {
-	const chips = [...document.querySelectorAll('.files-mode-chip')];
-	if (chips[0]) chips[0].click();
-});
+// Back to the sandbox the way a user goes back: the head ⋯'s Use this browser.
+await workMenu(p, 'head', 'browser');
 await p.waitForTimeout(900);
 const afterFolderParcel = await applyAndList({ v: 2, chats: [], files: {}, filesComplete: mode.complete });
 check('and merging that very parcel leaves the other device\'s workspace intact',

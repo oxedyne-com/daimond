@@ -57,7 +57,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, shot, SCRATCH } from './harness.mjs';
+import { open, shot, SCRATCH, workMenu } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -266,10 +266,7 @@ check('unlocked: the driver compiles a real document to real PDF bytes',
 async function openTheTypFile() {
 	await p.evaluate(() => window.DaimondPanels.show('work'));
 	await sleep(400);
-	await p.evaluate(() => {
-		const r = document.querySelector('#panel-work [data-act="refresh"]');
-		if (r) r.click();
-	});
+	await workMenu(p, 'head', 'refresh');
 	await sleep(900);
 	return await p.evaluate((src) => {
 		const rows = Array.from(document.querySelectorAll('#panel-work .files-row'));

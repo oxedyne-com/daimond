@@ -21,7 +21,7 @@
 //
 //   node dev/verify_cmgqa_revert.mjs [--arms=HE]
 import crypto from 'node:crypto';
-import { open, signInAs, scratch, markHere } from './harness.mjs';
+import { open, signInAs, scratch, markHere, workMenu } from './harness.mjs';
 import { makePagePro, GW_URL } from './pro.mjs';
 import { GWDIR } from './gwbin.mjs';
 import { guardRan } from './verdict.mjs';
@@ -223,11 +223,7 @@ async function armFolder() {
 		});
 		await pa.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
 		await sleep(600);
-		await pa.evaluate(() => {
-			const chips = [...document.querySelectorAll('.files-mode-chip')];
-			const machine = chips.find((c) => /machine/.test(c.className) || c.querySelector('[data-icon="machine"]')) || chips[1];
-			if (machine) machine.click();
-		});
+		await workMenu(pa, 'head', 'machine');
 		await sleep(1500);
 		const m = await pa.evaluate(async () => {
 			const mod = await import('/pkg/oxedyne_daimond.js');

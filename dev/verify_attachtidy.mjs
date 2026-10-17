@@ -11,9 +11,15 @@
 //      chip of its own — `attachmentsOf`'s nested dedupe.
 //   3. `harvestArtefacts` does not harvest a file under an attached `dir:`
 //      link, or a dot-prefixed basename.
-//   4. A link `by !== 'user'` sits under one collapsed "Added by the daimon"
-//      header with a count, and its "Drop all" removes them and keeps `holds`.
-//   5. An attachment no longer at its path draws "Gone" and no open action.
+//   4. The Workspace's focus section (Can change) is drawn from those same
+//      fence inputs, so the fold-made file is no row there and the marked
+//      folder is one row, its nested file none.
+//
+// Retired with Workspace round 2 P2 (fe78b65f), by design: the collapsed
+// "Added by the daimon (n)" group with its Drop all (first-principles design
+// row 12: FOLD into Recent, Drop all DROP -- provenance is what Recent shows
+// and it ages out), and the composed "This Diamond" tree's "Gone" row, which
+// left with that tree.
 //
 // EACH CHECK NAMED BELOW IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>`
 // serves a deliberately damaged copy of a file through `page.route`, and the
@@ -22,8 +28,6 @@
 //   node dev/verify_attachtidy.mjs --break producedmark  # 1 fails: produced reaches bounds
 //   node dev/verify_attachtidy.mjs --break nestdup       # 2 fails: nested chip drawn twice
 //   node dev/verify_attachtidy.mjs --break harvestall    # 3 fails: harvest ignores the mark
-//   node dev/verify_attachtidy.mjs --break nogroup       # 4 fails: daimon rows draw plain
-//   node dev/verify_attachtidy.mjs --break danglinglive  # 5 fails: a gone row draws live
 //   node dev/verify_attachtidy.mjs                       # and then, clean
 //
 //   eval "$(bash dev/world.sh 39 --up)"
@@ -32,7 +36,7 @@ import { port } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, connectMock, shot, markHere } from './harness.mjs';
+import { open, signInAs, connectMock, shot, markHere, workMenu } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -71,20 +75,6 @@ const BREAKS = {
 					return parsedRef.path === d || parsedRef.path.indexOf(d + '/') === 0;
 				})) continue;`,
 		with: `				/* harvest everything, marked folder or not */`,
-	},
-	// The daimon-made rows are never split out, so a fold's own bookkeeping
-	// draws one row per file, exactly as a person's own attachment does.
-	nogroup: {
-		file: 'js/daimond.js',
-		find: `			var daimonRows = attached.filter(function (a) { return a.by !== 'user'; });`,
-		with: `			var daimonRows = [];`,
-	},
-	// The lazy stat never marks anything gone, so a row for a deleted file
-	// draws exactly as a live one does — openable, shareable, still reaching.
-	danglinglive: {
-		file: 'js/daimond.js',
-		find: `					a.gone = !!names && !names[base];`,
-		with: `					a.gone = false;`,
 	},
 };
 
@@ -126,7 +116,6 @@ await connectMock(s);
 await page.waitForTimeout(1200);
 
 const T  = (k, v) => page.evaluate(([k, v]) => DaimondI18n.t(k, v || undefined), [k, v || null]);
-const Tn = (k, n) => page.evaluate(([k, n]) => DaimondI18n.tn(k, n), [k, n]);
 
 const call = (fn, args = []) => page.evaluate(async ({ fn, args }) => {
 	const m = await import('/pkg/oxedyne_daimond.js');
@@ -214,75 +203,27 @@ check('a path under an attached folder is not a second entry in the fence',
 check('the folder itself is still the one entry', (bounds2.attached || []).filter(p => p === 'code' || p === 'code/nested.rs').length === 1,
 	JSON.stringify(bounds2.attached));
 
-// ── The Workspace panel, drawn ────────────────────────────────────────────
-async function openWorkspace() {
-	await page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
-	await page.waitForTimeout(500);
-	// "This Diamond", not "Everything" -- the composed workspace tree is only
-	// drawn in the former (`diamondScope`).
-	await page.click('[data-scope="diamond"]', { force: true }).catch(() => {});
-	await page.waitForTimeout(500);
-	await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
-	await page.waitForTimeout(900);
-}
-await openWorkspace();
+// ── 4. Can change, drawn ─────────────────────────────────────────────────
+// The focus section names the Diamond in focus and lists what its daimon can
+// change: its own folder and each mark in force. The fold-made file is
+// provenance (Recent), never a row here, and the marked folder covers its
+// nested file. `--break producedmark` and `--break nestdup` turn these red too.
+await page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
+await page.waitForTimeout(500);
+await workMenu(page, 'head', 'refresh');
+await page.waitForTimeout(900);
 await shot(s, 'attachtidy-workspace-root');
-
-const rows = await page.evaluate(() => [...document.querySelectorAll('#panel-work .files-row.attached')].map(r => ({
-	path: r.dataset.path || '',
-	gone: r.classList.contains('gone'),
-})));
-const groupHead = await page.$('#panel-work .files-group-toggle');
-
-// ── 4. Added-by-the-daimon group ─────────────────────────────────────────
-check('extra/out.rs (fold-made) does not draw as a plain row', !rows.some(r => r.path === 'extra/out.rs'),
-	JSON.stringify(rows));
-check('a collapsed daimon group exists', !!groupHead, BREAK === 'nogroup' ? 'expected under --break' : '');
-const groupText = groupHead ? await groupHead.evaluate(e => e.textContent) : '';
-const wantCount = await Tn('dws.added_by_daimon', 1);
-check('its count reads one', groupText.indexOf(String(1)) >= 0 && groupText === wantCount || /\(1\)|（1）/.test(groupText),
-	JSON.stringify({ groupText, wantCount }));
-if (groupHead) {
-	await groupHead.click();
-	await page.waitForTimeout(500);
-	const opened = await page.evaluate(() => [...document.querySelectorAll('#panel-work .files-row.attached')]
-		.map(r => r.dataset.path || ''));
-	check('opening the group reveals extra/out.rs', opened.includes('extra/out.rs'), JSON.stringify(opened));
-	// The row's title carries the age and the `rel · by` hint, item 5 and the
-	// hint half of item 4.
-	const hintTitle = await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#panel-work .files-row.attached')]
-			.find(r => r.dataset.path === 'extra/out.rs');
-		return row ? row.title : '';
-	});
-	check('the row names how it got here', /produced/.test(hintTitle) && /fold/.test(hintTitle), hintTitle);
-	const drop = await page.$('#panel-work .files-group-drop');
-	check('a Drop all control is offered', !!drop);
-	if (drop) {
-		await drop.click();
-		await page.waitForTimeout(500);
-		all = await links();
-		check('Drop all removed the fold-made link', !has('file:extra/out.rs'), JSON.stringify(all.map(l => l.other)));
-		check('and left the user\'s `holds` mark standing', has('dir:[browser]code'), JSON.stringify(all.map(l => l.other)));
-	}
-}
-
-// ── 5. A dangling row says so ────────────────────────────────────────────
-await openWorkspace();
-const goneRow = await page.evaluate(() => {
-	const r = [...document.querySelectorAll('#panel-work .files-row.attached')]
-		.find(r => r.dataset.path === 'misc/ghost.txt');
-	return r ? { gone: r.classList.contains('gone'), badge: !!r.querySelector('.files-badge.files-gone') } : null;
+const can = await page.evaluate(() => {
+	const sec = document.querySelector('#panel-work .files-focus');
+	if (!sec || sec.hidden) return null;
+	return [...sec.querySelectorAll('.r[data-path]')]
+		.filter(r => r.dataset.kind !== 'recent').map(r => r.dataset.path);
 });
-check('the deleted-path row exists', !!goneRow, JSON.stringify(goneRow));
-check('and is marked gone', !!goneRow && goneRow.gone && goneRow.badge,
-	BREAK === 'danglinglive' ? 'expected under --break' : JSON.stringify(goneRow));
-const liveRow = await page.evaluate(() => {
-	const r = [...document.querySelectorAll('#panel-work .files-row.attached')]
-		.find(r => r.dataset.path === 'code');
-	return r ? r.classList.contains('gone') : null;
-});
-check('a real attachment is not marked gone', liveRow === false, String(liveRow));
+check('the focus section draws Can change for the Diamond', Array.isArray(can), JSON.stringify(can));
+check('the user\'s `holds` folder is a row in Can change', !!can && can.includes('code'), JSON.stringify(can));
+check('the fold-made file is no row in Can change', !!can && !can.includes('extra/out.rs'), JSON.stringify(can));
+check('the marked folder is one row, its nested file none',
+	!!can && can.filter(p => p === 'code').length === 1 && !can.includes('code/nested.rs'), JSON.stringify(can));
 
 await shot(s, 'attachtidy-final');
 await s.close();

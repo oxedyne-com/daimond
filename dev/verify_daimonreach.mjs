@@ -81,7 +81,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, connectMock, clearMockLog, mockLog } from './harness.mjs';
+import { open, signInAs, connectMock, clearMockLog, mockLog, workMenu } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -260,14 +260,15 @@ try {
 	// records and what `Files.bounds` then reports — not a link this file wrote.
 	await page.evaluate(() => DaimondPanels.show('work'));
 	await page.waitForTimeout(700);
-	await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+	await workMenu(page, 'head', 'refresh');
 	await page.waitForTimeout(1200);
 	let attached = false;
 	for (const row of await page.$$('#panel-work .files-row')) {
 		const nm = await row.$eval('.files-name', e => e.textContent).catch(() => '');
 		if (nm.replace(/^[^A-Za-z0-9._-]+/, '').trim() === 'books') {
-			const clip = await row.$('.attach-btn');
-			if (clip) { await clip.click({ force: true }); attached = true; }
+			const clip = await row.$('[data-act="mark"]');   // the row's ◈ (Workspace round 2 P3)
+			// The ◈ shows at rest only on hover: hover the row and press it unforced, or the press lands on the row.
+			if (clip) { await row.hover(); await clip.click(); attached = true; }
 			break;
 		}
 	}

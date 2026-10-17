@@ -8,7 +8,7 @@
 //
 // Needs dev/serve.mjs and a gateway on :9002 — the cloud-only row is real
 // rather than staged: a file is genuinely offloaded, then freed.
-import { open, signInAs } from './harness.mjs';
+import { open, signInAs, workMenu } from './harness.mjs';
 import path from 'node:path';
 
 const OUT = path.join(process.cwd(), 'www', 'guide', 'shots');
@@ -37,7 +37,7 @@ await p.evaluate(async () => {
 
 await p.evaluate(() => { try { DaimondPanels.open('work'); } catch (e) { /* already open */ } });
 await p.waitForTimeout(700);
-await p.click('#panel-work [data-act="refresh"]').catch(() => {});
+await workMenu(p, 'head', 'refresh');
 await p.waitForTimeout(1400);
 
 const clip = await p.evaluate(() => {

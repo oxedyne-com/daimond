@@ -674,19 +674,19 @@
    match the group's own majority, R4): 12px, `--w-text`, `--text-secondary`,
    padding 3px 10px, height 27px, radius `--radius-sm`, no border, a light
    fill on hover. Crystal's Edit/History/Save-a-version, the Graph bar, a
-   code block's Copy, the Workspace's Import/Save-a-copy and the Social/
+   code block's Copy, the Workspace's + New and Import/Save-a-copy and the Social/
    +Add-provider pills this replaces their own font, weight, padding and
    colour with it. A Pending tile's worded presses (`.pend-verb`: Switch, Add,
    Edit, Dismiss, Keep, Remove; 5.3.2) and a Status row's one act (`.astat-act`:
    Reload, Open) are the same button. */
-:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
+:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn, .files-new,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
 	.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb, .astat-act) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); background: transparent;
 	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 27px; line-height: 19px;
 	text-decoration: none;
 }
-:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
+:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn, .files-new,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
 	.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb, .astat-act):hover { background: var(--dl-hover); color: var(--text-primary); }
 /* The bare + is the same 27px box as the worded chips, but round, its glyph centred. */
@@ -702,7 +702,6 @@
 :root[data-skin="daylight"] .files-card,
 :root[data-skin="daylight"] .files-mode,
 :root[data-skin="daylight"] .files-path,
-:root[data-skin="daylight"] .files-rest,
 :root[data-skin="daylight"] .sys-sec,
 :root[data-skin="daylight"] .files-view-head,
 :root[data-skin="daylight"] .files-view-msg,
@@ -1010,7 +1009,6 @@
 :root[data-skin="daylight"] .ask-count,
 :root[data-skin="daylight"] .ask-rec,
 :root[data-skin="daylight"] .ctile-io .cap,
-:root[data-skin="daylight"] .files-rest-head,
 :root[data-skin="daylight"] .sys-head,
 :root[data-skin="daylight"] .graph-band,
 :root[data-skin="daylight"] .graph-edit-lab,
@@ -1040,7 +1038,7 @@
    not set: colour on hover, the fold triangle, focus rings. */
 :root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .rel-about > summary, .tagf-toggle, .arte-strip,
 	.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
-	.files-rest-head, .sys-head, .cap-more, .capp-conflicts > summary) {
+	.sys-head, .cap-more, .capp-conflicts > summary) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 19px;
 	padding: 4px 8px 4px 4px; min-height: 27px; box-sizing: border-box; background: transparent; border-color: transparent;
 }
@@ -1096,7 +1094,6 @@
 :root[data-skin="daylight"] .files-filter-input:focus,
 :root[data-skin="daylight"] .diamond-search:focus,
 :root[data-skin="daylight"] .gal-search:focus { border-color: var(--accent); }
-:root[data-skin="daylight"] .files-rest-head,
 :root[data-skin="daylight"] .sys-head { font-family: var(--font); font-size: var(--dl-xs); }
 
 /* ── Layout contract: explicit rows, never negotiated by wrap ─────── */
@@ -1329,13 +1326,13 @@
    `--text-secondary`, padding 6px 8px, height 30px, radius `--radius-sm`, no
    border. The chosen one takes `--dl-on` with `--text-primary`. */
 :root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
-	.files-mode-chip, .imp-chip, .tile-dlg-level, .dview-btn) {
+	.imp-chip, .tile-dlg-level, .dview-btn) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); letter-spacing: 0; line-height: 18px;
 	color: var(--text-secondary); background: transparent; border-color: transparent; border-width: 0;
 	border-radius: var(--radius-sm); padding: 6px 8px; height: 30px; min-height: 30px; box-sizing: border-box; gap: 4px;
 }
 :root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
-	.files-mode-chip, .imp-chip, .tile-dlg-level, .dview-btn):is([aria-pressed="true"], .on, .active) {
+	.imp-chip, .tile-dlg-level, .dview-btn):is([aria-pressed="true"], .on, .active) {
 	background: var(--dl-on); color: var(--text-primary);
 }
 :root[data-skin="daylight"] .seg button:hover,
@@ -1400,19 +1397,19 @@
 	:root[data-skin="daylight"] :is(select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]), textarea) { min-height: 44px; }
 	/* Dialog actions, create buttons, the primary and plain text buttons: */
 	:root[data-skin="daylight"] :is(.dlg-ok, .dlg-cancel, .tile-fold, .tile-keep, .compose-btn, .compose-send, .railhead > .railbtn,
-		.crystal-act:not(.crystal-form-x), .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
+		.crystal-act:not(.crystal-form-x), .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn, .files-new,
 		.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
 		.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb, .astat-act) { min-height: 44px; min-width: 44px; }
 	/* Toggle options (the head's face switch keeps the head block's 30px box and overlay, so the Diamond head stays 96px): */
 	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
-		.files-mode-chip, .imp-chip, .tile-dlg-level) { height: 44px; min-height: 44px; }
+		.imp-chip, .tile-dlg-level) { height: 44px; min-height: 44px; }
 	/* ...and 44px wide, except the rating popup's steps, which share one row (their own rule, app.css). */
 	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
-		.files-mode-chip, .imp-chip) { min-width: 44px; }
+		.imp-chip) { min-width: 44px; }
 	/* Disclosures: */
 	:root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .tagf-toggle, .arte-strip,
 		.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
-		.files-rest-head, .sys-head, .cap-more, .capp-conflicts > summary) { min-height: 44px; }
+		.sys-head, .cap-more, .capp-conflicts > summary) { min-height: 44px; }
 	:root[data-skin="daylight"] .crystal-act.mem-raw-btn { height: auto; min-height: 44px; }
 	/* A Pending tile's headline is a 44px row. */
 	:root[data-skin="daylight"] .pend-line { min-height: 44px; }
@@ -1446,6 +1443,9 @@
 	/* The Workspace crumb's overlay hangs 7px below its 29px row, over the Filter field's top rows: 8px of margin below the row puts
 	   the field clear of it, so a tap there is the field's. */
 	:root[data-skin="daylight"] .files-path { margin-bottom: 8px; }
+	/* + New is a text button, 44px tall in that 29px row, so its box hangs out of the row the same 7px as the crumbs' overlay;
+	   it stacks above its neighbours like them, so the whole 44px is its. */
+	:root[data-skin="daylight"] .files-path > .files-new { position: relative; z-index: 1; }
 	/* Tag chips that are buttons. The chip clips its own text (`overflow: hidden`, app.css), which also clipped the overlay to the
 	   chip's 19px, so the clip is on the x axis only (`text-overflow` still computes). A 19px chip, 26px between rows and 13px above
 	   and below the block make a 44px pitch, and 8px between chips, so the overlays of neighbours tile. A short tag is 44px wide, and

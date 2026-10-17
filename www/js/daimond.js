@@ -214,6 +214,96 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		},
 	};
 
+	// The seal (S1 SEAL, 16 Oct 2026): the DPS1 post record and the peer envelope's framing are
+	// written and read by the Rust in `src/seal/`, the same code the native runner runs, and
+	// post.js / peer.js reach it only through this bridge. The keys stay with identity.js: a
+	// DPS1 open hands the wasm the 32 bytes of the agreement identity.js made, never the secret.
+	//
+	// EVERY entry point awaits `ready`, which settles when the wasm is instantiated, so a send
+	// made before `init()` has finished WAITS rather than throwing on an unbound module (and a
+	// boot that failed rejects it, so nothing waits forever). A refusal a person should read
+	// rejects with an Error whose `code` names it (`short`, `not_sealed`, `not_for_you`,
+	// `bad_key`, `damaged`, ...), which post.js turns into its translated sentence.
+	//
+	// The block between the markers is also evaluated by dev/seal_compat.mjs over a Node wasm,
+	// so it may name only `window` and `Sbj`.
+	// SEAL-BRIDGE-BEGIN
+	(function () {
+		var want = ['seal_post', 'seal_post_epk', 'seal_post_open', 'seal_scheme',
+			'seal_peer_frame', 'seal_peer_aad'];
+		var missing = want.filter(function (n) { return typeof Sbj[n] !== 'function'; });
+		var settle = {};
+		var ready = new Promise(function (res, rej) { settle.res = res; settle.rej = rej; });
+		// An unhandled rejection is not this promise's to report; each caller sees it.
+		ready.catch(function () {});
+		function live() {
+			if (missing.length) return false;
+			try { Sbj.seal_peer_aad(); return true; } catch (e) { return false; }
+		}
+		function u8(b) { return (b instanceof Uint8Array) ? b : new Uint8Array(b); }
+		// The wasm TYPES its refusals (`e.refusal`, src/wasm/seal.rs): only those carry a
+		// code, as `code` and as `refusal` (post.js `isRefusal`, TAKEROW), and are final.
+		// Anything else -- a trap, a caller's bad input -- is a failure that may pass (S1 D2).
+		function refusal(e) {
+			var code = (e && typeof e.refusal === 'string') ? e.refusal : '';
+			var msg = String((e && e.message) || e);
+			var m = code ? /seal:[a-z_]+:\s*([^\n]*)/.exec(msg) : null;
+			var out = new Error(m ? m[1].replace(/\s*\[.*$/, '') : msg);
+			out.code = code || 'error';
+			if (code) out.refusal = code;
+			return out;
+		}
+		async function call(fn) {
+			if (missing.length) {
+				var err = new Error('This build cannot seal: its wasm lacks ' + missing.join(', ')
+					+ '. Rebuild www/pkg (dev/build-wasm.sh).');
+				err.code = 'no_bridge';
+				throw err;
+			}
+			await ready;
+			try { return fn(); } catch (e) { throw refusal(e); }
+		}
+		window.DaimondSeal = {
+			ready: ready,
+			markReady: function () { settle.res(true); },
+			markFailed: function (e) { settle.rej(e || new Error('The wasm module did not start.')); },
+			/// Seal bytes to a list of 32-byte X25519 public keys (DPS1).
+			sealPost: function (recipients, plain) {
+				return call(function () {
+					var cat = new Uint8Array(recipients.length * 32);
+					for (var i = 0; i < recipients.length; i++) cat.set(u8(recipients[i]), i * 32);
+					return Sbj.seal_post(cat, u8(plain));
+				});
+			},
+			/// The ephemeral key of a DPS1 record, its header checked.
+			postEpk: function (bytes) {
+				return call(function () { return Sbj.seal_post_epk(u8(bytes)); });
+			},
+			/// Open a DPS1 record with the agreement already made: `{ plain, ck }`.
+			openPost: function (bytes, shared, ownPub) {
+				return call(function () {
+					var out = Sbj.seal_post_open(u8(bytes), u8(shared), u8(ownPub));
+					return { ck: out.slice(0, 32), plain: out.slice(32) };
+				});
+			},
+			/// 'DPY2', 'DPY1', 'DPS1', or '' for a body with no known tag.
+			scheme: function (bytes) {
+				return call(function () { return Sbj.seal_scheme(u8(bytes)); });
+			},
+			/// DPY2 ‖ body, for a body identity.js sealed under `peerAad()`.
+			peerFrame: function (body) {
+				return call(function () { return Sbj.seal_peer_frame(u8(body)); });
+			},
+			/// The purpose a DPY2 body is bound to.
+			peerAad: function () {
+				return call(function () { return Sbj.seal_peer_aad(); });
+			},
+		};
+		// Already instantiated (a harness that initialised the module first): ready now.
+		if (live()) settle.res(true);
+	})();
+	// SEAL-BRIDGE-END
+
 	// The same arrangement for the identity format. `identity.js` is a classic
 	// script and cannot import the module, and there must be exactly ONE
 	// rendering of a fingerprint and ONE canonical encoding of a card -- a second
@@ -11810,7 +11900,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (window.DaimondPanels && DaimondPanels.isOpen && DaimondPanels.isOpen('work')) {
 				if (Files.refresh) Files.refresh();
-				if (Files.refreshResidency) Files.refreshResidency();
 			}
 		} catch (e) {}
 		return { failed: failed, refused: refused };
@@ -46428,7 +46517,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// were one element until the two panels were split apart, which is why so
 		// much below comes in pairs.
 		var pathEl, treeEl, viewEl, pvEl, modeEl;
-		var cloudChipEl = null;		// the Cloud chip, repainted as residency moves.
 		var modeReconnect = null;	// the handle the mode row is offering to reconnect
 		var curDir = '';
 		// The DOC panel's file, and nothing else's. A picture opened into the
@@ -46596,6 +46684,90 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				acc = acc ? (acc + '/' + segs[i]) : segs[i];
 				crumb(segs[i], acc, i === segs.length - 1);
 			}
+		}
+
+		/// The crumb line: where you are, headed by the open store, and + New beside it --
+		/// new things are made where the eye already is.
+		function paintPath() {
+			if (!pathEl) return;
+			renderCrumbs(pathEl, folderHandle ? folderHandle.name : t('files.mode_browser'), curDir, goDir);
+			var b = document.createElement('button');
+			b.type = 'button';
+			b.className = 'files-new';
+			b.dataset.act = 'new';
+			b.setAttribute('aria-haspopup', 'menu');
+			b.setAttribute('aria-expanded', popOpen('new') ? 'true' : 'false');
+			b.textContent = '+ ' + t('work.new');
+			b.addEventListener('click', function (ev) {
+				ev.stopPropagation();
+				if (popOpen('new')) { closePop(); return; }
+				openNewMenu(b);
+			});
+			pathEl.appendChild(b);
+		}
+
+		/// + New: a file or a folder named in place, an upload, and on Chromium in the
+		/// browser store an imported folder.
+		function openNewMenu(anchor) {
+			var canImport = typeof window.showDirectoryPicker === 'function' && !folderHandle;
+			openPop('new', anchor, t('work.new'), function (item, sep) {
+				item('file', t('work.file'), function () { startNaming(false); });
+				item('dir', t('work.folder'), function () { startNaming(true); });
+				sep();
+				item('upload', t('work.upload_menu'), uploadFiles);
+				if (canImport) item('import', t('files.import_folder'), importFolder, undefined, t('files.import_folder_help'));
+			});
+		}
+
+		/// The name row: a new row at the top of the listing with the name field in it,
+		/// focused. Enter makes the file (and opens it) or the folder; Escape, or leaving
+		/// the field, lets it go. It outlives a relist: `renderTree` puts it back.
+		var naming = null;		// { dir, row, input, had } while a name is being typed
+		function startNaming(dir) {
+			if (curFile || !listed) return;
+			endNaming();
+			var row = document.createElement('div');
+			row.className = 'files-row files-naming' + (dir ? ' dir' : '');
+			row.appendChild(kindIcon(dir ? 'dir' : 'file'));
+			var input = document.createElement('input');
+			input.type = 'text';
+			input.className = 'files-filter-input files-name-input';
+			input.placeholder = dir ? 'notes' : 'notes.md';
+			input.setAttribute('aria-label', t(dir ? 'work.folder' : 'work.file'));
+			input.autocomplete = 'off';
+			input.spellcheck = false;
+			row.appendChild(input);
+			naming = { dir: dir, row: row, input: input, had: true };
+			input.addEventListener('keydown', function (ev) {
+				if (ev.key === 'Enter') { ev.preventDefault(); commitNaming(); }
+			});
+			// A relist takes the row out and puts it back, which blurs it; only a blur that
+			// leaves the row in the tree is a person moving on.
+			input.addEventListener('blur', function () {
+				setTimeout(function () {
+					if (naming && naming.input === input && input.isConnected && document.activeElement !== input) endNaming();
+				}, 0);
+			});
+			var up = treeEl.querySelector(':scope > .files-up');
+			var first = up ? up.nextSibling : treeEl.firstChild;
+			treeEl.insertBefore(row, first);
+			input.focus();
+			// Escape is the layer router's, as for every other open thing.
+			DaimondLayers.open('naming', endNaming, input);
+		}
+		function endNaming() {
+			if (!naming) return;
+			var n = naming; naming = null;
+			n.row.remove();
+			DaimondLayers.done('naming');
+		}
+		async function commitNaming() {
+			if (!naming) return;
+			var dir = naming.dir, name = naming.input.value.trim();
+			endNaming();
+			if (!name) return;
+			if (dir) await newDir(name);
+			else await newFile(name);
 		}
 
 		var filterEl = null, filter = '', lastEntries = [], filterTimer = null;
@@ -47250,7 +47422,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// rows cannot claim a reach the tool door refuses or hide one it allows.
 		var focusEl = null;		// built in bind()
 		var focusSeq = 0;		// so a slow read cannot repaint over a newer one
-		var wsMenu = null;		// the head ⋯ menu while it is open
 
 		/// One row of the focus section: icon, name, then the optional place, time
 		/// and ◈, in the mockup's order.
@@ -47353,7 +47524,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!focusEl) return;
 			var seq = ++focusSeq;
 			var f = attachFocus();
-			paintWsMore(f);
+			if (popOpen('head')) closePop();		// its Toolchains… are the focus's
 			if (!f || !window.DaimondRecent) { focusEl.hidden = true; focusEl.textContent = ''; return; }
 			var b = null, ring = [], title = '';
 			try {
@@ -47462,6 +47633,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				focusEl.appendChild(row);
 			});
+			// Nothing added yet, as on a new Diamond or chat: one line to say where adding is.
+			if (!can.some(function (r) { return r.kind === 'mark' || r.kind === 'ghost' || r.taken; })) {
+				var pt = document.createElement('div');
+				pt.className = 'rail-note files-focus-note';
+				pt.textContent = t('dws.add_pointer');
+				focusEl.appendChild(pt);
+			}
 			// A toolchain the daimon asked for and was not granted (E3): a ghost row,
 			// one press from granted. A Diamond's alone, as toolchains are.
 			if (f.kind === 'diamond') {
@@ -47478,62 +47656,90 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 
-		/// The head ⋯ is only drawn while it has something in it: the toolchains,
-		/// which are a Diamond's alone.
-		function paintWsMore(f) {
-			var btn = document.querySelector('#panel-work [data-act="ws-more"]');
-			if (btn) btn.hidden = !(f && f.kind === 'diamond');
-			if (wsMenu && !(f && f.kind === 'diamond')) closeWsMenu();
+		/// The head ⋯: the panel's rare jobs, each only where it can act -- the store
+		/// switch, the two transfers, cloud storage, a manual relist, Daimond's files,
+		/// hidden files and, for a Diamond, its toolchains.
+		function openHeadMenu(anchor) {
+			if (popOpen('head')) { closePop(); return; }
+			var onMachine = !!folderHandle;
+			var canPick   = (typeof window.showDirectoryPicker === 'function');
+			var f = attachFocus();
+			openPop('head', anchor, t('chat.more'), function (item, sep) {
+				if (canPick) {
+					// The way back to a folder this session has used needs no picker; only the
+					// first use, or choosing another, does.
+					item('machine', t('work.open_machine'), (!onMachine && rootHandle)
+						? function () { reconnectFolder(rootHandle); } : openFolder);
+					if (onMachine) {
+						item('browser', t('work.use_browser'), switchToOpfs, undefined, t('files.browser_switch'));
+						item('forget', t('files.forget_root'), forgetRoot, undefined, t('files.forget_root_help'));
+					} else {
+						item('import', t('files.import_folder'), importFolder, undefined, t('files.import_folder_help'));
+						item('savecopy', t('files.save_copy'), exportFolder, undefined, t('files.save_copy_help'));
+					}
+				}
+				if (!onMachine && window.DaimondCloud) item('cloud', t('work.cloud'), showCloudView);
+				item('refresh', t('common.refresh'), async function () {
+					if (await list(curDir)) showModeMsg(t('files.refreshed'), false, 3000);
+				});
+				sep();
+				item('system', t('sys.head'), function () { showSystem(!sysShown); }, sysShown);
+				item('hidden', t('work.hidden'), function () { showHidden(!restShown); }, restShown);
+				if (f && f.kind === 'diamond' && currentDiamond) item('kits', t('work.kits'), function () { openKitsMenu(anchor); });
+			});
 		}
 
-		function closeWsMenu() {
-			if (!wsMenu) return;
-			wsMenu.remove(); wsMenu = null;
-			document.removeEventListener('click', onWsMenuOutside, true);
-			DaimondLayers.done('wsmenu');
-			var btn = document.querySelector('#panel-work [data-act="ws-more"]');
-			if (btn) btn.setAttribute('aria-expanded', 'false');
-		}
-		function onWsMenuOutside(e) { if (wsMenu && !wsMenu.contains(e.target)) closeWsMenu(); }
-
-		/// The head ⋯: the toolchain grants, which used to be a row of chips of their
-		/// own above the tree. Same store, same `toggleKit`.
-		function openWsMenu(anchor) {
-			if (wsMenu) { closeWsMenu(); return; }
+		/// Toolchains…, from the head ⋯: the grants, one checkbox each, through `toggleKit`.
+		function openKitsMenu(anchor) {
 			if (!currentDiamond) return;
 			var d = diamonds.find(function (x) { return x.id === currentDiamond.id; });
 			var on = (d && Array.isArray(d.toolkits)) ? d.toolkits : [];
-			var menu = document.createElement('div');
-			menu.className = 'railhead-menu';
-			menu.setAttribute('role', 'menu');
-			menu.setAttribute('aria-label', t('dws.kits'));
-			var head = document.createElement('div');
-			head.className = 'railhead-menu-head';
-			head.setAttribute('role', 'presentation');
-			head.textContent = t('dws.kits');
-			menu.appendChild(head);
-			KITS.forEach(function (k) {
-				var has = on.indexOf(k.name) >= 0;
-				var it = document.createElement('button');
-				it.type = 'button';
-				it.className = 'railhead-menu-item lead-ok';
-				it.setAttribute('role', 'menuitemcheckbox');
-				it.setAttribute('aria-checked', has ? 'true' : 'false');
-				it.dataset.kit = k.name;
-				it.textContent = k.label;
-				it.title = t(has ? 'dws.kit_off' : 'dws.kit_on', { kit: k.label, name: currentDiamond.name });
-				it.addEventListener('click', function () { closeWsMenu(); toggleKit(k.name); });
-				menu.appendChild(it);
+			openPop('head', anchor, t('dws.kits'), function (item, sep, menu) {
+				var head = document.createElement('div');
+				head.className = 'railhead-menu-head';
+				head.setAttribute('role', 'presentation');
+				head.textContent = t('dws.kits');
+				menu.appendChild(head);
+				KITS.forEach(function (k) {
+					var has = on.indexOf(k.name) >= 0;
+					var it = item('kit', k.label, function () { toggleKit(k.name); }, has,
+						t(has ? 'dws.kit_off' : 'dws.kit_on', { kit: k.label, name: currentDiamond.name }));
+					it.dataset.kit = k.name;
+				});
 			});
-			document.body.appendChild(menu);
-			var r = anchor.getBoundingClientRect();
-			var left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
-			menu.style.left = Math.max(8, left) + 'px';
-			menu.style.top = (r.bottom + 4) + 'px';
-			wsMenu = menu;
-			DaimondLayers.open('wsmenu', closeWsMenu, anchor);
-			anchor.setAttribute('aria-expanded', 'true');
-			setTimeout(function () { document.addEventListener('click', onWsMenuOutside, true); }, 0);
+		}
+
+		/// Daimond's own store, shown below the tree only when asked for in the head ⋯ (a
+		/// device preference), and open when it is.
+		var LS_SYSSHOWN = 'daimond-files-sys';
+		var sysShown = (function () {
+			try { return localStorage.getItem(LS_SYSSHOWN) === '1'; }
+			catch (e) { return false; }
+		})();
+		function showSystem(on) {
+			sysShown = !!on;
+			try { localStorage.setItem(LS_SYSSHOWN, sysShown ? '1' : '0'); }
+			catch (e) { /* private mode: it holds for this session only */ }
+			paintSystem();
+		}
+		function paintSystem() {
+			var sec = document.getElementById('sys-sec');
+			var head = document.getElementById('sys-head');
+			var body = document.getElementById('sys-body');
+			if (!sec || !head || !body) return;
+			sec.hidden = !sysShown;
+			head.setAttribute('aria-expanded', sysShown ? 'true' : 'false');
+			body.hidden = !sysShown;
+			if (sysShown) sysList(sysDir);
+		}
+
+		/// Dot-files and Daimond's own folders at the root, among the rows only when asked
+		/// for in the head ⋯ (a device preference).
+		function showHidden(on) {
+			restShown = !!on;
+			try { localStorage.setItem(LS_RESTGROUP, restShown ? '1' : '0'); }
+			catch (e) { /* private mode: it holds for this session only */ }
+			if (listed && !curFile) renderTree(lastEntries);
 		}
 
 		/// The Diamond in focus changed. The focus section is about it.
@@ -47562,7 +47768,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// reloads it and repaints the ◈s in place. In place, not a redrawn tree: the
 			// signal comes often, and a redraw would take a row's open ⋯ and hover with it.
 			// A take-away's row is dimmed only once the set no longer holds it.
-			document.addEventListener('daimond-links-changed', function () { loadAttached().then(repaintMarks, function () { /* the last set stands */ }); });
+			// The focus section's Can change is drawn from the same links as the tree's ◈, so a
+			// change made anywhere but a press here (sync, the daimon, another tab) redraws both.
+			document.addEventListener('daimond-links-changed', function () {
+				loadAttached().then(repaintMarks, function () { /* the last set stands */ });
+				renderFocus();
+			});
 			// The document view is NOT in this panel. Workspace is the filing
 			// cabinet -- a tree you browse -- and a document you have opened is
 			// something you are attending to, which belongs on the stage beside
@@ -47601,21 +47812,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			modeEl = panel.querySelector('.files-mode');
 			focusEl = panel.querySelector('.files-focus');
+			paintSystem();
 			var moreBtn = panel.querySelector('[data-act="ws-more"]');
 			if (moreBtn) moreBtn.addEventListener('click', function (ev) {
 				ev.stopPropagation();
-				openWsMenu(moreBtn);
+				openHeadMenu(moreBtn);
 			});
-			// Refresh redraws the same rows when nothing changed, so a press looked like none: it says it ran.
-			DaimondAnswer.control(panel.querySelector('[data-act="refresh"]'), { act: async function () {
-				if (await list(curDir)) showModeMsg(t('files.refreshed'), false, 3000);
-			} });
-			var newBtn = panel.querySelector('[data-act="new-file"]');
-			if (newBtn) newBtn.addEventListener('click', newFile);
-			var dirBtn = panel.querySelector('[data-act="new-dir"]');
-			if (dirBtn) dirBtn.addEventListener('click', newDir);
-			var upBtn = panel.querySelector('[data-act="upload"]');
-			if (upBtn) upBtn.addEventListener('click', uploadFiles);
 			// The editor, handed over so the chip can open what it writes: `render` draws the
 			// The editor, handed over so DAIMOND.md opens where every other file does:
 			// this module owns `openFile`.
@@ -47840,157 +48042,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// with the reconnect offer dropped out of it.
 			modeReconnect = reconnect || null;
 			modeEl.innerHTML = '';
-			var onMachine = !!folderHandle;
-			var canPick   = (typeof window.showDirectoryPicker === 'function');
-			// Two rows, not one (layout_contract.md V6): the place chips and the
-			// transfer buttons used to wrap together, so a long locale ("Einen
-			// Ordner importieren …") pushed the row to three lines with a break
-			// that moved with the string. Each group keeps its own row now.
-			var seg = document.createElement('div'); seg.className = 'files-mode-seg';
-			modeEl.appendChild(seg);
-			var acts = document.createElement('div'); acts.className = 'files-mode-acts';
-			modeEl.appendChild(acts);
-
-			// Browser — the in-app sandbox. What syncs, and what cloud storage backs.
-			seg.appendChild(modeChip('browser', t('files.mode_browser'), !onMachine,
-				onMachine
-					? t('files.browser_switch')
-					: t('files.browser_help'),
-				onMachine ? switchToOpfs : showBrowserInfo));
-
-			// Machine — a real folder on this disk. A genuine alternative root, and
-			// mutually exclusive with the sandbox: the agent has exactly one.
-			//
-			// Three things this chip can be, and it used to be only the third:
-			//
-			//   * a RECONNECT offer, when a stored grant needs a gesture (a boot, or a grant the
-			//     browser withdrew mid-session);
-			//   * the way BACK to a folder this session has already used, which needs no picker
-			//     at all -- query the grant, request it if it has lapsed, done;
-			//   * the FIRST-EVER use, which is the only case that needs a folder chosen.
-			//
-			// Calling the picker unconditionally collapsed the middle case into the last one, so
-			// every return trip cost a native dialog.
-			var machineChip = modeChip('machine',
-				onMachine ? folderHandle.name : (rootHandle ? rootHandle.name : t('files.mode_machine')),
-				onMachine,
-				canPick
-					? (onMachine
-						? t('files.machine_here')
-						: (rootHandle
-							? t('files.machine_return', { name: rootHandle.name })
-							: t('files.machine_pick')))
-					: t('files.machine_needs_chromium'),
-				!canPick ? null
-					: (reconnect ? function () { reconnectFolder(reconnect); }
-						: onMachine ? showMachineInfo
-						: rootHandle ? function () { reconnectFolder(rootHandle); }
-						: openFolder));
-			if (!canPick) machineChip.classList.add('ghost');
-			if (reconnect) setChip(machineChip, 'machine', t('files.machine_reconnect', { name: reconnect.name }));
-			seg.appendChild(machineChip);
-
-			// Cloud — not a place but a residency: where the browser workspace's
-			// bytes live. A real folder is the user's own disk and has none.
-			var cloudChip = modeChip('cloud', t('files.mode_cloud'), false,
-				onMachine
-					? t('files.cloud_on_machine')
-					: t('files.cloud_help'),
-				onMachine ? null : showCloudView);
-			cloudChip.classList.add('ghost');
-			seg.appendChild(cloudChip);
-			// Held so the chip can be repainted when residency changes, without
-			// rebuilding the row and losing a pending reconnect offer.
-			cloudChipEl = onMachine ? null : cloudChip;
-			if (!onMachine) paintCloudChip(cloudChip);
-
-			// The two transfers, which never change where the agent works: a
-			// handle can be read or written without becoming the root.
-			if (canPick && !onMachine) {
-				acts.appendChild(modeBtn(t('files.import_folder'),
-					t('files.import_folder_help'), importFolder));
-				acts.appendChild(modeBtn(t('files.save_copy'),
-					t('files.save_copy_help'), exportFolder));
+			// The store switch, the transfers and cloud storage are in the head ⋯, and the
+			// crumb line names the open store. What stays here is what cannot wait for
+			// someone to look in a menu: a folder that needs a press to come back.
+			if (reconnect) {
+				var acts = document.createElement('div'); acts.className = 'files-mode-acts';
+				acts.appendChild(modeBtn(t('files.machine_reconnect', { name: reconnect.name }),
+					t('files.machine_pick'), function () { reconnectFolder(reconnect); }, true));
+				modeEl.appendChild(acts);
 			}
-			// Choosing a DIFFERENT folder is now the only thing that opens a picker, so it needs
-			// somewhere to live. It belongs here, next to the chip that names the folder it would
-			// replace, and only while there is one to replace.
-			if (canPick && onMachine) {
-				acts.appendChild(modeBtn(t('files.change_root'), t('files.change_root_help'), openFolder));
-			}
+			paintPath();
 			modeChanged();
-		}
-
-		/// Repaint the Cloud chip's numbers in place. Residency changes under the
-		/// user's feet — a sync lands, a fetch completes, space is reclaimed — and
-		/// a chip that still reads the old total is simply wrong.
-		function refreshResidency() {
-			if (cloudChipEl) paintCloudChip(cloudChipEl);
-		}
-
-		/// Fill in the Cloud chip's real numbers, and lift it out of ghosting when
-		/// cloud storage actually holds something.
-		async function paintCloudChip(chip) {
-			if (!window.DaimondCloud) return;
-			chip.classList.add('ghost');
-			chip.classList.remove('cloud');
-			setChip(chip, 'cloud', t('files.cloud'));
-			var s;
-			try { s = await DaimondCloud.summary(); } catch (e) { return; }
-			if (!s.files) {
-				chip.title = t(DaimondCloud.available() ? 'files.cloud_empty' : 'files.cloud_locked');
-				return;
-			}
-			chip.classList.remove('ghost');
-			chip.classList.add('cloud');
-			setChip(chip, 'cloud', fmtBytes(s.bytes));
-			chip.title = s.awayFiles
-				? t('files.cloud_some_away', { n: s.files, away: s.awayFiles })
-				: t('files.cloud_all_here', { n: s.files });
-		}
-
-		/// The mode row's glyphs, in the toolbar's idiom: 24-unit outlines stroked
-		/// in `currentColor`, not emoji. Emoji are a second typeface with its own
-		/// colours, weight and vertical rhythm, and three of them sat in a row of
-		/// controls drawn entirely in thin outline.
-		var MODE_ICONS = {
-			browser: '<rect x="3" y="4.5" width="18" height="6" rx="1.5"/>'
-				+ '<rect x="3" y="13.5" width="18" height="6" rx="1.5"/>'
-				+ '<path d="M6.75 7.5h.01M6.75 16.5h.01"/>',
-			machine: '<rect x="3.5" y="5" width="17" height="11" rx="1.5"/><path d="M2 19h20"/>',
-			cloud:   '<path d="M7.2 18.5h9.3a4.2 4.2 0 00.5-8.37 6.2 6.2 0 00-11.75-1.4A3.7 3.7 0 007.2 18.5z"/>',
-		};
-
-		/// Give a chip its glyph and its words together.
-		///
-		/// One call, because they are one thing: setting `textContent` on a chip
-		/// that carries an icon silently deletes the icon, which is how the row
-		/// came to lose its glyphs whenever a folder was reconnected or the cloud
-		/// total was repainted. The label goes in as a text node, never as markup —
-		/// it can be a folder name off the user's disk.
-		function setChip(chip, icon, label) {
-			chip.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
-				+ (MODE_ICONS[icon] || '') + '</svg>';
-			chip.appendChild(document.createTextNode(label));
-		}
-
-		/// One chip in the mode row. A chip states where things are; clicking it
-		/// opens that location's controls rather than toggling a mode.
-		function modeChip(icon, label, active, title, onClick) {
-			var c = document.createElement('span');
-			c.className = 'files-mode-chip' + (active ? ' active' : '');
-			setChip(c, icon, label);
-			c.title = title;
-			if (onClick) {
-				c.classList.add('act');
-				c.setAttribute('role', 'button');
-				c.setAttribute('tabindex', '0');
-				c.addEventListener('click', onClick);
-				c.addEventListener('keydown', function (ev) {
-					if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onClick(); }
-				});
-			}
-			return c;
 		}
 
 		/// Cloud storage, in full: what is held, what it is costing, what is not on
@@ -48110,56 +48172,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 		}
 
-		/// What the browser has granted this workspace, which is the ceiling when
-		/// there is no cloud storage.
-		async function showBrowserInfo() {
-			if (!window.DaimondCloud) return;
-			var p = await DaimondCloud.pressure();
-			showModeMsg(p.quota
-				? ('This browser has granted ' + fmtBytes(p.quota) + ', of which ' +
-					fmtBytes(p.usage) + ' is used.')
-				: 'This browser does not report how much storage it has granted.');
-		}
-
-		/// What the agent can reach on this disk, and how to stop it reaching there.
-		///
-		/// The Machine chip, while it is the active one, used to re-open the folder picker. That
-		/// is the least useful thing it could do from a folder that is already open, and it left
-		/// the root's SCOPE unstated -- which is the one fact a person needs before pointing an
-		/// agent at a directory on their own machine. Mirrors showBrowserInfo: the active chip
-		/// says what this location is, and the row beside it carries the acts.
-		function showMachineInfo() {
+		/// Forget the open folder: its record, its kept handle and this device's marks on it.
+		/// Without this there would be NO way to make Daimond forget a folder.
+		async function forgetRoot() {
 			if (!folderHandle) return;
-			// A second click on the chip must not stack a second Forget button.
-			var old = modeEl.querySelector('.files-mode-forget');
-			if (old) old.remove();
-			var forgetActs = modeEl.querySelector('.files-mode-acts');
-			if (!forgetActs) { forgetActs = document.createElement('div'); forgetActs.className = 'files-mode-acts'; modeEl.appendChild(forgetActs); }
-			showModeMsg(t('files.machine_scope', { name: folderHandle.name }));
-			// Forgetting the folder was a side effect of switching to the sandbox until that stopped
-			// deleting the record. Without a deliberate control there would now be NO way to make
-			// Daimond forget a folder, which is worse than the dialog the change removed.
-			var forget = modeBtn(t('files.forget_root'), t('files.forget_root_help'), async function () {
-				try { await FsaDB.clear(); } catch (e) { /* nothing stored */ }
-				// The kept handle goes too (M2-F4): otherwise "Forget" only forgot the
-				// reconnect slot, and a folder picked again kept its old id and its marks.
-				try { await FsaDB.forget(folderFid); } catch (e) { /* nothing stored */ }
-				// THIS DEVICE'S OWN MARKS ON THE FOLDER (M2-R2-1, 2026-09-25). Without
-				// this a mark pressed in the folder stayed in force -- and its fence
-				// with it -- until the page reloaded, so the toast below was not true
-				// until then. Repainted at once (`signalLinksChanged`) rather than left
-				// for the next redraw to happen to catch.
-				try {
-					DaimondMarksHere.forgetRoot(
-						DaimondMarksHere.rootKey({ kind: 'machine', name: folderHandle.name, fid: folderFid }));
-				} catch (e) { /* nothing recorded */ }
-				rootHandle = null;
-				renderMode();
-				showModeMsg(t('files.root_forgotten'));
-				signalLinksChanged();
-			});
-			forget.classList.add('files-mode-forget');
-			forgetActs.appendChild(forget);
+			try { await FsaDB.clear(); } catch (e) { /* nothing stored */ }
+			// The kept handle goes too (M2-F4): otherwise "Forget" only forgot the
+			// reconnect slot, and a folder picked again kept its old id and its marks.
+			try { await FsaDB.forget(folderFid); } catch (e) { /* nothing stored */ }
+			// THIS DEVICE'S OWN MARKS ON THE FOLDER (M2-R2-1, 2026-09-25). Without
+			// this a mark pressed in the folder stayed in force -- and its fence
+			// with it -- until the page reloaded. Repainted at once
+			// (`signalLinksChanged`) rather than left for the next redraw to catch.
+			try {
+				DaimondMarksHere.forgetRoot(
+					DaimondMarksHere.rootKey({ kind: 'machine', name: folderHandle.name, fid: folderFid }));
+			} catch (e) { /* nothing recorded */ }
+			rootHandle = null;
+			renderMode();
+			showModeMsg(t('files.root_forgotten'));
+			signalLinksChanged();
 		}
 
 		/// The status rows report which files the agent is touching, so they are stale the moment
@@ -48202,17 +48234,59 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		// "Open folder": pick a real directory, grant read/write, and make
 		// it the workspace root.  Degrades cleanly off Chromium.
+		/// The running turns that work in the open folder, each with its name, whether it is
+		/// still running, and how to stop it: a chat's or a Diamond's turn, or a worker of one,
+		/// whose fence holds a path here. A fence's own folder is in the store, so a turn with
+		/// nothing added here is not in this folder, and a change moves nothing under it.
+		async function turnsInFolder() {
+			var out = [];
+			async function here(diamondId, chatId) {
+				try {
+					var b = diamondId ? await Files.bounds(diamondId) : await chatBounds(chatId);
+					return !!(b && b.attached && b.attached.length);
+				} catch (e) { return true; }		// unread is not proven elsewhere
+			}
+			function nameOf(diamondId, c) {
+				var d = diamondId ? diamonds.find(function (x) { return x.id === diamondId; }) : null;
+				return d ? d.name : chatDisplayName(c);
+			}
+			for (var i = 0; i < (chats || []).length; i++) {
+				var c = chats[i];
+				if (!c || !c._generating || !(await here(c.diamondId, c.id))) continue;
+				out.push({ name: nameOf(c.diamondId, c), live: (function (c) { return function () { return !!c._generating; }; })(c),
+					stop: (function (c) { return function () { abortTurn(c); }; })(c) });
+			}
+			var runs = (Workers && Workers.runs) || [];
+			for (var j = 0; j < runs.length; j++) {
+				var r = runs[j];
+				if (r.status !== 'running' || !(await here(r.diamondId, r.chatId))) continue;
+				var pc = (chats || []).find(function (x) { return x.id === r.chatId; });
+				out.push({ name: nameOf(r.diamondId, pc), live: (function (r) { return function () { return r.status === 'running'; }; })(r),
+					stop: (function (r) { return function () { Workers.stop(r); }; })(r) });
+			}
+			return out;
+		}
+
 		/// Changing the root swaps the workspace out from under whatever is
 		/// running: the agent resolves every path against one root, so a switch
-		/// mid-turn leaves it reading and writing somewhere else entirely. It
-		/// used to happen silently.
-		function rootSwitchBlocked() {
-			var busy = false;
-			try { busy = !!(window.DaimondCore && DaimondCore.busy()); } catch (e) { busy = false; }
-			if (busy) {
-				showModeMsg('Wait for the agent to finish before changing where it works.', true);
+		/// mid-turn leaves it reading and writing somewhere else entirely. Only the
+		/// turns working here are asked about (UNBLOCK-15): they are named, and
+		/// Stop and change stops them and goes on. Declining is a choice, not a fault,
+		/// so nothing here is red.
+		async function rootSwitchBlocked() {
+			var busy = await turnsInFolder();
+			if (!busy.length) return false;
+			var names = busy.map(function (b) { return b.name; })
+				.filter(function (n, i, a) { return a.indexOf(n) === i; }).join(', ');
+			if (!(await confirmDialog(t('files.switch_busy', { names: names }), t('files.stop_and_change'),
+				{ title: t('files.switch_busy_title') }))) return true;
+			busy.forEach(function (b) { b.stop(); });
+			// An abort lands at the turn's next await; the change waits for it, briefly.
+			for (var k = 0; k < 30 && busy.some(function (b) { return b.live(); }); k++) {
+				await new Promise(function (res) { setTimeout(res, 100); });
 			}
-			return busy;
+			if (busy.some(function (b) { return b.live(); })) { showModeMsg(t('files.still_stopping'), false); return true; }
+			return false;
 		}
 
 		// Stamp of folder ids already checked for the stray digest below, so a folder with
@@ -48267,7 +48341,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		async function openFolder() {
-			if (rootSwitchBlocked()) return;
+			if (await rootSwitchBlocked()) return;
 			if (typeof window.showDirectoryPicker !== 'function') {
 				showModeMsg('Real-folder mode needs a Chromium-based browser. Staying on OPFS.', true);
 				return;
@@ -48460,9 +48534,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the picker. Going to the sandbox says where the agent works, not which folder this
 		// browser is allowed to reach -- and the grant survives either way, so deleting the
 		// record only cost the user the dialog. Forgetting the folder is now its own deliberate
-		// control (see showMachineInfo).
+		// control (`forgetRoot`, in the head ⋯).
 		async function switchToOpfs() {
-			if (rootSwitchBlocked()) return;
+			if (await rootSwitchBlocked()) return;
 			try { use_opfs_workspace(); } catch (e) { /* ignore */ }
 			rootHandle = folderHandle || rootHandle;
 			folderHandle = null;
@@ -48481,7 +48555,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// mid-turn. The Machine chip now routes the way BACK through here, which is an
 			// ordinary click at an arbitrary moment -- so the gap became reachable and the agent
 			// could have had the ground moved under it mid-turn.
-			if (rootSwitchBlocked()) return;
+			if (await rootSwitchBlocked()) return;
 			if ((await ensurePermission(handle)) !== 'granted') {
 				showModeMsg('Reconnect was declined. Staying on OPFS.', true);
 				return;
@@ -48609,7 +48683,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			curDir = dir || '';
 			curFile = null; listed = true;
 			viewEl.style.display = 'none'; syncLineNo();   // the preview is not ours to close
-			renderCrumbs(pathEl, t('panel.work'), curDir, goDir);
+			paintPath();
 			listBusy();
 			await loadAttached();		// so a row can say whether it is attached
 			var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: curDir || '.' }));
@@ -48631,7 +48705,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			renderTree(parseListing(res.text));
 			drawnKey = listKey();
-			refreshResidency();
 			return true;
 		}
 
@@ -48670,8 +48743,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// see these entries and only the filter below was hiding them from their owner.
 		var APP_DIRS = { chats: 1, mail: 1, prompts: 1, system: 1 };
 		var LS_RESTGROUP = 'daimond-files-rest';
-		// Shut unless the device says otherwise, so the panel opens on the user's own files.
-		var restOpen = (function () {
+		// Not drawn unless the device says otherwise (head ⋯, Show hidden files), so the
+		// panel opens on the user's own files.
+		var restShown = (function () {
 			try { return localStorage.getItem(LS_RESTGROUP) === '1'; }
 			catch (e) { return false; }
 		})();
@@ -48692,17 +48766,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// somewhere to go back to, and that was the one way out of it.
 			var up = upRow();
 			if (up) treeEl.appendChild(up);
-			if (!mine.length && !rest.length) {
+			if (!mine.length && !(restShown && rest.length)) {
+				if (naming) { treeEl.appendChild(naming.row); if (naming.had) naming.input.focus(); }
 				var none = document.createElement('div');
 				none.className = 'files-empty';
 				none.textContent = 'empty';
 				treeEl.appendChild(none);
 				return;
 			}
+			if (naming) treeEl.appendChild(naming.row);
 			mine.forEach(function (e) { treeEl.appendChild(treeRow(e)); });
 			// Last: the user's own work reads down from the top of the panel, and what
-			// they did not put there themselves is one row underneath it.
-			if (rest.length) treeEl.appendChild(restGroup(rest));
+			// they did not put there themselves follows it, when asked for.
+			if (restShown) rest.forEach(function (e) { treeEl.appendChild(treeRow(e)); });
+			if (naming && naming.had) naming.input.focus();
 		}
 
 		/// One row of the tree, for something in `curDir`.
@@ -48730,77 +48807,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return row;
 		}
 
-		/// The disclosure at the foot of the tree, with its rows already inside it.
-		///
-		/// Built fresh on every listing rather than toggled in place, because the tree
-		/// is: the open state is the module's, not the element's, so it survives the
-		/// relist that follows a save, a sync landing or a folder being walked into.
-		function restGroup(rest) {
-			var wrap = document.createElement('div');
-			wrap.className = 'files-rest';
-			var head = document.createElement('button');
-			head.type = 'button';
-			head.className = 'files-rest-head';
-			head.id = 'files-rest-head';
-			head.setAttribute('aria-controls', 'files-rest-body');
-			head.title = t('files.rest_help');
-			var label = document.createElement('span');
-			label.className = 'files-rest-label';
-			label.textContent = t('files.rest');
-			head.appendChild(label);
-			// The count is a fact about what opening it costs, so it is beside the name
-			// and not in the tooltip, where nobody reads it before deciding.
-			var n = document.createElement('span');
-			n.className = 'files-rest-count';
-			n.textContent = tn('files.rest_count', rest.length);
-			// The number, kept beside the row that shows it. `relabelListing` says this
-			// count again in a new language and must not go back to the store to learn
-			// what it was: a plural form differs by language, so the WORDS have to be
-			// rebuilt even though the number has not moved.
-			head.dataset.n = rest.length;
-			head.appendChild(n);
-			var body = document.createElement('div');
-			body.className = 'files-rest-body';
-			body.id = 'files-rest-body';
-			rest.forEach(function (e) { body.appendChild(treeRow(e)); });
-			function paint() {
-				head.setAttribute('aria-expanded', restOpen ? 'true' : 'false');
-				body.hidden = !restOpen;
-			}
-			head.addEventListener('click', function () {
-				restOpen = !restOpen;
-				paint();
-				// A device preference, kept like the line numbers.
-				try { localStorage.setItem(LS_RESTGROUP, restOpen ? '1' : '0'); }
-				catch (e2) { /* private mode: it holds for this session only */ }
-			});
-			paint();
-			wrap.appendChild(head);
-			wrap.appendChild(body);
-			return wrap;
-		}
-
 		/// Say a listing that is ALREADY DRAWN over again, in whatever language is now on.
 		///
 		/// Not `list()`, and that is the whole reason this exists. Relisting sets
 		/// `curFile = null` and hides the document view with it, so `Files.relabel` guards
 		/// its relist with `!curFile` -- and the guard held from the moment the Doc panel
-		/// gained a document at cold start. The breadcrumb, the shut row at the foot of
-		/// the tree and the tree's spoken name were then fixed in the language the panel
+		/// gained a document at cold start. The breadcrumb and the tree's spoken name were then fixed in the language the panel
 		/// was first painted in, for as long as any document stayed open.
 		///
 		/// Only the words the panel writes itself. File and folder names are the user's
 		/// and do not translate.
 		function relabelListing() {
 			if (!listed) return;
-			renderCrumbs(pathEl, t('panel.work'), curDir, goDir);
-			var head = document.getElementById('files-rest-head');
-			if (!head) return;
-			head.title = t('files.rest_help');
-			var lbl = head.querySelector('.files-rest-label');
-			if (lbl) lbl.textContent = t('files.rest');
-			var n = head.querySelector('.files-rest-count');
-			if (n) n.textContent = tn('files.rest_count', parseInt(head.dataset.n, 10) || 0);
+			paintPath();
 			relabelRows();
 		}
 
@@ -48836,7 +48855,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// was, dimmed, with an Undo beside it for five seconds.
 		var UNDO_MS = 5000;
 		var undoing = {};		// key (a path, or 'kit:'+name) -> { focus, row, idx, undo, timer }
-		var rowMenu = null;		// the row ⋯ menu while it is open, and the path it is for
+		var pop = null;			// the one panel menu open -- head ⋯, + New or a row ⋯: { el, key, anchor }
 
 		/// The ◈ on a tree row, in one of its three roles: accent where the focus can
 		/// change the thing, muted where it may only read it, ghost where it cannot yet
@@ -49007,7 +49026,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			more.setAttribute('aria-expanded', 'false');
 			more.addEventListener('click', function (ev) {
 				ev.stopPropagation();
-				if (rowMenu && rowMenu.path === full) { closeRowMenu(); return; }
+				if (popOpen('row:' + full)) { closePop(); return; }
 				openRowMenu(row, e, full, more);
 			});
 			row.appendChild(more);
@@ -49016,7 +49035,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			paintMark(dm, row);
 			row.addEventListener('contextmenu', function (ev) {
 				ev.preventDefault();
-				if (!(rowMenu && rowMenu.path === full)) openRowMenu(row, e, full, more, ev.clientX, ev.clientY);
+				if (!popOpen('row:' + full)) openRowMenu(row, e, full, more, ev.clientX, ev.clientY);
 			});
 			// A phone has no hover and no right-click: a long-press opens the same menu,
 			// and the click the lifted finger then makes is not also an open.
@@ -49027,7 +49046,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				lp = { x: x, y: y, fired: false, timer: setTimeout(function () {
 					if (!lp) return;
 					lp.fired = true;
-					if (!(rowMenu && rowMenu.path === full)) openRowMenu(row, e, full, more, x, y);
+					if (!popOpen('row:' + full)) openRowMenu(row, e, full, more, x, y);
 				}, 500) };
 			});
 			row.addEventListener('pointermove', function (ev) {
@@ -49053,89 +49072,117 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			row.addEventListener('pointercancel', lift);
 		}
 
-		function closeRowMenu() {
-			if (!rowMenu) return;
-			rowMenu.el.remove();
-			if (rowMenu.anchor) rowMenu.anchor.setAttribute('aria-expanded', 'false');
-			rowMenu = null;
-			document.removeEventListener('click', onRowMenuOutside, true);
-			DaimondLayers.done('rowmenu');
-		}
-		function onRowMenuOutside(ev) { if (rowMenu && !rowMenu.el.contains(ev.target)) closeRowMenu(); }
+		/// Is the panel menu for `key` the one open?
+		function popOpen(key) { return !!(pop && pop.key === key); }
 
-		/// The row ⋯: everything a row can do besides its ◈, each item only where it can
-		/// act. The same `railhead-menu` role as the head ⋯.
-		function openRowMenu(row, e, full, anchor, x, y) {
-			closeRowMenu();
-			var f = attachFocus();
+		function closePop() {
+			if (!pop) return;
+			pop.el.remove();
+			if (pop.anchor) pop.anchor.setAttribute('aria-expanded', 'false');
+			pop = null;
+			document.removeEventListener('click', onPopOutside, true);
+			DaimondLayers.done('filesmenu');
+		}
+		function onPopOutside(ev) { if (pop && !pop.el.contains(ev.target)) closePop(); }
+
+		/// The panel's one menu, in the `railhead-menu` role: the head ⋯, + New and a row
+		/// ⋯ differ only in their items, which `fill(item, sep, menu)` adds. An item with
+		/// no `run` is drawn disabled; one with `checked` is a checkbox. It hangs from
+		/// `anchor`'s right edge, or from (x, y) for a right-click or a long-press.
+		function openPop(key, anchor, label, fill, x, y) {
+			closePop();
 			var menu = document.createElement('div');
 			menu.className = 'railhead-menu';
-			menu.dataset.menu = 'row';
-			menu.dataset.path = full;
+			menu.dataset.menu = key.split(':')[0];
 			menu.setAttribute('role', 'menu');
-			menu.setAttribute('aria-label', e.name);
-			function item(act, label, run, checked, title) {
+			menu.setAttribute('aria-label', label);
+			function item(act, text, run, checked, title) {
 				var it = document.createElement('button');
 				it.type = 'button';
 				it.className = 'railhead-menu-item';
 				it.dataset.act = act;
 				if (checked === undefined) {
 					it.setAttribute('role', 'menuitem');
-					it.textContent = label;
+					it.textContent = text;
 				} else {
 					it.setAttribute('role', 'menuitemcheckbox');
 					it.setAttribute('aria-checked', checked ? 'true' : 'false');
 					it.classList.add('lead-ok');
-					it.textContent = label;
+					it.textContent = text;
 				}
 				if (title) it.title = title;
-				if (run) it.addEventListener('click', function (ev) { ev.stopPropagation(); closeRowMenu(); run(); });
+				if (run) it.addEventListener('click', function (ev) { ev.stopPropagation(); closePop(); run(); });
 				else { it.disabled = true; it.setAttribute('aria-disabled', 'true'); }
 				menu.appendChild(it);
 				return it;
 			}
-			// Residency, not location: a cloud row is the user's file, safe, simply not on
-			// this device at the moment.
-			var backed = !e.dir && !e.cloud && !!(window.DaimondCloud && DaimondCloud.manifest(full));
-			if (e.cloud) {
-				item('get', t('files.get'), function () { fetchEntry(full, e.size || 0); },
-					undefined, t('files.get_help', { size: fmtBytes(e.size || 0) }));
-			} else if (!e.dir) {
-				item('download', t('files.download'), function () { downloadPath(full, false, e.name); },
-					undefined, t('files.download_help'));
+			function sep() {
+				var d = document.createElement('div');
+				d.className = 'railhead-menu-sep';
+				d.setAttribute('role', 'separator');
+				menu.appendChild(d);
 			}
-			if (backed) {
-				var pinned = DaimondCloud.isPinned(full);
-				item('pin', t('files.pinned_short'), function () {
-					DaimondCloud.pin(full, !DaimondCloud.isPinned(full));
-					list(curDir);
-				}, pinned, t(pinned ? 'files.pinned_help' : 'files.pin_help'));
-				if (!pinned) item('free', t('files.free'), function () { freeEntry(full); }, undefined, t('files.free_help'));
-			}
-			// The grants beyond the ◈: only on the user's own mark, and only where it is in
-			// force here can it be changed here (decision O2).
-			var a = f && f.kind === 'diamond' ? attachedOf(rootedRef(e.dir ? 'dir' : 'file', full)) : null;
-			if (a && isUsersMark(a.link)) {
-				var why = (a.here === false || a.gone) ? t('dws.share_unavailable')
-					: !a.force ? (a.by ? t('dws.confirm_here', { where: a.where }) : t('dws.confirm_old'))
-					: (a.rowShare && !a.share) ? t('dws.shared_there') + '\n' + t('dws.share_here_help')
-					: t('dws.share') + '\n' + t('dws.share_help', { max: fmtSyncBytes(SYNC_FOLDER_SHARE_MAX) });
-				var can = a.here !== false && !a.gone && !!a.force;
-				item('share', t('dws.share_item'), can ? function () { toggleAttachShare(a); } : null, a.share, why);
-				if (a.force) item('readonly', t('dws.readonly'), function () { setReadOnly(a); }, a.ro);
-			}
-			item('rename', t('files.rename_move'), function () { renameEntry(e, full); });
-			item('delete', t('files.delete'), function () { deleteEntry(e, full); });
+			fill(item, sep, menu);
 			document.body.appendChild(menu);
 			var r = anchor.getBoundingClientRect();
 			var left = x !== undefined ? x : r.right - menu.offsetWidth;
 			var top = y !== undefined ? y : r.bottom + 4;
 			menu.style.left = Math.max(8, Math.min(left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
 			menu.style.top = Math.max(8, Math.min(top, window.innerHeight - menu.offsetHeight - 8)) + 'px';
-			rowMenu = { el: menu, path: full, anchor: anchor };
-			DaimondLayers.open('rowmenu', closeRowMenu, anchor);
+			pop = { el: menu, key: key, anchor: anchor };
+			DaimondLayers.open('filesmenu', closePop, anchor);
 			anchor.setAttribute('aria-expanded', 'true');
-			setTimeout(function () { document.addEventListener('click', onRowMenuOutside, true); }, 0);
+			setTimeout(function () { document.addEventListener('click', onPopOutside, true); }, 0);
+		}
+
+		/// The row ⋯: everything a row can do besides its ◈, each item only where it can act.
+		function openRowMenu(row, e, full, anchor, x, y) {
+			var f = attachFocus();
+			openPop('row:' + full, anchor, e.name, function (item, sep, menu) {
+				menu.dataset.path = full;
+				// UNBLOCK-24: the row's way into and out of what is in focus, said in words, first.
+				// The ◈'s own press, so the two cannot disagree; a waiting mark is drawn at rest and
+				// asked about from its ◈, and the Diamond's own folder is held, not added.
+				var st = f ? attachStateOf(full, !!e.dir) : null;
+				if (st && !st.own && !(st.on && st.away)) {
+					var key = (st.on ? 'files.remove_from' : 'files.add_to')
+						+ (f.kind !== 'diamond' ? '_chat' : f.name ? '' : '_diamond');
+					item(st.on ? 'detach' : 'attach', t(key, f.kind === 'diamond' && f.name ? { name: f.name } : undefined),
+						function () { pressMark(full, !!e.dir); });
+				}
+				// Residency, not location: a cloud row is the user's file, safe, simply not on
+				// this device at the moment.
+				var backed = !e.dir && !e.cloud && !!(window.DaimondCloud && DaimondCloud.manifest(full));
+				if (e.cloud) {
+					item('get', t('files.get'), function () { fetchEntry(full, e.size || 0); },
+						undefined, t('files.get_help', { size: fmtBytes(e.size || 0) }));
+				} else if (!e.dir) {
+					item('download', t('files.download'), function () { downloadPath(full, false, e.name); },
+						undefined, t('files.download_help'));
+				}
+				if (backed) {
+					var pinned = DaimondCloud.isPinned(full);
+					item('pin', t('files.pinned_short'), function () {
+						DaimondCloud.pin(full, !DaimondCloud.isPinned(full));
+						list(curDir);
+					}, pinned, t(pinned ? 'files.pinned_help' : 'files.pin_help'));
+					if (!pinned) item('free', t('files.free'), function () { freeEntry(full); }, undefined, t('files.free_help'));
+				}
+				// The grants beyond the ◈: only on the user's own mark, and only where it is in
+				// force here can it be changed here (decision O2).
+				var a = f && f.kind === 'diamond' ? attachedOf(rootedRef(e.dir ? 'dir' : 'file', full)) : null;
+				if (a && isUsersMark(a.link)) {
+					var why = (a.here === false || a.gone) ? t('dws.share_unavailable')
+						: !a.force ? (a.by ? t('dws.confirm_here', { where: a.where }) : t('dws.confirm_old'))
+						: (a.rowShare && !a.share) ? t('dws.shared_there') + '\n' + t('dws.share_here_help')
+						: t('dws.share') + '\n' + t('dws.share_help', { max: fmtSyncBytes(SYNC_FOLDER_SHARE_MAX) });
+					var can = a.here !== false && !a.gone && !!a.force;
+					item('share', t('dws.share_item'), can ? function () { toggleAttachShare(a); } : null, a.share, why);
+					if (a.force) item('readonly', t('dws.readonly'), function () { setReadOnly(a); }, a.ro);
+				}
+				item('rename', t('files.rename_move'), function () { renameEntry(e, full); });
+				item('delete', t('files.delete'), function () { deleteEntry(e, full); });
+			}, x, y);
 		}
 
 		/// Read only, from the row ⋯: the mark is written again with the other relation,
@@ -51241,15 +51288,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			catch (e) { fileMsg(t('files.create_failed', { reason: friendlyError(e) }), true); }
 		}
 
-		// Create a new empty file in the current directory and open it to edit.
-		async function newFile() {
+		/// Make an empty file called `name` in the folder on screen, and open it to edit.
+		async function newFile(name) {
 			var into = writeDir();
-			var atRoot = !into || into === '.' || into === '/';
-			var hint = (atRoot && !Instructions.md.trim()) ? t('files.new_file_hint') : '';
-			var name = await promptDialog(t('work.new_file'),
-				{ message: hint, placeholder: 'notes.md', okLabel: t('rail.create') });
-			if (name === null) return;
-			name = name.trim(); if (!name) return;
 			var p = joinPath(into, name);
 			// ONE seed text, from the wasm, so the file a user makes by hand and the file the
 			// app seeds are the same file. They were two strings saying different things.
@@ -51273,11 +51314,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		/// Create a folder. Only an agent could make one before — and only as a
 		/// side effect of writing a file into it. The user had no way at all.
-		async function newDir() {
-			var name = await promptDialog(t('work.new_folder'),
-				{ placeholder: 'notes', okLabel: t('rail.create') });
-			if (name === null) return;
-			name = name.trim(); if (!name) return;
+		async function newDir(name) {
 			var res = await tools().run_tool_outcome('dir_create',
 				JSON.stringify({ path: joinPath(writeDir(), name) }));
 			if (!res || res.outcome !== 'done') {
@@ -51800,7 +51837,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			onDocOpen:     onDocOpen,
 			refresh:       refresh,
 			// Repaint what the Cloud chip claims, after a sync has moved residency.
-			refreshResidency: refreshResidency,
 			tryReconnect:  tryReconnect,
 			clear:         clear,
 			// The open folder, for the status row that reports on it. Null on the sandbox.
@@ -51825,7 +51861,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// which is Daimond's own store and is not the user's to browse.
 			///
 			/// This used to say "filtered exactly as the tree filters it", and since
-			/// the tree grew its `files-rest` row that is no longer true and is no
+			/// the tree learnt to show hidden files that is no longer true and is no
 			/// longer wanted. The tree is the owner LOOKING at his workspace and must
 			/// conceal nothing; this is a picker choosing what a chat may reach, and
 			/// an `.env` or a `.git` offered for attachment is a different question
@@ -52824,7 +52860,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				return out;
 			},
-			/// Forget `id`: "Forget" (`showMachineInfo`) drops the folder's kept handle too, so
+			/// Forget `id`: "Forget" (`forgetRoot`) drops the folder's kept handle too, so
 			/// a folder picked again after it gets a fresh id and its marks wait for "Use here"
 			/// (M2-F4). A no-op where `id` is empty, which nothing was ever kept under.
 			forget: function (id) {
@@ -61211,7 +61247,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!links.length) {
 			var none = document.createElement('div');
 			none.className = 'rail-note arte-empty';
-			none.textContent = t('dws.empty');
+			none.textContent = t('dws.empty_add');
 			body.appendChild(none);
 		}
 	}
@@ -71452,6 +71488,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// this block, so a panel waiting on it (graph, tools, ...) unblocks as early as
 			// possible rather than behind the rest of boot.
 			readyResolve();
+			try { window.DaimondSeal.markReady(); } catch (e) { /* no seal bridge */ }
 			try { document.dispatchEvent(new CustomEvent('daimond:wasm-ready')); } catch (e) {}
 			// Point OPFS at the current account's subdirectory BEFORE any file tool runs, so this
 			// account's workspace and Daimond's own state are isolated from every other account at
@@ -71521,6 +71558,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// throws before the module is usable must not hang forever.
 			try { readyReject(e); } catch (e2) {}
 			try { runnerReadyReject(e); } catch (e2) {}
+			try { window.DaimondSeal.markFailed(e); } catch (e2) {}
 			// A LinkError here is never an ordinary runtime failure. It means the wasm
 			// and the JS glue beside it came from DIFFERENT BUILDS -- the module asks for
 			// an import the glue does not define -- and that is what a deploy landing
@@ -72031,5 +72069,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	}
 
-	boot().then(handleCheckoutReturn);
+	// A throw in boot before its own try (where markFailed is called) would leave
+	// DaimondSeal.ready pending for good and every waiting send hung; settle it here.
+	boot().then(handleCheckoutReturn, function (e) {
+		try { window.DaimondSeal.markFailed(e); } catch (e2) { /* no seal bridge */ }
+		throw e;
+	});
 })();

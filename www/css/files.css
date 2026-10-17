@@ -17,68 +17,22 @@
 .files-actions { display: flex; gap: 4px; align-items: center; }
 
 /* Workspace root mode: OPFS sandbox vs an open real folder (FSA). */
-/* The chips total 418px, and the Workspace sheet is 380px wide on a phone, so
-   the row wraps -- and the second row was then clipped by the foot of the sheet.
-   It scrolls sideways below the breakpoint instead: a control on a second row
-   the sheet cuts off is one nobody can reach, where a control reached by a swipe
-   at least exists. 10px is the dock's one body inset. */
-/* Two rows, always (layout_contract.md V6): the place chips and the transfer
-   actions used to be every child of one wrapping row, so English wrapped
-   chips/actions onto two lines and German -- "Einen Ordner importieren …" --
-   onto three, the break landing wherever that string happened to end. Each
-   group is its own row (`.files-mode-seg`, `.files-mode-acts`, built in
-   daimond.js's `renderMode`); `.files-mode-msg` stays a plain child after
-   them. */
+/* The mode row holds only the Reconnect offer (`.files-mode-acts`, built in
+   daimond.js's `renderMode`) and the status message. One line at every width
+   and in every language (quality bar, rule 3): a long label makes the bar
+   scroll, never wrap and drop the file list below it. */
 .files-mode {
 	display: flex; flex-direction: column; align-items: stretch; gap: 6px;
 	padding: 6px 10px;
 	border-bottom: 1px solid var(--border);
 	flex: none;
 }
-/* One line at every width and in every language (quality bar, rule 3): a long
-   label makes the bar scroll, never wrap and drop the file list below it. */
-.files-mode-seg, .files-mode-acts {
+.files-mode-acts {
 	display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
 	overflow-x: auto; scrollbar-width: none;
 }
-.files-mode-seg::-webkit-scrollbar, .files-mode-acts::-webkit-scrollbar { display: none; }
-.files-mode-seg > *, .files-mode-acts > * { flex: 0 0 auto; }
-.files-mode-chip {
-	display: inline-flex; align-items: center; gap: 4px;
-	padding: 2px 8px; border-radius: 999px;
-	font-size: var(--fs-2xs); font-weight: 600;
-	border: 1px solid var(--border-2);
-}
-/* The .ic default of 16px belongs to toolbar buttons; on a --fs-2xs chip the
-   glyph must sit at cap height. */
-.files-mode-chip .ic { width: 13px; height: 13px; }
-/* A chip states where things are. Two of them name the workspace root and are
-   mutually exclusive; the third names a residency and is additive -- so the
-   lit one is not "the selected tab", it is simply what is true. */
-.files-mode-chip        { color: var(--text-secondary); background: var(--bg-tertiary); }
-.files-mode-chip.active { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
-.files-mode-chip.cloud  { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
-/* "Nothing in cloud storage yet" -- the chip is quieter because there is nothing
-   behind it, NOT because it is switched off: it keeps `role="button"`,
-   `tabindex="0"` and its click, and its title is a sentence the reader is meant
-   to read. `opacity: 0.55` over the whole chip put those words at 2.22:1 in
-   Light and Lollypop, 2.26 in Mist, 2.84 in Dark -- under even the audit's
-   invisible-text alarm, and nowhere near the 4.5 an 11px label asks for.
-   Opacity cannot be the answer: measured across the eleven palettes it takes
-   0.93 before the words clear 4.5, and 0.93 is not a ghost. So the fade moves to
-   the GLYPH, which carries no words, and the label drops to the app's own quiet
-   rung instead -- 4.51 (Light) to 5.37 (Dusk), and still a rung below the two
-   chips beside it. The chip reads as quiet; the sentence stays readable.
-
-   The `:not()` guard is not decoration: `.ghost` is also put on the Machine chip
-   when no folder can be picked, and that chip can be the LIT one at the same
-   time. The old rule only set an opacity, so the lit accent survived under it; a
-   colour would have taken it away. */
-.files-mode-chip.ghost:not(.active):not(.cloud) { color: var(--text-muted); }
-.files-mode-chip.ghost .ic                      { opacity: 0.55; }
-.files-mode-chip.act    { cursor: pointer; }
-.files-mode-chip.act:hover  { background: var(--bg-hover); border-color: var(--accent); }
-.files-mode-chip.act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.files-mode-acts::-webkit-scrollbar { display: none; }
+.files-mode-acts > * { flex: 0 0 auto; }
 .files-mode-btn {
 	padding: 2px 8px; border-radius: 6px;
 	font-size: var(--fs-2xs); cursor: pointer;
@@ -119,17 +73,21 @@
    Mock r2. Roles, not surfaces: the focus name is a section head, Recent and
    Can change are group labels, and a row is a file row. No rules and no
    outlines -- white space delineates the groups. The ◈ is the one mark: accent
-   where the daimon can change the thing, ghost where it waits on this device. */
+   where the daimon can change the thing, ghost where it waits on this device.
+   The heads and labels keep the file row's inline padding (10px; 12px on a phone, responsive.css),
+   so their text starts on the panel's edge with the head title and the row icons. */
 .files-focus { flex: none; padding-bottom: 6px; }
 .files-focus .sh {
-	display: block; padding: 16px 12px 2px;
+	display: block; padding: 16px 10px 2px;
 	font-size: var(--fs-base); font-weight: var(--w-strong); color: var(--text-primary);
 	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .files-focus .gl {
-	display: block; padding: 8px 12px 2px;
+	display: block; padding: 8px 10px 2px;
 	font-size: var(--fs-xs); font-weight: var(--w-med); color: var(--text-muted);
 }
+/* Nothing added yet: where adding is, in one line under Can change. */
+.files-focus .files-focus-note { padding: 4px 10px 2px; }
 /* A focus row is a file row by role: it takes `.files-row`'s box (below), and only its parts are its own. */
 .files-focus .r[role="button"] { cursor: pointer; }
 .files-focus .r[role="button"]:hover { background: var(--bg-hover); }
@@ -168,8 +126,10 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
    information and is always drawn. The ⋯ beside it holds the rest of the row's
    actions and comes out the same way. */
 .files-row .dm.ghost:not(.wait), .files-row .files-more { visibility: hidden; }
-.files-row:hover :is(.dm, .files-more),
-.files-row:focus-within :is(.dm, .files-more) { visibility: visible; }
+/* As specific as the rule above and after it, so it wins: an `:is(.dm, .files-more)`
+   counts as one class and left the ghost hidden on hover and focus alike. */
+.files-row:is(:hover, :focus-within) .dm.ghost,
+.files-row:is(:hover, :focus-within) .files-more { visibility: visible; }
 .files-more {
 	flex: none; padding: 0 4px; border: 0; background: none; cursor: pointer;
 	color: var(--text-secondary); font-size: var(--fs-base); line-height: 1;
@@ -183,12 +143,16 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 	color: var(--accent-text); font-size: var(--fs-xs); font-weight: var(--w-med);
 }
 .files-undo:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* + New on the crumb line, at the line's end: a text button by role (skin-daylight.css). */
+.files-new { margin-left: auto; flex: none; border: 0; background: none; cursor: pointer; color: var(--text-secondary); }
+/* The name row of + New: the field takes the filter's role and the name's place. */
+.files-naming .files-name-input { flex: 1; min-width: 0; width: auto; }
 /* Touch: a phone has no hover, so the ghost ◈ is always drawn, at 44px, and the ⋯
    gives way to the long-press. */
 @media (max-width: 760px), (pointer: coarse) {
 	:is(.files-focus .r, .files-row) { min-height: 44px; }
 	.dm { width: 44px; height: 44px; }
-	.files-row .dm.ghost { visibility: visible; }
+	.files-row .dm.ghost:not(.wait) { visibility: visible; }
 	.files-row .files-more { display: none; }
 }
 
@@ -419,37 +383,6 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cloud-row.away .cloud-path { color: var(--text-secondary); }
 .cloud-size { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--fs-2xs); }
 .cloud-pin  { font-size: var(--fs-2xs); }
-
-/* ── The rest of the folder, at the foot of the tree ─────────────
-   One shut row instead of a filter: the tree used to drop every dotfile
-   silently, which is a file its owner cannot see he has. The clutter it was
-   avoiding is answered by DESIGN — his own files stay at the top level, and
-   what he did not put there himself sits under one row with a count on it, so
-   he knows before pressing whether it costs a line or a screenful.
-   It borrows the System section's disclosure triangle deliberately: both rows
-   say the same thing about the same kind of contents, and two pictures for one
-   idea is how a panel stops being read. */
-.files-rest { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 4px; }
-.files-rest-head {
-	display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
-	border: 0; cursor: pointer;
-	text-transform: uppercase; letter-spacing: 0.04em;
-	color: var(--text-muted);
-}
-.files-rest-head::before { content: '\25B8'; display: inline-block; margin-right: 0.25em; }
-.files-rest-head[aria-expanded="true"]::before { content: '\25BE'; }
-.files-rest-label { flex: 1; }
-/* The count is a number about size, so it is set like every other one in this
-   panel — mono, quiet, and not shouted by the row's own uppercase. */
-.files-rest-count {
-	font-family: var(--font-mono); font-size: var(--fs-3xs);
-	text-transform: none; letter-spacing: 0;
-}
-.files-rest-head:hover { color: var(--text-primary); }
-.files-rest-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* Indented, so an entry inside the row is plainly the row's and not the tree's
-   — the only difference between the two; the controls on it are the same ones. */
-.files-rest-body .files-row { padding-left: 26px; }
 
 /* ── The System section: Daimond's own store ─────────────────────
    Its own section under the tree, not part of it. The two resolve against

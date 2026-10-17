@@ -110,12 +110,10 @@ const GHOSTS_ON_PAGE = (sel) => {
 	const sig = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '')
 		+ (typeof e.className === 'string' && e.className.trim()
 			? '.' + e.className.trim().split(/\s+/).join('.') : '');
-	const vis = (e) => {
-		const r = e.getBoundingClientRect();
-		if (!r.width || !r.height) return false;
-		const cs = getComputedStyle(e);
-		return cs.visibility !== 'hidden' && cs.opacity !== '0';
-	};
+	// The browser's own "is this rendered", which a rect cannot answer: content
+	// of a shut <details> keeps a laid-out box under `content-visibility: hidden`.
+	const vis = (e) => e.checkVisibility({ visibilityProperty: true })
+		&& getComputedStyle(e).opacity !== '0';
 	return [...document.querySelectorAll('*')].filter((e) => {
 		if (!vis(e) || e.matches(sel)) return false;
 		if (getComputedStyle(e).cursor !== 'pointer') return false;
@@ -135,16 +133,22 @@ const NO_FOCUS_RING = (sel) => {
 		'backgroundColor', 'borderColor', 'borderWidth', 'borderStyle', 'color',
 		'textDecorationLine', 'filter'];
 	const snap = (e) => { const cs = getComputedStyle(e); return P.map((p) => cs[p]).join('|'); };
-	// `visibility` too, not only the box (TOP-05): a `visibility: hidden`
-	// control (the update chip, while current) keeps its rect but cannot
-	// truly take focus, so `.focus()` on it is a silent no-op that this
-	// check would otherwise read as "the ring never changes".
-	const vis = (e) => { const r = e.getBoundingClientRect();
-		return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; };
+	// A control that cannot truly take focus makes `.focus()` a silent no-op,
+	// which this check would read as "the ring never changes". A rect test
+	// missed two such cases: a `visibility: hidden` control keeps its box
+	// (TOP-05, the update chip), and so does the content of a shut <details>,
+	// hidden by `content-visibility` on `::details-content` (r543 ws2). The
+	// browser's own `checkVisibility` answers both.
+	const vis = (e) => e.checkVisibility({ visibilityProperty: true });
 	const sig = (e) => e.tagName.toLowerCase()
 		+ (typeof e.className === 'string' && e.className.trim()
 			? '.' + e.className.trim().split(/\s+/).join('.') : '') + (e.id ? '#' + e.id : '');
 	const prev = document.activeElement;
+	// Every shut disclosure is opened for the census and shut again after it, so
+	// the controls a user reaches by opening one are measured, not skipped. The
+	// ring belongs to the CSS rule, not to the open state.
+	const shut = [...document.querySelectorAll('details:not([open])')];
+	shut.forEach((d) => { d.open = true; });
 	const seen = new Set(), bad = [];
 	[...document.querySelectorAll(sel)].filter(vis).forEach((e) => {
 		// An iframe's ring is the embedding browser's business, not the page's.
@@ -156,6 +160,7 @@ const NO_FOCUS_RING = (sel) => {
 		e.focus();
 		if (snap(e) === rest) bad.push(sig(e));
 	});
+	shut.forEach((d) => { d.open = false; });
 	if (prev && prev.focus) prev.focus();
 	return bad;
 };
@@ -200,13 +205,11 @@ const COUNT_IN = ({ sel, focusSel }) => {
 
 /// The first `n` visible focusables, in document order.
 const DOM_ORDER = ({ sel, n }) => [...document.querySelectorAll(sel)]
-	// `getBoundingClientRect` alone missed one real case (TOP-05): the update
-	// chip is `visibility: hidden` while current (css/updater.css), which
-	// keeps its box (a laid-out width, so nothing else in the row jumps) but
-	// takes it OUT of the tab order same as `display: none` would -- real Tab
-	// correctly skips it and this filter, without the visibility check, did not.
-	.filter((e) => { const r = e.getBoundingClientRect();
-		return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; })
+	// A rect test missed two controls that real Tab correctly skips: the update
+	// chip, `visibility: hidden` while current (TOP-05, css/updater.css), and
+	// the content of a shut <details>, which keeps a laid-out box under
+	// `content-visibility: hidden` (r543 ws2). `checkVisibility` sees both.
+	.filter((e) => e.checkVisibility({ visibilityProperty: true }))
 	.slice(0, n)
 	.map((e) => e.tagName + (e.id ? '#' + e.id : '')
 		+ (typeof e.className === 'string' && e.className.trim()
@@ -589,14 +592,30 @@ async function keyConsumed(sel, key) {
 	}, sel);
 	return dp;
 }
-if (await page.$('.files-mode-chip.act')) {
+// The Diamond rail row, a role="button" surrogate pressed by name and marked so each probe finds
+// that one. It was the Workspace mode row's chip until Workspace round 2 P4 put the chips' acts in
+// the head ⋯, whose items are real buttons. The choice is deliberate, not "first in the DOM": Enter
+// on the row opens its Crystal face, which widens what the later sections audit, and a reorder of
+// the DOM must not silently change that. Marked afresh before each use, since a repaint can redraw it.
+const SURR = '[data-a11y-surr]';
+const markSurr = () => page.evaluate(() => {
+	document.querySelectorAll('[data-a11y-surr]').forEach((e) => delete e.dataset.a11ySurr);
+	const e = [...document.querySelectorAll('.session-box.diamond-box[role="button"]')].find((e) =>
+		e.matches('[tabindex]:not([tabindex="-1"])') && e.checkVisibility({ visibilityProperty: true }));
+	if (!e) return null;
+	e.dataset.a11ySurr = '1';
+	return e.tagName.toLowerCase() + (e.id ? '#' + e.id : '')
+		+ (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
+});
+if (await markSurr()) {
 	for (const key of ['Enter', 'Space']) {
-		const took = await keyConsumed('.files-mode-chip.act', key);
-		check(took === true, `a role="button" chip acts on ${key}`,
+		await markSurr();
+		const took = await keyConsumed(SURR, key);
+		check(took === true, `a role="button" surrogate acts on ${key}`,
 			took === true ? null : 'the key passed straight through — no keydown handler');
 		await page.keyboard.press('Escape');
 		await page.waitForTimeout(300);
-		// Whatever the chip opened is put away, so the next check starts clean.
+		// Whatever the surrogate opened is put away, so the next check starts clean.
 		if (await page.$('.dlg-card')) { await page.keyboard.press('Escape'); await page.waitForTimeout(250); }
 	}
 } else {
@@ -893,15 +912,16 @@ p2 = await page.evaluate(POSITIVE_TABINDEX);
 red(p2.length === 0, 'and the page is clean again once it is removed');
 
 // (d) A role="button" surrogate with its tabindex taken away.
+const surSig = await markSurr();
 await page.evaluate(() => {
-	const c = document.querySelector('.files-mode-chip.act');
+	const c = document.querySelector('[data-a11y-surr]');
 	if (c) { c.dataset.a11ySaveTi = c.getAttribute('tabindex') || ''; c.removeAttribute('tabindex'); }
 });
 let s2 = await page.evaluate(SURROGATES);
-red(s2.some((x) => !x.ok && x.sig.includes('files-mode-chip')),
+red(!!surSig && s2.some((x) => !x.ok && x.sig === surSig),
 	'a role="button" that lost its tabindex is caught');
 await page.evaluate(() => {
-	const c = document.querySelector('.files-mode-chip.act');
+	const c = document.querySelector('[data-a11y-surr]');
 	if (c && c.dataset.a11ySaveTi) { c.setAttribute('tabindex', c.dataset.a11ySaveTi); delete c.dataset.a11ySaveTi; }
 });
 s2 = await page.evaluate(SURROGATES);
@@ -921,10 +941,11 @@ await page.evaluate(() => {
 });
 const clickOnly = await keyConsumed('#a11y-selftest-click-only', 'Enter');
 red(clickOnly !== true, 'a click-only role="button" is seen NOT to answer Enter');
-// The same probe on the real chip, which does answer, so the probe is not simply
+// The same probe on a real surrogate, which does answer, so the probe is not simply
 // reporting "no" to everything.
-const realChip = await keyConsumed('.files-mode-chip.act', 'Enter');
-red(realChip === true, 'and the same probe still says yes to a chip that does answer it');
+await markSurr();
+const realChip = await keyConsumed(SURR, 'Enter');
+red(realChip === true, 'and the same probe still says yes to a surrogate that does answer it');
 await page.evaluate(() => document.getElementById('a11y-selftest-click-only').remove());
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);

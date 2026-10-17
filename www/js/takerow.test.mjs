@@ -25,6 +25,10 @@
    ============================================================ */
 import { webcrypto } from 'node:crypto';
 import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadSeal, installSeal, pendingSeal } from './sealfixture.mjs';
+
+// The real wasm seal (S1): post.js and peer.js seal and open through it only.
+await loadSeal();
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -55,7 +59,7 @@ const realVerifySig = (pub, sig, data) => idWin.DaimondIdentity.verifySig(pub, s
 
 /// A tab: the real post.js over a relay box, with a seal key, an identity and a
 /// message format whose readiness the test controls through `fault`.
-async function tab(box, fault, withPeer) {
+async function tab(box, fault, withPeer, pending) {
 	const mine = await x25519();
 	const w = makeWindow({ now: 1_000_000_000 });
 	const accountKey = await subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
@@ -121,11 +125,13 @@ async function tab(box, fault, withPeer) {
 	w.sleeps = [];
 	w.setTimeout = (fn, ms) => { w.sleeps.push(ms | 0); return setTimeout(fn, 1); };
 	w.clearTimeout = (id) => clearTimeout(id);
+	// The seal: ready, or (`pending`) as the page has it before the wasm's boot ends.
+	const boot = pending ? await pendingSeal(w) : (installSeal(w), null);
 	loadScript(w, 'post.js');
 	if (withPeer) loadScript(w, 'peer.js');
 	await w.DaimondPost.read();
 	w.DaimondPost.adopt({ v: 5, through: 0, acked: 0, msgs: {}, notes: {}, groups: {}, shares: {}, feed: { since: 0, read: {}, new: {} } });
-	return { w, mine, accountKey };
+	return { w, mine, accountKey, boot };
 }
 
 /// A message row sealed to `pub`, addressed to this account.
@@ -324,6 +330,36 @@ console.log('\ntakerow 6: a stalled box backs the park off, as a failed round do
 	const ladder = w.sleeps.filter((ms) => ms >= 5000 && ms <= 60000);
 	check('the park waited on the backoff ladder (5 s doubling)', ladder.includes(5000) && ladder.includes(10000) && ladder.includes(20000),
 		JSON.stringify(w.sleeps));
+}
+
+console.log('\ntakerow 7: the wasm seal not yet up is waited for; one whose boot FAILED takes no row');
+{
+	const box = { rows: [], acks: [] };
+	const { w, mine, boot } = await tab(box, {}, false, true);
+	const { w: sealer } = await tab({ rows: [], acks: [] }, {}, false);		// a ready tab seals the rows
+	box.rows = [await msgRow(sealer, mine.pub, 1, 'early one'), await msgRow(sealer, mine.pub, 2, 'early two')];
+	let done = false;
+	const run = w.DaimondPost.collect().then((r) => { done = true; return r; });
+	await new Promise((r) => setTimeout(r, 30));
+	check('a collect before the seal is up waits for it', !done && box.rows.length === 2);
+	boot.start();
+	const r = await run;
+	await w.DaimondPost.ack();
+	const st = await w.DaimondPost.read();
+	check('and takes the rows once it is', r.stopped === false && !!st.msgs['a' + '1'.padStart(63, '0')] && !!st.msgs['a' + '2'.padStart(63, '0')]
+		&& box.rows.length === 0, JSON.stringify(r));
+}
+{
+	const box = { rows: [], acks: [] };
+	const { w, mine, boot } = await tab(box, {}, false, true);
+	const { w: sealer } = await tab({ rows: [], acks: [] }, {}, false);
+	box.rows = [await msgRow(sealer, mine.pub, 1, 'one'), await msgRow(sealer, mine.pub, 2, 'two')];
+	boot.fail(new Error('the wasm module did not start'));
+	const a = await pass(w);
+	check('a failed boot stops the pass', a.r.stopped === true, JSON.stringify(a.r));
+	check('no row is taken or kept as bad', Object.keys(a.st.msgs).length === 0, Object.keys(a.st.msgs).join(','));
+	check('and every row stays on the relay', box.rows.length === 2 && (a.st.through | 0) === 0 && (a.st.seen | 0) === 0,
+		JSON.stringify(box.rows.map((x) => x.seq)));
 }
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall takerow checks passed');

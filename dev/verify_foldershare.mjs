@@ -89,7 +89,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { buildBook } from './foldershare_book.mjs';
-import { open, signInAs, scratch, BROWSER, markHere, MOCK } from './harness.mjs';
+import { open, signInAs, scratch, BROWSER, markHere, MOCK, workMenu } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -612,7 +612,7 @@ check('B answers as a phone, so the mobile inline ceiling is the one it spends t
 //
 // The recipe dev/verify_dataloss.mjs and dev/verify_syncfixedpoint.mjs established: a
 // directory handle out of OPFS, granted the way a user grants one, handed to the panel's
-// Machine chip. A `showDirectoryPicker` grant cannot be answered under automation
+// folder item in the head ⋯. A `showDirectoryPicker` grant cannot be answered under automation
 // (dev/HATES.md, Lane G §1), and this is the same override by the door that also sets
 // the panel's own handle -- which is what `Files.folder()` answers and what the census
 // reads. `set_workspace_dir` alone sets only the engine's half.
@@ -625,12 +625,7 @@ await A.page.evaluate(async () => {
 });
 await A.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
 await A.page.waitForTimeout(700);
-await A.page.evaluate(() => {
-	const chips = [...document.querySelectorAll('.files-mode-chip')];
-	const machine = chips.find(c => /machine/.test(c.className)
-		|| c.querySelector('[data-icon="machine"]')) || chips[1];
-	if (machine) machine.click();
-});
+await workMenu(A.page, 'head', 'machine');
 await A.page.waitForTimeout(1500);
 const aMode = await A.page.evaluate(async () => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
@@ -1158,7 +1153,7 @@ await B.page.$$eval('.diamond-box', els => els[0] && els[0].click());
 await B.page.waitForTimeout(1200);
 await B.page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
 await B.page.waitForTimeout(800);
-await B.page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+await workMenu(B.page, 'head', 'refresh');
 await B.page.waitForTimeout(900);
 await B.page.waitForTimeout(1500);
 

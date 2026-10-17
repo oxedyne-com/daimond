@@ -44,6 +44,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { webcrypto } from 'node:crypto';
+import { loadSeal, installSeal } from './sealfixture.mjs';
+await loadSeal();
 
 const WWW = process.env.WWW || dirname(fileURLToPath(import.meta.url));
 const PREFIX = process.argv.includes('--prefix');
@@ -141,6 +143,7 @@ function makeTab(relay, name) {
 	loadScript('vendor/noble-curves.min.js', '\n;window.DaimondNoble = DaimondNoble;');
 	loadScript('curvefallback.js');
 	loadScript('identity.js');
+	installSeal(win);	// the wasm seal post.js and peer.js call (S1 SEAL)
 	loadScript('post.js');
 	loadScript('peer.js');
 	if (PREFIX) win.DaimondPeer.noteHeldFor = () => '';		// the collector before e6a99334

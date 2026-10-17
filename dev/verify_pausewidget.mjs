@@ -90,7 +90,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { open, newChat, scratch, mockLog, clearMockLog } from './harness.mjs';
+import { open, newChat, scratch, mockLog, clearMockLog, workMenu } from './harness.mjs';
 
 const UNBUILT = process.argv.includes('--unbuilt');
 const BASE = process.env.PAUSEWIDGET_BASE || '';
@@ -1046,10 +1046,12 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 		if (c && !document.getElementById('panel-work').getClientRects().length) c.click();
 	});
 	await p.waitForTimeout(1200);
-	await p.click('#panel-work [data-act="new-file"]', { force: true }).catch(() => {});
-	await p.waitForSelector('.dlg-input', { timeout: 8000 }).catch(() => {});
-	await p.fill('.dlg-input', 'held.txt').catch(() => {});
-	await p.click('.dlg-ok', { force: true }).catch(() => {});
+	// + New's File, named in place in the tree's name row (Workspace round 2 P4).
+	await workMenu(p, 'new', 'file');
+	const nameIn = '#panel-work .files-naming .files-name-input';
+	await p.waitForSelector(nameIn, { timeout: 8000 }).catch(() => {});
+	await p.fill(nameIn, 'held.txt').catch(() => {});
+	await p.press(nameIn, 'Enter').catch(() => {});
 	await p.waitForTimeout(1500);
 	const files = await p.evaluate(() => {
 		const w = document.getElementById('panel-work');

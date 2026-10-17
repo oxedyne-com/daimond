@@ -33,6 +33,13 @@
 //   N5  pressing a mark's ◈ takes it away at once, with no dialog: the row stays where it was, dimmed,
 //       with an Undo; the Undo puts it back in force; left alone, the Undo goes after five seconds and
 //       the mark stays away. Can change keeps N1 throughout (a taken row is not one of its rows).
+//   P4  the head holds exactly the title, the ⋯ and the ×: no new-file, new-folder, upload or refresh
+//       button, no mode chips or transfer buttons; the crumb starts at the store's name and its line holds
+//       + New (file, folder, upload, and import on Chromium); the head ⋯ holds the store's doors, refresh,
+//       Daimond's files, Show hidden files and, for a Diamond, Toolchains…; hidden files toggle the dot rows.
+//   N4  File… or Folder… puts a name row at the top of the listing, focused; Enter makes it (a file opens),
+//       Escape makes nothing, and a relist keeps the name being typed.
+//   N7  the head and the crumb line hold names, never a sentence.
 //
 // WSP_BASE=1 serves every www file this tree changed from ed595e3f (`git show`, lane B's pattern), so the gate
 // can be seen RED on the unchanged page whatever the tree holds. On ed595e3f itself the two are the same page.
@@ -70,8 +77,13 @@ const serveBase = async (page) => {
 		const esc = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		await page.route(new RegExp('/' + esc + '(\\?.*)?$'), (r) =>
 			r.fulfill({ status: 200, contentType: MIME[f.split('.').pop()] || 'text/plain', body }));
-		// The page itself is asked for as `/` and is served by the dev server, which writes into it, so it
-		// stays this tree's: on the base, the head's ⋯ is there but nothing hides it.
+	}
+	// The page itself is asked for as `/`, which the dev server answers with www/index.html as it is on
+	// disk; on the base it is the base's, or the base's script would run under this tree's markup.
+	if (changed.includes('index.html')) {
+		const body = git('show', `${BASE}:www/index.html`).stdout;
+		await page.route(/^https?:\/\/[^/]+\/(\?.*)?$/, (r) => r.request().resourceType() === 'document'
+			? r.fulfill({ status: 200, contentType: 'text/html', body }) : r.continue());
 	}
 };
 
@@ -158,7 +170,25 @@ async function seam(page) {
 }
 const mode = (page, mode, text) => page.evaluate(([m, t]) => { const w = window.__wsp; w.mode = m; w.text = t || ''; if (m === 'pass') { w.held.splice(0).forEach((r) => r()); } }, [mode, text]);
 const release = (page) => page.evaluate(() => { window.__wsp.held.splice(0).forEach((r) => r()); window.__wsp.mode = 'pass'; });
-const refresh = (page) => page.evaluate(() => { document.querySelector('#panel-work [data-act="refresh"]').click(); });
+// The panel's doors, as each page has them: before P4 the head held refresh and Daimond's files was always
+// drawn; since P4 both are in the head ⋯ (`data-act` refresh, system, kits). Pressed by script (`click()`),
+// which moves no focus, so a name being typed in the tree stays focused across a relist.
+const HEADDOOR = (act) => {
+	const own = document.querySelector(`#panel-work .railhead [data-act="${act}"]`);
+	if (own) { own.click(); return true; }
+	const more = document.querySelector('#panel-work [data-act="ws-more"]');
+	if (!more) return false;
+	more.click();
+	const it = document.querySelector(`.railhead-menu [data-act="${act}"]`);
+	if (it) { it.click(); return true; }
+	if (document.querySelector('.railhead-menu')) more.click();
+	return false;
+};
+const refresh = (page) => page.evaluate(HEADDOOR, 'refresh');
+const openSystem = async (page) => {
+	if (await page.evaluate(() => document.getElementById('sys-sec').hidden)) await page.evaluate(HEADDOOR, 'system');
+	await page.evaluate(() => { const h = document.getElementById('sys-head'); if (h.getAttribute('aria-expanded') !== 'true') h.click(); });
+};
 const treeNow = (page) => page.evaluate(() => {
 	const t = document.querySelector('#panel-work .files-tree');
 	const q = (s) => t.querySelector(s);
@@ -257,7 +287,7 @@ async function device(tag, s, size, stacked) {
 		}
 		await refresh(page); await wait(900);
 		// Daimond's files, open.
-		await page.evaluate(() => { const h = document.getElementById('sys-head'); if (h.getAttribute('aria-expanded') !== 'true') h.click(); });
+		await openSystem(page);
 		await wait(900);
 		await toTop(page);
 
@@ -276,6 +306,7 @@ async function device(tag, s, size, stacked) {
 		{ const ok = await reach(page, '#sys-tree > :last-child'); check(ok, `${T2}: the last row of Daimond's files is reachable by scrolling`, ok ? '' : reach.why); }
 		await focusSection(page, T2, scope === 'diamond' ? did : null, !stacked);
 		await rowControls(page, T2, scope === 'diamond' ? did : null, !stacked);
+		await headAndNew(page, T2, scope === 'diamond' ? did : null, !stacked, tag);
 		await toTop(page);
 		// WSP_SHOTS=<dir> keeps a picture of the panel at its top, for the before/after record.
 		if (process.env.WSP_SHOTS) await page.screenshot({ path: path.join(process.env.WSP_SHOTS, T2.replace(/[^\w-]+/g, '_') + '.png') });
@@ -404,7 +435,8 @@ async function focusSection(page, T2, id, phone) {
 	for (let i = 0; i < 20 && !(f.shown && f.hasCan); i++) { await wait(150); f = await page.evaluate(FOCUS); }
 	check(f.gone.length === 0, `${T2}: no scope, reach or toolchain row and no DAIMOND.md chip`, f.gone.join(' '));
 	// On a phone the Workspace is a destination, left by the app's own way back (I7), so it draws no ×.
-	check(f.title && f.close === !phone && f.more === !!id, `${T2}: the head holds the title, ${id ? 'the ⋯' : 'no ⋯ (nothing to put in it)'}${phone ? '' : ' and the ×'}`, JSON.stringify({ title: f.title, more: f.more, close: f.close }));
+	// Since P4 the ⋯ is always there: it holds the store's doors, refresh and the view's switches.
+	check(f.title && f.close === !phone && f.more, `${T2}: the head holds the title, the ⋯${phone ? '' : ' and the ×'}`, JSON.stringify({ title: f.title, more: f.more, close: f.close }));
 	check(f.shown && f.hasCan && !!f.sh, `${T2}: the focus section names the focus and draws Can change`, JSON.stringify({ shown: f.shown, sh: f.sh, can: f.hasCan }));
 	if (phone) check(f.minRow >= 44 && f.minDm >= 44, `${T2}: its rows and ◈ are 44px on a phone`, `row ${f.minRow}px, ◈ ${f.minDm}px`);
 	if (!id) return;
@@ -428,6 +460,9 @@ async function focusSection(page, T2, id, phone) {
 	const menu = await page.evaluate(async () => {
 		document.querySelector('#panel-work [data-act="ws-more"]').click();
 		await new Promise((r) => setTimeout(r, 300));
+		// Since P4 the toolchains are one item further in: Toolchains… opens them.
+		const k = document.querySelector('.railhead-menu [data-act="kits"]');
+		if (k) { k.click(); await new Promise((r) => setTimeout(r, 300)); }
 		const m = document.querySelector('.railhead-menu');
 		const out = { head: m && m.querySelector('.railhead-menu-head') ? m.querySelector('.railhead-menu-head').textContent : null, kits: m ? m.querySelectorAll('[data-kit]').length : 0 };
 		const py = m && m.querySelector('[data-kit="python"]');
@@ -442,6 +477,8 @@ async function focusSection(page, T2, id, phone) {
 	await page.evaluate(async () => {
 		document.querySelector('#panel-work [data-act="ws-more"]').click();
 		await new Promise((r) => setTimeout(r, 300));
+		const k = document.querySelector('.railhead-menu [data-act="kits"]');
+		if (k) { k.click(); await new Promise((r) => setTimeout(r, 300)); }
 		const py = document.querySelector('.railhead-menu [data-kit="python"]');
 		if (py) py.click();
 	});
@@ -570,6 +607,146 @@ async function rowControls(page, T2, id, phone) {
 		document.dispatchEvent(new CustomEvent('daimond-links-changed'));
 	}, id);
 	await wait(900);
+}
+
+// ── P4 and N4: the head, the crumb's + New, the name row, the head ⋯ ─────────────
+const HEAD = () => {
+	const vis = (el) => !!el && !el.hidden && el.offsetParent !== null && el.getBoundingClientRect().height > 0;
+	const head = document.querySelector('#panel-work .railhead');
+	const path = document.querySelector('#panel-work .files-path');
+	const drawn = [...head.querySelectorAll('[role="heading"], button')].filter(vis)
+		.map((e) => e.getAttribute('role') === 'heading' ? 'title' : e.classList.contains('panel-close') ? 'close' : (e.dataset.act || e.className));
+	// N7: the head and the crumb line are names, never a sentence.
+	const said = [...head.querySelectorAll('*'), ...(path ? path.querySelectorAll('*') : [])].filter(vis)
+		.map((e) => [...e.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(' ').trim())
+		.filter((x) => x && (/[.!?]$/.test(x) && !/…$/.test(x) || x.split(/\s+/).length > 4));
+	const root = path && path.querySelector('.path-crumb');
+	const nb = path && path.querySelector('[data-act="new"]');
+	return {
+		drawn, said,
+		old: ['new-file', 'new-dir', 'upload', 'refresh'].filter((a) => head.querySelector(`[data-act="${a}"]`)),
+		chips: document.querySelectorAll('#panel-work :is(.files-mode-chip, .files-mode-seg, .files-mode-acts, .files-mode-btn, .files-mode-forget)').length,
+		root: root ? root.textContent.trim() : null, store: DaimondI18n.t('files.mode_browser'),
+		newIn: !!nb && vis(nb) && nb.parentElement === path,
+	};
+};
+const POP = (key) => {
+	const m = document.querySelector(`.railhead-menu[data-menu="${key}"]`);
+	return m ? [...m.querySelectorAll('[data-act]')].map((b) => b.dataset.act) : null;
+};
+const pressNew = (page, act) => page.evaluate((act) => {
+	const b = document.querySelector('#panel-work .files-path [data-act="new"]');
+	if (!b) return false;
+	b.click();
+	const it = document.querySelector(`.railhead-menu[data-menu="new"] [data-act="${act}"]`);
+	if (!it) { b.click(); return false; }
+	it.click();
+	return true;
+}, act);
+const NAMING = () => {
+	const t = document.querySelector('#panel-work .files-tree'), r = t && t.querySelector('.files-naming');
+	const first = t && [...t.children].find((e) => !e.classList.contains('files-up'));
+	const i = r && r.querySelector('input');
+	return r ? { top: first === r, focused: document.activeElement === i, value: i ? i.value : null, dir: r.classList.contains('dir') } : null;
+};
+const listed = (page, name) => page.evaluate(async (name) => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	return (await app.run_tool('file_list', JSON.stringify({ path: '.' }))).split('\n').some((l) => l.includes(name));
+}, name);
+async function headAndNew(page, T2, id, phone, tag) {
+	await toTop(page);
+	await closeMenu(page);
+	const h = await page.evaluate(HEAD);
+	const want = phone ? ['title', 'ws-more'] : ['title', 'ws-more', 'close'];
+	check(h.drawn.join(' ') === want.join(' ') && h.old.length === 0, `${T2}: P4 the head holds exactly the title, the ⋯${phone ? '' : ' and the ×'}`, JSON.stringify({ drawn: h.drawn, old: h.old }));
+	check(h.chips === 0, `${T2}: P4 no mode chips or transfer buttons`, `${h.chips}`);
+	check(h.root === h.store && h.newIn, `${T2}: P4 the crumb starts at the store's name and its line holds + New`, JSON.stringify({ root: h.root, store: h.store, newIn: h.newIn }));
+	check(h.said.length === 0, `${T2}: N7 no sentence in the head or the crumb line`, h.said.slice(0, 3).join(' | '));
+	// The head ⋯: the store's doors, refresh and the view's switches; Toolchains… for a Diamond alone.
+	const head = await page.evaluate(() => {
+		const more = document.querySelector('#panel-work [data-act="ws-more"]');
+		if (!more) return null;
+		more.click();
+		const m = document.querySelector('.railhead-menu[data-menu="head"]');
+		const acts = m ? [...m.querySelectorAll('[data-act]')].map((b) => b.dataset.act) : null;
+		if (m) more.click();
+		return { acts, pick: typeof window.showDirectoryPicker === 'function', cloud: !!window.DaimondCloud };
+	});
+	const hw = head ? [...(head.pick ? ['machine', 'import', 'savecopy'] : []), ...(head.cloud ? ['cloud'] : []), 'refresh', 'system', 'hidden', ...(id ? ['kits'] : [])] : [];
+	check(!!head && !!head.acts && head.acts.join(' ') === hw.join(' '), `${T2}: P4 the head ⋯ holds the browser store's doors, refresh, Daimond's files, hidden files${id ? ' and Toolchains…' : ''}`,
+		JSON.stringify({ got: head && head.acts, want: hw }));
+	// + New: a file, a folder, an upload, and on Chromium in the browser store an imported folder.
+	const nw = await page.evaluate(() => {
+		const b = document.querySelector('#panel-work .files-path [data-act="new"]');
+		if (!b) return null;
+		b.click();
+		const m = document.querySelector('.railhead-menu[data-menu="new"]');
+		const acts = m ? [...m.querySelectorAll('[data-act]')].map((x) => x.dataset.act) : null;
+		if (m) b.click();
+		return { acts, pick: typeof window.showDirectoryPicker === 'function' };
+	});
+	const nwant = nw ? ['file', 'dir', 'upload', ...(nw.pick ? ['import'] : [])] : [];
+	check(!!nw && !!nw.acts && nw.acts.join(' ') === nwant.join(' '), `${T2}: P4 + New holds file, folder, upload${nw && nw.pick ? ' and import' : ''}`, JSON.stringify({ got: nw && nw.acts, want: nwant }));
+	if (id) return;
+	// The name row: File… puts it at the top of the listing, focused; Enter makes the file and opens it.
+	const fname = `p4_${tag}.md`, dname = `p4_${tag}_dir`;
+	await pressNew(page, 'file'); await wait(300);
+	let n = await page.evaluate(NAMING);
+	check(!!n && n.top && n.focused && !n.dir, `${T2}: N4 File… draws the name row at the top of the listing, focused`, JSON.stringify(n));
+	// With no name row, typing would land wherever focus is (the composer, which Enter sends).
+	if (!n) {
+		for (const w of ['Enter makes the file and opens it', 'Folder… and Enter make the folder', 'Escape takes the name row away and makes nothing', 'the name row outlives a relist, its text and focus kept'])
+			check(false, `${T2}: N4 ${w}`, 'no name row');
+		return hiddenRows(page, T2);
+	}
+	await page.keyboard.type(fname);
+	await page.keyboard.press('Enter');
+	let opened = false;
+	for (let i = 0; i < 30 && !opened; i++) {
+		await wait(150);
+		opened = await page.evaluate(() => { const v = document.querySelector('#doc-view .files-view-head'); return !!v && v.getBoundingClientRect().height > 0; });
+	}
+	check(await listed(page, fname) && opened && !(await page.evaluate(NAMING)), `${T2}: N4 Enter makes the file and opens it`, JSON.stringify({ listed: await listed(page, fname), opened }));
+	await page.evaluate(() => { const b = document.querySelector('#doc-view [data-act="back"]'); if (b) b.click(); DaimondPanels.show('work'); });
+	await wait(900);
+	// Folder…: Enter makes the folder.
+	await pressNew(page, 'dir'); await wait(300);
+	n = await page.evaluate(NAMING);
+	await page.keyboard.type(dname);
+	await page.keyboard.press('Enter');
+	let made = false;
+	for (let i = 0; i < 30 && !made; i++) { await wait(150); made = await page.evaluate((d) => !!document.querySelector(`#panel-work .files-tree .files-row[data-path^="${d}"]`), dname); }
+	check(!!n && n.dir && n.focused && made && await listed(page, dname), `${T2}: N4 Folder… and Enter make the folder`, JSON.stringify({ n, made }));
+	// Escape lets it go.
+	await pressNew(page, 'file'); await wait(300);
+	await page.keyboard.type('gone.md');
+	await page.keyboard.press('Escape'); await wait(300);
+	check(!(await page.evaluate(NAMING)) && !(await listed(page, 'gone.md')), `${T2}: N4 Escape takes the name row away and makes nothing`);
+	// A relist (here the head ⋯'s refresh, pressed by script so no focus moves) keeps the name being typed.
+	await pressNew(page, 'file'); await wait(300);
+	await page.keyboard.type('half');
+	await refresh(page); await wait(1200);
+	n = await page.evaluate(NAMING);
+	check(!!n && n.top && n.focused && n.value === 'half', `${T2}: N4 the name row outlives a relist, its text and focus kept`, JSON.stringify(n));
+	await page.keyboard.press('Escape'); await wait(300);
+	await hiddenRows(page, T2);
+}
+async function hiddenRows(page, T2) {
+	// Show hidden files puts the dot rows among the rows, and takes them out again.
+	await page.evaluate(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.run_tool('file_write', JSON.stringify({ path: '.p4_hidden.md', content: '# h\n' }));
+	});
+	await refresh(page); await wait(900);
+	const dot = () => page.evaluate(() => !!document.querySelector('#panel-work .files-tree .files-row[data-path=".p4_hidden.md"]'));
+	const d0 = await dot();
+	await page.evaluate(HEADDOOR, 'hidden'); await wait(900);
+	const d1 = await dot();
+	await page.evaluate(HEADDOOR, 'hidden'); await wait(900);
+	const d2 = await dot();
+	check(!d0 && d1 && !d2, `${T2}: P4 Show hidden files in the head ⋯ shows the dot rows and hides them again`, JSON.stringify([d0, d1, d2]));
 }
 
 const route = process.env.WSP_BASE ? serveBase : null;

@@ -68,6 +68,7 @@ pub mod office;
 pub mod opfs;
 pub mod pending;
 pub mod pty;
+pub mod seal;
 pub mod shot;
 pub mod social;
 pub mod typst;

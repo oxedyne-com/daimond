@@ -1199,22 +1199,12 @@ export async function standInFolders(s, { tag, name = 'usr', which = ['a', 'b'],
 		await page.evaluate(() => window.DaimondPanels
 			&& (DaimondPanels.open ? DaimondPanels.open('work') : DaimondPanels.show('work')));
 		await page.waitForTimeout(600);
-		const how = await page.evaluate((w) => {
+		// The head ⋯'s `machine` opens a folder, or another one when one is open (Workspace r2 P4).
+		const open = await page.evaluate((w) => {
 			window.__standIn.next = w;
-			const row = document.querySelector('#panel-work .files-mode') || document;
-			if (window.DaimondFiles && DaimondFiles.folder()) {
-				const want = DaimondI18n.t('files.change_root');
-				const b = [...row.querySelectorAll('.files-mode-btn')].find((x) => x.textContent.trim() === want);
-				if (!b) return 'no change-folder button';
-				b.click();
-				return 'change';
-			}
-			const chips = [...row.querySelectorAll('.files-mode-chip')];
-			const chip = chips.find((c) => c.querySelector('[data-icon="machine"]')) || chips[1];
-			if (!chip) return 'no machine chip';
-			chip.click();
-			return 'chip';
+			return !!(window.DaimondFiles && DaimondFiles.folder());
 		}, w);
+		const how = await page.evaluate(WORK_MENU, ['head', 'machine']) ? (open ? 'change' : 'chip') : 'no machine item';
 		const landed = await page.evaluate(async (w) => {
 			const want = await window.__standIn.dir(w);
 			for (let i = 0; i < 60; i++) {
@@ -1313,7 +1303,7 @@ export async function workRows(s) {
 	const p = s.page || s;
 	await p.evaluate(() => window.DaimondPanels && (DaimondPanels.open ? DaimondPanels.open('work') : DaimondPanels.show('work')));
 	await p.waitForTimeout(500);
-	await p.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+	await workMenu(p, 'head', 'refresh');
 	await p.waitForTimeout(2100);
 	return p.evaluate(() => {
 		const out = {};
@@ -1358,10 +1348,68 @@ export async function pressRowMark(s, path) {
 	const p = s.page || s;
 	const sel = '#panel-work .files-row[data-path="' + path + '"] [data-act="mark"]';
 	if (!await p.$(sel)) return false;
+	// Unforced: the ◈ shows at rest only on hover, and a forced click on a hidden ◈ lands on
+	// the row and opens it instead.
 	await p.hover('#panel-work .files-row[data-path="' + path + '"]').catch(() => {});
-	await p.click(sel, { force: true });
+	await p.click(sel);
 	await p.waitForTimeout(1500);
 	return true;
+}
+
+
+/// Press an item of the Workspace panel's head ⋯ (`menu` 'head') or of + New on its crumb
+/// line ('new'), by the item's `data-act`. False where the menu or the item is not there
+/// or the item is disabled, and the menu is then closed again.
+///
+/// Since Workspace round 2 P4 these two menus hold what the head's buttons and the mode
+/// row's chips used to: the head ⋯ has `machine` (open a folder on this computer: the
+/// folder last used from browser storage, a picker otherwise, or another folder when one
+/// is open), `browser`, `forget`, `import`, `savecopy`, `cloud`, `refresh`, `system`
+/// (Daimond's files), `hidden` and, for a Diamond, `kits`; + New has `file`, `dir`,
+/// `upload` and `import`. A pre-P4 page's own head button of the same `data-act` is
+/// pressed instead, so a script can still be run against an older build.
+///
+/// The presses are the page's own `click()`, which moves no focus: a name being typed in
+/// the tree keeps it, and the panel need not be on screen (a phone's drawer, a hidden dock).
+export async function workMenu(s, menu, act) {
+	const p = s.page || s;
+	return p.evaluate(WORK_MENU, [menu, act]);
+}
+
+/// `workMenu` as a page function, for a script that must press inside its own `evaluate`:
+/// `await page.evaluate(WORK_MENU, ['head', 'machine'])`.
+export const WORK_MENU = ([menu, act]) => {
+	if (menu === 'head') {
+		const own = document.querySelector(`#panel-work .railhead [data-act="${act}"]`);
+		if (own) { own.click(); return true; }
+	}
+	const door = menu === 'new'
+		? document.querySelector('#panel-work .files-path [data-act="new"]')
+		: document.querySelector('#panel-work [data-act="ws-more"]');
+	if (!door) return false;
+	door.click();
+	const m = document.querySelector(`.railhead-menu[data-menu="${menu}"]`);
+	const it = m && m.querySelector(`[data-act="${act}"]`);
+	if (it && !it.disabled) { it.click(); return true; }
+	if (m) door.click();
+	return false;
+};
+
+/// The enabled items of the Workspace head ⋯ (`menu` 'head') or of + New ('new'), by
+/// `data-act`; the menu is closed again. Empty where the door is not there.
+export async function workMenuItems(s, menu) {
+	const p = s.page || s;
+	return p.evaluate((menu) => {
+		const door = menu === 'new'
+			? document.querySelector('#panel-work .files-path [data-act="new"]')
+			: document.querySelector('#panel-work [data-act="ws-more"]');
+		if (!door) return [];
+		door.click();
+		const m = document.querySelector(`.railhead-menu[data-menu="${menu}"]`);
+		const out = m ? [...m.querySelectorAll('.railhead-menu-item:not([disabled])')].map((b) => b.dataset.act) : [];
+		if (m) door.click();
+		return out;
+	}, menu);
 }
 
 /// Point the app at a provider through the real Settings form.

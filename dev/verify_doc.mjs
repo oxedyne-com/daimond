@@ -118,10 +118,7 @@ let s = null;
 
 	await page.evaluate(() => window.DaimondPanels.show('work'));
 	await sleep(600);
-	await page.evaluate(() => {
-		const r = document.querySelector('#panel-work [data-act="refresh"]');
-		if (r) r.click();
-	});
+	await H.workMenu(page, 'head', 'refresh');
 	await sleep(900);
 
 	const before = await surfaces(page);
@@ -179,10 +176,7 @@ let s = null;
 	await page.fill('.dlg-input', 'Doc header probe');
 	await page.click('.dlg-ok', { force: true });
 	await sleep(900);
-	await page.evaluate(() => {
-		const r = document.querySelector('#panel-work [data-act="refresh"]');
-		if (r) r.click();
-	});
+	await H.workMenu(page, 'head', 'refresh');
 	await sleep(700);
 	const reopened = await page.evaluate(() => {
 		const rows = Array.from(document.querySelectorAll('#panel-work .files-row'));
@@ -271,10 +265,10 @@ let s = null;
 			editing: !!(view && view.querySelector('.files-edit')),
 			said:    ((view && view.querySelector('.files-view-msg')) || {}).textContent || '',
 			saidShown: shown('.files-view-msg'),
-			// The Browser chip's own word, read off the mode row rather than
+			// The store's own word, read off the crumb line's root rather than
 			// restated here: the check is that the two agree, and hard-coding the
 			// word would let them drift apart while it went on passing.
-			place:   ((document.querySelector('#panel-work .files-mode-chip.active')) || {}).textContent || '',
+			place:   ((document.querySelector('#panel-work .files-path .path-crumb')) || {}).textContent || '',
 			saveBtn: ((view && view.querySelector('[data-act="edit"]')) || {}).textContent || '',
 			download: shown('[data-act="download"]'),
 			attach:   shown('[data-act="attach"]'),

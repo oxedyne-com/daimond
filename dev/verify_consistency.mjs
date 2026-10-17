@@ -285,14 +285,12 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 			['title', ':scope > .chead-left, :scope > .ctitle, :scope > .web-mode'],
 			['tools', ':scope > .chead-right'],
 		]],
-		// The Workspace's mode row (V6): chips, then actions, then the status
-		// message, each its own row whatever the locale's strings measure.
-		// Matched on each part's own leaf class rather than the wrapper divs
-		// V6 adds, so the same check reads the row bands on the code before
-		// that fix too (proving the gate fails there) as well as after.
+		// The Workspace's mode row (V6): the Reconnect offer, then the status
+		// message, each its own row whatever the locale's strings measure. The
+		// place chips and the Forget button left it in Workspace round 2 P4
+		// (their doors are the head ⋯ now). Matched on each part's own leaf class.
 		['files-mode', '.files-mode', [
-			['chips', '.files-mode-chip'],
-			['acts', '.files-mode-btn, .files-mode-forget'],
+			['acts', '.files-mode-btn'],
 			['msg', '.files-mode-msg'],
 		]],
 		// A device row (V10): name, copy and rename share the first line; the

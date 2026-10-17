@@ -269,17 +269,19 @@ test('Compose: opening the next message does not leave the last one\'s handlers 
 function workspace(listOutcome) {
 	const s = src('daimond.js');
 	const ls   = cut(s, '\t\tasync function list(dir) {', '\t\t// ── What the tree used to keep from you');
-	const act  = cut(s, '{ act: async function () {', '} });\n\t\t\tvar newBtn');
+	// Since WS2 P4 Refresh is an item of the head ⋯, its act the item's third argument.
+	const act  = cut(s, "item('refresh', t('common.refresh'), async function () {", '\t\t\t\tsep();')
+		.replace("item('refresh', t('common.refresh'), ", '').replace(/\);\s*$/, '');
 	const treeEl = el(), notes = [];
 	const doc = { createElement: () => el() };
 	const tools = () => ({ run_tool_outcome: async () => listOutcome });
-	const body = ls + '\n; return { list: list, refresh: ' + act.replace(/^\{ act: /, '') + '} };';
+	const body = ls + '\n; return { list: list, refresh: ' + act + ' };';
 	const make = new Function('document', 'tools', 'treeEl', 'viewEl', 'pathEl', 'syncLineNo', 'loadAttached',
-		'renderCrumbs', 'goDir', 't', 'toolReason', 'renderTree', 'parseListing', 'refreshResidency', 'showModeMsg',
+		'renderCrumbs', 'paintPath', 'goDir', 't', 'toolReason', 'renderTree', 'parseListing', 'refreshResidency', 'showModeMsg',
 		'DaimondAnswer', 'window', 'listBusy', 'listNote', 'listKey',
 		'var curDir = "", curFile = null, listed = false, lastEntries = [], drawnKey = null, filter = "";\n' + body);
 	const noop = () => {};
-	const m = make(doc, tools, treeEl, el({ style: {} }), el(), noop, async () => {}, noop, noop, words, (r) => 'ERR ' + (r && r.text),
+	const m = make(doc, tools, treeEl, el({ style: {} }), el(), noop, async () => {}, noop, noop, noop, words, (r) => 'ERR ' + (r && r.text),
 		(entries) => entries.forEach((e) => treeEl.appendChild(el({ textContent: e.name }))),
 		(txt) => [ { name: txt, dir: false } ], noop,
 		(text, isErr, ms) => notes.push({ text, isErr: !!isErr, ms }), answer(), {},

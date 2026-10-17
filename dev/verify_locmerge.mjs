@@ -19,7 +19,7 @@
 // E2b (B's folder takes the edit) stays red while the file tools' stale-read guard keeps a read made in one
 // storage against the same path in another (src/tools.rs `stale_write`, keyed by path alone): B's write of the
 // edit into its folder is refused, and B holds the version back (not merged) rather than reverting it.
-import { open, signInAs, scratch, markHere } from './harness.mjs';
+import { open, signInAs, scratch, markHere, workMenu } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 import fs from 'node:fs';
@@ -129,7 +129,7 @@ const armPicker = (s, dir) => s.page.evaluate(async (dir) => {
 const folderNow = (s) => s.page.evaluate(() => (window.DaimondFiles && DaimondFiles.folder()) ? DaimondFiles.folder().name : null);
 async function chipTo(s, i, want) {
 	await s.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work')); await sleep(500);
-	await s.page.evaluate((i) => { const c = [...document.querySelectorAll('.files-mode-chip')]; if (c[i]) c[i].click(); }, i);
+	await workMenu(s.page, 'head', ['browser', 'machine', 'cloud'][i]);
 	const t0 = Date.now();
 	while (Date.now() - t0 < 15000) { if ((await folderNow(s)) === want) return true; await sleep(200); }
 	return false;

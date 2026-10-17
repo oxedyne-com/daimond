@@ -19,7 +19,7 @@
 // OPFS on purpose (FileRoot::Opfs, src/wasm/opfs.rs). If that pin ever slipped, opening a folder
 // would strew the app's internals through the user's repository. That is the test that earns its
 // keep.
-import { open, signInAs, shot } from './harness.mjs';
+import { open, signInAs, shot, workMenu, workMenuItems } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -41,27 +41,21 @@ await p.waitForTimeout(1500);
 // rather than on a file, which read as "make a folder" and left the mode chip looking like a
 // label with no switch. It belongs beside the chip that says which files the agent is touching.
 
-// The switch is now the Machine CHIP itself: a chip states where things are, and
-// clicking the one that is not current is what moves the agent there. So what has
-// to be true is that the row carries an actionable Machine chip -- not that it
-// carries a button reading "Open a folder…", which is what it was before the
-// chips took over.
+// Since Workspace round 2 P4 the store switch is an item of the head ⋯ ("Open a folder on this
+// computer…"), with the transfers and cloud storage beside it, and the crumb line names the open
+// store. What has to be true is that the head ⋯ carries the switch and the head's own buttons
+// carry no file operation at all.
 const where = await p.evaluate(() => {
-	const row    = document.querySelector('.files-mode');
-	const header = document.querySelector('.files-actions');
-	const btns   = [...(row ? row.querySelectorAll('.files-mode-btn') : [])].map(b => b.textContent);
-	const chips  = [...(row ? row.querySelectorAll('.files-mode-chip') : [])];
-	const machine = chips.find(c => /Machine|💻/.test(c.textContent));
+	const header = document.querySelector('#panel-work .files-actions');
 	return {
-		inRow:    !!(machine && machine.classList.contains('act')),
-		inHeader: !!(header && header.querySelector('[data-act="open-folder"]')),
-		chips:    chips.map(c => c.textContent.trim()).join(' | '),
-		buttons:  btns,
+		inHeader: !!(header && header.querySelector('[data-act="open-folder"], [data-act="new-file"], [data-act="new-dir"], [data-act="upload"]')),
+		buttons:  [...(header ? header.querySelectorAll('button') : [])].map(b => b.dataset.act || b.className),
 	};
 });
-check('the switch to a real folder sits in the mode row, as the Machine chip',
-	where.inRow === true, `${where.chips} · ${where.buttons.join(' | ')}`);
-check('and no longer hides among the file buttons in the header',
+where.menu = await workMenuItems(p, 'head');
+check('the switch to a real folder sits in the head ⋯',
+	where.menu.includes('machine'), `${where.menu.join(' | ')} · head: ${where.buttons.join(' | ')}`);
+check('and no file button is left in the header beside it',
 	where.inHeader === false);
 
 // ── A. The root swap, at the wasm edge ──────────────────────────────────
@@ -175,16 +169,15 @@ await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'fsa');
 await p.waitForTimeout(2500);
 
-/// The mode row carries THREE chips -- Browser, Machine and Cloud -- and the one
-/// that answers "where is the agent working" is whichever carries `active`.
-/// Reading the first chip in the row would always read "🗄 Browser" and say
-/// nothing about the folder.
+/// Where the agent is working, as the panel says it: the crumb line's root names the open store,
+/// the folder's own name on a folder and "Browser" otherwise (the mode row's active chip until
+/// Workspace round 2 P4).
 const chips = () => p.evaluate(() => {
-	const cs = [...document.querySelectorAll('.files-mode-chip')];
-	const on = cs.find(c => c.classList.contains('active'));
+	const path = document.querySelector('#panel-work .files-path');
+	const root = path && path.querySelector('.path-crumb');
 	return {
-		active: on ? on.textContent.trim() : '(none)',
-		all:    cs.map(c => c.textContent.trim()).join(' | '),
+		active: root ? root.textContent.trim() : '(none)',
+		all:    path ? path.textContent.replace(/\s+/g, ' ').trim() : '(no crumb line)',
 	};
 });
 
@@ -216,7 +209,7 @@ const ASCII_PDF = '%PDF-1.4\n'
 	+ '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 99 99]>>endobj\n'
 	+ 'trailer<</Root 1 0 R>>\n%%EOF\n';
 
-const pdfInFolder = await p.evaluate(async ({ folder, text }) => {
+await p.evaluate(async ({ folder, text }) => {
 	// Written through the FOLDER HANDLE, not through a file tool: the file is
 	// one the user already had, not one Daimond put there.
 	const root = await navigator.storage.getDirectory();
@@ -225,10 +218,11 @@ const pdfInFolder = await p.evaluate(async ({ folder, text }) => {
 	const w    = await fh.createWritable();
 	await w.write(new TextEncoder().encode(text));
 	await w.close();
-	// The tree was drawn before that write, so it is relisted through the
-	// panel's own Refresh.
-	const r = document.querySelector('.files-actions [data-act="refresh"]');
-	if (r) r.click();
+}, { folder: FOLDER, text: ASCII_PDF });
+// The tree was drawn before that write, so it is relisted through the panel's
+// own Refresh, in the head ⋯.
+await workMenu(p, 'head', 'refresh');
+const pdfInFolder = await p.evaluate(async () => {
 	await new Promise((res) => setTimeout(res, 1200));
 	const row = document.querySelector('.files-tree .files-row[data-path="paper.pdf"]');
 	if (!row) return { listed: false };
@@ -244,7 +238,7 @@ const pdfInFolder = await p.evaluate(async ({ folder, text }) => {
 		embed:  !!document.querySelector('#pv-view .fileview embed'),
 		pre:    pre ? pre.textContent.slice(0, 60) : null,
 	};
-}, { folder: FOLDER, text: ASCII_PDF });
+});
 
 check('a PDF in the open folder is listed where the user can click it',
 	pdfInFolder.listed === true, JSON.stringify(pdfInFolder));
@@ -279,10 +273,9 @@ const lost = await p.evaluate(async () => {
 	await new Promise(r => setTimeout(r, 600));
 	const mod  = await import('../pkg/oxedyne_daimond.js');
 	const msg  = document.querySelector('.files-mode-msg');
-	// The way back is the Machine chip itself, relabelled "💻 Reconnect <name>"
-	// by renderMode(lost) -- an offer that needs the user's gesture, never a
-	// prompt on load. It is not a separate button.
-	const back = [...document.querySelectorAll('.files-mode-chip')]
+	// The way back is the mode row's "Reconnect <name>", drawn by renderMode(lost) --
+	// an offer that needs the user's gesture, never a prompt on load.
+	const back = [...document.querySelectorAll('#panel-work .files-mode-btn')]
 		.some(c => /Reconnect/i.test(c.textContent));
 	return {
 		mode:    mod.workspace_mode(),
@@ -294,7 +287,7 @@ lost.chips = await chips();
 check('a withdrawn grant drops the agent back to the sandbox',
 	lost.mode === 'opfs', lost.mode);
 // The row still NAMES the folder, in the reconnect offer -- what it must not do
-// is go on claiming the agent is working there, so it is the ACTIVE chip that
+// is go on claiming the agent is working there, so it is the crumb's root that
 // has to have moved back to the browser sandbox.
 check('and the panel stops claiming a folder it cannot reach',
 	!lost.chips.active.includes(FOLDER), lost.chips.all);
@@ -332,15 +325,6 @@ const msg   = () => p.evaluate(() => {
 	const m = document.querySelector('.files-mode-msg');
 	return m ? m.textContent.trim() : '(none)';
 });
-/// Click a chip in the mode row by its visible text. The Machine chip is named for the folder
-/// when there is one, so it is matched on either.
-const clickChip = (pat) => p.evaluate((pat) => {
-	const c = [...document.querySelectorAll('.files-mode-chip')]
-		.find(x => new RegExp(pat, 'i').test(x.textContent));
-	if (!c) return false;
-	c.click();
-	return true;
-}, pat);
 const clickBtn = (pat) => p.evaluate((pat) => {
 	const b = [...document.querySelectorAll('.files-mode-btn')]
 		.find(x => new RegExp(pat, 'i').test(x.textContent));
@@ -371,27 +355,25 @@ const storedHandle = () => p.evaluate(async () => {
 
 // Back onto the folder, through the reconnect offer section E left standing. That is the user's
 // own way back and it needs no picker, so the counter must still be zero afterwards.
-await clickChip('Reconnect');
+await clickBtn('Reconnect');
 await p.waitForTimeout(900);
 check('C2 setup: the reconnect offer puts the agent back on the folder',
 	(await mode()) === 'folder', await mode());
 
-// The ACTIVE Machine chip states the root's SCOPE. A user is being asked to point an agent at a
-// directory on their disk; the one thing they need told is how far it reaches. The chip used to
-// re-open the picker instead, which is the least useful thing it could do while already there.
+// On a folder the head ⋯ offers the way back to browser storage and Forget, and reading it raises
+// no picker. (The active Machine chip's statement of the root's scope went with the chips in
+// Workspace round 2 P4.)
 await zero();
-await clickChip('Machine|' + FOLDER);
-await p.waitForTimeout(600);
-const info = { msg: await msg(), picks: await picks() };
-check('the active Machine chip states what the agent can reach, and asks for no picker',
-	/works only inside/i.test(info.msg) && info.msg.includes(FOLDER) && info.picks === 0,
-	`"${info.msg}" · pickers: ${info.picks}`);
+const onFolder = await workMenuItems(p, 'head');
+check('on a folder the head ⋯ offers browser storage and Forget, and asks for no picker',
+	onFolder.includes('browser') && onFolder.includes('forget') && (await picks()) === 0,
+	`${onFolder.join(' | ')} · pickers: ${await picks()}`);
 
-// Changing the root is its own control. It is the ONE thing that should raise a picker.
+// Changing the root is the folder item, on a folder. It is the ONE thing that should raise a picker.
 await zero();
-const hasChange = await clickBtn('Change folder');
+const hasChange = await workMenu(p, 'head', 'machine');
 await p.waitForTimeout(600);
-check('a separate "Change folder…" control is what raises the picker',
+check('the head ⋯\'s folder item, on a folder, is what raises the picker',
 	hasChange === true && (await picks()) === 1,
 	`control present: ${hasChange}, pickers: ${await picks()}`);
 // And it starts where the user already is, rather than in a default they have never used.
@@ -402,7 +384,7 @@ check('and it opens where the current root is',
 
 // The round trip. Browser, then back -- and no picker anywhere in it.
 await zero();
-await clickChip('Browser');
+await workMenu(p, 'head', 'browser');
 await p.waitForTimeout(900);
 const wentBrowser = await mode();
 const kept = await storedHandle();
@@ -411,25 +393,25 @@ check('switching to the browser sandbox takes the agent there',
 check('and does NOT delete the folder it is coming back to',
 	kept.held === true && kept.isDir === true, `stored: ${JSON.stringify(kept)}`);
 
-await clickChip('Machine|' + FOLDER);
+await workMenu(p, 'head', 'machine');
 await p.waitForTimeout(1200);
 const wentBack = await mode();
 const backChips = await chips();
-check('and the way back is one click on the chip, with no folder picker',
+check('and the way back is one press in the head ⋯, with no folder picker',
 	wentBack === 'folder' && (await picks()) === 0,
 	`mode: ${wentBack}, pickers: ${await picks()}`);
-check('the chip names the folder the agent is back in',
+check('the crumb names the folder the agent is back in',
 	backChips.active.includes(FOLDER), backChips.all);
 
 // The guard. Coming back is a ROOT SWAP, and a root swap while an agent is mid-turn leaves it
 // reading and writing somewhere else entirely. `openFolder` and `switchToOpfs` have always
 // refused; the reconnect path had no guard at all, and routing the chip through it is exactly
 // what would have made that gap reachable by an ordinary click.
-await clickChip('Browser');
+await workMenu(p, 'head', 'browser');
 await p.waitForTimeout(700);
 await p.evaluate(() => { window.__busyWas = DaimondCore.busy; DaimondCore.busy = function () { return true; }; });
 await zero();
-await clickChip('Machine|' + FOLDER);
+await workMenu(p, 'head', 'machine');
 await p.waitForTimeout(700);
 const blocked = { mode: await mode(), msg: await msg() };
 // THE PROPERTY. Two halves, and the first is the one that matters: with an
@@ -469,11 +451,9 @@ await p.evaluate(() => { DaimondCore.busy = window.__busyWas; });
 
 // And the way out. Remembering the folder across a switch removes the only thing that used to
 // make Daimond forget it, so there has to be a deliberate way to say so.
-await clickChip('Machine|' + FOLDER);
+await workMenu(p, 'head', 'machine');
 await p.waitForTimeout(900);
-await clickChip('Machine|' + FOLDER);          // the info context, where Forget lives
-await p.waitForTimeout(400);
-const hasForget = await clickBtn('Forget this folder');
+const hasForget = await workMenu(p, 'head', 'forget');
 await p.waitForTimeout(800);
 const forgotten = await storedHandle();
 check('and "Forget this folder" really does forget it',

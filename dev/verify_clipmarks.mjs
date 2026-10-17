@@ -43,7 +43,7 @@
 //
 // Exits 1 unless every check passed AND there were exactly EXPECTED of them, so a check
 // that silently fell away fails the run too.
-import { open, newChat, chat, scratch, storedChats, standInFolders } from './harness.mjs';
+import { open, newChat, chat, scratch, storedChats, standInFolders, workMenu, pressRowMark } from './harness.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const J = (x) => JSON.stringify(x);
@@ -80,11 +80,15 @@ async function openDiamond(p, id) {
 async function showWork(p) {
 	await p.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
 	await sleep(600);
-	await p.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+	await workMenu(p, 'head', 'refresh');
 	await sleep(1200);
 }
 
-const clipSel = (path) => '#panel-work .files-row [data-act="attach"][data-path="' + path + '"]';
+// The row's ◈ since Workspace round 2 P3 (the paperclip held it 2026-08-11 to P3); a mark
+// waiting on this device is drawn `wait`, where the paperclip drew it `away`. A pointer
+// presses it through `pressRowMark`, which hovers the row first: at rest the ◈ is shown on
+// hover only, and a press at its place would land on the row and open the folder.
+const clipSel = (path) => '#panel-work .files-row[data-path="' + path + '"] [data-act="mark"]';
 const clipState = (p, path) => p.evaluate((sel) => {
 	const b = document.querySelector(sel);
 	return b ? { pressed: b.getAttribute('aria-pressed'), cls: b.className, title: b.title } : null;
@@ -158,15 +162,28 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		});
 		check('M1. the transcript\'s paperclip reads held, not waiting to be confirmed',
 			!!hc && hc.on && !hc.away, J(hc));
-		// And in the tree of the Diamond's own directory, where a press on it acts on that row.
+		// And in the Diamond's own directory. The store left the workspace tree for the System
+		// section (head ⋯ System), whose rows carry no ◈: a row there is no mark, so nothing on
+		// it can read the transcript as unpressed or waiting. Entered a directory at a time.
 		await showWork(p);
-		await p.click('#panel-work [data-scope="diamond"]', { force: true }).catch(() => {});
-		await sleep(1500);
-		const tc = await clipState(p, 'diamonds/' + kid + '/transcript.md');
-		await p.click('#panel-work [data-scope="all"]', { force: true }).catch(() => {});
-		await sleep(1000);
-		check('M1. in the Diamond\'s own tree the transcript\'s paperclip reads held too',
-			!!tc && tc.pressed === 'true' && !/\baway\b/.test(tc.cls), J(tc));
+		await workMenu(p, 'head', 'system');
+		await sleep(900);
+		const enter = async (path) => {
+			await p.evaluate((d) => {
+				const r = document.querySelector('#sys-tree .sys-row.dir[data-path="' + d + '"]');
+				if (r) r.click();
+			}, path);
+			await sleep(1200);
+		};
+		await enter('diamonds');
+		await enter('diamonds/' + kid);
+		const tc = await p.evaluate((path) => {
+			const r = document.querySelector('#sys-tree .sys-row[data-path="' + path + '"]');
+			return r ? { marks: r.querySelectorAll('[data-act="mark"], .dm').length } : null;
+		}, 'diamonds/' + kid + '/transcript.md');
+		check('M1. in the Diamond\'s own directory (System) the transcript row carries no ◈ to read unpressed',
+			!!tc && tc.marks === 0, J(tc));
+		await showWork(p);
 
 		// ── M3: the tree's paperclip in the browser workspace ─────────────
 		await p.evaluate(async () => {
@@ -182,7 +199,7 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		const c0 = await clipState(p, 'books');
 		check('M3. the paperclip on books is not drawn pressed for another workspace\'s mark',
 			!!c0 && c0.pressed === 'false', J(c0));
-		await p.click(clipSel('books'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'books');
 		await sleep(2500);
 		const r3 = await rowsOf(p, d3);
 		check('M3. the press leaves the other workspace\'s mark in place (no removal to travel)',
@@ -194,9 +211,9 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		check('M3. the fence holds books here, and nothing waits', (b3.attached || []).includes('books')
 			&& !(b3.unconfirmed || []).includes('books'), J(b3));
 		const c1 = await clipState(p, 'books');
-		check('M3. the paperclip now reads pressed and in force', !!c1 && c1.pressed === 'true' && !/\baway\b/.test(c1.cls), J(c1));
+		check('M3. the paperclip now reads pressed and in force', !!c1 && c1.pressed === 'true' && !/\bwait\b/.test(c1.cls), J(c1));
 		// A second press takes off this workspace's mark, and only it.
-		await p.click(clipSel('books'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'books');
 		await sleep(2000);
 		const r3b = (await rowsOf(p, d3)).map((l) => l.to);
 		check('M3. a second press takes this workspace\'s mark off and leaves the other\'s',
@@ -250,7 +267,7 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		}, { cc, ref: machBooks });
 		await showWork(p);
 		const cc0 = await clipState(p, 'books');
-		await p.click(clipSel('books'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'books');
 		await sleep(1500);
 		const ch = await p.evaluate((cc) => (DaimondAttach.chatList(cc) || []).map((a) => a.ref), cc);
 		check('M3. a chat\'s paperclip leaves another workspace\'s holding and adds this one\'s',
@@ -338,22 +355,21 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		const cf2 = await p.evaluate(({ cc, tc }) => DaimondAttach.chatInForce(cc, tc), { cc, tc });
 		check('TOUCH. and "Use here" in it brings the holding into force', !!cf2 && cf2.ws === true, J(cf2));
 
-		// "Mark here" says what it does, so it confirms at once.
+		// The mark notice's "Use here" says what it does, so it confirms at once. ("Mark here"
+		// in the tree went with the mode row in Workspace round 2 P2; the notice holds the
+		// labelled confirm for every waiting mark now.)
 		const tm = 'dir:[browser]tmark';
 		await p.evaluate(async () => { const m = await import('/pkg/oxedyne_daimond.js'); await m.store_write('tmark/a.txt', 'x'); });
 		const dm = await makeDiamond(p, 'Touch mark', [{ to: tm }]);
 		await openDiamond(p, dm);
 		await showWork(p);
-		await p.evaluate(() => {
-			const r = [...document.querySelectorAll('#panel-work .files-row')].find((x) => /tmark/.test((x.querySelector('.files-name') || {}).textContent || ''));
-			if (r) r.click();
-		});
 		await sleep(1500);
-		const mh = await p.evaluate(() => !!document.querySelector('#panel-work [data-act="mark-here"]'));
-		await p.tap('#panel-work [data-act="mark-here"]').catch(() => {});
+		const mhSel = '#mark-notice .mark-notice-row[data-path$="tmark"] [data-act="mark-use-here"]';
+		const mh = await p.evaluate((sel) => !!document.querySelector(sel), mhSel);
+		await p.tap(mhSel).catch(() => {});
 		await sleep(1500);
 		const fm = await p.evaluate(({ id, tm }) => DaimondAttach.inForce(id, tm), { id: dm, tm });
-		check('TOUCH. control: "Mark here", which names what it does, confirms a waiting mark at once',
+		check('TOUCH. control: the notice\'s "Use here", which names what it does, confirms a waiting mark at once',
 			mh && !!fm && !(await anyDialog(p)), J({ mh, fm }));
 	} catch (e) { check('session B ran to the end', false, e && e.stack); }
 	await s.browser.close().catch(() => {});
@@ -426,15 +442,9 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		}), { id: d4, ref: fref });
 		check('item4. control: a second Diamond\'s mark is in force in this machine folder',
 			!!before4.f && (before4.b.attached || []).includes('system'), J(before4));
-		// The active chip opens `showMachineInfo`, which draws the Forget button.
-		// Clicked in the page (`el.click()`), not through Playwright's mouse -- the
-		// mode row sits under other rows this fixture never scrolls to, and a
-		// coordinate click lands on whatever is actually on top at that point.
+		// Forget is in the head ⋯ while a folder is open (Workspace round 2 P4).
 		await showWork(p);
-		await p.evaluate(() => { const c = document.querySelector('#panel-work .files-mode-chip.active'); if (c) c.click(); });
-		await sleep(700);
-		const sawForget = await p.evaluate(() => !!document.querySelector('#panel-work .files-mode-forget'));
-		await p.evaluate(() => { const b = document.querySelector('#panel-work .files-mode-forget'); if (b) b.click(); });
+		const sawForget = await workMenu(p, 'head', 'forget');
 		await sleep(1000);
 		const after4 = await p.evaluate(async ({ id, ref }) => ({
 			f: await DaimondAttach.inForce(id, ref),
@@ -462,8 +472,12 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		const dk = await makeDiamond(p, 'F1 clip', [{ to: kb1 }]);
 		await openDiamond(p, dk);
 		await showWork(p);
+		// Pressed here rather than through `pressRowMark`, whose settle after the click outlasts
+		// GUARD_MS: the guard would be over before it is looked at. Hovered first (the ◈ shows
+		// on hover), and the clock starts at the press itself.
+		await p.hover('#panel-work .files-row[data-path="kb1"]').catch(() => {});
 		const t0 = Date.now();
-		await p.click(clipSel('kb1'), { force: true }).catch(() => {});
+		await p.click(clipSel('kb1'));
 		await p.waitForSelector('.dlg-card', { timeout: 8000 }).catch(() => {});
 		const s0 = await p.evaluate(() => {
 			const c = [...document.querySelectorAll('.dlg-card')].filter((x) => x.getClientRects().length).pop();
@@ -531,10 +545,10 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		check('F2. control: two rows for `wide`, the pressed one read-only and in force',
 			(b0.attached || []).includes('wide') && (b0.read_only || []).includes('wide'), J(b0));
 		const c0 = await clipState(p, 'wide');
-		check('F2. control: the paperclip paints in force, not away', !!c0 && c0.pressed === 'true' && !/\baway\b/.test(c0.cls), J(c0));
+		check('F2. control: the paperclip paints in force, not away', !!c0 && c0.pressed === 'true' && !/\bwait\b/.test(c0.cls), J(c0));
 		// One press must act on the row the paperclip DREW -- the one in force --
 		// and take it off, never opening a question about the other, waiting row.
-		await p.click(clipSel('wide'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'wide');
 		await sleep(1800);
 		const rw1 = (await rowsOf(p, dw)).map((l) => ({ to: l.to, rel: l.rel, id: l.id }));
 		const dlgAfter1 = await anyDialog(p);
@@ -546,7 +560,7 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		// What is left is the `holds` twin, still waiting: a second press must ask,
 		// and must name it "read and change" -- the wider of the two, never assumed
 		// to be the read-only one the first press just removed.
-		await p.click(clipSel('wide'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'wide');
 		await p.waitForSelector('.modal.dlg[data-ask="mark-use-here"]', { timeout: 8000 }).catch(() => {});
 		await sleep(400);
 		const a1 = await askUp(p);
@@ -557,7 +571,7 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		await sleep(600);
 		const f2cancel = await p.evaluate((id) => DaimondAttach.inForce(id, 'dir:[browser]wide'), dw);
 		check('F2. Cancel grants nothing', !f2cancel, J(f2cancel));
-		await p.click(clipSel('wide'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'wide');
 		await p.waitForSelector('.modal.dlg[data-ask="mark-use-here"]', { timeout: 8000 }).catch(() => {});
 		await sleep(1200);	// past F1's GUARD_MS: the yes is disabled for its first second
 		await p.click('.modal.dlg .dlg-ok', { force: true }).catch(() => {});
@@ -571,7 +585,7 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		const ds = await makeDiamond(p, 'F2 solo', [{ to: solo, rel: 'consulted' }]);
 		await openDiamond(p, ds);
 		await showWork(p);
-		await p.click(clipSel('solo'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'solo');
 		await p.waitForSelector('.modal.dlg[data-ask="mark-use-here"]', { timeout: 8000 }).catch(() => {});
 		await sleep(400);
 		const a2 = await askUp(p);
@@ -637,7 +651,7 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		}, foldRef);
 		await openDiamond(p, fd);
 		await showWork(p);
-		await p.click(clipSel('folded.txt'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'folded.txt');
 		let rf1 = [];
 		for (let i = 0; i < 10; i++) {
 			rf1 = (await rowsOf(p, fd)).map((l) => ({ rel: l.rel, by: l.by, to: l.to }));
@@ -648,7 +662,7 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		check('item7. a press on a fold-harvested file ADDS a mark, not removes the fold row',
 			rf1.some((l) => l.rel === 'produced' && l.by === 'fold') && rf1.some((l) => l.rel === 'holds' && l.by === 'user') && !!ff1,
 			J({ rf1, ff1 }));
-		await p.click(clipSel('folded.txt'), { force: true }).catch(() => {});
+		await pressRowMark(p, 'folded.txt');
 		await sleep(1500);
 		const rf2 = (await rowsOf(p, fd)).map((l) => ({ rel: l.rel, by: l.by }));
 		check('item7. a second press takes only the user\'s mark off, and the fold row stays',

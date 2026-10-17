@@ -35,7 +35,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, scratch, shot } from './harness.mjs';
+import { open, scratch, shot, workMenu } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -142,7 +142,7 @@ try {
 
 	await page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
 	await page.waitForTimeout(600);
-	await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+	await workMenu(page, 'head', 'refresh');
 	await page.waitForTimeout(600);
 
 	await clickRowNamed('.files-tree .files-row', 'alpha');
@@ -181,9 +181,9 @@ try {
 	});
 	await page.waitForTimeout(600);
 
-	const head = await page.$('#sys-head');
-	const expanded = head ? await head.getAttribute('aria-expanded') : null;
-	if (expanded !== 'true') { await page.click('#sys-head', { force: true }); await page.waitForTimeout(500); }
+	// The System section is drawn only when asked for in the head ⋯ (Workspace round 2 P4).
+	const expanded = await page.$eval('#sys-head', (h) => h.getAttribute('aria-expanded')).catch(() => null);
+	if (expanded !== 'true') { await workMenu(page, 'head', 'system'); await page.waitForTimeout(500); }
 
 	await clickRowNamed('#sys-tree .sys-row', 'diamonds');
 	await page.waitForTimeout(500);

@@ -56,7 +56,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, shot, errors } from './harness.mjs';
+import { open, signInAs, shot, errors, workMenu, workMenuItems } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -159,17 +159,12 @@ check('0c and the sandbox does not already hold the folder\'s file',
 	JSON.stringify(sandboxBefore));
 
 // ── 1. Switch, with the dialog stood in for ──────────────────────────────────
-const switched = await p.evaluate(async () => {
-	window.showDirectoryPicker = async () => window.__machineHandle;
-	// The chip the user presses, found by its label rather than by position.
-	const chips = [...document.querySelectorAll('.files-mode-chip')];
-	const machine = chips.find(c => /machine/i.test(c.textContent || ''));
-	if (!machine) return { clicked: false, chips: chips.map(c => (c.textContent || '').trim()) };
-	machine.click();
-	return { clicked: true };
-});
-check('1a the Machine chip is on screen and was pressed', switched.clicked === true,
-	switched.clicked ? '' : 'chips: ' + JSON.stringify(switched.chips || []));
+await p.evaluate(() => { window.showDirectoryPicker = async () => window.__machineHandle; });
+// The item the user presses: the head ⋯'s Open a folder on this computer (Workspace round 2 P4).
+const items = await workMenuItems(p, 'head');
+const switched = { clicked: await workMenu(p, 'head', 'machine') };
+check('1a the head ⋯ offers a folder on this computer and it was pressed', switched.clicked === true,
+	switched.clicked ? '' : 'items: ' + JSON.stringify(items));
 await sleep(1500);
 
 const onMachine = await p.evaluate(() => ({
@@ -189,14 +184,8 @@ check('2b and it is a DIFFERENT root, not the sandbox with a folder added',
 await shot(s, 'machine-on');
 
 // ── 3. Back to the sandbox, and the fence holds the other way ────────────────
-const back = await p.evaluate(async () => {
-	const chips = [...document.querySelectorAll('.files-mode-chip')];
-	const browser = chips.find(c => /browser/i.test(c.textContent || ''));
-	if (!browser) return false;
-	browser.click();
-	return true;
-});
-check('3a the Browser chip is on screen and was pressed', back === true);
+const back = await workMenu(p, 'head', 'browser');
+check('3a the head ⋯ offers this browser and it was pressed', back === true);
 await sleep(1500);
 
 const namesB = await listRoot();

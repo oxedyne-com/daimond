@@ -69,7 +69,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, scratch } from './harness.mjs';
+import { open, scratch, workMenu } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -408,16 +408,11 @@ try {
 		name: 'file_write', match: 'rp-never.md',
 		outcome: 'refused', text: 'Refused: rp-never.md is outside what this Diamond may write.',
 	}]);
-	await p.evaluate(() => {
-		const b = document.querySelector('#panel-work [data-act="new-file"]');
-		if (b) b.click();
-	});
-	await p.waitForSelector('.dlg-card', { timeout: 5000 });
-	await p.fill('.dlg-input', 'rp-never.md');
-	await p.evaluate(() => {
-		const b = document.querySelector('.dlg-ok');
-		if (b) b.click();
-	});
+	// + New's File: the name is typed in place, in the tree's name row, and Enter makes it (Workspace round 2 P4).
+	await workMenu(p, 'new', 'file');
+	await p.waitForSelector('#panel-work .files-naming .files-name-input', { timeout: 5000 });
+	await p.fill('#panel-work .files-naming .files-name-input', 'rp-never.md');
+	await p.press('#panel-work .files-naming .files-name-input', 'Enter');
 	await p.waitForTimeout(1500);
 
 	const made = await p.evaluate(() => {

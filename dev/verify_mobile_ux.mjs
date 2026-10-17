@@ -8,7 +8,7 @@
 //
 // iOS auto-zoom itself is a Safari behaviour Chromium cannot reproduce, so we test
 // its CAUSE instead: no focusable control may be under 16px on a phone.
-import { open, signInAs, connectMock } from './harness.mjs';
+import { open, signInAs, connectMock, workMenu, workMenuItems } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -169,36 +169,28 @@ check('phone top bar: drawer, logo, "more" and full screen — nothing else stan
 	return items.map(el => el.id || el.className).join(', ');
 }));
 
-// ── 8. Files toolbar: real icons, and a new-file dialog with a ≥16px field ──
+// ── 8. Workspace head: real icons, and a name field ≥16px ──
 // The footer is the chip row since 2026-08-28; a destination is its chip.
 await page.evaluate(() => { const b = document.querySelector('#mnav .ptag[data-panel="work"]'); if (b) b.click(); });
 await sleep(400);
-check('files: toolbar icons are SVG, not emoji', await page.evaluate(() => {
-	// NO `up`. The parent-folder button is gone, at the owner's own request -- "I hate how
-	// the parent folder button in the workspace panel is right up the top away from the
-	// actual directory listing, and is such a button even needed when you could add a '..'
-	// entry?" (dev/HATES.md, 2026-08-24). There is a `..` row at the top of the listing
-	// instead, which is the universal convention, and not both. This list is the toolbar's
-	// icons, so a control that is no longer in the toolbar does not belong in it.
-	const btns = ['new-file', 'new-dir', 'upload', 'refresh'];
-	return btns.every(a => {
-		const b = document.querySelector(`[data-act="${a}"]`);
-		return b && b.querySelector('svg') && !b.textContent.trim();
-	});
+// Since Workspace round 2 P4 the head holds only the ⋯ and the ×: New file, New folder,
+// Upload and Refresh are items of + New and the head ⋯. (No `up` either: the `..` row at
+// the top of the listing replaced it, at the owner's request, dev/HATES.md 2026-08-24.)
+check('files: head icons are SVG, not emoji', await page.evaluate(() => {
+	const btns = [...document.querySelectorAll('#panel-work .railhead button')];
+	return btns.length > 0 && btns.every((b) => b.querySelector('svg') && !b.textContent.trim());
 }));
-check('files: new-file and new-folder icons differ', await page.evaluate(() => {
-	const a = document.querySelector('[data-act="new-file"] svg').innerHTML;
-	const b = document.querySelector('[data-act="new-dir"] svg').innerHTML;
-	return a !== b;
-}));
-await page.evaluate(() => { const b = document.querySelector('[data-act="new-file"]'); if (b) b.click(); });
+const newItems = await workMenuItems(page, 'new');
+check('files: + New holds a file and a folder', newItems.includes('file') && newItems.includes('dir'), newItems.join(','));
+// A field under 16px makes iOS zoom the page on focus.
+await workMenu(page, 'new', 'file');
 await sleep(500);
-const dlgSmall = await page.evaluate(() => {
-	const inp = [...document.querySelectorAll('input')].find(el => el.offsetParent !== null && /dlg|dialog/.test(el.className + ' ' + (el.closest('[class]') || {}).className));
-	if (!inp) return { found: false };
-	return { found: true, fs: parseFloat(getComputedStyle(inp).fontSize) };
+const nameFs = await page.evaluate(() => {
+	const inp = document.querySelector('#panel-work .files-name-input');
+	return inp ? parseFloat(getComputedStyle(inp).fontSize) : null;
 });
-check('files: new-file dialog field is ≥16px', dlgSmall.found ? dlgSmall.fs >= 16 : true, JSON.stringify(dlgSmall));
+check('files: the new file\'s name field is ≥16px', nameFs !== null && nameFs >= 16, String(nameFs));
+await page.keyboard.press('Escape');
 
 // ── 9. Nothing threw across all of it ──
 const real = s.errs.filter(e => !/Failed to load resource|status of 4\d\d/.test(e));

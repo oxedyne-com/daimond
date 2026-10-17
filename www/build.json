@@ -1,1 +1,1 @@
-{"build":"77d39777880e","note":"An old false mail failure leaves Pending, and mail agents that never start post nothing in the Email chat."}
+{"build":"461b39b7f232","note":"Posts, peer messages and the account wrap are sealed by the Rust engine in the browser, one code path with the runner."}

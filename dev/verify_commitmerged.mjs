@@ -41,7 +41,7 @@
 //      gateway): a 5.2.1 page and this page on one account, either one first (M2: the old page's
 //      files already in the mailbox; this page waits while new, and is re-seeded after a reload).
 import fs from 'node:fs';
-import { open, scratch, markHere, signInAs, APP } from './harness.mjs';
+import { open, scratch, markHere, signInAs, APP, workMenu } from './harness.mjs';
 import { makePagePro, GW_URL } from './pro.mjs';
 import { GWDIR } from './gwbin.mjs';
 import { guardRan } from './verdict.mjs';
@@ -223,11 +223,7 @@ async function pickFolder(s, share) {
 	});
 	await p.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
 	await sleep(600);
-	await p.evaluate(() => {
-		const chips = [...document.querySelectorAll('.files-mode-chip')];
-		const machine = chips.find((c) => /machine/.test(c.className) || c.querySelector('[data-icon="machine"]')) || chips[1];
-		if (machine) machine.click();
-	});
+	await workMenu(p, 'head', 'machine');
 	await p.waitForFunction(() => !!(window.Files ? Files.folder() : DaimondCore.syncFolderShare), null, { timeout: 5000 }).catch(() => {});
 	await sleep(1200);
 	if (!share) return;
@@ -264,7 +260,7 @@ async function armLostOrSwitched(arm, how) {
 		await round(p);			// merged in the folder (shares only), and argonaut's own parcel pushed
 		const n0 = (await commits(p)).length;
 		if (how === 'lost') await p.evaluate(() => window.dispatchEvent(new Event('daimond:folder-lost')));
-		else await p.evaluate(() => { const c = [...document.querySelectorAll('.files-mode-chip')]; if (c[0]) c[0].click(); });
+		else await workMenu(p, 'head', 'browser');
 		await sleep(1500);
 		console.log('  note mode=' + await mode(p) + ' after the ' + how);
 		await sandboxFiles(p, arm.toLowerCase(), 2);
@@ -323,7 +319,7 @@ async function armAlone() {
 			'differs in [' + fx.diff.join(', ') + '], chunkedFrom ' + fx.from.join(' -> ') + ' at v' + fx.v + ', foreignAt ' + fx.f);
 		await pickFolder(s, false);
 		await round(p);
-		await p.evaluate(() => { const c = [...document.querySelectorAll('.files-mode-chip')]; if (c[0]) c[0].click(); });
+		await workMenu(p, 'head', 'browser');
 		await sleep(1500);
 		const n = (await commits(p)).length;
 		await sandboxFiles(p, 'b', 1);
@@ -347,7 +343,7 @@ async function armUpgrade() {
 				// A folder remembered here, as argonaut's was after 09-13: picked, then left for
 				// the sandbox without forgetting it.
 				await pickFolder(s, false);
-				await p.evaluate(() => { const c = [...document.querySelectorAll('.files-mode-chip')]; if (c[0]) c[0].click(); });
+				await workMenu(p, 'head', 'browser');
 				await sleep(1200);
 			}
 			// The mailbox as a build before this one leaves it: this device's own parcel, with no
@@ -382,7 +378,7 @@ async function armUpgrade() {
 				// Back to the sandbox after the boot reconnect, the folder remembered: argonaut after 09-13.
 				await p.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
 				await sleep(800);
-				await p.evaluate(() => { const c = [...document.querySelectorAll('.files-mode-chip')]; if (c[0]) c[0].click(); });
+				await workMenu(p, 'head', 'browser');
 				await sleep(1200);
 			}
 			await p.evaluate(() => { window.__commits = []; const real = window.fetch; window.fetch = async function (u, o) {
@@ -742,7 +738,7 @@ async function armUpgradeCrossed() {
 		// first load of this build is not seeded, and its parcels never say chunkedFull.
 		await pickFolder(a, false);
 		await round(a.page); await round(p);
-		await a.page.evaluate(() => { const c = [...document.querySelectorAll('.files-mode-chip')]; if (c[0]) c[0].click(); });
+		await workMenu(a.page, 'head', 'browser');
 		await sleep(1200);
 		await round(a.page); await round(p);
 		const c0 = await commits(p);
@@ -778,7 +774,7 @@ async function armUpgradeCrossed() {
 			&& DaimondGateway.state().authed), null, { timeout: 30000 });
 		await a.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
 		await sleep(800);
-		await a.page.evaluate(() => { const c = [...document.querySelectorAll('.files-mode-chip')]; if (c[0]) c[0].click(); });
+		await workMenu(a.page, 'head', 'browser');
 		await sleep(1200);
 		await round(a.page);
 		await sandboxFiles(a.page, 'gb', 1); await round(a.page);

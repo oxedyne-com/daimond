@@ -99,7 +99,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, scratch, clearDiamonds, BROWSER, markHere } from './harness.mjs';
+import { open, signInAs, scratch, clearDiamonds, BROWSER, markHere, workMenu } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -579,12 +579,7 @@ if (OPFS) {
 	});
 	await A.page.evaluate(() => window.DaimondPanels && window.DaimondPanels.open && window.DaimondPanels.open('work'));
 	await A.page.waitForTimeout(700);
-	await A.page.evaluate(() => {
-		const chips = [...document.querySelectorAll('.files-mode-chip')];
-		const machine = chips.find(c => /machine/.test(c.className)
-			|| c.querySelector('[data-icon="machine"]')) || chips[1];
-		if (machine) machine.click();
-	});
+	await workMenu(A.page, 'head', 'machine');
 	await A.page.waitForTimeout(1500);
 } else {
 	skipped.push('the folder mount (A stands down as tools-missing instead)');
@@ -1061,12 +1056,7 @@ async function mountFolder(s) {
 	});
 	await s.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
 	await s.page.waitForTimeout(700);
-	await s.page.evaluate(() => {
-		const chips = [...document.querySelectorAll('.files-mode-chip')];
-		const machine = chips.find(c => /machine/.test(c.className)
-			|| c.querySelector('[data-icon="machine"]')) || chips[1];
-		if (machine) machine.click();
-	});
+	await workMenu(s.page, 'head', 'machine');
 	await s.page.waitForTimeout(1500);
 }
 

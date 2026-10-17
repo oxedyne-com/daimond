@@ -38,7 +38,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { open, connectMock, scratch, shot } from './harness.mjs';
+import { open, connectMock, scratch, shot, workMenu } from './harness.mjs';
 
 const OUT = path.join(os.homedir(), '.cache/daimond/system-shots');
 fs.mkdirSync(OUT, { recursive: true });
@@ -83,12 +83,13 @@ try {
 	await p.waitForTimeout(1800);
 
 	// ══ 1. The section lists the store ════════════════════════════════
-	// Opened the way a person does: the section is collapsed until asked for.
+	// Opened the way a person does: the section is hidden until asked for.
 	const collapsed = await p.evaluate(() => {
 		const h = document.getElementById('sys-head');
 		return h ? h.getAttribute('aria-expanded') : null;
 	});
-	await p.evaluate(() => { const h = document.getElementById('sys-head'); if (h) h.click(); });
+	// Since Workspace round 2 P4 the section is drawn only when asked for in the head ⋯ (System).
+	await workMenu(p, 'head', 'system');
 	await p.waitForTimeout(700);
 	const sec = await p.evaluate(() => {
 		const el = document.getElementById('sys-sec');
@@ -116,10 +117,11 @@ try {
 	check(!tree.some(r => /diamonds/.test(r)),
 		'and the workspace tree above it still does NOT list the store',
 		tree.join(', ') || '(empty)');
+	// Since Workspace round 2 P4 a tree row's delete is an item of its ⋯ (`row-more`), so a
+	// store row with no ⋯ and no delete of its own has no way to delete anything.
 	const dels = await p.evaluate(() =>
 		[...document.querySelectorAll('#sys-tree .sys-row')]
-			.filter(r => r.querySelector('.files-del')
-				&& getComputedStyle(r.querySelector('.files-del')).display !== 'none').length);
+			.filter(r => r.querySelector('[data-act="row-more"], [data-act="delete"], .files-del')).length);
 	check(dels === 0, 'no row in the section carries a delete control', String(dels));
 
 	// ══ 3. A row opens, and reads from the STORE ══════════════════════

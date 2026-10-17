@@ -28,6 +28,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadSeal, installSeal } from './sealfixture.mjs';
+await loadSeal();
 
 const HERE    = dirname(fileURLToPath(import.meta.url));
 const POST_JS = process.env.POST_JS || join(HERE, 'post.js');
@@ -83,6 +85,7 @@ function makeTab(rows, onCollect) {
 		} },
 	};
 	win.window = win;
+	installSeal(win);	// the wasm seal post.js opens through (S1 SEAL)
 	const fn = new Function('window', 'document', 'with (window) {\n' + readFileSync(POST_JS, 'utf8') + '\n}');
 	fn(win, document);
 	return {

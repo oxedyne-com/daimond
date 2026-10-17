@@ -36,7 +36,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, shot } from './harness.mjs';
+import { open, shot, workMenu } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -148,7 +148,7 @@ await page.waitForTimeout(700);
 // not in it. Press the panel's own refresh rather than filtering: the filter
 // surfaces the FILE, and a file row carries no attach control — which is the gap
 // notes4 asks to close and is not what this verifier is about.
-await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+await workMenu(page, 'head', 'refresh');
 await page.waitForTimeout(1200);
 let attachedIt = false;
 for (const row of await page.$$('#panel-work .files-row')) {
@@ -156,10 +156,11 @@ for (const row of await page.$$('#panel-work .files-row')) {
 	// The row's name carries a folder glyph before the name — matched on the
 	// name, not on the decoration.
 	if (nm.replace(/^[^A-Za-z0-9._-]+/, '').trim() === 'papers') {
-		// The paperclip superseded this ◈ on 2026-08-11 (ATTACH_CONTRACT.md §8) --
-		// same control, new class.
-		const hold = await row.$('.attach-btn');
-		if (hold) { await hold.click({ force: true }); attachedIt = true; }
+		// The row's ◈ again since Workspace round 2 P3 (the paperclip held it 2026-08-11 to P3).
+		const hold = await row.$('[data-act="mark"]');
+		// The ◈ is drawn at rest only on hover: hover the row, as a pointer does, and press it
+		// unforced -- a forced press on a hidden ◈ lands on the row and opens it.
+		if (hold) { await row.hover(); await hold.click(); attachedIt = true; }
 		break;
 	}
 }
