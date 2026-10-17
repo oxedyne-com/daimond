@@ -59,6 +59,7 @@ test('CQA2-2: an answered mail turn takes down the r569-era mail failure', () =>
 	const J = new Function('window', `
 		var _lastSteer = {};
 		function t(k) { return k; }
+		var Triggers = { of: function () { return [{ kind: 'mail' }]; } };	// a mail-only Diamond, read
 		${extractFn(APP, 'judgeTriggeredTurn')}
 		return { judge: judgeTriggeredTurn, steer: _lastSteer };`)(w);
 	const B = { id: 'B', name: 'Email' };

@@ -882,8 +882,8 @@
 		if (deps && deps.onChange) deps.onChange();
 	}
 
-	/// Make the credits row reflect the account: mint while there is a balance to spend, stand
-	/// down when there is not, and list what the key can run.
+	/// Make the credits row reflect the account: ask the gateway for a key, stand down on its
+	/// refusal, and list what the key can run.
 	///
 	/// `acct` is what the caller has just read from the gateway — `{ authed, credits, currency,
 	/// offline }`. It is passed in rather than fetched here so the gateway's contract stays in
@@ -891,7 +891,10 @@
 	async function syncCredits(acct) {
 		acct = acct || {};
 		if (!acct.authed) { standDown(acct.offline ? 'offline' : ''); return false; }
-		if (typeof acct.credits === 'number' && acct.credits <= 0) { standDown('nocredits'); return false; }
+		// No balance check here: the mint's answer is the only verdict on whether there is
+		// money to spend. An account may run below zero by design (the house account, up to
+		// its `house_limit_minor`), and a page that judged the figure for itself showed that
+		// account "no credits" and never asked. A refusal comes back with its own words.
 
 		credits.state = 'minting';
 		if (deps && deps.onChange) deps.onChange();

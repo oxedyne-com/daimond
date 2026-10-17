@@ -142,7 +142,8 @@
 	var bootedAt    = Date.now();
 	var tick        = null;         // the safety re-evaluation interval
 	var countTimer  = null;         // the one-second countdown
-	var countLeft   = 0;            // seconds still to run on it
+	var countDue    = 0;            // epoch-ms the countdown runs out (0: none running)
+	var countLeft   = 0;            // seconds still to run on it, as last painted
 	var deferUntil  = 0;            // Cancel, or a reload just taken
 	var unsafeSince = 0;            // when this pending build first found the tab unsafe
 	var gaveUp      = false;        // unsafe for GIVEUP_MS: a button only, until the next build
@@ -278,7 +279,7 @@
 		// update, it must not block it for ever: on a build whose sync never settles
 		// -- exactly the state a device is in before it takes a sync fix -- the tab
 		// would otherwise sit unsafe until GIVEUP_MS and re-nag on every focus. Once
-		// sync alone has held the build past SYNC_YIELD_MS (latched in `evaluate`),
+		// sync alone has held the build past SYNC_YIELD_MS (`latchSyncYield`),
 		// yield. The latch is gated on `!stuck`, so a device whose reloads never
 		// advance the build cannot churn here -- the one path that could loop.
 		return syncYield;
@@ -442,7 +443,22 @@
 		return why;
 	}
 
-	function counting() { return countTimer !== null; }
+	function counting() { return countDue !== 0; }
+
+	/// Arm the sync yield (read by `safeNow`). It arms only once every HARD block is
+	/// clear and sync is the sole thing left unsafe, the build has already waited
+	/// SYNC_YIELD_MS, and this device is not stuck -- so a genuinely busy turn still
+	/// blocks, and a device whose reloads never advance cannot loop here. Asked by
+	/// the tick and by the countdown alike, so a sync round that aborts a countdown
+	/// is weighed against the bound at the moment it does so.
+	function latchSyncYield() {
+		if (!syncYield && !stuck && unsafeSince
+			&& !dialogOpen() && !busy() && !composerHasUnsavedText()
+			&& !syncQuiet()
+			&& Date.now() - unsafeSince >= SYNC_YIELD_MS) {
+			syncYield = true;
+		}
+	}
 
 	/// The automatic path. It never reloads itself -- it arms the tick, and the
 	/// tick is what eventually starts a countdown.
@@ -457,17 +473,7 @@
 	function evaluate() {
 		if (applying || !pending) { heldWhy = null; disarm(); return; }
 		if (counting() || launching) return;
-		// Latch the sync yield (read by `safeNow`, so it survives into the countdown,
-		// where `unsafeSince` is reset to 0). It arms only once every HARD block is
-		// clear and sync is the sole thing left unsafe, the build has already waited
-		// SYNC_YIELD_MS, and this device is not stuck -- so a genuinely busy turn
-		// still blocks, and a device whose reloads never advance cannot loop here.
-		if (!syncYield && !stuck && unsafeSince
-			&& !dialogOpen() && !busy() && !composerHasUnsavedText()
-			&& !syncQuiet()
-			&& Date.now() - unsafeSince >= SYNC_YIELD_MS) {
-			syncYield = true;
-		}
+		latchSyncYield();
 		if (!softAllowed() || !safeNow() || !quietEnough()) {
 			if (!unsafeSince) unsafeSince = Date.now();
 			noteHeld();
@@ -478,26 +484,46 @@
 			if (Date.now() - unsafeSince >= GIVEUP_MS) { gaveUp = true; disarm(); reflect(); }
 			return;
 		}
+		// `unsafeSince` is NOT cleared here (r570s, argonaut): a countdown that a sync
+		// round aborts sends the build back to waiting, and a clock restarted at
+		// every abort is one that never reaches SYNC_YIELD_MS or GIVEUP_MS -- a tab
+		// with a sync round a minute sat on a superseded build for hours. It is
+		// cleared only by a new build (`onFound`) or by the reload itself.
 		heldWhy = null;
-		unsafeSince = 0;
 		startCount();
 	}
 
+	/// Whole seconds still to run, rounded up, so the last second reads 1, not 0.
+	function secsLeft() {
+		return Math.max(0, Math.ceil((countDue - Date.now()) / 1000));
+	}
+
+	/// The countdown runs to a DEADLINE, never a count of ticks. A hidden tab's
+	/// timers are throttled to about one firing a minute, so twenty one-second
+	/// ticks took twenty minutes there, and any sync round in that span aborted it.
+	/// A hidden document shows no countdown (nobody is looking) and simply reloads
+	/// at the first safe firing once the deadline is past; a tab brought back into
+	/// view is given a fresh deadline (`init`), so whoever is now looking sees it.
 	function startCount() {
-		countLeft = Math.round(COUNT_MS / 1000);
-		// The timer is armed BEFORE the first paint, because `reflect` asks
-		// `counting()` which asks this very handle -- painted first, the banner's
-		// opening second would say "ready" and the countdown would appear a second
-		// late, which is a second of an unannounced reload.
+		countDue  = Date.now() + COUNT_MS;
+		countLeft = secsLeft();
+		// The deadline and the timer are armed BEFORE the first paint, because
+		// `reflect` asks `counting()` -- painted first, the banner's opening second
+		// would say "ready" and the countdown would appear a second late, which is
+		// a second of an unannounced reload.
 		countTimer = setInterval(function () {
-			countLeft--;
-			// Safety is re-asked every second of the countdown and not merely before
-			// it: twenty seconds is long enough for a turn to start or a key to be
-			// pressed, and a countdown that ignored that would be the very reload
-			// this file exists to avoid.
-			if (!safeNow() || !quietEnough()) { noteHeld(); stopCount(); return; }
+			countLeft = secsLeft();
+			// Safety is re-asked at every firing of the countdown and not merely
+			// before it: twenty seconds is long enough for a turn to start or a key
+			// to be pressed, and a countdown that ignored that would be the very
+			// reload this file exists to avoid.
+			latchSyncYield();
+			if (!safeNow() || !quietEnough()) {
+				if (!unsafeSince) unsafeSince = Date.now();
+				noteHeld(); stopCount(); return;
+			}
 			if (countLeft <= 0) { stopCount(); takeIt(); return; }
-			syncBanner('soon');
+			reflect();
 		}, 1000);
 		reflect();
 	}
@@ -505,6 +531,7 @@
 	function stopCount() {
 		if (countTimer) clearInterval(countTimer);
 		countTimer = null;
+		countDue   = 0;
 		countLeft  = 0;
 		reflect();
 	}
@@ -583,6 +610,11 @@
 		// reload only.
 		try { if (booted) sessionStorage.setItem(PREV_KEY, booted); } catch (e) {}
 		try { if (window.DaimondJournal) DaimondJournal.flush(); } catch (e) {}
+		// What is in the boxes goes down BEFORE the reload, not on the settle timer
+		// or `pagehide` alone: the draft is what lets a reload land over unsent
+		// text at all (`composerHasUnsavedText`), so its write is not left to an
+		// event the reload may outrun.
+		try { if (window.DaimondDrafts) DaimondDrafts.flush(); } catch (e) {}
 		doReload(false);
 	}
 
@@ -860,7 +892,12 @@
 		if (gaveUp) { setChip('ready'); syncBanner('ready'); return; }
 		// A countdown wears the ready chip -- there is no separate chip art for it,
 		// and the banner beneath is where the seconds are said.
-		if (counting()) { setChip('ready'); syncBanner('soon'); return; }
+		// A hidden document shows none: nobody is there to read it (see `startCount`).
+		if (counting()) {
+			setChip('ready');
+			if (document.hidden) hideBanner(); else syncBanner('soon');
+			return;
+		}
 		var st = busy() ? 'busy' : 'ready';
 		setChip(st);
 		syncBanner(st);
@@ -1320,6 +1357,13 @@
 
 		schedulePoll();
 		document.addEventListener('visibilitychange', function () {
+			// Mid-countdown either way: shown, a fresh deadline, so whoever is now
+			// looking gets the whole warning rather than a reload in the next second;
+			// hidden, the banner goes, since nobody is there to read it.
+			if (counting()) {
+				if (!document.hidden) { countDue = Date.now() + COUNT_MS; countLeft = secsLeft(); }
+				reflect();
+			}
 			if (!document.hidden) poll();         // shown: re-check, and reflect any pending state
 			else if (pending) apply(false);       // hidden: the ideal moment to apply invisibly
 		});

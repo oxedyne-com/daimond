@@ -54873,7 +54873,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				A.clear(f.id, key);
 				// The r569 mail failure, on a Diamond with no other kind of action (`retireR569MailFailures`).
 				var acts = (mail && typeof Triggers !== 'undefined' && Triggers.of) ? Triggers.of(f.id) : [];
-				if (mail && !acts.some(function (a) { return !a || a.kind !== 'mail'; })) A.clear(f.id, 'turn-failed');
+				if (mail && acts.length && !acts.some(function (a) { return !a || a.kind !== 'mail'; })) A.clear(f.id, 'turn-failed');	// unread actions: leave it, as the sweep does
 				return failed;
 			}
 			if (!tell) return failed;

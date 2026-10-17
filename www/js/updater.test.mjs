@@ -57,10 +57,16 @@ async function settle(n = 12) { for (let i = 0; i < n; i++) await drain(); }
 // priority queue keyed on the fake now, and `advance` runs every timer that
 // falls inside the window, draining microtasks after each so a `fetch` that a
 // timer started has landed before the next one fires.
+//
+// `throttle`, when set, is a hidden tab's intensive timer throttling: no timer
+// fires between wake-ups, which fall on whole multiples of it (a browser aligns
+// them to the minute), so a one-second interval fires about once a minute.
 function makeClock(t0) {
 	let now = t0, seq = 0;
 	const timers = new Map();
+	const due = (t) => (api.throttle ? Math.ceil(t.at / api.throttle) * api.throttle : t.at);
 	const api = {
+		throttle: 0,
 		Date: { now: () => now },
 		now: () => now,
 		setTimeout(fn, ms) { const id = ++seq; timers.set(id, { at: now + (ms || 0), fn, every: 0 }); return id; },
@@ -68,15 +74,16 @@ function makeClock(t0) {
 		clearTimeout(id) { timers.delete(id); },
 		clearInterval(id) { timers.delete(id); },
 		pending() { return timers.size; },
+		halt() { timers.clear(); },              // the page is gone: nothing of it runs again
 		async advance(ms) {
 			const target = now + ms;
 			for (let guard = 0; guard < 100000; guard++) {
 				let pick = null;
 				for (const [id, t] of timers) {
-					if (t.at <= target && (!pick || t.at < pick[1].at)) pick = [id, t];
+					if (due(t) <= target && (!pick || due(t) < due(pick[1]))) pick = [id, t];
 				}
 				if (!pick) break;
-				now = pick[1].at;
+				now = Math.max(now, due(pick[1]));
 				if (pick[1].every) pick[1].at = now + pick[1].every; else timers.delete(pick[0]);
 				try { pick[1].fn(); } catch (e) { console.log('  timer threw: ' + e); }
 				await settle(4);
@@ -288,10 +295,7 @@ async function main() {
 		check('the feed heard "ready" with both ids',
 			!!ready && ready.payload.live === NEWER.build && ready.payload.mine === BOOTED.build);
 		check('a countdown is running', tab.U().countdown() === 20);
-		check('the banner names the countdown', /update\.reloading_in/.test(tab.bannerText() || ''));
-		check('the banner counts in seconds', /update\.reloading_in:20/.test(tab.bannerText() || ''));
-		check('the banner offers Reload now', /update\.reload_now/.test(tab.bannerText() || ''));
-		check('the banner offers Cancel', /update\.cancel/.test(tab.bannerText() || ''));
+		check('a hidden tab shows no countdown (nobody is there to read it)', tab.bannerText() === null);
 		await tab.clock.advance(19000);
 		check('it has not reloaded while the countdown runs', tab.reloads.n === 0);
 		check('the countdown is counting down', tab.U().countdown() === 1);
@@ -301,6 +305,107 @@ async function main() {
 		check('the feed heard "reload" just before it went', !!gone && gone.payload.live === NEWER.build);
 		check('the once-per-ten-minutes stamp was written before reloading',
 			tab.local.has('daimond-soft-at'));
+	}
+
+	console.log('\nupdater: a THROTTLED hidden tab with a sync round a minute still takes the build');
+	{
+		// argonaut, 17 Oct: on r569b for hours through two deploys. A hidden tab's
+		// timers fire about once a minute, so a countdown of twenty one-second ticks
+		// needed twenty minutes; a sync round caught at any wake aborted it, and the
+		// next evaluate started again with `unsafeSince` cleared, so neither
+		// SYNC_YIELD_MS nor GIVEUP_MS ever accrued. Here a round runs every minute,
+		// thirty seconds long, its start alternating so the minute wake catches
+		// every other one in flight -- the mixture that kept it restarting.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: {} });
+		const GIVEUP_MS = 30 * MIN;
+		Object.defineProperty(tab.state, 'quiet', { get() {
+			const k = Math.floor(tab.clock.now() / MIN), into = tab.clock.now() - k * MIN;
+			return k % 2 ? into < 30000 : into >= 30000;
+		} });
+		await tab.clock.advance(65000);
+		tab.clock.throttle = MIN;
+		await learn(tab);
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		let shown = false;
+		for (let t = 0; t < GIVEUP_MS && !tab.reloads.n; t += 5000) {
+			await tab.clock.advance(5000);
+			if (tab.bannerText() && /update\.reloading_in/.test(tab.bannerText())) shown = true;
+		}
+		check('it reloaded within the give-up bound', tab.reloads.n === 1);
+		check('it never gave up', tab.U().gaveUp() === false);
+		check('the hidden tab never showed a countdown', !shown);
+	}
+	{
+		// The same throttled, churning tab with a turn running throughout: the turn
+		// is a hard block, so it never reloads, and the give-up bound now accrues
+		// across the aborted countdowns and leaves the button.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { busy: true } });
+		Object.defineProperty(tab.state, 'quiet', { get() {
+			const k = Math.floor(tab.clock.now() / MIN), into = tab.clock.now() - k * MIN;
+			return k % 2 ? into < 30000 : into >= 30000;
+		} });
+		await tab.clock.advance(65000);
+		tab.clock.throttle = MIN;
+		await learn(tab);
+		await tab.clock.advance(40 * MIN);
+		check('a running turn still blocks the reload', tab.reloads.n === 0);
+		check('and no countdown ran over it', tab.U().countdown() === 0);
+		check('the give-up bound accrued: a button, not a reload', tab.U().gaveUp() === true);
+	}
+	{
+		// The turn starts mid-countdown on a throttled tab: the late wake past the
+		// deadline must still refuse rather than take the reload.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: {} });
+		await tab.clock.advance(65000);
+		tab.clock.throttle = MIN;
+		await learn(tab);
+		check('a countdown is running', tab.U().countdown() > 0);
+		tab.state.busy = true;
+		await tab.clock.advance(3 * MIN);
+		check('a turn that began during the countdown blocks the overdue reload', tab.reloads.n === 0);
+		tab.state.busy = false;
+		await tab.clock.advance(3 * MIN);
+		check('and it reloads at the first safe wake once the turn ends', tab.reloads.n === 1);
+	}
+
+	console.log('\nupdater: a draft survives the update\'s reload word for word');
+	{
+		// argonaut, 17 Oct: a 6,505-character unsent draft in #chat-input. A bound
+		// draft does not hold the build (drafts.js restores it), so the reload must
+		// write it down BEFORE it goes -- here typed 200 ms before the deadline, the
+		// settle timer still pending, and no `pagehide` to save it -- and the next
+		// page must put back exactly those characters.
+		const words = ('Line one of a long reply, with “quotes”, an em dash — and emoji 🧪.\n'
+			+ 'Tabs\tand trailing spaces   \n').repeat(70).slice(0, 6505);
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { draftBound: true } });
+		const loadDrafts = (win, clock) => new Function(
+			'window', 'document', 'setTimeout', 'clearTimeout',
+			'with (window) {\n' + readFileSync(join(HERE, 'drafts.js'), 'utf8') + '\n}')(
+			win, { visibilityState: 'hidden' }, clock.setTimeout, clock.clearTimeout);
+		loadDrafts(tab.win, tab.clock);
+		// A reload ends the page: no timer of it fires afterwards, the settle
+		// timer included.
+		const reload = tab.win.location.reload;
+		tab.win.location.reload = () => { reload(); tab.clock.halt(); };
+		const box = makeNode('textarea');
+		box.value = '';
+		tab.win.DaimondDrafts.bind(box, 'chat/c1');
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('a countdown is running over the bound draft', tab.U().countdown() === 20);
+		await tab.clock.advance(19800);
+		box.value = words;
+		tab.state.typed = true;
+		(box._on.input || []).forEach((f) => f({ isTrusted: true }));
+		await tab.clock.advance(1000);
+		check('it reloaded over the bound draft', tab.reloads.n === 1);
+		const next = makeTab({ stamps: [NEWER], store: tab.local, state: {} });
+		loadDrafts(next.win, next.clock);
+		const box2 = makeNode('textarea');
+		box2.value = '';
+		const back = next.win.DaimondDrafts.bind(box2, 'chat/c1');
+		check('the next page put the draft back word for word', back === words && box2.value === words,
+			'kept ' + (box2.value || '').length + ' of ' + words.length);
 	}
 
 	console.log('\nupdater: a running turn holds it off, and it keeps watching');
@@ -477,6 +582,12 @@ async function main() {
 		check('the feed heard it was held for being foreground and active',
 			!!held && held.payload.why === 'foreground-active', held && JSON.stringify(held.payload));
 		await tab.clock.advance(10 * MIN + 11000);
+		check('a countdown runs once it has been idle long enough', tab.U().countdown() > 0);
+		check('the banner names the countdown', /update\.reloading_in/.test(tab.bannerText() || ''));
+		check('the banner counts in seconds',
+			/update\.reloading_in:\d+/.test(tab.bannerText() || ''));
+		check('the banner offers Reload now', /update\.reload_now/.test(tab.bannerText() || ''));
+		check('the banner offers Cancel', /update\.cancel/.test(tab.bannerText() || ''));
 		await tab.clock.advance(21000);
 		check('it reloaded once the tab had been idle in front of the user long enough',
 			tab.reloads.n === 1);
@@ -610,8 +721,7 @@ async function main() {
 		await learn(tab);
 		check('the newer build is pending', tab.U().pending() === NEWER.build);
 		check('a countdown is running on an un-starred desktop', tab.U().countdown() === 20);
-		check('the countdown is announced', /update\.reloading_in/.test(tab.bannerText() || ''));
-		check('it offers Cancel', /update\.cancel/.test(tab.bannerText() || ''));
+		check('hidden, it counts down without a banner', tab.bannerText() === null);
 		await tab.clock.advance(21000);
 		check('the unlocked desktop reloaded onto the new build', tab.reloads.n === 1);
 	}
@@ -696,7 +806,7 @@ async function main() {
 		await learn(tab);
 		check('the newer build is pending', tab.U().pending() === NEWER.build);
 		check('a countdown is running', tab.U().countdown() === 20);
-		check('the countdown is still announced', /update\.reloading_in/.test(tab.bannerText() || ''));
+		check('hidden, it counts down without a banner', tab.bannerText() === null);
 		await tab.clock.advance(21000);
 		check('the runner reloaded onto the new build', tab.reloads.n === 1);
 	}

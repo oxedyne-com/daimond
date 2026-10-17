@@ -2441,8 +2441,8 @@ span.arte-open { cursor: default; }
    else is about the whole list rather than one tile. Same floating-popover
    shape as `.fold-menu` above, its own class only because it hangs off a
    different anchor and is not part of the fold feature. */
-.railhead-menu { position: fixed; z-index: 1200; background: var(--bg-secondary); border: 1px solid transparent; border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,0.4); padding: 5px; min-width: 170px; display: flex; flex-direction: column; gap: 2px; }
-.railhead-menu-item { text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); white-space: nowrap; }
+.railhead-menu { position: fixed; z-index: 1200; background: var(--bg-secondary); border: 1px solid transparent; border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,0.4); padding: 5px; min-width: 170px; max-width: calc(100vw - 16px); display: flex; flex-direction: column; gap: 2px; }
+.railhead-menu-item { text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .railhead-menu-item:hover { background: var(--bg-hover); }
 .railhead-menu-item.danger { color: var(--danger); }
 .railhead-menu-item.danger:hover { background: var(--danger); color: var(--on-fill, #fff); }
