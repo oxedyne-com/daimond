@@ -407,12 +407,17 @@
 						     everywhere, so this section's header has to survive its own
 						     fold. Collapsed by default at every width -- measured at 390x844
 						     those rows held 345px, more than either list they took it from,
-						     and at 1440x900 the foot of the rail held 119px, always. A
-						     desktop's toggle is drawn as an `.icon-btn`. -->
+						     and at 1440x900 the foot of the rail held 119px, always. The
+						     chevron is a phone's only (D-20261015-15): on a desktop the
+						     rows are in Settings and there is nothing left to unfold. -->
 						<button class="rail-fold icon-btn" data-fold="status" aria-controls="admin-status" aria-expanded="false" title="Open this section" aria-label="Open this section" data-i18n-title="rail.unfold_section" data-i18n-aria-label="rail.unfold_section">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
 						</button>
 					</div>
+					<!-- WHAT NEEDS HIM (D-20261015-15): one row per exception, a dot, a
+					     sentence and one act; red first. Empty and hidden when all is well.
+					     Shown even when the section is folded. js/needs.js draws it. -->
+					<div class="astat-needs" id="astat-needs" hidden></div>
 					<!-- ONE LINE, AND THE REST BEHIND IT (audit 2026-09-15, STRIP-01).
 					     A fresh account met eight diagnostic rows here -- models,
 					     account service, tools, permissions, a build hash, an
@@ -429,7 +434,7 @@
 					     block it opens. js/daimond.js `renderStatusSummary` writes
 					     the words and js/daimond.js's wiring remembers the fold. -->
 					<button class="astat-row astat-btn astat-summary" id="astat-summary"
-						aria-expanded="false" aria-controls="astat-detail"></button>
+						aria-controls="admin-body"></button>
 					<div class="astat-detail" id="astat-detail" hidden>
 					<button class="astat-row astat-btn" id="astat-model"></button>
 					<button class="astat-row astat-btn" id="astat-account"></button>
@@ -696,6 +701,7 @@
 					     sit on the right). `.chead-left` grows; `.chead-right` stays pinned. -->
 					<div class="chead-left">
 						<img class="chead-mark" id="chead-mark" src="assets/daimond_mark.svg" alt="" aria-hidden="true" style="display:none">
+						<span class="chead-av" id="chead-av" aria-hidden="true" style="display:none"></span>
 						<span class="ctitle" id="current-session-name" role="heading" aria-level="2">No chat</span>
 						<!-- A Diamond's two faces. The crystal is the daimon's output; the chat
 						     is its conversation, which is persistent and was until now not shown
@@ -1214,15 +1220,37 @@
 			</div>
 			<!-- How many agents are running, paused and queued: the fan-out's cost made legible. -->
 			<div class="agents-stat" id="agents-stat" style="display:none"></div>
+			<!-- Fuel and lens (think pass §2, §4): the spend of the last hour, and one grid
+			     asked four questions -- the squares keep their places, only the colour changes. -->
+			<div class="agents-fuel" id="agents-fuel">
+				<div class="spendh"><span class="fig" id="agents-spendh"></span><span class="lab" data-i18n="agents.last_hour">last hour</span></div>
+				<div class="dview agents-lens" id="agents-lens" role="group" aria-label="Colour the squares by" data-i18n-aria-label="agents.lens_aria">
+					<button class="dview-btn" type="button" data-lens="state" aria-pressed="true" data-i18n="agents.lens_state">State</button>
+					<button class="dview-btn" type="button" data-lens="cost" aria-pressed="false" data-i18n="agents.lens_cost">Cost</button>
+					<button class="dview-btn" type="button" data-lens="rating" aria-pressed="false" data-i18n="agents.lens_rating">Rating</button>
+					<button class="dview-btn" type="button" data-lens="device" aria-pressed="false" data-i18n="agents.lens_device">Device</button>
+				</div>
+			</div>
 			<!-- Find a run among many by name, task, Diamond or tag. A flat list
 			     with chips, not a Diamond-and-children tree: the parent a run
 			     belongs to rides on the run as a chip, so the tree's height is
 			     not spent on it. -->
 			<div class="diamond-find agent-find">
 				<input type="search" class="diamond-search" id="agent-search" placeholder="Search agents" aria-label="Search agents by name, task, diamond or tag" autocomplete="off" data-i18n-placeholder="agents.search" data-i18n-aria-label="agents.search_help">
+				<div class="diamond-filter agent-tagf" id="agent-tagf" style="display:none"></div>
 				<div class="diamond-filter" id="agent-filter" style="display:none"></div>
 			</div>
-			<div class="agents-list" id="agents-list"></div>
+			<!-- THE PANEL IS SPLIT (D-20261015-10, specs/daimond_agents_mock/). Above, one
+			     square per agent, coloured by state, a row per Diamond or chat; amber alone
+			     means "waiting on you". Below, only the agents a person pressed, each a
+			     tile with a close cross. Nothing is put below on its own. -->
+			<div class="agents-grid" id="agents-grid" role="group" aria-label="Agents" data-i18n-aria-label="agents.grid_aria"></div>
+			<!-- On a phone the lower half is a bottom sheet: one tile at a time, swiped
+			     sideways, a dot per tile. On a desktop the wrapper draws nothing. -->
+			<div class="agents-sheet" id="agents-sheet">
+				<div class="agents-list agents-pins" id="agents-list"></div>
+				<div class="agents-dots" id="agents-dots" aria-hidden="true"></div>
+			</div>
 		</aside>
 
 		<!-- Email: the mailboxes, and what is in them -->
@@ -1775,6 +1803,7 @@
 <!-- stamp.js before every module that writes a synced register: the one rule
      for a write's stamp and for a tie (window.DaimondStamp). -->
 <script src="js/stamp.js"></script>
+<script src="js/alerts.js"></script>
 <!-- support.js beside diag.js and breadcrumb.js: the "Something went wrong"
      one-tap report (D-20260920-02). Reads both their rings, so it loads after
      both and before anything that could report an error. -->
@@ -1860,6 +1889,8 @@
 <!-- money.js: which pot of money a figure belongs to, and what may honestly be
      said about it. Pure wording rules, before the app that draws them. -->
 <script src="js/money.js"></script>
+<!-- agentgrid.js: the Agents grid and the rail's credit cylinders, pure (D-20261015-10, -14). -->
+<script src="js/agentgrid.js"></script>
 <!-- signals.js: the local usage index the Optimiser reads. After ledger.js,
      which it does not depend on but sits beside conceptually: the ledger is the
      account's money, this is how the account is worked. -->
@@ -2066,6 +2097,9 @@
      formatting, no dependency on anything else here -- loaded wherever, so
      it sits just before the module that draws the tiles. -->
 <script src="js/time.js"></script>
+<script src="js/avatar_core.js"></script>
+<script src="js/needs.js"></script><!-- js/needs.js — the rail Status exceptions (window.DaimondNeeds) -->
+<script src="js/avatar.js"></script><!-- js/avatar.js — the Tabler icon beside a Diamond's or chat's name, and its picker (window.DaimondAvatar) -->
 <script type="module" src="js/daimond.js"></script>
 </body>
 </html>

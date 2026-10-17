@@ -1273,7 +1273,7 @@ await s.close();
 		oldKey: localStorage.getItem('daimond-workers-paused'),
 		holding: !!(document.getElementById('agents-ctl') || {}).classList
 			&& document.getElementById('agents-ctl').classList.contains('holding'),
-		tiles:  [...document.querySelectorAll('.acard')].map((c) => c.className),
+		tiles:  [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('.acard'))].map((c) => c.className),
 	}));
 	check(!!mig.ids && mig.ids.indexOf('root/workers') !== -1,
 		'a hold set under the OLD key comes up as `root/workers` in the tree', JSON.stringify(mig.ids));
@@ -1323,7 +1323,7 @@ await s.close();
 	for (let i = 0; i < 40 && mockLog().length - before === 0; i++) await p2.waitForTimeout(300);
 	const after = mockLog().length - before;
 	const status = await p2.evaluate(() =>
-		[...document.querySelectorAll('.acard')].map((c) => c.className).join(' '));
+		[...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('.acard'))].map((c) => c.className).join(' '));
 	check(after > 0,
 		'and the global control releases it — the held agent reaches the provider',
 		`${after} requests, tiles: ${status}`);

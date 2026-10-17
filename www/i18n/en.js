@@ -72,6 +72,8 @@
 	// keys behind a string a widget was handed. Every one of them is handed a
 	// name from somewhere else, so no list here could be right.
 	// i18n-indirect: i18n.js key + (n === 1 ? '.one' : '.other') = open -- `tn` appends the plural form to the key its own caller named
+	// i18n-indirect: needs.js r.key = needs.bypass needs.money_hours needs.money_mins needs.update needs.sync_hours needs.sync_mins needs.no_model
+	// i18n-indirect: needs.js r.actKey = needs.act_guard needs.act_topup needs.act_reload needs.act_retry needs.act_connect
 	// i18n-indirect: i18n.js n.getAttribute('data-i18n-label') = open -- the key is in the markup, where check 4 of dev/i18ncheck.mjs reads it
 	// i18n-indirect: i18n.js spec = open -- a `data-i18n` mark, which is one key or several joined by `|`
 	// i18n-indirect: i18n.js ks[0] = open -- one of the keys behind such a mark
@@ -1266,6 +1268,9 @@
 	'agent.model_configured_now': 'Set to {set} now; this worker started on {model}. A change applies from the next dispatch.',
 	// ── Pending ────────────────────────────────────────────────
 	'pending.empty':        'Nothing waiting.',
+	'pending.turn_failed':  '{name} could not finish a background turn',
+	'pending.turn_failed_detail': 'It ran at {when} when mail arrived, off screen, and failed or said nothing. Open {name} to read its thread, and check its model\'s key and credit.',
+	'pending.mail_note':    '{name} noted, on reading mail',
 	'pending.sort':         'Sort',
 	'pending.by_priority':  'By priority',
 	'pending.by_newest':    'Newest first',
@@ -1282,6 +1287,12 @@
 	'pending.discuss_named': 'Discuss first: {what}',
 	'pending.cancel':       'Drop it',
 	'pending.cancel_named': 'Drop it: {what}',
+	'pending.alert.needs': 'Needs you',
+	'pending.alert.quiet': 'For your eye',
+	'pending.alert.open': 'Open {name}',
+	'pending.alert.diamond': 'the Diamond',
+	'pending.alert.dismiss': 'Dismiss',
+	'pending.alert.gone': 'That Diamond is no longer here.',
 	'pending.noted':        'Noted, and taken off the list.',
 	'pending.opened':       'Opened for sending. It stays here until it is sent.',
 	'pending.diamond_gone': 'The diamond that raised this is gone, so there is nobody to discuss it with.',
@@ -1366,9 +1377,23 @@
 	// Built by concatenation at daimond.js's `tOr('agents.status_' + run.status,
 	// run.status)`, so a status with no key here reaches the screen as the raw
 	// internal word -- which is what it used to do for all seven.
-	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap blocked
+	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap blocked waiting
 	'agents.status_queued':      'queued',
 	'agents.status_running':     'running',
+	'agents.status_waiting': 'waiting',
+	'agents.grid_aria': 'Agents',
+	'agents.open_thread': 'Open {name}',
+	'agents.meter': '{spent} of {cap}',
+	'agents.last_hour': 'last hour',
+	'agents.rated_up': 'rated up',
+	'agents.rated_down': 'rated down',
+	'agents.unrated': 'unrated',
+	'agents.no_device': 'device not recorded',
+	'agents.lens_aria': 'Colour the squares by',
+	'agents.lens_state': 'State',
+	'agents.lens_cost': 'Cost',
+	'agents.lens_rating': 'Rating',
+	'agents.lens_device': 'Device',
 	'agents.status_paused':      'paused',
 	'agents.status_done':        'done',
 	'agents.status_error':       'failed',
@@ -1887,6 +1912,8 @@
 	'spend.period_day':      'Today',
 	'spend.period_week':     'Week',
 	'spend.period_month':    'Month',
+	'spend.runs_out': '{pool} runs out in ~{h} h',
+	'spend.cyl_title': '{pool}: {amt} of {full}',
 	'spend.no_turns':        'No turns in this window yet.',
 	'spend.nothing_yet':     'Nothing yet.',
 	'spend.nothing_spent':   'Nothing spent here yet.',
@@ -3542,6 +3569,8 @@
 	// the user found out on the next reload.
 	'store.alarm':          'Your conversations are not being saved.',
 	'store.alarm_advice':   'Everything on screen is still here, but a reload would lose it. Download a copy now.',
+	'boot.chats_held':      'Your chats could not be read yet, so work sent from your other devices is waiting. Trying again.',
+	'boot.chats_retry':     'Try again',
 	'store.alarm_download': 'Download a copy',
 	'store.alarm_retry':    'Try again',
 	'store.full':           'there is no room left in this browser’s storage for this site',
@@ -5066,5 +5095,28 @@
 	'undo.restored':           'Restored {name}',
 	'undo.retry':              'Retry',
 	'undo.edit_resend':        'Edit & resend',
+	'avatar.title':          'Icon',
+	'avatar.search':         'Search {n} icons',
+	'avatar.use_default':    'Use Default',
+	'avatar.suggested':      'From its name and tags',
+	'avatar.all':            'All',
+	'avatar.none':           'No icon matches.',
+	'avatar.change':         'Change icon',
+	'needs.bypass':          'Bypass: tools run unasked',
+	'needs.money_hours':     '{what}: ~{n} h left',
+	'needs.money_mins':      '{what}: ~{n} min left',
+	'needs.update':          'Update ready',
+	'needs.sync_hours':      'Sync stalled {n} h',
+	'needs.sync_mins':       'Sync stalled {n} min',
+	'needs.no_model':        'No model',
+	'needs.act_guard':       'Guard',
+	'needs.act_topup':       'Top Up',
+	'needs.act_reload':      'Reload',
+	'needs.act_retry':       'Retry',
+	'needs.act_connect':     'Connect',
+	'needs.key_what':        '{provider} key',
+	'home.sec_status':       'This device',
+	'rel.whats_new':        "What's new",
+	'rel.about':            'About',
 	});
 })();

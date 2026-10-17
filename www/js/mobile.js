@@ -504,6 +504,27 @@
 		head.classList.toggle('head-said-twice', same && kept === 0);
 	}
 
+	/// A PANEL'S COUNT BELONGS BESIDE ITS NAME. On a phone the sheet says the name in
+	/// the grabber and the panel's own head is lifted beside the closer as a strip of
+	/// controls (css/mobile.css); a `.rail-count` left in that strip sat wedged between
+	/// the controls, far from the name it counts (Pending, 2026-10-16). So the sheet's
+	/// title carries a live copy, and the strip hides the original.
+	var countWatch = null;
+	function mirrorCount(el) {
+		if (countWatch) { countWatch.disconnect(); countWatch = null; }
+		var src = el.querySelector('.railhead > .rail-count');
+		if (!src) return;
+		var dst = document.createElement('span');
+		dst.className = 'msheet-count';
+		titleEl.appendChild(dst);
+		var copy = function () { dst.textContent = (src.textContent || '').trim(); };
+		copy();
+		if (window.MutationObserver) {
+			countWatch = new MutationObserver(copy);
+			countWatch.observe(src, { childList: true, characterData: true, subtree: true });
+		}
+	}
+
 	/// Raise a guest. The element is MOVED into the sheet (the same idiom
 	/// the desktop layout engine uses to reorder panels); the desktop's
 	/// apply() skips reordering on a phone, so it stays put until closed.
@@ -534,6 +555,7 @@
 		DaimondLayers.open('sheet', close);
 		titleEl.textContent = label(id);
 		hideRedundantHead(el, label(id));
+		mirrorCount(el);
 		// The other face comes up with it, hidden, so the panel the watch draws into
 		// is MOUNTED from the moment the sheet opens. Mounted and hidden is a pause;
 		// gone is a stop, and the difference is the whole of the loop surviving a tab.

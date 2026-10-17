@@ -145,7 +145,10 @@
 		// this panel a reader might want to withhold for a reason nothing else here
 		// covers -- being interrupted -- so folding it into `show` would offer them a
 		// grant that does not match the thing they are granting.
-		{ id: 'asking',   fns: ['ask'] },
+		// The Pending panel's alerts sit with `ask` for the same reason it is its own row:
+		// both reach the PERSON, and withholding them is withholding being told. An alert is
+		// the asynchronous half -- a Diamond working while nobody has it open (D-20261016-17).
+		{ id: 'asking',   fns: ['ask', 'pending_raise', 'pending_clear'] },
 		// `runs` is here and not in a capability of its own: it says what the machine hand
 		// is still running and stops one of them, and a person who granted the starting of
 		// commands has already granted this. Withholding it would not stop a command being

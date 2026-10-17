@@ -108,11 +108,15 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 	}
 	probe.remove();
 	const tok = (c) => { if (!c || c === 'rgba(0, 0, 0, 0)' || c === 'transparent') return 'none'; const t = tokOf.get(c); return t ? t.sort((a, b) => a.length - b.length)[0] : c; };
-	const GLY = /^[▸▾▶▼►◂◀←-⇿✎✕×⟳↺⋯☰✓✔•◈⚙⊕‹›»«⤓⬇⬆↗●○★☆…✏✂⧉⎘⏸■□◆◇≡✖✗✘⚠ℹ❓❗+＋📎🔒🔓📄📁🗑⭐⚡]/u;
+	// A leading glyph (C1, r569): the marks below wherever they stand, joined to the word or not ("▸Custom", G23), and ANY other
+	// symbol (\p{So}, \p{Sm}: 🔑, ✦, ✅, ➜, ⏳) that stands alone before a space, so a re-typed one is never missed by a list. A
+	// currency or a "~" joined to its figure ("$5", "~3 min") is a word. An emoji's presentation selector rides with its glyph.
+	const GLY = /^(?:[▸▾▶▼►◂◀←-⇿✎✕×⟳↺⋯☰✓✔•◈⚙⊕‹›»«⤓⬇⬆↗●○★☆…✏✂⧉⎘⏸■□◆◇≡✖✗✘⚠ℹ❓❗+＋📎🔒🔓📄📁🗑⭐⚡]|[\p{So}\p{Sm}](?=\uFE0F?(?:\s|$)))\uFE0F?/u;
 	// What a person can read on a control: text under a `display: none` label (the phone Help menu's
 	// words, hidden on the desktop bar) is not a word on that control.
 	const visText = (e) => { let t = ''; const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() && n.parentElement && vis(n.parentElement) ? 1 : 3 }); for (let n; (n = w.nextNode());) t += n.nodeValue; return t; };
 	const firstText = (e) => { const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() && n.parentElement && vis(n.parentElement) ? 1 : 3 }); return w.nextNode(); };
+	const nextText = (e, n) => { const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT, { acceptNode: (x) => x.nodeValue.trim() && x.parentElement && vis(x.parentElement) ? 1 : 3 }); w.currentNode = n; return w.nextNode(); };
 	const charRect = (n, i) => { const rg = document.createRange(); rg.setStart(n, i); rg.setEnd(n, i + 1); return rg.getBoundingClientRect(); };
 	// D3: the first cell's left padding and the last cell's right padding are the table's edge, not its spacing. They are masked (null) at
 	// capture so only the inner sides of a table's cells are compared, side by side; a lone cell has no inner side.
@@ -142,8 +146,17 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 			const v = tn.nodeValue; let i = v.search(/\S/);
 			let c0 = charRect(tn, i);
 			if (GLY.test(v.slice(i)) ) {
-				const g = [...v.slice(i)][0]; let j = i + g.length; while (j < v.length && /\s/.test(v[j])) j++;
+				const g = GLY.exec(v.slice(i))[0]; let j = i + g.length; while (j < v.length && /\s/.test(v[j])) j++;
 				if (j < v.length) { const c1 = charRect(tn, j); glyph = g; ggap = +(c1.left - c0.right).toFixed(1); c0 = c1; }
+				else {
+					// A glyph in its own span or text node (C2, r569): "<span>✔</span> Save", "✔ <span>Save</span>". Measured to the
+					// next visible word in the same element, when it sits on the glyph's line.
+					const nx = nextText(el, tn);
+					if (nx) {
+						const c1 = charRect(nx, nx.nodeValue.search(/\S/));
+						if (Math.abs((c1.top + c1.bottom) - (c0.top + c0.bottom)) / 2 < Math.max(c0.height, 1)) { glyph = g; ggap = +(c1.left - c0.right).toFixed(1); c0 = c1; }
+					}
+				}
 			}
 			tx = Math.round(c0.left); tcy = Math.round((c0.top + c0.bottom) / 2);
 			// A ::before glyph on the label's element.
@@ -163,7 +176,7 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 			// Leading only on the label's own line: a figure's tag glyph on the line under its label (the phone's spend tally, r544) is not
 			// a leading icon, and its "gap" to the label above came out negative.
 			const lead = tx != null && tx > ir.left && (tcy == null || tcy >= ir.top - 1 && tcy <= ir.bottom + 1);
-			icon = { w: Math.round(ir.width), h: Math.round(ir.height), gap: lead ? +(tx - ir.right).toFixed(1) : null, dy: tcy != null ? Math.round((ir.top + ir.bottom) / 2 - tcy) : null };
+			icon = { w: Math.round(ir.width), h: Math.round(ir.height), av: !!(ic.closest && ic.closest('.av-btn, #chead-av')), gap: lead ? +(tx - ir.right).toFixed(1) : null, dy: tcy != null ? Math.round((ir.top + ir.bottom) / 2 - tcy) : null };
 		}
 		// Clipped text: overflowing its own box without an ellipsis, or cut by a clipping ancestor.
 		let clip = null;
@@ -1509,6 +1522,9 @@ const ROLES = [
 	['menu-item',       'sentence',    (it) => it.ctrl && (it.role === 'menuitem' || has(it, 'admin-item') || has(it, 'railhead-menu-item') || within(it, /^div#[\w-]*\.pop\b/) && /BUTTON/i.test(it.tag) && !/select|input/.test(it.tag))],
 	// G6: only the chip itself is a filter chip -- its × closer, its input and
 	// its "add" text-button are their own roles (ahead of filter-chip below).
+	// A tile's own icon (avatar.js) is one component drawn by one rule, the row's leading mark: not one of the
+	// row's trailing tools, whose height and spacing it would otherwise be measured against (av-K-desk).
+	['avatar',          'none',     (it) => it.ctrl && has(it, 'av-btn')],
 	['icon-button',     'none',     (it) => it.ctrl && has(it, 'tag-x')],
 	['field',            'sentence', (it) => it.tag === 'input' && has(it, 'tag-input')],
 	['text-button',     'title',    (it) => it.ctrl && has(it, 'crystal-act') && within(it, /tag-add/)],
@@ -1785,7 +1801,10 @@ function report() {
 		// G2: casing is English only -- each locale keeps its own capitalisation.
 		if (/^de-/.test(it.cfg)) continue;
 		const ok = CASE_OK[it.casing]; if (!ok) continue;
-		let t = (it.text || it.ph || '').trim(); if (!t || /^[\d\W]+$/.test(t) || USER.test(t) || /rel-build|rel-note|placeholder-example/.test(it.sig) || it.tag === 'input' && !it.ph) continue;
+		// The viewer's #doc-name is the file's own path, so the user's words whatever its length: the
+		// measured text is cut at 80 characters, which dropped a long seeded name's ".md" from USER's
+		// reach and read the path as a panel title (r569 postgates, order-dependent on which file opened).
+		let t = (it.text || it.ph || '').trim(); if (!t || /^[\d\W]+$/.test(t) || USER.test(t) || /rel-build|rel-note|placeholder-example|doc-name/.test(it.sig) || it.tag === 'input' && !it.ph) continue;
 		// G4(d): an input's placeholder that is itself an example value ("github.com",
 		// "someone@example.com") is not UI copy either.
 		if (it.tag === 'input' && /^[\w.-]+(@[\w.-]+)?\.[a-z]{2,}$/.test(it.ph || '')) continue;
@@ -1796,10 +1815,15 @@ function report() {
 	}
 	// Layout: glyph and icon gaps, left edges, sibling spacing, clipping, overlap.
 	const layout = [];
-	// G22: an avatar is not an inline icon.
-	const ggaps = I.filter((it) => it.ggap != null && !/^tile-/.test(it.roleName) && !/^[+＋]$/.test(it.glyph || '') || it.glyph && /^[＋]$/.test(it.glyph)); const igaps = I.filter((it) => it.icon && it.icon.gap != null && it.text && !has(it, 'user-avatar'));
+	// G22: an avatar is not an inline icon -- the account's `.user-avatar`, nor a tile's own icon (`.av-btn`, the head's
+	// `#chead-av`), whose 8px to the name is av-K-desk's (AVATARS.md), not a button's icon-to-label gap.
+	const ggaps = I.filter((it) => it.ggap != null && !/^tile-/.test(it.roleName) && !/^[+＋]$/.test(it.glyph || '') || it.glyph && /^[＋]$/.test(it.glyph)); const igaps = I.filter((it) => it.icon && it.icon.gap != null && it.text && !has(it, 'user-avatar') && !it.icon.av);
 	const modeOf = (xs) => { const c = new Map(); for (const x of xs) c.set(x, (c.get(x) || 0) + 1); return [...c.entries()].sort((a, b) => b[1] - a[1])[0]; };
-	for (const [kind, L, get] of [['glyph-gap', ggaps, (it) => Math.round(it.ggap)], ['icon-gap', igaps, (it) => Math.round(it.icon.gap)]]) {
+	// A leading glyph is drawn by its role (`.lead-ok`, `.lead-disc`, a disclosure's ::before), never typed into the label (GATEFIX, 16 Oct):
+	// a typed glyph's gap is a space in whatever font each engine falls back to (3px Chromium, 1px WebKit), so the typed glyph is itself the
+	// fault, whatever its gap reads and however few of it there are. Only drawn glyphs are then compared, by configuration, to their mode.
+	for (const it of ggaps) if (!/^::/.test(it.glyph || '')) layout.push({ kind: 'typed-glyph', cfg: it.cfg, canon: 'drawn by the role', v: 'typed ' + it.glyph, sig: it.sig, text: it.text.slice(0, 40), glyph: it.glyph, surfaces: it.surfaces.slice(0, 3), role: it.roleName });
+	for (const [kind, L, get] of [['glyph-gap', ggaps.filter((it) => /^::/.test(it.glyph || '')), (it) => Math.round(it.ggap)], ['icon-gap', igaps, (it) => Math.round(it.icon.gap)]]) {
 		const byCfg = new Map(); for (const it of L) { if (!byCfg.has(it.cfg)) byCfg.set(it.cfg, []); byCfg.get(it.cfg).push(it); }
 		for (const [cfg, X] of byCfg) { if (X.length < 2) continue; const [m] = modeOf(X.map(get));
 			for (const it of X) if (Math.abs(get(it) - m) > 1.5) layout.push({ kind, cfg, canon: m + 'px', v: get(it) + 'px', sig: it.sig, text: it.text.slice(0, 40), glyph: it.glyph || 'svg', surfaces: it.surfaces.slice(0, 3), role: it.roleName }); }
@@ -1847,12 +1871,15 @@ function report() {
 	// the input box, inset 12 px to the composer box edge; it is placed by the composer, not by the panel title, so its text is not compared to the
 	// panel's text edge. Its parts are still compared by role, as Crystal | Chat's are.
 	const COMPOSER_PART = (it) => /#composer-row\b|#seat-switch\b|#seat-here\b|#seat-runner\b|#effort-(step|dn|val|up)\b/.test(it.sig);
+	// A Status exception row (D-20261015-15, js/needs.js) leads its sentence with the state dot, a span of its own, so the sentence's box
+	// starts after the dot; the row is placed by the Status block, which the calm line shares, not by the panel's text edge (16 Oct, WebKit).
+	const NEED_ROW = (it) => /\bastat-val\b/.test(it.sig) && /^div\.astat-row\.astat-need\b/.test((it.anc || [])[0] || '');
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
 	const textBySurf = new Map(); for (const o of items) { if (!o.view || o.tx == null || o.tcy == null) continue; if (!textBySurf.has(o.surface)) textBySurf.set(o.surface, []); textBySurf.get(o.surface).push(o); }
 	const leftMate = (it) => (textBySurf.get(it.surface) || []).some((o) => o !== it && o.panel === it.panel && Math.abs(o.tcy - it.tcy) <= 4 && o.r[0] < it.r[0] && o.r[0] + o.r[2] <= it.r[0] + 2);
 	const byPanel = new Map(); for (const it of items) { if (!it.view || it.tx == null || it.lines !== 1) continue; if (!/panel-title|section-head|list-row|meta|disclosure|body-text|create-button|text-button/.test(it.roleName)) continue;
-		if (RIGHTALIGN(it) || COMPOSER_PART(it)) continue;
+		if (RIGHTALIGN(it) || COMPOSER_PART(it) || NEED_ROW(it)) continue;
 		// A text edge is the left edge of a row's FIRST text. An item with another text-bearing item wholly to its left on the same line (a button
 		// after a note, a unit after a field) is placed by that neighbour, not by the panel (5.2.9: `.ar-card-btn` after "No card saved.").
 		if (leftMate(it)) continue;

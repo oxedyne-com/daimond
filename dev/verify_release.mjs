@@ -13,7 +13,7 @@
 //
 // Run with dev/serve.mjs up. No gateway needed. The log is fed in over a data:
 // URL so this does not depend on the network or on what is published today.
-import { open, signInAs, errors, APP } from './harness.mjs';
+import { open, signInAs, errors, APP, statusRow } from './harness.mjs';
 import { readFile } from 'node:fs/promises';
 import { parseLog, verifyChain, entryHash, nextEntry } from '../verify/lib.mjs';
 import { guardRan } from './verdict.mjs';
@@ -122,7 +122,7 @@ await p.evaluate((url) => {
 
 // ── The history ─────────────────────────────────────────────────────────
 {
-	await p.click('#astat-release');
+	await statusRow(p, '#astat-release'); await p.click('#astat-release');
 	await p.waitForTimeout(700);
 	const rows = await p.$$eval('#rel-list .rel-row', els => els.map(e => ({
 		planned: e.classList.contains('rel-planned'),
@@ -224,7 +224,7 @@ await p.evaluate((url) => {
 		/no published history/i.test(txt), txt.trim().slice(0, 60));
 	await p.evaluate(() => window.DaimondRelease.paintRow());
 	await p.waitForTimeout(300);
-	check('and the status strip still stands', await p.isVisible('#astat-release'));
+	check('and the status strip still stands', await statusRow(p, '#astat-release'));
 }
 
 {

@@ -2485,17 +2485,18 @@
 	/// not "is there a key" but "is there money" — so it answers that one, and the balance is
 	/// the answer when there is one.
 	function keyLabel(p) {
+		// [glyph role, words]: the glyph is drawn by its `.lead-*` role, never typed (app.css).
 		if (!p.minted) {
-			return p.sealed ? '🔒 ' + t('models.sealed')
-				: p.hasKey ? '🔑 ' + t('models.key_set') : '⚠ ' + t('models.no_key');
+			return p.sealed ? ['lead-lock', t('models.sealed')]
+				: p.hasKey ? ['lead-key', t('models.key_set')] : ['lead-warn', t('models.no_key')];
 		}
 		switch (p.state) {
-			case 'ready':     return '';                              // the balance says it better
-			case 'minting':   return '✦ ' + t('models.connecting');
-			case 'nocredits': return '⚠ ' + t('models.no_credits');
-			case 'offline':   return '⚠ ' + t('models.offline');
-			case 'failed':    return '⚠ ' + t('models.could_not_connect');
-			default:          return '🔒 ' + t('models.unlock_to_use');
+			case 'ready':     return ['', ''];                        // the balance says it better
+			case 'minting':   return ['lead-wait', t('models.connecting')];
+			case 'nocredits': return ['lead-warn', t('models.no_credits')];
+			case 'offline':   return ['lead-warn', t('models.offline')];
+			case 'failed':    return ['lead-warn', t('models.could_not_connect')];
+			default:          return ['lead-lock', t('models.unlock_to_use')];
 		}
 	}
 
@@ -2770,11 +2771,13 @@
 
 			var head = document.createElement('button');
 			head.className = 'models-prov-head';
+			head.setAttribute('aria-expanded', open[p.id] ? 'true' : 'false');	// draws the caret
 			// The name, the balance and the host are three units, each kept whole: the rail is
 			// narrow enough that all three will not fit on one line, and a line broken through
 			// "$8.40 left" leaves a number on one row and its meaning on the next.
+			var key = keyLabel(p);
 			head.innerHTML =
-				  '<span class="models-caret">' + (open[p.id] ? '▾' : '▸') + '</span>'
+				  '<span class="models-caret" aria-hidden="true"></span>'
 				+ '<span class="models-prov-name">'
 				+   '<span class="models-nm">' + esc(p.name) + '</span>'
 				+   (p.balance ? '<span class="models-bal">'
@@ -2782,7 +2785,7 @@
 				+   (p.via ? '<span class="models-via">'
 						+ esc(t('models.via', { provider: p.via })) + '</span>' : '')
 				+ '</span>'
-				+ '<span class="models-prov-key">' + esc(keyLabel(p)) + '</span>'
+				+ '<span class="models-prov-key ' + key[0] + '">' + esc(key[1]) + '</span>'
 				+ '<span class="models-prov-count">' + esc(tn('models.count', p.count)) + '</span>';
 			head.title = p.paid
 				? t('models.row_paid_help', { provider: p.via || t('models.the_provider') })

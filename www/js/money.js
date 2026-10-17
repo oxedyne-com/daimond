@@ -147,13 +147,16 @@
 		if (own.length === 1) {
 			var p = own[0];
 			var c = p.credit || null;
-			out.push(rowFor({
+			var one = rowFor({
 				key:   'own',
 				label: st.ownOneLabel ? st.ownOneLabel(p.name) : ('Your ' + p.name + ' key'),
 				exactUsd:    (c && c.mode === 'auto') ? c.usd : null,
 				estimateUsd: (c && c.mode === 'manual') ? c.usd : null,
 				spentUsd:    (typeof p.spentUsd === 'number') ? p.spentUsd : null,
-			}, rate));
+			}, rate);
+			// Which provider: the Status exception's Top Up goes to its billing page (needs.js).
+			if (one) one.provider = p.name || '';
+			out.push(one);
 		} else if (own.length > 1) {
 			// Summed only where every one of them can be summed. A total that
 			// silently omits the two providers that would not answer is a wrong

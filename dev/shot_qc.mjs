@@ -22,7 +22,7 @@
 //   node dev/shot_qc.mjs --cells sharp-dark-1500,warm-light-380
 import fs from 'node:fs';
 import path from 'node:path';
-import { open, errors, scratch } from './harness.mjs';
+import { open, errors, scratch, statusRow } from './harness.mjs';
 
 const argv = process.argv.slice(2);
 const value = (n, d) => { const i = argv.indexOf(n); return (i >= 0 && argv[i + 1]) ? argv[i + 1] : d; };
@@ -171,7 +171,7 @@ const SURFACES = [
 		open: async () => {
 			await quieten();
 			await page.evaluate(() => DaimondPanels.show('rail'));
-			await page.click('#astat-model', { force: true });
+			await statusRow(page, '#astat-model'); await page.click('#astat-model', { force: true });
 			await pause(450);
 			await page.click('#models-add', { force: true }).catch(() => {});
 			await pause(350);

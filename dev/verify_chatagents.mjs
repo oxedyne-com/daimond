@@ -71,7 +71,7 @@ try {
 	await page.evaluate(() => {
 		window.__watch = { maxLive: 0, sample: '' };
 		window.__watchTimer = setInterval(() => {
-			const cards = [...document.querySelectorAll('#panel-agents .acard')].map(c => ({
+			const cards = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#panel-agents .acard'))].map(c => ({
 				name: (c.querySelector('.an') || {}).textContent || '',
 				pill: (c.querySelector('.pill') || {}).textContent || '',
 				chip: (c.querySelector('.diamond-chip') || {}).textContent || '',
@@ -86,7 +86,7 @@ try {
 
 	// Wait for both to finish and for the reports to be delivered.
 	await page.waitForFunction(() => {
-		const cards = [...document.querySelectorAll('#panel-agents .acard')];
+		const cards = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#panel-agents .acard'))];
 		return cards.length >= 2 && cards.every(c =>
 			['done', 'error', 'stopped'].includes((c.querySelector('.pill') || {}).textContent || ''));
 	}, null, { timeout: 45000 }).catch(() => {});
@@ -99,7 +99,7 @@ try {
 		watch.maxLive >= 2, watch.maxLive + ' live at once — ' + (watch.sample || 'no tiles appeared'));
 	await shot(s, 'chatagents-1-both-live');
 
-	const tiles = await page.evaluate(() => [...document.querySelectorAll('#panel-agents .acard')].map(c => ({
+	const tiles = await page.evaluate(() => [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#panel-agents .acard'))].map(c => ({
 		name: (c.querySelector('.an') || {}).textContent || '',
 		pill: (c.querySelector('.pill') || {}).textContent || '',
 		chip: (c.querySelector('.diamond-chip') || {}).textContent || '',

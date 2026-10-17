@@ -121,7 +121,7 @@ await page.waitForTimeout(9000);
 await shot(s, 'gather-1-dispatched');
 
 const runs = await page.evaluate(() =>
-	[...document.querySelectorAll('#panel-agents .acard')].length);
+	[...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#panel-agents .acard'))].length);
 
 const wire = mockLog();
 // The dispatching turn is the first request; a gather round is a LATER one whose
@@ -307,7 +307,13 @@ check('the daimon\'s next turn carries the report anyway, unspent and unlost',
 		return j.includes('### epsilon') && j.includes('EPSILONFOUND');
 	}), `${wire5.length} request(s) since`);
 check('and says the round did not run, so a silence is not read as a result',
-	wire5.some((m) => JSON.stringify(m.messages || []).includes('no round was run')));
+	// The note's words since c376c714 (17 Sep 2026): "Report(s) below, unread because this
+	// was round N ..." -- it said "no round was run" until then, and this check was left on
+	// the old words, so it went red on a note that still said the right thing.
+	wire5.some((m) => {
+		const j = JSON.stringify(m.messages || []);
+		return j.includes('below, unread because') && j.includes('this was round');
+	}));
 await shot(s, 'gather-5-undelivered');
 
 await s.close();

@@ -677,17 +677,18 @@
    code block's Copy, the Workspace's Import/Save-a-copy and the Social/
    +Add-provider pills this replaces their own font, weight, padding and
    colour with it. A Pending tile's worded presses (`.pend-verb`: Switch, Add,
-   Edit, Dismiss, Keep, Remove; 5.3.2) are the same button. */
+   Edit, Dismiss, Keep, Remove; 5.3.2) and a Status row's one act (`.astat-act`:
+   Reload, Open) are the same button. */
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-	.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) {
+	.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb, .astat-act) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); background: transparent;
 	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 27px; line-height: 19px;
 	text-decoration: none;
 }
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-	.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb):hover { background: var(--dl-hover); color: var(--text-primary); }
+	.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb, .astat-act):hover { background: var(--dl-hover); color: var(--text-primary); }
 /* The bare + is the same 27px box as the worded chips, but round, its glyph centred. */
 :root[data-skin="daylight"] .attach-add.icon { width: 27px; height: 27px; padding: 0; border-radius: 50%; }
 /* The primary text button: the role's size, filled in the accent. Subscribe,
@@ -1037,7 +1038,7 @@
    rest and system rows -- is 12px, --w-text, --text-muted, one line height
    and one hit box. The per-class blocks below keep only what this rule does
    not set: colour on hover, the fold triangle, focus rings. */
-:root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .tagf-toggle, .arte-strip,
+:root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .rel-about > summary, .tagf-toggle, .arte-strip,
 	.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
 	.files-rest-head, .sys-head, .cap-more, .capp-conflicts > summary) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 19px;
@@ -1263,7 +1264,7 @@
 	/* The rail's fold is clipped by the top half's `overflow: hidden`. */
 	:root[data-skin="daylight"] #rail-top { margin-right: -4px; padding-right: 4px; }
 	/* Every pressable status row is a finger's height, so the drawer's rows agree. */
-	:root[data-skin="daylight"] :is(.astat-row.astat-id, .astat-row > #user-row, .astat-row.astat-btn, .astat-row.astat-sync) { min-height: 44px; }
+	:root[data-skin="daylight"] :is(.astat-row.astat-id, .astat-row > #user-row, .astat-row.astat-btn, .astat-row.astat-sync, .astat-row > #chunk-chip) { min-height: 44px; }
 	/* R9: the rail's own closer sits in `.pptw-head`, so the head-tool group
 	   rule above (30px, unscoped, two grouped classes) outranks the plain
 	   `.ui-close` phone rule (responsive.css) for it alone -- restated here at
@@ -1401,7 +1402,7 @@
 	:root[data-skin="daylight"] :is(.dlg-ok, .dlg-cancel, .tile-fold, .tile-keep, .compose-btn, .compose-send, .railhead > .railbtn,
 		.crystal-act:not(.crystal-form-x), .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 		.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-		.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) { min-height: 44px; min-width: 44px; }
+		.pro-buy, .credit-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb, .astat-act) { min-height: 44px; min-width: 44px; }
 	/* Toggle options (the head's face switch keeps the head block's 30px box and overlay, so the Diamond head stays 96px): */
 	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
 		.files-mode-chip, .imp-chip, .tile-dlg-level) { height: 44px; min-height: 44px; }
@@ -1427,11 +1428,11 @@
 	/* Icon-size controls: their own box, the house overlay. */
 	/* `z-index: 1`: a neighbour that makes its own stacking context (the active tile's preview is `opacity: .7`) is painted over an
 	   overlay at `z-index: auto`, so it took the lower half of a tile's cog and x. (The rating arrows wear U2's own overlay, app.css.) */
-	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .attach-add, .attach-btn,
+	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .av-btn, .attach-add, .attach-btn,
 		.device-rename, .device-nominate, .device-remove, .mail-refresh,
 		.pptw-act, .railhead .addbtn:not(.railbtn),
 		.tagf-pool .tag-chip, .tagf-active .tag-chip, .session-box-tags .tag-chip) { position: relative; z-index: 1; }
-	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .attach-add, .attach-btn,
+	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .av-btn, .attach-add, .attach-btn,
 		.device-rename, .device-nominate, .device-remove, .mail-refresh,
 		.pptw-act, .railhead .addbtn:not(.railbtn),
 		.tagf-pool .tag-chip, .tagf-active .tag-chip, .session-box-tags .tag-chip)::after {
@@ -1453,9 +1454,10 @@
 	/* A Diamond's tags are ONE row that pans sideways, however many there are, so the tile is one height whatever its tags: a chip
 	   past the strip's right edge is cut by it, which is the cue. An x-scroller clips y too, so the strip's own box is the 44px
 	   the overlays need (19px chips, 13px above and below). It stops 32px short of the tile's right content edge, which is where the
-	   cog's overlay begins (the cog is 20px at the edge, its overlay reaches 12px to its left), so a chip never lies under it. */
+	   cog's overlay begins (the cog is 20px at the edge, its overlay reaches 12px to its left), so a chip never lies under it.
+   It starts 32px in on the left for the same reason: the tile's own icon (.av-btn, 20px at the edge) has the same overlay. */
 	:root[data-skin="daylight"] .diamond-box > .session-box-tags {
-		flex-wrap: nowrap; column-gap: 8px; padding-block: 13px; margin-right: 32px;
+		flex-wrap: nowrap; column-gap: 8px; padding-block: 13px; margin-right: 32px; margin-left: 32px;
 		overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
 	}
 	:root[data-skin="daylight"] .diamond-box > .session-box-tags::-webkit-scrollbar { display: none; }
@@ -1541,7 +1543,7 @@
 	}
 
 	/* Row 1: the mark, the title, the mode, the menu. */
-	:root[data-skin="daylight"] .panel.ai .chead .chead-mark { order: 0; margin-right: 6px; }
+	:root[data-skin="daylight"] .panel.ai .chead :is(.chead-mark, .chead-av) { order: 0; margin-right: 6px; }	/* the icon takes the mark's place, and its spacing */
 	:root[data-skin="daylight"] .panel.ai .chead .ctitle { order: 1; flex: 1 1 0; min-width: 0; align-self: center; }
 	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #hand-mode-chip { order: 2; flex: 0 1 auto; min-width: 0; justify-content: flex-start; }
 	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #hand-mode-chip .mode-chip-txt {

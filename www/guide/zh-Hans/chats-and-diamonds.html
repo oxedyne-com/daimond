@@ -82,7 +82,7 @@
 	<h2 id="s5">留下一场聊天</h2>
 	<p>侧栏里，一场聊天那一行上坐着两个按钮。 <span class="ui">留下</span> ，把整段对话变成一个 diamond。 <span class="ui">全部折叠</span> ，靠总结把它变成一个 diamond，留下搞定的结论，去掉来回的过程。</p>
 	<p>只想留下一部分的话，先折叠答案，勾选值得留下的那些轮次，然后选择 <span class="ui">折叠所选</span>。把你已经采纳的一步折叠进去，一句顺口的话留在原地就好。</p>
-	<p>没有什么会自己被吸收进去。一个 diamond 的记忆只通过折叠或编辑改变，每一次写入都保留在历史里。</p>
+	<p>没有什么会自己被吸收。一个 diamond 的记忆只通过折叠或编辑改变，每一次写入都保存在历史里，上限见下面的“历史”。</p>
 
 	<h2 id="s6">在一个 diamond 里面</h2>
 	<p>你的 diamond 排在你的聊天上面， <span class="ui">+</span> 会新建一个。一个 diamond 有两面，标题栏里的一个开关在它们之间切换。 <span class="ui">晶体</span> 是它知道的东西， <span class="ui">聊天</span> 是它自己的对话。</p>
@@ -94,7 +94,7 @@
 
 	<p>这张卡片用它自己的话，列出这个 diamond 的标题和摘要，然后是它掌握的其余一切，一行一样。 <span class="ui">编辑</span> ，打开一个表单。 <span class="ui">查看原始记忆</span> ，打开文件本身，给想直接在里面工作的时候用。</p>
 
-	<p>daimon 在说做完之前，会先看一看自己改了什么。它点名一个视图，而不是去猜页面：文档预览、一个打开的文件、屏幕上的任何面板、整个窗口，或者它所在 diamond 自己的页面。如果它自己的模型读不了图片，就由这个 diamond 的图像模型来描述，失败时会写明是哪个模型、哪个提供方。daimon 提的问题，只在它的对话显示在屏幕上时才画出来；在别的面上，它会被告知原因，转而在回复里提问。</p>
+	<p>daimon 在说做完之前，会先看看自己改了什么。它点名要看的视图，而不是去猜是哪一页：文档预览、一个打开的文件、屏幕上的任一面板、整个窗口，或者它所在 diamond 自己的页面。如果它自己的模型读不了图片，就由这个 diamond 的图像模型来描述；失败时会点出那个模型和它的提供方。daimon 提的问题只在它的对话显示在屏幕上时才画出来；从别的界面，它会被告知原因，改在回复里提问。</p>
 
 	<h2 id="s7">一个 diamond 保留的四个文件</h2>
 	<p>记忆是公开保存的。四个文件放在这个 diamond 自己的文件夹里，在工作区面板里可读，daimon 也读得到。</p>
@@ -115,11 +115,12 @@
 	<p>归档是可重复的，所以同一次折叠跑两遍，不会归档两遍；两次折叠先后到达的顺序，也不会改变文件最终说了什么。</p>
 
 	<h2 id="s9">历史</h2>
-	<p><span class="ui">历史</span> ，列出每一个版本，最新的在最前面。 <span class="ui">查看</span> 读一个， <span class="ui">恢复</span> 让它重新变成当前版本，而 <span class="ui">增量</span> 显示一次折叠拿到的材料。恢复会先保留当时的当前版本，所以一次恢复本身也可以被撤销。</p>
+	<p><span class="ui">历史</span> 列出它保存的版本，最新的在前。它最多保存 200 个版本，并受一个可在设置里修改的大小上限约束，列表底部会写明这两项。存满时，daimon 最早的编辑先被移除；你保存的版本、你自己的文件、你页面的数据和删除记录最后才被移除。列表里有一行会说明哪些版本在何时被移除。 <span class="ui">查看</span> 读一个， <span class="ui">恢复</span> 让它重新变成当前版本，而 <span class="ui">增量</span> 显示一次折叠拿到的材料。恢复会先保留当时的当前版本，所以一次恢复本身也可以被撤销。</p>
 	<p>Every file the daimon changes in a diamond is kept too, and a row's <span class="ui">Restore file</span> brings one back while <span class="ui">恢复</span> brings the whole version back. Files on this computer are kept only where the daimon wrote them here, so a change made by an editor, a build or a command is not in History. Deleting, renaming, folding and restoring each show <span class="ui">Undo</span> for five seconds, and after that the act stands.</p>
 
 	<h2 id="s10">不用问就行动</h2>
 	<p>一个 diamond 只在你提示它的时候回答，别的时候不会，除非你设置了一个触发动作。这些都在 <span class="ui">这个 diamond 什么时候行动</span> 下面，在晶体面上，而 <span class="ui">添加一个动作</span> ，新建一个。两样东西可以触发它：要么是你自己活动的分钟数，只在你工作的时候计数，要么是邮件到达一个你指定的文件夹。</p>
+	<p>不管屏幕上是哪个 diamond，邮件都会触发它的动作，所以一个盯着邮箱的 diamond 没人看着也照样工作。答案进入那个 diamond 自己的对话，屏幕停在原处。如果 diamond 正忙，或者你正打字打到一半，邮件就等一分钟再试。</p>
 	<p>每个动作都带一条每次都发送的指令，和一份只发一次、直到你改动它为止的上下文。它们是一个普通的文件， <code>triggers.json</code>，在这个 diamond 的文件夹里。</p>
 	<p>一个新的动作是 <strong>停着的</strong>，而且会这样说明： <em>已停止。按一下下拉菜单旁边指示灯上的 &#9654;，让这个动作运行。</em> 按一下就会激活它。</p>
 
@@ -134,7 +135,8 @@
 	<p>一个被按住的动作什么都不花，因为它在这一轮开始之前就被拒绝了。</p>
 
 	<h2 id="s12">标签、链接和回收站</h2>
-	<p><span class="ui">标签</span> ，在晶体面上，把一个 diamond 归档进侧栏里。最多八个标签，全部小写，并且去重。 <span class="ui">建议</span> ，给出四个可以拿来起步用的。标签是惰性的。它们不会发给模型，不是记忆的一部分，也不会改变一个智能体做的任何事。 <span class="ui">按标签筛选</span> ，在侧栏里，靠它们来缩小范围。它上方的 <span class="ui">搜索 diamond</span> 按名称或标签的开头查找 diamond。两者一起缩小范围，按 Esc 清空搜索。</p>
+	<p><span class="ui">标签</span> ，在晶体面上，把一个 diamond 归档进侧栏里。最多八个标签，全部小写，并且去重。 <span class="ui">建议</span> ，给出四个可以拿来起步用的。标签是惰性的。它们不会发给模型，不是记忆的一部分，也不会改变一个智能体做的任何事。 <span class="ui">按标签筛选</span> ，在侧栏里，靠它们来缩小范围。 <span class="ui">Search diamonds</span>, above it, finds a diamond by its name or by the start of a tag. The two narrow together, and Esc clears the search.</p>
+	<p>每个 diamond 和聊天的名字旁都有一个图标。在你自己选一个之前，图标跟随当前的名字和标签，所以带有标签 <span class="ui">person</span> 的 diamond 会得到一个人像，即使标签是在 diamond 之后才加上的。在每台设备上都一样。按一下图标可以换一个； <span class="ui">搜索</span> 涵盖全部 5,184 个，而 <span class="ui">使用默认</span> 会回到跟随名字和标签。选定的图标会同步到你的其他设备。</p>
 	<p>一个 diamond 也可以链接到另一个， <a href="interface.html">图谱</a> 就是它的图像。</p>
 	<p>删除一场聊天或一个 diamond，会把它送进回收站。它仍然被存着，仍然同步，但任何 daimon 都够不到它，并且带着日期在那一行保留三十天。 <span class="ui">恢复</span> ，在每一台设备上把它带回来。 <span class="ui">永久删除</span> 和 <span class="ui">清空回收站</span> ，是会先问你的那两个。</p>
 

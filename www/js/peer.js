@@ -3345,8 +3345,71 @@
 	/// LEASE_TTL_MS (16.5 min) after its dispatch.
 	function deadLease(r, now) {
 		if (!r || liveLease(r, now)) return false;
+		if (isMark(r)) return !!r.retired && now > leaseMs(r.deadline);
 		var last = Math.max(leaseMs(r.expiry), leaseMs(r.deadline), leaseMs(r.renewedAt));
 		return now - last > LEASE_TTL_MS;
+	}
+
+	// ── The answered mark (r569) ─────────────────────────────────
+	//
+	// A claim is a lease, and a lease is drained 16.5 minutes after its dispatch, so it
+	// cannot be the only record that an occasion was ANSWERED: a device that woke later
+	// found no record and ran it again. A MARK is the durable half, kept in the same
+	// section and written through the same door: "answered through `mark`" in generation
+	// `gen` (a folder's uidValidity), under a key its caller names. Within one generation
+	// it merges as a monotone max, so two writers converge with no arbitration. It is not
+	// drained while live: one record per key, which the caller bounds (one per Diamond,
+	// mailbox and folder), and RETIRES when what it answered for is deleted. It holds no
+	// claim: no holder, released, expiry 0, so every live-lease reader passes over it.
+	//
+	// A GENERATION IS AN IDENTITY, NEVER AN ORDER (r569 A1). IMAP promises only that a
+	// new UIDVALIDITY differs from the old: a mailbox moved to another server can come
+	// back lower, and one read as a signed 32-bit number goes negative above 2^31. A mark
+	// that "covered" every lower generation then silenced the folder for good. So a mark
+	// of another generation covers nothing, and between two generations the fresher write
+	// wins. At worst a device still on the old generation writes it back once, and the
+	// next arrival in the new one runs a turn it need not have: a cost, not a loss.
+	var MARK_HORIZON_MS = 30 * 24 * 3600 * 1000;	// a retired mark's life
+
+	/// Is a record an answered mark rather than a lease? A retired one is too.
+	function isMark(r) { return !!r && typeof r.mark === 'number'; }
+
+	/// Is a record a mark still in force, not retired?
+	function liveMark(r) { return isMark(r) && !r.retired; }
+
+	/// Does mark `r` cover `n` in generation `gen`?
+	function markCovers(r, gen, n) {
+		return liveMark(r) && leaseMs(r.gen) === leaseMs(gen) && r.mark >= leaseMs(n);
+	}
+
+	/// The winner of two marks for one key: the higher of two live marks in one generation,
+	/// else the fresher write (a new generation, or a retirement); the incoming on a tie,
+	/// as `pickLease` keeps.
+	function pickMark(local, incoming) {
+		if (!isMark(local)) return isMark(incoming) ? incoming : local;
+		if (!isMark(incoming)) return local;
+		if (liveMark(local) && liveMark(incoming) && leaseMs(local.gen) === leaseMs(incoming.gen)) {
+			return local.mark > incoming.mark ? local : incoming;
+		}
+		return leaseMs(local.renewedAt) > leaseMs(incoming.renewedAt) ? local : incoming;
+	}
+
+	/// Mark `cur` retired at `now`: fresher than every live copy, so it wins every merge,
+	/// and drained one horizon later. A mark written again after it is a fresh start.
+	function retiredRecord(cur, now) {
+		return {
+			mark: leaseMs(cur.mark), gen: leaseMs(cur.gen), retired: 1, mode: 'released', expiry: 0,
+			deadline: now + MARK_HORIZON_MS, renewedAt: Math.max(now, leaseMs(cur.renewedAt) + 1),
+		};
+	}
+
+	/// A mark record answering through `n` in `gen`, written after `cur` (fresher
+	/// `renewedAt`, so it replaces a mark of another generation or a retired one).
+	function markRecord(gen, n, now, cur) {
+		return {
+			mark: leaseMs(n), gen: leaseMs(gen), mode: 'released', expiry: 0,
+			deadline: now + MARK_HORIZON_MS, renewedAt: Math.max(now, leaseMs(cur && cur.renewedAt) + 1),
+		};
 	}
 
 	/// The ceiling an adopted expiry may reach on the ADOPTING device's clock: one TTL
@@ -3410,6 +3473,7 @@
 
 	/// The winner of two records for one turnId, BEFORE the expiry clamp.
 	function pickLease(local, incoming, now) {
+		if (isMark(local) || isMark(incoming)) return pickMark(local, incoming);
 		if (local && incoming && local.holder === incoming.holder) {
 			var ri = leaseMs(incoming.renewedAt), rl = leaseMs(local.renewedAt);
 			if (ri !== rl) return ri > rl ? incoming : local;
@@ -3723,17 +3787,36 @@
 			// charge (S-HAND #1). The proof of completion is in the lease, which every taker
 			// reads before it takes, so it stands down here on the snapshot in hand.
 			var settledCur = snap && snap.leases ? snap.leases[tid] : null;
-			if (settledCur && settledCur.settled) return { won: false, why: 'settled' };
+			// It adopts what it read, as every stand-down does: the mark raised with the
+			// tombstone is what tells this device the arrival was answered (r569).
+			if (settledCur && settledCur.settled) {
+				leaseWrite(mergeLeases(_leases, snap.leases, now));
+				return { won: false, why: 'settled' };
+			}
+			// ANSWERED FOR GOOD (r569 R1). `opts.mark` names the occasion's answered mark:
+			// covered, it was answered, however long ago, and stands down like a settled
+			// turn. Not yet written, of another generation or retired, it is SEEDED below
+			// the occasion in the claim's own write, so what is owed above it can be worked
+			// out on any device, a reloaded one too, without a write of its own.
+			var mk = o.mark && o.mark.key ? o.mark : null;
+			var mcur = mk && snap && snap.leases ? snap.leases[String(mk.key)] : null;
+			if (mk && markCovers(mcur, mk.gen, mk.upTo)) {
+				leaseWrite(mergeLeases(_leases, snap.leases, now));
+				return { won: false, why: 'settled' };
+			}
 			// A RE-TAKE OF THIS DEVICE'S OWN LIVE CLAIM (RUNNER-READY F2). `mergeLeases` keeps a
 			// live lease whose holder is the claimant, so the take wins -- but the run that
 			// claimed it is gone (a reload: the work claim forbids a second run on this device),
 			// and the caller ends that run as Interrupted rather than running the turn again.
 			var retake = !!settledCur && String(settledCur.holder || '') === holder && liveLease(settledCur, now);
 			// The claim expiry is the errand's DEADLINE (real or derived above), not
-			// now + TTL, so the lease stays live for the whole turn WITHOUT a renew -- a
-			// busy turn cannot push a renew (sync.js:1077), so a TTL-capped claim would
-			// read expired elsewhere after 90s and be re-run (the >TTL double-run). An
-			// errand with neither a deadline nor a `ts` falls back to a single TTL. A
+			// now + TTL, so the lease stays live for the whole turn WITHOUT a renew. A renew
+			// through the lease door itself is not held back by a running turn (`leaseCommit`
+			// sits outside the parcel push's busy gate, sync.js `pushWaits`), and the
+			// mail claim relies on that, but a renew that rides the parcel is, and a
+			// TTL-capped claim held by it would read expired elsewhere after 90s and be re-run
+			// (the >TTL double-run). An errand with neither a deadline nor a `ts` falls back
+			// to a single TTL, which the mail claim renews through the door. A
 			// recovery errand carries the placeholder's own deadline (`errandForRecovery`,
 			// 2026-09-23), so the refusal above stops a recovery of a hand-off that has
 			// expired, as it stops any other taker.
@@ -3748,7 +3831,11 @@
 				expiry: (deadline && deadline > now) ? deadline : (now + LEASE_TTL_MS),
 				renewedAt: now,
 			};
-			var proposed = mergeLeases({ [tid]: claim }, snap.leases, now);
+			var mine = { [tid]: claim };
+			if (mk && !(liveMark(mcur) && leaseMs(mcur.gen) === leaseMs(mk.gen))) {
+				mine[String(mk.key)] = markRecord(mk.gen, mk.floor, now, mcur);
+			}
+			var proposed = mergeLeases(mine, snap.leases, now);
 			if (!proposed[tid] || proposed[tid].holder !== holder) {
 				leaseWrite(mergeLeases(_leases, snap.leases, now));	// adopt what we learned
 				return { won: false, holder: proposed[tid] ? proposed[tid].holder : null };
@@ -3822,8 +3909,11 @@
 	/// journal progress; a dead one stops, and the lease expires. Answers
 	/// `{ ok, why }`. Aborts (ok:false, why:'revoked') if the lease is no longer
 	/// ours -- which is how a take-back (§3.3) reaches the running peer.
-	async function leaseRenew(turnId, holder, cas, nowFn) {
-		var tid = String(turnId), h = String(holder);
+	///
+	/// `opts.hold` keeps the record's mode: a claim renewed only to stay live (a mail
+	/// arrival's) is not a `running` hand-off, which other devices defer their push for.
+	async function leaseRenew(turnId, holder, cas, nowFn, opts) {
+		var tid = String(turnId), h = String(holder), hold = !!(opts && opts.hold);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var snap = await cas.read();
 			if (snap.unread) return { ok: false, why: 'unread' };		// unknown, never 'revoked'
@@ -3841,7 +3931,7 @@
 			// lease, where it is the old `now + TTL`.
 			var bumped = {
 				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''),
-				mode: cur.mode === 'claimed' ? 'running' : cur.mode,
+				mode: cur.mode === 'claimed' && !hold ? 'running' : cur.mode,
 				deadline: leaseMs(cur.deadline),
 				expiry: Math.max(now + LEASE_TTL_MS, leaseMs(cur.deadline)), renewedAt: now,
 			};
@@ -3850,6 +3940,61 @@
 			if (res.ok) { leaseWrite(proposed); return { ok: true }; }
 			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
 			if (res.why === 'unread') return { ok: false, why: 'unread' };	// unsealable, not a race: no retry
+		}
+		return { ok: false, why: 'exhausted' };
+	}
+
+	/// RAISE answered mark `key` to `n` in generation `gen` (r569). Monotone, so a raise a
+	/// mark already covers writes nothing and answers ok. `seed` raises only a mark that is
+	/// absent, retired or of another generation: the floor below an occasion not yet claimed.
+	async function leaseMark(key, gen, n, cas, nowFn, seed) {
+		var k = String(key);
+		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
+			var snap = await cas.read();
+			if (snap.unread) return { ok: false, why: 'unread' };
+			var now = leaseNow(nowFn);
+			var cur = snap.leases[k];
+			if (markCovers(cur, gen, n) || (seed && liveMark(cur) && leaseMs(cur.gen) === leaseMs(gen))) {
+				leaseWrite(mergeLeases(_leases, snap.leases, now));
+				return { ok: true };
+			}
+			var proposed = mergeLeases({ [k]: markRecord(gen, n, now, cur) }, snap.leases, now);
+			var res = await cas.write(snap.version, proposed);
+			if (res.ok) { leaseWrite(proposed); return { ok: true }; }
+			if (res.why === 'too_large') return { ok: false, why: 'too_large' };
+			if (res.why === 'unread') return { ok: false, why: 'unread' };
+		}
+		return { ok: false, why: 'exhausted' };
+	}
+
+	/// RETIRE every live mark whose key starts with `prefix`, but those named in `keep`
+	/// (r569 A3): what they answered for -- a Diamond, an action, a folder -- is gone, and a
+	/// mark is otherwise never drained. Read from this device's view first, so a call with
+	/// nothing to retire costs no round trip.
+	async function leaseRetire(prefix, keep, cas, nowFn) {
+		var p = String(prefix), kept = keep || {};
+		function doomed(m) {
+			var out = {};
+			Object.keys(m || {}).forEach(function (k) {
+				if (k.indexOf(p) === 0 && !kept[k] && liveMark(m[k])) out[k] = m[k];
+			});
+			return out;
+		}
+		if (!Object.keys(doomed(_leases)).length) return { ok: true };
+		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
+			var snap = await cas.read();
+			if (snap.unread) return { ok: false, why: 'unread' };
+			var now = leaseNow(nowFn), gone = doomed(snap.leases), mine = {};
+			Object.keys(gone).forEach(function (k) { mine[k] = retiredRecord(gone[k], now); });
+			if (!Object.keys(mine).length) {
+				leaseWrite(mergeLeases(_leases, snap.leases, now));
+				return { ok: true };
+			}
+			var proposed = mergeLeases(mine, snap.leases, now);
+			var res = await cas.write(snap.version, proposed);
+			if (res.ok) { leaseWrite(proposed); return { ok: true }; }
+			if (res.why === 'too_large') return { ok: false, why: 'too_large' };
+			if (res.why === 'unread') return { ok: false, why: 'unread' };
 		}
 		return { ok: false, why: 'exhausted' };
 	}
@@ -4560,6 +4705,10 @@
 		/// base version, which is the concurrency the lease exists to arbitrate.
 		takeFrom:  leaseTakeFrom,
 		renew:     leaseRenew,
+		/// The answered mark: raise it, and does a record cover an occasion?
+		mark:      leaseMark,
+		retire:    leaseRetire,
+		covers:    markCovers,
 		complete:  function (turnId, holder, cas, nowFn) { return leaseSet(turnId, holder, 'done', cas, nowFn); },
 		release:   function (turnId, holder, cas, nowFn) { return leaseSet(turnId, holder, 'released', cas, nowFn); },
 		/// The phone's take-back: revoke whoever holds the lease (§3.3).

@@ -23,7 +23,12 @@
    its own -- the caret is the first thing inside `.models-prov-head` with
    real text, so its colour is what the row is measured by. */
 .models-caret     { width: 10px; color: var(--text-muted); }
-.models-prov-name { font-weight: 600; flex: 1; }
+/* Drawn by the row's state, not typed (r569 gate, typed-glyph). */
+.models-caret::before { content: '\25B8'; }
+.models-prov-head[aria-expanded="true"] .models-caret::before { content: '\25BE'; }
+/* A disclosure's label at the disclosure weight: the bold name passed only while the typed caret
+   was the text the row was measured by (r569 gate, fw 600 against 375/400). */
+.models-prov-name { flex: 1; }
 .models-prov-key  { font-size: var(--fs-2xs); color: var(--text-secondary); }
 .models-prov-count{ font-size: var(--fs-2xs); color: var(--text-secondary); min-width: 68px; text-align: right; }
 
@@ -42,7 +47,10 @@
 	background: transparent; border: 0; color: var(--text-secondary);
 	font-family: var(--font-mono); font-size: var(--fs-2xs);
 }
-.settings-section .models-model:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* `button.` lifts this to app.css's `.settings-section button:not(.admin-item):hover`
+   (0,3,1), and the later sheet wins: without it a hovered model row took the FILL
+   button's accent-hover under row ink (obsidian 1.66:1, porcelain ~2.4:1). */
+.settings-section button.models-model:hover { background: var(--bg-hover); color: var(--text-primary); }
 .models-model.on    { color: var(--accent-text); background: var(--accent-soft); }
 .models-star { width: 12px; }
 .models-id   { flex: 1; word-break: break-all; }

@@ -16,12 +16,13 @@
    phone breakpoint so desktop is untouched.
    ============================================================ */
 
-/* The hamburger and the sheet exist only on a phone. The section folds do too,
-   except the status section's: it is shut by default at every width
-   (D-20261008-14), so its toggle is drawn on a desktop as well. */
+/* The hamburger, the sheet and the section folds exist only on a phone. The
+   status section's chevron was drawn on a desktop too (D-20261008-14) until its
+   rows moved to Settings > This device (D-20261015-15): folded or not, the rail
+   shows identity, exceptions, the calm line and the tally (st-S1x), so on a
+   desktop it had nothing to unfold and is gone. */
 #drawer-btn { display: none; }
 .rail-fold  { display: none; }
-.rail-fold[data-fold="status"] { display: flex; flex: none; }
 /* Pointing down when the section is open, at its heading when it is not. The
    chevron turns with the state at every width, so it is outside the breakpoint. */
 .rail-fold .ic { width: 16px; height: 16px; transition: transform .18s; }
@@ -34,7 +35,12 @@
    it. The identity row is the section's header, and a header stays. */
 /* The spend tally is NOT folded (D-20261009-18): Today / Week / Month stay at the
    foot of the section, folded or open, at every width. */
-.panel.rail:not([data-fold-status="on"]) .admin-status > *:not(.astat-id):not(.spend-row) { display: none !important; }
+.panel.rail:not([data-fold-status="on"]) .admin-status > *:not(.astat-id):not(.spend-row):not(.astat-needs):not(.astat-summary) { display: none !important; }
+/* A desktop has no status fold, so an open state stored on a phone (the key is per
+   device, but a window can be dragged across the breakpoint) changes nothing here. */
+@media (min-width: 761px) {
+	.panel.rail .admin-status > *:not(.astat-id):not(.spend-row):not(.astat-needs):not(.astat-summary) { display: none !important; }
+}
 #msheet     { display: none; }
 #scrim      { display: none; }
 
@@ -246,8 +252,9 @@
 	/* The worded "New Diamond"/"New Chat" rail button, not an icon square:
 	   the flush 36px box above clipped its label under the graph icon. */
 	:root[data-skin="daylight"] .railhead .railbtn { width: auto; padding: 0 9px; }
+	/* min-width: the shortest word, Edit, drew a 40px box, and at the screen's edge its hit was 43px (WebKit, 16 Oct). */
 	:root[data-skin="daylight"] .files-btn {
-		height: 36px; min-height: 36px; padding: 8px 10px; box-sizing: border-box;
+		height: 36px; min-height: 36px; min-width: 44px; padding: 8px 10px; box-sizing: border-box;
 	}
 	/* The phone's own toggle-option height (cluster 7): 32px against the
 	   desktop's 30px, matched to the other phone controls beside them. */
@@ -556,6 +563,29 @@
 	}
 	#msheet .panel > .railhead button:active { background: var(--accent-soft); }
 	#msheet .panel > .railhead > span:first-child { display: none; }
+	/* BY ROLE, NOT BY ELEMENT (Pending, 2026-10-16): a head's COUNT is part of its name,
+	   so the sheet's title carries it (`mirrorCount`, mobile.js) and the strip drops it;
+	   a head's SELECT is a control of the strip, drawn as the strip draws its buttons --
+	   borderless, in the head tools' colour, at the title's size. It keeps the 16px the
+	   no-zoom rule below needs (Safari zooms on a smaller focused control) and is scaled to
+	   14px on screen; a transform leaves the computed size alone. "By priority" was 17px
+	   beside a 14px "Pending", with the count wedged between them. The scale shrinks the
+	   box too, so 51px draws 44.6px: at 40px it was a 35px tap (r569 gate, phone + WebKit). */
+	#msheet .panel > .railhead > .rail-count { display: none; }
+	.msheet-count { margin-left: 8px; font-family: var(--font-mono); font-weight: 400; }
+	.msheet-count:empty { display: none; }
+	#msheet .panel > .railhead select {
+		height: 51px !important;
+		min-height: 51px !important;
+		max-width: 150px;
+		background-color: transparent;
+		border: none;
+		color: var(--text-secondary);
+		font-size: 16px !important;
+		font-weight: 600;
+		transform: scale(0.875);
+		transform-origin: right center;
+	}
 	/* THE LIFT IS FOR A HEAD HOLDING ONE OR TWO ICON BUTTONS, and the comment
 	   above it named Spending as the only panel raised with one. That stopped
 	   being true when the Improve panel became Social: its head carries FOUR

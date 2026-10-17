@@ -247,11 +247,11 @@ try {
 	// construction; what a hardcoded string cannot do is change when the language
 	// does.
 	const readTile = () => p.evaluate(() => {
-		const btns = [...document.querySelectorAll('#agents-list .acard .aacts .abtn')];
+		const btns = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard .aacts .abtn'))];
 		return {
 			labels: btns.map((b) => b.textContent.trim()),
 			titles: btns.map((b) => b.title),
-			pill:   (document.querySelector('#agents-list .acard .pill') || {}).textContent || '',
+			pill:   ((window.__pressSquares && window.__pressSquares(), document.querySelector('#agents-list .acard .pill')) || {}).textContent || '',
 			tally:  (document.getElementById('agents-stat') || {}).textContent || '',
 			live:   (document.getElementById('agents-count') || {}).textContent || '',
 			says:   {

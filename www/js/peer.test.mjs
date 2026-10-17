@@ -4978,6 +4978,7 @@ async function runLeaseFollowupAcceptance(phone, check) {
 				runnerCtxBegin: (e) => { ctx[e.turnId] = 1; }, runnerCtxEnd: (tid) => { delete ctx[tid]; },
 			};
 			new Function('window', 'with (window) {\nasync ' + daimondFuncSource('recoverOneLocally')
+				+ '\n' + daimondFuncSource('recoveringHere')
 				+ '\nwindow.__r = recoverOneLocally; }')(win);
 			return win.__r;
 		};

@@ -80,7 +80,7 @@ await signInAs(s, 'endings');
 await page.waitForTimeout(800);
 const openByName = (nm) => page.evaluate((nm) => {
 	const hit = [...document.querySelectorAll('#session-list .session-box')].find((b) => (b.textContent || '').trim().includes(nm));
-	if (hit) { (hit.querySelector('.tile-label, .tile-when, button') || hit).click(); return true; }
+	if (hit) { (hit.querySelector('.tile-label, .tile-when, button:not(.av-btn)') || hit).click(); return true; }
 	return false;
 }, nm);
 const read = () => page.evaluate(() => {

@@ -526,7 +526,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .astat-flag { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; max-width: 45%; font-size: var(--fs-xs); color: var(--text-secondary); }
 .astat-flag[hidden] { display: none; }
 /* Open, the summary row below says it, so the flag steps aside. */
-.panel.rail[data-fold-status="on"] .astat-flag { display: none; }
+@media (max-width: 760px) { .panel.rail[data-fold-status="on"] .astat-flag { display: none; } }
 /* The one line, and the eight behind it (audit 2026-09-15, STRIP-01). The chevron
    is drawn by the rule rather than put in the markup, so nothing has to keep a
    glyph and an `aria-expanded` in step by hand. */
@@ -1799,7 +1799,9 @@ span.arte-open { cursor: default; }
    r566u7's by-role gate). As a box with the disclosures' own 0.25em margin (`.rail-builtin`,
    `.files-rest-head`, `.cap-more`) it is the same gap in every engine. `lead-disc` follows
    the control's aria-expanded; `lead-ok` is the confirm tick, gone while the press is busy. */
-.lead-disc::before, .lead-ok::before { display: inline-block; margin-right: 0.25em; }
+.lead-disc::before, .lead-ok::before, .lead-back::before, .lead-warn::before,
+.lead-compile::before, .lead-publish::before, .lead-lock::before, .lead-key::before,
+.lead-wait::before { display: inline-block; margin-right: 0.25em; }
 .lead-disc::before { content: '\25B8'; }
 .lead-disc[aria-expanded="true"]::before { content: '\25BE'; }
 /* The tick is drawn, not read: the word beside it, or a check row's aria-checked, says it, and
@@ -1809,6 +1811,15 @@ span.arte-open { cursor: default; }
 /* A menu's check row (`menuitemcheckbox`) keeps the tick's box when unticked, so its words line
    up with its ticked neighbours, as the spaces typed in for it used to do. */
 .lead-ok[aria-checked="false"]::before { visibility: hidden; }
+/* The other leading glyphs take the same rule (r569 surface 4): a way back, a warning, a
+   press's own mark, a key's state. The harness counts any glyph still typed as a fault. */
+.lead-back::before    { content: '\2190'; }
+.lead-warn::before    { content: '\26A0'; }
+.lead-compile::before { content: '\2699'; }
+.lead-publish::before { content: '\21EA'; }
+.lead-lock::before    { content: '\1F512'; }
+.lead-key::before     { content: '\1F511'; }
+.lead-wait::before    { content: '\2726'; }
 .link-strip { display: block; width: 100%; text-align: left; border: none;
 	color: var(--text-muted); font-family: var(--font-mono);
 	cursor: pointer; }
@@ -3297,6 +3308,9 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .device-row:hover .device-stay, .device-stay:hover, .device-stay:focus-visible { opacity: 1; background: var(--bg-hover); }
 .device-stay.is-on { opacity: 1; color: var(--accent); }
 .device-stay-icon  { font-size: var(--fs-lg); line-height: 1; }
+/* The padlock is drawn, not typed into the label (r569 gate, typed-glyph): open while it stays unlocked. */
+.device-stay-icon::before { content: '\1F512'; }
+.device-stay.is-on .device-stay-icon::before { content: '\1F513'; }
 .device-stay-label { font-size: var(--fs-2xs); }
 /* A small badge on the nominee's line, so the runner reads at a glance beside the
    last-seen column rather than only through the star. */
@@ -4156,6 +4170,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 .pend-go:hover  { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
 .pend-no:hover  { border-color: var(--danger); color: var(--danger); }
 .pend-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* An alert (D-20261016-17): the kind says whether it needs the person. A quiet one is drawn
+   quieter, as it counts on nothing and lapses by itself. */
+.pend-kind { border-radius: 20px; padding: 0 6px; font-size: var(--fs-3xs); background: var(--dl-hover); color: var(--text-muted); }
+.pend-needs .pend-kind { background: var(--danger); color: var(--bg-primary, #fff); }
+.pend-quiet { opacity: 0.85; }
+.pend-open:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
 
 /* The Steering list (Rating U7c): a note's line, then its scope, model and day with Remove beside them. The line is the
    Pending tile's own note drawing and Remove its text button, so a note and its press are drawn the same wherever they appear.
@@ -5365,3 +5385,159 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .crystal-conflict-side { margin: 4px 0 2px; font-size: var(--fs-xs); color: var(--text-secondary); }
 .crystal-conflict-val { margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-primary); }
 .crystal-conflict-acts { display: flex; gap: 6px; margin-top: 10px; }
+
+/* ── Agents panel: the grid and the pinned tiles (D-20261015-10, specs/daimond_agents_mock/) ──
+   One square per agent, a row per origin, the origin's thread first as a small diamond. Colour
+   is state and amber alone means "waiting on you". A search dims what it leaves out; nothing
+   reflows. Below, only the tiles a person pressed. */
+.agents-grid { flex: none; display: flex; flex-direction: column; gap: 10px; padding: 10px 10px 4px; max-height: 45%; overflow-y: auto; }
+.agrow { display: flex; flex-wrap: wrap; gap: 4px; }
+.agsq { --s: 12px; width: var(--s); height: var(--s); border-radius: 2px; border: 0; padding: 0; flex: none; position: relative; cursor: pointer; background: var(--c, var(--bg-tertiary)); }
+.agsq.o { cursor: default; transform: rotate(45deg) scale(0.84); }
+button.agsq.o { cursor: pointer; }
+.agsq.run { --c: var(--accent); }
+/* A running square fills bottom-up by its turn's spend over its cap (--f, set from agentgrid.js budget). */
+.agsq.run { background: linear-gradient(to top, var(--accent) var(--f, 0%), color-mix(in srgb, var(--accent) 34%, var(--bg-primary)) var(--f, 0%)); }
+.agsq.o.run { background: var(--accent); }
+.agsq.que { --c: color-mix(in srgb, var(--accent) 30%, var(--text-primary)); }
+.agsq.wait { --c: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent); }
+.agsq.fail { --c: var(--danger); }
+.agsq.done { --c: color-mix(in srgb, var(--text-muted) 70%, var(--bg-primary)); opacity: var(--fade, 0.85); }
+.agsq.stop { --c: color-mix(in srgb, var(--text-muted) 30%, var(--bg-primary)); }
+.agsq.pin::after { content: ''; position: absolute; inset: -3px; border-radius: 4px; background: color-mix(in srgb, var(--text-primary) 14%, transparent); z-index: -1; }
+.agsq:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.agents-grid.dim .agsq:not(.match) { opacity: 0.18; }
+.agents-pins { padding-top: 18px; }
+/* The sheet wrapper draws nothing on a desktop: the list is the panel's flex child as before. */
+.agents-sheet { display: contents; }
+.agents-dots { display: none; }
+@media (max-width: 760px) {
+	/* The lower half as a bottom sheet (mock after-iphone.png): one tile at a time, swiped
+	   sideways with scroll-snap, a dot per tile, a grab bar on top. */
+	.agents-sheet.has-pins { display: flex; flex-direction: column; flex: none; margin-top: auto; background: var(--bg-secondary);
+		border-radius: 16px 16px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.5); padding: 8px 0 22px; }
+	.agents-sheet.has-pins::before { content: ''; width: 36px; height: 4px; border-radius: 2px; background: var(--border-2, var(--border)); margin: 0 auto 10px; flex: none; }
+	.agents-sheet .agents-pins.has-pins { flex: none; flex-direction: row; gap: 0; padding: 0; overflow-x: auto; overflow-y: hidden;
+		scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+	.agents-sheet .agents-pins.has-pins::-webkit-scrollbar { display: none; }
+	.agents-sheet .agents-pins.has-pins > * { flex: 0 0 100%; box-sizing: border-box; scroll-snap-align: start; padding: 0 16px; margin: 0; }
+	/* Above the skins' state tints: in the sheet a tile is the sheet. */
+	:root #agents-sheet .agents-pins > .acard { background: transparent; border-color: transparent; }
+	/* The mock's phone grid: 17 px squares, 5 px apart. */
+	#agents-grid .agsq { --s: 17px; }
+	#agents-grid .agrow { gap: 5px; }
+	.agents-sheet .acard .acard-x { width: 44px; height: 44px; margin: -12px -14px -12px 0; }
+	.agents-dots { display: flex; justify-content: center; gap: 6px; margin-top: 14px; }
+	.agents-dots:empty { display: none; }
+	.agents-dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--border-2, var(--border)); }
+	.agents-dots i.on { background: var(--text-secondary); }
+}
+.acard .acard-x { width: 26px; height: 26px; margin: -5px -6px -5px 0; flex: none; }
+.acard .ah .an { flex: 1; min-width: 0; }
+.acard .anote.await { color: var(--text-secondary); font-family: var(--font-mono); }
+.acard .aask { margin-top: 8px; }
+.acard .abtn-go { background: var(--warn); color: var(--bg-primary); }
+.pill.wait { color: var(--warn); background: var(--warn-bg); }
+
+/* CREDIT-CYL (D-20261015-14): the rail's Balance cell, one transparent cylinder per pool he
+   controls beside Today / Week / Month; full height is the balance right after the last top-up. */
+.spend-balance { flex: none; }
+.spend-cyls { display: flex; gap: 8px; padding-top: 2px; }
+.spend-cyls svg { display: block; overflow: visible; }
+.spend-cyls .glass { fill: color-mix(in srgb, var(--text-primary) 5%, transparent); stroke: color-mix(in srgb, var(--text-primary) 42%, transparent); stroke-width: 1; }
+.spend-cyls .rim { fill: none; stroke: color-mix(in srgb, var(--text-primary) 42%, transparent); stroke-width: 1; }
+.spend-cyls .liq { fill: color-mix(in srgb, var(--text-secondary) 55%, transparent); }
+.spend-cyls .liqtop { fill: color-mix(in srgb, var(--text-secondary) 80%, transparent); }
+.spend-cyls .low .liq { fill: color-mix(in srgb, var(--warn) 60%, transparent); }
+.spend-cyls .low .liqtop { fill: color-mix(in srgb, var(--warn) 90%, transparent); }
+.spend-runway { flex-basis: 100%; padding: 0 4px 4px; font-size: var(--dl-2xs, 11.5px); line-height: 14px; color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The grid's lens (think pass §2): Cost, Rating and Device recolour the squares;
+   their places do not move. The colour rides --k, set per square from agentgrid.js. */
+.agents-fuel { display: flex; align-items: flex-end; gap: 14px; padding: 2px 10px 8px; flex: none; }
+.agents-fuel .dview { margin-left: auto; }
+.agents-fuel .dview-btn { padding: 6px 8px; }
+.agents-fuel .spendh { display: flex; flex-direction: column; gap: 3px; padding-bottom: 1px; }
+.agents-fuel .spendh .fig { font-family: var(--font-mono); font-size: var(--dl-md); line-height: 1; }
+.agents-fuel .spendh .lab { font-size: var(--dl-2xs); color: var(--text-muted); line-height: 1; }
+/* On a phone the lens buttons take a row of their own under the fuel figure (mock iphone view). */
+@media (max-width: 760px) {
+	.agents-fuel { flex-wrap: wrap; row-gap: 10px; }
+	.agents-fuel .dview { flex-basis: 100%; margin-left: 0; }
+	/* A finger's 44 px, drawn at the mock's size: the hit rides an ::after, so the group
+	   cannot clip it, and the end buttons keep the group's corners themselves. */
+	.agents-fuel .dview { overflow: visible; }
+	.agents-fuel .dview-btn { position: relative; }
+	.agents-fuel .dview-btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+	.agents-fuel .dview-btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+	.agents-fuel .dview-btn::after { content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%); }
+}
+.acard .meter { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.acard .meter .bar { flex: 1; height: 3px; border-radius: 2px; background: var(--bg-tertiary); overflow: hidden; }
+.acard .meter .bar b { display: block; height: 100%; background: var(--accent); }
+.acard .meter span:last-child { font-family: var(--font-mono); font-size: var(--dl-2xs); color: var(--text-muted); white-space: nowrap; }
+.agents-grid { --agl-neutral: color-mix(in srgb, var(--text-muted) 45%, var(--bg-primary)); }
+.agents-grid.lens-cost .agsq, .agents-grid.lens-rating .agsq, .agents-grid.lens-device .agsq {
+	background: var(--k, var(--agl-neutral)); box-shadow: none; opacity: 1; }
+/* ── Avatars (D-20261015-13, js/avatar.js) ───────────────────────────────────
+   A Tabler line icon before a Diamond's or chat's name: 16px on the rail, 18px in
+   the panel head, one ink line in --text-secondary and no box around it. Tiles keep
+   their height: the button is no taller than the name's line. Pressing it opens the
+   picker, a popover beside the rail (a bottom sheet on a phone, 44px cells). */
+.av-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; background: none; border: none; padding: 0; margin: 0 2px 0 0; height: 20px; min-width: 20px; color: var(--text-secondary); border-radius: var(--radius-sm); cursor: pointer; line-height: 0; }
+.av-btn:hover, .av-btn:focus-visible { color: var(--text-primary); }
+.chead-av { display: inline-flex; align-items: center; flex: none; color: var(--text-secondary); line-height: 0; }
+.av-pick { position: fixed; z-index: 1300; width: 300px; max-height: calc(100vh - 16px); display: flex; flex-direction: column; gap: 10px; background: var(--bg-secondary); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,0.4); padding: 12px; color: var(--text-primary); }
+.av-pick-head { display: flex; align-items: center; justify-content: space-between; }
+.av-pick-title { font-size: var(--fs-sm); font-weight: 600; }
+.av-pick-x { width: 28px; height: 28px; min-width: 28px; min-height: 28px; }
+.av-pick-search { width: 100%; box-sizing: border-box; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 10px; font: inherit; font-size: var(--fs-sm); }
+.av-pick-body { display: flex; flex-direction: column; min-height: 0; flex: 0 1 auto; overflow: hidden; }
+/* av-K-picker-desk: the All grid shows five rows in a fixed height and scrolls inside it without a bar of its own. */
+.av-pick-scr { margin-top: 8px; max-height: 190px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; }
+.av-pick-scr::-webkit-scrollbar { display: none; }
+.av-pick-scr.av-pick-hits { max-height: 248px; }
+.av-pick-label { font-size: var(--fs-xs); color: var(--text-secondary); margin: 6px 0 4px; }
+.av-pick-label:first-child { margin-top: 0; }
+.av-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.av-cell { display: flex; align-items: center; justify-content: center; height: 32px; min-width: 0; background: none; border: none; border-radius: var(--radius-sm); color: var(--text-secondary); padding: 0; cursor: pointer; }
+.av-cell:hover, .av-cell:focus-visible { background: var(--bg-hover); color: var(--text-primary); }
+.av-cell.on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--text-primary); }
+.av-pick-none { font-size: var(--fs-sm); color: var(--text-secondary); padding: 8px 0; }
+.av-pick-foot { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-xs); color: var(--text-secondary); }
+.av-pick-default { background: none; border: none; color: var(--text-secondary); font: inherit; font-size: var(--fs-xs); padding: 4px 0; cursor: pointer; }
+.av-pick-default:hover { color: var(--text-primary); }
+/* av-K-picker-phone: a sheet inset 8px from the edges, the All grid in 230px. */
+.av-pick.av-sheet { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto; width: auto; max-height: calc(100vh - 16px); border-radius: var(--radius); padding: 12px; }
+.av-pick.av-sheet .av-cell { height: 44px; min-height: 44px; }
+.av-pick.av-sheet .av-pick-scr { max-height: 230px; }
+.av-pick.av-sheet .av-pick-scr.av-pick-hits { max-height: 300px; }
+.av-pick.av-sheet .av-pick-x { width: 44px; height: 44px; }
+.av-pick.av-sheet .av-pick-default { min-height: 44px; }
+
+/* ── Status exceptions (D-20261015-15, js/needs.js) ─────────────────────
+   One row per thing that needs the person: dot, sentence, one act. Red
+   for a real risk, amber for something running out or waiting. The calm
+   sync line under them carries no dot and no chevron: it is muted words. */
+.astat-needs { display: flex; flex-direction: column; gap: 2px; }
+.astat-needs[hidden] { display: none; }
+.astat-row.astat-need { color: var(--text-primary); padding: 3px 4px; }
+.astat-need .astat-val { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.astat-need .astat-dot.bad { background: var(--danger); }
+.astat-need .astat-dot.warn { background: var(--warn); }
+/* The row's act is a plain text button, never outlined: skin-daylight.css gives it the role's box. */
+.astat-act { flex: none; margin-left: auto; padding: 3px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--fs-xs); line-height: 19px; cursor: pointer; }
+.astat-act:hover { background: var(--bg-hover); color: var(--text-primary); }
+.astat-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.astat-summary.astat-calm .astat-dot { display: none; }
+.astat-summary.astat-calm { color: var(--text-muted); }
+.astat-summary::after { content: none; }
+.astat-detail.astat-in-settings { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 8px; }
+/* What's new: plain dated notes, newest first; the chain and builds under About. */
+.rel-news { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.rel-new { display: flex; flex-direction: column; gap: 2px; }
+.rel-new .rel-when { font-size: var(--fs-2xs); color: var(--text-muted); }
+/* A release's own words are body text, read in full: not a .*-note hint (verify_consistency). */
+.rel-new-text { font-size: var(--fs-sm); color: var(--text-primary); line-height: 1.4; }
+/* The app's one disclosure look (summary), only spaced from the notes above it. */
+.rel-about > summary { margin: 4px 0 8px; }

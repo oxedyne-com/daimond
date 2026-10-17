@@ -203,8 +203,14 @@ await newChat(s);
 await say('@tool file_write {"path":"/etc/passwd","content":"no"}');
 const refused = await endings();
 const rtile = await refusedTile();
-check('3a a refused turn draws NO trailing summary line',
-	refused.length === 0, JSON.stringify(refused));
+// SINCE 6e8fdfa9 (G T3, 9 Oct 2026) the engine ends a turn stopped by a refusal as
+// `failed`/`blocked`, and the page draws that stop as a plain line giving the reason
+// (`end.why_blocked`). That is a stop, not the summary this section forbids -- this
+// check was left expecting no line at all and went red on the ruling, not on a fault.
+const BLOCKED = 'Not done: stopped on something it could not get past';
+const summaries = (es) => es.filter((e) => !e.text.startsWith(BLOCKED));
+check('3a a refused turn draws NO trailing summary line (the blocked stop line is allowed)',
+	summaries(refused).length === 0, JSON.stringify(refused));
 check('3b and the refusal is shown on the tool tile instead',
 	rtile.present === true && /refus/i.test(rtile.meta), JSON.stringify(rtile));
 await shot(s, 'ending-3-refused');
@@ -226,8 +232,8 @@ while (Date.now() < until) {
 	await sleep(250);
 }
 const after = await endings();
-check('4a A RELOAD KEEPS THE TRAILING LINE ABSENT',
-	after.length === 0, JSON.stringify(after));
+check('4a A RELOAD KEEPS THE TRAILING LINE ABSENT (and the stop line as it was)',
+	summaries(after).length === 0 && after.length === refused.length, JSON.stringify(after));
 check('4b and the tool tile still shows the refusal after reload',
 	rafter.present === true, JSON.stringify(rafter));
 await shot(s, 'ending-4-reloaded');
@@ -260,7 +266,7 @@ await say('@tool spawn_agent {"name":"scribe","task":"@text I will fix it."}');
 const untilRun = Date.now() + 45000;
 let tiles = [];
 while (Date.now() < untilRun) {
-	tiles = await p.evaluate(() => [...document.querySelectorAll('#panel-agents .acard')].map(c => ({
+	tiles = await p.evaluate(() => [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#panel-agents .acard'))].map(c => ({
 		pill:   ((c.querySelector('.pill') || {}).textContent || ''),
 		ended:  ((c.querySelector('.aended') || {}).textContent || ''),
 		notice: !!c.querySelector('.aended.ended-notice'),

@@ -412,6 +412,8 @@
 			row.title = t('permmode.chip_help');
 			row.onclick = function () { open(row); };
 		}
+		// Bypass is the rail's red Status row (needs.js); a change of rung moves it.
+		if (window.DaimondNeeds && DaimondNeeds.refresh) DaimondNeeds.refresh();
 		if (pop && !pop.hidden) render();
 	}
 

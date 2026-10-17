@@ -48,7 +48,9 @@
 	<p>Os ajustes de um diamond trazem um <span class="ui">modelo ajudante</span>, separado daquele com que o daimon dele pensa. Um ajudante mantém o modelo com que começou, e uma mudança se aplica ao próximo.</p>
 
 	<h3 id="s2">O painel Agentes</h3>
-	<p>As execuções ao vivo aparecem em <span class="ui">Agentes</span>, no dock, com uma linha dizendo quantos estão em execução, pausados e na fila. Cada bloco mostra o custo dele conforme se acumula, e não só no final.</p>
+	<p>As execuções ao vivo aparecem em <span class="ui">Agentes</span>, no dock, com uma linha dizendo quantos estão em execução, pausados e na fila. No topo do painel está quanto custou a última hora.</p>
+	<p>Abaixo há uma grade: um quadrado por agente e uma linha por chat ou diamond, que começa com o pequeno diamond dessa conversa. Quando um turno posterior envia mais trabalho, os agentes dele seguem um diamond próprio na mesma linha. A cor é o estado, e só o âmbar quer dizer que um agente está esperando por você. Um quadrado em execução se enche de baixo para cima conforme o turno gasta rumo ao limite. Um concluído vai se apagando no dia seguinte ao fim e depois sai da grade, embora uma busca ainda o encontre.</p>
+	<p>Toque num quadrado para fixar o bloco dele abaixo. Toque de novo, ou no X do bloco, para guardá-lo. Nada abre sozinho. Cada bloco mostra o custo dele conforme se acumula, com um medidor do quanto este turno gastou do limite. Toque num diamond para abrir a conversa de onde veio o trabalho. <span class="ui">Estado</span>, <span class="ui">Custo</span>, <span class="ui">Avaliação</span> e <span class="ui">Dispositivo</span> mudam a cor dos quadrados sem movê-los.</p>
 	<p>Três controles ficam no cabeçalho, e de novo em cada bloco.</p>
 	<ul>
 		<li><strong>Pausar.</strong> Suspende o que está em execução e segura a fila. Um ajudante em execução guarda o que já tinha produzido, e nada novo começa.</li>

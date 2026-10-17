@@ -160,6 +160,9 @@
 		// Behind means the tab is running something older than the tip. Saying so
 		// is the point: the alternative is a row that reassures a stale tab.
 		var behind = !!(cur && tip && cur.seq < tip.seq);
+		state.behind = behind;
+		// The rail's Status raises "Update ready · Reload" from this (needs.js).
+		if (window.DaimondNeeds && DaimondNeeds.refresh) DaimondNeeds.refresh();
 		// Before any release is declared, the app says so and names the build. It
 		// must not present a deployment as a release: several are sealed a day,
 		// and none of them is an announcement.
@@ -200,6 +203,30 @@
 		await load();
 		into.innerHTML = '';
 
+		// WHAT'S NEW FIRST (STATUS-REVIEW, D-20261015-15): plain dated notes from each
+		// build's `note`, newest first. Milestones, sealed builds and the chain text are
+		// for somebody checking, so they sit under About, shut.
+		var notes = el('div', 'rel-news');
+		var lastNote = '';
+		state.entries.slice().reverse().forEach(function (e) {
+			if (!e.note || e.note === lastNote) return;
+			lastNote = e.note;
+			var n = el('div', 'rel-new');
+			n.appendChild(el('span', 'rel-when', window.DaimondTime.fmtLocal(e.ts, 'day')));
+			n.appendChild(el('div', 'rel-new-text', e.note));
+			notes.appendChild(n);
+		});
+		if (!notes.childNodes.length) notes.appendChild(el('div', 'rel-empty', t('rel.no_history')));
+		into.appendChild(notes);
+		var about = document.createElement('details');
+		about.className = 'rel-about';
+		var aboutSum = document.createElement('summary');
+		aboutSum.textContent = t('rel.about');
+		about.appendChild(aboutSum);
+		into.appendChild(about);
+		var outer = into;
+		into = about;
+
 		var cur = current();
 		var planned = state.releases && state.releases.planned;
 		var ms = (state.releases && state.releases.milestones) || [];
@@ -215,10 +242,7 @@
 			into.appendChild(pl);
 		}
 
-		if (!state.entries.length) {
-			into.appendChild(el('div', 'rel-empty', t('rel.no_history')));
-			return;
-		}
+		if (!state.entries.length) return;	// "no history" is said above
 
 		// Releases, newest first. A release is something declared, not something
 		// deployed: builds are sealed several times a day and listing them all
@@ -276,11 +300,14 @@
 		var foot = el('div', 'rel-foot');
 		foot.textContent = t('rel.foot');
 		into.appendChild(foot);
+		into = outer;
 	}
 
 	window.DaimondRelease = {
 		reset: function () { state = { entries: [], releases: null, build: null, loaded: false }; },
 		paintRow: paintRow,
+		/// A newer build than this tab's is out (set by paintRow).
+		isBehind: function () { return !!state.behind; },
 		render: render,
 		load: load,
 		current: current,

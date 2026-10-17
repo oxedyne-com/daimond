@@ -82,7 +82,7 @@
 	<h2 id="s5">Guardando um chat</h2>
 	<p>Dois botões ficam na linha de um chat na barra lateral. <span class="ui">Guardar</span> transforma a conversa inteira em um diamond. <span class="ui">Dobrar tudo</span> transforma-o em um diamond ao resumi-lo, guardando o que foi resolvido e descartando o vaivém.</p>
 	<p>Para guardar só parte, recolha as respostas, marque os turnos que valem a pena guardar, e escolha <span class="ui">Dobrar o selecionado</span>. Dobre um passo que você adotou, e deixe um comentário de passagem onde está.</p>
-	<p>Nada é absorvido sozinho. A memória de um diamond só muda por uma dobra ou uma edição, e cada escrita é guardada no Histórico.</p>
+	<p>Nada é absorvido por conta própria. A memória de um Diamond só muda por meio de uma dobra ou de uma edição, e cada gravação fica guardada no Histórico, até o limite descrito em Histórico, mais abaixo.</p>
 
 	<h2 id="s6">Dentro de um diamond</h2>
 	<p>Seus diamonds ficam acima dos seus chats, e o <span class="ui">+</span> cria um. Um diamond tem duas faces, e uma chave no cabeçalho dele alterna entre elas. <span class="ui">Cristal</span> é o que ele sabe, e <span class="ui">Conversa</span> é a própria conversa dele.</p>
@@ -94,7 +94,7 @@
 
 	<p>O cartão lista o título e o resumo do diamond nas próprias palavras dele, depois tudo mais que ele guarda, uma linha para cada coisa. <span class="ui">Editar</span> abre um formulário. <span class="ui">Ver memória bruta</span> abre o próprio arquivo, para quando você preferir trabalhar direto nele.</p>
 
-	<p>Um daimon olha o que mudou antes de dizer que terminou. Ele nomeia uma vista em vez de adivinhar a página: a prévia do documento, um arquivo aberto, qualquer painel na tela, a janela inteira ou a própria página do seu diamond. Se o próprio modelo dele não lê imagens, o modelo de imagens do diamond as descreve, e uma falha nomeia esse modelo e o provedor dele. Uma pergunta que um daimon faz só aparece enquanto a conversa dele está na tela; de outra face, ele fica sabendo por quê e pergunta na própria resposta.</p>
+	<p>Um daimon olha o que mudou antes de dizer que terminou. Ele nomeia uma vista em vez de adivinhar a página: a prévia do documento, um arquivo aberto, qualquer painel na tela, a janela inteira ou a página do próprio Diamond. Se o próprio modelo dele não lê imagens, o modelo de imagens do Diamond as descreve, e uma falha nomeia esse modelo e o seu provedor. Uma pergunta que um daimon faz só aparece enquanto a conversa dele está na tela; de outra vista ele é avisado do motivo e pergunta na resposta.</p>
 
 	<h2 id="s7">Os quatro arquivos que um diamond guarda</h2>
 	<p>A memória é guardada às claras. Quatro arquivos ficam na pasta do próprio diamond, legíveis no painel Espaço e pelo daimon.</p>
@@ -115,11 +115,12 @@
 	<p>Arquivar é repetível, então rodar a mesma dobra duas vezes não arquiva nada duas vezes, e a ordem em que duas dobras chegam não muda o que os arquivos acabam dizendo.</p>
 
 	<h2 id="s9">Histórico</h2>
-	<p><span class="ui">Histórico</span> lista toda versão, da mais nova para a mais antiga. <span class="ui">Ver</span> lê uma, <span class="ui">Restaurar</span> a torna atual de novo, e <span class="ui">Delta</span> mostra o material que foi dado a uma dobra. Restaurar guarda primeiro o que era atual, então uma restauração pode ela mesma ser desfeita.</p>
+	<p><span class="ui">Histórico</span> lista as versões que guarda, da mais nova para a mais antiga. Ele guarda até 200 versões dentro de um limite de tamanho que você pode mudar em Configurações, e o pé da lista diz os dois. Quando está cheio, as edições mais antigas do daimon são removidas primeiro; suas versões salvas, seus próprios arquivos, os dados da sua página e as exclusões são removidos por último. Uma linha na lista diz quais versões foram removidas e quando. <span class="ui">Ver</span> lê uma, <span class="ui">Restaurar</span> a torna atual de novo, e <span class="ui">Delta</span> mostra o material que foi dado a uma dobra. Restaurar guarda primeiro o que era atual, então uma restauração pode ela mesma ser desfeita.</p>
 	<p>Every file the daimon changes in a diamond is kept too, and a row's <span class="ui">Restore file</span> brings one back while <span class="ui">Restaurar</span> brings the whole version back. Files on this computer are kept only where the daimon wrote them here, so a change made by an editor, a build or a command is not in History. Deleting, renaming, folding and restoring each show <span class="ui">Undo</span> for five seconds, and after that the act stands.</p>
 
 	<h2 id="s10">Agindo sem ser pedido</h2>
 	<p>Um diamond responde quando você o solicita, e em nenhum outro momento, a menos que você configure uma ação disparada. Essas ficam em <span class="ui">Quando este diamond age</span> na face Cristal, e <span class="ui">Adicionar uma ação</span> cria uma. Duas coisas podem disparar uma: minutos da sua própria atividade, contados só enquanto você trabalha, ou correio chegando em uma pasta que você nomeia.</p>
+	<p>O e-mail dispara sua ação seja qual for o diamond na tela, então um diamond que vigia uma caixa de correio trabalha sem ninguém olhando para ele. A resposta vai para o fio do próprio diamond, e a tela fica onde está. Se o diamond estiver ocupado, ou você estiver no meio da digitação, o e-mail espera um minuto e é tentado de novo.</p>
 	<p>Cada ação traz uma instrução, enviada toda vez, e um contexto, enviado uma vez até você mudá-lo. Elas são um arquivo comum, <code>triggers.json</code>, na pasta do diamond.</p>
 	<p>Uma ação nova está <strong>parada</strong>, e diz isso: <em>Parada. Aperte &#9654; na luz ao lado do menu suspenso para deixar esta ação rodar.</em> Um toque a arma.</p>
 
@@ -134,7 +135,8 @@
 	<p>Uma ação retida não gasta nada, porque é recusada antes de o turno começar.</p>
 
 	<h2 id="s12">Etiquetas, links e a Lixeira</h2>
-	<p><span class="ui">Etiquetas</span> na face Cristal arquiva um diamond na barra lateral. Até oito etiquetas, em minúsculas e sem repetição. <span class="ui">Sugeridas</span> oferece quatro para começar. As etiquetas são inertes. Elas não são enviadas a um modelo, não são parte da memória, e não mudam nada do que um agente faz. <span class="ui">Filtrar por etiqueta</span> na barra lateral estreita por elas. <span class="ui">Buscar diamonds</span>, acima, encontra um diamond pelo nome ou pelo começo de uma etiqueta. Os dois estreitam juntos, e Esc limpa a busca.</p>
+	<p><span class="ui">Etiquetas</span> na face Cristal arquiva um diamond na barra lateral. Até oito etiquetas, em minúsculas e sem repetição. <span class="ui">Sugeridas</span> oferece quatro para começar. As etiquetas são inertes. Elas não são enviadas a um modelo, não são parte da memória, e não mudam nada do que um agente faz. <span class="ui">Filtrar por etiqueta</span> na barra lateral estreita por elas. <span class="ui">Search diamonds</span>, above it, finds a diamond by its name or by the start of a tag. The two narrow together, and Esc clears the search.</p>
+	<p>Cada Diamond e cada chat tem um ícone ao lado do nome. Até você escolher um, o ícone segue o nome e as tags como estão agora, então um Diamond com a tag <span class="ui">person</span> ganha uma pessoa, mesmo que a tag tenha vindo depois do Diamond. É igual em todo dispositivo. Toque no ícone para escolher outro; <span class="ui">Pesquisar</span> cobre todos os 5.184, e <span class="ui">Usar padrão</span> volta a seguir o nome e as tags. Um ícone escolhido é sincronizado com seus outros dispositivos.</p>
 	<p>Um diamond também pode ser vinculado a outro, e o <a href="interface.html">Grafo</a> é o retrato disso.</p>
 	<p>Excluir um chat ou um diamond o manda para a lixeira. Ele continua guardado e continua sincronizando, fora do alcance de qualquer daimon, e é mantido por trinta dias com a data na linha. <span class="ui">Restaurar</span> o traz de volta em todos os dispositivos. <span class="ui">Excluir de vez</span> e <span class="ui">Esvaziar a lixeira</span> são as duas que perguntam.</p>
 

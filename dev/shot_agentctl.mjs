@@ -15,7 +15,7 @@ async function newDiamond(name) {
 	await page.waitForSelector('.dlg-input', { timeout: 8000 });
 	await page.fill('.dlg-input', name);
 	await page.click('.dlg-ok');
-	await page.waitForSelector('#steer-input', { timeout: 10000 });
+	await page.waitForSelector('#chat-input', { timeout: 10000 });
 	await pause(300);
 }
 
@@ -23,8 +23,8 @@ async function fanOut(names) {
 	// Each worker runs a slow @long stream, so it stays running long enough to
 	// be caught and paused.
 	const calls = names.map(n => `spawn_agent {"name":"${n}","task":"@long 60"}`).join(' ;; ');
-	await page.fill('#steer-input', '@tools ' + calls);
-	await page.click('#steer-send');
+	await page.fill('#chat-input', '@tools ' + calls);
+	await page.click('#chat-send');
 	// The governor's predictive dispatch gate may ask to confirm a fan-out that
 	// would outpace the pace budget — accept it and let the workers run.
 	await pause(500);
@@ -34,7 +34,7 @@ async function fanOut(names) {
 
 // Snapshot the pane + header state.
 const snap = () => page.evaluate(() => {
-	const cards = [...document.querySelectorAll('#agents-list .acard')];
+	const cards = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard'))];
 	const st = (cls) => cards.filter(c => c.classList.contains(cls)).length;
 	const btn = (id) => { const b = document.getElementById(id); return b ? { shown: b.offsetParent !== null, disabled: !!b.disabled } : null; };
 	const ctl = document.getElementById('agents-ctl');
@@ -73,7 +73,7 @@ await shot(s, 'agentctl-resumed');
 
 // ── Fan out again, then Stop all (the kill switch) ──────────────────────
 await page.click('.diamond-box:has-text("Runaway test")', { force: true });
-await page.waitForSelector('#steer-input', { timeout: 8000 });
+await page.waitForSelector('#chat-input', { timeout: 8000 });
 await fanOut(['kill-a', 'kill-b', 'kill-c']);
 await pause(1600);
 const running2 = await snap();

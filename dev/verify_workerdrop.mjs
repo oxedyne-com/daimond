@@ -144,7 +144,7 @@ const seed = (chatId) => p.evaluate(async (chatId) => {
 /// not decide whether this file passes.
 const tiles = () => p.evaluate(() => {
 	const out = {};
-	[...document.querySelectorAll('#agents-list .acard')].forEach((card) => {
+	[...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard'))].forEach((card) => {
 		const name = (card.querySelector('.an') || {}).textContent || '';
 		out[name.trim()] = {
 			play: !!card.querySelector('.abtn.a-play'),
@@ -176,7 +176,7 @@ try {
 	// what happens to the report -- it must be ADDED TO, not replaced.
 	const after = await p.evaluate(async () => {
 		const W = window.DaimondWorkers;
-		const card = [...document.querySelectorAll('#agents-list .acard')].find(
+		const card = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard'))].find(
 			(c) => ((c.querySelector('.an') || {}).textContent || '').trim() === 'cut-off');
 		const btn = card && card.querySelector('.abtn.a-play');
 		const resumed = W.runs.find((r) => r.id === 'w1') || {};

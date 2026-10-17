@@ -12,12 +12,12 @@ await page.click('#new-diamond-btn', { force: true });
 await page.waitForSelector('.dlg-input', { timeout: 8000 });
 await page.fill('.dlg-input', 'Cost test');
 await page.click('.dlg-ok');
-await page.waitForSelector('#steer-input', { timeout: 10000 });
+await page.waitForSelector('#chat-input', { timeout: 10000 });
 await pause(300);
 
 // One worker: a tool call (books usage), then a slow stream.
-await page.fill('#steer-input', '@tools spawn_agent {"name":"coster","task":"@toolslow"}');
-await page.click('#steer-send');
+await page.fill('#chat-input', '@tools spawn_agent {"name":"coster","task":"@toolslow"}');
+await page.click('#chat-send');
 await pause(500);
 const okBtn = await page.$('.dlg-ok');
 if (okBtn) { await okBtn.click(); await pause(300); }
@@ -25,12 +25,14 @@ if (okBtn) { await okBtn.click(); await pause(300); }
 // Wait for round one to book usage and round two to be streaming.
 await pause(2600);
 const live = await page.evaluate(() => {
-	const c = document.querySelector('#agents-list .acard.running');
+	const c = (window.__pressSquares && window.__pressSquares(), document.querySelector('#agents-list .acard.running'));
 	if (!c) return { running: false };
 	const arow = c.querySelector('.arow');
 	return {
 		running: true,
 		rowText: arow ? arow.textContent.trim() : '',
+		// Since the price tag (D-20261009-18) the figure carries a tag glyph, not a "$".
+		tagText: ((arow && arow.querySelector('.tagb .tagb-n')) || {}).textContent || '',
 	};
 });
 console.log('LIVE (running):', JSON.stringify(live));
@@ -40,7 +42,7 @@ const realErrs = s.errs.filter(e => !/502|Bad Gateway|\/api\b/.test(e));
 const ok =
 	live.running === true
 	&& /tok/.test(live.rowText)          // tokens shown while running
-	&& /\$\d/.test(live.rowText)          // a dollar cost shown while running
+	&& /\d/.test(live.tagText)           // a priced cost shown while running
 	&& realErrs.length === 0;
 console.log(ok ? '\n✅ PASS — a running worker shows its cost live on the tile' : '\n❌ FAIL — see above');
 if (realErrs.length) console.log('PAGE ERRORS:', realErrs);

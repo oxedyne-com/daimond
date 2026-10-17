@@ -42,7 +42,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, errors } from './harness.mjs';
+import { open, signInAs, errors, statusRow } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
@@ -161,6 +161,7 @@ const survey = (p) => p.evaluate(() => {
 		admin: box('#admin'), status: box('#admin-status'),
 		idRow: box('#panel-rail .astat-id'), userRow: box('#user-row'),
 		modelRow: box('#astat-model'), split: box('#handle-rail-split'),
+		needs: box('#astat-needs'), calm: box('#astat-summary'), spend: box('#spend-row'),
 		headD: box('.railhead:has(.rail-fold[data-fold="diamonds"])'),
 		headC: box('.railhead:has(.rail-fold[data-fold="chats"])'),
 		diamonds: document.querySelectorAll('#diamond-list .diamond-box').length,
@@ -210,10 +211,15 @@ async function openStatusDetail(p) {
 		return !d || d.hidden;
 	});
 	if (shut) await tap(p, '#astat-summary');
-	return !(await p.evaluate(() => {
+	// D-20261015-15: the calm line opens Settings, where the rows now live. What
+	// counts here is a diagnostic row drawn IN THE RAIL, so Settings is shut again.
+	const inRail = await p.evaluate(() => {
 		const d = document.getElementById('astat-detail');
-		return !d || d.hidden;
-	}));
+		return !!d && !d.hidden && !d.classList.contains('astat-in-settings');
+	});
+	await p.evaluate(() => { if (window.DaimondAdmin && DaimondAdmin.close) DaimondAdmin.close(); });
+	await p.waitForTimeout(250);
+	return inRail;
 }
 
 const consoleClean = (s, where) => {
@@ -241,9 +247,11 @@ try {
 	check('the drawer opens with Diamonds and Chats open and the status rows away',
 		!!m.state && m.state.diamonds === true && m.state.chats === true && m.state.status === false,
 		JSON.stringify(m.state));
-	check('a folded status section draws its header row and nothing below it',
-		m.idRow.drawn && !m.modelRow.drawn && m.admin.h < 90,
-		`identity ${m.idRow.h}px, #astat-model ${m.modelRow.h}px, #admin ${m.admin.h}px`);
+	// st-S1x (D-20261015-15): folded is the identity row, any exception rows, the calm
+	// line and the tally -- no diagnostic row.
+	check('a folded status section draws its header, exceptions, calm line and tally, nothing more',
+		m.idRow.drawn && !m.modelRow.drawn && m.admin.h <= m.idRow.h + m.needs.h + m.calm.h + m.spend.h + 20,
+		`identity ${m.idRow.h}px, needs ${m.needs.h}px, calm ${m.calm.h}px, tally ${m.spend.h}px, #astat-model ${m.modelRow.h}px, #admin ${m.admin.h}px`);
 	check('and the identity row survives that fold, which is the only route to Settings',
 		m.userRow.drawn && m.userRow.h >= 34, m.userRow.h + 'px');
 	check('each list is bounded and scrolls inside itself rather than the drawer',
@@ -295,8 +303,10 @@ try {
 	await p.waitForTimeout(250);
 	const railDetailOpen = await openStatusDetail(p);
 	m = await survey(p);
-	check('unfolding the status rows brings them back and bounds them inside the strip',
-		railDetailOpen && m.modelRow.drawn && m.status.h <= Math.round(0.45 * m.rail.h) + 2,
+	// D-20261015-15: the diagnostic rows live in Settings > This device now, so unfolding
+	// the strip brings back no row; it must still stay bounded.
+	check('unfolding the status strip adds no diagnostic row and stays inside its bound',
+		!railDetailOpen && !m.modelRow.drawn && m.status.h <= Math.round(0.45 * m.rail.h) + 2,
 		`#astat-model ${m.modelRow.h}px, strip ${m.status.h}px of ${m.rail.h}`);
 	await p.evaluate(() => { if (DaimondShell.setFold) DaimondShell.setFold('status', false); });
 	await p.waitForTimeout(250);
@@ -389,19 +399,23 @@ try {
 	await p.evaluate(() => DaimondPanels.show('rail'));
 	await p.waitForTimeout(500);
 	const m0 = await survey(p);
-	check('a desktop\'s status section starts shut, to its identity row alone',
-		m0.folds.status && m0.folds.status.expanded === false && m0.idRow.drawn && !m0.modelRow.drawn && m0.admin.h < 90,
-		`status expanded ${m0.folds.status && m0.folds.status.expanded}, identity ${m0.idRow.h}px, #admin ${m0.admin.h}px`);
+	check('a desktop\'s status section is its identity row, exceptions, calm line and tally alone',
+		m0.idRow.drawn && !m0.modelRow.drawn && m0.admin.h <= m0.idRow.h + m0.needs.h + m0.calm.h + m0.spend.h + 20,
+		`identity ${m0.idRow.h}px, needs ${m0.needs.h}px, calm ${m0.calm.h}px, tally ${m0.spend.h}px, #admin ${m0.admin.h}px`);
 	const deskDetailOpen = await openStatusDetail(p);
 	const m = await survey(p);
-	check('only the status fold is drawn on a desktop; Diamonds and Chats are not',
+	// No fold is drawn on a desktop: the status chevron went with its rows (lead, 16 Oct).
+	check('no section fold is drawn on a desktop',
 		Object.keys(m.folds).length === 3
-			&& m.folds.status.drawn === true && m.folds.diamonds.drawn === false && m.folds.chats.drawn === false,
+			&& m.folds.status.drawn === false && m.folds.diamonds.drawn === false && m.folds.chats.drawn === false,
 		JSON.stringify(Object.keys(m.folds).map((k) => k + ':' + m.folds[k].drawn)));
 	check('the desktop keeps its own lever, the split handle between the two lists',
 		m.split && m.split.drawn, m.split ? m.split.h + 'px' : 'absent');
-	check('and every status row, unfolded', deskDetailOpen && m.modelRow.drawn && m.admin.h > 120,
-		`#astat-model ${m.modelRow.h}px, #admin ${m.admin.h}px`);
+	const inSettings = await statusRow(p, '#astat-model');
+	await p.evaluate(() => { if (window.DaimondAdmin && DaimondAdmin.close) DaimondAdmin.close(); });
+	await p.waitForTimeout(300);
+	check('and every status row, in Settings > This device', !deskDetailOpen && inSettings,
+		`rail detail ${deskDetailOpen}, #astat-model in Settings ${inSettings}`);
 	// THE TRAP THE FOLD CONTROL WOULD HAVE SPRUNG. `.railhead > span:first-child` is
 	// what makes the heading a heading — in app.css, skin-warm.css and improve.css —
 	// so a control placed BEFORE it restyles every railhead in the app, desktop

@@ -7,9 +7,11 @@
 //! is tested: the parse in particular, because a `meta.json` written before a
 //! field existed must still open the Diamond it describes.
 
-use crate::llm::{extract_json_number, extract_json_string, extract_json_string_array, json_escape};
+use crate::llm::{extract_json_bool, extract_json_number, extract_json_string, extract_json_string_array, json_escape};
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_jdat::prelude::*;
+use oxedyne_fe2o3_jdat::string::dec::DecoderConfig;
 
 
 /// The most tags one Diamond may carry; the excess is dropped.
@@ -17,6 +19,14 @@ const MAX_TAGS: usize = 8;
 
 /// The most characters one tag may carry; the excess is truncated.
 const MAX_TAG_LEN: usize = 24;
+
+/// The largest `meta.json` whose unknown fields are carried; above it the text is damage (see
+/// `read_meta`), and only the fields this build knows are read out of it.
+const MAX_CARRIED: usize = 65_536;
+
+/// Every key this build reads into a [`Meta`] field; any other is carried in [`Meta::extra`].
+const KNOWN_KEYS: [&str; 9] = ["name", "crystal_version", "brief_version", "updated", "touched",
+	"builtin", "builtin_named", "tags", "toolkits"];
 
 
 /// Per-Diamond metadata held in `meta.json`.
@@ -56,6 +66,18 @@ pub struct Meta {
 	/// copy seeded at a random id, which it recognises by its old seed name and text; never by
 	/// anything a person types.  See [`normalise_builtin`].
 	pub builtin: String,
+	/// Has the page given this built-in its current name once already (R568-FU F2)?
+	///
+	/// A built-in seeded under an old default name is renamed once at boot.  Without a record of
+	/// that, one he renamed BACK to the old name was renamed again on every boot.  Held in the
+	/// record beside the marker, so it travels and a second device does not do it over.
+	pub named:   bool,
+	/// The fields this build does not know, as `(key, canonical JSON value)` in key order.
+	///
+	/// Carried through every read-modify-write (R568-FU F1).  The r567 `to_json` wrote only what
+	/// it knew, so a device on it that renamed a built-in wrote the `builtin` marker away for
+	/// good; a field a later build adds must ride through this build's writes untouched.
+	pub extra:   Vec<(String, String)>,
 }
 
 impl Meta {
@@ -77,10 +99,20 @@ impl Meta {
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
-			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"tags\":{},\"toolkits\":{}}}",
+			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\"toolkits\":{}{}}}",
 			json_escape(&self.name), self.version, self.updated, self.touched,
-			json_escape(&self.builtin), self.tags_json(), self.kits_json(),
+			json_escape(&self.builtin), self.named, self.tags_json(), self.kits_json(),
+			self.extra_json(),
 		)
+	}
+
+	/// The carried unknown fields as `,"key":value` members, empty when there are none.
+	fn extra_json(&self) -> String {
+		let mut out = String::new();
+		for (k, v) in &self.extra {
+			out.push_str(&fmt!(",\"{}\":{}", json_escape(k), v));
+		}
+		out
 	}
 
 	/// The tags as a JSON array of strings, `[]` when there are none.
@@ -142,8 +174,78 @@ impl Meta {
 			// Postdates every Diamond already on a device; absent means a person's own Diamond,
 			// and the page marks the built-ins it can prove on the next boot.
 			builtin: normalise_builtin(&extract_json_string(s, "builtin").unwrap_or_default()),
+			// Postdates every Diamond already on a device; absent means not yet named.
+			named:   extract_json_bool(s, "builtin_named").unwrap_or(false),
+			extra:   unknown_fields(s),
 		}
 	}
+}
+
+/// Decode a `meta.json` as one JSON object, or `None` when it is too large to be sound or is not
+/// one.  The hand scans in [`Meta::from_json`] still read the known fields out of such a file.
+fn meta_map(s: &str) -> Option<DaticleMap> {
+	if s.len() > MAX_CARRIED {
+		return None;
+	}
+	let cfg = DecoderConfig::<(), ()>::json(None);
+	match Dat::decode_string_with_config(s, &cfg) {
+		Ok(Dat::Map(m))	=> Some(m),
+		_				=> None,
+	}
+}
+
+/// The members of a `meta.json` this build does not know, each as canonical JSON.
+///
+/// A value with no canonical JSON form (a float, an integer past 2^53) is the one thing not
+/// carried; no build writes either into this record.
+fn unknown_fields(s: &str) -> Vec<(String, String)> {
+	let mut out = Vec::new();
+	if let Some(m) = meta_map(s) {
+		for (k, v) in m.iter() {
+			if let Dat::Str(key) = k {
+				if KNOWN_KEYS.contains(&key.as_str()) {
+					continue;
+				}
+				if let Ok(text) = v.json_canonical() {
+					out.push((key.clone(), text));
+				}
+			}
+		}
+	}
+	out
+}
+
+/// The incoming `meta.json` rewritten to keep this device's built-in record, or `None` when it
+/// is to be written as it came (R568-FU F1).
+///
+/// An older build's metadata has no `builtin` key at all, because it did not know the field; a
+/// copy it renamed and sent back would otherwise unmark the built-in here for good.  An absent
+/// key is not a decision to unmark -- a build that knows the field always writes it, empty when
+/// the Diamond is a person's own -- so only an absent key is filled in, and `builtin_named` the
+/// same way.  The stamps are left as they came: the arrival is not a change of this device's.
+///
+/// # Arguments
+/// * `incoming` - The `meta.json` text an import is about to write.
+/// * `local` - This device's metadata for the same Diamond.
+pub fn keep_built_in_marker(incoming: &str, local: &Meta) -> Option<String> {
+	let has = |key: &str| match meta_map(incoming) {
+		Some(m)	=> m.get(&dat!(key)).is_some(),
+		None	=> extract_json_string(incoming, key).is_some()
+			|| extract_json_bool(incoming, key).is_some(),
+	};
+	let keep_mark = !local.builtin.is_empty() && !has("builtin");
+	let keep_named = local.named && !has("builtin_named");
+	if !keep_mark && !keep_named {
+		return None;
+	}
+	let mut m = Meta::from_json(incoming);
+	if keep_mark {
+		m.builtin = local.builtin.clone();
+	}
+	if keep_named {
+		m.named = true;
+	}
+	Some(m.to_json())
 }
 
 
@@ -336,6 +438,8 @@ mod tests {
 			tags:    vec![fmt!("work")],
 			kits: Vec::new(),
 			builtin: String::new(),
+			named:   false,
+			extra:   Vec::new(),
 		};
 		let back = Meta::from_json(&meta.to_json());
 		assert_eq!(1_700_000_000_000, back.updated);
@@ -353,6 +457,8 @@ mod tests {
 			tags:    Vec::new(),
 			kits:    Vec::new(),
 			builtin: fmt!("0da1000000f2"),
+			named:   false,
+			extra:   Vec::new(),
 		};
 		assert_eq!("0da1000000f2", Meta::from_json(&meta.to_json()).builtin);
 		// A record written before the field, and a person's own "Lucy", carry no marker.
@@ -372,6 +478,8 @@ mod tests {
 			tags:    vec![fmt!("work"), fmt!("urgent")],
 			kits: Vec::new(),
 			builtin: String::new(),
+			named:   false,
+			extra:   Vec::new(),
 		};
 		let back = Meta::from_json(&meta.to_json());
 		assert_eq!("Ship the thing", back.name);
@@ -382,7 +490,7 @@ mod tests {
 
 	#[test]
 	fn test_a_meta_with_no_tags_round_trips_as_an_empty_array() {
-		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new(), kits: Vec::new(), builtin: String::new() };
+		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new(), kits: Vec::new(), builtin: String::new(), named: false, extra: Vec::new() };
 		let json = meta.to_json();
 		assert!(json.contains("\"tags\":[]"), "{}", json);
 		assert!(Meta::from_json(&json).tags.is_empty());
@@ -405,7 +513,7 @@ mod tests {
 			fmt!("caf\u{e9} \u{65e5}\u{672c}"),   // multi-byte, passed through raw
 			fmt!("bell\u{7}"),                     // a control character, \u-escaped
 		];
-		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone(), kits: Vec::new(), builtin: String::new() };
+		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone(), kits: Vec::new(), builtin: String::new(), named: false, extra: Vec::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 
@@ -453,6 +561,8 @@ mod tests {
 			tags:    vec![fmt!("real")],
 			kits: Vec::new(),
 			builtin: String::new(),
+			named:   false,
+			extra:   Vec::new(),
 		};
 		assert_eq!(vec![fmt!("real")], Meta::from_json(&meta.to_json()).tags);
 	}
@@ -536,7 +646,7 @@ mod tests {
 		// what the file gives back, or the store drifts from the interface.
 		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tDiamond"), fmt!("work")]);
 		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, touched: 3, tags: tags.clone(),
-			kits: Vec::new(), builtin: String::new() };
+			kits: Vec::new(), builtin: String::new(), named: false, extra: Vec::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 
@@ -612,7 +722,7 @@ mod tests {
 	fn test_toolkit_grants_round_trip_through_the_stored_json() {
 		let meta = Meta {
 			name: fmt!("N"), version: 2, updated: 3, touched: 3,
-			tags: Vec::new(), kits: vec![fmt!("rust"), fmt!("node")], builtin: String::new(),
+			tags: Vec::new(), kits: vec![fmt!("rust"), fmt!("node")], builtin: String::new(), named: false, extra: Vec::new(),
 		};
 		assert_eq!(vec![fmt!("rust"), fmt!("node")], Meta::from_json(&meta.to_json()).kits);
 	}
@@ -647,4 +757,77 @@ mod real_file_tests {
 		assert_eq!(o.name, "81b Redfern Street North Perth");
 		assert!(o.kits.is_empty());
 	}
+}
+
+#[cfg(test)]
+mod unknown_field_tests {
+	use super::*;
+
+	#[test]
+	fn test_a_field_this_build_does_not_know_survives_a_write() {
+		// R568-FU F1: the r567 `to_json` named only the fields it knew, so a device on it that
+		// renamed a built-in wrote the `builtin` marker away for good. A field a later build adds
+		// must ride through this build's read-modify-write the same way.
+		let later = r#"{"name":"Lucy","crystal_version":3,"updated":5,"touched":6,"builtin":"0da1000000f2","tags":[],"toolkits":[],"pinned":true,"origin":{"dev":"d1","n":2},"note":"a \"quoted\" word"}"#;
+		let mut m = Meta::from_json(later);
+		m.name = fmt!("Lucia");
+		m.bump_touched(10);
+		let back = m.to_json();
+		assert!(back.contains(r#""pinned":true"#), "an unknown boolean was dropped: {}", back);
+		assert!(back.contains(r#""dev":"d1""#), "an unknown object was dropped: {}", back);
+		let again = Meta::from_json(&back);
+		assert_eq!("Lucia", again.name);
+		assert_eq!("0da1000000f2", again.builtin);
+		assert_eq!(Some(fmt!("a \"quoted\" word")), extract_json_string(&back, "note"));
+		// Written once, never twice: a known field is not echoed back as an unknown one.
+		assert_eq!(1, back.matches("\"name\"").count(), "{}", back);
+		assert_eq!(1, back.matches("\"builtin\"").count(), "{}", back);
+	}
+
+	fn local_lucy(named: bool) -> Meta {
+		Meta::from_json(&fmt!(
+			r#"{{"name":"Lucy","crystal_version":3,"updated":5,"touched":6,"builtin":"0da1000000f2","builtin_named":{},"tags":[],"toolkits":[]}}"#,
+			named))
+	}
+
+	#[test]
+	fn test_an_older_devices_copy_keeps_the_marker_it_never_knew() {
+		// R568-FU F1: an r567 device wrote the built-in's meta with no `builtin` key at all, and the
+		// import here laid it over the marked copy.
+		let older = r#"{"name":"Lucia","crystal_version":4,"updated":9,"touched":9,"tags":["x"],"toolkits":[]}"#;
+		let kept = keep_built_in_marker(older, &local_lucy(true));
+		let kept = match kept { Some(k) => k, None => panic!("the marker was not kept") };
+		let m = Meta::from_json(&kept);
+		assert_eq!("0da1000000f2", m.builtin);
+		assert!(m.named, "builtin_named was not kept: {}", kept);
+		// The rest is the incoming copy's, stamps included: the arrival is not an edit here.
+		assert_eq!("Lucia", m.name);
+		assert_eq!((4, 9, 9), (m.version, m.updated, m.touched));
+		assert_eq!(vec![fmt!("x")], m.tags);
+	}
+
+	#[test]
+	fn test_a_copy_that_says_unmarked_is_taken_at_its_word() {
+		// A build that knows the field always writes it; an empty one is a decision, not a gap.
+		let newer = r#"{"name":"Lucia","crystal_version":4,"updated":9,"touched":9,"builtin":"","builtin_named":false,"tags":[],"toolkits":[]}"#;
+		assert!(keep_built_in_marker(newer, &local_lucy(true)).is_none());
+		// And a person's own Diamond here has no marker to keep.
+		let mine = Meta::from_json(r#"{"name":"Mine","crystal_version":1,"updated":1,"touched":1}"#);
+		let older = r#"{"name":"Mine 2","crystal_version":1,"updated":2,"touched":2}"#;
+		assert!(keep_built_in_marker(older, &mine).is_none());
+	}
+
+	#[test]
+	fn test_the_built_in_naming_record_round_trips() {
+		// R568-FU F2: the once-only rename is recorded beside the marker, and travels.
+		let m = local_lucy(true);
+		assert!(m.named);
+		let back = m.to_json();
+		assert!(back.contains(r#""builtin_named":true"#), "{}", back);
+		assert!(Meta::from_json(&back).named);
+		assert!(!local_lucy(false).named);
+		// Absent, as on every copy written before the record existed, means not yet named.
+		assert!(!Meta::from_json(r#"{"name":"Lucy","builtin":"0da1000000f2"}"#).named);
+	}
+
 }

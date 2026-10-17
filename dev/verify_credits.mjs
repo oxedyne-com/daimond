@@ -21,7 +21,7 @@
 // The gateway is not running locally (/api/* is a 502 from dev/serve.mjs), so its four calls and
 // the provider behind the minted key are FETCH-stubbed — the store is never touched, and every
 // assertion below is against the real wasm, the real models.js and the real DOM.
-import { open, signInAs, connectMock, shot, errors, mockLog, clearMockLog, contentText, APP, MOCK } from './harness.mjs';
+import { open, signInAs, connectMock, shot, errors, mockLog, clearMockLog, contentText, APP, MOCK, pressSquares } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -258,8 +258,17 @@ check('a re-read that does not move the balance announces nothing', railQuiet.fi
 check('...and the row carries the balance regardless, because it reads the state itself',
 	/8\.40/.test(railQuiet.text), JSON.stringify(railQuiet.text));
 
+// #astat-model sits behind the status line's disclosure (#astat-summary) since 7cf50f98.
+async function openAstatModel() {
+	// The rail is not on screen in this harness (the old click was forced for that reason),
+	// so both presses are dispatched to the elements themselves.
+	await page.evaluate(() => { const d = document.getElementById('astat-detail');
+		if (d && d.hidden) document.getElementById('astat-summary').click();
+		document.getElementById('astat-model').click(); });
+}
+
 // ── The row, on screen ────────────────────────────────────────────────
-await page.click('#astat-model', { force: true });
+await openAstatModel();
 await page.waitForTimeout(600);
 const head = await page.$eval('.models-prov.paid .models-prov-head', e => ({
 	name: e.querySelector('.models-nm').textContent.trim(),
@@ -298,7 +307,7 @@ await shot(s, 'credits-row');
 // ── The second economy: a key of the user's own ───────────────────────
 await connectMock(s);
 await page.waitForTimeout(800);
-await page.click('#astat-model', { force: true });
+await openAstatModel();
 await page.waitForTimeout(600);
 const rows = await page.$$eval('.models-prov', els => els.map(e => ({
 	name: e.querySelector('.models-prov-name').firstChild.textContent.trim(),
@@ -392,7 +401,7 @@ async function expandCredits() {
 }
 
 // ── A turn: the browser calls the provider, and Daimond is not in the path ──
-await page.click('#astat-model', { force: true });
+await openAstatModel();
 await page.waitForTimeout(500);
 await expandCredits();
 await page.$$eval('.models-prov.paid .models-model', (els) => {
@@ -466,7 +475,7 @@ check('...and is offered the other way out: their own key',
 	/provider key of your own/i.test(t2), JSON.stringify(t2.slice(-140)));
 
 // The row must now say so itself, rather than offering models it cannot run.
-await page.click('#astat-model', { force: true });
+await openAstatModel();
 await page.waitForTimeout(600);
 await expandCredits();
 const dry = await page.$eval('.models-prov.paid', e => ({
@@ -568,7 +577,7 @@ await page.keyboard.press('Enter');
 await page.waitForTimeout(14000);
 
 // One worker = one `.acard`, whose class carries its status (running/done/error).
-const agents = () => page.$$eval('#agents-list .acard', els => els.map(e => ({
+const agents = async () => (await pressSquares(page), page).$$eval('#agents-list .acard', els => els.map(e => ({
 	text: e.innerText || '', cls: e.className || '',
 })));
 let runs = await agents();
@@ -617,7 +626,7 @@ check('the failed agent is marked failed, not quietly done',
 // A worker's message lives behind its own "Read", which is the only way a user sees it -- so it
 // is the way the message is read here too, rather than reaching into the object behind the tile.
 const w4text = await page.evaluate(async () => {
-	const cards = [...document.querySelectorAll('#agents-list .acard')];
+	const cards = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard'))];
 	const card = cards.find(c => /w4/.test(c.innerText));
 	if (!card) return '(no w4 tile)';
 	const read = [...card.querySelectorAll('.abtn')].find(b => b.textContent === 'Read');

@@ -115,6 +115,7 @@ const LIFTED = [
 	extractFn(POST, 'claimWork'),
 	'var _localRecovering = Object.create(null);',
 	extractFn(APP, 'recoverOneLocally'),
+	extractFn(APP, 'recoveringHere'),
 	extractFn(APP, 'claimTurnHere'),
 	extractFn(APP, 'releaseOwnStaleLeases'),
 	extractFn(APP, 'endRunnerTurn'),		// R3 F3: the self-release ends a journal-held run first (none here: false)

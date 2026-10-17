@@ -957,6 +957,8 @@ async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
         kits:    Vec::new(),
         // A person's Diamond until the page marks it a built-in (`mark_built_in`).
         builtin: String::new(),
+        named:   false,
+        extra:   Vec::new(),
     };
     res!(write_meta(&id, &meta).await);
 
@@ -980,6 +982,21 @@ pub async fn rename(id: &str, name: &str) -> Outcome<()> {
     let now = now_ms() as u64;
     let mut meta = res!(read_meta(id).await);
     meta.name = name.to_string();
+    meta.updated = now;
+    meta.bump_touched(now);
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
+/// Give a built-in its current name, once, and record that it was given (R568-FU F2).
+///
+/// As [`rename`], and the record travels with the marker, so neither this device nor another
+/// renames it again: a built-in he renamed back to its old default name stays as he left it.
+pub async fn name_built_in(id: &str, name: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let mut meta = res!(read_meta(id).await);
+    meta.name = name.to_string();
+    meta.named = true;
     meta.updated = now;
     meta.bump_touched(now);
     res!(write_meta(id, &meta).await);
@@ -1168,9 +1185,9 @@ pub async fn list() -> Outcome<String> {
     let items: Vec<String> = rows.iter().map(|(id, m)| {
         fmt!(
             "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\
-              \"touched\":{},\"builtin\":\"{}\",\"tags\":{},\"toolkits\":{}}}",
+              \"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\"toolkits\":{}}}",
             json_escape(id), json_escape(&m.name), m.version, m.updated,
-            m.touched, json_escape(&m.builtin), m.tags_json(), m.kits_json(),
+            m.touched, json_escape(&m.builtin), m.named, m.tags_json(), m.kits_json(),
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
@@ -7345,6 +7362,10 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<()> {
                 id, e));
         }
     }
+    // THIS DEVICE'S BUILT-IN RECORD, read before the delete below takes it (R568-FU F1). An older
+    // build's copy carries no `builtin` key, and laid over this one as it came it unmarked the
+    // built-in here for good. Unreadable is no record: the copy is then written as it came.
+    let local_meta = if existed { read_meta(&id).await.ok() } else { None };
     if existed {
         // PRESERVE `versions/`; delete only the rest.  The kept snapshot and the whole file
         // history live under it, and the export's own `versions/` is written over it below.
@@ -7385,6 +7406,14 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<()> {
                 crate::wasm::entry::trail("META REBUILT",
                     &fmt!("{} {}KB -> {}B", id, body.len() / 1024, rebuilt.to_json().len()));
                 rebuilt.to_json().into_bytes()
+            }
+        } else if rel == meta_rel {
+            // Not a re-stamp: the arrival is not a change of this device's, and the stamps stay
+            // the copy's own.
+            let text = String::from_utf8_lossy(&body).to_string();
+            match local_meta.as_ref().and_then(|l| crate::diamond_meta::keep_built_in_marker(&text, l)) {
+                Some(kept)  => kept.into_bytes(),
+                None        => body,
             }
         } else {
             body

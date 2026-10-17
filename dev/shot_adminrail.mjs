@@ -1,7 +1,7 @@
 // shot_adminrail.mjs — the rail's split into a pinned Status strip and an
 // on-demand Admin drawer. Drives: rest → cog opens Admin (menu) → close →
 // Models status row opens Admin (Models) → Esc closes.
-import { open, shot } from './harness.mjs';
+import { open, shot, statusRow } from './harness.mjs';
 
 const s = await open({ name: 'adminrail-shot', signIn: true, connect: true });
 const { page } = s;
@@ -25,7 +25,7 @@ await pause(350);
 const r2 = await openState();
 
 // A Status row (Models) opens the drawer straight to that section.
-await page.click('#astat-model', { force: true });
+await statusRow(page, '#astat-model'); await page.click('#astat-model', { force: true });
 await pause(400);
 const r3 = await openState();
 const title3 = await page.$eval('#admin-drawer-title', el => el.textContent);

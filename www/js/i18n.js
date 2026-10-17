@@ -202,8 +202,11 @@
 	/// The dollar string the app printed before display currencies existed.
 	/// Reproduced exactly rather than routed through `Intl`, because `Intl`
 	/// groups thousands and this never did.
+	/// `whole` is `calm` except that a whole amount drops its cents: a cap or a
+	/// limit the reader chose reads "$5", as they chose it, not "$5.00".
 	function plainUsd(u, mode) {
 		if (mode === 'fine') return '$' + u.toFixed(digits(u, 'fine'));
+		if (mode === 'whole' && u > 0 && u === Math.round(u)) return '$' + u;
 		if (u <= 0) return '$0';
 		return '$' + u.toFixed(digits(u, 'calm'));
 	}

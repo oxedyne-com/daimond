@@ -66,6 +66,7 @@ pub mod marks;
 pub mod ocr;
 pub mod office;
 pub mod opfs;
+pub mod pending;
 pub mod pty;
 pub mod shot;
 pub mod social;

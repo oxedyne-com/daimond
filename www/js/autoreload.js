@@ -179,7 +179,7 @@
 		// something the user must be told BEFORE the balance runs out, not after.
 		if (s.last_error) {
 			var err = el('div', 'ar-last-error');
-			err.appendChild(el('span', null, '⚠ ' + t('autoreload.last_error', { reason: s.last_error })));
+			err.appendChild(el('span', 'lead-warn', t('autoreload.last_error', { reason: s.last_error })));
 			host.appendChild(err);
 		}
 

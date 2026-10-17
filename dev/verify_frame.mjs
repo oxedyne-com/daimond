@@ -36,7 +36,7 @@
 // hidden form has to be posed by this file rather than read off the app: it
 // catches a change to how the button is revealed, not every way its slot could
 // stop being reserved.
-import { open, errors } from './harness.mjs';
+import { open, errors, statusRow } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -172,30 +172,37 @@ const still = async (what, before) => {
 	// Through `relabel`, which is what a language change calls: writing a longer
 	// word into the chip by hand does not survive, because the row's own
 	// ResizeObserver rebuilds it from the registry within the frame.
+	// The rightmost chip actually in the row: Social went behind More, and a chip
+	// that is not drawn grows by nothing and has nothing to its left.
+	const tgt = await page.evaluate(() => {
+		const cs = [...document.querySelectorAll('#panel-tags .ptag[data-panel]')]
+			.filter((c) => c.getBoundingClientRect().width > 0 && document.getElementById('panel-' + c.dataset.panel));
+		return cs.length ? cs[cs.length - 1].dataset.panel : 'social';
+	});
 	const before = await bar();
-	await page.evaluate(() => {
-		const el = document.getElementById('panel-social');
+	await page.evaluate((tgt) => {
+		const el = document.getElementById('panel-' + tgt);
 		el.dataset.was = el.dataset.label;
 		el.dataset.label = el.dataset.label + ' and then some';
 		window.DaimondPanels.relabel();
-	});
+	}, tgt);
 	await sleep(400);
 	const after = await bar();
-	const grew = await page.evaluate(() => {
-		const c = document.querySelector('#panel-tags .ptag[data-panel="social"]');
+	const grew = await page.evaluate((tgt) => {
+		const c = document.querySelector('#panel-tags .ptag[data-panel="' + tgt + '"]');
 		return c ? Math.round(c.getBoundingClientRect().width) : 0;
-	});
-	const left = Object.keys(before).filter(k => k.startsWith('chip:') && k !== 'chip:social'
-		&& after[k] !== undefined && before[k] < before['chip:social']);
+	}, tgt);
+	const left = Object.keys(before).filter(k => k.startsWith('chip:') && k !== 'chip:' + tgt
+		&& after[k] !== undefined && before[k] < before['chip:' + tgt]);
 	const movedLeft = left.filter(k => after[k] !== before[k]);
 	check('a longer label moves no chip to its left',
 		left.length > 3 && movedLeft.length === 0 && grew > 90,
 		`the chip grew to ${grew}px; ${left.length} chips before it, ${movedLeft.length} moved`);
-	await page.evaluate(() => {
-		const el = document.getElementById('panel-social');
+	await page.evaluate((tgt) => {
+		const el = document.getElementById('panel-' + tgt);
 		if (el.dataset.was) { el.dataset.label = el.dataset.was; delete el.dataset.was; }
 		window.DaimondPanels.relabel();
-	});
+	}, tgt);
 	await sleep(300);
 }
 
@@ -225,13 +232,17 @@ const still = async (what, before) => {
 {
 	const rows = () => page.evaluate(() => {
 		const o = {};
-		document.querySelectorAll('#admin-status > *').forEach(r => { o[r.id || r.className] = Math.round(r.getBoundingClientRect().y); });
+		// The diagnostic rows sit in Settings > This device since D-20261015-15, the sync row
+		// with them: the strip's own children and theirs, wherever the rows are drawn.
+		document.querySelectorAll('#admin-status > *, #astat-detail > *').forEach(r => { o[r.id || r.className] = Math.round(r.getBoundingClientRect().y); });
 		return o;
 	});
+	await statusRow(page, '#astat-sync');
 	const quiet = await rows();
 	page.evaluate(() => window.DaimondSync.pull()).catch(() => {});
 	await sleep(800);
 	const busy = await rows();
+	await page.evaluate(() => { if (window.DaimondAdmin && DaimondAdmin.close) DaimondAdmin.close(); });
 	const moved = Object.keys(quiet).filter(k => busy[k] !== undefined && busy[k] !== quiet[k]);
 	check('a sync round moves no row in the rail\'s status strip either',
 		moved.length === 0 && Object.keys(quiet).length > 6,
@@ -403,7 +414,8 @@ const still = async (what, before) => {
 	await sleep(500);
 	await drag(160);            // the divider low, with little left to give
 	const low = await rail();
-	await grow(60);
+	// Enough to pass what the Chats list can give, whatever height the strip starts at.
+	await grow(Math.max(60, low.sess - MIN_LIST + 40));
 	await sleep(400);
 	const squeezed = await rail();
 	await grow(0);

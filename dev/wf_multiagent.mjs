@@ -5,6 +5,9 @@ import { open, connectReal, spend, errors } from './harness.mjs';
 const s = await open({ name: 'wf-multi', connect: false });
 const model = await connectReal(s, 'value');
 const t0 = Date.now();
+// connectReal leaves Settings open over the chat; close it as a person would.
+await s.page.keyboard.press('Escape');
+await s.page.waitForTimeout(400);
 
 await s.page.click('#new-diamond-btn', { force: true });
 await s.page.waitForSelector('.dlg-input', { timeout: 10000 });
@@ -14,13 +17,13 @@ await s.page.waitForTimeout(1200);
 
 // Natural-language instruction — the REAL model must decide to call spawn_agent
 // three times (no @tools directive; that is mock-only).
-await s.page.fill('#steer-input',
+await s.page.fill('#chat-input',
   'Dispatch three separate worker agents to run in parallel. Worker one: use file_write to create alpha.txt containing exactly the word ALPHA. Worker two: create beta.txt containing exactly BETA. Worker three: create gamma.txt containing exactly GAMMA. Give each worker only its own single-file task.');
 await s.page.keyboard.press('Enter');
 
 // Wait for the conductor turn to finish dispatching.
 await s.page.waitForTimeout(2000);
-for (let i=0;i<30;i++){ const busy = await s.page.evaluate(()=>(document.getElementById('steer-send')||{}).disabled); if(!busy)break; await s.page.waitForTimeout(500); }
+for (let i=0;i<30;i++){ const busy = await s.page.evaluate(()=>(document.getElementById('chat-send')||{}).disabled); if(!busy)break; await s.page.waitForTimeout(500); }
 
 // Open the Agents panel and wait for workers to finish.
 await s.page.evaluate(() => window.DaimondPanels && DaimondPanels.show('agents'));
@@ -28,7 +31,7 @@ await s.page.waitForTimeout(1000);
 let tiles = 0;
 for (let i=0;i<40;i++){
   const st = await s.page.evaluate(() => {
-    const cards=[...document.querySelectorAll('#panel-agents .acard')];
+    const cards=[...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#panel-agents .acard'))];
     return { n: cards.length, running: cards.filter(c=>/running|queued/.test((c.querySelector('.pill')||{}).textContent||'')).length };
   });
   tiles = st.n;

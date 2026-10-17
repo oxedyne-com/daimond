@@ -37,7 +37,7 @@ if (BREAK && BREAK !== 'two') {
 
 /// One row per worker card: what it is called, what state it is in, whether it
 /// carries the folded mark and whether it is still being offered a fold.
-const cards = (page) => page.evaluate(() => [...document.querySelectorAll('#panel-agents .acard')].map(c => ({
+const cards = (page) => page.evaluate(() => [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#panel-agents .acard'))].map(c => ({
 	name:   ((c.querySelector('.an') || {}).textContent || '').trim().slice(0, 24),
 	status: ((c.querySelector('.pill') || {}).textContent || '').trim(),
 	folded: !!c.querySelector('.afolded'),
@@ -118,7 +118,7 @@ const afterClear = await s.page.evaluate(async () => {
 	const b = document.getElementById('agents-clear');
 	if (b) b.click();
 	await new Promise(r => setTimeout(r, 400));
-	return document.querySelectorAll('#panel-agents .acard').length;
+	return (window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#panel-agents .acard')).length;
 });
 check('CLEARING FINISHED WORKERS EMPTIES THE PANEL', afterClear === 0, `${afterClear} cards left`);
 

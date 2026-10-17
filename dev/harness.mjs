@@ -402,6 +402,17 @@ const PRESS_MARK = () => {
 	};
 };
 
+/// `window.__pressSquares()` in the page: press every agent square not pressed yet, so the
+/// tiles are drawn below (AGENT-GRID, D-20261015-10). Answers how many it pressed. For in-page
+/// reads of `#agents-list .acard`; `pressSquares(page)` below is the same from node.
+const PRESS_SQUARES = () => {
+	window.__pressSquares = () => {
+		const sq = [...document.querySelectorAll('#agents-grid .agsq:not(.o):not(.pin)')];
+		sq.forEach((b) => b.click());
+		return sq.length;
+	};
+};
+
 export async function open(opts = {}) {
 	const {
 		headed    = false,
@@ -721,6 +732,7 @@ export async function open(opts = {}) {
 
 	if (route) await route(page);
 	await page.addInitScript(PRESS_MARK);
+	await page.addInitScript(PRESS_SQUARES);
 	await page.goto(app, { waitUntil: 'domcontentloaded' });
 
 	// A WEBKIT SESSION WITHOUT OPFS IS REFUSED, before sign-in seeds anything. Without the
@@ -1001,6 +1013,26 @@ export async function onScreen(page, sel) {
 		const r = e.getBoundingClientRect();
 		return r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight;
 	}, sel).catch(() => false);
+}
+
+/// Bring a status row on screen the way a person reaches it now (D-20261015-15): the
+/// diagnostic rows (#astat-model, #astat-account, #astat-byok, #astat-pro, #astat-tools,
+/// #astat-hand, #astat-release, #astat-store, #astat-sync) moved, ids intact, from the rail's
+/// Status section to the foot of Settings home, "This device". Opens Settings home (the rail's
+/// calm line or the identity row do the same) and waits for the row to be drawn there.
+/// Returns false when it never is.
+export async function statusRow(page, sel) {
+	const drawn = () => page.evaluate((q) => { const e = document.querySelector(q); return !!e && e.getClientRects().length > 0; }, sel).catch(() => false);
+	if (await drawn()) return true;
+	await page.evaluate(() => { if (window.DaimondAdmin && DaimondAdmin.home) DaimondAdmin.home(); });
+	for (let t0 = Date.now(); Date.now() - t0 < 4000; ) {
+		if (await drawn()) {
+			await page.evaluate((q) => { const e = document.querySelector(q); if (e) e.scrollIntoView({ block: 'nearest' }); }, sel).catch(() => {});
+			return true;
+		}
+		await page.waitForTimeout(100);
+	}
+	return false;
 }
 
 /// Bring the rail on screen the way a person does, when `sel` (a rail control) is not: at
@@ -1552,6 +1584,19 @@ const sendState = () => {
 	};
 };
 
+/// What a press at Send's centre lands on: '' when it is Send, else the thing over it, named.
+/// `all`: say where Send is and what it holds even when nothing covers it. Run from Node.
+const sendCover = (page, all = false) => page.evaluate((all) => {
+	const b = document.getElementById('chat-send'), r = b && b.getBoundingClientRect();
+	if (!r) return 'no #chat-send';
+	const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+	const name = (e) => e ? e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className ? '.' + e.className.trim().split(/\s+/).join('.') : '') : 'nothing';
+	const on = b.contains(top);
+	if (on && !all) return '';
+	return `Send ${b.disabled ? 'disabled' : 'enabled'} at ${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}; `
+		+ `the press lands on ${on ? 'Send' : name(top)}; input ${JSON.stringify((document.getElementById('chat-input') || {}).value || '').slice(0, 40)}`;
+}, all).catch((e) => 'unread: ' + e.message);
+
 /// Send a message and wait for the turn to finish.
 ///
 /// "Finished" means the send button is offering Send again, not Stop — the
@@ -1571,6 +1616,10 @@ export async function chat(s, text, { timeout = 30000 } = {}) {
 	await revealComposer(page);
 	await page.fill('#chat-input', text);
 	const before = await page.evaluate(sendState);
+	// A force-click dispatches at Send's centre whatever is drawn there; a phone sheet over the
+	// composer then eats the press and the wait below times out saying nothing of why.
+	const covered = await sendCover(page);
+	if (covered) throw new Error(`chat(): Send is covered, so a press cannot reach it [${covered}].`);
 	await page.click('#chat-send', { force: true });
 	// SEND-REGISTERS begin
 	const r0 = Date.now();
@@ -1578,7 +1627,8 @@ export async function chat(s, text, { timeout = 30000 } = {}) {
 		const now = await page.evaluate(sendState);
 		if (now.busy || now.n > before.n || now.w > before.w) break;
 		if (Date.now() - r0 > SEND_REGISTER_MS) {
-			throw new Error(`chat(): the send never registered — no new question bubble, held message `
+			const at = await sendCover(page, true);
+			throw new Error(`[${at}] ` +`chat(): the send never registered — no new question bubble, held message `
 				+ `or busy Send within ${SEND_REGISTER_MS} ms of pressing Send on `
 				+ `${JSON.stringify(text.length > 60 ? text.slice(0, 60) + '…' : text)}.`);
 		}
@@ -1795,4 +1845,12 @@ export async function routeProbe(check, page) {
 	check('page.route intercepts this engine\'s requests (' + eng + ')', hit > 0,
 		'intercepted on the probe fetch: ' + hit + ' (0 means page.route is inert here, so every route-made withhold below is a no-op)');
 	return hit > 0;
+}
+
+/// Press every agent's square in the Agents grid that is not pressed yet, as a person does to
+/// see the tiles (AGENT-GRID, D-20261015-10): since the panel was split, a tile is drawn below
+/// only for a square someone pressed, so a verifier that reads `#agents-list .acard` presses
+/// first. In-page code calls `window.__pressSquares()` (installed by `open`). Answers how many it pressed.
+export async function pressSquares(page) {
+	return page.evaluate(() => (window.__pressSquares ? window.__pressSquares() : 0)).catch(() => 0);
 }

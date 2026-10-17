@@ -39,6 +39,7 @@ function world(list, crystals) {
 		calls,
 		app: {
 			rename_diamond: async (id, name) => { calls.push(['rename', id, name]); const f = list.find((d) => d.id === id); if (f) f.name = name; },
+			name_built_in:  async (id, name) => { calls.push(['rename', id, name]); const f = list.find((d) => d.id === id); if (f) { f.name = name; f.builtin_named = true; } },
 			mark_built_in:  async (id, fixed) => { calls.push(['mark', id, fixed]); const f = list.find((d) => d.id === id); if (f) f.builtin = fixed; },
 			read_crystal_data: async (id) => (crystals || {})[id] || '',
 			write_crystal_data: async (id, json) => { calls.push(['write', id, json]); },
@@ -181,4 +182,27 @@ test('an edited crystal keeps every word, the old heading included', async () =>
 	await lifted();
 	assert.deepEqual(w.calls.filter((c) => c[0] === 'write'), [], 'an edited crystal was rewritten');
 	assert.equal(neil.name, 'Neil', 'the name still moves');
+});
+
+// R568-FU F2: the rename ran on every boot, so a built-in he renamed BACK to its old seed name
+// was renamed again on the next one. It runs once per Diamond, recorded in the Diamond's own
+// record beside the marker (`builtin_named`), so the record travels and a second device does not
+// redo what the first already did.
+test('a built-in is renamed from its old seed name once, and the rename is recorded', async () => {
+	const lucy = { id: '0da1000000f2', name: 'Daimond Optimiser', crystal_version: 3, builtin: '0da1000000f2' };	// names-gate: legacy
+	const W = world([lucy]);
+	await W.fn.renameLegacyBuiltIns();
+	assert.equal(lucy.name, 'Lucy');
+	assert.equal(lucy.builtin_named, true, 'the rename was not recorded: ' + JSON.stringify(W.calls));
+});
+
+test('a built-in he renamed back to its old seed name keeps it, on this boot and every other', async () => {
+	const lucy = { id: '0da1000000f2', name: 'Daimond Optimiser', crystal_version: 3, builtin: '0da1000000f2', builtin_named: true };	// names-gate: legacy
+	const neil = { id: 'ab11bb22cc33', name: 'Daimond Help', crystal_version: 2, builtin: '0da1000000e1', builtin_named: true };	// names-gate: legacy
+	const W = world([lucy, neil]);
+	await W.fn.renameLegacyBuiltIns();
+	await W.fn.sweepSeededDuplicates();
+	assert.deepEqual(W.calls.filter((c) => c[0] === 'rename'), [], 'his own name was taken again: ' + JSON.stringify(W.calls));
+	assert.equal(lucy.name, 'Daimond Optimiser');	// names-gate: legacy
+	assert.equal(neil.name, 'Daimond Help');	// names-gate: legacy
 });

@@ -39,7 +39,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, chat, errors } from './harness.mjs';
+import { open, chat, errors, statusRow } from './harness.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = path.join(HERE, 'shots', 'sweep');
@@ -581,7 +581,7 @@ const SCENES = {
 		await calm();
 		// `#astat-model` -- the "Models · N" row -- not `#user-row`, which
 		// opens the Admin home and leaves the form unbuilt.
-		await page.click('#astat-model', { force: true }).catch(() => {});
+		await statusRow(page, '#astat-model'); await page.click('#astat-model', { force: true }).catch(() => {});
 		await page.waitForTimeout(700);
 		await page.evaluate(() => {
 			const add = document.getElementById('models-add');

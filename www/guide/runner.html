@@ -48,7 +48,9 @@
 	<p>A diamond's settings carry a <span class="ui">Helper model</span>, separate from the one its daimon thinks with. A helper keeps the model it started on, and a change applies to the next one.</p>
 
 	<h3 id="s2">The Agents panel</h3>
-	<p>Live runs appear in <span class="ui">Agents</span>, in the dock, with a line saying how many are running, paused and queued. Each tile shows its cost as it accrues, and not only at the end.</p>
+	<p>Live runs appear in <span class="ui">Agents</span>, in the dock, with a line saying how many are running, paused and queued. At the head of the panel is what the last hour cost.</p>
+	<p>Below it is a grid: one square per agent, and a row per chat or diamond, which starts with that thread&rsquo;s small diamond. When a later turn sends more work, its agents follow a diamond of their own in the same row. Colour is state, and amber alone means an agent is waiting on you. A running square fills from the bottom as its turn spends towards its cap. A finished one fades over the day after it ended and then leaves the grid, though a search still finds it.</p>
+	<p>Press a square to pin its tile below. Press it again, or the tile&rsquo;s cross, to put the tile away. Nothing opens by itself. Each tile shows its cost as it accrues, with a meter of what this turn has spent of its cap. Press a diamond to open the conversation the work came from. <span class="ui">State</span>, <span class="ui">Cost</span>, <span class="ui">Rating</span> and <span class="ui">Device</span> recolour the squares without moving them.</p>
 	<p>Three controls sit in the header and again on every tile.</p>
 	<ul>
 		<li><strong>Pause.</strong> Hang up what is running and hold the queue. A running helper keeps what it had produced, and nothing new starts.</li>

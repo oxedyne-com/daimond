@@ -2302,6 +2302,11 @@ impl DaimondApp {
         diamond::rename(&id, &name).await.map_err(to_js_err)
     }
 
+    /// Give a built-in its current name once, recording that it was given (R568-FU F2).
+    pub async fn name_built_in(&self, id: String, name: String) -> Result<(), JsValue> {
+        diamond::name_built_in(&id, &name).await.map_err(to_js_err)
+    }
+
     /// Mark a Diamond as the built-in seeded at `fixed_id`, a lasting marker in its own record,
     /// so the page never has to recognise a built-in by its name (NAMES N1).
     pub async fn mark_built_in(&self, id: String, fixed_id: String) -> Result<(), JsValue> {
@@ -2758,6 +2763,8 @@ impl DaimondApp {
     ///   message), joined once ahead of the instruction where the request is built and never
     ///   part of it.  Last and optional, so a trigger, a preset or a gather round, which no
     ///   person said, passes none.
+    /// * `pending_only` - A triggered turn whose only channel is the Pending panel, so an
+    ///   empty ending with nothing failed is quietly done ([`crate::agent::Agent::set_pending_only`]).
     ///
     /// # Returns
     /// The conversation after the turn, to be stored and handed back next time.
@@ -2772,6 +2779,7 @@ impl DaimondApp {
         prior:       JsValue,
         on_event:    JsValue,
         pre:         Option<String>,
+        pending_only: Option<bool>,
     )
         -> Result<js_sys::Array, JsValue>
     {
@@ -2787,7 +2795,8 @@ impl DaimondApp {
             Ok(d)  => d,
             Err(e) => return Err(to_js_err(e)),
         };
-        self.steer_inner(&id, instruction, pre.unwrap_or_default(), toolkits, prior, on_event)
+        self.steer_inner(&id, instruction, pre.unwrap_or_default(), toolkits, prior, on_event,
+            pending_only.unwrap_or(false))
             .await
             .map_err(to_js_err)
     }
@@ -3594,6 +3603,7 @@ impl DaimondApp {
         toolkits:    String,
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
+        pending_only: bool,
     )
         -> Outcome<js_sys::Array>
     {
@@ -3629,6 +3639,7 @@ impl DaimondApp {
         let DaimonTurn { mut agent, registry, crystal: before, standing: standing_before, .. } =
             res!(self.compose_daimon(did, &toolkits).await);
         agent.llm = agent.llm.with_halt(halt);
+        agent.set_pending_only(pending_only);
         // THE USER'S OWN EDITS BECOME A VERSION BEFORE THE TURN CAN WRITE OVER THEM.
         //
         // The Files panel, a capp's Save and a landed Diamond each marked the path they wrote,

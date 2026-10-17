@@ -226,7 +226,7 @@ await page.waitForTimeout(800);
 const openByName = (nm) => page.evaluate((nm) => {
 	const boxes = [...document.querySelectorAll('#session-list .session-box')];
 	const hit = boxes.find((b) => (b.textContent || '').includes(nm));
-	if (hit) { (hit.querySelector('.tile-label, .tile-when, button') || hit).click(); return true; }
+	if (hit) { (hit.querySelector('.tile-label, .tile-when, button:not(.av-btn)') || hit).click(); return true; }
 	return false;
 }, nm);
 const rail = await page.evaluate(() => [...document.querySelectorAll('#session-list .session-box')].map((b) => (b.textContent || '').trim().slice(0, 40)));

@@ -2561,6 +2561,9 @@ fn call_label(tc: &ToolCall) -> String {
 		"web_fetch" | "web_open" | "web_read"
 		                    => fmt!("{} {}", name, clip(&arg("url"), STUB_ARG_CAP)),
 		"spawn_agent"       => fmt!("spawn_agent {}", arg("name")),
+		// The KEY, so a retired raise says which alert is up and the model can clear it.
+		"pending_raise" | "pending_clear"
+		                    => fmt!("{} {}", name, clip(&arg("key"), STUB_ARG_CAP)),
 		// The workers a retired gather was waiting on, so the stub says WHOSE reports went.
 		// The model can call `gather` again on the same names and re-read them at no cost, and a
 		// stub naming nobody would leave it guessing which reports it had lost.

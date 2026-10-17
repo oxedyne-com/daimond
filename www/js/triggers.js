@@ -116,6 +116,8 @@
 			// than of the kind: a timer whose answer belongs in a thread wants the
 			// thread on screen, and running it behind the user's back leaves its
 			// answer where they are not. See `offScreenSteerAllowed` in daimond.js.
+			// A MAIL action needs no flag: an arrival is one occasion, not a clock,
+			// and it runs off screen into its own thread (D-20261016-17).
 			offScreen:   false,
 		};
 	}

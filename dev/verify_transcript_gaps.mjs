@@ -465,11 +465,17 @@ for (const S of SESSIONS) {
 	await wait(800);
 	const opened = await page.evaluate(() => {
 		const hit = [...document.querySelectorAll('#session-list .session-box')].find((b) => (b.textContent || '').includes('Gap gate chat'));
-		if (hit) { (hit.querySelector('.tile-label, .tile-when, button') || hit).click(); return true; }
+		if (hit) { (hit.querySelector('.tile-label, .tile-when, button:not(.av-btn)') || hit).click(); return true; }
 		return false;
 	});
-	check(`${S.kind}: the seeded chat opens`, opened);
 	await wait(1200);
+	// Opened means the chat is the focus and nothing was raised over it: the tile's icon is a
+	// button too, and pressing it raises the icon picker, which on a phone covers the composer.
+	const at = await page.evaluate(() => ({
+		focus: (() => { try { const f = DaimondAttach.focus(); return f && f.kind === 'chat' ? String(f.id) : ''; } catch (e) { return ''; } })(),
+		picker: !!document.querySelector('.av-pick'),
+	}));
+	check(`${S.kind}: the seeded chat opens`, opened && at.focus === 'gaps1' && !at.picker, `focus ${JSON.stringify(at.focus)}${at.picker ? ', the icon picker is up' : ''}`);
 	if (BREAK) await page.addStyleTag({ content: STRAY });
 
 	const themes = await page.evaluate(() => Object.keys(DaimondTheme.inTone('light').concat(DaimondTheme.inTone('mid'), DaimondTheme.inTone('dark')).reduce((o, k) => (o[k] = 1, o), {})));
@@ -593,6 +599,15 @@ for (const S of SESSIONS) {
 	await wait(400);
 	await page.setViewportSize({ width: lw, height: lh });
 	await wait(300);
+	// A tap on Send must land on Send: whatever is drawn over it on a phone eats the press.
+	const sendHit = await page.evaluate(() => {
+		const b = document.getElementById('chat-send'), r = b && b.getBoundingClientRect();
+		if (!r || !r.width) return 'Send not drawn';
+		const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+		if (b.disabled) return 'Send disabled';
+		return b.contains(top) ? '' : 'covered by ' + (top ? top.tagName.toLowerCase() + '.' + String(top.className || '').trim().split(/\s+/).join('.') : 'nothing');
+	});
+	check(`${cfgL}: a tap on Send lands on Send`, !sendHit, sendHit);
 	const asks0 = await page.evaluate(() => document.querySelectorAll('#chat-output > .chat-msg-user').length);
 	let turnOver = false, turnErr = '';
 	const turn = chat(s, '@narrates 5000 I will read the workspace first.;;file_list {"path":"."};;Now once more, to be sure of every name in it.;;file_list {"path":"."};;All listed.', { timeout: 60000 })

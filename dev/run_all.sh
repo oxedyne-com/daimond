@@ -425,6 +425,12 @@ budget_floor() {
 		# MEASURED at 633s and 657s alone on release 5 (2026-09-25 triage), against 477s
 		# on release 4: over the 600 it had, so the release-5 nightly would read exit 124.
 		verify_style)                     echo 900 ;;
+		# Two engines, one after the other: 172 s + 171 s on world 65 (r569, 17 Oct, load 14),
+		# so the 180 s default killed WebKit every time. Twice the finished 343 s.
+		verify_transcript_gaps)           echo 720 ;;
+		# `all` = seed, desk, phone, WebKit phone and the gaps gate above: killed at 180 s in
+		# the desk panels; finished in about 1100 s on world 65 (r569, 17 Oct). Twice that.
+		verify_consistency)               echo 2220 ;;
 		verify_handoff_noresurrect|verify_syncfixedpoint) echo 600 ;;
 		# Two devices paired, two turns, then a sync leg and the panels: 150 s red on world 99 (9 Oct).
 		verify_handoff_intent)            echo 300 ;;

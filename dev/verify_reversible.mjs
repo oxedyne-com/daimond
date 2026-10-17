@@ -35,7 +35,7 @@
 // dialogs only.
 
 import fs from 'node:fs';
-import { open, scratch } from './harness.mjs';
+import { open, scratch, statusRow } from './harness.mjs';
 
 let failures = 0;
 let skips    = 0;
@@ -106,7 +106,7 @@ const SURFACES = [
 	{
 		name:   'Models',
 		open:   { connect: false },
-		reach:  async (page) => { await click(page, '#astat-model'); },
+		reach:  async (page) => { await statusRow(page, '#astat-model'); await click(page, '#astat-model'); },
 		ready:  '#admin-models',
 		root:   '#admin-models',
 		// The sync switch used to have a twin here (`cfg-sync-btn`); it was a
@@ -117,7 +117,7 @@ const SURFACES = [
 	{
 		name:   'Credits',
 		open:   { connect: false },
-		reach:  async (page) => { await click(page, '#astat-account'); },
+		reach:  async (page) => { await statusRow(page, '#astat-account'); await click(page, '#astat-account'); },
 		ready:  '#admin-credits',
 		root:   '#admin-credits',
 		leaves: [],

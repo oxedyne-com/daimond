@@ -48,7 +48,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, shot } from './harness.mjs';
+import { open, signInAs, shot, statusRow } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -233,7 +233,7 @@ async function scenario(label, patches) {
 	const paste = { key: or.key, credits: or.credits };
 
 	// The panel, opened the way a user opens it, and the row expanded.
-	await p.click('#astat-model');
+	await statusRow(p, '#astat-model'); await p.click('#astat-model');
 	await p.waitForTimeout(600);
 	await p.evaluate(() => {
 		const heads = Array.prototype.slice.call(document.querySelectorAll('.models-prov-head'));
@@ -261,7 +261,7 @@ async function scenario(label, patches) {
 	for (let i = 0; i < 3; i++) {
 		await shut();
 		await p.waitForTimeout(200);
-		await p.click('#astat-model');
+		await statusRow(p, '#astat-model'); await p.click('#astat-model');
 		await p.waitForTimeout(300);
 	}
 	const reopened = { key: or.key };

@@ -181,7 +181,7 @@ await signInAs(s, 'decision-last');
 await page.waitForTimeout(800);
 const openByName = (nm) => page.evaluate((nm) => {
 	const hit = [...document.querySelectorAll('#session-list .session-box')].find((b) => (b.textContent || '').includes(nm));
-	if (hit) { (hit.querySelector('.tile-label, .tile-when, button') || hit).click(); return true; }
+	if (hit) { (hit.querySelector('.tile-label, .tile-when, button:not(.av-btn)') || hit).click(); return true; }
 	return false;
 }, nm);
 // The card is found by the start of its question: the cards change places as they are answered.
@@ -323,7 +323,7 @@ await signInAs(s, 'decision-last');
 await page.waitForTimeout(1200);
 await page.evaluate((id) => {
 	const b = [...document.querySelectorAll('#session-list .session-box')].find((x) => (id && x.dataset.id === id) || /rounds|Held/.test(x.textContent));
-	if (b) (b.querySelector('.tile-label, .tile-when, button') || b).click();
+	if (b) (b.querySelector('.tile-label, .tile-when, button:not(.av-btn)') || b).click();
 }, liveId);
 await page.waitForTimeout(1200);
 u = await read(); c = await cardState('He');

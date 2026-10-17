@@ -122,7 +122,7 @@ const shadowSettled = (page) => page.evaluate(() => window.DaimondCore.chatStore
 const openTile = (page, name) => page.evaluate((nm) => {
 	const boxes = [...document.querySelectorAll('#session-list .session-box')];
 	const hit = boxes.find((b) => (b.textContent || '').includes(nm));
-	if (hit) { (hit.querySelector('.tile-label, .tile-when, button') || hit).click(); return true; }
+	if (hit) { (hit.querySelector('.tile-label, .tile-when, button:not(.av-btn)') || hit).click(); return true; }
 	return false;
 }, name);
 

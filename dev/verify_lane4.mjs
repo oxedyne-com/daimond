@@ -43,7 +43,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { open, shot, errors } from './harness.mjs';
+import { open, shot, errors, pressSquares } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const RED = !!process.env.LANE4_RED;
@@ -273,12 +273,16 @@ await p.evaluate(({ a, b, d }) => {
 await p.waitForTimeout(500);
 
 /// Which runs the panel is showing, and which chip each carries.
-const shown = () => p.$$eval('#panel-agents .acard', (els) => els.map((e) => ({
+const shown = async () => (await pressSquares(p), p).$$eval('#panel-agents .acard', (els) => els.map((e) => ({
 	name:   (e.querySelector('.an') || {}).textContent || '',
 	chip:   (e.querySelector('.diamond-chip') || {}).textContent || '',
 	active: !!(e.querySelector('.diamond-chip') || {}).classList?.contains('tag-active'),
 })));
 
+// THE GRID DIMS WHAT A FILTER LEAVES OUT (Agents grid, think pass §1): no square moves and a
+// pinned tile stays, so what a filter keeps is read off the squares it leaves lit.
+const inForce = () => p.evaluate(() => [...document.querySelectorAll('#agents-grid .agsq.match:not(.o)')]
+	.map((b) => (window.DaimondWorkers.runs.find((r) => String(r.id) === b.dataset.run) || {}).name || '?').sort());
 let cards = await shown();
 check('all three runs are listed before anything is filtered',
 	cards.length === 3 && ['from-chat-a', 'from-chat-b', 'from-diamond']
@@ -292,11 +296,12 @@ check('each chat run carries a chip that names where it came from',
 await p.click('#panel-agents .acard:has(.an:text-is("from-chat-a")) .diamond-chip');
 await p.waitForTimeout(500);
 cards = await shown();
+let lit = await inForce();
 check('clicking the chat chip filters the panel to that conversation',
-	cards.length === 1 && cards[0].name === 'from-chat-a',
-	cards.length ? cards.map((c) => c.name).join(', ') : 'nothing shown');
+	lit.join() === 'from-chat-a', lit.join(', ') || 'nothing lit');
+const pressedOn = cards.find((c) => c.name === 'from-chat-a');
 check('the chip it was clicked on now reads as the one in force',
-	cards.length === 1 && cards[0].active === true, JSON.stringify(cards[0]));
+	!!pressedOn && pressedOn.active === true, JSON.stringify(pressedOn));
 const standing = await p.evaluate(() => {
 	const c = document.querySelector('#agent-filter .tag-chip');
 	return c ? { text: c.textContent, title: c.title } : null;
@@ -322,10 +327,9 @@ await p.click('#panel-agents .acard:has(.an:text-is("from-chat-a")) .diamond-chi
 await p.waitForTimeout(400);
 await p.click('#panel-agents .acard:has(.an:text-is("from-diamond")) .diamond-chip');
 await p.waitForTimeout(400);
-cards = await shown();
+lit = await inForce();
 check('a Diamond chip pressed after a chat chip replaces the filter, not adds to it',
-	cards.length === 1 && cards[0].name === 'from-diamond',
-	cards.map((c) => c.name).join(', ') || 'nothing shown');
+	lit.join() === 'from-diamond', lit.join(', ') || 'nothing lit');
 await p.click('#agent-filter .tag-chip');
 await p.waitForTimeout(400);
 

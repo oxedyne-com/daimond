@@ -30,7 +30,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open } from './harness.mjs';
+import { open, statusRow } from './harness.mjs';
 import { GW_PORT } from './ports.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -314,7 +314,7 @@ const SCENES = {
 	models: async () => {
 		await calm();
 		await drawerHome();
-		await page.click('#astat-model', { force: true }).catch(() => {});
+		await statusRow(page, '#astat-model'); await page.click('#astat-model', { force: true }).catch(() => {});
 		await page.waitForTimeout(1000);
 		await page.evaluate(() => {
 			if (document.querySelector('.models-credit')) return;
@@ -375,7 +375,7 @@ const SCENES = {
 	credits: async () => {
 		await calm();
 		await drawerHome();
-		await page.click('#astat-account', { force: true }).catch(() => {});
+		await statusRow(page, '#astat-account'); await page.click('#astat-account', { force: true }).catch(() => {});
 		await page.waitForTimeout(1000);
 		// The auto-reload block if it was built, the view's own lead if it was
 		// not, so the scene is scrolled to something real either way.

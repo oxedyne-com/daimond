@@ -339,6 +339,26 @@
 	// left from an earlier run of this build (daimond.js `syncIndexOwed`).
 	var upgradedAt    = -1;
 	var lastPushed    = null;	// comparison key of the state last pushed (see compareKey).
+	// SECTIONS A PARCEL LOSES, AND SECTIONS THIS BUILD DOES NOT KNOW (review fix 5, 2026-10-16).
+	// An older build collects only what it knows, so its push dropped a newer section
+	// (`alerts`) from the mailbox and nothing put it back. Two rules, for every section:
+	// HEAL -- a pull that lacks a section this device last sent re-sends it (`sentKeys`,
+	// `pulledLacks`); CARRY -- a pulled section this build does not know rides on verbatim
+	// in its pushes (`carried`) and is never itself news (compareKey skips it).
+	// Fixed in code, never derived from one collect: a known section legitimately left out of a round (`post`, whose refs keep chunks alive) must never be echoed back.
+	var KNOWN_SECTIONS = ['alerts', 'calendar', 'chats', 'chunked', 'chunkedFrom', 'chunkedFull',
+		'chunkedOld', 'chunkedTombs', 'chunks', 'debugShare', 'dev', 'devices', 'deviceTombs',
+		'diamonds', 'diamondsComplete', 'diamondTombs', 'files', 'filesComplete', 'fileTombs',
+		'fileTombsStamped', 'ledger', 'left', 'mail', 'models', 'msgTombs', 'nominated', 'own',
+		'peer', 'perms', 'size', 'support', 'tombs', 'v',
+		// hung on by collectParcel itself
+		'graph', 'handle', 'look', 'pause', 'post', 'trash', 'voice'];
+	var knownSection = Object.create(null);	// KNOWN_SECTIONS, plus any key this page has collected itself
+	KNOWN_SECTIONS.forEach(function (k) { knownSection[k] = true; });
+	var carried     = Object.create(null);	// unknown sections of the last merged parcel, verbatim
+	var sentKeys    = [];		// sections (non-null) of the parcel this device last sent or found already there
+	var pulledLacks = [];		// of those, the ones the last merged parcel did not have
+	var healedAt    = -1;		// the version a heal was last owed for: once per version, never a loop
 	// THE SAME FACT, CARRIED ACROSS A RELOAD, and consulted by the first push of a
 	// page and by nothing else.
 	//
@@ -1478,6 +1498,14 @@
 	/// its own key: there is nothing to mask and nothing to throw.
 	function compareKey(state) {
 		if (!state || typeof state !== 'object') return JSON.stringify(state);
+		// A CARRIED section (see `carried`) is not news: it is the mailbox's own value
+		// riding on. Identity, not equality -- a section this device produced is never it.
+		var skip = Object.keys(carried).filter(function (k) { return state[k] === carried[k]; });
+		if (skip.length) {
+			var lean = {};
+			Object.keys(state).forEach(function (k) { if (skip.indexOf(k) < 0) lean[k] = state[k]; });
+			state = lean;
+		}
 		var roster = !!state.devices && typeof state.devices === 'object';
 		if (!roster && !Object.prototype.hasOwnProperty.call(state, 'chunkedFrom')) return JSON.stringify(state);
 		var devs = {};
@@ -1761,7 +1789,32 @@
 				if (vce) state.voice = vce;
 			}
 		} catch (e) { log('voice snapshot failed', e); }
+		// What this build produced is known, whatever the constant says, so a section
+		// added to collectSync and missed in KNOWN_SECTIONS is still never carried.
+		Object.keys(state).forEach(function (k) { knownSection[k] = true; });
+		// CARRY: what this build does not know rides on, verbatim (see `carried`).
+		Object.keys(carried).forEach(function (k) {
+			if (!knownSection[k] && !Object.prototype.hasOwnProperty.call(state, k)) state[k] = carried[k];
+		});
 		return state;
+	}
+
+	/// The sections a parcel holds, for HEAL (see `sentKeys`): present and not null.
+	function presentKeys(state) {
+		if (!state || typeof state !== 'object') return [];
+		return Object.keys(state).filter(function (k) { return state[k] !== null && state[k] !== undefined; });
+	}
+	/// After a parcel is merged: keep what this build does not know, and say which of
+	/// this device's own sections it lacked. Only a section this build produces counts
+	/// as lacked -- a carried one is the mailbox's business, not ours to restore.
+	function noteSections(state) {
+		if (!state || typeof state !== 'object') return;
+		var next = Object.create(null);
+		Object.keys(state).forEach(function (k) { if (!knownSection[k]) next[k] = state[k]; });
+		carried = next;
+		pulledLacks = sentKeys.filter(function (k) {
+			return knownSection[k] && !Object.prototype.hasOwnProperty.call(state, k);
+		});
 	}
 
 	/// Merge a parcel into this device. Returns the sections that would not apply.
@@ -2228,6 +2281,17 @@
 			return serverVersion;		// the last FULLY-applied version, deliberately not j.version.
 		}
 		adoptAt(j.version | 0, preRead, applied ? 'merged' : 'kept', state);
+		// HEAL: the parcel lacked a section this device last sent (an older build pushed
+		// over it). Send again -- once for this version; the sender of a parcel that
+		// changes nothing on merging does not push back, so this cannot ping-pong.
+		noteSections(state);
+		if (pulledLacks.length && healedAt !== (j.version | 0)) {
+			healedAt = j.version | 0;
+			diag('pull lacks', pulledLacks.join(',') + ' v=' + (j.version | 0) + ' -> re-send');
+			lastPushed = null;
+			saveSig('');		// and the carried digest, or the next push agrees there is nothing to send
+			schedule();
+		}
 		// Merged HERE, in the location the apply ran in -- unless the device moved during it.
 		if ((await fileLoc()) === mergeLoc) noteMergedAt(mergeLoc, j.version | 0);
 		reapplyDone();				// a clean apply settles any re-pull that was armed.
@@ -2401,6 +2465,7 @@
 				var known = (cmp === lastPushed)
 					|| (lastPushed === null && !!bootSig && (await sigOf(cmp)) === bootSig);
 				if (known && serverVersion > 0) {
+					sentKeys = presentKeys(state);		// the mailbox already holds these
 					// Nothing new to send -- but the round is not wasted, and this
 					// is the trigger that has to catch up.
 					//
@@ -2518,6 +2583,7 @@
 				if (res.status === 200 && res.json && res.json.ok) {
 					serverVersion = res.json.version | 0;
 					lastPushed = cmp;
+					sentKeys = presentKeys(state);
 					saveVersion();
 					// This device's own parcel is the mailbox now: whole at this version if it
 					// was whole at the base it was collected over (its `chunkedFull`). Before the
@@ -2835,6 +2901,7 @@
 			if (res.status === 200 && res.json && res.json.ok) {
 				serverVersion = res.json.version | 0;
 				lastPushed    = cmp;
+				sentKeys      = presentKeys(state);
 				saveVersion();
 				// The frame is the mailbox now: the same mark as a push (see push()).
 				try { if (DaimondCore.syncIndexAt) DaimondCore.syncIndexAt(serverVersion, 'pushed', state); }
@@ -4674,6 +4741,9 @@
 		/// handed an object, matched none of its words and said "This device only"
 		/// through every stall (P1a M7, 2026-09-25).
 		chip: chipState,
+		/// ms of the last round that worked, 0 for never; and its age in words.
+		lastSyncedAt: function () { return lastSynced; },
+		whenAgo: whenAgo,
 		/// The presence path, off the content parcel: `beatPresence(deviceId, name)`
 		/// writes this device's last_seen and adopts the account's fresh map (bumping
 		/// no version and waking nobody); `refreshPresence()` reads that map without a
@@ -4732,6 +4802,8 @@
 		version: function () { return serverVersion; },
 		// The last version this page took from another writer; see `foreignAt`.
 		foreignAt: function () { return foreignAt; },
+		// Sections of this device's own the last merged parcel lacked (HEAL, see `sentKeys`).
+		lastPulledLacks: function () { return pulledLacks.slice(); },
 		// The cursor this device stood at when it last loaded this build over the build before's, or -1;
 		// see `oldAt`.
 		oldAt: function () { return oldAt; },

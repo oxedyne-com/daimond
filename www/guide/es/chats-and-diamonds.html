@@ -82,7 +82,7 @@
 	<h2 id="s5">Guardar un chat</h2>
 	<p>Dos botones están en la fila de un chat en la barra lateral. <span class="ui">Guardar</span> convierte toda la conversación en un diamond. <span class="ui">Plegar todo</span> lo convierte en un diamond resumiéndolo, quedándose con lo que se averiguó y descartando el ir y venir.</p>
 	<p>Para guardar solo parte, pliega las respuestas, marca los turnos que merece la pena guardar, y elige <span class="ui">Plegar lo seleccionado</span>. Pliega un paso que hayas adoptado, y deja un comentario de paso donde está.</p>
-	<p>Nada se absorbe solo. La memoria de un diamond cambia solo por un pliegue o una edición, y cada escritura se guarda en el historial.</p>
+	<p>Nada se absorbe por sí solo. La memoria de un Diamond cambia solo mediante un plegado o una edición, y cada escritura se guarda en el Historial, hasta el límite que se describe más abajo en Historial.</p>
 
 	<h2 id="s6">Dentro de un diamond</h2>
 	<p>Tus diamonds están encima de tus chats, y el <span class="ui">+</span> crea uno. Un diamond tiene dos caras, y un interruptor en su cabecera cambia entre ellas. <span class="ui">Cristal</span> es lo que sabe, y <span class="ui">Chat</span> es su propia conversación.</p>
@@ -94,7 +94,7 @@
 
 	<p>La tarjeta lista el título y el resumen del diamond con sus propias palabras, y luego todo lo demás que contiene, una línea cada uno. <span class="ui">Editar</span> abre un formulario. <span class="ui">Mostrar memoria en bruto</span> abre el propio archivo, para cuando prefieras trabajar directamente en él.</p>
 
-	<p>Un daimon mira lo que ha cambiado antes de decir que ha terminado. Nombra una vista en lugar de adivinar la página: la vista previa del documento, un archivo abierto, cualquier panel en pantalla, la ventana entera o la propia página de su diamond. Si su propio modelo no lee imágenes, el modelo de imágenes del diamond las describe, y un fallo nombra ese modelo y su proveedor. Una pregunta que hace un daimon solo se muestra mientras su conversación está en pantalla; desde otra cara se le dice por qué, y pregunta en su respuesta.</p>
+	<p>Un daimon mira lo que ha cambiado antes de decir que ha terminado. Nombra una vista en lugar de adivinar la página: la vista previa del documento, un archivo abierto, cualquier panel en pantalla, la ventana entera o la página propia de su Diamond. Si su propio modelo no lee imágenes, el modelo de imágenes del Diamond las describe, y un fallo nombra ese modelo y su proveedor. Una pregunta que hace un daimon solo se muestra mientras su conversación está en pantalla; desde otra vista se le dice por qué, y pregunta en su respuesta.</p>
 
 	<h2 id="s7">Los cuatro archivos que guarda un diamond</h2>
 	<p>La memoria se guarda a la vista. Cuatro archivos están en la carpeta propia del diamond, legibles en el panel Espacio y por el daimon.</p>
@@ -115,11 +115,12 @@
 	<p>Archivar es repetible, así que ejecutar el mismo pliegue dos veces no archiva nada dos veces, y el orden en que llegan dos pliegues no cambia lo que acaban diciendo los archivos.</p>
 
 	<h2 id="s9">Historial</h2>
-	<p><span class="ui">Historial</span> lista cada versión, de la más nueva a la más vieja. <span class="ui">Ver</span> lee una, <span class="ui">Restaurar</span> vuelve a hacerla la actual, y <span class="ui">Delta</span> muestra el material que se le dio a un pliegue. Restaurar guarda primero lo que era la actual, así que una restauración se puede deshacer a su vez.</p>
+	<p><span class="ui">Historial</span> enumera las versiones que guarda, de la más reciente a la más antigua. Guarda hasta 200 versiones dentro de un límite de tamaño que puedes cambiar en Ajustes, y el pie de la lista dice ambas cosas. Cuando está lleno, primero se eliminan las ediciones más antiguas del daimon; tus versiones guardadas, tus propios archivos, los datos de tu página y los borrados se eliminan al final. Una fila de la lista dice qué versiones se eliminaron y cuándo. <span class="ui">Ver</span> lee una, <span class="ui">Restaurar</span> vuelve a hacerla la actual, y <span class="ui">Delta</span> muestra el material que se le dio a un pliegue. Restaurar guarda primero lo que era la actual, así que una restauración se puede deshacer a su vez.</p>
 	<p>Every file the daimon changes in a diamond is kept too, and a row's <span class="ui">Restore file</span> brings one back while <span class="ui">Restaurar</span> brings the whole version back. Files on this computer are kept only where the daimon wrote them here, so a change made by an editor, a build or a command is not in History. Deleting, renaming, folding and restoring each show <span class="ui">Undo</span> for five seconds, and after that the act stands.</p>
 
 	<h2 id="s10">Actuar sin que se le pida</h2>
 	<p>Un diamond responde cuando se lo pides y en ningún otro momento, a menos que configures una acción disparada. Esas viven en <span class="ui">Cuándo actúa este diamond</span> en la cara Cristal, y <span class="ui">Añadir una acción</span> crea una. Dos cosas pueden dispararla: minutos de tu propia actividad, contados solo mientras trabajas, o correo que llega a una carpeta que nombres.</p>
+	<p>El correo dispara su acción sea cual sea el diamond que esté en pantalla, así que un diamond que vigila un buzón trabaja sin que nadie lo mire. La respuesta va al hilo propio de ese diamond, y la pantalla se queda donde está. Si el diamond está ocupado, o estás a medio escribir, el correo espera un minuto y se vuelve a intentar.</p>
 	<p>Cada acción lleva una instrucción, enviada cada vez, y un contexto, enviado una vez hasta que lo cambias. Son un archivo corriente, <code>triggers.json</code>, en la carpeta del diamond.</p>
 	<p>Una acción nueva está <strong>detenida</strong>, y lo dice: <em>Detenida. Pulsa &#9654; en la luz junto al desplegable para dejar correr esta acción.</em> Un toque la arma.</p>
 
@@ -134,7 +135,8 @@
 	<p>Una acción retenida no gasta nada, porque se rechaza antes de que empiece el turno.</p>
 
 	<h2 id="s12">Etiquetas, enlaces y la papelera</h2>
-	<p><span class="ui">Etiquetas</span> en la cara Cristal archiva un diamond en la barra lateral. Hasta ocho etiquetas, en minúscula y sin duplicados. <span class="ui">Sugeridas</span> ofrece cuatro para empezar. Las etiquetas son inertes. No se envían a ningún modelo, no son parte de la memoria, y no cambian nada de lo que hace un agente. <span class="ui">Filtrar por etiqueta</span> de la barra lateral filtra por ellas. <span class="ui">Buscar diamonds</span>, encima, encuentra un diamond por su nombre o por el comienzo de una etiqueta. Los dos filtran juntos, y Esc borra la búsqueda.</p>
+	<p><span class="ui">Etiquetas</span> en la cara Cristal archiva un diamond en la barra lateral. Hasta ocho etiquetas, en minúscula y sin duplicados. <span class="ui">Sugeridas</span> ofrece cuatro para empezar. Las etiquetas son inertes. No se envían a ningún modelo, no son parte de la memoria, y no cambian nada de lo que hace un agente. <span class="ui">Filtrar por etiqueta</span> de la barra lateral filtra por ellas. <span class="ui">Search diamonds</span>, above it, finds a diamond by its name or by the start of a tag. The two narrow together, and Esc clears the search.</p>
+	<p>Cada Diamond y cada chat tiene un icono junto a su nombre. Hasta que elijas uno, el icono sigue el nombre y las etiquetas tal como están ahora, así que un Diamond con la etiqueta <span class="ui">person</span> recibe una persona, aunque la etiqueta llegara después del Diamond. Es igual en todos los dispositivos. Pulsa el icono para elegir otro; <span class="ui">Buscar</span> abarca los 5.184, y <span class="ui">Usar predeterminado</span> vuelve a seguir el nombre y las etiquetas. Un icono elegido se sincroniza con tus otros dispositivos.</p>
 	<p>Un diamond también se puede enlazar con otro, y el <a href="interface.html">Grafo</a> es la imagen de eso.</p>
 	<p>Borrar un chat o un diamond lo manda a la papelera. Sigue guardado y sincronizado, fuera del alcance de todo daimon, y se guarda treinta días con la fecha en la fila. <span class="ui">Restaurar</span> lo trae de vuelta en todos los dispositivos. <span class="ui">Borrar para siempre</span> y <span class="ui">Vaciar la papelera</span> son las dos que preguntan.</p>
 

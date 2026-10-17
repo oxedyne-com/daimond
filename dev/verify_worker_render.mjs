@@ -82,14 +82,42 @@ try {
 		`${healed.kept} finished persisted, ${healed.inMemory} in memory (cap ${KEEP})`);
 
 	// ── 2. One worker turn, measured ────────────────────────────
-	await p.evaluate(() => {
+	const press = await p.evaluate(() => {
 		window.DaimondPanels.show('agents');
 		window.DaimondWorkers.render();
+		// Every square pressed BEFORE the measuring starts, so every tile is drawn as it
+		// was before the grid (AGENT-GRID): what is measured is the stream, not the press.
+		const W = window.DaimondWorkers;
+		const r0 = W.render, t0 = W.tile;
+		const n = { render: 0, tile: 0 };
+		W.render = function () { n.render++; return r0.apply(this, arguments); };
+		W.tile = function () { n.tile++; return t0.apply(this, arguments); };
+		const a = performance.now();
+		const pressed = window.__pressSquares ? window.__pressSquares() : 0;
+		const ms = performance.now() - a;
+		void document.body.offsetHeight;
+		const lay = Math.round(performance.now() - a - ms);
+		W.render = r0; W.tile = t0;
+		return { pressed, ms: Math.round(ms), lay, ...n };
+	});
+	// AGENT-GRID: a press draws its own tile and nothing else. Until 16 Oct 2026 each press
+	// redrew the whole panel, so pressing 40 squares was 40 renders and a second's freeze.
+	check('PRESSING EVERY SQUARE DRAWS EACH TILE ONCE — no whole redraw per press',
+		press.pressed > 0 && press.render === 0 && press.tile === press.pressed && press.ms <= LONG_MS,
+		`${press.pressed} pressed: ${press.render} render(s), ${press.tile} tile(s), ${press.ms} ms (then ${press.lay} ms to lay out what they show)`);
+	await p.evaluate(() => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))));
+	await p.evaluate(() => {
 		window.__long = [];
 		try {
 			new PerformanceObserver((l) => l.getEntries().forEach((e) => window.__long.push(e.duration)))
 				.observe({ type: 'longtask', buffered: false });
 			window.__longOk = true;
+			// What the page drew while it was measured, so a long task names its cause.
+			const Wd = window.DaimondWorkers;
+			window.__draws = { render: 0, tile: 0 };
+			const r0 = Wd.render, t0 = Wd.tile;
+			Wd.render = function () { window.__draws.render++; return r0.apply(this, arguments); };
+			Wd.tile = function () { window.__draws.tile++; return t0.apply(this, arguments); };
 		} catch (e) { window.__longOk = false; }
 		const W = window.DaimondWorkers;
 		W.resume(W.runs.find((r) => r.name === 'live'));
@@ -113,11 +141,11 @@ try {
 		if (status === 'running') {
 			const f = await p.evaluate((snap) => {
 				const W = window.DaimondWorkers;
-				const cards = [...document.querySelectorAll('#agents-list .acard')];
+				const cards = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard'))];
 				if (snap) {
 					window.__fin = [];
-					cards.forEach((c, i) => {
-						const r = W.runs[i];
+					cards.forEach((c) => {
+						const r = W.runs.find((x) => String(x.id) === c.dataset.run);
 						if (r && r.status === 'done') window.__fin.push({ node: c, html: c.outerHTML });
 					});
 					return null;
@@ -137,10 +165,14 @@ try {
 				requestAnimationFrame(() => {
 					const W = window.DaimondWorkers;
 					const out = [];
-					const cards = [...document.querySelectorAll('#agents-list .acard')];
-					W.runs.forEach((r, i) => {
+					const cards = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard'))];
+					// Tiles are in press order (AGENT-GRID), not run order: match by run id.
+					const by = {};
+					cards.forEach((c) => { by[c.dataset.run] = c; });
+					W.runs.forEach((r) => {
 						const want = W.tile(r).outerHTML;
-						if (!cards[i] || cards[i].outerHTML !== want) out.push(r.id);
+						const c = by[String(r.id)];
+						if (!c || c.outerHTML !== want) out.push(r.id);
 					});
 					res(out);
 				}))));
@@ -153,13 +185,16 @@ try {
 	const end = await p.evaluate(() => new Promise((res) => requestAnimationFrame(() =>
 		requestAnimationFrame(() => {
 			const W = window.DaimondWorkers;
-			const cards = [...document.querySelectorAll('#agents-list .acard')];
+			const cards = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard'))];
 			const wrong = [];
-			W.runs.forEach((r, i) => {
-				if (!cards[i] || cards[i].outerHTML !== W.tile(r).outerHTML) wrong.push(r.id);
+			const by = {};
+			cards.forEach((c) => { by[c.dataset.run] = c; });
+			W.runs.forEach((r) => {
+				const c = by[String(r.id)];
+				if (!c || c.outerHTML !== W.tile(r).outerHTML) wrong.push(r.id);
 			});
 			const live = W.runs.find((x) => x.name === 'live') || {};
-			res({ wrong, longOk: window.__longOk, longs: window.__long.slice(),
+			res({ wrong, longOk: window.__longOk, longs: window.__long.slice(), draws: window.__draws,
 				text: live.text || '', status: live.status,
 				chars: (localStorage.getItem('daimond-workers') || '').length });
 		}))));
@@ -169,7 +204,7 @@ try {
 	const worst = end.longs.length ? Math.max(...end.longs) : 0;
 	if (end.longOk) {
 		check(`A STREAMING WORKER DOES NOT BLOCK THE PAGE — no long task over ${LONG_MS} ms`,
-			worst <= LONG_MS, `${end.longs.length} long task(s), worst ${Math.round(worst)} ms`);
+			worst <= LONG_MS, `${end.longs.length} long task(s), worst ${Math.round(worst)} ms; ${end.draws ? end.draws.render + ' render(s), ' + end.draws.tile + ' tile(s) drawn' : ''}`);
 	} else {
 		console.log(`  n/a  long tasks (no longtask observer in ${BROWSER})`);
 	}

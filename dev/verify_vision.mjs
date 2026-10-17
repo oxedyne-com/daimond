@@ -563,9 +563,9 @@ const installShown = () => p.evaluate(() => {
 /// The worker tile for `task`, and everything the checks read off it.
 const tileFor = (task) => p.evaluate((task) => {
 	const shown = window.__visionShown;
-	const card = [...document.querySelectorAll('#agents-list .acard')]
+	const card = [...(window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard'))]
 		.find((c) => ((c.querySelector('.atask') || {}).textContent || '').trim() === task);
-	if (!card) return { found: false, cards: document.querySelectorAll('#agents-list .acard').length };
+	if (!card) return { found: false, cards: (window.__pressSquares && window.__pressSquares(), document.querySelectorAll('#agents-list .acard')).length };
 	// Every leaf in the tile that carries words of its own, so "the tile says X" can be
 	// traced to the one element that says it rather than to an innerText soup.
 	const said = [...card.querySelectorAll('*')]

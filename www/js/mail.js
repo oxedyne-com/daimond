@@ -1545,6 +1545,9 @@
 							folder:  name,
 							count:   fresh.length,
 							uids:    fresh.map(function (m) { return m.uid; }),
+							// With the uids, what names one arrival on every device: the
+							// lease each device claims before its turn runs (`mailClaimId`).
+							uidValidity: f.uidValidity || 0,
 						},
 					}));
 				} catch (e) { /* an old browser: the sync still happened */ }
@@ -3911,6 +3914,12 @@
 		/// only: nothing outside this module has any business with a password.
 		accounts: function () {
 			return state.accounts.map(function (a) { return a.address; });
+		},
+		/// What this device holds of one folder: its generation and the highest uid fetched.
+		/// A mail trigger owes a turn for what is held above the folder's answered mark.
+		held: function (address, name) {
+			var a = acct(address), f = a && a.folders ? a.folders[name || a.folder || 'INBOX'] : null;
+			return f ? { uidValidity: f.uidValidity || 0, lastUid: f.lastUid || 0 } : null;
 		},
 		// Surviving a passphrase change. The caller drives the two halves; the
 		// passwords never cross this boundary in either direction.

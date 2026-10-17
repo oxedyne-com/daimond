@@ -182,6 +182,7 @@ pub struct Agent {
     /// reason `briefing` is: a worker dispatched from a steering turn is inside the same
     /// Diamond.
     diamond:             Rc<RefCell<String>>,
+    pending_only:        Cell<bool>,                     // reports on Pending, see `set_pending_only`
 }
 
 
@@ -398,6 +399,7 @@ struct Claim {
 	outcome:	crate::tools::CallOutcome,
 	opaque:		bool,										// see [`crate::tools::Tool::opaque`]
 	paths:		Vec<(String, crate::tools::PathClaim)>,
+	alerted:	bool,										// a pending_raise/pending_clear that landed
 }
 
 /// The turn's tool log, and the findings that can be read out of it.
@@ -425,6 +427,14 @@ impl Claims {
 	/// taken: a write the fence stopped is not a file anybody should be looking for.  `daimon` is
 	/// the Diamond the turn acts for, inside which a call's default path is placed.
 	fn record(&mut self, name: &str, args: &str, outcome: crate::tools::CallOutcome, daimon: Option<&str>) {
+		self.record_said(name, args, outcome, daimon, "");
+	}
+
+	/// [`Claims::record`], with the result the model was handed: whether a Pending call LANDED
+	/// is read from the engine's own words ([`crate::tools::pending_landed`]), since `Done`
+	/// alone also covers a clear that found nothing and a raise that stayed dismissed.
+	fn record_said(&mut self, name: &str, args: &str, outcome: crate::tools::CallOutcome, daimon: Option<&str>,
+		result: &str) {
 		let tool = crate::tools::Tool::from_name(name);
 		let paths = match tool {
 			Some(t) if outcome == crate::tools::CallOutcome::Done => t.path_claims(args, daimon),
@@ -434,7 +444,22 @@ impl Claims {
 		// reached a shell, a build or a worker did.
 		let opaque = tool.map(|t| t.opaque()).unwrap_or(false)
 			&& outcome != crate::tools::CallOutcome::Refused;
-		self.calls.push(Claim { outcome, opaque, paths });
+		// The Pending panel is the one place a person looks for what a Diamond found
+		// (D-20261016-17, rulings section 16), so a turn that put its word there has reported --
+		// a raise that is on the panel, or a clear that took one off.  A clear of nothing is not
+		// a report (review AP-3): a failing turn's precautionary clear must not spare it the nudge.
+		let alerted = matches!(tool, Some(crate::tools::Tool::PendingRaise) | Some(crate::tools::Tool::PendingClear))
+			&& outcome == crate::tools::CallOutcome::Done
+			&& crate::tools::pending_landed(result);
+		self.calls.push(Claim { outcome, opaque, paths, alerted });
+	}
+
+	/// Did this turn report on the Pending panel?  Then an empty final reply is not silence:
+	/// it is the Email daimon doing as it is told, posting nothing in its chat.  No nudge to
+	/// "report what you did" (which would put the alert in the chat as well), and no
+	/// "ended without a reply" card under a turn whose answer is on the panel.
+	fn alerted(&self) -> bool {
+		self.calls.iter().any(|c| c.alerted)
 	}
 
 	fn tally(&self, want: crate::tools::CallOutcome) -> usize {
@@ -492,6 +517,7 @@ impl Agent {
             turn_start:      Cell::new(0),
             fold_rest:       Cell::new(0),
             orphaned:        Cell::new(false),
+            pending_only:    Cell::new(false),
             ending:          Rc::new(RefCell::new(None)),
             diamond:         Rc::new(RefCell::new(String::new())),
         }
@@ -1041,6 +1067,29 @@ impl Agent {
     /// * `id` - The Diamond, as `diamonds/<id>/` spells it.
     pub fn set_diamond(&self, id: &str) {
         *self.diamond.borrow_mut() = id.to_string();
+    }
+
+    /// Say that this turn reports through the Pending panel and never in its chat.
+    ///
+    /// A triggered daimon turn -- mail arriving, a schedule firing -- has no person waiting on
+    /// its reply (D-20261016-17, rulings section 16: "Post nothing in this chat").  Its word is
+    /// a `pending_raise`, or nothing at all.  So for such a turn an empty, unreasoned final reply
+    /// over at least one call, all of which went through, is a quiet [`TurnEnd::Answered`]: no "report what you did" nudge,
+    /// which is what made the model post routine mail in the chat (review R569 R4), and no
+    /// "ended without a reply" card.  A Failed or Refused call keeps the nudges and the
+    /// `Silent` ending, so a real failure is still seen.
+    pub fn set_pending_only(&self, on: bool) {
+        self.pending_only.set(on);
+    }
+
+    /// May this turn end on an empty reply without a word?
+    fn quiet_end(&self, claims: &Claims) -> bool {
+        // At least one call went through: an empty reply with no call at all is the
+        // empty-completion class, a turn that never tried, and stays `Silent` (CHECK_ABC B1).
+        self.pending_only.get()
+            && claims.tally(crate::tools::CallOutcome::Done) > 0
+            && claims.tally(crate::tools::CallOutcome::Failed) == 0
+            && claims.tally(crate::tools::CallOutcome::Refused) == 0
     }
 
     /// Which Diamond this turn is steering, or empty.
@@ -2053,6 +2102,16 @@ impl Agent {
             }
             if resp.tool_calls.is_empty() {
                 let empty_reply = resp.content.trim().is_empty();
+                // A TURN THAT REPORTS ON PENDING AND ENDED EMPTY WITH NOTHING FAILED IS DONE.
+                // Its silence is the routine-mail outcome the ruling asks for, so neither nudge
+                // below may ask it to say something.
+                // A round that reasoned is a thought cut off, not silence: it keeps the
+                // reasoned-only nudge, so a `pending_raise` it was about to make is not lost
+                // (CHECK_ABC B2).
+                let quiet = empty_reply
+                    && reasoned_only == 0
+                    && resp.thinking.trim().is_empty()
+                    && self.quiet_end(&claims);
                 // A TOOL-USING WORKER THAT ENDED WITH AN EMPTY FINAL REPLY.  It did the work --
                 // `claims.calls` is non-empty -- and then said nothing, so no report is written;
                 // the fan-out that dispatched it reads that silence as "nothing found" and
@@ -2063,7 +2122,7 @@ impl Agent {
                 // and `reasoned_only`: a second empty round after being asked ends the turn on its
                 // own word (Silent/ReasonedOnly below), now carrying `calls > 0` so the note names
                 // the work rather than inviting a re-dispatch.
-                if empty_reply && !report_nudged && !claims.calls.is_empty() {
+                if empty_reply && !quiet && !report_nudged && !claims.calls.is_empty() && !claims.alerted() {
                     report_nudged = true;
                     let said = ChatMessage::Assistant {
                         content:    MessageContent::text(crate::llm::seamed(resp.content.clone())),
@@ -2088,7 +2147,7 @@ impl Agent {
                 // finish the thought, and `reasoned_only > 0` catches the round after that
                 // whether or not IT carried reasoning too -- a second empty round is not
                 // something a third sentence will fix, whatever produced it.
-                if empty_reply && (reasoned_only > 0 || !resp.thinking.trim().is_empty()) {
+                if empty_reply && !quiet && !claims.alerted() && (reasoned_only > 0 || !resp.thinking.trim().is_empty()) {
                     reasoned_only += 1;
                     claims.reasoned += 1;
                     let said = ChatMessage::Assistant {
@@ -2121,7 +2180,7 @@ impl Agent {
                 // clears, the screen does not change, and a finished turn is indistinguishable
                 // from a hung one. The streaming path has said so since it was found; here the
                 // ending names it, which costs nothing and is the same fact.
-                let mut how = if empty_reply { TurnEnd::Silent } else { TurnEnd::Answered };
+                let mut how = if empty_reply && !quiet && !claims.alerted() { TurnEnd::Silent } else { TurnEnd::Answered };
                 // A REFUSAL STILL STANDING IS NOT AN ANSWER.  Told once that it must mend it,
                 // the model gets the round; a second ending over it is `Blocked`, and the
                 // refusal's own words are what the user reads.
@@ -2414,7 +2473,7 @@ impl Agent {
                     // AND THE AUDIT IS KEPT FROM THE SAME VERDICT, not from a second reading of
                     // it. The paths come from the ARGUMENTS the model sent, which name the file
                     // it meant whatever the reply says about it.
-                    claims.record(&tc.name, &tc.arguments, outcome, registry.ctx.daimon().as_deref());
+                    claims.record_said(&tc.name, &tc.arguments, outcome, registry.ctx.daimon().as_deref(), &text);
                     outcomes[base + n] = Some(outcome);
                     // ASKED OF THE RESULT, and of every call in the round rather than of the
                     // first: a round may carry several, and the question may not be the one that
@@ -7214,6 +7273,91 @@ mod tests {
              ({} rounds requested)", asked);
     }
 
+    /// The round script of a triggered turn: one call to `tool`, then an empty final reply,
+    /// then a report that only a nudge would ever ask for.
+    fn call_then_empty(tool: &str) -> Vec<crate::llm::tests::Reply> {
+        let call = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\
+                 \"type\":\"function\",\"function\":{\"name\":\"TOOL\",\"arguments\":\
+                 \"{\\\"path\\\":\\\"a.txt\\\",\\\"content\\\":\\\"1\\\"}\"}}]}}]}\n\n".replace("TOOL", tool),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let empty = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{}}]}\n\n".to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        vec![call, empty, sse_saying("I checked the mail; nothing needs you.")]
+    }
+
+    /// Runs a pending-only turn over `script`: its ending, and how many rounds were asked for.
+    async fn pending_only_turn(script: Vec<crate::llm::tests::Reply>) -> (TurnEnding, usize) {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(script).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(10);
+        a.set_pending_only(true);
+        let mut session = Session::new(fmt!("s1"), fmt!("mail"), fmt!("model"));
+        let _ = a.run_turn(&mut session, fmt!("new mail arrived"), &registry, &mut |_| {}).await;
+        let end = a.ending().expect("the turn said nothing about how it ended");
+        let asked = match seen.lock() { Ok(g) => g.bodies.len(), Err(e) => panic!("{}", e) };
+        (end, asked)
+    }
+
+    /// R569 R4 (D-20261016-17, rulings section 16): routine mail with nothing to raise ends in
+    /// silence.  A turn that reports on Pending is not told to "report what you did", which is
+    /// what made the model post the mail in its chat, and its silence is not `Silent`, which is
+    /// what raised a false "turn failed" alert.
+    #[tokio::test]
+    async fn test_a_pending_only_turn_ends_quietly_on_an_empty_reply_00() {
+        let (end, asked) = pending_only_turn(call_then_empty("file_write")).await;
+        assert_eq!(TurnEnd::Answered, end.how, "routine mail did not end quietly: {:?}", end);
+        assert_eq!(2, asked, "the turn was nudged to report ({} rounds requested)", asked);
+    }
+
+    /// The other side of the same rule: a call that went wrong is not routine, so a pending-only
+    /// turn that ends empty over it is still nudged, and still ends unexplained if it stays so.
+    #[tokio::test]
+    async fn test_a_pending_only_turn_over_a_failed_call_is_still_nudged_00() {
+        let (end, asked) = pending_only_turn(call_then_empty("no_such_tool")).await;
+        assert_eq!(3, asked, "a failed call ended quietly ({} rounds requested): {:?}", asked, end);
+    }
+
+    /// CHECK_ABC B1: an empty FIRST reply, no call made at all (the empty-completion class), is
+    /// not routine mail done; it must not end as a quiet `Answered`.
+    #[tokio::test]
+    async fn test_chk_abc_pending_only_empty_first_reply_is_not_quiet_00() {
+        let empty = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{}}]}\n\n".to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let (end, asked) = pending_only_turn(vec![empty, sse_saying("late words")]).await;
+        assert_ne!(TurnEnd::Answered, end.how, "an empty first reply with no call ended quietly ({} rounds)", asked);
+    }
+
+    /// CHECK_ABC B2: a call went through, then a round that only REASONED (cut mid-thought): the
+    /// reasoned-only nudge must still fire for a pending-only turn.
+    #[tokio::test]
+    async fn test_chk_abc_pending_only_reasoned_round_is_still_nudged_00() {
+        let mut script = call_then_empty("file_write");
+        script[1] = sse_reasoning_only("I should raise this one for him with pending_raise");
+        let (end, asked) = pending_only_turn(script).await;
+        assert!(asked >= 3, "a reasoned-only round ended quietly ({} rounds requested): {:?}", asked, end.how);
+    }
+
     #[test]
     fn test_an_ending_travels_as_one_of_six_words_00() {
         // Spelled once, for the reason `CallOutcome::wire` is: the browser knows these words and
@@ -8680,5 +8824,55 @@ fn test_agent_message_building() {
             assert_eq!(crate::tools::call_outcome(&r), o, "{}", r);
         }
         assert!(unrun_call_note(4_096).contains("output limit"));
+    }
+}
+
+/// ALERT-PENDING (D-20261016-17): a turn that reported on the Pending panel may end with no
+/// chat text, so a triggered Email turn posts nothing in its chat and leaves no card there.
+#[cfg(test)]
+mod tests_alerted {
+    use super::*;
+    use crate::tools::CallOutcome;
+
+    #[test]
+    fn test_a_landed_alert_is_a_report_and_nothing_else_is_00() {
+        let mut c = Claims::default();
+        assert!(!c.alerted(), "an empty turn reported nothing");
+        c.record("mail_list", "{}", CallOutcome::Done, Some("d7"));
+        assert!(!c.alerted(), "reading mail is not a report");
+        c.record("pending_raise", r#"{"key":"k","headline":"h","needs":true}"#, CallOutcome::Refused, Some("d7"));
+        assert!(!c.alerted(), "a refused raise put nothing on the panel, so silence after it is still silence");
+        c.record_said("pending_raise", r#"{"key":"k","headline":"h","needs":true}"#, CallOutcome::Done, Some("d7"),
+            "Raised. 'k' is on the user's Pending panel, on every device of theirs.");
+        assert!(c.alerted(), "a raise that landed is the turn's report");
+        let mut d = Claims::default();
+        d.record_said("pending_clear", r#"{"key":"k"}"#, CallOutcome::Done, Some("d7"),
+            "Cleared. The alert 'k' is off the user's Pending panel, on every device.");
+        assert!(d.alerted(), "a clear that landed is a report too");
+    }
+
+    /// Review AP-3: a clear that found nothing up, or a raise the person had already dismissed,
+    /// put nothing on the panel and took nothing off it. A turn whose real work FAILED and that
+    /// made a precautionary no-op clear has reported nothing, and must still be nudged.
+    #[test]
+    fn test_an_empty_clear_or_a_dismissed_raise_is_not_a_report_00() {
+        let raise = r#"{"key":"k","headline":"h","needs":true}"#;
+        let mut c = Claims::default();
+        c.record("mail_list", "{}", CallOutcome::Failed, Some("d7"));
+        c.record_said("pending_clear", r#"{"key":"k"}"#, CallOutcome::Done, Some("d7"),
+            "Done: nothing under 'k' was on the Pending panel, so there was nothing to clear.");
+        assert!(!c.alerted(), "a clear that removed nothing is not the turn's report");
+        c.record_said("pending_raise", raise, CallOutcome::Done, Some("d7"),
+            "Not raised again: the user dismissed this same alert 'k' already. Raise it with a \
+            different headline or detail only if something has changed.");
+        assert!(!c.alerted(), "a raise that stayed dismissed put nothing on the panel");
+        c.record_said("pending_raise", raise, CallOutcome::Done, Some("d7"),
+            "Updated in place. The alert 'k' was already on the user's Pending panel.");
+        assert!(c.alerted(), "an alert updated on the panel is the turn's report");
+        let mut r = Claims::default();
+        r.record_said("pending_raise", raise, CallOutcome::Done, Some("d7"), "Raised. 'k' is on the user's Pending panel.");
+        assert!(r.alerted(), "a raise that landed");
+        // The engine's own words are what is read, so they cannot drift from pending_result.
+        assert!(crate::tools::pending_landed("Cleared. x") && !crate::tools::pending_landed("Done: nothing"));
     }
 }

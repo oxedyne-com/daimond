@@ -241,7 +241,8 @@ try {
 			visible: rows.length,
 			ids:     rows.map(r => r.id).filter(Boolean),
 			summary: sum ? (sum.textContent || '').trim() : '',
-			hidden:  !!(det && det.hidden),
+			// D-20261015-15: the eight live in Settings > This device now, not behind the line.
+			hidden:  !!(det && (det.hidden || det.classList.contains('astat-in-settings'))),
 			inside:  det ? det.querySelectorAll('.astat-row').length : 0,
 		};
 	});
@@ -250,7 +251,7 @@ try {
 		`visible=${JSON.stringify(strip.ids)}`);
 	check('and it says something true about this account',
 		/\w/.test(strip.summary), strip.summary || '(empty)');
-	check('the eight diagnostics are still there, behind the disclosure',
+	check('the eight diagnostics are still there, in Settings > This device or behind the line',
 		strip.inside >= 8, strip.inside + ' rows inside #astat-detail');
 	const openedStrip = await page.evaluate(() => {
 		const sum = document.getElementById('astat-summary');
@@ -259,7 +260,8 @@ try {
 		return !!(det && !det.hidden);
 	});
 	check('and one press opens them', openedStrip);
-	await page.evaluate(() => { const b = document.getElementById('astat-summary'); if (b) b.click(); });
+	// The line opens Settings home now (D-20261015-15); put it away again.
+	await page.evaluate(() => { if (window.DaimondAdmin && DaimondAdmin.close) DaimondAdmin.close(); });
 	await snap('before-after-strip-1440');
 
 	// ── 2: the composer, with a model connected ───────────────────────
