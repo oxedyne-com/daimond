@@ -879,12 +879,48 @@
 		return dir;
 	}
 
+	/// Whether a file stands at `name` in `dir` before a write creates it. Only the store's
+	/// plain "nothing there" is no; a fault is yes, so a failed write never deletes on it.
+	async function existedIn(dir, name) {
+		try { await dir.getFileHandle(name); return true; }
+		catch (e) { return !isAbsent(e); }
+	}
+
+	/// Size and modification time of the file behind `fh`, or null on a fault.
+	async function stampOf(fh) {
+		try { var f = await fh.getFile(); return { fh: fh, size: f.size, at: f.lastModified }; }
+		catch (e) { return null; }
+	}
+
+	/// Is the file a failed write leaves behind still the empty one that write created? Only
+	/// then may it be removed: a file the user saved at that path while the download ran is
+	/// his, though nothing stood there when the download began. A fault reads as "no".
+	async function stillPlaceholder(seen) {
+		if (seen.existed || !seen.made) return false;
+		var now = await stampOf(seen.made.fh);
+		return !!now && now.size === 0 && now.size === seen.made.size && now.at === seen.made.at;
+	}
+
+	/// Give up a writable WITHOUT committing it. `close()` would write the partial (or empty)
+	/// bytes over whatever the file held; `abort()` discards them and leaves an existing file
+	/// as it was. A stream with no `abort` is simply never closed, which commits nothing.
+	async function dropWrite(w) {
+		if (!w) return;
+		try { if (typeof w.abort === 'function') await w.abort(); } catch (e) { /* already gone */ }
+	}
+
 	/// Open a writable stream at a path under `root`, creating the folders on the way.
-	async function openWriteUnderRoot(root, path) {
+	/// `seen`, when given, is told whether a file stood there before (`seen.existed`) and,
+	/// when none did, the placeholder this write made (`seen.made`), so a failure removes only
+	/// that placeholder (`stillPlaceholder`).
+	async function openWriteUnderRoot(root, path, seen) {
 		var p = parts(path);
 		var dir = await dirUnderRoot(root, path, true);
 		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		var fh = await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]), { create: true });
+		var name = await diskNameIn(dir, p[p.length - 1]);
+		if (seen) seen.existed = await existedIn(dir, name);
+		var fh = await dir.getFileHandle(name, { create: true });
+		if (seen && !seen.existed) seen.made = await stampOf(fh);
 		return await fh.createWritable();
 	}
 
@@ -909,13 +945,15 @@
 	///
 	/// `dest` is where the bytes land, which is `path` itself except for a conflict
 	/// copy. A failure leaves nothing behind: a truncated file standing in for a whole
-	/// one, in a folder under version control, would be committed by somebody.
+	/// one, in a folder under version control, would be committed by somebody. And a
+	/// failure over a file the user already has leaves HIS bytes: the writable is
+	/// aborted, never closed, and only a file this call created is removed.
 	async function materialiseTo(root, path, dest, folder) {
 		var m = manifest(path);
 		if (!m) return 'Error: ' + path + ' is not in cloud storage.';
 		if (!window.DaimondChunks) return 'Error: the chunk transport is not loaded.';
-		var to = dest || path, w, written = 0, okAll = false;
-		try { w = await openWriteUnderRoot(root, to); }
+		var to = dest || path, w, written = 0, okAll = false, seen = { existed: true };
+		try { w = await openWriteUnderRoot(root, to, seen); }
 		catch (e) { return 'Error: could not write ' + to + ' into the open folder: '
 			+ (e && e.message ? e.message : e); }
 		if ((m.v | 0) >= 2) {
@@ -924,13 +962,14 @@
 					await w.write(bytes);
 					written += bytes.length;
 				});
-				await w.close();
-			} catch (e) { try { await w.close(); } catch (e2) { /* already gone */ } okAll = false; }
+				if (okAll) await w.close();
+				else await dropWrite(w);
+			} catch (e) { await dropWrite(w); okAll = false; }
 		} else {
 			// An older whole-file manifest, from before the streaming pipeline.
 			var content = null;
 			try { content = await DaimondChunks.materialiseV1(m); } catch (e) { content = null; }
-			if (content == null) { try { await w.close(); } catch (e2) { /* already gone */ } }
+			if (content == null) await dropWrite(w);
 			else {
 				try {
 					var bytes = new TextEncoder().encode(content);
@@ -938,11 +977,11 @@
 					await w.close();
 					written = bytes.length;
 					okAll = true;
-				} catch (e) { try { await w.close(); } catch (e2) { /* already gone */ } okAll = false; }
+				} catch (e) { await dropWrite(w); okAll = false; }
 			}
 		}
 		if (!okAll) {
-			await removeUnderRoot(root, to);
+			if (await stillPlaceholder(seen)) await removeUnderRoot(root, to);
 			return 'Error: ' + to + ' could not be written; cloud storage no longer holds all of its parts.';
 		}
 		touch(path);
@@ -971,12 +1010,15 @@
 	}
 
 	/// Open a writable stream at a path, so a large file lands on disk piece by
-	/// piece instead of being assembled in memory first.
-	async function openWrite(path) {
+	/// piece instead of being assembled in memory first. `seen` as `openWriteUnderRoot`.
+	async function openWrite(path, seen) {
 		var p = parts(path);
 		var dir = await dirFor(path, true);
 		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		var fh = await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]), { create: true });
+		var name = await diskNameIn(dir, p[p.length - 1]);
+		if (seen) seen.existed = await existedIn(dir, name);
+		var fh = await dir.getFileHandle(name, { create: true });
+		if (seen && !seen.existed) seen.made = await stampOf(fh);
 		return await fh.createWritable();
 	}
 
@@ -1977,10 +2019,12 @@
 		if (await isHeld(path)) {
 			// NOT IF WHAT IS HERE IS A VERSION THE INDEX HAS MOVED PAST. That copy is not this
 			// file any more, and answering "already on this device" handed the person the older
-			// version of it. One changed here since is theirs, and stands.
+			// version of it. One changed here since is theirs, and stands. The stale copy is NOT
+			// removed first: the download writes over it, so success replaces it in one step and
+			// any failure (a missing part, a refused allowance) leaves it as it was.
 			var here = await fileAt(path);
 			var st = here ? await localState(path, here, m) : { state: 'absent' };
-			if (st.state !== 'stale' || !mayDrop(path, m, st.baseVer, st.live) || !(await removeLocal(path))) {
+			if (st.state !== 'stale' || !mayDrop(path, m, st.baseVer, st.live)) {
 				touch(path);
 				return 'OK: ' + path + ' is already on this device.';
 			}
@@ -2003,8 +2047,8 @@
 		if ((m.v | 0) >= 2) {
 			// Straight to disk, one piece at a time: a file too large to hold is
 			// exactly the file this exists for.
-			var w;
-			try { w = await openWrite(path); }
+			var w, seen = { existed: true };
+			try { w = await openWrite(path, seen); }
 			catch (e) { return 'Error: could not write ' + path + ' to this device: ' + (e && e.message ? e.message : e); }
 			var okAll = false;
 			try {
@@ -2012,14 +2056,16 @@
 					await w.write(bytes);
 					written += bytes.length;
 				});
-				await w.close();
+				if (okAll) await w.close();
+				else await dropWrite(w);
 			} catch (e) {
-				try { await w.close(); } catch (e2) { /* already gone */ }
+				await dropWrite(w);
 				okAll = false;
 			}
 			if (!okAll) {
-				// Never leave a truncated file standing in for a whole one.
-				await removeLocal(path);
+				// Never leave a truncated file standing in for a whole one -- and never take
+				// away one that was here before: the aborted write left its bytes as they were.
+				if (await stillPlaceholder(seen)) await removeLocal(path);
 				return 'Error: ' + path + ' could not be fetched; cloud storage no longer holds all of its parts.';
 			}
 		} else {

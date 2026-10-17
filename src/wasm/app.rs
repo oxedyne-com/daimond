@@ -48,6 +48,15 @@ fn versions_said(got: Option<(u64, Vec<String>)>) -> Result<String, JsValue> {
     Ok(fmt!("{{\"version\":{},\"files\":[{}]}}", version, names.join(",")))
 }
 
+/// A Diamond's reach as the engine read it, from [`DaimondApp::read_scope_reach`], held for
+/// the one [`DaimondApp::set_diamond_scope`] that consumes it.  Its fields are private and it has
+/// no constructor, so a page script can pass one along but cannot make or change one.
+#[wasm_bindgen]
+pub struct ScopeReach {
+    id:    DiamondId,
+    reach: crate::marks::Reach,
+}
+
 /// The browser-side Daimond application: one session driven by the agent
 /// loop over the wasm transport.
 ///
@@ -58,6 +67,13 @@ fn versions_said(got: Option<(u64, Vec<String>)>) -> Result<String, JsValue> {
 /// block a concurrent [`DaimondApp::abort`] call (an exclusive borrow cannot
 /// coexist).  With both taking `&self`, their shared borrows coexist and
 /// the Stop button can fire mid-turn.
+///
+/// **So no exported `async fn` here takes `&mut self`.**  Its exclusive borrow
+/// lasts until the future ends, and every call the page makes meanwhile --
+/// a tile's getter included -- throws "recursive use of an object"
+/// (ENGINE-REENTRY, 2026-10-17: `set_diamond_scope` did, while it read the
+/// marks).  Do the awaiting under `&self` and the mutation in a synchronous
+/// `&mut self` call; `www/js/scopereentry.test.mjs` scans for the pattern.
 #[wasm_bindgen]
 pub struct DaimondApp {
     agent:    Agent,
@@ -758,14 +774,16 @@ impl DaimondApp {
     ///
     /// **The marks are the engine's to read** (HIST-SAFE U2, 2026-10-12): the page passed its
     /// own directory and its marks until then, and a page script could claim a folder writable.
-    /// A caller passing them -- an `own_dir` where the id goes, or a third argument -- is refused.
+    /// They arrive in `reach`, which only [`DaimondApp::read_scope_reach`] makes; a caller passing
+    /// anything else where it goes, or a third argument, is refused.  This call is synchronous so
+    /// its exclusive borrow ends before any other call can begin (ENGINE-REENTRY, 2026-10-17).
     ///
     /// # Arguments
-    /// * `id` - The Diamond the worker works for.
+    /// * `reach` - The worker's Diamond as the engine read it, consumed here.
     /// * `toolkits` - JSON array of granted toolkit names (`rust`, `node`, `python`, `go`).
-    pub async fn set_diamond_scope(
+    pub fn set_diamond_scope(
         &mut self,
-        id:          String,
+        reach:       ScopeReach,
         toolkits:    String,
         legacy:      JsValue,
     )
@@ -774,17 +792,9 @@ impl DaimondApp {
         if !legacy.is_undefined() {
             return Err(to_js_err(refuse(LEGACY_BOUNDS)));
         }
-        let id = match DiamondId::parse(&id) {
-            Ok(d)  => d,
-            Err(e) => return Err(to_js_err(e)),
-        };
+        let ScopeReach { id, reach } = reach;
         let paths = parse_path_array;
         let own_dir = id.dir();
-        // FAIL CLOSED: a record that cannot be read refuses the turn, never "nothing pressed".
-        let reach = match crate::wasm::marks::diamond_reach(&id).await {
-            Ok(r)  => r,
-            Err(_) => return Err(to_js_err(refuse(crate::wasm::marks::UNREAD))),
-        };
         let mut bounds = crate::tools::diamond_bounds(&own_dir, &reach.places(), &reach.read_only);
         // Appended, never merged in earlier: a toolkit widens what a COMMAND may touch and nothing
         // else, and composing it here rather than inside `diamond_bounds` keeps the scope and the
@@ -803,6 +813,27 @@ impl DaimondApp {
         self.registry.ctx.unconfirmed = reach.unconfirmed;
         self.registry.ctx.live = Some(Live::Diamond(id, paths(&toolkits)));
         Ok(())
+    }
+
+    /// Read what the Diamond `id` reaches here, for [`DaimondApp::set_diamond_scope`] to apply.
+    ///
+    /// **The read and the mutation are two calls so that no exclusive borrow spans an await**
+    /// (ENGINE-REENTRY, 2026-10-17).  wasm-bindgen holds a `&mut self` method's borrow of the
+    /// whole object until its future ends, so when this read lived inside an async
+    /// `set_diamond_scope`, any getter the page called while the record was being read -- the
+    /// Agents panel redrawing a tile during `spawn_agent` -- threw "recursive use of an object".
+    /// The reach comes back as an opaque [`ScopeReach`] the page can hold but neither build nor
+    /// edit, so the marks are still the engine's to read (HIST-SAFE U2).  A record that cannot be
+    /// read rejects with [`crate::wasm::marks::UNREAD`]: FAIL CLOSED.
+    pub async fn read_scope_reach(&self, id: String) -> Result<ScopeReach, JsValue> {
+        let id = match DiamondId::parse(&id) {
+            Ok(d)  => d,
+            Err(e) => return Err(to_js_err(e)),
+        };
+        match crate::wasm::marks::diamond_reach(&id).await {
+            Ok(reach) => Ok(ScopeReach { id, reach }),
+            Err(_)    => Err(to_js_err(refuse(crate::wasm::marks::UNREAD))),
+        }
     }
 
     /// What the Diamond `id` reaches on this device now, as the engine reads it at every act:

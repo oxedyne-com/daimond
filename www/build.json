@@ -1,1 +1,1 @@
-{"build":"ef712879cd2b","note":"Email Diamond answers mail off screen and flags failed turns, one cost figure on the Agents grid, avatars and status."}
+{"build":"3bb79fbc0a96","note":"A sync that loses a chunk now stops and keeps the existing file, and agents no longer fail on a recursive engine call."}

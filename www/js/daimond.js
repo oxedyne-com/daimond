@@ -20195,6 +20195,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `diamondId` - The Diamond this agent works for.
 	async function scopeAgentTo(app, diamondId, given) {
 		if (!app || typeof app.set_diamond_scope !== 'function'
+			|| typeof app.read_scope_reach !== 'function'
 			|| typeof app.diamond_scope !== 'function') {
 			throw new Error('This build of the engine cannot confine an agent to a diamond.');
 		}
@@ -20206,10 +20207,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!b.own_dir) {
 			throw new Error('That diamond has no directory, so there is nothing to confine it to.');
 		}
+		// The marks are the engine's to read (HIST-SAFE U2); only the toolkits are the page's.
+		// The read is an async `&self` call and the apply a synchronous `&mut self` one, so no
+		// exclusive borrow spans an await: a tile's getter read while the marks are being read
+		// threw "recursive use of an object" when the two were one async call (ENGINE-REENTRY).
+		var reach = await engineHold(app, app.read_scope_reach(String(diamondId)));
 		// Nothing may be mid-call on this app: `set_diamond_scope` is `&mut self`.
 		await engineIdle(app);
-		// The marks are the engine's to read (HIST-SAFE U2); only the toolkits are the page's.
-		await app.set_diamond_scope(String(diamondId), JSON.stringify(b.toolkits || []));
+		app.set_diamond_scope(reach, JSON.stringify(b.toolkits || []));
 
 		// What the engine actually holds now. Compared rather than trusted: everything that can
 		// go wrong here is silent, and every silent failure is in the direction of more reach.
