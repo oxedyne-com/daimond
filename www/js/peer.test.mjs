@@ -650,6 +650,10 @@ async function main() {
 		plan.mark.why === 'dispatched' && plan.mark.iturn === 'turn-9' && plan.mark.interrupted === true);
 	check('the deadline defaults to ~15 minutes out',
 		plan.fields.deadline === T0 + phone.DaimondPeer.DISPATCH_DEADLINE_MS);
+	// UNBLOCK-11: the errand names the last message the asker saw, so the runner waits for it
+	// rather than refusing a thread that differs.
+	check('the errand carries through = the last message the asker saw, as (ts, mid)',
+		JSON.stringify(plan.errand(0).through) === JSON.stringify({ ts: T0 - 2000, mid: 'm2' }), JSON.stringify(plan.errand(0).through));
 
 	// Drive the order end to end: MARK the local turn first (the durable placeholder,
 	// so a refused post is a transcript event, D-20260918-27), post the errand SECOND

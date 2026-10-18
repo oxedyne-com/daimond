@@ -128,6 +128,7 @@ const LIFTED = [
 	extractFn(APP, 'reconcileEngine'),
 	extractFn(APP, 'sessionPlan'),
 	extractFn(APP, 'tailAfter'),
+	extractFn(APP, 'sessionDoubt'),
 	extractFn(APP, 'dedupeSession'),
 	'return { claimWork, recoverOneLocally, releaseOwnStaleLeases, ensureApp, dedupeSession, _localRecovering };',
 ].join('\n');

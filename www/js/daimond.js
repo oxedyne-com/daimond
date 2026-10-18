@@ -1701,15 +1701,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// that never wrote a file is the same bytes it always was (the push-skip fixed point).
 	function withRecent(c, out) {
 		if (Array.isArray(c.recent) && c.recent.length) out.recent = c.recent;
+		// The daimon chat's fold record (UNBLOCK-11), ABSENT when unset so a record without
+		// one travels as the same bytes it always did (the push-skip fixed point).
+		if (c.fold && typeof c.fold.text === 'string' && c.fold.text) out.fold = c.fold;
 		return out;
+	}
+	/// Does this chat record own a model? A chat inside a Diamond does not (UNBLOCK-5, C3): the
+	/// Diamond's record owns `model`, and the composer, every label, the meter and the turn read it
+	/// through `turnModelOf`. The copy a daimon's record used to keep went stale, and at an equal
+	/// `metaAt` the merge kept the canonically greater value, so `z-ai/…` beat `deepseek/…` on every
+	/// device for good. So the record is written, read and merged with no model, provider or worker
+	/// pair at all: with no second copy there is nothing to tie with. A record from before carries
+	/// one; it is shed by every read and write that passes through here, and the first logged.
+	var _chatModelShedSaid = false;
+	function chatOwnsModel(c) {
+		if (!c || !c.diamondId) return true;
+		if (!_chatModelShedSaid && (c.model || c.provider || c.workerModel || c.workerProvider)) {
+			_chatModelShedSaid = true;
+			diag('chat model shed', 'chat=' + (c.id || '') + ' diamond=' + c.diamondId + ' held=' + (c.model || ''));
+		}
+		return false;
 	}
 	function slimChat(c) {
 		// `name` and `model` are written as the summary writes them (`summaryOf`), a string
 		// even when absent, so a record held as a summary and one held live travel as the
-		// same bytes: "" against absent kept one chat record apart for good (r53 W-rec).
-		return withRecent(c, { id: c.id, name: c.name || '', messages: c.messages, model: c.model || '', provider: c.provider || '',
+		// same bytes: "" against absent kept one chat record apart for good (r53 W-rec). A
+		// chat inside a Diamond carries no model pair at all (`chatOwnsModel`): absent here
+		// and in the summary alike, so the two still agree.
+		var own = chatOwnsModel(c);
+		return withRecent(c, { id: c.id, name: c.name || '', messages: c.messages,
+			model: own ? (c.model || '') : undefined, provider: own ? (c.provider || '') : undefined,
 			diamondId: c.diamondId || '',
-			workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
+			workerModel: own ? (c.workerModel || '') : undefined, workerProvider: own ? (c.workerProvider || '') : undefined,
 			// The chat's chosen Effort, ABSENT when unset (undefined is dropped on the wire), so
 			// a record that never had one travels as the same bytes it always did.
 			effort: c.effort || undefined,
@@ -3089,11 +3112,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// unchanged chat from a grown one.
 		function summaryOf(c, serial, chunks) {
 			var fp = fileHash(serial);
+			var own = chatOwnsModel(c);		// a Diamond's chat holds no model pair (C3)
 			return withRecent(c, {
 				id: c.id, v: SHADOW_V,
-				name: c.name || '', model: c.model || '', provider: c.provider || '',
+				name: c.name || '', model: own ? (c.model || '') : undefined, provider: own ? (c.provider || '') : undefined,
 				diamondId: c.diamondId || '',
-				workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
+				workerModel: own ? (c.workerModel || '') : undefined, workerProvider: own ? (c.workerProvider || '') : undefined,
 				effort: c.effort || undefined,			// absent when unset, as `slimChat` writes it
 				status: c.status || 'active',
 				promptTokens: c.promptTokens || 0, completionTokens: c.completionTokens || 0,
@@ -4282,6 +4306,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// true counts so `stampOf`, the rail and the content predicates do not read a
 		// full chat as empty. An already-loaded input keeps its messages.
 		var loaded = c._loaded === true || (Array.isArray(c.messages) && c.messages.length > 0);
+		var own = chatOwnsModel(c);
 		var msgCount = (typeof c.msgCount === 'number') ? c.msgCount
 			: (Array.isArray(c.messages) ? c.messages.length : 0);
 		var sessionMsgs = (typeof c.sessionMsgs === 'number') ? c.sessionMsgs
@@ -4293,8 +4318,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The opening line off the summary, for a chat that is not resident. See
 			// `chatOpening`, which reads this only once the live messages have nothing.
 			opening: c.opening || '',
-			model: c.model,
-			provider: c.provider || '',
+			// None at all on a Diamond's chat, whose Diamond owns the model (`chatOwnsModel`, C3).
+			model: own ? c.model : undefined,
+			provider: own ? (c.provider || '') : undefined,
 			// Which Diamond's daimon this conversation belongs to, or '' for an
 			// ordinary chat. It has to come back: a record that lost it becomes a chat
 			// with a tile in the rail, and `daimonChat` — finding nothing bound to the
@@ -4302,7 +4328,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diamondId: c.diamondId || '',
 			// A chat stored before workers had a model of their own carries neither, and reads
 			// as "the chat's own model" everywhere. See `slimChat`.
-			workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
+			workerModel: own ? (c.workerModel || '') : undefined, workerProvider: own ? (c.workerProvider || '') : undefined,
 			effort: c.effort || '',			// '' is the model's own default
 			status: c.status || 'active',
 			promptTokens: c.promptTokens || 0, completionTokens: c.completionTokens || 0,
@@ -4514,6 +4540,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Recent is a union, newest per file, the same from either side.
 		var rec = window.DaimondRecent ? DaimondRecent.merge(a.recent, b.recent) : [];
 		if (rec.length) out.recent = rec; else delete out.recent;
+		// The fold record: the longer range wins, the same from either side (`mergeFold`).
+		var fold = mergeFold(a.fold, b.fold);
+		if (fold) out.fold = fold; else delete out.fold;
 		return out;
 	}
 
@@ -10075,6 +10104,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { return ''; }
 	}
 
+	/// The decisions archive a Diamond export is carrying (`.daimond/decisions-archive.md`), where
+	/// STATE.md and DECISIONS.md retire to, read as defensively as `packNotes` (UNBLOCK-18 F4).
+	function packArchive(data) {
+		try {
+			var files = (JSON.parse(data) || {}).files || {};
+			var text  = files['.daimond/decisions-archive.md'] || '';
+			return typeof text === 'string' ? text : '';
+		} catch (e) { return ''; }
+	}
+
 	/// Give a Diamond the links of BOTH copies when the two are equally fresh.
 	/// True when something was written.
 	///
@@ -10318,7 +10357,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var rAnc = sentAnc(r);
 				var wfOk = packFacets(idata);
 				var wf = wfOk || { tags: packTags(idata), kits: [], name: '', links: packLinks(idata) };
-				var plan = null, loserNotes = '';
+				var plan = null, loserNotes = '', loserArchive = '';
 				if (twoSided) {
 					// What lives outside the versioned files -- tags, links, name, grants -- is
 					// settled THREE-WAY against the copy both sides last shared (the newest in
@@ -10331,8 +10370,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						var loserPack = await app.export_diamond(r.id);
 						loserLinks = packLinks(loserPack);
 						loserNotes = packNotes(loserPack);
+						loserArchive = packArchive(loserPack);
 					}
-					catch (e) { loserLinks = ''; loserNotes = ''; }
+					catch (e) { loserLinks = ''; loserNotes = ''; loserArchive = ''; }
 					var lf = {
 						tags:  (mine && Array.isArray(mine.tags)) ? mine.tags.slice() : [],
 						kits:  (mine && Array.isArray(mine.toolkits)) ? mine.toolkits.slice() : [],
@@ -10414,6 +10454,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					catch (e) { trail('steering unjoined', r.id + ': ' + ((e && (e.message || e)) || '?')); }
 				}
 				loserNotes = '';
+				// NOR IS THE DECISIONS ARCHIVE (UNBLOCK-18 F4): what STATE.md and DECISIONS.md retired on this
+				// device is in no versioned file, so the import took it. The loser's entries the arriving
+				// archive lacks are appended, and the Diamond stamped so the join travels back.
+				if (twoSided && loserArchive && app.union_archive) {
+					try { await app.union_archive(r.id, loserArchive); }
+					catch (e) { trail('archive unjoined', r.id + ': ' + ((e && (e.message || e)) || '?')); }
+				}
+				loserArchive = '';
 				// Rows an earlier replace dropped, put back from this Diamond's "kept before sync" versions, the
 				// version this import may just have kept among them. Still under the hold, after every write above.
 				await healLogsHeld(app, r.id);
@@ -13702,7 +13750,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// WHOLE panel set there (four of them fixed -- Chat, Email, Files,
 		// Agents -- dev/verify_mobile.mjs), never trimmed to this handful.
 		var DEFAULT_PINNED = ['rail', 'ai', 'web', 'work', 'tools', 'spend'];
-		var arrangements = {};  // diamond id -> a saved arrangement, restored on switch
 		// What panels sharing a dock column have made of its height. Keyed by the
 		// column's OCCUPANCY -- 'work|mail' -- not by the column, so the tuning
 		// belongs to the panels rather than to the slot they happened to be in.
@@ -13974,7 +14021,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// one of the keys pairing copies between devices. It goes the moment a
 					// desktop cuts a height from it, which is the only way it can go.
 					railSplit: (railWas !== null && !railFit) ? railWas : undefined,
-					grid: grid, pinned: pinned, arrangements: arrangements, stacks: stacks,
+					grid: grid, pinned: pinned, stacks: stacks,
 				}));
 			} catch (e) { /* layout is a nicety; never break on quota */ }
 		}
@@ -14021,7 +14068,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// and one that did not exist when the list was saved is simply absent
 			// from it rather than lost -- the gallery still has it.
 			if (Array.isArray(st.pinned)) pinned = st.pinned.filter(def);
-			if (st.arrangements && typeof st.arrangements === 'object') arrangements = st.arrangements;
 			// A stored share is read only if it still names panels that exist and
 			// still has one number per panel: a stack whose occupancy has changed
 			// underneath it is not a stack the numbers describe, and an even split
@@ -15358,52 +15404,45 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 		}
 
-		// ── Arrangements ──────────────────────────────────────
-		// A Diamond can carry the arrangement it is worked in, so that returning to a
-		// piece of work restores the panels it needs rather than making them be
-		// reassembled by hand. It is saved DELIBERATELY and never inferred: a
-		// switch that silently closed panels would read as work being lost.
+		// ── A conversation's layout ───────────────────────────
+		// Each conversation keeps the panels it is worked in, in its PANEL RECORD
+		// (js/panelrec.js, UNBLOCK-14): `snapshot` is what is written when the person
+		// leaves it, `restoreLayout` what is put back when they arrive. This replaced
+		// the Diamond-only "save arrangement", which kept the same layout by hand: two
+		// owners of one layout would disagree about which one a switch restores.
 
-		/// Capture the current arrangement under a Diamond's id.
-		function saveArrangement(diamondId) {
-			if (!diamondId) return false;
-			arrangements[diamondId] = {
-				open: JSON.parse(JSON.stringify(open)),
-				stage: stage.slice(), dock: dock.map(function (c) { return c.slice(); }),
+		/// The layout as it stands, for a conversation's record. A copy.
+		function snapshot() {
+			return JSON.parse(JSON.stringify({
+				open: open, stage: stage, dock: dock,
 				widths: { rail: widths.rail, dock: widths.dock },
-				// The whole table, not this arrangement's own row: a share belongs to
-				// the panels either side of the boundary, and the Diamond being put
-				// away is not what makes it true.
-				seats: JSON.parse(JSON.stringify(seats)), grid: grid,
-			};
-			save();
-			return true;
+				// The whole table, not this layout's own row: a share belongs to the
+				// panels either side of the boundary, not to the conversation.
+				seats: seats, grid: grid,
+			}));
 		}
 
-		function hasArrangement(diamondId) { return !!(diamondId && arrangements[diamondId]); }
-
-		function forgetArrangement(diamondId) {
-			if (!diamondId || !arrangements[diamondId]) return false;
-			delete arrangements[diamondId];
-			save();
-			return true;
-		}
-
-		/// Put a saved arrangement back. Anything it names that no longer exists is
-		/// skipped, so an arrangement saved before a panel was removed still opens.
-		function restoreArrangement(diamondId) {
-			var a = diamondId && arrangements[diamondId];
-			if (!a) return false;
-			if (a.open) { open = {}; Object.keys(a.open).forEach(function (k) { if (def(k)) open[k] = !!a.open[k]; }); }
+		/// Put a conversation's layout back. Anything it names that no longer exists
+		/// is skipped, so a layout kept before a panel was removed still opens.
+		///
+		/// Through `hide` and `openHooks`, not around them: a Terminal the layout
+		/// closes ends its session, and one it opens starts one for this Diamond.
+		/// `filled` names panels whose content the caller is about to put back
+		/// itself, so their open hooks are not run (the Doc's would start a blank note).
+		function restoreLayout(a, filled) {
+			if (!a || !a.open || typeof a.open !== 'object') return false;
+			var want = {};
+			Object.keys(a.open).forEach(function (k) { if (def(k)) want[k] = !!a.open[k]; });
+			Object.keys(open).forEach(function (k) { if (open[k] && !want[k]) hide(k); });
+			var was = JSON.parse(JSON.stringify(open));
+			open = want;
 			if (typeof a.grid === 'string'
 				&& (a.grid === 'auto' || a.grid === 'custom' || GRIDS[a.grid])) grid = a.grid;
 			// Uncapped, as `load` is: `fitStage` closes what will not fit, with a
 			// measured width and back to a chip, rather than leaving it open and
 			// seated nowhere.
 			stage = (a.stage || []).filter(function (id) { return def(id) && zoneOf(id) === 'stage' && open[id]; });
-			// Through the same v1/v2 reader as a stored layout: an arrangement kept
-			// before the dock held columns is a flat list, and round-robinning it
-			// puts the panels back in the slots it was saved from.
+			// Through the same v1/v2 reader as a stored layout.
 			var dd = DD();
 			dock = (dd ? dd.migrate(a.dock || [], gridOf().cols) : []).map(function (c) {
 				return c.filter(function (id) { return def(id) && zoneOf(id) === 'dock' && open[id]; });
@@ -15412,6 +15451,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			readShares(a.seats, seats);
 			seatOpenPanels();
 			apply();
+			var mine = Array.isArray(filled) ? filled : [];
+			Object.keys(open).forEach(function (k) {
+				if (open[k] && !was[k] && mine.indexOf(k) === -1) openHooks(k);
+			});
 			return true;
 		}
 
@@ -15560,10 +15603,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (!on && i !== -1) pinned.splice(i, 1);
 				apply();
 			},
-			saveArrangement: saveArrangement,
-			restoreArrangement: restoreArrangement,
-			forgetArrangement: forgetArrangement,
-			hasArrangement: hasArrangement,
+			/// A conversation's layout, out of and back into its panel record.
+			snapshot: snapshot,
+			restoreLayout: restoreLayout,
 		};
 	})();
 	// The Web driver is a separate script and has to be able to take the stage,
@@ -16482,11 +16524,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The short name of the model answering the conversation on screen, for the
 	/// Thinking and Daimond tile headers — so each response says which model
 	/// produced it (owner review 2026-09-04). `current` is the chat on an ordinary
-	/// chat and the daimon's own record on a Diamond's chat face, and both carry the
-	/// model they run on; the open Diamond and the app default fill in behind them.
+	/// chat and the daimon's own record on a Diamond's chat face; the daimon's names
+	/// its Diamond's model (`turnModelOf`), never a copy of its own. The open Diamond
+	/// and the app default fill in behind them.
 	function respModel() {
-		var m = (current && current.model)
-			|| (currentDiamond && currentDiamond.model)
+		var m = (current && turnModelOf(current).model)
+			|| (currentDiamond && currentDiamond.id && diamondModel(currentDiamond.id).model)
 			|| (cfg && cfg.model) || '';
 		return m ? shortModel(m) : '';
 	}
@@ -21305,12 +21348,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return {
 				label: deviceLabelFor(rc.dispatchedBy),
 				send:  function (intent) {
+					// A file show (`{ show, page }`) or a Web page (`{ web }`).
 					var path = String((intent && intent.show) || '').slice(0, 1024);
-					if (!path) return;
-					rc.ui.push({ n: rc.ui.length ? rc.ui[rc.ui.length - 1].n + 1 : 1,
-						show: path, page: (intent.page | 0) > 0 ? (intent.page | 0) : 0 });
+					var web = uiWebUrl(intent && intent.web);
+					if (!path && !web) return;
+					var n = rc.ui.length ? rc.ui[rc.ui.length - 1].n + 1 : 1;
+					rc.ui.push(web ? { n: n, web: web }
+						: { n: n, show: path, page: (intent.page | 0) > 0 ? (intent.page | 0) : 0 });
 					if (rc.ui.length > RUNNER_UI_MAX) rc.ui.splice(0, rc.ui.length - RUNNER_UI_MAX);
-					diag('handoff panel intent', 'turn=' + String(rc.turnId).slice(0, 12) + ' show ' + path
+					diag('handoff panel intent', 'turn=' + String(rc.turnId).slice(0, 12)
+						+ (web ? ' web ' + web.slice(0, 80) : ' show ' + path)
 						+ ' -> ' + String(rc.dispatchedBy).slice(0, 6));
 				},
 			};
@@ -25699,6 +25746,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return chat.diamondId ? diamondEffort(chat.diamondId) : (chat.effort || '');
 	}
 
+	/// The model a chat's turn runs on: the Diamond's, for a chat inside one, and the chat's own
+	/// otherwise. THE ONE READ (UNBLOCK-5, C3): a Diamond's chat holds no model of its own
+	/// (`chatOwnsModel`), so a label, the meter and the errand all name what the Diamond's record
+	/// says, the one owner, rather than a copy that went stale.
+	function turnModelOf(chat) {
+		if (!chat) return { provider: '', model: '' };
+		var m = chat.diamondId ? (diamondModel(chat.diamondId) || {}) : chat;
+		return { provider: m.provider || '', model: m.model || '' };
+	}
+
+	/// The model an errand for `chat` carries: the one this device resolved and the asker saw, so
+	/// the runner runs it rather than its own copy of the Diamond's (C3). The url is resolved by
+	/// the peer from the provider (models.js), so it is left for the runner. A Diamond's pair is
+	/// marked `src: 'diamond'`, the asker's resolution: a runner honours a sent pair only so
+	/// marked, and an older asker's errand, which carries its chat record's stale copy unmarked,
+	/// runs on the Diamond's own (`steerModelFor`).
+	function errandModelOf(chat) {
+		var m = turnModelOf(chat);
+		var out = { provider: m.provider, model: m.model, url: '' };
+		if (chat && chat.diamondId) out.src = 'diamond';
+		return out;
+	}
+
 	/// The person's message a turn answers, by its id or its `iturn`, or null.
 	function storedPrompt(chat, turnId) {
 		var id = String(turnId == null ? '' : turnId), ms = (chat && chat.messages) || [];
@@ -27240,9 +27310,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Built by `buildDispatch` from this same chat; named here only so a caller
 			// that has a reason to suppress it (`seed: false`) has somewhere to say so.
 			seed:   (opts && opts.seed === false) ? false : undefined,
-			// The chat's OWN model. The url is resolved by the peer from the provider
-			// (models.js), so it is left for the runner rather than looked up here.
-			model:  { provider: chat.provider || '', model: chat.model || '', url: '' },
+			// The model the turn runs on, as this device resolved it: the chat's own, or its
+			// Diamond's (C3). The url is resolved by the peer from the provider (models.js).
+			model:  errandModelOf(chat),
 			scope:  scopePaths || (Array.isArray(chat.holds) ? chat.holds : []),
 			pause:  pause,
 			dispatchedBy: by,
@@ -27524,6 +27594,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The name is the record's `name` (a seed from before r53 sends `title`).
 			chat = {
 				id:       String(errand.chatId || ''),
+				// A daimon errand that beats its parcel still runs through `steer_crystal`.
+				diamondId: String(errand.diamondId || ''),
 				name:     String(seed.name || seed.title || ''),
 				provider: String(seed.provider || ''),
 				model:    String(seed.model || ''),
@@ -27628,44 +27700,86 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// version at or past it holds the prompt, the chat, and the offloaded-file chunk
 	/// manifests -- the large files themselves hydrate on demand from those manifests
 	/// at file-read time (chunks.js), so the manifests being present is the gate.
-	/// May this device claim the errand: can it rebuild the thread the sender fingerprinted?
-	/// Asked BEFORE the claim (runErrand's `ready`, D2 / rc-b ruling b), so a runner that
-	/// cannot never holds the turn. The seed is judged without a write; a non-resident copy
-	/// is loaded (a local read); a runner only BEHIND pulls for a bounded while. `{ ok }`, or
-	/// `{ ok: false, why }` with the reason the sender shows when it runs the turn itself.
-	var PRECLAIM_PULL_MS = 8000;		// the most a runner pulls before it claims
+	/// Before the claim (runErrand's `ready`): wait up to `THROUGH_WAIT_MS` for the message the
+	/// asker last saw (`errand.through`), pulling, then claim regardless. Always `{ ok: true,
+	/// lacked }`, `lacked` the note for the model when that message never came ('' when it
+	/// did). The "conversation differs" refusal is gone (UNBLOCK-11): memory belongs to the
+	/// chat, so a runner whose copy differs runs on the converged transcript it holds.
 	// This device's sync version, for threadReadiness: below the errand's parcel version a
-	// copy is still behind (a deletion may be in flight), so it pulls rather than refuses.
+	// copy is still behind (a deletion may be in flight).
 	function syncHeld() {
 		try { return (window.DaimondSync && DaimondSync.version) ? (DaimondSync.version() | 0) : undefined; }
 		catch (e) { return undefined; }
 	}
-	async function peerReady(errand, own) {
+	// THE MOST A RUNNER WAITS for the message the asker last saw (UNBLOCK-11): then it runs
+	// with what it holds and tells the model what it lacked. A turn is never refused here.
+	var THROUGH_WAIT_MS = 10000;
+	/// Does this copy hold what the asker saw? The message the errand's `through` names; for an
+	/// older sender, whose errand carries no `through` key at all, the thread by its fingerprint
+	/// (`holdsThread`, C2 r2 F4) -- it used to pass at once on whatever was held, with no note. A
+	/// `through` of null is a new sender with nothing before the prompt: nothing to wait for.
+	function askerHeld(c, e, own) {
+		if (!e) return true;
+		if (e.through && e.through.mid) return DaimondPeer.holdsThrough(c, e);
+		if (e.through === null) return true;
+		return DaimondPeer.holdsThread(c, e, own);
+	}
+	/// What this device's copy lacks of the asker's view, said for the model, or '' when it
+	/// holds it (`askerHeld`).
+	function lackedNote(c, e, own) {
+		if (!e || askerHeld(c, e, own)) return '';
+		if (!e.through) return '[Daimond: this device could not confirm it held the conversation as the asker saw it (the turn came from an older build of Daimond). '
+			+ 'It answers from what it holds, which may be missing the most recent exchange; say so if it matters.]\n';
+		var when = e.through.ts ? new Date(e.through.ts).toISOString() : 'an unknown time';
+		return '[Daimond: this device had not yet received the conversation up to the asker\'s last message (sent '
+			+ when + '). It answers from what it holds, which may be missing the most recent exchange; say so if it matters.]\n';
+	}
+	// ONE DEADLINE FOR THE WAIT (C2 r2 F6): `peerReady` sets it before the claim, and
+	// `peerReconstruct` waits to the same instant rather than starting a second 10 s of its own.
+	// Keyed by the errand object, which `runErrandOnce` passes to both, so nothing rides on it.
+	var readyBy = new WeakMap();
+	/// The instant the wait for what the asker saw ends, for this errand: the one `peerReady`
+	/// set, or `THROUGH_WAIT_MS` from now where it never ran (a local recovery).
+	function throughDeadline(errand) {
+		var by = (errand && typeof errand === 'object') ? readyBy.get(errand) : undefined;
+		if (typeof by === 'number') return by;
+		by = Date.now() + THROUGH_WAIT_MS;
+		if (errand && typeof errand === 'object') readyBy.set(errand, by);
+		return by;
+	}
+	/// `p`, or nothing once `by` has passed, whichever comes first: a slow pull does not stretch
+	/// the bound. The pull itself runs on; its failure is the bound's to answer.
+	function withinDeadline(p, by) {
+		var left = by - Date.now();
+		var quiet = Promise.resolve(p).catch(function () { /* offline: the bound ends it */ });
+		if (left <= 0) return Promise.resolve();
+		return Promise.race([quiet, new Promise(function (res) { setTimeout(res, left); })]);
+	}
+	async function peerReady(errand, own, waitMs) {
 		var e = errand || {};
-		if (!e.thread || typeof e.thread.n !== 'number') return { ok: true };	// an older sender: judged after the claim
+		var by = Date.now() + (typeof waitMs === 'number' ? waitMs : THROUGH_WAIT_MS);
+		if (errand && typeof errand === 'object') readyBy.set(errand, by);
 		function find() {
 			for (var i = 0; i < chats.length; i++) if (chats[i].id === e.chatId) return chats[i];
 			return null;
 		}
-		async function judge() {
+		async function holds() {
 			var c = find();
-			if (c && c._loaded === false) { try { await loadChatMessages(c); } catch (err) { /* behind, below */ } }
-			return DaimondPeer.threadReadiness(c, e, syncHeld(), own);
+			if (c && c._loaded === false) { try { await withinDeadline(loadChatMessages(c), by); } catch (err) { /* waited for below */ } }
+			return !!(c && c._loaded !== false && askerHeld(c, e, own));
 		}
-		var by = Date.now() + PRECLAIM_PULL_MS;
-		var v = await judge();
-		while (v.state === 'behind' && Date.now() < by && window.DaimondSync && DaimondSync.pull) {
-			try { await DaimondSync.pull(true); } catch (err) { /* offline: the bound ends it */ }
-			try { await onChatsChangedElsewhere(); } catch (err) { /* asked again regardless */ }
-			v = await judge();
-			if (v.state === 'behind') await new Promise(function (res) { setTimeout(res, 500); });
+		if (!errand || e.through === null) return { ok: true, lacked: '' };	// a new sender, nothing before the prompt
+		var got = await holds();
+		while (!got && Date.now() < by) {
+			if (window.DaimondSync && DaimondSync.pull) { try { await withinDeadline(DaimondSync.pull(true), by); } catch (err) { /* offline: the bound ends it */ } }
+			try { await withinDeadline(onChatsChangedElsewhere(), by); } catch (err) { /* asked again regardless */ }
+			got = await holds();
+			if (!got && Date.now() < by) await new Promise(function (res) { setTimeout(res, Math.min(500, Math.max(0, by - Date.now()))); });
 		}
-		if (v.state === 'match') return { ok: true };
-		var why = v.state === 'final'
-			? 'the conversation differs on this device (it holds ' + v.have + ' messages, the sender ' + v.want + ')'
-			: 'the conversation has not reached this device (it holds ' + v.have + ' of ' + v.want + ' messages)';
-		diag('ready REFUSED', 'chat=' + e.chatId + ' turn=' + e.turnId + ' ' + v.state + ' ' + v.have + '/' + v.want);
-		return { ok: false, why: why };
+		if (got) return { ok: true, lacked: '' };
+		diag('ready LACKING', 'chat=' + e.chatId + ' turn=' + e.turnId + ' through=' + (e.through ? e.through.mid : '(older sender: thread)')
+			+ ' not here; running with what is held');
+		return { ok: true, lacked: lackedNote(find(), e, own) };
 	}
 
 	async function peerReconstruct(errand, own) {
@@ -27721,7 +27835,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// these pulls are the net for a device whose channel is down, from the wake
 		// floor up to a few seconds apart, and back to the floor on any movement.
 		var pullGap = RECONSTRUCT_PULL_MIN_MS, pullAt = 0;
-		function threadReady(c) { return !!(c && c._loaded && DaimondPeer.holdsThread(c, errand, own)); }
+		// READY: resident and holding the message the asker last saw (`through`), or the whole
+		// fingerprinted thread. A resident copy still short of `through` once the bounded wait is
+		// spent runs anyway, and the model is told what it lacked (UNBLOCK-11).
+		var throughBy = throughDeadline(errand);
+		function threadReady(c) {
+			if (!c || !c._loaded) return false;
+			return askerHeld(c, errand, own) || DaimondPeer.holdsThread(c, errand, own) || Date.now() > throughBy;
+		}
 		function chatHeldN(c) { return (c && c._loaded) ? DaimondPeer.threadReadiness(c, errand, syncHeld(), own).have : -1; }
 		while (true) {
 			chat = findErrandChat();
@@ -27733,17 +27854,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// normally true on the first pass (the seed grafted it); where it is not, the
 			// loop below pulls exactly as it did.
 			if (threadReady(chat)) break;
-			// A MISMATCH THAT CAN NEVER CONVERGE IS NOT A THREAD STILL ARRIVING (D2). A
-			// resident copy holding as many model-facing rows as the errand names, and not
-			// the same ones, will never match: hand it back now, with its reason, below.
-			if (chat && chat._loaded && DaimondPeer.threadReadiness(chat, errand, syncHeld(), own).state === 'final') break;
 			// Present but a NON-RESIDENT summary (empty transcript beside a real msgCount,
 			// seq 213): make it resident before building the agent, or ensureApp would seed
 			// the runner from an empty transcript.
 			if (chat && !chat._loaded) {
 				try { await loadChatMessages(chat); } catch (e) { /* retry within the window */ }
 				if (threadReady(chat)) break;
-				if (chat._loaded && DaimondPeer.threadReadiness(chat, errand, syncHeld(), own).state === 'final') break;
 			}
 			var now = Date.now();
 			var heldN = chatHeldN(chat);
@@ -27797,28 +27913,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			eResident.undeliverable = true;
 			throw eResident;
 		}
-		// THE THREAD MUST MATCH BEFORE THE TURN RUNS (S-HAND #3). A chat whose model-facing
-		// PREFIX does not fingerprint-match the dispatcher's is a different conversation --
-		// stale (behind) or truncated -- so hand the turn back UNDELIVERABLE rather than run
-		// the model against it. runErrand acks the errand off the relay and reports
-		// undeliverable, and the dispatcher runs it LOCALLY at once, on the device that holds
-		// the thread. Nothing ran here, so there is no charge. (An older dispatcher's errand
-		// carries no `thread`, so `holdsThread` falls back to `holdsTurn` and this preserves
-		// the pre-fix reach for a mixed fleet.)
-		if (!DaimondPeer.holdsThread(chat, errand, own)) {
-			var mineSig = DaimondPeer.threadSig(chat, errand.turnId, null, own, own);
-			var wantN   = (errand.thread && (errand.thread.n | 0)) || 0;
-			var differs = DaimondPeer.threadReadiness(chat, errand, syncHeld(), own).state === 'final';
-			diag('reconstruct UNDELIVERABLE', 'chat=' + chat.id + ' thread ' + (differs ? 'MISMATCH' : 'incomplete')
-				+ ': have ' + mineSig.n + ' of ' + wantN + ' model-facing messages after '
-				+ Math.round((Date.now() - startAt) / 1000) + 's');
-			var eThread = new Error(differs
-				? 'the conversation differs on this device (it holds ' + mineSig.n + ' messages, the sender ' + wantN + '); handing back'
-				: 'the thread is incomplete on this device (have ' + mineSig.n + ' of ' + wantN + ' messages); handing back');
-			eThread.undeliverable = true;
-			eThread.cause = 'thread';			// the sender's tile names it (D2)
-			throw eThread;
-		}
+		// A COPY THAT DIFFERS RUNS ON WHAT IT HOLDS (UNBLOCK-11). It used to hand the turn back
+		// that the conversation differed, so a turn was refused, or run on a stale
+		// session; memory now belongs to the converged transcript (`daimonPrior`, `seedEngine`),
+		// and a copy still short of the asker's last message says so to the model (`lacked`).
+		var lacked = lackedNote(chat, errand, own);
+		if (lacked) diag('reconstruct LACKING', 'chat=' + chat.id + ' through=' + (errand.through ? errand.through.mid : '(older sender: thread)') + ' after '
+			+ Math.round((Date.now() - startAt) / 1000) + 's; running with what is held');
 		// THE SENDER'S REMOVALS, HONOURED (UNBLOCK-1). The errand names the rows the sender
 		// removed and has not yet shipped (`gone`); the prefix above was proven without them,
 		// so they leave this copy now -- the same removal, recorded as the same tombstone the
@@ -27897,7 +27998,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		await scopeChatTo(app, chat.id);
 		diag('reconstruct ready', 'chat=' + chat.id + ' turn=' + (errand && errand.turnId)
 			+ ' after=' + Math.round((Date.now() - startAt) / 1000) + 's');
-		return { chat: chat, app: app };
+		return { chat: chat, app: app, lacked: lacked };
 	}
 
 	// How long the runner waits for a handed-off turn's fan-out to settle before it
@@ -28195,6 +28296,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			maxParks:      (window.DaimondPeer && DaimondPeer.MAX_PARKS) || 2,
 			parkRequested: function (er) { return _runnerParked[String(er.turnId)] || null; },
 			runTurn: async function (c, prompt, ropts) {
+				// A copy short of the asker's last message runs anyway and says so (UNBLOCK-11): the
+				// note leads the turn's own, so the model reads what this device lacked.
+				if (c && c.lacked) ropts = Object.assign({}, ropts, { pre: c.lacked + ((ropts && typeof ropts.pre === 'string') ? ropts.pre : '') });
 				// Publish this turn's hard-stop to the runner context, so egressAllowed can
 				// abort exactly this turn when it parks. The app exists now (reconstruct ran).
 				var tid = String((ropts && ropts.turnId) || '');
@@ -28212,7 +28316,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// failure instead (classified by runnerErrorKind): the lease releases,
 					// the errand stays on the relay, and the dispatcher -- which has the key
 					// -- runs it local or another keyed peer takes it. Nothing was spent.
-					if (typeof diamondCanRun === 'function' && !diamondCanRun(did)) {
+					// The asker's marked pair (C3) runs or the turn goes back: `steerModelFor`
+					// throws this same 401 for one it cannot run. An unmarked one runs the Diamond's.
+					var sentM = ropts && ropts.model;
+					if (sentM && sentM.model && sentM.src === 'diamond') steerModelFor(did, ropts);
+					else if (typeof diamondCanRun === 'function' && !diamondCanRun(did)) {
 						var eKey = new Error('the diamond’s model has no usable api key on this device');
 						eKey.code = 401;
 						throw eKey;
@@ -28968,8 +29076,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { msgs: obj.msgs, ref: ref, n: obj.n | 0, ui: frameUi(obj.ui), workers: ws };
 	}
 
-	/// The panel intents a frame carries, read field by field: `[{ n, show, page }]`, in
-	/// order, each with a positive `n` and a path. Untrusted, as all off the door is.
+	/// A Web page address a panel intent may carry: http(s) only and at most 2048
+	/// characters, or `''`. A runner names pages the asker's panel will navigate to, so a
+	/// `javascript:` or `blob:` address (which means nothing on another device) is refused.
+	function uiWebUrl(v) {
+		var u = (typeof v === 'string') ? v.trim() : '';
+		return (u && u.length <= 2048 && /^https?:\/\//i.test(u)) ? u : '';
+	}
+
+	/// The panel intents a frame carries, read field by field: `[{ n, show, page }]` or
+	/// `[{ n, web }]`, in order, each with a positive `n` and a path or an http(s)
+	/// address. Untrusted, as all off the door is.
 	function frameUi(raw) {
 		if (!Array.isArray(raw)) return [];
 		var out = [];
@@ -28977,8 +29094,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var u = raw[i];
 			if (!u || typeof u !== 'object') continue;
 			var n = u.n | 0, path = (typeof u.show === 'string') ? u.show.slice(0, 1024) : '';
-			if (n <= 0 || !path) continue;
-			out.push({ n: n, show: path, page: (u.page | 0) > 0 ? (u.page | 0) : 0 });
+			var web = uiWebUrl(u.web);
+			if (n <= 0 || (!path && !web)) continue;
+			out.push(web ? { n: n, web: web }
+				: { n: n, show: path, page: (u.page | 0) > 0 ? (u.page | 0) : 0 });
 		}
 		return out;
 	}
@@ -29026,13 +29145,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var tries = 0;
 			(function attempt() {
 				Promise.resolve().then(function () {
+					// A page goes through the Web panel's own door, whose owner rule keeps
+					// it for a conversation not on screen, as a file show is kept.
+					if (u.web) return (window.DaimondWeb && DaimondWeb.open) ? DaimondWeb.open(u.web, owner) : null;
 					return DaimondDoc.show(u.show, u.page || undefined, owner);
 				}).then(function () {
-					diag('handoff panel opened', 'turn=' + String(key).slice(0, 12) + ' ' + u.show);
+					diag('handoff panel opened', 'turn=' + String(key).slice(0, 12) + ' ' + (u.web || u.show));
 					done();
 				}, function (e) {
 					if (tries >= UI_RETRY_MS.length) {
-						diag('handoff panel lost', 'turn=' + String(key).slice(0, 12) + ' ' + u.show + ': '
+						diag('handoff panel lost', 'turn=' + String(key).slice(0, 12) + ' ' + (u.web || u.show) + ': '
 							+ String((e && e.message) || e).slice(0, 120));
 						done();
 						return;
@@ -29876,7 +29998,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			prompt:       String(m.itext == null ? '' : m.itext),
 			pre:          storedPre(chat, m.iturn),		// read from the original record, never composed
 			effort:       (function () { var e = storedEffort(chat, m.iturn); return e === null ? turnEffortOf(chat) : e; })(),
-			model:        { provider: chat.provider || '', model: chat.model || '', url: '' },
+			model:        errandModelOf(chat),		// the chat's, or its Diamond's (C3)
 			scope:        Array.isArray(chat.holds) ? chat.holds : [],
 			parcelVersion: (function () { try { return DaimondSync.version() | 0; } catch (e) { return 0; } })(),
 			deadline:     DaimondPeer.handoffDeadline(m),
@@ -32947,6 +33069,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { /* module not up */ }
 		// Same reasoning for how the tile drew itself: an id nobody can reach.
 		forgetTilePrefs(id);
+		// And what its panels held (UNBLOCK-14). Trashing keeps it, so a restore
+		// comes back to its panels; only destroying lets it go.
+		try { if (window.DaimondPanelRec) DaimondPanelRec.drop('chat:' + id); }
+		catch (e) { /* no store */ }
 		// ── A CHAT'S SCOPE MUST GO WITH IT. A SEAM. ─────────────────
 		//
 		// A chat now carries persistent scope — files and folders brought into it
@@ -32960,7 +33086,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		//
 		// DESTROYING one is a different matter and does NOT fall out for free.
 		// `destroyDiamond` forgets five separate things by hand — the
-		// arrangement, the pause flags, the tile preferences, the view, the
+		// panel record, the pause flags, the tile preferences, the view, the
 		// daimon's conversation — because nothing collects them on its own, and
 		// a chat's sidecar and scratch are two more of the same kind. Left
 		// behind they are bytes under an id nothing lists, and `all_links` walks
@@ -33937,16 +34063,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 		syncComposer();   // reflect THIS chat's own generating state
-		// A file this chat's turn asked to show while the person was elsewhere, as a
-		// Diamond's is taken when it opens (`takeDeferred`): once, now.
-		if (window.DaimondViewer && DaimondViewer.takeDeferred && chat && chat.id) {
-			var waiting = DaimondViewer.takeDeferred('chat:' + chat.id);
-			if (waiting) {
-				Promise.resolve(Files.open(waiting)).catch(function () {
-					/* the file may have been moved or deleted since; nothing to say */
-				});
-			}
-		}
 		renderChatAttachments();
 		syncComposerAttachPrefix();
 		updateActiveSession();
@@ -37132,12 +37248,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// and note a model as used, on the strength of a repaint. Where none has been built
 	/// yet the published window stands, which is where `chatWindow` ends up anyway.
 	function daimonWindow(dc) {
-		var app = null;
+		var app = null, m = turnModelOf(dc);		// the Diamond's model; the record holds none (C3)
 		try {
-			var a = appCfgFor({ provider: dc.provider, model: dc.model });
+			var a = appCfgFor(m);
 			app = _diamondApps[diamondAppKey(a)] || null;
 		} catch (e) { /* nothing built, or no model list: the published figure stands */ }
-		return chatWindow({ app: app, model: dc.model, provider: dc.provider });
+		return chatWindow({ app: app, model: m.model, provider: m.provider });
 	}
 
 	// The context bar alone: window fraction, fold mark, percentage. Factored out
@@ -37628,26 +37744,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var tail = [];
 		if (sess && sess.msgs && sess.msgs.length) {
 			tail = tailAfter(chat, sess);
-			var lastHeld = -1, ids = {};
-			sess.msgs.forEach(function (x) { if (x && x.role === 'user' && x.mid) ids[String(x.mid)] = 1; });
-			(chat.messages || []).forEach(function (m, n) { if (m && m.role === 'user' && ids[String(m.mid || '')] === 1) lastHeld = n; });
-			var early = tail.some(function (m) {
-				return m.role === 'user' && (!exceptMid || String(m.mid) !== String(exceptMid)) && chat.messages.indexOf(m) < lastHeld;
-			});
-			// An untagged row (an old-build peer's answer) standing after a prompt the tail lays on by id, above the
-			// marker, is dropped by the tail, so the model would read that prompt with no answer (check_fix6 M1). Its
-			// turn is not guessed: the engine is laid from the transcript, as `sessionCut` does for an untagged held row.
-			// Once laid so, the session holds every prompt, so the rule does not fire again.
-			var inTail = new Set(tail), byId = -1, lost = false;
-			(chat.messages || []).forEach(function (m, n) {
-				if (lost || !m) return;
-				if (m.role === 'user') {
-					if (inTail.has(m) && (!exceptMid || String(m.mid) !== String(exceptMid))) byId = n;
-					return;
-				}
-				lost = byId >= 0 && m.role === 'assistant' && m.content && !m.iturn && !m.provisional
-					&& !inTail.has(m) && m.mid !== sess.upto;
-			});
+			var doubt = sessionDoubt(chat, sess, tail, exceptMid);
+			var early = doubt === 'early', lost = doubt === 'lost';
 			if (early || lost) {
 				diag('session out of order', 'chat=' + String(chat.id || '').slice(0, 12) + (early
 					? ' a turn it never heard stands before one it holds'
@@ -37844,14 +37942,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Trailing furniture is walked past for the same reason: an `end_log` or an
 			// `error_log` is not a message the agent holds, and a marker standing on one
 			// leaves `tailAfter` with nothing after it to find.
-			var at = all.length - 1;
-			while (at >= 0) {
-				var m = all[at];
-				if (m && m.content && (m.role === 'user' || m.role === 'assistant')
-					&& !(m.role === 'assistant' && m.interrupted)) break;
-				at--;
-			}
-			var last = at >= 0 ? all[at] : null;
+			var last = sessionMarker(all);
 			var list = Array.prototype.slice.call(msgs);
 			// WHERE EACH TURN STARTS in the list, by its prompt's mid, so a retracted turn can
 			// be cut out at its own prompt and the turns before it keep their tool-call ids and
@@ -37988,6 +38079,197 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// interrupted turn does exactly that), and falling back to the clock is what stops
 	/// the tail from replaying the whole conversation a second time. Above the marker, a
 	/// turn whose prompt the stored list does not hold by id is in the tail too.
+	/// Why a stored session cannot be laid with `tail` (`tailAfter`) behind it, or '' when it
+	/// can. 'early': a turn it never heard stands before one it holds, and the model's history
+	/// cannot be inserted into (check_fix5 L1). 'lost': an untagged answer (an old-build peer's)
+	/// stands after a prompt the tail lays on by id, above the marker, so the tail would drop it
+	/// and the model would read that prompt with no answer (check_fix6 M1). Either way the
+	/// engine is laid from the transcript. `exceptMid` is the prompt about to be re-sent.
+	function sessionDoubt(chat, sess, tail, exceptMid) {
+		var msgs = chat.messages || [];
+		var lastHeld = -1, ids = {};
+		sess.msgs.forEach(function (x) { if (x && x.role === 'user' && x.mid) ids[String(x.mid)] = 1; });
+		msgs.forEach(function (m, n) { if (m && m.role === 'user' && ids[String(m.mid || '')] === 1) lastHeld = n; });
+		var early = tail.some(function (m) {
+			return m.role === 'user' && (!exceptMid || String(m.mid) !== String(exceptMid)) && msgs.indexOf(m) < lastHeld;
+		});
+		if (early) return 'early';
+		var inTail = new Set(tail), byId = -1, lost = false;
+		msgs.forEach(function (m, n) {
+			if (lost || !m) return;
+			if (m.role === 'user') {
+				if (inTail.has(m) && (!exceptMid || String(m.mid) !== String(exceptMid))) byId = n;
+				return;
+			}
+			lost = byId >= 0 && m.role === 'assistant' && m.content && !m.iturn && !m.provisional
+				&& !inTail.has(m) && m.mid !== sess.upto;
+		});
+		return lost ? 'lost' : '';
+	}
+
+	/// The transcript row a stored session's marker (`upto`, `uptoTs`) stands on: the last
+	/// user or assistant row with words that the agent actually holds, walking past trailing
+	/// furniture and an interrupted partial (see `captureSession`). null when there is none.
+	function sessionMarker(all) {
+		var at = (all || []).length - 1;
+		while (at >= 0) {
+			var m = all[at];
+			if (m && m.content && (m.role === 'user' || m.role === 'assistant')
+				&& !(m.role === 'assistant' && m.interrupted)) return m;
+			at--;
+		}
+		return null;
+	}
+
+	/// THE CONVERSATION A DAIMON TURN STARTS FROM (UNBLOCK-11 F1): a function of the converged
+	/// transcript, never of this device's stored session alone. The stored session
+	/// (`rec.session`, a `Local` cache) is used where it can be trusted, with the turns it never
+	/// heard laid on behind it by `tailAfter` exactly as `seedEngine` lays a chat's; on any
+	/// doubt (`sessionDoubt`), or with no session, it is rebuilt from the transcript's prose:
+	/// the fold record first (`rec.fold`), then the prose after its `through`. So "continue" on
+	/// device B reads A's answer that synced into B's transcript even though B's session never
+	/// held it. `exceptMid` is the prompt this turn sends itself. Returns the engine list.
+	function daimonPrior(rec, exceptMid) {
+		var all = rec.messages || [];
+		var keep = function (m) {
+			return m && m.content && (m.role === 'user' || m.role === 'assistant') && !m.provisional
+				&& (!exceptMid || String(m.mid) !== String(exceptMid));
+		};
+		var lay = function (m) {
+			var o = { role: m.role, content: m.content };
+			if (m.role === 'user' && m.mid) o.mid = String(m.mid);
+			return o;
+		};
+		var sess = rec.session;
+		if (sess && Array.isArray(sess.msgs) && sess.msgs.length && (sess.upto || sess.uptoTs)) {
+			var clean = dedupeSession(sess.msgs, all, sess.upto, sess.uptoTs);
+			var held = Object.assign({}, sess, { msgs: clean });
+			var tail = tailAfter(rec, held);
+			var doubt = sessionDoubt(rec, held, tail, exceptMid);
+			if (!doubt) return clean.concat(tail.filter(keep).map(lay));
+			diag('daimon session out of order', 'chat=' + String(rec.id || '').slice(0, 12) + ' ' + doubt
+				+ '; the turn is laid from the transcript');
+		}
+		// No session to trust: the transcript's own prose, after the fold where one was recorded.
+		var out = [], from = -1, fold = rec.fold;
+		if (fold && typeof fold.text === 'string' && fold.text) {
+			for (var i = 0; i < all.length; i++) if (all[i] && fold.through && all[i].mid === fold.through) { from = i; break; }
+			out.push({ role: 'user', content: fold.text });
+		}
+		all.forEach(function (m, n) {
+			if (!keep(m)) return;
+			if (fold && fold.text && (from >= 0 ? n <= from : (m.ts || 0) <= (fold.throughTs || 0))) return;
+			out.push(lay(m));
+		});
+		return out;
+	}
+
+	/// The bound on a fold record's text (design §5): the engine's fold notice is well under it.
+	var FOLD_TEXT_CAP = 16384;
+	var FOLD_HEAD = '[Daimond folded the earlier part';
+
+	/// The fold record a daimon turn leaves (UNBLOCK-11 item 3), or `prev` unchanged. `after` is
+	/// the engine list the turn returned; its last fold notice is the summary of everything
+	/// before the first prompt it still holds after the notice, so `through` is the transcript
+	/// row just before that prompt (before `turnMid`'s prompt when none is held). Keyed
+	/// `(chat, through)`; the text is capped at `FOLD_TEXT_CAP`. Stored with the chat
+	/// (`withRecent`), so every device rebuilds from it (`daimonPrior`).
+	function foldFrom(rec, after, turnMid, prev, now, dev) {
+		var list = Array.isArray(after) ? after : [];
+		var at = -1;
+		for (var i = list.length - 1; i >= 0; i--) {
+			var x = list[i];
+			var t = x && (typeof x.content === 'string' ? x.content : '');
+			if (t && t.indexOf(FOLD_HEAD) === 0) { at = i; break; }
+		}
+		if (at < 0) return prev || null;
+		var text = String(list[at].content).slice(0, FOLD_TEXT_CAP);
+		if (prev && prev.text === text) return prev;
+		var firstMid = String(turnMid || '');
+		for (var k = at + 1; k < list.length; k++) if (list[k] && list[k].role === 'user' && list[k].mid) { firstMid = String(list[k].mid); break; }
+		var msgs = rec.messages || [], through = null;
+		for (var j = 0; j < msgs.length; j++) {
+			var m = msgs[j];
+			if (m && m.role === 'user' && String(m.mid || '') === firstMid) break;
+			if (m && m.mid && m.content && (m.role === 'user' || m.role === 'assistant')) through = m;
+		}
+		if (!through) return prev || null;
+		return { through: String(through.mid), throughTs: +through.ts || 0, at: now, dev: String(dev || ''), text: text };
+	}
+
+	/// Two devices' fold records for one chat: the longer range (`throughTs`) wins; on the same
+	/// range the earlier one (`at`), then the lesser device id, so both sides pick the same.
+	function mergeFold(a, b) {
+		if (!a || !a.text) return (b && b.text) ? b : null;
+		if (!b || !b.text) return a;
+		if ((a.throughTs || 0) !== (b.throughTs || 0)) return (a.throughTs || 0) > (b.throughTs || 0) ? a : b;
+		if ((a.at || 0) !== (b.at || 0)) return (a.at || 0) < (b.at || 0) ? a : b;
+		return String(a.dev || '') <= String(b.dev || '') ? a : b;
+	}
+
+	/// A daimon turn that threw part way lands what it said (UNBLOCK-11 item 6): the round's
+	/// prose `text` is pushed as an interrupted answer of the turn (`iturn`), and the stored
+	/// session is evicted, so the next turn is laid from the transcript, partial included.
+	/// A throw AFTER the try landed the answer (C2 r2 F3) reaches the same catch: a row of that
+	/// mid already held means the turn landed, with its session, so nothing is done.
+	function landFailedTurn(rec, text, turnMid, mid, now) {
+		var msgs = Array.isArray(rec.messages) ? rec.messages : [];
+		for (var i = 0; i < msgs.length; i++) if (mid && msgs[i] && String(msgs[i].mid) === String(mid)) return null;
+		rec.session = null;
+		if (!text) return null;
+		var row = { role: 'assistant', content: text, mid: mid, iturn: String(turnMid), interrupted: true, ts: now };
+		rec.messages.push(row);
+		return row;
+	}
+
+	/// The most `recall` hears back from a daimon chat's transcript, and the words around each.
+	var TRANSCRIPT_HITS_CAP = 200;
+	var TRANSCRIPT_EXCERPT = 120;
+
+	/// `recall` over a daimon chat's own conversation (UNBLOCK-11 item 4): the transcript's
+	/// prose and its fold record, newest last, as `[{ mid, ts, role, excerpt }]`. `args` is the
+	/// tool's own (`query`, `fixed`, `ignore_case`, `limit`); a query that is not a valid
+	/// expression is searched as literal text. A fold record answers as role 'fold' at its
+	/// `through`. Reads only what is resident: a summary-only chat answers its fold alone.
+	function transcriptSearch(rec, args) {
+		var a = args || {};
+		var q = String(a.query == null ? '' : a.query);
+		if (!q) return [];
+		var flags = a.ignore_case ? 'i' : '';
+		var esc = function (x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+		var re;
+		try { re = new RegExp(a.fixed ? esc(q) : q, flags); }
+		catch (e) { re = new RegExp(esc(q), flags); }
+		var lim = Math.max(1, Math.min(TRANSCRIPT_HITS_CAP, (a.limit | 0) || TRANSCRIPT_HITS_CAP));
+		var out = [];
+		var hit = function (text, mid, ts, role) {
+			if (out.length >= lim || typeof text !== 'string') return;
+			var m = re.exec(text);
+			if (!m) return;
+			var from = Math.max(0, m.index - TRANSCRIPT_EXCERPT), to = Math.min(text.length, m.index + m[0].length + TRANSCRIPT_EXCERPT);
+			out.push({ mid: String(mid || ''), ts: +ts || 0, role: role,
+				excerpt: (from > 0 ? '…' : '') + text.slice(from, to) + (to < text.length ? '…' : '') });
+		};
+		var fold = rec && rec.fold;
+		if (fold && fold.text) hit(fold.text, fold.through, fold.throughTs, 'fold');
+		((rec && rec.messages) || []).forEach(function (m) {
+			if (m && (m.role === 'user' || m.role === 'assistant') && !m.provisional) hit(m.content, m.mid, m.ts, m.role);
+		});
+		return out;
+	}
+	window.DaimondTranscript = {
+		/// The engine's `recall` asks here (a wasm extern): the Diamond's daimon chat, searched.
+		/// Answers a JSON array, '[]' for a Diamond with no daimon chat or unreadable args.
+		search: function (diamondId, argsJson) {
+			try {
+				var rec = chats.find(function (c) { return c && c.diamondId === String(diamondId || ''); });
+				if (!rec) return '[]';
+				var args = typeof argsJson === 'string' ? JSON.parse(argsJson || '{}') : (argsJson || {});
+				return JSON.stringify(transcriptSearch(rec, args));
+			} catch (e) { return '[]'; }
+		},
+	};
+
 	function tailAfter(chat, sess) {
 		var msgs = chat.messages || [];
 		var from = -1;
@@ -41619,10 +41901,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `chat` - The chat dispatching.
 	function chatWorkerModel(chat) {
-		var r = window.DaimondModels
-			&& DaimondModels.resolve(chat.provider || '', chat.model || '');
+		var m = turnModelOf(chat);
+		var r = window.DaimondModels && DaimondModels.resolve(m.provider, m.model);
 		if (r) return { provider: r.provider, model: r.model, chosen: true };
-		return { provider: chat.provider || '', model: chat.model || '', chosen: true };
+		return { provider: m.provider, model: m.model, chosen: true };
 	}
 
 	// Record a completed turn's cost and feed the spend governor in one
@@ -52050,20 +52332,112 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			DaimondPanels.hide('doc');
 		}
 
-		// ── A FILE PANEL FOLLOWS ITS CONVERSATION (CAPTURE-FENCE QA A F1, 2026-10-12) ──
+		// ── A CONVERSATION'S PANELS GO AND COME BACK WITH IT (UNBLOCK-14) ──
 		//
-		// The Work panel follows the open conversation; the Doc and Preview panels did not, so
-		// Diamond A's document stayed on screen beside B's thread, and B's own capture of the
-		// preview saved A's document into B's folder. rc-b's ruling (2): they close when the
-		// person opens another conversation, as the Work panel moves. The first conversation
-		// of the session only claims them, so a document the boot puts back stays.
-		var panelsOwner = null;		// convKey() the Doc and Preview were last claimed for
+		// The Work panel follows the open conversation, and since CAPTURE-FENCE (rc-b's
+		// ruling (2), 2026-10-12) the Doc and Preview leave the screen with theirs, so
+		// Diamond A's document never sits beside B's thread for B's capture to save.
+		//
+		// That fence used to CLOSE them and remember nothing, so a file was lost on
+		// every round trip (D-20261015-17: *"panel state is not kept when switching
+		// between daimons and chats"*). Now leaving a conversation writes its PANEL
+		// RECORD (js/panelrec.js) first -- layout, Doc file and aim, Preview, Web
+		// address, the Terminal as a panel of the layout -- and arriving puts the
+		// arriving one's record back, with any file its turns showed while it was off
+		// screen. One owner: this replaced the Diamond-only "save arrangement" and the
+		// viewer's take-once `deferred`.
+		//
+		// The first conversation of the session only claims the panels, so what the
+		// tab's boot put back stays.
+		var panelsOwner = null;		// convKey() the panels were last claimed for
+		/// Panels whose content belongs to a conversation: they leave with it.
+		var CONV_PANELS = ['doc', 'preview', 'web', 'term'];
+
+		function PR() { return window.DaimondPanelRec || null; }
+
+		/// What this conversation's panels hold now, as its record.
+		function captureRecord() {
+			var rec = { layout: DaimondPanels.snapshot() };
+			// What a CLOSED panel last held is not what it holds: a Doc the person
+			// closed keeps `curFile` behind it, and recording that would open it again
+			// on the way back.
+			if (curFile && DaimondPanels.isOpen('doc') && viewEl.style.display !== 'none') {
+				var body = viewEl.querySelector('.files-edit, .files-view-body');
+				rec.doc = { path: curFile, store: storeFile, top: body ? Math.round(body.scrollTop) : 0 };
+			}
+			if (pvFile && DaimondPanels.isOpen('preview')) rec.preview = { path: pvFile, store: pvStore };
+			if (DaimondPanels.isOpen('web') && window.DaimondWeb) {
+				try {
+					var st = DaimondWeb.status();
+					// A blob page is this tab's and dies with it; the guide is no address.
+					if (st && st.url && st.driver !== 'guide' && !/^blob:/i.test(st.url)) rec.web = { url: st.url };
+				} catch (e) { /* no page is the ordinary case */ }
+			}
+			return rec;
+		}
+
+		/// Write the record of the conversation being left.
+		function leaveConversation(key) {
+			if (key && PR()) PR().put(key, captureRecord());
+		}
+
+		/// Put the arriving conversation's panels back, or, with no record, leave the
+		/// layout as it is less the panels that held the last one's things.
+		function arriveConversation(key) {
+			var rec = (key && PR()) ? PR().get(key) : null;
+			// A Doc already open is not opened again, so its hook does not run: the
+			// note it starts is started here instead.
+			var wasDoc = DaimondPanels.isOpen('doc');
+			var shows = (rec && rec.shows) || [];
+			// Only the panels the record fills are put back by hand; one it names open
+			// but holds nothing for stays closed rather than opening empty.
+			var back = (rec && PR() && PR().arrival) ? PR().arrival(rec) : null;
+			if (back) {
+				DaimondPanels.restoreLayout(back.layout, back.filled);
+			} else {
+				CONV_PANELS.forEach(function (id) { DaimondPanels.hide(id); });
+			}
+			if (!rec) return;
+			// One after another, and only while this is still the conversation on
+			// screen: a fast second switch must not open A's file over C.
+			var still = function () { return convKey() === key; };
+			var chain = Promise.resolve();
+			var openOne = function (f, after) {
+				chain = chain.then(function () {
+					if (!still()) return;
+					if (f.page) DaimondViewer.at(f.path, f.page);
+					return Promise.resolve(openFile(f.path, f.store ? { store: true } : undefined))
+						.then(function () { if (after && still()) after(); });
+				}).catch(function () { /* moved or deleted since; nothing to say */ });
+			};
+			if (rec.doc) openOne(rec.doc, function () {
+				var body = viewEl.querySelector('.files-edit, .files-view-body');
+				if (body && rec.doc.top) body.scrollTop = rec.doc.top;
+			});
+			if (rec.preview) openOne(rec.preview);
+			shows.forEach(function (f) { openOne(f); });
+			if (back && back.filled.indexOf('doc') === -1 && back.layout.open.doc && wasDoc) {
+				chain = chain.then(function () { if (still()) return onDocOpen(); }).catch(function () {});
+			}
+			if (rec.web && window.DaimondWeb) {
+				chain = chain.then(function () {
+					if (!still()) return;
+					var st = null;
+					try { st = DaimondWeb.status(); } catch (e) { st = null; }
+					// The page already in the panel is not loaded again.
+					if (st && st.url === rec.web.url) { DaimondPanels.show('web'); return; }
+					return DaimondWeb.open(rec.web.url);
+				}).catch(function () { /* the page can say why itself */ });
+			}
+		}
 
 		function followConversation() {
 			var k = convKey();
 			if (panelsOwner !== null && k !== panelsOwner) {
+				leaveConversation(panelsOwner);
 				if (_pdfUrl || _docPdf || pvFile || watchedPath()) closePreview();
 				if (curFile || viewEl.style.display !== 'none') shutView();
+				arriveConversation(k);
 			}
 			panelsOwner = k;
 			ownPanel('doc');
@@ -53124,15 +53498,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function onClose() { teardown(); }
 
 		/// The Diamond in focus changed.
+		///
+		/// The session ends here, at once: its fence was the other Diamond's. Whether
+		/// one starts again is NOT decided here. A switch puts the arriving
+		/// conversation's layout back (`followConversation` → `restoreLayout`, in the
+		/// same event), and that layout owns the Terminal: it closes the panel or, by
+		/// its open hook, starts it. So the restart waits until the event has been
+		/// handled, and happens only for a panel still open with no session in it --
+		/// a change that switched no conversation, or one whose layout kept it open.
 		function onDiamondChanged() {
 			if (!els) return;
 			if (!sid && !term) return;
-			var open = window.DaimondPanels && DaimondPanels.isOpen('term');
 			teardown();
-			// Locking clears the Diamond too, and that arrives here as a change. A
-			// terminal started in answer to it would be a program launched by the act
-			// of logging out.
-			if (open && !locked) onOpen();
+			Promise.resolve().then(function () {
+				var open = window.DaimondPanels && DaimondPanels.isOpen('term');
+				// Locking clears the Diamond too, and that arrives here as a change. A
+				// terminal started in answer to it would be a program launched by the
+				// act of logging out.
+				if (open && !locked && !sid && !term) onOpen();
+			});
 		}
 
 		return {
@@ -53611,14 +53995,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// its Diamond, because it is not a chat you started, it is a daimon you have been
 	/// talking to.
 	///
-	/// Its model is not frozen at creation the way a chat's is. A Diamond's primary may
-	/// be changed at any time (§1.3), so the record's model is refreshed from
-	/// `diamondModel` whenever it is asked for — a stale pair here would meter the turn
-	/// against a model the Diamond stopped using.
+	/// It holds NO MODEL (UNBLOCK-5, C3). A Diamond's primary may be changed at any time
+	/// (§1.3), and the copy this record used to keep, refreshed here by an unstamped write,
+	/// went stale and won merges by value: Lifelog's turns said glm with the Diamond on
+	/// deepseek. The Diamond's record is the one owner; `turnModelOf` reads it.
 	function daimonChat(f) {
 		if (!f || !f.id) return null;
 		var rec = chats.find(function (c) { return c.diamondId === f.id; });
-		var m = diamondModel(f.id);
 		if (!rec) {
 			rec = {
 				id: newChatId(),
@@ -53626,8 +54009,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				name: f.name || t('rail.unnamed_diamond'),
 				app: null,                 // a daimon runs on `diamondApp`, never its own
 				messages: [],
-				model: m.model || '',
-				provider: m.provider || '',
 				status: 'active',
 				promptTokens: 0, completionTokens: 0, cachedTokens: 0, costUsd: 0,
 				prevPrompt: 0, prevCompletion: 0, prevCached: 0, prevCost: 0,
@@ -53637,8 +54018,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chats.push(rec);
 			persistChats();
 		}
-		rec.model = m.model || rec.model;
-		rec.provider = m.provider || rec.provider;
 		// The Diamond's name is the conversation's name. Renaming the Diamond has to
 		// carry, or a merged store ends up with two records claiming one Diamond under
 		// two names and no way to tell which is current.
@@ -56683,7 +57062,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// leaves the rail, the graph, the fold picker and every daimon's reach, and
 	/// appears in the Trash panel with Restore beside it.
 	///
-	/// So the arrangement, the pause flags, the tile's colours and the chosen
+	/// So the panel record, the pause flags, the tile's colours and the chosen
 	/// view all STAY. They are what makes a restore return the Diamond you
 	/// deleted rather than a Diamond with its name. Forgetting them is part of
 	/// destroying it, and lives in `destroyDiamond`.
@@ -56750,10 +57129,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (a.diamond === id) DaimondAlerts.dismiss(a.id);
 			});
 		} catch (e) { /* the tombstone hides them anyway (Pending.fresh) */ }
-		// A destroyed Diamond's arrangement has nothing left to restore, and the
-		// layout blob is rewritten whole on every change, so leaving it would
-		// grow the write for ever.
-		try { DaimondPanels.forgetArrangement(id); } catch (e) { /* no layout engine */ }
+		// A destroyed Diamond's panel record has nothing left to restore (UNBLOCK-14).
+		try { if (window.DaimondPanelRec) DaimondPanelRec.drop(id); } catch (e) { /* no store */ }
 		// And its pause flags, for the same reason: a leaf id nobody can reach
 		// keeps the Diamonds section — and the root above it — amber for ever,
 		// and travels in every sync parcel for the life of the account.
@@ -57828,23 +58205,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (view) setDiamondView(f.id, want);
 		// Remembered so this tab's next boot comes back here, on this face. See TAB_VIEW_KEY.
 		tabViewSet({ diamond: f && f.id ? f.id : '', chat: '', face: want });
-		// A Diamond that carries an arrangement is worked in it. Only an arrangement
-		// the user deliberately saved exists, so this never closes a panel behind
-		// their back on a Diamond they never arranged.
-		DaimondPanels.restoreArrangement(f.id);
-		// A file this Diamond's daimon asked to show while the user was elsewhere.
-		// After the arrangement, deliberately: the daimon's show is the more recent
-		// intent of the two, and a restored arrangement that closed the Doc panel
-		// would otherwise swallow it. Taken, so it happens once. See
-		// `mayTakeScreen` in js/viewer.js.
-		if (window.DaimondViewer && DaimondViewer.takeDeferred) {
-			var waiting = DaimondViewer.takeDeferred(f.id);
-			if (waiting) {
-				Promise.resolve(Files.open(waiting)).catch(function () {
-					/* the file may have been moved or deleted since; nothing to say */
-				});
-			}
-		}
+		// The panels this Diamond was worked in, and anything its daimon showed while
+		// the person was elsewhere, come back through `followConversation`, which
+		// `signalDiamondChanged` above has already run (UNBLOCK-14).
 
 		if (want === 'chat') {
 			// `current` IS the daimon's record here, and that is the point: every
@@ -64718,7 +65081,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			onProgress: (ropts && ropts.onProgress) || null,
 			pre:        (ropts && ropts.pre),
 			effort:     (ropts && ropts.effort),	// the level the asker sent the turn with
+			model:      (ropts && ropts.model) || null,	// and the model it resolved (C3)
 		});
+	}
+
+	/// The model a daimon turn on Diamond `id` runs on: the pair a hand-off's errand carries
+	/// (`detached.model`) when the asker marked it its resolution (`src: 'diamond'`,
+	/// `errandModelOf`), and the Diamond's own otherwise, so an older asker's unmarked, stale
+	/// chat-record pair never runs. A marked pair this device cannot run is NOT swapped for its
+	/// own copy: the turn is handed back as the no-key gate hands it (401, `runnerErrorKind`), so
+	/// the asker, which has the key, runs what it showed.
+	function steerModelFor(id, detached) {
+		var own = diamondModel(id) || {};
+		var mine = { provider: own.provider || '', model: own.model || '' };
+		var sent = detached && detached.model;
+		if (!sent || !sent.model || sent.src !== 'diamond') return mine;
+		var r = window.DaimondModels && DaimondModels.resolve(sent.provider || '', sent.model);
+		if (r) return { provider: r.provider, model: r.model };
+		diag('daimon model', 'sent=' + sent.model + ' unrunnable here, handed back');
+		var eKey = new Error('the diamond’s model has no usable api key on this device');
+		eKey.code = 401;
+		throw eKey;
 	}
 
 	/// The records of the file rows a daimon turn's changed-files note shows: one per manifest
@@ -64869,10 +65252,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// daimon is given; `instruction` stays what the user wrote and is what the
 		// transcript records, so the thread reads as the person's own sentence.
 		var sent = takePageNote(preset ? '' : instruction) + instruction;
-		// Can THIS Diamond's model run? Asking whether the *default* provider is configured is the
+		// THE MODEL THIS TURN RUNS ON, set once, before anything is marked busy, and handed to every
+		// `diamondApp` below (C3). The Diamond's, and on a runner the pair the asker resolved and
+		// marked on the errand, so the turn runs what the asker saw rather than this device's copy of
+		// the Diamond's record. A marked pair this device cannot run throws the 401 hand-back here.
+		var dsPair = steerModelFor(f.id, detached);
+		// Can THAT model run? Asking whether the *default* provider is configured is the
 		// wrong question: it would stop a perfectly good Diamond steering because some other
 		// provider -- the starred one -- had lost its key.
-		if (!diamondCanRun(f.id)) {
+		if (!(window.DaimondModels && DaimondModels.resolve(dsPair.provider, dsPair.model))) {
 			openSettings(t('crystal.no_key_steer'));
 			return '';
 		}
@@ -64997,7 +65385,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// run (`detached`) is the asker's turn, and its errand recovers it there.
 			persistChats();
 			if (window.DaimondJournal) {
-				var jmeta = { model: rec.model, provider: rec.provider, amid: dmid, daimon: 1 };
+				var jmeta = { model: dsPair.model, provider: dsPair.provider, amid: dmid, daimon: 1 };
 				if (steerPre) jmeta.pre = steerPre;
 				if (srec.app === true) jmeta.app = true;
 				sJ = window.DaimondJournal;
@@ -65013,7 +65401,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// recovery's hands off it; the errand folds it and reports it Interrupted.
 			if (window.DaimondJournal) {
 				_turnRun[dumid] = beginTurnRun(rec, dumid);
-				var hmeta = { model: rec.model, provider: rec.provider, amid: dmid, daimon: 1,
+				var hmeta = { model: dsPair.model, provider: dsPair.provider, amid: dmid, daimon: 1,
 					run: _turnRun[dumid].id, ho: 1, at: Date.now() };
 				if (steerPre) hmeta.pre = steerPre;
 				sJ = window.DaimondJournal;
@@ -65040,7 +65428,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// same model. Pointing the record at it is what makes Stop reach this turn;
 		// aborting is idempotent, and a Diamond's app is rebuilt by `diamondApp` on the
 		// next use, so a stopped daimon does not leave a poisoned client behind.
-		rec.app = diamondApp(f.id, null, steerEff);
+		rec.app = diamondApp(f.id, dsPair, steerEff);
 		rec._runApp = rec.app;		// and what Stop and a pause reach, whatever becomes of `rec.app`
 		// TRAINING WHEELS — the debug feed's `turn.start`, THE DAIMON'S. The chat path
 		// has emitted one since the feed existed and this path never did, so the lens
@@ -65056,7 +65444,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var dsC0 = (rec.app && rec.app.completion_tokens) || 0;
 		var dsA0 = (rec.app && rec.app.cached_tokens) || 0;
 		var dsU0 = (rec.app && rec.app.cost_usd) || 0;
-		var dsPair = diamondModel(diamondId) || { provider: '', model: '' };
 		// Every row of this run is keyed by `dumid`, the turn's own id (what a hand-off's
 		// lease holds); the daimon chat's id rides apart in `chat`. Keyed by `rec.id` until
 		// Q8c, every steer a Diamond ever ran was one "turn" in the Lens.
@@ -65457,7 +65844,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (onScreen()) appendError(ev.content || '');
 			}
 		};
-		var fa = diamondApp(diamondId, null, steerEff);	// the Diamond steers with its own model, at the turn's Effort
+		var fa = diamondApp(diamondId, dsPair, steerEff);	// the turn's model (`steerModelFor`), at the turn's Effort
 		// The toolchains the user ticked on this Diamond, read fresh for THIS turn. The
 		// marks themselves are the engine's to read at the turn (HIST-SAFE U2), from the
 		// same `marks::reach` that `Files.bounds` answers with, so the daimon and the
@@ -65526,8 +65913,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// place a worker's are: ticking Git granted it to this daimon's workers and not
 				// to the daimon, which is the surface the user granted it on.
 				JSON.stringify(marks.toolkits  || []),
-				(rec.session && rec.session.msgs) || [], onEvent,
-				steerPre || undefined, !!(how && how.pendingOnly)), rec);
+				// The conversation the turn starts from is the converged transcript's
+				// (`daimonPrior`), the stored session only where it agrees (UNBLOCK-11 F1). The
+				// prompt's mid and this device's id go with it, for the engine's activity record.
+				daimonPrior(rec, dumid), onEvent,
+				steerPre || undefined, !!(how && how.pendingOnly), String(dumid), selfDeviceId()), rec);
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {
 				// A DETACHED turn stamps the answer with the errand's turn id, so the
@@ -65602,8 +65992,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (onScreen()) appendEnding(pendingSteerEnd, false);
 				pendingSteerEnd = null;
 			}
+			// The session is a cache of the transcript (UNBLOCK-11): marked on the row the agent
+			// holds last, as `captureSession` marks a chat's, so the next turn lays on by
+			// `tailAfter` whatever another device added after it. The fold record, if the
+			// engine folded, is stored with the chat so every device can rebuild from it.
+			var sMark = sessionMarker(rec.messages);
 			rec.session = { v: 1, msgs: Array.prototype.slice.call(after || []),
-				upto: '', uptoTs: 0 };
+				upto: sMark ? (sMark.mid || '') : '', uptoTs: sMark ? (sMark.ts || 0) : 0 };
+			var sFold = foldFrom(rec, after, dumid, rec.fold || null, Date.now(), selfDeviceId());
+			if (sFold) rec.fold = sFold;
 			try {
 				rec.lastPrompt = fa.last_prompt_tokens || rec.lastPrompt || 0;
 			} catch (e) { /* the app is mid-turn nowhere here */ }
@@ -65635,10 +66032,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (onScreen()) appendEnding(pendingSteerEnd, false);
 				pendingSteerEnd = null;
 			}
+			// WHAT THE TURN SAID BEFORE IT FAILED LANDS IN THE TRANSCRIPT (UNBLOCK-11): it was
+			// dropped with `replyText`, and the session evicted, so the next turn (here or on
+			// another device) is laid from a transcript that holds the partial answer.
+			landFailedTurn(rec, (e && e.interrupted) ? '' : replyText, dumid, dmid, Date.now());
 			if (e && e.interrupted) {
 				// THE ENGINE WAS KILLED UNDER THE TURN (UNBLOCK-7 F2): interrupted, not an
 				// error; a handed-off run says so, and Retry asks the instruction again.
-				var killed = { role: 'assistant', content: '', mid: newMid(), interrupted: true,
+				var killed = { role: 'assistant', content: replyText || '', mid: replyText ? dmid : newMid(), interrupted: true,
 					iturn: dumid, itext: instruction, ts: Date.now() };
 				if (detached) { killed.why = 'runner'; killed.lostOn = selfDeviceId(); }
 				rec.messages.push(killed);
@@ -72438,13 +72839,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var win = 0;
 					try {
 						win = (window.DaimondPricing && DaimondPricing.contextWindow)
-							? (DaimondPricing.contextWindow(c.model, c.provider || '') || 0) : 0;
+							? (DaimondPricing.contextWindow(turnModelOf(c).model, turnModelOf(c).provider) || 0) : 0;
 					} catch (e) {}
 					return {
 						id:       c.id,
 						name:     c.name,
-						model:    c.model || '',
-						provider: c.provider || '',
+						model:    turnModelOf(c).model,
+						provider: turnModelOf(c).provider,
 						messages: Array.isArray(c.messages) ? c.messages.length : (c.msgCount || 0),
 						contextWindow: win,
 					};
@@ -72497,8 +72898,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				contextActual: contextActual,
 				contextWindow: contextWindow,
 				foldAt:        foldAt,
-				activeModel:   chat ? (chat.model || '') : '',
-				provider:      chat ? (chat.provider || '') : '',
+				activeModel:   chat ? turnModelOf(chat).model : '',
+				provider:      chat ? turnModelOf(chat).provider : '',
 				workerState:   workerState,
 				activity:      workerState ? (workerState.busy ? 'busy' : 'idle') : null,
 			};

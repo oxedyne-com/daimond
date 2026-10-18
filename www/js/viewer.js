@@ -1750,12 +1750,14 @@
 	// showing a file is telling the user something, and the moment they open that
 	// Diamond is the moment it is worth seeing -- which is how `pendingFolds`
 	// already treats a proposal made while the user was elsewhere.
+	//
+	// It is written into the asking conversation's PANEL RECORD (js/panelrec.js,
+	// UNBLOCK-14), the one owner of what that conversation's panels hold. It used to
+	// sit in a table here that was TAKEN on arrival, so the file showed once and was
+	// gone after the person next left and came back.
 
 	/// Answers the id of the conversation on screen, or `''` for none.
 	var screenOwner = null;
-
-	/// The last file each absent owner asked to show, by owner id.
-	var deferred = Object.create(null);
 
 	/// Register the function that says which conversation is on screen.
 	/// Called once, by `daimond.js`.
@@ -1796,20 +1798,6 @@
 			return (a && typeof a.send === 'function') ? a : null;
 		}
 		catch (e) { return null; }
-	}
-
-	/// The file `owner` asked to show while it was off screen, and forget it.
-	///
-	/// Taken rather than read: it is shown once, when the user arrives. Leaving it
-	/// would reopen the panel on every later visit to that Diamond, long after the
-	/// turn that asked had been forgotten by everyone.
-	///
-	/// # Arguments
-	/// * `owner` - The conversation being opened.
-	function takeDeferred(owner) {
-		var p = owner ? deferred[owner] : '';
-		if (owner) delete deferred[owner];
-		return p || '';
 	}
 
 	/// Whether a show asked for by `owner` may take the screen now.
@@ -1866,7 +1854,12 @@
 		// Diamond is worse than no tool at all: it is the model telling them to
 		// look at something that is not there.
 		if (!mayTakeScreen(owner)) {
-			if (owner) deferred[owner] = path;
+			// Into the conversation's record: arriving opens it, and from then on it is
+			// what that conversation's panel holds, until the person closes it.
+			if (owner && window.DaimondPanelRec && DaimondPanelRec.fold) {
+				DaimondPanelRec.fold(String(owner), 'file',
+					{ path: String(path), page: (typeof page === 'number' && page > 0) ? page : 0 });
+			}
 			v.shown = false;
 			v.page = aimPage(path);
 			return JSON.stringify(v);
@@ -1897,11 +1890,13 @@
 		// Where a document opens next time it is drawn.
 		at:            at,
 		opener:        setOpener,
-		// Who is on screen, and what an absent owner asked for while it was. Both
+		// Who is on screen, and whether a turn runs for another device. Both
 		// registered from `daimond.js`, which is the only module that knows.
 		screenOwner:   setScreenOwner,
 		remoteAsker:   setRemoteAsker,
-		takeDeferred:  takeDeferred,
+		// The asking device of a turn run here for another, which the Web panel
+		// answers first exactly as `showToUser` does.
+		askerOf:       askerOf,
 		mayTakeScreen: mayTakeScreen,
 		// The routing question a panel with an editor in it has to answer, kept
 		// here beside the table it is answered from rather than restated by every

@@ -2366,6 +2366,14 @@ impl DaimondApp {
         diamond::union_links_from(&owner, &sidecar).await.map_err(to_js_err)
     }
 
+    /// Take into a Diamond's decisions archive every entry the losing device's copy of it held
+    /// and this one does not, after a two-sided import replaced `.daimond/` (UNBLOCK-18 F4).  True
+    /// when something was written.  See
+    /// [`union_archive_from`](crate::wasm::diamond::union_archive_from).
+    pub async fn union_archive(&self, owner: String, archive: String) -> Result<bool, JsValue> {
+        diamond::union_archive_from(&owner, &archive).await.map_err(to_js_err)
+    }
+
     /// Join another device's page logs into this Diamond's in place, where neither copy is
     /// fresher: the page-log twin of [`DaimondApp::union_links`].  `export_json` is that device's
     /// export.  Answers the JSON [`DaimondApp::import_diamond`] does, with `files` the logs written
@@ -2855,6 +2863,11 @@ impl DaimondApp {
     ///   person said, passes none.
     /// * `pending_only` - A triggered turn whose only channel is the Pending panel, so an
     ///   empty ending with nothing failed is quietly done ([`crate::agent::Agent::set_pending_only`]).
+    /// * `mid` - The id of the person's message this turn answers (the page's `dumid`), carried
+    ///   on the turn's messages so the page can join its session to its transcript. Optional.
+    /// * `device` - This device's id, which names its activity file
+    ///   (`.daimond/activity/<device>.log`). A caller that gives none writes no activity line,
+    ///   since a shared fallback name would put two writers on one file.
     ///
     /// # Returns
     /// The conversation after the turn, to be stored and handed back next time.
@@ -2870,6 +2883,8 @@ impl DaimondApp {
         on_event:    JsValue,
         pre:         Option<String>,
         pending_only: Option<bool>,
+        mid:         Option<String>,
+        device:      Option<String>,
     )
         -> Result<js_sys::Array, JsValue>
     {
@@ -2886,7 +2901,7 @@ impl DaimondApp {
             Err(e) => return Err(to_js_err(e)),
         };
         self.steer_inner(&id, instruction, pre.unwrap_or_default(), toolkits, prior, on_event,
-            pending_only.unwrap_or(false))
+            pending_only.unwrap_or(false), mid.unwrap_or_default(), device.unwrap_or_default())
             .await
             .map_err(to_js_err)
     }
@@ -3585,6 +3600,12 @@ impl DaimondApp {
         let split = crate::tools::crystal_split(
             &before, crate::tools::crystal_hot_room(prompt_files.hot_bytes())).unwrap_or_default();
         local.push_str(&crate::tools::crystal_prompt_text(&split, &prompt_files));
+        // WHAT THIS DIAMOND'S TURNS DID, on every device (UNBLOCK-11): a fact of the Diamond and
+        // not of this device's session, so a widget built on the phone yesterday is known here
+        // after a fold, a rebuild or a pull. Newest first, at most `activity::PROMPT_CAP`.
+        let activity: Vec<String> = diamond::activity_read_all(id).await
+            .into_iter().map(|(_, text)| text).collect();
+        local.push_str(&crate::activity::prompt_from(&activity, js_sys::Date::now() as i64));
 
         // The daimon reaches what its workers reach, and writes where the user marked.
         //
@@ -3694,6 +3715,8 @@ impl DaimondApp {
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
         pending_only: bool,
+        mid:         String,
+        device:      String,
     )
         -> Outcome<js_sys::Array>
     {
@@ -3787,7 +3810,7 @@ impl DaimondApp {
             (false, true)  => viewer,
             (false, false) => fmt!("{}\n\n{}", pre, viewer),
         };
-        let ran = agent.run_turn_noted(&mut session, instruction, pre, String::new(), &registry,
+        let ran = agent.run_turn_noted(&mut session, instruction, pre, mid, &registry,
             &mut sink).await;
         self.absorb_usage(&session);
         // WHERE THIS TURN'S OWN MESSAGES START, so its ledger can be read apart from every turn
@@ -3941,6 +3964,26 @@ impl DaimondApp {
             },
         };
         let kept = recorded.is_ok();
+        // ONE ACTIVITY LINE FOR EVERY TURN THAT RAN, settled or failed (UNBLOCK-11), written by
+        // the app and never the model, to this device's own file. Best effort: the turn is not
+        // failed for want of its line.
+        if !device.trim().is_empty() {
+            let said = session.messages[turn_start.min(session.messages.len())..].iter().rev()
+                .find(|m| matches!(m, ChatMessage::Assistant { .. }) && !m.text().trim().is_empty())
+                .map(|m| m.text().into_owned())
+                .unwrap_or_default();
+            let failed = ran.as_ref().err().map(|e| e.plain());
+            let version = match &recorded {
+                Ok(Some((v, files))) => Some((*v, files.as_slice())),
+                _                    => None,
+            };
+            let now = js_sys::Date::now() as i64;
+            let line = crate::activity::ended(now, &device, version, &typed, &said, failed.as_deref());
+            if let Err(e) = diamond::activity_append(id, line, now).await {
+                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                    "the activity line of the turn in {} could not be written: {}", id, e)));
+            }
+        }
         match recorded {
             // THE DAIMON IS TOLD, in one sentence, and only where a manifest was actually
             // written. A model with no way to undo its own work does not merely fail to undo it:
@@ -4120,7 +4163,8 @@ impl DaimondApp {
         let last_good = diamond::crystal_hot_last_good(id, &crystal).await;
         let mut want = res!(self.reduce_round(id, delta, &crystal, &files, "").await);
         let lost = crate::agent::compact::fold_losses(&crystal, &files, &want);
-        let land = crate::agent::compact::fold_landing(id, &crystal, &last_good, &files, &want).err();
+        let land = crate::agent::compact::fold_landing(id, &crystal, &last_good, &files, &want,
+            &diamond::today()).err();
         if !lost.is_empty() || land.is_some() {
             // ONE RETRY, AND ONLY ONE. A reducer that destroys the record twice in a row is
             // not going to be talked round by a third sentence, and the user is waiting.
@@ -4146,7 +4190,9 @@ impl DaimondApp {
                     Diamond instead, or fold a smaller delta.",
                     still.join("; "); Invalid, Data));
             }
-            if let Err(why) = crate::agent::compact::fold_landing(id, &crystal, &last_good, &files, &again) {
+            if let Err(why) = crate::agent::compact::fold_landing(id, &crystal, &last_good,
+                &files, &again, &diamond::today())
+            {
                 return Err(err!(
                     "This fold would not fit in the Diamond, and the reducer's second answer \
                     did not either: {} The crystal and its files are unchanged.", why;

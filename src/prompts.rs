@@ -477,8 +477,9 @@ pub const CRYSTAL_TIME_NOTE: &str =
 /// the crystal.**  That sentence named no file, no moment and no test, so what it asked for was
 /// done when a turn happened to have room for it.  These three name the file, the moment and the
 /// test: a task is ticked when it is VERIFIED and the version that did it is written beside it, a
-/// decision is written the turn it is made rather than the turn somebody asks, and `STATE.md` is
-/// rewritten when anything moves rather than appended to.
+/// decision is written the turn it is made rather than the turn somebody asks, and `STATE.md` says
+/// where things are, one section at a time through `state_set`, rather than being a running log
+/// (UNBLOCK-18: daimons used it as one and hit its 4 KiB ceiling 32 times in 30 turns).
 ///
 /// The last sentence is the rule the whole file set exists for and is quoted verbatim from the
 /// design of 2026-09-15 §5.2.  Lane C adds the turn-end check that notices when it was ignored;
@@ -490,9 +491,10 @@ pub const NEVER_FORGET_NOTE: &str =
 	 whole, the last as its final twenty lines. Tick a task in \
 	 `REQUIREMENTS.md` only when you have VERIFIED it, and write the version that did it beside \
 	 the tick — `- [x] T12 … (v37)`. Write a decision into `DECISIONS.md` the turn it is made, \
-	 dated, with the reason, one line; it is append-only. Rewrite `STATE.md` whenever anything \
-	 moves — where the work is, what builds it, which file is the main one, what is in flight, \
-	 the next step — because it holds where things ARE and no history at all. \
+	 dated, with the reason, one line; it is append-only. `STATE.md` is where things are — \
+	 where the work is, what builds it, which file is the main one, what is in flight, the next \
+	 step — one `## ` section each, set with `state_set` when it moves; it is not a log. Past \
+	 4 KiB its oldest-touched sections move to `.daimond/decisions-archive.md`, dated. \
 	 REQUIREMENTS.md is the list of what this Diamond exists to do. A task leaves it only by \
 	 being ticked with the version that did it, or by the user striking it. Before you say a \
 	 piece of work is finished, read the file.";
@@ -544,7 +546,8 @@ pub const DECISIONS_TEMPLATE: &str =
 /// headings; `crate::tools::STATE_FACTS_HEADING` is where that is said once.
 pub const STATE_TEMPLATE: &str =
 	"# State\n\n\
-	 Where things are now. Rewritten whenever anything moves; it holds no history.\n\n\
+	 Where things are now, one section each; set one with `state_set`. Not a log: the oldest \
+	 sections move to `.daimond/decisions-archive.md`.\n\n\
 	 ## Layout\n\n\
 	 ## Build and test\n\n\
 	 ## In flight\n\n\
@@ -1661,7 +1664,8 @@ pub const CRYSTAL_FILES_NOTE: &str =
 	 cannot know either.\n\
 	 - Never delete any line of `DECISIONS.md`. It is append-only: add the delta's \
 	 rulings at the bottom, dated, and leave everything above them alone.\n\
-	 - `STATE.md` says where things ARE and holds no history, so rewrite it whole.";
+	 - `STATE.md` says where things are, one `## ` section each: change those that moved, \
+	 keep the rest.";
 
 /// The compactor's role: fold the earlier part of a working conversation into the
 /// notes the same assistant would need to carry on.

@@ -37,6 +37,7 @@
           node www/js/diamondconflict.test.mjs --break nonotes
           node www/js/diamondconflict.test.mjs --break nolock    (Case 6 only)
           node www/js/diamondconflict.test.mjs --break stale     (Case 6 only)
+          node www/js/diamondconflict.test.mjs --break noarchive (Case 7 only)
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -50,7 +51,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + line); failures++; }
 }
 
-const KNOWN = ['deletewrite', 'nobase', 'nonotes', 'nolock', 'stale'];
+const KNOWN = ['deletewrite', 'nobase', 'nonotes', 'nolock', 'stale', 'noarchive'];
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return (i >= 0 && process.argv[i + 1]) ? process.argv[i + 1] : '';
@@ -66,7 +67,8 @@ if (BREAK && !KNOWN.includes(BREAK)) {
 // must redden the two-sided assertions. `nonotes` takes the note file's join out of the page, so the
 // import's whole replacement stands, and must redden Case 5. `nolock` lets the lock admit everyone at once, and
 // `stale` decides from the list read at the top of the pull and not from the Diamond as it stands under the lock;
-// each must redden Case 6 and nothing else.
+// each must redden Case 6 and nothing else. `noarchive` takes the decisions archive's join out of the page
+// (UNBLOCK-18 F4), so the import's whole replacement stands, and must redden Case 7.
 
 // ── Lift a function out of daimond.js by source ───────────────────
 function lift(src, marker) {
@@ -83,12 +85,18 @@ const liftedTags    = lift(SRC, '\tfunction packTags(data) {');
 const liftedLinks   = lift(SRC, '\tfunction packLinks(data) {');
 const liftedPackAt  = lift(SRC, '\tfunction packStamp(data) {');
 const liftedPackNotes = lift(SRC, '\tfunction packNotes(data) {');
+const liftedPackArchive = lift(SRC, '\tfunction packArchive(data) {');
 const liftedJoin    = lift(SRC, '\tfunction joinCounts(s) {');
 const liftedHeal    = lift(SRC, '\tasync function healLogsHeld(app, id) {');
 let liftedApply     = lift(SRC, '\tasync function applyDiamonds(remote, from) {');
 if (BREAK === 'nonotes') {
 	const needle = 'await window.DaimondNotes.uniteHeld(', n = liftedApply.split(needle).length - 1;
 	if (n !== 1) { console.error('break nonotes: target matched ' + n + ' times, not once: ' + needle); process.exit(2); }
+	liftedApply = liftedApply.replace(needle, 'await (async function () { return false; })(');
+}
+if (BREAK === 'noarchive') {
+	const needle = 'await app.union_archive(', n = liftedApply.split(needle).length - 1;
+	if (n !== 1) { console.error('break noarchive: target matched ' + n + ' times, not once: ' + needle); process.exit(2); }
 	liftedApply = liftedApply.replace(needle, 'await (async function () { return false; })(');
 }
 if (BREAK === 'stale') {
@@ -146,7 +154,8 @@ function pack(id, d) {
 			'.daimond/meta.json':   JSON.stringify(d.metaAt ? { tags: d.tags || [], touched: d.metaAt } : { tags: d.tags || [] }),
 			'.daimond/links.jsonl': d.links || '',
 			'crystal.json':         d.memory || '',
-		}, d.notes != null ? { '.daimond/steering.md': d.notes } : {}),
+		}, d.notes != null ? { '.daimond/steering.md': d.notes } : {},
+			d.archive != null ? { '.daimond/decisions-archive.md': d.archive } : {}),
 	});
 }
 function unpack(json) {
@@ -160,6 +169,7 @@ function unpack(json) {
 		links:   String(files['.daimond/links.jsonl'] || ''),
 		memory:  String(files['crystal.json'] || ''),
 		notes:   typeof files['.daimond/steering.md'] === 'string' ? files['.daimond/steering.md'] : null,
+		archive: typeof files['.daimond/decisions-archive.md'] === 'string' ? files['.daimond/decisions-archive.md'] : null,
 	};
 }
 
@@ -197,7 +207,7 @@ function makeApp() {
 				// `delete_except_versions`, then every pack file written: `.daimond/steering.md` is not a
 				// versioned file, so the arriving pack's is all there is (a pack without one leaves none).
 				store[id] = { touched: inc.touched, tags: inc.tags.slice(), links: inc.links,
-					memory: inc.memory, versions: versions, notes: inc.notes };
+					memory: inc.memory, versions: versions, notes: inc.notes, archive: inc.archive };
 			},
 			async set_tags(id, tagsJson) {
 				if (!store[id]) return;
@@ -212,6 +222,19 @@ function makeApp() {
 				add.forEach((l) => { if (cur.indexOf(l) === -1) { cur.push(l); grew = true; } });
 				if (grew) { store[id].links = cur.join('\n'); store[id].touched += 1; }
 				return grew;
+			},
+			// The engine's join (`state_md::archive_union`), modelled by `## ` entry: an entry the
+			// archive here lacks is appended, and the Diamond stamped.
+			async union_archive(id, there) {
+				if (!store[id]) return false;
+				const cur = store[id].archive || '';
+				const add = String(there || '').split(/\n(?=## )/).map((e) => e.trim())
+					.filter((e) => e && !cur.includes(e));
+				if (!add.length) return false;
+				store[id].archive = cur + add.map((e) => '\n' + e + '\n').join('');
+				store[id].touched += 1;
+				calls.archive = (calls.archive || 0) + 1;
+				return true;
 			},
 			async delete_diamond(id) { delete store[id]; },
 		},
@@ -250,7 +273,7 @@ function build(harness) {
 	const baseStore = harness.baseStore;
 	const src =
 		'var window = ctx.window;\n' +
-		liftedStamp + '\n' + liftedTags + '\n' + liftedLinks + '\n' + liftedPackAt + '\n' + liftedPackNotes + '\n' +
+		liftedStamp + '\n' + liftedTags + '\n' + liftedLinks + '\n' + liftedPackAt + '\n' + liftedPackNotes + '\n' + liftedPackArchive + '\n' +
 		liftedDia + '\n' + liftedShape + '\n' + 'var DIAMOND_ANC_MAX = 16, DIAMOND_SEEN_MAX = 8;\n' +
 		// deps applyDiamonds reaches for, stubbed to the harness
 		'function diamondApp() { return ctx.app; }\n' +
@@ -490,6 +513,38 @@ async function window_notes(t) {
 	return N && N.by[t.id] ? N.by[t.id].entries.map((e) => e.id).sort() : null;
 }
 
+// ══ Case 7 — the decisions archive is joined, not replaced (UNBLOCK-18 F4) ══
+// `.daimond/decisions-archive.md` is where STATE.md and DECISIONS.md retire to, and it is not a versioned
+// file, so a two-sided import replaced it with the arriving copy's and the sections retired here left the
+// only file `recall` reaches. The loser's entries the arriving archive lacks are now appended.
+async function archiveFile() {
+	console.log('\nthe decisions archive on a two-sided change (UNBLOCK-18 F4):');
+	const A = '## STATE.md, section \'A\', retired 2026-10-01\n\nshared a';
+	const B = '## STATE.md, section \'B\', retired 2026-10-02\n\nonly here';
+	const C = '## STATE.md, section \'C\', retired 2026-10-03\n\nonly there';
+	const mk = (local, remote, touched) => {
+		const h = makeApp();
+		h.seed('X', { touched: touched, tags: ['a'], links: 'L', memory: 'MEM_here', archive: local });
+		const baseStore = { map: { X: 10 } };
+		const apply = build({ app: h.app, baseStore });
+		const data = pack('X', { touched: 30, tags: ['a'], links: 'L', memory: 'MEM_there', archive: remote });
+		return { h, run: () => apply({ diamonds: [ { id: 'X', touched: 30, updated: 30, data: data } ] }, 'desktop') };
+	};
+	let t = mk('\n' + A + '\n\n' + B + '\n', '\n' + A + '\n\n' + C + '\n', 20);
+	await t.run();
+	const got = t.h.store.X.archive || '';
+	check('A1 the import was a conflict', t.h.calls.import.some((c) => c.keepConflict === true));
+	check('A1 the section retired here survives', got.includes('only here'), JSON.stringify(got));
+	check('A1 the arriving one stands, and the shared one once', got.includes('only there') && got.split('shared a').length === 2);
+	check('A1 the join is stamped so that it travels on', t.h.store.X.touched > 30, 'touched ' + t.h.store.X.touched);
+	const n = t.h.calls.archive || 0;
+	await t.run();
+	check('A1 a further round joins nothing (it settles)', (t.h.calls.archive || 0) === n);
+	t = mk('\n' + A + '\n\n' + B + '\n', '\n' + A + '\n', 10);
+	await t.run();
+	check('A2 a one-sided pull is not joined', !(t.h.calls.archive) && !(t.h.store.X.archive || '').includes('only here'));
+}
+
 // ══ Case 6 — a press made while a pull applies the same Diamond (round F, R1) ══
 // `applyDiamonds` decided "two-sided" from the list it read at its top, and the import sat outside the queue the
 // note writes share: a note pressed after the list read as a one-sided change and the import replaced the file
@@ -568,6 +623,7 @@ async function main() {
 	await freshAdopt();
 	await storedStamp();
 	await noteFile();
+	await archiveFile();
 	await lockCases();
 
 	console.log('');

@@ -205,7 +205,7 @@
 		'web_open', 'web_read', 'web_scroll', 'web_close', 'web_snapshot',
 		'ask', 'social_read', 'social_send', 'sheet_read', 'sheet_write',
 		'doc_edit', 'runs', 'verify', 'artefact_add', 'link_list', 'link_add',
-		'link_remove'];
+		'link_remove', 'state_set'];
 
 	/// Why something did not work. Deliberately coarse: a class of failure is
 	/// actionable and a message is not sendable.

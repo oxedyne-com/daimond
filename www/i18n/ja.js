@@ -1011,11 +1011,6 @@
 	'menu.calendar': '暦',
 	'menu.calendar_ce': '西暦',
 	'menu.calendar_he': '完新世暦',
-	'menu.this_diamond':  'この diamond',
-	'menu.arrangement_update': '保存した配置を更新',
-	'menu.arrangement_keep':   'この配置を {name} と一緒に残す',
-	'menu.arrangement_keep_this': 'この配置をこの diamond と一緒に残す',
-	'menu.arrangement_forget': '残さない',
 
 	// ── 文字サイズの段階 ───────────────────────────────────────
 	'size.small':  '小',

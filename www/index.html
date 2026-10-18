@@ -1851,6 +1851,10 @@
      first -- a restore opens an undo window. -->
 <script src="js/undo.js"></script>
 <script src="js/versions.js"></script>
+<!-- panelrec.js: each conversation's panels, kept on this device and put back on
+     arrival (UNBLOCK-14). Before viewer.js and web.js, which write a show made
+     off screen into it, and before the module, which saves and restores it. -->
+<script src="js/panelrec.js"></script>
 <!-- viewer.js: the Doc panel's file viewer, so that opening a PDF or a PNG shows
      the document rather than a screenful of replacement characters. Classic,
      before the module, so window.DaimondViewer exists when the app reaches for

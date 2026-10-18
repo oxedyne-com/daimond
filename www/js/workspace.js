@@ -593,28 +593,6 @@
 			menuEl.appendChild(reset);
 		}
 
-		// This Diamond's arrangement, when there is a Diamond to hang it on.
-		var diamond = window.DaimondDiamond && DaimondDiamond.current && DaimondDiamond.current();
-		if (diamond && diamond.id) {
-			menuEl.appendChild(el('div', 'pop-head', t('menu.this_diamond')));
-			var saved = P().hasArrangement(diamond.id);
-			var save = el('button', 'gal-row');
-			save.appendChild(el('span', 'nm', saved ? t('menu.arrangement_update')
-				: (diamond.name ? t('menu.arrangement_keep', { name: diamond.name })
-					: t('menu.arrangement_keep_this'))));
-			save.addEventListener('click', function () {
-				P().saveArrangement(diamond.id);
-				renderMenu();
-			});
-			menuEl.appendChild(save);
-			if (saved) {
-				var drop = el('button', 'gal-row');
-				drop.appendChild(el('span', 'nm', t('menu.arrangement_forget')));
-				drop.addEventListener('click', function () { P().forgetArrangement(diamond.id); renderMenu(); });
-				menuEl.appendChild(drop);
-			}
-		}
-
 		renderLanguage(menuEl);
 	}
 

@@ -67,6 +67,7 @@ pub mod ocr;
 pub mod office;
 pub mod opfs;
 pub mod pending;
+pub mod transcript;
 pub mod pty;
 pub mod seal;
 pub mod shot;

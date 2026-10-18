@@ -359,8 +359,43 @@
 	/// session; otherwise it is an iframe, which many sites simply refuse. We ask
 	/// the gateway FIRST whether the site will frame, because a parent page
 	/// cannot detect frame refusal reliably — the load event fires either way.
-	async function open(url) {
+	/// Navigate the panel to `url`.
+	///
+	/// `owner` is the conversation asking, as the turn's keeper names it (a Diamond's
+	/// id or `chat:<id>`), or nothing for the person's own act. A conversation that
+	/// is not the one on screen does not take the screen (UNBLOCK-14, as a file show
+	/// does in js/viewer.js): the address is written into its panel record, and the
+	/// page opens when the person arrives there.
+	///
+	/// `turn` is the asking turn's tag. A turn run here for another device opens its
+	/// page on THAT device (D-20261006-27), answered first as `showToUser` answers
+	/// it: this screen is left as it was and nothing is written into this device's
+	/// records, because nothing here is to change.
+	async function open(url, owner, turn) {
 		url = String(url || '').trim();
+		var asker = (url && window.DaimondViewer && DaimondViewer.askerOf)
+			? DaimondViewer.askerOf(owner, turn) : null;
+		if (asker) {
+			asker.send({ web: url });
+			return {
+				url: url, shown: false, asker: String(asker.label || ''),
+				note: 'The page opens in the Web panel on the device the user asked from'
+					+ (asker.label ? ' (' + String(asker.label) + ')' : '') + '.'
+					+ ' Use web_fetch to read it here.',
+			};
+		}
+		if (owner && window.DaimondViewer && DaimondViewer.mayTakeScreen
+			&& !DaimondViewer.mayTakeScreen(String(owner))) {
+			var kept = !!(url && window.DaimondPanelRec && DaimondPanelRec.fold
+				&& DaimondPanelRec.fold(String(owner), 'web', { url: url }));
+			return {
+				url: url, shown: false, kept: kept,
+				note: 'The user is looking at another conversation, so the page was not '
+					+ 'opened on their screen' + (kept ? '; it opens in the Web panel when '
+					+ 'they come back to this one.' : '.')
+					+ ' Use web_fetch to read it now.',
+			};
+		}
 		// Whatever was shown before — a read-only text copy especially — is torn
 		// down before the new page, so the panel never shows one site through
 		// the remains of another.

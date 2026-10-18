@@ -1543,24 +1543,116 @@ pub(crate) async fn standing_retired(
     path: &str,
     text: String,
 )
-    -> Outcome<(String, String)>
+    -> Outcome<Landed>
 {
     let leaf = match crate::tools::standing_leaf(path) {
         Some(l) => l,
-        None    => return Ok((text, String::new())),
+        None    => return Ok(Landed { kept: text, ..Landed::default() }),
     };
+    if leaf == crate::tools::STATE_FILE {
+        return state_landed(root, path, text).await;
+    }
     let cap = crate::tools::standing_cap(leaf);
     let out = crate::tools::standing_retire(leaf, &text);
     if out.retired.is_empty() {
-        return Ok((text, String::new()));
+        return Ok(Landed { kept: text, ..Landed::default() });
     }
     let archive = crate::tools::standing_archive(leaf, &crate::tools::diamond_of_path(path));
-    res!(archive_append(root, &archive, &out.retired).await);
     let moved = out.retired.lines().count();
-    Ok((out.kept, fmt!(
+    let said = fmt!(
         "\n{} was over its {}-byte ceiling, so the {} oldest finished {} moved to {}, where \
         recall still searches them and file_read still opens them. Nothing was deleted.",
-        leaf, cap, moved, if moved == 1 { "line" } else { "lines" }, archive)))
+        leaf, cap, moved, if moved == 1 { "line" } else { "lines" }, archive);
+    Ok(Landed {
+        kept:    out.kept,
+        said,
+        archive: vec![(archive, out.retired)],
+        ..Landed::default()
+    })
+}
+
+/// A standing file's write as it will land, and the side files it leaves to write.
+///
+/// **The side files wait until the write is accepted** (UNBLOCK-18 F6).  [`standing_retired`]
+/// only reads; a door that can still refuse (`before_overwrite`, a restore's question) would
+/// otherwise leave a DECISIONS line for a retirement that never happened.  Once the write is
+/// accepted the door calls [`Landed::settle`], and only then writes the file itself: archive
+/// first, so a failure at any point leaves the retired text somewhere, never nowhere.
+#[derive(Debug, Default)]
+pub(crate) struct Landed {
+    pub kept:  String,                      // the file to write
+    pub said:  String,                      // what the tool result says moved
+    archive:   Vec<(String, String)>,       // (archive path, text to append), written first
+    decisions: Option<(String, String)>,    // (path, whole new DECISIONS.md)
+    touched:   Option<(String, String)>,    // (path, whole new touched record)
+}
+
+impl Landed {
+    /// Write the side files, archive first, then `DECISIONS.md`, then the touched record.  Call
+    /// once the write is accepted and before the file itself is written.
+    pub(crate) async fn settle(&self, root: FileRoot) -> Outcome<()> {
+        for (archive, text) in self.archive.iter() {
+            res!(archive_append(root, archive, text).await);
+        }
+        if let Some((p, t)) = &self.decisions {
+            res!(opfs::write_file(root, p, t.as_bytes()).await);
+        }
+        if let Some((p, t)) = &self.touched {
+            res!(opfs::write_file(root, p, t.as_bytes()).await);
+        }
+        Ok(())
+    }
+}
+
+/// A write to `STATE.md` as it lands: by section, never refused (UNBLOCK-18).
+///
+/// Reads what stands there and when each section was last touched, and lands the write through
+/// [`crate::state_md::land`].  What it moved goes to the decisions archive, one dated line per
+/// retirement to `DECISIONS.md` (itself retired as any write to it is), and the touched record is
+/// rewritten with only the live keys -- its bound is the file's own sections, its shed every
+/// landing.  All three wait in the answer for [`Landed::settle`].
+async fn state_landed(root: FileRoot, path: &str, text: String) -> Outcome<Landed> {
+    let id = crate::tools::diamond_of_path(path);
+    let read = |p: String| async move {
+        opfs::read_file(root, &p).await
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default()
+    };
+    let old = read(path.to_string()).await;
+    let touched_path = fmt!("{}/{}/{}{}", crate::tools::STORE_ROOT, id,
+        crate::tools::DAIMOND_DIR, crate::state_md::TOUCHED_LEAF);
+    let touched = crate::state_md::touched_parse(&read(touched_path.clone()).await);
+    let land = crate::state_md::land(&old, &text, &touched, now_ms() as u64, &today());
+    let archive = crate::tools::standing_archive(crate::tools::STATE_FILE, &id);
+    let mut out = Landed { said: land.said(), ..Landed::default() };
+    if !land.archived.is_empty() {
+        out.archive.push((archive.clone(), land.archived.clone()));
+    }
+    if !land.noted.is_empty() {
+        let dpath = standing_path(&id, crate::tools::DECISIONS_FILE);
+        let mut dec = read(dpath.clone()).await;
+        if dec.is_empty() {
+            dec = crate::tools::standing_template(crate::tools::DECISIONS_FILE).to_string();
+        }
+        if !dec.ends_with('\n') {
+            dec.push('\n');
+        }
+        for line in land.noted.iter() {
+            dec.push_str(line);
+            dec.push('\n');
+        }
+        let ret = crate::tools::standing_retire(crate::tools::DECISIONS_FILE, &dec);
+        if !ret.retired.is_empty() {
+            let darchive = crate::tools::standing_archive(crate::tools::DECISIONS_FILE, &id);
+            out.archive.push((darchive, ret.retired));
+        }
+        out.decisions = Some((dpath, ret.kept));
+    }
+    if land.touched != touched {
+        out.touched = Some((touched_path, crate::state_md::touched_render(&land.touched)));
+    }
+    out.kept = land.kept;
+    Ok(out)
 }
 
 /// Append retired lines to a standing file's archive.
@@ -1588,9 +1680,9 @@ async fn archive_append(root: FileRoot, archive: &str, retired: &str) -> Outcome
 /// * `text` - The whole new file.
 pub async fn write_standing(id: &str, leaf: &str, text: &str) -> Outcome<()> {
     let path = standing_path(id, leaf);
-    let (kept, _moved) = res!(standing_retired(
-        FileRoot::Opfs, &path, text.to_string()).await);
-    opfs::write_file(FileRoot::Opfs, &path, kept.as_bytes()).await
+    let landed = res!(standing_retired(FileRoot::Opfs, &path, text.to_string()).await);
+    res!(landed.settle(FileRoot::Opfs).await);
+    opfs::write_file(FileRoot::Opfs, &path, landed.kept.as_bytes()).await
 }
 
 /// File a context fold's notes into this Diamond's three markdown files.
@@ -1624,8 +1716,9 @@ pub async fn absorb_fold_notes(id: &str, notes: &crate::agent::compact::FoldNote
     // different keys, so which file a line came from makes no difference to the answer.
     let mut retired = String::new();
     for leaf in crate::tools::STANDING_FILES {
+        // `STATE.md` retires into the decisions archive, which the line before has read.
         let path = crate::tools::standing_archive(leaf, id);
-        if path.is_empty() {
+        if path.is_empty() || leaf == crate::tools::STATE_FILE {
             continue;
         }
         if let Ok(b) = opfs::read_file(FileRoot::Opfs, &path).await {
@@ -1648,10 +1741,13 @@ pub async fn absorb_fold_notes(id: &str, notes: &crate::agent::compact::FoldNote
         // Retired by the app's own arithmetic before it is written, exactly as a daimon's own
         // write is, so the file a fold leaves is under its ceiling with everything that came off
         // it in the archive rather than gone.
-        let kept = match standing_retired(
-            FileRoot::Opfs, &path, now.clone()).await
-        {
-            Ok((kept, _moved)) => kept,
+        let landed = standing_retired(FileRoot::Opfs, &path, now.clone()).await;
+        let landed = match landed {
+            Ok(l)  => l.settle(FileRoot::Opfs).await.map(|()| l.kept),
+            Err(e) => Err(e),
+        };
+        let kept = match landed {
+            Ok(kept) => kept,
             Err(e) => {
                 console_log(&fmt!("Diamond '{}': {} could not be retired ({}).", id, leaf, e));
                 now.clone()
@@ -2316,13 +2412,23 @@ pub async fn fold_apply(
         .unwrap_or_default();
     let files = read_standing(id).await;
     let last_good = crystal_hot_last_good(id, &old).await;
-    let land = match crate::agent::compact::fold_landing(id, &old, &last_good, &files, want) {
+    let land = match crate::agent::compact::fold_landing(id, &old, &last_good, &files, want,
+        &today())
+    {
         Ok(l)    => l,
         Err(why) => return Err(err!(
             "{} Nothing was written: the crystal and its files are as they were.", why;
             Invalid, Input, Size)),
     };
     let parent = res!(read_meta(id).await).version;
+    // What the files retire goes to the archive FIRST (UNBLOCK-18 F5): a failure after the files
+    // are written would otherwise leave STATE.md without its retired sections and a DECISIONS
+    // line naming an archive entry that is not there.  A refused fold below leaves a duplicate
+    // in an append-only archive, which costs bytes and never content.
+    for (leaf, lines) in land.retired.iter() {
+        let archive = crate::tools::standing_archive(leaf, id);
+        res!(archive_append(FileRoot::Opfs, &archive, lines).await);
+    }
     let mut written: Vec<&'static str> = Vec::new();
     let mut fault: Option<Error<ErrTag>> = None;
     for (leaf, text) in land.files.iter() {
@@ -2382,10 +2488,6 @@ pub async fn fold_apply(
         },
     };
     drop(hold);
-    for (leaf, lines) in land.retired.iter() {
-        let archive = crate::tools::standing_archive(leaf, id);
-        res!(archive_append(FileRoot::Opfs, &archive, lines).await);
-    }
 
     // Retain the raw delta, referenced by the log record.
     let dref = delta_path(id, version);
@@ -6689,6 +6791,38 @@ pub async fn union_links_from(owner: &str, sidecar: &str) -> Outcome<bool> {
     Ok(true)
 }
 
+/// Take into a Diamond's decisions archive every entry the losing device's copy held and this
+/// one does not (UNBLOCK-18 F4).  True when something was written, which is also when the
+/// Diamond was stamped, so the union travels back and the other device takes it one-sided.
+///
+/// A two-sided import replaces `.daimond/` whole, and the archive is not a versioned file, so
+/// without this the sections `STATE.md` retired on the loser would leave the one file `recall`
+/// and `file_read` reach.  The join is [`crate::state_md::archive_union`]; until the carrier
+/// (C11) makes the archive a Log kind.
+///
+/// # Arguments
+/// * `owner` - The Diamond just imported.
+/// * `there` - The loser's `.daimond/decisions-archive.md`, read off its export before the import.
+pub async fn union_archive_from(owner: &str, there: &str) -> Outcome<bool> {
+    if there.trim().is_empty() || !res!(opfs::exists(FileRoot::Opfs, &meta_path(owner)).await) {
+        return Ok(false);
+    }
+    let path = crate::tools::standing_archive(crate::tools::STATE_FILE, owner);
+    let mine = opfs::read_file(FileRoot::Opfs, &path).await
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    let add = crate::state_md::archive_union(&mine, there);
+    if add.is_empty() {
+        return Ok(false);                   // it holds everything the loser's did
+    }
+    res!(archive_append(FileRoot::Opfs, &path, &add).await);
+    if let Err(e) = touch(owner).await {
+        console_log(&fmt!("Diamond '{}' could not be stamped after its archive was joined: {}",
+            owner, e));
+    }
+    Ok(true)
+}
+
 /// Stamp the owner of a sidecar that has just changed, best effort.
 ///
 /// Best effort because the link is already written: a Diamond whose `meta.json`
@@ -7681,6 +7815,20 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOu
         }
         writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
     }
+    // THIS DEVICE'S ACTIVITY RECORD, read before the delete below takes it (UNBLOCK-11). Each
+    // device's file has one writer, and lines it wrote since its last push are in no export yet:
+    // laid over as the copy came, they went. Joined with the export's copy below, and a file the
+    // export lacks is put back as it was.
+    let local_activity = if existed { activity_read_all(&id).await } else { Vec::new() };
+    let mut arriving_activity: Vec<(String, String)> = Vec::new();
+    let writes: Vec<(String, Vec<u8>)> = writes.into_iter().filter_map(|(rel, body)| {
+        if crate::activity::is_activity_rel(&rel) {
+            arriving_activity.push((rel, String::from_utf8_lossy(&body).into_owned()));
+            None
+        } else {
+            Some((rel, body))
+        }
+    }).collect();
     if existed {
         // PRESERVE `versions/`; delete only the rest.  The kept snapshot and the whole file
         // history live under it, and the export's own `versions/` is written over it below.
@@ -7737,6 +7885,10 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOu
         // device knows of its page data must not go because the other copy did not know it.
         let bytes = res!(joined_log(&id, &rel, bytes).await);
         res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), &bytes).await);
+    }
+    let now = js_sys::Date::now() as i64;
+    for (rel, text) in crate::activity::after_import(&local_activity, &arriving_activity, now) {
+        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), text.as_bytes()).await);
     }
     // THE COUNTER STAYS WHERE THE IMPORT SET IT, at the remote's live version, and is not
     // advanced past the kept snapshot as it once was. The next edit already mints past every
@@ -7838,6 +7990,51 @@ async fn joined_log(id: &str, rel: &str, body: Vec<u8>) -> Outcome<Vec<u8>> {
         return Ok(versions::prune_log_merge(&mine, &String::from_utf8_lossy(&body)).into_bytes());
     }
     Ok(body)
+}
+
+/// Every activity file of the Diamond `id`, as `(rel, text)` under its directory
+/// (UNBLOCK-11). None where it has no record yet; an unreadable file is left out.
+pub async fn activity_read_all(id: &str) -> Vec<(String, String)> {
+    let dir = fmt!("{}/{}", diamond_dir(id), crate::activity::ACTIVITY_DIR);
+    let entries = match opfs::list_dir(FileRoot::Opfs, &dir).await {
+        Ok(e)  => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (name, is_dir, _) in entries {
+        let rel = fmt!("{}/{}", crate::activity::ACTIVITY_DIR, name);
+        if is_dir || !crate::activity::is_activity_rel(&rel) {
+            continue;
+        }
+        if let Ok(b) = opfs::read_file(FileRoot::Opfs, &fmt!("{}/{}", dir, name)).await {
+            out.push((rel, String::from_utf8_lossy(&b).into_owned()));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Append one ended turn to THIS device's activity file of the Diamond `id`, shed for `now`.
+/// Each device writes only its own file, so no second writer can lose a line of it.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `turn` - The turn that ended ([`crate::activity::ended`]); its `dev` names the file.
+/// * `now` - The time, ms since the epoch.
+///
+/// Under the version hold (C2 r2 F5): `import_diamond` holds it across its read, delete and
+/// rewrite of the activity files, so a pull landing between this read and write cannot drop the
+/// turn's line, nor this write lay an old copy over the pull's join. Not re-entrant: the caller
+/// holds no hold.
+pub async fn activity_append(id: &str, turn: crate::activity::Turn, now: i64) -> Outcome<()> {
+    let _hold = res!(hold_versions(id).await);
+    let path = fmt!("{}/{}", diamond_dir(id), crate::activity::file_rel(&turn.dev));
+    let old = match opfs::read_file(FileRoot::Opfs, &path).await {
+        Ok(b)  => String::from_utf8_lossy(&b).into_owned(),
+        Err(_) => String::new(),
+    };
+    let text = crate::activity::append(&old, turn, now);
+    opfs::write_file(FileRoot::Opfs, &path, text.as_bytes()).await
 }
 
 /// The files a pack carries, text and base64 alike, each path checked against the Diamond it is

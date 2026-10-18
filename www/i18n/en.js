@@ -1874,11 +1874,6 @@
 	'menu.calendar': 'Calendar',
 	'menu.calendar_ce': 'Common Era',
 	'menu.calendar_he': 'Holocene',
-	'menu.this_diamond':  'This diamond',
-	'menu.arrangement_update': 'Update the saved arrangement',
-	'menu.arrangement_keep':   'Keep this arrangement with {name}',
-	'menu.arrangement_keep_this': 'Keep this arrangement with this diamond',
-	'menu.arrangement_forget': 'Forget it',
 
 	// ── Text-size steps ────────────────────────────────────────
 	// i18n-indirect: workspace.js STEP_KEYS[i] = size.small size.normal size.large size.larger

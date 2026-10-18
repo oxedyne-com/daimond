@@ -851,11 +851,6 @@
 	'menu.calendar': 'Kalender',
 	'menu.calendar_ce': 'Unsere Zeitrechnung',
 	'menu.calendar_he': 'Holozän',
-	'menu.this_diamond': 'Dieses Diamond',
-	'menu.arrangement_update': 'Gespeicherte Anordnung aktualisieren',
-	'menu.arrangement_keep': 'Diese Anordnung bei {name} behalten',
-	'menu.arrangement_keep_this': 'Diese Anordnung bei diesem Diamond behalten',
-	'menu.arrangement_forget': 'Verwerfen',
 
 	// ── Text-size steps ────────────────────────────────────────
 	'size.small': 'Klein',

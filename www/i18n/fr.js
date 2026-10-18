@@ -852,11 +852,6 @@
 	'menu.calendar': 'Calendrier',
 	'menu.calendar_ce': 'Ère commune',
 	'menu.calendar_he': 'Holocène',
-	'menu.this_diamond': 'Ce diamond',
-	'menu.arrangement_update': 'Mettre à jour la disposition enregistrée',
-	'menu.arrangement_keep': 'Garder cette disposition avec {name}',
-	'menu.arrangement_keep_this': 'Garder cette disposition avec ce diamond',
-	'menu.arrangement_forget': 'L’oublier',
 
 	// ── Text-size steps ────────────────────────────────────────
 	'size.small': 'Petit',

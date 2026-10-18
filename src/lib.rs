@@ -15,6 +15,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod activity;
 pub mod agent;
 pub mod executor;
 /// The Steel WebSocket handler is a native-only server concern; the
@@ -78,6 +79,9 @@ pub mod session;
 /// because in the browser, which is where the user actually works, this module used to compile and
 /// be read by nothing.
 pub mod skills;
+/// `STATE.md` as keyed sections, rendered and retired by the engine rather than refused
+/// (UNBLOCK-18).  Pure; the store's half is `wasm::diamond::standing_retired`.
+pub mod state_md;
 /// The one block of a person's standing notes composed into the chat's and the daimon's prompt,
 /// and the lint that keeps a note from asking the model to chase approval.
 ///

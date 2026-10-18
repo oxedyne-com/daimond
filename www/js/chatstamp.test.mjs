@@ -83,6 +83,8 @@ const { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimCha
 	extractFn(APP, 'chatMsgCount'),
 	extractFn(APP, 'chatSessionMsgs'),
 	extractFn(APP, 'withRecent'),
+	'var _chatModelShedSaid = false; function diag() {}',
+	extractFn(APP, 'chatOwnsModel'),
 	extractFn(APP, 'slimChat'),
 	'function applyCarry(merged, c) { ' + carryBlock + ' }',
 	'return { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimChat, applyCarry };',

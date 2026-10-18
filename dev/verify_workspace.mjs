@@ -529,47 +529,8 @@ const seatedNow = () => p.$$eval('#dock .pcol > .panel',
 	}
 }
 
-// ── An arrangement is restored only where one was saved ─────────────────
-{
-	await p.waitForTimeout(300);
-	// Nothing saved yet: selecting the Diamond must not disturb the panels.
-	const before = await p.evaluate(() => window.DaimondPanels.model().panels
-		.filter(x => x.open).map(x => x.id).sort().join(','));
-	await p.evaluate(async (id) => {
-		const row = Array.from(document.querySelectorAll('#diamond-list .diamond-box'))
-			.find(e => e.dataset.id === id);
-		if (row) row.click();
-		await new Promise(r => setTimeout(r, 800));
-	}, diamondId);
-	await p.waitForTimeout(600);
-	const after = await p.evaluate(() => window.DaimondPanels.model().panels
-		.filter(x => x.open).map(x => x.id).sort().join(','));
-	check('a Diamond with no saved arrangement changes nothing', before === after,
-		`${before} then ${after}`);
-
-	// Save one, disturb the layout, come back.
-	await p.evaluate((id) => {
-		window.DaimondPanels.show('spend');
-		window.DaimondPanels.saveArrangement(id);
-	}, diamondId);
-	await p.waitForTimeout(400);
-	check('the arrangement is recorded',
-		await p.evaluate((id) => window.DaimondPanels.hasArrangement(id), diamondId));
-
-	await p.evaluate(() => window.DaimondPanels.hide('spend'));
-	await p.waitForTimeout(300);
-	check('and the layout was genuinely disturbed',
-		!(await p.evaluate(() => window.DaimondPanels.isOpen('spend'))));
-
-	await p.evaluate((id) => window.DaimondPanels.restoreArrangement(id), diamondId);
-	await p.waitForTimeout(500);
-	check('returning to the Diamond puts the panels back',
-		await p.evaluate(() => window.DaimondPanels.isOpen('spend')));
-
-	await p.evaluate((id) => window.DaimondPanels.forgetArrangement(id), diamondId);
-	check('and it can be forgotten',
-		!(await p.evaluate((id) => window.DaimondPanels.hasArrangement(id), diamondId)));
-}
+// A Diamond's panels coming back with it is `dev/verify_panelstate.mjs`'s
+// (UNBLOCK-14): the hand-saved arrangement this section drove is gone.
 
 // ── The row fits the window, and takes nothing off screen with it ──────
 // This one is worth keeping. The header used to run off the right of a narrow

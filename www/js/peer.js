@@ -313,6 +313,12 @@
 			// back rather than running an incomplete conversation (S-HAND #3). null from an
 			// older dispatcher, which `holdsThread` reads as "fall back to holdsTurn".
 			thread:  o.thread || null,
+			// THE LAST MESSAGE THE ASKER SAW, `{ ts, mid }` (UNBLOCK-11), from `throughOf`. The
+			// runner waits a bounded while for that message to arrive, then runs whatever it
+			// holds and tells the model what it lacked: a turn is never refused for a thread
+			// that differs. null when the chat held nothing before the prompt, and from an
+			// older sender.
+			through: (o.through && o.through.mid) ? { ts: +o.through.ts || 0, mid: String(o.through.mid) } : null,
 			// THE ROWS THE SENDER REMOVED and has not yet shipped in a parcel (a Retry's
 			// retracted answer), by mid. The runner leaves them out of the thread it judges
 			// and runs, and records the same removal, so the errand never waits on the
@@ -1294,6 +1300,32 @@
 	/// undeliverable rather than running the model against a stale or truncated conversation.
 	/// An errand without `thread` (an older dispatcher) falls back to `holdsTurn`, the
 	/// pre-fix readiness, so a mixed-build fleet still hands off in both directions.
+	/// The last message the asker saw before this turn's prompt, as `{ ts, mid }`: the newest
+	/// user or assistant row with words and a mid, other than the turn's own prompt and the
+	/// rows of this turn. null when there is none. This is what an errand's `through` names.
+	function throughOf(chat, turnId) {
+		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
+		var tid = String(turnId || '');
+		for (var i = msgs.length - 1; i >= 0; i--) {
+			var m = msgs[i];
+			if (!m || !m.mid || !m.content || m.provisional) continue;
+			if (m.role !== 'user' && m.role !== 'assistant') continue;
+			if (tid && (String(m.mid) === tid || String(m.iturn || '') === tid)) continue;
+			return { ts: +m.ts || 0, mid: String(m.mid) };
+		}
+		return null;
+	}
+
+	/// Does this copy of the chat hold the message the errand's asker last saw? True when the
+	/// errand names none (an older sender, or a chat with nothing before the prompt).
+	function holdsThrough(chat, errand) {
+		var t = errand && errand.through;
+		if (!t || !t.mid) return true;
+		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
+		for (var i = 0; i < msgs.length; i++) if (msgs[i] && String(msgs[i].mid) === String(t.mid)) return true;
+		return false;
+	}
+
 	function holdsThread(chat, errand, own) {
 		var e = errand || {};
 		// A non-resident chat shows a summary, not its transcript: it holds no thread yet.
@@ -1389,6 +1421,7 @@
 		var gone   = triedList(o.gone);		// removals not yet in a parcel
 		var to     = String(o.to || '');		// the elected runner
 		var behind = openTurn(c, turnId);		// the running turns this one queues behind
+		var through = throughOf(c, turnId);	// the last message the asker saw
 		return {
 			// MARK FIRST, then post, then push. The durable `why:'dispatched'`
 			// placeholder is written BEFORE the errand is posted, so a refused post is a
@@ -1417,7 +1450,7 @@
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
-					gone: gone, to: to, behind: behind,
+					gone: gone, to: to, behind: behind, through: through,
 					auto: o.auto === true,
 				});
 			},
@@ -1426,7 +1459,7 @@
 				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt, pre: pre, effort: effort,
 				model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
-				seed: seed, thread: thread, tried: tried, gone: gone, to: to, behind: behind,
+				seed: seed, thread: thread, tried: tried, gone: gone, to: to, behind: behind, through: through,
 			},
 		};
 	}
@@ -5638,7 +5671,8 @@
 				var turnP = (async function () {
 					return d.runTurn(ctx, e.prompt, { onProgress: nudge, promptInTranscript: true, turnId: turnId,
 						pre: (typeof e.pre === 'string') ? e.pre : '',
-						effort: (typeof e.effort === 'string') ? e.effort : undefined });
+						effort: (typeof e.effort === 'string') ? e.effort : undefined,
+						model: e.model || null });		// the model the asker resolved (C3)
 				})();
 				turnP.then(null, function () { /* a run raced out by `dead` may still reject */ });
 				// Decided by which end came first, not by `deadWhy` alone: a turn that finished in
@@ -6789,6 +6823,8 @@
 		/// the model-facing prefix the turn was dispatched from? S-HAND #3.
 		threadSig:     threadSig,
 		holdsThread:   holdsThread,
+		throughOf:     throughOf,
+		holdsThrough:  holdsThrough,
 		threadReadiness: threadReadiness,
 		SEED_MAX_MSGS:  SEED_MAX_MSGS,
 		SEED_MAX_CHARS: SEED_MAX_CHARS,

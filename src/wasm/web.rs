@@ -43,9 +43,13 @@ extern "C" {
     #[wasm_bindgen(catch, method)]
     fn status(this: &Driver) -> Result<JsValue, JsValue>;
 
-    /// Dock the panel and navigate it to `url`.
+    /// Dock the panel and navigate it to `url`, for the conversation `owner` (a Diamond's id,
+    /// `chat:<id>`, or empty).  A conversation not on screen has the address written into its
+    /// panel record instead (UNBLOCK-14), and opens it when the person arrives there.  `turn`
+    /// is the asking turn's tag: a turn run here for another device sends the page to that
+    /// device and leaves this screen and its records alone (D-20261006-27).
     #[wasm_bindgen(catch, method)]
-    fn open(this: &Driver, url: &str) -> Result<JsValue, JsValue>;
+    fn open(this: &Driver, url: &str, owner: &str, turn: &str) -> Result<JsValue, JsValue>;
 
     /// Read `url` through the gateway, without a driver. `raw` asks for the bytes
     /// themselves rather than the page stripped to text.
@@ -165,9 +169,14 @@ pub async fn current_url() -> String {
 }
 
 /// Show `url` in the Web panel.
-pub async fn open(url: &str) -> Outcome<String> {
+///
+/// # Arguments
+/// * `url` - The address the model chose.
+/// * `owner` - The asking turn's keeper (a Diamond's id or `chat:<id>`), or empty.
+/// * `turn` - The asking turn's tag, which says whether it was asked on another device.
+pub async fn open(url: &str, owner: &str, turn: &str) -> Outcome<String> {
     let d = res!(driver());
-    settle(d.open(url)).await
+    settle(d.open(url, owner, turn)).await
 }
 
 /// Read `url` through the gateway, driver or no driver.

@@ -1007,11 +1007,6 @@
 	'menu.calendar': '历法',
 	'menu.calendar_ce': '公元',
 	'menu.calendar_he': '全新世纪年',
-	'menu.this_diamond':  '这个 diamond',
-	'menu.arrangement_update': '更新已保存的布置',
-	'menu.arrangement_keep':   '把这个布置留给 {name}',
-	'menu.arrangement_keep_this': '把这个布置留给这个 diamond',
-	'menu.arrangement_forget': '不保留',
 
 	// ── 字号档位 ───────────────────────────────────────────────
 	'size.small':  '小',

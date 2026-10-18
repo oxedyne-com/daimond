@@ -1012,11 +1012,6 @@
 	'menu.calendar': '달력',
 	'menu.calendar_ce': '서기',
 	'menu.calendar_he': '홀로세력',
-	'menu.this_diamond':  '이 diamond',
-	'menu.arrangement_update': '저장한 배치 업데이트',
-	'menu.arrangement_keep':   '이 배치를 {name}에 남겨 두기',
-	'menu.arrangement_keep_this': '이 배치를 이 diamond에 남겨 두기',
-	'menu.arrangement_forget': '남기지 않기',
 
 	// ── 글자 크기 단계 ─────────────────────────────────────────
 	'size.small':  '작게',

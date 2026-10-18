@@ -1532,8 +1532,10 @@ pub const DECISIONS_FILE: &str = "DECISIONS.md";
 
 /// Where things ARE -- layout, build command, main file, what is in flight, the next step.
 ///
-/// OVERWRITTEN, never appended to, which is what its 4 KiB ceiling enforces: a file of where
-/// things are that accumulated would become a file of where things were.
+/// Keyed sections, one per `## ` heading, and RENDERED from them (UNBLOCK-18): every write lands
+/// through [`crate::state_md::land`], which retires the oldest-touched sections to the decisions
+/// archive rather than refusing the write.  A file of where things are that accumulated would
+/// become a file of where things were, so what ages out of it goes to the archive with a date.
 pub const STATE_FILE: &str = "STATE.md";
 
 /// The three, in the order the prompt carries them and a refusal names them.
@@ -1551,7 +1553,7 @@ pub const REQUIREMENTS_CAP: usize = 8 * 1024;
 pub const DECISIONS_CAP: usize = 16 * 1024;
 
 /// What [`STATE_FILE`] may weigh, in bytes.  The smallest of the three, and deliberately: it is
-/// the file with no history in it, and a ceiling is the only thing that keeps that true.
+/// the file with no history in it.  Kept by retirement, never by refusal ([`crate::state_md`]).
 pub const STATE_CAP: usize = 4 * 1024;
 
 /// How many lines of [`DECISIONS_FILE`] ride in the prompt.
@@ -1601,7 +1603,8 @@ pub fn standing_retire(leaf: &str, text: &str) -> Retired {
     match leaf {
         REQUIREMENTS_FILE => retire_done(text, cap),
         DECISIONS_FILE    => retire_decisions(text, cap),
-        // `STATE.md` holds no history, so it has nothing to retire and is simply refused.
+        // `STATE.md` retires by section and by age, which needs what stood there before and when
+        // each section was touched: [`crate::state_md::land`], at the same two doors.
         _                 => keep(),
     }
 }
@@ -1617,7 +1620,8 @@ pub fn standing_retire(leaf: &str, text: &str) -> Retired {
 pub fn standing_archive(leaf: &str, id: &str) -> String {
     match leaf {
         REQUIREMENTS_FILE => fmt!("{}/{}/{}done.md", STORE_ROOT, id, DAIMOND_DIR),
-        DECISIONS_FILE    => fmt!("{}/{}/{}decisions-archive.md", STORE_ROOT, id, DAIMOND_DIR),
+        DECISIONS_FILE
+        | STATE_FILE      => fmt!("{}/{}/{}decisions-archive.md", STORE_ROOT, id, DAIMOND_DIR),
         _                 => String::new(),
     }
 }
@@ -1644,9 +1648,12 @@ pub fn standing_template(leaf: &str) -> &'static str {
 /// * `leaf` - One of [`STANDING_FILES`].
 /// * `new_len` - Bytes the write would leave on disk, AFTER any retirement.
 /// * `old_len` - Bytes there now; 0 where there is no such file yet.
+///
+/// **Never `STATE.md`** (UNBLOCK-18): it retires its oldest sections instead, so a write to it
+/// always lands.
 pub fn standing_refused(leaf: &str, new_len: usize, old_len: usize) -> bool {
     let cap = standing_cap(leaf);
-    cap > 0 && new_len > cap && new_len >= old_len
+    leaf != STATE_FILE && cap > 0 && new_len > cap && new_len >= old_len
 }
 
 /// What to say when [`standing_refused`] says no.
@@ -1663,20 +1670,12 @@ pub fn standing_refused(leaf: &str, new_len: usize, old_len: usize) -> bool {
 pub fn standing_cap_message(leaf: &str, new_len: usize, id: &str) -> String {
     let cap = standing_cap(leaf);
     let over = new_len.saturating_sub(cap);
-    match leaf {
-        STATE_FILE => fmt!(
-            "{} says where things ARE and may not exceed {} bytes; this write is {}, which is {} \
-            over. It is OVERWRITTEN rather than added to and holds no history, so what has grown \
-            it is almost certainly a record: a ruling belongs on one dated line in {}, a task in \
-            {}, and everything else in a cold section of the crystal.",
-            STATE_FILE, cap, new_len, over, DECISIONS_FILE, REQUIREMENTS_FILE),
-        _ => fmt!(
-            "{} may not exceed {} bytes; this write is {}, which is {} over, and there was \
-            nothing left to retire into {} — every line of it is live. Strike what is finished \
-            or superseded, or move the detail into a cold section of the crystal, which costs \
-            nothing per round.",
-            leaf, cap, new_len, over, standing_archive(leaf, id)),
-    }
+    fmt!(
+        "{} may not exceed {} bytes; this write is {}, which is {} over, and there was \
+        nothing left to retire into {} — every line of it is live. Strike what is finished \
+        or superseded, or move the detail into a cold section of the crystal, which costs \
+        nothing per round.",
+        leaf, cap, new_len, over, standing_archive(leaf, id))
 }
 
 /// One of the three after retirement: what stays live, and what moves to the archive.
@@ -4129,6 +4128,73 @@ impl RecallQuery {
 pub fn recall_query(args: &str) -> Outcome<RecallQuery> {
 	let opts = res!(search_opts(args));
 	Ok(RecallQuery { re: opts.re, before: opts.before, after: opts.after, limit: opts.limit })
+}
+
+/// The activity record's part of `recall` (UNBLOCK-11): every device's file merged and searched
+/// as one text under [`crate::activity::ACTIVITY_DIR`], with `file_search`'s own matcher. The
+/// prompt carries only the newest [`crate::activity::PROMPT_CAP`] bytes of it, and says that
+/// `recall` reaches the rest; this is that reach.
+///
+/// # Arguments
+/// * `files` - The text of every activity file of the Diamond.
+/// * `now` - The time, ms since the epoch, by which the record is shed.
+/// * `opts` - The compiled query.
+/// * `stats` - Running totals, carried on from the crystal half.
+/// * `out` - The lines found so far, appended to.
+///
+/// # Returns
+/// Whether the search may go on (`false` once the limit is reached).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn recall_activity(
+    files: &[String],
+    now:   i64,
+    opts:  &SearchOpts,
+    stats: &mut SearchStats,
+    out:   &mut Vec<String>,
+)
+    -> Outcome<bool>
+{
+    let text = crate::activity::recall_text(&crate::activity::merge(files, now));
+    if text.is_empty() {
+        return Ok(true);
+    }
+    stats.files += 1;
+    let lines = all_numbered(&text);
+    scan_file(opts, crate::activity::ACTIVITY_DIR, &lines, stats, out)
+}
+
+/// The daimon chat's transcript hits, as the page's `DaimondTranscript.search` answered them
+/// (a JSON array of `{mid, ts, role, excerpt}`), each as one `transcript:<role>:<ts>: <excerpt>`
+/// line, up to the query's limit. The page did the matching, with the same arguments.
+///
+/// # Arguments
+/// * `json` - The page's answer.
+/// * `limit` - The most lines `out` may hold.
+/// * `out` - The lines found so far, appended to.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn recall_transcript_lines(json: &str, limit: usize, out: &mut Vec<String>) {
+    let cfg = crate::agent::compact::json_cfg();
+    let items = match Dat::decode_string_with_config(json.to_string(), &cfg) {
+        Ok(Dat::List(items)) => items,
+        _                    => return,
+    };
+    for item in items {
+        if out.len() >= limit {
+            return;
+        }
+        let one = match item.json() {
+            Ok(j)  => j,
+            Err(_) => continue,
+        };
+        let excerpt = extract_json_string(&one, "excerpt").unwrap_or_default();
+        if excerpt.trim().is_empty() {
+            continue;
+        }
+        let role = extract_json_string(&one, "role").unwrap_or_else(|| fmt!("message"));
+        let ts = extract_json_number(&one, "ts").unwrap_or(0);
+        let flat: String = excerpt.split_whitespace().collect::<Vec<_>>().join(" ");
+        out.push(fmt!("transcript:{}:{}: {}", role, ts, flat));
+    }
 }
 
 /// Every line of a crystal that `opts` matches, in `file_search`'s own report form.
@@ -17995,6 +18061,12 @@ pub enum Tool {
     /// Take an alert this Diamond raised off the Pending panel, on every device.
     PendingClear,
     PendingNone,                                            // a pending-only turn's "nothing to raise"
+    /// Set one keyed section of the Diamond's `STATE.md` (UNBLOCK-18).
+    ///
+    /// The file is rendered from its sections and lands through [`crate::state_md::land`], as a
+    /// `file_write` of it does, so the tool and the file are one owner: a write is never refused
+    /// for size, and what ages out goes to the decisions archive with a dated line.
+    StateSet,
     /// Several READS in one round: an ordered list of primitive read ops, answered together.
     ///
     /// **The measured gap between a daimon and Claude Code is rounds, and this is the largest
@@ -18219,7 +18291,29 @@ fn edit_hunks(args: &str, path: &str) -> Outcome<Vec<(String, String)>> {
 /// * `path`  - Named only so the refusal can say which file was left alone.
 /// * `data`  - The file's current text.
 /// * `hunks` - The find/replace pairs, in order.
+///
+/// **`STATE.md` is the one exception**: its sections are independent, so the hunks that place
+/// land and the third answer names those that did not ([`crate::state_md::edited_by_section`]).
+/// Empty for every other file.
 fn file_edited(path: &str, data: &str, hunks: &[(String, String)])
+    -> Outcome<(String, Vec<usize>, String)>
+{
+    if hunks.len() > 1 && standing_leaf(path) == Some(STATE_FILE) {
+        let (out, missed) = res!(crate::state_md::edited_by_section(data, hunks,
+            |d, h| file_edited_all(path, d, h).map(|(t, _)| t)));
+        let note = match missed.is_empty() {
+            true  => String::new(),
+            false => fmt!("\n{} of {} edit(s) did not place, because their section changed under \
+                this call; the rest landed, section by section. Read STATE.md and send only these \
+                again: {}.", missed.len(), hunks.len(), missed.join("; ")),
+        };
+        return Ok((out, Vec::new(), note));
+    }
+    file_edited_all(path, data, hunks).map(|(t, r)| (t, r, String::new()))
+}
+
+/// [`file_edited`]'s all-or-nothing rule, which every file but `STATE.md` answers to.
+fn file_edited_all(path: &str, data: &str, hunks: &[(String, String)])
     -> Outcome<(String, Vec<usize>)>
 {
     let mut out = data.to_string();
@@ -18847,6 +18941,8 @@ impl Tool {
             Tool::PendingClear,
             // Offered only in a pending-only turn, whose quiet end it is (MAIL-FIX2 item 2).
             Tool::PendingNone,
+            // `STATE.md` by section, the daimon's alone: the file is ON a Diamond.
+            Tool::StateSet,
             // Several reads in one round, which is the shell move a daimon had no tool for.
             // Behind the `compound` tune until the parity gate reports on it, so `offered`
             // withholds it and this line costs a round nothing meanwhile -- see
@@ -18905,6 +19001,8 @@ impl Tool {
             Tool::FileWrite | Tool::FileEdit | Tool::FileDelete | Tool::DirCreate
             | Tool::FileFetch | Tool::DocEdit | Tool::SheetWrite | Tool::FileRevert =>
                 vec![res!(Self::arg(args_json, "path"))],
+            // One section of the Diamond's own STATE.md, written through `file_write`'s door.
+            Tool::StateSet => vec![STATE_FILE.to_string()],
             // The PDF it writes is a write, and naming it here is what puts it in
             // front of `guard`.  A compile whose `out` was invisible to the guard
             // could drop a file inside Daimond's own directory.
@@ -18989,6 +19087,7 @@ impl Tool {
             Tool::FileWrite | Tool::FileEdit | Tool::FileFetch | Tool::DocEdit
             | Tool::SheetWrite | Tool::DirCreate | Tool::FileRevert =>
                 named("path", PathClaim::Left).into_iter().collect(),
+            Tool::StateSet => vec![(STATE_FILE.to_string(), PathClaim::Left)],
             // The PDF is named by the same function the guard and the result use, so the audit
             // checks the file the compile actually wrote rather than the source it read.
             Tool::TypstCompile => match Self::typst_out(args_json) {
@@ -19447,6 +19546,7 @@ impl Tool {
             Tool::PendingRaise => "pending_raise",
             Tool::PendingClear => "pending_clear",
             Tool::PendingNone  => "pending_none",
+            Tool::StateSet     => "state_set",
             Tool::Compound    => "compound",
         }
     }
@@ -19763,6 +19863,7 @@ impl Tool {
             "pending_raise" => Some(Tool::PendingRaise),
             "pending_clear" => Some(Tool::PendingClear),
             "pending_none"  => Some(Tool::PendingNone),
+            "state_set"     => Some(Tool::StateSet),
             "compound"     => Some(Tool::Compound),
             _              => None,
         }
@@ -19773,7 +19874,7 @@ impl Tool {
         match self {
             Tool::FileRead    => "Read a UTF-8 text file from the workspace. Paths here and in every file tool are workspace-relative ('src/main.rs'); a leading '/' is DROPPED rather than refused, so an absolute path lands wrong. Each line comes back as its number, a TAB, then the text -- strip both before quoting into file_edit's old_string. A long file comes in pages; a partial page says which lines it holds of how many and gives the next call. A glob in 'path' such as 'src/*.js', or \"paths\":[..], reads a whole folder in one call -- do that before following its imports one at a time, not a file per round. A bare read of a big file is a 200-line peek; use outline to map it and file_search to find a name, then read the region. Reading an image gives its type and size, not the picture: add \"as\":\"image\" to look.",
             Tool::FileWrite   => "Create or overwrite a file in the workspace with the given content.",
-            Tool::FileEdit    => "Replace exact, unique substrings in a workspace text file. Give either one 'old_string'/'new_string' pair, or 'edits' -- a list of such pairs applied in order, which is one round instead of many and is what to prefer. ALL OR NOTHING: if any pair fails to match, nothing at all is written and the reply names the ones that failed, so re-send only those. 'old_string' must be the file's own bytes -- file_read prefixes each line with its number and a TAB, so strip that from anything copied out of a read -- and must be unique; include surrounding text.",
+            Tool::FileEdit    => "Replace exact, unique substrings in a workspace text file. Give either one 'old_string'/'new_string' pair, or 'edits' -- a list of such pairs applied in order, in one round. ALL OR NOTHING (STATE.md: per section): if any pair fails to match, nothing at all is written and the reply names the ones that failed, so re-send only those. 'old_string' must be the file's own bytes -- file_read prefixes each line with its number and a TAB, so strip that from anything copied out of a read -- and must be unique; include surrounding text.",
             Tool::FileList    => "List the entries of a workspace directory. One directory, no recursion: to find files by name across a tree use file_glob, and to find files by their contents use file_search.",
             Tool::FileSearch  => "Search file CONTENTS; each hit is 'path:line:text', a neighbour 'path-line-text'. THIS IS THE FIRST THING TO REACH FOR on any tree. 'query' is a regex; \"fixed\":true for literal text, \"ignore_case\":true to fold case. Narrow with \"glob\" ('**/*.rs') and \"path\"; \"context\" (or \"before\"/\"after\") adds neighbouring lines. ANY file size. At most 200 matches unless you raise \"limit\"; a stopped search says so and gives the \"offset\" to page with, and it names what it never opened -- read that before concluding anything is absent. .git, node_modules and target are skipped unless \"all\":true or you NAME one. Past twenty thousand directory entries it STOPS and says where: narrow 'path' and ask again. Inside a folder added on this computer it runs there natively in ONE call; 'rg' or 'grep' through run buys none of that. Use run for a command that DOES something, this to find where to change.",
             Tool::Outline     => "Map a file: one row per function, method, type, section or heading -- 'start-end  kind  name', nested items indented -- in about a kilobyte for any size of file. Rust, JS/TS, Python, Markdown and Typst. Use it BEFORE reading a file you do not know, then file_read the region by 'offset'/'limit'. Ranges end where the next item begins.",
@@ -19788,7 +19889,7 @@ impl Tool {
             Tool::Capture     => "Photograph the app's own view to a workspace PNG, to LOOK at a change you made (your shell and workers cannot launch a browser). NAME A VIEW, not a guessed selector: in:\"preview\" (document preview), in:\"doc\" (an open file), any panel on screen by name (\"web\", \"graph\", \"term\", \"ai\", ...), or in:\"screen\" (the whole window). Only views on screen are drawn; a refusal lists them. A selector narrows a view to one element (no view: the app's DOM); the whole page (over ~3000 elements) is refused. THE HAND-OFF: dispatch a vision-capable worker with the path; it file_reads it \"as\":\"image\" and confirms the change shows and nothing else broke. Unreported, it is UNVERIFIED: say so, never infer a pass. YOUR DIAMOND'S PAGE is in a sandboxed frame: in:\"crystal\" draws it at 390 and 1440 with a TEXT TABLE of its blocks' size, display, grid/flex and overflow (a selector: its matches); to measure parts, crystal_look. Browser build only.",
             Tool::CrystalLook => "Draw your Diamond's page as its owner sees it, your edits included, at 1440 (default) or 390, and MEASURE up to 8 'targets' (a CSS selector, or 'text:' and an element's words): box, font-size, line-height, weight, padding, colours, border, and a picture if you can see. Look BEFORE a visual edit and AFTER (an edit after a look re-measures by itself); answer with the difference, e.g. 'both 40 px; were 39 and 39'. Browser build only.",
             Tool::Ask         => "Put ONE decision to the user as options they answer with a single tap. THIS IS HOW YOU ASK THEM SOMETHING, wherever you would stop to ask which of these, or shall I go on: a typed answer is a decision put off. ONE at a time, never a list; where more follow, set 'n' and 'of'. 'recommend' must match one 'label' EXACTLY. 'it depends' is not an answer: say what it depends on and pick the branch you believe applies. 'why' cites THEIR world, not a general virtue. They may also answer in their own words and reject every option. YOUR TURN ENDS WHEN YOU CALL THIS: do not restate the question afterwards. Their answer arrives next, opening 'Chose:' with the label or 'Other:' with words of their own.",
-            Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat -- this is for showing them something; the other file tools only hand bytes to you. A PDF is drawn page by page by the browser's own viewer, so say 'it is on screen now', never 'I cannot display a PDF'. Pictures (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF, SVG) are drawn, sound and video get a player, HTML is rendered, JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and source opens in an editor the user can type in. A format with no viewer is shown as a paged hex dump naming it, so this never fails: never conclude Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so call it again with the same path after you rewrite or recompile it. 'page' opens a PDF at a page. Show a file when they asked to see one, when you have just produced a document, or when looking beats describing.",
+            Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat -- this is for showing them something; the other file tools only hand bytes to you. A PDF is drawn page by page by the browser's own viewer, so say 'it is on screen now', never 'I cannot display a PDF'. Pictures are drawn, sound and video get a player, HTML is rendered, JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and source opens in an editor the user can type in. A format with no viewer is shown as a paged hex dump naming it, so this never fails: never conclude Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so call it again with the same path after you rewrite or recompile it. 'page' opens a PDF at a page. Show a file when they asked to see one, when you have just produced a document, or when looking beats describing.",
             Tool::SheetRead   => "Read a rectangle of an Excel spreadsheet (.xlsx) as a table. Give a 'path', optionally a 'sheet' by the name on its tab (the first sheet otherwise) and optionally a 'range' like 'A1:H40' (the first 100 rows otherwise). The result carries the column letters and the row numbers, so your next call can name exactly the range you now want. THE VALUE SHOWN IS THE ONE STORED IN THE FILE -- the number the person who wrote it saw. Formulas are NOT recalculated; the formulas inside the range are listed after the table, so you can see what produced a figure without being handed a different figure. Call file_read on a .xlsx first to learn what sheets it has and how big they are, then this to read the cells. A workbook is a compressed archive of XML and one sheet can be a hundred thousand rows, which is why this takes a range and file_read does not hand you the whole thing.",
             Tool::DocEdit     => "Change the words in a Word (.docx) or OpenDocument (.odt) document that already exists, leaving everything else in it exactly as it was. Give a 'path' and 'edits': a list of {\"find\",\"replace\"} pairs, optionally with 'nth' to pick one occurrence (1-based, counted through the whole document) instead of replacing all of them. THIS IS NOT file_edit AND file_edit WILL NOT WORK ON A DOCUMENT: these formats are compressed archives, so there is no text in the file for file_edit to match against. Read the document with file_read first and quote a phrase it actually holds — and note that a writer's formatting splits a sentence into runs, so a phrase interrupted by a footnote mark or a field may not be findable as one string, while an ordinary sentence with a bold word in the middle of it is. A 'find' that matches nothing is an ERROR NAMING THE STRING and nothing at all is written; that refusal is the answer, so read the document again rather than retrying the same string. Only the body is searched: a phrase in a header, a footer or a footnote reports as absent rather than being changed in one of two places. This does NOT work on a presentation: a slide is a position on a canvas, and changing words without knowing the geometry puts text over other text — read it and write a new one instead. For a spreadsheet, use sheet_write.",
             Tool::SheetWrite  => "Write cells into an Excel (.xlsx) or OpenDocument (.ods) spreadsheet that already exists. Give a 'path' and 'edits': a list of cells, each with a 'ref' like 'B2' and either a 'value' or a 'formula'. Name the 'sheet' by the tab it is on, or leave it out for the first sheet — a sheet name that is not in the workbook is refused and the refusal lists the ones that are. A 'value' is typed the way a person typing into a cell would have it typed: '3.5' becomes the number 3.5, 'true' becomes a boolean, and text that is not exactly how a number prints stays text, so a part number like '007' is not renumbered. An empty value empties the cell. A 'formula' is written in the ordinary A1 form ('=B2*C2', '=SUM(D2:D10)') and is converted to whatever the file's own format needs. NOTHING IS RECALCULATED: a formula you write goes in without a value beside it and the reader works it out when the file is opened, and every formula already in the workbook keeps the number it had. A 'ref' beyond the end of the sheet is written and the sheet grows; only a bad reference is refused. Read the sheet with sheet_read first, so you write to the cell you mean.",
@@ -19823,6 +19924,7 @@ impl Tool {
             Tool::PendingRaise => "Put an alert on the user's Pending panel, the one place they look for alerts, on every device; do not also post it in your chat. Raising a 'key' again updates that item in place. Clear it with pending_clear once the condition is over.",
             Tool::PendingClear => "Take this Diamond's alert off the user's Pending panel, on every device, by its 'key'.",
             Tool::PendingNone  => "Nothing here needs the user: call this, then end with no reply.",
+            Tool::StateSet     => "Set one '## key' section of STATE.md; empty text drops it. Past 4 KiB the oldest go to the archive.",
             Tool::Compound    => "Several READS in one round, answered in order, each under a '--- [n]' header. Each op in 'ops' names one read and carries that read's own arguments: {\"op\":\"list\",\"path\":\"src\"}, {\"op\":\"read\",\"paths\":[\"a.js\",\"b.js\"]}, {\"op\":\"search\",\"query\":\"fmt\",\"glob\":\"**/*.js\"}. Use it whenever reads go together. A refused op keeps its slot and says why; the rest still run. The ops share one byte budget, and the header names any op it cut. READS only.",
         }
     }
@@ -19886,6 +19988,7 @@ impl Tool {
             Tool::PendingRaise => "Put an alert on your Pending panel, on every device.",
             Tool::PendingClear => "Take an alert it raised off your Pending panel.",
             Tool::PendingNone  => "Note that nothing needed your Pending panel.",
+            Tool::StateSet     => "Update one section of where things stand.",
             Tool::Compound    => "Make several reads of your files in one go, and get all the answers together.",
         }
     }
@@ -19948,6 +20051,7 @@ impl Tool {
             Tool::PendingRaise => r#"{"type":"object","properties":{"key":{"type":"string","description":"The alert's name, e.g. 'imap-login': letters, digits, '-', '_', '.'; at most 64."},"headline":{"type":"string","description":"What happened: one line, at most 120."},"detail":{"type":"string","description":"The fix, at most 600."},"needs":{"type":"boolean","description":"true if the user must act (counts on the badge); false shows it quietly for 24 hours."}},"required":["key","headline","needs"]}"#,
             Tool::PendingClear => r#"{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}"#,
             Tool::PendingNone  => r#"{"type":"object","properties":{}}"#,
+            Tool::StateSet     => r#"{"type":"object","properties":{"key":{"type":"string"},"text":{"type":"string"}},"required":["key","text"]}"#,
             Tool::Compound => r#"{"type":"object","properties":{"ops":{"type":"array","minItems":1,"maxItems":12,"description":"The reads, in order. An op's other keys are that read's own arguments.","items":{"type":"object","properties":{"op":{"type":"string","enum":["list","read","search","glob","outline"]},"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"pattern":{"type":"string"},"query":{"type":"string"},"glob":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"},"end":{"type":"integer"},"context":{"type":"integer"},"depth":{"type":"integer"},"name":{"type":"string"}},"required":["op"]}},"budget":{"type":"integer","description":"Most bytes all ops return (default 32768, most 80000)."}},"required":["ops"]}"#,
         }
     }
@@ -20124,6 +20228,9 @@ impl Tool {
             Tool::MailList | Tool::MailSearch | Tool::MailRead | Tool::MailDraft =>
                 Self::mail_unavailable(),
             Tool::PendingNone => Ok(PENDING_NONE_SAID.to_string()),
+            Tool::StateSet => Err(err!(
+                "Tool 'state_set' sets a section of a Diamond's STATE.md in the browser's storage; \
+                this is the native build, which has no Diamonds in it."; Unimplemented)),
             Tool::PendingRaise | Tool::PendingClear => Err(err!(
                 "Tool '{}' puts an alert on Daimond's Pending panel, which is part of the browser \
                 page; this is the native build, which has no panel and nobody reading one.",
@@ -22206,7 +22313,11 @@ impl Tool {
                 if let Some(refusal) = egress_check(self.name(), &url, ctx).await {
                     return Ok(MessageContent::text(refusal));
                 }
-                crate::wasm::web::open(&url).await
+                // WHO is asking, as `file_show` names it: the turn's keeper.  The panel answers
+                // whether the conversation is on screen, and keeps the page for it if not; the
+                // turn's tag says whether it was asked on another device, whose screen it is.
+                let owner = ctx.keeper().or_else(|| ctx.daimon()).unwrap_or_default();
+                crate::wasm::web::open(&url, &owner, &ctx.turn_tag()).await
             }
             Tool::WebClose    => crate::wasm::web::close().await,
             Tool::WebFetch => {
@@ -22555,6 +22666,21 @@ impl Tool {
                 // whole file set exists to keep. Named by their own paths, so what comes back
                 // can be opened with file_read.
                 res!(Self::recall_standing(&id, &opts, &mut stats, &mut lines).await);
+                // AND WHAT EVERY DEVICE'S TURNS DID (UNBLOCK-11): the activity record, whole,
+                // where the prompt carries only its newest lines.
+                let files: Vec<String> = crate::wasm::diamond::activity_read_all(&id).await
+                    .into_iter().map(|(_, text)| text).collect();
+                let now = js_sys::Date::now() as i64;
+                if res!(recall_activity(&files, now, &opts, &mut stats, &mut lines)) {
+                    // AND THE DAIMON CHAT'S OWN TRANSCRIPT, on every device the same, where a
+                    // session folded or rebuilt elsewhere no longer holds the words. The page
+                    // searches it; a page without the search is said, not hidden.
+                    match crate::wasm::transcript::search(&id, args_json).await {
+                        Ok(json) => recall_transcript_lines(&json, opts.limit, &mut lines),
+                        Err(e)   => lines.push(fmt!("[recall] the chat transcript was not \
+                            searched: {}", e.plain())),
+                    }
+                }
                 Ok(Self::recall_said(&opts, &lines, &stats))
             }
             Tool::LinkAdd => {
@@ -22614,6 +22740,7 @@ impl Tool {
             Tool::MailRead   => Self::mail_read(args_json).await,
             Tool::MailDraft  => Self::mail_draft(args_json).await,
             Tool::PendingNone => Ok(PENDING_NONE_SAID.to_string()),
+            Tool::StateSet => return Self::state_set(args_json, ctx).await,
             // The page keeps the alert under the turn's own Diamond, never the model's word.
             Tool::PendingRaise | Tool::PendingClear => {
                 let raise = matches!(self, Tool::PendingRaise);
@@ -23418,6 +23545,36 @@ impl Tool {
         out
     }
 
+    #[cfg(target_arch = "wasm32")]
+    /// `state_set`: one keyed section of the Diamond's `STATE.md`, landed through `file_write`'s
+    /// own door so the fence, the version capture and the section landing all apply as they do to
+    /// a whole-file write.  It reads the file itself, so that read is what it has seen.
+    async fn state_set(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        if ctx.daimon().is_none() {
+            return Ok(MessageContent::text(fmt!(
+                "state_set sets a section of a Diamond's {}, and this turn is not working inside \
+                a Diamond.", STATE_FILE)));
+        }
+        let key  = res!(Self::arg(args_json, "key"));
+        let text = extract_json_string(args_json, "text");
+        if let Some(why) = crate::state_md::set_refusal(&key, text.as_deref()) {
+            return Ok(MessageContent::text(why));
+        }
+        let text = text.unwrap_or_default();
+        let path = res!(Self::scoped(ctx, STATE_FILE));
+        let at   = stored_in(ctx, &path);
+        let now  = crate::wasm::opfs::read_file(ctx.root, &path).await.ok();
+        let was  = now.as_deref().map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_default();
+        if let Some(b) = &now {
+            lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(b));
+        }
+        let next = crate::state_md::set(&was, &key, &text);
+        let args = fmt!("{{\"path\":\"{}\",\"content\":\"{}\"}}",
+            crate::llm::json_escape(STATE_FILE), crate::llm::json_escape(&next));
+        Self::file_write_page(&args, ctx).await
+    }
+
     /// `file_write` in the browser.  Its own function rather than an arm of `execute`, for the
     /// reason [`Self::file_delete`] is: a debug build of the wasm keeps every local of
     /// `execute`'s one future, and the format's limit is 50,000 (Q5-1 open item 2).
@@ -23647,8 +23804,9 @@ impl Tool {
         // refusal below reports is on what is LIVE. The arithmetic is the app's; a model
         // asked to prune its own record prunes what it judges unimportant, which is the
         // judgement the record exists to survive.
-        let (mut content, retired) = res!(crate::wasm::diamond::standing_retired(
-            ctx.root, &path, content).await);
+        let landed = res!(crate::wasm::diamond::standing_retired(ctx.root, &path, content).await);
+        let mut content = landed.kept.clone();
+        let retired = landed.said.clone();
         let mut demoted = String::new();
         // A Diamond has a ceiling on five of its files, and this is the door a daimon
         // uses: it edits them with the ordinary file tools, and the store only sees the
@@ -23720,6 +23878,13 @@ impl Tool {
         } else {
             None
         };
+        // ACCEPTED: only now do the side files of a standing file's landing go down -- archive
+        // first, then DECISIONS.md, then the touched record -- and then the file itself (F6).
+        if let Err(e) = landed.settle(ctx.root).await {
+            Self::overwrite_failed(&over).await;
+            Self::restore_failed(&rest).await;
+            return Err(e);
+        }
         if let Some((bytes, note)) = office {
             match Self::restore_store_write(ctx, &raw, &lic, &bytes, &rest).await {
                 Ok(None)       => {},
@@ -24024,7 +24189,7 @@ impl Tool {
                 let after: Option<Vec<u8>> = match &keep {
                     Some((_, (Some(b), _))) => std::str::from_utf8(b).ok()
                         .and_then(|t| file_edited(&raw, t, &hunks).ok())
-                        .map(|(updated, _)| updated.into_bytes()),
+                        .map(|(updated, _, _)| updated.into_bytes()),
                     _ => None,
                 };
                 // The turn's bound, and the copy on disk, after the dry run and before
@@ -24155,7 +24320,7 @@ impl Tool {
         // Strict, because this text is WRITTEN BACK whole: a lossy read turned every invalid
         // byte in the file into U+FFFD, not only the ones the hunks touched.
         let data = res!(utf8_text(&bytes, &path));
-        let (updated, relaxed) = res!(file_edited(&path, &data, &hunks));
+        let (updated, relaxed, missed) = res!(file_edited(&path, &data, &hunks));
         // THE CRYSTAL'S THIRD DOOR, and it answers for both of its files.
         //
         // `Tool::FileWrite` has carried this check since the ceiling was built, and
@@ -24173,8 +24338,8 @@ impl Tool {
         // Retired first, exactly as at the write door and by the same function, so an
         // edit that tips one of the three over its ceiling is relieved rather than
         // refused -- and a daimon that appends a decision a day never meets the limit.
-        let (updated, retired) = res!(crate::wasm::diamond::standing_retired(
-            ctx.root, &path, updated).await);
+        let landed = res!(crate::wasm::diamond::standing_retired(ctx.root, &path, updated).await);
+        let (updated, retired) = (landed.kept.clone(), landed.said.clone());
         let (updated, demoted) = res!(Self::cap_door(ctx, "file_edit", &path, updated, &data).await);
         // The edit's RESULT must still be one JSON object where it is a crystal's data, and a
         // crystal that was broken before the edit is said to be.
@@ -24195,6 +24360,11 @@ impl Tool {
             },
             None      => None,
         };
+        // Accepted: the landing's side files first, archive leading, then the file (F6).
+        if let Err(e) = landed.settle(ctx.root).await {
+            Self::overwrite_failed(&over).await;
+            return Err(e);
+        }
         if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, updated.as_bytes()).await {
             Self::overwrite_failed(&over).await;
             return Err(e);
@@ -24208,8 +24378,8 @@ impl Tool {
         // The edit is anchored to current on-disk content, so it merges
         // safely; record the new state as this agent's latest view.
         lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(updated.as_bytes()));
-        Ok(fmt!("{}{}{}{}", demoted, Self::edit_said(&path, hunks.len()),
-            relaxed_said(&relaxed), retired))
+        Ok(fmt!("{}{}{}{}{}", demoted, Self::edit_said(&path, hunks.len()),
+            relaxed_said(&relaxed), missed, retired))
         };
         Ok(MessageContent::text(res!(text)))
     }
@@ -26254,10 +26424,10 @@ impl Tool {
         };
         let data = res!(std::fs::read_to_string(&abs)
             .map_err(|e| err!(e, "file_edit: cannot read '{}'.", path; IO, File, Read)));
-        let (updated, relaxed) = res!(file_edited(&path, &data, &hunks));
+        let (updated, relaxed, missed) = res!(file_edited(&path, &data, &hunks));
         res!(std::fs::write(&abs, updated.as_bytes())
             .map_err(|e| err!(e, "file_edit: cannot write '{}'.", path; IO, File, Write)));
-        Ok(fmt!("{}{}", Self::edit_said(&path, hunks.len()), relaxed_said(&relaxed)))
+        Ok(fmt!("{}{}{}", Self::edit_said(&path, hunks.len()), relaxed_said(&relaxed), missed))
     }
 
     /// What an edit reports, which says how many hunks landed when there was more than one.
@@ -30999,7 +31169,7 @@ mod tests {
         // drift measured on the bank -- and which, unlike a bare `let x = 1;`, is not a substring
         // of the file, so the exact attempt really does fail first.
         let hunks = vec![(fmt!("\tlet x = 1;"), fmt!("\tlet x = 3;"))];
-        let (out, relaxed) = match file_edited("a.rs", data, &hunks) {
+        let (out, relaxed, _) = match file_edited("a.rs", data, &hunks) {
             Ok(v)  => v,
             Err(e) => panic!("the relaxed match did not fire: {}", e),
         };
@@ -31035,7 +31205,7 @@ mod tests {
     fn test_an_exact_match_is_never_reached_by_the_relaxed_rule_00() {
         let data = "    let x = 1;\n";
         let hunks = vec![(fmt!("    let x = 1;"), fmt!("    let x = 2;"))];
-        let (out, relaxed) = match file_edited("a.rs", data, &hunks) {
+        let (out, relaxed, _) = match file_edited("a.rs", data, &hunks) {
             Ok(v)  => v,
             Err(e) => panic!("an exact hunk was refused: {}", e),
         };
@@ -31829,7 +31999,7 @@ mod tests {
 
     /// Every tool this build has, by name -- written out rather than taken from a roster, so a
     /// tool no roster offers today is still asked about.
-    const EVERY_TOOL: [&str; 53] = [
+    const EVERY_TOOL: [&str; 54] = [
         "file_read", "file_write", "file_edit", "file_list", "file_search", "outline", "serve",
         "file_glob", "file_delete", "file_revert", "file_move", "dir_create", "artefact_add",
         "file_fetch", "file_show", "capture", "ask", "social_read", "social_send", "sheet_read",
@@ -31838,6 +32008,7 @@ mod tests {
         "web_click", "web_type", "web_scroll", "typst_compile", "link_list", "crystal_read",
         "recall", "link_add", "link_remove", "ocr", "mail_list", "mail_search", "mail_read",
         "mail_draft", "compound", "crystal_look", "pending_raise", "pending_clear", "pending_none",
+        "state_set",
     ];
 
     /// **Every argument of every tool that names a path is fenced as a write, or is named here as
@@ -34077,8 +34248,9 @@ mod tests {
             standing_archive(REQUIREMENTS_FILE, "abc123"));
         assert_eq!("diamonds/abc123/.daimond/decisions-archive.md",
             standing_archive(DECISIONS_FILE, "abc123"));
-        assert_eq!("", standing_archive(STATE_FILE, "abc123"),
-            "STATE.md holds no history, so it retires nowhere");
+        // STATE.md retires its oldest-touched sections into the same archive (UNBLOCK-18).
+        assert_eq!("diamonds/abc123/.daimond/decisions-archive.md",
+            standing_archive(STATE_FILE, "abc123"));
         assert_eq!("abc123", diamond_of_path("diamonds/abc123/REQUIREMENTS.md"));
     }
 
@@ -34096,20 +34268,45 @@ mod tests {
         assert!(m.contains(&fmt!("{}", REQUIREMENTS_CAP)), "the ceiling is not said: {}", m);
         assert!(m.contains("diamonds/abc123/.daimond/done.md"),
             "the archive path is not named, so the daimon cannot go and look: {}", m);
-        // STATE.md is refused in different words, because its way out is a different one: it has
-        // no archive, and what has grown it belongs in one of the other two.
-        let st = match diamond_cap_refusal(
-            "diamonds/abc123/STATE.md", &"y".repeat(STATE_CAP + 1), "", "", 0)
-        {
-            Some(m) => m,
-            None    => panic!("STATE.md over its ceiling was allowed"),
-        };
-        assert!(st.contains(DECISIONS_FILE) && st.contains(REQUIREMENTS_FILE),
-            "STATE.md's refusal does not say where the record belongs instead: {}", st);
+        // STATE.md is never refused (UNBLOCK-18): over its ceiling it retires its oldest-touched
+        // sections to the archive instead.
+        assert!(diamond_cap_refusal(
+            "diamonds/abc123/STATE.md", &"y".repeat(STATE_CAP + 1), "", "", 0).is_none(),
+            "STATE.md over its ceiling was refused");
         // And the asymmetry every other ceiling here has: an oversized file may be edited DOWN.
         assert!(diamond_cap_refusal(data, &"x".repeat(REQUIREMENTS_CAP + 50),
             &"x".repeat(REQUIREMENTS_CAP + 100), "", 0).is_none(),
             "a write that SHRINKS an oversized file was refused, which bricks the Diamond");
+    }
+
+    /// UNBLOCK-18: a 5 KB `STATE.md` is never refused; the engine retires its oldest sections.
+    #[test]
+    fn test_a_five_kb_state_write_is_never_refused_00() {
+        let five = fmt!("# State\n\n## Old\n\n{}\n\n## New\n\n{}\n",
+            "o".repeat(2_500), "n".repeat(2_500));
+        assert!(five.len() > 5_000);
+        assert!(diamond_cap_refusal("diamonds/abc123/STATE.md", &five, "", "", 0).is_none(),
+            "a 5 KB STATE.md write was refused");
+        assert!(diamond_cap_refusal("diamonds/abc123/STATE.md", &five, &five[..4_200], "", 0)
+            .is_none(), "a STATE.md write that grows an oversized file was refused");
+    }
+
+    /// UNBLOCK-18: a `file_edit` on `STATE.md` whose other section changed still lands the hunk
+    /// aimed at the section that did not, and says which one missed.
+    #[test]
+    fn test_a_state_edit_against_a_changed_file_applies_by_section_00() {
+        let now = "# State\n\n## Layout\n\nsrc in a\n\n## Next step\n\nchanged by the fold\n";
+        let hunks = vec![
+            ("src in a".to_string(), "src in b".to_string()),
+            ("write the tests".to_string(), "ship it".to_string()),	// stale: section changed
+        ];
+        let out = file_edited("diamonds/abc123/STATE.md", now, &hunks);
+        assert!(out.is_ok(), "a stale hunk refused the whole STATE.md edit: {:?}",
+            out.as_ref().err());
+        let text = match out { Ok(r) => r.0, Err(_) => String::new() };
+        assert!(text.contains("src in b") && text.contains("changed by the fold"), "{}", text);
+        // Every other file keeps all or nothing.
+        assert!(file_edited("notes/x.md", now, &hunks).is_err());
     }
 
     /// Done items retire oldest first, and nothing that is still open ever moves.
@@ -34845,6 +35042,40 @@ mod tests {
 
         set_crystal_cap(0);
         set_crystal_hot_cap(0);
+    }
+
+    #[test]
+    fn test_recall_finds_an_activity_line_from_any_device_00() {
+        let now = 1_792_000_000_000i64;
+        let built = crate::activity::ended(now - 60_000, "phone", Some((9, &["widgets/clock.html".to_string()][..])),
+            "build a clock widget", "Built it.", None);
+        let other = crate::activity::ended(now - 30_000, "laptop", None, "tidy the notes", "Tidied.", None);
+        let files = vec![
+            crate::activity::append("", built, now),
+            crate::activity::append("", other, now),
+        ];
+        let opts = match search_opts(r#"{"query":"clock widget"}"#) {
+            Ok(o)  => o,
+            Err(e) => panic!("the query must compile: {}", e),
+        };
+        let mut stats = SearchStats::default();
+        let mut lines = Vec::new();
+        match recall_activity(&files, now, &opts, &mut stats, &mut lines) {
+            Ok(go) => assert!(go, "one match leaves the search free to go on"),
+            Err(e) => panic!("recall must run: {}", e),
+        }
+        assert_eq!(1, lines.len(), "{:?}", lines);
+        assert!(lines[0].starts_with(".daimond/activity:"), "{}", lines[0]);
+        assert!(lines[0].contains("widgets/clock.html"), "{}", lines[0]);
+        // And the page's transcript hits are reported as lines of their own, up to the limit.
+        let mut out = Vec::new();
+        recall_transcript_lines(
+            r#"[{"mid":"m1","ts":17,"role":"assistant","excerpt":"the clock\nwidget is up"},{"mid":"m2","ts":18,"role":"user","excerpt":""}]"#,
+            10, &mut out);
+        assert_eq!(vec!["transcript:assistant:17: the clock widget is up".to_string()], out);
+        let mut full = vec!["x".to_string()];
+        recall_transcript_lines(r#"[{"mid":"m1","ts":1,"role":"user","excerpt":"y"}]"#, 1, &mut full);
+        assert_eq!(1, full.len(), "the limit holds");
     }
 
     #[test]
@@ -48767,6 +48998,12 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         // glob syntax a model already knows, 69), `ocr` (the list of formats it turns away, 66)
         // and `typst_compile` (", real typesetting, for a document to print or send", 53).
         // Pending-only with compound on is the dearest belt and is measured below.
+        //
+        // 2026-10-17, `state_set` (UNBLOCK-18, 253 characters before its own trim, 206 after)
+        // PAID FOR UNDER THE SAME CEILING: its own text 47 shorter, `file_edit` 20 (the "which is
+        // one round instead of many" clause, with STATE.md's per-section rule added) and
+        // `file_show` 58 (the list of picture formats). Net +130: 47,453 pending-only with
+        // compound on (47 under), 47,357 compound on, 46,184 off.
         const BUDGET: usize = 47_500;
 
         set_locked_packs("");
@@ -48933,6 +49170,9 @@ impl Tool {
             Tool::MailList | Tool::MailSearch | Tool::MailRead | Tool::MailDraft =>
                 Self::mail_unavailable(),
             Tool::PendingNone => Ok(PENDING_NONE_SAID.to_string()),
+            Tool::StateSet => Err(err!(
+                "Tool 'state_set' sets a section of a Diamond's STATE.md in the browser's storage; \
+                this is the native build, which has no Diamonds in it."; Unimplemented)),
             Tool::PendingRaise | Tool::PendingClear => Err(err!(
                 "Tool '{}' puts an alert on Daimond's Pending panel, which is part of the browser \
                 page; this is the native build, which has no panel and nobody reading one.",

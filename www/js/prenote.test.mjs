@@ -305,8 +305,9 @@ console.log('\nA replay carries the original pre and computes none');
 	check('errandForRecovery and dispatchToPeer are in daimond.js', !!efr && !!dtp);
 	if (efr) {
 		const teo = new Function('diamondEffort', lift(SRC, 'turnEffortOf') + '\nreturn turnEffortOf;')(() => '');
-		const mk = new Function('window', 'DaimondPeer', 'DaimondSync', 'selfDeviceId', 'storedPre', 'storedEffort', 'turnEffortOf', efr + '\nreturn errandForRecovery;');
-		const f = mk(win, Peer, { version: () => 7 }, () => 'dev-self', S.storedPre, S.storedEffort, teo);
+		const mk = new Function('window', 'DaimondPeer', 'DaimondSync', 'selfDeviceId', 'storedPre', 'storedEffort', 'turnEffortOf', 'errandModelOf', efr + '\nreturn errandForRecovery;');
+		const f = mk(win, Peer, { version: () => 7 }, () => 'dev-self', S.storedPre, S.storedEffort, teo,
+			(c) => ({ provider: c.provider || '', model: c.model || '', url: '' }));
 		const e = run(() => f(chat, { iturn: 't1', itext: 'the turn', dispatchedBy: 'devA', ts: T(3) }, false));
 		check('errandForRecovery carries the stored pre beside the prompt', e && e.pre === NOTE && e.prompt === 'the turn', e && e.pre);
 		const e0 = run(() => f(chat, { iturn: 'u1', itext: 'say u1', ts: T(0) }, false));

@@ -2890,28 +2890,54 @@ pub struct FoldLanding {
 ///   mend the way the other two do.
 /// * `files` - The three files as they stand on disk.
 /// * `want` - The proposal.
+/// * `today` - `YYYY-MM-DD`, for the dated line a `STATE.md` retirement writes into
+///   `DECISIONS.md` (UNBLOCK-18): `STATE.md` is never refused, it retires by section.
 pub fn fold_landing(
 	id:          &str,
 	old_crystal: &str,
 	last_good:   &str,
 	files:       &crate::tools::Standing,
 	want:        &FoldProposal,
+	today:       &str,
 )
 	-> std::result::Result<FoldLanding, String>
 {
 	use crate::tools::{DECISIONS_FILE, REQUIREMENTS_FILE, STATE_FILE};
 	let mut land = FoldLanding::default();
 	let mut after = files.clone();
+	// `STATE.md` first, because what it retires is noted in `DECISIONS.md`.  A fold keeps no
+	// touched record, so its sections age by their place in the file.
+	let mut decisions = want.decisions.clone();
+	let state = want.state.as_ref().map(|t| crate::state_md::land(
+		&files.state, t, &std::collections::BTreeMap::new(), 0, today));
+	if let Some(l) = &state {
+		if !l.noted.is_empty() {
+			let mut d = decisions.clone().unwrap_or_else(|| files.decisions.clone());
+			if !d.is_empty() && !d.ends_with('\n') {
+				d.push('\n');
+			}
+			for line in l.noted.iter() {
+				d.push_str(line);
+				d.push('\n');
+			}
+			decisions = Some(d);
+		}
+	}
+	let state_kept = state.as_ref().map(|l| l.kept.clone());
 	for (leaf, text, old) in [
 		(REQUIREMENTS_FILE, &want.requirements, &files.requirements),
-		(DECISIONS_FILE,    &want.decisions,    &files.decisions),
-		(STATE_FILE,        &want.state,        &files.state),
+		(DECISIONS_FILE,    &decisions,         &files.decisions),
+		(STATE_FILE,        &state_kept,        &files.state),
 	] {
 		let text = match text {
 			Some(t) => t,
 			None    => continue,
 		};
-		let out = crate::tools::standing_retire(leaf, text);
+		let out = match (leaf, &state) {
+			(STATE_FILE, Some(l)) => crate::tools::Retired {
+				kept: l.kept.clone(), retired: l.archived.clone() },
+			_ => crate::tools::standing_retire(leaf, text),
+		};
 		if crate::tools::standing_refused(leaf, out.kept.len(), old.len()) {
 			return Err(crate::tools::standing_cap_message(leaf, out.kept.len(), id));
 		}
@@ -5522,8 +5548,16 @@ mod tests {
 		let mut req = fmt!("# Requirements\n\n");
 		let mut i = 0;
 		while req.len() + 80 < crate::tools::REQUIREMENTS_CAP { req.push_str(&line(i)); i += 1; }
+		// Full in sections each under their own 2 KiB bound: one oversized opening text is cut on
+		// every landing now (UNBLOCK-18 F2), which would free the room this fixture must not have.
 		let mut st = fmt!("# State\n\n");
-		while st.len() + 80 < crate::tools::STATE_CAP { st.push_str("where things are, said once more.\n"); }
+		for key in ["Where", "Next", "Facts"] {
+			let mut sec = fmt!("## {}\n\n", key);
+			while sec.len() + 40 < 1_900 && st.len() + sec.len() + 80 < crate::tools::STATE_CAP {
+				sec.push_str("where things are, said once more.\n");
+			}
+			st.push_str(&sec);
+		}
 		let mut dec = fmt!("# Decisions\n\n");
 		for i in 0..200 {
 			dec.push_str(&fmt!("- 2026-10-0{} a decision recorded with its reason, {}\n", i % 9 + 1,
@@ -5558,7 +5592,7 @@ mod tests {
 		};
 		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, "", files.hot_bytes()).is_some(),
 			"fixture: without the last good crystal the fold is over the room");
-		let l = match fold_landing("d1", &old, &good, &files, &want) {
+		let l = match fold_landing("d1", &old, &good, &files, &want, "2026-10-17") {
 			Ok(l)  => l,
 			Err(m) => panic!("a fold within the last good crystal's hot part was refused: {}", m),
 		};
@@ -5580,7 +5614,7 @@ mod tests {
 			crystal: heavy_crystal(3 * 1024, 0, 0),
 			requirements: None, decisions: None, state: Some(st),
 		};
-		match fold_landing("d1", &old, "", &files, &want) {
+		match fold_landing("d1", &old, "", &files, &want, "2026-10-17") {
 			Ok(l)  => panic!("a 3 KiB summary in 2 KiB of room landed: {:?}", l.moved),
 			Err(m) => assert!(m.contains("bytes"), "the refusal names the ceiling: {}", m),
 		}
@@ -5599,7 +5633,7 @@ mod tests {
 		};
 		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, "", files.hot_bytes()).is_some(),
 			"the fixture must be over the room");
-		let l = match fold_landing("d1", &old, "", &files, &want) {
+		let l = match fold_landing("d1", &old, "", &files, &want, "2026-10-17") {
 			Ok(l)  => l,
 			Err(m) => panic!("a fold a demotion fits was refused: {}", m),
 		};
@@ -5612,7 +5646,17 @@ mod tests {
 	fn test_a_fold_counts_the_new_files_against_the_crystals_room_00() {
 		// A crystal that fits beside the OLD files but not beside the files the fold writes.
 		let mut files = full_files();
-		let grown = files.state.clone();
+		// In sections under 2 KiB each, so the landing keeps all of it (UNBLOCK-18): one ~4 KiB
+		// opening section would be cut to its 2 KiB head and free the room this test needs.
+		let mut grown = fmt!("# State\n\n");
+		let mut n = 0;
+		while grown.len() + 80 < crate::tools::STATE_CAP {
+			if grown.len() > (n + 1) * 1_000 {
+				n += 1;
+				grown.push_str(&fmt!("## Part {}\n\n", n));
+			}
+			grown.push_str("where things are, said once more.\n");
+		}
 		files.state = fmt!("# State\n\nshort.\n");
 		let old = heavy_crystal(200, 0, 0);
 		let want = FoldProposal {
@@ -5621,7 +5665,7 @@ mod tests {
 		};
 		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, "", files.hot_bytes()).is_none(),
 			"the fixture must fit beside the old files");
-		assert!(fold_landing("d1", &old, "", &files, &want).is_err(),
+		assert!(fold_landing("d1", &old, "", &files, &want, "2026-10-17").is_err(),
 			"the crystal was measured against the files as they were");
 	}
 

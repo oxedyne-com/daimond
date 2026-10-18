@@ -125,6 +125,8 @@
 		{ id: 'files',    fns: ['file_read', 'file_write', 'file_edit', 'file_list',
 		                        'file_search', 'file_glob', 'file_delete', 'file_move',
 		                        'dir_create',
+		                        // One section of a Diamond's STATE.md, through file_write's door.
+		                        'state_set',
 		                        // Mapping a file is finding something IN the workspace, which
 		                        // is what this row is about: a person granting "your files"
 		                        // has granted reading one, and this reads one more cheaply.

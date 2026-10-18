@@ -848,11 +848,6 @@
 	'menu.calendar': 'Calendario',
 	'menu.calendar_ce': 'Era común',
 	'menu.calendar_he': 'Holoceno',
-	'menu.this_diamond': 'Este diamond',
-	'menu.arrangement_update': 'Actualizar la disposición guardada',
-	'menu.arrangement_keep': 'Guardar esta disposición con {name}',
-	'menu.arrangement_keep_this': 'Guardar esta disposición con este diamond',
-	'menu.arrangement_forget': 'Olvidarla',
 
 	// ── Text-size steps ────────────────────────────────────────
 	'size.small': 'Pequeño',
