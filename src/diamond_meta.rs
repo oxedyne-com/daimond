@@ -25,8 +25,8 @@ const MAX_TAG_LEN: usize = 24;
 const MAX_CARRIED: usize = 65_536;
 
 /// Every key this build reads into a [`Meta`] field; any other is carried in [`Meta::extra`].
-const KNOWN_KEYS: [&str; 9] = ["name", "crystal_version", "brief_version", "updated", "touched",
-	"builtin", "builtin_named", "tags", "toolkits"];
+const KNOWN_KEYS: [&str; 10] = ["name", "crystal_version", "brief_version", "updated", "touched",
+	"builtin", "builtin_named", "tags", "toolkits", "no_progress_rounds"];
 
 
 /// Per-Diamond metadata held in `meta.json`.
@@ -72,6 +72,9 @@ pub struct Meta {
 	/// that, one he renamed BACK to the old name was renamed again on every boot.  Held in the
 	/// record beside the marker, so it travels and a second device does not do it over.
 	pub named:   bool,
+	/// This Diamond's own K for the no-progress rule (UNBLOCK-27 R4), or 0 for the app's figure.
+	/// Applied to its daimon after `adopt_limits`, since `Limits` is shared by every Diamond.
+	pub no_progress: usize,
 	/// The fields this build does not know, as `(key, canonical JSON value)` in key order.
 	///
 	/// Carried through every read-modify-write (R568-FU F1).  The r567 `to_json` wrote only what
@@ -99,9 +102,12 @@ impl Meta {
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
-			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\"toolkits\":{}{}}}",
+			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\"toolkits\":{}{}{}}}",
 			json_escape(&self.name), self.version, self.updated, self.touched,
 			json_escape(&self.builtin), self.named, self.tags_json(), self.kits_json(),
+			// Only when set, so a record nobody tuned is byte for byte what it was.
+			if self.no_progress > 0 { fmt!(",\"no_progress_rounds\":{}", self.no_progress) }
+				else { String::new() },
 			self.extra_json(),
 		)
 	}
@@ -176,6 +182,7 @@ impl Meta {
 			builtin: normalise_builtin(&extract_json_string(s, "builtin").unwrap_or_default()),
 			// Postdates every Diamond already on a device; absent means not yet named.
 			named:   extract_json_bool(s, "builtin_named").unwrap_or(false),
+			no_progress: extract_json_number(s, "no_progress_rounds").unwrap_or(0) as usize,
 			extra:   unknown_fields(s),
 		}
 	}
@@ -439,6 +446,7 @@ mod tests {
 			kits: Vec::new(),
 			builtin: String::new(),
 			named:   false,
+			no_progress: 0,
 			extra:   Vec::new(),
 		};
 		let back = Meta::from_json(&meta.to_json());
@@ -458,6 +466,7 @@ mod tests {
 			kits:    Vec::new(),
 			builtin: fmt!("0da1000000f2"),
 			named:   false,
+			no_progress: 0,
 			extra:   Vec::new(),
 		};
 		assert_eq!("0da1000000f2", Meta::from_json(&meta.to_json()).builtin);
@@ -479,6 +488,7 @@ mod tests {
 			kits: Vec::new(),
 			builtin: String::new(),
 			named:   false,
+			no_progress: 0,
 			extra:   Vec::new(),
 		};
 		let back = Meta::from_json(&meta.to_json());
@@ -490,7 +500,7 @@ mod tests {
 
 	#[test]
 	fn test_a_meta_with_no_tags_round_trips_as_an_empty_array() {
-		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new(), kits: Vec::new(), builtin: String::new(), named: false, extra: Vec::new() };
+		let meta = Meta { name: fmt!("Quiet"), version: 0, updated: 1, touched: 1, tags: Vec::new(), kits: Vec::new(), builtin: String::new(), named: false, no_progress: 0, extra: Vec::new() };
 		let json = meta.to_json();
 		assert!(json.contains("\"tags\":[]"), "{}", json);
 		assert!(Meta::from_json(&json).tags.is_empty());
@@ -513,7 +523,7 @@ mod tests {
 			fmt!("caf\u{e9} \u{65e5}\u{672c}"),   // multi-byte, passed through raw
 			fmt!("bell\u{7}"),                     // a control character, \u-escaped
 		];
-		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone(), kits: Vec::new(), builtin: String::new(), named: false, extra: Vec::new() };
+		let meta = Meta { name: fmt!("N"), version: 1, updated: 2, touched: 2, tags: tags.clone(), kits: Vec::new(), builtin: String::new(), named: false, no_progress: 0, extra: Vec::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 
@@ -562,6 +572,7 @@ mod tests {
 			kits: Vec::new(),
 			builtin: String::new(),
 			named:   false,
+			no_progress: 0,
 			extra:   Vec::new(),
 		};
 		assert_eq!(vec![fmt!("real")], Meta::from_json(&meta.to_json()).tags);
@@ -646,7 +657,7 @@ mod tests {
 		// what the file gives back, or the store drifts from the interface.
 		let tags = normalise_tags(&[fmt!("  Work "), fmt!("Deep\tDiamond"), fmt!("work")]);
 		let meta = Meta { name: fmt!("N"), version: 2, updated: 3, touched: 3, tags: tags.clone(),
-			kits: Vec::new(), builtin: String::new(), named: false, extra: Vec::new() };
+			kits: Vec::new(), builtin: String::new(), named: false, no_progress: 0, extra: Vec::new() };
 		assert_eq!(tags, Meta::from_json(&meta.to_json()).tags);
 	}
 
@@ -722,7 +733,7 @@ mod tests {
 	fn test_toolkit_grants_round_trip_through_the_stored_json() {
 		let meta = Meta {
 			name: fmt!("N"), version: 2, updated: 3, touched: 3,
-			tags: Vec::new(), kits: vec![fmt!("rust"), fmt!("node")], builtin: String::new(), named: false, extra: Vec::new(),
+			tags: Vec::new(), kits: vec![fmt!("rust"), fmt!("node")], builtin: String::new(), named: false, no_progress: 0, extra: Vec::new(),
 		};
 		assert_eq!(vec![fmt!("rust"), fmt!("node")], Meta::from_json(&meta.to_json()).kits);
 	}
@@ -830,4 +841,15 @@ mod unknown_field_tests {
 		assert!(!Meta::from_json(r#"{"name":"Lucy","builtin":"0da1000000f2"}"#).named);
 	}
 
+
+	#[test]
+	fn test_a_diamonds_own_k_round_trips_and_is_absent_when_unset_00() {
+		let mut m = Meta::from_json(r#"{"name":"Reit","crystal_version":1,"no_progress_rounds":20}"#);
+		assert_eq!(20, m.no_progress);
+		assert!(m.extra.is_empty(), "a known key is not carried twice: {:?}", m.extra);
+		assert!(m.to_json().contains("\"no_progress_rounds\":20"), "{}", m.to_json());
+		assert_eq!(20, Meta::from_json(&m.to_json()).no_progress);
+		m.no_progress = 0;
+		assert!(!m.to_json().contains("no_progress_rounds"), "{}", m.to_json());
+	}
 }

@@ -117,7 +117,7 @@ const J = JSON.stringify;
 const hasPre = (m) => Object.prototype.hasOwnProperty.call(m, 'pre');
 
 // ── Lifts: the real helpers, in one scope with the real ratings ──
-const names = ['ratingPre', 'pushUserRecord', 'tsPast', 'storedPre', 'storedPrompt', 'storedEffort', 'landInterjection', 'recoverUserRecord', 'interjectMessage', 'heldNote'];
+const names = ['ratingPre', 'pushUserRecord', 'tsPast', 'storedPre', 'storedPrompt', 'storedEffort', 'landInterjection', 'recoverUserRecord', 'interjectMessage', 'interjectInto', 'heldNote'];
 const src = {};
 for (const n of names) src[n] = lift(SRC, n);
 check('ratingPre, pushUserRecord, tsPast and storedPre are in daimond.js', ['ratingPre', 'pushUserRecord', 'tsPast', 'storedPre'].every((n) => !!src[n]), names.filter((n) => !src[n]).join(','));
@@ -126,7 +126,7 @@ const calls_ = { interject: [], rendered: 0, gave: [], committed: [] };	// what 
 function scope() {
 	const mid = { n: 0 };
 	const stubs = { newMid: () => 'mi' + (++mid.n), nowTs: () => Date.now(), commitRatings: (id) => { calls_.committed.push(id); return false; },
-		giveUpSent: (c, w) => { calls_.gave.push(w); }, syncSendMode: () => {}, renderQueue: () => { calls_.rendered++; }, journalQueue: () => {} };
+		giveUpSent: (c, w) => { calls_.gave.push(w); }, syncSendMode: () => {}, renderQueue: () => { calls_.rendered++; }, journalQueue: () => {}, _steerApp: {}, current: null };
 	return new Function('window', 'DaimondRatings', ...Object.keys(stubs), have.map((n) => src[n]).join('\n') + '\nreturn { ' + have.join(', ') + ' };')(win, R, ...Object.values(stubs));
 }
 const miss = (n) => () => { throw new Error(n + ' missing'); };
@@ -243,7 +243,8 @@ console.log('\nThe three paths set it, and nothing else does');
 	const sites = calls(SRC, 'pushUserRecord');
 	const gate = (c) => topArgs(c.text)[2];
 	const by = {}; sites.forEach((c) => { (by[c.owner] = by[c.owner] || []).push(gate(c)); });
-	same('the callers are runTurn, maybeAutoDispatch, runSteer, an interjection landing and the journal recovery', Object.keys(by).sort(), ['landInterjection', 'maybeAutoDispatch', 'recoverUserRecord', 'runSteer', 'runTurn']);
+	// sayToRunner: words said into a turn another device runs join the thread as they are sent (UNBLOCK-27 R7).
+	same('the callers are runTurn, maybeAutoDispatch, runSteer, an interjection landing, words said to a runner and the journal recovery', Object.keys(by).sort(), ['landInterjection', 'maybeAutoDispatch', 'recoverUserRecord', 'runSteer', 'runTurn', 'sayToRunner']);
 	same('path 1 (local chat send): gated on the person flag runTurn is given, or on a note a replay hands it', by.runTurn, ["!!opts.person || typeof opts.told === 'string'"]);
 	same('path 5 (an interjection landing) is a person\'s message', by.landInterjection, ['true']);
 	same('the journal recovery restores the mark it was opened with', by.recoverUserRecord, ['meta.app !== true']);
@@ -253,13 +254,13 @@ console.log('\nThe three paths set it, and nothing else does');
 	// J9: the ratings are committed (a pending draft is a rating_log) before the note is composed
 	const idxs = []; { const re = /\bpushUserRecord\(/g; let mm; while ((mm = re.exec(SRC))) if (!/function\s*$/.test(SRC.slice(Math.max(0, mm.index - 16), mm.index))) idxs.push(mm.index); }
 	const committedFirst = idxs.map((i) => { const k = SRC.lastIndexOf('commitRatings(', i); return { owner: ownerAt(SRC, i), ok: k > 0 && ownerAt(SRC, k) === ownerAt(SRC, i) }; });
-	same('every send path commits the ratings before it composes the note (so a pending draft is already a record)', committedFirst.filter((c) => !['landInterjection', 'recoverUserRecord'].includes(c.owner)).map((c) => c.owner + ':' + c.ok).sort(), ['maybeAutoDispatch:true', 'runSteer:true', 'runTurn:true']);
+	same('every send path commits the ratings before it composes the note (so a pending draft is already a record)', committedFirst.filter((c) => !['landInterjection', 'recoverUserRecord'].includes(c.owner)).map((c) => c.owner + ':' + c.ok).sort(), ['maybeAutoDispatch:true', 'runSteer:true', 'runTurn:true', 'sayToRunner:true']);
 	{ const ij = lift(SRC, 'interjectMessage') || ''; check('and so does the interjection, at the typing step, before it composes', ij.indexOf('commitRatings(') > 0 && ij.indexOf('commitRatings(') < ij.indexOf('ratingPre('), ij.slice(0, 200)); }
 	check('no send path pushes its user record by hand any more',
 		!/chat\.messages\.push\(urec\)/.test(SRC) && !/rec\.messages\.push\(\{ role: 'user', content: instruction/.test(SRC)
 		&& !/chat\.messages\.push\(\{ role: 'user', content: text, mid: umid, iturn: umid/.test(SRC));
-	check('ratingPre is called from pushUserRecord and the interjection\'s typing step alone, and noteFor from ratingPre alone',
-		calls(SRC, 'ratingPre').map((c) => c.owner).sort().join() === 'interjectMessage,pushUserRecord' && calls(SRC, 'noteFor').map((c) => c.owner).join() === 'ratingPre',
+	check('ratingPre is called from pushUserRecord and the interjection\'s typing steps (here, and said to a runner) alone, and noteFor from ratingPre alone',
+		calls(SRC, 'ratingPre').map((c) => c.owner).sort().join() === 'interjectMessage,pushUserRecord,sayToRunner' && calls(SRC, 'noteFor').map((c) => c.owner).join() === 'ratingPre',
 		calls(SRC, 'ratingPre').map((c) => c.owner).concat(calls(SRC, 'noteFor').map((c) => c.owner)));
 	// the callers of runTurn that carry the person flag are the composer, the queue and a retry; the rest have none
 	const rt = calls(SRC, 'runTurn').filter((c) => c.owner !== 'runTurn');

@@ -12538,6 +12538,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// each other's edits. So the flag became a set, keyed by the Diamond the turn
 	// belongs to.
 	var crystalRunning = Object.create(null);   // diamondId -> true while a steer or fold runs
+	var _steerApp = Object.create(null);        // diamondId -> the app its steer runs on, while it runs (UNBLOCK-27 R7)
+	var _saidThere = Object.create(null);       // turnId -> [{ chatId, mid, text }] said to its runner, until its report (UNBLOCK-27 R7)
 
 	/// Is THIS Diamond mid-turn? Asked of an id rather than of the app, which is the
 	/// distinction the single flag could not make.
@@ -21482,6 +21484,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!ws.length) return ui;
 		return Object.assign({}, ui || {}, { workers: ws });
 	}
+	/// Can the turn this device runs for another (`turnId`) still hear words said into it
+	/// (UNBLOCK-27 R7c)? Deaf while its round streams prose with no call (the answer, so no
+	/// seam follows) and once the turn is over; a call opens a seam again. A word said to a
+	/// deaf turn is answered `unheard` at once and runs as the next turn.
+	function runnerDeaf(turnId, deaf) {
+		var rc = _runnerCtx[String(turnId || '')];
+		if (rc) rc.deaf = !!deaf;
+	}
 	function runnerCtxEnd(turnId) {
 		var tid = String(turnId || '');
 		delete _runnerCtx[tid];
@@ -28455,6 +28465,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// progress door a chat uses (pushProgress reads this daimon record by the
 					// turn's mid). `ropts.onProgress` is the lease-liveness piggyback.
 					await runSteerDetached(f, prompt, c.chat, ropts);
+					runnerDeaf(tid, true);		// the turn is over: nothing said now reaches it
 					// A daimon that fanned out settles here too, so `done` is posted after the
 					// real end of the turn -- `drainAgenticRounds` reads worker/batch state
 					// and re-dispatches nothing, so it cannot double-run.
@@ -28476,6 +28487,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				await runTurn(c.chat, prompt, { promptInTranscript: !!(ropts && ropts.promptInTranscript), turnId: ropts && ropts.turnId,
 					told: (ropts && typeof ropts.pre === 'string') ? ropts.pre : undefined,
 					effort: ropts && ropts.effort });
+				runnerDeaf(tid, true);		// the turn is over: nothing said now reaches it
 				// The turn has ended, but if it fanned out workers the answer is not in
 				// yet: the gather round that reads their reports runs a macrotask later,
 				// and on a runner it runs at all only because `chatShowingOrRunning` now
@@ -28493,6 +28505,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// turn's own catch closes it -- the interrupted row, `_generating` and the crystal's
 			// busy flag down. A turn stuck on an await that is not raced is forced down after.
 			endLocal: function (e, why) { return endRunnerLocal(ctx && ctx.chat, e, why); },
+			// Words the sender said into this run over its lease (UNBLOCK-27 R7): true once the turn
+			// running here has them, false while nothing runs to hear them.
+			// 'late' where the turn can hear nothing more, its last round writing the answer
+			// (`runnerDeaf`): the runner answers the sender at once and never takes them (R7c).
+			interject: function (said) {
+				var c = ctx && ctx.chat;
+				if (!c || !said || !said.text) return false;
+				var rcx = said.turn ? _runnerCtx[String(said.turn)] : null;
+				if (rcx && rcx.deaf) return 'late';
+				if (!c.diamondId && !c._generating) return false;
+				return interjectMessage(c, String(said.text), undefined, { id: said.id, pre: said.pre });
+			},
+			// Whether those words reached the model: landed in the thread under the id they were said as.
+			landed: function (id) {
+				var c = ctx && ctx.chat;
+				return !!c && (c.messages || []).some(function (m) { return m && m.mid === String(id); });
+			},
 			abort: function (why) {
 				try { if (ctx && ctx.chat) Workers.cancelAwaits(ctx.chat.id); } catch (e) { /* best effort */ }
 				// The reason first, so the engine's `ended` event finds it when the stop lands. A
@@ -28807,6 +28836,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try {
 				var tid = String(report.turnId);
 				peerReports[tid] = report;
+				requeueUnheard(report);
 				// A parked / terminal report settles the live question, so retire the
 				// dispatcher's "awaiting" marker; the footer then reads the report state.
 				// A parked, terminal or HANDED-BACK report settles the live question, so
@@ -28894,6 +28924,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { stampDispatchHolders(); } catch (e) { /* the re-render still advances the footer */ }
 			// A lease that settled is the turn done, here as on the tab that collected the report.
 			try { Object.keys(_finalMids).forEach(function (k) { adoptFinalFrame(k); }); } catch (e) { /* the parcel still comes */ }
+			// A runner's receipt for words its turn could no longer hear: sent as the next turn now.
+			try { heedUnheard(); } catch (e) { /* the turn's report still sends them */ }
 			renderDispatchedBadges();
 			// A claim starts a watch and a release ends one. See `refreshHandoffWatch`.
 			updateExpedite();
@@ -30014,11 +30046,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (c.id) ChatStore.compact(c.id);   // drop the tombstoned placeholder from the chunks (Stage 2)
 			}
 		}
+		// What its runner never heard goes now, as the next turn (UNBLOCK-27 R7). After the index
+		// entry goes, below, so the turn no longer reads as held.
+		var _after = only;
 		// The placeholder is gone: its index entry goes with it, and any armed
 		// dispatcher-side recovery backstop (Fix B) has nothing left to recover.
 		delete _dispatchedIx[String(turnId)];
 		delete _finalMids[String(turnId)]; delete _finalRun[String(turnId)];
 		try { clearDispatchFallback(turnId); } catch (e) { /* no timer armed */ }
+		if (_after && (_after._queue || []).length) setTimeout(function () { drainAfterHeld(_after); }, 0);
 		// The hand-off is settled: if it was the last one outstanding, the in-flight
 		// poll stands down.
 		updateExpedite();
@@ -39991,13 +40027,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// note 14. A daimon queues behind its own turn, as a chat queues behind
 			// its own, and behind nobody else's.
 			// And behind its own turn taken back after a refused hand-off (R568-FU F4).
-			if (diamondBusy(target.diamondId) || recoveringHere(target)) { enqueueMessage(target, text, words); return; }
+			// SAID INTO THE RUNNING TURN (UNBLOCK-27 R7), where it runs: here, at its next seam
+			// through the Diamond's queue, or on the runner, over the turn's lease. Queued only
+			// where neither can hear it.
 			// AUTO-DISPATCH the daimon turn, exactly as a chat does (§4.1). The queue guard
-			// above runs FIRST, so a steer typed during this daimon's own in-flight turn
+			// runs FIRST, so a steer typed during this daimon's own in-flight turn
 			// queues rather than dispatching a second time. `maybeAutoDispatch` pushes the
 			// user message, gives up the words it sent and hands off to the runner (which
 			// services it through `steer_crystal`); false falls through to the local steer.
-			if (await maybeAutoDispatch(target, text, words)) return;
+			if (await sendToDiamondTurn(target, text, words)) return;
 			// Queued where it cannot run now: a turn that began on this Diamond in the wait
 			// (where `runSteer` would turn a typed preset away unsaid), or a Diamond left in
 			// the wait, since a steer runs on the one on screen.
@@ -40185,43 +40223,196 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the truth. Returns false when this build's agent cannot take one — an older
 	/// wasm bundle, or a chat whose agent has been thrown away — so the caller falls
 	/// back to the queue rather than dropping what was typed.
-	function interjectMessage(chat, text, words) {
-		if (!chat.app || typeof chat.app.interject !== 'function') return false;
+	function interjectMessage(chat, text, words, from) {
+		var into = interjectInto(chat);
+		if (!into) return false;
 		// A person's message, so it takes the note of what has been rated since the model last heard, composed
 		// now and sent with the words. A correction already waiting has told what it told, so this one starts
 		// where that one was typed. The same string goes on the record when it lands (`landInterjection`).
-		commitRatings(chat.id, { });
+		// Words said on ANOTHER device (`from`, the lease's `{ id, pre }`) bring that device's note and id.
+		if (!from) commitRatings(chat.id, { });
 		var notes = chat._interjectNote || [];
-		var pre = ratingPre(chat, notes.length ? notes[notes.length - 1].at : undefined);
+		var pre = from ? String(from.pre || '') : ratingPre(chat, notes.length ? notes[notes.length - 1].at : undefined);
 		var at = (chat.messages || []).length;
-		try { chat.app.interject(text, pre || undefined); }
+		try { into(text, pre || undefined); }
 		catch (e) { return false; }
 		chat._interject = chat._interject || [];
 		chat._interject.push(text);
-		notes.push({ pre: pre, at: at });
+		notes.push({ pre: pre, at: at, mid: from ? String(from.id || '') : '' });
 		chat._interjectNote = notes;
 		journalQueue(chat);
-		giveUpSent(chat, words === undefined ? text : words);
+		if (!from) giveUpSent(chat, words === undefined ? text : words);
 		syncSendMode();
-		renderQueue();
+		if (current === chat) renderQueue();
 		return true;
+	}
+
+	/// What carries words into the turn `chat` is running HERE, or null where none runs.
+	///
+	/// A DIAMOND'S TURN IS SPOKEN TO TOO (UNBLOCK-27 R7). It runs on an agent `steer_crystal`
+	/// composes for the turn, which shares the Diamond's queue on the app it runs on
+	/// (`interject_daimon`), so mid-turn words reach it at its next seam as a chat's do.
+	function interjectInto(chat) {
+		if (!chat) return null;
+		if (chat.diamondId) {
+			var did = String(chat.diamondId), fa = _steerApp[did];
+			if (!fa || typeof fa.interject_daimon !== 'function') return null;
+			return function (text, pre) { fa.interject_daimon(did, text, pre); };
+		}
+		if (!chat.app || typeof chat.app.interject !== 'function') return null;
+		return function (text, pre) { chat.app.interject(text, pre); };
+	}
+
+	/// Where words sent to Diamond chat `target` go while a turn of it may be running: said into
+	/// the turn running here, said to the runner of one handed off, queued behind one that cannot
+	/// hear them here, or handed off as the next turn. False: none of these, so it steers here.
+	async function sendToDiamondTurn(target, text, words) {
+		if (diamondBusy(target.diamondId) && !recoveringHere(target) && interjectMessage(target, text, words)) return true;
+		var heldThere = diamondBusy(target.diamondId) ? null : peerHeldTurnOf(target);
+		if (heldThere && await sayToRunner(target, heldThere, text, words)) return true;
+		if (diamondBusy(target.diamondId) || recoveringHere(target)) { enqueueMessage(target, text, words); return true; }
+		return !!(await maybeAutoDispatch(target, text, words));
+	}
+
+	/// Say words into a turn ANOTHER device runs for `chat` (`ph`, its held placeholder), over the
+	/// turn's lease, where its runner hears them at its next seam (UNBLOCK-27 R7). They join the
+	/// thread here, where they were sent, under the id the runner records them by, so the two
+	/// copies are one message. False where nothing is running there to hear them: the caller queues.
+	async function sayToRunner(chat, ph, text, words) {
+		var tid = String((ph && ph.iturn) || '');
+		if (!tid || _peerStopping[tid] || !window.DaimondLease || !DaimondLease.say || !window.DaimondPeer) return false;
+		// A SAY IS ONLY FOR A TURN THAT CAN STILL HEAR IT (UNBLOCK-27 R7c). Its runner's frames
+		// show its answer being written (or the turn over): no seam follows, so the words go out
+		// as the next turn now, as they did before turns could be spoken to, and never wait out
+		// the answer's tail for a report that names them unheard.
+		if (DaimondPeer.frameHears && !DaimondPeer.frameHears(_progressView[tid])) {
+			diag('said not', 'turn=' + tid + ' past its last round: sent as the next turn');
+			return false;
+		}
+		commitRatings(chat.id, { });
+		var pre = ratingPre(chat);
+		var mid = newMid();
+		var res;
+		try {
+			res = await DaimondLease.say(tid, { id: mid, text: text, pre: pre || '' }, DaimondPeer.syncCas(peerSyncShim()));
+		} catch (e) { res = { ok: false, why: 'threw' }; }
+		diag('said to runner', 'turn=' + tid + ' ok=' + (res && res.ok ? 1 : 0) + ' why=' + String((res && res.why) || ''));
+		if (!res || !res.ok) return false;
+		(_saidThere[tid] = _saidThere[tid] || []).push({ chatId: String(chat.id || ''), mid: mid, text: text });
+		giveUpSent(chat, words === undefined ? text : words);
+		pushUserRecord(chat, { role: 'user', interject: true, content: text, mid: mid, ts: Date.now() }, true, pre || '');
+		if (current === chat) appendInterjected(text);
+		syncSendMode();
+		return true;
+	}
+
+	/// The runner has reported on a turn this device said words into (`sayToRunner`): any its report
+	/// does not name as heard reached the thread here but never the model, said between the runner's
+	/// last read of the lease and the turn's end. Each goes out once, as the next turn
+	/// (`resendUnheard`). Answers how many.
+	function requeueUnheard(report) {
+		var tid = String((report && report.turnId) || '');
+		var said = tid ? _saidThere[tid] : null;
+		if (!said) return 0;
+		delete _saidThere[tid];		// once: a second report of the turn finds nothing
+		var heard = Array.isArray(report.heard) ? report.heard.map(String) : [];
+		var n = 0;
+		said.forEach(function (s) {
+			if (heard.indexOf(s.mid) !== -1) return;
+			n++;
+			resendUnheard(s);
+		});
+		if (n) diag('said unheard', 'turn=' + tid + ' resent=' + n);
+		return n;
+	}
+
+	/// The runner's receipts on the lease view (`DaimondLease.unheard`): words said into a turn that
+	/// could no longer hear them, answered the moment the runner read them rather than at the turn's
+	/// end. Each goes out once, as the next turn (`resendUnheard`). Answers how many.
+	function heedUnheard() {
+		var n = 0;
+		if (!window.DaimondLease || !DaimondLease.record) return 0;
+		Object.keys(_saidThere).forEach(function (tid) {
+			var r = DaimondLease.record(tid);
+			var ids = (r && Array.isArray(r.unheard)) ? r.unheard.map(String) : [];
+			if (!ids.length) return;
+			var left = [], out = [];
+			_saidThere[tid].forEach(function (s) { (ids.indexOf(s.mid) !== -1 ? out : left).push(s); });
+			if (!out.length) return;
+			if (left.length) _saidThere[tid] = left; else delete _saidThere[tid];
+			diag('said unheard', 'turn=' + tid + ' receipt=' + out.length);
+			out.forEach(function (s) { n++; resendUnheard(s); });
+		});
+		return n;
+	}
+
+	/// Words said into a handed-off turn that never reached its model go out as the next turn, now,
+	/// UNDER THE ID THEY WERE SAID AS (UNBLOCK-27 R7c): the turn's message is the said copy restamped,
+	/// so a device that already holds the said copy holds one row, not that and the turn's message.
+	/// Where the turn cannot be handed off now, the said copy leaves every thread and the words queue.
+	async function resendUnheard(s) {
+		var chat = chats.find(function (x) { return x && String(x.id) === s.chatId; });
+		if (!chat) return false;		// deleted since: nowhere to send it
+		var sent = false;
+		try { sent = await maybeAutoDispatch(chat, s.text, '', s.mid); }
+		catch (e) { sent = false; }
+		var ms = chat.messages || [], newest = null;
+		for (var i = ms.length - 1; i >= 0; i--) { if (ms[i] && ms[i].mid === s.mid) { newest = ms[i]; break; } }
+		if (sent) {
+			// The turn's copy is the newest of that id; the said copy it replaces goes.
+			var one = ms.filter(function (m) { return !(m && m.mid === s.mid && m !== newest); });
+			if (one.length !== ms.length) {
+				chat.messages = one;
+				try { persistChats(); } catch (e) { /* the dispatch persisted the turn */ }
+				if (ownsChat(chat)) renderHistory(chat.messages);
+			}
+			return true;
+		}
+		var kept = ms.filter(function (m) { return !(m && m.mid === s.mid); });
+		if (kept.length !== ms.length) {
+			chat.messages = kept;
+			msgTombstone([s.mid]);
+			touchChat(chat);
+		}
+		chat._queue = (chat._queue || []).concat([s.text]);
+		journalQueue(chat);
+		try { persistChats(); } catch (e) { /* the queue is journalled */ }
+		if (ownsChat(chat)) renderHistory(chat.messages);
+		if (current === chat) renderQueue();
+		updateQueueBadges();
+		drainAfterHeld(chat);
+		return false;
+	}
+
+	/// Send what waits on `chat` once nothing runs it, here or on a runner: the words a handed-off
+	/// turn ended without hearing, sent at its report or when its answer lands (UNBLOCK-27 R7).
+	function drainAfterHeld(chat) {
+		if (!chat || !(chat._queue || []).length || chat._generating || recoveringHere(chat)) return;
+		if (chat.diamondId ? diamondBusy(chat.diamondId) : false) return;
+		if (peerHeldTurnOf(chat)) return;		// its answer has not landed: the drop sends it
+		try { if (chat.diamondId) drainSteerQueue(chat, chat.diamondId, false); else drainQueue(chat, false); }
+		catch (e) { /* the queue stays, badged */ }
 	}
 
 	/// A correction has landed at the engine's seam: it stops waiting and joins the thread, as a person's
 	/// message carrying the note it was SENT with, kept with the waiting text, so the record says what the
 	/// model read and no more. Words typed twice land first in, first out.
 	function landInterjection(chat, said) {
-		var told = '';
+		var told = '', mid = '';
 		if (chat._interject && chat._interject.length) {
 			var at = chat._interject.indexOf(said);
 			at = at === -1 ? 0 : at;
 			chat._interject.splice(at, 1);
 			var kept = (chat._interjectNote || []).splice(at, 1)[0];
 			if (kept && typeof kept.pre === 'string') told = kept.pre;
+			if (kept && kept.mid) mid = String(kept.mid);
 		}
+		// Said on another device under an id the thread already holds (UNBLOCK-27 R7): one message.
+		var had = mid ? (chat.messages || []).filter(function (m) { return m && m.mid === mid; })[0] : null;
+		if (had) return had;
 		// Taken by the turn, but saved only when it ends: still his to get back.
 		if (chat._jturn) { chat._jsaid = (chat._jsaid || []).concat([said]); journalQueue(chat); }
-		var rec = pushUserRecord(chat, { role: 'user', interject: true, content: said, mid: newMid(), ts: Date.now() }, true, told);
+		var rec = pushUserRecord(chat, { role: 'user', interject: true, content: said, mid: mid || newMid(), ts: Date.now() }, true, told);
 		if (rec && rec.mid) heldNote(chat, chat.app, rec.mid);		// the engine took it at its seam
 		return rec;
 	}
@@ -40235,12 +40426,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// of a correction typed into a plain prose answer.
 	///
 	/// What comes back goes in FRONT of anything already queued: it was typed first.
-	function reclaimInterjections(chat) {
+	function reclaimInterjections(chat, take, keep) {
 		var left = [];
-		if (chat.app && typeof chat.app.take_interjections === 'function') {
+		if (typeof take === 'function') {
+			try { left = Array.prototype.slice.call(take() || []); }
+			catch (e) { left = []; }
+		} else if (chat.app && typeof chat.app.take_interjections === 'function') {
 			try { left = Array.prototype.slice.call(chat.app.take_interjections() || []); }
 			catch (e) { left = []; }
 		}
+		if (keep === false) left = [];		// said on another device, which keeps its own copy
 		chat._interject = [];
 		chat._interjectNote = [];
 		// Drained whatever happens, but only put back where there is something to put
@@ -41013,6 +41208,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// arriving where the user can see them, and the caption is only
 				// there to say the turn is not over yet.
 				if (!writing) { writing = true; busySay(chat, tOr('chat.busy_writing', 'Writing the answer…')); }
+				if (umid) runnerDeaf(umid, true);		// prose with no call yet: the answer (R7c)
 				if (!owns()) return;
 				// The answer's mid on its tile as it streams (see `mountRateControls`).
 				appendAssistantText(ev.content || '', undefined, undefined, { mid: amid });
@@ -41064,6 +41260,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// chat left running in the background is found on the right step.
 				callN += 1;
 				writing = false;
+				if (umid) runnerDeaf(umid, false);		// a call: the turn has a seam ahead (R7c)
 				// TRAINING WHEELS — the debug feed's `round`, one per tool-call round.
 				// `ctx` is `last_prompt_tokens`: what the LAST request actually sent,
 				// which is also what the feed's fold inference watches for a drop --
@@ -65820,6 +66017,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				daimonProd();			// before the live row can leave, so it carries the record
 				if (detached) { try { _liveTurn[String(detached.turnId)] = replyText; } catch (e) { /* a dropped frame only slows the stream */ } }
 				if (!writing) { writing = true; busySay(rec, tOr('chat.busy_writing', 'Writing the answer…')); }
+				if (detached) runnerDeaf(detached.turnId, true);		// prose with no call yet: the answer (R7c)
 				if (onScreen()) appendAssistantText(ev.content || '', undefined, undefined, { mid: dmid });
 			} else if (ev.type === 'tool_call') {
 				// PROSE BEFORE A TOOL CALL IS WORKING, NOT THE ANSWER: the rule `runTurn`'s own
@@ -65836,6 +66034,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				callN += 1;
 				writing = false;
+				if (detached) runnerDeaf(detached.turnId, false);		// a call: the turn has a seam ahead (R7c)
 				// TRAINING WHEELS — the debug feed's `round`, the DAIMON's agentic loop.
 				// Keyed on the Diamond's own record, which is the turn here; the chat
 				// path's `round` is keyed on the turn's mid. Folded past 60 rounds,
@@ -65908,6 +66107,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				busySay(rec, tOr('chat.busy_next', 'Tool call {n} done, thinking…', { n: callN }));
 				if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
+			} else if (ev.type === 'interjected') {
+				// HIS WORDS LANDED IN THE DAIMON'S TURN (UNBLOCK-27 R7), at the seam, as a chat's do.
+				var saidD = ev.content || '';
+				landInterjection(rec, saidD);
+				if (onScreen()) { appendInterjected(saidD); renderQueue(); }
 			} else if (ev.type === 'thinking') {
 				// Persisted like a fold, and for the same reason: a reload that dropped it
 				// would leave the answer with no working behind it and no sign there had
@@ -66043,6 +66247,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		};
 		var fa = diamondApp(diamondId, dsPair, steerEff);	// the turn's model (`steerModelFor`), at the turn's Effort
+		_steerApp[diamondId] = fa;		// what words said mid-turn are handed to (UNBLOCK-27 R7)
+		var saidBack = function () {
+			if (_steerApp[diamondId] === fa) delete _steerApp[diamondId];
+			reclaimInterjections(rec, function () {
+				return (fa && typeof fa.take_daimon_interjections === 'function') ? fa.take_daimon_interjections(diamondId) : [];
+			}, !detached);
+		};
 		// The toolchains the user ticked on this Diamond, read fresh for THIS turn. The
 		// marks themselves are the engine's to read at the turn (HIST-SAFE U2), from the
 		// same `marks::reach` that `Files.bounds` answers with, so the daimon and the
@@ -66260,6 +66471,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// guarding it with a SECOND predicate that goes wrong: a user who moved
 			// to the crystal face mid-turn left `onScreen` false, and the chat face
 			// kept its dots for ever because nothing ever re-decided them.
+			saidBack();
 			syncComposer();
 			setCrystalBusy(diamondId, false);
 			// AFTER the flag comes down, and handed the failure: what was typed while
@@ -66284,6 +66496,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `syncComposer` is what takes the thread's own dots down -- unguarded, for
 		// the reason given at the failure exit above.
 		if (onCrystal()) hideCrystalSpinner();
+		saidBack();
 		syncComposer();
 		setCrystalBusy(diamondId, false);
 		// A PENDING-ONLY TURN'S AGENTS THAT NEVER START (FIRE MAIL-FU3, post-QA r569cqa2 CQA2-1).

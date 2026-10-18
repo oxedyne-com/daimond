@@ -9295,22 +9295,10 @@ pub mod tests {
         })
     }
 
-    /// Start the stub provider on an ephemeral port.
-    ///
-    /// Each connection is served the next reply in `script`; the last one repeats
-    /// for as long as the client keeps trying, so "gives up" is observable as a
-    /// connection count rather than as a hang.
-    pub async fn start_stub(script: Vec<Reply>) -> (u16, Arc<std::sync::Mutex<Seen>>) {
-        // THE STUB IS A TLS SERVER AND NEEDS A PROVIDER TOO.  Every client helper here installs
-        // one, so in a whole-suite run some earlier test has always installed it process-wide by
-        // the time a stub starts, and every stub test passed.  Run one of them ALONE and the
-        // server is built first, with nothing installed, and rustls panics -- so
-        // `cargo test -- one_test_name` failed for a reason that had nothing to do with the test.
-        //
-        // That is not a hypothetical: a daimon changed the retry policy, wrote a test for it, and
-        // told the user to prove it with exactly that command.  Both it and the test beside it
-        // would have failed, and the change would have looked broken.  Idempotent, so installing
-        // it here costs nothing where a client got there first.
+    /// Bind the stub's TLS listener on an ephemeral port.
+    async fn stub_listener()
+        -> (tokio::net::TcpListener, tokio_rustls::TlsAcceptor, u16)
+    {
         let _ = rustls::crypto::ring::default_provider().install_default();
         use tokio_rustls::rustls::ServerConfig;
         use tokio_rustls::rustls::pki_types::CertificateDer;
@@ -9329,7 +9317,6 @@ pub mod tests {
             Err(e) => panic!("stub TLS config: {}", e),
         };
         let acceptor = TlsAcceptor::from(Arc::new(cfg));
-
         let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
             Ok(l)  => l,
             Err(e) => panic!("stub listen: {}", e),
@@ -9338,6 +9325,26 @@ pub mod tests {
             Ok(a)  => a.port(),
             Err(e) => panic!("stub addr: {}", e),
         };
+        (listener, acceptor, port)
+    }
+
+    /// Start the stub provider on an ephemeral port.
+    ///
+    /// Each connection is served the next reply in `script`; the last one repeats
+    /// for as long as the client keeps trying, so "gives up" is observable as a
+    /// connection count rather than as a hang.
+    pub async fn start_stub(script: Vec<Reply>) -> (u16, Arc<std::sync::Mutex<Seen>>) {
+        // THE STUB IS A TLS SERVER AND NEEDS A PROVIDER TOO.  Every client helper here installs
+        // one, so in a whole-suite run some earlier test has always installed it process-wide by
+        // the time a stub starts, and every stub test passed.  Run one of them ALONE and the
+        // server is built first, with nothing installed, and rustls panics -- so
+        // `cargo test -- one_test_name` failed for a reason that had nothing to do with the test.
+        //
+        // That is not a hypothetical: a daimon changed the retry policy, wrote a test for it, and
+        // told the user to prove it with exactly that command.  Both it and the test beside it
+        // would have failed, and the change would have looked broken.  Idempotent, so installing
+        // it here costs nothing where a client got there first.
+        let (listener, acceptor, port) = stub_listener().await;
         let seen = Arc::new(std::sync::Mutex::new(Seen::default()));
         let seen_task = seen.clone();
 
@@ -9366,6 +9373,65 @@ pub mod tests {
             }
         });
         (port, seen)
+    }
+
+    /// Start a stub provider whose every reply is chosen by `policy` from the request it answers.
+    ///
+    /// `start_stub` serves a fixed script, which cannot tell whether the engine sent the model
+    /// what it needed. This one reads the body first, so a scripted model can act on what the
+    /// engine put in front of it -- the shape the UNBLOCK-27 replay depends on. `policy` is
+    /// called once per request, in the order the bodies arrive, with the body.
+    pub async fn start_stub_with<F>(policy: F) -> (u16, Arc<std::sync::Mutex<Seen>>)
+    where
+        F: FnMut(&str) -> Reply + Send + 'static,
+    {
+        let (listener, acceptor, port) = stub_listener().await;
+        let seen = Arc::new(std::sync::Mutex::new(Seen::default()));
+        let seen_task = seen.clone();
+        let policy = Arc::new(std::sync::Mutex::new(policy));
+
+        tokio::spawn(async move {
+            loop {
+                let (tcp, _) = match listener.accept().await {
+                    Ok(v)  => v,
+                    Err(_) => return,
+                };
+                let acceptor = acceptor.clone();
+                let seen = seen_task.clone();
+                let policy = policy.clone();
+                tokio::spawn(async move {
+                    let mut tls = match acceptor.accept(tcp).await {
+                        Ok(s)  => s,
+                        Err(_) => return,
+                    };
+                    let body = read_request(&mut tls).await;
+                    // Chosen under the lock and the lock dropped before the write, so a policy
+                    // never holds it across an await.
+                    let reply = match policy.lock() {
+                        Ok(mut f) => f(&body),
+                        Err(e)    => panic!("stub policy poisoned: {}", e),
+                    };
+                    if let Ok(mut g) = seen.lock() {
+                        g.bodies.push(body);
+                    }
+                    write_reply(&mut tls, &reply).await;
+                });
+            }
+        });
+        (port, seen)
+    }
+
+    /// A stub client speaking chat completions as `model`, with the short retry ladder
+    /// `stub_client` uses.
+    pub fn stub_client_for(port: u16, model: &str) -> LlmClient {
+        let mut client = test_client("localhost", port, model);
+        client.retry = RetryPolicy {
+            max_attempts:      4,
+            base_ms:           20,
+            max_backoff_ms:    40,
+            max_total_wait_ms: 5_000,
+        };
+        client
     }
 
     /// Read one HTTP request off the stream and return its body.

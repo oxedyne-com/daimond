@@ -651,6 +651,16 @@ impl Agent {
         self.hold_worker();
     }
 
+    /// Set K for this agent alone (UNBLOCK-27 R4).  Called for a Diamond's daimon AFTER
+    /// [`Agent::adopt_limits`], which copies the app agent's `Limits` -- shared by every Diamond
+    /// on one model -- so a figure set before it, or set on the shared agent, would not be this
+    /// Diamond's own.  Zero is ignored and the adopted figure stands.
+    pub fn set_no_progress_rounds(&self, k: usize) {
+        if k > 0 {
+            self.limits.borrow_mut().no_progress_rounds = k;
+        }
+    }
+
     /// Set how many tool-call rounds one turn may take.
     ///
     /// # Arguments
@@ -787,6 +797,9 @@ impl Agent {
             // well as there -- a figure read back out of `limits()` has to be the one used.
             if let Some(n) = crate::llm::extract_json_number(text, "sweep_every") {
                 if n > 0 { l.sweep_every = n as usize; }
+            }
+            if let Some(n) = crate::llm::extract_json_number(text, "no_progress_rounds") {
+                if n > 0 { l.no_progress_rounds = n as usize; }
             }
             // The worker preset.
             if let Some(n) = crate::llm::extract_json_number(text, "worker_max_rounds") {
@@ -1159,6 +1172,18 @@ impl Agent {
         let mut q = self.interject.borrow_mut();
         q.push(Said { text: t.to_string(), pre: pre.to_string() });
         q.len()
+    }
+
+    /// Take `said` as this agent's interjection queue, in place of the empty one it was built with.
+    ///
+    /// **A TURN RUN ON A FRESH AGENT CAN STILL BE SPOKEN TO (UNBLOCK-27 R7).**  A Diamond's daimon
+    /// turn runs on an agent composed for that one turn, so its own queue was one nothing outside
+    /// the turn could reach, and words the user sent while it ran waited until it ended.  The
+    /// holder keeps the queue and hands it to every agent that runs a turn for it; what the turn
+    /// never reached a seam for is still in the holder's queue when it ends, for the page to take
+    /// back.
+    pub fn share_interjections(&mut self, said: &Interjections) {
+        self.interject = said.clone();
     }
 
     /// What is waiting to be said, for the UI to draw.
@@ -1865,6 +1890,17 @@ impl Agent {
         // Read at the seam, so the grace is counted in rounds the model actually got to use --
         // see the seam below and `compact::ORPHAN_GRACE_ROUNDS`.
         let mut orphan_from: Option<usize> = None;
+        // THE TURN'S OWN STATE, held here and not in the conversation (UNBLOCK-27 R3, R4): what
+        // the ask names as its product, whether that is written, and how long since any file
+        // outside a scratch folder changed.  A fold or a dropped reasoning block cannot reach it.
+        // See `crate::turn_state` for how its no-progress rule and the ORCHESTRATE budget meet.
+        let mut state = {
+            let ask = working.iter().rev().find_map(|m| match m {
+                ChatMessage::User { content, .. } => Some(content.as_text().into_owned()),
+                _                                 => None,
+            }).unwrap_or_default();
+            crate::turn_state::TurnState::new(&ask, self.limits.borrow().no_progress_rounds)
+        };
         loop {
             // A STOPPED TURN GOES NO FURTHER, asked before anything of the next round -- the
             // cap's fold, the proactive fold, the request -- can spend.  The seam below asks it
@@ -2358,6 +2394,11 @@ impl Agent {
                             .map(|head| (held_said(&tc.name, head), held_told(&tc.name, head)))
                     })
                     .collect();
+                // A READ PAST 2K QUIET ROUNDS IS NOT SENT (UNBLOCK-27 R4).  Answered as a refusal
+                // that says to deliver; nothing that writes, builds, runs or dispatches is ever
+                // held here, so the act that delivers always goes through.
+                let closed: Vec<bool> = group.iter().map(|tc| state.refuses(&tc.name)).collect();
+                let shut = state.refusal();
                 let truncated = resp.truncated;
                 let outs: Vec<Outcome<MessageContent>> = if group.len() == 1 {
                     if pre[0] {
@@ -2365,19 +2406,24 @@ impl Agent {
                         vec![Ok(MessageContent::text(String::new()))]
                     } else if let Some((said, _)) = &held[0] {
                         vec![Ok(MessageContent::text(crate::tools::refusal_line(said)))]
+                    } else if closed[0] {
+                        vec![Ok(MessageContent::text(shut.clone()))]
                     } else {
                         vec![self.one_call(registry, &group[0], truncated, on_event).await]
                     }
                 } else {
                     sinks = group.iter().map(|_| Vec::new()).collect();
                     let futs: Vec<_> = group.iter().zip(sinks.iter_mut()).zip(held.iter())
-                        .zip(pre.iter())
-                        .map(|(((tc, sink), h), p)| {
+                        .zip(pre.iter()).zip(closed.iter())
+                        .map(|((((tc, sink), h), p), c)| {
+                            let shut = &shut;
                             async move {
                                 if *p {
                                     Ok(MessageContent::text(String::new()))
                                 } else if let Some((said, _)) = h {
                                     Ok(MessageContent::text(crate::tools::refusal_line(said)))
+                                } else if *c {
+                                    Ok(MessageContent::text(shut.clone()))
                                 } else {
                                     self.call_buffered(registry, tc, truncated, sink).await
                                 }
@@ -2474,9 +2520,26 @@ impl Agent {
                     // announce, the claims, the event and the stored reply are all built from
                     // this one value, so the pairing flow is untouched.
                     let result = self.with_folds(session, tc, result);
+                    let outcome = crate::tools::call_outcome(&result.as_text());
+                    // INTO THE TURN'S STATE, and a read that returns what the same call returned
+                    // before says so (R3).  Prefixed rather than replacing the result: the
+                    // earlier copy may since have been retired or folded away.
+                    let seen = match crate::turn_state::Class::of(&tc.name) {
+                        crate::turn_state::Class::Read => Some(crate::turn_state::result_hash(&result)),
+                        _                              => None,
+                    };
+                    let claimed = crate::tools::Tool::from_name(&tc.name)
+                        .map(|t| t.path_claims(&tc.arguments, registry.ctx.daimon().as_deref()))
+                        .unwrap_or_default();
+                    let result = match state.record(&tc.name, &tc.arguments, outcome, &claimed,
+                        seen, rounds)
+                    {
+                        Some(r) => headed(result, &fmt!("Unchanged since round {}: the same call \
+                            returned exactly this then.", r)),
+                        None    => result,
+                    };
                     // Mutable because the setbacks below may add a line to it; see `Setbacks`.
                     let mut text = result.as_text().into_owned();
-                    let outcome = crate::tools::call_outcome(&text);
                     // The engine's own look opens on what it is, and a look that could not be
                     // taken on why, so the daimon says so rather than calling the page seen.
                     let auto = look_call.as_deref() == Some(tc.id.as_str());
@@ -2491,8 +2554,17 @@ impl Agent {
                     // that failed or was refused is counted: reading one file twice is ordinary,
                     // and a turn that verifies its own work makes the same successful call on
                     // purpose.
+                    //
+                    // A read the no-progress rule closed (R4) is not booked: the engine withheld
+                    // it rather than the call failing, and what lifts it is the delivery, not a
+                    // mend of the read.  Booked, it stood as an unmended refusal that no write of
+                    // the deliverable could clear, so a turn that delivered ended `Blocked`.
                     let paused = crate::tools::paused_node(&text).is_some();
-                    let verdict = setbacks.record(&tc.name, &tc.arguments, &text, outcome, paused);
+                    let verdict = if closed.get(n).copied().unwrap_or(false) {
+                        Verdict::default()
+                    } else {
+                        setbacks.record(&tc.name, &tc.arguments, &text, outcome, paused)
+                    };
                     if let Some(w) = verdict.warn {
                         text.push_str(&fmt!("\n{}", w));
                     }
@@ -2691,6 +2763,10 @@ impl Agent {
                 };
                 compact::note_budget(&mut working, rounds_left, usd_left, fraction_left);
             }
+            // AND WHERE THE TURN STANDS, every round, after the budget line so that line's strip
+            // never cuts this one (R3), with the deliver line from K quiet rounds (R4).
+            let line = state.end_round(rounds);
+            compact::note_turn_state(&mut working, &line);
         }
     }
 
@@ -3072,8 +3148,9 @@ impl Agent {
         // The hard ceiling is the budget itself: however few messages that leaves, a tail
         // bigger than what may be sent is a fold that changed nothing.
         let ceiling = self.gauge.bytes(budget).saturating_sub(schema);
-        let mut cut = compact::tail_start(&session.messages, self.gauge.bytes(tail).min(ceiling),
-            compact::MIN_KEEP_MESSAGES, ceiling, &open);
+        let keep = self.gauge.bytes(tail).min(ceiling);
+        let mut cut = compact::tail_start(&session.messages, keep, compact::MIN_KEEP_MESSAGES,
+            ceiling, &open);
         // A FOLD AT THE ROUND LIMIT THAT FOLDS NOTHING IS THE COMMON CASE, not the rare one.
         // `tail_start` answers 0 whenever the whole conversation fits the tail budget, and a
         // turn stopped at ten rounds has not filled 48,000 tokens -- so the leg that continues
@@ -3082,9 +3159,29 @@ impl Agent {
         // door the question is different: the log is about to be re-sent on every round of the
         // next leg, so it is worth replacing with a note.  See `compact::capped_cut`, which
         // answers 0 when there is genuinely nothing worth folding.
-        if cut == 0 && why.at_the_cap() {
+        let capped = cut == 0 && why.at_the_cap();
+        if capped {
             cut = compact::capped_cut(&session.messages, ceiling, &open);
         }
+        // THE TURN'S OWN ASK SURVIVES A CUT THROUGH THE TURN.  The cut may land inside the turn
+        // in flight -- a floor at its start would stop a long turn ever folding -- so the
+        // opening message is set back verbatim behind the notice, and its bytes come out of the
+        // tail it joins: the cut is chosen again against what is left, which only moves it
+        // later.  A fold the user asked for runs between turns, where `turn_start` names the
+        // last turn's opening and pinning it would carry an old request forward.  See
+        // `compact::pinned_opening`.
+        let ts = if matches!(why, Fold::ByHand) { usize::MAX } else { self.turn_start.get() };
+        if let Some(p) = compact::pinned_opening(&session.messages, ts, cut) {
+            let pb   = compact::msg_bytes(p, &open);
+            let ceil = ceiling.saturating_sub(pb);
+            cut = if capped {
+                compact::capped_cut(&session.messages, ceil, &open)
+            } else {
+                compact::tail_start(&session.messages, keep.saturating_sub(pb),
+                    compact::MIN_KEEP_MESSAGES, ceil, &open)
+            };
+        }
+        let pin = compact::pinned_opening(&session.messages, ts, cut).cloned();
         // A FOLD THAT FREES TOO LITTLE IS NOT PAID FOR.  A cut over nothing but an earlier fold
         // note re-summarises a summary, and one that frees less than a tenth of the budget, net
         // of the note it writes, is re-triggered by the next tool result: on 2026-10-12 that was
@@ -3111,7 +3208,9 @@ impl Agent {
                 model.trim().to_string() };
             by_sp = crate::prompts::fingerprint(&self.fold_prompt());
             summarised = true;
-            let raw = match self.summarise(&rendered, &model, session, why, shape).await {
+            let raw = match self.summarise(&rendered, &model, session, why, pin.is_some(), shape)
+                .await
+            {
                 Ok(s)  => Ok(s),
                 Err(e) => Err(fmt!("{}", e)),
             };
@@ -3142,8 +3241,13 @@ impl Agent {
             structured = matches!(summary,
                 compact::Summary::Notes(_) | compact::Summary::Filed(_));
             if let Err(ref e) = raw { trouble = e.clone(); }
-            let note = compact::notice(cut, &summary, &ledger, why.at_the_cap());
-            match compact::fold(&session.messages, cut, note) {
+            // A turn cut through CONTINUES from the note, exactly as a capped one does.
+            let mut note = compact::notice(cut, &summary, &ledger,
+                why.at_the_cap() || pin.is_some());
+            if pin.is_some() {
+                note.push_str(compact::TURN_CONTINUES_NOTE);
+            }
+            match compact::fold_keeping(&session.messages, cut, pin.as_ref(), note) {
                 Ok(new) => {
                     // A fold that made the conversation bigger is not a fold; it happens
                     // when the folded part was small and the note is not.
@@ -3159,8 +3263,9 @@ impl Agent {
                         // AND SO DOES THE TURN'S OWN START, by the same arithmetic: a caller
                         // that slices `session.messages[turn_start..]` after the turn must be
                         // handed an index into the list as it now is, not as it was.
-                        self.turn_start.set(compact::prior_end_after_fold(
-                            self.turn_start.get(), cut));
+                        // Where the opening was pinned it is the message behind the notice.
+                        self.turn_start.set(if pin.is_some() { 1 } else {
+                            compact::prior_end_after_fold(self.turn_start.get(), cut) });
                     }
                 },
                 // Refused rather than allowed to orphan a tool call. Eliding below still
@@ -3333,6 +3438,7 @@ impl Agent {
     /// * `model` - The model to fold with, or empty for the chat's own.
     /// * `session` - Charged with what the call cost, so the fold is not spent invisibly.
     /// * `why` - What brought the fold about, which decides how the user message opens.
+    /// * `mid_turn` - Whether the cut runs through the turn in flight, which then continues.
     /// * `shape` - Which layout the compactor is asked for, and therefore its output budget.
     async fn summarise(
         &self,
@@ -3340,6 +3446,7 @@ impl Agent {
         model:    &str,
         session:  &mut Session,
         why:      Fold,
+        mid_turn: bool,
         shape:    compact::FoldShape,
     )
         -> Outcome<String>
@@ -3365,11 +3472,16 @@ impl Agent {
         }
         // WHY THE FOLD IS HAPPENING CHANGES WHAT THE NOTE IS FOR, and only the capped one is a
         // different job: the turn CONTINUES from this note in the next round, so `## Next step`
-        // is the plan it starts on rather than a remark about the future. The others are a
-        // record for whatever comes next, which may be the user.
+        // is the plan it starts on rather than a remark about the future. So is a fold that cuts
+        // through the turn in flight (`mid_turn`), whose opening is pinned behind the note. The
+        // others are a record for whatever comes next, which may be the user.
         let opening = if why.at_the_cap() {
             "The turn has hit its round limit and CONTINUES from your note in the next round. \
              Write `## Next step` as the plan it starts on."
+        } else if mid_turn {
+            "The turn is still running and CONTINUES from your note in the next round; its \
+             opening request is kept word for word after the note. Write `## Next step` as the \
+             plan it carries on with."
         } else if matches!(why, Fold::ByHand) {
             "The user asked for this fold."
         } else {
@@ -4277,6 +4389,48 @@ mod tests {
         }
     }
 
+    /// Words said into a queue the agent was HANDED, from outside the turn, reach the next
+    /// round's request, and the turn can end on them (UNBLOCK-27 R7): the daimon's case, whose
+    /// agent is built for the turn while the queue belongs to the Diamond.
+    #[tokio::test]
+    async fn test_words_said_into_a_shared_queue_reach_the_next_round_and_end_the_turn() {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+            plain_answer(),
+            tool_round(&[("file_write", r#"{"path":"b.txt","content":"2"}"#)]),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let held = new_interjections();			// the Diamond's, outliving the agent
+        let mut a = Agent::new(llm, "You are a daimon.");
+        a.share_interjections(&held);
+        let mut session = Session::new(fmt!("s1"), fmt!("shared"), fmt!("model"));
+        let mut heard: Vec<String> = Vec::new();
+        let mut round = 0usize;
+        let ran = a.run_turn(&mut session, fmt!("ocr the seven pages"), &registry, &mut |ev| {
+            match ev {
+                AgentEvent::ToolCall { .. } => {
+                    round += 1;
+                    if round == 1 {
+                        held.borrow_mut().push(Said { text: fmt!("put it together now"), pre: String::new() });
+                    }
+                },
+                AgentEvent::Interjected(said) => heard.push(said),
+                _                             => {},
+            }
+        }).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        assert_eq!(vec![fmt!("put it together now")], heard, "the words never landed");
+        let bodies = sent_bodies(&seen);
+        assert_eq!(2, bodies.len(), "the turn did not end on the answer that followed the words");
+        assert!(!bodies[0].contains("put it together now"));
+        assert!(bodies[1].contains("put it together now"), "round 2 was built without them: {}", bodies[1]);
+        assert!(held.borrow().is_empty(), "delivered words stay in the holder's queue");
+        assert_eq!(1, session.messages.iter().filter(|m| m.text() == "put it together now").count(),
+            "said once, in the session once");
+    }
+
     /// A correction with no note queues and is said as it always was.
     #[test]
     fn test_an_interjection_with_no_note_carries_none() {
@@ -4813,6 +4967,33 @@ mod tests {
         assert_eq!(Effort::XHigh, b.llm.thinking_tune().effort);
     }
 
+    #[test]
+    fn test_a_diamonds_own_k_holds_only_when_set_after_adopting_00() {
+        // UNBLOCK-27 R4.  `Limits` is the app agent's, shared by every Diamond on one model, so
+        // a Diamond's K is applied to its daimon AFTER `adopt_limits` and reaches no one else.
+        let app = make_test_agent();
+        if let Err(e) = app.set_tune(r#"{"no_progress_rounds":9}"#) {
+            panic!("{}", e);
+        }
+        let reit = make_test_agent();
+        reit.adopt_limits(&app);
+        assert_eq!(9, reit.limits().no_progress_rounds, "the app's figure is adopted");
+        reit.set_no_progress_rounds(20);
+        assert_eq!(20, reit.limits().no_progress_rounds);
+        assert_eq!(9, app.limits().no_progress_rounds, "a Diamond's K must not reach the app");
+        // A second Diamond on the same app keeps the shared figure, and nought keeps it too.
+        let other = make_test_agent();
+        other.adopt_limits(&app);
+        other.set_no_progress_rounds(0);
+        assert_eq!(9, other.limits().no_progress_rounds);
+        // Set BEFORE adopting, it is lost: the order the composer keeps is the one that works.
+        let early = make_test_agent();
+        early.set_no_progress_rounds(20);
+        early.adopt_limits(&app);
+        assert_eq!(9, early.limits().no_progress_rounds);
+        assert_eq!(compact::NO_PROGRESS_ROUNDS, make_test_agent().limits().no_progress_rounds);
+    }
+
     #[tokio::test]
     async fn test_a_tune_that_keeps_the_prior_turn_sends_its_results_whole_00() {
         // The mirror of `test_a_turn_sends_a_retired_history_and_stores_a_whole_one_00`, and it is
@@ -5111,11 +5292,18 @@ mod tests {
             Ok(d)  => d,
             Err(e) => panic!("a scratch directory: {}", e),
         };
+        tools_in(dir, Vec::new())
+    }
+
+    /// A registry holding `tools` over a workspace rooted at `dir`.
+    fn tools_in(dir: std::path::PathBuf, tools: Vec<crate::tools::Tool>)
+        -> crate::tools::ToolRegistry
+    {
         let ws = match crate::workspace::Workspace::new(dir) {
             Ok(w)  => w,
             Err(e) => panic!("a scratch workspace: {}", e),
         };
-        crate::tools::ToolRegistry::new(Vec::new(), crate::tools::ToolContext {
+        crate::tools::ToolRegistry::new(tools, crate::tools::ToolContext {
             workspace:   ws,
             executor:    crate::executor::Executor::local_default(),
             cwd:         String::new(),
@@ -5163,28 +5351,7 @@ mod tests {
         if let Err(e) = std::fs::write(dir.join("cover.png"), &png) {
             panic!("the fixture picture could not be written: {}", e);
         }
-        let ws = match crate::workspace::Workspace::new(dir) {
-            Ok(w)  => w,
-            Err(e) => panic!("a scratch workspace: {}", e),
-        };
-        crate::tools::ToolRegistry::new(vec![crate::tools::Tool::FileRead],
-            crate::tools::ToolContext {
-                workspace:   ws,
-                executor:    crate::executor::Executor::local_default(),
-                cwd:         String::new(),
-                path_prefix: String::new(),
-                root:        crate::tools::FileRoot::Workspace,
-                read_seen:   crate::tools::new_read_cache(),
-                no_write:    Vec::new(),
-                daimon_of:   String::new(),
-                turn:        String::new(),
-                keeper:      String::new(),
-                unconfirmed: Vec::new(),
-                live: None,
-                by_model:    false,
-                restoring:   0,
-                by:          None,
-            })
+        tools_in(dir, vec![crate::tools::Tool::FileRead])
     }
 
     /// One streamed round that asks to LOOK at the fixture picture.
@@ -8568,6 +8735,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_a_turn_folded_twice_carries_its_opening_once_verbatim_00() {
+        // UNBLOCK-27 R1. A long turn has nothing to fold but itself, so both cuts land INSIDE
+        // it, past its opening message. That message must stand straight after each notice,
+        // word for word, notes and all, exactly once -- and `turn_start` must name it.
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![completion(structured_fold_reply()), completion(structured_fold_reply())]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(3, 200);
+        let ask = ChatMessage::user_noted(fmt!("Put the seven pages together as letter.typ."),
+            fmt!("[the page is open]"));
+        a.turn_start.set(session.messages.len());
+        session.messages.push(ask.clone());
+        let mut events: Vec<AgentEvent> = Vec::new();
+        for pass in 1..=2 {
+            // The turn's own work, each pass enough to fill the window again.
+            for i in 0..60 {
+                session.messages.push(ChatMessage::Assistant {
+                    content: MessageContent::text(fmt!("check {} {} {}", pass, i, "z".repeat(800))),
+                    tool_calls: Vec::new(),
+                });
+                session.messages.push(ChatMessage::user(fmt!("go on {} {}", pass, i)));
+            }
+            let mut working = session.messages.clone();
+            a.fold_if_needed(&mut session, &mut working, 0, Fold::Refused,
+                &mut |ev| events.push(ev)).await;
+            assert!(compact::is_fold_notice(&session.messages[0]),
+                "pass {}: the list does not open with a fold notice", pass);
+            let copies = session.messages.iter().filter(|m| **m == ask).count();
+            assert_eq!(1, copies, "pass {}: the opening is carried {} times", pass, copies);
+            assert!(session.messages[1] == ask,
+                "pass {}: the opening is not verbatim straight after the notice: {:?}", pass,
+                session.messages[1].text());
+            assert_eq!(1, a.turn_start(), "pass {}: turn_start does not name the opening", pass);
+            assert!(session.messages[0].text().contains("This turn is still running"),
+                "pass {}: the notice does not say the turn continues", pass);
+            assert!(session.messages.len() < 60,
+                "pass {}: the fold kept {} messages, so it did not cut through the turn", pass,
+                session.messages.len());
+        }
+        // And the compactor was told the turn goes on, both times.
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        let told = bodies.iter().filter(|b| b.contains("still running and CONTINUES")).count();
+        assert_eq!(2, told, "the summariser was told the turn continues {} of 2 times", told);
+    }
+
+    #[tokio::test]
     async fn test_a_garbage_reply_still_folds_and_still_announces_00() {
         // A malformed reply costs the STRUCTURE and nothing else. The turn must never lose its
         // fold to a model that answered in paragraphs -- which is the whole reason the parse
@@ -8924,6 +9138,326 @@ fn test_agent_message_building() {
             assert_eq!(crate::tools::call_outcome(&r), o, "{}", r);
         }
         assert!(unrun_call_note(4_096).contains("output limit"));
+    }
+
+    // ── UNBLOCK-27: the Reit re-check turn, replayed ───────────────────
+    //
+    // Turn `mvdi04ca-2-48j7q` (2026-10-18): 7 OCR calls, 7 page writes, then 88 rounds of crops
+    // and re-reads with no deliverable, a fold that cut the ask, and no document after 102
+    // rounds. The scripted model reads what it is sent, and each arm delivers only when the
+    // engine has done the one thing its unit adds, so each turns green on that unit alone:
+    // AMNESIA on R2 (its reasoning from three rounds back is carried), PIN on R1 (the opening
+    // message stands after the fold note), STUBBORN on R4 (a deliver line, or its reads
+    // refused). The policies depend on nothing else, so the arms measure the engine, not the
+    // script. Diagnosis and check: notes/daimond_recheck_20261018/{diag,check}.md.
+
+    const REPLAY_ASK: &str = "Proofread the seven transcribed pages of the Laurence letter \
+        against the scans.\nThen put the corrected letter together as letter.typ in the \
+        Laurence_letter_doctor folder.";
+    const REPLAY_FOLD_NOTE: &str = "[Daimond folded the earlier part";
+    const REPLAY_DELIVER_MARK: &str = "deliver now";    // the line R4 sends, lower-cased
+    const REPLAY_REFUSED: &str = "\"content\":\"Refused"; // a tool reply R4 turned away
+    const REPLAY_FOLD_ROUND: usize = 60;                // the request the fold lands before
+    const REPLAY_CAP: u64 = compact::CONTEXT_CAP_MIN;   // the carry ceiling, in tokens
+    const REPLAY_MAX_ROUNDS: usize = 120;               // one leg; live is 4 x 150
+    const REPLAY_PAGES: usize = 7;
+    const REPLAY_LETTER: &str = "Laurence_letter_doctor/letter.typ";
+
+    // A fold summary that keeps the work and loses the ask, as the real one did.
+    const REPLAY_FOLD_SUMMARY: &str = "## Task\nProofreading transcribed pages against \
+        crops.\n## Next step\nKeep checking the crops.\n## Found\n- p7 line 29 reads P.H.\n";
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum ReplayArm {
+        Amnesia,    // R2: delivers once its reasoning from three rounds back is in the request
+        Pin,        // R1: delivers once the ask stands after the fold note
+        Stubborn,   // R4: also notes into _work/, delivers only on a deliver line or a refused read
+    }
+
+    #[derive(Default)]
+    struct ReplayLog {
+        rounds:     usize,          // streamed requests answered
+        last_page:  usize,          // the round that wrote the last page
+        letter:     Option<usize>,  // the round that wrote the letter
+        folded_at:  Option<usize>,  // rounds answered when the first summarising call came
+        after_fold: Vec<bool>,      // per streamed request after the fold: ask after the note?
+        scratch:    Vec<String>,    // _work/ notes the stubborn arm wrote
+        fold_bytes: usize,          // size of the request the fold was forced on
+        ask_seen:   bool,           // the matcher found the ask in the opening request
+    }
+
+    impl ReplayLog {
+        fn facts(&self, ending: &Option<TurnEnding>) -> String {
+            fmt!("{} rounds, ending {:?}, letter.typ round {:?}, last page write round {}, \
+                fold after round {:?} (request {} B), ask after the fold note in {} of {} \
+                later requests", self.rounds, ending.as_ref().map(|e| e.how), self.letter,
+                self.last_page, self.folded_at, self.fold_bytes,
+                self.after_fold.iter().filter(|b| **b).count(), self.after_fold.len())
+        }
+    }
+
+    /// One streamed round: reasoning, then `calls` as `(name, arguments)`, reporting
+    /// `prompt_tokens` as the provider's usage. No calls means `text` is the answer.
+    fn replay_round(r: usize, think: &str, calls: &[(&str, String)], text: &str,
+        prompt_tokens: u64) -> crate::llm::tests::Reply
+    {
+        let esc = crate::llm::json_escape;
+        let mut chunks = Vec::new();
+        if !think.is_empty() {
+            chunks.push(fmt!("data: {{\"choices\":[{{\"delta\":{{\"reasoning\":\"{}\"}}}}]}}\n\n",
+                esc(think)));
+        }
+        for (i, (name, args)) in calls.iter().enumerate() {
+            chunks.push(fmt!("data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":{},\
+                \"id\":\"r{}c{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\
+                \"arguments\":\"{}\"}}}}]}}}}]}}\n\n", i, r, i, name, esc(args)));
+        }
+        if calls.is_empty() {
+            chunks.push(fmt!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n",
+                esc(text)));
+        }
+        chunks.push(fmt!("data: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"{}\"}}],\
+            \"usage\":{{\"prompt_tokens\":{},\"completion_tokens\":40}}}}\n\n",
+            if calls.is_empty() { "stop" } else { "tool_calls" }, prompt_tokens));
+        chunks.push("data: [DONE]\n\n".to_string());
+        crate::llm::tests::Reply::Sse { chunks, reset_after: None }
+    }
+
+    /// The scripted model for `arm`.
+    fn replay_policy(log: Arc<std::sync::Mutex<ReplayLog>>, arm: ReplayArm)
+        -> impl FnMut(&str) -> crate::llm::tests::Reply + Send + 'static
+    {
+        let ask = crate::llm::json_escape(REPLAY_ASK);
+        move |body: &str| {
+            let mut g = match log.lock() {
+                Ok(g)  => g,
+                Err(e) => panic!("replay log: {}", e),
+            };
+            // The summarising call is the only one not streamed.
+            if !body.contains("\"stream\":true") {
+                if g.folded_at.is_none() {
+                    g.folded_at = Some(g.rounds);
+                }
+                return completion(REPLAY_FOLD_SUMMARY);
+            }
+            g.rounds += 1;
+            let r = g.rounds;
+            if r == 1 {
+                g.ask_seen = body.contains(&ask);
+            }
+            // The ask counts as pinned only where it stands after the note, not in a
+            // summary or a quotation of it ahead of the note.
+            let pinned = match (body.find(REPLAY_FOLD_NOTE), body.rfind(&ask)) {
+                (Some(n), Some(a)) => a > n,
+                _                  => false,
+            };
+            if g.folded_at.is_some() {
+                g.after_fold.push(pinned);
+            }
+            // An honest count, except that the provider's word that the prompt has outgrown
+            // the ceiling forces the fold in front of request REPLAY_FOLD_ROUND.
+            let tokens = if r == REPLAY_FOLD_ROUND - 1 {
+                g.fold_bytes = body.len();
+                REPLAY_CAP + 1
+            } else {
+                (body.len() / 4) as u64
+            };
+            if r <= REPLAY_PAGES {
+                // The OCR stand-in: the native build has no `ocr`, and a transcript read
+                // through `run` is the same successful, store-neutral call to the engine.
+                let argv = fmt!("{{\"argv\":[\"cat\",\"scans/page-{:03}.txt\"]}}", r);
+                return replay_round(r, "", &[("run", argv)], "", tokens);
+            }
+            if r <= 2 * REPLAY_PAGES {
+                let p = r - REPLAY_PAGES;
+                let args = fmt!("{{\"path\":\"Laurence_letter_doctor/transcript_pages/\
+                    page-{:03}.md\",\"content\":\"Page {} transcript.\\n\"}}", p, p);
+                g.last_page = r;
+                return replay_round(r, "", &[("file_write", args)], "", tokens);
+            }
+            if g.letter.is_some() {
+                return replay_round(r, "", &[], "The corrected letter is in letter.typ.", tokens);
+            }
+            let deliver = match arm {
+                ReplayArm::Amnesia  => body.contains(&ask)
+                    && body.contains(&fmt!("finding r{}:", r - 3)),
+                ReplayArm::Pin      => g.folded_at.is_some() && pinned,
+                ReplayArm::Stubborn => body.to_lowercase().contains(REPLAY_DELIVER_MARK)
+                    || body.contains(REPLAY_REFUSED),
+            };
+            if deliver {
+                g.letter = Some(r);
+                let args = fmt!("{{\"path\":\"{}\",\"content\":\"= Letter\\nMrs P.H. \
+                    Bergman\\n\"}}", REPLAY_LETTER);
+                return replay_round(r, "", &[("file_write", args)], "", tokens);
+            }
+            // Every re-check says it is ready, as the real one did four times, and crops again.
+            let k = r % REPLAY_PAGES + 1;
+            let think = fmt!("finding r{}: p{} line 29 reads P.H. not P.W.; now assemble", r, k);
+            // Each crop a new file, as the real ones were, so no call is ever the same twice.
+            let mut calls = vec![
+                ("run", fmt!("{{\"argv\":[\"cp\",\"scans/page-{:03}.png\",\
+                    \"_work/crop-{:03}.png\"]}}", k, r)),
+                ("file_read", fmt!("{{\"path\":\"_work/crop-{:03}.png\",\"as\":\"image\"}}", r)),
+            ];
+            if arm == ReplayArm::Stubborn {
+                // A write-class call, but to scratch, which is not progress.
+                let note = fmt!("_work/crop-{:03}.md", r);
+                g.scratch.push(note.clone());
+                calls.push(("file_write", fmt!("{{\"path\":\"{}\",\"content\":\"p{} line 29: \
+                    P.H.\\n\"}}", note, k)));
+            }
+            replay_round(r, &think, &calls, "", tokens)
+        }
+    }
+
+    /// The Reit workspace: seven scans, each with the transcript the OCR read off it.
+    fn replay_workspace() -> (std::path::PathBuf, crate::tools::ToolRegistry) {
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_agent_recheck") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
+        let png = match oxedyne_fe2o3_text::base64::decode(COVER_PNG_B64) {
+            Ok(b)  => b,
+            Err(e) => panic!("the documented base64 must decode: {}", e),
+        };
+        for d in ["scans", "_work", "Laurence_letter_doctor/transcript_pages"] {
+            if let Err(e) = std::fs::create_dir_all(dir.join(d)) {
+                panic!("{}: {}", d, e);
+            }
+        }
+        for p in 1..=REPLAY_PAGES {
+            // About a page of print, so the log grows as the real one did.
+            let text = fmt!("Page {} of the letter.\n{}", p,
+                "Dear Laurence, the house at Hoogland is let to Mrs P.W. Bergman until May.\n"
+                    .repeat(20));
+            let ok = std::fs::write(dir.join(fmt!("scans/page-{:03}.png", p)), &png)
+                .and_then(|_| std::fs::write(dir.join(fmt!("scans/page-{:03}.txt", p)), text));
+            if let Err(e) = ok {
+                panic!("page {}: {}", p, e);
+            }
+        }
+        let reg = tools_in(dir.clone(), vec![crate::tools::Tool::FileRead,
+            crate::tools::Tool::FileWrite, crate::tools::Tool::Run]);
+        (dir, reg)
+    }
+
+    /// Run one arm of the replay to its end and hand back what happened.
+    async fn replay_recheck_turn(arm: ReplayArm)
+        -> (ReplayLog, Option<TurnEnding>, std::path::PathBuf)
+    {
+        let log = Arc::new(std::sync::Mutex::new(ReplayLog::default()));
+        let (port, _seen) = crate::llm::tests::start_stub_with(
+            replay_policy(log.clone(), arm)).await;
+        let a = Agent::new(crate::llm::tests::stub_client_for(port, "deepseek/deepseek-v4.1-flash"),
+            "You are Daimond.");
+        a.set_context_window(1_310_720);
+        a.set_context_cap(REPLAY_CAP);
+        a.set_spend_cap_usd(1_000.0);
+        a.set_max_rounds(REPLAY_MAX_ROUNDS);
+        // One leg, so a runaway is the cap and the only fold is the one the script forces.
+        a.limits.borrow_mut().max_continuations = 0;
+        let (dir, registry) = replay_workspace();
+        let mut session = Session::new(fmt!("s1"), fmt!("recheck"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, REPLAY_ASK.to_string(), &registry,
+            &mut |ev| events.push(ev)).await;
+        let g = match log.lock() {
+            Ok(mut g) => std::mem::take(&mut *g),
+            Err(e)    => panic!("replay log: {}", e),
+        };
+        (g, a.ending(), dir)
+    }
+
+    #[tokio::test]
+    #[ignore = "UNBLOCK-27 known-red until R2: the model's reasoning is dropped between \
+        rounds, so it never sees its own findings, never delivers, and runs to the cap"]
+    async fn test_a_recheck_turn_that_keeps_its_reasoning_delivers_00() {
+        let (log, ending, dir) = replay_recheck_turn(ReplayArm::Amnesia).await;
+        let facts = log.facts(&ending);
+        assert!(log.ask_seen, "the fixture cannot see its own ask: {}", facts);
+        assert_eq!(2 * REPLAY_PAGES, log.last_page, "the page writes did not run: {}", facts);
+        let bound = log.last_page + compact::NO_PROGRESS_ROUNDS + 2;
+        assert!(dir.join(REPLAY_LETTER).exists() && log.letter.map_or(false, |r| r <= bound),
+            "letter.typ was not written by round {} (K+2 after the last page): {}", bound, facts);
+        assert_eq!(Some(TurnEnd::Answered), ending.as_ref().map(|e| e.how),
+            "the turn did not end answered: {}", facts);
+    }
+
+    #[tokio::test]
+    async fn test_a_recheck_turn_keeps_its_ask_across_a_fold_00() {
+        let (log, ending, dir) = replay_recheck_turn(ReplayArm::Pin).await;
+        let facts = log.facts(&ending);
+        assert!(log.ask_seen, "the fixture cannot see its own ask: {}", facts);
+        assert_eq!(Some(REPLAY_FOLD_ROUND - 1), log.folded_at,
+            "the fixture must fold in front of round {}: {}", REPLAY_FOLD_ROUND, facts);
+        assert!(!log.after_fold.is_empty() && log.after_fold.iter().all(|b| *b),
+            "the ask did not stand verbatim after the fold note in every later request: {}",
+            facts);
+        assert!(dir.join(REPLAY_LETTER).exists() && log.letter == Some(REPLAY_FOLD_ROUND),
+            "letter.typ was not written in the first round after the fold: {}", facts);
+        assert_eq!(Some(TurnEnd::Answered), ending.as_ref().map(|e| e.how),
+            "the turn did not end answered: {}", facts);
+    }
+
+    #[tokio::test]
+    async fn test_a_recheck_turn_that_only_crops_is_told_to_deliver_00() {
+        let (log, ending, dir) = replay_recheck_turn(ReplayArm::Stubborn).await;
+        let facts = log.facts(&ending);
+        assert!(log.ask_seen, "the fixture cannot see its own ask: {}", facts);
+        assert_eq!(2 * REPLAY_PAGES, log.last_page, "the page writes did not run: {}", facts);
+        // Scratch writes are not progress, so they must not have held the nudge off.
+        let bound = log.last_page + 2 * compact::NO_PROGRESS_ROUNDS + 1;
+        assert!(dir.join(REPLAY_LETTER).exists() && log.letter.map_or(false, |r| r <= bound),
+            "letter.typ was not written by round {} (2K+1 after the last page): {}", bound, facts);
+        // The bound is on reads: no write-class call is ever refused, scratch or not.
+        let lost: Vec<&String> = log.scratch.iter().filter(|p| !dir.join(p).exists()).collect();
+        assert!(lost.is_empty(), "a write was refused: {:?}: {}", lost, facts);
+        assert_eq!(Some(TurnEnd::Answered), ending.as_ref().map(|e| e.how),
+            "the turn did not end answered: {}", facts);
+    }
+
+    /// R4b: a read-only turn whose ask names no file is research, not a stall, so 40 rounds of
+    /// reads run unrefused and unnudged to the answer.
+    #[tokio::test]
+    async fn test_a_long_read_only_turn_with_no_deliverable_is_never_refused_00() {
+        const ROUNDS: usize = 40;
+        let ask = "Which page of the scanned letter mentions Hoogland, and how often? \
+            Answer in the chat.";
+        let nudged = Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+        let seen = nudged.clone();
+        let mut r = 0usize;
+        let (port, _seen) = crate::llm::tests::start_stub_with(move |body: &str| {
+            r += 1;
+            if body.to_lowercase().contains(REPLAY_DELIVER_MARK) || body.contains(REPLAY_REFUSED) {
+                if let Ok(mut g) = seen.lock() {
+                    g.push(r);
+                }
+            }
+            if r > ROUNDS {
+                return replay_round(r, "", &[], "Every page mentions Hoogland once.", 100);
+            }
+            // A new read each round, then the same seven again, as a careful review would.
+            let p = (r - 1) % REPLAY_PAGES + 1;
+            let args = fmt!("{{\"path\":\"scans/page-{:03}.txt\"}}", p);
+            replay_round(r, "", &[("file_read", args)], "", 100)
+        }).await;
+        let a = Agent::new(crate::llm::tests::stub_client_for(port, "deepseek/deepseek-v4.1-flash"),
+            "You are Daimond.");
+        a.set_spend_cap_usd(1_000.0);
+        a.set_max_rounds(ROUNDS + 10);
+        a.limits.borrow_mut().max_continuations = 0;
+        let (dir, registry) = replay_workspace();
+        let mut session = Session::new(fmt!("s1"), fmt!("review"), fmt!("model"));
+        let _ = a.run_turn(&mut session, ask.to_string(), &registry, &mut |_| {}).await;
+        let hits = match nudged.lock() {
+            Ok(g)  => g.clone(),
+            Err(e) => panic!("nudge log: {}", e),
+        };
+        assert!(hits.is_empty(), "a turn with no deliverable was nudged or refused in requests \
+            {:?}", hits);
+        assert_eq!(Some(TurnEnd::Answered), a.ending().as_ref().map(|e| e.how),
+            "the read-only turn did not end answered ({:?})", dir);
     }
 }
 

@@ -429,7 +429,7 @@ pub fn storage_for(root: FileRoot, path: &str, folder: Option<u64>, ns: &str) ->
 /// A cheap, deterministic content hash (FNV-1a) used only to detect that a
 /// file changed -- never for security, so a fast non-cryptographic hash is
 /// exactly right.
-fn content_hash(bytes: &[u8]) -> u64 {
+pub(crate) fn content_hash(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
         h ^= b as u64;

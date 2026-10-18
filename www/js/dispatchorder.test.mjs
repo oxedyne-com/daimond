@@ -90,7 +90,10 @@ test('the send path queues behind a turn being taken back, before it decides to 
 	const waits = send.indexOf('recoveringHere(chat)');
 	assert.ok(waits > 0, 'sendPressed never asks whether the chat\'s turn is being taken back');
 	assert.ok(waits < send.lastIndexOf('maybeAutoDispatch('), 'it asks only after it has dispatched or run');
-	const steer = send.indexOf('recoveringHere(target)');
+	// A steer's route while a turn may run is `sendToDiamondTurn` (UNBLOCK-27 R7c), which sendPressed calls.
+	const route = cut('sendToDiamondTurn');
+	assert.ok(route && send.indexOf('sendToDiamondTurn(') > 0, 'sendPressed does not route a steer through sendToDiamondTurn');
+	const steer = route.indexOf('recoveringHere(target)');
 	assert.ok(steer > 0, 'a steer never asks whether the daimon\'s turn is being taken back');
-	assert.ok(steer < send.indexOf('maybeAutoDispatch('), 'a steer asks only after it has dispatched or run');
+	assert.ok(steer < route.indexOf('maybeAutoDispatch('), 'a steer asks only after it has dispatched or run');
 });

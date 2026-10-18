@@ -14,6 +14,8 @@
 //! tools are backed by the OPFS edge (see [`crate::tools`]).
 
 use crate::agent::Agent;
+use crate::agent::Interjections;
+use crate::agent::new_interjections;
 use crate::llm::{Halt, LlmClient, parse_json_string_array};
 use crate::prompts::Role;
 use crate::protocol::{AgentEvent, ChatMessage, Session, ToolCall, generate_session_id};
@@ -112,6 +114,10 @@ pub struct DaimondApp {
     // the lines the block carries.  Held per Diamond and not per app because the app is shared by
     // every Diamond on one model, and a note written for Thesis must not steer the Diamond beside it.
     steering: RefCell<std::collections::BTreeMap<String, String>>,
+    // What the user said into each Diamond's running daimon turn, by Diamond id (UNBLOCK-27 R7).
+    // The Diamond's and not the turn's: a daimon turn runs on an agent composed for it, and a
+    // queue that agent owned could be reached by nothing outside it.
+    said:     RefCell<std::collections::BTreeMap<String, Interjections>>,
 }
 
 /// A turn's place in its app's list of running turns, given up when the turn ends -- however it
@@ -251,6 +257,7 @@ impl DaimondApp {
             provider:         RefCell::new(String::new()),
             fingerprints:     RefCell::new(std::collections::BTreeMap::new()),
             steering:         RefCell::new(std::collections::BTreeMap::new()),
+            said:             RefCell::new(std::collections::BTreeMap::new()),
         })
     }
 
@@ -417,6 +424,32 @@ impl DaimondApp {
         let out = js_sys::Array::new();
         let mut q = self.agent.interject.borrow_mut();
         for said in std::mem::take(&mut *q) {
+            out.push(&JsValue::from_str(&said.text));
+        }
+        out
+    }
+
+    /// Say something into the daimon turn running for Diamond `id`, delivered at its next seam.
+    ///
+    /// The daimon's half of [`DaimondApp::interject`] (UNBLOCK-27 R7): a daimon turn runs on an
+    /// agent composed for it, and that agent shares this Diamond's queue.  Returns how many are
+    /// now waiting.
+    pub fn interject_daimon(&self, id: String, text: String, pre: Option<String>) -> usize {
+        let q = self.said_for(&id);
+        let t = text.trim();
+        if !t.is_empty() {
+            q.borrow_mut().push(crate::agent::Said { text: t.to_string(), pre: pre.unwrap_or_default() });
+        }
+        let n = q.borrow().len();
+        n
+    }
+
+    /// Take back what was said into Diamond `id`'s turn and never reached a seam, as
+    /// [`DaimondApp::take_interjections`] does for this app's own.
+    pub fn take_daimon_interjections(&self, id: String) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        let q = self.said_for(&id);
+        for said in std::mem::take(&mut *q.borrow_mut()) {
             out.push(&JsValue::from_str(&said.text));
         }
         out
@@ -3431,6 +3464,11 @@ impl DaimondApp {
         Running { app: self, tag, halt }
     }
 
+    /// Diamond `id`'s interjection queue, made on first use.
+    fn said_for(&self, id: &str) -> Interjections {
+        self.said.borrow_mut().entry(id.to_string()).or_insert_with(new_interjections).clone()
+    }
+
     async fn compose_daimon(
         &self,
         did:         &DiamondId,
@@ -3674,12 +3712,18 @@ impl DaimondApp {
         // A STOP OF ITS OWN: this app is shared by every Diamond on one model, and a daimon
         // stopped with the app's halt would stop them all.  `steer_inner` holds it under the
         // page's tag.
-        let agent = Agent::new(self.agent.llm.with_halt(Halt::new()),
+        let mut agent = Agent::new(self.agent.llm.with_halt(Halt::new()),
             &self.with_instructions(&system));
+        // SPOKEN TO WHILE IT RUNS (UNBLOCK-27 R7): the Diamond's queue, so `interject_daimon`
+        // reaches this turn at its next seam.
+        agent.share_interjections(&self.said_for(id));
         // A fresh agent starts from the default limits, so without this a Diamond's
         // daimon would fold the same model's conversation at a different size from
         // the chat that dispatched it.
         agent.adopt_limits(&self.agent);
+        // AND THEN THIS DIAMOND'S OWN K (UNBLOCK-27 R4), which must come after: `adopt_limits`
+        // copies the app agent's figures, shared by every Diamond on this model.
+        agent.set_no_progress_rounds(diamond::no_progress_rounds(id).await);
         // And it starts with no briefing at all, which left the ONE agent that dispatches workers
         // as the one agent that could not judge how many to dispatch.
         let mut brief = self.briefing(&registry).await;

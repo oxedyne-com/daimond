@@ -395,6 +395,10 @@
 			// AN `aborted` RUN CUT SHORT ON THE RUNNER (check_f234 fix 1): why it was cut
 			// ('deadline', 'poison'), which the sender draws as Interrupted + Retry. '' otherwise.
 			cut:     o.cut ? String(o.cut) : '',
+			// THE WORDS THE SENDER SAID INTO THE RUN (`DaimondLease.say`) that reached the model,
+			// by id (UNBLOCK-27 R7). The sender queues any it said that are not named here, so a
+			// word said too late for the turn runs as the next one. [] from an older runner.
+			heard:   triedList(o.heard),
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -4003,6 +4007,8 @@
 				expiry: exp, renewedAt: now,
 			};
 			if (cur.blocker) bumped.blocker = cur.blocker;		// a hold is not an unblock
+			if (cur.said) bumped.said = cur.said;			// nor does it unsay what was said (UNBLOCK-27 R7)
+			if (cur.unheard) bumped.unheard = cur.unheard;		// nor take back a receipt (UNBLOCK-27 R7c)
 			var proposed = mergeLeases({ [tid]: bumped }, snap.leases, now);
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { leaseWrite(proposed); return { ok: true, expiry: leaseMs(proposed[tid] && proposed[tid].expiry) }; }
@@ -4326,6 +4332,95 @@
 	}
 
 	// ════════════════════════════════════════════════════════════
+	// WHAT HE SAID INTO A TURN ANOTHER DEVICE RUNS (UNBLOCK-27 R7).
+	// ------------------------------------------------------------
+	// "50 min? to ocr 7 pages??!!!": his "put it together now" waited for the turn it
+	// was meant to end. A word said on the device that sent a turn rides the turn's
+	// LEASE RECORD, as the blocker and the Stop do, for their reasons: every device
+	// already reads it, the runner already reads it between rounds (the liveness
+	// read), and it is CAS-arbitrated. Each word carries the id it was said as, so
+	// the runner delivers it once whatever number of devices write or re-read it.
+	// ════════════════════════════════════════════════════════════
+	var SAID_MAX = 8;				// words waiting on one turn
+	var SAID_TEXT_MAX = 4000;			// characters in one, so the door stays small
+
+	/// SAY `said` ({ id, text, pre }) into the turn `turnId` another device holds, for its
+	/// runner to deliver at its next seam. `{ ok: true }` once the door holds it (and for
+	/// an id it already holds); `{ ok: false, why }` where nothing is running to hear it,
+	/// so the caller queues the words instead.
+	async function leaseSay(turnId, said, cas, nowFn) {
+		var tid = String(turnId || ''), id = String((said && said.id) || '');
+		var text = String((said && said.text) || '').trim();
+		if (!tid || !id || !text) return { ok: false, why: 'empty' };
+		if (text.length > SAID_TEXT_MAX) return { ok: false, why: 'too_long' };
+		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
+			var snap = await cas.read();
+			if (snap.unread) return { ok: false, why: 'unread' };
+			var now = leaseNow(nowFn);
+			var cur = snap.leases[tid];
+			if (!cur || isMark(cur) || !liveLease(cur, now) || (cur.mode !== 'claimed' && cur.mode !== 'running')) {
+				leaseWrite(mergeLeases(_leases, snap.leases, now));
+				return { ok: false, why: 'not_running' };
+			}
+			var list = Array.isArray(cur.said) ? cur.said.slice() : [];
+			if (list.some(function (x) { return x && String(x.id) === id; })) {
+				leaseWrite(mergeLeases(_leases, snap.leases, now));
+				return { ok: true };
+			}
+			if (list.length >= SAID_MAX) return { ok: false, why: 'full' };
+			list.push({ id: id, text: text, pre: String((said && said.pre) || '') });
+			var next = {};
+			Object.keys(cur).forEach(function (k) { next[k] = cur[k]; });
+			next.said = list;
+			// After the runner's own copy, so the same-holder merge keeps this one everywhere.
+			next.renewedAt = Math.max(now, leaseMs(cur.renewedAt) + 1);
+			var proposed = mergeLeases({ [tid]: next }, snap.leases, now);
+			if (!proposed[tid] || !Array.isArray(proposed[tid].said) || proposed[tid].said.length !== list.length) continue;
+			var res = await cas.write(snap.version, proposed);
+			if (res.ok) { leaseWrite(proposed); return { ok: true }; }
+			if (res.why === 'too_large') return { ok: false, why: 'too_large' };
+			if (res.why === 'unread') return { ok: false, why: 'unread' };
+		}
+		return { ok: false, why: 'exhausted' };
+	}
+
+	/// The runner's RECEIPT for words said into its turn too late for it to hear them
+	/// (UNBLOCK-27 R7c): the turn had no model round left, its answer already being
+	/// written. Their ids join the lease's `unheard` list, which the sender reads off the
+	/// lease view and sends each as the next turn at once, rather than waiting for the
+	/// report at the turn's end. Only the holder writes it, and only on a live run.
+	async function leaseUnheard(turnId, ids, holder, cas, nowFn) {
+		var tid = String(turnId || ''), h = String(holder || '');
+		var add = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
+		if (!tid || !h || !add.length) return { ok: false, why: 'empty' };
+		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
+			var snap = await cas.read();
+			if (snap.unread) return { ok: false, why: 'unread' };
+			var now = leaseNow(nowFn);
+			var cur = snap.leases[tid];
+			if (!cur || isMark(cur) || cur.holder !== h || (cur.mode !== 'claimed' && cur.mode !== 'running')) {
+				leaseWrite(mergeLeases(_leases, snap.leases, now));
+				return { ok: false, why: 'not_ours' };
+			}
+			var list = Array.isArray(cur.unheard) ? cur.unheard.map(String) : [];
+			var fresh = add.filter(function (id) { return list.indexOf(id) === -1; });
+			if (!fresh.length) { leaseWrite(mergeLeases(_leases, snap.leases, now)); return { ok: true }; }
+			list = list.concat(fresh).slice(-SAID_MAX * 2);
+			var next = {};
+			Object.keys(cur).forEach(function (k) { next[k] = cur[k]; });
+			next.unheard = list;
+			next.renewedAt = Math.max(now, leaseMs(cur.renewedAt) + 1);
+			var proposed = mergeLeases({ [tid]: next }, snap.leases, now);
+			if (!proposed[tid] || !Array.isArray(proposed[tid].unheard) || proposed[tid].unheard.length !== list.length) continue;
+			var res = await cas.write(snap.version, proposed);
+			if (res.ok) { leaseWrite(proposed); return { ok: true }; }
+			if (res.why === 'too_large') return { ok: false, why: 'too_large' };
+			if (res.why === 'unread') return { ok: false, why: 'unread' };
+		}
+		return { ok: false, why: 'exhausted' };
+	}
+
+	// ════════════════════════════════════════════════════════════
 	// THE BLOCKER — what is stopping the runner, carried to every device.
 	// ------------------------------------------------------------
 	// Owner ruling 2026-09-12: a blocker raised on the RUNNER -- a permission
@@ -4585,6 +4680,8 @@
 				renewedAt: Math.max(now, leaseMs(cur.renewedAt) + 1),
 			};
 			if (blocker) next.blocker = makeBlocker(blocker);
+			if (cur.said) next.said = cur.said;			// what was said into the turn waits on (UNBLOCK-27 R7)
+			if (cur.unheard) next.unheard = cur.unheard;		// and so does the runner's receipt (UNBLOCK-27 R7c)
 			var proposed = mergeLeases({ [tid]: next }, snap.leases, now);
 			// The merge keeps the record it judges fresher; a proposal that lost is a
 			// sibling writing the same lease, so re-read and try again rather than
@@ -4792,6 +4889,10 @@
 		/// holder may write; every device reads.
 		block:     leaseBlock,
 		unblock:   leaseUnblock,
+		/// Words said into a turn another device runs, delivered there once (UNBLOCK-27 R7).
+		say:       leaseSay,
+		/// The runner's receipt for words its turn could no longer hear (UNBLOCK-27 R7c).
+		unheard:   leaseUnheard,
 		blocker:   blockerOf,
 		/// Stage a section for the sync shim's CAS commit. Not for general use.
 		install:   leaseInstall,
@@ -5424,7 +5525,7 @@
 			// An absent record is a revoke only past the lease's own deadline, when it has expired
 			// and drained; before it, a take-back would have left a 'released' record (`absent`).
 			var verdict = leaseVerdict(cur, d.selfId, leaseNow(leaseClock), holdEnd());
-			if (verdict === 'ours') { await holdOn(); return; }
+			if (verdict === 'ours') { await hearSaid(cur); await holdOn(); return; }
 			if (verdict === 'absent') return;
 			{
 				revoked = true;
@@ -5438,6 +5539,52 @@
 				try { if (d.abort) d.abort(stoppedThere ? 'user' : 'lease_revoked'); } catch (err) { /* idempotent */ }
 			}
 		}
+		// WHAT THE SENDER SAID INTO THIS RUN (UNBLOCK-27 R7), handed to the turn by id, once
+		// each: a word the turn could not take yet (`d.interject` false: nothing running to
+		// hear it) is offered again at the next read.
+		//
+		// A word the turn can no longer hear (`d.interject` answers 'late': its last model round
+		// is under way, the answer being written) is never taken, so it is never a second row
+		// here, and the runner answers it AT ONCE with a receipt on the lease (`leaseUnheard`),
+		// which the sender reads and sends the word as the next turn (UNBLOCK-27 R7c). Before,
+		// it was taken, never reached the model, and waited out the answer's tail for the report.
+		var saidTaken = {}, saidLate = {};
+		async function hearSaid(cur) {
+			if (!d.interject || !cur || !Array.isArray(cur.said)) return;
+			var late = [];
+			cur.said.forEach(function (x) {
+				var id = String((x && x.id) || '');
+				if (!id || saidTaken[id] || saidLate[id]) return;
+				var took = false;
+				try { took = d.interject({ id: id, text: String(x.text || ''), pre: String(x.pre || ''), turn: turnId }); }
+				catch (err) { took = false; }
+				if (took === true) { saidTaken[id] = 1; trace.push('said'); }
+				else if (took === 'late') { saidLate[id] = 1; late.push(id); }
+			});
+			if (!late.length) return;
+			trace.push('unheard');
+			var rr;
+			try { rr = await leaseUnheard(turnId, late, d.selfId, d.cas, leaseClock); }
+			catch (err) { rr = { ok: false, why: 'threw' }; }
+			diag('said unheard receipt', 'turn=' + turnId + ' n=' + late.length + ' ok=' + (rr && rr.ok ? 1 : 0));
+		}
+		// Is a word on the lease view this run has neither taken nor answered? The view moving
+		// is the sender's say landing, so the run reads the door now, not at the next tick.
+		function saidWaiting(r) {
+			return !!r && Array.isArray(r.said) && r.said.some(function (x) {
+				var id = String((x && x.id) || '');
+				return !!id && !saidTaken[id] && !saidLate[id];
+			});
+		}
+		// What the report names as heard: taken by the turn AND read by the model (`d.landed`).
+		// A word the turn took but ended before its next round never reached the model, so
+		// it is left out, and the sender sends it again as the next turn.
+		function heardIds() {
+			return Object.keys(saidTaken).filter(function (id) {
+				if (!d.landed) return true;
+				try { return d.landed(id) === true; } catch (err) { return false; }
+			});
+		}
 		// What the engine's journal events call: a nudge, never a forced read.
 		function nudge() { return liveness(false); }
 		// Steps 4's tail: the final frame, the report, the lease, the ack and the parcel,
@@ -5446,7 +5593,7 @@
 			// A streaming frame still in flight lands first, so it can never arrive after
 			// the final frame and stand in for the finished turn.
 			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
-			return finishTurn(e, d, rep, trace, leaseClock, false, holdEnd());
+			return finishTurn(e, d, Object.assign({}, rep || {}, { heard: heardIds() }), trace, leaseClock, false, holdEnd());
 		}
 		// What an adopted lease view calls (`_leaseWatch`): a read of the door, but only
 		// when the view no longer says this device runs the turn, so a lease change on
@@ -5457,7 +5604,7 @@
 		async function endStopped() {
 			stopCheck();
 			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
-			var sfin = await finishTurn(e, d, {}, trace, leaseClock, true, holdEnd());
+			var sfin = await finishTurn(e, d, { heard: heardIds() }, trace, leaseClock, true, holdEnd());
 			return { ran: true, done: true, stopped: true, parcelVersion: sfin.parcelVersion, trace: trace };
 		}
 		// THE END OF A RUN THAT WILL NOT END ITSELF (F4): unless the lease is no longer ours,
@@ -5506,7 +5653,7 @@
 			}
 			var who = String(d.selfName || '').trim();
 			var dwhy = who ? 'Interrupted on ' + who : 'Interrupted on the device that ran it';
-			try { if (d.post) { await d.post(reportFor(e, { status: 'aborted', why: dwhy, by: String(d.selfId || ''), cause: deadWhy, cut: deadWhy })); trace.push('report'); } }
+			try { if (d.post) { await d.post(reportFor(e, { status: 'aborted', why: dwhy, by: String(d.selfId || ''), cause: deadWhy, cut: deadWhy, heard: heardIds() })); trace.push('report'); } }
 			catch (err) { /* the settled lease already says it */ }
 			try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
 			catch (err) { /* a missed ack costs one re-collect, which the settled lease refuses */ }
@@ -5520,7 +5667,7 @@
 		}
 		function leaseWatched() {
 			var r = _leases[turnId];
-			if (!r || r.holder !== String(d.selfId) || r.mode === 'released') liveness(true);
+			if (!r || r.holder !== String(d.selfId) || r.mode === 'released' || (d.interject && saidWaiting(r))) liveness(true);
 		}
 		try {
 			// 1a. A RE-TAKE OF THIS DEVICE'S OWN LIVE LEASE IS A RECOVERY, NEVER A RUN (rulings §1,
@@ -5710,7 +5857,7 @@
 					stopCheck();
 					var ewhy = runnerErrorWhy(ek, d.selfName, err);
 					trace.push('handback');
-					try { if (d.post) await d.post(reportFor(e, { status: 'error', why: ewhy })); trace.push('report'); }
+					try { if (d.post) await d.post(reportFor(e, { status: 'error', why: ewhy, heard: heardIds() })); trace.push('report'); }
 					catch (e2) { /* the release below still frees the turn */ }
 					try { await settleLease('turn', turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
 					catch (e2) { /* an unreleased lease still expires at its deadline */ }
@@ -6491,6 +6638,21 @@
 	///     so a late frame never rewinds the view;
 	///   * `final` closes the streamed view and CARRIES the full final rows -- the last
 	///     word on the turn, which no later frame reopens or overdraws.
+	/// Can the turn a watched view (`foldProgress` state) stands for still hear words said into it
+	/// (UNBLOCK-27 R7c)? Not once its final frame is in, nor while its newest row is its answer
+	/// being written: prose with no call after it, so no seam follows, or its ending. Prose before
+	/// a call is filed as working (`think_log`), so a trailing assistant row is the answer. A turn
+	/// with no frame yet may still hear; its runner answers a late word `unheard` itself.
+	function frameHears(view) {
+		if (!view) return true;
+		if (view.final) return false;
+		var rows = Array.isArray(view.msgs) ? view.msgs : [];
+		var last = rows.length ? rows[rows.length - 1] : null;
+		if (!last) return true;
+		if (last.role === 'end_log') return false;
+		return !(last.role === 'assistant' && String(last.content == null ? '' : last.content).trim());
+	}
+
 	function foldProgress(state, frame) {
 		var cur = state || {};
 		if (cur.final) return null;
@@ -6976,6 +7138,8 @@
 		progressTail:    progressTail,
 		foldProgress:    foldProgress,
 		foldProvisional: foldProvisional,
+		/// Can a watched turn still hear words said into it (UNBLOCK-27 R7c)?
+		frameHears:      frameHears,
 		/// The footer control a dispatched turn offers for a §5 state -- 'runhere',
 		/// 'rerun', 'answeragain' or '' (none). Pure table, so the owner's no-take-back
 		/// ruling (D-20261009-23) is one thing a test enumerates.

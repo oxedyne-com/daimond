@@ -89,6 +89,11 @@ pub const DEFAULT_MAX_ROUNDS: usize = 150;
 /// count is the backstop for a turn that is looping cheaply.
 pub const MAX_CONTINUATIONS: usize = 3;
 
+// K for UNBLOCK-27 R4: rounds with no completed write outside a scratch folder before a turn is
+// told to deliver; from 2K the read class refuses.  The default for `Limits::no_progress_rounds`,
+// which a Diamond may set for itself (`diamond_meta::Meta::no_progress`).
+pub const NO_PROGRESS_ROUNDS: usize = 12;
+
 /// What window to assume when nobody has said what the model's is.
 ///
 /// The smallest window in Daimond's own price table, so assuming it is the assumption that
@@ -459,6 +464,9 @@ pub struct Limits {
 	pub worker_spend_usd:     f64,
 	pub orphan_grace_rounds:  usize,	// see `ORPHAN_GRACE_ROUNDS`
 
+	// The no-progress rule
+	pub no_progress_rounds:   usize,	// K; see `NO_PROGRESS_ROUNDS` and `crate::turn_state`
+
 	// How long an in-turn gather waits
 	pub gather_timeout_s: u64,	// seconds; see `GATHER_TIMEOUT_S`
 
@@ -532,6 +540,7 @@ impl Default for Limits {
 			worker_keep:          WORKER_KEEP,
 			worker_spend_usd:     WORKER_SPEND_CAP_USD,
 			orphan_grace_rounds:  ORPHAN_GRACE_ROUNDS,
+			no_progress_rounds:   NO_PROGRESS_ROUNDS,
 			gather_timeout_s:     GATHER_TIMEOUT_S,
 			batch_line:           true,
 			compound:             false,
@@ -906,6 +915,37 @@ pub fn capped_cut(msgs: &[ChatMessage], hard_bytes: u64, open: &OpenSet) -> usiz
 	}
 	cut
 }
+
+/// The turn's opening message, where a cut at `cut` would fold it away.
+///
+/// A fold may cut inside the turn in flight, because a long turn has nothing else to fold and a
+/// floor at its start would leave it over the ceiling for good.  What it may not do is lose the
+/// sentence the turn began with: on 2026-10-18 a fold 120 calls into a re-check turn took the ask
+/// with it, the summary dropped it, and the model spent its next rounds asking itself what it had
+/// been asked.  So the caller keeps this message verbatim behind the notice, counting its bytes
+/// against the tail.  A fold notice is not an opening and is never pinned.
+///
+/// # Arguments
+/// * `msgs` - The conversation, oldest first.
+/// * `turn_start` - Index of the turn's opening message.
+/// * `cut` - Index of the first message the fold keeps.
+pub fn pinned_opening(msgs: &[ChatMessage], turn_start: usize, cut: usize)
+	-> Option<&ChatMessage>
+{
+	if turn_start >= cut || turn_start >= msgs.len() {
+		return None;
+	}
+	let m = &msgs[turn_start];
+	match m {
+		ChatMessage::User { .. } if !is_fold_notice(m) => Some(m),
+		_                                              => None,
+	}
+}
+
+/// Said in a fold notice that has a turn's opening message pinned behind it.
+pub const TURN_CONTINUES_NOTE: &str =
+	"\n\nThis turn is still running. Its opening message follows this note word for word: that \
+	 is the request being worked on, and the work continues from here.";
 
 /// Whether every tool call is answered and every tool reply was asked for.
 pub fn pairing_is_whole(msgs: &[ChatMessage]) -> bool {
@@ -1800,13 +1840,31 @@ pub fn orphan_limit_note(rounds: usize, grace: usize) -> ChatMessage {
 /// * `cut` - Index of the first message to keep.
 /// * `notice` - What replaces the folded part.
 pub fn fold(msgs: &[ChatMessage], cut: usize, notice: String) -> Outcome<Vec<ChatMessage>> {
+	fold_keeping(msgs, cut, None, notice)
+}
+
+/// [`fold`], with `pin` set straight after the notice and ahead of `msgs[cut..]`.
+///
+/// The pin is the opening message of a turn the cut passes through -- see [`pinned_opening`] --
+/// so the turn's ask stands word for word however many times the turn folds.
+pub fn fold_keeping(
+	msgs:   &[ChatMessage],
+	cut:    usize,
+	pin:    Option<&ChatMessage>,
+	notice: String,
+)
+	-> Outcome<Vec<ChatMessage>>
+{
 	if cut == 0 || cut >= msgs.len() {
 		return Err(err!(
 			"Fold: a cut at {} of {} messages folds nothing or everything.", cut, msgs.len();
 			Invalid, Input));
 	}
-	let mut out = Vec::with_capacity(msgs.len() - cut + 1);
+	let mut out = Vec::with_capacity(msgs.len() - cut + 2);
 	out.push(ChatMessage::user(notice));
+	if let Some(p) = pin {
+		out.push(p.clone());
+	}
 	out.extend_from_slice(&msgs[cut..]);
 	let before = orphan_count(msgs);
 	let after  = orphan_count(&out);
@@ -2315,6 +2373,28 @@ pub fn note_budget(msgs: &mut [ChatMessage], rounds_left: usize, usd_left: Optio
 	let whole = fmt!("{}{}{} rounds{} left. When they are spent the turn ends, so use them on \
 		the task]",
 		msgs[i].content().as_text(), BUDGET_NOTE_OPEN, rounds_left, money);
+	msgs[i] = msgs[i].with_content(MessageContent::text(whole));
+	true
+}
+
+/// How the turn-state line opens (UNBLOCK-27 R3).  Its own marker: `[budget]` and `[turn budget: `
+/// are taken, and [`note_budget`]'s strip must never find this one.
+pub const STATE_NOTE_OPEN: &str = "\n[turn state: ";
+
+/// Put the turn's state line on the last text tool result of the SENT copy, every round.
+///
+/// Unlike [`note_budget`], an earlier line is LEFT where it stood: each names its own round, so
+/// none goes stale, and rewriting the previous round's result would re-price it out of the
+/// provider's prompt cache every round.  The session never holds one, so a fold or the next turn
+/// starts without them.
+pub fn note_turn_state(msgs: &mut [ChatMessage], line: &str) -> bool {
+	let i = match msgs.iter().rposition(|m| matches!(m,
+		ChatMessage::Tool { content, .. } if !content.has_image()))
+	{
+		Some(i) => i,
+		None    => return false,
+	};
+	let whole = fmt!("{}{}{}]", msgs[i].content().as_text(), STATE_NOTE_OPEN, line);
 	msgs[i] = msgs[i].with_content(MessageContent::text(whole));
 	true
 }

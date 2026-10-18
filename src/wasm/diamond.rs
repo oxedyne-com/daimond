@@ -818,6 +818,15 @@ async fn write_meta(id: &str, meta: &Meta) -> Outcome<()> {
     opfs::write_file(FileRoot::Opfs, &meta_path(id), meta.to_json().as_bytes()).await
 }
 
+/// This Diamond's own K for the no-progress rule (UNBLOCK-27 R4), or 0 where it has none or its
+/// record cannot be read, so the app's figure stands.
+pub async fn no_progress_rounds(id: &str) -> usize {
+    match read_meta(id).await {
+        Ok(m)  => m.no_progress,
+        Err(_) => 0,
+    }
+}
+
 /// Stamp a Diamond as changed, without saying it was worked on.
 ///
 /// Every mutation of anything inside `diamonds/<id>/` moves `touched`, because
@@ -1064,6 +1073,8 @@ async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
         // A person's Diamond until the page marks it a built-in (`mark_built_in`).
         builtin: String::new(),
         named:   false,
+        // The app's K until someone sets this Diamond's own (UNBLOCK-27 R4).
+        no_progress: 0,
         extra:   Vec::new(),
     };
     res!(write_meta(&id, &meta).await);
