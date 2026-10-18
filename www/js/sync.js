@@ -661,7 +661,23 @@
 		}
 		// Bound every request; track and hand out a READ's controller only, so a push
 		// can be ended by its own deadline and by nothing else.
-		var ac = null, timer = null;
+		//
+		// SETTLED BY THE BOUND, NOT BY FETCH (SYNC-NETBOUND, diag c2freeze). The abort
+		// alone relied on fetch honouring it, and a fetch WebKit has queued behind the
+		// origin's six sockets did not: the abort fired at 18 s and the call never
+		// returned, so `refreshPresence` hung for ever. So the request is raced against
+		// `cut`, which rejects the moment the budget runs out or the controller is
+		// aborted by anyone (a resume's `pullAbort`, the wake park's `hold`), whatever
+		// the fetch does. The abort is still sent, so a fetch that honours it is freed.
+		var ac = null, timer = null, fail = null;
+		var cut = new Promise(function (res, rej) { fail = rej; });
+		cut.catch(function () {});		// a call that won the race leaves it unheard
+		var expire = function () {
+			var e;
+			try { e = new DOMException('sync call passed its deadline', 'AbortError'); }
+			catch (x) { e = new Error('sync call passed its deadline'); e.name = 'AbortError'; }
+			fail(e);
+		};
 		var read   = method === 'GET';
 		var budget = !read ? writeDeadline(opts.body ? opts.body.length : 0)
 			: ((xtra.timeoutMs !== undefined) ? xtra.timeoutMs : PULL_TIMEOUT_MS);
@@ -669,19 +685,23 @@
 			try { ac = new AbortController(); } catch (e) { ac = null; }
 			if (ac) {
 				opts.signal = ac.signal;
-				if (budget > 0) timer = setTimeout(function () { try { ac.abort(); } catch (e) {} }, budget);
+				try { ac.signal.addEventListener('abort', expire); } catch (e) {}
+				if (budget > 0) timer = setTimeout(function () { try { ac.abort(); } catch (e) {} expire(); }, budget);
 				if (read && xtra.track) pullAbort = ac;
 				// `hold` hands the controller to the caller, so the wake park can be
 				// ended when what it listens for changes. See `setProgressWanted`.
 				if (read && xtra.hold) xtra.hold.ac = ac;
 			}
 		}
+		// No controller to be had: the bound still ends the call.
+		if (!ac && budget > 0) timer = setTimeout(expire, budget);
 		try {
-			var r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
+			var r = await Promise.race([DaimondGateway.gwFetch(PATH + (query || ''), opts), cut]);
 			if (r.status === 426) return { status: 426, json: null };
 			if (r.status === 429 || r.status === 503) noteRetryAfter(r);
+			// The body is inside the bound too: a stalled body is the same hang.
 			var j = null;
-			try { j = await r.json(); } catch (e) { j = null; }
+			try { j = await Promise.race([r.json(), cut]); } catch (e) { j = null; }
 			var res = { status: r.status, json: j };
 			if (r.status !== 401) { clearSessionGone(r.status); return res; }
 			// Still refused after a renewal that either failed or did not help. This
@@ -2095,7 +2115,7 @@
 				// key, so a parcel that still will not open under it is genuine
 				// corruption of THIS blob, not an epoch mismatch. Today's recovery.
 				log('pull: adopted the new epoch but the parcel would not open; keeping local state');
-				adoptAt(j.version | 0, preRead, 'adopted', null);
+				await adoptUnopened(j.version | 0, preRead);
 				reapplyDone();
 				if (!quiet) restStatus();
 				return serverVersion;
@@ -2144,7 +2164,7 @@
 								// open under the now-proven key: genuine corruption of that
 								// blob. Keep local state and let our own go over it.
 								log('pull: yielded to the diverged branch but the parcel would not open; keeping local state');
-								adoptAt(j.version | 0, preRead, 'adopted', null);
+								await adoptUnopened(j.version | 0, preRead);
 								reapplyDone();
 								if (!quiet) restStatus();
 								return serverVersion;
@@ -2165,7 +2185,7 @@
 						// yields to us on its next pull. Not corruption -- but the mechanics
 						// (adopt the version, push our own) are the same and are right here.
 						log('pull: diverged at the same epoch; holding our branch (smaller salt wins)');
-						adoptAt(j.version | 0, preRead, 'adopted', null);
+						await adoptUnopened(j.version | 0, preRead);
 						reapplyDone();
 						if (!quiet) restStatus();
 						return serverVersion;
@@ -2176,7 +2196,7 @@
 					// it -- how an account recovers from a bad blob at all. `lastFailed`
 					// is for sections that ARRIVED and could not be merged; this is not one.
 					log('pull decrypt/parse failed; keeping local state');
-					adoptAt(j.version | 0, preRead, 'adopted', null);
+					await adoptUnopened(j.version | 0, preRead);
 					reapplyDone();
 					if (!quiet) restStatus();
 					return serverVersion;
@@ -2204,7 +2224,7 @@
 				// Older than the previous key we hold, or none held (a fresh page): carry
 				// our record over it. Finite -- the lagging device adopts on its next pull.
 				log('pull sealed under an older epoch; carrying our record over it');
-				adoptAt(j.version | 0, preRead, 'adopted', null);
+				await adoptUnopened(j.version | 0, preRead);
 				reapplyDone();
 				if (!quiet) restStatus();
 				return serverVersion;
@@ -3002,7 +3022,42 @@
 		return ready() && entitled && !_removedSelf;
 	}
 
-	async function beatPresence(deviceId, name, attended, servicing, runner, mobile,
+	/// SINGLE FLIGHT (SYNC-NETBOUND, diag c2freeze fix 3). At most one beat is on the
+	/// wire. A beat asked for while one is in flight waits as the ONE pending beat, and
+	/// a newer one replaces its state rather than queueing a second, so a held beat
+	/// never takes another socket: on a bad radio the beats used to pile up past the
+	/// browser's six per origin and starve every other request, the errand posts
+	/// included. The beat in flight is bounded by `call()`'s deadline, so a beat that
+	/// times out frees the slot. Every caller waiting on the pending beat is answered
+	/// with that beat's result.
+	var beatBusy = false;
+	var beatNext = null;		// { args, waiters } -- the one pending beat, newest state
+
+	function beatPresence() {
+		var args = Array.prototype.slice.call(arguments);
+		if (beatBusy) {
+			if (beatNext) beatNext.args = args;
+			else beatNext = { args: args, waiters: [] };
+			var slot = beatNext;
+			return new Promise(function (r) { slot.waiters.push(r); });
+		}
+		beatBusy = true;
+		var p = beatOnce.apply(null, args);
+		p.then(beatDone, beatDone);
+		return p;
+	}
+
+	function beatDone() {
+		beatBusy = false;
+		var n = beatNext;
+		beatNext = null;
+		if (!n) return;
+		beatPresence.apply(null, n.args).then(function (v) {
+			n.waiters.forEach(function (r) { r(v); });
+		});
+	}
+
+	async function beatOnce(deviceId, name, attended, servicing, runner, mobile,
 		hand, folder, busy, busyChats) {
 		if (!canBeat()) return null;
 		try {
@@ -4527,6 +4582,15 @@
 		try { if (window.DaimondCore && DaimondCore.syncIndexAt) DaimondCore.syncIndexAt(v | 0, how, state); }
 		catch (e) { log('index mark failed', e); }
 	}
+	/// Adopt a version whose parcel this device could not open, to push its own state over it.
+	async function adoptUnopened(v, preRead) {
+		adoptAt(v, preRead, 'adopted', null);
+		// MERGED HERE, at this location, for there is nothing at `v` for any location to merge.
+		// Without it the push's merge gate (QFB4-1) re-pulls, meets this same exit and returns,
+		// so the push that is the whole recovery never runs (FIRE SYNC-UNREAD). Only where the
+		// cursor really moved to `v`: a stale read that raced a push leaves the push's version.
+		if (serverVersion === v) noteMergedAt(await fileLoc(), v);
+	}
 	function loadVersion() {
 		var raw = localStorage.getItem(K_VERSION);
 		serverVersion = parseInt(raw || '0', 10) || 0;
@@ -4730,6 +4794,9 @@
 		/// The same once-per-boot fact `daimond:pulled` announces, for a caller that
 		/// arrives after it fired.
 		pulled:  function () { return announcedPull; },
+		/// Has this page ever heard back from the mailbox (`heardOk`)? A page that has not has
+		/// no peer it could be coordinating with, so a mail claim has nothing to claim against.
+		heard:   function () { return heardOk; },
 		push:    function () { return push(); },
 		/// Push and CONFIRM the current parcel is committed, answering the version it
 		/// committed at -- `{ ok, version, why? }`. Used by the hand-off dispatcher so

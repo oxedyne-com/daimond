@@ -78,7 +78,7 @@
 /* Stuck: a reload will not shift the build. Warning-toned and pulsing, so it draws
    the eye to the banner that names the escape. */
 .update-chip[data-state="stuck"] {
-	color: var(--warning, var(--danger));
+	color: var(--warn);
 	opacity: 1;
 	cursor: pointer;
 	animation: update-pulse 1.4s ease-in-out infinite;
@@ -131,7 +131,7 @@
 /* Stuck: a reload cannot shift the build. Warning-toned, and the message names the
    sure escape (close and reopen) while the button offers the guarded cache-clear
    reload worth trying first. */
-.update-banner[data-state="stuck"] { background: color-mix(in srgb, var(--warning, var(--danger)) 12%, var(--bg-secondary)); }
+.update-banner[data-state="stuck"] { background: color-mix(in srgb, var(--warn) 12%, var(--bg-secondary)); }
 /* `display: flex` above beats the UA's `[hidden] { display: none }`, exactly as it
    does for `.update-chip` — so `hideBanner`'s `el.hidden = true` would leave an empty
    banner box on screen. Guarded the same way `.left-banner` is (css/app.css). */
@@ -152,7 +152,7 @@
 }
 .update-banner-go:hover { background: var(--accent-hover); }
 .update-banner[data-state="stale"] .update-banner-go { background: var(--danger); }
-.update-banner[data-state="stuck"] .update-banner-go { background: var(--warning, var(--danger)); }
+.update-banner[data-state="stuck"] .update-banner-go { background: var(--warn); }
 
 /* Dismiss: quiet, and gone entirely on the stale banner, which may not be waved away. */
 .update-banner-x {

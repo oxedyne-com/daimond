@@ -135,7 +135,7 @@ function device(name, door, turns, held) {
 	});
 	W.tick = async () => { if (!W.dead) for (const fn of [...W.timers.values()]) await fn(); };
 	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail', 'mailMarkKey',
-		'mailClaimId', 'claimMailArrival', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks',
+		'mailClaimId', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks',
 		'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
 	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'MAIL_TRIES_MAX', '_mailTries', 'FOLLOW_MAX_MS'].map((n) => extractVar(APP, n)).join('\n');

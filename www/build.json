@@ -1,1 +1,1 @@
-{"build":"7c7f734836b7","note":"Models menu in plain terms; a Diamond follows the default until given its own; a turn keeps the models it started with."}
+{"build":"e3e9b34cd4b0","note":"A daimon checks which messages it holds, a fold counts only answered turns, and sync no longer stalls on a slow call."}

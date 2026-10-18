@@ -3336,11 +3336,13 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    warning-coloured "old build — reload" tag beside it, which is the mixed-build
    hand-off failure made visible at a glance. */
 .device-build { flex: none; font-family: var(--font-mono); font-size: var(--fs-3xs); color: var(--text-muted); white-space: nowrap; }
-.device-oldbuild { flex: none; font-size: var(--fs-3xs); text-transform: uppercase; letter-spacing: .04em; color: var(--warning, var(--danger)); border: 1px solid transparent; border-radius: 4px; padding: 0 4px; white-space: nowrap; background: var(--warn-bg); }
-.device-row.is-oldbuild .device-build { color: var(--warning, var(--danger)); }
+.device-oldbuild { flex: none; font-size: var(--fs-3xs); text-transform: uppercase; letter-spacing: .04em; color: var(--warn); border: 1px solid transparent; border-radius: 4px; padding: 0 4px; white-space: nowrap; background: var(--warn-bg); }
+.device-row.is-oldbuild .device-build { color: var(--warn); }
 /* The one-line fleet-skew banner over the Devices list: your devices are not all
-   on one build. Loud enough to notice, not so loud it competes with the rows. */
-.device-skew { margin: 4px 0 6px; padding: 6px 8px; font-size: var(--fs-2xs); line-height: 1.35; color: var(--warning, var(--danger)); background: var(--bg-hover); border: 1px solid transparent; border-radius: 6px; }
+   on one build. Loud enough to notice, not so loud it competes with the rows.
+   Its text starts on the rows' 8px edge: 7px of padding inside the 1px border
+   (FIRE byrole3, r575 -- 8px put it one pixel right of every row's name). */
+.device-skew { margin: 4px 0 6px; padding: 6px 7px; font-size: var(--fs-2xs); line-height: 1.35; color: var(--warn); background: var(--bg-hover); border: 1px solid transparent; border-radius: 6px; }
 
 /* ── A DEVICE ROW AT A PHONE'S WIDTH: A FINGER'S TARGETS ─────────────────────
    The grid above (V10) gives the row its three lines at every width; only the

@@ -1734,6 +1734,9 @@ const ALLOW = [
 	{ role: '*', m: /\.(on|active|current|selected|is-on|tag-inc)\b|aria-current/, p: ['col', 'bg', 'fw'], why: 'the current or selected state is drawn apart on purpose, by colour, fill and weight, never by a border' },
 	{ role: '*', m: /\.danger\b/, p: ['col'], why: 'a destructive action is drawn in the danger colour' },
 	{ role: '*', m: /\.dlg-ok\b|#chat-send\b|#msheet-ask-send\b|\.compose-send\b|\.ti-continue\b|#push-save\b|#beta-open\b|\.crystal-act\.primary\b|\.pro-buy\b|\.credit-buy\b|\.tools-buy\b|\.mail-unlock\b|\.ar-save\b|\.ar-card-btn\.accent\b/, p: ['col', 'bg', 'bd', 'fw', 'rad'], why: 'the one primary action of a dialog, the composer, an interrupted turn or the crystal form is filled -- the send button’s own round primary keeps its radius too' },
+	// FIRE byrole3 (r575): the Devices list flags a device on an older build than this one -- its build stamp and the
+	// "old build" chip take the warning colour (app.css `.device-row.is-oldbuild .device-build`), the mixed-build hand-off made visible.
+	{ role: 'stamp', m: /^span\.device-build\b.* < (\S+ )?div\.device-row\b[\w.-]*\.is-oldbuild\b/, p: ['col'], why: 'a device on an older build than this one wears the warning colour on its build stamp' },
 	{ role: 'meta', m: /\.crollup-count\b/, p: ['col', 'fw', 'ff'], why: 'the tool-count badge is filled in the outcome colour (ok, warn, fail)' },
 	{ role: '*', m: / :focus$/, p: ['bd', 'sh'], why: 'the focused field shows the accent edge; every field takes it on focus' },
 	{ role: 'close-button', m: /about-card/, p: ['col', 'bg', 'rad'], why: 'the About card closes over its picture, so its × is a dark disc (app.css .about-card > .ui-head .ui-close)' },

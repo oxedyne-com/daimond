@@ -66,7 +66,7 @@ function world(act) {
 	W.A = { id: 'A', name: 'Work' }; W.B = { id: 'B', name: 'Email' };
 	W.ta = Object.assign(DaimondTriggers.blank('mail'), {
 		id: 'm1', mailbox: 'alerts@oxegen.io', folder: 'INBOX', instruction: 'Watch the server alerts.' });
-	const body = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail', 'mailClaimId', 'claimMailArrival',
+	const body = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail', 'mailClaimId', 'claimMailArrival', 'trailTrigger',
 		'settleMailClaim', 'keepMailClaim', 'seedMailMark', 'mailMarkKey', 'mailGen', 'judgeTriggeredTurn', 'quietTurnEnd', 'followVerdicts'].map((n) => extractFn(APP, n)).join('\n');
 	W.api = new Function('W', 'DaimondTriggers', `
 		var window = W.win, diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _mailTries = {}, MAIL_TRIES_MAX = 3, _lastSteer = {}, FOLLOW_MAX_MS = 20 * 60 * 1000;

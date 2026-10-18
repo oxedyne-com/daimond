@@ -319,6 +319,10 @@
 			// that differs. null when the chat held nothing before the prompt, and from an
 			// older sender.
 			through: (o.through && o.through.mid) ? { ts: +o.through.ts || 0, mid: String(o.through.mid) } : null,
+			// THE MESSAGES THE ASKER HELD before the prompt, as short hashes of their mids, newest
+			// `THREAD_IDS_MAX` (`threadIds`, QA r572z-A N1). The runner checks each is held, so a row
+			// of its own cannot stand in for one it lacks. null from an older sender: counts judge.
+			ids:     idList(o.ids),
 			// THE ROWS THE SENDER REMOVED and has not yet shipped in a parcel (a Retry's
 			// retracted answer), by mid. The runner leaves them out of the thread it judges
 			// and runs, and records the same removal, so the errand never waits on the
@@ -411,6 +415,17 @@
 			var id = String(x || '');
 			if (id && out.indexOf(id) < 0) out.push(id);
 		});
+		return out;
+	}
+
+	/// An errand's `ids`: the newest `THREAD_IDS_MAX` non-empty strings, or null when it carries none.
+	function idList(v) {
+		if (!Array.isArray(v)) return null;
+		var out = [];
+		for (var i = Math.max(0, v.length - THREAD_IDS_MAX); i < v.length; i++) {
+			var h = String(v[i] == null ? '' : v[i]);
+			if (h) out.push(h);
+		}
 		return out;
 	}
 
@@ -1064,6 +1079,10 @@
 	// What a seed from before whole-message seeds cut each message to. Such a seed says
 	// nothing of which rows it cut, so a row this long in one is taken as cut.
 	var LEGACY_SEED_MSG_CHARS = 16 * 1024;
+	// How many of the asker's message ids an errand carries (QA r572z-A N1): at most 7 base-36
+	// characters each, so at most ~5 KiB of JSON beside the prompt, whether or not the seed is
+	// dropped to fit the post. Older rows than these are judged by count alone.
+	var THREAD_IDS_MAX = 512;
 
 	/// Is this row part of the conversation a model is fed? THE ONE RULE (FIRE C2-READY, QA r572y C2b F3)
 	/// that `throughOf`, `seedFrom`, `threadSig` and so `threadReadiness` share, so the message an errand
@@ -1250,6 +1269,32 @@
 		return { n: n, sig: fnv1a(parts.join('\n')) };
 	}
 
+	/// The short hash an errand's `ids` names a message by: FNV-1a of its mid, base 36.
+	function midHash(mid) { return fnv1a(String(mid)).toString(36); }
+
+	/// THE MESSAGES THE ASKER HOLDS before the turn's own prompt, oldest first, as `midHash`es: the
+	/// rows `threadSig` counts on the sender, so `ids.length` is `thread.n` up to `THREAD_IDS_MAX`.
+	function threadIds(chat, turnId) {
+		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
+		var id = String(turnId || ''), out = [];
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (!m || !m.role) continue;
+			if (m.role === 'user' && String(m.mid || '') === id) break;
+			if (!conversational(m)) continue;
+			out.push(midHash(m.mid || ''));
+		}
+		return out.length > THREAD_IDS_MAX ? out.slice(out.length - THREAD_IDS_MAX) : out;
+	}
+
+	/// How many of the errand's `ids` this view does not hold as a conversational row.
+	function idsMissing(view, ids) {
+		var have = {}, msgs = view.messages, n = 0;
+		for (var i = 0; i < msgs.length; i++) if (conversational(msgs[i])) have[midHash(msgs[i].mid || '')] = 1;
+		for (var j = 0; j < ids.length; j++) if (!have[ids[j]]) n++;
+		return n;
+	}
+
 	/// The mids of an errand's `gone` list as a lookup.
 	function goneSet(gone) {
 		var out = {};
@@ -1382,12 +1427,16 @@
 		}
 		var wantN = e.thread.n | 0;
 		var out = { have: mine.n, want: wantN };
+		// WHICH rows, not how many (QA r572z-A N1): a row the asker never saw -- the runner's own
+		// answer to an earlier hand-off -- must not make up for an older one it lacks. Rows older
+		// than the errand's ids, and an older sender's errand without them, are judged by count.
+		var miss = Array.isArray(e.ids) ? idsMissing(view, e.ids) : 0;
 		if (chat && !resident) out.state = 'behind';		// load it, then ask again
 		else if (threadMatches(view, e, o)) out.state = 'match';
-		else if (mine.n < wantN || !holdsThrough(view, e)) out.state = 'behind';
+		else if (miss > 0 || mine.n < wantN || !holdsThrough(view, e)) out.state = 'behind';
 		else out.state = typeof held === 'number' && held < (e.parcelVersion | 0) ? 'behind' : 'diverged';
 		out.ready = out.state !== 'behind';
-		out.lack  = out.ready ? 0 : Math.max(1, wantN - mine.n);
+		out.lack  = out.ready ? 0 : Math.max(1, miss, wantN - mine.n);
 		return out;
 	}
 
@@ -1444,6 +1493,7 @@
 		var to     = String(o.to || '');		// the elected runner
 		var behind = openTurn(c, turnId);		// the running turns this one queues behind
 		var through = throughOf(c, turnId);	// the last message the asker saw
+		var ids    = threadIds(c, turnId);		// which messages it held (N1)
 		return {
 			// MARK FIRST, then post, then push. The durable `why:'dispatched'`
 			// placeholder is written BEFORE the errand is posted, so a refused post is a
@@ -1472,7 +1522,7 @@
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
-					gone: gone, to: to, behind: behind, through: through,
+					gone: gone, to: to, behind: behind, through: through, ids: ids,
 					auto: o.auto === true,
 				});
 			},
@@ -1481,7 +1531,7 @@
 				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt, pre: pre, effort: effort,
 				model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
-				seed: seed, thread: thread, tried: tried, gone: gone, to: to, behind: behind, through: through,
+				seed: seed, thread: thread, tried: tried, gone: gone, to: to, behind: behind, through: through, ids: ids,
 			},
 		};
 	}

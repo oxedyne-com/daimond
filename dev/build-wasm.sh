@@ -39,6 +39,15 @@ CARGO_DIR=$(cd "${CARGO_HOME:-$HOME/.cargo}" && pwd -P)
 # own standard library to /rustc/<hash>, so those two are the whole story.
 export RUSTFLAGS="--remap-path-prefix=$CARGO_DIR=/cargo --remap-path-prefix=$ROOT=/build ${RUSTFLAGS:-}"
 
+# And one thing the builder's environment can add that the source never asked for.
+# Cargo mixes `__CARGO_DEFAULT_LIB_METADATA` into every crate's metadata hash, and
+# so into every symbol, so a build that inherits it gives other bytes from the same
+# source. An rc agent's unit sets it (rc-b, 19 Oct 2026: one two-crate wasm build,
+# 5fd86e67 without it, 90d43f99 with), and a repro-check run there then reported a
+# reproducible bundle as not reproducible. A stranger has no such variable, so the
+# sealed build has none either, whoever runs it.
+unset __CARGO_DEFAULT_LIB_METADATA
+
 wasm-pack build --target web --out-dir www/pkg "$@"
 
 # ── Say what it was built from ──────────────────────────────────────────

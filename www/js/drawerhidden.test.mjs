@@ -54,3 +54,72 @@ test('a widened window has a live rail at once: no script makes the rail inert',
 	assert.ok(!/visibility/.test(rule(CSS.replace(/@media[^{]*\{[\s\S]*$/, ''), '.panel.rail') || ''),
 		'the desktop rail must never hide');
 });
+
+// The focus helpers, lifted from daimond.js and run over a small DOM. A closed drawer
+// still has boxes, so "has client rects" cannot mean "can take the focus" (S1MF-live).
+const APP = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
+function lift(name) {
+	const m = new RegExp('\\n\\t+function ' + name + '\\(').exec(APP);
+	if (!m) return '';
+	let depth = 0, i = APP.indexOf('{', m.index);
+	for (; i < APP.length; i++) {
+		if (APP[i] === '{') depth++;
+		else if (APP[i] === '}' && --depth === 0) break;
+	}
+	return APP.slice(m.index + 1, i + 1);
+}
+// A page: `shown` elements take the focus, hidden ones keep their boxes and refuse it.
+function page() {
+	const doc = { activeElement: null, cards: [], byId: {} };
+	const el = (id, shown, kids = []) => {
+		const e = {
+			id, isConnected: true, offsetWidth: 10, offsetHeight: 10, parentElement: null, attrs: {},
+			getClientRects: () => [{}],
+			checkVisibility: () => shown,
+			focus() { if (shown) doc.activeElement = e; },
+			querySelectorAll: () => kids,
+			hasAttribute: (k) => k in e.attrs,
+			setAttribute: (k, v) => { e.attrs[k] = v; },
+		};
+		kids.forEach((k) => { k.parentElement = e; });
+		if (id) doc.byId[id] = e;
+		return e;
+	};
+	doc.body = el('', true); doc.documentElement = el('', true);
+	doc.activeElement = doc.body;
+	doc.getElementById = (id) => doc.byId[id] || null;
+	doc.querySelectorAll = () => doc.cards;
+	doc.querySelector = () => null;
+	const names = ['refocus', 'tookFocus', 'canFocus', 'onScreen', 'focusWithin', 'handOverTarget'];
+	const api = new Function('document', 'window', 'getComputedStyle',
+		names.map(lift).join('\n') + '\nreturn { refocus, handOverTarget: typeof handOverTarget === "function" ? handOverTarget : null };')(
+		doc, { getComputedStyle: () => ({ visibility: 'visible', opacity: '1' }) }, () => ({ visibility: 'visible', opacity: '1' }));
+	return { doc, el, api };
+}
+
+test('a dialog closed over Admin on a phone leaves the focus in Admin, not on the body', () => {
+	const { doc, el, api } = page();
+	// The verifier pressed #user-row in the closed drawer, so the focus never left the body.
+	const row = el('user-row', false), rail = el('rail', false, [row]);
+	const ok = el('admin-ok', true); doc.cards = [el('admin-card', true, [ok])];
+	api.refocus(doc.body, rail);
+	assert.equal(doc.activeElement.id, 'admin-ok', 'the focus was left on ' + (doc.activeElement.id || 'the body'));
+});
+
+test('the unlock on a phone hands the keyboard to the burger, not into the hidden drawer', () => {
+	const { el, api } = page();
+	assert.ok(api.handOverTarget, 'daimond.js has no handOverTarget');
+	el('chat-input', false); el('new-session-btn', false); el('drawer-btn', true);
+	const next = api.handOverTarget();
+	assert.equal(next && next.id, 'drawer-btn');
+});
+
+test('a dialog closed with nothing standing behind it hands the keyboard to the page, not the body', () => {
+	const { doc, el, api } = page();
+	// K3 on a phone: Admin was opened inside the closed drawer, so it too is hidden.
+	const row = el('user-row', false), rail = el('rail', false, [row]);
+	doc.cards = [el('admin-card', false, [el('admin-ok', false)])];
+	el('chat-input', false); el('new-session-btn', false); el('drawer-btn', true);
+	api.refocus(doc.body, rail);
+	assert.equal(doc.activeElement.id, 'drawer-btn', 'the focus was left on ' + (doc.activeElement.id || 'the body'));
+});

@@ -16,7 +16,7 @@ check('the record names only the turns the engine held', J(f1.turns) === J(['u1'
 check('the rebuild lays the uncovered turn, not the covered one', J(said(F.daimonPrior({ messages: T, fold: f1 }, 'u3'))) === J([FOLD, 'q2', 'a2']), J(said(F.daimonPrior({ messages: T, fold: f1 }, 'u3'))));
 // 2. A refold that held the previous summary carries its turns.
 const f2 = F.foldFrom({ messages: T }, [{ role: 'user', content: FOLD + ' 2' }, { role: 'user', content: 'q3', mid: 'u3' }], 'u3', f1, 2, 'd',
-	[{ role: 'user', content: FOLD }, { role: 'user', content: 'q2', mid: 'u2' }]);
+	[{ role: 'user', content: FOLD }, { role: 'user', content: 'q2', mid: 'u2' }, { role: 'assistant', content: 'a2' }]);
 check('a refold carries the previous record\'s turns', J(f2.turns.slice().sort()) === J(['u1', 'u2']), J(f2));
 // 3. mergeFold: the superset wins whatever its range; a listed record beats an unlisted one; both orders agree.
 const big = { through: 'a2', throughTs: 50, turns: ['u1'], at: 1, dev: 'a', text: 'x' };
@@ -28,7 +28,7 @@ check('a listed record beats an unlisted one', F.mergeFold(old, big) === big && 
 check('an unlisted record proves nothing', J(said(F.daimonPrior({ messages: T, fold: old }, 'u3'))) === J(['z', 'q1', 'a1', 'q2', 'a2']), '');
 // 5. The bound: a long chat's ids shed into floorTs, and the shed turns still read as covered.
 const many = [];
-for (let i = 0; i < 600; i++) many.push({ role: 'user', content: 'p' + i, mid: 'mid-long-id-' + i, ts: 100 + i });
+for (let i = 0; i < 600; i++) many.push({ role: 'user', content: 'p' + i, mid: 'mid-long-id-' + i, ts: 100 + i }, { role: 'assistant', content: 'r' + i, iturn: 'mid-long-id-' + i, ts: 100 + i });
 many.push({ role: 'user', content: 'now', mid: 'now', ts: 9999 });
 const f3 = F.foldFrom({ messages: many }, [{ role: 'user', content: FOLD }], 'now', null, 3, 'd');
 check('the turns list stays under 8 KiB', J(f3.turns).length <= 8192 && f3.floorTs > 0, J(f3).length);

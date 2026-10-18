@@ -19902,7 +19902,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		for (var i = cards.length - 1; i >= 0; i--) {
 			if (onScreen(cards[i]) && focusWithin(cards[i])) return;
 		}
-		if (host && host.isConnected && onScreen(host)) { focusWithin(host); return; }
+		if (host && host.isConnected && onScreen(host) && focusWithin(host)) return;
 		// `host` can itself be a popover control that closed along with the
 		// dialog -- About closes the Help menu it opened from (workspace.js),
 		// so `about-btn` goes dark too. Climb to whatever names it in an
@@ -19913,19 +19913,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var opener = document.querySelector('[aria-controls="' + n.id + '"]');
 			if (opener && tookFocus(opener)) return;
 		}
+		// Nothing standing could take it: a layer left up inside the phone's closed,
+		// hidden drawer (Admin opened from it), or an opener that never had the focus.
+		// The page's own first stop, never the body (S1MF-live).
+		tookFocus(handOverTarget());
 	}
 
 	/// Focus `el` and report whether it actually took it. `focus()` on a detached
-	/// or hidden element neither throws nor moves anything.
+	/// or hidden element neither throws nor moves anything. The body is never a
+	/// landing place: it is where the focus goes when it has gone nowhere, and it
+	/// is "already focused" whenever an opener was missing.
 	function tookFocus(el) {
 		if (!el || !el.isConnected || typeof el.focus !== 'function') return false;
+		if (el === document.body || el === document.documentElement) return false;
 		try { el.focus(); } catch (e) { return false; }
 		return document.activeElement === el;
 	}
 
-	/// Whether an element is actually rendered, rather than merely present.
-	function onScreen(el) {
-		return !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+	/// Can `el` take the focus? Boxes are not enough: the phone drawer, closed, keeps
+	/// its layout and is `visibility: hidden` (GATEFIX r568 a2), and `focus()` on it
+	/// does nothing and throws nothing (S1MF-live).
+	function canFocus(el) {
+		if (!el || !el.isConnected) return false;
+		if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) return false;
+		if (typeof el.checkVisibility === 'function') {
+			return el.checkVisibility({ visibilityProperty: true, opacityProperty: true });
+		}
+		var cs = window.getComputedStyle ? getComputedStyle(el) : null;
+		return !cs || (cs.visibility !== 'hidden' && cs.opacity !== '0');
+	}
+
+	/// Whether an element is actually rendered and able to take the focus.
+	function onScreen(el) { return canFocus(el); }
+
+	/// Where the keyboard goes once the gate is gone: the first candidate that can take
+	/// the focus. On a phone with no chat, New Chat is inside the closed drawer, which is
+	/// hidden, so the burger that opens the drawer takes it (S1MF-live).
+	function handOverTarget() {
+		return ['chat-input', 'new-session-btn', 'new-diamond-btn', 'drawer-btn']
+			.map(function (id) { return document.getElementById(id); })
+			.filter(canFocus)[0] || null;
 	}
 
 	/// Give the focus to the first thing inside `scope` that will take it, or to
@@ -38597,13 +38624,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var FOLD_TURNS_CAP = 8192;
 	var FOLD_HEAD = '[Daimond folded the earlier part';
 
+	/// The answers the transcript `msgs` holds, by turn (C2-N2): `by[turn][content]`, a tagged
+	/// answer by its `iturn`, an untagged one by the prompt above it; `any[content]` across turns.
+	function foldAnswers(msgs) {
+		var by = {}, any = {}, cur = '';
+		(msgs || []).forEach(function (m) {
+			if (!m) return;
+			if (m.role === 'user') { cur = m.mid ? String(m.mid) : ''; return; }
+			if (m.role !== 'assistant' || m.provisional || typeof m.content !== 'string' || !m.content) return;
+			var id = m.iturn ? String(m.iturn) : cur;
+			if (!id) return;
+			(by[id] = by[id] || {})[m.content] = 1;
+			any[m.content] = 1;
+		});
+		return { by: by, any: any };
+	}
+
 	/// The fold record a daimon turn leaves (UNBLOCK-11 item 3), or `prev` unchanged. `after` is
 	/// the engine list the turn returned; its last fold notice is the summary of everything
 	/// before the first prompt it still holds after the notice. `before` is the list the turn
 	/// started from (`daimonPrior`); absent, the transcript up to that prompt stands for it.
 	///
 	/// THE RECORD NAMES THE TURNS IT COVERS (C2-FOLD, design amendment 23): `turns` is the
-	/// prompt ids the engine held before that prompt, plus `prev`'s when the engine held `prev`'s
+	/// prompt ids the engine held before that prompt with their answers (C2-N2), plus `prev`'s when the engine held `prev`'s
 	/// summary, so a turn another device ran that reached this one only after the fold is not
 	/// covered, wherever its timestamp puts it, and every rebuild lays it (`foldCover`).
 	/// `through` (the transcript row just before that prompt) is kept for `recall` and for an
@@ -38629,15 +38672,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (m && m.mid && m.content && (m.role === 'user' || m.role === 'assistant')) through = m;
 		}
 		if (!through) return prev || null;
-		// The prompts the engine held ahead of `firstMid`, and `prev`'s turns where it held `prev`'s summary.
+		// The prompts the engine held ahead of `firstMid` with their answers (C2-N2), and `prev`'s turns
+		// where it held `prev`'s summary. A prompt whose answer had not arrived stays uncovered, so the
+		// answer, when it lands, is laid by every rebuild (`foldCover`) rather than lost.
 		var held = Array.isArray(before) ? before : msgs, seen = {}, turns = [], withPrev = !Array.isArray(before);
 		var add = function (id) { if (id && seen[id] !== 1) { seen[id] = 1; turns.push(id); } };
+		var ans = foldAnswers(msgs);
+		var answered = function (id, h) {
+			var mine = ans.by[id];
+			if (!mine) return false;									// no answer in the transcript yet
+			if (!Array.isArray(before)) return true;					// the transcript stands for the engine
+			for (var k = h + 1, near = true; k < held.length; k++) {
+				var z = held[k];
+				if (!z) continue;
+				if (z.role === 'user') { if (z.mid && String(z.mid) === firstMid) break; near = false; continue; }
+				if (z.role !== 'assistant' || typeof z.content !== 'string') continue;
+				if (mine[z.content] === 1) return true;					// its answer, laid from the transcript
+				if (near && ans.any[z.content] !== 1) return true;		// its answer, in the engine's own form
+			}
+			return false;
+		};
 		for (var h = 0; h < held.length; h++) {
 			var y = held[h];
 			if (!y || y.role !== 'user') continue;
 			if (y.mid && String(y.mid) === firstMid) break;
 			if (prev && prev.text && y.content === prev.text) withPrev = true;
-			if (y.mid) add(String(y.mid));
+			if (y.mid && answered(String(y.mid), h)) add(String(y.mid));
 		}
 		var floorTs = 0;
 		if (withPrev && prev && Array.isArray(prev.turns)) {
@@ -55290,8 +55350,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var tid = mailClaimId(id, occasion), self = selfDeviceId();
 		if (!tid || !self || !window.DaimondLease || !DaimondLease.take
 			|| !window.DaimondPeer || !DaimondPeer.syncCas) return { go: true };
-		if (_mailRunning[tid]) return { go: false };
-		if ((_mailTries[tid] | 0) >= MAIL_TRIES_MAX) return { drop: true };	// tried enough here (Q4)
+		// A page that has never heard back from the mailbox -- no sync tier, Safe mode, a sync
+		// door that never answered -- has no peer to coordinate with: its door would only ever
+		// read `unread`, and standing down on that would silence every mail trigger for good
+		// (S1MF-live). A page that has heard it keeps the stand-down below.
+		if (window.DaimondSync && window.DaimondSync.heard && !window.DaimondSync.heard()) return { go: true };
+		if (_mailRunning[tid]) return { go: false, why: 'running' };
+		if ((_mailTries[tid] | 0) >= MAIL_TRIES_MAX) return { drop: true, why: 'tries' };	// tried enough here (Q4)
 		var lo = 0, hi = 0;
 		occasion.uids.forEach(function (x) {
 			if (+x > hi) hi = +x;
@@ -55307,10 +55372,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (took && took.won) return { go: true, tid: tid, self: self, cas: cas, mark: mark };
 		var why = String((took && took.why) || '');
 		diag('mail claim', tid + ' lost why=' + (why || 'held') + ' holder=' + String((took && took.holder) || '').slice(0, 8));
-		if (why === 'settled') return { drop: true };
-		if (!why) return { go: false };
-		if (DaimondPeer.standDownUndecided && DaimondPeer.standDownUndecided(why)) return { go: false };
+		if (why === 'settled') return { drop: true, why: why };
+		if (!why) return { go: false, why: 'held' };
+		if (DaimondPeer.standDownUndecided && DaimondPeer.standDownUndecided(why)) return { go: false, why: why };
 		return { go: true };
+	}
+
+	/// A mail trigger that did not run, written to the trail and the debug feed: a refusal is
+	/// never silent, or a device whose triggers have stopped cannot be told from a quiet inbox.
+	function trailTrigger(what, d) {
+		var text = what + (d === undefined ? '' : ': ' + String((d && d.message) || d));
+		diag('trigger', text);
+		try { window.DaimondTrail.note('trigger', text); } catch (e) { /* no trail is not an error */ }
 	}
 
 	/// Write a folder's mark just under an arrival refused before it could be claimed, when
@@ -55580,12 +55653,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The Diamond's own model has to be able to run, exactly as a hand
 				// steer checks. A trigger that opened the settings dialog on a timer
 				// would be the worst possible moment to ask.
-				if (!diamondCanRun(id)) { oweMail(id, occasion); seedMailMark(id, occasion); continue; }
+				var mail = occasion.kind === 'mail';
+				var arrival = mail ? id + ' ' + (occasion.mailbox || '') + '/' + (occasion.folder || '') : '';
+				if (!diamondCanRun(id)) {
+					if (mail) trailTrigger('mail held', arrival + ' cannot run');
+					oweMail(id, occasion); seedMailMark(id, occasion); continue;
+				}
 				var t = owed[0];
 				// ONE DEVICE PER ARRIVAL (MO-1): a mail occasion is claimed before it runs.
-				var claim = occasion.kind === 'mail' ? await claimMailArrival(id, occasion) : null;
-				if (claim && claim.drop) continue;
-				if (claim && !claim.go) { oweMail(id, occasion); continue; }
+				var claim = mail ? await claimMailArrival(id, occasion) : null;
+				if (claim && claim.drop) {
+					if (claim.why !== 'settled') trailTrigger('mail dropped', arrival + ' why=' + claim.why);
+					continue;
+				}
+				if (claim && !claim.go) {
+					trailTrigger('mail held', arrival + ' claim not won why=' + claim.why);
+					oweMail(id, occasion); continue;
+				}
 				var msg = DaimondTriggers.compose(t, occasion.said);
 				var out = null, stop = keepMailClaim(claim);
 				// A turn that threw may still have run, so it settles as one that went; it answered
@@ -55595,7 +55679,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					stop();
 					if (claim) await settleMailClaim(claim, !out || out.went, !!out && out.went && !out.failed, !!out && out.stopped);
 				}
-				if (!out.went) { oweMail(id, occasion); continue; }
+				if (!out.went) {
+					if (mail) trailTrigger('mail held', arrival + ' turn not gone');
+					oweMail(id, occasion); continue;
+				}
 				fired.push({ id: id, actionId: t.id });
 				// One turn answers whatever has arrived, so a folder this turn has answered is
 				// owed nothing more: an arrival refused earlier would be a second turn (MO-2).
@@ -56575,7 +56662,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var d = (ev && ev.detail) || {};
 			Triggers.fire({ kind: 'mail', mailbox: d.mailbox, folder: d.folder,
 				uids: d.uids, uidValidity: d.uidValidity })
-				.catch(function () { /* a failed trigger is not a failed sync */ });
+				.catch(function (e) { trailTrigger('mail fire failed', e); });	// not a failed sync, but never silent
 		});
 		['keydown', 'pointerdown', 'wheel'].forEach(function (ev) {
 			window.addEventListener(ev, DaimondTriggers.noteActivity, { passive: true });
@@ -68529,9 +68616,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// document from the start but hidden until a chat exists, and focusing a
 			// hidden element does nothing at all -- so naming it first meant the
 			// keyboard was handed to something invisible, which is to say nowhere.
-			var next = ['chat-input', 'new-session-btn', 'new-diamond-btn']
-				.map(function (id) { return document.getElementById(id); })
-				.filter(function (el) { return el && el.getClientRects().length; })[0];
+			var next = handOverTarget();
 			if (next && next.id === 'chat-input') {
 				try { next.focus(); } catch (e) { /* gone */ }
 				return;

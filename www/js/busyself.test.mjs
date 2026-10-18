@@ -306,11 +306,12 @@ console.log('\n— B: the beat names its chats, and the switch reads them —');
 {
 	// B1: the gateway beat carries busy_chats beside busy, a list of ids, [] included.
 	const ssrc = readFileSync(join(HERE, 'sync.js'), 'utf8');
-	const sa = ssrc.indexOf('\n\tasync function beatPresence(');
+	// The beat's body is built in `beatOnce`; `beatPresence` is its single-flight door.
+	const sa = ssrc.indexOf('\n\tasync function beatOnce(');
 	const sb = ssrc.indexOf('\n\tasync function refreshPresence(', sa);
 	const sent = [];
 	const beatPresence = new Function('canBeat', 'call', 'notedRemoval', 'log', 'window',
-		ssrc.slice(sa, sb) + '\nreturn beatPresence;')(
+		ssrc.slice(sa, sb) + '\nreturn beatOnce;')(
 		() => true, async (m, body) => { sent.push(body); return { status: 500 }; },
 		() => false, () => {}, {});
 	await beatPresence('arg', 'argonaut', false, true, true, false, true, true, 2, ['c1', 'c2']);

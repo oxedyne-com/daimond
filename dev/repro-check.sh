@@ -111,6 +111,11 @@ WORK=${WORK:-$HOME/.cache/daimond-repro-check}
 rm -rf "$WORK"
 mkdir -p "$WORK/a/deeper/nested"
 export CARGO_HOME="$WORK/cargo-home"
+# Unset here as well as in build-wasm.sh, because the wasm is built by the CLONE's
+# build-wasm.sh, and a mirror published before 19 Oct 2026 does not scrub it. Cargo
+# mixes the value into every metadata hash, so a check run inside an rc agent, whose
+# unit sets it, rebuilt other bytes and called a reproducible bundle unreproducible.
+unset __CARGO_DEFAULT_LIB_METADATA
 mkdir -p "$CARGO_HOME"
 
 echo "── cloning the public mirror into a path of its own"

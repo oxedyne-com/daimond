@@ -282,9 +282,13 @@ const UNLOCKED_NOW = () => {
 	return { un, gate: !!(m && m.offsetParent !== null), ready: !!window.__DAIMOND_READY,
 		theme: window.DaimondTheme ? window.DaimondTheme.get() : '' };
 };
-const WANT_FIRST = () => ['chat-input', 'new-session-btn', 'new-diamond-btn']
+// The hand-over's own candidates and test (daimond.js handOverTarget): boxes AND visible, since
+// a phone's closed drawer keeps its boxes while hidden, so there the burger is the stop (S1MF-live).
+const WANT_FIRST = () => ['chat-input', 'new-session-btn', 'new-diamond-btn', 'drawer-btn']
 	.map((id) => document.getElementById(id))
-	.filter((e) => e && e.getClientRects().length).map((e) => e.id)[0] || '';
+	.filter((e) => e && e.getClientRects().length
+		&& (typeof e.checkVisibility !== 'function' || e.checkVisibility({ visibilityProperty: true, opacityProperty: true })))
+	.map((e) => e.id)[0] || '';
 async function reloadNoInput(page) {
 	await page.reload();
 	// The wait is for the unlock to be done, not for a fixed time: the gate is hidden,
@@ -349,10 +353,11 @@ async function ringSection() {
 				check(v === 'x', `${at}: a character typed with no click lands in the composer`, `value ${JSON.stringify(v)}`);
 				continue;
 			}
-			// B. the predicate goes red on the old hand-over, in this same document.
-			await pg.evaluate(() => { const b = document.getElementById('new-session-btn'); if (b) b.focus(); });
+			// B. the predicate goes red on the old hand-over, in this same document: the control
+			// itself focused by script (New Chat; the burger on a phone, whose drawer is hidden).
+			await pg.evaluate((w) => { const b = document.getElementById(w); if (b) b.focus(); }, want);
 			const old = await pg.evaluate(RING_OF);
-			check(old.ring, `${at}: SELF-TEST: focusing New Chat by script, as the old hand-over did, reads as a ring`,
+			check(old.ring, `${at}: SELF-TEST: focusing ${want || '(nothing)'} by script, as the old hand-over did, reads as a ring`,
 				`${old.name}, :focus-visible ${old.fv}, outline ${old.outline}`);
 			// C. the panel takes the focus back; Tab lands on the control, with its ring.
 			await pg.evaluate(() => { const h = document.querySelector('.focus-home'); if (h) h.focus(); });

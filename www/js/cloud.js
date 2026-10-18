@@ -781,8 +781,8 @@
 	async function diskNameIn(dir, name) {
 		var enc = diskName(name);
 		if (enc === name) return enc;
-		try { await dir.getFileHandle(name); return name; } catch (e) { /* not there */ }
-		try { await dir.getDirectoryHandle(name); return name; } catch (e) { /* nor there */ }
+		try { await dir.getFileHandle(name); return name; } catch (e) { if (!isAbsent(e)) throw e; }
+		try { await dir.getDirectoryHandle(name); return name; } catch (e) { if (!isAbsent(e)) throw e; }
 		return enc;
 	}
 
@@ -808,14 +808,15 @@
 		return dir;
 	}
 
-	/// Whether this device currently holds the file.
+	/// Whether this device currently holds the file. Only the store's plain "nothing there" is
+	/// no; a store that cannot be read throws, as `fileAt` does, and is never "not held".
 	async function isHeld(path) {
 		var p = parts(path);
 		if (!p.length) return false;
 		var dir = await dirFor(path, false);
 		if (!dir) return false;
 		try { await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1])); return true; }
-		catch (e) { return false; }
+		catch (e) { if (isAbsent(e)) return false; throw e; }
 	}
 
 	async function readText(path) {
@@ -862,11 +863,12 @@
 		var dir = await dirUnderRoot(root, path, false);
 		if (!dir) return null;
 		try { return await (await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]))).getFile(); }
-		catch (e) { return null; }
+		catch (e) { if (isAbsent(e)) return null; throw e; }
 	}
 
 	/// The directory handle holding `path` under `root`, or null when a component is
-	/// absent and `create` was not asked for. `dirFor`'s reasoning, one root along.
+	/// absent and `create` was not asked for. `dirFor`'s reasoning, one root along: a
+	/// directory that cannot be read throws.
 	async function dirUnderRoot(root, path, create) {
 		if (!root) return null;
 		var p = parts(path);
@@ -874,7 +876,7 @@
 		var dir = root;
 		for (var i = 0; i < p.length - 1; i++) {
 			try { dir = await dir.getDirectoryHandle(await diskNameIn(dir, p[i]), { create: !!create }); }
-			catch (e) { return null; }
+			catch (e) { if (isAbsent(e)) return null; throw e; }
 		}
 		return dir;
 	}
@@ -2152,8 +2154,11 @@
 		// What the write may replace: the File judged stale below, or, for a path not on this
 		// device, nothing at all. A file that appears there, or moves, before the write closes is
 		// not written over; the next sync pass meets it as a local file (OPFS-LOCK5).
-		var here = JUDGED_ABSENT;
-		if (await isHeld(path)) {
+		var here = JUDGED_ABSENT, held;
+		// A store that cannot be read is not a path to download into: said, not fetched over.
+		try { held = await isHeld(path); }
+		catch (e) { return 'Error: could not read ' + path + ' on this device: ' + (e && (e.name || e.message) ? (e.name || e.message) : e); }
+		if (held) {
 			// NOT IF WHAT IS HERE IS A VERSION THE INDEX HAS MOVED PAST. That copy is not this
 			// file any more, and answering "already on this device" handed the person the older
 			// version of it. One changed here since is theirs, and stands. The stale copy is NOT
@@ -2355,7 +2360,10 @@
 			if (pinned[p]) continue;
 			// Just used is not cold, however long ago it was used before that.
 			if (a[p] && (now - a[p]) < RECENT_USE_MS) continue;
-			if (!(await isHeld(p))) continue;
+			// A path whose holding cannot be read is not freed: nothing is evicted on a fault.
+			var has = false;
+			try { has = await isHeld(p); } catch (e) { has = false; }
+			if (!has) continue;
 			candidates.push({ path: p, size: (ix[p].bytes | 0) || (ix[p].size | 0), at: a[p] || 0 });
 		}
 		candidates.sort(function (x, y) { return x.at - y.at; });	// coldest first.

@@ -1,0 +1,184 @@
+/* ============================================================
+   Test — a version adopted without opening counts as merged here
+   (FIRE SYNC-UNREAD, dc_diag.md fix 1).
+
+   Five exits in pullOnce take the mailbox's version WITHOUT opening
+   its parcel ("keep local state and let ours go over it"). They
+   returned before `noteMergedAt`, so the push's merge gate
+   (`serverVersion > 0 && !locMerged`, QFB4-1) re-pulled, met the
+   same exit, and returned: a device whose mailbox top it cannot open
+   never pushed again, and the promised recovery never ran.
+
+   Each case below seeds the mailbox at v1 with a parcel this device
+   cannot open, reaching one exit, and asserts that the next push
+   lands v2 over it and that the location is recorded as merged at
+   v1. Case 4 is the diagnosis's E1 seed: an empty blob.
+
+   Drives the REAL www/js/sync.js in a simulated tab, as synckey.test.
+
+   Run:  node www/js/syncunread.test.mjs
+   ============================================================ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { webcrypto } from 'node:crypto';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+let failures = 0;
+function check(name, cond, detail) {
+	const line = name + (detail !== undefined && detail !== '' ? ' — ' + detail : '');
+	if (cond) { console.log('  ok   ' + line); }
+	else { console.log('  FAIL ' + line); failures++; }
+}
+
+const SELF = '00112233445566aa';
+const LOC  = 'browser';					// the storage location `fileLoc` reports
+const K_MERGED_AT = 'daimond-sync-merged-at';
+
+const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+
+/// A rekey envelope around sealed bytes this device cannot open, as wrapEnvelope lays it out.
+function envelope(rec) {
+	const json = Buffer.from(JSON.stringify(rec), 'utf8');
+	const head = Buffer.from([68, 82, 75, 49,
+		(json.length >>> 24) & 255, (json.length >>> 16) & 255, (json.length >>> 8) & 255, json.length & 255]);
+	return Buffer.concat([head, json, Buffer.from('not a sealed parcel', 'utf8')]).toString('base64');
+}
+
+function makeTab(id) {
+	const store = new Map();
+	const localStorage = {
+		getItem: (k) => (store.has(k) ? store.get(k) : null),
+		setItem: (k, v) => store.set(k, String(v)),
+		removeItem: (k) => store.delete(k),
+	};
+	const win = { addEventListener: () => {}, dispatchEvent: () => true };
+	const noEl = {
+		addEventListener: () => {}, appendChild: () => {}, setAttribute: () => {},
+		querySelector: () => null, querySelectorAll: () => [], remove: () => {},
+		style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} }, dataset: {},
+	};
+	const document = {
+		readyState: 'complete', hidden: false, addEventListener: () => {},
+		querySelector: () => null, querySelectorAll: () => [], getElementById: () => null,
+		createElement: () => Object.assign({}, noEl), body: noEl,
+	};
+	const tab = {
+		win, store,
+		unlocked: false,
+		epoch: id.epoch | 0,
+		salt: id.salt || null,
+		posts: [],
+		gets: 0,
+		mailbox: null,				// { version, blob }
+	};
+	// A parcel this mock seals is base64 of 'P:' + plain; anything else will not open.
+	const open = (blob) => {
+		const s = Buffer.from(String(blob), 'base64').toString('utf8');
+		if (!blob || !s.startsWith('P:')) throw new Error('will not open');
+		return s.slice(2);
+	};
+	win.DaimondIdentity = {
+		isUnlocked: () => tab.unlocked,
+		wrap: async (plain) => b64('P:' + plain),
+		unwrap: async (blob) => open(blob),
+		unwrapPrev: async () => { throw new Error('no previous key'); },
+		hasPrevKey: () => false,
+		handle: () => '',
+		deviceId: () => SELF,
+		epoch: () => tab.epoch,
+		saltB64: () => tab.salt,
+		rekeyRecord: () => null,			// pushes travel bare; what is read is the point here
+		verifyRecord: async () => true,
+		adoptRekey: async (rec) => { tab.epoch = rec.epoch | 0; tab.salt = rec.salt; return { ok: true }; },
+		adoptDiverged: async (rec) => { tab.salt = rec.salt; return { ok: true }; },
+	};
+	win.DaimondGateway = {
+		clientApi: () => 1,
+		state: () => ({ authed: tab.unlocked }),
+		gwFetch: async (path, opts) => {
+			if (!opts || opts.method === 'GET') {
+				tab.gets++;
+				if (!tab.mailbox) return { status: 200, json: async () => ({ present: false, version: 0 }) };
+				return { status: 200, json: async () => ({ present: true,
+					version: tab.mailbox.version, blob: tab.mailbox.blob }) };
+			}
+			const body = JSON.parse(opts.body);
+			const cur = tab.mailbox ? tab.mailbox.version : 0;
+			if ((body.base_version | 0) !== cur) {
+				return { status: 409, json: async () => ({ error: 'stale', version: cur }) };
+			}
+			tab.posts.push(body);
+			tab.mailbox = { version: cur + 1, blob: body.blob };
+			return { status: 200, json: async () => ({ ok: true, version: cur + 1 }) };
+		},
+	};
+	win.DaimondCore = {
+		collectSync: async () => ({ v: 3, chats: [{ id: 'c1', messages: ['local work'] }], files: {},
+			filesComplete: true, devices: {}, ledger: [] }),
+		syncSelfDeviceId: () => SELF,
+		syncLoc: async () => LOC,
+		busy: () => false,
+		deviceSelfName: () => 'Chromium on Linux',
+		syncMayCommitChunks: () => false,
+		syncCommitBlockedReason: () => 'tools are not up',
+		applySync: async () => ({}),
+	};
+	win.DaimondCloud = {
+		sha256: async (s) => {
+			const d = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+			return Array.from(new Uint8Array(d)).map((b) => ('0' + b.toString(16)).slice(-2)).join('');
+		},
+	};
+	const body = readFileSync(join(HERE, 'sync.js'), 'utf8');
+	const fn = new Function(
+		'window', 'document', 'crypto', 'localStorage',
+		'TextEncoder', 'TextDecoder',
+		'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+		'console',
+		'with (window) {\n' + body + '\n}');
+	fn(win, document, webcrypto, localStorage,
+		TextEncoder, TextDecoder,
+		setTimeout, clearTimeout, () => 0, () => {},
+		{ log: () => {}, debug: () => {}, warn: () => {}, error: () => {} });
+	return tab;
+}
+
+const CASES = [
+	// The control: a parcel that opens merges, and the push lands, with or without the fix.
+	['0. control: an openable parcel',
+		{ epoch: 0, salt: 'mm' }, b64('P:' + JSON.stringify({ v: 3, chats: [], files: {}, filesComplete: true, devices: {}, ledger: [] }))],
+	['1. a newer epoch, adopted, whose parcel still will not open',
+		{ epoch: 0, salt: 'mm' }, envelope({ v: 1, epoch: 1, salt: 'nn' })],
+	['2. a diverged branch yielded to, whose parcel will not open',
+		{ epoch: 1, salt: 'zz' }, envelope({ v: 1, epoch: 1, salt: 'aa' })],
+	['3. a diverged branch this side wins (smaller salt)',
+		{ epoch: 1, salt: 'aa' }, envelope({ v: 1, epoch: 1, salt: 'zz' })],
+	['4. a corrupt blob at our own epoch (E1: the empty blob)',
+		{ epoch: 0, salt: 'mm' }, ''],
+	['5. an older-epoch blob with no previous key held',
+		{ epoch: 1, salt: 'mm' }, b64('junk from a lagging device')],
+];
+
+console.log('\nan unopenable parcel at the mailbox top does not block the next push\n');
+
+for (const [name, id, blob] of CASES) {
+	const tab = makeTab(id);
+	tab.mailbox = { version: 1, blob };
+	tab.unlocked = true;
+	await tab.win.DaimondSync.push();
+	check(name + ': the push lands over it',
+		tab.posts.length === 1 && tab.mailbox.version === 2,
+		tab.posts.length + ' POST(s), mailbox v' + tab.mailbox.version);
+	let merged = {};
+	try { merged = JSON.parse(tab.store.get(K_MERGED_AT) || '{}'); } catch (e) { merged = {}; }
+	check(name + ': this location is recorded at the version it reached',
+		merged[LOC] === tab.mailbox.version, JSON.stringify(merged));
+	check(name + ': and what landed opens', (() => {
+		try { return JSON.parse(Buffer.from(tab.mailbox.blob, 'base64').toString('utf8').slice(2)).chats[0].id === 'c1'; }
+		catch (e) { return false; }
+	})());
+}
+
+console.log(failures ? '\n' + failures + ' FAILED\n' : '\nall sync-unread checks passed\n');
+process.exit(failures ? 1 : 0);

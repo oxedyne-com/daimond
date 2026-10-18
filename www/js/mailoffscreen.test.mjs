@@ -53,7 +53,7 @@ function world(mailB) {
 	const A = { id: 'A', name: 'Work' }, B = { id: 'B', name: 'Email' };
 	W.A = A; W.B = B;
 	const body = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail',
-		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'].map((n) => extractFn(APP, n)).join('\n');
+		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'].map((n) => extractFn(APP, n)).join('\n');
 	const fire = extractMethod(APP, 'fire'), retry = extractMethod(APP, 'retryMail');
 	W.api = new Function('W', 'DaimondTriggers', `
 		var diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _mailTries = {}, MAIL_TRIES_MAX = 3, _lastSteer = {}, MAIL_FLOOR_KEY = 'daimond.mail.floor', _mailFloor = null, FOLLOW_MAX_MS = 20 * 60 * 1000;

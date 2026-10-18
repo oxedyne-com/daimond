@@ -105,15 +105,18 @@ const DaimondTriggers = require('./triggers.js');
 const CLOCK = { now: 1_800_000_000_000 };
 
 // One open device: Diamond A on screen, Diamond B watching alerts@.
-function device(name, door, turns) {
+function device(name, door, turns, opts) {
 	const peer = loadPeer();
+	// What sync.js would say: has this page ever heard back from the mailbox? And the trail.
+	if (opts && 'heard' in opts) peer.DaimondSync = { heard: () => opts.heard };
+	if (opts && opts.trail) peer.DaimondTrail = { note: (w, d) => opts.trail.push([w, String(d)]) };
 	const W = { name, turns, busy: new Set(), hold: null };
 	W.A = { id: 'A', name: 'Work' }; W.B = { id: 'B', name: 'Email' };
 	W.mailB = Object.assign(DaimondTriggers.blank('mail'), {
 		id: 'm1', mailbox: 'alerts@oxegen.io', folder: 'INBOX', instruction: 'Triage the alert.',
 	});
 	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail',
-		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'];
+		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
 	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'FOLLOW_MAX_MS'].map((n) => extractVar(APP, n)).join('\n');
 	W.api = new Function('W', 'DaimondTriggers', 'window', 'door', 'CLOCK', `
@@ -201,4 +204,32 @@ test('a claimant that dies: the arrival is taken by another device once its clai
 	assert.equal(turns.length, 2, 'the lapsed claim was never taken over');
 	assert.equal(turns[1].on, 'desk');
 	never();
+});
+
+// A door that never answers 200: no sync tier, Safe mode, or sync unreachable (S1MF-live).
+function deadDoor() {
+	return {
+		read: async () => ({ version: 0, leases: {}, unread: true }),
+		commit: async () => ({ ok: false, why: 'unread' }),
+	};
+}
+
+test('a page that has never heard the mailbox runs the arrival though the door is unreadable', async () => {
+	const turns = [], trail = [];
+	const P = device('phone', deadDoor(), turns, { heard: false, trail });
+	const fired = await P.api.fire(ARRIVED);
+	assert.equal(turns.length, 1, 'a device without sync never ran its mail trigger: ' + JSON.stringify(trail));
+	assert.equal(fired.length, 1);
+	assert.equal(P.owed(), 0);
+});
+
+test('a page that has heard the mailbox keeps the stand-down, and says so on the trail', async () => {
+	const turns = [], trail = [];
+	const P = device('phone', deadDoor(), turns, { heard: true, trail });
+	const fired = await P.api.fire(ARRIVED);
+	assert.equal(turns.length, 0, 'a synced page ran past an undecided claim');
+	assert.equal(fired.length, 0);
+	assert.equal(P.owed(), 1, 'the refused arrival was not kept owed');
+	assert.ok(trail.some(([w, d]) => w === 'trigger' && /unread/.test(d)),
+		'the refusal left no trail row naming why: ' + JSON.stringify(trail));
 });
