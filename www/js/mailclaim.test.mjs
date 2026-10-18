@@ -108,17 +108,27 @@ const CLOCK = { now: 1_800_000_000_000 };
 function device(name, door, turns, opts) {
 	const peer = loadPeer();
 	// What sync.js would say: has this page ever heard back from the mailbox? And the trail.
-	if (opts && 'heard' in opts) peer.DaimondSync = { heard: () => opts.heard };
+	// What sync.js would say. By default a syncing page that has heard the mailbox. `never`
+	// is a page that can never coordinate ('identity': none, 'safe': a safe start, 'tier': no
+	// sync tier); `heard: false` a syncing page whose first pull is not back yet.
+	const said = { heard: !(opts && opts.heard === false) }, never = (opts && opts.never) || '';
+	if (never !== 'identity') peer.DaimondIdentity.everExisted = () => true;
+	if (never === 'safe') peer.DaimondSafe = { on: () => true };
+	peer.DaimondSync = { heard: () => said.heard, entitled: () => never !== 'tier' };
+	const heardBy = [];
+	peer.addEventListener = (t, fn) => { if (t === 'daimond:heard') heardBy.push(fn); };
 	if (opts && opts.trail) peer.DaimondTrail = { note: (w, d) => opts.trail.push([w, String(d)]) };
 	const W = { name, turns, busy: new Set(), hold: null };
+	// The page's first pull lands: sync.js raises `daimond:heard` once.
+	W.hear = () => { said.heard = true; heardBy.splice(0).forEach((fn) => fn()); };
 	W.A = { id: 'A', name: 'Work' }; W.B = { id: 'B', name: 'Email' };
 	W.mailB = Object.assign(DaimondTriggers.blank('mail'), {
 		id: 'm1', mailbox: 'alerts@oxegen.io', folder: 'INBOX', instruction: 'Triage the alert.',
 	});
 	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail',
-		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'];
+		'mailMarkKey', 'mailClaimId', 'syncsHere', 'retryMailOnHeard', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
-	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'FOLLOW_MAX_MS'].map((n) => extractVar(APP, n)).join('\n');
+	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'FOLLOW_MAX_MS', '_mailHeardArmed'].map((n) => extractVar(APP, n)).join('\n');
 	W.api = new Function('W', 'DaimondTriggers', 'window', 'door', 'CLOCK', `
 		var diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _mailTries = {}, MAIL_TRIES_MAX = 3, _lastSteer = {};
 		var _triggers = { A: { v: 1, actions: [] }, B: { v: 1, actions: [W.mailB] } };
@@ -214,12 +224,46 @@ function deadDoor() {
 	};
 }
 
-test('a page that has never heard the mailbox runs the arrival though the door is unreadable', async () => {
-	const turns = [], trail = [];
-	const P = device('phone', deadDoor(), turns, { heard: false, trail });
+for (const never of ['identity', 'safe', 'tier']) {
+	test('a page that can never coordinate (' + never + ') runs the arrival though the door is unreadable', async () => {
+		const turns = [], trail = [];
+		const P = device('phone', deadDoor(), turns, { heard: false, never, trail });
+		const fired = await P.api.fire(ARRIVED);
+		assert.equal(turns.length, 1, 'a device that cannot sync never ran its mail trigger: ' + JSON.stringify(trail));
+		assert.equal(fired.length, 1);
+		assert.equal(P.owed(), 0);
+	});
+}
+
+// QA r572w B N2: a syncing page whose first pull is not back yet is not a page without sync.
+test('a syncing page that has not heard yet does not run an arrival another device ran', async () => {
+	const door = makeDoor(), turns = [];
+	const D = device('desk', door, turns);
+	await D.api.fire(ARRIVED);						// the desk claims, runs and settles it
+	const P = device('phone', door, turns, { heard: false });	// unlocked, boot pull still out
+	await P.api.fire(ARRIVED);
+	assert.deepEqual(turns.map((t) => t.on), ['desk'], 'the arrival ran twice (MO-1)');
+	assert.equal(P.owed(), 1, 'the unheard arrival was not held owed');
+	P.hear();
+	await new Promise((r) => setTimeout(r, 50));
+	assert.deepEqual(turns.map((t) => t.on), ['desk'], 'the retry after the pull ran a settled arrival');
+	assert.equal(P.owed(), 0, 'a settled arrival is still owed after the pull');
+});
+
+test('an arrival held unheard runs once the first pull lands, and not before', async () => {
+	const door = makeDoor(), turns = [], trail = [];
+	const P = device('phone', door, turns, { heard: false, trail });
 	const fired = await P.api.fire(ARRIVED);
-	assert.equal(turns.length, 1, 'a device without sync never ran its mail trigger: ' + JSON.stringify(trail));
-	assert.equal(fired.length, 1);
+	assert.equal(turns.length, 0, 'a page that had not heard ran the arrival blind');
+	assert.equal(fired.length, 0);
+	assert.ok(trail.some(([w, d]) => w === 'trigger' && /unheard/.test(d)),
+		'the hold left no trail row naming why: ' + JSON.stringify(trail));
+	await P.api.retryMail();						// a tick while the door is still unreachable
+	assert.equal(turns.length, 0, 'a tick before the first pull ran the arrival blind');
+	assert.equal(P.owed(), 1);
+	P.hear();
+	await new Promise((r) => setTimeout(r, 50));
+	assert.deepEqual(turns.map((t) => t.on), ['phone'], 'the held arrival did not run after the pull');
 	assert.equal(P.owed(), 0);
 });
 

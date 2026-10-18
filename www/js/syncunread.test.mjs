@@ -36,6 +36,7 @@ const LOC  = 'browser';					// the storage location `fileLoc` reports
 const K_MERGED_AT = 'daimond-sync-merged-at';
 
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+const named = (msg, name) => Object.assign(new Error(msg), { name });
 
 /// A rekey envelope around sealed bytes this device cannot open, as wrapEnvelope lays it out.
 function envelope(rec) {
@@ -71,17 +72,24 @@ function makeTab(id) {
 		posts: [],
 		gets: 0,
 		mailbox: null,				// { version, blob }
+		lockOnGet: false,			// the user presses Lock while the next GET is in flight
+		failNext: null,				// an error the next unwrap throws once (an OOM, say)
+		applied: [],				// the versions `applySync` merged
 	};
 	// A parcel this mock seals is base64 of 'P:' + plain; anything else will not open.
 	const open = (blob) => {
 		const s = Buffer.from(String(blob), 'base64').toString('utf8');
-		if (!blob || !s.startsWith('P:')) throw new Error('will not open');
+		if (!blob || !s.startsWith('P:')) throw named('will not open', 'OperationError');	// the GCM tag
 		return s.slice(2);
 	};
 	win.DaimondIdentity = {
 		isUnlocked: () => tab.unlocked,
 		wrap: async (plain) => b64('P:' + plain),
-		unwrap: async (blob) => open(blob),
+		unwrap: async (blob) => {
+			if (!tab.unlocked) throw new Error('locked');				// requireUnlocked
+			if (tab.failNext) { const e = tab.failNext; tab.failNext = null; throw e; }
+			return open(blob);
+		},
 		unwrapPrev: async () => { throw new Error('no previous key'); },
 		hasPrevKey: () => false,
 		handle: () => '',
@@ -99,6 +107,7 @@ function makeTab(id) {
 		gwFetch: async (path, opts) => {
 			if (!opts || opts.method === 'GET') {
 				tab.gets++;
+				if (tab.lockOnGet) { tab.lockOnGet = false; tab.unlocked = false; }
 				if (!tab.mailbox) return { status: 200, json: async () => ({ present: false, version: 0 }) };
 				return { status: 200, json: async () => ({ present: true,
 					version: tab.mailbox.version, blob: tab.mailbox.blob }) };
@@ -122,7 +131,7 @@ function makeTab(id) {
 		deviceSelfName: () => 'Chromium on Linux',
 		syncMayCommitChunks: () => false,
 		syncCommitBlockedReason: () => 'tools are not up',
-		applySync: async () => ({}),
+		applySync: async (st, v) => { tab.applied.push(v); return {}; },
 	};
 	win.DaimondCloud = {
 		sha256: async (s) => {
@@ -178,6 +187,67 @@ for (const [name, id, blob] of CASES) {
 		try { return JSON.parse(Buffer.from(tab.mailbox.blob, 'base64').toString('utf8').slice(2)).chats[0].id === 'c1'; }
 		catch (e) { return false; }
 	})());
+}
+
+// ── A parcel that could not be TRIED is not unopenable (QA r572w B N1) ──
+//
+// Another device lands a GOOD parcel at v1. This page's first read of it fails for a
+// reason that says nothing about the parcel. It must not be taken as merged: the next
+// push merges it first, and only then lands. A real decrypt failure is still adopted,
+// and a version so adopted still merges when a later read can open it.
+
+console.log('\na parcel that could not be tried is not adopted unopened\n');
+
+const GOOD = b64('P:' + JSON.stringify({ v: 3, chats: [{ id: 'c2', messages: ['B work'] }], files: {},
+	filesComplete: true, devices: {}, ledger: [] }));
+const mergedHere = (tab) => {
+	try { return JSON.parse(tab.store.get(K_MERGED_AT) || '{}')[LOC]; } catch (e) { return undefined; }
+};
+async function seeded() {
+	const tab = makeTab({ epoch: 0, salt: 'mm' });
+	tab.unlocked = true;
+	await tab.win.DaimondSync.pull(true);			// an empty mailbox: this page has heard
+	tab.mailbox = { version: 1, blob: GOOD };
+	return tab;
+}
+
+for (const [name, spoil] of [
+	['a. Lock pressed mid-pull', (tab) => { tab.lockOnGet = true; }],
+	['b. out of memory in decrypt', (tab) => { tab.failNext = new RangeError('Out of memory'); }],
+]) {
+	const tab = await seeded();
+	spoil(tab);
+	const r = await tab.win.DaimondSync.pull(true);
+	check(name + ': the read fails, and v1 is not recorded as merged',
+		r < 0 && mergedHere(tab) !== 1, 'pull ' + r + ', mergedAt ' + mergedHere(tab));
+	tab.unlocked = true;
+	await tab.win.DaimondSync.push();
+	check(name + ': the next push merges v1 before it lands',
+		tab.applied.indexOf(1) >= 0 && tab.posts.length === 1 && tab.mailbox.version === 2,
+		'applied ' + JSON.stringify(tab.applied) + ', ' + tab.posts.length + ' POST(s), mailbox v' + tab.mailbox.version);
+}
+
+{
+	const name = 'c. a real decrypt failure (OperationError)';
+	const tab = await seeded();
+	tab.failNext = named('The operation failed for an operation-specific reason', 'OperationError');
+	const r = await tab.win.DaimondSync.pull(true);
+	check(name + ': is adopted unopened', r === 1 && mergedHere(tab) === 1 && tab.applied.length === 0,
+		'pull ' + r + ', mergedAt ' + mergedHere(tab));
+	await tab.win.DaimondSync.push();
+	check(name + ': and the push still lands', tab.posts.length === 1 && tab.mailbox.version === 2,
+		tab.posts.length + ' POST(s), mailbox v' + tab.mailbox.version);
+}
+
+{
+	const name = 'd. a version adopted unopened that a later read can open';
+	const tab = await seeded();
+	tab.failNext = named('unparseable', 'SyntaxError');
+	await tab.win.DaimondSync.pull(true);
+	const before = tab.applied.length;
+	await tab.win.DaimondSync.pull(true);
+	check(name + ': is merged, never skipped as already adopted',
+		before === 0 && tab.applied.indexOf(1) >= 0, 'applied ' + JSON.stringify(tab.applied));
 }
 
 console.log(failures ? '\n' + failures + ' FAILED\n' : '\nall sync-unread checks passed\n');

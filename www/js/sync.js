@@ -491,6 +491,9 @@
 	// already adopted is merged once more: the rounds that ran without a store merged every
 	// section but the files'. pullOnce's already-adopted skip would decline it until the mailbox moved.
 	var remergeOwed   = false;
+	// The version this page took without opening its parcel (`adoptUnopened`), or -1. It is
+	// never "already adopted" for the skip in pullOnce: a later pull that can open it merges it.
+	var unopenedAt    = -1;
 	// The version this session last merged again because the index was not known whole
 	// (push()), so a device that stays so pays one extra read per version, never per round.
 	var wholeTriedAt  = -1;
@@ -1982,7 +1985,11 @@
 		if (window.DaimondCloud && DaimondCloud.ready) { try { await DaimondCloud.ready(); } catch (e) { /* fallback path stays active */ } }
 		try {
 			var r = await pullOnce(quiet);
-			if (r >= 0) heardOk = true;
+			if (r >= 0 && !heardOk) {
+				heardOk = true;
+				// Once per page: what waited on a page that has heard (a held mail arrival) goes now.
+				try { window.dispatchEvent(new Event('daimond:heard')); } catch (e) { /* no window */ }
+			}
 			return r;
 		}
 		finally { notePulled(); }
@@ -2111,6 +2118,7 @@
 				state = JSON.parse(plainA);
 				plainA = null;
 			} catch (e) {
+				if (!unopenable(e)) return couldNotTry(e);
 				// The new key was adopted and proven against the record's own private
 				// key, so a parcel that still will not open under it is genuine
 				// corruption of THIS blob, not an epoch mismatch. Today's recovery.
@@ -2122,13 +2130,16 @@
 			}
 			trail('sync parsed');
 		} else if (re === le) {
-			var okB = null;
+			var okB = null, errB = null;
 			try {
 				var plainB = await DaimondIdentity.unwrap(env.sealed);	// throws on a wrong key.
 				trail('sync parcel', Math.round(plainB.length / 1024) + 'K plain');
 				okB = JSON.parse(plainB);
 				plainB = null;
-			} catch (e) { okB = null; }
+			} catch (e) { okB = null; errB = e; }
+			// Not opened because this page could not try (locked mid-pull, out of memory):
+			// nothing is known about the parcel yet, so neither branch below may judge it.
+			if (!okB && errB && !unopenable(errB)) return couldNotTry(errB);
 			if (okB) {
 				state = okB;
 				trail('sync parsed');
@@ -2160,6 +2171,7 @@
 								plainY = null;
 								trail('sync parsed');
 							} catch (e2) {
+								if (!unopenable(e2)) return couldNotTry(e2);
 								// Crossed to the other branch but its parcel still will not
 								// open under the now-proven key: genuine corruption of that
 								// blob. Keep local state and let our own go over it.
@@ -2209,17 +2221,18 @@
 			// passphrase), open it with that and merge -- the lost-edit race, closed. The
 			// retry then pushes our own state, at the current epoch and with our record,
 			// so nothing is lost and the lagging device adopts from it on its next pull.
-			var got = null;
+			var got = null, errC = null;
 			// A pre-change / old-build blob: try the current key first, then the previous.
 			if (!env.rec) {
 				try { got = JSON.parse(await DaimondIdentity.unwrap(env.sealed)); }
-				catch (e) { got = null; }
+				catch (e) { got = null; if (!unopenable(e)) errC = e; }
 			}
-			if (!got && (re === le - 1 || !env.rec)
+			if (!got && !errC && (re === le - 1 || !env.rec)
 				&& window.DaimondIdentity && DaimondIdentity.hasPrevKey && DaimondIdentity.hasPrevKey()) {
 				try { got = JSON.parse(await DaimondIdentity.unwrapPrev(env.sealed)); }
-				catch (e) { got = null; }
+				catch (e) { got = null; if (!unopenable(e)) errC = e; }
 			}
+			if (!got && errC) return couldNotTry(errC);
 			if (!got) {
 				// Older than the previous key we hold, or none held (a fresh page): carry
 				// our record over it. Finite -- the lagging device adopts on its next pull.
@@ -2273,7 +2286,7 @@
 		} catch (e) { /* cannot tell; leave the claim standing */ }
 		var mergeLoc = await fileLoc();
 		if (j.version === serverVersion && noted === serverVersion && pulledOk && reapplyTries === 0
-			&& !remergeOwed && locMerged(mergeLoc)) {
+			&& !remergeOwed && unopenedAt !== serverVersion && locMerged(mergeLoc)) {
 			// ONE TRAIL LINE STANDS IN FOR THE SECTION THIS PULL DID NOT RUN. Skipping
 			// `applyParcel` outright means `applySync`'s own `section('files', …)` never
 			// fires, and a trail that goes silent here is exactly the failure mode its own
@@ -2284,6 +2297,7 @@
 			lastFailed = [];
 		} else {
 			remergeOwed = false;		// this apply is the one it was owed
+			unopenedAt  = -1;			// opened at last: whatever was taken unopened is merged now
 			lastHeld   = [];
 			lastFailed = await applyParcel(state, j.version | 0);
 			applied = true;
@@ -4582,9 +4596,30 @@
 		try { if (window.DaimondCore && DaimondCore.syncIndexAt) DaimondCore.syncIndexAt(v | 0, how, state); }
 		catch (e) { log('index mark failed', e); }
 	}
+	/// Did the parcel itself refuse to open, rather than this page fail to try? Only the AES-GCM
+	/// tag refusing it (`OperationError`, a wrong key or a tampered or truncated blob), base64 that
+	/// will not decode (`InvalidCharacterError`) or plaintext that is not JSON (`SyntaxError`) say
+	/// anything about the parcel, and only while the page is still ready to have tried.
+	///
+	/// QA r572w B N1: a Lock pressed mid-pull (`requireUnlocked` throws a plain Error) or an iOS
+	/// RangeError in decrypt or parse was read as "unopenable", the version recorded as merged,
+	/// and the next push landed over another device's good parcel without merging it.
+	function unopenable(e) {
+		if (!ready()) return false;
+		var n = e && e.name;
+		return n === 'OperationError' || n === 'InvalidCharacterError' || n === 'SyntaxError';
+	}
+	/// The parcel was not opened because this page could not try: the version is not adopted,
+	/// and the read fails as a network fault does, so the next pull tries it again.
+	function couldNotTry(e) {
+		log('pull: could not try to open the parcel (' + ((e && e.name) || 'Error') + '); not adopting it, retried on the next pull');
+		restStatus();
+		return -1;
+	}
 	/// Adopt a version whose parcel this device could not open, to push its own state over it.
 	async function adoptUnopened(v, preRead) {
 		adoptAt(v, preRead, 'adopted', null);
+		if (serverVersion === v) unopenedAt = v;
 		// MERGED HERE, at this location, for there is nothing at `v` for any location to merge.
 		// Without it the push's merge gate (QFB4-1) re-pulls, meets this same exit and returns,
 		// so the push that is the whole recovery never runs (FIRE SYNC-UNREAD). Only where the

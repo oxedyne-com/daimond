@@ -1,1 +1,1 @@
-{"build":"e3e9b34cd4b0","note":"A daimon checks which messages it holds, a fold counts only answered turns, and sync no longer stalls on a slow call."}
+{"build":"fb1d17b215ac","note":"Changes from another device are no longer lost if this one cannot open them at first; long chats keep every answer."}

@@ -127,6 +127,9 @@ function device(name, door, turns, held) {
 	const W = { name, turns, busy: new Set(), hold: null, timers: new Map(), seq: 0, dead: false };
 	W.held = held || { uidValidity: 7, lastUid: 42 };
 	peer.DaimondMail = { held: () => W.held };
+	// A syncing page that has heard the mailbox, as every device here is.
+	peer.DaimondIdentity.everExisted = () => true;
+	peer.DaimondSync = { heard: () => true, entitled: () => true };
 	W.peer = peer;
 	W.A = { id: 'A', name: 'Work' }; W.B = { id: 'B', name: 'Email', messages: [] };
 	W.polls = [];		// the report-back round's 1.5 s idle polls, run by hand
@@ -135,10 +138,10 @@ function device(name, door, turns, held) {
 	});
 	W.tick = async () => { if (!W.dead) for (const fn of [...W.timers.values()]) await fn(); };
 	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail', 'mailMarkKey',
-		'mailClaimId', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks',
+		'mailClaimId', 'syncsHere', 'retryMailOnHeard', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks',
 		'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
-	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'MAIL_TRIES_MAX', '_mailTries', 'FOLLOW_MAX_MS'].map((n) => extractVar(APP, n)).join('\n');
+	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'MAIL_TRIES_MAX', '_mailTries', 'FOLLOW_MAX_MS', '_mailHeardArmed'].map((n) => extractVar(APP, n)).join('\n');
 	W.api = new Function('W', 'DaimondTriggers', 'window', 'door', 'CLOCK', 'setInterval', 'clearInterval', 'setTimeout', `
 		var diamonds = [W.A, W.B], currentDiamond = W.A, _mailOwed = {}, _mailRunning = {}, _lastSteer = {};
 		var _triggers = { A: { v: 1, actions: [] }, B: { v: 1, actions: [W.mailB] } };

@@ -38556,39 +38556,60 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out;
 	}
 
-	/// Which rows of the transcript `all` a fold record summarised, as a test `(m, n)` (C2-FOLD,
-	/// design amendment 23). A row is its turn by id: a prompt by its `mid`, any other row by its
-	/// `iturn`; the turn is covered when the record names it, or when its prompt is no later than
-	/// the record's `floorTs` (the ids it shed to stay under its bound). An untagged answer, from a
-	/// build before the tag, is covered only when the prompt above it is and it stands at or
-	/// before `through`. A record without `turns`, from before C2-FOLD, proves nothing and covers
-	/// nothing: every turn is laid behind its summary, and the next fold writes a listed record.
+	/// Which rows of the transcript `all` a fold record summarised, as a test `(m)` (FOLDIDS, QA
+	/// r572w A F1/F2). The record lists the message ids the engine held when it folded (`ids`): a
+	/// row is covered when its own `mid` is listed, or when its own `ts` is no later than `floorTs`
+	/// (the ids it shed to stay under its bound). A prompt the engine held is covered whether or not
+	/// it was ever answered; an answer it did not hold (one that came late, or another device's) is
+	/// not, and every rebuild lays it. A record without a list proves nothing and covers nothing.
 	function foldCover(fold, all) {
-		if (!fold || !fold.text || !Array.isArray(fold.turns)) return function () { return false; };
-		var ids = {}, floor = +fold.floorTs || 0, msgs = all || [];
-		fold.turns.forEach(function (t) { ids[String(t)] = 1; });
-		var at = {}, through = -1;
+		var held = foldHeld(fold, all);
+		if (!held) return function () { return false; };
+		return function (m) {
+			if (!m || !m.mid) return false;
+			if (held.ids[String(m.mid)] === 1) return true;
+			var ts = +m.ts || 0;
+			return held.floor > 0 && ts > 0 && ts <= held.floor;
+		};
+	}
+
+	/// The ids a fold record covers in the transcript `all`, as `{ ids, floor }`, or null for a
+	/// record that lists nothing.
+	///
+	/// A RECORD FROM BEFORE FOLDIDS names whole turns (`turns`, its `floorTs` a prompt time, C2-FOLD).
+	/// It is read as covering what it named: each turn's prompt, every row tagged with the turn, and an
+	/// untagged answer under its prompt at or before `through`. It is read here and nowhere else, and
+	/// the next fold over it writes the exact list in its place (`foldFrom`).
+	function foldHeld(fold, all) {
+		if (!fold || !fold.text) return null;
+		var ids = {};
+		if (Array.isArray(fold.ids)) {
+			fold.ids.forEach(function (t) { ids[String(t)] = 1; });
+			return { ids: ids, floor: +fold.floorTs || 0 };
+		}
+		if (!Array.isArray(fold.turns)) return null;
+		var turns = {}, floor = +fold.floorTs || 0, msgs = all || [], at = {}, through = -1, cur = null;
+		fold.turns.forEach(function (t) { turns[String(t)] = 1; });
 		msgs.forEach(function (m, n) {
 			if (!m) return;
 			if (m.role === 'user' && m.mid && at[String(m.mid)] === undefined) at[String(m.mid)] = m;
 			if (fold.through && m.mid === fold.through) through = n;
 		});
 		var turn = function (id, ts) {
-			if (ids[id] === 1) return true;
+			if (turns[id] === 1) return true;
 			var q = at[id];
 			return floor > 0 && ((q ? +q.ts : +ts) || 0) <= floor;
 		};
-		return function (m, n) {
-			if (!m) return false;
-			if (m.role === 'user') return m.mid ? turn(String(m.mid), m.ts) : false;
-			if (m.iturn) return turn(String(m.iturn), m.ts);
-			if (through < 0 || n > through) return false;
-			for (var k = n - 1; k >= 0; k--) {
-				var q = msgs[k];
-				if (q && q.role === 'user') return q.mid ? turn(String(q.mid), q.ts) : false;
-			}
-			return false;
-		};
+		msgs.forEach(function (m, n) {
+			if (!m) return;
+			if (m.role === 'user') cur = m;
+			if (!m.mid) return;
+			var hit = m.role === 'user' ? turn(String(m.mid), m.ts)
+				: m.iturn ? turn(String(m.iturn), m.ts)
+				: through >= 0 && n <= through && !!(cur && cur.mid) && turn(String(cur.mid), cur.ts);
+			if (hit) ids[String(m.mid)] = 1;
+		});
+		return { ids: ids, floor: 0 };
 	}
 
 	/// 'unheard' when the transcript holds a turn, above the first prompt a stored session holds
@@ -38617,25 +38638,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return '';
 	}
 
-	/// The bound on a fold record's text (design §5): the engine's fold notice is well under it.
+	// The bound on a fold record's text (design §5): the engine's fold notice is well under it.
 	var FOLD_TEXT_CAP = 16384;
-	/// The bound on its `turns` list, as JSON bytes (C2's 8 KiB): the oldest ids are shed into
-	/// `floorTs`, the latest prompt time among them.
-	var FOLD_TURNS_CAP = 8192;
+	// The bound on its `ids`, as JSON bytes: some 700 ids, where a fold at the 120k-token point
+	// lists a prompt and an answer per turn held, a few hundred. The oldest go first, into `floorTs`.
+	var FOLD_IDS_CAP = 16384;
 	var FOLD_HEAD = '[Daimond folded the earlier part';
 
-	/// The answers the transcript `msgs` holds, by turn (C2-N2): `by[turn][content]`, a tagged
-	/// answer by its `iturn`, an untagged one by the prompt above it; `any[content]` across turns.
+	/// The answers in the transcript `msgs`, by the prompt they answer: `by[turn]` the rows, and
+	/// `any[content]` across turns. An answer is linked to its prompt when it is saved (`iturn`). One
+	/// without the link, saved before FOLDIDS or by an older build, is filed under the prompt above
+	/// it: the old rule by position, which no answer saved since needs.
 	function foldAnswers(msgs) {
 		var by = {}, any = {}, cur = '';
 		(msgs || []).forEach(function (m) {
 			if (!m) return;
 			if (m.role === 'user') { cur = m.mid ? String(m.mid) : ''; return; }
 			if (m.role !== 'assistant' || m.provisional || typeof m.content !== 'string' || !m.content) return;
-			var id = m.iturn ? String(m.iturn) : cur;
-			if (!id) return;
-			(by[id] = by[id] || {})[m.content] = 1;
 			any[m.content] = 1;
+			var id = m.iturn ? String(m.iturn) : cur;
+			if (id && m.mid) (by[id] = by[id] || []).push(m);
 		});
 		return { by: by, any: any };
 	}
@@ -38645,13 +38667,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// before the first prompt it still holds after the notice. `before` is the list the turn
 	/// started from (`daimonPrior`); absent, the transcript up to that prompt stands for it.
 	///
-	/// THE RECORD NAMES THE TURNS IT COVERS (C2-FOLD, design amendment 23): `turns` is the
-	/// prompt ids the engine held before that prompt with their answers (C2-N2), plus `prev`'s when the engine held `prev`'s
-	/// summary, so a turn another device ran that reached this one only after the fold is not
-	/// covered, wherever its timestamp puts it, and every rebuild lays it (`foldCover`).
-	/// `through` (the transcript row just before that prompt) is kept for `recall` and for an
-	/// untagged answer. The text is capped at `FOLD_TEXT_CAP`, `turns` at `FOLD_TURNS_CAP`.
-	/// Stored with the chat (`withRecent`), so every device rebuilds from it (`daimonPrior`).
+	/// THE RECORD LISTS THE MESSAGE IDS THE ENGINE HELD (FOLDIDS, QA r572w A F1/F2): `ids` is every
+	/// prompt it held ahead of that prompt, answered or not, so an errored or stopped turn is covered
+	/// once and never laid again, every answer it held, matched to its prompt by the answer's own
+	/// link (`iturn`), and every other user row it held, such as a changed-files note. An answer that had not arrived, or arrived after the list was built, is not
+	/// listed, so every rebuild lays it (`foldCover`); so is another device's turn that reached this
+	/// one only after the fold. When the engine held `prev`'s summary, `prev`'s ids are carried.
+	/// `through` (the transcript row just before that prompt) is kept for `recall`. The text is
+	/// capped at `FOLD_TEXT_CAP`, `ids` at `FOLD_IDS_CAP`. Stored with the chat (`withRecent`), so
+	/// every device rebuilds from it (`daimonPrior`).
 	function foldFrom(rec, after, turnMid, prev, now, dev, before) {
 		var list = Array.isArray(after) ? after : [];
 		var at = -1;
@@ -38665,80 +38689,94 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (prev && prev.text === text) return prev;
 		var firstMid = String(turnMid || '');
 		for (var k = at + 1; k < list.length; k++) if (list[k] && list[k].role === 'user' && list[k].mid) { firstMid = String(list[k].mid); break; }
-		var msgs = rec.messages || [], through = null;
+		var msgs = rec.messages || [], through = null, cut = msgs.length;
 		for (var j = 0; j < msgs.length; j++) {
 			var m = msgs[j];
-			if (m && m.role === 'user' && String(m.mid || '') === firstMid) break;
+			if (m && m.role === 'user' && String(m.mid || '') === firstMid) { cut = j; break; }
 			if (m && m.mid && m.content && (m.role === 'user' || m.role === 'assistant')) through = m;
 		}
 		if (!through) return prev || null;
-		// The prompts the engine held ahead of `firstMid` with their answers (C2-N2), and `prev`'s turns
-		// where it held `prev`'s summary. A prompt whose answer had not arrived stays uncovered, so the
-		// answer, when it lands, is laid by every rebuild (`foldCover`) rather than lost.
-		var held = Array.isArray(before) ? before : msgs, seen = {}, turns = [], withPrev = !Array.isArray(before);
-		var add = function (id) { if (id && seen[id] !== 1) { seen[id] = 1; turns.push(id); } };
-		var ans = foldAnswers(msgs);
-		var answered = function (id, h) {
-			var mine = ans.by[id];
-			if (!mine) return false;									// no answer in the transcript yet
-			if (!Array.isArray(before)) return true;					// the transcript stands for the engine
+		var listed = Array.isArray(before), held = listed ? before : msgs.slice(0, cut);
+		var seen = {}, ids = [], withPrev = !listed, ans = foldAnswers(msgs), self = String(dev || '');
+		var add = function (id) { if (id && seen[id] !== 1) { seen[id] = 1; ids.push(id); } };
+		// The answers of prompt `id`, standing at `h` in the engine's list, that the engine held: one
+		// laid in the transcript's words, or this device's own in the engine's form (the first answer
+		// after the prompt, in words no transcript answer has).
+		var answers = function (id, h) {
+			var said = {}, own = false;
 			for (var k = h + 1, near = true; k < held.length; k++) {
 				var z = held[k];
 				if (!z) continue;
 				if (z.role === 'user') { if (z.mid && String(z.mid) === firstMid) break; near = false; continue; }
-				if (z.role !== 'assistant' || typeof z.content !== 'string') continue;
-				if (mine[z.content] === 1) return true;					// its answer, laid from the transcript
-				if (near && ans.any[z.content] !== 1) return true;		// its answer, in the engine's own form
+				if (z.role !== 'assistant' || typeof z.content !== 'string' || !z.content) continue;
+				said[z.content] = 1;
+				if (near && listed && ans.any[z.content] !== 1) own = true;
 			}
-			return false;
+			(ans.by[id] || []).forEach(function (r) {
+				if (said[r.content] === 1 || (own && (!r.ranOn || String(r.ranOn) === self))) add(String(r.mid));
+			});
 		};
+		// A user row the engine holds without an id (a turn's changed-files note, in its session's form)
+		// is the transcript's earliest unlisted row of those words ahead of the cut.
+		var spare = {};
+		for (var c = 0; c < cut; c++) {
+			var w = msgs[c];
+			if (w && w.role === 'user' && w.mid && typeof w.content === 'string') (spare[w.content] = spare[w.content] || []).push(String(w.mid));
+		}
 		for (var h = 0; h < held.length; h++) {
 			var y = held[h];
 			if (!y || y.role !== 'user') continue;
 			if (y.mid && String(y.mid) === firstMid) break;
 			if (prev && prev.text && y.content === prev.text) withPrev = true;
-			if (y.mid && answered(String(y.mid), h)) add(String(y.mid));
+			if (!y.mid) {
+				var sp = spare[y.content];
+				while (sp && sp.length && seen[sp[0]] === 1) sp.shift();
+				if (sp && sp.length) add(sp.shift());
+				continue;
+			}
+			add(String(y.mid));
+			answers(String(y.mid), h);
 		}
-		var floorTs = 0;
-		if (withPrev && prev && Array.isArray(prev.turns)) {
-			prev.turns.forEach(function (t) { add(String(t)); });
-			floorTs = +prev.floorTs || 0;
-		}
-		// Bounded: the oldest prompts' ids go first, into `floorTs`.
+		var floorTs = 0, ph = withPrev ? foldHeld(prev, msgs) : null;	// a record from before FOLDIDS is read into the list here
+		if (ph) { Object.keys(ph.ids).forEach(add); floorTs = ph.floor; }
+		// Bounded: the oldest rows' ids go first, into `floorTs`; an id the transcript no longer holds goes before any.
 		var tsOf = {};
-		msgs.forEach(function (m) { if (m && m.role === 'user' && m.mid) tsOf[String(m.mid)] = +m.ts || 0; });
-		turns.sort(function (p, q) { return (tsOf[p] || 0) - (tsOf[q] || 0); });
-		var size = JSON.stringify(turns).length;
-		while (turns.length && size > FOLD_TURNS_CAP) {
-			var shed = turns.shift();
+		msgs.forEach(function (m) { if (m && m.mid) tsOf[String(m.mid)] = +m.ts || 0; });
+		ids.sort(function (p, q) { return (tsOf[p] || 0) - (tsOf[q] || 0); });
+		var size = JSON.stringify(ids).length;
+		while (ids.length && size > FOLD_IDS_CAP) {
+			var shed = ids.shift();
 			size -= JSON.stringify(shed).length + 1;
 			floorTs = Math.max(floorTs, tsOf[shed] || 0);
 		}
-		var out = { through: String(through.mid), throughTs: +through.ts || 0, turns: turns, at: now, dev: String(dev || ''), text: text };
+		var out = { through: String(through.mid), throughTs: +through.ts || 0, ids: ids, at: now, dev: self, text: text };
 		if (floorTs > 0) out.floorTs = floorTs;
 		return out;
 	}
 
 	/// Two devices' fold records for one chat, both sides picking the same (C2-FOLD). Never one
-	/// that lacks a turn the other covers where the other lacks none of its: the one covering
-	/// the other's `turns` wins, then a listed record over an unlisted one (which proves nothing),
-	/// then the one covering more turns; the turns the winner lacks are laid as prose by every
-	/// rebuild (`foldCover`), and the next fold covers them. Two unlisted records: the longer
-	/// range (`throughTs`). Then the earlier one (`at`), then the lesser device id.
+	/// that lacks a row the other covers where the other lacks none of its: the one covering the
+	/// other's list wins, then an exact list (`ids`, FOLDIDS) over a list of turns from before it,
+	/// and either over an unlisted record (which proves nothing), then the one covering more; the
+	/// rows the winner lacks are laid as prose by every rebuild (`foldCover`), and the next fold
+	/// covers them. Two unlisted records: the longer range (`throughTs`). Then the earlier one
+	/// (`at`), then the lesser device id.
 	function mergeFold(a, b) {
 		if (!a || !a.text) return (b && b.text) ? b : null;
 		if (!b || !b.text) return a;
-		var la = Array.isArray(a.turns), lb = Array.isArray(b.turns);
-		if (la !== lb) return la ? a : b;
-		if (la) {
+		var kind = function (f) { return Array.isArray(f.ids) ? 2 : Array.isArray(f.turns) ? 1 : 0; };
+		var ka = kind(a), kb = kind(b);
+		if (ka !== kb) return ka > kb ? a : b;
+		if (ka) {
+			var of = function (f) { return ka === 2 ? f.ids : f.turns; };
 			var has = function (f, g) {
 				var ids = {};
-				f.turns.forEach(function (t) { ids[String(t)] = 1; });
-				return g.turns.every(function (t) { return ids[String(t)] === 1; });
+				of(f).forEach(function (t) { ids[String(t)] = 1; });
+				return of(g).every(function (t) { return ids[String(t)] === 1; });
 			};
 			var ab = has(a, b), ba = has(b, a);
 			if (ab !== ba) return ab ? a : b;
-			if (a.turns.length !== b.turns.length) return a.turns.length > b.turns.length ? a : b;
+			if (of(a).length !== of(b).length) return of(a).length > of(b).length ? a : b;
 		}
 		else if ((a.throughTs || 0) !== (b.throughTs || 0)) return (a.throughTs || 0) > (b.throughTs || 0) ? a : b;
 		if ((a.at || 0) !== (b.at || 0)) return (a.at || 0) < (b.at || 0) ? a : b;
@@ -55350,11 +55388,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var tid = mailClaimId(id, occasion), self = selfDeviceId();
 		if (!tid || !self || !window.DaimondLease || !DaimondLease.take
 			|| !window.DaimondPeer || !DaimondPeer.syncCas) return { go: true };
-		// A page that has never heard back from the mailbox -- no sync tier, Safe mode, a sync
-		// door that never answered -- has no peer to coordinate with: its door would only ever
-		// read `unread`, and standing down on that would silence every mail trigger for good
-		// (S1MF-live). A page that has heard it keeps the stand-down below.
-		if (window.DaimondSync && window.DaimondSync.heard && !window.DaimondSync.heard()) return { go: true };
+		// A page that can NEVER coordinate -- no identity, Safe mode, no sync tier -- has no peer
+		// to defer to: its door would only ever read `unread`, and standing down on that would
+		// silence every mail trigger for good (S1MF-live).
+		var sync = window.DaimondSync;
+		if (!syncsHere() || (sync.entitled && !sync.entitled())) return { go: true };
+		// A syncing page that has not heard back YET is another matter: the arrival may be one
+		// another device already claimed and ran, so it is held owed, never run blind, and asked
+		// again when this page first hears the mailbox (QA r572w B N2). A door unreachable for
+		// good keeps it held, retried every tick and on the pull that finally answers.
+		if (sync.heard && !sync.heard()) {
+			retryMailOnHeard();
+			return { go: false, why: 'unheard' };
+		}
 		if (_mailRunning[tid]) return { go: false, why: 'running' };
 		if ((_mailTries[tid] | 0) >= MAIL_TRIES_MAX) return { drop: true, why: 'tries' };	// tried enough here (Q4)
 		var lo = 0, hi = 0;
@@ -55376,6 +55422,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!why) return { go: false, why: 'held' };
 		if (DaimondPeer.standDownUndecided && DaimondPeer.standDownUndecided(why)) return { go: false, why: why };
 		return { go: true };
+	}
+
+	/// Ask the owed mail again the moment this page first hears the mailbox (`daimond:heard`),
+	/// rather than at the next tick. Armed once per page.
+	var _mailHeardArmed = false;
+	function retryMailOnHeard() {
+		if (_mailHeardArmed) return;
+		_mailHeardArmed = true;
+		try {
+			window.addEventListener('daimond:heard', function () {
+				Triggers.retryMail().catch(function () { /* asked again next tick */ });
+			}, { once: true });
+		} catch (e) { /* the tick asks again */ }
 	}
 
 	/// A mail trigger that did not run, written to the trail and the debug feed: a refusal is
@@ -56401,6 +56460,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	}
 
+	/// Has this page anything to pull from: sync loaded, an identity, and not a safe start?
+	function syncsHere() {
+		try {
+			return !!(window.DaimondSync && window.DaimondIdentity
+				&& !(window.DaimondSafe && window.DaimondSafe.on())
+				&& (window.DaimondIdentity.exists() || window.DaimondIdentity.everExisted()));
+		} catch (e) { return false; }
+	}
+
 	/// Run `fn` once this session has heard from the account's other devices: after its
 	/// first pull has run, or at once on a device with nothing to pull from -- no
 	/// identity, or a safe start.
@@ -56409,15 +56477,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// gateway is down has no news coming. What runs here must therefore be safe on a
 	/// record older than the account's, which `unseed`'s stamp is.
 	function afterFirstPull(fn) {
-		var syncs = false;
-		try {
-			syncs = !!(window.DaimondSync && window.DaimondIdentity
-				&& !(window.DaimondSafe && DaimondSafe.on())
-				&& (DaimondIdentity.exists() || DaimondIdentity.everExisted()));
-		} catch (e) { syncs = false; }
 		var done = false;
 		function go() { if (done) return; done = true; fn(); }
-		if (!syncs || (DaimondSync.pulled && DaimondSync.pulled())) { go(); return; }
+		if (!syncsHere() || (DaimondSync.pulled && DaimondSync.pulled())) { go(); return; }
 		window.addEventListener('daimond:pulled', go, { once: true });
 		setTimeout(go, SWEEP_WAIT_MS);
 	}
@@ -67230,12 +67292,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				steerPre || undefined, !!(how && how.pendingOnly), String(dumid), selfDeviceId()), rec);
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {
-				// A DETACHED turn stamps the answer with the errand's turn id, so the
-				// runErrand finished-guard (an assistant message whose `iturn` is the turn,
-				// with content) stands a re-collect down before it can re-take the released
-				// lease and re-bill -- the transcript belt to the `done` report's braces.
+				// EVERY ANSWER IS LINKED TO ITS PROMPT (FOLDIDS): `iturn` is the prompt's mid, which
+				// for a DETACHED turn is the errand's turn id, so the runErrand finished-guard (an
+				// assistant message whose `iturn` is the turn, with content) stands a re-collect
+				// down before it can re-take the released lease and re-bill. A local turn's prompt
+				// mid is minted here and names no errand, so the guard never reads it; the fold
+				// (`foldFrom`) pairs the answer by it, never by where it stands.
 				var dAns = { role: 'assistant', content: replyText,
-					mid: dmid, iturn: detached ? String(detached.turnId) : undefined,
+					mid: dmid, iturn: String(dumid),
 					ranOn: selfDeviceId(), ts: Date.now() };
 				if (daimonProd()) dAns.prod = [dprod];
 				rec.messages.push(dAns);
