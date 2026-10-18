@@ -1589,6 +1589,11 @@
 	/// A JSON member on screen: a quoted key, a colon, and the start of a value.
 	var JSON_RUN = /"[A-Za-z_][\w-]*"\s*:\s*["\[{0-9tfn]/;
 	var SUMMARY_PREFIX = 40;
+	/// A JavaScript engine's error as a page prints it: its name, a colon, the message.
+	var SCRIPT_ERROR = /\b((?:Reference|Type|Syntax|Range|URI|Eval)Error): /;
+	/// `settle`: how long a page's file reads must stay quiet before it is measured, and the most
+	/// it is waited for, so a page that reads, then fails, is measured after the failure.
+	var SETTLE_QUIET_MS = 700, SETTLE_MAX_MS = 6000;
 
 	/// The verdict on what the page showed: `{ proof: 'pass' | 'FAIL: <reasons>', debug }`, where
 	/// `debug` counts the debug nodes left on screen (`#dbg`, `<pre>`, KEYMAP, DKEYS) for the
@@ -1617,6 +1622,11 @@
 				+ (missing.length === 1 ? ' is not on screen' : ''));
 		}
 		if (JSON_RUN.test(f.text) || /\{"/.test(f.text)) why.push('raw JSON is on screen');
+		// A page that catches its own failure and prints it ("Could not open the log: ReferenceError:
+		// readLanes is not defined", TMPL2) did not load, though nothing was thrown past it.
+		// Only the error's NAME is said, from a fixed set: the page's own words never reach the verdict.
+		var shown = SCRIPT_ERROR.exec(f.text);
+		if (shown) why.push('a script error (' + shown[1] + ') is printed on screen');
 		if (num(f.dbg)) why.push('a #dbg debug panel is on screen');
 		if (num(f.keymap) || num(f.dkeys)) why.push('a KEYMAP or DKEYS debug dump is on screen');
 		var g = num(f.svg) + num(f.canvas) + num(f.img) + num(f.bar), want = num(gmin);
@@ -1647,7 +1657,7 @@
 	/// works on a page just edited, which is the point: a daimon on a handed-off turn
 	/// has no page on screen, and a daimon that cannot see what it built guesses.
 	///
-	/// `req` is `{ page, data, id, width, sel, max_w, background, png }` (`png: false` asks for the
+	/// `req` is `{ page, data, id, width, sel, max_w, background, png, settle }` (`png: false` asks for the
 	/// table alone, which is what a re-measure after an edit wants): the stored page text
 	/// (empty for the shipped default) and the stored `crystal.json` text, read by the
 	/// caller from the Diamond. The frame is made by the very function `mount` uses,
@@ -1679,6 +1689,7 @@
 		var high = width < 768 ? 844 : 900;
 		var sel = str(req.sel).slice(0, PROBE_SEL_MAX);
 		var wantPng = req.png !== false, wantProof = req.proof === true, gmin = Number(req.graphics_min) || 0;
+		var settleFirst = req.settle === true;
 		var looks = arr(req.look).filter(function (t) { return typeof t === 'string' && t.trim(); })
 			.slice(0, LOOK_MAX).map(function (t) { return t.trim().slice(0, LOOK_CHARS); });
 		var page = str(req.page).trim() ? draw(String(req.page)) : DEFAULT_PAGE;
@@ -1707,12 +1718,14 @@
 			frame.setAttribute('aria-hidden', 'true');
 			frame.tabIndex = -1;
 			var settled = false, loads = 0, ready = false, rendered = false, asked = 0, readyT = 0, renderT = 0, replyT = 0;
+			var quietT = 0, settleT = 0;
 			var answered = false, drew = [];
 
 			function end(fn, v) {
 				if (settled) return;
 				settled = true;
 				clearTimeout(readyT); clearTimeout(renderT); clearTimeout(replyT);
+				clearTimeout(quietT); clearTimeout(settleT);
 				window.removeEventListener('message', onMsg);
 				if (frame.parentNode) frame.parentNode.removeChild(frame);
 				try { URL.revokeObjectURL(made.url); } catch (e) { /* already gone */ }
@@ -1724,8 +1737,17 @@
 				msg.dc = 1; msg.v = PROTOCOL;
 				try { w.postMessage(msg, '*'); } catch (e) { /* the frame went away */ }
 			}
+			// With `settle`, the probe waits for the page's file reads to go quiet (each `asset` asked
+			// starts the wait again), up to SETTLE_MAX_MS, so what it reads is the page after its load.
+			function soon() {
+				if (!settleFirst) { ask(); return; }
+				if (!settleT) settleT = setTimeout(ask, SETTLE_MAX_MS);
+				clearTimeout(quietT);
+				quietT = setTimeout(ask, SETTLE_QUIET_MS);
+			}
 			function ask() {
 				if (asked || settled) return;
+				clearTimeout(quietT); clearTimeout(settleT);
 				asked = ++probeSeq;
 				say({ cmd: 'probe', id: asked, sel: sel, png: wantPng, proof: wantProof, look: looks,
 					max_w: Number(req.max_w) > 0 ? Math.min(Number(req.max_w), 4000) : 0,
@@ -1748,15 +1770,17 @@
 						say({ cmd: 'data', data: wireData(data, req, document.body, names) });
 						// A page that says `rendered` is measured then; one that never does, after the
 						// same grace the on-screen frame gives it.
-						renderT = setTimeout(ask, FALLBACK_MS);
+						renderT = setTimeout(soon, FALLBACK_MS);
 						break;
 					case 'rendered':
 						if (!rendered) drew = arr(m.keys).filter(function (k) { return typeof k === 'string'; });
-						rendered = true; clearTimeout(renderT); ask(); break;
+						rendered = true; clearTimeout(renderT); soon(); break;
 					case 'asset':
 						// The same answer the on-screen frame gets, for this Diamond's own folder only.
 						serveAsset(m, req.id, assetFor(req)).then(function (reply) {
-							if (!settled) say(reply);
+							if (settled) return;
+							say(reply);
+							if (quietT && !asked) soon();
 						});
 						break;
 					case 'probed':

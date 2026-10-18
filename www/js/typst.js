@@ -314,6 +314,14 @@ function literalAt(text, range) {
 	return hits[0].val;
 }
 
+// What the project gather hands the compiler, as `ASSET_EXTS` in src/wasm/typst.rs lists it,
+// with the sources themselves.
+const GATHERED_EXTS = new Set([
+	'typ', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp',
+	'bmp', 'dib', 'tif', 'tiff', 'ico', 'heic', 'heif',
+	'bib', 'csv', 'json', 'yaml', 'yml', 'toml', 'xml', 'txt',
+]);
+
 /// One diagnostic, said in terms of what this compiler was actually given.
 ///
 /// # Arguments
@@ -322,7 +330,7 @@ function literalAt(text, range) {
 ///           how many files went in, where the root was put, which folders a
 ///           root-relative name was looked for in, and whether this was a
 ///           single-file compile with no project behind it at all.
-function explainDiag(d, ctx) {
+export function explainDiag(d, ctx) {
 	const where = d.path ? (d.path + (rangeLine(d.range) >= 0 ? ':' + (rangeLine(d.range) + 1) : '')) : '';
 	const head = (d.severity || 'error') + (where ? ' at ' + where : '') + ': ';
 	const msg = String(d.message || '');
@@ -340,6 +348,18 @@ function explainDiag(d, ctx) {
 			+ 'around it. Compile this document with the command-line typst, which can fetch '
 			+ 'the package — or copy what it provides into the project as ordinary files and '
 			+ 'import it by path.';
+	}
+	// A name whose extension is no file the gather hands over -- a Word document in an
+	// image() call, say -- is not a missing file, and the gathered-files message below
+	// would send the reader looking for one (UNBLOCK-25).
+	const nameExt = (/\.([A-Za-z0-9]+)$/.exec(named) || [])[1];
+	if (nameExt && !GATHERED_EXTS.has(nameExt.toLowerCase())
+		&& /failed to load file|access denied|file not found|unknown image format|failed to decode/i.test(msg)) {
+		return head + '"' + named + '" is a .' + nameExt + ' file, which typst cannot read or place. '
+			+ 'A picture can be PNG, JPEG, GIF, WebP or SVG, and a BMP, TIFF, ICO or HEIC is '
+			+ 'converted when it is gathered; data can be CSV, JSON, YAML, TOML, XML or text. '
+			+ 'Name a file of one of those kinds here.'
+			+ '\n  typst said: ' + msg;
 	}
 	if (/failed to load file/i.test(msg) || /access denied/i.test(msg)) {
 		if (ctx.single) {

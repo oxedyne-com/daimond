@@ -2080,6 +2080,7 @@ function buildS61Sandbox(P, spy) {
 		chatIsActiveErrand: () => false,					// no errand in flight here
 		_askCard:           null,
 		diag:               () => {},
+		maybeAutoDispatch:  async () => false,		// the election keeps a retry here
 	};
 	const src = [
 		daimondFuncSource('turnMessagesOf'),
@@ -2087,6 +2088,7 @@ function buildS61Sandbox(P, spy) {
 		daimondFuncSource('retryTurn'),
 		daimondFuncSource('answerAgain'),
 		daimondFuncSource('askAgain'),
+		'async ' + daimondFuncSource('retryRouted'),		// every Retry goes through the election
 		daimondFuncSource('tailAfter'),
 		daimondFuncSource('sessionCut'),		// a retraction cuts the stored session (1e)
 	].join('\n')
@@ -2142,7 +2144,7 @@ async function runLocalAskAnswerGuardAcceptance(P, check) {
 			{ mid: 'm3', iturn: 'T3', role: 'user', content: 'Other: leave them' },
 			{ mid: 'm4', iturn: 'T3', role: 'assistant', content: 'Done.' },
 		] };
-		win.retryTurn(chat, 'T3', 'Other: leave them');
+		await win.retryTurn(chat, 'T3', 'Other: leave them');
 		check('S6-1 retryTurn: a completed local ask-answer reopens the question, never resends it bare',
 			spy.ranTurn.length === 0 && spy.tombstoned.includes('m3') && chat.messages.length === 0);
 	}
@@ -2155,7 +2157,7 @@ async function runLocalAskAnswerGuardAcceptance(P, check) {
 			{ mid: 'm5', iturn: 'T4', role: 'user', content: 'What is the capital of France?' },
 			{ mid: 'm6', iturn: 'T4', role: 'assistant', content: 'Paris.' },
 		] };
-		win.retryTurn(chat, 'T4', 'What is the capital of France?');
+		await win.retryTurn(chat, 'T4', 'What is the capital of France?');
 		check('S6-1 retryTurn: an ordinary retry is still retracted and re-run (unchanged)',
 			spy.ranTurn.length === 1 && spy.ranTurn[0].text === 'What is the capital of France?');
 	}
@@ -3742,13 +3744,16 @@ async function runHeartbeatContainment(P, L, check) {
 		await tick();
 		await new Promise((r) => setTimeout(r, 0));
 		check('F4: inside the deadline a hung run is still running', settled === null);
-		clock = sync.leases()[TID].deadline + 1;		// past the claim's own deadline
+		// UNBLOCK-25: the deadline bounds only the START. A running turn holds its lease by
+		// renewing it ahead of its expiry; one whose ticker could not run (asleep, wedged) sees
+		// the lease LAPSE unrenewed, and the run ends there, so no Retry elsewhere runs it twice.
+		clock = sync.leases()[TID].expiry + 1;		// past the lease it holds, never renewed
 		await tick();
 		for (let i = 0; i < 5 && settled === null; i++) await new Promise((r) => setTimeout(r, 0));
-		check('F4: past the lease deadline the hung run ENDS (runErrand returns)',
-			!!settled && settled.aborted === true && settled.why === 'deadline', JSON.stringify(settled));
-		check('F4: and it aborted the engine, naming the deadline', whys[0] === 'lease_deadline', JSON.stringify(whys));
-		check('F4: the local run is dropped (endLocal)', ended.length === 1 && ended[0] === 'deadline');
+		check('F4: past its lapsed lease the hung run ENDS (runErrand returns)',
+			!!settled && settled.aborted === true && settled.why === 'lapsed', JSON.stringify(settled));
+		check('F4: and it aborted the engine, naming the lapse', whys[0] === 'lease_lapsed', JSON.stringify(whys));
+		check('F4: the local run is dropped (endLocal)', ended.length === 1 && ended[0] === 'lapsed');
 		const rep = posts.find((r) => r && r.t === 'report');
 		check('F4: an ABORTED report goes home, naming the runner',
 			!!rep && rep.status === 'aborted' && /argonaut/.test(String(rep.why)) && rep.to === 'PHONE', JSON.stringify(rep));

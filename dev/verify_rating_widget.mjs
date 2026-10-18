@@ -216,7 +216,7 @@ const stored = (cid, s = D) => s.page.evaluate(async (c) => {
 }, cid);
 const ratings = async (cid, s = D) => (await stored(cid, s)).filter((m) => m && m.role === 'rating_log');
 const mq = (mid) => `#chat-output .ctile[data-mid="${mid}"]`;
-/// The visible copy of a control on answer `mid`: the header form or the row form, whichever shows.
+/// The visible copy of a control on answer `mid` (one form since UNBLOCK-10, the row under the answer).
 const ctl = (mid, cls, s = D) => s.page.locator(`${mq(mid)} .${cls} >> visible=true`).first();
 const has = async (loc) => (await loc.count()) > 0;
 async function flush(cid, s = D) {
@@ -258,7 +258,7 @@ async function turn(text, s = D) {
 async function tap(mid, which, s = D) {
 	const b = ctl(mid, 'ctile-rate-' + which, s);
 	need(await has(b), `no visible ${which} control on answer ${mid}`);
-	await b.click({ force: true });
+	await b.click();
 	await sleep(150);
 }
 const LONG = Array.from({ length: 140 }, (_, i) => 'sentence' + i).join(' ');
@@ -285,7 +285,7 @@ await section('W1', async () => {
 	for (const [i, m] of a.entries()) {
 		const f = await facts(String(m.mid));
 		check(`W1: answer ${i + 1}'s live tile carries data-mid`, f.tile === true, 'no tile with data-mid ' + m.mid);
-		check(`W1: answer ${i + 1} shows exactly one rating group (the other form is hidden)`, f.visible === 1 && f.groups >= 2, `groups ${f.groups}, visible ${f.visible}`);
+		check(`W1: answer ${i + 1} mounts exactly one rating group, and it shows (UNBLOCK-10: one form)`, f.visible === 1 && f.groups === 1, `groups ${f.groups}, visible ${f.visible}`);
 		check(`W1: answer ${i + 1}'s group is a labelled group of up, down and details, none lit`,
 			f.role === 'group' && !!f.label && f.up && f.down && f.more && f.popup === 'dialog' && f.lit === '' && !f.detail, J({ role: f.role, label: f.label, popup: f.popup, lit: f.lit }));
 	}
@@ -295,11 +295,11 @@ await section('W1', async () => {
 	check('W1: no group on a user tile, a tool tile or anywhere but an answer', stray === 0, stray + ' stray');
 	// Mid-turn: nothing on the streaming answer or the empty placeholder.
 	await D.page.fill('#chat-input', '@slow 3500 STREAMING-W1');
-	await D.page.click('#chat-send', { force: true });
+	await D.page.click('#chat-send');
 	await sleep(1200);
 	const mid = await D.page.evaluate(() => ({ groups: document.querySelectorAll('#chat-output .ctile-rate:not(.turn-file-rate)').length,
 		tiles: [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant')].length }));
-	check('W1: nothing is mounted on a streaming answer or its placeholder', mid.groups === 0 || mid.groups === 2 * a.length, `${mid.groups} groups over ${mid.tiles} assistant tiles, ${a.length} answers settled`);
+	check('W1: nothing is mounted on a streaming answer or its placeholder', mid.groups === 0 || mid.groups === a.length, `${mid.groups} groups over ${mid.tiles} assistant tiles, ${a.length} answers settled`);
 	await waitFor(async () => (await answersOf(cid)).length > a.length, 20000);
 	await sleep(700);
 	const a4 = (await answersOf(cid)).pop();
@@ -414,7 +414,7 @@ await section('W4', async () => {
 	const rowLoc = ctl(String(a[2].mid), 'ctile-rate-tags');
 	const stillThere = await has(rowLoc);
 	check('W4: the chip row is still under answer 3 three seconds after the tap', stillThere, 'gone: the burst was committed early');
-	if (stillThere) await rowLoc.locator('.tile-dlg-level').nth(3).click({ force: true, timeout: 5000 });
+	if (stillThere) await rowLoc.locator('.tile-dlg-level').nth(3).click({ timeout: 5000 });
 	const tLast = await D.page.evaluate(() => Date.now());
 	await sleep(3200);
 	const held = { pending: await pending(cid), written: (await ratings(cid)).length - n0 };
@@ -465,7 +465,7 @@ await section('W6', async () => {
 	let f = await facts(mid);
 	need(f.chips, 'no chip row after a down tap');
 	check('W6: the down tags in form order, with their labels', J(f.chips.map((c) => c.t)) === J(DOWN.map((d) => d[1])), J(f.chips.map((c) => c.t)));
-	await ctl(mid, 'ctile-rate-tags').locator('.tile-dlg-level').nth(3).click({ force: true });
+	await ctl(mid, 'ctile-rate-tags').locator('.tile-dlg-level').nth(3).click();
 	f = await facts(mid);
 	check('W6: a toggle presses the chip and writes nothing yet', f.chips.filter((c) => c.on).map((c) => c.t).join() === 'Too long' && (await ratings(cid)).length === n0 && (await pending(cid)) === 1, J(f.chips.filter((c) => c.on)));
 	await flush(cid);
@@ -504,12 +504,12 @@ const card = (s = D) => s.page.locator('.rate-card >> visible=true').first();
 async function openPopup(mid, s = D) {
 	const b = ctl(mid, 'ctile-rate-more', s);
 	need(await has(b), 'no details control on answer ' + mid);
-	await b.click({ force: true });
+	await b.click();
 	await s.page.waitForSelector('.rate-card', { timeout: 4000 }).catch(() => {});
 	need(await has(card(s)), 'the details control opens no popup');
 }
 const closePopup = async (how = 'cross', s = D) => {
-	if (how === 'cross') await s.page.locator('.rate-card .ui-close').first().click({ force: true });
+	if (how === 'cross') await s.page.locator('.rate-card .ui-close').first().click();
 	else await s.page.keyboard.press('Escape');
 	await sleep(300);
 };
@@ -518,7 +518,7 @@ const tagBtn = (i, s = D) => s.page.locator('.rate-card .ctile-rate-tags .tile-d
 const dimBtn = (row, v, s = D) => s.page.locator('.rate-card .rate-dim').nth(row).locator('.tile-dlg-level').nth(v);
 async function openDetails(s = D) {
 	const on = await s.page.evaluate(() => { const d = document.querySelector('.rate-card details'); return !!d && d.open; });
-	if (!on) await s.page.locator('.rate-card details > summary').first().click({ force: true });
+	if (!on) await s.page.locator('.rate-card details > summary').first().click();
 	await sleep(200);
 }
 // ══ FV ═══════════════════════════════════════════════════════════════════
@@ -561,12 +561,12 @@ await section('W8', async () => {
 	await openPopup(mid);
 	check('W8: the scale is five steps in words, in one row', (await stepBtn(0).count()) === 1 && (await D.page.locator('.rate-card .rate-scale .tile-dlg-level').count()) === 5
 		&& J(await D.page.locator('.rate-card .rate-scale .tile-dlg-level').allTextContents()) === J(['Useless', 'Poor', 'Fine', 'Good', 'Great']), J(await D.page.locator('.rate-card .rate-scale .tile-dlg-level').allTextContents()));
-	await stepBtn(0).click({ force: true });
-	await tagBtn(2).click({ force: true }); await tagBtn(3).click({ force: true });
+	await stepBtn(0).click();
+	await tagBtn(2).click(); await tagBtn(3).click();
 	await openDetails();
 	const nDims = await D.page.locator('.rate-card .rate-dim').count();
 	check('W8: Details holds the four dimensions and the words field', nDims === 4 && (await D.page.locator('.rate-card textarea.rate-said-input').count()) === 1, nDims + ' dims');
-	await dimBtn(0, 1).click({ force: true });
+	await dimBtn(0, 1).click();
 	await D.page.locator('.rate-card textarea.rate-said-input').fill(NOTE);
 	const where = (await D.page.locator('.rate-card .rate-where').innerText().catch(() => '')).trim();
 	const cm = m.prod[0].cm;
@@ -602,13 +602,13 @@ await section('W9', async () => {
 	const { cid } = await seedMain();
 	if (!w8) {	// stand alone: make a head with detail through the popup
 		const m = await freshAnswer('W9'); need(m, 'no answer to rate');
-		await openPopup(String(m.mid)); await stepBtn(0).click({ force: true }); await closePopup('cross'); await flush(cid);
+		await openPopup(String(m.mid)); await stepBtn(0).click(); await closePopup('cross'); await flush(cid);
 		w8 = { mid: String(m.mid), cid };
 	}
 	const n0 = (await ratings(cid)).length;
 	await openPopup(w8.mid);
 	need(await has(D.page.locator('.rate-card .rate-clear')), 'no Clear button on a rated product');
-	await D.page.locator('.rate-card .rate-clear').click({ force: true });
+	await D.page.locator('.rate-card .rate-clear').click();
 	await sleep(300);
 	check('W9: Clear closes the popup', !(await has(card())), '');
 	await flush(cid);
@@ -632,7 +632,7 @@ await section('W10', async () => {
 	const m2 = await freshAnswer('W10b');
 	if (await has(ctl(String(m2.mid), 'ctile-rate-more'))) {
 		marker = 'NOTE-MARKER-' + Date.now().toString(36);
-		await openPopup(String(m2.mid)); await stepBtn(0).click({ force: true });
+		await openPopup(String(m2.mid)); await stepBtn(0).click();
 		await openDetails(); await D.page.locator('.rate-card textarea.rate-said-input').fill(marker); await closePopup('cross');
 	}
 	const text = '@text NEXT-TURN-' + Date.now().toString(36);
@@ -661,7 +661,7 @@ await section('W11', async () => {
 	const m = await freshAnswer('W11'); need(m, 'no answer to rate');
 	const n0 = (await ratings(cid)).length;
 	await D.page.fill('#chat-input', '@slow 6000 SLOW-W11');
-	await D.page.click('#chat-send', { force: true });
+	await D.page.click('#chat-send');
 	await sleep(1200);
 	await tap(String(m.mid), 'up');
 	await flush(cid).catch(() => {});
@@ -729,16 +729,16 @@ await section('W14', async () => {
 	await tap(mid, 'down');
 	const shown = () => D.page.evaluate(() => [...document.querySelectorAll('#chat-output .ctile-rate, #chat-output .ctile-rate-row, #chat-output .ctile-rate-tags')].filter((e) => e.getClientRects().length).length);
 	check('W14: before selection mode the group and chip row show', (await shown()) >= 2, await shown() + ' shown');
-	await D.page.click('#collapse-btn', { force: true }); await sleep(400);
+	await D.page.click('#collapse-btn'); await sleep(400);
 	const sel = await D.page.evaluate(() => document.getElementById('chat-output').classList.contains('selecting'));
 	check('W14: selection mode is on', sel, '');
 	check('W14: selection mode hides the group, the row and the chip row', (await shown()) === 0, await shown() + ' still shown');
-	await D.page.click('#collapse-btn', { force: true }); await sleep(400);
+	await D.page.click('#collapse-btn'); await sleep(400);
 	const lbl = D.page.locator(`${mq(mid)} > .ctile-lbl .ctile-who`).first();
 	const col = () => D.page.evaluate((mid) => document.querySelector(`#chat-output .ctile[data-mid="${CSS.escape(mid)}"]`).classList.contains('collapsed'), mid);
-	const c0 = await col(); await lbl.click({ force: true }); await sleep(250);
+	const c0 = await col(); await lbl.click(); await sleep(250);
 	check('W14: a click on the label still collapses the tile', (await col()) !== c0, 'collapsed ' + c0 + ' -> ' + await col());
-	await lbl.click({ force: true }); await sleep(250);
+	await lbl.click(); await sleep(250);
 	const c1 = await col(); await tap(mid, 'up');
 	check('W14: a click on an arrow does not collapse it', (await col()) === c1, '');
 	await flush(cid).catch(() => {});
@@ -762,7 +762,7 @@ await section('W15', async () => {
 	await D.page.evaluate(() => { const c = document.getElementById('dview-chat'); if (c) c.click(); });
 	await sleep(500);
 	await D.page.fill('#chat-input', '@text DAIMON-ANSWER-W15 the daimon replies');
-	await D.page.click('#chat-send', { force: true });
+	await D.page.click('#chat-send');
 	await waitFor(() => D.page.evaluate((id) => !window.DaimondCore.diamondBusy(id), id), 60000, 500);
 	await sleep(1000);
 	const rec = () => D.page.evaluate((id) => { const r = window.DaimondDiamond.conversation(id); return r ? { id: r.id, messages: JSON.parse(JSON.stringify(r.messages || [])) } : { id: '', messages: [] }; }, id);
@@ -792,7 +792,7 @@ await section('W16', async () => {
 	await D.page.evaluate(() => { document.getElementById('chat-output').scrollTop = 1e6; });
 	await D.page.focus('#chat-input');
 	const before = await D.page.evaluate(() => document.getElementById('chat-output').scrollTop);
-	await link.click({ force: true }); await sleep(500);
+	await link.click(); await sleep(500);
 	const r = await D.page.evaluate(() => { const o = document.getElementById('chat-output').getBoundingClientRect(); const e = document.activeElement;
 		const t = [...document.querySelectorAll('#chat-output .ctile[data-mid]')].find((x) => x.querySelector('.ctile-rate-up[aria-pressed="true"]'));
 		const tr = t ? t.getBoundingClientRect() : null;
@@ -926,7 +926,17 @@ const geom = (s, mid) => s.page.evaluate((mid) => {
 		sameLine: !!g && !!time && Math.abs((R(g).top + R(g).bottom) / 2 - (R(time).top + R(time).bottom) / 2) <= 3,
 		timeRight: time ? R(time).right : null, userRight: user ? R(user).right : null,
 		lblH: lbl ? R(lbl).height : 0, userLblH: (() => { const u = document.querySelector('#chat-output .ctile[data-t="user"] .ctile-lbl'); return u ? R(u).height : 0; })(), tileH: R(t).height, userTileH: (() => { const u = [...document.querySelectorAll('#chat-output .ctile[data-t="user"]')].map((e) => R(e).height); return u.length ? Math.min(...u) : 0; })(), lblClip: lbl ? lbl.scrollWidth - lbl.clientWidth : 0, copyIn: copy && vis(copy) ? R(copy).right <= R(t).right + 0.5 : true,
-		rowUnder: row && body ? R(row).top - R(body).bottom : null, tagsUnder: tags && row ? R(tags).top - R(row).bottom : null };
+		rowUnder: row && body ? R(row).top - R(body).bottom : null, tagsUnder: tags && row ? R(tags).top - R(row).bottom : null,
+		place: (() => {	// as verify_rating_rest: the first arrow's ink against the first line box of the body's text
+			if (!g || !body) return null;
+			const w = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.data.trim() ? 1 : 3 }), n = w.nextNode();
+			if (!n) return null;
+			const rg = document.createRange(); rg.selectNodeContents(n); const rr = rg.getClientRects()[0];
+			const b = g.querySelector('button'), i = b && (b.querySelector('svg, .ic') || b);
+			if (!rr || !i) return null;
+			const r = R(i);
+			return { dx: +(r.left - rr.left).toFixed(1), dy: +(r.top - R(body).bottom).toFixed(1) };
+		})() };
 }, mid);
 const setModel = (s, mid, name) => s.page.evaluate(({ mid, name }) => { const m = document.querySelector(`#chat-output .ctile[data-mid="${CSS.escape(mid)}"] .ctile-meta`); if (m) m.textContent = name; return m ? m.textContent : ''; }, { mid, name });
 const scrollTo = (s, mid) => s.page.evaluate((mid) => document.querySelector(`#chat-output .ctile[data-mid="${CSS.escape(mid)}"]`).scrollIntoView({ block: 'center' }), mid);
@@ -950,30 +960,29 @@ async function popupLayout(s, look, size, mids) {
 	await snap(s, look, size, 'popup_details_note');
 	await closePopup('escape', s);
 }
-async function layoutRun(s, look, size, mids, form) {
+const MAX_DX = 8;		// px, first arrow's ink from the answer text's start, as verify_rating_rest
+const MAX_DY = 32;		// px, arrows' top below the answer body's foot
+async function layoutRun(s, look, size, mids) {
 	await scrollTo(s, mids[0]);
-	if (form === 'header') await s.page.hover(`${mq(mids[6])} .ctile-lbl`); else await s.page.hover(`${mq(mids[6])}`).catch(() => {});
+	await s.page.hover(`${mq(mids[6])}`).catch(() => {});
 	const g = await geom(s, mids[6]);
 	need(g && g.n === 1, `${look} ${size}: ${g ? g.n : 'no'} visible groups on the bare answer`);
-	if (form === 'header') {
-		check(`L: ${look} ${size} header form: the group lies between the peek and the time, on one line`, g.inHead && g.between && g.sameLine, J(g));
-		check(`L: ${look} ${size} header form: the time's right edge equals a user tile's to 1px`, g.userRight !== null && Math.abs(g.timeRight - g.userRight) <= 1, `${g.timeRight} vs ${g.userRight}`);
-		// R2-01: the group's buttons once carried `margin: 0` over Copy's -2px, which drew the bar 30px tall on every answer.
-		check(`L: ${look} ${size} header form: the label bar is 28px, as a user tile's (R2-01)`, Math.abs(g.lblH - 28) <= 0.5 && Math.abs(g.lblH - g.userLblH) <= 0.5, `${g.lblH}px against a user tile's ${g.userLblH}px`);
-		// Against a live one-line user tile, not a literal: 66.5px was the base tile before the 10 Oct gap rule (1a5fd5ff) made it 62.5.
-		check(`L: ${look} ${size} header form: a one-line answer tile is as tall as a one-line user tile (R2-01)`, g.userTileH > 0 && Math.abs(g.tileH - g.userTileH) <= 1, g.tileH + 'px against ' + g.userTileH + 'px');
-	} else {
-		check(`L: ${look} ${size} row form: exactly one group shows, in the row, directly under the body`, g.row && g.rowUnder !== null && g.rowUnder >= -1 && g.rowUnder <= 16, J(g));
-	}
+	// UNBLOCK-10: one form at every width, the row under the answer on its text's column; never in the header.
+	check(`L: ${look} ${size} exactly one group shows, in the row under the body, none in the header`, g.row && !g.inHead && g.rowUnder !== null && g.rowUnder >= -1 && g.rowUnder <= 16, J(g));
+	check(`L: ${look} ${size} the arrows start within ${MAX_DX}px of the answer text's start`, !!g.place && Math.abs(g.place.dx) <= MAX_DX, J(g.place));
+	check(`L: ${look} ${size} the arrows sit under the answer, within ${MAX_DY}px of its foot`, !!g.place && g.place.dy >= -4 && g.place.dy <= MAX_DY, J(g.place));
+	// R2-01: the label bar of an answer stays 28px, as a user tile's, now that it holds no group.
+	check(`L: ${look} ${size} the label bar is as tall as a user tile's (R2-01)`, Math.abs(g.lblH - g.userLblH) <= 0.5, `${g.lblH}px against a user tile's ${g.userLblH}px`);
 	await snap(s, look, size, 'hover');
 	await scrollTo(s, mids[1]); await snap(s, look, size, 'rated');
 	await scrollTo(s, mids[5]);
 	const gc = await geom(s, mids[5]);
-	check(`L: ${look} ${size} the open chip row lies under ${form === 'row' ? 'the row' : 'the header'} and wraps only among chips`, gc && (gc.tagsUnder === null || gc.tagsUnder >= -1), J(gc));
+	check(`L: ${look} ${size} the open chip row lies under the row and wraps only among chips`, gc && (gc.tagsUnder === null || gc.tagsUnder >= -1), J(gc));
 	await snap(s, look, size, 'chips');
-	const rt = await s.page.evaluate(() => { const t = [...document.querySelectorAll('#chat-output .ctile[data-t="rating"]')].pop(); const r = t && t.getBoundingClientRect(); return t ? { lines: t.querySelectorAll('.rate-line').length, right: r.right, over: [...t.querySelectorAll('.rate-line')].filter((l) => l.scrollWidth > l.clientWidth + 1).length } : null; });
+	// The burst's tile is the chat's first Rating tile; each popup pass's note may flush a later one.
+	const rt = await s.page.evaluate(() => { const t = document.querySelector('#chat-output .ctile[data-t="rating"]'); const r = t && t.getBoundingClientRect(); return t ? { lines: t.querySelectorAll('.rate-line').length, right: r.right, over: [...t.querySelectorAll('.rate-line')].filter((l) => l.scrollWidth > l.clientWidth + 1).length } : null; });
 	check(`L: ${look} ${size} the Rating tile holds five lines, none clipped`, rt && rt.lines === 5 && rt.over === 0, J(rt));
-	await s.page.evaluate(() => { const t = [...document.querySelectorAll('#chat-output .ctile[data-t="rating"]')].pop(); if (t) t.scrollIntoView({ block: 'center' }); });
+	await s.page.evaluate(() => { const t = document.querySelector('#chat-output .ctile[data-t="rating"]'); if (t) t.scrollIntoView({ block: 'center' }); });
 	await snap(s, look, size, 'rating_tile');
 	await popupLayout(s, look, size, mids);
 }
@@ -984,31 +993,28 @@ await section('LD', async () => {
 		check(`L: rig: the chat panel can be held at ${px}px`, Math.abs(w - px) <= 1, w + 'px');
 	}
 	const natural = await setPanelWidth(D, 0);
-	console.log(`  (the chat panel's natural width at 1440x900 with the default panels is ${natural}px; the header form needs the container over 440px, which is a panel of 443px or more)`);
-	check(`L: the default computer layout (${natural}px) is under the header form's line, so it wears the row form`, natural - 2 <= 440, natural + 'px');
+	console.log(`  (the chat panel's natural width at 1440x900 with the default panels is ${natural}px)`);
 	const lc = await layoutChat(D);
 	for (const look of ['obsidian', 'porcelain']) {
 		await wear(D, look);
 		await D.page.setViewportSize({ width: 1440, height: 900 });
-		const w = await setPanelWidth(D, 700);
-		check(`L: ${look} 1440 the chat panel is held at 700px, over the 440px line`, Math.abs(w - 700) <= 1, w + 'px');
-		await layoutRun(D, look, '1440x900', lc.mids, 'header');
-		const w5 = await setPanelWidth(D, 443);
-		check(`L: ${look} the panel was set to 443px (content box 441px, the narrowest that still holds the header form)`, Math.abs(w5 - 443) <= 1, w5 + 'px');
+		// UNBLOCK-10: the row form at every panel width; 700 and 443 once wore the header form.
+		for (const px of [700, 443, 440]) {
+			const w = await setPanelWidth(D, px);
+			check(`L: ${look} 1440 the chat panel is held at ${px}px`, Math.abs(w - px) <= 1, w + 'px');
+			await layoutRun(D, look, '1440x900@' + px, lc.mids);
+		}
 		await setModel(D, lc.mids[6], LONG_MODEL);
 		const g = await geom(D, lc.mids[6]);
-		check(`L: ${look} 443px, longest model name: the header form holds one line and Copy stays inside the tile`, g && g.n === 1 && !g.row && g.inHead && g.lblClip <= 1 && g.copyIn && g.between && Math.abs(g.lblH - g.userLblH) <= 0.5, J(g));
-		await snap(D, look, '443', 'longname');
-		const w1 = await setPanelWidth(D, 440);
-		check(`L: ${look} the panel was set to 440px (content box 438px, under the line)`, Math.abs(w1 - 440) <= 1, w1 + 'px');
-		await layoutRun(D, look, '440', lc.mids, 'row');
+		check(`L: ${look} 440px, longest model name: the label holds one line and Copy stays inside the tile`, g && g.n === 1 && g.row && !g.inHead && g.lblClip <= 1 && g.copyIn && Math.abs(g.lblH - g.userLblH) <= 0.5, J(g));
+		await snap(D, look, '440', 'longname');
 		await setPanelWidth(D, 0);
 	}
 });
 await section('LP', async () => {
 	const P = await phone();
 	const pc = await layoutChat(P);
-	for (const look of ['obsidian', 'porcelain']) { await wear(P, look); await layoutRun(P, look, '390x844', pc.mids, 'row'); }
+	for (const look of ['obsidian', 'porcelain']) { await wear(P, look); await layoutRun(P, look, '390x844', pc.mids); }
 	// R2-02: `.ctile-peek` once squeezed a Thinking tile's model name ("fast", 24.4px) down to 6px at 390px.
 	await chat(P, '@reason I compare the lead times against a May start first. ;; Harlow is the only one that lands in May.').catch(() => {});
 	await sleep(800);
@@ -1108,7 +1114,7 @@ await section('T', async () => {
 	await tap(String(m2.mid), 'down', P);
 	await tapAreas(P, 'the chip row', '#chat-output .ctile-rate-tags .tile-dlg-level');
 	await openPopup(String(m1.mid), P);
-	await stepBtn(0, P).click({ force: true }); await openDetails(P);
+	await stepBtn(0, P).click(); await openDetails(P);
 	await tapAreas(P, 'the popup', '.rate-card .rate-scale .tile-dlg-level, .rate-card .ctile-rate-tags .tile-dlg-level, .rate-card .rate-dim .tile-dlg-level, .rate-card details > summary, .rate-card textarea, .rate-card .rate-clear, .rate-card .ui-close');
 	await closePopup('escape', P);
 });
@@ -1128,7 +1134,7 @@ const mkDiamondOn = async (s, label) => {
 };
 const steerOn = async (s, id, text) => {
 	await s.page.evaluate(() => { const c = document.getElementById('dview-chat'); if (c) c.click(); }); await sleep(500);
-	await s.page.fill('#chat-input', text); await s.page.click('#chat-send', { force: true });
+	await s.page.fill('#chat-input', text); await s.page.click('#chat-send');
 	await sleep(800); await waitFor(() => s.page.evaluate((id) => !window.DaimondCore.diamondBusy(id), id), 90000, 500); await sleep(1000);
 	return s.page.evaluate((id) => { const r = window.DaimondDiamond.conversation(id); return r ? { id: r.id, messages: JSON.parse(JSON.stringify(r.messages || [])) } : { id: '', messages: [] }; }, id);
 };
@@ -1162,7 +1168,7 @@ async function fwFlowOne() {
 		const rec = tail.prod.find((p) => p.h === row.h); need(rec, 'the row\'s handle ' + row.h + ' matches no record in the note');
 		const html0 = await tileOf(D), n0 = (await D.page.evaluate((id) => window.DaimondDiamond.conversation(id).messages.filter((m) => m.role === 'rating_log').length, id));
 		await D.page.evaluate(() => { [...document.querySelectorAll('#chat-output .turn-files')].pop().__v = 'kept'; });
-		await D.page.locator(`${FWROW}[data-h="${row.h}"] .ctile-rate-down`).first().click({ force: true }); await sleep(200);
+		await D.page.locator(`${FWROW}[data-h="${row.h}"] .ctile-rate-down`).first().click(); await sleep(200);
 		const lit = (await fwRows(D)).find((r) => r.h === row.h).lit;
 		await flush(cid);
 		const after = await D.page.evaluate((id) => JSON.parse(JSON.stringify(window.DaimondDiamond.conversation(id).messages)), id);
@@ -1245,9 +1251,9 @@ await section('FW6', async () => {
 	await D.page.evaluate((id) => { const c = document.getElementById('dview-chat'); if (c) c.click(); }, id); await sleep(500);
 	const shown = () => D.page.evaluate((sel) => [...document.querySelectorAll(sel)].filter((e) => e.getClientRects().length).length, `${FWROW} .ctile-rate`);
 	need((await shown()) > 0, 'no file-row group shows before selection mode');
-	await D.page.click('#collapse-btn', { force: true }); await sleep(400);
+	await D.page.click('#collapse-btn'); await sleep(400);
 	check('FW6: selection mode hides every file-row group', (await shown()) === 0, (await shown()) + ' still shown');
-	await D.page.click('#collapse-btn', { force: true }); await sleep(400);
+	await D.page.click('#collapse-btn'); await sleep(400);
 	check('FW6: and leaving it brings them back', (await shown()) > 0, '');
 });
 // ── The end ─────────────────────────────────────────────────────────────

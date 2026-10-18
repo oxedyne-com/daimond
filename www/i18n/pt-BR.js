@@ -402,6 +402,20 @@
 	'end.why_lease_revoked': 'Interrompido: outro dispositivo assumiu este turno',
 	'end.why_stream_abort': 'Interrompido: cortado antes de o turno terminar',
 	'end.why_blocked':      'Não concluído: parou em algo que não conseguiu superar',
+	'end.why_lease_lapsed': 'Interrompido: o dispositivo que executava este turno o perdeu',
+	'end.why_lease_deadline': 'Interrompido: nenhum dispositivo iniciou este turno a tempo',
+	// The plain account a cut turn ends with (UNBLOCK-25 U4, `cutAccount`).
+	// i18n-family: cut.why_ = user lease_cap lease_lapsed lease_revoked lease_deadline
+	'cut.why_user': 'Interrompido, como você pediu.',
+	'cut.why_lease_cap': 'Interrompido: o turno entregue a outro dispositivo passou do limite de 30 minutos.',
+	'cut.why_lease_lapsed': 'Interrompido: o dispositivo que o executava perdeu o turno.',
+	'cut.why_lease_revoked': 'Interrompido: outro dispositivo assumiu este turno.',
+	'cut.why_lease_deadline': 'Interrompido: nenhum dispositivo o iniciou a tempo.',
+	'cut.none': 'Ainda não tinha usado nenhuma ferramenta.',
+	'cut.calls.one': 'Tinha feito {n} chamada de ferramenta.',
+	'cut.calls.other': 'Tinha feito {n} chamadas de ferramentas.',
+	'cut.wrote': 'Escreveu {paths}.',
+	'cut.wrote_more': 'Escreveu {paths} e mais {more}.',
 	'end.how_paused':   'Pausado',
 	'end.how_capped':   'Interrompido: limite de passos atingido',
 	'end.how_spend_cap': 'Interrompido: limite de gastos atingido',
@@ -717,6 +731,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} arquivo não coube no pacote de sincronização deste dispositivo e não chega aos seus outros dispositivos enquanto não houver espaço para ele: {names}',
 	'sync.files_left.other':    '{n} arquivos não couberam no pacote de sincronização deste dispositivo e não chegam aos seus outros dispositivos enquanto não houver espaço para eles: {names}',
+	'sync.logs_held.one':       'Um registro em {names} é grande demais ou não pôde ser lido, então ainda não foi sincronizado. Ele está seguro neste dispositivo.',
+	'sync.logs_held.other':     'Registros em {n} diamonds são grandes demais ou não puderam ser lidos, então ainda não foram sincronizados. Eles estão seguros neste dispositivo: {names}',
 	'sync.folders_left.one':    '{names} pesa mais do que os {max} que uma pasta compartilhada pode ocupar, então não chega aos seus outros dispositivos. Compartilhe uma pasta menor, ou tire parte do que está nela.',
 	'sync.folders_left.other':  '{n} pastas compartilhadas passam dos {max} que cada uma pode ocupar e não chegam aos seus outros dispositivos: {names}.',
 	// Uma sessão que acabou e não pôde ser retomada. Mesmo rótulo dos de baixo: o
@@ -751,12 +767,14 @@
 
 	// ── Cloud storage cleanup ──────────────────────────────────
 	'chunks.sweep_held': 'Limpeza pausada',
-	'chunks.sweep_held_reason': 'O armazenamento em nuvem tem {n} de {m} pedaços que nenhum arquivo mais referencia. Não apagados: nenhuma requisição pode apagar mais da metade de uma vez.',
 	'chunks.upload_refused':    'Envios pausados',
 	'chunks.upload_refused_title': 'O armazenamento na nuvem recusou um envio',
-	'chunks.sweep_confirm_ask': 'Apagar agora? Nada do que você ainda vê é tocado, e o espaço é liberado.',
-	'chunks.sweep_confirm_ok':  'Apagar os pedaços',
-	'chunks.sweep_confirm_title': 'Liberar os pedaços aos quais nada mais se refere?',
+	'chunks.held_ask_title': 'Remover {n} pedaços armazenados?',
+	'chunks.held_ask_body': 'Este dispositivo não usa mais {n} de {m} pedaços armazenados. Eles ficam guardados por 7 dias, e um dispositivo que ainda os usa os traz de volta.',
+	'chunks.held_ask_ok': 'Remover',
+	'chunks.held_ask_keep': 'Manter',
+	'chunks.held_kept_title': 'Pedaços armazenados mantidos',
+	'chunks.held_kept_body': 'Este dispositivo não conseguiu verificar seus arquivos, então {n} pedaços armazenados foram mantidos.',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Vincular outro dispositivo',
@@ -1240,10 +1258,7 @@
 	'web.mirror_wait':    'Esperando a primeira imagem dessa aba. Se o Chrome colocou uma janela de permissão na frente, ela espera a sua resposta.',
 	'web.mirror_silent':  'Há algum tempo nada volta do Daimond Hands, então não há imagem ao vivo. A aba continua aberta e continua sendo a página.',
 	'web.mirror_refused': 'Esta aba não pode ser fotografada, então não há imagem ao vivo. Veja a própria aba, ou peça a imagem de novo.',
-	'web.blocked': '<b>{host}</b> não se exibe dentro de outra página. A maioria dos sites bloqueia isso como proteção contra clickjacking; não é um defeito.',
-	'web.blocked_hands': 'O Daimond Hands pode dirigi-lo em uma aba real.',
-	'web.blocked_install': 'Instale o Daimond Hands para dirigi-lo ao vivo.',
-	'web.open_new_tab': 'Abrir em uma nova aba',
+	'web.blocked_line': '<b>{host}</b> não permite ser exibido dentro do app.',
 	'web.read_as_text': 'Ler como texto',
 	'web.reading': 'Lendo…',
 	'web.read_failed': 'Não foi possível ler essa página: {reason}',
@@ -2654,6 +2669,7 @@
 	'capp.merge_ok': 'Atualizar a página',
 	'capp.merge_later': 'Agora não',
 	'capp.merge_waiting': 'Atualizada. A nova página aparece assim que a entrada que você está digitando for salva.',
+	'capp.merge_refused': 'Há uma página de {name} mais nova, mas esta atualização entra em conflito com as suas edições, então sua página fica como está.',
 	'capp.merge_show': 'Onde os dois alteraram',
 	'capp.merge_line': 'Linha {n}',
 	'capp.merge_yours': 'A sua',
@@ -2870,6 +2886,7 @@
 	'post.err_no_account':       'Nenhuma conta tem essa chave, então a mensagem não foi enviada.',
 	'post.err_too_big':          'Essa mensagem é grande demais para o relé carregar.',
 	'post.err_refused':          'O relé não aceitou essa mensagem, então ela não foi enviada.',
+	'post.err_unknown':          'O relé não conseguiu confirmar essa mensagem a tempo, então ela ainda pode chegar. Verifique antes de enviá-la de novo.',
 	'post.locked':               'Desbloqueie o Daimond para ler suas mensagens.',
 	'post.tray_head':            'Esperando sua resposta',
 	'post.none':                 'Ainda não há mensagens. Adicione alguém em {people}.',
@@ -2912,7 +2929,9 @@
 	'post.refused_no_account': 'nenhuma conta tem a chave deles',
 	'post.refused_too_big':    'grande demais para o relé',
 	'post.refused_other':      'o relé recusou',
+	'post.refused_unknown':    'não confirmado, ainda pode chegar',
 	'post.group_refused':      'O relé não aceitou para: {who}.',
+	'post.group_unknown':      'O relé não conseguiu confirmar para: {who}. Ainda pode chegar.',
 
 	// ── A group, and who is in it ──
 	// A group is a LIST OF PEOPLE a message is sealed to one by one. No

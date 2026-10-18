@@ -1130,13 +1130,27 @@
 	// statement of what happened, not an accusation — the reader decides whether
 	// the model promised otherwise.
 	// i18n-family: end.how_ = answered stopped paused capped spend_cap silent failed malformed reasoned_only
-	// i18n-family: end.why_ = lease_cap lease_revoked stream_abort blocked
+	// i18n-family: end.why_ = lease_cap lease_revoked lease_lapsed lease_deadline stream_abort blocked
 	'end.how_answered': 'Answered',
 	'end.how_stopped':  'Stopped',
 	'end.why_lease_cap':    'Stopped: ran past the 30-minute limit for a turn handed to another device',
 	'end.why_lease_revoked': 'Stopped: another device took this turn over',
 	'end.why_stream_abort': 'Stopped: cut off before the turn finished',
 	'end.why_blocked':      'Not done: stopped on something it could not get past',
+	'end.why_lease_lapsed': 'Stopped: the device running this turn lost hold of it',
+	'end.why_lease_deadline': 'Stopped: no device started this turn in time',
+	// The plain account a cut turn ends with (UNBLOCK-25 U4, `cutAccount`).
+	// i18n-family: cut.why_ = user lease_cap lease_lapsed lease_revoked lease_deadline
+	'cut.why_user': 'Stopped, as you asked.',
+	'cut.why_lease_cap': 'Stopped: it ran past the 30-minute limit for a turn handed to another device.',
+	'cut.why_lease_lapsed': 'Stopped: the device running it lost hold of the turn.',
+	'cut.why_lease_revoked': 'Stopped: another device took this turn over.',
+	'cut.why_lease_deadline': 'Stopped: no device started it in time.',
+	'cut.none': 'It had not called any tools yet.',
+	'cut.calls.one': 'It had made {n} tool call.',
+	'cut.calls.other': 'It had made {n} tool calls.',
+	'cut.wrote': 'It wrote {paths}.',
+	'cut.wrote_more': 'It wrote {paths} and {more} more.',
 	'end.how_paused':   'Paused',
 	'end.how_capped':   'Stopped: step limit reached',
 	'end.how_spend_cap': 'Stopped: spend limit reached',
@@ -1230,10 +1244,7 @@
 	'web.mirror_silent':  'Nothing has come back from Daimond Hands for a while, so there is no live picture. The tab itself is still open, and is still the page.',
 	'web.mirror_refused': 'This tab cannot be photographed, so there is no live picture. Watch the tab itself, or ask for the picture again.',
 	// A site that refuses to be framed, which is most of them.
-	'web.blocked':         '<b>{host}</b> will not display inside another page. Most sites block this as protection against clickjacking; it is not a fault.',
-	'web.blocked_hands':   'Daimond Hands can drive it in a real tab.',
-	'web.blocked_install': 'Install Daimond Hands to drive it live.',
-	'web.open_new_tab':    'Open in a new tab',
+	'web.blocked_line':    '<b>{host}</b> does not allow itself to be shown inside the app.',
 	'web.read_as_text':    'Read it as text',
 	'web.reading':         'Reading…',
 	'web.read_failed':     'That page could not be read: {reason}',
@@ -1707,6 +1718,9 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} file did not fit in this device’s sync parcel and will not reach your other devices until there is room for it: {names}',
 	'sync.files_left.other':    '{n} files did not fit in this device’s sync parcel and will not reach your other devices until there is room for them: {names}',
+	// A Diamond whose page log held its join back: nothing of it was written, and the next pull retries.
+	'sync.logs_held.one':       'A log in {names} is too large or could not be read, so it has not synced yet. It is safe on this device.',
+	'sync.logs_held.other':     'Logs in {n} diamonds are too large or could not be read, so they have not synced yet. They are safe on this device: {names}',
 	// `{size}` is what the walk had summed when it gave up at the ceiling, not the
 	// tree's true weight -- the walk stops there on purpose (see `walkShared`), so
 	// the sentence must not claim a total nobody measured.
@@ -1759,16 +1773,21 @@
 	// A deletion the gateway would not carry out on one request. Say the two
 	// numbers, and say plainly that nothing of theirs has gone.
 	'chunks.sweep_held':          'Cleanup paused',
-	'chunks.sweep_held_reason':   'Cloud storage holds {n} of {m} pieces nothing refers to. Not deleted: no single request may clear more than half at once.',
-	// The chip is a control, so these five carry what pressing it does. They were
+	// The chip is a control, so these carry what pressing it does. They were
 	// written as `t('key', 'English')` -- and `t`'s second argument is VARS, not a
 	// fallback, so a key that is not here is PAINTED ON THE SCREEN as itself, in
 	// every language including this one.
 	'chunks.upload_refused':       'Uploads paused',
 	'chunks.upload_refused_title': 'Cloud storage refused an upload',
-	'chunks.sweep_confirm_ask':    'Delete them now? Nothing you can still see is touched, and the space is freed.',
-	'chunks.sweep_confirm_ok':     'Delete them',
-	'chunks.sweep_confirm_title':  'Free the unreferenced pieces?',
+	// F8, the owner's words (2026-09-27). `held_ask_*` only when this device can
+	// vouch for the deletion (`why === 'ask'`): Remove or Keep. Otherwise
+	// `held_kept_*`, a notice with Close and nothing to authorise.
+	'chunks.held_ask_title':      'Remove {n} stored pieces?',
+	'chunks.held_ask_body':       'This device no longer uses {n} of {m} stored pieces. They are kept 7 days, and a device that still uses them brings them back.',
+	'chunks.held_ask_ok':         'Remove',
+	'chunks.held_ask_keep':       'Keep',
+	'chunks.held_kept_title':     'Stored pieces kept',
+	'chunks.held_kept_body':      'This device could not check its files, so {n} stored pieces are kept.',
 
 	// ── Pairing a second device ────────────────────────────────
 	// The quotation marks around a button's name are curly on purpose; keep
@@ -2605,6 +2624,7 @@
 	'capp.merge_ok': 'Update the Page',
 	'capp.merge_later': 'Not Now',
 	'capp.merge_waiting': 'Updated. The new page shows once the entry you are typing is saved.',
+	'capp.merge_refused': 'There is a newer {name} page, but this update conflicts with your edits, so your page is left as it is.',
 	'capp.merge_show': 'Where you both changed it',
 	'capp.merge_line': 'Line {n}',
 	'capp.merge_yours': 'Yours',
@@ -4220,6 +4240,7 @@
 	'post.err_no_account':       'No account holds that key, so the message has not been sent.',
 	'post.err_too_big':          'That message is too large for the relay to carry.',
 	'post.err_refused':          'The relay would not take that message, so it has not been sent.',
+	'post.err_unknown':          'The relay could not confirm that message in time, so it may still arrive. Check before you send it again.',
 	'post.err_bad_put':          'A post needs a recipient, an address and a sealed body.',
 	'post.locked':               'Unlock Daimond to read your messages.',
 	'post.tray_head':            'Waiting for your answer',
@@ -4292,7 +4313,9 @@
 	'post.refused_no_account': 'no account holds their key',
 	'post.refused_too_big':    'too large for the relay to carry',
 	'post.refused_other':      'the relay refused it',
+	'post.refused_unknown':    'not confirmed, it may still arrive',
 	'post.group_refused':      'The relay would not take it for: {who}.',
+	'post.group_unknown':      'The relay could not confirm it for: {who}. It may still arrive.',
 	// ── The feed, which is the one thing here that is NOT sealed ──
 	//
 	// A feed post is stored on Oxedyne's gateway IN PLAIN TEXT, shown to the

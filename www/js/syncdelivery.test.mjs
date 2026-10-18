@@ -21,6 +21,8 @@
                the retry lands one redundant version and loses nothing.
      PROGHANG  H3. A progress frame nothing answers: the final push
                still gets the gate (never).
+     HELDLOG   PLD. A Diamond held back by its page log: the same version is
+               merged again on the next pull, and skipped once the hold lifts.
      FLUSHDOOR M1. flush() over a parcel refused at the 8 MiB front
                door: ok:false, 'too_large' (ok:true at the old version).
      FLUSH413  M1. The same for a parcel the gateway answers 413.
@@ -230,7 +232,7 @@ function makeTab(cfg) {
 			tab.applies     = (tab.applies || 0) + 1;
 			if (tab.slowApply) await realSleep(40);
 			tab.applyActive--;
-			return tab.mergeFails ? { failed: ['chats'] } : {};
+			return tab.mergeFails ? { failed: ['chats'] } : (tab.held ? { held: tab.held.slice() } : {});
 		},
 	};
 	win.DaimondCloud = {
@@ -705,6 +707,26 @@ if (want('FILESTORE')) {
 	check('a store that comes back re-merges the adopted version once', tab.gets - g0 === 1 && (tab.applies || 0) - a0 === 1,
 		(tab.gets - g0) + ' GETs, ' + ((tab.applies || 0) - a0) + ' merges');
 	check('and the chip rests', chipOf(tab) === 'rest' && S.state().filesHeld === true, chipOf(tab));
+}
+
+if (want('HELDLOG')) {
+	console.log('\nHELDLOG (PLD): a Diamond held back by its page log is imported again on the next pull of the same version\n');
+	const { tab, S } = await booted({});
+	tab.held = ['dX'];
+	tab.land(5, { v: 3, chats: [], note: 'other v5' });
+	const a0 = tab.applies || 0;
+	await S.pull(); await quiet(tab);
+	check('[ctl] the version with the held Diamond is merged and adopted', (tab.applies || 0) - a0 === 1 && S.state().version === 5,
+		((tab.applies || 0) - a0) + ' merges, v' + S.state().version);
+	check('a hold is not a stalled merge: the chip does not say merge', S.state().stalledWhy !== 'merge', JSON.stringify(S.state().stalledWhy));
+	await S.pull(); await quiet(tab);
+	check('the next pull of the same version merges it again (it is not "already adopted")', (tab.applies || 0) - a0 === 2,
+		((tab.applies || 0) - a0) + ' merges');
+	tab.held = null;
+	await S.pull(); await quiet(tab);
+	await S.pull(); await quiet(tab);
+	check('once the hold lifts the version is adopted and the next pull skips it', (tab.applies || 0) - a0 === 3,
+		((tab.applies || 0) - a0) + ' merges');
 }
 
 console.log('\n' + checks + ' checks, ' + (failures ? failures + ' FAILED' : 'ALL PASS'));

@@ -492,6 +492,20 @@
 	'end.why_lease_revoked': '停下了：另一台设备接手了这一轮',
 	'end.why_stream_abort': '停下了：这一轮还没结束就被切断了',
 	'end.why_blocked':      '未完成：遇到无法解决的问题而停下',
+	'end.why_lease_lapsed': '停下了：运行这一轮的设备失去了它',
+	'end.why_lease_deadline': '停下了：没有设备按时开始这一轮',
+	// The plain account a cut turn ends with (UNBLOCK-25 U4, `cutAccount`).
+	// i18n-family: cut.why_ = user lease_cap lease_lapsed lease_revoked lease_deadline
+	'cut.why_user': '已按你的要求停下。',
+	'cut.why_lease_cap': '停下了：交给另一台设备的这一轮超过了30分钟的上限。',
+	'cut.why_lease_lapsed': '停下了：运行它的设备失去了这一轮。',
+	'cut.why_lease_revoked': '停下了：另一台设备接管了这一轮。',
+	'cut.why_lease_deadline': '停下了：没有设备按时开始它。',
+	'cut.none': '还没有调用任何工具。',
+	'cut.calls.one': '已调用工具{n}次。',
+	'cut.calls.other': '已调用工具{n}次。',
+	'cut.wrote': '写入了 {paths}。',
+	'cut.wrote_more': '写入了 {paths} 等，另有{more}个。',
 	'end.how_paused':   '已暂停',
 	'end.how_capped':   '停下了：到了步数上限',
 	'end.how_spend_cap': '停下了：到了花费上限',
@@ -571,10 +585,7 @@
 	'web.mirror_silent':  'Daimond Hands 已有一段时间没有回应，因此没有实时画面。标签页本身仍然打开，仍然是该页面。',
 	'web.mirror_refused': '此标签页无法截取画面，因此没有实时画面。请直接查看该标签页，或再次请求画面。',
 	// 拒绝被嵌进框里的站点，也就是大多数站点。
-	'web.blocked':         '<b>{host}</b> 不允许在别的页面里显示。大多数站点都会挡这一手，用来防点击劫持；这不是故障。',
-	'web.blocked_hands':   'Daimond Hands 可以在真正的标签页里操作它。',
-	'web.blocked_install': '装上 Daimond Hands 才能实时操作它。',
-	'web.open_new_tab':    '在新标签页里打开',
+	'web.blocked_line':    '<b>{host}</b> 不允许在应用里显示。',
 	'web.read_as_text':    '当作文本读',
 	'web.reading':         '正在读取…',
 	'web.read_failed':     '那个页面读不出来：{reason}',
@@ -879,6 +890,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '有 {n} 个文件装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
 	'sync.files_left.other':    '有 {n} 个文件装不进这台设备的同步包裹，在腾出空间之前不会传到你的其他设备：{names}',
+	'sync.logs_held.one':       '{names} 中的一份日志太大或无法读取，所以还没有同步。它在这台设备上是安全的。',
+	'sync.logs_held.other':     '有 {n} 个 diamond 中的日志太大或无法读取，所以还没有同步。它们在这台设备上是安全的：{names}',
 	'sync.folders_left.one':    '{names} 超过共享文件夹可占用的 {max}，所以不会传到你的其他设备。请共享更小的文件夹，或者把其中一部分移出去。',
 	'sync.folders_left.other':  '有 {n} 个共享文件夹超过了各自可占用的 {max}，不会传到你的其他设备：{names}。',
 	// 已经结束、又拿不回来的会话。和下面用同一个说法。
@@ -912,12 +925,14 @@
 
 	// ── 云端存储清理 ───────────────────────────────────────────
 	'chunks.sweep_held':          '清理已暂停',
-	'chunks.sweep_held_reason':   '云存储里有 {n}/{m} 个已无任何文件引用的碎片。未删除的原因：单次请求不能一次删除超过一半。',
 	'chunks.upload_refused':      '上传已暂停',
 	'chunks.upload_refused_title': '云端存储拒绝了一次上传',
-	'chunks.sweep_confirm_ask':   '现在就删除？你还能看到的东西一件都不会动，空间会腾出来。',
-	'chunks.sweep_confirm_ok':    '删除这些片段',
-	'chunks.sweep_confirm_title': '释放没有被引用的片段？',
+	'chunks.held_ask_title':      '移除 {n} 个已存储的碎片？',
+	'chunks.held_ask_body':       '此设备已不再使用 {m} 个已存储碎片中的 {n} 个。它们会保留 7 天，仍在使用它们的设备会把它们找回来。',
+	'chunks.held_ask_ok':         '移除',
+	'chunks.held_ask_keep':       '保留',
+	'chunks.held_kept_title':     '已保留存储的碎片',
+	'chunks.held_kept_body':      '此设备无法检查其文件，因此保留了 {n} 个已存储的碎片。',
 
 	// ── 关联第二台设备 ─────────────────────────────────────────
 	// 按钮名称外面的引号用中文的“”。
@@ -2690,6 +2705,7 @@
 	'capp.merge_ok': '更新页面',
 	'capp.merge_later': '暂不',
 	'capp.merge_waiting': '已更新。正在输入的条目保存后，将显示新页面。',
+	'capp.merge_refused': '有更新的 {name} 页面，但此更新与你的编辑冲突，因此你的页面保持不变。',
 	'capp.merge_show': '你们都改动的地方',
 	'capp.merge_line': '第 {n} 行',
 	'capp.merge_yours': '你的版本',
@@ -2906,6 +2922,7 @@
 	'post.err_no_account':       '没有账户持有那个密钥，消息还没有发出。',
 	'post.err_too_big':          '这条消息太大，中继带不动。',
 	'post.err_refused':          '中继没有接受这条消息，所以它没有发出。',
+	'post.err_unknown':          '中继没能及时确认这条消息，它可能仍会送达。再次发送前请先确认。',
 	'post.locked':               '解锁 Daimond 才能读你的消息。',
 	'post.tray_head':            '等你答复',
 	'post.none':                 '还没有消息。在{people}里添加一个人。',
@@ -2948,7 +2965,9 @@
 	'post.refused_no_account': '没有账户持有他们的密钥',
 	'post.refused_too_big':    '超过中继能带的大小',
 	'post.refused_other':      '中继没有收',
+	'post.refused_unknown':    '未确认，可能仍会送达',
 	'post.group_refused':      '这些人中继没有收：{who}。',
+	'post.group_unknown':      '这些人中继没能确认：{who}。它可能仍会送达。',
 
 	// ── A group, and who is in it ──
 	// A group is a LIST OF PEOPLE a message is sealed to one by one. No

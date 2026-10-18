@@ -70,9 +70,10 @@ const st = {
 	dedupeSession: (m) => m, loadMsgTombs: () => ({}), ChatStore: { compact() {} }, newMid: () => 'n1',
 	peerUiStateFor: () => '', selfDeviceId: () => 'D1', leaseClockNow: () => T0, answerAgain() {},
 	diamonds: [], currentDiamond: null, runSteer: () => Promise.resolve(),
+	maybeAutoDispatch: async () => false,		// the election keeps the retry here
 	runTurn: (chat, text) => { sp.ran.push({ text, session: JSON.parse(JSON.stringify(chat.session || null)) }); return Promise.resolve(); },
 };
-const names = ['captureSession', 'tailAfter', 'sessionCut', 'seedEngine', 'turnMessagesOf', 'askAgain', 'retryTurn', 'honourGone']
+const names = ['captureSession', 'tailAfter', 'sessionCut', 'seedEngine', 'turnMessagesOf', 'askAgain', 'retryTurn', 'retryRouted', 'honourGone']
 	.filter((n) => n !== 'sessionCut' || lift(SRC, n));	// absent before the fix, so the red is the behaviour below
 const missing = names.filter((n) => !lift(SRC, n));
 check('the gone removal is a function of daimond.js', missing.length === 0, missing);
@@ -119,7 +120,7 @@ if (F) {
 	{
 		sp.ran.length = 0;
 		const chat = chatWithSession();
-		F.retryTurn(chat, 'u1', 'q1', { person: true });
+		await F.retryTurn(chat, 'u1', 'q1', { person: true });
 		const s = sp.ran.length === 1 ? sp.ran[0].session : 'not run';
 		check('the replacing turn runs with no session that holds the retracted answer', sp.ran.length === 1 && !JSON.stringify(s).includes('a1-words'), s);
 		check('and the session left is the cleared form, which a stored copy does not refill',
@@ -168,7 +169,7 @@ if (F) {
 	{
 		sp.ran.length = 0;
 		const chat = twoTurns();
-		F.retryTurn(chat, 'u2', 'q2', { person: true });
+		await F.retryTurn(chat, 'u2', 'q2', { person: true });
 		const s = chat.session;
 		check('the session keeps turn 1 whole, its tool-call ids included',
 			s.msgs.length === 4 && s.msgs[2].tool_call_id === 'call_1' && s.upto === 'a1' && s.uptoTs === T0 + 1, s);
@@ -211,7 +212,7 @@ if (F) {
 		// A mark that no longer stands on its own prompt (a stale index) is no mark.
 		const chat = twoTurns();
 		chat.session.marks = { u1: 0, u2: 3 };
-		F.retryTurn(chat, 'u2', 'q2', { person: true });
+		await F.retryTurn(chat, 'u2', 'q2', { person: true });
 		check('a mark that stands on another entry falls back to the cleared form', chat.session.msgs.length === 0, chat.session);
 	}
 	// ── F3 (check_fix3): a held row's turn is its tag's, by position only when it has none. ──
@@ -343,18 +344,18 @@ if (F) {
 	{
 		const chat = twoTurns();
 		delete chat.session.marks;
-		F.retryTurn(chat, 'u2', 'q2', { person: true });
+		await F.retryTurn(chat, 'u2', 'q2', { person: true });
 		check('without marks it falls back to the cleared form', chat.session.msgs.length === 0, chat.session);
 		const folded = { id: 'c5', messages: twoTurns().messages };
 		F.captureSession(folded, { export_session: () => [
 			{ role: 'system', content: 'summary' }, { role: 'user', content: 'q2', mid: 'u2' }, { role: 'assistant', content: 'a2-words' }] });
-		F.retryTurn(folded, 'u2', 'q2', { person: true });
+		await F.retryTurn(folded, 'u2', 'q2', { person: true });
 		check('cutting the first unfolded turn keeps the fold', folded.session.msgs.length === 1
 			&& folded.session.msgs[0].content === 'summary' && folded.session.upto === 'a1', folded.session);
 		const early = { id: 'c6', messages: twoTurns().messages };
 		F.captureSession(early, { export_session: () => [
 			{ role: 'system', content: 'summary' }, { role: 'user', content: 'q2', mid: 'u2' }, { role: 'assistant', content: 'a2-words' }] });
-		F.retryTurn(early, 'u1', 'q1', { person: true });
+		await F.retryTurn(early, 'u1', 'q1', { person: true });
 		check('cutting a folded turn empties the session', early.session.msgs.length === 0, early.session);
 	}
 }

@@ -604,6 +604,17 @@ pub async fn touch_diamond(id: String) -> Result<(), JsValue> {
     diamond::touch(&id).await.map_err(to_js_err)
 }
 
+/// Write a crystal page's file and stamp its Diamond as one act: both, or the file put back and
+/// an error.  See [`diamond::page_write`]; the page's `save` verb goes through this alone.
+///
+/// # Arguments
+/// * `path` - `diamonds/<id>/<rel>`.
+/// * `append` - Add `text` on a line after what the file holds, and record the path as a page log.
+#[wasm_bindgen]
+pub async fn page_write(id: String, path: String, text: String, append: bool) -> Result<(), JsValue> {
+    diamond::page_write(&id, &path, &text, append).await.map_err(to_js_err)
+}
+
 /// Point the file tools / Workspace at a real local folder (FSA mode).
 ///
 /// `handle` is a `FileSystemDirectoryHandle` from `showDirectoryPicker()`

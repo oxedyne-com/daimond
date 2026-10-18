@@ -30,6 +30,9 @@ pub mod diamond_delta;
 /// while the OPFS edge over it stays in [`wasm::diamond`].
 pub mod diamond_link;
 pub mod diamond_meta;
+/// Which of a Diamond's files are page logs: the paths a crystal page has appended to, recorded so
+/// the import can join them line by line.  Target-agnostic; the OPFS edge is [`wasm::diamond`].
+pub mod diamond_pagelog;
 /// What an import does with this device's own history before it lays another device's copy of a
 /// Diamond over it: which versions are this device's alone, and the files that refile each one
 /// whole above both histories.  Target-agnostic, so the plan is tested natively while the OPFS

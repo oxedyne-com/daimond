@@ -57,6 +57,23 @@
 //   node dev/verify_composemerge.mjs --break noflush
 //   node dev/verify_composemerge.mjs --break resendsrefused
 //   node dev/verify_composemerge.mjs --break queuesnobody
+//   node dev/verify_composemerge.mjs --break selfwake
+//   node dev/verify_composemerge.mjs --break pointerdown
+//   node dev/verify_composemerge.mjs --break nodefer
+//
+// And the "what goes with it" row under the buttons (R53 composemerge, QA C-Q1 to C-Q3):
+//
+//   (g) THE ROW IS REDRAWN WHEN A PANEL OPENS OR CLOSES, AND AT NO OTHER TIME. It
+//       names a panel opened with no press near it, it is written at most once per
+//       open or close, and at rest it is written never. A MutationObserver on `#main`
+//       once did the redraw, and the row is inside `#main`, so it woke itself sixty
+//       times a second for as long as the page was visible (`--break selfwake`).
+//   (h) A PRESS IS NEVER MOVED UNDER. A line grown a step before the press (a longer
+//       palette name: no DOM change at all) must not be redrawn on the way to the
+//       button, or the button drops under a finger that has not moved and the click
+//       is lost (`--break pointerdown`, the release-4 listener); and a panel the app
+//       opens while the finger is down has its redraw owed until the finger comes up
+//       (`--break nodefer`).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -139,6 +156,32 @@ const BREAKS = {
 		file: 'js/improve.js',
 		find: '\t\t\tif (!cut.body.trim()) {',
 		with: '\t\t\tif (false) {',
+	}],
+	// 831c70c1's observer on `#main`, which holds the row, and the unconditional write it
+	// fed: every redraw is a mutation that wakes the next. Only (g) reddens.
+	selfwake: [{
+		file: 'js/improve.js',
+		find: '\t\t\t\tDaimondPanels.onChange(redrawSoon);\n',
+		with: '\t\t\t\tnew MutationObserver(function () { requestAnimationFrame(function () { if (!contextOff()) drawContext(); }); })'
+			+ ".observe(document.getElementById('main'), { attributes: true, attributeFilter: ['style', 'class', 'hidden'], childList: true, subtree: true });\n",
+	}, {
+		file: 'js/improve.js',
+		find: '\t\tif (line.textContent !== ctx) line.textContent = ctx;\n',
+		with: '\t\tline.textContent = ctx;\n',
+	}],
+	// The release-4 listener: the row redrawn as the hand arrives at the button. Only (h)'s
+	// grown line reddens.
+	pointerdown: [{
+		file: 'js/improve.js',
+		find: "\t\tdocument.addEventListener('pointerdown', function () { _pressing = true; }, true);\n",
+		with: "\t\tdocument.addEventListener('pointerdown', function (e) { var t = e.target; "
+			+ "if (t && t.closest && t.closest('#panel-social') && !contextOff()) drawContext(); }, true);\n",
+	}],
+	// A panel opened under a press is redrawn at once. Only (h)'s held press reddens.
+	nodefer: [{
+		file: 'js/improve.js',
+		find: '\t\tif (_pressing) { _drawOwed = true; return; }\n',
+		with: '',
 	}],
 };
 
@@ -573,6 +616,126 @@ try {
 	}
 	check('(f) and the press posts it', opens().length - before === 1,
 		`${opens().length - before} posts`);
+
+	// ── (g) The row at rest, and over opens and closes ──
+	// The row was closed for (f); it comes back as a person would find it on a new note.
+	await page.evaluate(() => {
+		const r = document.getElementById('improve-with');
+		if (r) { delete r.dataset.off; r.hidden = false; }
+		window.dispatchEvent(new Event('resize'));
+	});
+	await page.waitForTimeout(400);
+	const g = await page.evaluate(async () => {
+		const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+		const line = document.getElementById('improve-with-text');
+		let writes = 0;
+		const mo = new MutationObserver((l) => { writes += l.length; });
+		mo.observe(line, { childList: true, characterData: true, subtree: true });
+		const real = DaimondPanels.panels;
+		let reads = 0;
+		DaimondPanels.panels = function () { reads++; return real.apply(this, arguments); };
+		await wait(2000);
+		const rest = { writes, reads };
+		writes = 0;
+		let named = 0;
+		for (let i = 0; i < 20; i++) {
+			DaimondPanels.show('agents');
+			await wait(60);
+			if (/Agents/i.test(line.textContent)) named++;
+			DaimondPanels.hide('agents');
+			await wait(60);
+		}
+		await wait(400);
+		const cycles = { writes, named };
+		DaimondPanels.panels = real;
+		mo.disconnect();
+		return { rest, cycles, open: DaimondPanels.isOpen('agents'), text: line.textContent.slice(0, 120) };
+	});
+	check('(g) at rest the row is not rewritten (2 s, nothing happening)', g.rest.writes === 0, JSON.stringify(g.rest));
+	check('(g) nor is what it says recomputed at rest (< 4 reads of the panel list in 2 s)', g.rest.reads < 4, JSON.stringify(g.rest));
+	check('(g) a panel opened with no press near it is named by the row', g.cycles.named >= 18, JSON.stringify(g.cycles));
+	check('(g) twenty opens and closes write the row at most once each way', g.cycles.writes <= 40, JSON.stringify(g.cycles));
+
+	// ── (h) A press is never moved under ──
+	await page.evaluate(() => {
+		window.__polishN = 0;
+		const real = window.DaimondTriage.polish;
+		window.DaimondTriage.polish = async function (t) { window.__polishN++; return real(t); };
+	});
+	const rowH = () => page.evaluate(() => Math.round(document.getElementById('improve-with').getBoundingClientRect().height));
+	const setSkin = (v) => page.evaluate((v) => { if (v) localStorage.setItem('daimond-skin', v); else localStorage.removeItem('daimond-skin'); }, v);
+	const redraw = async () => { await page.evaluate(() => window.dispatchEvent(new Event('resize'))); await page.waitForTimeout(250); };
+	const btn = () => page.evaluate(() => {
+		const b = document.querySelector('#panel-social [data-act="improve-polish"]');
+		const r = b.getBoundingClientRect();
+		const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+		const at = document.elementFromPoint(x, y);
+		return { x, y, hit: !!(at && (at === b || b.contains(at))), vh: window.innerHeight };
+	});
+	await page.locator('#panel-social [data-act="improve-polish"]').scrollIntoViewIfNeeded().catch(() => {});
+	const skin0 = await page.evaluate(() => localStorage.getItem('daimond-skin') || '');
+	await redraw();
+	const h0 = await rowH();
+	let grow = '';
+	for (let k = 2; k <= 80 && !grow; k += 2) {
+		const v = (skin0 || 'warm') + ' ' + 'x'.repeat(k);
+		await setSkin(v); await redraw();
+		// A whole line, not a pixel of rounding: a row that grows by a rounding error moves no button.
+		if (await rowH() >= h0 + 8) grow = v;
+	}
+	await setSkin(skin0); await redraw();
+	check('(h) control: a palette name that adds a line to the row was found', !!grow, `row ${h0}px`);
+	if (grow) {
+		await page.evaluate(() => {
+			const box = document.getElementById('improve-box');
+			box.value = 'The line grew a step before this press\nIts body.';
+			box.dispatchEvent(new Event('input', { bubbles: true }));
+		});
+		await setSkin(grow);
+		await page.waitForTimeout(600);
+		const p0 = await btn();
+		check('(h) control: the Polish button is on screen, under the pointer', p0.hit, JSON.stringify(p0));
+		const n0 = await page.evaluate(() => window.__polishN);
+		await page.mouse.move(p0.x, p0.y);
+		await page.mouse.down();
+		await page.waitForTimeout(100);
+		const p1 = await btn();
+		await page.mouse.up();
+		await page.waitForTimeout(800);
+		const landed = await page.evaluate(() => window.__polishN) - n0;
+		check('(h) a line grown a step before the press: the button stays under the finger', p1.y === p0.y, `moved ${p1.y - p0.y}px`);
+		check('(h) and the press lands', landed === 1, `polish calls ${landed}; button ${JSON.stringify(p0)}`);
+		await setSkin(skin0);
+		await page.evaluate(() => { try { for (const n of window.DaimondImprove.notes()) window.DaimondImprove.drop && window.DaimondImprove.drop(n.id); } catch (e) { /* none */ } });
+	}
+	await redraw();
+	// A panel the app opens while a finger is down: the row's redraw waits for the finger.
+	await page.evaluate(() => {
+		const box = document.getElementById('improve-box');
+		box.value = '';
+		box.dispatchEvent(new Event('input', { bubbles: true }));
+	});
+	const q0 = await btn();
+	await page.evaluate(() => {
+		const line = document.getElementById('improve-with-text');
+		window.__rowWrites = 0;
+		window.__rowMo = new MutationObserver((l) => { window.__rowWrites += l.length; });
+		window.__rowMo.observe(line, { childList: true, characterData: true, subtree: true });
+	});
+	await page.mouse.move(q0.x, q0.y);
+	await page.mouse.down();
+	await page.evaluate(() => DaimondPanels.show('agents'));
+	await page.waitForTimeout(300);
+	const held = await page.evaluate(() => window.__rowWrites);
+	await page.mouse.up();
+	await page.waitForTimeout(500);
+	const after = await page.evaluate(() => {
+		window.__rowMo.disconnect();
+		return { writes: window.__rowWrites, names: /Agents/i.test(document.getElementById('improve-with-text').textContent) };
+	});
+	check('(h) a panel opened while the finger is down: the row is not redrawn under it', held === 0, `writes while held ${held}`);
+	check('(h) and it is redrawn once the finger is up, naming the panel', after.writes > held && after.names, JSON.stringify(after));
+	await page.evaluate(() => DaimondPanels.hide('agents'));
 
 	const errs = errors(s).filter(e => !/Failed to load resource/.test(e));
 	check('nothing above was reached by way of an unhandled error', errs.length === 0,

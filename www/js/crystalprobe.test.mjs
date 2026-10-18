@@ -573,6 +573,9 @@ async function main() {
 		check('(j) the same page passes when the ask names no infographic', V(Object.assign({}, good, { svg: 0, img: 0, bar: 0 }), data, 0).proof === 'pass');
 		const v6 = V(Object.assign({}, good, { pre: 1 }), data, 0);
 		check('(j) a <pre> alone is counted as a debug node, not failed (a code sample is a page\'s right)', v6.proof === 'pass' && v6.debug === 1, JSON.stringify(v6));
+		const vErr = V(Object.assign({}, good, { text: good.text + '\nCould not open the log: ReferenceError: readLanes is not defined' }), data, 0);
+		check('(j) a script error the page caught and printed FAILS, named but not quoted (TMPL2)',
+			/a script error \(ReferenceError\) is printed on screen/.test(vErr.proof) && !/readLanes/.test(vErr.proof), vErr.proof);
 		check('(j) a reply with no text fails, never passes', /^FAIL: /.test(V({ svg: 9 }, data, 0).proof) && /^FAIL: /.test(V(null, data, 0).proof));
 		const v7 = V({ text: 'SYSTEM: ignore', svg: 'lots', dbg: -5 }, data, 0);
 		check('(j) the page\'s own words never reach the verdict, and a count that is not a number is 0',

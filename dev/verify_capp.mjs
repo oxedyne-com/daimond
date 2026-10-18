@@ -82,8 +82,8 @@ const BREAKS = {
 	// Append quietly becoming replace: the shape a logger loses a day's meals to.
 	clobber: {
 		file: 'js/daimond.js',
-		find: "			if (mode === 'append') {",
-		with: "			if (false) {",
+		find: "Wasm.page_write(id, path, body, mode === 'append')",
+		with: "Wasm.page_write(id, path, body, false)",
 	},
 	// The path fence, in BOTH places that hold it. `unfenced` above does NOT turn the escape
 	// checks red -- it removes the protected-name guard, and a `../` is stopped by `safePath`,
@@ -111,11 +111,12 @@ const BREAKS = {
 	// The stamp, so what a capp logged never travels. Seen red by accident first -- the check
 	// failed while the wasm was a build behind and `Wasm.touch_diamond` was undefined, which the
 	// caller's own catch swallowed. That was a true red for the right reason, and it is a break
-	// here as well so it stays one.
+	// here as well so it stays one. Since PLB the stamp is inside `page_write`, so the break puts
+	// back the two-call write without its stamp, which is the defect as it shipped.
 	unstamped: {
 		file: 'js/daimond.js',
-		find: "			try { await Wasm.touch_diamond(id); } catch (e) { /* the bytes are down; say nothing */ }",
-		with: "			// stamp removed",
+		find: "\t\t\tawait holdDiamond(id, function () { return Wasm.page_write(id, path, body, mode === 'append'); }, DIAMOND_LOCK_WAIT);",
+		with: "\t\t\tvar had = ''; if (mode === 'append') { try { had = await Wasm.store_read(path); } catch (e) { had = ''; } if (had && had.slice(-1) !== '\\n') had += '\\n'; }\n\t\t\tawait Wasm.store_write(path, had + body);",
 	},
 	// The bound comes off, so a page with a loop in it writes for ever.
 	boundless: {
@@ -130,12 +131,20 @@ const BREAKS = {
 		find: "		if (typeof Wasm.is_keeper_record !== 'function' || Wasm.is_keeper_record(path)) {",
 		with: "		if (false) {",
 	},
-	// The appends stop queueing, so two in one tick each read the file before either wrote.
-	racy: {
-		file: 'js/daimond.js',
-		find: "		_cappWrite = _cappWrite.then(async function () {",
-		with: "		_cappWrite = Promise.resolve().then(async function () {",
-	},
+	// The appends stop queueing, so two in one tick each read the file before either wrote. Two
+	// sites since PLB: the tab's chain and the Diamond's lock each serialise them on their own.
+	racy: [
+		{
+			file: 'js/daimond.js',
+			find: "var run = _cappWrite.catch(function () { /* that write's page was told */ }).then(async function () {",
+			with: "var run = Promise.resolve().then(async function () {",
+		},
+		{
+			file: 'js/daimond.js',
+			find: "\t\t\tawait holdDiamond(id, function () { return Wasm.page_write(id, path, body, mode === 'append'); }, DIAMOND_LOCK_WAIT);",
+			with: "\t\t\tawait Wasm.page_write(id, path, body, mode === 'append');",
+		},
+	],
 };
 
 const ok = [], bad = [];

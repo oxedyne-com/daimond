@@ -13,12 +13,16 @@
 //   * where both changed the same lines the offer shows BOTH, and Update keeps the
 //     person's lines and brings in everything else;
 //   * after Update the record's base is the new template, so a LATER fix merges
-//     against it and does not bring back the line the person kept over it.
+//     against it and does not bring back the line the person kept over it;
+//   * an offer is drawn only once the merged page has been proved to load: a merge
+//     that keeps the person's deletion of a line the template's new code needs
+//     (the Life log readLanes case, 10 Oct) is refused in words, never offered, and
+//     the page is left as it is (TMPL2).
 //
 // Every marker is a `//` line inserted after a unique statement line of the page's
 // one classic script, so each version is still a page that runs.
 //
-//   node dev/verify_crystalupdate.mjs --base   # RED: r544's daimond.js and versions.js
+//   node dev/verify_crystalupdate.mjs --base   # RED: r545's daimond.js, versions.js, crystal.js
 //   node dev/verify_crystalupdate.mjs          # GREEN
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -31,7 +35,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 const TPL  = path.join(ROOT, 'www', 'capps', 'lifelog');
 const BASE = process.argv.includes('--base');
-const BASE_REF = 'release/r544';
+const BASE_REF = 'release/r545';      // the offer before the load proof
 
 let failures = 0;
 const check = (cond, msg, detail) => {
@@ -44,6 +48,7 @@ const REAL = fs.readFileSync(path.join(TPL, 'crystal.html'), 'utf8');
 const MAN  = JSON.parse(fs.readFileSync(path.join(TPL, 'capp.json'), 'utf8'));
 const V0   = MAN.v;
 const H0   = sha(REAL);
+const H60  = '60fe671170fc11b3ee995699e8227f5d8746c6956226719b1fdb9f54151418af';   // the readLanes base
 
 // ── Anchors ─────────────────────────────────────────────────────────
 //
@@ -95,7 +100,7 @@ const s = await open({
 	route:   async (page) => {
 		if (BASE) {
 			// The app before this change: everything else is the tree's.
-			for (const f of ['js/daimond.js', 'js/versions.js']) {
+			for (const f of ['js/daimond.js', 'js/versions.js', 'js/crystal.js']) {
 				const body = execFileSync('git', ['-C', ROOT, 'show', BASE_REF + ':www/' + f],
 					{ encoding: 'utf8', maxBuffer: 64 << 20 });
 				await page.route('**/' + f, (r) => r.fulfill({
@@ -188,6 +193,10 @@ const face = () => p.evaluate(() => {
 	};
 });
 
+/// Wait until the offer is drawn: shown once proved, or refused in its place.
+const settled = () => p.waitForSelector('#capp-offer:not([hidden])', { state: 'attached', timeout: 20000 })
+	.then(() => true, () => false);
+
 const press = async (sel) => {
 	await p.evaluate((sel) => { const b = document.querySelector('#capp-offer ' + sel); if (b) b.click(); }, sel);
 	await p.waitForTimeout(2200);
@@ -214,6 +223,7 @@ try {
 	await writePage(id, FORK);
 	plan = { v: V0 + 1, files: { 'crystal.html': T1, ['base/' + H0 + '.html']: REAL } };
 	await reopen();
+	await settled();
 	const f1 = await face();
 	console.log('  offer: ' + f1.text + (f1.note ? ' | note: ' + f1.note : ''));
 	check(String(await storedPage(id)) === FORK, 'the forked page is not rewritten on open');
@@ -235,6 +245,7 @@ try {
 	await writePage(id, FORK2);
 	plan = { v: V0 + 2, files: { 'crystal.html': T2, ['base/' + H0 + '.html']: REAL } };
 	await reopen();
+	await settled();
 	const f2 = await face();
 	console.log('  offer: ' + f2.text);
 	check(f2.offer, 'the next version is offered again');
@@ -260,6 +271,7 @@ try {
 	// ══ 3. A later fix merges against the new base ══
 	plan = { v: V0 + 3, files: { 'crystal.html': T3, ['base/' + sha(T2) + '.html']: T2 } };
 	await reopen();
+	await settled();
 	const f3 = await face();
 	check(f3.offer && f3.conflicts === null,
 		'A LATER FIX IS OFFERED CLEAN: the line kept over the template is not re-contested', f3.text);
@@ -271,6 +283,38 @@ try {
 	const rec3 = await record(id);
 	check(!!rec3 && rec3.files && rec3.files['crystal.html'] === sha(T3), 'the base moves again');
 	await p.screenshot({ path: scratch('crystalupdate-done.png') });
+
+	// ══ 4. A merge whose page does not load is refused, never offered ══
+	// The Life log case, from the repo's own pages: the person's page is the one
+	// delivered at 60fe… less its `/// Everything the page needs` line; today's
+	// template inserts `function readLanes(` just before that line. diff3 calls it
+	// a conflict, the person's side wins, and the merge calls readLanes undefined.
+	const B60 = fs.readFileSync(path.join(TPL, 'base', H60 + '.html'), 'utf8');
+	const bl = B60.split('\n');
+	const cut = bl.findIndex(l => l.startsWith('/// Everything the page needs'));
+	if (cut < 0) throw new Error('the 60fe page no longer has its `/// Everything` line');
+	bl.splice(cut, 1);
+	const MINE4 = bl.join('\n');
+	await writePage(id, MINE4);
+	await p.evaluate(async ({ id, rec }) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		await m.store_write('diamonds/' + id + '/capp.json', JSON.stringify(rec));
+	}, { id, rec: { capp: 'lifelog', v: V0 + 3, files: { ...((rec3 && rec3.files) || {}), 'crystal.html': H60 } } });
+	plan = { v: V0 + 4, files: { 'crystal.html': REAL } };
+	await reopen();
+	const drawn = await settled();
+	const f4 = await face();
+	console.log('  offer: ' + f4.text);
+	check(drawn, 'the offer is settled one way or the other');
+	check(!f4.ok, 'A MERGE WHOSE PAGE DOES NOT LOAD IS NOT OFFERED (no Update)', f4.text);
+	check(/conflicts with your edits/.test(f4.text), 'it is refused in words instead', f4.text);
+	check(String(await storedPage(id)) === MINE4, 'and the person\'s page is left as it is');
+	const rec4 = await record(id);
+	check(!!rec4 && rec4.refused === V0 + 4, 'the refusal is remembered at the version', rec4 && rec4.refused);
+	await reopen();
+	await settled();
+	check(!(await face()).offer, 'it is not offered or refused again at that version');
+	await p.screenshot({ path: scratch('crystalupdate-refused.png') });
 } catch (e) {
 	console.log('  FAIL threw — ' + (e && e.message));
 	failures++;

@@ -70,6 +70,7 @@ use crate::diamond_delta::{
 use crate::diamond_rebase::{self, Side};
 use crate::diamond_versions::{self as versions, At, Cause, Entry, Manifest};
 use crate::diamond_meta::{Meta, normalise_tags};
+use crate::diamond_pagelog::{self as pagelog, ImportOutcome, LocalLog, LocalLogs, PAGELOGS_REL};
 use crate::llm::{extract_json_bool, extract_json_string, json_escape};
 use crate::protocol::generate_session_id;
 use crate::tools::FileRoot;
@@ -833,6 +834,111 @@ pub async fn touch(id: &str) -> Outcome<()> {
     let mut meta = res!(read_meta(id).await);
     meta.bump_touched(now_ms() as u64);
     write_meta(id, &meta).await
+}
+
+/// Write a crystal page's file and stamp its Diamond as one act: both, or neither.
+///
+/// **A page write that is down but not stamped is a write the next sync throws away.**  `touched`
+/// decides whose copy the other device takes, so a log line laid down on a phone that then failed
+/// to stamp left the phone the stale side, and the desktop's copy replaced it with the line gone.
+/// The page's door used to write and then stamp as two calls, and swallow a failed stamp; so here
+/// a stamp that fails puts the file back as it was and the save is refused, and the page can say
+/// so.  The JS holds the Diamond's lock across this call, so an import cannot land between the
+/// write and the stamp either.
+///
+/// An append also records the path in [`PAGELOGS_REL`], once: a page log is a path a page has
+/// appended to, and the import needs the list to join such files rather than replace them.
+///
+/// # Arguments
+/// * `full_path` - `diamonds/<id>/<rel>`.
+/// * `append` - Add `text` after what the file holds (on a line of its own) rather than replace it.
+pub async fn page_write(id: &str, full_path: &str, text: &str, append: bool) -> Outcome<()> {
+    let home = fmt!("{}/", diamond_dir(id));
+    let rel = match full_path.strip_prefix(home.as_str()) {
+        Some(r) if !r.is_empty() && !r.split('/').any(|p| p == "..") => r,
+        _ => return Err(err!("A page write to '{}' is not a path in Diamond '{}'.",
+            full_path, id; Invalid, Input)),
+    };
+    // What the file held, read BEFORE anything is written: it is what a failure puts back, so a
+    // read that fails is a save that fails, with nothing written.
+    let had = res!(read_if_any(full_path).await);
+    let mut body: Vec<u8> = Vec::new();
+    if append {
+        if let Some(b) = &had {
+            body.extend_from_slice(b);
+            if !b.is_empty() && b.last() != Some(&b'\n') {
+                body.push(b'\n');
+            }
+        }
+    }
+    body.extend_from_slice(text.as_bytes());
+    res!(opfs::write_file(FileRoot::Opfs, full_path, &body).await);
+
+    let rec_path = fmt!("{}{}", home, PAGELOGS_REL);
+    let mut rec_had: Option<Option<Vec<u8>>> = None; // the record's bytes before, once it is written
+    let done = record_and_stamp(id, rel, &rec_path, append, &mut rec_had).await;
+    let e = match done {
+        Ok(())  => return Ok(()),
+        Err(e)  => e,
+    };
+    let mut undo = Vec::new();
+    if let Err(e2) = restore(full_path, &had).await {
+        undo.push(fmt!("the page's file could not be put back ({})", e2));
+    }
+    if let Some(prev) = &rec_had {
+        if let Err(e2) = restore(&rec_path, prev).await {
+            undo.push(fmt!("the page-log record could not be put back ({})", e2));
+        }
+    }
+    if undo.is_empty() {
+        Err(err!("The page's write was put back because the Diamond could not be stamped: {}", e;
+            IO, File, Write))
+    } else {
+        Err(err!("The page's write could not be stamped ({}), and {}.", e, undo.join(", and ");
+            IO, File, Write))
+    }
+}
+
+/// The half of [`page_write`] after the page's own bytes are down: record the path (an append
+/// only, and only a path [`pagelog::is_recordable`] passes), then stamp.  `rec_had` is set to the
+/// record's bytes before, once the record has been written, so a failure can put it back.
+async fn record_and_stamp(
+    id:         &str,
+    rel:        &str,
+    rec_path:   &str,
+    append:     bool,
+    rec_had:    &mut Option<Option<Vec<u8>>>,
+)
+    -> Outcome<()>
+{
+    if append && pagelog::is_recordable(rel) {
+        let prev = res!(read_if_any(rec_path).await);
+        let text = match &prev {
+            Some(b) => String::from_utf8_lossy(b).to_string(),
+            None    => String::new(),
+        };
+        if let Some(next) = pagelog::with_path(&text, rel) {
+            *rec_had = Some(prev);
+            res!(opfs::write_file(FileRoot::Opfs, rec_path, next.as_bytes()).await);
+        }
+    }
+    touch(id).await
+}
+
+/// A file's bytes, or `None` when it does not exist.  Any other failure to read is an error.
+async fn read_if_any(path: &str) -> Outcome<Option<Vec<u8>>> {
+    if !res!(opfs::exists(FileRoot::Opfs, path).await) {
+        return Ok(None);
+    }
+    Ok(Some(res!(opfs::read_file(FileRoot::Opfs, path).await)))
+}
+
+/// Put a file back as it was: its bytes, or gone if it did not exist.
+async fn restore(path: &str, prev: &Option<Vec<u8>>) -> Outcome<()> {
+    match prev {
+        Some(b) => opfs::write_file(FileRoot::Opfs, path, b).await,
+        None    => opfs::delete_file(FileRoot::Opfs, path).await,
+    }
 }
 
 
@@ -3505,15 +3611,15 @@ pub async fn settle(id: &str, names: &[String]) {
 const OUTPUTS_DIR: &str = "outputs";
 
 /// Is `rel`, a path inside a Diamond, this device's own and never carried in either direction:
-/// the notes of copies taken mid-turn ([`PENDING_DIR`]) and of generated outputs
-/// ([`OUTPUTS_DIR`])?  An export leaves them out, and an import lays none down, so a pack from
+/// the notes of copies taken mid-turn ([`PENDING_DIR`]), of generated outputs ([`OUTPUTS_DIR`]),
+/// and the page-log heal's mark ([`pagelog::HEAL_DIR`])?  An export leaves them out, and an import lays none down, so a pack from
 /// anywhere cannot plant one.
 fn device_local(rel: &str) -> bool {
     // The claims of writes in flight are this device's tabs' (D-26 HISTFIX2 b5).
     if rel == fmt!("{}/{}", VERSIONS_SUBDIR, versions::CLAIMS_FILE) {
         return true;
     }
-    [PENDING_DIR, OUTPUTS_DIR].iter().any(|d| {
+    [PENDING_DIR, OUTPUTS_DIR, pagelog::HEAL_DIR].iter().any(|d| {
         let dir = fmt!("{}/{}", VERSIONS_SUBDIR, d);
         rel == dir || rel.starts_with(&fmt!("{}/", dir))
     })
@@ -6948,22 +7054,187 @@ async fn keep_local_before_import(_hold: &VersionHold, id: &str, incoming: &[(St
     if sources.is_empty() {
         return Ok(None);        // nothing local to keep -- a fresh adopt is not a conflict
     }
+    let sources = sources.into_iter().map(|(p, b)| (p, b, None)).collect();
+    res!(write_version_held(_hold, id, at, Cause::Restore,
+        "kept before sync — a local edit the merge replaced", sources).await);
+    Ok(Some(at))
+}
 
-    // THE BODIES BEFORE THE MANIFEST, so a failure half way leaves bytes nothing names
-    // rather than a manifest naming bytes that are not there -- the discipline
-    // [`versions_record`] states.
+/// Write one version at `at` holding `sources`, each `(path, body, was)` by its workspace path,
+/// for a caller holding the store.  A body over [`versions::VERSION_FILE_MAX`] is a `skipped` row,
+/// as the store keeps any file that size.
+///
+/// THE BODIES BEFORE THE MANIFEST, so a failure half way leaves bytes nothing names rather than a
+/// manifest naming bytes that are not there -- the discipline [`versions_record`] states.
+async fn write_version_held(
+    _hold:      &VersionHold,
+    id:         &str,
+    at:         u64,
+    cause:      Cause,
+    note:       &str,
+    sources:    Vec<(String, Vec<u8>, Option<String>)>,
+)
+    -> Outcome<()>
+{
     let mut entries: Vec<Entry> = Vec::new();
     let mut w = Writing::begin(id);     // under the hold until the manifest names the bodies
-    for (path, body) in sources.into_iter() {
-        let hash = versions::hash_of(&body);
-        res!(w.put(id, &hash, &body).await);
-        entries.push(Entry::changed(&path, &body, None));
+    for (path, body, was) in sources.into_iter() {
+        let mut entry = Entry::changed(&path, &body, was);
+        if body.len() > versions::VERSION_FILE_MAX {
+            entry.skipped = Some("size".to_string());
+        } else {
+            res!(w.put(id, &entry.hash, &body).await);
+        }
+        entries.push(entry);
     }
-    let manifest = Manifest::new(Cause::Restore, now_ms() as u64, "",
-        "kept before sync — a local edit the merge replaced", entries);
+    let manifest = Manifest::new(cause, now_ms() as u64, "", note, entries);
     res!(opfs::write_file(FileRoot::Opfs, &manifest_path(id, at),
         manifest.to_json().as_bytes()).await);
-    Ok(Some(at))
+    Ok(())
+}
+
+/// This device's page-log record, and every log it or the arriving copy's record names, each
+/// read whole or found absent, unreadable or over [`pagelog::PAGELOG_JOIN_MAX`].  The size is
+/// asked first, so a log too big to join is never read into memory.
+async fn local_logs(id: &str, arriving: &[(String, Vec<u8>)]) -> LocalLogs {
+    let dir = diamond_dir(id);
+    let record = read_log(&fmt!("{}/{}", dir, PAGELOGS_REL)).await;
+    let mut files: Vec<(String, LocalLog)> = Vec::new();
+    {
+        let mine: &[u8] = match &record {
+            LocalLog::Body(b) => b,
+            _                 => &[],
+        };
+        for rel in pagelog::recorded_paths(arriving, mine) {
+            let log = read_log(&fmt!("{}/{}", dir, rel)).await;
+            files.push((rel, log));
+        }
+    }
+    LocalLogs { record, files }
+}
+
+async fn read_log(path: &str) -> LocalLog {
+    match opfs::exists(FileRoot::Opfs, path).await {
+        Ok(false) => return LocalLog::Absent,
+        Ok(true)  => (),
+        Err(_)    => return LocalLog::Unreadable,
+    }
+    match opfs::read_file_capped(FileRoot::Opfs, path, pagelog::PAGELOG_JOIN_MAX as u32).await {
+        Ok((_, total)) if total > pagelog::PAGELOG_JOIN_MAX as f64 => LocalLog::TooBig,
+        Ok((bytes, _))  => LocalLog::Body(bytes),
+        Err(_)          => LocalLog::Unreadable,
+    }
+}
+
+/// Mint the one version a page-log join wrote (#12), above every number on disk, for a caller
+/// holding the store: the joined logs, each with this device's copy as what stood before it.
+async fn mint_join_version(hold: &VersionHold, id: &str, logs: Vec<(String, Vec<u8>, Option<String>)>)
+    -> Outcome<u64>
+{
+    mint_log_version(hold, id, Cause::Share, "rows from both devices kept", logs).await
+}
+
+/// Mint one version of page logs written, above every number on disk, for a caller holding the
+/// store: each log by its path inside the Diamond, with the hash of what stood before it.
+async fn mint_log_version(
+    hold:   &VersionHold,
+    id:     &str,
+    cause:  Cause,
+    note:   &str,
+    logs:   Vec<(String, Vec<u8>, Option<String>)>,
+)
+    -> Outcome<u64>
+{
+    let at = local_version_max(id).await + 1;
+    let dir = diamond_dir(id);
+    let sources = logs.into_iter().map(|(rel, b, was)| (fmt!("{}/{}", dir, rel), b, was)).collect();
+    res!(write_version_held(hold, id, at, cause, note, sources).await);
+    Ok(at)
+}
+
+/// This device's heal mark, `diamonds/<id>/versions/heal/pagelogs`.  See [`pagelog::HEAL_DIR`].
+fn heal_mark_path(id: &str) -> String {
+    fmt!("{}/{}/{}", versions_dir(id), pagelog::HEAL_DIR, pagelog::HEAL_MARK_FILE)
+}
+
+/// Every "kept before sync" manifest this Diamond holds, each by the hash of its bytes, oldest
+/// first.  A manifest that will not read is passed over, as [`versions_manifests`] passes it.
+async fn kept_manifests(id: &str) -> Vec<(String, Manifest)> {
+    let mut out: Vec<(u64, String, Manifest)> = Vec::new();
+    for (name, is_dir, _size) in version_entries(id).await {
+        if is_dir {
+            continue;
+        }
+        let n = match versions::manifest_version(&name) {
+            Some(n) => n,
+            None    => continue,
+        };
+        let bytes = match opfs::read_file(FileRoot::Opfs, &fmt!("{}/{}", versions_dir(id), name)).await {
+            Ok(b)  => b,
+            Err(_) => continue,
+        };
+        if let Ok(m) = Manifest::from_json(&String::from_utf8_lossy(&bytes)) {
+            if pagelog::is_kept_before_sync(&m) {
+                out.push((n, versions::hash_of(&bytes), m));
+            }
+        }
+    }
+    out.sort_by_key(|(n, _, _)| *n);
+    out.into_iter().map(|(_, h, m)| (h, m)).collect()
+}
+
+/// Put back the page-log rows an earlier sync's replace dropped, from this Diamond's "kept before
+/// sync" versions (PL4), and answer what was put back.
+///
+/// Only rows are added, never one taken out: see [`pagelog::heal_plan`].  The logs are written
+/// first, then the one version that records them, then the mark, so a heal cut short is read
+/// again whole next time and adds nothing twice.  A heal with nothing to put back writes nothing,
+/// the mark included unless it has moved.  The Diamond is not stamped here: the caller stamps it
+/// when `rows` > 0, so the rows travel.  A caller holding the Diamond's lock calls this, so no
+/// page append can land between the read of a log and its write.
+pub async fn heal_pagelogs(id: &str) -> Outcome<pagelog::HealCounts> {
+    if !res!(opfs::exists(FileRoot::Opfs, &meta_path(id)).await) {
+        return Ok(pagelog::HealCounts::default());
+    }
+    let hold = res!(hold_versions(id).await);
+    let live = local_logs(id, &[]).await;
+    let kept = kept_manifests(id).await;
+    let mark = match opfs::read_file(FileRoot::Opfs, &heal_mark_path(id)).await {
+        Ok(b)  => pagelog::HealMark::read(&String::from_utf8_lossy(&b)),
+        Err(_) => pagelog::HealMark::default(),
+    };
+    let record: &[u8] = match &live.record {
+        LocalLog::Body(b) => b,
+        _                 => &[],
+    };
+    let mut bodies: Vec<(String, Vec<u8>)> = Vec::new();
+    for h in pagelog::heal_wants(&kept, &diamond_dir(id), record, &mark) {
+        if let Ok(b) = opfs::read_file(FileRoot::Opfs, &body_path(id, &h)).await {
+            if versions::hash_of(&b) == h {
+                bodies.push((h, b));
+            }
+        }
+    }
+    let plan = pagelog::heal_plan(&kept, &diamond_dir(id), &live, &mark, &bodies);
+    let counts = pagelog::HealCounts::of(&plan);
+    let dir = diamond_dir(id);
+    for l in &plan.logs {
+        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, l.rel), &l.bytes).await);
+    }
+    if !plan.logs.is_empty() {
+        let wrote = plan.logs.iter()
+            .map(|l| (l.rel.clone(), l.bytes.clone(), Some(versions::hash_of(&l.was))))
+            .collect();
+        if let Err(e) = mint_log_version(&hold, id, Cause::Restore, pagelog::HEAL_NOTE, wrote).await {
+            console_log(&fmt!("Diamond '{}': the page-log rows were put back, but their version \
+                could not be written ({}).", id, e));
+        }
+    }
+    if plan.mark != mark {
+        res!(opfs::write_file(FileRoot::Opfs, &heal_mark_path(id), plan.mark.to_text().as_bytes()).await);
+    }
+    drop(hold);
+    Ok(counts)
 }
 
 /// File every version of this device's that the copy arriving does not hold above both histories,
@@ -7297,7 +7568,7 @@ async fn delete_except_versions(dir: &str) -> Outcome<()> {
 /// `restore` version FIRST ([`keep_local_before_import`]), so the losing edit becomes a version the
 /// user can restore rather than a silent loss.  A one-sided pull passes `false` and behaves exactly
 /// as before, bar the preserved `versions/`.
-pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<()> {
+pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOutcome> {
     // The browser's own parser, not a second one written here.  This JSON holds
     // whole files, and a hand-rolled scan would be a second unescaping
     // implementation to keep exactly in step with the first.
@@ -7346,6 +7617,25 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<()> {
     // from under it.  Dropped when the import returns, whichever way.
     let hold = res!(hold_versions(&id).await);
     let existed = res!(opfs::exists(FileRoot::Opfs, &dir).await);
+    // THE PAGE LOGS ARE JOINED, NOT REPLACED (r547 page-log guard, PLC).  Where both devices moved,
+    // each kept rows the other lacks in the files a page appends to, and the replace below kept
+    // only one side's.  Each log `.daimond/pagelogs` names on either side is joined row by row;
+    // nothing else is (R2).  Read and planned FIRST, before anything is refiled or written: a log
+    // this device cannot read whole, or one over the cap, holds the whole import back for the
+    // round with nothing written (R3), since the replace it would fall back to is the loss this
+    // exists to prevent.
+    let logs = if existed && keep_conflict {
+        match pagelog::join_plan(&writes, &local_logs(&id, &writes).await) {
+            pagelog::Plan::Join(j)     => Some(j),
+            pagelog::Plan::Held(paths) => {
+                crate::wasm::entry::trail("PAGELOG HELD", &fmt!("{} {}", id, paths.join(", ")));
+                drop(hold);
+                return Ok(ImportOutcome::Held(paths));
+            }
+        }
+    } else {
+        None
+    };
     // NO VERSION OF THIS DEVICE'S IS WRITTEN OVER OR READ THROUGH THE OTHER'S (2026-09-23, bc4).
     // Two devices that each record between syncs mint the same numbers, and the writes below lay
     // the other's `versions/` over this one's by name: a local keyframe and an incoming patch
@@ -7380,6 +7670,17 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<()> {
     // build's copy carries no `builtin` key, and laid over this one as it came it unmarked the
     // built-in here for good. Unreadable is no record: the copy is then written as it came.
     let local_meta = if existed { read_meta(&id).await.ok() } else { None };
+    // The joined logs over the arriving copies, and the ones only this device held besides, so
+    // the delete below takes nothing the join kept.  The metadata stays last.
+    if let Some(j) = &logs {
+        for (rel, body) in j.import_writes() {
+            match writes.iter_mut().find(|(r, _)| *r == rel) {
+                Some(w) => w.1 = body,
+                None    => writes.push((rel, body)),
+            }
+        }
+        writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
+    }
     if existed {
         // PRESERVE `versions/`; delete only the rest.  The kept snapshot and the whole file
         // history live under it, and the export's own `versions/` is written over it below.
@@ -7449,8 +7750,76 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<()> {
         console_log(&fmt!("Diamond '{}': the arrived version store could not be pruned ({}).",
             id, e));
     }
+    // ONE VERSION FOR THE JOIN (#12), still under the hold and above both histories, so History
+    // shows where this device's rows came back in.  Best effort, as the kept snapshot is: the
+    // joined logs are already down.
+    let counts = match &logs {
+        Some(j) => j.import_counts(),
+        None    => pagelog::Counts::default(),
+    };
+    if let Some(j) = logs {
+        if counts.files > 0 {
+            let kept = j.logs.into_iter()
+                .filter(|l| l.here_adds > 0)
+                .map(|l| (l.rel, l.bytes, l.was.as_deref().map(versions::hash_of)))
+                .collect();
+            if let Err(e) = mint_join_version(&hold, &id, kept).await {
+                console_log(&fmt!("Diamond '{}': the page logs were joined, but their version \
+                    could not be written ({}).", id, e));
+            }
+        }
+    }
     drop(hold);
-    Ok(())
+    Ok(ImportOutcome::Joined(counts))
+}
+
+/// Join another device's page logs into this one's in place, where neither copy of the Diamond
+/// is fresher and so neither is imported: the page-log twin of [`union_links_from`].
+///
+/// `export_json` is that device's [`export_diamond`].  A local log is written only where the
+/// other copy holds rows it lacks (#8), and then one version is minted for what was written.  The
+/// Diamond is not stamped here: the answer's `here` says whether this device holds rows the other
+/// lacks, and the caller stamps on it so the join travels back.  A log over the cap or unreadable
+/// writes nothing at all, and the answer is held.
+pub async fn union_logs_from(id: &str, export_json: &str) -> Outcome<ImportOutcome> {
+    let val = res!(js_sys::JSON::parse(export_json)
+        .map_err(|e| err!("A Diamond export could not be parsed: {}.", js_str(&e); Invalid, Input)));
+    match js_prop(&val, "id") {
+        Some(i) if i == id  => (),
+        Some(i)             => return Err(err!("The export is of Diamond '{}', not '{}'.", i, id;
+            Invalid, Input)),
+        None                => return Err(err!("A Diamond export carries no id."; Invalid, Input)),
+    }
+    // As for a sidecar: a Diamond that is not here is not one to write logs into.
+    if !res!(opfs::exists(FileRoot::Opfs, &meta_path(id)).await) {
+        return Ok(ImportOutcome::Joined(pagelog::Counts::default()));
+    }
+    let arriving = res!(pack_files(&val));
+    let hold = res!(hold_versions(id).await);
+    let j = match pagelog::join_plan(&arriving, &local_logs(id, &arriving).await) {
+        pagelog::Plan::Join(j)     => j,
+        pagelog::Plan::Held(paths) => {
+            crate::wasm::entry::trail("PAGELOG HELD", &fmt!("{} {}", id, paths.join(", ")));
+            return Ok(ImportOutcome::Held(paths));
+        }
+    };
+    let dir = diamond_dir(id);
+    for (rel, body) in j.local_writes() {
+        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), &body).await);
+    }
+    let counts = j.local_counts();
+    if counts.files > 0 {
+        let wrote = j.logs.into_iter()
+            .filter(|l| l.arriving_adds > 0)
+            .map(|l| (l.rel, l.bytes, l.was.as_deref().map(versions::hash_of)))
+            .collect();
+        if let Err(e) = mint_join_version(&hold, id, wrote).await {
+            console_log(&fmt!("Diamond '{}': the page logs were joined, but their version \
+                could not be written ({}).", id, e));
+        }
+    }
+    drop(hold);
+    Ok(ImportOutcome::Joined(counts))
 }
 
 /// What to write at `rel` of the Diamond `id` for an arriving `body`: the arriving bytes, except

@@ -73,6 +73,7 @@ function world() {
 		function updateQueueBadges() {}
 		function returnQueue(c) { W.returned = (c._queue || []).slice(); c._queue = []; }
 		function runTurn(chat, text) { W.sent.push(text); }
+		async function sendQueued(chat, text) { W.sent.push(text); return 'here'; }	// the election kept it here
 		function armIdleBound(stands, fire) { W.armed = { stands: stands, fire: fire }; }
 		function dialogIdleMs() { return 1800000; }
 		function trail() {}

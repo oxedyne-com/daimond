@@ -520,12 +520,12 @@ async function rateSurfaces(pre) {
 	const into = (mid) => ev((m) => { const t = document.querySelector(`#chat-output .ctile[data-mid="${m}"]`); if (t) t.scrollIntoView({ block: 'center' }); }, mid);
 	if (!last || !first) { CAP.missing.push(`${CFG}/${pre}rate_tags`, `${CFG}/${pre}dlg_rate`); return; }
 	await into(last); await wait(300);
-	await vis(last, 'ctile-rate-down').click({ force: true }); await wait(400);
+	await vis(last, 'ctile-rate-down').click(); await wait(400);
 	await grab(pre + 'rate_tags', '#chat-output');
-	await vis(last, 'ctile-rate-down').click({ force: true }); await wait(300);
+	await vis(last, 'ctile-rate-down').click(); await wait(300);
 	await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
 	await into(first); await wait(300);
-	const ov = await overlay(pre + 'dlg_rate', async () => { await vis(first, 'ctile-rate-more').click({ force: true }); return true; });
+	const ov = await overlay(pre + 'dlg_rate', async () => { await vis(first, 'ctile-rate-more').click(); return true; });
 	if (ov) {
 		await ev(() => { const d = document.querySelector('.rate-card details'); if (d) d.open = true; }); await wait(400);
 		await grab(pre + 'dlg_rate_details', await topOverlay());
@@ -576,13 +576,13 @@ async function fileSurfaces(pre, wk) {
 	}
 	await unfold('#chat-output .turn-files'); await into(); await wait(300);
 	await grab(pre + 'chat_files_row', '#chat-output');
-	if (!pre) { await row('o.md').hover({ force: true }).catch(() => {}); await wait(300); await grab('chat_files_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
-	await vis('o.md', 'ctile-rate-down').click({ force: true }); await wait(400);
+	if (!pre) { await row('o.md').hover().catch(() => {}); await wait(300); await grab('chat_files_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
+	await vis('o.md', 'ctile-rate-down').click(); await wait(400);
 	await grab(pre + 'file_rate_tags', '#chat-output');
-	await vis('o.md', 'ctile-rate-down').click({ force: true }); await wait(300);
+	await vis('o.md', 'ctile-rate-down').click(); await wait(300);
 	await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
 	await into(); await wait(300);
-	const ov = await overlay(pre + 'dlg_rate_file', async () => { await vis('n.md', 'ctile-rate-more').click({ force: true }); return true; });
+	const ov = await overlay(pre + 'dlg_rate_file', async () => { await vis('n.md', 'ctile-rate-more').click(); return true; });
 	if (ov) {
 		await ev(() => { const d = document.querySelector('.rate-card details'); if (d) d.open = true; }); await wait(400);
 		await grab(pre + 'dlg_rate_file_details', await topOverlay());
@@ -778,7 +778,7 @@ async function deskSurfaces() {
 	await grab('transcript_stopped', '#chat-output');
 	await mainChat();
 	const tiles = page.locator('#chat-output .ctile.chat-msg-assistant');
-	if (await tiles.count()) { await tiles.last().hover({ force: true }).catch(() => {}); await wait(300); await grab('tile_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
+	if (await tiles.count()) { await tiles.last().hover().catch(() => {}); await wait(300); await grab('tile_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
 	await rateSurfaces('');
 	await fileSurfaces('', false);
 	await page.fill('#chat-input', 'A draft that is long enough to wrap onto a second line of the composer, so its height and its buttons show how they sit together.').catch(() => {});
@@ -885,7 +885,7 @@ async function deskSurfaces() {
 // ── Surfaces: the phone ─────────────────────────────────────────────────
 async function phoneSurfaces(wk) {
 	await quiet(); await ratingFixtures();
-	for (let i = 0; i < 3; i++) { if (await page.locator('#admin-close').isVisible().catch(() => false)) { await page.locator('#admin-close').click({ force: true }); await wait(300); } }
+	for (let i = 0; i < 3; i++) { if (await page.locator('#admin-close').isVisible().catch(() => false)) { await page.locator('#admin-close').click(); await wait(300); } }
 	await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(300);
 	await mainChat();
 	await grab('p_chat');
@@ -1037,10 +1037,10 @@ async function seed() {
 	const freeApp = () => ev(async () => { const m = await import('/pkg/oxedyne_daimond.js'); window.__free = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true); });
 	await freeApp();
 	for (const name of DIAMONDS) {
-		await page.click('#new-diamond-btn', { force: true });
+		await page.click('#new-diamond-btn');
 		await page.waitForSelector('.dlg-input', { timeout: 10000 });
 		await page.fill('.dlg-input', name);
-		await page.click('.dlg-ok', { force: true });
+		await page.click('.dlg-ok');
 		await wait(1200);
 	}
 	const kid = await ev(async () => { const d = JSON.parse(await window.__free.list_diamonds()).find((x) => x.name === 'Kitchen renovation'); return d ? d.id : ''; });
@@ -1058,15 +1058,15 @@ async function seed() {
 		const vis = (mid, cls) => page.locator(`#chat-output .ctile[data-mid="${mid}"] .${cls} >> visible=true`).first();
 		const mids = await ev(async () => [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant[data-mid]')].map((t) => t.dataset.mid));
 		if (mids.length < 2) { log(`seed: ${mids.length} answers with a mid, want >= 2`); await s.close().catch(() => {}); process.exit(3); }
-		await vis(mids[0], 'ctile-rate-more').click({ force: true });
+		await vis(mids[0], 'ctile-rate-more').click();
 		await page.waitForSelector('.rate-card', { timeout: 6000 });
-		await page.locator('.rate-card .rate-scale .tile-dlg-level').first().click({ force: true });
-		await page.locator('.rate-card .ctile-rate-tags .tile-dlg-level').nth(2).click({ force: true });
-		await page.locator('.rate-card details > summary').first().click({ force: true });
+		await page.locator('.rate-card .rate-scale .tile-dlg-level').first().click();
+		await page.locator('.rate-card .ctile-rate-tags .tile-dlg-level').nth(2).click();
+		await page.locator('.rate-card details > summary').first().click();
 		await page.locator('.rate-card textarea.rate-said-input').fill('Too long for what I asked, and the table was not needed.');
-		await page.locator('.rate-card .ui-close').first().click({ force: true });
+		await page.locator('.rate-card .ui-close').first().click();
 		await wait(300);
-		await vis(mids[1], 'ctile-rate-up').click({ force: true });
+		await vis(mids[1], 'ctile-rate-up').click();
 		await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
 		await wait(500);
 		const lines = await ev(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length);
@@ -1087,13 +1087,13 @@ async function seed() {
 		const rows = await ev(() => [...document.querySelectorAll('#chat-output .turn-files')].pop().querySelectorAll('.turn-file-row[data-h]').length);
 		if (tiles !== 2 || rows !== 2) { log(`seed: the chat's Files rows did not land (${tiles} tiles, ${rows} rated rows in the last, want 2 and 2)`); await s.close().catch(() => {}); process.exit(3); }
 		const nrow = page.locator('#chat-output .turn-files').last().locator('.turn-file-row', { hasText: 'n.md' });
-		await nrow.locator('.ctile-rate-more').click({ force: true });
+		await nrow.locator('.ctile-rate-more').click();
 		await page.waitForSelector('.rate-card', { timeout: 6000 });
-		await page.locator('.rate-card .rate-scale .tile-dlg-level').first().click({ force: true });
-		await page.locator('.rate-card .ctile-rate-tags .tile-dlg-level').nth(1).click({ force: true });
-		await page.locator('.rate-card details > summary').first().click({ force: true });
+		await page.locator('.rate-card .rate-scale .tile-dlg-level').first().click();
+		await page.locator('.rate-card .ctile-rate-tags .tile-dlg-level').nth(1).click();
+		await page.locator('.rate-card details > summary').first().click();
 		await page.locator('.rate-card textarea.rate-said-input').fill('It changed more of the file than I asked for.');
-		await page.locator('.rate-card .ui-close').first().click({ force: true });
+		await page.locator('.rate-card .ui-close').first().click();
 		await wait(300);
 		await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
 		await wait(500);
@@ -1123,11 +1123,11 @@ async function seed() {
 		const pick = await ev((name) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === name); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; }, DIAMONDS[3]);
 		if (pick !== true) { log('seed: no long-titled Kitchen Diamond to steer'); await s.close().catch(() => {}); process.exit(3); }
 		await wait(1000);
-		await page.locator('#dview-chat').click({ force: true }); await wait(700);
+		await page.locator('#dview-chat').click(); await wait(700);
 		const w = (p, c) => JSON.stringify({ path: `diamonds/${kid2}/code/${p}`, content: c });
 		await page.fill('#chat-input', '@tools file_write ' + w('plan.md', '# Plan\n\nStage two, joinery first.\n') + ' ;; file_write ' + w('quotes.md', '# Quotes\n\nHarlow, Oakline, Brandt.\n')
 			+ ' ;; file_write ' + w('drawings/stage-two/benchtop/final-revisions/kitchen-benchtop-and-splashback-v3.md', '# Drawing\n\nv3.\n') + ' ;; file_write ' + w('todo.md', '# To do\n\nPower points.\n'));
-		await page.click('#chat-send', { force: true });
+		await page.click('#chat-send');
 		await page.waitForFunction((id) => !window.DaimondCore.diamondBusy(id), kid2, { timeout: 90000, polling: 500 }).catch((e) => log('diamond turn', e.message));
 		await wait(1500);
 		const rr = await ev(() => document.querySelectorAll('#chat-output .turn-files .turn-file-row[data-h]').length);
@@ -1140,7 +1140,7 @@ async function seed() {
 			} catch (e) { return String(e); } }, kid2);
 			log(`seed: the Diamond's tail note has ${rr} rated rows, want 4 :: ${why}`); await s.close().catch(() => {}); process.exit(3);
 		}
-		await page.locator('#chat-output .turn-files .turn-file-row', { hasText: 'quotes.md' }).locator('.ctile-rate-up').click({ force: true });
+		await page.locator('#chat-output .turn-files .turn-file-row', { hasText: 'quotes.md' }).locator('.ctile-rate-up').click();
 		await wait(300);
 		await ev(async (id) => { const c = window.DaimondDiamond.conversation(id); await window.DaimondRatingUI.flush(String(c.id)); }, kid2);
 		await wait(600);
@@ -1153,7 +1153,7 @@ async function seed() {
 			await ev(() => { const b = document.getElementById('drawer-btn'); if (b && b.getClientRects().length && !document.body.classList.contains('drawer-open')) b.click(); }); await wait(300);
 			const ok = await ev((a) => { const t = [...document.querySelectorAll(a.l + ' ' + a.c)].find((e) => new RegExp(a.re).test((e.textContent || ''))); const c = t && t.querySelector('.tile-cog'); if (!c) return false; c.click(); return true; }, { l: listSel, c: boxCls, re });
 			if (!ok) return false;
-			await wait(700); await page.locator('.tile-dlg-delete').first().click({ force: true }); await wait(600);
+			await wait(700); await page.locator('.tile-dlg-delete').first().click(); await wait(600);
 			await ev(() => { const b = [...document.querySelectorAll('.dlg-card .dlg-ok.danger, .modal-card .dlg-ok.danger')].find((e) => e.getClientRects().length); if (b) b.click(); });
 			await wait(900);
 			return true;
@@ -1162,9 +1162,9 @@ async function seed() {
 			await newChat(s); await chat(s, q);
 			if (!(await trashOne('#session-list', '.chat-box', q.slice(0, 12)))) log('seed: could not trash the chat', q.slice(0, 12));
 		}
-		await page.click('#new-diamond-btn', { force: true });
+		await page.click('#new-diamond-btn');
 		await page.waitForSelector('.dlg-input', { timeout: 10000 });
-		await page.fill('.dlg-input', 'Old budget draft'); await page.click('.dlg-ok', { force: true }); await wait(1200);
+		await page.fill('.dlg-input', 'Old budget draft'); await page.click('.dlg-ok'); await wait(1200);
 		if (!(await trashOne('#diamond-list', '.diamond-box', 'Old budget draft'))) log('seed: could not trash the Diamond');
 	}
 	// #12: a Log Life whose page the person has changed and whose template has moved on since, so its face carries the offer to bring the
@@ -2265,10 +2265,10 @@ async function vSetup(kind) {
 			// A down tap on a down rating takes it back, so tap again if no chip row came (an earlier pass leaves its rating committed).
 			const m = await at(false), down = page.locator(`#chat-output .ctile[data-mid="${m}"] .ctile-rate-down >> visible=true`).first();
 			const row = () => ev(() => [...document.querySelectorAll('#chat-output .ctile-rate-tags')].some((e) => e.getClientRects().length > 0));
-			await down.click({ force: true }); await wait(400);
-			if (!(await row())) { await down.click({ force: true }); await wait(400); }
+			await down.click(); await wait(400);
+			if (!(await row())) { await down.click(); await wait(400); }
 		}
-		else { const m = await at(true); await page.locator(`#chat-output .ctile[data-mid="${m}"] .ctile-rate-more >> visible=true`).first().click({ force: true }); await wait(600); }
+		else { const m = await at(true); await page.locator(`#chat-output .ctile[data-mid="${m}"] .ctile-rate-more >> visible=true`).first().click(); await wait(600); }
 	}
 	if (kind === 'filter') { await ev(() => { document.querySelectorAll('#panel-rail .tagf-toggle[aria-expanded="false"], #panel-rail .rail-fold[aria-expanded="false"]').forEach((b) => b.click()); document.querySelectorAll('#panel-rail details').forEach((d) => { d.open = true; }); }); await wait(400); }
 	if (kind === 'viewer') {
@@ -2311,7 +2311,7 @@ async function vSetup(kind) {
 		if (kind === 'ratingfile') { await unfold('#chat-output .ctile[data-t="rating"] .rate-line'); await ev(() => { const t = [...document.querySelectorAll('#chat-output .ctile[data-t="rating"]')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); }
 		else { await unfold('#chat-output .turn-files'); await ev(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); }
 		await wait(300);
-		if (kind === 'filepop') { await page.locator('#chat-output .turn-files').last().locator('.turn-file-row', { hasText: 'n.md' }).locator('.ctile-rate-more >> visible=true').first().click({ force: true }); await wait(600); }
+		if (kind === 'filepop') { await page.locator('#chat-output .turn-files').last().locator('.turn-file-row', { hasText: 'n.md' }).locator('.ctile-rate-more >> visible=true').first().click(); await wait(600); }
 	}
 	if (kind === 'dtail') {
 		// The Kitchen Diamond whose turn changed files, on its chat face, with the tail note in view (the thread's last tile).

@@ -496,6 +496,20 @@
 	'end.why_lease_revoked': '멈췄어요: 다른 기기가 이 턴을 넘겨받았어요',
 	'end.why_stream_abort': '멈췄어요: 턴이 끝나기 전에 끊겼어요',
 	'end.why_blocked':      '완료되지 않음: 넘어설 수 없는 문제에서 멈췄습니다',
+	'end.why_lease_lapsed': '멈췄어요: 이 턴을 실행하던 기기가 턴을 놓쳤어요',
+	'end.why_lease_deadline': '멈췄어요: 제때 이 턴을 시작한 기기가 없어요',
+	// The plain account a cut turn ends with (UNBLOCK-25 U4, `cutAccount`).
+	// i18n-family: cut.why_ = user lease_cap lease_lapsed lease_revoked lease_deadline
+	'cut.why_user': '요청대로 멈췄어요.',
+	'cut.why_lease_cap': '멈췄어요: 다른 기기에 넘긴 턴이 30분 한도를 넘었어요.',
+	'cut.why_lease_lapsed': '멈췄어요: 실행하던 기기가 턴을 놓쳤어요.',
+	'cut.why_lease_revoked': '멈췄어요: 다른 기기가 이 턴을 넘겨받았어요.',
+	'cut.why_lease_deadline': '멈췄어요: 제때 시작한 기기가 없어요.',
+	'cut.none': '아직 도구를 쓰지 않았어요.',
+	'cut.calls.one': '도구 호출 {n}번을 했어요.',
+	'cut.calls.other': '도구 호출 {n}번을 했어요.',
+	'cut.wrote': '쓴 파일: {paths}.',
+	'cut.wrote_more': '쓴 파일: {paths} 외 {more}개.',
 	'end.how_paused':   '일시정지됨',
 	'end.how_capped':   '멈췄어요: 단계 한도에 닿았어요',
 	'end.how_spend_cap': '멈췄어요: 지출 한도에 닿았어요',
@@ -575,10 +589,7 @@
 	'web.mirror_silent':  'Daimond Hands에서 한동안 응답이 없어 실시간 화면이 없습니다. 탭 자체는 열려 있고 여전히 그 페이지입니다.',
 	'web.mirror_refused': '이 탭은 화면을 캡처할 수 없어 실시간 화면이 없습니다. 탭에서 직접 보거나 화면을 다시 요청하세요.',
 	// 틀 안에 담기기를 거부하는 사이트 — 사실 대부분이 그래요.
-	'web.blocked':         '<b>{host}</b>은(는) 다른 페이지 안에서는 표시되지 않아요. 대부분의 사이트가 클릭재킹을 막으려고 이렇게 해요. 고장이 아니에요.',
-	'web.blocked_hands':   'Daimond Hands은 진짜 탭에서 조작할 수 있어요.',
-	'web.blocked_install': '실시간으로 조작하려면 Daimond Hands을 설치하세요.',
-	'web.open_new_tab':    '새 탭에서 열기',
+	'web.blocked_line':    '<b>{host}</b>은(는) 앱 안에서 표시되는 것을 허용하지 않아요.',
 	'web.read_as_text':    '텍스트로 읽기',
 	'web.reading':         '읽는 중…',
 	'web.read_failed':     '그 페이지를 읽지 못했어요: {reason}',
@@ -884,6 +895,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '파일 {n}개가 이 기기의 동기화 꾸러미에 들어가지 못해, 자리가 날 때까지는 다른 기기로 가지 않아요: {names}',
 	'sync.files_left.other':    '파일 {n}개가 이 기기의 동기화 꾸러미에 들어가지 못해, 자리가 날 때까지는 다른 기기로 가지 않아요: {names}',
+	'sync.logs_held.one':       '{names}의 기록이 너무 크거나 읽을 수 없어서 아직 동기화되지 않았어요. 이 기기에는 안전하게 남아 있어요.',
+	'sync.logs_held.other':     'diamond {n}개의 기록이 너무 크거나 읽을 수 없어서 아직 동기화되지 않았어요. 이 기기에는 안전하게 남아 있어요: {names}',
 	'sync.folders_left.one':    '{names}은(는) 공유 폴더에 허용된 {max}를 넘어서 다른 기기로 가지 않아요. 더 작은 폴더를 공유하거나, 일부를 빼 주세요.',
 	'sync.folders_left.other':  '공유 폴더 {n}개가 각자에게 허용된 {max}를 넘어서 다른 기기로 가지 않아요: {names}.',
 	// 끝나 버렸고 다시 얻지도 못한 세션. 아래와 같은 이름을 씁니다.
@@ -917,12 +930,14 @@
 
 	// ── 클라우드 저장소 정리 ───────────────────────────────────
 	'chunks.sweep_held':          '정리 일시 중지',
-	'chunks.sweep_held_reason':   '클라우드 저장소에는 어떤 파일도 참조하지 않는 조각이 {m}개 중 {n}개 있어요. 삭제하지 않은 이유는 한 번에 절반 넘게 지울 수 없기 때문이에요.',
 	'chunks.upload_refused':      '올리기 일시 중지',
 	'chunks.upload_refused_title': '클라우드 저장소가 올리기를 거부했습니다',
-	'chunks.sweep_confirm_ask':   '지금 삭제하시겠습니까? 아직 보이는 것은 하나도 건드리지 않으며, 공간이 확보됩니다.',
-	'chunks.sweep_confirm_ok':    '조각 삭제',
-	'chunks.sweep_confirm_title': '어디서도 참조하지 않는 조각을 정리하시겠습니까?',
+	'chunks.held_ask_title':      '저장된 조각 {n}개를 제거할까요?',
+	'chunks.held_ask_body':       '이 기기는 저장된 조각 {m}개 중 {n}개를 더 이상 사용하지 않아요. 조각은 7일 동안 보관되며, 아직 사용하는 기기가 있으면 되돌려 놓아요.',
+	'chunks.held_ask_ok':         '제거',
+	'chunks.held_ask_keep':       '보관',
+	'chunks.held_kept_title':     '저장된 조각을 보관했어요',
+	'chunks.held_kept_body':      '이 기기가 파일을 확인하지 못해 저장된 조각 {n}개를 보관해요.',
 
 	// ── 두 번째 기기 연결 ──────────────────────────────────────
 	// 버튼 이름을 감싸는 따옴표는 한국어 관례대로 “ ”를 써요.
@@ -2697,6 +2712,7 @@
 	'capp.merge_ok': '페이지 업데이트',
 	'capp.merge_later': '나중에',
 	'capp.merge_waiting': '업데이트했습니다. 입력 중인 항목이 저장되면 새 페이지가 표시됩니다.',
+	'capp.merge_refused': '새 {name} 페이지가 있지만 이 업데이트가 편집한 내용과 충돌하므로 페이지를 그대로 둡니다.',
 	'capp.merge_show': '둘 다 바꾼 곳',
 	'capp.merge_line': '{n}번째 줄',
 	'capp.merge_yours': '당신의 것',
@@ -2913,6 +2929,7 @@
 	'post.err_no_account':       '그 키를 가진 계정이 없어서 메시지를 보내지 못했어요.',
 	'post.err_too_big':          '이 메시지는 릴레이가 실어 나르기에 너무 큽니다.',
 	'post.err_refused':          '릴레이가 이 메시지를 받지 않아서 보내지 못했어요.',
+	'post.err_unknown':          '릴레이가 이 메시지를 제때 확인하지 못했어요. 아직 도착할 수 있어요. 다시 보내기 전에 확인해 주세요.',
 	'post.locked':               '메시지를 읽으려면 Daimond을 잠금 해제하세요.',
 	'post.tray_head':            '당신의 답을 기다리는 중',
 	'post.none':                 '아직 메시지가 없어요. {people}에서 누군가를 추가하세요.',
@@ -2955,7 +2972,9 @@
 	'post.refused_no_account': '그 키를 가진 계정이 없음',
 	'post.refused_too_big':    '중계가 나를 수 있는 크기를 넘음',
 	'post.refused_other':      '중계가 받지 않았음',
+	'post.refused_unknown':    '확인되지 않음, 아직 도착할 수 있음',
 	'post.group_refused':      '다음 상대에게는 중계가 받지 않았습니다: {who}.',
+	'post.group_unknown':      '다음 상대에게는 중계가 확인하지 못했습니다: {who}. 아직 도착할 수 있어요.',
 
 	// ── A group, and who is in it ──
 	// A group is a LIST OF PEOPLE a message is sealed to one by one. No

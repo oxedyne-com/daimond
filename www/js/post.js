@@ -1651,6 +1651,33 @@
 		return { status: r.status, json: j };
 	}
 
+	/// The status the gateway answers a put whose write it cannot say landed (WSTALL,
+	/// 2026-10-16): the store's writer did not answer in time, so the row may be in the
+	/// box or may land in it later. It is NOT a refusal, and nothing may tell a person
+	/// their message "has not been sent" on it.
+	var UNKNOWN_STATUS = 504;
+
+	/// How many times a put of unknown outcome is sent again, and the wait before each.
+	var RESEND_WAITS_MS = [1000, 2000, 4000];
+
+	/// One put to the relay, sent again while its outcome is unknown.
+	///
+	/// THE SAME BODY EVERY TIME, which is what makes a resend safe: the relay keys
+	/// an envelope on its sender and address (`Store::deliver_post`, SIM-2), so a
+	/// row that did land is answered as carried and no second row is stored. A
+	/// caller must never compose afresh to retry, because a new seal is a new
+	/// address and the relay would carry both. The answer is that of the last
+	/// attempt, so a put still unknown after the resends answers 504 and the caller
+	/// says so.
+	async function putOnce(req) {
+		var r = await call('POST', req);
+		for (var i = 0; i < RESEND_WAITS_MS.length && r.status === UNKNOWN_STATUS; i++) {
+			await sleep(RESEND_WAITS_MS[i]);
+			r = await call('POST', req);
+		}
+		return r;
+	}
+
 	// ── The doorbell ───────────────────────────────────────────
 	//
 	// One email, at most once a day, saying something is waiting. No sender, no
@@ -1735,11 +1762,12 @@
 		// reason for existing: one recipient and forty recipients are the same POST
 		// and must fail in the same words.
 		var r;
-		try { r = await call('POST', { to: String(o.to), addr: made.addr, envelope: made.envelope }); }
+		try { r = await putOnce({ to: String(o.to), addr: made.addr, envelope: made.envelope }); }
 		catch (e) { return { ok: false, status: 0, why: whyRefused(0) }; }
 
 		if (r.status !== 200 || !r.json || !r.json.ok) {
-			return { ok: false, status: r.status | 0, why: whyRefused(r.status) };
+			return { ok: false, status: r.status | 0, unknown: r.status === UNKNOWN_STATUS,
+				why: whyRefused(r.status) };
 		}
 
 		// The sender's own copy. Kept only after the relay accepted it, so a Sent
@@ -1782,10 +1810,11 @@
 		if (b['for']) req['for'] = String(b['for']);
 		if (+b.ttl > 0) req.ttl = Math.round(+b.ttl);
 		if (b.turn) req.turn = String(b.turn);
-		try { r = await call('POST', req); }
+		try { r = await putOnce(req); }
 		catch (e) { return { ok: false, status: 0, why: whyRefused(0) }; }
 		if (r.status !== 200 || !r.json || !r.json.ok) {
-			return { ok: false, status: r.status | 0, why: whyRefused(r.status) };
+			return { ok: false, status: r.status | 0, unknown: r.status === UNKNOWN_STATUS,
+				why: whyRefused(r.status) };
 		}
 		return { ok: true, status: 200, addr: String(b.addr) };
 	}
@@ -1892,7 +1921,7 @@
 		for (i = 0; i < tos.length; i++) {
 			var r;
 			try {
-				r = await call('POST', { to: String(tos[i]), addr: made.addr,
+				r = await putOnce({ to: String(tos[i]), addr: made.addr,
 					envelope: made.envelope });
 			} catch (e) {
 				refused.push({ to: String(tos[i]), status: 0, why: whyRefused(0) });
@@ -1944,6 +1973,16 @@
 				? tOr('post.refused_no_account', 'no account holds their key')
 				: tOr('post.err_no_account',
 					'No account holds that key, so the message has not been sent.');
+		}
+		// NOT KNOWN, AND NEVER "NOT SENT": the relay may hold it, and `putOnce` has
+		// already sent the same envelope again. A person who sends it once more by
+		// hand seals a new envelope, which the relay cannot tell from a second message.
+		if (s === UNKNOWN_STATUS) {
+			return clause
+				? tOr('post.refused_unknown', 'not confirmed, it may still arrive')
+				: tOr('post.err_unknown',
+					'The relay could not confirm that message in time, so it may still arrive. '
+					+ 'Check before you send it again.');
 		}
 		if (s === 413) {
 			return clause
@@ -3990,13 +4029,15 @@
 	/// of those two is theirs, which is the part of a message worth paying eight
 	/// translations for.
 	function shortfall(r) {
-		var mine = [], theirs = [];
+		var mine = [], theirs = [], unsure = [];
 		((r && r.skipped) || []).forEach(function (s) {
 			mine.push(String(s && s.label || '?') + ' (' + String(s && s.why || '') + ')');
 		});
 		((r && r.refused) || []).forEach(function (x) {
 			var to  = String(x && x.to || '');
 			var who = nameFor(to) || to.slice(0, 8);
+			// Not a refusal, and never drawn under "would not take it" (WSTALL).
+			if ((x && x.status | 0) === UNKNOWN_STATUS) { unsure.push(who); return; }
 			theirs.push(who + ' (' + whyRefused(x && x.status, true) + ')');
 		});
 		var said = '';
@@ -4007,6 +4048,11 @@
 		if (theirs.length) {
 			said += ' ' + tOr('post.group_refused',
 				'The relay would not take it for: {who}.', { who: theirs.join(', ') });
+		}
+		if (unsure.length) {
+			said += ' ' + tOr('post.group_unknown',
+				'The relay could not confirm it for: {who}. It may still arrive.',
+				{ who: unsure.join(', ') });
 		}
 		return said;
 	}

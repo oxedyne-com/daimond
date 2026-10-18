@@ -235,8 +235,34 @@ const MAX_FONT_DIRS: usize = 64;
 /// the least use.
 const ASSET_EXTS: &[&str] = &[
     "svg", "png", "jpg", "jpeg", "gif", "webp",
+    "bmp", "dib", "tif", "tiff", "ico", "heic", "heif",
     "bib", "csv", "json", "yaml", "yml", "toml", "xml", "txt",
 ];
+
+/// Extensions of pictures typst cannot place, which the gather converts to PNG or JPEG and
+/// places under the name the source used: typst reads such a file's format from its bytes,
+/// so `image("scan.bmp")` finds a PNG and places it (UNBLOCK-25).
+const CONVERT_EXTS: &[&str] = &["bmp", "dib", "tif", "tiff", "ico", "heic", "heif"];
+
+/// A gathered picture in a format typst cannot place, as the PNG or JPEG it can: the first
+/// page of a TIFF.  Anything else comes back as it was.
+fn placeable(path: &str, data: Vec<u8>) -> Result<Vec<u8>, String> {
+    if !CONVERT_EXTS.contains(&ext(path).as_str()) {
+        return Ok(data);
+    }
+    let m = oxedyne_fe2o3_stds::media::Media::sniff(&data);
+    if crate::protocol::ImageMedia::sniff(&data).is_some()
+        || !oxedyne_fe2o3_graphics::convert::decodable(m)
+    {
+        return Ok(data);
+    }
+    match oxedyne_fe2o3_graphics::convert::to_common(&data) {
+        Ok(mut pages) if !pages.is_empty() => Ok(pages.swap_remove(0).bytes),
+        Ok(_)  => Err(fmt!("'{}' is a {} with no pages in it.", path, m.label())),
+        Err(e) => Err(fmt!("'{}' is a {} this could not read, so it cannot be placed: {}",
+            path, m.label(), e)),
+    }
+}
 
 /// Extensions a font file carries.
 const FONT_EXTS: &[&str] = &["ttf", "otf", "ttc", "otc"];
@@ -1678,6 +1704,12 @@ async fn gather(reach: &Reach<'_>, root: FileRoot, main_rel: &str) -> Outcome<Ga
             };
             if assets.iter().any(|(p, _)| *p == shadow) { continue; }
             let data = match opfs::read_file(root, &path).await { Ok(d) => d, Err(_) => continue };
+            let data = match placeable(&path, data) {
+                Ok(d)    => d,
+                Err(why) => return Ok(refuse(fmt!(
+                    "{} Nothing was compiled, because the PDF would have gone out without that \
+                    picture.", why))),
+            };
             bytes += data.len();
             if bytes > MAX_BYTES {
                 return Ok(refuse(fmt!(

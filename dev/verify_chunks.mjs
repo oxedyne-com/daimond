@@ -13,6 +13,9 @@
 //      is a button now, it asks before it deletes, and the parked commit is
 //      written to localStorage — a token can only be minted by the gateway, so a
 //      reload used to abandon a deletion the account goes on paying for.
+//      SINCE F8 (2026-09-27) ONLY WHERE THIS DEVICE CAN VOUCH FOR IT: `why ===
+//      'ask'` asks Remove or Keep; any other reason is a notice with Close and
+//      no token, and `confirmHeldSweep` refuses it for any caller.
 //   b. A REFUSED UPLOAD ARRIVES AS ITS OWN SENTENCE. `putChunks` threw
 //      `chunk put failed: 507` and discarded `res.json.error`. The gateway
 //      composes four sentences on this route and each names the remedy; the user
@@ -56,6 +59,8 @@
 //	node dev/verify_chunks.mjs --no-gateway --break status    # the status code is back
 //	node dev/verify_chunks.mjs --no-gateway --break memory    # the deletion dies on reload
 //	node dev/verify_chunks.mjs --no-gateway --break anyone    # a stranger inherits it
+//	node dev/verify_chunks.mjs --no-gateway --break anyask    # every reason gets Remove
+//	node dev/verify_chunks.mjs --no-gateway --break anyremove # confirmHeldSweep vouches for anything
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -112,6 +117,14 @@ const OWNER = "\t\tvar fp = whoseFp();\n"
 	+ "\t\t\treturn null;\n"
 	+ "\t\t}\n";
 
+/// F8's two halves: the dialog offers Remove only for `ask`, and the function
+/// that sends the token refuses anything else on its own account.
+const NOTICE = "\t\tif (!heldAsks()) {\n"
+	+ "\t\t\t// Nothing to authorise: the pieces are kept, and this says why.\n";
+const ANY_NOTICE = "\t\tif (false) {\n"
+	+ "\t\t\t// Nothing to authorise: the pieces are kept, and this says why.\n";
+const GUARD = "\t\tif (!heldAsks()) { log('not a question for a person:', heldSweep.why || '(no reason)'); return null; }\n";
+
 const BREAKS = {
 	// The chip goes back to being a pill nobody can press. `confirmHeldSweep`
 	// still exists and still works — which is the whole point of the finding, and
@@ -124,6 +137,13 @@ const BREAKS = {
 	// Any identity picks up any parked deletion, which is what an un-namespaced
 	// key left behind by a forget would hand the next person in this browser.
 	anyone:   [{ file: SRC, find: OWNER,    with: '' }],
+	// Remove on every reason, as before F8: a person asked to vouch for an index
+	// this device could not check. The function still refuses, so this is the
+	// dialog half alone.
+	anyask:   [{ file: SRC, find: NOTICE,   with: ANY_NOTICE }],
+	// The function half alone: the dialog still says Close, but any caller of
+	// `confirmHeldSweep` sends a person's token for a set nobody checked.
+	anyremove: [{ file: SRC, find: GUARD,   with: '' }],
 };
 
 if (BREAK && !BREAKS[BREAK]) {
@@ -210,7 +230,7 @@ async function arm(page) {
 		window.__gw = {
 			calls:     [],
 			token:     'sweep-token-abcdef',
-			held:      4,				// chunks the account holds, all of them doomed.
+			held:      4,				// declared chunks the commit drops, all of them doomed.
 			putStatus: 0,				// 0 = accept the upload.
 			putError:  '',
 		};
@@ -231,13 +251,19 @@ async function arm(page) {
 			if (body.op === 'commit') {
 				// The interlock: the identical body, quoting the token, carries the
 				// deletion out. Anything else is held back again.
+				// A person's token releases (kept 7 days) and deletes nothing, as
+				// the gateway since GW-DL1 answers.
 				if (body.sweep_token === window.__gw.token) {
-					return reply(200, { ok: true, swept: window.__gw.held, free_allowance: 0 });
+					return reply(200, { ok: true, swept: 0, released: window.__gw.held, free_allowance: 0 });
 				}
+				// `sweep_held` is what the account had declared: the doomed plus
+				// the k this commit names again, so `sweep_held - sweep_held_back`
+				// is k and the client can account for it (`why === 'ask'`) --
+				// unless k is 0, an index naming nothing.
 				return reply(200, {
 					ok: true, swept: 0,
 					sweep_held_back: window.__gw.held,
-					sweep_held:      window.__gw.held,
+					sweep_held:      window.__gw.held + (body.chunks || []).length,
 					sweep_token:     window.__gw.token,
 					free_allowance:  0,
 				});
@@ -250,8 +276,17 @@ async function arm(page) {
 		window.__asked  = [];
 		window.__answer = true;
 		window.DaimondCore.confirm = function (message, okLabel, opts) {
-			window.__asked.push({ message: message, okLabel: okLabel, title: (opts || {}).title });
+			const o = opts || {};
+			window.__asked.push({ message: message, okLabel: okLabel, title: o.title,
+				// `undefined` is the dialog's default Cancel; `null` drops it.
+				cancelLabel: o.cancelLabel, danger: o.danger });
 			return Promise.resolve(window.__answer);
+		};
+		/// Two files naming two chunks this account had declared: an index this
+		/// device can account for, so the stub's reply stands as `ask`.
+		window.__two = {
+			'a.bin': { v: 2, size: 10, key: 'ka', chunks: [{ addr: 'aa'.repeat(32), size: 10 }] },
+			'b.bin': { v: 2, size: 11, key: 'kb', chunks: [{ addr: 'bb'.repeat(32), size: 11 }] },
 		};
 	});
 }
@@ -273,6 +308,23 @@ const chipState = () => p.evaluate(() => {
 	};
 });
 
+/// Open the status strip's Details, as a person would, so the chip can be pressed.
+///
+/// Since 2026-09-15 (`7cf50f98`) the strip shows one summary line and keeps its
+/// rows behind a disclosure, closed for a first-time user -- and the chip lives in
+/// the sync row, one of them. Every click below timed out on "element is not
+/// visible" from then on, so nothing past 1b ran: the dialog, the token and the
+/// reload went unmeasured in every gate. The disclosure remembers being open, so
+/// after a reload this finds it open and does nothing.
+const reach = async () => {
+	const closed = await p.evaluate(() => {
+		const d = document.getElementById('astat-detail');
+		return !!d && d.hidden;
+	});
+	if (closed) await p.click('#astat-summary');
+	await p.waitForTimeout(100);
+};
+
 try {
 	await p.waitForFunction(
 		() => !!window.DaimondChunks && !!window.DaimondGateway && !!window.DaimondCore,
@@ -288,8 +340,9 @@ try {
 
 	// ── 1b. A held-back sweep stands, and the notice is a CONTROL ─────────────
 	//
-	// An index naming nothing: the one case `refusalToConfirm` deliberately never
-	// clears by itself, and the case the escape hatch exists for.
+	// An index naming nothing: the sharpest form of a device that knows nothing,
+	// and since F8 (2026-09-27) the case that is NOT a question -- the chip is
+	// still a control, but what it opens is a notice.
 	const stood = await p.evaluate(async () => {
 		await window.DaimondChunks.commit({}, 1, null);
 		return window.DaimondChunks.state();
@@ -309,41 +362,132 @@ try {
 		chip.text);
 	check('and it carries an accessible name that includes the reason',
 		chip.label.length > chip.text.length, chip.label.slice(0, 80));
+	await reach();
+	check('and a person can reach it: visible once Details is open',
+		await p.isVisible('#chunk-chip'), 'astat-detail hidden=' + await p.evaluate(() =>
+			String((document.getElementById('astat-detail') || {}).hidden)));
 
-	// ── 1c. Saying NO deletes nothing ─────────────────────────────────────────
+	/// The page's own words for a key, so the checks below hold in any locale and
+	/// prove the number was filled in rather than a `{n}` left standing.
+	const words = (k, v) => p.evaluate(([k2, v2]) => window.DaimondI18n.t(k2, v2), [k, v || null]);
+	const kept = {
+		title: await words('chunks.held_kept_title'),
+		body:  await words('chunks.held_kept_body', { n: 4 }),
+		close: await words('common.close'),
+	};
+	check('the notice\'s words are in the table, not bare keys',
+		!/^chunks\./.test(kept.title) && !/^chunks\./.test(kept.body) && !/\{n\}/.test(kept.body),
+		JSON.stringify(kept));
+	check('the chip\'s hover says the pieces are KEPT, with the number',
+		chip.title === kept.body && chip.title.indexOf('4') !== -1, chip.title);
+
+	// ── 1c. It is a notice: one button, and no token whatever is pressed ──────
 	//
-	// Before the yes, because a control that deleted on any click would pass the
-	// next check and be a far worse defect than the one being fixed.
-	await p.evaluate(() => { window.__answer = false; window.__gw.calls.length = 0; });
-	await p.click('#chunk-chip');
-	await p.waitForTimeout(300);
+	// The answer is YES on purpose: Close resolves the dialog true, and a chip
+	// that sent a token on any true would pass a "no" test and delete on Close.
 	// A COMMIT QUOTING THE TOKEN, not any commit. The sync engine is running in
 	// this page and commits its own live set on its own schedule; counting every
 	// commit would make these checks depend on whether a background round
 	// happened to land inside the window, and one already did during a `--break`
 	// run — turning a check that should have gone red green.
+	await p.evaluate(() => { window.__answer = true; window.__gw.calls.length = 0; window.__asked.length = 0; });
+	await reach(); await p.click('#chunk-chip');
+	await p.waitForTimeout(300);
 	const said = await p.evaluate(() => ({
-		asked:   window.__asked.length,
+		asked:   window.__asked.slice(),
 		tokened: window.__gw.calls.filter((c) => c.op === 'commit' && c.sweep_token).length,
 		st:      window.DaimondChunks.state(),
 	}));
-	check('pressing the chip ASKS before it deletes', said.asked === 1, `${said.asked} question(s)`);
-	check('and answering no authorises no deletion', said.tokened === 0,
+	const note = said.asked[0] || {};
+	check('pressing the chip opens the notice', said.asked.length === 1, `${said.asked.length} dialog(s)`);
+	check('with ONE button, Close, and no second',
+		note.okLabel === kept.close && note.cancelLabel === null,
+		JSON.stringify({ ok: note.okLabel, cancel: note.cancelLabel }));
+	check('titled "Stored pieces kept", saying why, with the number',
+		note.title === kept.title && note.message === kept.body,
+		JSON.stringify({ title: note.title, message: note.message }));
+	check('and not drawn as a danger', note.danger === false, String(note.danger));
+	check('and Close authorises no deletion', said.tokened === 0,
 		`${said.tokened} commit(s) quoting a token`);
-	check('so the deletion is still standing', said.st.standing === true, JSON.stringify(said.st));
+	check('so the pieces are still standing, kept', said.st.standing === true && said.st.why === 'names_nothing',
+		JSON.stringify(said.st));
 
-	// ── 1d. Saying YES carries the deletion out ───────────────────────────────
+	// ── 1d. And no caller can vouch for it either ─────────────────────────────
+	//
+	// The dialog is one caller. `confirmHeldSweep` is exported for verifiers and
+	// reachable from a console, so the rule has to live in it.
+	await p.evaluate(() => { window.__gw.calls.length = 0; });
+	const forced = await p.evaluate(async () => ({
+		j:       await window.DaimondChunks.confirmHeldSweep(),
+		tokened: window.__gw.calls.filter((c) => c.op === 'commit' && c.sweep_token).length,
+		st:      window.DaimondChunks.state(),
+		held:    localStorage.getItem('daimond-chunk-held'),
+	}));
+	check('confirmHeldSweep refuses an index this device could not check: null',
+		forced.j === null, JSON.stringify(forced.j));
+	check('and sends no token', forced.tokened === 0, `${forced.tokened} commit(s) quoting a token`);
+	check('and it stays standing, written down',
+		forced.st.standing === true && forced.st.confirmed === 0 && !!forced.held,
+		JSON.stringify(forced.st));
+
+	// ── 1d². Where this device CAN account for it, a person is asked ──────────
+	//
+	// Two files naming two chunks the account had declared, four dropped: the
+	// gateway's held minus held-back is the two this client named, so the
+	// deletion is one a person may answer (`ask`).
+	await p.evaluate(async () => {
+		window.__gw.calls.length = 0;
+		await window.DaimondChunks.commit(window.__two, 1, null);
+	});
+	const asks = await p.evaluate(() => window.DaimondChunks.state());
+	check('an index this device can account for stands as a question',
+		asks.standing === true && asks.why === 'ask' && asks.heldBack === 4 && asks.held === 6,
+		JSON.stringify(asks));
+	const ask = {
+		title: await words('chunks.held_ask_title', { n: 4 }),
+		body:  await words('chunks.held_ask_body', { n: 4, m: 6 }),
+		ok:    await words('chunks.held_ask_ok'),
+		keep:  await words('chunks.held_ask_keep'),
+	};
+	check('the question\'s words are in the table, numbers filled',
+		!/^chunks\./.test(ask.title + ask.body + ask.ok + ask.keep) && !/\{[nm]\}/.test(ask.title + ask.body),
+		JSON.stringify(ask));
+	const askChip = await chipState();
+	check('the chip\'s hover says what Remove would do, with both numbers',
+		askChip.title === ask.body && askChip.title.indexOf('4') !== -1 && askChip.title.indexOf('6') !== -1,
+		askChip.title);
+
+	// Keep deletes nothing. Before the Remove, because a control that deleted on
+	// any click would pass the next check and be the worse defect.
+	await p.evaluate(() => { window.__answer = false; window.__gw.calls.length = 0; window.__asked.length = 0; });
+	await reach(); await p.click('#chunk-chip');
+	await p.waitForTimeout(300);
+	const keep = await p.evaluate(() => ({
+		asked:   window.__asked.slice(),
+		tokened: window.__gw.calls.filter((c) => c.op === 'commit' && c.sweep_token).length,
+		st:      window.DaimondChunks.state(),
+	}));
+	const q = keep.asked[0] || {};
+	check('pressing the chip ASKS before it removes', keep.asked.length === 1, `${keep.asked.length} question(s)`);
+	check('Remove or Keep, titled with the number',
+		q.okLabel === ask.ok && q.cancelLabel === ask.keep && q.title === ask.title && q.message === ask.body,
+		JSON.stringify({ ok: q.okLabel, cancel: q.cancelLabel, title: q.title }));
+	check('and Keep authorises no deletion', keep.tokened === 0,
+		`${keep.tokened} commit(s) quoting a token`);
+	check('so the question is still standing', keep.st.standing === true && keep.st.why === 'ask',
+		JSON.stringify(keep.st));
+
+	// Remove carries it out, once.
 	await p.evaluate(() => { window.__answer = true; window.__gw.calls.length = 0; });
-	await p.click('#chunk-chip');
+	await reach(); await p.click('#chunk-chip');
 	await p.waitForFunction(() => window.DaimondChunks.state().standing === false,
 		null, { timeout: 8000 }).catch(() => {});
 	const done = await p.evaluate(() => ({
-		asked:   window.__asked.length,
 		tokened: window.__gw.calls.filter((c) => c.op === 'commit' && c.sweep_token),
 		st:      window.DaimondChunks.state(),
 		held:    localStorage.getItem('daimond-chunk-held'),
 	}));
-	check('answering yes authorises the deletion exactly once, never in a loop',
+	check('Remove authorises the deletion exactly once, never in a loop',
 		done.tokened.length === 1, `${done.tokened.length} commit(s) quoting a token`);
 	check('and it quotes the token the gateway minted, so the gateway can check it',
 		done.tokened.length === 1 && done.tokened[0].sweep_token === 'sweep-token-abcdef',
@@ -354,10 +498,13 @@ try {
 	check('and says a person gave it',
 		done.tokened.length === 1 && done.tokened[0].sweep_confirm === 'person',
 		JSON.stringify(done.tokened[0] && done.tokened[0].sweep_confirm));
-	check('the chunks actually go: the client records the sweep as confirmed',
+	check('and it is the commit that was held, naming the same two chunks',
+		done.tokened.length === 1 && (done.tokened[0].chunks || []).length === 2,
+		JSON.stringify(done.tokened[0] && (done.tokened[0].chunks || []).length));
+	check('the client records it as confirmed, and nothing stands',
 		done.st.confirmed === 1 && done.st.standing === false, JSON.stringify(done.st));
 	const cleared = await chipState();
-	check('the chip goes with them, and the element is still there to be hidden',
+	check('the chip goes with it, and the element is still there to be hidden',
 		cleared.exists === true && cleared.shown === false,
 		`exists=${cleared.exists} shown=${cleared.shown}`);
 	check('and nothing is left in storage to raise it from the dead next boot',
@@ -369,10 +516,10 @@ try {
 	// re-derive one. A reload used to drop the body and the token together, and
 	// on a device where sync is not running the commit that would raise it again
 	// never comes — so the chunks sit there, referenced by nothing, swept by
-	// nothing, and billed.
+	// nothing, and billed. A question, so that what comes back can be answered.
 	await p.evaluate(async () => {
 		window.__gw.calls.length = 0;
-		await window.DaimondChunks.commit({}, 1, null);
+		await window.DaimondChunks.commit(window.__two, 1, null);
 	});
 	const beforeReload = await p.evaluate(() => ({
 		st:    window.DaimondChunks.state(),
@@ -389,8 +536,9 @@ try {
 		null, { timeout: 15000 });
 
 	const survived = await p.evaluate(() => window.DaimondChunks.state());
-	check('after a reload the deletion is STILL standing',
-		survived.standing === true && survived.heldBack === 4, JSON.stringify(survived));
+	check('after a reload the deletion is STILL standing, still a question',
+		survived.standing === true && survived.heldBack === 4 && survived.why === 'ask',
+		JSON.stringify(survived));
 	const afterChip = await chipState();
 	check('and the chip is drawn again from storage, unprompted',
 		afterChip.exists === true && afterChip.shown === true && afterChip.tag === 'BUTTON',
@@ -400,7 +548,7 @@ try {
 	// minted, which is the only thing that makes the restored body worth keeping.
 	await arm(p);
 	await p.evaluate(() => { window.__answer = true; window.__gw.calls.length = 0; });
-	await p.click('#chunk-chip');
+	await reach(); await p.click('#chunk-chip');
 	await p.waitForFunction(() => window.DaimondChunks.state().standing === false,
 		null, { timeout: 8000 }).catch(() => {});
 	const resumed = await p.evaluate(() => ({
@@ -412,6 +560,40 @@ try {
 	check('and it quotes the token from the sitting before, not a new one',
 		resumed.tokened.length === 1 && resumed.tokened[0].sweep_token === 'sweep-token-abcdef',
 		JSON.stringify(resumed.tokened[0] && resumed.tokened[0].sweep_token));
+
+	// ── 1e¹. What an older page left, with no reason, is not a question ───────
+	//
+	// A page from before `why` was recorded persisted `why: ''`, and `readHeld`
+	// keeps that as ''. It must come back as a notice, never as Remove: nobody
+	// knows now whether that device could vouch for it.
+	await p.evaluate(async () => {
+		await window.DaimondChunks.commit(window.__two, 1, null);
+		const raw = JSON.parse(localStorage.getItem('daimond-chunk-held') || 'null');
+		if (raw) { raw.why = ''; localStorage.setItem('daimond-chunk-held', JSON.stringify(raw)); }
+	});
+	await p.reload({ waitUntil: 'domcontentloaded' });
+	await signInAs(t1, t1.name);
+	await p.waitForFunction(() => !!window.DaimondChunks && !!window.DaimondCore,
+		null, { timeout: 15000 });
+	await arm(p);
+	await p.evaluate(() => { window.__answer = true; window.__gw.calls.length = 0; window.__asked.length = 0; });
+	await reach(); await p.click('#chunk-chip');
+	await p.waitForTimeout(300);
+	const legacy = await p.evaluate(async () => ({
+		asked:   window.__asked.slice(),
+		j:       await window.DaimondChunks.confirmHeldSweep(),
+		tokened: window.__gw.calls.filter((c) => c.op === 'commit' && c.sweep_token).length,
+		st:      window.DaimondChunks.state(),
+	}));
+	const lq = legacy.asked[0] || {};
+	check('an older page\'s entry with no reason is restored, and standing',
+		legacy.st.standing === true && legacy.st.why === '', JSON.stringify(legacy.st));
+	check('and it opens the notice, Close alone',
+		legacy.asked.length === 1 && lq.okLabel === kept.close && lq.cancelLabel === null,
+		JSON.stringify({ n: legacy.asked.length, ok: lq.okLabel, cancel: lq.cancelLabel }));
+	check('and nothing sends its token, the chip or a direct call',
+		legacy.j === null && legacy.tokened === 0,
+		JSON.stringify({ j: legacy.j, tokened: legacy.tokened }));
 
 	// ── 1e². And it belongs to whoever it was stored for ──────────────────────
 	//
@@ -494,7 +676,7 @@ try {
 		refChip.label.indexOf(AT_CEILING) !== -1 || refChip.title === AT_CEILING,
 		refChip.title.slice(0, 80));
 
-	await p.click('#chunk-chip');
+	await reach(); await p.click('#chunk-chip');
 	await p.waitForTimeout(300);
 	const told = await p.evaluate(() => window.__asked.slice());
 	check('and pressing it puts the sentence in front of the user',

@@ -83,6 +83,8 @@ const liftedTags    = lift(SRC, '\tfunction packTags(data) {');
 const liftedLinks   = lift(SRC, '\tfunction packLinks(data) {');
 const liftedPackAt  = lift(SRC, '\tfunction packStamp(data) {');
 const liftedPackNotes = lift(SRC, '\tfunction packNotes(data) {');
+const liftedJoin    = lift(SRC, '\tfunction joinCounts(s) {');
+const liftedHeal    = lift(SRC, '\tasync function healLogsHeld(app, id) {');
 let liftedApply     = lift(SRC, '\tasync function applyDiamonds(remote, from) {');
 if (BREAK === 'nonotes') {
 	const needle = 'await window.DaimondNotes.uniteHeld(', n = liftedApply.split(needle).length - 1;
@@ -253,6 +255,9 @@ function build(harness) {
 		// deps applyDiamonds reaches for, stubbed to the harness
 		'function diamondApp() { return ctx.app; }\n' +
 		'function trail() {}\n' +
+		liftedJoin + '\n' +
+		liftedHeal + '\n' +	// the fake app has no `heal_pagelogs`, so it answers 0
+		'function noteLogsHeld(id, name, held) { if (ctx.onHeld) ctx.onHeld(id, held); }\n' +
 		'function heapNote() { return \'\'; }\n' +
 		'function mergeTombMap() { return {}; }\n' +
 		'function notePeerRef() {}\n' +

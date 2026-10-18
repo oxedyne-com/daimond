@@ -133,6 +133,7 @@ const miss = (n) => () => { throw new Error(n + ' missing'); };
 const S = Object.assign({ ratingPre: () => '<missing>', pushUserRecord: miss('pushUserRecord'), storedPre: () => '<missing>',
 	landInterjection: miss('landInterjection'), recoverUserRecord: miss('recoverUserRecord'), interjectMessage: miss('interjectMessage') }, scope());
 const run = (f) => { try { return f(); } catch (e) { return 'threw: ' + e.message; } };
+const runA = async (f) => { try { return await f(); } catch (e) { return 'threw: ' + e.message; } };
 
 // ═══ 1. pushUserRecord: the one place `pre` is set ═══
 console.log('\nA person\'s message takes the note in the step that appends it');
@@ -246,7 +247,8 @@ console.log('\nThe three paths set it, and nothing else does');
 	same('path 1 (local chat send): gated on the person flag runTurn is given, or on a note a replay hands it', by.runTurn, ["!!opts.person || typeof opts.told === 'string'"]);
 	same('path 5 (an interjection landing) is a person\'s message', by.landInterjection, ['true']);
 	same('the journal recovery restores the mark it was opened with', by.recoverUserRecord, ['meta.app !== true']);
-	same('path 3 (the peer-dispatch push): a person\'s send, always', by.maybeAutoDispatch, ['true']);
+	// A Continue's nudge is handed off too since UNBLOCK-1 QFOLLOW, and it is the app's.
+	same('path 3 (the peer-dispatch push): a person\'s send, unless the app wrote it (a Continue\'s nudge)', by.maybeAutoDispatch, ['!app']);
 	same('path 4 (the Diamond send): gated on how.said, which only a person\'s typing passes', by.runSteer, ['!!(how && how.said)']);
 	// J9: the ratings are committed (a pending draft is a rating_log) before the note is composed
 	const idxs = []; { const re = /\bpushUserRecord\(/g; let mm; while ((mm = re.exec(SRC))) if (!/function\s*$/.test(SRC.slice(Math.max(0, mm.index - 16), mm.index))) idxs.push(mm.index); }
@@ -265,10 +267,11 @@ console.log('\nThe three paths set it, and nothing else does');
 	// retryRouted is retryTurn's own tail for a refused permit's Retry, run here when no peer takes it.
 	// retryTurn reaches runTurn through `askAgain`, which hands its options on untouched (a daimon
 	// turn's Retry goes to runSteer there instead, D-20261012-07).
-	same('the person flag reaches runTurn from the composer, drainQueue and retryTurn only (a lost run\'s fenced retry through runRetryHere)', withPerson.map((c) => c.owner).sort(), ['drainQueue', 'retryRouted', 'runRetryHere', 'sendPressed']);
+	same('the person flag reaches runTurn from the composer, the queue (sendQueued) and retryTurn only (a lost run\'s fenced retry through runRetryHere)', withPerson.map((c) => c.owner).sort(), ['retryRouted', 'runRetryHere', 'sendPressed', 'sendQueued']);
 	// retryRouted too since R3 3c (7c939256): a daimon's routed Retry the hand-off declines is
 	// asked again here, as the person, as its send would be.
-	same('retryTurn and retryRouted ask again as the person', calls(SRC, 'askAgain').filter((c) => /person:\s*true/.test(c.text)).map((c) => c.owner), ['retryTurn', 'retryRouted']);
+	// Every Retry goes through the election since UNBLOCK-1 QFOLLOW, so retryRouted is askAgain's only caller.
+	same('retryRouted asks again as the person', calls(SRC, 'askAgain').filter((c) => /person:\s*true/.test(c.text)).map((c) => c.owner), ['retryRouted']);
 	check('and askAgain passes its options to runTurn as given', /return runTurn\(chat, text, opts\)/.test(lift(SRC, 'askAgain') || ''));
 	const none = rt.filter((c) => !/person:\s*true/.test(c.text)).map((c) => c.text.replace(/\s+/g, ' ').slice(0, 60));
 	check('a Continue, a gather round and a peer turn pass no person flag (so they take no pre)',
@@ -277,7 +280,7 @@ console.log('\nThe three paths set it, and nothing else does');
 	const steers = calls(SRC, 'runSteer').filter((c) => /said:\s*true/.test(c.text)).map((c) => c.owner);
 	const dsteer = calls(SRC, 'doSteer').filter((c) => /said:\s*true/.test(c.text)).map((c) => c.owner);
 	// askAgain is a daimon turn's Retry: his own words, asked again as he typed them.
-	same('how.said is passed by drainSteerQueue and a Retry (askAgain) to runSteer', steers.sort(), ['askAgain', 'drainSteerQueue']);
+	same('how.said is passed by the daimon queue (steerQueued) and a Retry (askAgain) to runSteer', steers.sort(), ['askAgain', 'steerQueued']);
 	same('how.said is passed by the composer to doSteer, and by nothing else', dsteer, ['sendPressed']);
 	check('doSteer hands how on to runSteer', /return runSteer\(currentDiamond, presetArg, depthArg, null, how\)/.test(lift(SRC, 'doSteer') || ''));
 	// the bubble: appendUserMessage takes (text, ts, prod) and no site hands it a note
@@ -548,7 +551,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	const helper = lift(SRC, 'turnMessagesOf');
 	const fns = ['continueTurn', 'retryTurn', 'answerAgain'].map((n) => lift(SRC, n));
 	const cut = lift(SRC, 'tailAfter') + '\n' + lift(SRC, 'sessionCut');	// a retraction cuts the stored session (1e)
-	const ask = lift(SRC, 'askAgain');			// retryTurn's way to the model (a chat's runTurn, a daimon's runSteer)
+	const ask = lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryRouted');	// retryTurn's way to the model, through the election
 	check('the three doors are in daimond.js', fns.every(Boolean));
 	const spy = () => ({ tombstoned: [], ran: [], journal: [] });
 	function doors(sp, over) {
@@ -558,7 +561,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 			loadMsgTombs: () => ({}), msgTombstone: (mids) => sp.tombstoned.push(...mids), touchChat() {}, persistChats() {}, renderHistory() {},
 			runTurn: (chat, text, opts) => { sp.ran.push({ text, opts, had: (chat.messages || []).map((m) => m.mid) }); }, ChatStore: { compact() {} },
 			newMid: () => 'nmid', CONTINUE_NUDGE: '__nudge__', handoffTargetLabel: () => '', peerUiStateFor: () => '', selfDeviceId: () => 'SELF', turnHold: () => '', chatIsActiveErrand: () => false, _askCard: null,
-			diamonds: [], currentDiamond: null, runSteer: () => false, diag() {} };
+			diamonds: [], currentDiamond: null, runSteer: () => false, diag() {}, maybeAutoDispatch: async () => false };
 		Object.assign(st, over || {});
 		const body = (helper ? helper + '\n' : '') + cut + '\n' + (ask ? ask + '\n' : '') + fns.filter(Boolean).join('\n') + '\nreturn { continueTurn, retryTurn, answerAgain };';
 		return new Function('window', 'DaimondRatings', ...Object.keys(st), body)(Object.assign({}, st), R, ...Object.values(st));
@@ -572,7 +575,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 
 	{ // retryTurn
 		const sp = spy(), d = doors(sp), c = cold();
-		const went = run(() => d.retryTurn(c, 't9', 'the question', { person: true }));
+		const went = await runA(() => d.retryTurn(c, 't9', 'the question', { person: true }));
 		check('retryTurn: the unmarked question is retracted with its answer, and tombstoned', sp.tombstoned.includes('t9') && sp.tombstoned.includes('m3'), sp.tombstoned);
 		check('retryTurn: the model is asked once, and the old question is not in the chat beside it', sp.ran.length === 1 && !sp.ran[0].had.includes('t9') && !mids(c).includes('t9'), { ran: sp.ran.map((r) => r.had), left: mids(c), went });
 		check('retryTurn: the earlier turn stays', mids(c).join() === 'mold,m1', mids(c));
@@ -580,12 +583,12 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	{ // retryTurn: the marked question (a resident chat) still goes, as before
 		const sp = spy(), d = doors(sp), c = cold();
 		c.messages[2].iturn = 't9';
-		run(() => d.retryTurn(c, 't9', 'the question', { person: true }));
+		await runA(() => d.retryTurn(c, 't9', 'the question', { person: true }));
 		check('retryTurn: a marked question is retracted as it always was', sp.tombstoned.includes('t9') && sp.ran.length === 1 && mids(c).join() === 'mold,m1', { t: sp.tombstoned, left: mids(c) });
 	}
 	{ // retryTurn: a turn whose only message is the unmarked question
 		const sp = spy(), d = doors(sp), c = { id: 'c9', messages: [U('t8', T(0), 'alone')] };
-		run(() => d.retryTurn(c, 't8', 'alone', { person: true }));
+		await runA(() => d.retryTurn(c, 't8', 'alone', { person: true }));
 		check('retryTurn: a turn with only its unmarked question is retracted and asked again', sp.tombstoned.includes('t8') && sp.ran.length === 1 && !mids(c).includes('t8'), { t: sp.tombstoned, left: mids(c) });
 	}
 	{ // answerAgain

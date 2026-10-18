@@ -405,53 +405,19 @@
 		showPanel();
 		// From here the panel is claimed for this page, and anything still
 		// speaking for the last one has been superseded.
-		var seq = claimPage(url);
+		claimPage(url);
 
-		if (hasExt()) {
-			// Opening a site the user has not approved before pops up a small
-			// Daimond Hands window asking them to allow it — a separate window
-			// that is easy to miss. Say it is coming, so the panel is not just a
-			// blank wait while an approval window sits unnoticed behind it.
-			//
-			// And say what will happen AFTER they allow it, before it happens: the
-			// page arrives as a browser window of its own, and a user who was not
-			// told that reads it as Daimond having launched a browser instead of
-			// using the panel.
-			state.driver = 'ext';
-			state.url    = url;
-			// The last page's title and mode do not describe this one. Left as they
-			// were, a site opened while the user still had the wheel on the previous
-			// tab drew the blindfold over the new site's opening note — the panel
-			// saying "you're driving" about a page nobody has opened yet.
-			state.title  = '';
-			state.mode   = 'idle';
-			note(t('web.opening', { host: esc(hostOf(url)) }) + '<br>' + t('web.real_tab'));
-			render();
-			var r;
-			try {
-				r = await openViaExt(url, seq);
-			} catch (e) {
-				// Declined, closed, or timed out: say what to do, not just the raw
-				// error. The note is stamped with this request, so a late answer can
-				// tell whether it is still the one on screen.
-				stale = { seq: seq, url: url };
-				notApproved(url, e.message, false);
-				render();
-				throw e;
-			}
-			// The wait is long, and the user or the model may have moved on. The
-			// model is still told its page is open — that is true, and the tab is
-			// there — but the panel now belongs to whatever was asked for since.
-			if (superseded(seq, url)) {
-				return { url: r.url || url, framed: false, driver: 'ext',
-					title: r.title || '', mode: r.mode || 'agent' };
-			}
-			adoptPage(r, url);
-			return { url: state.url, framed: false, driver: 'ext', title: state.title, mode: state.mode };
-		}
-
-		// No hands. Show it if the site allows framing, and say so plainly if not.
-		// Our own blob has nothing to ask the gateway about.
+		// SHOWING IS THE PANEL'S OWN JOB, with or without Hands (UNBLOCK-21). Under
+		// Hands every page used to go to the extension, which asks Chrome for that one
+		// site -- a grant window per new host -- and opens it as a real browser tab: the
+		// owner's "asked permissions for each website, and they were showing in a new
+		// tab of the browser, when I want to see them in the Web panel" (D-20261015-24).
+		// Showing needs neither. The frame shows the page where the site allows it, the
+		// conversation's one web consent covers it, and the extension is taken up only
+		// when the daimon goes on to ACT on the page (`drive`).
+		//
+		// Show it if the site allows framing, and say so plainly if not. Our own blob
+		// has nothing to ask the gateway about.
 		var framable = true, why = '';
 		try {
 			if (blob) throw new Error('skip');
@@ -481,8 +447,11 @@
 		// status() can tell the user rather than leaving them to guess.
 		state.reason = ours ? ''
 			: 'This page is cross-origin' + (why ? ' — it ' + why : '')
-				+ ', so it can be shown but not operated. Read it with web_fetch, '
-				+ 'or install Daimond Hands to drive it.';
+				+ (hasExt()
+					? ', so it is shown but not yet operated. web_snapshot takes it up with '
+						+ 'Daimond Hands, out of sight; web_fetch reads it.'
+					: ', so it can be shown but not operated. Read it with web_fetch, '
+						+ 'or install Daimond Hands to drive it.');
 		if (ours) {
 			// Our page, wrapped with the bridge and dropped into the SANDBOX. It runs
 			// in an opaque origin — it cannot touch our localStorage or our OPFS —
@@ -503,9 +472,15 @@
 			// The model is told, in the tool result, exactly what it may do next.
 			note: ours
 				? 'This page is Daimond\'s own, so it can be operated: snapshot it and click.'
-				: 'This page is cross-origin. It is SHOWN to the user, but it cannot be '
-					+ 'operated from the browser. Use web_fetch to read it, or ask the user '
-					+ 'to install Daimond Hands to drive it.',
+				: hasExt()
+					? (framable ? 'This page is SHOWN to the user in the Web panel. '
+						: 'This site refuses to be shown inside the app, and the panel says so. ')
+						+ 'Use web_fetch to read it. To act on it, call web_snapshot: Daimond '
+						+ 'Hands then takes it up in a background tab, which may ask the user to '
+						+ 'approve the site once.'
+					: 'This page is cross-origin. It is SHOWN to the user, but it cannot be '
+						+ 'operated from the browser. Use web_fetch to read it, or ask the user '
+						+ 'to install Daimond Hands to drive it.',
 		};
 	}
 
@@ -602,11 +577,38 @@
 		};
 	}
 
+	/// Take a page the panel is SHOWING up with Hands, so it can be acted on.
+	///
+	/// The one place the extension opens a page (UNBLOCK-21). Showing is the frame's
+	/// job; acting needs the real tab, so the first act on a shown page is what asks
+	/// for it, and the extension's own approval (once per site, Chrome's rule) is put
+	/// then, not on every page a search turned up. A page with no Hands, or one that
+	/// is already driven, is left as it is and the caller's own refusal stands.
+	async function drive() {
+		if (state.driver !== 'frame' || !hasExt() || !state.url) return;
+		var url = state.url;
+		var seq = claim.seq;
+		note(t('web.opening', { host: esc(hostOf(url)) }) + '<br>' + t('web.real_tab'));
+		var r;
+		try {
+			r = await openViaExt(url, seq);
+		} catch (e) {
+			stale = { seq: seq, url: url };
+			notApproved(url, e.message, false);
+			render();
+			throw e;
+		}
+		if (superseded(seq, url)) throw new Error('The panel moved on to another page before '
+			+ 'this one could be taken up. Open it again with web_open.');
+		adoptPage(r, url);
+	}
+
 	/// The accessibility tree, with refs to act on. Never raw HTML: page text is
 	/// the least trustworthy string in the application, and a model that acts on
 	/// a selector it invented from page text is a model a page can steer.
 	async function snapshot() {
 		if (state.driver === 'none') throw new Error(NO_PAGE);
+		await drive();
 		if (state.driver === 'ext') {
 			if (state.mode === 'user') throw new Error(NOT_YOURS);
 			var r = await ext('snapshot');
@@ -627,6 +629,7 @@
 	/// cross-origin page merely SHOWN can only be read through web_fetch.
 	async function read() {
 		if (state.driver === 'none') throw new Error(NO_PAGE);
+		await drive();
 		if (state.driver === 'ext') {
 			if (state.mode === 'user') throw new Error(NOT_YOURS);
 			var r = await ext('read');
@@ -1197,24 +1200,16 @@
 
 	/// A site that will not be embedded — which is MOST of them. This is not an
 	/// error; it is the web's own clickjacking defence (X-Frame-Options / CSP),
-	/// and it is the same in every browser. Say so plainly, and offer the three
-	/// things that actually work: open it in a real tab, read its text, or — with
-	/// Daimond Hands — drive it live.
+	/// and it is the same in every browser. Said in ONE muted line (UNBLOCK-21),
+	/// with the panel's own way to read it. There is no "open in a new tab": the
+	/// owner wants pages in the panel, and a tab is what he asked to be rid of.
+	/// The header's pop-out stays, as his own choice.
 	function blocked(url) {
 		els.note.innerHTML = '';
 		els.note.className = 'web-note on';
 		var msg = document.createElement('div');
-		msg.innerHTML = t('web.blocked', { host: esc(hostOf(url)) }) + ' '
-			+ (hasExt() ? t('web.blocked_hands') : t('web.blocked_install'));
+		msg.innerHTML = t('web.blocked_line', { host: esc(hostOf(url)) });
 		els.note.appendChild(msg);
-
-		var row = document.createElement('div');
-		row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;justify-content:center';
-
-		var tab = document.createElement('button');
-		tab.textContent = t('web.open_new_tab');     // free, no gateway, no extension
-		tab.addEventListener('click', function () { window.open(url, '_blank', 'noopener'); });
-		row.appendChild(tab);
 
 		var read = document.createElement('button');
 		read.textContent = t('web.read_as_text');
@@ -1232,8 +1227,7 @@
 				msg.innerHTML = t('web.read_failed', { reason: esc(e.message) });
 			}
 		});
-		row.appendChild(read);
-		els.note.appendChild(row);
+		els.note.appendChild(read);
 	}
 
 	/// Tear down the read-only text copy, if one is showing. A new page must

@@ -630,6 +630,22 @@
 	//
 	// Once per commit, never a loop, and a sweep that is not collected is left
 	// standing on the chip rather than swallowed.
+	//
+	// WHAT `why` RECORDS is why the question needs a person, for the chip, the
+	// log and the verifiers: 'not_merged' (this device may not declare a live set
+	// at all), 'names_nothing' (an index naming nothing, the sharpest form of a
+	// client that knows nothing), 'unaccounted' (this client and the gateway do
+	// not agree on the size of the corpus), or 'ask' (none of those: a deletion of
+	// more than half, which only a person may carry out).
+	//
+	// ONLY 'ask' IS A QUESTION (2026-09-27, F8). Every other reason means this
+	// device could not vouch for the deletion, so a person pressing Remove would
+	// be vouching for a set nobody checked -- the index that names nothing is the
+	// sharpest case, and it is exactly what a device that lost its files sends.
+	// For those the chip opens a notice with one button and sends no token, and
+	// `confirmHeldSweep` itself refuses, so the rule holds for any caller and for
+	// an entry an older page persisted with no reason at all. An account emptied
+	// on purpose has Forget for that.
 	var heldSweep = null;		// {body, n, m, token, why, at} while a deletion stands uncollected.
 	var confirmed = 0;			// Large sweeps this page has carried out, for the verifier.
 	var refusal   = null;		// {msg, status, at} while the gateway is turning uploads away.
@@ -644,10 +660,17 @@
 	/// below are new and the locale tables are another lane's file, so each
 	/// carries the English it means and the tables can catch up without this file
 	/// ever showing a bare key.
+	///
+	/// The fallback is filled from `v` as the table's string would be, or a page
+	/// with no table would say "{n} stored pieces" to the person it is asking.
 	function t(k, fallback, v) {
 		var i18n = window.DaimondI18n;
 		if (i18n && i18n.has && i18n.has(k)) return i18n.t(k, v);
-		return fallback == null ? k : fallback;
+		if (fallback == null) return k;
+		if (!v) return fallback;
+		return String(fallback).replace(/\{(\w+)\}/g, function (whole, name) {
+			return v[name] != null ? String(v[name]) : whole;
+		});
 	}
 
 	// ── A standing deletion outlives the page that found it ────
@@ -817,12 +840,20 @@
 		return c;
 	}
 
-	/// The reason sentence for the deletion that is standing.
+	/// Does the standing deletion put a question to a person? Only `ask` does:
+	/// see "ONLY 'ask' IS A QUESTION" at the head of this section.
+	function heldAsks() { return !!heldSweep && heldSweep.why === 'ask'; }
+
+	/// The sentence for the deletion that is standing: what Remove would do when
+	/// a person may answer it, and why the pieces are kept when they may not.
 	function heldReason() {
-		return t('chunks.sweep_held_reason', 'Cloud storage holds pieces that no file '
-			+ 'on this account still refers to. They have NOT been deleted, because no '
-			+ 'single request may remove more than half of what is stored.',
-			{ n: heldSweep ? heldSweep.n : 0, m: heldSweep ? heldSweep.m : 0 });
+		var v = { n: heldSweep ? heldSweep.n : 0, m: heldSweep ? heldSweep.m : 0 };
+		if (heldAsks()) {
+			return t('chunks.held_ask_body', 'This device no longer uses {n} of {m} stored pieces. '
+				+ 'They are kept 7 days, and a device that still uses them brings them back.', v);
+		}
+		return t('chunks.held_kept_body',
+			'This device could not check its files, so {n} stored pieces are kept.', v);
 	}
 
 	/// Show or hide the standing notice, and tell anything else that is watching.
@@ -856,8 +887,8 @@
 		} catch (e) { /* no window to tell */ }
 	}
 
-	/// The chip was pressed. Say what is standing, and offer the one act that
-	/// answers it.
+	/// The chip was pressed. Say what is standing, and offer Remove only where a
+	/// person may give it: `why === 'ask'`. Anything else is a notice with Close.
 	///
 	/// ASKED, ALWAYS. `confirmHeldSweep` deletes on a person's word rather than on
 	/// the engine's, so the word has to be given here rather than assumed from a
@@ -883,14 +914,25 @@
 			} catch (e) { /* the dialog went with a redraw */ }
 			return;
 		}
-		var message = (refusal ? refusal.msg + '\n\n' : '') + heldReason() + '\n\n'
-			+ t('chunks.sweep_confirm_ask',
-				'Delete them now? Nothing you can still see is touched, and the space is freed.');
+		var n = heldSweep.n;
+		var message = (refusal ? refusal.msg + '\n\n' : '') + heldReason();
+		if (!heldAsks()) {
+			// Nothing to authorise: the pieces are kept, and this says why.
+			try {
+				await core.confirm(message, t('common.close', 'Close'), {
+					title:       t('chunks.held_kept_title', 'Stored pieces kept'),
+					danger:      false,
+					cancelLabel: null,
+				});
+			} catch (e) { /* the dialog went with a redraw */ }
+			return;
+		}
 		var yes = false;
 		try {
-			yes = await core.confirm(message,
-				t('chunks.sweep_confirm_ok', 'Delete them'),
-				{ title: t('chunks.sweep_confirm_title', 'Free the unreferenced pieces?') });
+			yes = await core.confirm(message, t('chunks.held_ask_ok', 'Remove'), {
+				title:       t('chunks.held_ask_title', 'Remove {n} stored pieces?', { n: n }),
+				cancelLabel: t('chunks.held_ask_keep', 'Keep'),
+			});
 		} catch (e) { yes = false; }		// no answer is not a yes.
 		if (!yes) return;
 		await confirmHeldSweep();
@@ -1034,15 +1076,18 @@
 
 	/// Carry out a deletion this client declined to confirm on its own.
 	///
-	/// The escape hatch for the one case the conditions above deliberately never
-	/// clear by themselves — an index that names nothing, on an account that
-	/// really has been emptied — and the only thing in this file that deletes on
-	/// a person's word rather than the engine's. It re-sends the commit exactly
-	/// as it stood, so a set that has moved since is refused by the token.
+	/// The only thing in this file that sends a token, and so the only thing that
+	/// releases on a person's word rather than the engine's. It re-sends the
+	/// commit exactly as it stood, so a set that has moved since is refused by the
+	/// token.
 	///
-	/// Reached from the chip, through `onChipClick`, which asks first.
+	/// Reached from the chip, through `onChipClick`, which asks first. Null, and
+	/// nothing sent, unless the deletion is one a person may answer (`ask`): the
+	/// rule lives here and not only in the dialog, so a verifier, a console or a
+	/// later caller cannot vouch for an index this device could not check.
 	async function confirmHeldSweep() {
 		if (!heldSweep || !heldSweep.body) return null;
+		if (!heldAsks()) { log('not a question for a person:', heldSweep.why || '(no reason)'); return null; }
 		var body = heldSweep.body;
 		body.sweep_token = heldSweep.token;
 		var res;
@@ -1130,9 +1175,9 @@
 		chunkSizeFor:      chunkSizeFor,
 		commit:            commit,				// ({path: manifest}, version) -> {swept,...}|null
 		/// A deletion this client declined to confirm, carried out on a person's
-		/// word. Reached from the notice in the rail's status strip, which asks
-		/// first; exported
-		/// as well so a verifier can drive the act without driving a dialog.
+		/// word, and only one whose `why` is 'ask' (null otherwise). Reached from
+		/// the chip in the rail's status strip, which asks first; exported as well
+		/// so a verifier can drive the act without driving a dialog.
 		confirmHeldSweep:  confirmHeldSweep,
 		state:             state,
 		/// Is a re-offload owed because the passphrase changed? Read by

@@ -352,14 +352,14 @@ test('B9: adoptRemoteGrant asks the settle rule before it takes a tile down or m
 });
 
 test('B10: a refused permit\'s Retry sends the turn the way a send goes, so it is asked here again', () => {
-	assert.match(lift('permitRetry'), /retryTurn\(chat, id, text, \{ person: true, route: true \}\)/);
+	assert.match(lift('permitRetry'), /retryTurn\(chat, id, text\)/);
 	const rt = lift('retryTurn');
 	// Every routed Retry, a daimon's too (R3 3c, 7c939256): the hand-off first; a daimon the
 	// hand-off declines is asked again here through runSteer (askAgain), as its send would be.
-	assert.ok(rt.indexOf('if (ropts && ropts.route) return retryRouted(chat, text, nmid, lost);') >= 0);	// an ordinary Retry is unchanged below it
+	assert.ok(rt.indexOf('return retryRouted(chat, text, nmid, lost, ropts && ropts.onStart);') >= 0);	// every Retry is routed (UNBLOCK-1 QFOLLOW)
 	assert.match(lift('retryRouted'), /if \(chat\.diamondId\) return askAgain\(chat, text, \{ person: true, mid: nmid \}\);/);
 	// A refused permit's Retry is not a lost run's: it runs unfenced, as a send that stayed here.
-	assert.match(lift('retryRouted'), /if \(lost\) return runRetryHere\(chat, text, nmid\);\s*return runTurn\(chat, text, \{ person: true, mid: nmid \}\);/);
+	assert.match(lift('retryRouted'), /if \(lost\) return runRetryHere\(chat, text, nmid\);[\s\S]*return runTurn\(chat, text, \{ person: true, mid: nmid, onStart: onStart \}\);/);
 	assert.match(lift('retryRouted'), /if \(await maybeAutoDispatch\(chat, text, '', nmid\)\) return true;/);
 	assert.match(lift('maybeAutoDispatch'), /var umid = mid \|\| newMid\(\);/);
 });

@@ -79,7 +79,7 @@ function doors(sp, model2) {
 		loadMsgTombs: () => ({}), msgTombstone: (mids) => sp.tombstoned.push(...mids), touchChat() {}, persistChats() {}, renderHistory() {},
 		ChatStore: { compact() {} }, newMid: () => 'n' + (++sp.seq), peerUiStateFor: () => '', selfDeviceId: () => 'D1', leaseClockNow: () => T0,
 		answerAgain() { sp.again++; },
-		diag() {}, diamonds: [], currentDiamond: null, runSteer: () => { sp.steered++; return Promise.resolve(); },
+		diag() {}, maybeAutoDispatch: async () => false, diamonds: [], currentDiamond: null, runSteer: () => { sp.steered++; return Promise.resolve(); },
 		runTurn: (chat, text, opts) => {
 			sp.ran.push({ text, opts });
 			const id = (opts && opts.mid) || 'fresh';
@@ -88,7 +88,7 @@ function doors(sp, model2) {
 			return Promise.resolve();
 		},
 	};
-	const body = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'tailAfter') + '\n' + lift(SRC, 'sessionCut') + '\n' + lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryTurn') + '\nreturn retryTurn;';
+	const body = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'tailAfter') + '\n' + lift(SRC, 'sessionCut') + '\n' + lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryTurn') + '\n' + lift(SRC, 'retryRouted') + '\nreturn retryTurn;';
 	const w = Object.assign({}, win, st);
 	return new Function('window', ...Object.keys(st), 'DaimondLedger', 'DaimondProvenance', body)(w, ...Object.values(st), L, P);
 }
@@ -108,7 +108,7 @@ function scene(spendHeld) {
 console.log('retryTurn leaves the turned-down answer counted, and out of the chat');
 {
 	const { sp, chat, retry } = scene(true);
-	retry(chat, 't9', 'write the summary', { person: true });
+	await retry(chat, 't9', 'write the summary', { person: true });
 	const mids = chat.messages.map((m) => m.mid);
 	check('the turn is retracted and tombstoned as before', sp.tombstoned.includes('t9') && sp.tombstoned.includes('a9') && !mids.includes('a9') && !mids.includes('t9'), { t: sp.tombstoned, mids });
 	check('the retracted words do not come back into the chat', !JSON.stringify(chat.messages).includes('the answer a9'));
@@ -130,7 +130,7 @@ console.log('retryTurn leaves the turned-down answer counted, and out of the cha
 }
 {
 	const { sp, chat, retry } = scene(false);
-	retry(chat, 't9', 'write the summary', { person: true });
+	await retry(chat, 't9', 'write the summary', { person: true });
 	const es = L.entries().filter((e) => e.tid === 't9');
 	check('spend not held here: one outcome-only mark carries the turn, its model and the replacement',
 		es.length === 1 && es[0].ol === 1 && es[0].u === 0 && es[0].m === 'model-a' && es[0].pv === 'pv1' && es[0].tr === sp.ran[0].opts.mid, es);
@@ -143,7 +143,7 @@ console.log('retryTurn leaves the turned-down answer counted, and out of the cha
 	// and `tr` sits last, where a build that has never heard of it puts it.
 	const { chat, retry } = scene(true);
 	const before = L.entries();
-	retry(chat, 't9', 'write the summary', { person: true });
+	await retry(chat, 't9', 'write the summary', { person: true });
 	const after = L.entries();
 	const ab = JSON.stringify(L.merge(before, after, T0 + 100)), ba = JSON.stringify(L.merge(after, before, T0 + 100));
 	check('the marked and unmarked copies join to the marked one, in either order', ab === ba && ab.includes('"tr":"n1"'), { ab, ba });

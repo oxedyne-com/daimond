@@ -406,6 +406,20 @@
 	'end.why_lease_revoked': 'Angehalten: Ein anderes Gerät hat diese Runde übernommen',
 	'end.why_stream_abort': 'Angehalten: Abgebrochen, bevor die Runde fertig war',
 	'end.why_blocked':      'Nicht erledigt: an etwas hängen geblieben, das nicht zu lösen war',
+	'end.why_lease_lapsed': 'Angehalten: Das Gerät, das diese Runde ausführte, hat sie verloren',
+	'end.why_lease_deadline': 'Angehalten: Kein Gerät hat diese Runde rechtzeitig gestartet',
+	// The plain account a cut turn ends with (UNBLOCK-25 U4, `cutAccount`).
+	// i18n-family: cut.why_ = user lease_cap lease_lapsed lease_revoked lease_deadline
+	'cut.why_user': 'Angehalten, wie gewünscht.',
+	'cut.why_lease_cap': 'Angehalten: Die an ein anderes Gerät übergebene Runde hat das Limit von 30 Minuten überschritten.',
+	'cut.why_lease_lapsed': 'Angehalten: Das ausführende Gerät hat die Runde verloren.',
+	'cut.why_lease_revoked': 'Angehalten: Ein anderes Gerät hat diese Runde übernommen.',
+	'cut.why_lease_deadline': 'Angehalten: Kein Gerät hat sie rechtzeitig gestartet.',
+	'cut.none': 'Es wurden noch keine Werkzeuge aufgerufen.',
+	'cut.calls.one': 'Es gab {n} Werkzeugaufruf.',
+	'cut.calls.other': 'Es gab {n} Werkzeugaufrufe.',
+	'cut.wrote': 'Geschrieben: {paths}.',
+	'cut.wrote_more': 'Geschrieben: {paths} und {more} weitere.',
 	'end.how_paused':   'Pausiert',
 	'end.how_capped':   'Angehalten: Schrittgrenze erreicht',
 	'end.how_spend_cap': 'Angehalten: Ausgabengrenze erreicht',
@@ -721,6 +735,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} Datei passte nicht ins Sync-Paket dieses Geräts und erreicht deine anderen Geräte erst, wenn Platz dafür ist: {names}',
 	'sync.files_left.other':    '{n} Dateien passten nicht ins Sync-Paket dieses Geräts und erreichen deine anderen Geräte erst, wenn Platz dafür ist: {names}',
+	'sync.logs_held.one':       'Ein Protokoll in {names} ist zu groß oder ließ sich nicht lesen und wurde deshalb noch nicht synchronisiert. Auf diesem Gerät ist es sicher.',
+	'sync.logs_held.other':     'Protokolle in {n} diamonds sind zu groß oder ließen sich nicht lesen und wurden deshalb noch nicht synchronisiert. Auf diesem Gerät sind sie sicher: {names}',
 	'sync.folders_left.one':    '{names} wiegt mehr als die {max}, die ein geteilter Ordner belegen darf, und geht deshalb nicht an deine anderen Geräte. Teile einen kleineren Ordner, oder nimm etwas heraus.',
 	'sync.folders_left.other':  '{n} geteilte Ordner liegen über den {max}, die jeder belegen darf, und gehen nicht an deine anderen Geräte: {names}.',
 	// Eine Sitzung, die geendet hat und nicht erneuert werden konnte. Gleiche
@@ -755,12 +771,14 @@
 
 	// ── Cloud storage cleanup ──────────────────────────────────
 	'chunks.sweep_held': 'Aufräumen angehalten',
-	'chunks.sweep_held_reason': 'Cloud-Speicher hält {n} von {m} Teilen, auf die nichts mehr verweist. Nicht gelöscht: keine einzelne Anfrage darf mehr als die Hälfte auf einmal löschen.',
 	'chunks.upload_refused':    'Hochladen angehalten',
 	'chunks.upload_refused_title': 'Der Cloud-Speicher hat das Hochladen abgelehnt',
-	'chunks.sweep_confirm_ask': 'Jetzt löschen? Nichts, was du noch sehen kannst, wird angetastet, und der Platz wird frei.',
-	'chunks.sweep_confirm_ok':  'Die Teile löschen',
-	'chunks.sweep_confirm_title': 'Die Teile freigeben, auf die nichts mehr verweist?',
+	'chunks.held_ask_title': '{n} gespeicherte Teile entfernen?',
+	'chunks.held_ask_body': 'Dieses Gerät verwendet {n} von {m} gespeicherten Teilen nicht mehr. Sie bleiben 7 Tage erhalten, und ein Gerät, das sie noch verwendet, holt sie zurück.',
+	'chunks.held_ask_ok': 'Entfernen',
+	'chunks.held_ask_keep': 'Behalten',
+	'chunks.held_kept_title': 'Gespeicherte Teile behalten',
+	'chunks.held_kept_body': 'Dieses Gerät konnte seine Dateien nicht prüfen, daher bleiben {n} gespeicherte Teile erhalten.',
 
 	// ── Pairing a second device ────────────────────────────────
 	'pair.link_another': 'Anderes Gerät verknüpfen',
@@ -1244,10 +1262,7 @@
 	'web.mirror_wait':    'Warten auf das erste Bild dieses Tabs. Hat Chrome ein Berechtigungsfenster davorgelegt, wartet es auf deine Antwort.',
 	'web.mirror_silent':  'Von Daimond Hands kam seit einer Weile nichts zurück, daher gibt es kein Live-Bild. Der Tab selbst ist weiter offen und weiter die Seite.',
 	'web.mirror_refused': 'Dieser Tab lässt sich nicht abfotografieren, daher gibt es kein Live-Bild. Sieh im Tab selbst nach, oder frag erneut nach dem Bild.',
-	'web.blocked': '<b>{host}</b> lässt sich nicht in einer anderen Seite darstellen. Die meisten Seiten blockieren das als Schutz gegen Clickjacking; es ist kein Fehler.',
-	'web.blocked_hands': 'Daimond Hands kann sie in einem echten Tab steuern.',
-	'web.blocked_install': 'Installiere Daimond Hands, um sie live zu steuern.',
-	'web.open_new_tab': 'In neuem Tab öffnen',
+	'web.blocked_line': '<b>{host}</b> lässt sich nicht in der App anzeigen.',
 	'web.read_as_text': 'Als Text lesen',
 	'web.reading': 'Wird gelesen…',
 	'web.read_failed': 'Diese Seite ließ sich nicht lesen: {reason}',
@@ -2661,6 +2676,7 @@
 	'capp.merge_ok': 'Seite aktualisieren',
 	'capp.merge_later': 'Nicht jetzt',
 	'capp.merge_waiting': 'Aktualisiert. Die neue Seite erscheint, sobald der Eintrag, den du gerade tippst, gespeichert ist.',
+	'capp.merge_refused': 'Es gibt eine neuere {name}-Seite, aber diese Aktualisierung kollidiert mit deinen Änderungen, daher bleibt deine Seite, wie sie ist.',
 	'capp.merge_show': 'Wo ihr beide geändert habt',
 	'capp.merge_line': 'Zeile {n}',
 	'capp.merge_yours': 'Deine',
@@ -2877,6 +2893,7 @@
 	'post.err_no_account':       'Kein Konto hat diesen Schlüssel, die Nachricht wurde also nicht gesendet.',
 	'post.err_too_big':          'Diese Nachricht ist zu groß, als dass das Relay sie tragen könnte.',
 	'post.err_refused':          'Das Relay hat diese Nachricht nicht angenommen, sie wurde also nicht gesendet.',
+	'post.err_unknown':          'Das Relay konnte diese Nachricht nicht rechtzeitig bestätigen, sie kann also noch ankommen. Prüfe das, bevor du sie noch einmal sendest.',
 	'post.locked':               'Entsperre Daimond, um deine Nachrichten zu lesen.',
 	'post.tray_head':            'Wartet auf deine Antwort',
 	'post.none':                 'Noch keine Nachrichten. Füge jemanden unter {people} hinzu.',
@@ -2919,7 +2936,9 @@
 	'post.refused_no_account': 'kein Konto hält ihren Schlüssel',
 	'post.refused_too_big':    'zu groß für das Relais',
 	'post.refused_other':      'das Relais hat es abgelehnt',
+	'post.refused_unknown':    'nicht bestätigt, kann noch ankommen',
 	'post.group_refused':      'Das Relais hat es für diese nicht angenommen: {who}.',
+	'post.group_unknown':      'Das Relais konnte es für diese nicht bestätigen: {who}. Es kann noch ankommen.',
 
 	// ── A group, and who is in it ──
 	// A group is a LIST OF PEOPLE a message is sealed to one by one. No

@@ -24,7 +24,9 @@
 // the deletion out. Since 2026-09-27 (DL-1) only a PERSON's confirmation may
 // quote it: the page never answers on its own, and the gateway ignores a token
 // that does not say a person gave it, so a page from before that change,
-// confirming by itself, is refused. The floor is measured against what the
+// confirming by itself, is refused. Since F8 the page offers a person that
+// choice only where it can account for the deletion (`why === 'ask'`); an index
+// naming nothing gets a notice, and `confirmHeldSweep` refuses it (B5). The floor is measured against what the
 // account had DECLARED, so young uploads nobody has named (this file's section A
 // leaves five) no longer dilute it; they diluted it here on every gate until
 // then.
@@ -203,14 +205,29 @@ try {
 			const j = await r.json();
 			return j.version | 0;
 		};
-		/// Wipe the account's chunk store, so each case starts from a known one.
-		/// Through the commit path with an explicit confirmation, which is the
-		/// only way to empty it — and it is the client's own escape hatch, so
-		/// the reset exercises that too.
+		/// Empty the account's declared set, so each case starts from a known one:
+		/// a commit naming nothing, then the same commit with its token and a
+		/// person's mark, which releases everything (kept 7 days, declared by
+		/// nothing). RAW, around the client, as `verify_gwdl1_rollback`'s
+		/// `__commit` is: since F8 the client refuses to vouch for an index naming
+		/// nothing (`confirmHeldSweep` returns null unless `why === 'ask'`), so a
+		/// reset through it would leave every case after the first on a store
+		/// still declaring the last one's chunks.
 		window.__wipe = async function () {
-			const v = await window.__version();
-			await DaimondChunks.commit({}, v, null);
-			if (DaimondChunks.state().standing) await DaimondChunks.confirmHeldSweep();
+			const post = async (body) => {
+				const r = await window.__realFetch('/api/chunk', {
+					method: 'POST', credentials: 'same-origin',
+					headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+					body: JSON.stringify(body),
+				});
+				return r.json();
+			};
+			const body = { op: 'commit', blob_version: await window.__version(), chunks: [] };
+			const j = await post(body);
+			if (j && j.sweep_token) {
+				const k = await post(Object.assign({}, body, { sweep_token: j.sweep_token, sweep_confirm: 'person' }));
+				if (!k || !k.ok || k.sweep_token) throw new Error('wipe: the person\'s token was refused: ' + JSON.stringify(k));
+			}
 			return DaimondChunks.state();
 		};
 	});
@@ -521,7 +538,13 @@ try {
 	check('and the standing deletion is written down, so a reload keeps it',
 		!!kept && nil.st.persisted === true, kept ? (kept.length + ' bytes') : 'nothing written');
 
-	// (B5) The operator's escape hatch really carries that deletion out.
+	// (B5) NO REMOVE for it (F8, 2026-09-27). It used to be the operator's escape
+	// hatch; but an index naming nothing is exactly what a device that lost its
+	// files sends, and a person pressing Remove would be vouching for a set nobody
+	// checked. So `confirmHeldSweep` itself refuses anything but `ask`, whoever
+	// calls it, and the chip says the pieces are kept. An account emptied on
+	// purpose has Forget.
+	await clear();
 	const forced = await page.evaluate(async () => {
 		const j = await DaimondChunks.confirmHeldSweep();
 		return {
@@ -530,13 +553,16 @@ try {
 			saved: localStorage.getItem('daimond-chunk-held'),
 		};
 	});
-	check('a person confirming it releases what the client would not on its own (kept 7 days)',
-		forced.j && forced.j.released === 4 && forced.j.swept === 0 && forced.held === 4,
-		JSON.stringify({ released: forced.j && forced.j.released, held: forced.held }));
-	check('and the standing notice clears with it',
-		forced.st.standing === false, JSON.stringify(forced.st));
-	check('and what was written down goes too, so it cannot rise again next boot',
-		forced.saved === null, String(forced.saved));
+	const trB5 = await trace();
+	check('no Remove for an index naming nothing: confirmHeldSweep returns null, and sends nothing',
+		forced.j === null && ops(trB5, 'commit').length === 0,
+		JSON.stringify({ j: forced.j, commits: ops(trB5, 'commit') }));
+	check('so nothing is released, and all four are still held',
+		forced.held === 4, forced.held + ' of 4 held');
+	check('and it is still standing, written down, as the kept notice',
+		forced.st.standing === true && forced.st.why === 'names_nothing' && forced.st.confirmed === conf.before + 1
+		&& !!forced.saved && forced.st.persisted === true,
+		JSON.stringify({ st: forced.st, saved: !!forced.saved }));
 
 	// (B6) A device that may not declare a live set does not confirm one either.
 	// sync gates the FIRST commit on this; the client re-asserts it immediately

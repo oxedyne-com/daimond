@@ -5,9 +5,9 @@
 // Owner decision: the up, down and details controls (`.ctile-rate`) were opacity 0 on a computer until the
 // tile was hovered or held focus, so a finished answer carried nothing to say it could be rated. They are
 // now shown at rest as the phone shows them, quiet in colour (`--text-muted`, the app's muted-control
-// token), and take the accent on hover or keyboard focus. Select mode hides them by `display: none`; a folded
-// answer keeps its header group (a computer can rate a folded answer as it always could) and hides only the
-// phone's row under the answer. The same rule serves a file row's group in the Files tile (`.turn-file-rate`),
+// token), and take the accent on hover or keyboard focus. Select mode hides them by `display: none`. Since
+// UNBLOCK-10 an answer has one form on every device, the row under its text, and a folded answer hides it
+// with the body. The same rule serves a file row's group in the Files tile (`.turn-file-rate`),
 // which is the same group in another place (bar rule 2).
 //
 // The sheet is read by role, not by the lines the old rule happened to sit on: any rule of any selector
@@ -96,12 +96,13 @@ test('a rating button rests in the muted-control colour and takes the accent on 
 	}
 });
 
-test('select mode hides the rating controls; a folded answer keeps its header group', () => {
+test('select mode hides the rating controls; an answer wears the row form on every device', () => {
 	const hides = (sel) => rs.some((r) => parts(r.sel).includes(sel) && decl(r.body, 'display').includes('none'));
 	assert.ok(hides('.chat-output.selecting .ctile-rate'), 'select mode no longer hides .ctile-rate');
 	assert.ok(hides('.chat-output.selecting .ctile-rate-row'), 'select mode no longer hides .ctile-rate-row');
-	assert.ok(hides('.ctile.collapsed > .ctile-rate-row'), 'a folded answer no longer hides its phone rating row');
-	assert.ok(!hides('.ctile.collapsed > .ctile-lbl .ctile-rate'), 'a folded answer hides its header rating group: the controls must stay reachable');
+	assert.ok(hides('.ctile.collapsed > .ctile-rate-row'), 'a folded answer no longer hides its rating row');
+	assert.ok(!hides('.ctile-rate-row'), 'a rule hides the rating row: an answer must wear it at every width');
+	assert.ok(!/\.ctile-lbl\s*>?\s*\.ctile-rate\b/.test(css), 'the sheet still styles a header rating group (UNBLOCK-10)');
 });
 
 test('Copy keeps its own reveal: hidden at rest, shown on hover', () => {

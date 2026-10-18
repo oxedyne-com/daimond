@@ -3453,6 +3453,7 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 /* A forked capp page offered its template's fix (daimond.js `cappOfferNote`): one
    line, the two buttons, and the places both sides changed, above the page. */
 .capp-offer { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.capp-offer[hidden] { display: none; }
 .capp-offer-note { margin: 0; color: var(--text-secondary); font-size: var(--fs-xs); line-height: 1.5; }
 .capp-offer-acts { display: flex; gap: 6px; flex-wrap: wrap; }
 .capp-conflicts > summary { cursor: pointer; color: var(--text-secondary); font-size: var(--fs-xs); user-select: none; }
@@ -4792,21 +4793,16 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile-rate .ic { width: 13px; height: 13px; }
 
 /* ── Rating an answer (Rating U2) ─────────────────────────────────────
-   The group sits in the label bar between the peek and the time, so its width comes
-   out of the flexible middle and the time and Copy keep the x they have on every other
-   tile. It shows at rest in the muted colour and takes the accent on hover or focus; a
-   lit arrow, and a details control holding more than a bare +1 or -1, always wear it.
-
-   Where there is no hover, or the chat panel has no room for three buttons beside a
-   model name, the same group is drawn a second time in a row under the answer
-   (`.ctile-rate-row`) and the header's is dropped. The mount writes both; the rules
-   below show one. There is no script in the choice, so a panel resized across the line
-   changes live, as the chat head does at 440px. */
+   One form on every device: the group is a row under the answer (`.ctile-rate-row`),
+   its first arrow on the answer text's column, so it sits in the reading path on a
+   3440px desktop as it does on a phone (UNBLOCK-10, rulings §7: the same control is
+   drawn identically everywhere). It shows at rest in the muted colour and takes the
+   accent on hover or focus; a lit arrow, and a details control holding more than a
+   bare +1 or -1, always wear it. A folded answer hides the row with its body. */
 .ctile-rate { display: flex; align-items: center; gap: 2px; flex: none; }
 .ctile-rate button { margin: -2px 0; }		/* Copy's vertical margin: each arrow adds 16px to the bar, as Copy does */
 .ctile-rate button[aria-pressed="true"],
 .ctile-rate .ctile-rate-more.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.ctile-rate-row { display: none; }
 .ctile-rate-tags { flex-wrap: wrap; gap: 2px; }
 #chat-output .ctile-rate-tags { padding: 2px var(--ct-pad-x) var(--tx-pad-y); }
 .ctile-rate-tags .tile-dlg-level { flex: 0 0 auto; }
@@ -5154,17 +5150,6 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 		.panel.ai .chead-right { margin-left: auto; }
 	}
 }
-/* ── Rating controls: which form an answer wears ─────────────────────
-   The header form needs room for three buttons beside a model name; the row form
-   (`.ctile-rate-row`, under the answer) does not, and is the one a touch screen gets
-   since touch has no hover. Both are written by the mount; exactly one is shown.
-
-   WHERE THE LINE FALLS, measured (Daylight, the Holocene time, `fast` for a model):
-   the label's content is the panel's container width less 96px, and the header holds
-   dot 8, name 46, a 4px spring, the group 52, time 119.7 and Copy 14, with six 8px gaps:
-   291.7px without a model name. The name needs about 52px (eight characters and an
-   ellipsis), so the header form needs a container of 96 + 291.7 + 52, which is 440px.
-   It is the width at which the chat head drops to one row, too. */
 /* --rate-ink: how far the glyphs' ink stands inside their 16px box. Both arrows start at x 6 of a 24 viewBox
    with a 1.75 round-capped stroke (`.ic`), so the ink begins at (6 - 0.875) / 24 of the box, 3.42px. */
 .ctile-rate-row { --rate-ink: calc(16px * 5.125 / 24); align-items: center; box-sizing: border-box; height: calc(16px + var(--tx-pad-y)); padding: 0 var(--ct-pad-x) var(--tx-pad-y) calc(var(--ct-pad-x) - var(--rate-ink)); }
@@ -5176,47 +5161,30 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile-rate-row .ctile-rate button { position: relative; }
 .ctile-rate-row .ctile-rate button::after { content: ''; position: absolute; bottom: calc(2px - var(--tx-pad-y)); left: 50%; width: 44px; height: 44px; transform: translateX(-50%); }
 .ctile-rate-row .ctile-rate button:first-child::after { left: calc(var(--rate-ink) - var(--ct-pad-x)); transform: none; }
+.ctile-rate-row { display: flex; }
+/* A finger, or a phone-width pane: the chips under a pending down rating take the 44px overlay. */
 @container aipane (max-width: 440px) {
-	.ctile > .ctile-lbl > .ctile-rate { display: none; }
-	.ctile-rate-row { display: flex; }
 	#chat-output .ctile-rate-tags { row-gap: 14px; margin-top: 8px; }
 	#chat-output .ctile-rate-tags .tile-dlg-level { position: relative; min-width: 44px; }
 	#chat-output .ctile-rate-tags .tile-dlg-level::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 }
-/* A touch screen, which has no hover. `pointer: coarse` and not `hover: none`: a headless browser
-   reports no pointer at all, and a rule keyed on that could never show the header form there. */
+/* A touch screen. `pointer: coarse` and not `hover: none`: a headless browser reports no pointer at all. */
 @media (pointer: coarse) {
-	.ctile > .ctile-lbl > .ctile-rate { display: none; }
-	.ctile-rate-row { display: flex; }
 	#chat-output .ctile-rate-tags { row-gap: 14px; margin-top: 8px; }
 	#chat-output .ctile-rate-tags .tile-dlg-level { position: relative; min-width: 44px; }
 	#chat-output .ctile-rate-tags .tile-dlg-level::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 }
 
 /* ── Rating a changed file (Rating U3) ─────────────────────────────────
-   Placement only. The group in a changed-files row is the three buttons an answer has, and it wears
-   the form an answer wears in the same place and the same input mode (bar rule 2): the HEADER form
-   where there is a mouse and the chat pane has room, shown at rest in the muted colour and taking the
-   accent on hover or focus, a lit arrow and a lit details control always wearing it; the ROW form where the pane is
-   440px or less across, or the pointer is coarse (a finger has no hover), every button always there at
-   the 50px pitch. The choice is the answer's own, and so are its two conditions, written below as
-   the answer's are. The group stands at the row's right end, after the delta, and its width is the
-   form's (52px, 116px), so the delta stands at the same x on every row, and a row with no record in a
-   table that has one keeps the room empty (bar rule 3). */
-.turn-files { --tf-rate-w: 52px; }
-.turn-file-rate { flex: none; width: var(--tf-rate-w); justify-content: flex-start; }
+   Placement only. The group in a changed-files row is the three buttons an answer has, in the form an
+   answer wears (bar rule 2): every button always there at the 50px pitch. The group stands at the row's
+   right end, after the delta, and its width is the form's (116px), so the delta stands at the same x on
+   every row, and a row with no record in a table that has one keeps the room empty (bar rule 3). */
+.turn-files { --tf-rate-w: 116px; }
+.turn-file-rate { flex: none; width: var(--tf-rate-w); justify-content: flex-start; gap: 34px; }
 .turn-files:has(.turn-file-rate) .turn-file-row:not(:has(> .turn-file-rate))::after { content: ''; flex: none; width: var(--tf-rate-w); }
-@container aipane (max-width: 440px) {
-	.turn-files { --tf-rate-w: 116px; }
-	.turn-file-rate { gap: 34px; }
-}
-@media (pointer: coarse) {
-	.turn-files { --tf-rate-w: 116px; }
-	.turn-file-rate { gap: 34px; }
-}
-/* A finger on the ROW form: each button takes the house 44px overlay (they are 16px wide at a 50px pitch, so
-   no two meet). The row form on a mouse in a narrow window of a computer has the overlay only at the phone
-   width; a header-form group (a mouse, room to spare) has none, its buttons being 18px apart. */
+/* A finger: each button takes the house 44px overlay (they are 16px wide at a 50px pitch, so no two meet).
+   A mouse in a narrow window of a computer has the overlay only at the phone width. */
 @media (pointer: coarse) {
 	.turn-file-rate button { position: relative; }
 	.turn-file-rate button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }

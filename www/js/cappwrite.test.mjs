@@ -7,7 +7,8 @@
    been. Any page write that followed a failed one was silently lost (r546 live and r547).
 
    The REAL `writeCrystalAsset` and its chain are lifted from the file's own text and run as written
-   against a `Wasm` stand-in whose store can be told to refuse the next write. Proved: the failing
+   against a `Wasm` stand-in whose one-call `page_write` (write and stamp, PLB) can be told to refuse
+   the next write; `holdDiamond`, which the write is made under, is lifted with it. Proved: the failing
    write's caller is refused; the write after it lands its bytes, and its caller is answered only once
    they have landed; appends still serialise after a failure; the queue is the tab's, so a failure on
    one Diamond costs another nothing; the Diamond is stamped; a failed save leaves a trail note naming
@@ -29,9 +30,14 @@ function check(name, cond, detail) {
 const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
 const A = SRC.indexOf('\tasync function writeCrystalAsset(');
 const Z = SRC.indexOf('\tvar _cappWrite = Promise.resolve();', A);
-check('writeCrystalAsset and its chain are found in daimond.js', A >= 0 && Z > A, 'at ' + A + '..' + Z);
+const LA = SRC.indexOf('\tvar DIAMOND_LOCKS = {};');
+const LF = SRC.indexOf('\tfunction holdDiamond(', LA);
+const LZ = SRC.indexOf('\n\t}\n', LF);
+const found = A >= 0 && Z > A && LA >= 0 && LF > LA && LZ > LF;
+check('writeCrystalAsset, its chain and holdDiamond are found in daimond.js', found, [A, Z, LA, LF, LZ].join(','));
 
-// A store with OPFS's whole-file read and write, a little slow, that refuses the next write when told.
+// A store with OPFS's whole-file read and write behind the one-call door, a little slow, that refuses
+// the next write when told (and so writes and stamps nothing).
 function stand() {
 	const files = new Map(), touched = [];
 	let refuse = 0;
@@ -40,21 +46,31 @@ function stand() {
 		is_keeper_record: () => false,
 		store_read: async (p) => { await tick(); if (!files.has(p)) throw new Error('no file ' + p); return files.get(p); },
 		store_write: async (p, b) => { await tick(); if (refuse > 0) { refuse--; const e = new Error('store refused ' + p + ' ' + b); e.name = 'QuotaExceededError'; throw e; } files.set(p, b); },
-		touch_diamond: async (id) => { touched.push(id); },
+		page_write: async (id, p, text, append) => {
+			let body = String(text);
+			if (append) {
+				let had = '';
+				try { had = await Wasm.store_read(p); } catch (e) { had = ''; }
+				if (had && had.slice(-1) !== '\n') had += '\n';
+				body = had + body;
+			}
+			await Wasm.store_write(p, body);
+			touched.push(id);
+		},
 	};
 	const notes = [];
 	const win = { DaimondTrail: { note: (w, d) => notes.push(w + ': ' + d) } };
 	return { Wasm, win, files, touched, notes, refuseNext: () => { refuse++; } };
 }
 function lift(s) {
-	const src = SRC.slice(A, SRC.indexOf('\n', Z) + 1);
-	return new Function('Wasm', 'window', src + '\nreturn writeCrystalAsset;')(s.Wasm, s.win);
+	const src = SRC.slice(LA, LZ + 3) + SRC.slice(A, SRC.indexOf('\n', Z) + 1);
+	return new Function('Wasm', 'window', 'navigator', src + '\nreturn writeCrystalAsset;')(s.Wasm, s.win, undefined);
 }
 let unhandled = 0;
 process.on('unhandledRejection', () => { unhandled++; });
 const settle = (p) => p.then((v) => ({ ok: true, v }), (e) => ({ ok: false, e: String(e && e.message || e) }));
 
-if (A >= 0 && Z > A) {
+if (found) {
 	const P = 'diamonds/d1/log.txt';
 
 	// Case 1: the write after a failed one, issued while the failure is still in flight.

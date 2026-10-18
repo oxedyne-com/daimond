@@ -32,44 +32,44 @@ crate-type = ["cdylib", "rlib"]
 insecure_testing = []
 
 [dependencies]
-oxedyne_fe2o3_core		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
-oxedyne_fe2o3_jdat		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
-oxedyne_fe2o3_iop_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
-oxedyne_fe2o3_iop_db		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
-oxedyne_fe2o3_iop_crypto	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
-oxedyne_fe2o3_syntax		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
-oxedyne_fe2o3_graphics		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
+oxedyne_fe2o3_core		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
+oxedyne_fe2o3_jdat		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
+oxedyne_fe2o3_iop_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
+oxedyne_fe2o3_iop_db		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
+oxedyne_fe2o3_iop_crypto	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
+oxedyne_fe2o3_syntax		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
+oxedyne_fe2o3_graphics		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
 # The regex engine and the glob matcher the file tools search with (`fe2o3_text::regex`,
 # `fe2o3_text::glob`).  Portable, so the browser build searches by the same rules the native
 # build does -- two matchers would eventually disagree about what a pattern means.
-oxedyne_fe2o3_text		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
+oxedyne_fe2o3_text		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
 # `fe2o3_stds::media` -- what a file IS, from its own bytes, so the viewer offers a
 # picture a picture and a document a document.  PORTABLE, and it was native-only
 # below until the browser began asking the same question: the wasm build then would
 # not compile at all, which the reproducible build caught and the development tree
 # could not, since a path dependency there is portable by default.
-oxedyne_fe2o3_stds		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
+oxedyne_fe2o3_stds		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
 # `fe2o3_file::office`, which reads and writes the Microsoft Office formats, over
 # `fe2o3_file::zip`.  Portable: the crate reaches no filesystem at all, so a `.docx`
 # dragged into the browser is read by the same code the native build reads one with.
-oxedyne_fe2o3_file		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
+oxedyne_fe2o3_file		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
 # SHA3-256, the SBJ address function, which WebCrypto does not implement at all, and
 # the SHA-256 behind an identity fingerprint.  Pure Rust, so it compiles to wasm32 as
 # it stands; it was native-only only while nothing but the native half hashed anything.
-oxedyne_fe2o3_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
-oxedyne_fe2o3_ore		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
+oxedyne_fe2o3_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
+oxedyne_fe2o3_ore		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
 # SBJ, the signed container a message and an identity card travel in.  It is here and
 # not behind the gateway because the point of a signature is that the RECIPIENT checks
 # it: a server that verified and handed over a tidy result would have proved only that
 # the server says so.  `default-features = false` drops the post-quantum schemes that
 # rest on C, leaving the pure-Rust subset -- Ed25519, SHA3 -- a browser can compile.
-oxedyne_fe2o3_sbj		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88", default-features = false }
+oxedyne_fe2o3_sbj		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6", default-features = false }
 # The seal (`seal`): the X25519 + HKDF + AES-256-GCM records a post, a peer envelope and the
 # account wrap travel in, one code path for the browser and the native runner.  Already in the
 # graph through `fe2o3_sbj`; `mode2` without the default `pq`/`batch` keeps the C-backed schemes
 # out, so it compiles to wasm32 as it stands.  `zeroize` (also already in the graph through it)
 # clears the one-call secrets -- the ephemeral X25519 scalar and the body key -- when they drop.
-oxedyne_fe2o3_crypto		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88", default-features = false, features = ["mode2"] }
+oxedyne_fe2o3_crypto		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6", default-features = false, features = ["mode2"] }
 zeroize				= "1.4.2"
 
 
@@ -78,8 +78,8 @@ zeroize				= "1.4.2"
 # concerns; none of these crates target wasm32.  Target-gated so Cargo
 # feature unification never touches the wasm build (F6).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-oxedyne_fe2o3_net		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
-oxedyne_fe2o3_o3db_sync		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
+oxedyne_fe2o3_net		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
+oxedyne_fe2o3_o3db_sync		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
 
 tokio = { version = "1.35", features = ["full"] }
 tokio-rustls = "0.26"
@@ -90,7 +90,7 @@ rustls-pemfile = "2"
 # TLS client with `fetch` + `ReadableStream` via web-sys, driven by
 # wasm-bindgen-futures.  `getrandom`'s `js` backend must stay confined
 # to wasm32 so it never leaks onto native (F6).
-oxedyne_fe2o3_stds			= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
+oxedyne_fe2o3_stds			= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen		= "0.2"
 wasm-bindgen-futures	= "0.4"
@@ -158,7 +158,7 @@ web-sys = { version = "0.3", features = [
 # crate's server modules (the Maildir store and the passwd user file), which reach `fe2o3_net`
 # and do not build for this target; what is left needs only `fe2o3_core` and `fe2o3_text`, both
 # already in the graph.
-oxedyne_fe2o3_mail	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88", default-features = false }
+oxedyne_fe2o3_mail	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6", default-features = false }
 [target.'cfg(target_arch = "wasm32")'.dependencies.ring]
 version		= "0.17.14"
 features	= ["wasm32_unknown_unknown_js"]
@@ -167,4 +167,4 @@ features	= ["wasm32_unknown_unknown_js"]
 tokio = { version = "1.35", features = ["full", "test-util"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-oxedyne_fe2o3_test			= { git = "https://github.com/oxedyne-com/fe2o3", rev = "db06b7196f901eea1ed1c9a318942b6c38239c88" }
+oxedyne_fe2o3_test			= { git = "https://github.com/oxedyne-com/fe2o3", rev = "750a89bf740d36f3e81f2e807be5646c93a85ad6" }

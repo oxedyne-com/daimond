@@ -392,6 +392,11 @@
 	// their section merged. Not a failed section -- the version is adopted, since a re-pull
 	// reads the same bytes -- but a fact to say (DL-2, 2026-09-27; see applyChats).
 	var lastRefused   = [];
+	// Diamonds the last merge HELD, by id: a page log over the cap or unreadable here, so
+	// nothing of them was written (PLD). Not a failed section -- the rest merged, the version is
+	// adopted and the push goes on -- but the version is owed a merge again (`remergeOwed`), so
+	// the next pull of this same version imports them once more rather than skipping it.
+	var lastHeld      = [];
 	// THE NEWEST VERSION THIS DEVICE PULLED AND COULD NOT MERGE, or 0. That version is
 	// the bounded re-pull's (`scheduleReapply`), never the wake channel's: the channel
 	// used to park `?above=serverVersion`, which a failed merge deliberately leaves
@@ -1911,6 +1916,7 @@
 		var core = (report && Array.isArray(report.failed)) ? report.failed : [];
 		lastRefused = (report && report.refused && Array.isArray(report.refused.chats))
 			? report.refused.chats.slice() : [];
+		lastHeld = (report && Array.isArray(report.held)) ? report.held.slice() : [];
 		if (lastRefused.length) {
 			diag('pull chats REFUSED', lastRefused.length + ' chat(s) could not be read and were left out: '
 				+ lastRefused.join(','));
@@ -2258,8 +2264,17 @@
 			lastFailed = [];
 		} else {
 			remergeOwed = false;		// this apply is the one it was owed
+			lastHeld   = [];
 			lastFailed = await applyParcel(state, j.version | 0);
 			applied = true;
+			// A HELD DIAMOND IS NOT MERGED, so this version is not "already adopted" for it: the
+			// next pull of it runs the merge again and the import is retried, by whatever trigger
+			// brings that pull. Until the hold lifts, each of those pulls pays the walk.
+			if (lastHeld.length) {
+				remergeOwed = true;
+				diag('pull diamonds HELD', lastHeld.length + ' Diamond(s) held back: ' + lastHeld.join(',')
+					+ ' -> v' + (j.version | 0) + ' owed a merge again');
+			}
 		}
 		pulledOk   = true;			// a parcel was read; see `pulledOk`.
 		noteSynced();

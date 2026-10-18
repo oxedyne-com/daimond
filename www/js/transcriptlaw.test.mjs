@@ -202,7 +202,7 @@ if (!BREAK) {
 	check('and a transcript in hand that is not one never reaches the row',
 		/appendChunks\(mcS, c\.id, c\.messages\);[\s\S]{0,500}if \(!transcriptOk\(c\.messages\)\) \{\s*skip\(/.test(src));
 	check('applySync names a refused chat in `refused`, not in `failed`',
-		/refused\.chats = got\.refused/.test(src) && /return \{ failed: failed, refused: refused \};/.test(src));
+		/refused\.chats = got\.refused/.test(src) && /return \{ failed: failed, refused: refused(, held: _heldNow\.slice\(\))? \};/.test(src));
 	check('sync.js reads `refused` apart from `failed`, so a refused chat does not hold the version back',
 		/lastRefused = \(report && report\.refused/.test(syncSrc) && /return failed\.concat\(core\);/.test(syncSrc));
 }

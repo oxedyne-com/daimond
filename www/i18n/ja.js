@@ -495,6 +495,20 @@
 	'end.why_lease_revoked': '止めました：別の端末がこのターンを引き継ぎました',
 	'end.why_stream_abort': '止めました：ターンが終わる前に途切れました',
 	'end.why_blocked':      '未完了：乗り越えられない問題で止まりました',
+	'end.why_lease_lapsed': '止めました：このターンを実行していた端末がターンを失いました',
+	'end.why_lease_deadline': '止めました：期限までにこのターンを始めた端末がありません',
+	// The plain account a cut turn ends with (UNBLOCK-25 U4, `cutAccount`).
+	// i18n-family: cut.why_ = user lease_cap lease_lapsed lease_revoked lease_deadline
+	'cut.why_user': 'ご指示どおり止めました。',
+	'cut.why_lease_cap': '止めました：別の端末に渡したターンが30分の上限を超えました。',
+	'cut.why_lease_lapsed': '止めました：実行していた端末がターンを失いました。',
+	'cut.why_lease_revoked': '止めました：別の端末がこのターンを引き継ぎました。',
+	'cut.why_lease_deadline': '止めました：期限までに始めた端末がありません。',
+	'cut.none': 'まだツールを使っていませんでした。',
+	'cut.calls.one': 'ツール呼び出しは{n}回でした。',
+	'cut.calls.other': 'ツール呼び出しは{n}回でした。',
+	'cut.wrote': '書き込み：{paths}。',
+	'cut.wrote_more': '書き込み：{paths} ほか{more}件。',
 	'end.how_paused':   '一時停止しました',
 	'end.how_capped':   '止めました：手順の上限に達しました',
 	'end.how_spend_cap': '止めました：利用額の上限に達しました',
@@ -574,10 +588,7 @@
 	'web.mirror_silent':  'Daimond Hands からしばらく応答がないため、ライブ映像はありません。タブ自体は開いたままで、依然としてそのページです。',
 	'web.mirror_refused': 'このタブは撮影できないため、ライブ映像はありません。タブを直接見るか、もう一度映像を依頼してください。',
 	// 枠の中に入れられるのを拒むサイト。ほとんどがそうです。
-	'web.blocked':         '<b>{host}</b> は別のページの中では表示されません。ほとんどのサイトはクリックジャッキング対策としてこれを禁じています。不具合ではありません。',
-	'web.blocked_hands':   'Daimond Hands なら実際のタブで操作できます。',
-	'web.blocked_install': 'ライブで操作するには Daimond Hands を入れてください。',
-	'web.open_new_tab':    '新しいタブで開く',
+	'web.blocked_line':    '<b>{host}</b> はアプリの中での表示を許していません。',
 	'web.read_as_text':    'テキストとして読む',
 	'web.reading':         '読み込み中…',
 	'web.read_failed':     'そのページは読めませんでした：{reason}',
@@ -883,6 +894,8 @@
 	// it is for, and nothing at the far end is deleted.
 	'sync.files_left.one':      '{n} 件のファイルがこの端末の同期の荷物に入りきらず、空きができるまでほかの端末には届きません: {names}',
 	'sync.files_left.other':    '{n} 件のファイルがこの端末の同期の荷物に入りきらず、空きができるまでほかの端末には届きません: {names}',
+	'sync.logs_held.one':       '{names} のログが大きすぎるか読み取れないため、まだ同期されていません。この端末には無事に残っています。',
+	'sync.logs_held.other':     '{n} 件の diamond のログが大きすぎるか読み取れないため、まだ同期されていません。この端末には無事に残っています: {names}',
 	'sync.folders_left.one':    '{names} は共有フォルダに許された {max} を超えているため、ほかの端末には届きません。もっと小さいフォルダを共有するか、中身を一部外してください。',
 	'sync.folders_left.other':  '{n} 件の共有フォルダがそれぞれに許された {max} を超えていて、ほかの端末には届きません: {names}。',
 	// 終わってしまい、取り直せなかったセッション。下と同じ見出しにします。
@@ -916,12 +929,14 @@
 
 	// ── クラウドストレージの整理 ───────────────────────────────
 	'chunks.sweep_held':          'クリーンアップを一時停止',
-	'chunks.sweep_held_reason':   'クラウド保存には、どのファイルからも参照されなくなった断片が {m} 個中 {n} 個あります。削除していません。一度に半分を超えては削除できないためです。',
 	'chunks.upload_refused':      'アップロードを一時停止',
 	'chunks.upload_refused_title': 'クラウドストレージがアップロードを拒否しました',
-	'chunks.sweep_confirm_ask':   '今すぐ削除しますか。いま見えているものには何も手をつけず、領域だけが解放されます。',
-	'chunks.sweep_confirm_ok':    '断片を削除',
-	'chunks.sweep_confirm_title': 'どこからも参照されていない断片を解放しますか？',
+	'chunks.held_ask_title':      '保存された断片 {n} 個を削除しますか？',
+	'chunks.held_ask_body':       'このデバイスは保存された断片 {m} 個のうち {n} 個を使わなくなりました。断片は 7 日間保持され、まだ使っているデバイスがあれば元に戻ります。',
+	'chunks.held_ask_ok':         '削除',
+	'chunks.held_ask_keep':       '保持',
+	'chunks.held_kept_title':     '保存された断片を保持しました',
+	'chunks.held_kept_body':      'このデバイスはファイルを確認できなかったため、保存された断片 {n} 個を保持しています。',
 
 	// ── 2 台目の端末とのペアリング ─────────────────────────────
 	// ボタン名を囲む引用符は日本語のかぎ括弧に置き換えています。
@@ -2698,6 +2713,7 @@
 	'capp.merge_ok': 'ページを更新',
 	'capp.merge_later': '今はしない',
 	'capp.merge_waiting': '更新しました。入力中の項目が保存されると、新しいページが表示されます。',
+	'capp.merge_refused': '新しい {name} のページがありますが、この更新はあなたの編集と衝突するため、ページはそのままにしています。',
 	'capp.merge_show': '両方が変更した箇所',
 	'capp.merge_line': '{n}行目',
 	'capp.merge_yours': 'あなたの版',
@@ -2915,6 +2931,7 @@
 	'post.err_no_account':       'その鍵を持つアカウントがないため、メッセージは送られていません。',
 	'post.err_too_big':          'このメッセージはリレーが運ぶには大きすぎます。',
 	'post.err_refused':          'リレーがこのメッセージを受け取らなかったため、送られていません。',
+	'post.err_unknown':          'リレーがこのメッセージを時間内に確認できませんでした。まだ届く可能性があります。もう一度送る前に確認してください。',
 	'post.locked':               'メッセージを読むには Daimond のロックを解除してください。',
 	'post.tray_head':            'あなたの返事待ち',
 	'post.none':                 'まだメッセージはありません。{people}で誰かを追加してください。',
@@ -2957,7 +2974,9 @@
 	'post.refused_no_account': 'その鍵を持つアカウントがない',
 	'post.refused_too_big':    '中継が運べる大きさを超えている',
 	'post.refused_other':      '中継が受け取らなかった',
+	'post.refused_unknown':    '未確認、まだ届く可能性あり',
 	'post.group_refused':      '次の相手については中継が受け取りませんでした：{who}。',
+	'post.group_unknown':      '次の相手については中継が確認できませんでした：{who}。まだ届く可能性があります。',
 
 	// ── A group, and who is in it ──
 	// A group is a LIST OF PEOPLE a message is sealed to one by one. No

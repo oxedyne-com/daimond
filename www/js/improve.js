@@ -470,6 +470,7 @@
 	// no id of any kind.
 
 	var _build = '';
+	var _heard = false;		// the row hears the panel engine (`hearPanels`); declared up here, above any first draw
 
 	/// Read the build id once, from the same `build.json` the updater reads.
 	/// A failure leaves it empty, and the line simply does not name a build --
@@ -586,13 +587,18 @@
 	/// Redraw the row that says what goes with the note. Left closed if the user
 	/// closed it: a row that reappeared on every keystroke would be a control
 	/// that does not stay pressed.
+	///
+	/// ONLY A DIFFERENCE IS WRITTEN. A row rewritten with the text it already shows
+	/// is still a DOM change, and anything that watches the page for one is woken
+	/// for nothing -- the loop QA C-Q1 measured at sixty redraws a second.
 	function drawContext() {
+		hearPanels();
 		var row = el('improve-with'), line = el('improve-with-text');
 		if (!row || !line) return;
-		if (row.dataset.off === '1') { row.hidden = true; return; }
+		if (row.dataset.off === '1') { if (!row.hidden) row.hidden = true; return; }
 		var ctx = context();
-		line.textContent = ctx;
-		row.hidden = !ctx;
+		if (line.textContent !== ctx) line.textContent = ctx;
+		if (row.hidden !== !ctx) row.hidden = !ctx;
 	}
 
 	// ── The voice a proposal is written with ───────────────────
@@ -3489,21 +3495,69 @@
 	// panel open with no announcement. So the two facts most likely to move under
 	// an open panel were the two this row never heard about, which is the defect
 	// the redraw in `outgoing()` closes.
-	try { window.addEventListener('resize', function () { if (!contextOff()) drawContext(); }); }
+	try { window.addEventListener('resize', redrawSoon); }
 	catch (e) { /* no window */ }
 
-	// And on the way to the button. A hand coming back to this panel to press Send
-	// passes through it, so the last state of the preview a person can read is the
-	// state that was in force when they pressed.
-	['pointerdown', 'focusin'].forEach(function (ev) {
+	// PANELS, TOLD RATHER THAN WATCHED, AND NEVER UNDER A PRESS (R53 composemerge).
+	//
+	// A version of this row redrew on `pointerdown`/`focusin`, "on the way to the
+	// button": a panel opened a step earlier left the row stale, the hand's own
+	// arrival caught the change, the longer line wrapped to a second row right
+	// then, and the buttons dropped out from under a finger that had not moved --
+	// the click missed and nothing posted (verify_composemerge). A reserved height
+	// cannot close that: the line lists however many panels are open, in whatever
+	// language, after a build id whose width varies glyph to glyph.
+	//
+	// The next version watched `#main` with a MutationObserver -- and this row is
+	// inside `#main`, so every redraw woke the observer for the next frame: sixty
+	// redraws a second, for as long as the page was visible, on every device (QA
+	// C-Q1), and a line that changed mid-press was redrawn mid-press (C-Q2).
+	//
+	// So the row is redrawn when the panel engine SAYS the open set changed
+	// (`DaimondPanels.onChange`, announced from `apply()` only when a reader could
+	// see the difference), and on a resize. A redraw that falls while a pointer is
+	// down is owed, not done, and done a turn after the pointer comes up, once the
+	// click has been dispatched. `drawContext` writes only a difference, so nothing
+	// here can wake anything, and a palette changed with no panel moving is read at
+	// the press itself by `outgoing()`, as it always has been.
+	var _pressing = false;		// a pointer is down somewhere on the page
+	var _drawOwed = false;		// a redraw fell while it was down
+
+	function redrawSoon() {
+		if (contextOff()) return;
+		if (_pressing) { _drawOwed = true; return; }
+		drawContext();
+	}
+
+	/// The press is over, or cannot be finished: pay a redraw it held back.
+	function pressOver() {
+		_pressing = false;
+		if (!_drawOwed) return;
+		_drawOwed = false;
+		setTimeout(redrawSoon, 0);
+	}
+
+	try {
+		document.addEventListener('pointerdown', function () { _pressing = true; }, true);
+		document.addEventListener('pointerup', pressOver, true);
+		document.addEventListener('pointercancel', pressOver, true);
+		// A press the page never sees end (the window lost, the tab hidden) owes
+		// nothing for ever: the next redraw is not held behind it.
+		window.addEventListener('blur', pressOver);
+		document.addEventListener('visibilitychange', pressOver);
+	} catch (e) { /* no document */ }
+
+	/// Hear the panel engine, once. Asked lazily: this file runs before the module
+	/// that makes `DaimondPanels`, and the row matters only once it is drawn.
+	function hearPanels() {
+		if (_heard) return;
 		try {
-			document.addEventListener(ev, function (e) {
-				var t = e.target;
-				if (!t || typeof t.closest !== 'function' || !t.closest('#panel-social')) return;
-				if (!contextOff()) drawContext();
-			}, true);
-		} catch (err) { /* no document */ }
-	});
+			if (window.DaimondPanels && DaimondPanels.onChange) {
+				DaimondPanels.onChange(redrawSoon);
+				_heard = true;
+			}
+		} catch (e) { /* no panel engine: a stale preview until the press, never a stale note */ }
+	}
 
 	// Writing a fresh note takes the "Raised" confirmation down, so it never sits
 	// stale over a compose that has moved on -- and the title count follows the

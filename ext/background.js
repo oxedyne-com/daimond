@@ -792,7 +792,11 @@ const HANDLERS = {
 		let tab	= null;
 
 		if (await alive(s.tabId)) {
-			tab = await chrome.tabs.update(s.tabId, { url, active: true });
+			// Navigated where it stands, NOT made active. Activating it brought the
+			// reused tab to the front over Daimond on every open, the same wheel
+			// grab the new-tab branch below was written to avoid (UNBLOCK-21). The
+			// panel mirrors it; the user goes to it only by choice.
+			tab = await chrome.tabs.update(s.tabId, { url });
 		} else {
 			// A background TAB in the current window, not a new WINDOW. A fresh
 			// window steals focus and stacks over the app -- "a new window, not a

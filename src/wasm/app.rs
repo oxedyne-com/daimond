@@ -578,6 +578,23 @@ impl DaimondApp {
         self.registry.ctx.forget_web_consent(diamond);
     }
 
+    /// This client's own conversation's web answer, as the word its workers carry: `allow`,
+    /// `deny`, or empty where it has not been asked.  Read by the collector that starts a chat's
+    /// workers after the turn, beside [`DaimondApp::is_tainted`].
+    pub fn web_consent_word(&self) -> String {
+        self.registry.ctx.web_consent_word().to_string()
+    }
+
+    /// Give a dispatched worker the web answer of the conversation that sent it (UNBLOCK-21), so
+    /// the chat's one consent covers its workers.  See
+    /// [`crate::tools::ToolContext::inherit_web_consent`].
+    ///
+    /// # Arguments
+    /// * `word` - The dispatching conversation's [`DaimondApp::web_consent_word`].
+    pub fn inherit_web_consent(&self, word: &str) {
+        self.registry.ctx.inherit_web_consent(word);
+    }
+
     /// Offer this agent the dispatch tool, so the user's own chat can send workers out.
     ///
     /// NOT in [`crate::tools::Tool::browser`], which is the list a worker is built from too: a
@@ -2225,8 +2242,15 @@ impl DaimondApp {
     /// the copy both sides last agreed on, so the local state is kept as a recoverable
     /// version before the replace rather than lost (S-SYNC #4).  A one-sided pull passes
     /// `false`; either way `versions/` is preserved.
-    pub async fn import_diamond(&self, json: String, keep_conflict: bool) -> Result<(), JsValue> {
-        diamond::import_diamond(&json, keep_conflict).await.map_err(to_js_err)
+    ///
+    /// Answers `{held:[…]|null, files, here, arriving}` as JSON.  `held` names the page logs that
+    /// held the import back for this round, with nothing written; otherwise the counts are the
+    /// rows of this device's page logs the replace would have lost and were kept, in `files` logs,
+    /// and the rows the arriving copy brought.  A one-sided import answers zeros.
+    pub async fn import_diamond(&self, json: String, keep_conflict: bool) -> Result<String, JsValue> {
+        diamond::import_diamond(&json, keep_conflict).await
+            .map(|o| o.to_json())
+            .map_err(to_js_err)
     }
 
     /// Export a Diamond's SHAPE as a template anybody can open, sealed to nobody.
@@ -2340,6 +2364,27 @@ impl DaimondApp {
     /// [`union_links_from`](crate::wasm::diamond::union_links_from).
     pub async fn union_links(&self, owner: String, sidecar: String) -> Result<bool, JsValue> {
         diamond::union_links_from(&owner, &sidecar).await.map_err(to_js_err)
+    }
+
+    /// Join another device's page logs into this Diamond's in place, where neither copy is
+    /// fresher: the page-log twin of [`DaimondApp::union_links`].  `export_json` is that device's
+    /// export.  Answers the JSON [`DaimondApp::import_diamond`] does, with `files` the logs written
+    /// here; the caller stamps the Diamond when `here` > 0, so the rows only this device held
+    /// travel back.  See [`union_logs_from`](crate::wasm::diamond::union_logs_from).
+    pub async fn union_logs(&self, id: String, export_json: String) -> Result<String, JsValue> {
+        diamond::union_logs_from(&id, &export_json).await
+            .map(|o| o.to_json())
+            .map_err(to_js_err)
+    }
+
+    /// Put back the page-log rows an earlier sync dropped, from this Diamond's "kept before sync"
+    /// versions, and answer `{files, rows, gone}` as JSON: `gone` counts kept copies the store no
+    /// longer holds.  The caller holds the Diamond's lock and stamps it when `rows` > 0.  See
+    /// [`heal_pagelogs`](crate::wasm::diamond::heal_pagelogs).
+    pub async fn heal_pagelogs(&self, id: String) -> Result<String, JsValue> {
+        diamond::heal_pagelogs(&id).await
+            .map(|c| c.to_json())
+            .map_err(to_js_err)
     }
 
     /// Rename a Diamond.

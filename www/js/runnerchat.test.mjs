@@ -86,6 +86,8 @@ function harness() {
 		function persistChats() {}
 		function runTurn(chat, text) { env.runs.push({ chat: chat, text: text }); }
 		var CONTINUE_NUDGE = 'continue';
+		// The Continue's turn, wherever the switch puts it (UNBLOCK-1 QFOLLOW, qfollow.test Q10).
+		function continueRouted(chat) { env.runs.push({ chat: chat, text: CONTINUE_NUDGE }); }
 		function turnMessagesOf(chat, iturn) { env.retracted.push(iturn); return []; }
 		function turnSpan(chat, id) {
 			return (chat.messages || []).filter(function (m) { return id && m.iturn === id; });

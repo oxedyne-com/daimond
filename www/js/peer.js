@@ -3323,6 +3323,12 @@
 	// best-effort and the lease is left to expire at its deadline. Generous, because it
 	// is a backstop for a hung turn, not a turn budget.
 	var MAX_LEASE_LIFE_MS = 30 * 60 * 1000;	// 30 min: a turn still 'running' past this is hung, not live
+	// HOW FAR AHEAD A RUNNING TURN HOLDS ITS LEASE (UNBLOCK-25). `DISPATCH_DEADLINE_MS` bounds
+	// only when a turn may START; a turn still running near it renews its own lease through
+	// the door, this far ahead, so every other device reads it live and none re-runs it.
+	// Never past the hung cap from the deadline (`expiryCap`). A runner that dies stops
+	// renewing, and its lease lapses within this, as Interrupted + Retry.
+	var RUN_HOLD_MS = 5 * 60 * 1000;
 
 	/// The local materialised view of the parcel's `leases` section: turnId ->
 	/// record. Snapshotted into the parcel and merged back through `adopt`.
@@ -3432,7 +3438,15 @@
 	function expiryCap(r, now) {
 		var cap = now + LEASE_TTL_MS;
 		var dl  = leaseMs(r && r.deadline);
-		return dl > cap ? dl : cap;
+		if (dl > cap) cap = dl;
+		// A RUNNING TURN PAST ITS START WINDOW (UNBLOCK-25) holds its lease one `RUN_HOLD_MS`
+		// ahead of this device's clock, and never past the hung cap measured from the
+		// dispatcher's deadline, so a fast-clock holder still cannot park a turn for long.
+		if (dl && r.mode === 'running') {
+			var run = Math.min(now + RUN_HOLD_MS, dl + MAX_LEASE_LIFE_MS);
+			if (run > cap) cap = run;
+		}
+		return cap;
 	}
 
 	/// Clamp a record's expiry to `expiryCap`. A holder with a fast clock could
@@ -3928,6 +3942,7 @@
 	/// arrival's) is not a `running` hand-off, which other devices defer their push for.
 	async function leaseRenew(turnId, holder, cas, nowFn, opts) {
 		var tid = String(turnId), h = String(holder), hold = !!(opts && opts.hold);
+		var holdMs = (opts && +opts.holdMs > 0) ? +opts.holdMs : 0;	// a running turn's hold (UNBLOCK-25)
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var snap = await cas.read();
 			if (snap.unread) return { ok: false, why: 'unread' };		// unknown, never 'revoked'
@@ -3943,15 +3958,21 @@
 			// transitions claimed -> running once), this is a no-op for a live turn; it
 			// stays correct for a direct DaimondLease.renew of a TTL-only (no-deadline)
 			// lease, where it is the old `now + TTL`.
+			// A RUNNING TURN'S HOLD (`holdMs`, UNBLOCK-25) reaches past the deadline, to the hung
+			// cap at most: the start window does not bound a turn already running.
+			var dl = leaseMs(cur.deadline);
+			var exp = Math.max(now + LEASE_TTL_MS, dl);
+			if (holdMs && dl) exp = Math.max(exp, Math.min(now + holdMs, dl + MAX_LEASE_LIFE_MS));
 			var bumped = {
 				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''),
 				mode: cur.mode === 'claimed' && !hold ? 'running' : cur.mode,
-				deadline: leaseMs(cur.deadline),
-				expiry: Math.max(now + LEASE_TTL_MS, leaseMs(cur.deadline)), renewedAt: now,
+				deadline: dl,
+				expiry: exp, renewedAt: now,
 			};
+			if (cur.blocker) bumped.blocker = cur.blocker;		// a hold is not an unblock
 			var proposed = mergeLeases({ [tid]: bumped }, snap.leases, now);
 			var res = await cas.write(snap.version, proposed);
-			if (res.ok) { leaseWrite(proposed); return { ok: true }; }
+			if (res.ok) { leaseWrite(proposed); return { ok: true, expiry: leaseMs(proposed[tid] && proposed[tid].expiry) }; }
 			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
 			if (res.why === 'unread') return { ok: false, why: 'unread' };	// unsealable, not a race: no retry
 		}
@@ -5255,6 +5276,16 @@
 		// writes a deadline already past here, and the take holds the claim to the age window
 		// instead. Racing the errand's own would kill a healthy run on its first tick.
 		var deadAt = leaseMs(took.deadline) || leaseMs(e.deadline);		// 0: no deadline to race
+		// THE START WINDOW IS NOT THE FINISH LINE (UNBLOCK-25). `deadAt` bounds only how late the
+		// turn may START: a run that has begun holds its lease past it by renewing (`holdOn`),
+		// and ends when the lease is no longer held -- a take-back, the hung cap, or a lease
+		// that lapsed because no renew could land. A run that kept going on a lapsed lease could
+		// meet the asker's Retry on another device: two runs, two bills.
+		var runningNow = false;				// step 4 began: the start window is behind it
+		var heldTo = deadAt;				// the lease's expiry as this run last wrote it
+		var holdFlight = false;				// one hold renew in flight at a time
+		var runHold = (d.runHoldMs != null) ? d.runHoldMs : RUN_HOLD_MS;
+		function holdEnd() { return Math.max(deadAt, heldTo); }
 		var stoppedThere = false;		// the revoke is the sender's Stop (settled), not a take-back
 		var progFlight = null, progLast = 0;		// the frame in flight; when the last one left
 		var checkStart = leaseNow(leaseClock);
@@ -5291,13 +5322,37 @@
 			liveTrail = setTimeout(function () { liveTrail = null; liveness(false); }, Math.max(0, wait));
 		}
 		var gapMs = (d.livenessGapMs != null) ? d.livenessGapMs : LIVENESS_GAP_MS;
-		// Past the errand's deadline the run ENDS (F4), after the read so a revoke is still
-		// recorded as one, and whatever the read found -- revoked, unreadable or ours alike.
-		function pastDeadline() { return deadAt > 0 && leaseNow(leaseClock) > deadAt; }
+		// The cut that is due, or '' (F4, UNBLOCK-25): a turn not yet started past its start
+		// window ('deadline'), or a running one past the lease it holds ('lapsed'). The run ENDS
+		// after the read, so a revoke is still recorded as one, whatever the read found.
+		function cutDue() {
+			var n = leaseNow(leaseClock);
+			if (!runningNow) return (deadAt > 0 && n > deadAt) ? 'deadline' : '';
+			return (heldTo > 0 && n > heldTo) ? 'lapsed' : '';
+		}
 		async function liveness(force) {
-			if (!checkStopped && revoked && pastDeadline()) { killRun('deadline'); return; }
+			var due = cutDue();
+			if (!checkStopped && revoked && due) { killRun(due); return; }
 			await livenessRead(force);
-			if (!checkStopped && pastDeadline()) killRun('deadline');
+			if (!checkStopped && (due = cutDue())) killRun(due);
+		}
+		// HOLD THE LEASE AHEAD OF ITS EXPIRY while the turn runs (UNBLOCK-25): one door write
+		// per half hold, only once it is within half a hold of lapsing, so a turn inside its
+		// start window writes nothing new. A lapsed lease is never revived: another device may
+		// already read it Interrupted and have pressed Retry.
+		async function holdOn() {
+			if (!runningNow || !(heldTo > 0) || holdFlight || checkStopped || revoked) return;
+			var n = leaseNow(leaseClock);
+			if (n > heldTo || heldTo - n > runHold / 2) return;
+			holdFlight = true;
+			try {
+				var rn = await leaseRenew(turnId, d.selfId, d.cas, leaseClock, { holdMs: runHold });
+				if (rn && rn.ok && rn.expiry > heldTo) {
+					if (heldTo <= deadAt) trace.push('hold');
+					heldTo = rn.expiry;
+				}
+			} catch (err) { /* the next tick tries again; a lease never held lapses and ends the run */ }
+			finally { holdFlight = false; }
 		}
 		async function livenessRead(force) {
 			if (checkStopped || revoked) return;
@@ -5330,8 +5385,9 @@
 			var cur = snap.leases[turnId];
 			// An absent record is a revoke only past the lease's own deadline, when it has expired
 			// and drained; before it, a take-back would have left a 'released' record (`absent`).
-			var verdict = leaseVerdict(cur, d.selfId, leaseNow(leaseClock), deadAt);
-			if (verdict === 'ours' || verdict === 'absent') return;
+			var verdict = leaseVerdict(cur, d.selfId, leaseNow(leaseClock), holdEnd());
+			if (verdict === 'ours') { await holdOn(); return; }
+			if (verdict === 'absent') return;
 			{
 				revoked = true;
 				// A STOP PRESSED ON THE DEVICE THAT SENT THE TURN (D-20261011-21, R3 F1 ruled a):
@@ -5352,7 +5408,7 @@
 			// A streaming frame still in flight lands first, so it can never arrive after
 			// the final frame and stand in for the finished turn.
 			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
-			return finishTurn(e, d, rep, trace, leaseClock, false, deadAt);
+			return finishTurn(e, d, rep, trace, leaseClock, false, holdEnd());
 		}
 		// What an adopted lease view calls (`_leaseWatch`): a read of the door, but only
 		// when the view no longer says this device runs the turn, so a lease change on
@@ -5363,7 +5419,7 @@
 		async function endStopped() {
 			stopCheck();
 			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
-			var sfin = await finishTurn(e, d, {}, trace, leaseClock, true, deadAt);
+			var sfin = await finishTurn(e, d, {}, trace, leaseClock, true, holdEnd());
 			return { ran: true, done: true, stopped: true, parcelVersion: sfin.parcelVersion, trace: trace };
 		}
 		// THE END OF A RUN THAT WILL NOT END ITSELF (F4): unless the lease is no longer ours,
@@ -5375,7 +5431,8 @@
 		// (check_f234 fix 1; ruling D-20261010-22).
 		async function endDead() {
 			stopCheck();
-			var abortWhy = deadWhy === 'deadline' ? 'lease_deadline' : deadWhy === 'lease_cap' ? 'lease_cap' : 'engine_poisoned';
+			var abortWhy = deadWhy === 'deadline' ? 'lease_deadline' : deadWhy === 'lapsed' ? 'lease_lapsed'
+				: deadWhy === 'lease_cap' ? 'lease_cap' : 'engine_poisoned';
 			// THE ENGINE ABORTED FIRST, so the spend stops now and not when the lease door
 			// answers (check_f1stop P2): the door's read and write can take tens of seconds.
 			// A Stop already read is the sender's, so its run is aborted as one.
@@ -5387,7 +5444,7 @@
 			var dwhy0 = '';
 			if (!revoked) {
 				try {
-					var dn = await settleLease('turn', turnId, d.selfId, 'done', d.cas, leaseClock, deadWhy, deadAt);
+					var dn = await settleLease('turn', turnId, d.selfId, 'done', d.cas, leaseClock, deadWhy, holdEnd());
 					dwhy0 = (dn && !dn.ok) ? String(dn.why || '') : '';
 				} catch (err) { dwhy0 = 'unread'; /* an unsettled lease still expires at its deadline */ }
 				if (dwhy0 === 'stopped') { trace.push('stopped-unseen'); stoppedThere = true; }
@@ -5406,7 +5463,7 @@
 			if (dwhy0 === 'absent') trace.push('absent');		// unknown: reported as before
 			else if (!dwhy0) {
 				trace.push('complete');
-				try { await settleLease('turn', turnId, d.selfId, 'released', d.cas, leaseClock, deadWhy, deadAt); trace.push('release'); }
+				try { await settleLease('turn', turnId, d.selfId, 'released', d.cas, leaseClock, deadWhy, holdEnd()); trace.push('release'); }
 				catch (err) { /* an unsettled lease still expires at its deadline */ }
 			}
 			var who = String(d.selfName || '').trim();
@@ -5533,6 +5590,7 @@
 			// busy. This keeps the deadline expiry (leaseRenew never shrinks it); it does
 			// NOT start a heartbeat. A lease already revoked between take and here aborts.
 			var mk = await retryUnread(function () { return leaseRenew(turnId, d.selfId, d.cas, leaseClock); });
+			if (mk && mk.ok && mk.expiry > heldTo) heldTo = mk.expiry;
 			if (!mk.ok && mk.why === 'revoked') {
 				revoked = true;
 				trace.push('abort');
@@ -5543,6 +5601,7 @@
 			// 4. RUN. A revoked lease HARD-ABORTS at once, via the read-only ticker and
 			// the injected onProgress (kept so a real journal-event piggyback can check
 			// liveness between ticks); chat.app.abort is the hard stop.
+			runningNow = true;		// from here the lease is held, not the start window
 			if (setT) checkTimer = setT(function () { liveness(true); if (d.heartbeat) d.heartbeat(); }, RENEW_EVERY_MS);
 			_leaseWatch[turnId] = leaseWatched;	// and at once, on a lease wake
 			_poisonWatch[turnId] = killRun;		// and at once, on a poisoned engine
