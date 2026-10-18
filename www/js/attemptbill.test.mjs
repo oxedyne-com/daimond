@@ -82,9 +82,12 @@ function device() {
 		return chat.app;
 	};
 	const fns = missing.length ? {} : new Function('window', 'DaimondLedger', 'Date', 'writeUsageDigest',
-		'ensureApp', 'scopeTurnApp',
+		'ensureApp', 'scopeTurnApp', '_appProv', 'turnModelOf',
 		srcs.join('') + '\nreturn { recordSpend, appSpend, billChatSpend, rebuildAppWithout };')(
-		win, win.DaimondLedger, fakeDate, () => {}, ensureApp, async () => {});
+		win, win.DaimondLedger, fakeDate, () => {}, ensureApp, async () => {},
+		// U1d: a chat's spend is billed to the model its engine was built on (`noteAppProv`), else
+		// the model in force; these fakes record none, so the chat's own pair stands.
+		new WeakMap(), (c) => ({ provider: c.provider || '', model: c.model || '' }));
 	const rows = () => win.DaimondStore.get('daimond-ledger', []);
 	return { L: win.DaimondLedger, clock, fakeDate, rows, missing, ...fns };
 }

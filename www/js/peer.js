@@ -386,9 +386,10 @@
 			// QA F-A1): an `undeliverable` with `busy` > 0. 0 on every other report.
 			busy:    o.busy | 0,
 			// WHY A HAND-BACK WAS MADE, as a code the sender's tile can name (D2, 11 Oct):
-			// 'thread' when the runner could not rebuild the conversation as sent. '' otherwise,
-			// and from an older runner, whose hand-back reads as a hand-off that did not finish.
-			cause:   o.cause === 'thread' ? 'thread' : '',
+			// 'thread' when the runner could not rebuild the conversation as sent, 'models' when it
+			// cannot run the turn's models (D-20261018-09 PR). '' otherwise, and from an older
+			// runner, whose hand-back reads as a hand-off that did not finish.
+			cause:   (o.cause === 'thread' || o.cause === 'models') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
 			// final frame carries what it had done, badged (r545 F-C2-1). 0 elsewhere.
 			interrupted: o.interrupted | 0,
@@ -5366,22 +5367,24 @@
 		}
 
 		// 0. READY BEFORE THE CLAIM (D2, rc-b ruling b, 11 Oct). A runner never claims a
-		// turn it cannot run. It asks first whether it can rebuild the errand's thread (the
-		// seed grafted in, a bounded pull where it is only behind); if it cannot, it writes
-		// no lease, hands the turn back `undeliverable` with the reason, and acks the
-		// errand, so the sender runs it at once rather than after a claimed turn's stall.
+		// turn it cannot run. It asks first whether it can run the turn's models and rebuild
+		// the errand's thread (the seed grafted in, a bounded pull where it is only behind);
+		// if it cannot, it writes no lease, hands the turn back `undeliverable` with the
+		// reason, and acks the errand, so the sender runs it at once rather than after a
+		// claimed turn's stall.
 		// Not asked on a local recovery (`allowSelf`): that device holds the thread itself.
 		if (!d.allowSelf && typeof d.ready === 'function') {
 			var rd = null;
 			try { rd = await d.ready(e, own); } catch (err) { rd = { ok: false, why: String((err && err.message) || err) }; }
 			if (rd && rd.ok === false) {
-				var nwhy = String(rd.why || 'this device cannot rebuild the thread');
+				var nwhy  = String(rd.why || 'this device cannot rebuild the thread');
+				var ncause = rd.cause || 'thread';	// 'models': it cannot run the turn's set
 				trace.push('not-ready');
 				diag('collect NOT READY', 'turn=' + turnId + ' -- ' + nwhy);
 				// One console line, as the reconstruct refusal below prints: it is the same refusal
 				// of a stale thread, met earlier, and a verifier on B's console reads either.
 				try { if (typeof console !== 'undefined') console.error('peer: collect not ready for turn ' + turnId + ' -- ' + nwhy); } catch (e2) {}
-				try { if (d.post) { await d.post(reportFor(e, { status: 'undeliverable', why: nwhy, cause: 'thread', by: String(d.selfId || '') })); trace.push('report'); } }
+				try { if (d.post) { await d.post(reportFor(e, { status: 'undeliverable', why: nwhy, cause: ncause, by: String(d.selfId || '') })); trace.push('report'); } }
 				catch (err) { /* the sender's backstop still ends it */ }
 				try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
 				catch (err) { /* a missed ack costs one idempotent re-collect */ }

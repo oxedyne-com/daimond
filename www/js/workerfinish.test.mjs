@@ -364,7 +364,7 @@ function buildLocalFn(name, freeNames, transform) {
 		? body.replace("provider: mm.provider || wm.provider || ''", "provider: wm.provider || ''")
 		: body;
 	const dispatch = build('dispatch',
-		['revealAgents', 'diamondWorkerModel', 'diamondVisionModel', 'priorSessionRun', 'window'],
+		['revealAgents', 'diamondWorkerModel', 'diamondVisionModel', 'priorSessionRun', 'window', 'diag'],
 		transform);
 
 	function run(routeForImpl) {
@@ -376,6 +376,7 @@ function buildLocalFn(name, freeNames, transform) {
 			() => ({ model: '', provider: '' }),	// diamondVisionModel (unreached: diamondId is '')
 			() => null,					// priorSessionRun
 			{},						// window
+			() => {},					// diag (U1d: a dispatch with no turn set says so)
 			'', 'Diamond One', [{ name: 'looker', task: 'describe this picture' }], false,
 			{ model: 'text-model', provider: 'TEXT_PROV' }, 0, null);
 		return self.runs[0];

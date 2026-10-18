@@ -83,7 +83,8 @@ for (const [label, set, get] of [['default model', 'setDefault', 'getDefault'], 
 		loadScript(w, 'models.js');
 		const M = w.DaimondModels;
 		M.init({});
-		M.applySync({ v: 2, providers: { openai: { name: 'OpenAI', url: 'https://x', models: ['m1', 'm2'], fetched: 1, touched: 1 } }, tombs: {} });
+		// The row carries a sealed key, as it does between real devices: a default needs a key to stand (U2b).
+		M.applySync({ v: 2, providers: { openai: { name: 'OpenAI', url: 'https://x', keyEnc: 'sealed', models: ['m1', 'm2'], fetched: 1, touched: 1 } }, tombs: {} });
 		return { w, write: (m) => M[set]('openai', m), snap: () => M.exportSync(), adopt: (r) => M.applySync(r),
 			read: () => M[get]().model };
 	}, 'm1', 'm2');

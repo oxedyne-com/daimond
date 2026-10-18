@@ -48,7 +48,7 @@ function check(name, cond, detail) {
 const w = makeWindow({ now: 1_000_000_000 });
 const want = ['mergeChatRecords', 'slimChat', 'chatFields'];
 const has = (n) => new RegExp('\\n\\t+function ' + n + '\\(').test(APP);
-for (const n of ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta']) if (has(n)) want.push(n);
+for (const n of ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel']) if (has(n)) want.push(n);
 const F = sliceDaimond(w, want, { loadMsgTombs: () => ({}) }).fns;
 const { mergeChatRecords, slimChat } = F;
 
@@ -132,14 +132,14 @@ function adoptionFn() {
 	if (at < 0 || end < 0) throw new Error('the tab adoption block was not found');
 	const body = APP.slice(at, end);
 	const args = ['s', 'c', 'DaimondStamp', 'slimChat', 'chatFields', 'CHAT_TURN_FIELDS', 'CHAT_META_FIELDS'];
-	const extra = ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta'].filter(has);
+	const extra = ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].filter(has);
 	return new Function(...args, ...extra, body + '\nreturn c;');
 }
 const ADOPT = adoptionFn();
 const TF = ['promptTokens', 'completionTokens', 'cachedTokens', 'costUsd', 'prevPrompt', 'prevCompletion', 'lastPrompt', 'prevCached', 'prevCost'];
 const MF = ['name', 'model', 'provider', 'workerModel', 'workerProvider', 'status', 'foldedInto', 'holds', 'diamondId'];
 const adopt = (s, c) => ADOPT(structuredClone(s), structuredClone(c), w.DaimondStamp, slimChat, F.chatFields, TF, MF,
-	...['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta'].filter(has).map((n) => F[n]));
+	...['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].filter(has).map((n) => F[n]));
 const decided = (c) => { const s = slimChat(c); const o = {}; for (const k of MF.concat(TF, ['updatedAt', 'metaAt'])) o[k] = s[k]; return JSON.stringify(o); };
 
 console.log('\nB. the tab adoption lands where the merge does\n');

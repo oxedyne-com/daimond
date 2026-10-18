@@ -301,7 +301,8 @@ async function main() {
 		z.addProvider('openai', {});
 		await pause();
 		z.setDefault('openai', 'm2');
-		const zy = replica(); await zy.applySync(z.exportSync()); await zy.applySync(Y);
+		// zy holds the key, as a sealed key travels with the row: a default needs one to stand (U2b).
+		const zy = replica(); await zy.applySync(z.exportSync()); await zy.setKey('openai', 'k'); await zy.applySync(Y);
 		check('a choice made after the deletion stands', zy.getDefault().model === 'm2', JSON.stringify(zy.getDefault()));
 		const t1 = replica(), t2 = replica();
 		const tie = (p, m) => ({ v: 2, def: { provider: p, model: m }, defAt: 5000, draft: { provider: '', model: '' }, draftAt: 0, providers: {}, tombs: {} });

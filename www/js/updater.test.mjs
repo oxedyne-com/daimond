@@ -21,8 +21,9 @@
      (e) the three blanket guards hold: nothing within a minute
          of boot, nothing twice in ten minutes, nothing while
          this tab's own build id is unknown;
-     (f) half an hour of never being safe leaves a button, not
-         a reload;
+     (f) half an hour of never being safe adds a button, and the
+         watch runs on: the first quiet moment still takes it, and
+         a newer release replaces the pending build;
      (g) a failed check is silent;
      (h) an idle unlocked DESKTOP reloads itself whether or
          not it is the nominated runner, a phone does not
@@ -649,21 +650,76 @@ async function main() {
 		check('a tab that does not know its own build never reloads', tab.reloads.n === 0);
 	}
 
-	console.log('\nupdater: half an hour of never being safe leaves a button, not a reload');
+	console.log('\nupdater: half an hour of never being safe leaves a button, and keeps watching');
 	{
 		const tab = await boot({ stamps: [BOOTED, NEWER], state: { busy: true } });
 		await tab.clock.advance(35 * MIN);
-		check('it gave up watching', tab.U().gaveUp() === true);
+		check('it gave up asking', tab.U().gaveUp() === true);
 		check('it still never reloaded', tab.reloads.n === 0);
 		check('the banner offers a manual Reload',
 			/update\.reload\|/.test(tab.bannerText() || ''));
+		// A4: the give-up changes the banner only. The watch runs on, so the
+		// first quiet moment after the turn takes the build, with its countdown.
 		tab.state.busy = false;
 		await tab.clock.advance(5 * MIN);
-		check('having given up, it does not resume on its own', tab.reloads.n === 0);
+		check('having given up, it resumes on its own once the turn ends', tab.reloads.n === 1);
+		check('a safe moment clears the give-up', tab.U().gaveUp() === false);
+	}
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { busy: true } });
+		await tab.clock.advance(35 * MIN);
+		tab.state.busy = false;
 		const b = tab.banner();
 		b.children[1].click();                     // the Reload button
 		await settle();
 		check('the manual button reloads at once', tab.reloads.n === 1);
+	}
+
+	const NEWEST = { build: 'cccccccccccc', note: 'third' };
+	console.log('\nupdater: A1 a build released while one is pending replaces it');
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER, NEWEST], state: { busy: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('NEWER is pending', tab.U().pending() === NEWER.build);
+		const n0 = tab.fetchCalls.length;
+		await tab.clock.advance(10 * MIN);          // scheduled polls run on the fake clock
+		await learn(tab);                           // and one by hand
+		check('the stamp is still read once a build is pending', tab.fetchCalls.length > n0);
+		check('the newer release replaces the pending id', tab.U().pending() === NEWEST.build);
+		check('the feed hears of each new build once, not every poll',
+			tab.events.filter((e) => e.kind === 'update.check' && e.payload.status === 'differs').length === 2);
+	}
+
+	console.log('\nupdater: A2 after giving up mid-turn, the banner does not keep saying a turn runs');
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { busy: true }, hidden: false });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		await tab.clock.advance(31 * MIN);
+		check('it gave up mid-turn', tab.U().gaveUp() === true && tab.U().held() === 'turn');
+		tab.state.busy = false;
+		tab.fireWin('daimond:idle');
+		await tab.clock.advance(5 * MIN);
+		tab.fireDoc('visibilitychange');
+		await tab.clock.advance(MIN);
+		check('held() no longer says turn once no turn runs', tab.U().held() !== 'turn');
+		check('the banner no longer names a running turn',
+			!String(tab.bannerText()).includes('update.held_turn'));
+	}
+
+	console.log('\nupdater: A3 (argonaut) gave up on one build, a newer ships, the tab goes quiet');
+	{
+		const tab = await boot({ stamps: [BOOTED, ...Array(40).fill(NEWER), NEWEST], state: { busy: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		await tab.clock.advance(31 * MIN);
+		check('gave up on NEWER', tab.U().gaveUp() === true);
+		tab.state.busy = false;
+		tab.fireWin('daimond:idle');
+		await tab.clock.advance(3 * 60 * MIN);
+		check('it took the newest build with one reload',
+			tab.reloads.n === 1 && tab.U().pending() === NEWEST.build);
 	}
 
 	console.log('\nupdater: a failed check is silent');

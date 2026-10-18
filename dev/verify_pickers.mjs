@@ -263,10 +263,17 @@ check('the chat records its provider, so a reload does not move it to the defaul
 	persisted.provider + ':' + persisted.model);
 // The workers were never moved off the chat's model, so they move with it: a worker pair left on
 // the old model would be a separate choice nobody made, and peer routing reads a pair that differs
-// from the chat's own as a worker chat.
+// from the chat's own as a worker chat. Since the redesign (D-20261018-09) riding is stored as
+// EMPTY, meaning "follow", and not as a copy of the chat's pair: a copy is a pick the user never
+// made and stops following the next time the chat's model moves. So both halves are read: the
+// stored pair is empty, and the app's own resolver turns it into the chat's new model.
+const wResolved = await storedChats(s).then((raw) => p.evaluate((c) => {
+	const m = window.DaimondModels && DaimondModels.effective({ kind: 'chat', chat: c }, 'workers');
+	return m ? (m.provider || '') + ':' + (m.model || '') : '(no resolver)';
+}, raw[0] || {}));
 check('workers that rode the chat\'s model follow it to the new one',
-	persisted.wp === 'provB' && persisted.wm === 'beta-small',
-	persisted.wp + ':' + persisted.wm);
+	!persisted.wp && !persisted.wm && wResolved === 'provB:beta-small',
+	`stored '${persisted.wp || ''}:${persisted.wm || ''}', resolves to ${wResolved}`);
 
 await shot(s, 'picker-chat');
 

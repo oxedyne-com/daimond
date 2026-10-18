@@ -145,6 +145,10 @@
 	var ANTHROPIC_VERSION = '2023-06-01';
 
 	var store = { v: 2, def: { provider: '', model: '' }, providers: {} };
+	// The stamped choices, each one register merged on its own stamp `<slot>At` (SIM-18):
+	// the default, then the global Jobs picks. A Jobs pick unset means "as the daimon".
+	var CHOICES  = ['def', 'draft', 'workers', 'images'];
+	var JOB_SLOT = { drafting: 'draft', workers: 'workers', images: 'images' };
 
 	/// Provider id -> plaintext key, memory only.
 	///
@@ -333,15 +337,13 @@
 			if (!mine) { into.providers[id] = copy(r); moved.push(id); return; }
 			if (mergeRow(mine, r)) moved.push(id);
 		});
-		if (from.def && choiceWins(from.def, ms(from.defAt), into.def || {}, ms(into.defAt))) {
-			into.def   = { provider: String(from.def.provider || ''), model: String(from.def.model || '') };
-			into.defAt = ms(from.defAt);
-		}
-		if (from.draft && choiceWins(from.draft, ms(from.draftAt), into.draft || { provider: '', model: '' }, ms(into.draftAt))) {
-			into.draft   = { provider: String(from.draft.provider || ''), model: String(from.draft.model || '') };
-			into.draftAt = ms(from.draftAt);
-		}
-		['def', 'draft'].forEach(function (slot) {
+		CHOICES.forEach(function (slot) {
+			var f = from[slot], at = slot + 'At';
+			if (!f || !choiceWins(f, ms(from[at]), into[slot] || { provider: '', model: '' }, ms(into[at]))) return;
+			into[slot] = { provider: String(f.provider || ''), model: String(f.model || '') };
+			into[at]   = ms(from[at]);
+		});
+		CHOICES.forEach(function (slot) {
 			var r = from.lastRun && from.lastRun[slot];
 			if (!r) return;
 			var mine = into.lastRun && into.lastRun[slot];
@@ -1979,6 +1981,15 @@
 
 	function getDefault() { return standing(store.def, store.defAt, 'def'); }
 
+	/// The default or the drafting model (`slot` 'def' or 'draft') as stored and synced, not as
+	/// `standing` reads it on this device. Null while the store holds no provider: a cold read
+	/// (`loadSettled`) or a first run, neither of which may be compared against.
+	function storedChoice(slot) {
+		if (!hasProviders()) return null;
+		var c = store[slot];
+		return { provider: (c && c.provider) || '', model: (c && c.model) || '' };
+	}
+
 	/// A choice -- the default, the drafting model -- as it stands here.
 	///
 	/// The stored choice is a register merged on its own stamp and nothing else, so
@@ -1994,34 +2005,38 @@
 		var p = (choice && choice.provider) || '';
 		if (!p) return { provider: '', model: (choice && choice.model) || '' };
 		if (ms(tombs()[p]) > ms(at)) return { provider: '', model: '' };
-		if (store.providers[p]) return { provider: p, model: (choice && choice.model) || '' };
+		if (runnable(choice, at, slot)) return { provider: p, model: (choice && choice.model) || '' };
 		var last = store.lastRun && store.lastRun[slot];
-		if (last && runnable(last, last.at)) return { provider: last.provider, model: last.model || '' };
+		if (last && runnable(last, last.at, slot)) return { provider: last.provider, model: last.model || '' };
 		return { provider: '', model: '' };
 	}
 
 	/// Can this device run a choice stamped `at`: its provider here, and not deleted since?
-	function runnable(choice, at) {
+	///
+	/// The default (`slot` 'def') needs a key here as well (D-20261018-09 U2b). A provider row
+	/// arrives from another device whether or not its key can, and `resolve` runs nothing
+	/// without one. A Jobs pick that cannot run falls to its next link (`effective`); the
+	/// default has none, so a keyless one would leave every follower asking for a key while
+	/// this device holds an older default it can run. A sealed key counts, so a lock does not
+	/// move it, and the credits row counts unkeyed, its key being minted here on unlock.
+	function runnable(choice, at, slot) {
 		var p = choice && choice.provider;
-		return !!p && !!store.providers[p] && !(ms(tombs()[p]) > ms(at));
+		if (!p || !store.providers[p] || ms(tombs()[p]) > ms(at)) return false;
+		return slot !== 'def' || p === CREDITS || hasKey(p);
 	}
 
 	/// Remember each choice this device can run as it stands, for `standing`. Asked on
 	/// every store write, so a merge, a press and a provider arriving all count.
 	function noteRunnable() {
 		var last = store.lastRun || (store.lastRun = {});
-		if (runnable(store.def, store.defAt)) {
-			last.def = { provider: store.def.provider, model: store.def.model || '', at: ms(store.defAt) };
-		}
-		if (store.draft && runnable(store.draft, store.draftAt)) {
-			last.draft = { provider: store.draft.provider, model: store.draft.model || '', at: ms(store.draftAt) };
-		}
+		CHOICES.forEach(function (slot) {
+			var c = store[slot], at = store[slot + 'At'];
+			if (c && runnable(c, at, slot)) last[slot] = { provider: c.provider, model: c.model || '', at: ms(at) };
+		});
 	}
-	function setDefault(provider, model) {
-		store.def = { provider: provider, model: model };
-		store.defAt = DaimondStamp.next(store.defAt);		// which device chose last, for the merge
-		save();
-	}
+	/// Move the default (the star). A pick equal to the new default now follows it, so it is
+	/// cleared in the same change set (`setEveryone`).
+	function setDefault(provider, model) { return setEveryone({ provider: provider, model: model }, false); }
 
 	// ── The drafting model ──────────────────────────────────────────
 	// The note→proposal drafting in triage.js runs on the CHAT model unless a model
@@ -2029,12 +2044,22 @@
 	// way a Diamond's vision and worker already are per Diamond. UNSET means "same as
 	// chat", so the whole feature is exactly as it was until somebody chooses.
 
-	function getDraft() { return standing(store.draft, store.draftAt, 'draft'); }
-	/// Empty model clears the setting: drafting falls back to the chat default. The
-	/// provider is dropped with it, since a provider with no model names nothing.
-	function setDraft(provider, model) {
-		store.draft   = { provider: model ? (provider || '') : '', model: model || '' };
-		store.draftAt = DaimondStamp.next(store.draftAt);	// which device chose last, for the merge
+	function getDraft() { return getJob('drafting'); }
+	function setDraft(provider, model) { setJob('drafting', provider, model); }
+
+	/// A global Jobs pick -- `'drafting'`, `'workers'` or `'images'` -- as it stands here.
+	function getJob(role) {
+		var slot = JOB_SLOT[role];
+		return slot ? standing(store[slot], store[slot + 'At'], slot) : { provider: '', model: '' };
+	}
+
+	/// Empty model clears the pick: the job falls back to the daimon. The provider is
+	/// dropped with it, since a provider with no model names nothing.
+	function setJob(role, provider, model) {
+		var slot = JOB_SLOT[role];
+		if (!slot) return;
+		store[slot]         = { provider: model ? (provider || '') : '', model: model || '' };
+		store[slot + 'At']  = DaimondStamp.next(store[slot + 'At']);	// which device chose last, for the merge
 		save();
 	}
 
@@ -2043,9 +2068,261 @@
 	/// cannot tell a defaulted run from a chosen one and the cost line prices
 	/// whichever it actually is.
 	function resolveDraft() {
-		var dr = getDraft();
+		var dr = effective(null, 'drafting');
 		if (dr.model) return resolve(dr.provider, dr.model);
 		return resolve('', '');
+	}
+
+	// ── One resolver ────────────────────────────────────────────────
+	// D-20261018-09 U1b. Every dispatch -- a chat turn, a worker, an image task, the drafting
+	// and the summarising -- asks `effective`, and the chain is the spec's §3: the target's
+	// own pick for the role, then the global Jobs pick, then the target's daimon (or chat)
+	// model, then the default. The records are the page's; it hands over its reader once
+	// (`bindPicks`), so this file reaches into nothing.
+
+	var picks = null;	// the page's reader, from `bindPicks`
+
+	/// Take the page's reader: `diamond(id)` and `chat(chat)` each answer the target's own
+	/// `{ daimon, workers, images }` as `{ provider, model }` pairs, '' where unset, and
+	/// `summarising()` the global Summarising pick. Its writers, for *Everyone uses*
+	/// (U2a): `list()` names every target, `[{ target, name }]`; `clear(target, role)`
+	/// clears one text pick ('daimon' or 'workers', or 'summarising' on `{ kind: 'jobs' }`)
+	/// as the page's own stamped write; `set(target, role, pair)` writes one back, for Undo
+	/// (U2b); `settle()` saves what a run of clears or sets left unsaved.
+	function bindPicks(reader) { picks = reader || null; }
+
+	function blankPair() { return { provider: '', model: '' }; }
+
+	function ownPicks(target) {
+		var got = null;
+		if (picks && target && target.kind === 'diamond' && picks.diamond) got = picks.diamond(target.id);
+		if (picks && target && target.kind === 'chat'    && picks.chat)    got = picks.chat(target.chat);
+		got = got || {};
+		return { daimon: got.daimon || blankPair(), workers: got.workers || blankPair(), images: got.images || blankPair() };
+	}
+
+	/// A pick as it runs here, or null when it names no model or its provider cannot run
+	/// here (no key, deleted), so the chain moves on to its next link.
+	function runPick(pair, from) {
+		if (!pair || !pair.model) return null;
+		var r = resolve(pair.provider || '', pair.model);
+		return r ? { provider: r.provider, model: r.model, from: from } : null;
+	}
+
+	/// What `role` runs on for `target`: `{ provider, model, from }`.
+	///
+	/// # Arguments
+	/// * `target` - `{ kind: 'diamond', id }`, `{ kind: 'chat', chat }`, `{ kind: 'run',
+	///   provider }` (a built conversation known only by its key, for Summarising) or null.
+	/// * `role` - `'daimon'`, `'workers'`, `'images'`, `'drafting'` or `'summarising'`.
+	///
+	/// `from` names the link that answered: `'own'`, `'jobs'`, `'daimon'`, `'workers'` (an
+	/// image task on the workers' own or Jobs pick) or `'default'`. The daimon's own pick is
+	/// taken as stored, as `diamondModel` always has: a Diamond pinned to a provider with no
+	/// key here asks for the key rather than spending on another one. Images stops at the
+	/// global Images pick and otherwise runs where the workers do; `Workers.unseeable` moves
+	/// a refused picture. Summarising rides the conversation's own key ("Same provider or
+	/// nothing"), so a pick on another provider answers model '' -- the conversation's own.
+	function effective(target, role) {
+		var own = ownPicks(target);
+		var d   = getDefault();
+		var dm  = own.daimon.model
+			? { provider: own.daimon.provider || '', model: own.daimon.model, from: 'own' }
+			: { provider: d.provider || '', model: d.model || '', from: 'default' };
+		if (role === 'daimon') return dm;
+		// The third link, the daimon's (or chat's) model; with no target there is none.
+		var up = target ? { provider: dm.provider, model: dm.model, from: 'daimon' } : dm;
+		if (role === 'summarising') {
+			var run = (target && target.kind === 'run') ? (target.provider || '') : up.provider;
+			var sp  = (picks && picks.summarising && picks.summarising()) || blankPair();
+			if (sp.model && (sp.provider || '') === run) return { provider: run, model: sp.model, from: 'jobs' };
+			return { provider: run, model: '', from: up.from };
+		}
+		if (role === 'images') {
+			var im = runPick(own.images, 'own') || runPick(getJob('images'), 'jobs');
+			if (im) return im;
+			var w = effective(target, 'workers');
+			return (w.from === 'own' || w.from === 'jobs') ? { provider: w.provider, model: w.model, from: 'workers' } : w;
+		}
+		if (role === 'workers')  return runPick(own.workers, 'own') || runPick(getJob('workers'), 'jobs') || up;
+		if (role === 'drafting') return runPick(getJob('drafting'), 'jobs') || up;
+		return up;
+	}
+
+	// ── Everyone uses X (D-20261018-09 U2a) ─────────────────────────
+	// One call moves the default and, in the same synchronous change set, every pick that only
+	// restates it: a pick equal to the default is "follows" (§3). With Move Them Too every
+	// text-model pick goes. Images never: an images model is chosen for what it can see, and no
+	// text default stands in for one. No toast and no history here: a Diamond's note is written
+	// at its next turn, when the model in force is seen to differ from its last turn's (U2c).
+
+	function pairOf(p) { return { provider: (p && p.provider) || '', model: (p && p.model) || '' }; }
+
+	/// Is `p` the pick `to`? The same provider and the same model; a pick naming no provider
+	/// names the default's, which from this change on is `to`'s.
+	function isPick(p, to) {
+		return !!(p && p.model) && p.model === to.model && (p.provider || to.provider) === to.provider;
+	}
+
+	/// What moving the default to `to` clears, read and not written: `fields` (each with the
+	/// target as the reader knows it, `ref` as an undo record names it, the role and the pick
+	/// before), and the plan's `follow`, `own`, `equal` and `imagesKept`.
+	///
+	/// Without `moveAll` a pick is cleared only where clearing changes nothing that runs now. A
+	/// daimon equal to `to` follows. A Workers pick falls back to its daimon, not to the
+	/// default, so it is cleared only where it equals `to` and its daimon is on `to` too; the
+	/// global Workers pick only where every daimon that reads it is on `to`. Drafting falls back
+	/// to the default, and Summarising is cleared when equal, as the migration clears it.
+	function everyoneSweep(to, moveAll) {
+		var out = { fields: [], follow: { daimons: 0, chats: 0 }, own: [], equal: [], imagesKept: [] };
+		var d = pairOf(store.def);
+		var moves = d.provider !== to.provider || d.model !== to.model;	// do followers switch?
+		var held  = false;	// does a daimon other than `to` read the global Workers pick?
+		var list  = (picks && typeof picks.list === 'function' && picks.list()) || [];
+		list.forEach(function (t) {
+			var kind = t.target.kind, own = ownPicks(t.target);
+			var ref  = kind === 'chat' ? { kind: 'chat', id: (t.target.chat && t.target.chat.id) || t.target.id || '' }
+				: { kind: kind, id: t.target.id };
+			var who  = { name: t.name || '', kind: kind, roles: [] };
+			var dEq  = isPick(own.daimon, to);
+			var dGo  = !!own.daimon.model && (moveAll || dEq);
+			var onTo = !own.daimon.model || dGo;	// its daimon runs on `to` from now
+			var wGo  = !!own.workers.model && (moveAll || (onTo && isPick(own.workers, to)));
+			if (dGo) out.fields.push({ target: t.target, ref: ref, role: 'daimon',  before: pairOf(own.daimon) });
+			if (wGo) out.fields.push({ target: t.target, ref: ref, role: 'workers', before: pairOf(own.workers) });
+			if (!own.daimon.model && moves) out.follow[kind === 'chat' ? 'chats' : 'daimons']++;
+			if (own.daimon.model && !dGo)   who.roles.push('daimon');
+			if (own.workers.model && !wGo)  who.roles.push('workers');
+			if (who.roles.length) out.own.push(who);
+			if (dEq) out.equal.push({ name: who.name, kind: kind, roles: ['daimon'] });
+			if (own.images.model) out.imagesKept.push({ name: who.name, kind: kind, roles: ['images'] });
+			if (!onTo && !(own.workers.model && !wGo)) held = true;
+		});
+		var jobs = { kind: 'jobs' };
+		var job  = function (role, pick, go) {
+			var who = { name: '', kind: 'jobs', roles: [role] };
+			if (!pick.model) return;
+			if (go) out.fields.push({ target: jobs, ref: jobs, role: role, before: pick });
+			else out.own.push(who);
+			if (isPick(pick, to)) out.equal.push(who);
+		};
+		var dr = pairOf(store.draft), wk = pairOf(store.workers);
+		var sp = pairOf(picks && typeof picks.summarising === 'function' && picks.summarising());
+		job('drafting',    dr, moveAll || isPick(dr, to));
+		job('workers',     wk, moveAll || (isPick(wk, to) && !held));
+		job('summarising', sp, moveAll || isPick(sp, to));
+		if (pairOf(store.images).model) out.imagesKept.push({ name: '', kind: 'jobs', roles: ['images'] });
+		return out;
+	}
+
+	/// What *Everyone uses* `pick` would do, for the confirm: `follow` counts the daimons and
+	/// chats that switch at their next turn; `own` names each exception Keep Theirs keeps, with
+	/// the `roles` it keeps; `equal` the picks already on `pick`, which now follow and are never
+	/// named; `imagesKept` the Images picks, which stay either way. Writes nothing.
+	function planEveryone(pick) {
+		var to = pairOf(pick);
+		var sw = everyoneSweep(to, false);
+		return { follow: sw.follow, own: sw.own, equal: sw.equal, imagesKept: sw.imagesKept };
+	}
+
+	/// Everyone uses `pick`: set the default and clear every pick equal to it; with `moveAll`
+	/// (Move Them Too) every text-model pick. One synchronous change set, so one store write and
+	/// one sync parcel. The undo record, `{ def: { wrote, before }, fields: [{ target, role,
+	/// wrote, before }] }`, holds every pair it wrote over, for a compare-and-set Undo (U2b).
+	function setEveryone(pick, moveAll) {
+		var to   = pairOf(pick);
+		var sw   = to.model ? everyoneSweep(to, !!moveAll) : { fields: [] };
+		var undo = { def: { wrote: pairOf(to), before: pairOf(store.def) }, fields: [] };
+		store.def   = to;
+		store.defAt = DaimondStamp.next(store.defAt);		// which device chose last, for the merge
+		sw.fields.forEach(function (f) {
+			var slot = f.target.kind === 'jobs' && JOB_SLOT[f.role];
+			if (slot) {
+				store[slot]        = blankPair();
+				store[slot + 'At'] = DaimondStamp.next(store[slot + 'At']);
+			} else if (picks && typeof picks.clear === 'function') {
+				picks.clear(f.target, f.role);
+			} else {
+				return;
+			}
+			undo.fields.push({ target: f.ref, role: f.role, wrote: blankPair(), before: f.before });
+		});
+		if (picks && typeof picks.settle === 'function') picks.settle();
+		save();
+		return undo;
+	}
+
+	// ── Undo, compare-and-set (D-20261018-09 U2b) ───────────────────
+	// Undo puts back each field, and the default, only where it still holds what
+	// `setEveryone` wrote. A field changed since, here or on another device, is a newer
+	// decision and stays. Each restore is the ordinary stamped write, so it travels.
+
+	function samePair(a, b) {
+		var x = pairOf(a), y = pairOf(b);
+		return x.provider === y.provider && x.model === y.model;
+	}
+
+	/// Undo an *Everyone uses* record (`setEveryone`'s return): `{ restored, kept }`, where
+	/// `kept` names each field left alone because it changed since, as `{ name, kind, role }`
+	/// (the default as `{ name: '', kind: 'default', role: 'default' }`). One change set.
+	function undoEveryone(rec) {
+		var out = { restored: 0, kept: [] };
+		if (!rec || typeof rec !== 'object') return out;
+		var list  = (picks && typeof picks.list === 'function' && picks.list()) || [];
+		var named = function (ref) {
+			var hit = list.filter(function (t) {
+				var id = t.target.kind === 'chat' ? ((t.target.chat && t.target.chat.id) || t.target.id) : t.target.id;
+				return t.target.kind === ref.kind && id === ref.id;
+			})[0];
+			return hit || null;
+		};
+		if (rec.def && rec.def.wrote) {
+			if (samePair(store.def, rec.def.wrote)) {
+				store.def   = pairOf(rec.def.before);
+				store.defAt = DaimondStamp.next(store.defAt);
+				out.restored++;
+			} else {
+				out.kept.push({ name: '', kind: 'default', role: 'default' });
+			}
+		}
+		(rec.fields || []).forEach(function (f) {
+			var ref = f.target || {}, slot = ref.kind === 'jobs' && JOB_SLOT[f.role];
+			var t   = ref.kind === 'jobs' ? { target: { kind: 'jobs' }, name: '' } : named(ref);
+			var now = !t ? null
+				: slot ? pairOf(store[slot])
+				: ref.kind === 'jobs' ? (f.role === 'summarising' && picks && typeof picks.summarising === 'function'
+					? pairOf(picks.summarising()) : null)
+				: (ownPicks(t.target)[f.role] || null);
+			if (!now || !samePair(now, f.wrote)) {
+				out.kept.push({ name: (t && t.name) || '', kind: ref.kind || '', role: f.role });
+				return;
+			}
+			if (samePair(now, f.before)) return;
+			if (slot) {
+				store[slot]        = pairOf(f.before);
+				store[slot + 'At'] = DaimondStamp.next(store[slot + 'At']);
+			} else if (picks && typeof picks.set === 'function') {
+				picks.set(t.target, f.role, pairOf(f.before));
+			} else {
+				out.kept.push({ name: t.name || '', kind: ref.kind || '', role: f.role });
+				return;
+			}
+			out.restored++;
+		});
+		if (picks && typeof picks.settle === 'function') picks.settle();
+		save();
+		return out;
+	}
+
+	/// The default as this device stands on it, for *Everyone uses*: `pick` as chosen and
+	/// synced, `here` whether this device can run it, `using` what it runs instead (the last
+	/// default it could, `standing`'s fallback; blank when none) and `missing` the display
+	/// name of the provider it lacks, '' when `here`.
+	function everyoneStanding() {
+		var pick  = pairOf(store.def);
+		var using = pairOf(getDefault());
+		var here  = !pick.model || samePair(pick, using);
+		return { pick: pick, here: here, using: using, missing: here ? '' : providerName(pick.provider) };
 	}
 
 	/// What a chat needs to actually run: the endpoint, the key and the model.
@@ -2256,6 +2533,12 @@
 			// handing it back on the next pull.
 			tombs: sortedTombs(),
 		};
+		// The Jobs picks travel once made, so a store with none sends the bytes it always did.
+		['workers', 'images'].forEach(function (slot) {
+			if (!ms(store[slot + 'At'])) return;
+			out[slot] = { provider: (store[slot] && store[slot].provider) || '', model: (store[slot] && store[slot].model) || '' };
+			out[slot + 'At'] = ms(store[slot + 'At']);
+		});
 		Object.keys(store.providers).sort().forEach(function (id) {
 			if (id === CREDITS) return;					// minted per device; see above
 			var p = store.providers[id] || {};
@@ -2400,22 +2683,18 @@
 				}
 			}
 		});
-		// The default and the drafting model are each ONE choice with its stamp, and the
+		// The default and each Jobs pick are ONE choice with its stamp, and the
 		// later choice wins -- a cleared one included, since clearing is stamped too. Taken
 		// whole and on nothing else, so the merge is the same in any order (SIM-18); a
 		// choice whose provider is not here reads as unset until it is (`resolve`).
-		var rAt = ms(remote.defAt);
-		if (remote.def && typeof remote.def === 'object' && choiceWins(remote.def, rAt, store.def, ms(store.defAt))) {
-			store.def   = { provider: String(remote.def.provider || ''), model: String(remote.def.model || '') };
-			store.defAt = rAt;
+		CHOICES.forEach(function (slot) {
+			var r = remote[slot], rAt = ms(remote[slot + 'At']);
+			if (!r || typeof r !== 'object'
+				|| !choiceWins(r, rAt, store[slot] || { provider: '', model: '' }, ms(store[slot + 'At']))) return;
+			store[slot]          = { provider: String(r.provider || ''), model: String(r.model || '') };
+			store[slot + 'At']   = rAt;
 			updated++;
-		}
-		var drAt = ms(remote.draftAt), dr = store.draft || { provider: '', model: '' };
-		if (remote.draft && typeof remote.draft === 'object' && choiceWins(remote.draft, drAt, dr, ms(store.draftAt))) {
-			store.draft   = { provider: String(remote.draft.provider || ''), model: String(remote.draft.model || '') };
-			store.draftAt = drAt;
-			updated++;
-		}
+		});
 		// Fill the gaps in the plaintext cache, never overwrite it.
 		if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) {
 			for (var i = 0; i < adopt.length; i++) {
@@ -3819,11 +4098,24 @@
 		count:          count,
 		getDefault:     getDefault,
 		setDefault:     setDefault,
+		// The stored, synced choice, for the one-off copies-to-follows migration in daimond.js.
+		storedChoice:   storedChoice,
 		resolve:        resolve,
 		// The drafting model: the note→proposal task's own model, defaulting to chat.
 		getDraft:       getDraft,
 		setDraft:       setDraft,
 		resolveDraft:   resolveDraft,
+		// The global Jobs picks (Drafting, Workers, Images), and the one resolver.
+		getJob:         getJob,
+		setJob:         setJob,
+		effective:      effective,
+		bindPicks:      bindPicks,
+		// Everyone uses X: the one call, and what it would do, for the confirm.
+		setEveryone:    setEveryone,
+		planEveryone:   planEveryone,
+		// Its Undo, compare-and-set, and whether this device can run the default.
+		undoEveryone:     undoEveryone,
+		everyoneStanding: everyoneStanding,
 		ready:          ready,
 		providerName:   providerName,
 		// The store as it travels between devices, and the merge on arrival.

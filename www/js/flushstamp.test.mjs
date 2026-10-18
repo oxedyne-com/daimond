@@ -102,11 +102,11 @@ async function dispatchWith(fl, auto) {
 	const make = new Function('window', 'DaimondPeer', 'DaimondPost', 'DaimondSync', 'DaimondModels',
 		'diag', 'turnHold', 'selfDeviceId', 'markTurnDispatched', 't', 'touchChat', 'persistChats',
 		'ownsChat', 'renderHistory', 'recoverOneLocally', 'storedPre', 'storedEffort', 'autonomousPosture',
-		'msgTombsOwed', 'msgTombsShipped', 'dsEvent', 'turnEffortOf', 'errandModelOf',
+		'msgTombsOwed', 'msgTombsShipped', 'dsEvent', 'turnEffortOf', 'errandModelOf', 'honoursModelSet',
 		dispatchSrc + '\nreturn dispatchToPeer;');
 	const fn = make(win, Peer, Post, S, {}, noop, () => null, () => 'dev-a', noop, (k) => k, noop, noop,
 		() => false, noop, noop, () => '', () => null, () => auto === true, () => [], noop, noop, turnEffortOf,
-		(c) => ({ provider: c.provider || '', model: c.model || '', url: '' }));
+		(c) => ({ provider: c.provider || '', model: c.model || '', url: '' }), () => true);
 	const chat = { id: 'c1', messages: [], provider: '', model: '' };
 	const out = await fn(chat, 'turn-1', 'hello', [], {});
 	return { out, sealedAt, posted, errandAuto, calls: S.calls };

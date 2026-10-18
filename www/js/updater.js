@@ -146,7 +146,7 @@
 	var countLeft   = 0;            // seconds still to run on it, as last painted
 	var deferUntil  = 0;            // Cancel, or a reload just taken
 	var unsafeSince = 0;            // when this pending build first found the tab unsafe
-	var gaveUp      = false;        // unsafe for GIVEUP_MS: a button only, until the next build
+	var gaveUp      = false;        // unsafe for GIVEUP_MS: the banner shows a button; the watch runs on
 	var syncYield   = false;        // sync alone held past SYNC_YIELD_MS: treat it as quiet (build-scoped)
 
 	// TRAINING WHEELS -- remove with the DEBUG_SHARE module. One guarded line per
@@ -463,7 +463,7 @@
 	/// The automatic path. It never reloads itself -- it arms the tick, and the
 	/// tick is what eventually starts a countdown.
 	function softTry() {
-		if (applying || launching || !pending || gaveUp) return false;
+		if (applying || launching || !pending) return false;
 		if (!tick) tick = setInterval(evaluate, TICK_MS);
 		evaluate();
 		return false;
@@ -477,13 +477,17 @@
 		if (!softAllowed() || !safeNow() || !quietEnough()) {
 			if (!unsafeSince) unsafeSince = Date.now();
 			noteHeld();
-			// Half an hour of never finding a safe moment is not a moment that is
-			// coming -- a desktop left with a half-typed prompt will sit like that
-			// for days. Stop asking and leave the user a button; a check that finds
-			// a DIFFERENT build starts the whole thing over.
-			if (Date.now() - unsafeSince >= GIVEUP_MS) { gaveUp = true; disarm(); reflect(); }
+			// Half an hour of never finding a safe moment is not one that is coming
+			// soon -- a desktop left with a half-typed prompt will sit like that for
+			// days -- so the banner offers the user a button. It changes only what is
+			// painted (FIRE updater-held, 19 Oct): the watch keeps running, so the
+			// first quiet moment still takes the build and `heldWhy` stays current.
+			// Stopping it here left argonaut on a superseded build for 13 h, its
+			// banner naming a turn that had ended hours before.
+			if (!gaveUp && Date.now() - unsafeSince >= GIVEUP_MS) { gaveUp = true; reflect(); }
 			return;
 		}
+		gaveUp = false;                           // safe now: the countdown banner, not the button
 		// `unsafeSince` is NOT cleared here (r570s, argonaut): a countdown that a sync
 		// round aborts sends the build back to waiting, and a clock restarted at
 		// every abort is one that never reaches SYNC_YIELD_MS or GIVEUP_MS -- a tab
@@ -1099,23 +1103,24 @@
 	}
 
 	/// One stamp read, with the feed told only when there is something to say --
-	/// the id moved, or the read failed. A check that confirms what the tab already
+	/// the id moved to one this tab has not yet heard of, or the read failed. A check that confirms what the tab already
 	/// knows is the overwhelmingly common case, and reporting it would bury the two
 	/// that matter.
 	function checkStamp() {
 		return readStamp().then(function (j) {
 			if (!j) share('update.check', { live: null, mine: booted, status: 'fail' });
-			else if (booted && j.build !== booted) {
+			else if (booted && j.build !== booted && j.build !== pending) {
 				share('update.check', { live: j.build, mine: booted, status: 'differs' });
 			}
 			return j;
 		});
 	}
 
-	/// One check. Once an update is known, stop asking and just watch for a safe moment to apply.
+	/// One check. The stamp is read even with a build pending, so a newer release
+	/// replaces it (`onFound`) rather than the tab waiting on a superseded one.
 	function poll() {
-		if (pending) { apply(false); return; }
 		checkStamp().then(onFound);
+		if (pending) apply(false);
 	}
 
 	/// The poll, spread out. Every tab in a fleet hears of a deploy within the same

@@ -98,6 +98,7 @@ function world(over) {
 		seatOpts: () => ({ selfId: 'PHONE' }),
 		chatRunningOn: () => '',
 		annotatePresence: (p) => p,
+		turnPresence: (p) => p,
 		presenceWithLeaseBusy: (p) => p,
 		DaimondPresence: { snapshot: () => ({}) },
 		DaimondModels: { resolve: () => ({}) },

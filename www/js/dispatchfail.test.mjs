@@ -162,7 +162,7 @@ async function refusedPost(mode) {
 	const stub = {
 		diag: () => {}, dsEvent: () => {}, turnHold: () => null, selfDeviceId: () => PHONE,
 		storedPre: () => '', storedEffort: () => null, turnEffortOf: () => null, autonomousPosture: () => null,
-		msgTombsOwed: () => [], loadChatMessages: async () => {},
+		msgTombsOwed: () => [], loadChatMessages: async () => {}, honoursModelSet: () => true,
 		markTurnDispatched: (ch, mark) => { ch.messages.push({ role: 'assistant', content: '', why: 'dispatched', iturn: mark.iturn, toDevice: DESK, toName: 'argonaut' }); },
 		seatNoteOnPrompt: () => true, seatNameOf: (id, nm) => nm || id,
 		touchMsg: () => {}, touchChat: () => {}, persistChats: () => { rec.persisted++; }, ownsChat: () => false, renderHistory: () => {},

@@ -8,9 +8,11 @@
 //      Diamonds had models and drawn nowhere, so two Diamonds deliberately put
 //      on different models were indistinguishable on the rail.
 //   2. Changing the daimon's model is a deliberate two-step: the pulldown reveals
-//      a "Change" button ONLY while the pick differs, and pressing it takes effect,
-//      is written into the crystal's own version history — the discontinuity notes2
-//      calls "a fold and a new daimon" — and LEAVES THE CONVERSATION WHERE IT IS.
+//      a "Change" button ONLY while the pick differs, and pressing it takes effect
+//      and LEAVES THE CONVERSATION WHERE IT IS. The next turn writes it into the
+//      crystal's own version history — the discontinuity notes2 calls "a fold and a
+//      new daimon" — because the history follows the model in force, not the button
+//      (D-20261018-09 U2c), so a moved default reaches a following Diamond too.
 //      There is no confirm, and the absence is the property: the modal that stood
 //      here warned that the thread would not carry over, which was true for the
 //      twenty-two minutes before a daimon had a thread at all. So the two halves are
@@ -49,7 +51,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { open, newChat, connectMock, scratch, shot, signInAs, steerDiamond, storedChats } from './harness.mjs';
+import { open, newChat, connectMock, scratch, shot, signInAs, steerDiamond, storedChats, servedChats } from './harness.mjs';
 
 // The mock offers three models, and exactly one of them is in the price TABLE with
 // a context window. That is the one this run connects under, because `mock/fast`
@@ -80,16 +82,23 @@ const SRC_BREAKS = {
 	// half gone -- the model's own copy, which is what the next turn carries, and the
 	// transcript the reader is looking at.
 	wipes: {
-		find: "\t\t\tresetDiamondApps();\n\t\t\tvar logged = true;",
-		with: "\t\t\tresetDiamondApps();\n"
-			+ "\t\t\tvar _lost = (chats || []).find(function (c) { return c.diamondId === opts.id; });\n"
+		find: "\t\t\tawait changeDiamondModel(opts.id, before, p);",
+		// A loss the store keeps. Emptying the arrays alone is not one: the transcript is
+		// an append-only union and the session is kept by the turn winner, so the next
+		// save restores both from disk and the break bit nothing (I step 2, 19 Oct). The
+		// two writes that really lose a conversation are the ones made here: every
+		// message TOMBSTONED, which the union honours, and the session replaced by an
+		// empty one under a fresher turn stamp, which the merge takes over the old one.
+		with: "\t\t\tvar _lost = (chats || []).find(function (c) { return c.diamondId === opts.id; });\n"
 			+ "\t\t\tif (_lost) {\n"
+			+ "\t\t\t\tawait msgTombstone((_lost.messages || []).map(function (m) { return m && m.mid; }).filter(Boolean));\n"
 			+ "\t\t\t\t_lost.messages = [];\n"
 			+ "\t\t\t\t_lost.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };\n"
+			+ "\t\t\t\t_lost.updatedAt = Date.now();\n"
 			+ "\t\t\t\tpersistChats();\n"
 			+ "\t\t\t\tif (current && current.id === _lost.id) renderHistory(_lost.messages);\n"
 			+ "\t\t\t}\n"
-			+ "\t\t\tvar logged = true;",
+			+ "\t\t\tawait changeDiamondModel(opts.id, before, p);",
 	},
 	// THE OLD FOLD GUARD, restored: `chat.app`, which asks whether an engine was built
 	// during THIS page load and not whether anything was ever said. After a reload it
@@ -114,11 +123,11 @@ const SRC_BREAKS = {
 	// not move either — which is the point: a confirm is a thing that stands there.
 	// It now lives on the Change button's click, where the switch was moved.
 	asks: {
-		find: "\t\t\tsetDiamondModel(opts.id, { provider: p.provider, model: p.model });",
+		find: "\t\t\tawait changeDiamondModel(opts.id, before, p);",
 		with: "\t\t\tvar _ok = await confirmDialog('Change the model?', 'Change',\n"
 			+ "\t\t\t\t{ title: 'Change the daimon', danger: false });\n"
 			+ "\t\t\tif (!_ok) return;\n"
-			+ "\t\t\tsetDiamondModel(opts.id, { provider: p.provider, model: p.model });",
+			+ "\t\t\tawait changeDiamondModel(opts.id, before, p);",
 	},
 };
 let patched = null;
@@ -454,9 +463,15 @@ try {
 			const co = document.getElementById('chat-output');
 			return co ? (co.textContent || '') : '';
 		});
-		check(/remember this sentence/.test(stillDrawn),
+		// The transcript as the store SERVES it, not only as drawn: a screen not yet
+		// redrawn still shows a transcript the store has already lost.
+		const served = await servedChats(s);
+		const sRec = (served || []).find(c => c && c.diamondId === dId);
+		const sSaid = sRec ? JSON.stringify(sRec.messages || []) : '';
+		check(/remember this sentence/.test(stillDrawn) && /remember this sentence/.test(sSaid),
 			'and so is the transcript the reader is looking at',
-			stillDrawn.replace(/\s+/g, ' ').slice(0, 70));
+			`stored ${sRec ? (sRec.messages || []).length : -1} messages; drawn: `
+				+ stillDrawn.replace(/\s+/g, ' ').slice(0, 50));
 
 		// ── The receipt. ──
 		//
@@ -485,6 +500,11 @@ try {
 		await p.waitForTimeout(400);
 		await p.evaluate((sel) => { document.querySelector(sel).click(); }, dSel);
 		await p.waitForTimeout(900);
+		// THE NOTE IS THE NEXT TURN'S TO WRITE (U2c): a turn on another pair than the last one
+		// ran on says so before its request. So one more turn, on the new model, first.
+		await steerDiamond(s, 'and now on the new model');
+		await p.waitForSelector('.chat-spinner', { state: 'detached', timeout: 40000 }).catch(() => {});
+		await p.waitForTimeout(1200);
 		// Onto the CRYSTAL face: the steer above put this Diamond on its chat face and
 		// `setDiamondView` remembers, so selecting it again lands on the conversation and
 		// the history control -- which belongs to the crystal -- is simply not on screen.
@@ -531,6 +551,7 @@ try {
 			webp:     r('open hero.webp'),
 			nearMiss: r('read notes.pngx, it is not an image'),
 			tiff:     r('open scan.tiff'),
+			psd:      r('open layers.psd'),
 			supplied: r('look at shots/home.png', true),
 		};
 	});
@@ -544,8 +565,13 @@ try {
 		check(routed.jpeg.model === 'the-eyes-one' && routed.gif.model === 'the-eyes-one'
 			&& routed.webp.model === 'the-eyes-one',
 			'.jpg, .jpeg, .gif and .webp count as images — exactly what ImageMedia sniffs');
-		check(routed.tiff.model === 'the-text-one',
-			'a format this app cannot hand a model as an image is not one', routed.tiff.model);
+		// A TIFF is an image since UNBLOCK-25 (e7dfad37): the tools convert BMP, TIFF, HEIC
+		// and ICO to PNG or JPEG themselves, so IMAGE_EXT took them in. A PSD is still a
+		// format nothing here can turn into a picture a model sees.
+		check(routed.tiff.model === 'the-eyes-one',
+			'a .tiff counts as an image, because the tools convert it (UNBLOCK-25)', routed.tiff.model);
+		check(routed.psd.model === 'the-text-one',
+			'a format this app cannot hand a model as an image is not one', routed.psd.model);
 		check(routed.nearMiss.model === 'the-text-one',
 			'an extension that merely starts with an image name is not one', routed.nearMiss.model);
 		check(routed.supplied.model === 'the-text-one' && routed.supplied.sees === false,

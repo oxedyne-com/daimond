@@ -230,6 +230,7 @@ if (typeof L.say === 'function') {
 			appendInterjected: () => {}, touchChat: () => {}, persistChats: () => {}, ownsChat: () => false,
 			renderHistory: () => {}, updateQueueBadges: () => {}, recoveringHere: () => false, diamondBusy: () => false,
 			peerHeldTurnOf: () => null, peerSyncShim: () => ({}),
+			honoursModelSet: () => true,		// its runner runs the model set (D-20261018-09 OR)
 			newMid: () => 'mid' + (++S.mids),
 			msgTombstone: (ids) => { S.tombs.push(...ids); },
 			drainSteerQueue: (c) => { S.drained.push(c._queue.slice()); },

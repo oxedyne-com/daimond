@@ -326,7 +326,7 @@ console.log('\nA replay carries the original pre and computes none');
 	check('dispatchToPeer puts the stored pre in the errand it builds (every re-dispatch goes through it)',
 		/pre:\s*storedPre\(chat, turnId\)/.test(dtp || ''));
 	// Two re-dispatch sites since the re-seat chase went (D-20261009-23).
-	const rd = ['{ parkCount: count }', 'turn.text'].map((s) => SRC.indexOf(s) > 0);
+	const rd = ['{ parkCount: count, runTo:', 'turn.text'].map((s) => SRC.indexOf(s) > 0);
 	check('the two re-dispatch sites call dispatchToPeer, and none of them composes', rd.every(Boolean)
 		&& calls(SRC, 'dispatchToPeer').every((c) => !/ratingPre|noteFor/.test(c.text)));
 }

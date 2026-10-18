@@ -130,7 +130,7 @@ lib.setDiamondModel('d', { workerProvider: 'p', workerModel: 'W', visionProvider
 clock = 5000;
 lib.setDiamondModel('d', { effort: '' });
 check('SET clearing the Effort keeps the worker and vision models (check_b1 should 2)',
-	rec('d').effort === '' && rec('d').workerModel === 'W' && rec('d').visionModel === 'V' && rec('d').at === 1000 && rec('d').eat === 5000, rec('d'));
+	rec('d').effort === '' && rec('d').workerModel === 'W' && rec('d').visionModel === 'V' && rec('d').wat === 1000 && rec('d').vat === 1000 && rec('d').dat === 0 && rec('d').at === 1000 && rec('d').eat === 5000, rec('d'));	// each pick on its own stamp (U1a), `at` the latest (S)
 reset(); clock = 1000;
 lib.setDiamondModel('d', { effort: 'high' });
 clock = 900;																	// this clock is behind the stamp it replaces

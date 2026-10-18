@@ -63,8 +63,11 @@ const FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatM
 	'chatMetaBeats', 'mergeFold', 'mergeChatRecords', 'hydrateChat', 'diamondModels', 'setDiamondModel',
 	'blankDiamondModel', 'mergeDiamondModel', 'adoptDiamondModel', 'diamondModel', 'turnEffortOf',
 	'turnModelOf', 'errandModelOf', 'respModel', 'shortModel', 'daimonChat', 'errandForRecovery',
-	'steerModelFor', 'readJson'];
-const VARS = ['CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF',
+	'steerModelFor', 'readJson', 'sentModelsOf', 'steerModelsFor', 'turnModelsOfDiamond', 'turnModelsOfChat',
+	'chatWorkerModel', 'diamondWorkerModel', 'diamondVisionModel',
+	// The chat's model half on its own stamp (D-20261018-09 U1c).
+	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit'];
+const VARS = ['CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', 'DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF',
 	'DIAMOND_EFFORT_HALF', '_chatModelShedSaid'];
 const BODY = VARS.map(function (v) { return liftVar(APP, v); }).join('\n') + '\n'
 	+ FNS.map(function (f) { return liftFn(APP, f); }).join('\n');
@@ -86,6 +89,13 @@ function device(name, skew) {
 		DaimondModels: {
 			getDefault: function () { return { provider: 'openrouter', model: 'openrouter/default' }; },
 			resolve: function (p, m) { return m && p !== 'nokey' ? { provider: p || 'openrouter', model: m } : null; },
+			// The daimon link of models.js's chain (mmeffective.test.mjs drives the real one).
+			effective: function (t, role) {
+				var rec = (t && t.kind === 'diamond')
+					? (JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}')[t.id] || {}) : ((t && t.chat) || {});
+				return rec.model ? { provider: rec.provider || '', model: rec.model, from: 'own' }
+					: { provider: 'openrouter', model: 'openrouter/default', from: 'default' };
+			},
 		},
 	};
 	const logs = [];
@@ -195,10 +205,13 @@ function lifted(names, own) {
 /// pair it is asked for and stops the turn there. Answers the pairs built and the turn's error.
 async function runnerSteer(model) {
 	const built = [], STOP = new Error('stop');
-	const DaimondModels = { resolve: function (p, m) { return m && p !== 'nokey' ? { provider: p, model: m } : null; } };
-	const fns = lifted(['steerModelFor', 'runSteer', 'runSteerDetached'], {
+	const DaimondModels = { resolve: function (p, m) { return m && p !== 'nokey' ? { provider: p, model: m } : null; },
+		effective: function () { return { provider: GLM.provider, model: GLM.model, from: 'own' }; } };
+	const fns = lifted(['sentModelsOf', 'steerModelsFor', 'steerModelFor', 'steerTurnSet', 'copyTurnSet', 'turnModelsOfDiamond', 'runSteer', 'runSteerDetached'], {
 		window: { DaimondModels: DaimondModels }, DaimondModels: DaimondModels,
 		diamondModel: function () { return { provider: GLM.provider, model: GLM.model }; },
+		// The set's daimon half is the pair `steerModelFor` resolved; the other halves are not asked about.
+		turnModelsOfDiamond: function (id, d) { return { daimon: { provider: d.provider, model: d.model }, workers: {}, images: {} }; },
 		diag: function () {},
 		diamondBusy: function () { return false; },
 		document: { getElementById: function () { return null; } },
@@ -271,8 +284,10 @@ await (async function () {
 	// The runner holds an older copy of the Diamond's record (glm); the errand says deepseek,
 	// marked the asker's resolution. Each errand runs through the REAL `runSteerDetached` and
 	// `runSteer`, against a stubbed `diamondApp` that records the pair the turn's app is built with.
-	check('the errand marks a Diamond\'s pair the asker\'s resolution', er.model && er.model.src === 'diamond', er.model);
-	check('an ordinary chat\'s pair is not so marked', eo.model && eo.model.src === undefined, eo.model);
+	// A Diamond's keeps `src: 'diamond'`, which older runners honour; a chat's is `src: 'asker'`
+	// (D-20261018-09 U1e, QA B #5; mmerrand.test.mjs).
+	check('the errand marks a Diamond\'s pair the asker\'s resolution', er.model && er.model.src === 'diamond' && !!er.model.workers, er.model);
+	check('an ordinary chat\'s pair is so marked too', eo.model && eo.model.src === 'asker', eo.model);
 	const sent = await runnerSteer(er.model);
 	check('the runner builds the turn\'s app on the sent model, not its own copy',
 		sent.built.length === 1 && sent.built[0].model === DSK.model, sent);

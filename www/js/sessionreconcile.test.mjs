@@ -222,6 +222,7 @@ console.log('\nreconcileEngine, one case at a time');
 	const pageStub = Object.assign({}, stub, {
 		dedupeSession: () => { throw new Error('dedupe broke'); },
 		appCfgFor: () => ({ baseUrl: '', apiKey: '', model: 'm', provider: 'p' }), creditsGen: () => 0,
+		turnModelOf: () => ({ provider: 'p', model: 'm' }),	// U1d: the pair ensureApp builds on
 		Notes: null, Instructions: { compose: (a) => a }, SYSTEM_PROMPT: () => '', DaimondApp: Engine,
 		maxOutFor: () => 0, cfg: { tools: false }, noteAppProv: nop, promptPrint: () => '', DaimondModels: { noteUse: nop },
 		applyRoundLimit: nop, applyFoldSettings: nop, applyProviderRouting: nop, applySight: nop, applyEffort: nop, applyCrystalCap: nop,

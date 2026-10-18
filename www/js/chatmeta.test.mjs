@@ -81,9 +81,9 @@ function daimondSrc() {
 	if (BREAK === 'lww') {
 		// The metadata scalars resolve from the TURN winner again -- record-level
 		// LWW -- so a rename loses to a later turn exactly as it did before the split.
-		const target = 'takeChatMeta(out, metaNewer);';
+		const target = 'takeChatMeta(out, metaNewer, chatMetaFields(a, b));';
 		if (!src.includes(target)) throw new Error('break target not found: metaNewer name resolution');
-		src = src.replace(target, 'takeChatMeta(out, turnNewer);  // BROKEN: record-level LWW');
+		src = src.replace(target, 'takeChatMeta(out, turnNewer, chatMetaFields(a, b));  // BROKEN: record-level LWW');
 	}
 	return src;
 }
@@ -113,9 +113,10 @@ function sourceGuards() {
 		/function touchChat\(c\) \{ if \(c\) c\.updatedAt = DaimondStamp\.next\(c\.updatedAt\); \}/.test(d), 'touchChat changed shape');
 	{
 		const tm = funcBody(d, 'function touchChatMeta(c) {');
+		// And the name half's own `nat`, past the model half's too (D-20261018-09 S).
 		check('touchChatMeta moves BOTH stamps, past both',
-			tm.includes('DaimondStamp.next(Math.max(c.updatedAt || 0, c.metaAt || 0))')
-			&& tm.includes('c.updatedAt = now; c.metaAt = now;'),
+			tm.includes("DaimondStamp.next(Math.max(c.updatedAt || 0, c.metaAt || 0, c.mat, chatMatOf(c, 'nat')))")
+			&& tm.includes('c.updatedAt = now; c.metaAt = now; c.nat = now;'),
 			'touchChatMeta missing or wrong');
 	}
 
@@ -130,17 +131,21 @@ function sourceGuards() {
 			&& funcBody(d, 'function chatTurnBeats(a, b) {').includes('DaimondStamp.beats(a.updatedAt || 0, chatFields(a, CHAT_TURN_FIELDS), b.updatedAt || 0, chatFields(b, CHAT_TURN_FIELDS))'));
 		check('the metadata winner is the newer metaAt, a tie by the metadata fields',
 			m.includes('var metaNewer = chatMetaBeats(a, b) ? a : b;')
-			&& funcBody(d, 'function chatMetaBeats(a, b) {').includes('DaimondStamp.beats(am, chatFields(a, CHAT_META_FIELDS), bm, chatFields(b, CHAT_META_FIELDS))'));
+			// The fields it decides: all of them for two records from before `mat`, the name
+			// half once either carries a split stamp, decided on `nat` (D-20261018-09 U1c and S).
+			// Neither carrying one, `nat` reads as `metaAt`.
+			&& funcBody(d, 'function chatMetaBeats(a, b) {').includes('var f = chatMetaFields(a, b);')
+			&& funcBody(d, 'function chatMetaBeats(a, b) {').includes("DaimondStamp.beats(chatMatOf(a, 'nat'), chatFields(a, f), chatMatOf(b, 'nat'), chatFields(b, f))"));
 		check('metaAt falls back to updatedAt when a side predates the field',
 			m.includes("var am = (typeof a.metaAt === 'number') ? a.metaAt : au;")
 			&& m.includes("var bm = (typeof b.metaAt === 'number') ? b.metaAt : bu;"));
-		const tk = funcBody(d, 'function takeChatMeta(out, src) {');
+		const tk = funcBody(d, 'function takeChatMeta(out, src, names) {');
 		check('the user-facing scalars come from the metadata winner, NOT the turn winner',
-			m.includes('takeChatMeta(out, metaNewer);')
+			m.includes('takeChatMeta(out, metaNewer, chatMetaFields(a, b));')
 			// Each metadata field is taken from the winner in `slimChat`'s form, the one
 			// place a field's stored form is spelled (r545: `effort` "" against absent).
 			&& tk.includes('var s = slimChat(src);')
-			&& tk.includes('CHAT_META_FIELDS.forEach(')
+			&& tk.includes('names.forEach(')
 			&& tk.includes('if (s[k] === undefined) delete out[k];')
 			&& tk.includes('else out[k] = s[k];')
 			&& ['name', 'model', 'status', 'foldedInto', 'holds'].every((k) => new RegExp("var CHAT_META_FIELDS = \\[[^\\]]*'" + k + "'").test(d)),
@@ -174,7 +179,7 @@ function sourceGuards() {
 		// store it reads cannot each keep their own.
 		check('turn fields still gate on updatedAt', oc.includes('if (chatTurnBeats(s, c) && !c._generating) {'));
 		check('metadata scalars gate on metaAt', oc.includes('if (chatMetaBeats(s, c) && !c._generating) {')
-			&& oc.includes('takeChatMeta(c, s);'),
+			&& oc.includes('takeChatMeta(c, s, chatMetaFields(s, c));'),
 			'a cross-tab rename can still be clobbered by another tab\'s turn');
 	}
 }

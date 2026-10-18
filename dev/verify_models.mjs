@@ -729,7 +729,9 @@ const dated = await p.evaluate(async (stamp) => {
 		return e ? e.textContent.trim() : '';
 	};
 	const out = { asked: at('groq'), never: at('together'),
-		day: new Date(stamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+		// In the locale the line is drawn in. The app dates it in ITS locale, which is 'de'
+		// here, so an expectation in the browser's own ('Jul 14') could never match '14. Juli'.
+		day: new Date(stamp).toLocaleDateString('de', { month: 'short', day: 'numeric' }) };
 	await DaimondI18n.setLocale('en');
 	return out;
 }, STAMP);

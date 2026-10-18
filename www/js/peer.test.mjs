@@ -2637,7 +2637,8 @@ async function runNominationAcceptance(P, L, check) {
 		check('UNBLOCK-1 route: the send passes the elected device as runTo',
 			/runTo:\s*DaimondPeer\.peerIdOf\(d\.peer\)/.test(DAIMOND_SRC));
 		check('UNBLOCK-1 route: the errand\'s to is runTo, not the tile\'s toId',
-			/\bto:\s*\(opts && opts\.runTo\) \|\| ''/.test(DAIMOND_SRC) && !/\bto:\s*\(opts && opts\.toId\)/.test(DAIMOND_SRC));
+			/var runTo = String\(\(opts && opts\.runTo\) \|\| ''\)/.test(DAIMOND_SRC) && /\bto:\s*runTo,/.test(DAIMOND_SRC)
+			&& !/\bto:\s*\(opts && opts\.toId\)/.test(DAIMOND_SRC));
 	}
 
 	// ── UNBLOCK-1: "reachable" on the switch is the send's test, and includes listening. ──

@@ -361,7 +361,7 @@ function main() {
 			src = src.replace(needle, 'if (false) { // BROKEN: fallback removed');
 		}
 		check('runTurn calls recordTurnOutcome from its finally',
-			src.includes("recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'), turnSpent);"));
+			src.includes("recordTurnOutcome(tp.model, tp.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'), turnSpent);"));
 		check('the Stop button reads as interrupted', src.includes("var turnOutcome = chat._aborted ? 'interrupted'"));
 		check('a page/tab going away reads as interrupted, not failed',
 			src.includes("(threw && _unloading) ? 'interrupted'"));

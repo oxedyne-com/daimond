@@ -1091,6 +1091,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// ── State ──────────────────────────────────────────────────
 	var cfg = loadCfg();
 	var chats = [];             // { id, name, app, messages:[{role,content}], promptTokens, completionTokens }
+	var chatsUp = false;        // the boot's chat load has returned (`migrateInherit` waits on it)
 	var current = null;         // active chat object
 	var _unloading = false;     // the page is on its way out — an aborted request is not a failure
 
@@ -1754,7 +1755,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// falls back to `updatedAt` so an old-build record merges exactly as it
 			// did -- and so a legacy record and a peer that has merged it agree on the
 			// same number, which keeps the push-skip fixed point.
-			metaAt: (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0) });
+			metaAt: (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0),
+			// The model half's stamp (D-20261018-09 U1c), ABSENT until a model edit sets it, so a
+			// record that never had one travels as the same bytes it always did.
+			mat: (typeof c.mat === 'number') ? c.mat : undefined,
+			nat: (typeof c.nat === 'number') ? c.nat : undefined });	// the name half's, likewise (S)
 	}
 	function readJson(key, fallback) {
 		try {
@@ -2550,6 +2555,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				c.prevPrompt || 0, c.prevCompletion || 0, c.prevCached || 0, c.prevCost || 0, c.lastPrompt || 0];
 			// Only when set, so a chat with no Effort stamps as it did and nothing is rewritten at boot.
 			if (c.effort) sv.push('e:' + c.effort);
+			if (typeof c.mat === 'number') sv.push('t:' + c.mat);	// the model stamp, only when set (U1c)
+			if (typeof c.nat === 'number') sv.push('n:' + c.nat);	// the name stamp, likewise (S)
 			return String(c.updatedAt || 0) + ':' + mc + ':' + sc + ':' + JSON.stringify(c.holds || []) + ':m' + ma
 				+ ':' + standingOf(c) + ':' + JSON.stringify(sv);
 		}
@@ -3130,6 +3137,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// read `ChatStore.stored()` (summaries, not the full row) can resolve a
 				// scalar edit by `metaAt` rather than by turn recency (S-SYNC #5).
 				metaAt: (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0),
+				mat: (typeof c.mat === 'number') ? c.mat : undefined,	// absent until a model edit (U1c)
+				nat: (typeof c.nat === 'number') ? c.nat : undefined,	// absent until the split (S)
 				foldedInto: c.foldedInto || null,
 				msgCount: (c.messages || []).length,
 				standing: msgStanding(c.messages || []),		// in the change stamp (`stampOf`)
@@ -4349,7 +4358,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// past it -- a legacy record then reads as "metadata as old as the record",
 			// which is the truth, and a later turn (`touchChat`) leaves this stamp
 			// alone while a metadata edit (`touchChatMeta`) moves it (S-SYNC #5).
-			metaAt: (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0) };
+			metaAt: (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0),
+			mat: (typeof c.mat === 'number') ? c.mat : undefined,	// absent until a model edit (U1c)
+			nat: (typeof c.nat === 'number') ? c.nat : undefined };	// absent until the split (S)
 	}
 	/// Open the store and hand back what it holds, hydrated — everything the user
 	/// still has, which is not everything the store still holds. A trashed chat
@@ -4438,15 +4449,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// stamp is (`DaimondStamp.next`): an edit made after adopting a copy from a
 	/// faster clock must outrank that copy (D112).
 	function touchChat(c) { if (c) c.updatedAt = DaimondStamp.next(c.updatedAt); }
-	/// Stamp a chat as touched by a METADATA edit -- a rename, a model or worker
-	/// change, a status/fold/holds change. Moves BOTH stamps: `metaAt` so the edit
-	/// survives a merge against a later turn (which moves only `updatedAt`), and
-	/// `updatedAt` so the record re-saves, re-pushes and resurfaces on the rail as
-	/// any edit does.
+	/// Stamp a chat as touched by a NAME-HALF edit -- a rename, a status/fold/holds
+	/// change. Moves `nat`, `metaAt` and `updatedAt`: `nat` so the edit survives a merge
+	/// against a later turn (which moves only `updatedAt`) and a model edit made elsewhere;
+	/// `metaAt`, the whole metadata clock, so a build before the split adopts it; and
+	/// `updatedAt` so the record re-saves, re-pushes and resurfaces on the rail as any edit does.
 	function touchChatMeta(c) {
 		if (!c) return;
-		var now = DaimondStamp.next(Math.max(c.updatedAt || 0, c.metaAt || 0));
-		c.updatedAt = now; c.metaAt = now;
+		// The model half keeps the stamp it had (U1c): read off `metaAt` until now, it is pinned
+		// there before `metaAt` moves, so a rename does not outrank a model edit made elsewhere.
+		if (typeof c.mat !== 'number') c.mat = chatMatOf(c);
+		var now = DaimondStamp.next(Math.max(c.updatedAt || 0, c.metaAt || 0, c.mat, chatMatOf(c, 'nat')));
+		c.updatedAt = now; c.metaAt = now; c.nat = now;
+	}
+	/// Stamp a chat as touched by a MODEL edit -- its model, provider, worker pair or Effort
+	/// (D-20261018-09 U1c). Moves `mat`, `metaAt` and `updatedAt` and leaves `nat`, so a model
+	/// clear on one device and a rename on another both survive the merge, and a build before
+	/// the split, deciding on `metaAt` alone, still adopts the edit (S).
+	function touchChatModel(c) {
+		if (!c) return;
+		// The name half keeps the stamp it had, pinned before `metaAt` moves, as `mat` is above.
+		if (typeof c.nat !== 'number') c.nat = chatMatOf(c, 'nat');
+		var now = DaimondStamp.next(Math.max(c.updatedAt || 0, c.metaAt || 0, chatMatOf(c), c.nat));
+		c.updatedAt = now; c.metaAt = now; c.mat = now;
 	}
 
 	/// The fields a chat's TURN stamp (`updatedAt`) decides, and those its METADATA
@@ -4456,6 +4481,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		'prevPrompt', 'prevCompletion', 'lastPrompt', 'prevCached', 'prevCost'];
 	var CHAT_META_FIELDS = ['name', 'model', 'provider', 'workerModel', 'workerProvider',
 		'status', 'foldedInto', 'holds', 'diamondId', 'effort'];
+	// THE MODEL HALF ON ITS OWN STAMP `mat` (D-20261018-09 U1c), AND THE NAME HALF ON `nat` (S).
+	// Riding `metaAt` together, a bulk model clear on one device and a rename on another lost one
+	// of the two. Once either side carries `mat` or `nat`, `nat` decides CHAT_NAME_FIELDS and `mat`
+	// the model half; a pair of records from before the split merges on CHAT_META_FIELDS by
+	// `metaAt` exactly as it always did. `metaAt` stays the later of the two, the whole clock a
+	// build before the split reads, so that build sees every edit and its own next edit carries
+	// what it adopted (QA-A): a side with no split stamp reads both halves as stamped at `metaAt`.
+	var CHAT_NAME_FIELDS  = ['name', 'status', 'foldedInto', 'holds', 'diamondId'];
+	var CHAT_MODEL_FIELDS = ['model', 'provider', 'workerModel', 'workerProvider', 'effort'];
+	/// The stamp a chat's model half holds, or its name half's with `k` 'nat'.
+	function chatMatOf(c, k) {
+		var n = c[k || 'mat'];
+		if (typeof n === 'number') return n;
+		return (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0);
+	}
+	/// Does either side carry a split stamp?
+	function chatMatSplit(a, b) {
+		return typeof a.mat === 'number' || typeof b.mat === 'number' || typeof a.nat === 'number' || typeof b.nat === 'number';
+	}
 	function chatFields(c, names) {
 		var s = slimChat(c);
 		return names.map(function (k) { return s[k] === undefined ? '' : s[k]; });	// an absent effort is ''
@@ -4465,9 +4509,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the only place a field's stored form is spelled, so a merged record and a slimmed
 	/// one are the same bytes ("" against absent kept a chat record apart for good: r53
 	/// W-rec, and again for `effort` in r545). A field it leaves undefined is deleted.
-	function takeChatMeta(out, src) {
+	function takeChatMeta(out, src, names) {
 		var s = slimChat(src);
-		CHAT_META_FIELDS.forEach(function (k) {
+		names.forEach(function (k) {
 			if (s[k] === undefined) delete out[k];
 			else out[k] = s[k];
 		});
@@ -4479,9 +4523,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return DaimondStamp.beats(a.updatedAt || 0, chatFields(a, CHAT_TURN_FIELDS), b.updatedAt || 0, chatFields(b, CHAT_TURN_FIELDS));
 	}
 	function chatMetaBeats(a, b) {
-		var am = (typeof a.metaAt === 'number') ? a.metaAt : (a.updatedAt || 0);
-		var bm = (typeof b.metaAt === 'number') ? b.metaAt : (b.updatedAt || 0);
-		return DaimondStamp.beats(am, chatFields(a, CHAT_META_FIELDS), bm, chatFields(b, CHAT_META_FIELDS));
+		var f = chatMetaFields(a, b);
+		return DaimondStamp.beats(chatMatOf(a, 'nat'), chatFields(a, f), chatMatOf(b, 'nat'), chatFields(b, f));
+	}
+	/// The fields the name stamp decides between `a` and `b`: all of them for two records from
+	/// before the split, the name half once either carries a split stamp.
+	function chatMetaFields(a, b) { return chatMatSplit(a, b) ? CHAT_NAME_FIELDS : CHAT_META_FIELDS; }
+	function chatModelBeats(a, b) {
+		return DaimondStamp.beats(chatMatOf(a), chatFields(a, CHAT_MODEL_FIELDS), chatMatOf(b), chatFields(b, CHAT_MODEL_FIELDS));
+	}
+	/// Take the model half onto `out` from the `mat` winner of `a` and `b`, when either carries
+	/// a split stamp, and carry the greater `mat` and `nat`; the one assignment `mergeChatRecords`
+	/// and the tab adoption share. A chat inside a Diamond holds no pair (`chatOwnsModel`) whichever side
+	/// the name half came from.
+	function takeChatModel(out, a, b) {
+		if (!chatMatSplit(a, b)) return;
+		var w = chatModelBeats(a, b) ? a : b;
+		if (w !== out) takeChatMeta(out, w, CHAT_MODEL_FIELDS);
+		if (out.diamondId) { delete out.model; delete out.provider; delete out.workerModel; delete out.workerProvider; }
+		var am = chatMatOf(a), bm = chatMatOf(b), an = chatMatOf(a, 'nat'), bn = chatMatOf(b, 'nat');
+		out.mat = am >= bm ? am : bm;
+		out.nat = an >= bn ? an : bn;
 	}
 
 	/// Merge two chat records FIELD-appropriately -- the ONE rule every apply, merge,
@@ -4519,7 +4581,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// winner's copies of them. This is the whole of the fix: record-level LWW took
 		// EVERY scalar from whichever side had the newer `updatedAt`, so a turn
 		// reverted a rename and vice-versa.
-		takeChatMeta(out, metaNewer);
+		takeChatMeta(out, metaNewer, chatMetaFields(a, b));
+		takeChatModel(out, a, b);
 		// Both stamps move to the max each side holds, so the merged record is at least
 		// as fresh as either input on both axes and a re-collect of an unchanged state
 		// is byte-stable (the push-skip fixed point).
@@ -4840,8 +4903,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// A folder marked into the workspace in ANOTHER TAB is a change to
 				// what this tab's next turn may touch, so it is adopted with the rest
 				// of the fresher metadata rather than left to whichever tab saves last.
-				takeChatMeta(c, s);
+				takeChatMeta(c, s, chatMetaFields(s, c));
 			}
+			// The model half on its own stamp, under the same guard (D-20261018-09 U1c).
+			if (!c._generating) takeChatModel(c, s, c);
 			// Both stamps move forward to the max, so neither a turn nor a metadata edit
 			// applied here can make the record read older than the store already has it.
 			if (!c._generating) {
@@ -5366,6 +5431,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// as "desktop", and an omitted key keeps such a line byte-identical so the
 		// push still skips.
 		if (typeof (d && d.mobile) === 'boolean') e.mobile = d.mobile;
+		// This MACHINE runs a handed-off turn on the set its asker sent (D-20261018-09 OR).
+		// Only ever true, and only from the device itself (`touchSelfDevice`): a line
+		// without it is a build before the Models menu, which runs a following chat on its
+		// own default, so no turn is handed to it (`honoursModelSet`).
+		if (d && d.modelset === true) e.modelset = true;
 		return e;
 	}
 
@@ -5559,6 +5629,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// must not churn the parcel.
 		var mob = isMobileDeviceSelf();
 		if (typeof me.mobile !== 'boolean' || me.mobile !== mob) { me.mobile = mob; me.seen = now; }
+		// This build runs a handed-off turn on its asker's set, so it says so on its own line,
+		// the advertisement an asker reads before it hands a turn over (`honoursModelSet`).
+		// Stamped once, with `seen`, so the line carrying it wins the merge.
+		if (me.modelset !== true) { me.modelset = true; me.seen = now; }
 		// A name chosen while pairing, on a device that had no line to put it on
 		// until this moment.
 		//
@@ -5682,7 +5756,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the true one: a copy that reached us later cannot have been created later. The
 	/// name follows its own later `namedAt`, and an equal one the smaller label.
 	function mergeDeviceLine(a, b) {
-		var key = function (d) { return JSON.stringify([d.name, d.build, typeof d.mobile === 'boolean' ? d.mobile : null]); };
+		// `modelset` in the key, so at an equal `seen` the line that says it wins: an older build
+		// writes its peers' lines back without the field (D-20261018-09 OR).
+		var key = function (d) { return JSON.stringify([d.name, d.build, typeof d.mobile === 'boolean' ? d.mobile : null,
+			d.modelset === true ? true : null]); };
 		var line  = (b.seen > a.seen || (b.seen === a.seen && key(b) > key(a))) ? b : a;
 		var named = (b.namedAt > a.namedAt || (b.namedAt === a.namedAt && b.label < a.label)) ? b : a;
 		var out = deviceEntry(line);
@@ -11109,6 +11186,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	async function collectSync() {
+		// Not before the boot's migration (`bootInherit`): the first parcel carries its clears.
+		await inheritGate(30000);
 		// persistChats() nudges the sync engine, and this IS the sync engine
 		// asking for the parcel: without the flag every push would arm the next
 		// one and the debounce would become a poll that never stopped.
@@ -11814,7 +11893,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				+ ' -> ' + mergedLen + (mergedLen > Math.max(localLen, remoteLen) ? ' RESURRECT' : ''));
 			byId[r.id] = merged;
 			mergedIds[r.id] = 1;
-			arrived.push.apply(arrived, arrivedIn(r.id, localMsgs, r.messages, nameWas, merged.name || '', merged.metaAt));
+			arrived.push.apply(arrived, arrivedIn(r.id, localMsgs, r.messages, nameWas, merged.name || '', chatMatOf(merged, 'nat')));
 			// A holding taken off, marked out or Read-off on another device narrows what
 			// was pressed on it here (R2), as the merged record now stands.
 			if (DaimondMarksHere.chatSettle(r.id, merged.holds)) dropChatApp(r.id);
@@ -15719,9 +15798,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// -- because a Diamond thinks and is billed for thinking. The canvas asks
 		/// one: a link dropped on empty space is a person saying "and one of these
 		/// here", and a modal about billing in the middle of a drag would be the
-		/// gesture refusing to finish. So the account's default model is taken,
-		/// exactly as the capp template flow takes it, and the model can be changed
-		/// on the tile afterwards like any other.
+		/// gesture refusing to finish. So it follows the account's default model,
+		/// exactly as a capp's Diamond does, and the model can be changed on the
+		/// tile afterwards like any other.
 		///
 		/// The three calls after the write are `createDiamond`'s own and are here
 		/// for its reasons: the nonce so the other tab and the sync learn of it, the
@@ -15730,15 +15809,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// it before anything tries to select it.
 		create: async function (name) {
 			var id = await diamondApp().create_diamond(String(name || '').trim());
-			try {
-				var d = window.DaimondModels ? DaimondModels.getDefault() : null;
-				if (d && d.model && DaimondModels.resolve(d.provider, d.model)) {
-					setDiamondModel(id, {
-						provider: d.provider, model: d.model,
-						workerProvider: d.provider, workerModel: d.model,
-					});
-				}
-			} catch (e) { /* no models module: the Diamond is still a Diamond */ }
+			// No model is written: the Diamond follows the default (U1c).
 			bumpDiamonds();
 			clearDiamondFilters();
 			await loadDiamonds();
@@ -16290,6 +16361,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// send-time and step-away paths annotate identically.
 	function annotatePresence(presence) {
 		return presenceWithMobile(presenceWithBuilds(presence));
+	}
+
+	/// Has device `id` shown it runs a handed-off turn on the set its asker sent? Its own
+	/// roster line says so (`modelset`). A runner before the Models menu (14ef947b) runs a
+	/// following chat's errand, which carries no model of its own, on its own default and
+	/// says nothing (D-20261018-09 OR). It cannot be changed, so it is never handed a turn:
+	/// a line that has not said it, or no line at all, is a runner that cannot.
+	function honoursModelSet(id) {
+		try {
+			var ln = id ? loadDevices()[String(id)] : null;
+			return !!(ln && ln.modelset === true);
+		} catch (e) { return false; }
+	}
+
+	/// The presence a TURN is seated from: the annotated map without the peers that have not
+	/// shown they honour the model set (`honoursModelSet`). Every turn's election reads it --
+	/// the send and the queue, Retry and Continue (`maybeAutoDispatch`), the switch
+	/// (`seatSwitchFor`, `seatPlanNow`) and the step-away hand-off -- so a runner that cannot
+	/// is not offered, the switch reads Here, and the turn runs here on this device's set.
+	/// The door (`dispatchToPeer`) and a say into a running turn (`sayToRunner`) ask it too.
+	function turnPresence(presence) {
+		var p = annotatePresence(presence) || {}, out = {}, self = selfDeviceId();
+		Object.keys(p).forEach(function (id) {
+			if (id === self || honoursModelSet(id)) out[id] = p[id];
+		});
+		return out;
 	}
 
 	/// The device running a turn of `chat` now (a live claim on one of its handed-off
@@ -25869,20 +25966,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// says, the one owner, rather than a copy that went stale.
 	function turnModelOf(chat) {
 		if (!chat) return { provider: '', model: '' };
-		var m = chat.diamondId ? (diamondModel(chat.diamondId) || {}) : chat;
+		var m = chat.diamondId ? (diamondModel(chat.diamondId) || {})
+			: (window.DaimondModels ? DaimondModels.effective({ kind: 'chat', chat: chat }, 'daimon') : chat);
 		return { provider: m.provider || '', model: m.model || '' };
 	}
 
-	/// The model an errand for `chat` carries: the one this device resolved and the asker saw, so
-	/// the runner runs it rather than its own copy of the Diamond's (C3). The url is resolved by
-	/// the peer from the provider (models.js), so it is left for the runner. A Diamond's pair is
-	/// marked `src: 'diamond'`, the asker's resolution: a runner honours a sent pair only so
-	/// marked, and an older asker's errand, which carries its chat record's stale copy unmarked,
-	/// runs on the Diamond's own (`steerModelFor`).
+	/// The models an errand for `chat` carries: the set this device resolved and the asker saw,
+	/// `{ daimon, workers, images }`, so the runner runs it rather than its own resolution (C3;
+	/// D-20261018-09 U1e). A following chat stores no model, and sent bare it ran on the runner's
+	/// default. The daimon half stays at the top level, where every build reads it; the url is
+	/// resolved by the peer from the provider (models.js), so it is left for the runner. A chat's
+	/// is marked `src: 'asker'` and a Diamond's keeps `src: 'diamond'`, the marker a 14ef947b
+	/// runner honours, so a runner not yet reloaded still runs the asker's daimon half rather than
+	/// its own copy of the Diamond (QA B #5); a current runner takes the whole set from `workers`
+	/// (`sentModelsOf`). An older asker's unmarked pair runs as it always did.
 	function errandModelOf(chat) {
-		var m = turnModelOf(chat);
-		var out = { provider: m.provider, model: m.model, url: '' };
-		if (chat && chat.diamondId) out.src = 'diamond';
+		if (!chat) return { provider: '', model: '', url: '' };
+		var s = chat.diamondId ? turnModelsOfDiamond(chat.diamondId) : turnModelsOfChat(chat);
+		var out = { provider: s.daimon.provider, model: s.daimon.model, url: '' };
+		if (!out.model) return out;		// nothing resolved: the runner resolves, as before
+		out.src     = chat.diamondId ? 'diamond' : 'asker';
+		out.workers = { provider: s.workers.provider || '', model: s.workers.model || '', chosen: !!s.workers.chosen };
+		out.images  = { provider: s.images.provider || '', model: s.images.model || '', chosen: !!s.images.chosen };
 		return out;
 	}
 
@@ -27398,6 +27503,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			|| !window.DaimondSync  || !DaimondSync.push) {
 			return { ok: false, why: 'the peer transport is not available in this build' };
 		}
+		// ONLY TO A RUNNER THAT RUNS THE TURN'S SET (D-20261018-09 OR). Every hand-off comes
+		// through here, so here the errand is addressed, and only to a device that has shown it
+		// honours the model set the errand carries: one before the Models menu runs a following
+		// chat on its own default and says nothing. Asked before anything is marked or posted,
+		// in the same run as the election that named it; `unable` tells the caller to run it here.
+		var runTo = String((opts && opts.runTo) || '');
+		if (!honoursModelSet(runTo)) {
+			diag('dispatch refused', 'turn=' + turnId + ' runner ' + (runTo ? runTo.slice(0, 8) : 'unnamed')
+				+ ' has not shown it runs the model set');
+			return { ok: false, unable: true, why: 'no runner here runs this turn on its models' };
+		}
 		var pause = null;
 		try { if (window.DaimondPause) pause = DaimondPause.snapshot(); } catch (e) { pause = null; }
 		// This device's stable id, for "waiting for <machine>" and so a peer never
@@ -27444,7 +27560,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// election may seat another desk (a nominee busy elsewhere), and a `to` naming
 			// the nominee made the elected desk stand down and the nominee bounce the turn.
 			gone:   msgTombsOwed(),
-			to:     (opts && opts.runTo) || '',
+			to:     runTo,
 		};
 		// A THREAD IS NEVER FINGERPRINTED FROM AN UNLOADED CHAT (D2). Every hand-off --
 		// a send, a re-dispatch, a parked re-run -- comes through here, so it is made
@@ -27884,6 +28000,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (left <= 0) return Promise.resolve();
 		return Promise.race([quiet, new Promise(function (res) { setTimeout(res, left); })]);
 	}
+	/// Why this device cannot run errand `e`'s models, or '' when it can (D-20261018-09 PR): the
+	/// rule the run dep throws its 401 by, asked before the claim. A marked set is `sentModelsOf`'s
+	/// to judge; an unmarked Diamond turn runs the Diamond's own model, judged where its record is
+	/// resident (one that is not is reconstruct's to hand back).
+	function errandUnrunnable(e, chat) {
+		var marked = null;
+		try { marked = sentModelsOf(e && e.model); }
+		catch (err) { return (err && err.code === 401) ? String(err.message) : ''; }	// any other: runTurn's
+		var did = String((e && e.diamondId) || (chat && chat.diamondId) || '');
+		if (marked || !did || !diamonds.some(function (x) { return x.id === did; })) return '';
+		return diamondCanRun(did) ? '' : 'the diamond’s model has no usable api key on this device';
+	}
+
 	async function peerReady(errand, own, waitMs) {
 		var e = errand || {};
 		var by = Date.now() + (typeof waitMs === 'number' ? waitMs : THROUGH_WAIT_MS);
@@ -27891,6 +28020,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function find() {
 			for (var i = 0; i < chats.length; i++) if (chats[i].id === e.chatId) return chats[i];
 			return null;
+		}
+		// A RUNNER NEVER CLAIMS A TURN WHOSE MODELS IT CANNOT RUN (D2 applied to models): refused
+		// here, before any lease, the asker's hand-back runs it at once on the device that has the key.
+		var unrun = errand ? errandUnrunnable(e, find()) : '';
+		if (unrun) {
+			diag('ready MODELS', 'chat=' + e.chatId + ' turn=' + e.turnId + ' -- ' + unrun);
+			return { ok: false, cause: 'models', why: unrun };
 		}
 		async function holds() {
 			var c = find();
@@ -28125,7 +28261,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// append a duplicate to the transcript either. A daimon runs on `diamondApp`, not
 		// this app, but building it is harmless and keeps the ctx shape uniform.
 		chat.app = null;
-		var app = ensureApp(chat, String(errand.turnId || ''));
+		// On the asker's daimon (U1e) when it runs here. One that does not was refused before the
+		// claim (`peerReady`); a key removed since makes `runTurn` throw its 401 before anything
+		// runs, so the engine is built on this device's own meanwhile.
+		var sentPair = null;
+		try { var ss = sentModelsOf(errand && errand.model); sentPair = ss ? ss.daimon : null; } catch (e) { /* runTurn throws it */ }
+		var app = ensureApp(chat, String(errand.turnId || ''), sentPair);
 		await scopeChatTo(app, chat.id);
 		diag('reconstruct ready', 'chat=' + chat.id + ' turn=' + (errand && errand.turnId)
 			+ ' after=' + Math.round((Date.now() - startAt) / 1000) + 's');
@@ -28442,17 +28583,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// directory on an empty scope, so the authority is correct here.
 				var did = String((c && c.chat && c.chat.diamondId) || '');
 				if (did) {
-					// THIS RUNNER MUST BE ABLE TO RUN THE DIAMOND'S MODEL. A runner that
-					// lacks its key would otherwise `openSettings` and answer nothing, and
-					// runErrand would report an empty `done`. Hand it back as a provider
-					// failure instead (classified by runnerErrorKind): the lease releases,
-					// the errand stays on the relay, and the dispatcher -- which has the key
-					// -- runs it local or another keyed peer takes it. Nothing was spent.
-					// The asker's marked pair (C3) runs or the turn goes back: `steerModelFor`
-					// throws this same 401 for one it cannot run. An unmarked one runs the Diamond's.
-					var sentM = ropts && ropts.model;
-					if (sentM && sentM.model && sentM.src === 'diamond') steerModelFor(did, ropts);
-					else if (typeof diamondCanRun === 'function' && !diamondCanRun(did)) {
+					// THIS RUNNER MUST BE ABLE TO RUN THE DIAMOND'S MODEL. `peerReady` refuses a
+					// turn it cannot run before the claim (`errandUnrunnable`), and the asker runs
+					// it at once. This is the guard for a key removed since then: a runner that
+					// lacks it would otherwise `openSettings` and answer nothing. It fails as a
+					// provider refusal (runnerErrorKind), so the lease releases unsettled and the
+					// asker's tile reads failed with [Run here]; its dispatch backstop runs it there
+					// if still open. Nothing was spent. The asker's marked set (C3, U1e) is
+					// `sentModelsOf`'s to judge, which throws this same 401; an unmarked one runs the Diamond's.
+					var marked = sentModelsOf(ropts && ropts.model);
+					if (!marked && typeof diamondCanRun === 'function' && !diamondCanRun(did)) {
 						var eKey = new Error('the diamond’s model has no usable api key on this device');
 						eKey.code = 401;
 						throw eKey;
@@ -28495,13 +28635,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						if (c && c.chat) abortTurn(c.chat);
 					};
 				}
+				// THE ASKER'S SET (U1e): the turn runs the models the asker resolved and showed. A set
+				// this device cannot run was refused before the claim (`peerReady`); a key removed since
+				// throws the 401 here, before anything runs. An unmarked pair (an older asker's) is null,
+				// and the turn resolves on this device as it always did.
+				var sentSet = sentModelsOf(ropts && ropts.model);
 				// D3 — the prompt is already in the reconstructed transcript, so tell
 				// runTurn to run against it rather than append a second copy.
 				// The errand's own note (sealed with it) is written as given: the runner's copy of the person's
 				// message, if it has to push one, is the person's and carries it.
 				await runTurn(c.chat, prompt, { promptInTranscript: !!(ropts && ropts.promptInTranscript), turnId: ropts && ropts.turnId,
 					told: (ropts && typeof ropts.pre === 'string') ? ropts.pre : undefined,
-					effort: ropts && ropts.effort });
+					effort: ropts && ropts.effort, models: sentSet });
 				runnerDeaf(tid, true);		// the turn is over: nothing said now reaches it
 				// The turn has ended, but if it fanned out workers the answer is not in
 				// yet: the gather round that reads their reports runs a macrotask later,
@@ -29903,9 +30048,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// If no peer is awake, dispatchToPeer's caller falls back to a local run. A turn a
 		// person's pause holds is not handed on (F2): it is continued HERE, where the same
 		// pause refuses it in words, rather than left parked with nothing said.
+		// It goes to the runner the switch offers, the one election every hand-off reads; with
+		// none that runs the turn's set (D-20261018-09 OR) the door answers `unable`, and it runs here.
 		try {
-			dispatchToPeer(chat, tid, text, Array.isArray(chat.holds) ? chat.holds : [], { parkCount: count })
-				.then(function (r) { if (r && r.paused) continueTurn(chat, tid, text); });
+			var sw = seatSwitchFor(chat);
+			dispatchToPeer(chat, tid, text, Array.isArray(chat.holds) ? chat.holds : [],
+				{ parkCount: count, runTo: (sw && sw.runner) ? sw.runner.deviceId : '' })
+				.then(function (r) { if (r && (r.paused || r.unable)) continueTurn(chat, tid, text); });
 		} catch (e) { continueTurn(chat, tid, text); }
 	}
 
@@ -30965,7 +31114,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var o = seatOpts();
 			if (!o.selfId) return null;
 			o.queueOn = chatRunningOn(current);	// as the send reads it
-			var presence = annotatePresence((window.DaimondPresence && DaimondPresence.snapshot()) || {});
+			var presence = turnPresence((window.DaimondPresence && DaimondPresence.snapshot()) || {});
 			return DaimondPeer.seatPlan(current, presence, o, Date.now());
 		} catch (e) { return null; }
 	}
@@ -30982,7 +31131,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			o.queueOn = chatRunningOn(chat);
 			// The presence the send reads (`maybeAutoDispatch`): a claim this device
 			// sees on another chat makes the runner busy before its own beat says so.
-			var presence = presenceWithLeaseBusy(annotatePresence(
+			var presence = presenceWithLeaseBusy(turnPresence(
 				(window.DaimondPresence && DaimondPresence.snapshot()) || {}), chat);
 			return DaimondPeer.seatSwitch(chat, presence, o, Date.now());
 		} catch (e) { return null; }
@@ -31084,8 +31233,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return { diamond: current.diamondId, provider: m.provider || '', model: m.model || '',
 				effort: diamondEffort(current.diamondId) };
 		}
-		return { chat: current, provider: current.provider || '', model: current.model || '',
-			effort: current.effort || '' };
+		// The pair in force, which is the default's for a chat that follows it (U1c).
+		var r = window.DaimondModels && DaimondModels.resolve(current.provider || '', current.model || '');
+		return { chat: current, provider: r ? r.provider : (current.provider || ''),
+			model: r ? r.model : (current.model || ''), effort: current.effort || '' };
 	}
 
 	/// The step's ladder. A model that names its default stands at that level when the Effort is
@@ -31145,8 +31296,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			bumpDiamonds();
 		} else {
 			h.chat.effort = next;
-			// A metadata scalar, like the model it belongs to (S-SYNC #5).
-			touchChatMeta(h.chat);
+			// The model half, on its own stamp with the model it belongs to (U1c).
+			touchChatModel(h.chat);
 			persistChats();
 		}
 		renderEffortStep();
@@ -31500,7 +31651,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// an unconfirmed snapshot. Zero in every confirmed case, so autoDispatchDecision
 			// keeps its normal 90s nominee gate.
 			var presumeNomWin = (nomStale && !refreshLanded) ? NOMINEE_TRUST_MS : 0;
-				presence = presenceWithLeaseBusy(annotatePresence(presence), chat);
+				presence = presenceWithLeaseBusy(turnPresence(presence), chat);
 				// ROUTING READS LIVE PRESENCE, NOT THE STORED DEVICE LIST (owner redesign
 				// 2026-09-09). The star an older account carries points at the argonaut's DEAD
 				// pre-re-mint id; `handoffTarget` never seats that raw id unless it is ITSELF
@@ -31729,7 +31880,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// (no fresh peer -> keep it here, to be recovered on return). This IS the
 				// §4.1 backgrounding-with-a-turn-in-flight case, and a per-chat opt-out
 				// still beats it inside the pure decision.
-					presence = annotatePresence(presence);
+					presence = turnPresence(presence);
 					var d = DaimondPeer.autoDispatchDecision(chat, presence, {
 					selfId:        self,
 					backgrounding: true,
@@ -31757,7 +31908,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// as dispatched even if the push/post do not finish — and a dispatched turn
 				// no peer ran is reclaimable.
 				try { dispatchToPeer(chat, turn.turnId, turn.text, Array.isArray(chat.holds) ? chat.holds : [],
-					{ diamondId: String(chat.diamondId || ''), tried: electedTried(d) }); }
+					{ diamondId: String(chat.diamondId || ''), tried: electedTried(d), runTo: DaimondPeer.peerIdOf(d.peer) }); }
 				catch (e) { /* recovery-on-return is the net */ }
 			});
 		} catch (e) { /* the page is going; nothing here may throw into unload */ }
@@ -33026,11 +33177,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// A manually-started chat begins as a *pending* tile: the user confirms
 	// its label and model, then presses Start. Nothing runs until Start — the
 	// "pick model → Start" pattern shared by every manually-started agent.
+	/// The pick to store for `pair`, made against `def`, the pair it would otherwise follow
+	/// (D-20261018-09 U1c). Only a deliberate pick is stored: nothing chosen, or a choice equal to
+	/// `def`, stores `''` and the record follows. Equal is the same provider AND the same model; a
+	/// pair with no provider names `def`'s. Every path that creates or stores a chat's or a
+	/// Diamond's model comes through here.
+	function storedPick(pair, def) {
+		var m  = String((pair && pair.model) || ''),    p  = String((pair && pair.provider) || '');
+		var dm = String((def && def.model) || ''),      dp = String((def && def.provider) || '');
+		if (!m || (m === dm && (p || dp) === dp)) return { provider: '', model: '' };
+		return { provider: p, model: m };
+	}
+	/// The pair a chat's turn would run on now: its own pick, or the default's for `''`. Null
+	/// when no key here can run it.
+	function chatPairInForce(chat) {
+		var r = window.DaimondModels && DaimondModels.resolve((chat && chat.provider) || '', (chat && chat.model) || '');
+		return r ? { provider: r.provider, model: r.model } : null;
+	}
+
+	/// What a Diamond made from `chat` stores: the chat's picks, each through `storedPick`, so a
+	/// chat that follows the default makes a Diamond that follows it too (U1c).
+	function diamondPickFromChat(chat) {
+		var def = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };
+		var own = storedPick({ provider: chat.provider, model: chat.model }, def);
+		var wk  = storedPick({ provider: chat.workerProvider, model: chat.workerModel },
+			chatPairInForce(chat) || own);
+		return { provider: own.provider, model: own.model, workerProvider: wk.provider, workerModel: wk.model };
+	}
+
 	function newChat() {
-		// A new chat opens on the starred default -- both halves of it. Seeding the model without
-		// its provider would leave the pulldown pointing at a model and the app reaching for
-		// whichever key happened to be default, which are not always the same provider.
-		var d = window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' };
+		// A new chat FOLLOWS the default, its workers the chat: nothing is copied (U1c), so a
+		// later move of the default moves it too. The pickers name the pair in force.
 		var chat = {
 			id: newChatId(),
 			// EMPTY, not `Chat-0025`. The rail derives what it shows from when
@@ -33039,13 +33216,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			name: '',
 			app: null,
 			messages: [],
-			model: d.model || cfg.model || '',
-			provider: d.provider || '',
-			// The workers start on the same model as the chat, and the tile's second pulldown is
-			// where that is changed. Seeded rather than left empty so the pulldown has something to
-			// point at; an empty pair still means the chat's own model wherever one is read.
-			workerModel: d.model || cfg.model || '',
-			workerProvider: d.provider || '',
+			model: '',
+			provider: '',
+			workerModel: '',				// '' is the chat's own model
+			workerProvider: '',
 			status: 'pending',
 			promptTokens: 0,
 			completionTokens: 0,
@@ -33060,8 +33234,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 		// Seed BOTH stamps at creation (S-SYNC #5), so a new chat's name/model/holds
 		// carry a real `metaAt` from the first moment rather than falling back to a
-		// turn's `updatedAt` later.
+		// turn's `updatedAt` later. The model half is born with them (U1c).
 		touchChatMeta(chat);
+		chat.mat = chat.metaAt;
 		chats.unshift(chat);
 		// AFTER the unshift, so the number is how many exist now rather than how
 		// many existed a line ago. Before `selectChat`, which reports leaving the
@@ -33080,12 +33255,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// no provider can run, it becomes the chat's own model: the one thing already known to work,
 	/// and never the starred default, which is a different provider's key as often as not.
 	function startChat(chat, model, provider, worker) {
-		model    = (model    || chat.model    || cfg.model || '').trim();
-		provider = (provider || chat.provider || '').trim();
-		// Ask whether THIS model can actually run, not whether the default provider can. A chat
-		// on a provider whose key is sealed must say so, rather than quietly starting on someone
-		// else's key -- which is what checking `cfg` alone did.
-		var r = model && window.DaimondModels && DaimondModels.resolve(provider, model);
+		var M = window.DaimondModels;
+		var def = M ? M.getDefault() : { provider: '', model: '' };
+		// Only a deliberate pick is stored; one equal to the default, or none, follows it (U1c).
+		var pick = storedPick({ provider: (provider || chat.provider || '').trim(),
+			model: (model || chat.model || '').trim() }, def);
+		model = pick.model; provider = pick.provider;
+		// Ask whether THE PAIR IN FORCE can actually run, not whether the default provider can. A
+		// chat on a provider whose key is sealed must say so, rather than quietly starting on
+		// someone else's key -- which is what checking `cfg` alone did.
+		var r = M && M.resolve(provider, model);
 		if (!r) {
 			// NEVER a silent `openSettings()+return` that leaves the composer hidden --
 			// that is the SEV-1 dead-end. Remember the attempted pair and re-draw the
@@ -33094,23 +33273,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chat.model    = model;
 			chat.provider = provider;
 			if (current === chat) renderPendingCentre(chat);
-			if (!model) openSettings(t('chat.choose_model'));
-			else openSettings(t(provider ? 'chat.no_key_start' : 'chat.connect_start'));
+			if (!model && !def.model) openSettings(t('chat.choose_model'));
+			else openSettings(t((provider || def.provider) ? 'chat.no_key_start' : 'chat.connect_start'));
 			return;
 		}
-		chat.model    = r.model;
-		chat.provider = r.provider;
-		chat.effort   = DaimondModels.effortAfterSwitch(chat.effort || '', r.provider, r.model).effort;
+		// The resolved pair is never written back: the chat keeps its pick, or '' (U1c).
+		var was = CHAT_MODEL_FIELDS.map(function (k) { return chat[k] || ''; }).join('\u0000');
+		chat.model    = model;
+		chat.provider = provider;
+		chat.effort   = M.effortAfterSwitch(chat.effort || '', r.provider, r.model).effort;
+		// The workers follow the chat unless a pick that some key can run sets them apart.
 		var wm = (worker && worker.model) || chat.workerModel || '';
 		var wp = (worker && worker.provider) || chat.workerProvider || '';
-		var wr = wm && window.DaimondModels && DaimondModels.resolve(wp, wm);
-		chat.workerModel    = wr ? wr.model    : r.model;
-		chat.workerProvider = wr ? wr.provider : r.provider;
+		var wr = wm && M.resolve(wp, wm);
+		var wk = wr ? storedPick(wr, r) : { provider: '', model: '' };
+		chat.workerModel    = wk.model;
+		chat.workerProvider = wk.provider;
 		chat.status = 'active';
 		chat.app = null;                       // built lazily on the first turn
-		// Model/worker/status are METADATA scalars (S-SYNC #5): stamp `metaAt` so the
-		// choice made here survives a merge against a later turn from another device.
+		// Status is a METADATA scalar (S-SYNC #5): stamp `metaAt` so the choice made here
+		// survives a merge against a later turn from another device. The model half moves its
+		// own stamp, and only when it changed (U1c).
 		touchChatMeta(chat);
+		if (CHAT_MODEL_FIELDS.map(function (k) { return chat[k] || ''; }).join('\u0000') !== was) touchChatModel(chat);
 		persistChats();
 		renderSessionList();
 		selectChat(chat);
@@ -33641,12 +33826,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// user answered both when they started the chat this Diamond is made of,
 		// and asking again at the moment they are naming something is one
 		// question too many.
-		setDiamondModel(id, {
-			provider:       chat.provider || '',
-			model:          chat.model || '',
-			workerProvider: chat.workerProvider || '',
-			workerModel:    chat.workerModel || '',
-		});
+		setDiamondModel(id, diamondPickFromChat(chat));
 
 		// The transcript, then the link that makes it an artefact. The link is
 		// attempted even if the write failed, and vice versa, because a Diamond
@@ -33786,12 +33966,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A Diamond made out of a chat inherits that chat's model, and its workers' model with it.
 		// Neither is asked for here because the user has already answered both, when they started
 		// the chat this Diamond is made of.
-		setDiamondModel(id, {
-			provider:       chat.provider || '',
-			model:          chat.model || '',
-			workerProvider: chat.workerProvider || '',
-			workerModel:    chat.workerModel || '',
-		});
+		setDiamondModel(id, diamondPickFromChat(chat));
 		await loadDiamonds();
 		foldChatInto(chat, id, turns).catch(function (e) { foldFailed(e, id); });
 	}
@@ -34268,9 +34443,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// that would bounce -- see `renderPendingCentre`.
 	function pendingStartBlock(chat) {
 		var M = window.DaimondModels;
-		var model    = (chat.model    || cfg.model || '').trim();
+		var model    = (chat.model    || '').trim();			// '' follows the default (U1c)
 		var provider = (chat.provider || '').trim();
-		if (M && model && M.resolve(provider, model)) return null;   // startable
+		if (M && M.resolve(provider, model)) return null;   // startable
 		// Not startable. A key present but sealed (the wrong-salt duplicate-identity
 		// case seals every provider at once) is the dead-end the owner hit: a key IS
 		// stored, so "connect a provider" would be a lie and the fix is to re-enter it
@@ -35661,7 +35836,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		sel.className = 'tile-model';
 		sel.id = lab.htmlFor;
 		sel.title = t('tile.model_chat_help');
-		populateModelSelect(sel, chat.model || cfg.model || '', chat.provider || '');
+		// The pair in force, the default's for a chat that follows it (U1c).
+		var inForce = function () {
+			return chatPairInForce(chat) || { provider: chat.provider || '', model: chat.model || '' };
+		};
+		populateModelSelect(sel, inForce().model, inForce().provider);
 
 		var change = document.createElement('button');
 		change.type = 'button';
@@ -35670,7 +35849,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		change.title = t('tile.chat_model_change_help');
 		change.hidden = true;
 		var pendingPick = null;			// the pick awaiting a Change press, or null when it matches
-		var inForce = function () { return { provider: chat.provider || '', model: chat.model || '' }; };
 
 		sel.addEventListener('change', function () {
 			var p = DaimondModels.pick(sel);
@@ -35696,18 +35874,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The workers go with the chat unless the user set them apart from it.
 			var wk = DaimondModels.workerAfterSwitch(before, res,
 				{ provider: chat.workerProvider || '', model: chat.workerModel || '' });
-			chat.model          = res.model;
-			chat.provider       = res.provider;
-			chat.workerModel    = wk.model;
-			chat.workerProvider = wk.provider;
+			// Stored as picks (U1c): the default chosen here is "follows", and workers equal
+			// to the chat's model follow the chat.
+			var own = storedPick(res, DaimondModels.getDefault());
+			var wks = storedPick(wk, res);
+			chat.model          = own.model;
+			chat.provider       = own.provider;
+			chat.workerModel    = wks.model;
+			chat.workerProvider = wks.provider;
 			// The Effort goes with the model only where the new one offers that level.
 			var eff = DaimondModels.effortAfterSwitch(chat.effort || '', res.provider, res.model);
 			chat.effort = eff.effort;
 			// A DaimondApp's model and key are fixed at construction, so the cached one
 			// goes and `ensureApp` builds the next on the new pair, history and all.
 			chat.app = null;
-			// Model and provider are METADATA scalars (S-SYNC #5).
-			touchChatMeta(chat);
+			// The model half, on its own stamp (U1c), so a rename elsewhere is not lost.
+			touchChatModel(chat);
 			persistChats();
 			pendingPick   = null;
 			change.hidden = true;
@@ -36707,38 +36889,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// Point a Diamond at another model, as the Change button does and as a Pending model switch
-	/// does (Rating U7b): record it, drop the cached client, write the history entry and say what
-	/// moved. `before` is the model in force until now; `p` is `{ provider, model }`.
+	/// does (Rating U7b): record it, drop the cached client and say what moved. `before` is the
+	/// model in force until now; `p` is `{ provider, model }`. The history entry is the next turn's
+	/// to write (`noteModelInForce`), as it is for every other way the model in force moves.
 	async function changeDiamondModel(id, before, p) {
 		// The daimon's Effort goes with it only where the new model offers that level.
 		var eff = DaimondModels.effortAfterSwitch(diamondEffort(id), p.provider || '', p.model || '');
-		setDiamondModel(id, { provider: p.provider, model: p.model, effort: eff.effort,
-			effortProvider: eff.effort ? (p.provider || '') : '', effortModel: eff.effort ? (p.model || '') : '' });
+		var pick = { provider: p.provider, model: p.model, effort: eff.effort,
+			effortProvider: eff.effort ? (p.provider || '') : '', effortModel: eff.effort ? (p.model || '') : '' };
+		// A record with no last-run pair (every Diamond on the day of deploy) takes `before` as
+		// it, or the next turn, seeing no `ran`, would write no note of the move (QA B #1).
+		var rec = diamondModels()[id] || {};
+		if (!rec.ranModel && before && before.model) {
+			pick.ranProvider = before.provider || ''; pick.ranModel = before.model;
+		}
+		setDiamondModel(id, pick);
 		// A DaimondApp has no setter for its model, so the cached client for this
 		// Diamond has to go; `diamondApp` builds the new one, with the new window, on
 		// next use. The persisted session is untouched and is re-seeded into it.
 		resetDiamondApps();
-		var logged = true;
-		try {
-			await diamondApp(id).record_model_change(id,
-				t('tile.model_change_note', {
-					from: before.model || '?', to: p.model,
-				}));
-		} catch (e) {
-			// The setting is already written and in force. Say the history entry
-			// failed rather than implying the change did.
-			logged = false;
-			toast(t('tile.model_change_unlogged'), true);
-		}
-		// The receipt: what moved, and that the thread came with it. One message
-		// or the other -- `model_change_unlogged` already says the change stuck,
-		// so a second toast beside it would say it twice.
-		if (logged) {
-			toast(t('tile.model_changed', {
-				from: shortModel(before.model) || t('tile.model_none'),
-				to:   shortModel(p.model),
-			}) + effortClearedNote(eff, p.model));
-		}
+		// The receipt: what moved, and that the thread came with it. The one toast; no other
+		// path that moves a Diamond's model says so per Diamond.
+		toast(t('tile.model_changed', {
+			from: shortModel(before.model) || t('tile.model_none'),
+			to:   shortModel(p.model),
+		}) + effortClearedNote(eff, p.model));
 	}
 
 	/// A settings dialog for something that is not a tile: a title, a body somebody
@@ -37804,11 +37979,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	// ── Send a turn ────────────────────────────────────────────
-	function ensureApp(chat, exceptMid) {
-		if (chat.app) return reconcileEngine(chat, exceptMid);
-		// A chat runs on the provider and model it was started with, and falls back to the
-		// default. Both travel with the chat, so a later change of default leaves it alone.
-		var a = appCfgFor(chat);
+	function ensureApp(chat, exceptMid, pair) {
+		// THE ENGINE RUNS THE TURN'S MODEL (D-20261018-09 U1d): `pair`, the daimon half of the set the
+		// turn resolved at its start, or, for a caller outside a turn, the model in force now. A chat
+		// that follows the default stores no model and is never written one here, so an engine built
+		// on another pair is rebuilt at the next turn's start (never under a running turn).
+		var want = pair || turnModelOf(chat);
+		if (chat.app) {
+			var held = chat._appPair;
+			if (!held || chat._generating
+				|| (held.model === (want.model || '') && held.provider === (want.provider || ''))) {
+				return reconcileEngine(chat, exceptMid);
+			}
+			diag('chat engine', 'chat=' + String(chat.id || '').slice(0, 12) + ' model ' + held.model + ' -> ' + (want.model || '') + ', rebuilt');
+			chat.app = null; chat._held = null;
+		}
+		var a = appCfgFor(want);
 		// A DaimondApp's key is fixed at construction, so record WHICH minted key it froze. A
 		// chat built before somebody else re-minted holds a revoked key and will 401 on its next
 		// turn; the generation is how the retry tells that apart from a key that is genuinely
@@ -37835,14 +38021,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (cfg.tools !== false && typeof chat.app.allow_dispatch === 'function') {
 			chat.app.allow_dispatch();
 		}
-		chat.model    = a.model;
-		chat.provider = a.provider || chat.provider || '';
+		// What this engine was built on, beside it and NOT on the record (U1d): the record keeps only a
+		// deliberate pick, and writing the resolved pair back made every following chat a pinned one.
+		// Not persisted (`slimChat` keeps a whitelist): an engine does not survive a reload either.
+		var ap = { provider: a.provider || want.provider || '', model: a.model || '' };
+		chat._appPair = ap;
 		// The fingerprint is of the very text the app was built with, which for a chat is the
 		// role and the standing instructions and nothing else.
-		noteAppProv(chat.app, 'chat', a.model, chat.provider, promptPrint(chatSys), '');
+		noteAppProv(chat.app, 'chat', ap.model, ap.provider, promptPrint(chatSys), '');
 		// A chat freezing its model is a use of it. Recorded here rather than in the
 		// pulldown, because a model picked and never run is not one anybody uses.
-		try { DaimondModels.noteUse(chat.provider, chat.model); } catch (e) { /* never block a turn */ }
+		try { DaimondModels.noteUse(ap.provider, ap.model); } catch (e) { /* never block a turn */ }
 		// How big this model's window is, so a long chat is folded before the provider
 		// refuses it rather than after. `contextWindow` returns null for a model nobody
 		// publishes a figure for, and a null is left alone: the agent's own default
@@ -37850,15 +38039,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// fold still catches a refusal either way.
 		try {
 			var cw = window.DaimondPricing
-				? DaimondPricing.contextWindow(a.model || chat.model, chat.provider || '')
+				? DaimondPricing.contextWindow(ap.model, ap.provider)
 				: null;
 			if (cw && chat.app.set_context_window) chat.app.set_context_window(cw);
 		} catch (e) { /* an older wasm build has no setter */ }
 		applyRoundLimit(chat.app);
-		applyFoldSettings(chat.app, chat.provider || '');
-		applyProviderRouting(chat.app, chat.provider || '', chat.model || '');
-		applySight(chat.app, chat.provider || '', chat.model || '');
-		applyEffort(chat.app, chat.provider || '', chat.model || '', chat.effort || '');
+		applyFoldSettings(chat.app, ap.provider);
+		applyProviderRouting(chat.app, ap.provider, ap.model);
+		applySight(chat.app, ap.provider, ap.model);
+		applyEffort(chat.app, ap.provider, ap.model, chat.effort || '');
 		applyCrystalCap(chat.app);
 		// THE STANDING NETWORK ANSWER, applied before this chat has run anything.
 		// `net_consent` lives on the engine and a new engine starts with none, so
@@ -38687,7 +38876,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// exactly like a bad key. A key the user typed and had refused is a key the user has to
 	/// look at, so that one is reported and not quietly retried.
 	function canRemint(chat) {
-		return !!(window.DaimondModels && chat && chat.provider === DaimondModels.CREDITS);
+		// The pair the engine runs on, not the record: a following chat stores provider ''
+		// (U1c) and runs on the default, credits included (QA B #2). A worker run names its own.
+		if (!window.DaimondModels || !chat) return false;
+		var p = chat._appPair || (chat.provider ? chat : turnModelOf(chat));
+		return p.provider === DaimondModels.CREDITS;
 	}
 
 	/// Rebuild a chat's agent on a fresh key, WITHOUT the message this turn is sending.
@@ -38716,7 +38909,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat.messages = keep.filter(function (m) { return m.mid !== mid; });
 		chat.app = null;
 		var app;
-		try { app = ensureApp(chat); }
+		// On the turn's own model (U1d), not on the setting as it stands now.
+		try { app = ensureApp(chat, undefined, (chat._generating && chat._turnSet) ? chat._turnSet.daimon : undefined); }
 		catch (e) { chat.app = prev; chat._held = prevHeld; throw e; }
 		finally { chat.messages = keep; }
 		// AND IT CARRIES NO TAG, so a Stop naming this turn would reach nothing (engine QA E2).
@@ -40407,6 +40601,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	async function sayToRunner(chat, ph, text, words) {
 		var tid = String((ph && ph.iturn) || '');
 		if (!tid || _peerStopping[tid] || !window.DaimondLease || !DaimondLease.say || !window.DaimondPeer) return false;
+		// ITS RUNNER RUNS THE SET, OR IT IS NOT SPOKEN TO (D-20261018-09 OR). A turn an older asker
+		// handed to a runner before the Models menu is not added to: the words go as the next
+		// turn, which the election seats only where the set is honoured.
+		var holder = '';
+		try { holder = String((DaimondLease.holder && DaimondLease.holder(tid)) || ''); } catch (e) { holder = ''; }
+		if (!honoursModelSet(holder)) {
+			diag('said not', 'turn=' + tid + ' runner ' + (holder ? holder.slice(0, 8) : 'unknown')
+				+ ' has not shown it runs the model set');
+			return false;
+		}
 		// A SAY IS ONLY FOR A TURN THAT CAN STILL HEAR IT (UNBLOCK-27 R7c). Its runner's frames
 		// show its answer being written (or the turn over): no seam follows, so the words go out
 		// as the next turn now, as they did before turns could be spoken to, and never wait out
@@ -41056,15 +41260,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		// The engine is brought up to the chat here, at the one place every turn passes. A peer turn's prompt is already in
 		// the transcript and `run_turn` sends it, so it is held out (`reusePrompt`, as `peerReconstruct` holds it out).
-		try { app = ensureApp(chat, reusePrompt ? String(reusePrompt.mid) : undefined); }
+		// THE MODELS THIS TURN RUNS ON, resolved once, here (D-20261018-09 U1d): the engine is built
+		// on the daimon half, every worker of the turn on the others, and every read below of what
+		// the turn ran on (cost, ledger, reply length, provenance) reads this set and not the record,
+		// which for a chat that follows the default holds nothing. A change made while it runs
+		// applies from the next turn.
+		// A gather round runs on the set of the turn that fanned out (U1d2), a runner's on the asker's
+		// (U1e); a copy either way, as the engine's fall-back below adjusts it.
+		var turnSet = copyTurnSet(turnModelsOfRun(chat, opts.models));
+		try { app = ensureApp(chat, reusePrompt ? String(reusePrompt.mid) : undefined, turnSet.daimon); }
 		catch (e) { appendError('Could not start agent: ' + String(e)); return; }
+		// What the engine was actually built on, should it differ (a model with no key falls back).
+		if (chat._appPair) turnSet.daimon = { provider: chat._appPair.provider, model: chat._appPair.model };
+		var tp = turnSet.daimon;
 		// THE EFFORT THIS TURN RUNS WITH (D-20261014-08): the one the dispatcher sent with a
 		// handed-off turn, else the one its stored prompt ran with, else the chat's (a Diamond's
 		// thread: the Diamond's) as it stands now. Always a string, '' being the model's own
 		// default, so the record says which.
 		var turnEffort = typeof opts.effort === 'string' ? opts.effort
 			: (reusePrompt && typeof reusePrompt.effort === 'string' ? reusePrompt.effort : turnEffortOf(chat));
-		applyEffort(app, chat.provider || '', chat.model || '', turnEffort);
+		applyEffort(app, tp.provider, tp.model, turnEffort);
 		// THE CONVERSATION IS FENCED, not only the workers it dispatches. The incident this
 		// answers had no worker in it at all. Fails the turn rather than running it unfenced:
 		// a scope that did not take is the one failure here that matters.
@@ -41104,7 +41319,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// decide which Diamond is failing the user.
 					diamondId:  chat.diamondId || '',
 					text:       text,
-					prevModel:  chat.model || '',
+					prevModel:  tp.model,
 					prevTools:  (chat._lastTurnTools || []).slice(),
 				});
 			}
@@ -41145,6 +41360,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// The depth a gather round left for this chat, read and cleared exactly as
 					// the post-turn path below reads and clears it.
 					depth:    Workers.gatherDepth[chat.id] | 0,
+					models:   turnSet,
 				});
 				delete Workers.gatherDepth[chat.id];
 			} catch (e) { inTurnWorkers = false; }
@@ -41202,8 +41418,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			turn:  String(umid),
 			chat:  String(chat.id || ''),
 			dia:   String(chat.diamondId || ''),
-			model: String(chat.model || '').slice(0, 48),
-			prov:  String(chat.provider || '').slice(0, 24),
+			model: String(tp.model).slice(0, 48),
+			prov:  String(tp.provider).slice(0, 24),
 			eff:   turnEffort,
 			ho:    opts.turnId ? 1 : 0,
 		});
@@ -41227,14 +41443,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// THE ANSWER'S PROVENANCE, STAMPED ONCE, HERE, before a token streams: the live row a
 		// watcher draws, the journal a crash recovers from and the final message all carry
 		// this one object, so every copy of the answer carries the same bytes (design §3.5).
-		var aprov = _appProv.get(app) || { role: 'chat', m: chat.model, pv: chat.provider, sp: '' };
+		var aprov = _appProv.get(app) || { role: 'chat', m: tp.model, pv: tp.provider, sp: '' };
 		var aprod = stampProd({ h: window.DaimondProvenance ? DaimondProvenance.h.answer(chat.id, amid) : '',
 			k: 'answer', m: aprov.m, pv: aprov.pv, role: aprov.role, sp: aprov.sp,
 			d: chat.diamondId || '', c: chat.id, t: umid, dev: selfDeviceId(), at: Date.now() });
 		if (umid && aprod) _liveProd[String(umid)] = aprod;
 		var J = window.DaimondJournal;
 		// The note and the app mark ride in the opening entry, so a recovered turn is the same turn.
-		var jmeta = { model: chat.model, provider: chat.provider, amid: amid, prod: aprod };
+		var jmeta = { model: tp.model, provider: tp.provider, amid: amid, prod: aprod };
 		// A HANDED-OFF RUN IS NAMED (r545 F-C2-1). The rows this run writes carry its id
 		// (`stampTurnRun`), and so does its journal entry, so a runner that reloads mid-turn
 		// folds the run it lost under the same name and the asker can tell that run's rows
@@ -41248,6 +41464,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (J) J.turnOpen(umid, chat.id, text, jmeta);
 
 		chat._generating = true;
+		chat._turnSet = turnSet;	// what a retry's rebuilt engine runs on (`rebuildAppWithout`)
 		if (J) journalTurnBegins(chat, umid);
 		// The press that asked for this turn is let go now the turn is under way (`holdSend`).
 		if (typeof opts.onStart === 'function') { try { opts.onStart(); } catch (e) { /* the turn goes on */ } }
@@ -41569,7 +41786,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// model that would not look. Silence here is what let a daimon answer
 				// confidently about a cover nobody had shown it.
 				pushRunRow(chat, umid, { role: 'vision_log',
-					content: blindLine(ev.model || chat.model || '', ev.source),
+					content: blindLine(ev.model || tp.model, ev.source),
 					mid: newMid(), ts: Date.now() });
 				if (!owns()) return;
 				var visLast = chat.messages[chat.messages.length - 1];
@@ -41744,7 +41961,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// by guessing again, and it is only shown if the second ask fails too.
 				// Only worth trying while there is room below to try: at the floor
 				// the reply length is no longer a plausible cause.
-				if (!backedOff && maxOutFor(chat.model, chat.provider) > MIN_MAX
+				if (!backedOff && maxOutFor(tp.model, tp.provider) > MIN_MAX
 					&& (capRefused(ev.content) || opaqueRefusal(ev.content))) {
 					capFail = true; return;
 				}
@@ -41834,7 +42051,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// is rebuilt rather than told. One correction only: a second
 						// refusal is real and is reported.
 						backedOff = true; capFail = false;
-						var asked = maxOutFor(chat.model, chat.provider);
+						var asked = maxOutFor(tp.model, tp.provider);
 						var half  = Math.max(MIN_MAX, Math.floor(asked / 2));
 						chat._capTry = half;
 						app = await rebuildAppWithout(chat, umid);
@@ -41846,7 +42063,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// a bad key, a malformed request — and every later turn on that
 						// model would be quietly shortened for it.
 						chat._capTry = 0;
-						noteCapRefused(chat.model, chat.provider, asked);
+						noteCapRefused(tp.model, tp.provider, asked);
 					} else if (authFail) {
 						// One shot at a fresh key, then the same turn again. The key is fixed at a
 						// DaimondApp's construction, so the agent is rebuilt rather than told.
@@ -41967,10 +42184,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// the alternative is a tool that silently did nothing.
 				if (capCut) {
 					var cutMsg = t('err.reply_cut') === 'err.reply_cut'
-						? ('The reply ran out of room at ' + fmtTok(maxOutFor(chat.model, chat.provider))
+						? ('The reply ran out of room at ' + fmtTok(maxOutFor(tp.model, tp.provider))
 							+ ' tokens, so a tool call arrived incomplete and could not run. '
 							+ 'Raise the reply length in Settings, or ask for a smaller change')
-						: t('err.reply_cut', { max: fmtTok(maxOutFor(chat.model, chat.provider)) });
+						: t('err.reply_cut', { max: fmtTok(maxOutFor(tp.model, tp.provider)) });
 					pushRunRow(chat, umid, { role: 'error_log', content: cutMsg, mid: newMid(), ts: Date.now() });
 					if (owns()) appendError(cutMsg);
 				}
@@ -42155,7 +42372,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					turnCost = Math.max(0, (chat.costUsd || 0) - tok0.cost);
 				}
 				tmeter.end(lastHow);
-				recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'), turnSpent);
+				recordTurnOutcome(tp.model, tp.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'), turnSpent);
 				// THE ENDING IS THE LAST RECORD OF THE TURN. Stored here, so it sits under
 				// the answer it is about rather than over it, and so a reload draws it where
 				// this sitting drew it.
@@ -42174,6 +42391,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				pendingEnd = null;
 				chat._generating = false;
 				chat._runApp = null;
+				chat._turnSet = null;
 				chat._capTry = 0;            // the backoff belonged to this turn only
 				// The turn is over, so the last question can be asked again. The two
 				// controls are withheld while one runs (`mountTurnActions` tests
@@ -42201,8 +42419,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// was the other desktop, the join missed, and a US$1.14 turn the app started
 					// by itself was booked against a model named `?`. The turn knows its own
 					// model; nothing has to be joined to learn it.
-					m:    String(chat.model || '').slice(0, 48),
-					prov: String(chat.provider || '').slice(0, 24),
+					m:    String(tp.model).slice(0, 48),
+					prov: String(tp.provider).slice(0, 24),
 					// `r` the engine's model rounds, `k` the tool calls they asked for; see `turnRounds`.
 					r:    turnRounds,
 					k:    callN,
@@ -42217,8 +42435,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// lens had to GUESS which ledger entry was this turn (device + a 5s
 					// clock skew + equal prompt size), which is what put one turn on the
 					// screen twice under two devices.
-					m:    String(chat.model || '').slice(0, 48),
-					prov: String(chat.provider || '').slice(0, 24),
+					m:    String(tp.model).slice(0, 48),
+					prov: String(tp.provider).slice(0, 24),
 					out:  (chat._aborted || pausedBack || cutWhy) ? 'stopped'
 						: (threw || sawError) ? (capFail ? 'cap' : 'error')
 						: (lastHow === 'silent' || lastHow === 'reasoned_only' || lastHow === 'malformed')
@@ -42318,8 +42536,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var d = Workers.gatherDepth[chat.id] | 0;
 				delete Workers.gatherDepth[chat.id];
 				Workers.dispatch('', '', dispatched, chatTainted,
-					chatWorkerModel(chat), d, { chatId: chat.id, chatName: chat.name || '',
-						web: chatWebWord(app) });
+					turnSet.workers, d, { chatId: chat.id, chatName: chat.name || '',
+						web: chatWebWord(app), models: turnSet });
 			}
 		} else if (rejectedSpawns) {
 			appendError(tOr('agents.no_task',
@@ -42351,7 +42569,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `chat` - The chat dispatching.
 	function chatWorkerModel(chat) {
-		var m = turnModelOf(chat);
+		var m = window.DaimondModels ? DaimondModels.effective({ kind: 'chat', chat: chat }, 'workers') : turnModelOf(chat);
 		var r = window.DaimondModels && DaimondModels.resolve(m.provider, m.model);
 		if (r) return { provider: r.provider, model: r.model, chosen: true };
 		return { provider: m.provider, model: m.model, chosen: true };
@@ -42468,7 +42686,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat.costUsd = (chat.costUsd || 0) + d.cost;
 		// Billed to the chat's OWN Diamond, which for an ordinary chat is nothing at all,
 		// never the selected one (see `recordSpend`).
-		d.entry = recordSpend(chat.model, d.p, d.c, d.ca, d.cost, chat.provider, chat.diamondId || '', turnId);
+		// Billed to the model THIS engine was built on (U1d): a following chat's record names none.
+		var pv = _appProv.get(app);
+		var bp = (pv && pv.m) ? { model: pv.m, provider: pv.pv || '' } : (chat._appPair || turnModelOf(chat));
+		d.entry = recordSpend(bp.model, d.p, d.c, d.ca, d.cost, bp.provider, chat.diamondId || '', turnId);
 		return d;
 	}
 
@@ -42910,11 +43131,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// # Arguments
 		/// * `turnId` - The tag the engine was handed with `set_turn_tag`.
 		/// * `owner` - `{ chatId, chatName }` for a chat, `{ diamondId, diamondName, depth }`
-		///   for a Diamond's daimon.
+		///   for a Diamond's daimon, each with `models`, the set the turn resolved at its start
+		///   (`turnModelsOfChat`, `turnModelsOfDiamond`), which every worker it starts runs on.
 		holdTurn: function (turnId, owner) {
 			var turn = String(turnId || '');
 			if (!turn) return;
 			this.liveTurns[turn] = owner || {};
+		},
+
+		/// The set a running daimon turn of `diamondId` began on, or null when none is running here.
+		turnModelsFor: function (diamondId) {
+			var self = this, got = null;
+			Object.keys(this.liveTurns).forEach(function (k) {
+				var o = self.liveTurns[k] || {};
+				if (o.diamondId && o.diamondId === diamondId && o.models) got = o.models;
+			});
+			return got;
 		},
 
 		/// The turn has ended: stop holding its workers back, and settle anything still waiting.
@@ -42992,8 +43224,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// says the refusal as a pause's (`paused_line`).
 						return JSON.stringify({ started: false, why: gate.why, paused: gate.paused || '' });
 					}
-					var pick = live.chatId
-						? (chat ? chatWorkerModel(chat) : null)
+					// THE TURN'S OWN SET (U1d): a round of this turn dispatches on the models the turn
+					// began on, not on the setting as it stands now. A turn held without one (an
+					// older caller) resolves here, as it always did.
+					var tm = live.models || null;
+					var pick = tm ? tm.workers
+						: live.chatId ? (chat ? chatWorkerModel(chat) : null)
 						: diamondWorkerModel(live.diamondId || '');
 					if (!pick || !pick.model) {
 						return JSON.stringify({ started: false,
@@ -43007,7 +43243,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var ids = self.dispatch(live.diamondId || '', live.diamondName || '',
 						[{ name: name, task: task }], tainted, pick, live.depth | 0,
 						{ chatId: live.chatId || '', chatName: live.chatName || '',
-							turnId: turn, how: live.how || null, web: String((o && o.web) || '') });
+							turnId: turn, how: live.how || null, web: String((o && o.web) || ''), models: tm });
 					if (!ids || !ids.length) {
 						return JSON.stringify({ started: false,
 							why: 'the worker pump would not take it' });
@@ -43438,7 +43674,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!specs || !specs.length) return [];
 			revealAgents();
 			var self = this;
-			var wm = (pick && pick.model) ? pick : diamondWorkerModel(diamondId);
+			// THE SET THE TURN BEGAN ON (U1d), when a turn sent this: its workers and images halves
+			// are what this batch runs on, so a default moved during the turn reaches the next
+			// turn and not this one's later rounds. Every dispatch today comes from a turn; one
+			// that does not resolves here, now, and says so.
+			var tm = (owner && owner.models) || null;
+			if (!tm) diag('worker models', 'no turn set; resolved at dispatch diamond=' + String(diamondId || '').slice(0, 12)
+				+ ' chat=' + String((owner && owner.chatId) || '').slice(0, 12));
+			var wm = (pick && pick.model) ? pick : tm ? tm.workers : diamondWorkerModel(diamondId);
 			// The secondary is a map keyed by modality, so it is resolved per SPEC rather
 			// than once for the batch: one fan-out can quite reasonably be two agents reading
 			// code and one reading a screenshot. The text half is still resolved once, above,
@@ -43449,7 +43692,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// on it would move a chat's worker onto an unrelated model and an unrelated
 			// key. `pick.chosen` suppresses routing on that path anyway, and this makes
 			// the pair honest rather than relying on the flag alone.
-			var vm = diamondId ? diamondVisionModel(diamondId) : wm;
+			var vm = tm ? tm.images : diamondId ? diamondVisionModel(diamondId) : wm;
 			// One batch per dispatch, so the reports can be gathered together when the
 			// LAST of them finishes rather than one at a time. A conductor that reads
 			// three reports in one round can say which two agree; one that reads them
@@ -43465,6 +43708,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				diamondId: diamondId, diamondName: diamondName,
 				chatId: chatId, chatName: chatName, turnId: turnId,
 				depth: (depth | 0), expected: specs.length, ids: [],
+				models: tm,	// the turn's set, which its gather round runs on (U1d2)
 			};
 			// A PENDING-ONLY TURN'S FAN-OUT IS PART OF THAT TURN (post-QA r569qa2 Q3). Its report
 			// comes back as a round of the same mail turn: it posts nothing in the chat, and the
@@ -43546,6 +43790,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// when a Diamond's turn sent it -- so the grid can open each later turn's
 					// work with a diamond of its own (mock 'o', nested orchestrators).
 					parentId: turnId || batch,
+					// The set of the turn that sent it (U1d), so a refused picture moves where the
+					// turn's images half points (`visionTarget`), not where the setting does now.
+					turnModels: tm,
 					app: null,
 				};
 				// A CONTINUATION KEEPS ITS FOLDS AND TOOL HISTORY, unlike the plain
@@ -43791,7 +44038,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// once only -- so there is no re-gather to lose either.)
 			var dGath = diamonds.find(function (x) { return x.id === b.diamondId; });
 			if (!dGath) { owe('answered'); return; }	// the Diamond is gone, and its mail with it
-			if (!diamondCanRun(b.diamondId)) {
+			// The round runs on the turn's daimon (U1d2), so that is the model asked about.
+			var gm = b.models && b.models.daimon;
+			if (gm ? !(window.DaimondModels && DaimondModels.resolve(gm.provider, gm.model)) : !diamondCanRun(b.diamondId)) {
 				this.tellDaimon(b.diamondId, held + 'this diamond has no model to run on.'
 					+ '\n\n' + parts.join('\n\n'), quiet);
 				owe('failed');
@@ -43830,13 +44079,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				// A mail turn's report-back round is that turn still (Q3): pending-only, so it
 				// posts nothing in the chat, and its ending is what the batch owes the turn.
-				if (!b.follow) { runSteer(dGath, instruction, b.depth + 1); return; }
+				if (!b.follow) { runSteer(dGath, instruction, b.depth + 1, null, null, b.models); return; }
 				var before = _lastSteer[b.diamondId];
 				var ended = function () {
 					var e = _lastSteer[b.diamondId];
 					b.follow(e && e !== before ? e : { how: 'failed' });
 				};
-				Promise.resolve(runSteer(dGath, instruction, b.depth + 1, null, b.how))
+				Promise.resolve(runSteer(dGath, instruction, b.depth + 1, null, b.how, b.models))
 					.then(ended, function () { b.follow({ how: 'failed' }); });
 			};
 			setTimeout(function () { deliverGather(GATHER_IDLE_TRIES); }, 0);
@@ -43940,7 +44189,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& b.depth < this.MAX_GATHER_DEPTH
 				&& !chat._generating
 				&& chatShowingOrRunning(chat)
-				&& !!(window.DaimondModels && DaimondModels.resolve(chat.provider, chat.model));
+				&& !!(window.DaimondModels && DaimondModels.resolve(	// the turn's daimon, which the round runs on (U1d2)
+					(b.models && b.models.daimon || chat).provider, (b.models && b.models.daimon || chat).model));
 			if (!canRun) {
 				// No turn. The reports go in as an assistant message, which is what they
 				// are — the app relaying what the workers said — and the transcript is
@@ -43985,7 +44235,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				self.gatherDepth[c.id] = (b.depth | 0) + 1;
 				// HERE, NOT ELECTED (UNBLOCK-1 QFOLLOW): the round's workers ran here and their
 				// results are here, so the turn that reads them runs where they are.
-				Promise.resolve(runTurn(c, instruction))
+				Promise.resolve(runTurn(c, instruction, { models: b.models }))
 					.catch(function () { /* the round's own error handling stands */ })
 					.then(function () { delete self.roundPending[b.chatId]; });
 			}, 0);
@@ -44816,7 +45066,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (run.status !== 'running') return;	// stopped or paused by hand; not ours
 			// NOWHERE TO GO, and both spellings of it: no image model was ever chosen for
 			// this Diamond, or the one chosen is the same pair as the worker model.
-			return imagesModelFor(run.diamondId, diamondWorkerModel(run.diamondId));
+			// The set of the turn that dispatched it (U1d); a run from before the set re-resolves.
+			var tm = run.turnModels;
+			return tm ? imagesModelFor(run.diamondId, tm.workers, tm.images)
+				: imagesModelFor(run.diamondId, diamondWorkerModel(run.diamondId));
 		},
 
 		/// Move a worker that was refused a picture onto its Diamond's image model, and
@@ -54239,8 +54492,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// the crystal it holds, so it lives in localStorage beside the app rather than in the Diamond's
 	// own OPFS record -- and no Rust has to learn about it.
 	var DIAMOND_MODELS_KEY = 'daimond-diamond-models';
-	// The record's two halves, each synced on its own stamp: `at` and `eat`.
-	var DIAMOND_MODEL_HALF  = ['provider', 'model', 'workerProvider', 'workerModel', 'visionProvider', 'visionModel'];
+	// The record's two halves: the models, whose three pairs (daimon, Workers, Images) each sync on
+	// their own stamp, `dat`, `wat` and `vat`; and the Effort, on `eat`. The fourth pair is no pick:
+	// it is the pair the daimon's last turn ran on, on `rat` (U2c, `noteModelInForce`), merged as
+	// the picks are so a turn run on another device counts here. One line, so the pairs travel
+	// with the half wherever it is lifted.
+	//
+	// `at` STAYS THE WHOLE MODEL HALF'S CLOCK, the latest of `dat`, `wat` and `vat` (QA-A, S): a
+	// build before the split decides the half on `at` alone, so a pick that moved only its own
+	// stamp never reached it, and its next edit wrote the old pick back as newer. `dat` is written
+	// only where it differs from `at`; absent, the daimon pair is stamped at `at`.
+	var DIAMOND_MODEL_HALF  = ['provider', 'model', 'workerProvider', 'workerModel', 'visionProvider', 'visionModel', 'ranProvider', 'ranModel'], DIAMOND_MODEL_PAIRS = [['dat', 'provider', 'model'], ['wat', 'workerProvider', 'workerModel'], ['vat', 'visionProvider', 'visionModel'], ['rat', 'ranProvider', 'ranModel']];
 	var DIAMOND_EFFORT_HALF = ['effort', 'effortProvider', 'effortModel'];
 
 	function diamondModels() { return readJson(DIAMOND_MODELS_KEY, {}) || {}; }
@@ -54261,13 +54523,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// not have to carry the other two -- the first version of this took the whole record and
 	/// a dialog that set the worker model alone would have silently cleared the vision one.
 	///
-	/// THE RECORD SYNCS AS A SETTING, ON ITS OWN STAMPS (check_f1 B1). `at` moves when the models
-	/// change and `eat` when the Effort does, and `applyDiamonds` adopts each half of an arriving
-	/// record by its stamp, whichever way the Diamond's own stamp falls. Stamping the whole
-	/// Diamond instead let a press of the Effort step win a whole-Diamond race and put another
-	/// device's crystal edit off the head; one stamp for the record would let a press revert a
-	/// model changed elsewhere. `at` here is given only where a change is not the user's (a
-	/// dropped level) and must not outrank theirs.
+	/// THE RECORD SYNCS AS A SETTING, ON ITS OWN STAMPS (check_f1 B1). `dat` moves when the daimon's
+	/// model changes, `wat` when the Workers' does, `vat` when the Images' does and `eat` when the
+	/// Effort does, and `at` with any of the first three, for builds that read only it, and `applyDiamonds` adopts each pair of an arriving record by its stamp,
+	/// whichever way the Diamond's own stamp falls. Stamping the whole Diamond instead let a press
+	/// of the Effort step win a whole-Diamond race and put another device's crystal edit off the
+	/// head; one stamp for the models let a clear on one device and an Images pick on another
+	/// lose one of the two (D-20261018-09). `at` here is given only where a change is not the
+	/// user's (a dropped level) and must not outrank theirs.
+	///
+	/// A clear is a write: emptying a pick leaves a stamped tombstone, so the clear travels. Only a
+	/// Diamond with no record and nothing to say writes none.
 	function setDiamondModel(id, pick, at) {
 		if (!id || !pick) return;
 		var all = diamondModels();
@@ -54289,25 +54555,53 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			workerModel:    keep('workerModel', pick.workerModel),
 			visionProvider: keep('visionProvider', pick.visionProvider),
 			visionModel:    keep('visionModel', pick.visionModel),
+			ranProvider:    keep('ranProvider', pick.ranProvider),	// the pair the last
+			ranModel:       keep('ranModel', pick.ranModel),		// turn ran on
 			effort:         effort,							// the daimon's Effort, '' for its model's default
 			effortProvider: effort ? keep('effortProvider', pick.effortProvider) : '',	// the model
 			effortModel:    effort ? keep('effortModel', pick.effortModel) : '',		// it was set for
 		};
 		var bare = DIAMOND_MODEL_HALF.concat(DIAMOND_EFFORT_HALF).every(function (k) { return !next[k]; });
-		if (bare && (!all[id] || all[id].model)) return;	// a Diamond with no primary is not a record
+		if (bare && !all[id]) return;	// no record and nothing to say: none is made
+		// The stamp a model pair of `r` holds. A record from a build before the split carries one
+		// `at` for all three pairs, so the daimon pair, or a Workers or Images pick, with no stamp
+		// of its own reads as the record's `at`; an empty Workers or Images pair with none is
+		// unstamped. `at` was never the ran pair's clock, so a ran pair with no `rat` is unstamped:
+		// the migration's seed, which any real turn's `rat` outranks.
+		var pairStamp = function (r, p) {
+			if (p[0] === 'dat') return typeof r.dat === 'number' ? r.dat : (+r.at || 0);	// 0 is a stamp
+			if (p[0] === 'rat') return +r.rat || 0;
+			return +r[p[0]] || ((r[p[1]] || r[p[2]]) ? (+r.at || 0) : 0);
+		};
 		var moved = function (half) { return half.some(function (k) { return (was[k] || '') !== next[k]; }); };
-		var mm = moved(DIAMOND_MODEL_HALF), em = moved(DIAMOND_EFFORT_HALF);
-		// An unchanged half keeps its stamp: a call that restates it must not outrank a change
+		var pm = DIAMOND_MODEL_PAIRS.map(function (p) { return moved(p.slice(1)); });
+		var em = moved(DIAMOND_EFFORT_HALF);
+		// An unchanged pair keeps its stamp: a call that restates it must not outrank a change
 		// made elsewhere.
-		if (!mm && !em) return;
-		// Each moved half outranks the stamp it replaces, whatever this clock says (stamp.js).
+		if (!em && !pm.some(Boolean)) return;
+		// Each moved pair outranks the stamp it replaces, whatever this clock says (stamp.js). A
+		// moved daimon, Workers or Images pair also outranks `at`, which an old peer compares
+		// alone, so a slow clock's pick is not lost to that peer's echo of the older half.
 		var stamp = function (prev) { return at !== undefined ? at : DaimondStamp.next(prev); };
-		next.at  = mm ? stamp(was.at)  : (+was.at || 0);
+		var ps = DIAMOND_MODEL_PAIRS.map(function (p, i) {
+			var prev = pairStamp(was, p);
+			return pm[i] ? stamp(i < 3 ? Math.max(prev, +was.at || 0) : prev) : prev;
+		});
+		// `at` (the latest pick's) and `eat` are always written, as before; `dat` after them only
+		// where it is not `at`, and `wat`, `vat` and `rat` only once they say something, so a
+		// record that never had a Workers or Images pick keeps the bytes it always had.
+		// `mergeDiamondModel` writes the same order.
+		next.at  = Math.max(ps[0], ps[1], ps[2]);
 		next.eat = em ? stamp(was.eat) : (+was.eat || 0);
+		DIAMOND_MODEL_PAIRS.forEach(function (p, i) { if (i ? ps[i] : ps[i] !== next.at) next[p[0]] = ps[i]; });
 		all[id] = next;
 		try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
-		// Another model is another client, and the notes are chosen per model (C6).
-		try { if (typeof Notes === 'object' && Notes) Notes.reapply(id); } catch (e) { /* the notes are not up yet */ }
+		// Another model is another client, and the notes are chosen per model (C6). The last-run
+		// pair alone is no pick: its turn re-applies them itself (`noteModelInForce`).
+		var picked = em || pm.some(function (m, i) { return m && DIAMOND_MODEL_PAIRS[i][0] !== 'rat'; });
+		if (picked) {
+			try { if (typeof Notes === 'object' && Notes) Notes.reapply(id); } catch (e) { /* the notes are not up yet */ }
+		}
 	}
 
 	function blankDiamondModel() {
@@ -54328,7 +54622,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!theirs || typeof theirs !== 'object') return null;
 		var m = (mine && typeof mine === 'object') ? mine : {};
 		var str = function (o, k) { return typeof o[k] === 'string' ? o[k] : ''; };
-		var ta = +theirs.at || 0, te = +theirs.eat || 0, ma = +m.at || 0, me = +m.eat || 0;
+		var pairStamp = function (r, p) {	// as in setDiamondModel
+			if (p[0] === 'dat') return typeof r.dat === 'number' ? r.dat : (+r.at || 0);	// 0 is a stamp
+			if (p[0] === 'rat') return +r.rat || 0;
+			return +r[p[0]] || ((r[p[1]] || r[p[2]]) ? (+r.at || 0) : 0);
+		};
+		var te = +theirs.eat || 0, me = +m.eat || 0;
 		var out = blankDiamondModel(), moved = false;
 		var take = function (half, t, mn) {
 			var theirsWins = (t || mn) ? t > mn
@@ -54337,11 +54636,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			half.forEach(function (k) { out[k] = str(from, k); });
 			if (theirsWins) moved = true;
 		};
-		take(DIAMOND_MODEL_HALF, ta, ma);
+		var ps = DIAMOND_MODEL_PAIRS.map(function (p) {
+			var t = pairStamp(theirs, p), mn = pairStamp(m, p);
+			take(p.slice(1), t, mn);
+			return Math.max(t, mn);
+		});
 		take(DIAMOND_EFFORT_HALF, te, me);
 		if (!moved) return null;
-		out.at  = Math.max(ta, ma);
+		// The stamps in the order `setDiamondModel` writes them.
+		out.at  = Math.max(ps[0], ps[1], ps[2]);
 		out.eat = Math.max(te, me);
+		DIAMOND_MODEL_PAIRS.forEach(function (p, i) { if (i ? ps[i] : ps[i] !== out.at) out[p[0]] = ps[i]; });
 		// An Effort paired with no model in force is the model's own default: kept as a level.
 		if (!out.effort) { out.effortProvider = ''; out.effortModel = ''; }
 		return out;
@@ -54357,6 +54662,219 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 		try { if (typeof Notes === 'object' && Notes) Notes.reapply(id); } catch (e) { /* the notes are not up yet */ }
 		return true;
+	}
+
+	// ── Copies become follows (D-20261018-09 U1f) ────────────────────
+	//
+	// Until U1c every chat and New Diamond stored a COPY of the default, so moving the default moved
+	// nothing he could see. This clears, once per device, every stored pick that only restates
+	// what it would follow anyway, so it follows from now on. Nothing changes which model runs,
+	// except Summarising: equal to the default, it now follows the conversation's own model, as
+	// the spec's §3 has it.
+	// This device's pre-migration copy, and the run-once marker.
+	var INHERIT_KEY = 'daimond-inherit-v1';
+
+	/// Clear the copies (above). Did it run? It runs once, and never against an empty default or
+	/// a models store with no provider, which is what a cold WebKit read looks like (models.js
+	/// `migrate`): there the copy is not written either, so a later boot tries again.
+	///
+	/// Equal is the same provider AND the same model, both against the STORED default
+	/// (`storedChoice`), not this device's fallback. A pick naming no provider names the default's,
+	/// as `resolve` reads it. A Diamond's or chat's daimon equal to the default is cleared; its
+	/// Workers when equal to the daimon in force; a Diamond's Images when equal to the Workers in
+	/// force, which is what an empty Images pick falls back to (`diamondVisionModel`). Drafting
+	/// and Summarising when equal to the default. Effort is left alone.
+	///
+	/// Every clear is the ordinary stamped write (`setDiamondModel`, `touchChatModel`, `setDraft`),
+	/// all in this one synchronous task, so the next parcel carries them together. So does each
+	/// Diamond's last-run pair, seeded where it has none with the pair in force before the
+	/// migration, so the history notes a move made after it (`noteModelInForce`, QA B #1).
+	function migrateInherit() {
+		var M = window.DaimondModels;
+		if (!M || typeof M.storedChoice !== 'function' || !chatsUp) return false;
+		try { if (localStorage.getItem(INHERIT_KEY) !== null) return false; } catch (e) { return false; }
+		var d = M.storedChoice('def');
+		if (!d || !d.provider || !d.model) return false;
+		var norm = function (p, m) { return { provider: m ? (p || d.provider) : '', model: m || '' }; };
+		var same = function (a, b) { return !!a.model && a.model === b.model && a.provider === b.provider; };
+		var all = diamondModels();
+		var dr  = M.storedChoice('draft') || { provider: '', model: '' };
+		var mine = { at: Date.now(), diamondModels: JSON.parse(JSON.stringify(all)), chats: {},
+			draft: { provider: dr.provider, model: dr.model },
+			fold: { provider: cfg.foldProvider || '', model: cfg.foldModel || '' } };
+		var own = chats.filter(function (c) { return c && c.id && !c.diamondId; });
+		own.forEach(function (c) {
+			mine.chats[c.id] = { provider: c.provider || '', model: c.model || '',
+				workerProvider: c.workerProvider || '', workerModel: c.workerModel || '' };
+		});
+		// The plan before the copy, so the copy names exactly what was cleared and
+		// `unmigrateInherit` puts back that and nothing else (QA B #4).
+		var picks = {}, clearedD = {}, clearedC = {};
+		// Every Diamond with no last-run pair takes the pair in force before the migration, which
+		// is what its last old-build turn ran on, so the next turn on another model writes the
+		// history note (QA B #1). A Diamond with no record follows the default. The seed is
+		// unstamped (0), so a turn another device ran before this one migrated keeps its `ran`
+		// when they sync and its note is not written twice (qa_mmB_migrate M3).
+		var seeds = {};
+		var ids = Object.keys(all);
+		if (typeof diamonds !== 'undefined' && Array.isArray(diamonds)) {
+			diamonds.forEach(function (x) { if (x && x.id && ids.indexOf(x.id) < 0) ids.push(x.id); });
+		}
+		ids.forEach(function (id) {
+			var r = all[id];
+			if (r !== undefined && (!r || typeof r !== 'object')) return;
+			r = r || {};
+			var dm = norm(r.provider, r.model), wk = norm(r.workerProvider, r.workerModel);
+			var vm = norm(r.visionProvider, r.visionModel);
+			var inForce = dm.model ? dm : d, pick = {}, cl = [];
+			if (same(dm, d)) { pick.provider = ''; pick.model = ''; cl.push('daimon'); }
+			var wKept = !!wk.model && !same(wk, inForce);
+			if (wk.model && !wKept) { pick.workerProvider = ''; pick.workerModel = ''; cl.push('workers'); }
+			if (same(vm, wKept ? wk : inForce)) { pick.visionProvider = ''; pick.visionModel = ''; cl.push('images'); }
+			if (!r.ranModel) seeds[id] = { ranProvider: inForce.provider, ranModel: inForce.model };
+			if (cl.length) clearedD[id] = cl;
+			if (Object.keys(pick).length) picks[id] = pick;
+		});
+		var plan = own.map(function (c) {
+			var cm = norm(c.provider, c.model), wk = norm(c.workerProvider, c.workerModel);
+			var p = { c: c, m: same(cm, d), w: same(wk, cm.model ? cm : d) };
+			if (p.m || p.w) clearedC[c.id] = [].concat(p.m ? ['daimon'] : [], p.w ? ['workers'] : []);
+			return p;
+		});
+		var clearDraft = same(norm(dr.provider, dr.model), d);
+		var clearFold  = same(norm(cfg.foldProvider, cfg.foldModel), d);
+		mine.cleared = { diamonds: clearedD, chats: clearedC, draft: clearDraft, fold: clearFold };
+		// The copy first: a migration that cannot be undone does not run.
+		try { localStorage.setItem(INHERIT_KEY, JSON.stringify(mine)); } catch (e) { return false; }
+		Object.keys(picks).forEach(function (id) { setDiamondModel(id, picks[id]); });
+		Object.keys(seeds).forEach(function (id) { setDiamondModel(id, seeds[id], 0); });
+		var moved = false;
+		plan.forEach(function (p) {
+			if (!p.m && !p.w) return;
+			if (p.m) { p.c.provider = ''; p.c.model = ''; }
+			if (p.w) { p.c.workerProvider = ''; p.c.workerModel = ''; }
+			touchChatModel(p.c);
+			moved = true;
+		});
+		if (moved) persistChats();
+		if (clearDraft) M.setDraft('', '');
+		if (clearFold) setFoldPick('', '');
+		return true;
+	}
+
+	// Has the boot's migration run, and who waits for it.
+	var _inheritDone = { ran: false, waiters: [] };
+
+	/// The boot's migration (above), run once its Diamond list is read, so a Diamond with no model
+	/// record (a template, or one made without a key) is in it and gets its last-run pair. The
+	/// models store has settled at unlock and the chats before it (`chatsUp`). Whether it ran or
+	/// declined, the parcel it held back may go now (`inheritGate`).
+	function bootInherit() {
+		try { migrateInherit(); } catch (e) { diag('inherit-migrate', { why: String(e && e.message || e) }); }
+		_inheritDone.ran = true;
+		_inheritDone.waiters.splice(0).forEach(function (r) { r(); });
+	}
+
+	/// Resolves once the boot's migration has run, so the first parcel carries its clears, or after
+	/// `ms`: a Diamond list that never comes back delays sync, it does not stop it.
+	function inheritGate(ms) {
+		if (_inheritDone.ran) return Promise.resolve();
+		return new Promise(function (r) {
+			var tm = setTimeout(r, ms);
+			_inheritDone.waiters.push(function () { clearTimeout(tm); r(); });
+		});
+	}
+
+	/// Put back what `migrateInherit` cleared on this device, from its copy, as new stamped writes
+	/// that travel like any change. For the console (`DaimondModels.unmigrateInherit()`); the copy
+	/// stays, so the migration does not run again.
+	///
+	/// Compare-and-set, as `undoEveryone` is (QA B #4): a pair is put back only where the migration
+	/// cleared it and it still holds the '' the migration wrote. A pick made since, here or on
+	/// another device, is a newer decision and stays, and the last-run pair is never touched. A
+	/// copy from before the copy named its clears counts each pair it held as cleared.
+	function unmigrateInherit() {
+		var was = readJson(INHERIT_KEY, null);
+		if (!was || typeof was !== 'object' || was.undoneAt) return false;
+		var M = window.DaimondModels;
+		var str = function (o, k) { return (o && typeof o[k] === 'string') ? o[k] : ''; };
+		var cl  = (was.cleared && typeof was.cleared === 'object') ? was.cleared : null;
+		var HALVES = { daimon: ['provider', 'model'], workers: ['workerProvider', 'workerModel'],
+			images: ['visionProvider', 'visionModel'] };
+		// The halves of `w` (the copy) to put back on `now`, as one pick: cleared, and still ''.
+		var restore = function (now, w, cleared, names) {
+			var pick = {};
+			names.forEach(function (h) {
+				var ks = HALVES[h];
+				if (!str(w, ks[1])) return;
+				if (cleared && cleared.indexOf(h) < 0) return;
+				if ((now && (now[ks[0]] || now[ks[1]]))) return;
+				pick[ks[0]] = str(w, ks[0]); pick[ks[1]] = str(w, ks[1]);
+			});
+			return pick;
+		};
+		var dms = was.diamondModels || {}, live = diamondModels();
+		Object.keys(dms).forEach(function (id) {
+			var cleared = cl ? ((cl.diamonds || {})[id] || []) : null;
+			var pick = restore(live[id], dms[id], cleared, ['daimon', 'workers', 'images']);
+			if (Object.keys(pick).length) setDiamondModel(id, pick);
+		});
+		var moved = false;
+		chats.forEach(function (c) {
+			var w = c && (was.chats || {})[c.id];
+			if (!w || c.diamondId) return;
+			var cleared = cl ? ((cl.chats || {})[c.id] || []) : null;
+			var pick = restore(c, w, cleared, ['daimon', 'workers']);
+			if (!Object.keys(pick).length) return;
+			Object.keys(pick).forEach(function (k) { c[k] = pick[k]; });
+			touchChatModel(c);
+			moved = true;
+		});
+		if (moved) persistChats();
+		var dr = M && M.storedChoice ? M.storedChoice('draft') : null;
+		if (dr && !dr.model && str(was.draft, 'model') && (!cl || cl.draft)) {
+			M.setDraft(str(was.draft, 'provider'), str(was.draft, 'model'));
+		}
+		if (!cfg.foldModel && str(was.fold, 'model') && (!cl || cl.fold)) {
+			setFoldPick(str(was.fold, 'provider'), str(was.fold, 'model'));
+		}
+		was.undoneAt = Date.now();
+		try { localStorage.setItem(INHERIT_KEY, JSON.stringify(was)); } catch (e) { /* quota: the writes above stand */ }
+		return true;
+	}
+
+	/// THE HISTORY FOLLOWS THE MODEL IN FORCE, NOT THE BUTTON (D-20261018-09 U2c; Models spec §3).
+	/// Called as a daimon turn starts, before its request, with the pair it runs on. Where that
+	/// pair is not the one its last turn ran on (the record's `ran` pair), the steering notes are
+	/// re-applied and the model-change note goes into the crystal's history. A Diamond that follows
+	/// the default is never written to when the default moves, so a note written on Change missed
+	/// it; this covers Change, a moved default, a pick synced from another device and *Everyone
+	/// uses* alike, with no toast. The `ran` pair syncs on `rat`, so a turn another device ran on
+	/// the new pair has already said it. A first turn, with no `ran`, writes it and nothing else.
+	/// `ran` moves only once the note is in, so a note that failed is tried again next turn. Does
+	/// the history say the model changed?
+	///
+	/// # Arguments
+	/// * `app` - The turn's engine, which writes the note (`record_model_change`).
+	async function noteModelInForce(id, pair, app) {
+		if (!id || !pair) return false;
+		var rec  = diamondModels()[id] || {};
+		var to   = { provider: pair.provider || '', model: pair.model || '' };
+		var from = { provider: rec.ranProvider || '', model: rec.ranModel || '' };
+		if (!to.model || (from.provider === to.provider && from.model === to.model)) return false;
+		if (from.model) {
+			try { if (typeof Notes === 'object' && Notes) Notes.reapply(id); } catch (e) { /* the notes are not up yet */ }
+			try {
+				await app.record_model_change(id, t('tile.model_change_note', { from: from.model, to: to.model }));
+			} catch (e) {
+				// The turn runs on the new model all the same; the history line waits for the next.
+				diag('model change', 'note for ' + id + ' not written, ' + from.model + ' -> ' + to.model
+					+ ': ' + ((e && e.message) || e));
+				return false;
+			}
+		}
+		setDiamondModel(id, { ranProvider: to.provider, ranModel: to.model });
+		return !!from.model;
 	}
 
 	/// The daimon's Effort on the model this Diamond runs on now. A level the model in force does
@@ -54378,10 +54896,91 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// The model a Diamond runs on. A Diamond made before Diamonds had models falls back to the default,
-	/// which is exactly what it was silently doing already.
+	/// which is exactly what it was silently doing already. The chain is `DaimondModels.effective`'s.
 	function diamondModel(id) {
-		var m = diamondModels()[id];
-		return m && m.model ? m : (window.DaimondModels ? DaimondModels.getDefault() : { provider: '', model: '' });
+		return window.DaimondModels
+			? DaimondModels.effective({ kind: 'diamond', id: id }, 'daimon') : { provider: '', model: '' };
+	}
+
+	/// A model record's own picks, as `DaimondModels.effective` reads them: '' where unset.
+	function modelPicksOf(rec) {
+		rec = rec || {};
+		return {
+			daimon:  { provider: rec.provider || '',       model: rec.model || '' },
+			workers: { provider: rec.workerProvider || '', model: rec.workerModel || '' },
+			images:  { provider: rec.visionProvider || '', model: rec.visionModel || '' },
+		};
+	}
+
+	/// A Diamond's own picks, from its record.
+	function diamondPicks(id) { return modelPicksOf(diamondModels()[id]); }
+
+	/// A chat's own picks. A chat inside a Diamond owns no model (`chatOwnsModel`): its daimon is
+	/// the Diamond's, and its workers follow that daimon unless a Jobs pick says otherwise.
+	function chatPicks(chat) {
+		if (chat && chat.diamondId) return modelPicksOf(diamondPicks(chat.diamondId).daimon);
+		return modelPicksOf(chat && { provider: chat.provider, model: chat.model,
+			workerProvider: chat.workerProvider, workerModel: chat.workerModel });
+	}
+
+	/// The global Summarising pick (`cfg.foldModel`), which stays a device setting.
+	function summarisingPick() { return { provider: cfg.foldProvider || '', model: cfg.foldModel || '' }; }
+
+	// ── The writers *Everyone uses* reaches through (D-20261018-09 U2a) ──
+	// `DaimondModels.setEveryone` decides what to clear; these do the clearing, each as the
+	// ordinary stamped write, so the change set is the one a hand edit would make.
+
+	/// Every Diamond, and every chat that owns a model, named as the rail names it. A record whose
+	/// Diamond the rail has not listed yet is a target still, so its pick is not left behind.
+	function everyoneTargets() {
+		var out = [], seen = {};
+		var add = function (id, name) {
+			if (!id || seen[id]) return;
+			seen[id] = true;
+			out.push({ target: { kind: 'diamond', id: id }, name: name || '' });
+		};
+		diamonds.forEach(function (d) { if (d) add(d.id, d.name); });
+		Object.keys(diamondModels()).forEach(function (id) { add(id, ''); });
+		chats.forEach(function (c) {
+			if (c && c.id && !c.diamondId) out.push({ target: { kind: 'chat', chat: c }, name: chatDisplayName(c) });
+		});
+		return out;
+	}
+
+	// A chat cleared and not yet saved (`settlePicks`).
+	var _picksDirty = false;
+
+	/// Clear one text pick: a Diamond's or chat's `'daimon'` or `'workers'`, or `'summarising'`
+	/// on `{ kind: 'jobs' }`. Never Images. A chat is saved by `settlePicks`, once for the run.
+	function clearPick(target, role) { setPick(target, role, null); }
+
+	/// Write one text pick, `pair` as `{ provider, model }` (null clears it), as `clearPick`
+	/// names them: the Undo of *Everyone uses* puts a cleared pick back through here (U2b).
+	/// An unchanged pick writes nothing, so it keeps its stamp.
+	function setPick(target, role, pair) {
+		if (!target) return;
+		var pv = (pair && pair.model) ? (pair.provider || '') : '', md = (pair && pair.model) || '';
+		if (target.kind === 'jobs') { if (role === 'summarising') setFoldPick(pv, md); return; }
+		var ks = role === 'daimon' ? ['provider', 'model'] : role === 'workers' ? ['workerProvider', 'workerModel'] : null;
+		if (!ks) return;
+		if (target.kind === 'diamond') {
+			var pick = {};
+			pick[ks[0]] = pv; pick[ks[1]] = md;
+			setDiamondModel(target.id, pick);
+			return;
+		}
+		var c = target.chat || chats.filter(function (x) { return x && x.id === target.id; })[0];
+		if (!c || c.diamondId || ((c[ks[0]] || '') === pv && (c[ks[1]] || '') === md)) return;
+		c[ks[0]] = pv; c[ks[1]] = md;
+		touchChatModel(c);
+		_picksDirty = true;
+	}
+
+	/// Save the chats a run of `clearPick` or `setPick` changed.
+	function settlePicks() {
+		if (!_picksDirty) return;
+		_picksDirty = false;
+		persistChats();
 	}
 
 	/// The model this Diamond's WORKERS run on: what the user chose for them, and otherwise the
@@ -54393,16 +54992,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// provider's key. A Diamond made before this setting existed carries no worker model, and
 	/// "absent" therefore has to mean the Diamond's own model: reading it as the default would
 	/// preserve the defect for every Diamond that already exists.
+	///
+	/// A worker model whose provider has since lost its key falls through to the next link
+	/// (`DaimondModels.effective`): the global Workers pick, then the Diamond's own model.
 	function diamondWorkerModel(id) {
-		var m = diamondModels()[id];
-		if (m && m.workerModel) {
-			var r = window.DaimondModels
-				&& DaimondModels.resolve(m.workerProvider || '', m.workerModel);
-			// A worker model whose provider has since lost its key falls back to the Diamond's own
-			// model, which is the one thing here already known to be able to run.
-			if (r) return { provider: r.provider, model: r.model };
-		}
-		return diamondModel(id);
+		if (!window.DaimondModels) return diamondModel(id);
+		var e = DaimondModels.effective({ kind: 'diamond', id: id }, 'workers');
+		return { provider: e.provider, model: e.model };
 	}
 
 	/// Which file extensions this app can actually hand a model as an image.
@@ -54444,13 +55040,55 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `Workers.unseeable`. A Diamond with no vision model set falls back to the text one —
 	/// the run says which model it got, so a fallback is visible rather than silent.
 	function diamondVisionModel(id) {
-		var m = diamondModels()[id];
-		if (m && m.visionModel) {
-			var r = window.DaimondModels
-				&& DaimondModels.resolve(m.visionProvider || '', m.visionModel);
-			if (r) return { provider: r.provider, model: r.model };
-		}
-		return diamondWorkerModel(id);
+		if (!window.DaimondModels) return diamondWorkerModel(id);
+		var e = DaimondModels.effective({ kind: 'diamond', id: id }, 'images');
+		return { provider: e.provider, model: e.model };
+	}
+
+	/// THE MODELS A TURN RUNS ON, resolved once at its start (D-20261018-09 U1d; Models spec §3,
+	/// "A turn keeps the models it started with"). The turn holds this set on its run state and
+	/// every fan-out round of it dispatches on it, so a default moved mid-turn applies from the
+	/// next turn and never splits one turn across two models. `images.chosen` says the images
+	/// pair was picked (its own or the Jobs pick) rather than inherited from the workers, the
+	/// question `imagesModelFor` asks.
+	///
+	/// # Arguments
+	/// * `daimon` - The pair the daimon runs on this turn (`steerModelFor`), so a runner's
+	///   marked errand pair is the set's daimon as well.
+	function turnModelsOfDiamond(id, daimon) {
+		var d  = daimon || diamondModel(id) || {};
+		var im = window.DaimondModels
+			? DaimondModels.effective({ kind: 'diamond', id: id }, 'images') : diamondVisionModel(id);
+		return {
+			daimon:  { provider: d.provider || '', model: d.model || '' },
+			workers: diamondWorkerModel(id),
+			images:  { provider: im.provider || '', model: im.model || '',
+				chosen: im.from === 'own' || im.from === 'jobs' },
+		};
+	}
+
+	/// A copy of a held turn set, so a round that adjusts its own (`runTurn` does, when the engine fell
+	/// back) never edits the batch's.
+	function copyTurnSet(m) {
+		var c = function (p) { return p ? Object.assign({}, p) : { provider: '', model: '' }; };
+		return { daimon: c(m.daimon), workers: c(m.workers), images: c(m.images || m.workers) };
+	}
+
+	/// The same set for a chat. Its workers ride its own pair, `chosen` (`chatWorkerModel`), and a
+	/// chat has no images setting, so its images half is its workers'.
+	function turnModelsOfChat(chat, daimon) {
+		var d = daimon || turnModelOf(chat);
+		var w = chatWorkerModel(chat);
+		return { daimon: { provider: d.provider || '', model: d.model || '' }, workers: w, images: w };
+	}
+
+	/// The set a chat's turn runs on: `sent`, the set a hand-off's errand carried and the runner
+	/// resolved (`sentModelsOf`), or this device's own. A set holding only a daimon half (an
+	/// older asker's) takes its workers here.
+	function turnModelsOfRun(chat, sent) {
+		if (!sent || !sent.daimon) return turnModelsOfChat(chat);
+		if (!sent.workers) return turnModelsOfChat(chat, sent.daimon);
+		return { daimon: sent.daimon, workers: sent.workers, images: sent.images || sent.workers };
 	}
 
 	// ── A Diamond has two faces ──────────────────────────────────────
@@ -58628,9 +59266,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// NO name check: blank is legal and takes the sequential default
 				// below. `rail.err_name` stays for the rename paths, which do have
 				// to refuse an empty answer -- there is nothing to fall back to.
-				if (!v.model || !v.model.model) return t('rail.err_model');
-				if (!DaimondModels.resolve(v.model.provider, v.model.model)) {
-					return t('rail.err_no_key');
+				// A model is no longer required: none, or the default, follows the default
+				// (U1c). Refused only when nothing can run.
+				var m = v.model || {};
+				if (!DaimondModels.resolve(m.provider || '', m.model || '')) {
+					return t(m.model ? 'rail.err_no_key' : 'rail.err_model');
 				}
 				// A worker model on a provider with no readable key would fall back to the
 				// Diamond's own model at dispatch and silently ignore what was chosen here.
@@ -58658,12 +59298,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			noticeDialog(t('rail.create_failed'), friendlyError(e));
 			return;
 		}
-		var w = vals.workerModel || {};
+		// Only a deliberate pick is stored (U1c): an untouched picker, or one left on the
+		// default, writes no model, and workers equal to the daimon's model follow it.
+		var vm  = vals.model || {};
+		var own = storedPick(vm, DaimondModels.getDefault());
+		var daimon = DaimondModels.resolve(vm.provider || '', vm.model || '') || own;
+		var wk  = storedPick(vals.workerModel, daimon);
 		setDiamondModel(id, {
-			provider:       vals.model.provider,
-			model:          vals.model.model,
-			workerProvider: w.provider || '',
-			workerModel:    w.model || '',
+			provider:       own.provider,
+			model:          own.model,
+			workerProvider: wk.provider,
+			workerModel:    wk.model,
 		});
 		bumpDiamonds();
 		// Creating something is the user saying "show me this now". A search
@@ -60130,9 +60775,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// (`DaimondModels.cheapestSeeing`, D-20261009-27), marked `dflt` with the rule that chose it
 	/// (`familiar`: a maker the account already uses; `cheapest`: none did), so a daimon whose own
 	/// model reads no pictures is never left blind for want of a setting it did not know of.
-	function imagesModelFor(diamondId, from) {
+	function imagesModelFor(diamondId, from, held) {
+		// `held`: the images half of the running turn's set (`turnModelsOfDiamond`), read in place
+		// of the setting as it stands now, so a picture moved mid-turn goes where the turn began.
 		var chose = diamondModels()[diamondId];
-		var vm = (chose && chose.visionModel) ? diamondVisionModel(diamondId) : null;
+		var vm = held ? (held.chosen ? held : null)
+			: ((chose && chose.visionModel) ? diamondVisionModel(diamondId) : null);
 		if (vm && vm.model) {
 			if (from && vm.model === from.model && (vm.provider || '') === (from.provider || '')) return;
 			return { provider: vm.provider || '', model: vm.model };
@@ -60166,7 +60814,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { req = JSON.parse(String(reqJson || '{}')); } catch (e) { req = {}; }
 		var id = String(req.id || '');
 		var own = diamondModels()[id] || {};
-		var to = id ? imagesModelFor(id, { provider: own.provider || '', model: own.model || '' }) : null;
+		// The daimon's running turn, when there is one, answers with the set it began on (U1d).
+		var tm  = id ? Workers.turnModelsFor(id) : null;
+		var to  = !id ? null : tm ? imagesModelFor(id, tm.daimon, tm.images)
+			: imagesModelFor(id, { provider: own.provider || '', model: own.model || '' });
 		if (!to) return JSON.stringify({ ok: false, none: true });
 		// The model AND the row it went to, since the same model can sit on two rows with
 		// different keys (2026-10-12: credits' stale key beside openrouter's live one).
@@ -60555,18 +61206,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { id = await diamondApp().create_diamond(spec.name); }
 		catch (e) { await noticeDialog(t('rail.create_failed'), friendlyError(e)); return 'failed'; }
 
-		// The Diamond's own model, where there is one to give it. A capp draws and
+		// No model is written: the Diamond follows the default (U1c). A capp draws and
 		// records without a model at all, so a machine with no key still gets a
 		// working Life log -- it simply has no daimon to ask about it yet.
-		try {
-			var d = window.DaimondModels ? DaimondModels.getDefault() : null;
-			if (d && d.model && DaimondModels.resolve(d.provider, d.model)) {
-				setDiamondModel(id, {
-					provider: d.provider, model: d.model,
-					workerProvider: d.provider, workerModel: d.model,
-				});
-			}
-		} catch (e) { /* no models module: the Diamond is still a Diamond */ }
 
 		// ── A crystal, if the template did not bring one. See `seed`: without
 		//    content in `crystal.json` the crystal face draws its empty line and
@@ -65606,23 +66248,57 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	}
 
-	/// The model a daimon turn on Diamond `id` runs on: the pair a hand-off's errand carries
-	/// (`detached.model`) when the asker marked it its resolution (`src: 'diamond'`,
-	/// `errandModelOf`), and the Diamond's own otherwise, so an older asker's unmarked, stale
-	/// chat-record pair never runs. A marked pair this device cannot run is NOT swapped for its
-	/// own copy: the turn is handed back as the no-key gate hands it (401, `runnerErrorKind`), so
-	/// the asker, which has the key, runs what it showed.
+	/// THE SET A HANDED-OFF TURN RUNS ON (D-20261018-09 U1e), from its errand's `model`: the set
+	/// the asker resolved and showed (`errandModelOf`), each half resolved here, whenever it
+	/// carries `workers` (a Diamond's keeps `src: 'diamond'` for older runners); an older asker's
+	/// Diamond primary (`src: 'diamond'`, no `workers`) as `{ daimon }` alone, its workers
+	/// resolving on this device as they always did; and null for an unmarked pair, an older
+	/// asker's stale chat-record copy, which runs this device's own resolution. A marked half this
+	/// device cannot run is NOT swapped for its own: it throws 401. Asked before the claim
+	/// (`errandUnrunnable`), that refuses the turn and the asker runs it at once; met after it (a
+	/// key removed in between), the turn fails as a provider refusal (`runnerErrorKind`).
+	function sentModelsOf(sent) {
+		if (!sent || !sent.model || (sent.src !== 'asker' && sent.src !== 'diamond')) return null;
+		function run(p, half) {
+			var r = window.DaimondModels && DaimondModels.resolve(p.provider || '', p.model);
+			if (r) return { provider: r.provider, model: r.model };
+			diag('daimon model', half + '=' + p.model + ' unrunnable here, handed back');
+			var eKey = new Error('the turn’s ' + half + ' model has no usable api key on this device');
+			eKey.code = 401;
+			throw eKey;
+		}
+		var daimon = run(sent, 'daimon');
+		if (sent.src !== 'asker' && !sent.workers) return { daimon: daimon };
+		var w  = (sent.workers && sent.workers.model) ? run(sent.workers, 'workers') : daimon;
+		var im = (sent.images && sent.images.model) ? run(sent.images, 'images') : w;
+		return {
+			daimon:  daimon,
+			workers: { provider: w.provider, model: w.model, chosen: !!(sent.workers && sent.workers.chosen) },
+			images:  { provider: im.provider, model: im.model, chosen: !!(sent.images && sent.images.chosen) },
+		};
+	}
+
+	/// The set a daimon turn on Diamond `id` runs on: the one a hand-off's errand carries
+	/// (`detached.model`, `sentModelsOf`), whole or its daimon half, and the Diamond's own
+	/// otherwise. Throws the 401 hand-back for a marked set this device cannot run.
+	function steerModelsFor(id, detached) {
+		var sent = sentModelsOf(detached && detached.model);
+		if (sent && sent.workers) return sent;
+		return turnModelsOfDiamond(id, sent ? sent.daimon : null);
+	}
+
+	/// The set a daimon turn on Diamond `id` runs on. A gather round is handed the set of the turn
+	/// that fanned out (`held`, U1d2) and resolves nothing, so a default moved during the fan-out
+	/// does not reach it; any other turn resolves here, at its start (`steerModelsFor`), a runner's
+	/// whole, so it keeps the asker's Workers and Images.
+	function steerTurnSet(id, detached, held) {
+		if (held && held.daimon) return copyTurnSet(held);
+		return steerModelsFor(id, detached);
+	}
+
+	/// The daimon half of `steerModelsFor`.
 	function steerModelFor(id, detached) {
-		var own = diamondModel(id) || {};
-		var mine = { provider: own.provider || '', model: own.model || '' };
-		var sent = detached && detached.model;
-		if (!sent || !sent.model || sent.src !== 'diamond') return mine;
-		var r = window.DaimondModels && DaimondModels.resolve(sent.provider || '', sent.model);
-		if (r) return { provider: r.provider, model: r.model };
-		diag('daimon model', 'sent=' + sent.model + ' unrunnable here, handed back');
-		var eKey = new Error('the diamond’s model has no usable api key on this device');
-		eKey.code = 401;
-		throw eKey;
+		return steerModelsFor(id, detached).daimon;
 	}
 
 	/// The records of the file rows a daimon turn's changed-files note shows: one per manifest
@@ -65719,7 +66395,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { ChatStore.settled().then(close, close); } catch (e) { close(); }
 	}
 
-	async function runSteer(f, presetArg, depthArg, detached, how) {
+	/// `held` is the set a gather round inherits from the turn that fanned out (U1d2): a round
+	/// of that turn runs on what the turn began with, never on a default moved meanwhile.
+	async function runSteer(f, presetArg, depthArg, detached, how, held) {
 		if (!f) return '';
 		// A STEER TYPED WHILE THIS DIAMOND'S OWN TURN IS IN FLIGHT USED TO VANISH.
 		// This was `if (crystalBusy || !currentDiamond) return;`: Send did nothing,
@@ -65777,7 +66455,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `diamondApp` below (C3). The Diamond's, and on a runner the pair the asker resolved and
 		// marked on the errand, so the turn runs what the asker saw rather than this device's copy of
 		// the Diamond's record. A marked pair this device cannot run throws the 401 hand-back here.
-		var dsPair = steerModelFor(f.id, detached);
+		// And the workers' and images' halves, in the same breath (U1d): every fan-out round of this
+		// turn runs on this set, and a change made while it runs applies from the next turn. On a
+		// runner, the whole set is the asker's (U1e); a gather round's, the set it was handed (U1d2).
+		var dsSet  = steerTurnSet(f.id, detached, held);
+		var dsPair = dsSet.daimon;
 		// Can THAT model run? Asking whether the *default* provider is configured is the
 		// wrong question: it would stop a perfectly good Diamond steering because some other
 		// provider -- the starred one -- had lost its key.
@@ -66380,6 +67062,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return (fa && typeof fa.take_daimon_interjections === 'function') ? fa.take_daimon_interjections(diamondId) : [];
 			}, !detached);
 		};
+		// On another pair than the last turn ran on, the history says so before the request (U2c).
+		try { await noteModelInForce(diamondId, dsPair, fa); }
+		catch (e) { diag('model change', 'turn-start note: ' + ((e && e.message) || e)); }
 		// The toolchains the user ticked on this Diamond, read fresh for THIS turn. The
 		// marks themselves are the engine's to read at the turn (HIST-SAFE U2), from the
 		// same `marks::reach` that `Files.bounds` answers with, so the daimon and the
@@ -66411,6 +67096,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				Workers.holdTurn(steerTurn, {
 					diamondId: diamondId, diamondName: diamondName,
 					depth: (depth | 0), how: (how && how.pendingOnly) ? how : null,
+					models: dsSet,
 				});
 				steerInTurn = true;
 			}
@@ -66690,9 +67376,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// reports come back as a round one deeper, and a daimon that answers
 				// every report by dispatching again runs out of room rather than
 				// fanning out for ever.
+				// The turn's own set (U1d), resolved where the turn began.
 				Workers.dispatch(diamondId, diamondName, dispatched, daimonTainted,
-					diamondWorkerModel(diamondId), (depth | 0),
-					(how && how.pendingOnly) ? { how: how } : undefined);
+					dsSet.workers, (depth | 0),
+					{ how: (how && how.pendingOnly) ? how : null, models: dsSet });
 			}
 		} else if (rejected) {
 			crystalSay(rejected === 1
@@ -67024,7 +67711,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `migrate_root` -- so the "only into an empty rail" rule is answered from
 		// the store as it finally stands, not as it stood mid-migration.
 		step('loadDiamonds', function () {
-			return loadDiamonds().then(function () { return seedDefaultDiamonds(); })
+			return loadDiamonds().then(bootInherit, function (e) { bootInherit(); throw e; })
+				.then(function () { return seedDefaultDiamonds(); })
 				// AND THE SPARES ARE SWEPT, OUTSIDE THAT FLAG. The duplicates reported
 				// live are on devices that seeded BEFORE the fixed ids landed, so
 				// `seedDefaultDiamonds` returns on its flag at their first line and a
@@ -68062,6 +68750,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondModels && DaimondModels.loadSettled) {
 			try { await DaimondModels.loadSettled(); } catch (e) { /* the sync load already ran */ }
 		}
+		// Copies become follows (D-20261018-09 U1f) once the boot has read the Diamond list
+		// (`bootInherit`, in `renderAll`), not here: before it a Diamond with no model record is
+		// named nowhere. The parcel waits for it (`inheritGate`).
+		if (window.DaimondModels) DaimondModels.unmigrateInherit = unmigrateInherit;
 		// Record this account's name and fingerprint in the registry, so the account picker can
 		// show WHO an account is without unlocking it. The identity's keys are namespaced to the
 		// current account, so this names the right one.
@@ -71655,19 +72347,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		save: function (sel) {
 			var o = sel.options[sel.selectedIndex];
-			cfg.foldModel    = (o && o.value) || '';
-			cfg.foldProvider = (o && o.dataset.provider) || '';
-			var stored = readJson(CFG_KEY, {}) || {};
-			stored.foldModel = cfg.foldModel; stored.foldProvider = cfg.foldProvider;
-			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
-			catch (e) { /* quota — the choice holds for this session */ }
-			// Live, not on next construction: the setting is one call on an existing app,
-			// so dropping every chat's agent to deliver it would throw away restored
-			// sessions for nothing.
-			chats.forEach(function (c) { applyFoldSettings(c.app, c.provider); });
-			Object.keys(_diamondApps).forEach(function (k) {
-				applyFoldSettings(_diamondApps[k], _diamondAppProvider.get(_diamondApps[k]) || '');
-			});
+			setFoldPick((o && o.dataset.provider) || '', (o && o.value) || '');
 			this.render();
 		},
 	};
@@ -71763,6 +72443,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { app.set_reasoning_effort(e); } catch (x) { /* an older wasm build has no setter */ }
 	}
 
+	/// Choose what folds a conversation (Summarising): `''` for the conversation's own model.
+	function setFoldPick(provider, model) {
+		cfg.foldModel    = model || '';
+		cfg.foldProvider = model ? (provider || '') : '';
+		var stored = readJson(CFG_KEY, {}) || {};
+		stored.foldModel = cfg.foldModel; stored.foldProvider = cfg.foldProvider;
+		try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+		catch (e) { /* quota — the choice holds for this session */ }
+		// Live, not on next construction: the setting is one call on an existing app,
+		// so dropping every chat's agent to deliver it would throw away restored
+		// sessions for nothing.
+		// The engine's pair, not the record's: a following chat stores provider '', and
+		// resolving Summarising on '' reset its engine to no fold model (QA B #3).
+		chats.forEach(function (c) {
+			if (c.app) applyFoldSettings(c.app, (c._appPair || turnModelOf(c)).provider);
+		});
+		Object.keys(_diamondApps).forEach(function (k) {
+			applyFoldSettings(_diamondApps[k], _diamondAppProvider.get(_diamondApps[k]) || '');
+		});
+	}
 	function applyFoldSettings(app, provider) {
 		if (!app) return;
 		// WHERE it folds, before WHICH MODEL folds it. Zero is how "the user has not chosen"
@@ -71807,10 +72507,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// own key, so a model id belonging to somebody else's endpoint is not a fold with
 		// a different model — it is a request that fails, or one answered by whatever that
 		// endpoint does with an unknown name.
-		var same = (cfg.foldProvider || '') === (provider || '');
+		var fold = window.DaimondModels
+			? DaimondModels.effective({ kind: 'run', provider: provider || '' }, 'summarising')
+			: { model: (cfg.foldProvider || '') === (provider || '') ? (cfg.foldModel || '') : '' };
 		try {
 			if (typeof app.set_fold_model === 'function') {
-				app.set_fold_model(same ? (cfg.foldModel || '') : '');
+				app.set_fold_model(fold.model || '');
 			}
 		} catch (e) { /* an older wasm build has no setter */ }
 		try {
@@ -72811,6 +73513,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondModels) {
 			// The store is loaded (and the old single-provider config carried into it) before
 			// anything asks what model to run on.
+			// The resolver reads each Diamond's and chat's own picks through these (D-20261018-09 U1b).
+			DaimondModels.bindPicks({ diamond: diamondPicks, chat: chatPicks, summarising: summarisingPick,
+				list: everyoneTargets, clear: clearPick, set: setPick, settle: settlePicks });
 			DaimondModels.init({
 				onChange: function () {
 					syncCfgFromModels();
@@ -73059,6 +73764,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return;
 		}
 		chats = await loadChatsHeld();  // restore persisted chats (survive reload) -- SUMMARIES (seq 213)
+		chatsUp = true;
 		rebuildDispatchedIndex();   // seed the dispatched-placeholder cache from the summaries
 		runnerReadyResolve();       // the engine and the chats are up: errands may be worked now
 		// Load the transcripts of the few chats that hold a dispatched placeholder, so the

@@ -178,6 +178,7 @@ function makeTab(name, locks, w) {
 		renderDispatchedBadges: () => {},
 		// ensureApp's world: an agent that records what it was given.
 		appCfgFor: () => ({ baseUrl: '', apiKey: '', model: 'm', provider: 'p' }),
+		turnModelOf: (c) => ({ provider: (c && c.provider) || '', model: (c && c.model) || '' }),	// U1d: the pair it builds on
 		creditsGen: () => 0,
 		maxOutFor: () => 1,
 		Instructions: { compose: () => '' },
