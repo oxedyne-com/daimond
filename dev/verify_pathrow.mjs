@@ -112,7 +112,7 @@ async function device(tag, s, size, phone) {
 	await page.evaluate(() => document.getElementById('new-diamond-btn').click());
 	await page.waitForSelector('.dlg-input', { timeout: 10000 });
 	await page.fill('.dlg-input', NAME);
-	await page.click('.dlg-ok', { force: true });
+	await page.click('.dlg-ok');
 	await wait(1200);
 	const id = await page.evaluate(async (n) => {
 		for (const d of JSON.parse(await DaimondCore.diamondApp().list_diamonds())) if (d.name === n) return d.id;
@@ -143,7 +143,7 @@ async function device(tag, s, size, phone) {
 			console.log('tree: ' + await page.evaluate(() => [...document.querySelectorAll('#panel-work .files-tree .files-row')].map((r) => r.dataset.path).join(' | ')));
 			throw e;
 		});
-		await page.click(sel, { force: true });
+		await page.click(sel);
 		await wait(500);
 	}
 	const fileSel = `#panel-work .files-tree .files-row[data-path="${FILE}"]`;
@@ -168,7 +168,7 @@ async function device(tag, s, size, phone) {
 		await page.click(fileSel + ' [data-act="row-more"]');
 		await wait(200);
 	}
-	await page.click('.railhead-menu[data-menu="row"] [data-act="attach"]', { force: true });
+	await page.click('.railhead-menu[data-menu="row"] [data-act="attach"]');
 	await wait(1500);
 
 	const recSel = `#panel-work .files-focus .r[data-kind="recent"]`;

@@ -13382,6 +13382,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// that rises as a SHEET leaves the conversation underneath, so those are
 		// left alone.
 		if (crystalFull && name !== 'ai' && !MOBILE_GUESTS[name]) setCrystalFull(false);
+		// One panel at a time: the Workspace panel's menu hangs on the body and would stay over
+		// whatever is shown in its place (UNBLOCK-24 r3).
+		if (name !== 'work' && Files) Files.onLeave();
 		// The rail is reached through the hamburger drawer, not the bar.
 		if (name === 'rail') {
 			if (window.DaimondShell) DaimondShell.openDrawer();
@@ -14843,6 +14846,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `quiet` opens the panel in the engine and leaves the phone's floor, and so its
 			// drawer, where they were: for a caller that is not a person's own tap.
 			var quiet = !!(opts && opts.quiet);
+			// A person asking for a panel, this one again included, is done with the Workspace
+			// panel's menu: it hangs on the body, and on a desktop, where that panel stays on
+			// screen beside the one asked for, it stayed over the rows under it (UNBLOCK-24 r3).
+			if (!quiet && Files) Files.onLeave();
 			// Before anything else, and before the already-open shortcut below: an
 			// asked-for panel that is still suppressed must be let out first, or it
 			// is seated where nothing can be seen. Ahead of the shortcut so that a
@@ -14953,6 +14960,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// open (S-UI #2) -- a panel closed and never reopened must not keep a
 			// listener nothing on screen needs any more.
 			if (id === 'modeldash' && window.DaimondModelDash) DaimondModelDash.onClose();
+			if (id === 'work' && Files) Files.onLeave();		// its menu is on the body, not in the panel
 			open[id] = false;
 			if (id === 'rail') railForced = false;   // a closed rail is not a forced one
 			stage = stage.filter(function (x) { return x !== id; });
@@ -23886,6 +23894,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Name a device the always-on runner, or clear the nomination with ''. Pushes
 		/// the choice to the other devices at once (it is an account fact) and redraws.
 		function setNominee(id) {
+			// This device's own ✭ puts the runner question at the press, and the answer
+			// decides the nomination: no nominates nothing. Left to runner.js's
+			// fifteen-second poll, the dialog arrived up to fifteen seconds later over
+			// whatever screen was up by then (UNBLOCK-24 r3). A nomination made on
+			// another device keeps the polled ask, which is the case the poll is for.
+			if (id && id === deviceId() && window.DaimondRunner && DaimondRunner.ask) {
+				DaimondRunner.ask().then(function (yes) { if (yes) saveNominee(id); },
+					function () { /* no answer, no nomination */ });
+				return;
+			}
+			saveNominee(id);
+		}
+
+		function saveNominee(id) {
 			nominateDevice(id);
 			if (window.DaimondSync && DaimondSync.nudge) {
 				try { DaimondSync.nudge(); } catch (e) { /* not syncing */ }
@@ -48865,6 +48887,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		function renderTree(entries) {
 			lastEntries = entries;
+			// The rows are drawn afresh, so a row ⋯ left open hangs from a row that is gone.
+			if (pop && pop.key.indexOf('row:') === 0) closePop();
 			var atRoot = !curDir || curDir === '.' || curDir === '/';
 			var mine = [], rest = [];
 			entries.forEach(function (e) {
@@ -51869,6 +51893,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		function onOpen() {
+			// UNBLOCK-24 r3: a panel shown again is drawn again, so a menu left open on its last
+			// showing is put away first. It hangs on the body, not in the panel, and so outlived
+			// a switch to the chat and back, covering the rows under it (the r570s crawls).
+			closePop();
 			bindSystem();
 			if (!curFile) list(curDir);
 			// Listed whether or not the section is expanded: it is cheap, it is local,
@@ -51948,6 +51976,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// The DOC panel was asked for. Its own hook, not `onOpen`: that one is the
 			/// WORKSPACE panel's, and the two panels are opened separately.
 			onDocOpen:     onDocOpen,
+			/// The Workspace panel is leaving the screen: its one menu goes with it (UNBLOCK-24 r3).
+			onLeave:       closePop,
 			refresh:       refresh,
 			// Repaint what the Cloud chip claims, after a sync has moved residency.
 			tryReconnect:  tryReconnect,

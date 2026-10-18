@@ -13,7 +13,10 @@
 //   A1  Can change shows the one-line pointer while nothing is added, and loses it once something is;
 //   A2  on a phone the tree's ghost ◈ is drawn at rest;
 //   A3  a file's ⋯ offers "Add to <Diamond>" first; pressing it puts the file in the Diamond's fence;
-//   A4  the same ⋯ then offers "Remove from <Diamond>"; pressing it takes the file out, with the Undo.
+//   A4  the same ⋯ then offers "Remove from <Diamond>"; pressing it takes the file out, with the Undo;
+//   A5  (UNBLOCK-24 r3, the r570s crawls) the head ⋯ left open does not outlive the panel: after a switch
+//       to the chat and back no menu is up and nothing covers "Its own folder" or the file's row; the head
+//       ⋯ then a row ⋯ leaves one menu up, the row's; Escape puts it away.
 //
 // WSA_BASE=<sha> serves that commit's changed www files instead, to see the gate RED on the unchanged page.
 // Run with the world up (`bash dev/world.sh 75 --up`); no gateway.
@@ -97,6 +100,45 @@ async function rowMenu(page, phone) {
 	return page.evaluate(MENU);
 }
 
+// Every row the crawl presses in the panel's top half: the focus section's ("Its own folder" among them)
+// and the file's own. A row is covered when the point at its centre is not in it.
+const COVERED = (sel) => {
+	const out = [];
+	for (const r of [...document.querySelectorAll('#panel-work .files-focus .r'), document.querySelector(sel)]) {
+		if (!r || !r.getClientRects().length) continue;
+		const b = r.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2;
+		if (y < 0 || y > innerHeight) continue;
+		const at = document.elementFromPoint(x, y);
+		if (!r.contains(at)) out.push(`${r.textContent.trim().slice(0, 30)} under ${at ? at.tagName.toLowerCase() + '.' + at.className : 'nothing'}`);
+	}
+	return out;
+};
+const MENUS = () => [...document.querySelectorAll('.railhead-menu')].map((m) => m.dataset.menu || '?');
+
+async function headLeftOpen(page, tag, phone) {
+	await page.evaluate(() => document.querySelector('#panel-work [data-act="ws-more"]').click());
+	await wait(300);
+	const up = await page.evaluate(MENUS);
+	check(up.length === 1 && up[0] === 'head', `${tag}: A5 the head ⋯ opens its menu`, JSON.stringify(up));
+	// What the crawl's way home does: the chat, then the panel again, with nobody pressing Escape.
+	await page.evaluate(() => DaimondPanels.show('ai'));
+	await wait(300);
+	await page.evaluate(() => DaimondPanels.show('work'));
+	await wait(800);
+	const after = await page.evaluate(MENUS), cov = await page.evaluate(COVERED, rowSel);
+	check(after.length === 0, `${tag}: A5 the head ⋯ left open does not outlive the panel`, JSON.stringify(after));
+	check(cov.length === 0, `${tag}: A5 nothing covers the panel's rows after it`, JSON.stringify(cov));
+	// The head ⋯ and then a row's: one menu at a time, the row's, and Escape puts it away.
+	await page.evaluate(() => document.querySelector('#panel-work [data-act="ws-more"]').click());
+	await wait(300);
+	const m = await rowMenu(page, phone), both = await page.evaluate(MENUS);
+	check(!!m && both.length === 1 && both[0] === 'row', `${tag}: A5 the head ⋯ then a row ⋯ leaves one menu, the row's`, JSON.stringify(both));
+	await page.keyboard.press('Escape');
+	await wait(300);
+	const gone = await page.evaluate(MENUS), cov2 = await page.evaluate(COVERED, rowSel);
+	check(gone.length === 0 && cov2.length === 0, `${tag}: A5 Escape puts it away and uncovers the rows`, JSON.stringify({ gone, cov2 }));
+}
+
 async function device(tag, s, size, phone) {
 	const { page } = s;
 	console.log(`\n── ${tag}: ${size.width}x${size.height} ──`);
@@ -113,7 +155,7 @@ async function device(tag, s, size, phone) {
 	await page.evaluate(() => document.getElementById('new-diamond-btn').click());
 	await page.waitForSelector('.dlg-input', { timeout: 10000 });
 	await page.fill('.dlg-input', NAME);
-	await page.click('.dlg-ok', { force: true });
+	await page.click('.dlg-ok');
 	await wait(1200);
 	await page.evaluate(() => DaimondPanels.show('work'));
 	await wait(600);
@@ -135,7 +177,7 @@ async function device(tag, s, size, phone) {
 	const add = m && m[0];
 	check(!!add && add.act === 'attach' && add.text.includes(NAME), `${tag}: A3 the ⋯ offers Add to the Diamond, first`, JSON.stringify(m));
 	if (add && add.act === 'attach') {
-		await page.click('.railhead-menu[data-menu="row"] [data-act="attach"]', { force: true });
+		await page.click('.railhead-menu[data-menu="row"] [data-act="attach"]');
 		await wait(1500);
 	} else { await page.keyboard.press('Escape').catch(() => {}); await wait(200); }
 	const s1 = await st();
@@ -146,11 +188,13 @@ async function device(tag, s, size, phone) {
 	const rem = m && m[0];
 	check(!!rem && rem.act === 'detach' && rem.text.includes(NAME), `${tag}: A4 the ⋯ then offers Remove from the Diamond`, JSON.stringify(m));
 	if (rem && rem.act === 'detach') {
-		await page.click('.railhead-menu[data-menu="row"] [data-act="detach"]', { force: true });
+		await page.click('.railhead-menu[data-menu="row"] [data-act="detach"]');
 		await wait(1200);
 	} else { await page.keyboard.press('Escape').catch(() => {}); await wait(200); }
 	const s2 = await st();
 	check(!s2.in && s2.undo, `${tag}: A4 the press takes it out at once, with the Undo`, JSON.stringify(s2));
+
+	await headLeftOpen(page, tag, phone);
 }
 
 let D = null, P = null;
