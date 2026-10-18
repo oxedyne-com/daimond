@@ -170,10 +170,10 @@ console.log('\nâ€” T: the thread check reads the runner\'s own turns as unseen â
 	check('T2 only its prompt seen: a match with own', P.holdsThread(runner, asked, ['o1']));
 	check('T2 all of it seen: a match either way', P.holdsThread(runner, seen) && P.holdsThread(runner, seen, ['o1']));
 	const r0 = P.threadReadiness(runner, unseen, 9), r1 = P.threadReadiness(runner, unseen, 9, ['o1']);
-	check('T3 readiness: final without own, a match with it', r0.state === 'final' && r1.state === 'match', r0.state + '/' + r1.state);
+	check('T3 readiness: diverged without own, a match with it', r0.state === 'diverged' && r1.state === 'match', r0.state + '/' + r1.state);
 	const stray = { _loaded: true, messages: before.concat(ownRows, [u('x9')], [u('t2')]) };
 	const r2 = P.threadReadiness(stray, unseen, 9, ['o1']);
-	check('T4 a row that is not own work still differs', r2.state === 'final' && r2.have === 3, JSON.stringify(r2));
+	check('T4 a row that is not own work still differs', r2.state === 'diverged' && r2.have === 3, JSON.stringify(r2));
 	const short = { _loaded: true, messages: [u('u0')].concat(ownRows, [u('t2')]) };
 	const r3 = P.threadReadiness(short, unseen, 9, ['o1']);
 	check('T4 behind is judged with every own row left out', r3.state === 'behind' && r3.have === 1, JSON.stringify(r3));

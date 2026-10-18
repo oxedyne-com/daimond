@@ -1626,6 +1626,27 @@ pub fn standing_archive(leaf: &str, id: &str) -> String {
     }
 }
 
+/// One of the three beside the crystal, `diamonds/<id>/<leaf>`, workspace-relative.  The one
+/// spelling of that path: the store, `state_set` and the guard all name it from here.
+pub fn standing_path(leaf: &str, id: &str) -> String {
+    fmt!("{}/{}/{}", STORE_ROOT, id, leaf)
+}
+
+/// The `STATE.md` a `state_set` lands in: the Diamond's own, never the workspace root's (QA
+/// r572y C4-1).  A turn acting for no Diamond has no `STATE.md` to set, and is refused saying so.
+///
+/// # Arguments
+/// * `daimon` - The Diamond the turn acts for, as [`ToolContext::daimon`] reads it.
+pub fn state_path(daimon: Option<&str>) -> Outcome<String> {
+    match daimon.map(str::trim) {
+        Some(id) if !id.is_empty() => Ok(standing_path(STATE_FILE, id)),
+        _ => Err(err!(
+            "state_set sets a section of a Diamond's {}, and this turn is not working inside a \
+            Diamond, so nothing was written.", STATE_FILE;
+            Invalid, Input, Missing)),
+    }
+}
+
 /// The shipped text one of the three is seeded with.
 ///
 /// # Arguments
@@ -19041,7 +19062,7 @@ impl Tool {
             | Tool::FileFetch | Tool::DocEdit | Tool::SheetWrite | Tool::FileRevert =>
                 vec![res!(Self::arg(args_json, "path"))],
             // One section of the Diamond's own STATE.md, written through `file_write`'s door.
-            Tool::StateSet => vec![STATE_FILE.to_string()],
+            Tool::StateSet => vec![res!(state_path(daimon))],
             // The PDF it writes is a write, and naming it here is what puts it in
             // front of `guard`.  A compile whose `out` was invisible to the guard
             // could drop a file inside Daimond's own directory.
@@ -19126,7 +19147,7 @@ impl Tool {
             Tool::FileWrite | Tool::FileEdit | Tool::FileFetch | Tool::DocEdit
             | Tool::SheetWrite | Tool::DirCreate | Tool::FileRevert =>
                 named("path", PathClaim::Left).into_iter().collect(),
-            Tool::StateSet => vec![(STATE_FILE.to_string(), PathClaim::Left)],
+            Tool::StateSet => state_path(daimon).ok().map(|p| (p, PathClaim::Left)).into_iter().collect(),
             // The PDF is named by the same function the guard and the result use, so the audit
             // checks the file the compile actually wrote rather than the source it read.
             Tool::TypstCompile => match Self::typst_out(args_json) {
@@ -20315,7 +20336,7 @@ impl Tool {
         -> Outcome<()>
     {
         let mut paths: Vec<String> = STANDING_FILES.iter()
-            .map(|leaf| fmt!("{}/{}/{}", STORE_ROOT, id, leaf))
+            .map(|leaf| standing_path(leaf, id))
             .collect();
         let dir = fmt!("{}/{}/{}", STORE_ROOT, id, DAIMOND_DIR.trim_end_matches('/'));
         if let Ok(entries) = crate::wasm::opfs::list_dir(FileRoot::Opfs, &dir).await {
@@ -20405,7 +20426,7 @@ impl Tool {
             return 0;
         }
         let read = |leaf: &'static str| {
-            let p = fmt!("{}/{}/{}", STORE_ROOT, id, leaf);
+            let p = standing_path(leaf, &id);
             async move {
                 crate::wasm::opfs::read_file(ctx.root, &p).await
                     .map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -23639,18 +23660,16 @@ impl Tool {
     /// own door so the fence, the version capture and the section landing all apply as they do to
     /// a whole-file write.  It reads the file itself, so that read is what it has seen.
     async fn state_set(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
-        if ctx.daimon().is_none() {
-            return Ok(MessageContent::text(fmt!(
-                "state_set sets a section of a Diamond's {}, and this turn is not working inside \
-                a Diamond.", STATE_FILE)));
-        }
+        let path = match state_path(ctx.daimon().as_deref()) {
+            Ok(p)  => p,
+            Err(e) => return Ok(MessageContent::text(refusal_line(&e.plain()))),
+        };
         let key  = res!(Self::arg(args_json, "key"));
         let text = extract_json_string(args_json, "text");
         if let Some(why) = crate::state_md::set_refusal(&key, text.as_deref()) {
             return Ok(MessageContent::text(why));
         }
         let text = text.unwrap_or_default();
-        let path = res!(Self::scoped(ctx, STATE_FILE));
         let at   = stored_in(ctx, &path);
         let now  = crate::wasm::opfs::read_file(ctx.root, &path).await.ok();
         let was  = now.as_deref().map(|b| String::from_utf8_lossy(b).into_owned())
@@ -23660,7 +23679,7 @@ impl Tool {
         }
         let next = crate::state_md::set(&was, &key, &text);
         let args = fmt!("{{\"path\":\"{}\",\"content\":\"{}\"}}",
-            crate::llm::json_escape(STATE_FILE), crate::llm::json_escape(&next));
+            crate::llm::json_escape(&path), crate::llm::json_escape(&next));
         Self::file_write_page(&args, ctx).await
     }
 
@@ -45240,6 +45259,38 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         c.daimon_of = fmt!("alpha");
         c.no_write  = diamond_bounds("diamonds/alpha", &[], &[]);
         c
+    }
+
+    /// QA r572y C4-1: `state_set` must land in the Diamond's own `STATE.md`.
+    #[test]
+    fn qa_c4_state_set_path_is_the_diamonds_own_state_md() {
+        let c = daimon_ctx();
+        // Exactly what `state_set` computes.
+        let p = state_path(c.daimon().as_deref()).expect("state_path");
+        eprintln!("QA state_set path = {:?}; standing_leaf = {:?}; licence = {:?}",
+            p, standing_leaf(&p), c.licence(&p).map(|l| l.path().to_string()));
+        let mut wide = daimon_ctx();
+        wide.no_write = diamond_bounds("diamonds/alpha", &[fmt!("")], &[]);
+        eprintln!("QA with the root attached: licence(STATE.md) = {:?}",
+            wide.licence("STATE.md").map(|l| l.path().to_string()));
+        let mut dot = daimon_ctx();
+        dot.no_write = diamond_bounds("diamonds/alpha", &[fmt!(".")], &[]);
+        eprintln!("QA with '.' attached: licence(STATE.md) = {:?}",
+            dot.licence("STATE.md").map(|l| l.path().to_string()));
+        assert_eq!(p, "diamonds/alpha/STATE.md", "state_set writes a path that is not the Diamond's");
+    }
+
+    /// `write_targets` names the same file `state_set` writes, so the guard judges the write that
+    /// happens rather than a root `STATE.md` nobody touches.
+    #[test]
+    fn qa_c4_state_set_write_target_is_the_diamonds_own_state_md() {
+        let w = Tool::write_targets(&Tool::StateSet, r#"{"key":"Next step","text":"x"}"#, Some("alpha"))
+            .expect("targets");
+        assert_eq!(w, vec![fmt!("diamonds/alpha/STATE.md")], "the guard judges a path state_set does not write");
+        let c = Tool::StateSet.path_claims(r#"{"key":"Next step","text":"x"}"#, Some("alpha"));
+        assert_eq!(c.into_iter().map(|(p, _)| p).collect::<Vec<_>>(), vec![fmt!("diamonds/alpha/STATE.md")]);
+        assert!(Tool::write_targets(&Tool::StateSet, r#"{"key":"Next step","text":"x"}"#, None).is_err(),
+            "a turn with no Diamond must be refused, never pointed at the root");
     }
 
     /// What [`Tool::scoped`] used to produce: a concatenation, never normalised, never checked.

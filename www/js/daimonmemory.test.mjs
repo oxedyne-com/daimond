@@ -129,7 +129,7 @@ console.log('\nFOLD: a fold is a record with the chat, and a rebuild reads it\n'
 	];
 	const FOLD = '[Daimond folded the earlier part of this conversation to keep it inside the model\'s window] we chose blue';
 	const rec = { id: 'chat-f', messages: msgs.slice(), session: null,
-		fold: { through: 'a2', throughTs: 4, at: 10, dev: 'devA', text: FOLD } };
+		fold: { through: 'a2', throughTs: 4, turns: ['u1', 'u2'], at: 10, dev: 'devA', text: FOLD } };	// C2-FOLD: the turns it covers
 	const w = said(prior(rec, 'u4'));
 	check('no session: the fold first, then only the prose after its through', J(w) === J([FOLD, 'new q3', 'new a3']), J(w));
 
@@ -191,14 +191,17 @@ console.log('\nFAIL: a failed mid-run turn lands its partial answer\n');
 	const at = n.indexOf('} catch (e) {\n\t\t\t// A failure BEFORE the turn');
 	check('runSteer\'s catch lands it', at > 0 && n.slice(at, at + 1500).indexOf('landFailedTurn(') > 0);
 	check('runSteer starts the turn from daimonPrior, with the prompt\'s mid and the device',
-		/fa\.steer_crystal\([\s\S]{0,900}daimonPrior\(rec, dumid\)[\s\S]{0,200}String\(dumid\), selfDeviceId\(\)\)/.test(n));
+		/var prior = daimonPrior\(rec, dumid\);\s*var after = await turnKill\(fa\.steer_crystal\([\s\S]{0,900}\bprior, onEvent[\s\S]{0,200}String\(dumid\), selfDeviceId\(\)\)/.test(n)
+		&& /foldFrom\(rec, after, dumid, rec\.fold \|\| null, Date\.now\(\), selfDeviceId\(\), prior\)/.test(n));
 }
 
 // ── THROUGH: the errand names what the asker saw; the runner waits, then runs ──
 console.log('\nTHROUGH: the errand carries through, the runner waits ≤ 10 s and says what it lacked\n');
 {
-	const throughSrc = extractFn(PJS, 'throughOf'), holdsSrc = extractFn(PJS, 'holdsThrough');
-	const P = new Function(throughSrc + '\n' + holdsSrc + '\nreturn { throughOf: typeof throughOf === "function" ? throughOf : null, holdsThrough: typeof holdsThrough === "function" ? holdsThrough : null };')();
+	// FIRE C2-READY: the real peer.js, so readiness is judged by its own `threadReadiness` on real fingerprints.
+	const pw = { console: { log() {}, warn() {}, error() {} }, localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} } };
+	new Function('window', 'with (window) {\n' + PJS + '\n}')(pw);
+	const P = pw.DaimondPeer;
 	const chat = { messages: [
 		{ role: 'user', content: 'q', mid: 'm1', ts: 10 },
 		{ role: 'assistant', content: 'a', mid: 'm2', ts: 20 },
@@ -213,26 +216,23 @@ console.log('\nTHROUGH: the errand carries through, the runner waits ≤ 10 s an
 	win.setTimeout = setTimeout; win.Date = Date;	// the wait runs on the real clock
 	let pulls = 0, arriveOn = -1;
 	const live = { id: 'chat-r', _loaded: true, messages: [{ role: 'user', content: 'q', mid: 'm1', ts: 10 }] };
-	win.DaimondPeer = {
-		holdsThrough: P.holdsThrough || (() => false),
-		threadReadiness: () => ({ state: 'final', have: 1, want: 3 }),
-		holdsThread: () => false,
-	};
+	win.DaimondPeer = P;
 	win.DaimondSync = { version: () => 1, pull: async () => {
 		pulls++;
 		if (pulls === arriveOn) live.messages.push({ role: 'assistant', content: 'a', mid: 'm2', ts: 20 });
 	} };
-	const R = lift(['peerReady', 'THROUGH_WAIT_MS'].concat(declLine('throughDeadline') > 0 ? ['throughDeadline'] : []), {
+	const R = lift(['peerReady', 'lackedNote', 'askerReadiness', 'syncHeld', 'THROUGH_WAIT_MS'].concat(declLine('throughDeadline') > 0 ? ['throughDeadline'] : []), {
 		chats: [live], loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {},
 	}, win);
-	const errand = { chatId: 'chat-r', turnId: 'T', through: { ts: 20, mid: 'm2' }, thread: { n: 3, sig: 'x' } };
+	const THR = P.threadSig({ messages: [chat.messages[0], chat.messages[1], chat.messages[3]] }, 'T');	// m1, m2 before T
+	const errand = { chatId: 'chat-r', turnId: 'T', through: { ts: 20, mid: 'm2' }, thread: THR };
 	if (!R.peerReady) check('peerReady is liftable', false);
 	else {
 		const t0 = Date.now();
 		const v = await R.peerReady(errand, [], 1200);
 		const dt = Date.now() - t0;
 		check('a copy short of through is not refused', v && v.ok === true, J(v));
-		check('it says what it lacked', !!v && typeof v.lacked === 'string' && /had not yet received/.test(v.lacked), J(v));
+		check('it says what it lacked, counted', !!v && typeof v.lacked === 'string' && /had not yet received 1 earlier message /.test(v.lacked), J(v));
 		check('it waited the bound, pulling, and no longer', dt >= 1100 && dt < 4000 && pulls >= 1, dt + ' ms, ' + pulls + ' pulls');
 		check('the bound is at most 10 s', R.THROUGH_WAIT_MS !== undefined && R.THROUGH_WAIT_MS <= 10000, String(R.THROUGH_WAIT_MS));
 		pulls = 0; arriveOn = 1; live.messages = live.messages.slice(0, 1);
@@ -240,23 +240,57 @@ console.log('\nTHROUGH: the errand carries through, the runner waits ≤ 10 s an
 		check('through arriving within the wait runs with nothing lacked', v2 && v2.ok === true && v2.lacked === '', J(v2));
 
 		// C2 r2 F4: an older sender's errand carries `thread` and no `through` key at all. It used to pass at once on
-		// whatever the runner held, with no note; it now waits the same bound for `holdsThread`, and says so if it fails.
-		const old = { chatId: 'chat-r', turnId: 'T', thread: { n: 3, sig: 'x' } };
+		// whatever the runner held, with no note; it now waits the same bound for its whole thread, and says so if it fails.
+		live.messages = live.messages.slice(0, 1);
+		const old = { chatId: 'chat-r', turnId: 'T', thread: THR };
 		pulls = 0; arriveOn = -1;
 		const t1 = Date.now();
 		const v3 = await R.peerReady(old, [], 1200);
 		const dt3 = Date.now() - t1;
 		check('an older sender\'s errand waits the bound for its thread', dt3 >= 1100 && dt3 < 4000 && pulls >= 1, dt3 + ' ms, ' + pulls + ' pulls');
-		check('and its note says what could not be confirmed', !!v3 && v3.ok === true && /could not confirm/.test(v3.lacked || ''), J(v3));
-		win.DaimondPeer.holdsThread = () => true;
+		check('and its note counts what it lacked', !!v3 && v3.ok === true && /had not yet received 1 earlier message /.test(v3.lacked || ''), J(v3));
+		const older = { chatId: 'chat-r', turnId: 'T' };	// older still: no thread at all
+		const v3b = await R.peerReady(older, [], 600);
+		check('an errand with no thread says what could not be confirmed', !!v3b && /could not confirm/.test(v3b.lacked || ''), J(v3b));
+		live.messages = chat.messages.slice(0, 2).map((m) => Object.assign({}, m));
 		const t2 = Date.now();
 		const v4 = await R.peerReady(old, [], 1200);
 		check('an older errand whose thread is held runs at once, nothing lacked', v4 && v4.lacked === '' && Date.now() - t2 < 500, J(v4));
-		win.DaimondPeer.holdsThread = () => false;
-		const fresh = { chatId: 'chat-r', turnId: 'T', thread: { n: 0, sig: 0 }, through: null };
+		live.messages = live.messages.slice(0, 1);
+		const fresh = { chatId: 'chat-r', turnId: 'T', thread: P.threadSig({ messages: [] }, 'T'), through: null };
 		const t3 = Date.now();
 		const v5 = await R.peerReady(fresh, [], 1200);
 		check('a new sender with nothing before the prompt (through: null) does not wait', v5 && v5.lacked === '' && Date.now() - t3 < 500, J(v5));
+
+		// C2 r3 (UNBLOCK-11, daimond-rig-b SYNCGATE 18 Oct): the errand CARRIES the asker's last message in its seed,
+		// which the graft lays into the chat, so a runner whose own copy lacks it starts at once. It used to log
+		// `ready LACKING` and wait the whole bound for a message it already held on the errand.
+		live.messages = live.messages.slice(0, 1);
+		const seeded = { chatId: 'chat-r', turnId: 'T', through: { ts: 20, mid: 'm2' }, thread: THR,
+			seed: { whole: true, msgs: [{ role: 'user', content: 'q', mid: 'm1', ts: 10 }, { role: 'assistant', content: 'a', mid: 'm2', ts: 20 }] } };
+		pulls = 0; arriveOn = -1;
+		const t5 = Date.now();
+		const v6 = await R.peerReady(seeded, [], 1200);
+		const dt6 = Date.now() - t5;
+		check('through carried in the errand\'s seed starts at once, nothing lacked', v6 && v6.ok === true && v6.lacked === '' && dt6 < 500, dt6 + ' ms ' + J(v6));
+		const absent = Object.assign({}, seeded, { chatId: 'chat-absent' });
+		const t6 = Date.now();
+		const v7 = await R.peerReady(absent, [], 1200);
+		check('so does one whose chat is not here yet, the seed making it', v7 && v7.lacked === '' && Date.now() - t6 < 500, J(v7));
+		const short = Object.assign({}, seeded, { seed: { whole: true, msgs: [{ role: 'user', content: 'q', mid: 'm1', ts: 10 }] } });
+		const t7 = Date.now();
+		const v8 = await R.peerReady(short, [], 1200);
+		const dt8 = Date.now() - t7;
+		check('through in neither the copy nor the seed still waits the bound and says it lacked', dt8 >= 1100 && /had not yet received/.test((v8 && v8.lacked) || ''), dt8 + ' ms ' + J(v8));
+
+		// C2 r3b (check 2d65): the seed counts only BEFORE the claim. A graft that throws after pushing the empty
+		// chat leaves it without `through`; the post-graft checks in reconstruct read the real copy, so the turn
+		// says it lacked the asker's last message rather than running silently without it.
+		const grafted = { id: 'chat-g', _loaded: true, messages: [] };
+		const failed = Object.assign({}, seeded, { chatId: 'chat-g' });
+		const note = R.lackedNote ? R.lackedNote(grafted, failed, [], true) : '';
+		check('a graft that threw after the chat push leaves the reconstruct\'s "lacked" note', /had not yet received/.test(note || ''), J(note));
+		check('the copy-only holdsThrough does not count the seed', P.holdsThrough && P.holdsThrough(grafted, failed) === false);
 
 		// C2 r2 F6: ONE deadline. A pull slower than the time left does not stretch the wait, and the deadline is the
 		// one the reconstruct reads, not a second 10 s of its own.
@@ -280,7 +314,9 @@ console.log('\nREFUSAL: "the conversation differs" is gone\n');
 	check('daimond.js no longer says it', DJS.indexOf('conversation differs on this device') < 0);
 	const rc = extractFn(DJS, 'peerReconstruct');
 	check('peerReconstruct no longer hands a differing thread back', rc.length > 0 && rc.indexOf('eThread') < 0 && rc.indexOf("=== 'final') break") < 0);
-	check('it returns what it lacked for the turn\'s note', /lacked: lacked/.test(rc));
+	// C2-NOTE: it hands the turn the errand, and the turn counts the lack when it lays its history.
+	check('it hands the turn what it needs to count the lack', /errand: errand, own: own/.test(rc) && /lacked: lacked/.test(rc) === false);
+	check('the turn reads its note at the moment it runs', /ropts = runnerTurnOpts\(c, ropts\)/.test(DJS) && /lackedNote\(c\.chat, c\.errand, c\.own, true\)/.test(extractFn(DJS, 'runnerTurnOpts')));
 }
 
 // ── SEARCH: recall over the chat's prose and its fold ──

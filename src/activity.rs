@@ -490,29 +490,69 @@ pub fn prompt_from(files: &[String], now: i64) -> String {
 	prompt_block(&merge(files, now), PROMPT_CAP)
 }
 
-/// The activity files a Diamond holds after a pull: every file the export carried, joined with
-/// this device's copy where it has one, and every file of this device's the export lacked, kept
-/// as it was. A pull lays the export down over a deleted tree, so without this a device's own
-/// lines not yet carried out would go with it.
+/// What a pull or a join in place does with the activity files (UNBLOCK-11, item 24).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Join {
+	pub writes:		Vec<(String, String)>,	// (rel, text) written over this device's file in place
+	pub here:		usize,					// lines this device holds that the other copy lacks
+	pub arriving:	usize,					// lines the other copy holds that this device lacks
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Plan {
+	Held(Vec<String>),	// files this device could not read; nothing may be written
+	Join(Join),
+}
+
+/// How the activity files here meet another copy's: a pull's import and the join in place where
+/// the stamps tie both take this one plan, as the page logs take theirs.
+///
+/// A file the other copy carries is written over this device's in place, joined, only where the
+/// other copy adds a line (#8); a file only this device holds is left where it stands. `here`
+/// counts the lines this device holds that the other copy lacks, so the caller stamps and the
+/// join travels back. Any file this device could not read holds the whole plan, since the write
+/// it would fall back to is the loss this exists to prevent.
 ///
 /// # Arguments
-/// * `local` - `(rel, text)` of every activity file here before the pull.
-/// * `arriving` - `(rel, text)` of every activity file the export carries.
+/// * `local` - `(rel, text)` of every activity file here.
+/// * `unreadable` - The activity files here that could not be read.
+/// * `arriving` - `(rel, text)` of every activity file the other copy carries.
 /// * `now` - The time, ms since the epoch.
-pub fn after_import(local: &[(String, String)], arriving: &[(String, String)], now: i64)
-	-> Vec<(String, String)>
+pub fn join_plan(
+	local:		&[(String, String)],
+	unreadable:	&[String],
+	arriving:	&[(String, String)],
+	now:		i64,
+)
+	-> Plan
 {
-	let mut out: Vec<(String, String)> = Vec::new();
+	if !unreadable.is_empty() {
+		return Plan::Held(unreadable.to_vec());
+	}
+	let mut out = Join::default();
 	for (rel, theirs) in arriving {
 		let mine = local.iter().find(|(r, _)| r == rel).map(|(_, t)| t.as_str()).unwrap_or("");
-		out.push((rel.clone(), join(mine, theirs, now)));
+		let both = join(mine, theirs, now);
+		let here = lines_beyond(&both, &join("", theirs, now));
+		let arriving = lines_beyond(&both, &join("", mine, now));
+		out.here += here;
+		out.arriving += arriving;
+		if arriving > 0 {
+			out.writes.push((rel.clone(), both));
+		}
 	}
 	for (rel, mine) in local {
 		if !arriving.iter().any(|(r, _)| r == rel) {
-			out.push((rel.clone(), mine.clone()));
+			out.here += join("", mine, now).lines().count();
 		}
 	}
-	out
+	Plan::Join(out)
+}
+
+/// How many lines of `all` are not lines of `some`.
+fn lines_beyond(all: &str, some: &str) -> usize {
+	let have: std::collections::BTreeSet<&str> = some.lines().collect();
+	all.lines().filter(|l| !have.contains(l)).count()
 }
 
 /// The whole record as numbered text for `recall`, oldest first.
@@ -681,23 +721,110 @@ mod tests {
 		assert!(prompt_from(&[], NOW).is_empty());
 	}
 
+	/// The body of the wasm function `sig` names, read from the source: the OPFS edge cannot run
+	/// natively, so its shape is what these arms check.
+	fn wasm_body(sig: &str) -> &'static str {
+		let src = include_str!("wasm/diamond.rs");
+		let at = src.find(sig).unwrap_or(src.len());
+		let body = &src[at..];
+		let end = body.find("\n}\n").unwrap_or(body.len());
+		&body[..end]
+	}
+
+	fn place(body: &str, needle: &str) -> usize {
+		body.find(needle).unwrap_or(usize::MAX)
+	}
+
+	fn joined(p: Plan) -> Join {
+		match p {
+			Plan::Join(j)	=> j,
+			Plan::Held(h)	=> panic!("held: {:?}", h),
+		}
+	}
+
+	// Arm (a): a turn that changes no file still marks the Diamond changed.
 	#[test]
-	fn a_pull_keeps_a_local_file_the_export_lacks_and_joins_one_it_has() {
+	fn arm_a_an_activity_append_stamps_the_diamond_under_its_hold() {
+		let body = wasm_body("pub async fn activity_append(");
+		let hold = place(body, "hold_versions(id)");
+		let write = place(body, "opfs::write_file");
+		let stamp = place(body, "touch(id)");
+		assert!(hold < write && write < stamp && stamp != usize::MAX,
+			"activity_append writes then stamps, both under the hold: {}", body);
+	}
+
+	// Arm (b): local-only lines kept on a pull count as this device's, so the pull stamps.
+	#[test]
+	fn arm_b_local_only_activity_lines_kept_on_a_pull_mark_it_changed() {
 		let mine_a = append("", turn(NOW - 3_000, "A", "local only line"), NOW);
 		let base_b = append("", turn(NOW - 5_000, "B", "b one"), NOW);
 		let mine_b = append(&base_b, turn(NOW - 2_000, "B", "b two not yet carried"), NOW);
 		let theirs_b = append(&base_b, turn(NOW - 1_000, "B", "b three from there"), NOW);
-		let local = vec![(file_rel("A"), mine_a.clone()), (file_rel("B"), mine_b)];
+		let local = vec![(file_rel("A"), mine_a), (file_rel("B"), mine_b)];
 		let arriving = vec![(file_rel("B"), theirs_b)];
-		let out = after_import(&local, &arriving, NOW);
-		assert_eq!(2, out.len());
-		let a = out.iter().find(|(r, _)| *r == file_rel("A")).expect("A kept");
-		assert_eq!(mine_a, a.1);
-		let b = out.iter().find(|(r, _)| *r == file_rel("B")).expect("B joined");
-		assert_eq!(3, parse(&b.1).len(), "{}", b.1);
+		let j = joined(join_plan(&local, &[], &arriving, NOW));
+		assert_eq!(2, j.here, "A's line and B's uncarried line are this device's: {:?}", j);
+		assert_eq!(1, j.arriving, "{:?}", j);
+		// A's file is left where it stands; B's is written in place, joined.
+		assert_eq!(1, j.writes.len(), "{:?}", j);
+		assert_eq!(file_rel("B"), j.writes[0].0);
+		assert_eq!(3, parse(&j.writes[0].1).len(), "{}", j.writes[0].1);
+		// And the import folds those lines into the answer the caller stamps on.
+		let body = wasm_body("pub async fn import_diamond(");
+		assert!(body.contains("activity::join_plan") && body.contains("counts.here += "),
+			"import_diamond folds the activity join into its counts: {}", body);
 	}
 
-	/// C2 r2 F1: A's day held as turn lines on B, then A's own day line arriving, is counted once.
+	// Arm (c): where the stamps tie, the join in place takes the other device's lines too.
+	#[test]
+	fn arm_c_a_timestamp_tie_joins_both_devices_activity_lines() {
+		let mine = append("", turn(NOW - 3_000, "A", "asked on A"), NOW);
+		let theirs = append("", turn(NOW - 2_000, "B", "asked on B"), NOW);
+		let local = vec![(file_rel("A"), mine.clone())];
+		let arriving = vec![(file_rel("B"), theirs.clone())];
+		let j = joined(join_plan(&local, &[], &arriving, NOW));
+		assert_eq!(vec![(file_rel("B"), join("", &theirs, NOW))], j.writes);
+		assert_eq!((1, 1), (j.here, j.arriving), "{:?}", j);
+		// Nothing new either side: nothing written, nothing to stamp.
+		let both = vec![(file_rel("A"), mine), (file_rel("B"), theirs)];
+		assert_eq!(Join::default(), joined(join_plan(&both, &[], &both, NOW)));
+		let body = wasm_body("pub async fn union_logs_from(");
+		assert!(body.contains("activity::join_plan") && body.contains("counts.here += "),
+			"union_logs_from joins activity files and counts them: {}", body);
+	}
+
+	// Arm (d): a pull never deletes the activity directory, so a kill mid-pull loses nothing.
+	#[test]
+	fn arm_d_a_pull_keeps_the_activity_directory_on_disk_throughout() {
+		use crate::diamond_rebase::{on_replace, OnReplace};
+		assert_eq!(OnReplace::Keep,		on_replace(ACTIVITY_DIR));
+		assert_eq!(OnReplace::Keep,		on_replace("versions"));
+		assert_eq!(OnReplace::Descend,	on_replace(".daimond"));
+		assert_eq!(OnReplace::Delete,	on_replace(".daimond/meta.json"));
+		assert_eq!(OnReplace::Delete,	on_replace(".daimond/activityx"));
+		assert_eq!(OnReplace::Delete,	on_replace("crystal.json"));
+		let body = wasm_body("async fn delete_except_kept(");
+		assert!(body.contains("on_replace("), "the replace's delete weighs every path: {}", body);
+		let imp = wasm_body("pub async fn import_diamond(");
+		assert!(imp.contains("delete_except_kept(") && !imp.contains("delete_except_versions("),
+			"import_diamond deletes through the keep list: {}", imp);
+	}
+
+	// Arm (e): an unreadable activity file holds the pull, before anything is written.
+	#[test]
+	fn arm_e_an_unreadable_activity_file_holds_the_pull() {
+		let theirs = append("", turn(NOW - 2_000, "B", "asked on B"), NOW);
+		let arriving = vec![(file_rel("B"), theirs)];
+		assert_eq!(Plan::Held(vec![file_rel("B")]),
+			join_plan(&[], &[file_rel("B")], &arriving, NOW));
+		let body = wasm_body("pub async fn import_diamond(");
+		let plan = place(body, "activity::join_plan");
+		assert!(plan < place(body, "refile_own_versions(") && plan < place(body, "delete_except_kept("),
+			"the activity plan is made before anything is refiled or deleted: {}", body);
+		let read = wasm_body("pub async fn activity_read(");
+		assert!(read.contains("unreadable.push"), "a file that cannot be read is named: {}", read);
+	}
+
 	#[test]
 	fn a_day_line_replaces_that_devices_turn_lines_for_that_day() {
 		let old = NOW - 10 * DAY_MS;
@@ -763,7 +890,7 @@ mod tests {
 		let end = body.find("\n}\n").unwrap_or(body.len());
 		let body = &body[..end];
 		let hold = body.find("hold_versions(id)").unwrap_or(usize::MAX);
-		let read = body.find("opfs::read_file").unwrap_or(0);
+		let read = body.find("read_if_any(").unwrap_or(0);
 		assert!(hold < read, "activity_append holds the version store before it reads: {}", body);
 	}
 }

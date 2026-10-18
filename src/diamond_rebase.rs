@@ -708,6 +708,29 @@ fn skip_ws(b: &[u8], mut i: usize) -> usize {
 }
 
 
+/// What a wholesale replace does with one entry of the Diamond's directory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OnReplace {
+	Keep,		// survives the replace whole
+	Descend,	// a directory holding something kept: its entries are weighed one by one
+	Delete,
+}
+
+/// What a pull's wholesale replace does with the entry at `rel` under the Diamond's directory.
+/// The version store survives it (S-SYNC #4), and so does the activity record (item 24): each
+/// device's file holds lines no export carries yet, and joined in place it is never off the disk.
+pub fn on_replace(rel: &str) -> OnReplace {
+	const KEPT: [&str; 2] = ["versions", crate::activity::ACTIVITY_DIR];
+	if KEPT.contains(&rel) {
+		return OnReplace::Keep;
+	}
+	if KEPT.iter().any(|k| k.len() > rel.len() && k.starts_with(rel) && k.as_bytes()[rel.len()] == b'/') {
+		return OnReplace::Descend;
+	}
+	OnReplace::Delete
+}
+
+
 #[cfg(test)]
 mod tests {
 	use super::*;

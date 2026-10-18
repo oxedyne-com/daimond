@@ -1064,6 +1064,20 @@
 	// nothing of which rows it cut, so a row this long in one is taken as cut.
 	var LEGACY_SEED_MSG_CHARS = 16 * 1024;
 
+	/// Is this row part of the conversation a model is fed? THE ONE RULE (FIRE C2-READY, QA r572y C2b F3)
+	/// that `throughOf`, `seedFrom`, `threadSig` and so `threadReadiness` share, so the message an errand
+	/// says the asker last saw is always one its seed can carry and its fingerprint counts.
+	function conversational(m) {
+		if (!m || (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'tool')) return false;
+		// A render-only provisional row is not history: a final frame the runner cut at the door
+		// (`progressRow`) is held provisional until the runner's own copy lands (F4).
+		if (m.provisional) return false;
+		// A cut turn's LANDED partial answer is memory (C2: `landFailedTurn`, the kill path, a recovered
+		// row). A hand-off's placeholder is not, whatever words it shows, nor a badge with none.
+		if (m.interrupted) return !!m.content && m.why !== REASON_DISPATCHED;
+		return true;
+	}
+
 	/// THE THREAD THE ERRAND CARRIES. Pure over a chat's `messages`: the tail, ending
 	/// at the turn's own user message, whole messages only, the whole under
 	/// `SEED_MAX_CHARS`, oldest dropped first.
@@ -1076,9 +1090,8 @@
 	/// runner reads the thread off the ERRAND, and the parcel (the workspace, the
 	/// Diamonds, the rest of the account) follows in the background.
 	///
-	/// Only the roles a model is fed travel: `user`, `assistant` and `tool`. A
-	/// `think_log`, a `vision_log` and every other view-only row are left out --
-	/// the runner rebuilds its own. Answers null where there is nothing to seed,
+	/// Only `conversational` rows travel: a `think_log`, a `vision_log` and every
+	/// other view-only row are left out -- the runner rebuilds its own. Answers null where there is nothing to seed,
 	/// so an errand carries `seed: null` rather than an empty shell.
 	function seedFrom(chat, turnId, maxMsgs, maxChars) {
 		var c = chat || {}, msgs = Array.isArray(c.messages) ? c.messages : [];
@@ -1096,14 +1109,9 @@
 		var used = 0;
 		for (var j = end - 1; j >= 0 && keep.length < nMax; j--) {
 			var mm = msgs[j];
-			if (!mm || !mm.role) continue;
-			if (mm.role !== 'user' && mm.role !== 'assistant' && mm.role !== 'tool') continue;
-			// A half turn is not history, and nor is a provisional row: a final frame the
-			// runner cut at the door (`progressRow`) is held provisional here until the
-			// runner's own copy lands, and a seed marked `whole` must not carry it, or a
-			// runner lacking the answer grafts the cut copy as the real one (F4). Skipped,
-			// as `threadSig` skips it, so a runner that lacks it is never ready on it.
-			if (mm.interrupted || mm.provisional) continue;
+			// A seed marked `whole` must not carry a provisional row, or a runner lacking the
+			// answer grafts the cut copy as the real one (F4); `conversational` leaves it out.
+			if (!conversational(mm)) continue;
 			var body = String(mm.content == null ? '' : mm.content);
 			// A person's message brings the note it took (U4), counted with it: the budget is
 			// the envelope's size, and the note rides the same seal.
@@ -1125,6 +1133,8 @@
 			if (note) sm.pre = note;
 			// An app-made record keeps its mark, so a runner's copy of it is the same record.
 			if (mm.role === 'user' && mm.app === true) sm.app = true;
+			// A landed partial travels as one, so the runner's copy carries the same badge.
+			if (mm.interrupted) { sm.interrupted = 1; if (mm.iturn) sm.iturn = String(mm.iturn); }
 			keep.unshift(sm);
 		}
 		if (!keep.length) return null;
@@ -1212,9 +1222,8 @@
 	/// The thread's fingerprint UP TO (excluding) the turn's own user message: `{ n, sig }`
 	/// over the model-facing rows' `role:mid` pairs. CONTENT-FREE, so it costs almost
 	/// nothing on the errand and cannot disagree with itself across seed clips -- it names
-	/// no content, only the shape of the prefix a model would be fed. Only user|assistant|
-	/// tool travel to a model; a half turn (interrupted) and a render-only provisional row
-	/// are not history and are skipped, exactly as `seedFrom` skips them.
+	/// no content, only the shape of the prefix a model would be fed: the `conversational`
+	/// rows, exactly those `seedFrom` carries.
 	/// `gone` (optional) lists mids the sender has removed and the copy may still hold.
 	/// `behind` (optional) lists turns whose answer rows are left out, as the sender's
 	/// thread lacked them (`openTurn`). `asked` (optional) lists turns whose prompt rows
@@ -1230,8 +1239,7 @@
 			var m = msgs[i];
 			if (!m || !m.role) continue;
 			if (m.role === 'user' && String(m.mid || '') === id) break;	// stop AT the turn's user message
-			if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'tool') continue;
-			if (m.interrupted || m.provisional) continue;
+			if (!conversational(m)) continue;
 			if (out[String(m.mid || '')]) continue;			// removed by the sender
 			if (m.role !== 'user' && skip[String(m.iturn || '')]) continue;	// a queued-behind answer
 			if (m.role === 'user' && (ask[String(m.mid || '')] || ask[String(m.iturn || '')])) continue;	// an unseen own prompt
@@ -1298,22 +1306,16 @@
 		return false;
 	}
 
-	/// Does this chat hold EXACTLY the thread the errand was dispatched from -- the same
-	/// model-facing prefix, by `{ n, sig }`? The reconstruct's readiness test (S-HAND #3):
-	/// a runner whose parcel is behind or ahead does not match, so it hands the turn back
-	/// undeliverable rather than running the model against a stale or truncated conversation.
-	/// An errand without `thread` (an older dispatcher) falls back to `holdsTurn`, the
-	/// pre-fix readiness, so a mixed-build fleet still hands off in both directions.
 	/// The last message the asker saw before this turn's prompt, as `{ ts, mid }`: the newest
-	/// user or assistant row with words and a mid, other than the turn's own prompt and the
-	/// rows of this turn. null when there is none. This is what an errand's `through` names.
+	/// `conversational` user or assistant row with words and a mid, other than the turn's own
+	/// prompt and the rows of this turn. null when there is none. This is what an errand's
+	/// `through` names.
 	function throughOf(chat, turnId) {
 		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
 		var tid = String(turnId || '');
 		for (var i = msgs.length - 1; i >= 0; i--) {
 			var m = msgs[i];
-			if (!m || !m.mid || !m.content || m.provisional) continue;
-			if (m.role !== 'user' && m.role !== 'assistant') continue;
+			if (!conversational(m) || !m.mid || !m.content || m.role === 'tool') continue;
 			if (tid && (String(m.mid) === tid || String(m.iturn || '') === tid)) continue;
 			return { ts: +m.ts || 0, mid: String(m.mid) };
 		}
@@ -1321,15 +1323,21 @@
 	}
 
 	/// Does this copy of the chat hold the message the errand's asker last saw? True when the
-	/// errand names none (an older sender, or a chat with nothing before the prompt).
+	/// errand names none (an older sender, or a chat with nothing before the prompt). The copy
+	/// alone: `threadReadiness` asks it of the copy with the seed laid in where that counts.
 	function holdsThrough(chat, errand) {
 		var t = errand && errand.through;
 		if (!t || !t.mid) return true;
+		var mid = String(t.mid);
 		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
-		for (var i = 0; i < msgs.length; i++) if (msgs[i] && String(msgs[i].mid) === String(t.mid)) return true;
+		for (var i = 0; i < msgs.length; i++) if (msgs[i] && String(msgs[i].mid) === mid) return true;
 		return false;
 	}
 
+	/// Does this chat hold EXACTLY the thread the errand was dispatched from -- the same
+	/// model-facing prefix, by `{ n, sig }`? An errand without `thread` (an older dispatcher)
+	/// falls back to `holdsTurn`, so a mixed-build fleet still hands off in both directions.
+	/// Readiness is `threadReadiness`, which also runs a copy holding more than the asker.
 	function holdsThread(chat, errand, own) {
 		var e = errand || {};
 		// A non-resident chat shows a summary, not its transcript: it holds no thread yet.
@@ -1338,38 +1346,47 @@
 		return threadMatches(chat, e, own);
 	}
 
-	/// Can this device rebuild the errand's thread, and if not, can it ever? `state` is
-	/// `match` (the thread, with the errand's seed grafted in, is the dispatcher's),
-	/// `behind` (a prefix of it: the rest may still arrive) or `final` (it can never match).
+	/// IS THIS COPY READY TO RUN THE ERRAND'S TURN? The one readiness check (FIRE C2-READY, QA
+	/// r572y C2b F1/F2), judged on the asker's WHOLE history, not only the last message it saw:
+	/// `peerReady` asks it before the claim and `peerReconstruct` after the graft, so the two
+	/// cannot disagree. Answers `{ state, ready, have, want, lack }`, `state` one of:
+	///   match    -- the thread is the dispatcher's, by `{ n, sig }` (`threadMatches`);
+	///   diverged -- it holds as many model-facing rows as the asker and the asker's last
+	///               message, and rows the asker never saw: memory belongs to the converged
+	///               transcript (UNBLOCK-11), so it runs;
+	///   behind   -- it lacks rows the asker held (`lack` of them, at least one): it keeps
+	///               pulling to the one deadline, then runs and says so.
+	/// `ready` is match or diverged. A chat that is not resident is behind (load it); an absent
+	/// one is built from the seed. An errand with no thread (an older dispatcher) is judged by
+	/// `holdsTurn`, `want` -1 and `lack` 0, as its lack cannot be counted.
 	/// The seed is grafted VIRTUALLY, so the answer costs no write and a runner may ask it
-	/// before it claims (D2, 11 Oct). A transcript only grows by union, so a runner already
-	/// holding as many model-facing rows as the errand names, and not the same ones, holds
-	/// a row the dispatcher's thread lacks and will hold it for ever: that is final, and is
-	/// what an errand fingerprinted from an unloaded chat looked like ("7 of 0"). A chat
-	/// that is absent or not resident is `behind`; an errand with no thread (an older
-	/// dispatcher) is judged by `holdsTurn` and is never final.
+	/// before it claims (D2, 11 Oct). After the graft `{ copy: true }` asks the copy alone, so a
+	/// graft that failed is seen (C2 r3b).
 	/// `held` is this device's sync version: a copy not yet holding the sender's parcel
 	/// (`held < errand.parcelVersion`) may still lose rows to a deletion in flight (a Retry
 	/// tombstones the old answer and dispatches before that parcel lands), so it is only
-	/// `behind`, never `final`. Without `held` the rows alone judge, as before.
-	/// `own` names the runner's own in-flight turns in the chat (`threadMatches`); behind
-	/// and final are judged with every row of theirs left out, as the sender may lack them.
-	function threadReadiness(chat, errand, held, own) {
+	/// `behind`, never `diverged`. Without `held` the rows alone judge.
+	/// `own` names the runner's own in-flight turns in the chat (`threadMatches`); behind and
+	/// diverged are judged with every row of theirs left out, as the sender may lack them.
+	function threadReadiness(chat, errand, held, own, opts) {
 		var e = errand || {};
 		var resident = !!chat && chat._loaded !== false;
 		var base = resident && Array.isArray(chat.messages) ? chat.messages : [];
-		var view = { messages: base.concat(seedGraft({ messages: base }, e)) };
+		var view = (opts && opts.copy) ? { messages: base } : { messages: base.concat(seedGraft({ messages: base }, e)) };
 		var o = triedList(own);
 		var mine = threadSig(view, e.turnId, e.gone, o, o);
 		if (!e.thread || typeof e.thread.n !== 'number') {
-			return { state: holdsTurn(view, e.turnId) ? 'match' : 'behind', have: mine.n, want: -1 };
+			var turn = !(chat && !resident) && holdsTurn(view, e.turnId);
+			return { state: turn ? 'match' : 'behind', ready: turn, have: mine.n, want: -1, lack: 0 };
 		}
 		var wantN = e.thread.n | 0;
 		var out = { have: mine.n, want: wantN };
-		if (threadMatches(view, e, o)) out.state = 'match';
-		else if (chat && !resident) out.state = 'behind';		// load it, then ask again
-		else if (mine.n < wantN) out.state = 'behind';
-		else out.state = typeof held === 'number' && held < (e.parcelVersion | 0) ? 'behind' : 'final';
+		if (chat && !resident) out.state = 'behind';		// load it, then ask again
+		else if (threadMatches(view, e, o)) out.state = 'match';
+		else if (mine.n < wantN || !holdsThrough(view, e)) out.state = 'behind';
+		else out.state = typeof held === 'number' && held < (e.parcelVersion | 0) ? 'behind' : 'diverged';
+		out.ready = out.state !== 'behind';
+		out.lack  = out.ready ? 0 : Math.max(1, wantN - mine.n);
 		return out;
 	}
 
@@ -6985,9 +7002,9 @@
 		seedFrom:      seedFrom,
 		seedGraft:     seedGraft,
 		holdsTurn:     holdsTurn,
-		/// The content-free thread fingerprint the errand carries (`threadSig`) and the
-		/// runner's readiness test over it (`holdsThread`): does this device hold exactly
-		/// the model-facing prefix the turn was dispatched from? S-HAND #3.
+		/// The content-free thread fingerprint the errand carries (`threadSig`), over the
+		/// rows `conversational` admits; `threadReadiness` is the runner's readiness check.
+		conversational: conversational,
 		threadSig:     threadSig,
 		holdsThread:   holdsThread,
 		throughOf:     throughOf,

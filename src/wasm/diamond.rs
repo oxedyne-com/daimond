@@ -133,15 +133,6 @@ fn crystal_legacy_path(id: &str) -> String {
     fmt!("diamonds/{}/{}", id, crate::tools::CRYSTAL_FILE_LEGACY)
 }
 
-/// One of the three markdown files beside the crystal, `diamonds/<id>/<leaf>`.
-///
-/// # Arguments
-/// * `id` - The Diamond.
-/// * `leaf` - One of [`crate::tools::STANDING_FILES`].
-fn standing_path(id: &str, leaf: &str) -> String {
-    fmt!("diamonds/{}/{}", id, leaf)
-}
-
 /// The append-only log, `diamonds/<id>/.daimond/log`.
 fn log_path(id: &str) -> String {
     fmt!("diamonds/{}/{}/log", id, STORE_DIR)
@@ -1058,7 +1049,7 @@ async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
     // shown and invents one it is not.  An empty Diamond whose REQUIREMENTS.md does not exist is
     // a Diamond whose first turn has nowhere to put what the user just asked for.
     for leaf in crate::tools::STANDING_FILES {
-        res!(opfs::write_file(FileRoot::Opfs, &standing_path(&id, leaf),
+        res!(opfs::write_file(FileRoot::Opfs, &crate::tools::standing_path(leaf, &id),
             crate::tools::standing_template(leaf).as_bytes()).await);
     }
 
@@ -1417,7 +1408,7 @@ async fn find_crystal_data(id: &str) -> Outcome<Option<String>> {
 /// * `id` - The Diamond.
 pub async fn read_standing(id: &str) -> crate::tools::Standing {
     let read = |leaf: &'static str| {
-        let path = standing_path(id, leaf);
+        let path = crate::tools::standing_path(leaf, id);
         async move {
             opfs::read_file(FileRoot::Opfs, &path).await
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
@@ -1502,7 +1493,7 @@ pub async fn ensure_standing(id: &str) -> crate::tools::Standing {
             continue;
         }
         *held = crate::tools::standing_template(leaf).to_string();
-        if let Err(e) = opfs::write_file(FileRoot::Opfs, &standing_path(id, leaf),
+        if let Err(e) = opfs::write_file(FileRoot::Opfs, &crate::tools::standing_path(leaf, id),
             held.as_bytes()).await
         {
             console_log(&fmt!("Diamond '{}': {} could not be seeded ({}).", id, leaf, e));
@@ -1511,7 +1502,7 @@ pub async fn ensure_standing(id: &str) -> crate::tools::Standing {
     if !unfiled.is_empty() {
         files.requirements = crate::tools::file_unfiled(&files.requirements, &unfiled);
         if let Err(e) = opfs::write_file(FileRoot::Opfs,
-            &standing_path(id, crate::tools::REQUIREMENTS_FILE),
+            &crate::tools::standing_path(crate::tools::REQUIREMENTS_FILE, id),
             files.requirements.as_bytes()).await
         {
             console_log(&fmt!(
@@ -1640,7 +1631,7 @@ async fn state_landed(root: FileRoot, path: &str, text: String) -> Outcome<Lande
         out.archive.push((archive.clone(), land.archived.clone()));
     }
     if !land.noted.is_empty() {
-        let dpath = standing_path(&id, crate::tools::DECISIONS_FILE);
+        let dpath = crate::tools::standing_path(crate::tools::DECISIONS_FILE, &id);
         let mut dec = read(dpath.clone()).await;
         if dec.is_empty() {
             dec = crate::tools::standing_template(crate::tools::DECISIONS_FILE).to_string();
@@ -1690,7 +1681,7 @@ async fn archive_append(root: FileRoot, archive: &str, retired: &str) -> Outcome
 /// * `leaf` - One of [`crate::tools::STANDING_FILES`].
 /// * `text` - The whole new file.
 pub async fn write_standing(id: &str, leaf: &str, text: &str) -> Outcome<()> {
-    let path = standing_path(id, leaf);
+    let path = crate::tools::standing_path(leaf, id);
     let landed = res!(standing_retired(FileRoot::Opfs, &path, text.to_string()).await);
     res!(landed.settle(FileRoot::Opfs).await);
     opfs::write_file(FileRoot::Opfs, &path, landed.kept.as_bytes()).await
@@ -1748,7 +1739,7 @@ pub async fn absorb_fold_notes(id: &str, notes: &crate::agent::compact::FoldNote
         if was == now {
             continue;
         }
-        let path = standing_path(id, leaf);
+        let path = crate::tools::standing_path(leaf, id);
         // Retired by the app's own arithmetic before it is written, exactly as a daimon's own
         // write is, so the file a fold leaves is under its ceiling with everything that came off
         // it in the archive rather than gone.
@@ -2443,7 +2434,7 @@ pub async fn fold_apply(
     let mut written: Vec<&'static str> = Vec::new();
     let mut fault: Option<Error<ErrTag>> = None;
     for (leaf, text) in land.files.iter() {
-        match opfs::write_file(FileRoot::Opfs, &standing_path(id, leaf), text.as_bytes()).await {
+        match opfs::write_file(FileRoot::Opfs, &crate::tools::standing_path(leaf, id), text.as_bytes()).await {
             Ok(()) => written.push(leaf),
             Err(e) => { fault = Some(e); break; },
         }
@@ -2462,7 +2453,7 @@ pub async fn fold_apply(
                     crate::tools::DECISIONS_FILE    => &files.decisions,
                     _                               => &files.state,
                 };
-                if let Err(r) = opfs::write_file(FileRoot::Opfs, &standing_path(id, leaf),
+                if let Err(r) = opfs::write_file(FileRoot::Opfs, &crate::tools::standing_path(leaf, id),
                     was.as_bytes()).await
                 {
                     console_log(&fmt!("Diamond '{}': {} could not be put back after a failed \
@@ -2484,7 +2475,7 @@ pub async fn fold_apply(
         };
         Change {
             before: Some(was.as_bytes().to_vec()),
-            ..Change::of(&standing_path(id, leaf), text.as_bytes().to_vec())
+            ..Change::of(&crate::tools::standing_path(leaf, id), text.as_bytes().to_vec())
         }
     }).collect();
     let paths: Vec<String> = changes.iter().map(|c| c.path.clone()).collect();
@@ -7696,20 +7687,26 @@ async fn rebase_before_import(_hold: &VersionHold, id: &str, incoming: &[(String
     Ok(plan.moves.len())
 }
 
-/// Delete everything a Diamond holds EXCEPT its version store, so the file history --
-/// and any conflict snapshot just kept -- survives a wholesale replace (S-SYNC #4).
-/// The export's own `versions/` files are written over what is kept, unioning by
-/// content address.
-async fn delete_except_versions(dir: &str) -> Outcome<()> {
-    let entries = match opfs::list_dir(FileRoot::Opfs, dir).await {
-        Ok(e)  => e,
-        Err(_) => return Ok(()),
-    };
-    for (name, is_dir, _size) in entries {
-        if name == VERSIONS_SUBDIR {
-            continue;
+/// Delete everything a Diamond holds EXCEPT what [`diamond_rebase::on_replace`] keeps: its
+/// version store, so the file history -- and any conflict snapshot just kept -- survives a
+/// wholesale replace (S-SYNC #4), and its activity record, which is joined in place (item 24).
+/// The export's own `versions/` files are written over what is kept, unioning by content address.
+async fn delete_except_kept(dir: &str) -> Outcome<()> {
+    let mut subs: Vec<String> = vec![String::new()];
+    while let Some(sub) = subs.pop() {
+        let at = if sub.is_empty() { dir.to_string() } else { fmt!("{}/{}", dir, sub) };
+        let entries = match opfs::list_dir(FileRoot::Opfs, &at).await {
+            Ok(e)  => e,
+            Err(_) => continue,
+        };
+        for (name, is_dir, _size) in entries {
+            let rel = if sub.is_empty() { name.clone() } else { fmt!("{}/{}", sub, name) };
+            match diamond_rebase::on_replace(&rel) {
+                diamond_rebase::OnReplace::Keep                 => (),
+                diamond_rebase::OnReplace::Descend if is_dir    => subs.push(rel),
+                _ => res!(opfs::delete_entry(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), is_dir).await),
+            }
         }
-        res!(opfs::delete_entry(FileRoot::Opfs, &fmt!("{}/{}", dir, name), is_dir).await);
     }
     Ok(())
 }
@@ -7741,6 +7738,11 @@ async fn delete_except_versions(dir: &str) -> Outcome<()> {
 /// decision D3 of the launch plan, and it is a decision about THIS function.  The bodies are
 /// bytes, so the ones that are not valid UTF-8 travel in the pack's `binary` map
 /// ([`crate::protocol::pack_diamond`]) and arrive byte for byte.
+///
+/// **The activity record is joined IN PLACE, never deleted (item 24).**  Each device's file holds
+/// lines no export carries yet, so it is kept like `versions/`, an arriving copy is written over it
+/// only where it adds a line, and one this device cannot read holds the import back.  The lines
+/// only this device held count in the answer's `here`, so the caller stamps and they travel.
 ///
 /// **`versions/` is PRESERVED, not deleted (S-SYNC #4).**  The wholesale replace once deleted the
 /// whole directory, `versions/` included, so a two-sided edit -- the phone changed the memory,
@@ -7825,6 +7827,32 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOu
     } else {
         None
     };
+    // THIS DEVICE'S ACTIVITY RECORD, joined in place (UNBLOCK-11, item 24). Each device's file has
+    // one writer, and lines it wrote since its last push are in no export yet. Planned here, with
+    // the page logs and before anything is written: a file this device cannot read holds the
+    // import back, since laying the copy over it would lose its lines.
+    let mut arriving_activity: Vec<(String, String)> = Vec::new();
+    writes.retain(|(rel, body)| {
+        let act = crate::activity::is_activity_rel(rel);
+        if act {
+            arriving_activity.push((rel.clone(), String::from_utf8_lossy(body).into_owned()));
+        }
+        !act
+    });
+    let (local_activity, unreadable) = if existed {
+        activity_read(&id).await
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let now = js_sys::Date::now() as i64;
+    let act = match crate::activity::join_plan(&local_activity, &unreadable, &arriving_activity, now) {
+        crate::activity::Plan::Join(j)     => j,
+        crate::activity::Plan::Held(paths) => {
+            crate::wasm::entry::trail("ACTIVITY HELD", &fmt!("{} {}", id, paths.join(", ")));
+            drop(hold);
+            return Ok(ImportOutcome::Held(paths));
+        }
+    };
     // NO VERSION OF THIS DEVICE'S IS WRITTEN OVER OR READ THROUGH THE OTHER'S (2026-09-23, bc4).
     // Two devices that each record between syncs mint the same numbers, and the writes below lay
     // the other's `versions/` over this one's by name: a local keyframe and an incoming patch
@@ -7870,24 +7898,11 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOu
         }
         writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
     }
-    // THIS DEVICE'S ACTIVITY RECORD, read before the delete below takes it (UNBLOCK-11). Each
-    // device's file has one writer, and lines it wrote since its last push are in no export yet:
-    // laid over as the copy came, they went. Joined with the export's copy below, and a file the
-    // export lacks is put back as it was.
-    let local_activity = if existed { activity_read_all(&id).await } else { Vec::new() };
-    let mut arriving_activity: Vec<(String, String)> = Vec::new();
-    let writes: Vec<(String, Vec<u8>)> = writes.into_iter().filter_map(|(rel, body)| {
-        if crate::activity::is_activity_rel(&rel) {
-            arriving_activity.push((rel, String::from_utf8_lossy(&body).into_owned()));
-            None
-        } else {
-            Some((rel, body))
-        }
-    }).collect();
     if existed {
-        // PRESERVE `versions/`; delete only the rest.  The kept snapshot and the whole file
-        // history live under it, and the export's own `versions/` is written over it below.
-        res!(delete_except_versions(&dir).await);
+        // PRESERVE `versions/` and the activity record; delete only the rest.  The kept snapshot
+        // and the whole file history live under the one, and the export's own `versions/` is
+        // written over it below; the other is joined in place.
+        res!(delete_except_kept(&dir).await);
     }
     for (rel, body) in writes {
         // THE METADATA IS REBUILT, NOT COPIED. Every other file in an export is
@@ -7941,8 +7956,7 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOu
         let bytes = res!(joined_log(&id, &rel, bytes).await);
         res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), &bytes).await);
     }
-    let now = js_sys::Date::now() as i64;
-    for (rel, text) in crate::activity::after_import(&local_activity, &arriving_activity, now) {
+    for (rel, text) in &act.writes {
         res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), text.as_bytes()).await);
     }
     // THE COUNTER STAYS WHERE THE IMPORT SET IT, at the remote's live version, and is not
@@ -7960,7 +7974,7 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOu
     // ONE VERSION FOR THE JOIN (#12), still under the hold and above both histories, so History
     // shows where this device's rows came back in.  Best effort, as the kept snapshot is: the
     // joined logs are already down.
-    let counts = match &logs {
+    let mut counts = match &logs {
         Some(j) => j.import_counts(),
         None    => pagelog::Counts::default(),
     };
@@ -7977,6 +7991,9 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOu
         }
     }
     drop(hold);
+    // The activity lines only this device held stay here, so they stamp it as page rows do.
+    counts.here += act.here;
+    counts.arriving += act.arriving;
     Ok(ImportOutcome::Joined(counts))
 }
 
@@ -7988,6 +8005,10 @@ pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<ImportOu
 /// Diamond is not stamped here: the answer's `here` says whether this device holds rows the other
 /// lacks, and the caller stamps on it so the join travels back.  A log over the cap or unreadable
 /// writes nothing at all, and the answer is held.
+///
+/// The activity files are joined here too (item 24), by [`crate::activity::join_plan`] as the
+/// import joins them, and count in `here` and `arriving` the same way; one this device cannot
+/// read holds the join.
 pub async fn union_logs_from(id: &str, export_json: &str) -> Outcome<ImportOutcome> {
     let val = res!(js_sys::JSON::parse(export_json)
         .map_err(|e| err!("A Diamond export could not be parsed: {}.", js_str(&e); Invalid, Input)));
@@ -8010,11 +8031,27 @@ pub async fn union_logs_from(id: &str, export_json: &str) -> Outcome<ImportOutco
             return Ok(ImportOutcome::Held(paths));
         }
     };
+    let arriving_activity: Vec<(String, String)> = arriving.iter()
+        .filter(|(rel, _)| crate::activity::is_activity_rel(rel))
+        .map(|(rel, body)| (rel.clone(), String::from_utf8_lossy(body).into_owned()))
+        .collect();
+    let (local_activity, unreadable) = activity_read(id).await;
+    let now = js_sys::Date::now() as i64;
+    let act = match crate::activity::join_plan(&local_activity, &unreadable, &arriving_activity, now) {
+        crate::activity::Plan::Join(a)     => a,
+        crate::activity::Plan::Held(paths) => {
+            crate::wasm::entry::trail("ACTIVITY HELD", &fmt!("{} {}", id, paths.join(", ")));
+            return Ok(ImportOutcome::Held(paths));
+        }
+    };
     let dir = diamond_dir(id);
     for (rel, body) in j.local_writes() {
         res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), &body).await);
     }
-    let counts = j.local_counts();
+    for (rel, text) in &act.writes {
+        res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), text.as_bytes()).await);
+    }
+    let mut counts = j.local_counts();
     if counts.files > 0 {
         let wrote = j.logs.into_iter()
             .filter(|l| l.arriving_adds > 0)
@@ -8026,6 +8063,8 @@ pub async fn union_logs_from(id: &str, export_json: &str) -> Outcome<ImportOutco
         }
     }
     drop(hold);
+    counts.here += act.here;
+    counts.arriving += act.arriving;
     Ok(ImportOutcome::Joined(counts))
 }
 
@@ -8047,13 +8086,27 @@ async fn joined_log(id: &str, rel: &str, body: Vec<u8>) -> Outcome<Vec<u8>> {
     Ok(body)
 }
 
-/// Every activity file of the Diamond `id`, as `(rel, text)` under its directory
-/// (UNBLOCK-11). None where it has no record yet; an unreadable file is left out.
+/// Every activity file of the Diamond `id`, as `(rel, text)` under its directory, for the
+/// prompt and `recall` (UNBLOCK-11). None where it has no record yet; an unreadable file is left
+/// out, which a reader may do and a pull may not ([`activity_read`]).
 pub async fn activity_read_all(id: &str) -> Vec<(String, String)> {
+    activity_read(id).await.0
+}
+
+/// Every activity file of the Diamond `id` as `(rel, text)`, and beside them the files that could
+/// not be read (the directory itself where it exists and cannot be listed), so that a pull holds
+/// back rather than writing over what it could not see (item 24).
+pub async fn activity_read(id: &str) -> (Vec<(String, String)>, Vec<String>) {
     let dir = fmt!("{}/{}", diamond_dir(id), crate::activity::ACTIVITY_DIR);
+    let mut unreadable: Vec<String> = Vec::new();
     let entries = match opfs::list_dir(FileRoot::Opfs, &dir).await {
         Ok(e)  => e,
-        Err(_) => return Vec::new(),
+        Err(_) => {
+            if !matches!(opfs::exists(FileRoot::Opfs, &dir).await, Ok(false)) {
+                unreadable.push(crate::activity::ACTIVITY_DIR.to_string());
+            }
+            return (Vec::new(), unreadable);
+        }
     };
     let mut out: Vec<(String, String)> = Vec::new();
     for (name, is_dir, _) in entries {
@@ -8061,12 +8114,13 @@ pub async fn activity_read_all(id: &str) -> Vec<(String, String)> {
         if is_dir || !crate::activity::is_activity_rel(&rel) {
             continue;
         }
-        if let Ok(b) = opfs::read_file(FileRoot::Opfs, &fmt!("{}/{}", dir, name)).await {
-            out.push((rel, String::from_utf8_lossy(&b).into_owned()));
+        match opfs::read_file(FileRoot::Opfs, &fmt!("{}/{}", dir, name)).await {
+            Ok(b)  => out.push((rel, String::from_utf8_lossy(&b).into_owned())),
+            Err(_) => unreadable.push(rel),
         }
     }
     out.sort();
-    out
+    (out, unreadable)
 }
 
 /// Append one ended turn to THIS device's activity file of the Diamond `id`, shed for `now`.
@@ -8077,19 +8131,34 @@ pub async fn activity_read_all(id: &str) -> Vec<(String, String)> {
 /// * `turn` - The turn that ended ([`crate::activity::ended`]); its `dev` names the file.
 /// * `now` - The time, ms since the epoch.
 ///
-/// Under the version hold (C2 r2 F5): `import_diamond` holds it across its read, delete and
-/// rewrite of the activity files, so a pull landing between this read and write cannot drop the
-/// turn's line, nor this write lay an old copy over the pull's join. Not re-entrant: the caller
-/// holds no hold.
+/// Under the version hold (C2 r2 F5): `import_diamond` holds it across its read and join of the
+/// activity files, so a pull landing between this read and write cannot drop the turn's line, nor
+/// this write lay an old copy over the pull's join. Not re-entrant: the caller holds no hold.
+///
+/// **The line and the stamp are one act (item 24)**, as [`page_write`]'s are: a turn that changed
+/// no file moves nothing else, and an unstamped line is one the next sync does not carry. A stamp
+/// that fails puts the file back. A file that exists and cannot be read is an error, not an empty
+/// record to write one line over.
 pub async fn activity_append(id: &str, turn: crate::activity::Turn, now: i64) -> Outcome<()> {
     let _hold = res!(hold_versions(id).await);
     let path = fmt!("{}/{}", diamond_dir(id), crate::activity::file_rel(&turn.dev));
-    let old = match opfs::read_file(FileRoot::Opfs, &path).await {
-        Ok(b)  => String::from_utf8_lossy(&b).into_owned(),
-        Err(_) => String::new(),
+    let had = res!(read_if_any(&path).await);
+    let old = match &had {
+        Some(b) => String::from_utf8_lossy(b).into_owned(),
+        None    => String::new(),
     };
     let text = crate::activity::append(&old, turn, now);
-    opfs::write_file(FileRoot::Opfs, &path, text.as_bytes()).await
+    res!(opfs::write_file(FileRoot::Opfs, &path, text.as_bytes()).await);
+    let e = match touch(id).await {
+        Ok(())  => return Ok(()),
+        Err(e)  => e,
+    };
+    match restore(&path, &had).await {
+        Ok(())  => Err(err!("The activity line was put back because Diamond '{}' could not be \
+            stamped: {}", id, e; IO, File, Write)),
+        Err(e2) => Err(err!("The activity line of Diamond '{}' could not be stamped ({}), and \
+            the file could not be put back ({}).", id, e, e2; IO, File, Write)),
+    }
 }
 
 /// The files a pack carries, text and base64 alike, each path checked against the Diamond it is

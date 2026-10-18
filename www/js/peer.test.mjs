@@ -953,14 +953,14 @@ async function main() {
 			{ role: 'assistant', content: 'a1', mid: 'm2', ts: T0 + 1 },
 			{ role: 'tool',      content: 't1', mid: 'm3', ts: T0 + 2 },
 			{ role: 'think_log', content: 'thinking...', mid: 'mx', ts: T0 + 3 },	// view-only, not fed
-			{ role: 'assistant', content: 'half', mid: 'm4', interrupted: true, ts: T0 + 4 }, // a half turn
+			{ role: 'assistant', content: 'half', mid: 'm4', interrupted: true, ts: T0 + 4 }, // a landed partial: memory (C2)
 			{ role: 'assistant', content: 'prov', mid: 'm5', provisional: true, ts: T0 + 5 },  // render-only
 			{ role: 'user',      content: 'the turn', mid: 'TURN', ts: T0 + 6 },
 			{ role: 'assistant', content: 'after',  mid: 'm7', ts: T0 + 7 },		// after the turn
 		] };
 		const sig = P.threadSig(chat, 'TURN');
-		check('#3a: threadSig counts only user|assistant|tool BEFORE the turn (3), not think_log/interrupted/provisional/after',
-			sig.n === 3, 'n=' + sig.n);
+		check('#3a: threadSig counts only conversational rows BEFORE the turn (4, a landed partial included), not think_log/provisional/after',
+			sig.n === 4, 'n=' + sig.n);
 
 		const errand = { turnId: 'TURN', thread: sig };
 		check('#3b: holdsThread TRUE for the dispatcher\'s own chat', P.holdsThread(chat, errand) === true);
@@ -1578,23 +1578,24 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 			check('TR3c: a runner missing the tail is BEHIND (still arriving)',
 				R({ id: 'c-tr', messages: prior.slice(0, 2) }, er).state === 'behind');
 			const more = { id: 'c-tr', messages: prior.concat([{ role: 'user', content: 'x', mid: 'p5', ts: NOW - 1 }]) };
-			check('TR3d: a runner holding MORE than the errand is FINAL (the D2 "7 of 0")',
-				R(more, { turnId: 'TR-T', thread: { n: 0, sig: P.threadSig({ messages: [] }, 'TR-T').sig } }).state === 'final'
-				&& R(more, er).state === 'final');
+			// FIRE C2-READY: a copy holding more than the asker is DIVERGED and runs (UNBLOCK-11).
+			check('TR3d: a runner holding MORE than the errand is DIVERGED, and ready',
+				R(more, { turnId: 'TR-T', thread: { n: 0, sig: P.threadSig({ messages: [] }, 'TR-T').sig } }).state === 'diverged'
+				&& R(more, er).state === 'diverged' && R(more, er).ready === true);
 			const swapped = { id: 'c-tr', messages: prior.slice(0, 3).concat([{ role: 'assistant', content: 'z', mid: 'pZ', ts: NOW - 2 }]) };
-			check('TR3e: an equal count with a different sig is FINAL', R(swapped, er).state === 'final');
+			check('TR3e: an equal count with a different sig is DIVERGED', R(swapped, er).state === 'diverged');
 			check('TR3f: an absent chat whose errand SEED carries the thread is a match (no write)',
 				R(null, { turnId: 'TR-T', thread: want, seed: { msgs: prior.concat([userRow]), whole: true } }).state === 'match');
-			check('TR3g: an errand with no thread is never judged final', R(full, { turnId: 'TR-T' }).state !== 'final');
+			check('TR3g: an errand with no thread is never judged diverged', R(full, { turnId: 'TR-T' }).state !== 'diverged');
 			// TR3h (permit 3c, 12 Oct): a Retry tombstones T1 and dispatches before that parcel
 			// lands; a runner still below the errand's parcel version holds T1's two rows and is
 			// only BEHIND on deletions, not divergent. At or past the version, the rows judge.
 			const retry = { turnId: 'TR-T', parcelVersion: 16, thread: { n: 0, sig: P.threadSig({ messages: [] }, 'TR-T').sig } };
 			const stale = { id: 'c-tr', messages: prior.slice(0, 2) };
-			check('TR3h: a runner below the parcel version holding extra rows is BEHIND, not final',
+			check('TR3h: a runner below the parcel version holding extra rows is BEHIND, not diverged',
 				R(stale, retry, 15).state === 'behind', R(stale, retry, 15).state);
-			check('TR3i: at the parcel version the same copy is FINAL; without a version, as before',
-				R(stale, retry, 16).state === 'final' && R(stale, retry).state === 'final');
+			check('TR3i: at the parcel version the same copy is DIVERGED; without a version, as before',
+				R(stale, retry, 16).state === 'diverged' && R(stale, retry).state === 'diverged');
 		}
 		// TR4: a runner whose readiness says no never writes a lease, hands back at once.
 		L.forget();
@@ -2705,7 +2706,7 @@ async function runNominationAcceptance(P, L, check) {
 		const tooFar = { id: 'c-q', messages: pre.concat(ans3, [{ role: 'user', content: 'q5', mid: 'u5' },
 			{ role: 'assistant', content: 'a5', mid: 'a5', iturn: 'u5' }, q4]), _loaded: true };
 		check('[ctl] 3b: a runner holding a further turn as well does not match',
-			P.holdsThread(tooFar, errand) === false && P.threadReadiness(tooFar, errand, 0).state === 'final');
+			P.holdsThread(tooFar, errand) === false && P.threadReadiness(tooFar, errand, 0).state === 'diverged');
 		const other = { id: 'c-q', messages: pre.concat([{ role: 'assistant', content: 'x', mid: 'x1', iturn: 'u1' }], [q4]), _loaded: true };
 		check('[ctl] 3b: an extra answer to an earlier turn does not match', P.holdsThread(other, errand) === false);
 		const answered = { id: 'c-q', messages: pre.concat([placeholder], ans3, [q4]) };

@@ -27746,6 +27746,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// made, so this copy is the same record.
 			if (add[j].role === 'user' && typeof add[j].pre === 'string' && add[j].pre) gm.pre = add[j].pre;
 			if (add[j].role === 'user' && add[j].app === true) gm.app = true;
+			// A cut turn's landed partial is the same record here, badge and turn included.
+			if (add[j].interrupted) { gm.interrupted = 1; if (add[j].iturn) gm.iturn = String(add[j].iturn); }
 			chat.messages.push(gm);
 		}
 		// A graft is a copy of messages the dispatcher wrote, so it moves no stamp: the
@@ -27817,10 +27819,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// version at or past it holds the prompt, the chat, and the offloaded-file chunk
 	/// manifests -- the large files themselves hydrate on demand from those manifests
 	/// at file-read time (chunks.js), so the manifests being present is the gate.
-	/// Before the claim (runErrand's `ready`): wait up to `THROUGH_WAIT_MS` for the message the
-	/// asker last saw (`errand.through`), pulling, then claim regardless. Always `{ ok: true,
-	/// lacked }`, `lacked` the note for the model when that message never came ('' when it
-	/// did). The "conversation differs" refusal is gone (UNBLOCK-11): memory belongs to the
+	/// Before the claim (runErrand's `ready`): wait up to `THROUGH_WAIT_MS` for the copy, with the
+	/// errand's seed laid in, to hold the asker's whole history (`askerReadiness`), pulling, then
+	/// claim regardless. Always `{ ok: true, lacked }`, `lacked` the note for the model saying how
+	/// many messages it lacks ('' when it is ready). The "conversation differs" refusal is gone (UNBLOCK-11): memory belongs to the
 	/// chat, so a runner whose copy differs runs on the converged transcript it holds.
 	// This device's sync version, for threadReadiness: below the errand's parcel version a
 	// copy is still behind (a deletion may be in flight).
@@ -27831,25 +27833,35 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// THE MOST A RUNNER WAITS for the message the asker last saw (UNBLOCK-11): then it runs
 	// with what it holds and tells the model what it lacked. A turn is never refused here.
 	var THROUGH_WAIT_MS = 10000;
-	/// Does this copy hold what the asker saw? The message the errand's `through` names; for an
-	/// older sender, whose errand carries no `through` key at all, the thread by its fingerprint
-	/// (`holdsThread`, C2 r2 F4) -- it used to pass at once on whatever was held, with no note. A
-	/// `through` of null is a new sender with nothing before the prompt: nothing to wait for.
-	function askerHeld(c, e, own) {
-		if (!e) return true;
-		if (e.through && e.through.mid) return DaimondPeer.holdsThrough(c, e);
-		if (e.through === null) return true;
-		return DaimondPeer.holdsThread(c, e, own);
+	/// Is this copy ready to run the errand's turn? `DaimondPeer.threadReadiness`, the one check
+	/// (FIRE C2-READY), judged on the asker's whole history: the seed counts unless `copy` asks of
+	/// the copy alone, as the post-graft checks do (C2 r3b).
+	function askerReadiness(c, e, own, copy) {
+		return DaimondPeer.threadReadiness(c, e, syncHeld(), own, copy ? { copy: true } : null);
 	}
-	/// What this device's copy lacks of the asker's view, said for the model, or '' when it
-	/// holds it (`askerHeld`).
-	function lackedNote(c, e, own) {
-		if (!e || askerHeld(c, e, own)) return '';
-		if (!e.through) return '[Daimond: this device could not confirm it held the conversation as the asker saw it (the turn came from an older build of Daimond). '
+	/// What this device's copy lacks of the asker's view, said for the model, or '' when it is
+	/// ready (`askerReadiness`).
+	function lackedNote(c, e, own, copy) {
+		if (!e) return '';
+		var rd = askerReadiness(c, e, own, copy);
+		if (rd.ready) return '';
+		if (rd.want < 0) return '[Daimond: this device could not confirm it held the conversation as the asker saw it (the turn came from an older build of Daimond). '
 			+ 'It answers from what it holds, which may be missing the most recent exchange; say so if it matters.]\n';
-		var when = e.through.ts ? new Date(e.through.ts).toISOString() : 'an unknown time';
-		return '[Daimond: this device had not yet received the conversation up to the asker\'s last message (sent '
-			+ when + '). It answers from what it holds, which may be missing the most recent exchange; say so if it matters.]\n';
+		var when = (e.through && e.through.ts) ? ' (sent ' + new Date(e.through.ts).toISOString() + ')' : '';
+		var n = rd.lack + ' earlier message' + (rd.lack === 1 ? '' : 's');
+		return '[Daimond: this device had not yet received ' + n + ' of the conversation up to the asker\'s last message'
+			+ when + '. It answers from what it holds, which lacks them; say so if it matters.]\n';
+	}
+	/// The options a runner's turn runs with: the copy's lack note laid ahead of the turn's own,
+	/// read at the moment the turn lays its history (C2-NOTE, UNBLOCK-11). The note and the rows
+	/// come from one reading: a pull that lands the missing rows between `peerReconstruct` and the
+	/// turn leaves no stale note on a turn that holds them all.
+	function runnerTurnOpts(c, ropts) {
+		var lacked = (c && c.chat && c.errand) ? lackedNote(c.chat, c.errand, c.own, true) : '';
+		if (!lacked) return ropts;
+		diag('turn LACKING', 'chat=' + c.chat.id + ' through=' + (c.errand.through ? c.errand.through.mid : '(older sender)')
+			+ '; running with what is held');
+		return Object.assign({}, ropts, { pre: lacked + ((ropts && typeof ropts.pre === 'string') ? ropts.pre : '') });
 	}
 	// ONE DEADLINE FOR THE WAIT (C2 r2 F6): `peerReady` sets it before the claim, and
 	// `peerReconstruct` waits to the same instant rather than starting a second 10 s of its own.
@@ -27883,9 +27895,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		async function holds() {
 			var c = find();
 			if (c && c._loaded === false) { try { await withinDeadline(loadChatMessages(c), by); } catch (err) { /* waited for below */ } }
-			return !!(c && c._loaded !== false && askerHeld(c, e, own));
+			// Before the claim the errand's seed counts: the graft lays it in, and makes a chat not
+			// here yet. The post-graft checks in `peerReconstruct` ask the real copy.
+			return askerReadiness(c, e, own, false).ready;
 		}
-		if (!errand || e.through === null) return { ok: true, lacked: '' };	// a new sender, nothing before the prompt
+		if (!errand) return { ok: true, lacked: '' };
 		var got = await holds();
 		while (!got && Date.now() < by) {
 			if (window.DaimondSync && DaimondSync.pull) { try { await withinDeadline(DaimondSync.pull(true), by); } catch (err) { /* offline: the bound ends it */ } }
@@ -27894,9 +27908,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!got && Date.now() < by) await new Promise(function (res) { setTimeout(res, Math.min(500, Math.max(0, by - Date.now()))); });
 		}
 		if (got) return { ok: true, lacked: '' };
-		diag('ready LACKING', 'chat=' + e.chatId + ' turn=' + e.turnId + ' through=' + (e.through ? e.through.mid : '(older sender: thread)')
-			+ ' not here; running with what is held');
-		return { ok: true, lacked: lackedNote(find(), e, own) };
+		var rd = askerReadiness(find(), e, own, false);
+		diag('ready LACKING', 'chat=' + e.chatId + ' turn=' + e.turnId + ' have=' + rd.have + ' want=' + rd.want
+			+ ' through=' + (e.through ? e.through.mid : '(older sender)') + '; running with what is held');
+		return { ok: true, lacked: lackedNote(find(), e, own, false) };
 	}
 
 	async function peerReconstruct(errand, own) {
@@ -27952,13 +27967,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// these pulls are the net for a device whose channel is down, from the wake
 		// floor up to a few seconds apart, and back to the floor on any movement.
 		var pullGap = RECONSTRUCT_PULL_MIN_MS, pullAt = 0;
-		// READY: resident and holding the message the asker last saw (`through`), or the whole
-		// fingerprinted thread. A resident copy still short of `through` once the bounded wait is
-		// spent runs anyway, and the model is told what it lacked (UNBLOCK-11).
+		// READY: resident and holding the asker's whole history, or more (`askerReadiness`, the copy
+		// alone now the graft has run). A resident copy still behind once the one deadline is spent
+		// runs anyway, and the model is told how much it lacked (UNBLOCK-11).
 		var throughBy = throughDeadline(errand);
 		function threadReady(c) {
 			if (!c || !c._loaded) return false;
-			return askerHeld(c, errand, own) || DaimondPeer.holdsThread(c, errand, own) || Date.now() > throughBy;
+			return askerReadiness(c, errand, own, true).ready || Date.now() > throughBy;
 		}
 		function chatHeldN(c) { return (c && c._loaded) ? DaimondPeer.threadReadiness(c, errand, syncHeld(), own).have : -1; }
 		while (true) {
@@ -28033,10 +28048,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A COPY THAT DIFFERS RUNS ON WHAT IT HOLDS (UNBLOCK-11). It used to hand the turn back
 		// that the conversation differed, so a turn was refused, or run on a stale
 		// session; memory now belongs to the converged transcript (`daimonPrior`, `seedEngine`),
-		// and a copy still short of the asker's last message says so to the model (`lacked`).
-		var lacked = lackedNote(chat, errand, own);
-		if (lacked) diag('reconstruct LACKING', 'chat=' + chat.id + ' through=' + (errand.through ? errand.through.mid : '(older sender: thread)') + ' after '
-			+ Math.round((Date.now() - startAt) / 1000) + 's; running with what is held');
+		// and a copy still short of the asker's last message says so to the model. The note is
+		// read when the turn lays its history (`runnerTurnOpts`), not here: the awaits below and
+		// in runErrand can land the missing rows first (C2-NOTE).
 		// THE SENDER'S REMOVALS, HONOURED (UNBLOCK-1). The errand names the rows the sender
 		// removed and has not yet shipped (`gone`); the prefix above was proven without them,
 		// so they leave this copy now -- the same removal, recorded as the same tombstone the
@@ -28115,7 +28129,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		await scopeChatTo(app, chat.id);
 		diag('reconstruct ready', 'chat=' + chat.id + ' turn=' + (errand && errand.turnId)
 			+ ' after=' + Math.round((Date.now() - startAt) / 1000) + 's');
-		return { chat: chat, app: app, lacked: lacked };
+		return { chat: chat, app: app, errand: errand, own: own };
 	}
 
 	// How long the runner waits for a handed-off turn's fan-out to settle before it
@@ -28414,8 +28428,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			parkRequested: function (er) { return _runnerParked[String(er.turnId)] || null; },
 			runTurn: async function (c, prompt, ropts) {
 				// A copy short of the asker's last message runs anyway and says so (UNBLOCK-11): the
-				// note leads the turn's own, so the model reads what this device lacked.
-				if (c && c.lacked) ropts = Object.assign({}, ropts, { pre: c.lacked + ((ropts && typeof ropts.pre === 'string') ? ropts.pre : '') });
+				// note leads the turn's own, so the model reads what this device lacked -- counted
+				// now, from the rows the turn is about to read (C2-NOTE).
+				ropts = runnerTurnOpts(c, ropts);
 				// Publish this turn's hard-stop to the runner context, so egressAllowed can
 				// abort exactly this turn when it parks. The app exists now (reconstruct ran).
 				var tid = String((ropts && ropts.turnId) || '');
@@ -38308,36 +38323,104 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var clean = dedupeSession(sess.msgs, all, sess.upto, sess.uptoTs);
 			var held = Object.assign({}, sess, { msgs: clean });
 			var tail = tailAfter(rec, held);
-			var doubt = sessionDoubt(rec, held, tail, exceptMid);
+			var doubt = sessionDoubt(rec, held, tail, exceptMid) || foldGap(rec, held, exceptMid);
 			if (!doubt) return clean.concat(tail.filter(keep).map(lay));
 			diag('daimon session out of order', 'chat=' + String(rec.id || '').slice(0, 12) + ' ' + doubt
 				+ '; the turn is laid from the transcript');
 		}
-		// No session to trust: the transcript's own prose, after the fold where one was recorded.
-		var out = [], from = -1, fold = rec.fold;
-		if (fold && typeof fold.text === 'string' && fold.text) {
-			for (var i = 0; i < all.length; i++) if (all[i] && fold.through && all[i].mid === fold.through) { from = i; break; }
-			out.push({ role: 'user', content: fold.text });
-		}
+		// No session to trust: the fold's summary, then every turn of the transcript it does not cover, in
+		// transcript order, wherever it stands (C2-FOLD: a turn that synced in below the fold point is laid).
+		var out = [], fold = rec.fold;
+		var covered = foldCover(fold, all);
+		if (fold && typeof fold.text === 'string' && fold.text) out.push({ role: 'user', content: fold.text });
 		all.forEach(function (m, n) {
-			if (!keep(m)) return;
-			if (fold && fold.text && (from >= 0 ? n <= from : (m.ts || 0) <= (fold.throughTs || 0))) return;
+			if (!keep(m) || covered(m, n)) return;
 			out.push(lay(m));
 		});
 		return out;
 	}
 
+	/// Which rows of the transcript `all` a fold record summarised, as a test `(m, n)` (C2-FOLD,
+	/// design amendment 23). A row is its turn by id: a prompt by its `mid`, any other row by its
+	/// `iturn`; the turn is covered when the record names it, or when its prompt is no later than
+	/// the record's `floorTs` (the ids it shed to stay under its bound). An untagged answer, from a
+	/// build before the tag, is covered only when the prompt above it is and it stands at or
+	/// before `through`. A record without `turns`, from before C2-FOLD, proves nothing and covers
+	/// nothing: every turn is laid behind its summary, and the next fold writes a listed record.
+	function foldCover(fold, all) {
+		if (!fold || !fold.text || !Array.isArray(fold.turns)) return function () { return false; };
+		var ids = {}, floor = +fold.floorTs || 0, msgs = all || [];
+		fold.turns.forEach(function (t) { ids[String(t)] = 1; });
+		var at = {}, through = -1;
+		msgs.forEach(function (m, n) {
+			if (!m) return;
+			if (m.role === 'user' && m.mid && at[String(m.mid)] === undefined) at[String(m.mid)] = m;
+			if (fold.through && m.mid === fold.through) through = n;
+		});
+		var turn = function (id, ts) {
+			if (ids[id] === 1) return true;
+			var q = at[id];
+			return floor > 0 && ((q ? +q.ts : +ts) || 0) <= floor;
+		};
+		return function (m, n) {
+			if (!m) return false;
+			if (m.role === 'user') return m.mid ? turn(String(m.mid), m.ts) : false;
+			if (m.iturn) return turn(String(m.iturn), m.ts);
+			if (through < 0 || n > through) return false;
+			for (var k = n - 1; k >= 0; k--) {
+				var q = msgs[k];
+				if (q && q.role === 'user') return q.mid ? turn(String(q.mid), q.ts) : false;
+			}
+			return false;
+		};
+	}
+
+	/// 'unheard' when the transcript holds a turn, above the first prompt a stored session holds
+	/// by id, that the session never heard and the fold record does not cover: another device's
+	/// turn that synced in below the fold point (C2-FOLD). The model's history cannot be inserted
+	/// into, so the turn is laid from the transcript (`daimonPrior`). '' otherwise, and where the
+	/// session's list carries no ids from its first prompt on (the marker alone decides there).
+	function foldGap(rec, sess, exceptMid) {
+		var all = rec.messages || [];
+		var heard = {}, first = '', whole = true;
+		(sess.msgs || []).forEach(function (x) {
+			if (!whole || !x || x.role !== 'user') return;
+			if (x.mid) { heard[String(x.mid)] = 1; if (!first) first = String(x.mid); }
+			else if (first) whole = false;
+		});
+		if (!first || !whole) return '';
+		var covered = foldCover(rec.fold, all);
+		for (var n = 0; n < all.length; n++) {
+			var m = all[n];
+			if (!m || m.role !== 'user' || !m.mid) continue;
+			var id = String(m.mid);
+			if (id === first) return '';
+			if (m.provisional || !m.content || heard[id] === 1 || (exceptMid && id === String(exceptMid))) continue;
+			if (!covered(m, n)) return 'unheard';
+		}
+		return '';
+	}
+
 	/// The bound on a fold record's text (design §5): the engine's fold notice is well under it.
 	var FOLD_TEXT_CAP = 16384;
+	/// The bound on its `turns` list, as JSON bytes (C2's 8 KiB): the oldest ids are shed into
+	/// `floorTs`, the latest prompt time among them.
+	var FOLD_TURNS_CAP = 8192;
 	var FOLD_HEAD = '[Daimond folded the earlier part';
 
 	/// The fold record a daimon turn leaves (UNBLOCK-11 item 3), or `prev` unchanged. `after` is
 	/// the engine list the turn returned; its last fold notice is the summary of everything
-	/// before the first prompt it still holds after the notice, so `through` is the transcript
-	/// row just before that prompt (before `turnMid`'s prompt when none is held). Keyed
-	/// `(chat, through)`; the text is capped at `FOLD_TEXT_CAP`. Stored with the chat
-	/// (`withRecent`), so every device rebuilds from it (`daimonPrior`).
-	function foldFrom(rec, after, turnMid, prev, now, dev) {
+	/// before the first prompt it still holds after the notice. `before` is the list the turn
+	/// started from (`daimonPrior`); absent, the transcript up to that prompt stands for it.
+	///
+	/// THE RECORD NAMES THE TURNS IT COVERS (C2-FOLD, design amendment 23): `turns` is the
+	/// prompt ids the engine held before that prompt, plus `prev`'s when the engine held `prev`'s
+	/// summary, so a turn another device ran that reached this one only after the fold is not
+	/// covered, wherever its timestamp puts it, and every rebuild lays it (`foldCover`).
+	/// `through` (the transcript row just before that prompt) is kept for `recall` and for an
+	/// untagged answer. The text is capped at `FOLD_TEXT_CAP`, `turns` at `FOLD_TURNS_CAP`.
+	/// Stored with the chat (`withRecent`), so every device rebuilds from it (`daimonPrior`).
+	function foldFrom(rec, after, turnMid, prev, now, dev, before) {
 		var list = Array.isArray(after) ? after : [];
 		var at = -1;
 		for (var i = list.length - 1; i >= 0; i--) {
@@ -38357,15 +38440,58 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (m && m.mid && m.content && (m.role === 'user' || m.role === 'assistant')) through = m;
 		}
 		if (!through) return prev || null;
-		return { through: String(through.mid), throughTs: +through.ts || 0, at: now, dev: String(dev || ''), text: text };
+		// The prompts the engine held ahead of `firstMid`, and `prev`'s turns where it held `prev`'s summary.
+		var held = Array.isArray(before) ? before : msgs, seen = {}, turns = [], withPrev = !Array.isArray(before);
+		var add = function (id) { if (id && seen[id] !== 1) { seen[id] = 1; turns.push(id); } };
+		for (var h = 0; h < held.length; h++) {
+			var y = held[h];
+			if (!y || y.role !== 'user') continue;
+			if (y.mid && String(y.mid) === firstMid) break;
+			if (prev && prev.text && y.content === prev.text) withPrev = true;
+			if (y.mid) add(String(y.mid));
+		}
+		var floorTs = 0;
+		if (withPrev && prev && Array.isArray(prev.turns)) {
+			prev.turns.forEach(function (t) { add(String(t)); });
+			floorTs = +prev.floorTs || 0;
+		}
+		// Bounded: the oldest prompts' ids go first, into `floorTs`.
+		var tsOf = {};
+		msgs.forEach(function (m) { if (m && m.role === 'user' && m.mid) tsOf[String(m.mid)] = +m.ts || 0; });
+		turns.sort(function (p, q) { return (tsOf[p] || 0) - (tsOf[q] || 0); });
+		var size = JSON.stringify(turns).length;
+		while (turns.length && size > FOLD_TURNS_CAP) {
+			var shed = turns.shift();
+			size -= JSON.stringify(shed).length + 1;
+			floorTs = Math.max(floorTs, tsOf[shed] || 0);
+		}
+		var out = { through: String(through.mid), throughTs: +through.ts || 0, turns: turns, at: now, dev: String(dev || ''), text: text };
+		if (floorTs > 0) out.floorTs = floorTs;
+		return out;
 	}
 
-	/// Two devices' fold records for one chat: the longer range (`throughTs`) wins; on the same
-	/// range the earlier one (`at`), then the lesser device id, so both sides pick the same.
+	/// Two devices' fold records for one chat, both sides picking the same (C2-FOLD). Never one
+	/// that lacks a turn the other covers where the other lacks none of its: the one covering
+	/// the other's `turns` wins, then a listed record over an unlisted one (which proves nothing),
+	/// then the one covering more turns; the turns the winner lacks are laid as prose by every
+	/// rebuild (`foldCover`), and the next fold covers them. Two unlisted records: the longer
+	/// range (`throughTs`). Then the earlier one (`at`), then the lesser device id.
 	function mergeFold(a, b) {
 		if (!a || !a.text) return (b && b.text) ? b : null;
 		if (!b || !b.text) return a;
-		if ((a.throughTs || 0) !== (b.throughTs || 0)) return (a.throughTs || 0) > (b.throughTs || 0) ? a : b;
+		var la = Array.isArray(a.turns), lb = Array.isArray(b.turns);
+		if (la !== lb) return la ? a : b;
+		if (la) {
+			var has = function (f, g) {
+				var ids = {};
+				f.turns.forEach(function (t) { ids[String(t)] = 1; });
+				return g.turns.every(function (t) { return ids[String(t)] === 1; });
+			};
+			var ab = has(a, b), ba = has(b, a);
+			if (ab !== ba) return ab ? a : b;
+			if (a.turns.length !== b.turns.length) return a.turns.length > b.turns.length ? a : b;
+		}
+		else if ((a.throughTs || 0) !== (b.throughTs || 0)) return (a.throughTs || 0) > (b.throughTs || 0) ? a : b;
 		if ((a.at || 0) !== (b.at || 0)) return (a.at || 0) < (b.at || 0) ? a : b;
 		return String(a.dev || '') <= String(b.dev || '') ? a : b;
 	}
@@ -66316,6 +66442,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// not be asked a follow-up question.
 			// The marks, this device's record of them and what waits for a press are the
 			// engine's to read at the turn (HIST-SAFE U2); only the toolkits travel.
+			// The list the turn starts from, kept: the fold record names the turns it held (C2-FOLD).
+			var prior = daimonPrior(rec, dumid);
 			var after = await turnKill(fa.steer_crystal(diamondId, sent,
 				// The toolchains the user ticked on this Diamond. Handed over here because
 				// `compose_daimon` is where a daimon's own bounds are built, and it is not the
@@ -66325,7 +66453,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The conversation the turn starts from is the converged transcript's
 				// (`daimonPrior`), the stored session only where it agrees (UNBLOCK-11 F1). The
 				// prompt's mid and this device's id go with it, for the engine's activity record.
-				daimonPrior(rec, dumid), onEvent,
+				prior, onEvent,
 				steerPre || undefined, !!(how && how.pendingOnly), String(dumid), selfDeviceId()), rec);
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {
@@ -66408,7 +66536,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sMark = sessionMarker(rec.messages);
 			rec.session = { v: 1, msgs: Array.prototype.slice.call(after || []),
 				upto: sMark ? (sMark.mid || '') : '', uptoTs: sMark ? (sMark.ts || 0) : 0 };
-			var sFold = foldFrom(rec, after, dumid, rec.fold || null, Date.now(), selfDeviceId());
+			var sFold = foldFrom(rec, after, dumid, rec.fold || null, Date.now(), selfDeviceId(), prior);
 			if (sFold) rec.fold = sFold;
 			try {
 				rec.lastPrompt = fa.last_prompt_tokens || rec.lastPrompt || 0;
