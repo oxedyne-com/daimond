@@ -2416,9 +2416,15 @@ impl Journal {
     /// * `fence` - The specification to harden.
     pub fn fence_guard(&self, fence: &FenceSpec) -> FenceSpec {
         let mut out = fence.clone();
-        let dir     = self.cfg.dir.to_string_lossy().to_string();
-        if !out.deny.iter().any(|d| d == &dir) {
-            out.deny.push(dir);
+        let mut held = vec![self.cfg.dir.to_string_lossy().to_string()];
+        // The trash too: a restore trusts what it holds to say where files go back (QA WMF4).
+        if let Ok(t) = crate::meter::trash_root() {
+            held.push(t.to_string_lossy().to_string());
+        }
+        for dir in held {
+            if !out.deny.iter().any(|d| d == &dir) {
+                out.deny.push(dir);
+            }
         }
         out
     }
@@ -2594,7 +2600,7 @@ fn quarantine(path: &Path, ts: i64) -> Outcome<String> {
     Ok(to)
 }
 
-/// Refuses a fence that would let a command reach a journal directory.
+/// Refuses a fence that would let a command reach a journal directory, or the meter's trash.
 ///
 /// Split out from [`Journal::check_fence`] so the rule can be applied before a
 /// journal has been opened, and so it can be tested on its own.
@@ -2603,6 +2609,8 @@ fn quarantine(path: &Path, ts: i64) -> Outcome<String> {
 /// * `dir`   - Where the journal lives.
 /// * `fence` - The specification about to be applied.
 pub fn check_fence_at(dir: &Path, fence: &FenceSpec) -> Outcome<()> {
+    // The meter's trash is held the same way: what it says is where a restore writes.
+    let trash = crate::meter::trash_root().ok();
     for (kind, roots) in [("rw", &fence.rw), ("ro", &fence.ro)] {
         for r in roots.iter() {
             let p = Path::new(r);
@@ -2622,6 +2630,18 @@ pub fn check_fence_at(dir: &Path, fence: &FenceSpec) -> Outcome<()> {
                     will not run under this fence. Move the journal, or narrow \
                     the grant.", kind, r, dir.display();
                     Invalid, Input, Path, Security));
+            }
+            if let Some(t) = trash.as_ref() {
+                if is_inside(t, p) || is_inside(p, t) {
+                    return Err(err!(
+                        "The fence grants '{}' access to '{}', and the hand keeps the files \
+                        commands remove in its trash at '{}', which the grant reaches. A \
+                        command that can rewrite the trash can say where an Undo writes, so \
+                        the hand will not run under this fence. Narrow the grant, or set {} \
+                        to somewhere it does not reach.", kind, r, t.display(),
+                        crate::meter::TRASH_DIR_VAR;
+                        Invalid, Input, Path, Security));
+                }
             }
         }
     }
@@ -4269,6 +4289,35 @@ mod tests {
         assert!(g.deny.iter().any(|d| Path::new(d) == dir));
         let g2 = j.fence_guard(&g);
         assert_eq!(g.deny.len(), g2.deny.len(), "the guard must not add the root twice");
+        Ok(())
+    }
+
+    /// A fence that reaches the meter's trash is refused, and the guard denies the trash.
+    ///
+    /// A restore trusts the trash's marks file to say where files go back (QA of WMF4).
+    #[test]
+    fn test_a_fence_reaching_the_trash_is_refused_00() -> Outcome<()> {
+        let dir   = res!(scratch("fence_trash_00"));
+        let j     = res!(Journal::open(cfg_at(&dir)));
+        let trash = res!(crate::meter::trash_root());
+        for root in [trash.clone(), trash.join("1700000000000")] {
+            let f = FenceSpec { rw: vec![root.to_string_lossy().to_string()], ..Default::default() };
+            match check_fence_at(&dir, &f) {
+                Ok(()) => return Err(err!(
+                    "A fence granting '{}' reaches the trash and must be refused.",
+                    root.display(); Bug)),
+                Err(e) => {
+                    let s = fmt!("{}", e);
+                    assert!(s.contains("trash"), "message was: {}", s);
+                },
+            }
+        }
+        if let Some(up) = trash.parent() {
+            let f = FenceSpec { ro: vec![up.to_string_lossy().to_string()], ..Default::default() };
+            assert!(check_fence_at(&dir, &f).is_err(), "a grant above the trash must be refused");
+        }
+        let g = j.fence_guard(&FenceSpec::default());
+        assert!(g.deny.iter().any(|d| Path::new(d) == trash), "the guard must deny the trash");
         Ok(())
     }
 

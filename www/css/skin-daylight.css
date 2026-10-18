@@ -758,7 +758,9 @@
    a history entry's age are the same role (meta) and took `--text-muted`: the role was two-toned, and
    whichever tone a view drew more of became the gate's canon, so a desk (release
    dates) and a phone (pending cards) disagreed. One colour for the role (by-role,
-   12 Oct). The mono stamps keep their own reading (`:is(.ctile-meta, ...)` above). */
+   12 Oct). The mono stamps keep their own reading (`:is(.ctile-meta, ...)` above).
+   A merge conflict's line reference joined on 18 Oct (r573), once the by-role seed
+   reached a Pending Capp offer and measured it. */
 :root[data-skin="daylight"] .tile-when-sub,
 :root[data-skin="daylight"] .tile-model-chip,
 :root[data-skin="daylight"] .tile-meter,
@@ -775,6 +777,7 @@
 :root[data-skin="daylight"] .rel-when,
 :root[data-skin="daylight"] .rel-meta,
 :root[data-skin="daylight"] .hist-when,
+:root[data-skin="daylight"] .capp-conflict-meta,
 :root[data-skin="daylight"] .cmeter { color: var(--dl-faint); }
 
 /* ── Tag chips: the colours stay, the outlines go ──────────── */

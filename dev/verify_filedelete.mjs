@@ -17,7 +17,9 @@
 //   E. The user's confirmed folder delete has its own door, `delete_folder`, which a file cannot use.
 //   F. The same refusal holds in the OPFS sandbox with no folder open.
 //   G. A daimon's one-file delete is a VERSION: through a real turn (the mock's `@tool`), the
-//      bytes are kept, `file_revert` puts the file back, and History's restore does too -- on
+//      bytes are kept once he applies it (UNBLOCK-26: a daimon's change to a file he made asks
+//      him first; the refused and unanswered answers are verify_askchange's A1-A8, so here every
+//      ask is answered 'apply' and recorded), `file_revert` puts the file back, and History's restore does too -- on
 //      the folder mount and in the sandbox. A file too large to keep is refused, not deleted.
 //      The audit of 2026-09-23 (its probe is folded in here): a path spelled `./x`, `a//x`,
 //      `a/z/../x` or `x/` is kept exactly as `x` is; the daimon cannot delete or write its own
@@ -58,6 +60,12 @@ const MOCK   = process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/comple
 const s = await open({ name: 'filedelete', connect: false });
 const p = s.page;
 await p.waitForTimeout(1500);
+// The page's change ask, answered 'apply' and recorded, as verify_askchange stubs it.
+await p.evaluate(() => {
+	window.__asks = [];
+	window.DaimondDeletes = window.DaimondDeletes || {};
+	window.DaimondDeletes.change = async (raw) => { window.__asks.push(JSON.parse(raw)); return 'apply'; };
+});
 // H5. What the model is actually told `file_delete` does: the description in the request the
 // page sends the provider, read off the wire rather than off the Rust source.
 const sentDesc = [];
@@ -189,6 +197,7 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	};
 	// A version to open a restore on, then the folder deletes under its ticket: the person's door
 	// holds the folder guard as the registry does.
+	const asked0 = window.__asks.length;
 	await turn(['proj', 'keep.txt'], 'file_write', { path: 'proj/t.txt', content: 't' });
 	const va = await newest();
 	const ra = await ticketed(id, ['proj', 'keep.txt'],
@@ -214,6 +223,7 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	// The daimon's own one-file delete, through a real turn.
 	out.diaFile = await turn(['proj', 'keep.txt'], 'file_delete', { path: 'proj/a.txt' });
 	out.diaFileGone = !(await at('proj/a.txt'));
+	out.diaAsks = window.__asks.slice(asked0).map((a) => ({ act: a.act, path: a.path }));
 
 	// D. Moves.
 	out.toStore  = await call('file_move', { path: 'proj', to: 'diamonds/' + id + '/proj' });
@@ -422,7 +432,8 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	// 3. A Diamond's worker: kept in its Diamond's store, recorded at the daimon's turn end.
 	const wEng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
 	await press(['vault']);
-	await wEng.set_diamond_scope(id, '[]');
+	const wReach = await wEng.read_scope_reach(String(id));
+	wEng.set_diamond_scope(wReach, '[]');
 	const workText = 'the worker deletes me';
 	await mod.write_file('vault/worker.md', workText);
 	let wSaid = '';
@@ -510,6 +521,9 @@ check('B. the file the escapes named is still there', r.keptAfterEscapes === tru
 check('C. one file is deleted', r.file.outcome === 'done' && r.fileGone, show(r.file));
 check("C. a daimon's one-file delete in its workspace works",
 	/Deleted /.test(r.diaFile) && r.diaFileGone, r.diaFile.slice(0, 160));
+check("C. that delete of his file was asked first, once, and the daimon's own proj/t.txt never",
+	r.diaAsks.filter((a) => a.act === 'delete' && a.path === 'proj/a.txt').length === 1
+	&& !r.diaAsks.some((a) => a.path === 'proj/t.txt'), JSON.stringify(r.diaAsks).slice(0, 200));
 check("D. a folder cannot be moved off the disk into Daimond's store", refused(r.toStore), show(r.toStore));
 check('D. a folder cannot be moved into itself', refused(r.intoSelf), show(r.intoSelf));
 check('D. refused moves left the tree whole', r.afterRefusedMoves === true);

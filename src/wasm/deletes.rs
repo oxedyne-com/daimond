@@ -10,6 +10,11 @@
 //! question no posture answers for them.  The machine hand's held command is asked the same way,
 //! for the same reason.
 
+use crate::held_change::{
+	self,
+	Answer,
+	Change,
+};
 use crate::llm::json_escape;
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -59,4 +64,39 @@ pub async fn ask_to_go_on(keeper: &str, path: &str, count: usize, limit: usize, 
         Err(_) => return false,
     };
     answer.as_bool() == Some(true)
+}
+
+/// Ask the person whether a turn keeping into `keeper`'s store may make `change` to `path`, a
+/// file the keeper did not make, showing them the change (UNBLOCK-26 U5).  Put on the Pending
+/// panel here, or for a turn handed off from another device, on that device through the permit
+/// route -- never through the permission door, so no posture answers it (see this file's head).
+///
+/// Every failure to ask is [`Answer::Unanswered`]: nothing is written for a question nobody saw.
+///
+/// # Arguments
+/// * `turn` - The turn's tag (`ToolContext::turn_tag`), which names a handed-off turn.
+pub async fn ask_change(keeper: &str, path: &str, before: &[u8], change: Change<'_>, turn: &str)
+	-> Answer
+{
+	let win = match web_sys::window() {
+		Some(w)	=> w,
+		None	=> return Answer::Unanswered,
+	};
+	let driver = match js_sys::Reflect::get(&win, &JsValue::from_str(DELETES_GLOBAL)) {
+		Ok(v) if v.is_object()	=> v,
+		_						=> return Answer::Unanswered,
+	};
+	let ask = match js_sys::Reflect::get(&driver, &JsValue::from_str("change")) {
+		Ok(f) if f.is_function()	=> f.unchecked_into::<js_sys::Function>(),
+		_							=> return Answer::Unanswered,
+	};
+	let payload = held_change::payload(keeper, path, turn, before, &change);
+	let ret = match ask.call1(&driver, &JsValue::from_str(&payload)) {
+		Ok(v)	=> v,
+		Err(_)	=> return Answer::Unanswered,
+	};
+	match crate::wasm::settle_js(ret).await {
+		Ok(v)	=> Answer::from_word(&v.as_string().unwrap_or_default()),
+		Err(_)	=> Answer::Unanswered,
+	}
 }

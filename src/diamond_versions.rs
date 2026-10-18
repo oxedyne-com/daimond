@@ -300,6 +300,33 @@ pub fn open_file_key(path: &str, copy: &[u8]) -> String {
 	fmt!("{}\n{}", path, hash_of(copy))
 }
 
+/// The changes to the user's files a turn was told not to make (UNBLOCK-26 U3): the paths the
+/// person answered "Don't change" for, or left unanswered, while the turn asked.
+///
+/// **A no is final for the rest of the turn**, as the open folder's stop is ([`OpenTally`]): a
+/// retry, a worker, or the same change by another verb is refused without asking again.  It holds
+/// through a folder both ways -- a no to a folder's move refuses each file in it, and a no to one
+/// file refuses the move of a folder that carries it -- since either is the change he declined,
+/// made another way.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ChangeRefusals {
+	paths: BTreeSet<String>,	// as the captures name them: normalised, or absolute on the machine
+}
+
+impl ChangeRefusals {
+
+	pub fn refuse(&mut self, path: &str) {
+		self.paths.insert(path.trim_end_matches('/').to_string());
+	}
+
+	/// Did the person decline a change to `path`, or to a folder it is in, or to a file in it?
+	pub fn refused(&self, path: &str) -> bool {
+		let p = path.trim_end_matches('/');
+		let inside = |a: &str, b: &str| a == b || (a.starts_with(b) && a[b.len()..].starts_with('/'));
+		self.paths.iter().any(|r| inside(p, r) || inside(r, p))
+	}
+}
+
 /// The body ceiling in force, in bytes.
 pub fn versions_bytes_cap() -> u64 {
 	let set = VERSIONS_BYTES.with(|c| c.get());
@@ -544,6 +571,7 @@ pub struct Entry {
 	pub folder:  Option<String>,	// which folder a workspace-relative path was in: see `needs_folder`
 	pub by:      Option<Author>,	// the agent that wrote it; None for the user's door or a walk
 	pub door:    bool,		// a person's door wrote it (the dirty set), not a walk: see `page_paths`
+	pub made:    bool,		// a turn's own act found nothing there and made the file: see `made_by_turns`
 }
 
 impl Entry {
@@ -562,6 +590,7 @@ impl Entry {
 			folder:  None,
 			by:      None,
 			door:    false,
+			made:    false,
 		}
 	}
 
@@ -612,6 +641,11 @@ impl Entry {
 		if self.door {
 			out.push_str(",\"door\":true");
 		}
+		// Written only when true, so a row from before it existed reads as one that vouches for
+		// nothing: a file made then is asked about as the user's, which is the safe way to be wrong.
+		if self.made {
+			out.push_str(",\"made\":true");
+		}
 		out.push('}');
 		out
 	}
@@ -634,6 +668,7 @@ impl Entry {
 			folder:  extract_json_string(s, "folder").filter(|f| !f.is_empty()),
 			by:      object_inside(s, "by").and_then(Author::from_json),
 			door:    extract_json_bool(s, "door").unwrap_or(false),
+			made:    extract_json_bool(s, "made").unwrap_or(false),
 		})
 	}
 }
@@ -1037,6 +1072,72 @@ pub fn run_copies(manifests: &[(u64, Manifest)], path: &str, found: &str) -> Vec
 	out
 }
 
+/// Did this Diamond's own turns make the file at `path`, which now hashes to `now`?  Yes only where
+/// the unbroken run of turns' changes that led to `now` begins at a row whose act MADE the file
+/// ([`Entry::made`]) -- so nothing of anyone else's can be in it.  It is what lets a turn change
+/// its own files freely while every other file in a held folder is put to the user (UNBLOCK-26).
+///
+/// **When unsure, no.**  The walk is [`run_copies`]' and ends where that one does, at any change a
+/// turn did not make: the user's door, a Save, a fold, a Diamond that arrived, a row whose content
+/// is not what the row after it replaced (an edit the store never saw), or bytes on disk that are
+/// not what the newest row left.  Each of those answers no, as does running out of rows before a
+/// made one, a deletion in the run, and a row with no hash to chain.  **A restore answers no as
+/// well, even back to bytes a turn made**: the restore is the user's act, he chose what stands, and
+/// the row cannot be trusted to say whose bytes it put back.
+///
+/// **`was: None` is not "made"** (UNBLOCK-26 check, 2026-10-18).  It says only that no earlier hash
+/// was known: a command's edit of a file the store never recorded, or the destination of a file a
+/// move carried, both write such a row over the user's bytes.  The walk ends only at `made`.
+///
+/// A wipe's `was` is the file as the turns found it, older than what the wipe replaced, so after a
+/// wipe the walk passes over turns' rows until it reaches one that left those bytes.  A row from
+/// another device's turn counts as this device's does: the manifests travel with the Diamond, and
+/// a row vouches for nothing unless the bytes on disk hash to the run it starts.
+///
+/// # Arguments
+/// * `manifests` - Every manifest held, by version, in any order.
+/// * `path` - As the manifests name it: normalised, or absolute for a machine file.
+/// * `folder` - The folder a relative path is in, as its rows record it; `None` for a machine file.
+/// * `now` - The hash of the bytes at `path` now.
+pub fn made_by_turns(
+	manifests:	&[(u64, Manifest)],
+	path:		&str,
+	folder:		Option<&str>,
+	now:		&str,
+) -> bool {
+	let mut rows: Vec<(u64, u64, Cause, &Entry)> = manifests.iter()
+		.flat_map(|(n, m)| m.files.iter()
+			.filter(move |e| e.path == path && e.folder.as_deref() == folder)
+			.map(move |e| (*n, m.ts, m.cause, e)))
+		.collect();
+	// Newest first; two devices mint the same number between syncs, so a tie goes by the clock.
+	rows.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
+	let mut at = now.to_string();
+	let mut past_wipe = false;	// looking for the row that left a wipe's `was`
+	for (_, _, cause, e) in rows.into_iter() {
+		if cause != Cause::Turn || e.gone || !is_hash(&e.hash) {
+			return false;
+		}
+		if e.hash != at {
+			match past_wipe {
+				true	=> continue,
+				false	=> return false,
+			}
+		}
+		if e.made {
+			return true;
+		}
+		match &e.was {
+			Some(w) if is_hash(w) => {
+				at = w.clone();
+				past_wipe = e.wiped;
+			},
+			_ => return false,
+		}
+	}
+	false
+}
+
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ What a turn captured                                           │
@@ -1137,6 +1238,21 @@ impl Change {
 		Self { path: path.to_string(), after: Body::Gone, before: None,
 			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false,
 			folder: None, by: None, door: false }
+	}
+
+	/// Did a turn's own act make the file this capture describes ([`Entry::made`])?
+	///
+	/// Only a file tool's capture can say so: its first act read the path, found nothing and
+	/// captured no prior bytes, and every later act it folds in found the bytes the turn had left
+	/// (`capture_into` replaces a run another hand broke).  A walk's or a ledger's re-read found
+	/// nothing it can vouch for ([`Found::Unread`]), a refused read knows nothing, and bytes a move
+	/// carried keep their own history -- made only where the turn made them at the source.
+	pub fn made(&self) -> bool {
+		matches!(self.after, Body::Held(_))
+			&& self.before.is_none()
+			&& self.refused.is_none()
+			&& matches!(self.found, Found::Nothing | Found::Hash(_))
+			&& matches!(self.carried, None | Some(Carried::Made))
 	}
 }
 
@@ -3830,6 +3946,200 @@ Garden: order two bags of bark for a bed.
 			"a trim that leaves seven lines of twelve was a wipe");
 	}
 
+	// ── Made by this Diamond (UNBLOCK-26 U1) ────────────────────────────
+
+	/// A row of `path` in a held folder: what a turn's act left, and whether that act made the file.
+	fn made_row(was: Option<&str>, now: &str, made: bool) -> Entry {
+		let mut r = e("vault/p.md", now, was);
+		r.mark = true;
+		r.made = made;
+		r
+	}
+
+	/// **A file a turn made, and only turns have changed since, is the Diamond's**: the unbroken
+	/// run of turns' changes from the bytes on disk ends at the row whose act made it.  Rows of other
+	/// paths are passed over.
+	#[test]
+	fn test_a_file_a_turn_made_and_only_turns_changed_is_made_here_00() {
+		let h = |s: &str| hash_of(s.as_bytes());
+		let ms = vec![
+			(1, m(Cause::Turn, vec![made_row(None, "A", true), e("vault/q.md", "Q", None)])),
+			(2, m(Cause::Turn, vec![made_row(Some("A"), "B", false)])),
+			(3, m(Cause::User, vec![e("vault/q.md", "Q2", Some("Q"))])),
+		];
+		assert!(made_by_turns(&ms, "vault/p.md", None, &h("B")), "made and edited by turns");
+		// The order the manifests are held in does not matter.
+		let rev: Vec<(u64, Manifest)> = ms.iter().rev().cloned().collect();
+		assert!(made_by_turns(&rev, "vault/p.md", None, &h("B")), "made, manifests reversed");
+		// The made row alone.
+		assert!(made_by_turns(&ms[..1], "vault/p.md", None, &h("A")), "made, never edited");
+	}
+
+	/// **A file that stood before any turn came to it is the user's**, whatever turns have done to
+	/// it since: the run ends at the bytes the first turn found, not at a row that made it.  A row
+	/// with no `was` that no act made -- a walk reading what a command left, with the store never
+	/// having held the path -- is exactly that file, and vouches for nothing.
+	#[test]
+	fn test_a_file_that_stood_before_any_turn_is_the_users_00() {
+		let h = |s: &str| hash_of(s.as_bytes());
+		let ms = vec![
+			(1, m(Cause::Turn, vec![made_row(Some("his"), "A", false)])),
+			(2, m(Cause::Turn, vec![made_row(Some("A"), "B", false)])),
+		];
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &h("B")), "his file edited by turns");
+		// A `sed -i` through a command, read back by the walk: no `was`, and no act made it.
+		let ms = vec![(1, m(Cause::Turn, vec![made_row(None, "A", false)]))];
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &h("A")), "a walk's row vouched");
+		// No record at all.
+		assert!(!made_by_turns(&[], "vault/p.md", None, &h("A")), "no rows vouched");
+	}
+
+	/// **A file the Diamond made and the user has since edited is the user's**: on disk, where the
+	/// store never saw it, or through their own door.  His words are in it now.
+	#[test]
+	fn test_a_made_file_he_has_edited_is_his_00() {
+		let h = |s: &str| hash_of(s.as_bytes());
+		let ms = vec![
+			(1, m(Cause::Turn, vec![made_row(None, "A", true)])),
+			(2, m(Cause::Turn, vec![made_row(Some("A"), "B", false)])),
+		];
+		// His editor: the bytes on disk are not what the newest row left.
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &h("B, and a line of his")),
+			"an edit on disk the store never saw left it made");
+		// His editor between two turns: the later turn's `was` is not what the earlier one left.
+		let gap = vec![
+			(1, m(Cause::Turn, vec![made_row(None, "A", true)])),
+			(2, m(Cause::Turn, vec![made_row(Some("A, and a line of his"), "B", false)])),
+		];
+		assert!(!made_by_turns(&gap, "vault/p.md", None, &h("B")), "a gap in the run left it made");
+		// His own door, then a turn: the run ends at his row.
+		for cause in [Cause::User, Cause::Save, Cause::Fold] {
+			let ms = vec![
+				(1, m(Cause::Turn, vec![made_row(None, "A", true)])),
+				(2, m(cause, vec![made_row(Some("A"), "B", false)])),
+				(3, m(Cause::Turn, vec![made_row(Some("B"), "C", false)])),
+			];
+			assert!(!made_by_turns(&ms, "vault/p.md", None, &h("C")), "{:?}", cause);
+		}
+	}
+
+	/// **A made file restored from History is the user's, even to a version a turn made.**  The
+	/// restore is his act: he chose which bytes stand, so the next change to them is put to him.
+	/// Telling a restore to the Diamond's own bytes from one to bytes of his would need the walk to
+	/// trust the restore's row to say where it came from, and when unsure the answer is no.
+	#[test]
+	fn test_a_made_file_restored_from_history_is_his_00() {
+		let h = |s: &str| hash_of(s.as_bytes());
+		let ms = vec![
+			(1, m(Cause::Turn, vec![made_row(None, "A", true)])),
+			(2, m(Cause::Turn, vec![made_row(Some("A"), "B", false)])),
+			(3, m(Cause::Restore, vec![made_row(Some("B"), "A", false)])),
+		];
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &h("A")), "restored to A, read as made");
+		// And a turn's edit after the restore does not carry it back.
+		let mut ms = ms;
+		ms.push((4, m(Cause::Turn, vec![made_row(Some("A"), "C", false)])));
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &h("C")), "a turn after the restore");
+	}
+
+	/// **Another device's turns count the same as this one's**: the manifests travel with the
+	/// Diamond and a row vouches only where the bytes on disk hash to it.  Two devices mint the same
+	/// version numbers between syncs, so a tie is read newest by clock.
+	#[test]
+	fn test_another_devices_turns_of_the_same_diamond_count_the_same_00() {
+		let h = |s: &str| hash_of(s.as_bytes());
+		let mut there = made_row(None, "A", true);
+		there.by = Some(Author { role: "daimon".to_string(), m: "glm-5".to_string(),
+			..Author::default() });
+		let mut here = made_row(Some("A"), "B", false);
+		here.by = Some(Author { role: "worker".to_string(), run: "r_9".to_string(),
+			..Author::default() });
+		// Both minted version 5, the other device first.
+		let ms = vec![
+			(5, Manifest::new(Cause::Turn, TS + 1000, "m_2", "", vec![here])),
+			(5, Manifest::new(Cause::Turn, TS, "m_1", "", vec![there])),
+		];
+		assert!(made_by_turns(&ms, "vault/p.md", None, &h("B")), "another device's made row");
+		// A Diamond that arrived from someone else is a Share, and a Share never vouches.
+		let ms = vec![(1, m(Cause::Share, vec![made_row(None, "A", true)]))];
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &h("A")), "a share vouched");
+	}
+
+	/// **A row vouches only for the file in its own folder**, and a wipe's `was` reaches back to the
+	/// file as the turns found it, past the turns' rows between.
+	#[test]
+	fn test_made_here_keeps_to_its_folder_and_reads_through_a_wipe_00() {
+		let h = |s: &str| hash_of(s.as_bytes());
+		let mut a = e("p.md", "A", None);
+		a.made = true;
+		a.folder = Some("fA".to_string());
+		let ms = vec![(1, m(Cause::Turn, vec![a]))];
+		assert!(made_by_turns(&ms, "p.md", Some("fA"), &h("A")), "its own folder");
+		assert!(!made_by_turns(&ms, "p.md", Some("fB"), &h("A")), "another folder's row vouched");
+		assert!(!made_by_turns(&ms, "p.md", None, &h("A")), "a foldered row vouched for none");
+		// Made A, edited to B, wiped to C: the wipe's `was` is A, the run's first copy.
+		let mut wipe = made_row(Some("A"), "C", false);
+		wipe.wiped = true;
+		let ms = vec![
+			(1, m(Cause::Turn, vec![made_row(None, "A", true)])),
+			(2, m(Cause::Turn, vec![made_row(Some("A"), "B", false)])),
+			(3, m(Cause::Turn, vec![wipe.clone()])),
+		];
+		assert!(made_by_turns(&ms, "vault/p.md", None, &h("C")), "a wipe of its own file");
+		// The same wipe of his file reaches his bytes, which no row made.
+		let ms = vec![
+			(1, m(Cause::Turn, vec![made_row(Some("his"), "A", false)])),
+			(2, m(Cause::Turn, vec![made_row(Some("A"), "B", false)])),
+			(3, m(Cause::Turn, vec![made_row(Some("his"), "C", false)])),
+		];
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &h("C")), "a wipe of his file");
+		// A deletion in the run: the file now there came from somewhere the walk cannot vouch for.
+		let ms = vec![
+			(1, m(Cause::Turn, vec![made_row(None, "A", true)])),
+			(2, m(Cause::Turn, vec![gone("vault/p.md", "A")])),
+			(3, m(Cause::Turn, vec![made_row(Some("A"), "B", false)])),
+		];
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &h("B")), "read through a deletion");
+	}
+
+	/// **Only a file tool's capture that found nothing at its first act made the file**, and the row
+	/// says so across a round trip.  A walk's change, a capture of bytes that stood, one whose prior
+	/// bytes the hand refused, and bytes a move carried from a file of the user's never made it.
+	#[test]
+	fn test_only_a_capture_that_found_nothing_made_the_file_00() {
+		let cap = |before: Option<&str>, found: Found| Change {
+			before: before.map(|b| b.as_bytes().to_vec()), found, ..Change::of("vault/p.md", b"B".to_vec())
+		};
+		assert!(cap(None, Found::Nothing).made(), "a first act that found nothing");
+		assert!(cap(None, Found::of(Some(b"B"))).made(), "folded over its own later act");
+		assert!(!Change::of("vault/p.md", b"B".to_vec()).made(), "a walk's change");
+		assert!(!cap(Some("his"), Found::of(Some(b"his"))).made(), "a capture of bytes that stood");
+		assert!(!Change { refused: Some("denied".to_string()), ..cap(None, Found::Unread) }.made(),
+			"a capture the hand refused");
+		assert!(!Change { carried: Some(Carried::Kept(b"his".to_vec())), ..cap(None, Found::Nothing) }
+			.made(), "a move of his file");
+		assert!(Change { carried: Some(Carried::Made), ..cap(None, Found::Nothing) }.made(),
+			"a move of a file the turn made");
+		assert!(!Change { after: Body::Gone, ..cap(None, Found::Nothing) }.made(), "a deletion");
+		// A move of his file onto a new path: the destination found nothing there, and still the
+		// bytes are his.  Its row has no `was` and makes nothing, so the walk reads it as his.
+		let (_, his) = moved(("vault/a.md", true), ("vault/p.md", true),
+			Moving::Read(b"his".to_vec(), Some(b"his".to_vec())));
+		assert!(!his.made(), "a moved-in file of his made here");
+		let ms = vec![(1, m(Cause::Turn, vec![made_row(None, "his", his.made())]))];
+		assert!(!made_by_turns(&ms, "vault/p.md", None, &hash_of(b"his")), "moved-in file vouched");
+		// A move of a file this turn made carries "made" with it.
+		let (_, own) = moved(("vault/a.md", true), ("vault/p.md", true),
+			Moving::Read(b"own".to_vec(), None));
+		assert!(own.made(), "a moved file the turn made");
+		// The row carries it, and a row without it reads as one that made nothing.
+		let mut r = made_row(None, "A", true);
+		let back = Entry::from_json(&r.to_json());
+		assert_eq!(Some(r.clone()), back, "made did not round-trip");
+		r.made = false;
+		assert!(!r.to_json().contains("made"), "made written when false");
+	}
+
 	/// **The turns' run ends at any change a turn did not make, and at a destruction.**  A write is
 	/// never measured against a state the user has since moved the file on from, and a document a
 	/// daimon keeps rewriting is a wipe once each time half of it has gone, not at every turn.
@@ -5341,7 +5651,7 @@ Garden: order two bags of bark for a bed.
 		let row = |p: &str, was: Option<&str>, gone: bool| Entry { path: p.to_string(),
 			hash: if gone { String::new() } else { hash_of(p.as_bytes()) }, bytes: 1,
 			was: was.map(|w| w.to_string()), gone, wiped: false, mark: true, skipped: None,
-			folder: None, by: None, door: false };
+			folder: None, by: None, door: false, made: false };
 		let mut rows: Vec<(Entry, bool)> = (0..70)
 			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None, false), false)).collect();
 		rows.push((row("vault/u.md", Some(&hash_of(b"u")), true), true));
@@ -5361,7 +5671,7 @@ Garden: order two bags of bark for a bed.
 	fn test_rows_holding_copies_past_the_bound_go_into_a_further_version_00() {
 		let row = |p: &str, was: Option<&str>| Entry { path: p.to_string(),
 			hash: hash_of(p.as_bytes()), bytes: 1, was: was.map(|w| w.to_string()), gone: false,
-			wiped: false, mark: true, skipped: None, folder: None, by: None, door: false };
+			wiped: false, mark: true, skipped: None, folder: None, by: None, door: false, made: false };
 		let mut rows: Vec<(Entry, bool)> = (0..10)
 			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None), false)).collect();
 		for i in 0..65 {
@@ -6607,5 +6917,49 @@ mod qa_d26a {
 		prune_as_held(&mut ms, &mut disk, &stamps, &f, 800, now);
 		assert!(disk.iter().any(|(d, _)| *d == fresh), "a body in flight was taken blind");
 		assert!(!disk.iter().any(|(d, _)| *d == old), "an orphan of long ago was kept");
+	}
+}
+
+#[cfg(test)]
+mod ublk26_change_refusals {
+	use super::*;
+
+	fn said_no(paths: &[&str]) -> ChangeRefusals {
+		let mut r = ChangeRefusals::default();
+		for p in paths {
+			r.refuse(p);
+		}
+		r
+	}
+
+	#[test]
+	fn a_no_holds_at_the_path_itself() {
+		let r = said_no(&["Bio/letter.md", "/home/j/Bio/notes.txt"]);
+		assert!(r.refused("Bio/letter.md"));
+		assert!(r.refused("/home/j/Bio/notes.txt"));
+	}
+
+	#[test]
+	fn a_no_to_a_folder_holds_for_each_file_in_it() {
+		let r = said_no(&["Bio/"]);
+		assert!(r.refused("Bio/letter.md"));
+		assert!(r.refused("Bio/drafts/one.md"));
+		assert!(r.refused("Bio"));
+	}
+
+	#[test]
+	fn a_no_to_a_file_holds_for_the_folder_that_carries_it() {
+		let r = said_no(&["Bio/drafts/one.md"]);
+		assert!(r.refused("Bio"));
+		assert!(r.refused("Bio/drafts/"));
+	}
+
+	#[test]
+	fn a_no_says_nothing_of_unrelated_paths() {
+		let r = said_no(&["Bio/letter.md"]);
+		assert!(!r.refused("Bio/letter.md.bak"));
+		assert!(!r.refused("Biography/letter.md"));
+		assert!(!r.refused("Bio/other.md"));
+		assert!(!ChangeRefusals::default().refused("Bio/letter.md"));
 	}
 }

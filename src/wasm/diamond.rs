@@ -2623,6 +2623,12 @@ thread_local! {
     static SEALED: std::cell::RefCell<std::collections::BTreeMap<String, usize>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
 
+    /// The changes to the user's files the person declined this turn, per store (UNBLOCK-26 U3):
+    /// a daimon's and every worker keeping into it.  Drained with `CAPTURED`, at the turn's end.
+    /// See [`versions::ChangeRefusals`].
+    static CHANGES_REFUSED: std::cell::RefCell<std::collections::BTreeMap<String, versions::ChangeRefusals>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
     /// The stores whose running turn has run a command or a worker, whose writes no capture sees:
     /// its turn end cannot tell them from another tab's ([`drain_turn`]).  Ended with the captures.
     static OPAQUE: std::cell::RefCell<std::collections::BTreeSet<String>> =
@@ -2771,6 +2777,17 @@ pub fn open_delete_release(id: &str, file: &str) {
             t.release(file);
         }
     });
+}
+
+/// Did the person decline, this turn, a change a turn keeping into `id`'s store wants to make at
+/// `path` ([`versions::ChangeRefusals::refused`])?
+pub fn change_refused(id: &str, path: &str) -> bool {
+    CHANGES_REFUSED.with(|c| c.borrow().get(id).map(|r| r.refused(path)).unwrap_or(false))
+}
+
+/// Record that the person declined a change at `path`, for the rest of the turn.
+pub fn refuse_change(id: &str, path: &str) {
+    CHANGES_REFUSED.with(|c| c.borrow_mut().entry(id.to_string()).or_default().refuse(path));
 }
 
 /// Note that one of the user's own doors changed `path` in this Diamond, after its write: what
@@ -3198,6 +3215,26 @@ pub async fn turns_found(id: &str, path: &str, now: &[u8]) -> Option<Vec<u8>> {
     Some(found)
 }
 
+/// Is the file at `path` the user's rather than this Diamond's own (UNBLOCK-26)?  Not the user's
+/// only where this turn made the bytes that stand there, or the file as this turn found it was
+/// made by the Diamond's earlier turns and touched by nothing since ([`versions::made_by_turns`]).
+/// Bytes a move carried from a file of the user's are his; when unsure, the file is his.
+///
+/// **Read from the store at every such act, never from a copy of it**, as [`turns_found`] is.
+///
+/// # Arguments
+/// * `path` - As the capture names it: normalised, or absolute for a machine file.
+/// * `now` - The bytes at `path` as the act found them.
+pub async fn authored_by_user(id: &str, path: &str, now: &[u8]) -> bool {
+    let found = match this_turn_found(id, path, now) {
+        TurnFound::Made       => return false,
+        TurnFound::Carried(_) => return true,
+        TurnFound::Was(w)     => w,
+    };
+    let held = versions_manifests(id).await;
+    !versions::made_by_turns(&held, path, folder_of(path).as_deref(), &versions::hash_of(&found))
+}
+
 /// May a turn keeping into `id`'s store replace or remove `path` and still keep what it owes
 /// ([`versions::claim_room`], which says what the two bounds are and why they count copies)?
 ///
@@ -3293,6 +3330,7 @@ fn drain_captured(id: &str) -> Vec<(String, Change)> {
 pub fn end_turn_counts(id: &str) {
     OPEN_DELETES.with(|o| { o.borrow_mut().remove(id); });
     SEALED.with(|s| { s.borrow_mut().remove(id); });
+    CHANGES_REFUSED.with(|c| { c.borrow_mut().remove(id); });
 }
 
 // ── The copy on disk before the act ──────────────────────────────────────
@@ -4403,6 +4441,9 @@ pub async fn versions_record_held(
             (Some(b), Body::Held(a)) => crate::tools::wiped(&ch.path, b, a),
             _                        => false,
         });
+        // WHETHER A TURN'S OWN ACT MADE IT (UNBLOCK-26 U1): read off the capture now, since the
+        // fold and the record that follow keep no trace of what the first act found.
+        let made = cause == Cause::Turn && ch.made();
         // What stood there: the bytes the caller captured, else what the store last recorded.
         let kept = ch.before.is_some();
         let was = match &ch.before {
@@ -4431,6 +4472,7 @@ pub async fn versions_record_held(
                     folder,
                     by:      ch.by,
                     door:    ch.door,
+                    made:    false,
                 }, kept));
             },
             Body::TooLarge(size) => {
@@ -4446,6 +4488,7 @@ pub async fn versions_record_held(
                     folder,
                     by:      ch.by,
                     door:    ch.door,
+                    made:    false,
                 }, kept));
             },
             // A ROW WITH NO BODY IS STILL A ROW. A file the daimon changed and the app could not
@@ -4465,6 +4508,7 @@ pub async fn versions_record_held(
                     folder,
                     by:      ch.by,
                     door:    ch.door,
+                    made:    false,
                 }, kept));
             },
             Body::Held(body) => {
@@ -4482,7 +4526,7 @@ pub async fn versions_record_held(
                     bodies.push((hash.clone(), body));
                 }
                 entries.push((Entry { path: ch.path, hash, bytes, was, gone: false, wiped,
-                    mark: ch.mark, skipped, folder, by: ch.by, door: ch.door }, kept));
+                    mark: ch.mark, skipped, folder, by: ch.by, door: ch.door, made }, kept));
             },
         }
     }

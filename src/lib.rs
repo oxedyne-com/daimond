@@ -53,6 +53,9 @@ pub mod diamond_versions;
 /// transform whose reversibility is the whole of its correctness, and that is provable
 /// natively rather than only in a page.  The edge that applies it is [`wasm::opfs`].
 pub mod fsname;
+/// The question a turn puts before it changes a file the person made, and what each answer
+/// means.  Target-agnostic; the asking edge is `wasm::deletes::ask_change`.
+pub mod held_change;
 pub mod llm;
 pub mod marks;
 /// The system prompt each kind of agent runs under, and the part of it a user

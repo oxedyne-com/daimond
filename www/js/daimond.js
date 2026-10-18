@@ -20326,7 +20326,90 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}).then(function (yes) { return yes === true; }, function () { return false; });
 	}
 
+	// ── A change to a file he made, asked first (UNBLOCK-26 U5) ──
+	// The engine holds an edit, delete or move of a file the keeper did not make and asks
+	// here (`ask_change`, src/wasm/deletes.rs), the change drawn as a History-style diff. A
+	// turn handed off from another device is asked on THAT device through the permit route;
+	// every other turn on a Pending tile here, its chat's caption saying so. NEVER through
+	// `egressAllowed`: no posture, the autonomous one included, answers this question. Only
+	// his Apply is 'apply' and only his Don't Change is 'refused'; ten minutes unanswered, a
+	// reload, a tile that could not be raised: all 'unanswered', and nothing is written.
+	var CHANGE_WORD = { allow: 'apply', deny: 'refused' };
+
+	/// How long a change ask waits for him: the engine's own wait, else ten minutes. The
+	/// same on a Pending tile here and on the device a handed-off turn came from (lead,
+	/// r573): never the permit route's 60 s, and silence there is still 'unanswered'.
+	function changeWaitMs(req) {
+		return Math.max(1000, Number(req && req.wait) || 600000);
+	}
+
+	/// A store path as the person reads it: the file's name and the folder it sits in.
+	function changeName(path) {
+		var p = String(path || ''), i = p.lastIndexOf('/');
+		return { name: i >= 0 ? p.slice(i + 1) : p, folder: i > 0 ? p.slice(0, i) : '/' };
+	}
+
+	/// The headline for a change ask, by what the change does.
+	function changeHead(req) {
+		var key = req.act === 'delete' ? 'change.head_delete'
+			: req.act === 'move' ? 'change.head_move' : 'change.head';
+		return t(key, { name: changeName(req.path).name });
+	}
+
+	/// The chat the keeper's turn is running in, or null: a chat keeper names itself, a
+	/// Diamond's turn is the one generating on it.
+	function changeChat(keeper) {
+		var k = String(keeper || '');
+		if (k.indexOf('chat:') === 0) return chats.find(function (c) { return c && c.id === k.slice(5); }) || null;
+		return chats.find(function (c) { return c && c.diamondId === k && c._generating; }) || null;
+	}
+
+	/// Put a change to the person and resolve the engine's word: 'apply', 'refused' or
+	/// 'unanswered' (`held_change::Answer::from_word`).
+	function askChange(payload) {
+		var req;
+		try { req = JSON.parse(String(payload || '')); } catch (e) { req = null; }
+		if (!req || typeof req !== 'object' || !req.path) return Promise.resolve('unanswered');
+		var rc = permitRunnerTurn({ turn: req.turn });
+		if (rc) {
+			return Promise.resolve(routePermitAsk(rc, 'change', String(req.path), JSON.stringify(req), changeWaitMs(req)))
+				.then(function (w) {
+					if (w === DaimondPeer.PERMIT_YES.change) return 'apply';
+					return w === DaimondPeer.permitNoWord('refused') ? 'refused' : 'unanswered';
+				}, function () { return 'unanswered'; });
+		}
+		var keeper = String(req.keeper || ''), chat = changeChat(keeper);
+		var did = keeper.indexOf('chat:') === 0 ? ((chat && chat.diamondId) || '') : keeper;
+		var d = did ? diamonds.find(function (x) { return x.id === did; }) : null;
+		var id = null;
+		try {
+			id = Pending.add({
+				kind: 'consent', headline: changeHead(req), detail: '', change: req, priority: 'high',
+				diamondId: d ? d.id : '', diamondName: d ? d.name : '',
+			});
+		} catch (e) { id = null; }
+		if (!id) return Promise.resolve('unanswered');
+		var words = t('change.waiting', { name: changeName(req.path).name });
+		var prev = chat ? chat._busy : null;
+		if (chat) busySay(chat, words, true);
+		var wait = changeWaitMs(req);
+		return new Promise(function (resolve) {
+			var timer = setTimeout(function () {
+				if (settleConsent(id, 'timeout')) {
+					try { Pending.fresh(); Pending.render(); } catch (e) { /* the panel is not up */ }
+				}
+			}, wait);
+			_parked[id] = function (verdict) {
+				clearTimeout(timer);
+				if (chat && chat._busy === words) busySay(chat, prev || tOr('chat.busy', 'Thinking…'));
+				resolve(CHANGE_WORD[verdict] || 'unanswered');
+			};
+		});
+	}
+
 	window.DaimondDeletes = {
+		/// Put a change to a file he made to him (`askChange`).
+		change: askChange,
 		/// Put the held delete to the person; resolves true only on their yes.
 		held: function (payload) {
 			var req = {};
@@ -20972,7 +21055,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// host, so the user knows why the turn is not progressing and the ball is theirs.
 	function consentActPhrase(ask) {
 		var tool = String((ask && ask.tool) || ''), host = String((ask && ask.host) || '');
-		if (DaimondPeer.permitAsk(tool)) return permitActPhrase(tool, ask && ask.about);
+		if (DaimondPeer.permitAsk(tool)) return permitActPhrase(tool, ask && ask.about, ask && ask.detail);
 		if (tool === 'web_type')   return t('turn.consent_act_type',  { host: host });
 		if (tool === 'web_click')  return t('turn.consent_act_click', { host: host });
 		if (tool === 'web_search') return t('turn.consent_act_search');
@@ -20995,11 +21078,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// What a handed-off turn wants to do, as a phrase after "permission to".
-	function permitActPhrase(kind, about) {
+	///
+	/// `shown` is the ask's quoted thing (a change's path), read when `about` was cut short.
+	function permitActPhrase(kind, about, shown) {
 		var a = permitAbout(about);
 		if (kind === 'place')   return t('permit.act_place', { place: a.place });
 		if (kind === 'toolkit') return t('permit.act_toolkit', { kits: a.labels.join(', ') });
+		if (kind === 'change') {
+			var c = changeAbout(about);
+			return t('permit.act_change', { name: changeName(c ? c.path : shown).name });
+		}
 		return t('permit.act_run');
+	}
+
+	/// A change ask's `about` (the engine's payload, quoted whole by the runner), or null.
+	function changeAbout(about) {
+		var c;
+		try { c = JSON.parse(String(about || '')); } catch (e) { c = null; }
+		return c && typeof c === 'object' && c.path ? c : null;
 	}
 
 	/// The headline and body for a permit asked from another device, in the words the
@@ -21009,6 +21105,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var dev = deviceLabelFor(String(ask.dispatchedBy || ''));
 		var shown = String(ask.detail || '');
 		var head;
+		if (kind === 'change') {
+			var c = changeAbout(ask.about);
+			return { head: c ? changeHead(c) : t('permit.act_change', { name: changeName(shown).name }),
+				body: t('change.remote', { device: dev }) };
+		}
 		if (kind === 'toolkit')    head = t('kit.ask_title', { name: a.name, kits: a.labels.join(', ') });
 		else if (kind === 'place') head = t('place.ask_title', { name: a.name, place: a.place });
 		else                       head = t('permmode.run_title');
@@ -21054,7 +21155,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				kind: 'notice', headline: head, key: key,
 				detail: ask ? t('permit.notice_detail', {
 					name: deviceLabelFor(String(grant.by || '')),
-					act: permitActPhrase(String(ask.kind || ''), ask.about) }) : '',
+					act: permitActPhrase(String(ask.kind || ''), ask.about, ask.detail) }) : '',
 				retry: { turnId: String(grant.turnId || '') },
 			});
 		} catch (e) { /* the refusal stands; only the word is lost */ }
@@ -21539,19 +21640,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `shown` - The thing authorised, as the question quotes it (path, command).
 	/// * `about` - JSON `{ id, kits | place }` the answering device needs to word it.
-	function routePermitAsk(rc, kind, shown, about) {
+	/// * `waitMs` - How long to wait for the answer; absent is `CONSENT_DEADLINE_MS`. A
+	///   change ask passes its own ten minutes (`changeWaitMs`).
+	function routePermitAsk(rc, kind, shown, about, waitMs) {
 		// ONE TURN'S PERMITS ARE ASKED ONE AFTER ANOTHER (F5): a turn that writes two files
 		// in one round raises both questions at once, and the second used to be refused
 		// unasked because the first was still open. It now waits its turn on the chain and
 		// is asked when the first settles, whichever way.
 		var run = (rc.permitQ || Promise.resolve()).then(function () {
-			return putPermitAsk(rc, kind, shown, about);
+			return putPermitAsk(rc, kind, shown, about, waitMs);
 		});
 		rc.permitQ = run.catch(function () { /* the next question is still asked */ });
 		return run;
 	}
 
-	async function putPermitAsk(rc, kind, shown, about) {
+	async function putPermitAsk(rc, kind, shown, about, waitMs) {
 		// A web act's question open on this turn: this one was never put to anybody.
 		if (_openAskForTurn(rc.turnId)) return DaimondPeer.permitNoWord('unsupported');
 		var presence = (window.DaimondPresence && DaimondPresence.snapshot)
@@ -21559,7 +21662,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var route = DaimondPeer.consentRouteDecision(presence, selfDeviceId(), Date.now(),
 			{ windowMs: DaimondPeer.DISPATCH_FRESH_MS, source: rc.dispatchedBy });
 		var d = DaimondPeer.permitRouteDecision(kind, route, rc.dispatchedBy, rc.asks);
-		var wait = DaimondPeer.CONSENT_DEADLINE_MS || 60000;
+		var wait = (Number(waitMs) > 0) ? Number(waitMs) : (DaimondPeer.CONSENT_DEADLINE_MS || 60000);
 		var ask = DaimondPeer.makeAsk({
 			eid: rc.eid, turnId: rc.turnId, chatId: rc.chatId,
 			tool: kind, host: '', detail: String(shown || ''), kind: kind, about: String(about || ''),
@@ -21589,9 +21692,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		var verdict = await new Promise(function (resolve) {
 			var done = false;
-			function settle(v) { if (done) return; done = true; delete _consentWait[ask.cid]; resolve(v); }
+			var timer = null;
+			function settle(v) {
+				if (done) return; done = true; clearTimeout(timer); delete _consentWait[ask.cid]; resolve(v);
+			}
 			_consentWait[ask.cid] = { turnId: rc.turnId, kind: kind, target: ask.target, resolve: settle };
-			setTimeout(function () { settle(null); }, wait);
+			timer = setTimeout(function () { settle(null); }, wait);
 		});
 		await clearBlocker(rc.turnId);
 		var out = DaimondPeer.permitOutcome(kind, verdict);
@@ -21715,8 +21821,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (permit) _permitAsks[cid] = ask;
 			var txt = permit ? permitTileText(ask)
 				: consentTileText(String(ask.tool || ''), String(ask.host || ''), String(ask.detail || ''));
+			var change = ask.kind === 'change' ? changeAbout(ask.about) : null;
 			var id = Pending.add({
-				kind: 'consent', headline: txt.head, detail: txt.body, priority: 'high',
+				kind: 'consent', headline: txt.head, detail: txt.body, priority: 'high', change: change,
 			});
 			if (!id) return;
 			_askTiles[cid] = id;
@@ -26902,7 +27009,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		var label = document.createElement('span');
 		label.className = 'ti-label';
-		var act = consentActPhrase({ tool: spec.tool, host: spec.host, about: spec.about });
+		var act = consentActPhrase({ tool: spec.tool, host: spec.host, about: spec.about, detail: spec.detail });
 		var q   = spec.detail || t('egress.nothing');
 		var permit = DaimondPeer.permitAsk(spec.kind);
 		if (spec.kind === 'consent' || permit) {
@@ -32679,9 +32786,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			spinnerEl.appendChild(spinnerSay);
 		}
 		spinnerSay.textContent = words || tOr('chat.busy', 'Thinking…');   // escaped via textContent
+		// A caption that leads to its question opens Pending when pressed.
+		// Touched only when it changes, so an ordinary caption costs nothing more.
+		var go = !!(current && current._busyGo && current._busy === words);
+		if (go !== !!spinnerSay._go) {
+			spinnerSay._go = go;
+			spinnerSay.classList.toggle('chat-spinner-go', go);
+			if (go) { spinnerSay.setAttribute('role', 'button'); spinnerSay.tabIndex = 0; }
+			else { spinnerSay.removeAttribute('role'); spinnerSay.removeAttribute('tabindex'); }
+			spinnerSay.onclick = go ? openPendingFromCaption : null;
+			spinnerSay.onkeydown = go ? function (e) {
+				if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPendingFromCaption(); }
+			} : null;
+		}
 		var pinned = nearBottom();
 		postToChat(spinnerEl);
 		if (pinned) setScrollTop(chatOutput.scrollHeight);
+	}
+	function openPendingFromCaption() {
+		try { DaimondPanels.show('pending'); } catch (e) { /* the layout engine is not up */ }
 	}
 	function hideSpinner() { if (spinnerEl) { spinnerEl.remove(); spinnerEl = null; spinnerSay = null; } }
 
@@ -32695,9 +32818,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The words are resolved here rather than stored as a key: nobody changes
 	/// language in the middle of a turn, and storing the sentence keeps the
 	/// fallback beside the call that needs it.
-	function busySay(chat, words) {
+	///
+	/// `go` marks a caption that is the way to its question (the change ask, UNBLOCK-26 U5):
+	/// pressing it opens Pending. Any later word on the chat drops it.
+	function busySay(chat, words, go) {
 		if (!chat) return;
 		chat._busy = words;
+		chat._busyGo = go === true;
 		if (current === chat) showSpinner(words);
 	}
 
@@ -45883,6 +46010,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A consent names the run that asked, when one did: the Agents grid turns that
 			// square amber, and its pinned tile carries the same Allow and Deny.
 			if (kind === 'consent' && item.runId) rec.runId = String(item.runId);
+			// A change ask carries the change itself, drawn on the tile (UNBLOCK-26 U5).
+			if (kind === 'consent' && item.change && typeof item.change === 'object') rec.change = item.change;
 			this.fresh();
 			// A proposal is the daimon answer it came from, filed under its own handle.
 			if (kind === 'proposal' && item.prod && window.DaimondProvenance) {
@@ -46037,6 +46166,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			when.textContent = relTime(it.at);
 			head.appendChild(when);
 			box.appendChild(head);
+			if (it.kind === 'consent' && it.change) { changeTile(box, it); return box; }
 
 			// The headline, which EXPANDS. A panel of paragraphs cannot be scanned,
 			// and a panel of one-liners cannot be judged -- so it is both, and which
@@ -46565,6 +46695,74 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			value: it.steer.line, okLabel: t('pending.steer.add'), live: steerLintMsg, validate: steerLintMsg, lines: 4,
 		});
 		return v ? steerPress(it, 'add', v) : false;
+	}
+
+	/// The body and the buttons of a change ask's tile (called by `Pending.tile`, UNBLOCK-26
+	/// U5): where the file is, the change as History draws one, Apply and Don't Change. No
+	/// discuss: the turn is held on this answer, and a turn sent to talk about it would be a
+	/// second one beside it.
+	function changeTile(box, it) {
+		var c = it.change || {}, at = changeName(c.path);
+		var line = document.createElement('div');
+		line.className = 'pend-line pend-change-head';
+		line.textContent = it.headline;
+		box.appendChild(line);
+		var where = document.createElement('div');
+		where.className = 'rail-note pend-change-in';
+		where.textContent = t('change.in', { folder: at.folder })
+			+ (c.act === 'move' && c.to ? ' · ' + t('change.move_to', { to: String(c.to) }) : '');
+		box.appendChild(where);
+		// Asked here for a turn another device is running: which one.
+		if (it.detail) {
+			var from = document.createElement('div');
+			from.className = 'rail-note pend-change-from';
+			from.textContent = it.detail;
+			box.appendChild(from);
+		}
+		if (c.text === false) {
+			var none = document.createElement('div');
+			none.className = 'rail-note pend-change-none';
+			none.textContent = t('versions.cannot_compare');
+			box.appendChild(none);
+		} else if (Array.isArray(c.rows) && c.rows.length) {
+			var pre = document.createElement('div');
+			pre.className = 'hist-diff';
+			c.rows.forEach(function (r) {
+				var ln = document.createElement('div');
+				var k = String((r && r.k) || ' ');
+				// The marker column (+, -, blank) is drawn by the role in CSS, as in History, so every
+				// line's text starts at one edge; a fold says its count in words, not a typed glyph.
+				ln.className = 'hist-diff-line' + (k === '+' ? ' add' : k === '-' ? ' del' : k === '~' ? ' fold' : '');
+				ln.textContent = k === '~' ? tn('change.same', r.n | 0, { n: r.n | 0 }) : String(r.t || '');	// escaped via textContent
+				pre.appendChild(ln);
+			});
+			box.appendChild(pre);
+		}
+		if ((c.more | 0) > 0) {
+			var more = document.createElement('div');
+			more.className = 'rail-note pend-change-more';
+			more.textContent = tn('change.more', c.more | 0, { n: c.more | 0 });
+			box.appendChild(more);
+		}
+		if (it.expired) {
+			var gone = document.createElement('div');
+			gone.className = 'rail-note pend-consent';
+			gone.textContent = t('change.expired');
+			box.appendChild(gone);
+		}
+		var acts = document.createElement('div');
+		acts.className = 'pend-acts';
+		function btn(cls, label, fn) {
+			var b = document.createElement('button');
+			b.type = 'button'; b.className = 'pend-act pend-verb ' + cls; b.textContent = label;
+			b.addEventListener('click', fn);
+			acts.appendChild(b);
+			return b;
+		}
+		// An expired tile has nothing behind it: only the record is left to clear.
+		if (!it.expired) btn('pend-go', t('change.apply'), function () { Pending.execute(it); });
+		btn('pend-no', it.expired ? t('common.dismiss') : t('change.keep'), function () { Pending.drop(it.id); });
+		box.appendChild(acts);
 	}
 
 	/// The body and the buttons of a `steer` tile (called by `Pending.tile`): the line Add would write, always in view.
@@ -61616,7 +61814,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			(d.rows || []).forEach(function (l) {
 				var ln = document.createElement('div');
 				ln.className = 'hist-diff-line' + (l.op === '+' ? ' add' : l.op === '-' ? ' del' : '');
-				ln.textContent = l.op + l.text;     // escaped via textContent (H5)
+				ln.textContent = l.text;     // escaped via textContent (H5); the op is drawn by the role
 				pre.appendChild(ln);
 			});
 			delta.textContent = '+' + (d.add || 0) + ' −' + (d.del || 0);

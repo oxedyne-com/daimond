@@ -413,6 +413,33 @@ const PRESS_SQUARES = () => {
 	};
 };
 
+// UNBLOCK-26 (r573): a daimon's change to a file the person made asks first, and the page
+// waits ten minutes for the answer. A verifier that drives such a change and does not answer
+// stalls silently, so every `DaimondDeletes.change` -- the page's own or a verifier's stub,
+// set at any time -- is logged when asked and again if still unanswered after 15 s.
+const CHANGE_ASK = '[change ask]';
+function LOG_CHANGE_ASKS(tag) {
+	const wrap = (fn) => (typeof fn !== 'function' || fn.__logged) ? fn : Object.assign(function (raw) {
+		let o = {};
+		try { o = JSON.parse(String(raw || '{}')) || {}; } catch (e) { /* logged as is */ }
+		const what = `${o.act || '?'} ${o.path || ''}${o.to ? ' -> ' + o.to : ''}`;
+		console.info(`${tag} ${what}`);
+		const late = setTimeout(() => console.info(`${tag} UNANSWERED after 15 s: ${what}`), 15000);
+		return Promise.resolve(fn.apply(this, arguments)).finally(() => clearTimeout(late));
+	}, { __logged: true });
+	const trap = (obj) => {
+		if (!obj || typeof obj !== 'object' || obj.__trapped) return obj;
+		let change = wrap(obj.change);
+		Object.defineProperty(obj, 'change', { configurable: true, enumerable: true,
+			get: () => change, set: (f) => { change = wrap(f); } });
+		Object.defineProperty(obj, '__trapped', { value: true });
+		return obj;
+	};
+	let cur = trap(window.DaimondDeletes);
+	Object.defineProperty(window, 'DaimondDeletes', { configurable: true,
+		get: () => cur, set: (v) => { cur = trap(v); } });
+}
+
 export async function open(opts = {}) {
 	const {
 		headed    = false,
@@ -663,6 +690,9 @@ export async function open(opts = {}) {
 	page.on('console', m => {
 		logs.push(`${m.type()}: ${m.text()}`);
 		if (m.type() === 'error') errs.push(m.text());
+		// A change ask is printed as it is put, so a verifier that never answers one names
+		// itself in the first second rather than after the page's ten-minute wait.
+		if (m.text().startsWith(CHANGE_ASK)) console.log('  ' + m.text());
 	});
 	page.on('pageerror', e => errs.push(`pageerror: ${e.message}`));
 	page.on('crash', () => errs.push('PAGE CRASHED'));
@@ -733,6 +763,7 @@ export async function open(opts = {}) {
 	if (route) await route(page);
 	await page.addInitScript(PRESS_MARK);
 	await page.addInitScript(PRESS_SQUARES);
+	await page.addInitScript(LOG_CHANGE_ASKS, CHANGE_ASK);
 	await page.goto(app, { waitUntil: 'domcontentloaded' });
 
 	// A WEBKIT SESSION WITHOUT OPFS IS REFUSED, before sign-in seeds anything. Without the

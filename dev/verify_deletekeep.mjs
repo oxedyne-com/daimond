@@ -147,7 +147,8 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 		const seen = [];
 		try {
 			await press(id, marks);
-			await eng.set_diamond_scope(String(id), '[]');
+			const reach = await eng.read_scope_reach(String(id));
+			eng.set_diamond_scope(reach, '[]');
 			await eng.run_turn(text, (ev) => {
 				if (ev.type === 'tool_result') seen.push(String(ev.content || ''));
 			});
@@ -169,7 +170,22 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 		const rows = JSON.parse(await app.versions_list(id));
 		return rows.length ? rows[0] : null;
 	};
-	window.__k = { mod, app, dir, read, sha, turn, turnEv, worker, newest, press, confirm };
+	// Files the daimon made, in one turn of its own: since UNBLOCK-26 U3 a change to a file the
+	// PERSON made is put to him first, and once applied is not counted again by the open folder's
+	// delete limit, so F8 and F11's limit and wipe rows are about the daimon's own files.
+	const made = async (id, files) => {
+		const said = await turnEv(id, ['vault'], '@tools ' + Object.keys(files).map((path) =>
+			'file_write ' + JSON.stringify({ path, content: files[path] })).join(' ;; '));
+		const bad = said.filter((e) => !/^(Wrote|Saved) /.test(e.content));
+		if (bad.length) throw new Error('made: ' + bad.map((e) => e.content.slice(0, 120)).join(' | '));
+	};
+	window.__k = { mod, app, dir, read, sha, turn, turnEv, worker, newest, press, confirm, made };
+	// UNBLOCK-26: a daimon's change to a file the person made asks him first. Every ask here is
+	// answered 'apply' and recorded (the other answers are verify_askchange's A1-A8). Set on the
+	// page's own driver, so F8's swap of `DaimondDeletes` out and back keeps it.
+	window.__asks = window.__asks || [];
+	window.DaimondDeletes = window.DaimondDeletes || {};
+	window.DaimondDeletes.change = async (raw) => { window.__asks.push(JSON.parse(raw)); return 'apply'; };
 }, { folder: FOLDER, mock: MOCK, fresh });
 
 await install(true);
@@ -472,21 +488,21 @@ if (want('F7')) {
 // turn under the autonomous posture. The posture is ON for every turn below.
 if (want('F8')) {
 	const setup = await p.evaluate(async (id) => {
-		const { mod, app } = __k;
+		const { mod, app, made } = __k;
 		const out = { api: typeof app.set_open_deletes_ask === 'function', driver: !!window.DaimondDeletes };
 		try { localStorage.setItem('daimond-autonomous-posture', '1'); } catch (e) { /* private mode */ }
 		// Set where the build has it; a build without it is measured as it is.
 		window.__ask = (n) => { if (typeof __k.app.set_open_deletes_ask === 'function') __k.app.set_open_deletes_ask(n); };
 		window.__ask(3);
 		if (out.api) out.limit = app.open_deletes_ask();
+		const files = {};
 		for (const n of ['a0', 'a1', 'a2', 'a3', 'a4', 'c0', 'c1', 'c2', 'c3', 'c4', 'd0', 'd1',
-			'k0', 'k1', 'k2', 'k3', 'k4', 'g0', 'g1', 'g2', 'g3']) {
-			await mod.write_file('vault/f8/' + n + '.md', 'f8 ' + n);
-		}
-		for (const n of ['s0', 's1']) await mod.write_file('diamonds/' + id + '/f8s/' + n + '.md', 'store ' + n);
+			'k0', 'k1', 'k2', 'k3', 'k4', 'g0', 'g1', 'g2', 'g3']) files['vault/f8/' + n + '.md'] = 'f8 ' + n;
 		for (let w = 0; w < 2; w++) {
-			for (let i = 0; i < 3; i++) await mod.write_file('vault/f8w/w' + w + '_' + i + '.md', 'w');
+			for (let i = 0; i < 3; i++) files['vault/f8w/w' + w + '_' + i + '.md'] = 'w';
 		}
+		await made(id, files);
+		for (const n of ['s0', 's1']) await mod.write_file('diamonds/' + id + '/f8s/' + n + '.md', 'store ' + n);
 		return out;
 	}, id);
 	check('F8. the engine has the limit and the page has the question', setup.api && setup.driver
@@ -908,6 +924,9 @@ if (want('F10')) {
 }
 
 // ── F11: a write that keeps nothing of a user's file is a delete by another verb (R4) ─────
+// Since UNBLOCK-26 U3 a change to a file the PERSON made is put to him first and, once applied,
+// is not asked about again as a wipe; so the files F11's limit and R4 rows wipe are the daimon's
+// own (`made`), where the open folder's limit is still the only question.
 if (want('F11')) {
 	const HELD = '.modal.dlg[data-ask="delete-held"]';
 	const dialog = async (ms) => {
@@ -926,11 +945,13 @@ if (want('F11')) {
 		await p.click(HELD + (yes ? ' .dlg-ok' : ' .dlg-cancel'), { force: true });
 	};
 	const setup = await p.evaluate(async () => {
-		const { mod, app } = __k;
+		const { app, made } = __k;
 		const id = await app.create_diamond('f11 wipes');
 		app.set_open_deletes_ask(3);
-		for (let i = 0; i < 5; i++) await mod.write_file('vault/f11/m' + i + '.md', 'keep me ' + i + '\n');
-		for (let i = 0; i < 5; i++) await mod.write_file('vault/f11/k' + i + '.md', 'keep this ' + i + '\nand this\n');
+		const files = {};
+		for (let i = 0; i < 5; i++) files['vault/f11/m' + i + '.md'] = 'keep me ' + i + '\n';
+		for (let i = 0; i < 5; i++) files['vault/f11/k' + i + '.md'] = 'keep this ' + i + '\nand this\n';
+		await made(id, files);
 		window.__f11keep = window.DaimondWeb && window.DaimondWeb.fetch;
 		window.DaimondWeb = window.DaimondWeb || {};
 		window.DaimondWeb.fetch = async (url) => ({ url, content_type: 'text/plain', body_b64: btoa('x'), bytes: 1 });
@@ -1144,13 +1165,11 @@ if (want('F11')) {
 	const KILN = 'The kiln was fired on Friday.\nIt held two hundred pots.\nMost came out whole.\n'
 		+ 'The glaze on the blue ones ran.\nWe will fire again in May.\n';
 	const most = await p.evaluate(async ({ all, para, kiln }) => {
-		const { mod, app } = __k;
+		const { app, made } = __k;
 		const id = await app.create_diamond('f11 emptying most');
+		await made(id, { 'vault/f11/most/one.md': all, 'vault/f11/most/three.md': all,
+			'vault/f11/most/para.md': para, 'vault/f11/most/kiln.md': kiln });
 		app.set_open_deletes_ask(0);
-		await mod.write_file('vault/f11/most/one.md', all);
-		await mod.write_file('vault/f11/most/three.md', all);
-		await mod.write_file('vault/f11/most/para.md', para);
-		await mod.write_file('vault/f11/most/kiln.md', kiln);
 		return id;
 	}, { all: notes(12), para: PARA, kiln: KILN });
 	// One turn, and whether the person was asked while it ran: a question is answered "go on", so
@@ -1244,11 +1263,10 @@ if (want('F11')) {
 	// the wipe's copy, not what the edit found, so the file still goes back whole.
 	const lines = (t) => String(t).split('\n').length - 1;
 	const found = await p.evaluate(async ({ all }) => {
-		const { mod, app } = __k;
+		const { app, made } = __k;
 		const id = await app.create_diamond('f11 as the turns found it');
+		await made(id, { 'vault/f11/found/del.md': all, 'vault/f11/found/crash.md': all });
 		app.set_open_deletes_ask(0);
-		await mod.write_file('vault/f11/found/del.md', all);
-		await mod.write_file('vault/f11/found/crash.md', all);
 		return id;
 	}, { all: notes(12) });
 	const fa = {};

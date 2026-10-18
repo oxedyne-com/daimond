@@ -176,6 +176,13 @@ pub fn sweep(root: &Path) {
 /// A file whose original path is occupied again is left in the trash and counted as
 /// skipped: something now stands there, and overwriting it would be a second loss.
 ///
+/// The restore runs outside every fence, so it follows no link (WMF4).  Each file goes back
+/// only beneath the deepest mark it was taken from, and never into a `.daimond` folder.  The
+/// path is walked from `/` one name at a time, each opened with `O_NOFOLLOW`, so a link or a
+/// non-folder anywhere on the way refuses the file, and the file is renamed in by the last
+/// folder's descriptor without replacing anything.  What is put back is what was kept: a
+/// regular file, or a link as a link, never what one points at.
+///
 /// # Returns
 /// `(restored, skipped)`.
 pub fn restore(root: &Path, since_ms: u64) -> Outcome<(u32, u32)> {
@@ -194,22 +201,28 @@ pub fn restore(root: &Path, since_ms: u64) -> Outcome<(u32, u32)> {
         }
     }
     layers.sort();
+    let marks = marks_noted(&turn);
     let mut n = (0u32, 0u32);
     for (_, layer) in &layers {
-        res!(put_back(layer, layer, &mut n));
+        res!(put_back(layer, layer, &marks, &mut n));
+    }
+    // The marks file goes with the last layer: while any file is left, it says where it goes.
+    if layers.iter().all(|(_, layer)| remove_empty(layer)) {
+        let _ = std::fs::remove_file(turn.join(MARKS_FILE));
+        let _ = std::fs::remove_file(turn.join(MARKS_LINES));
     }
     let _ = remove_empty(&turn);
     Ok(n)
 }
 
-fn put_back(turn: &Path, dir: &Path, n: &mut (u32, u32)) -> Outcome<()> {
+fn put_back(turn: &Path, dir: &Path, marks: &[PathBuf], n: &mut (u32, u32)) -> Outcome<()> {
     let rd = res!(std::fs::read_dir(dir));
     for e in rd {
         let e = res!(e);
         let p = e.path();
         let ft = res!(e.file_type());
         if ft.is_dir() {
-            res!(put_back(turn, &p, n));
+            res!(put_back(turn, &p, marks, n));
             continue;
         }
         let rel = match p.strip_prefix(turn) {
@@ -223,20 +236,284 @@ fn put_back(turn: &Path, dir: &Path, n: &mut (u32, u32)) -> Outcome<()> {
             continue;
         }
         let orig = Path::new("/").join(rel);
-        if std::fs::symlink_metadata(&orig).is_ok() {
+        // Only what the trash itself holds as a file or a link; anything else it did not keep.
+        if !(ft.is_file() || ft.is_symlink()) {
             n.1 += 1;
             continue;
         }
-        if let Some(parent) = orig.parent() {
-            res!(std::fs::create_dir_all(parent));
-        }
-        let moved = match std::fs::rename(&p, &orig) {
-            Ok(()) => true,
-            Err(_) => std::fs::copy(&p, &orig).is_ok() && std::fs::remove_file(&p).is_ok(),
+        let mark = mark_for(marks, &orig);
+        let below = match orig.strip_prefix(&mark) {
+            Ok(b) if !mark.as_os_str().is_empty() && !b.as_os_str().is_empty() => b,
+            _ => { n.1 += 1; continue; },
         };
+        if below.components().any(|c| c.as_os_str() == ".daimond") {
+            n.1 += 1;
+            continue;
+        }
+        let moved = place(&p, &mark, below, ft.is_file());
         if moved { n.0 += 1; } else { n.1 += 1; }
     }
     Ok(())
+}
+
+/// Opens the folder `name` beneath `dir` without following a link, making it if it is absent.
+///
+/// The folder is opened `O_PATH`, which needs only search permission, so a mark below a folder
+/// the user can enter but not list (a 0711 home) is still reached (QA D4).  An `O_PATH`
+/// descriptor serves as the folder for every `*at` call the restore makes.
+#[cfg(unix)]
+fn step<Fd: std::os::fd::AsFd>(dir: Fd, name: &std::ffi::OsStr, make: bool)
+    -> Option<std::os::fd::OwnedFd>
+{
+    use rustix::{
+        fs::{
+            mkdirat,
+            openat,
+            Mode,
+        },
+        io::Errno,
+    };
+    match openat(&dir, name, walk_flags(), Mode::empty()) {
+        Ok(d) => Some(d),
+        Err(e) if make && e == Errno::NOENT => {
+            match mkdirat(&dir, name, Mode::from_raw_mode(0o777)) {
+                Ok(()) => {},
+                Err(e) if e == Errno::EXIST => {},
+                Err(_) => return None,
+            }
+            // Opened again with O_NOFOLLOW: a link swapped in since the mkdir is refused.
+            openat(&dir, name, walk_flags(), Mode::empty()).ok()
+        },
+        Err(_) => None,
+    }
+}
+
+/// How each folder on a restore's path is opened: as a path only, never through a link.
+#[cfg(unix)]
+fn walk_flags() -> rustix::fs::OFlags {
+    use rustix::fs::OFlags;
+    OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
+}
+
+/// Flushes the folder `dir` names, so a name just made in it outlives a crash.
+///
+/// The `O_PATH` descriptor cannot be synced itself, so the folder is opened for reading
+/// through it, which needs read permission on that one folder.
+#[cfg(unix)]
+fn sync_dir<Fd: std::os::fd::AsFd>(dir: Fd) -> bool {
+    use rustix::fs::{
+        fsync,
+        openat,
+        Mode,
+        OFlags,
+    };
+    match openat(&dir, ".", OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty()) {
+        Ok(d)  => fsync(&d).is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Moves `from` (beneath `from_dir`) to `leaf` beneath `dir` without replacing anything.
+///
+/// `RENAME_NOREPLACE` first.  A filesystem that refuses it (FUSE without rename2, some network
+/// mounts) gets a hard link, which fails atomically on an existing name and follows nothing,
+/// and then `from` is unlinked.  Where the link is refused too, nothing moves (QA D2): a plain
+/// rename would replace whatever appeared since the leaf was seen absent.
+///
+/// # Returns
+/// `Ok(true)` when the name is in place, `Ok(false)` when it is refused, and `Err(EXDEV)` when
+/// the two are on different filesystems.
+#[cfg(unix)]
+fn move_in<A: std::os::fd::AsFd, B: std::os::fd::AsFd>(
+    from_dir:   A,
+    from:       &std::ffi::OsStr,
+    dir:        B,
+    leaf:       &std::ffi::OsStr,
+)
+    -> std::result::Result<bool, rustix::io::Errno>
+{
+    use rustix::{
+        fs::{
+            linkat,
+            renameat_with,
+            unlinkat,
+            AtFlags,
+            RenameFlags,
+        },
+        io::Errno,
+    };
+    match renameat_with(&from_dir, from, &dir, leaf, RenameFlags::NOREPLACE) {
+        Ok(()) => Ok(true),
+        Err(e) if e == Errno::XDEV => Err(e),
+        Err(e) if e == Errno::INVAL || e == Errno::NOSYS || e == Errno::NOTSUP => {
+            match linkat(&from_dir, from, &dir, leaf, AtFlags::empty()) {
+                Ok(()) => {
+                    // The file is back under both names; the second is the trash's to lose.
+                    let _ = unlinkat(&from_dir, from, AtFlags::empty());
+                    Ok(true)
+                },
+                Err(e) if e == Errno::XDEV => Err(e),
+                Err(_) => Ok(false),
+            }
+        },
+        Err(_) => Ok(false),
+    }
+}
+
+/// Puts the kept `kept` back at `mark`/`below`, following no link on the way (WMF4).
+///
+/// The mark is walked from `/` without making anything: it is a root the hand canonicalised,
+/// and one gone or swapped for a link is refused.  Below it, a missing folder is made.  The
+/// leaf is moved in without replacing anything (see [`move_in`]).  Across filesystems a
+/// regular file is copied into a temporary name made exclusively in the same folder, synced,
+/// and only then moved to the leaf, so a copy that fails part way leaves nothing at the
+/// original path (QA D1); the folder is synced before the trash's copy is removed.  A link
+/// across filesystems is made again from what it holds (QA D5).
+///
+/// # Returns
+/// Whether the file is back.
+#[cfg(unix)]
+fn place(kept: &Path, mark: &Path, below: &Path, plain: bool) -> bool {
+    use rustix::{
+        fs::{
+            readlinkat,
+            statat,
+            symlinkat,
+            openat,
+            AtFlags,
+            Mode,
+            CWD,
+        },
+    };
+    let mut dir = match openat(CWD, "/", walk_flags(), Mode::empty()) {
+        Ok(d)  => d,
+        Err(_) => return false,
+    };
+    for c in mark.components() {
+        match c {
+            Component::RootDir   => continue,
+            Component::Normal(n) => match step(&dir, n, false) {
+                Some(d) => dir = d,
+                None    => return false,
+            },
+            _ => return false,
+        }
+    }
+    let names: Vec<&std::ffi::OsStr> = below.components().filter_map(|c| match c {
+        Component::Normal(n) => Some(n),
+        _                    => None,
+    }).collect();
+    if names.len() != below.components().count() {
+        return false;
+    }
+    let (leaf, parents) = match names.split_last() {
+        Some(s) => s,
+        None    => return false,
+    };
+    for n in parents {
+        match step(&dir, n, true) {
+            Some(d) => dir = d,
+            None    => return false,
+        }
+    }
+    if statat(&dir, *leaf, AtFlags::SYMLINK_NOFOLLOW).is_ok() {
+        return false;
+    }
+    // An error here is another filesystem; anything else has answered.
+    if let Ok(moved) = move_in(CWD, kept.as_os_str(), &dir, *leaf) {
+        return moved;
+    }
+    if !plain {
+        // A link holds a path: it is made again from that path, which fails on an existing
+        // name and follows nothing.
+        let to = match readlinkat(CWD, kept, Vec::new()) {
+            Ok(t)  => t,
+            Err(_) => return false,
+        };
+        if symlinkat(to.as_c_str(), &dir, *leaf).is_err() {
+            return false;
+        }
+        if sync_dir(&dir) {
+            let _ = std::fs::remove_file(kept);
+        }
+        return true;
+    }
+    copy_back(kept, &dir, leaf)
+}
+
+/// Copies the regular file `kept` to `leaf` beneath `dir`, on another filesystem, through a
+/// temporary name in the same folder (QA D1).
+///
+/// # Returns
+/// Whether the file is back.  On any failure the temporary is removed and the trash keeps its
+/// copy.
+#[cfg(unix)]
+fn copy_back(kept: &Path, dir: &std::os::fd::OwnedFd, leaf: &std::ffi::OsStr) -> bool {
+    use rustix::{
+        fs::{
+            fchmod,
+            fsync,
+            openat,
+            unlinkat,
+            AtFlags,
+            Mode,
+            OFlags,
+        },
+        io::Errno,
+    };
+    use std::os::unix::{
+        fs::{
+            OpenOptionsExt,
+            PermissionsExt,
+        },
+    };
+    let mut src = match std::fs::OpenOptions::new().read(true)
+        .custom_flags(OFlags::NOFOLLOW.bits() as i32).open(kept)
+    {
+        Ok(f)  => f,
+        Err(_) => return false,
+    };
+    let mode = match src.metadata() {
+        Ok(m) if m.is_file() => m.permissions().mode() & 0o7777,
+        _ => return false,
+    };
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let mut made = None;
+    for i in 0..16u32 {
+        let name = fmt!(".daimond-restore.{}.{}.{}", std::process::id(), stamp, i);
+        match openat(dir, name.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600))
+        {
+            Ok(f) => { made = Some((name, f)); break; },
+            Err(e) if e == Errno::EXIST => continue,
+            Err(_) => return false,
+        }
+    }
+    let (tmp, out) = match made {
+        Some(m) => m,
+        None    => return false,
+    };
+    let mut out = std::fs::File::from(out);
+    let written = std::io::copy(&mut src, &mut out).is_ok()
+        && fchmod(&out, Mode::from_raw_mode(mode)).is_ok()
+        && fsync(&out).is_ok();
+    drop(out);
+    let back = written && matches!(move_in(dir, std::ffi::OsStr::new(&tmp), dir, leaf), Ok(true));
+    if !back {
+        let _ = unlinkat(dir, tmp.as_str(), AtFlags::empty());
+        return false;
+    }
+    // The new name reaches the disk before the only other copy is let go.
+    if sync_dir(dir) {
+        let _ = std::fs::remove_file(kept);
+    }
+    true
+}
+
+#[cfg(not(unix))]
+fn place(_kept: &Path, _mark: &Path, _below: &Path, _plain: bool) -> bool {
+    false
 }
 
 fn remove_empty(dir: &Path) -> bool {
@@ -462,13 +739,86 @@ fn trash_path(trash: &Path, since_ms: u64, layer: u32, victim: &Path) -> PathBuf
     out
 }
 
+/// The file in each turn's trash naming the marks its files were taken from, as raw bytes each
+/// ended by a NUL, which no path can hold (QA D3).
+const MARKS_FILE: &str = "marks0";
+
+/// The same, as WMF4 first wrote it: one UTF-8 mark a line.  Still read, so a turn kept by
+/// that build can be put back.
+const MARKS_LINES: &str = "marks";
+
+/// Records `mark` as a root the turn `since_ms` took files from, so that a restore writes
+/// beneath it and nowhere else (WMF4).  The trash is outside every fence, so no command can
+/// add a root here.  The mark is written as its own bytes, so a name that is not UTF-8 or
+/// holds a newline or a carriage return goes back as it was (QA D3).
+#[cfg(unix)]
+fn note_mark(trash: &Path, since_ms: u64, mark: &Path) -> Outcome<()> {
+    use std::{
+        io::Write,
+        os::unix::ffi::OsStrExt,
+    };
+    // No mark (a file kept from outside every mark): nothing is recorded, and a restore
+    // refuses the file rather than put it back somewhere unproven.
+    if !mark.is_absolute() {
+        return Ok(());
+    }
+    let turn = trash.join(fmt!("{}", since_ms));
+    res!(std::fs::create_dir_all(&turn));
+    let file = turn.join(MARKS_FILE);
+    let raw = mark.as_os_str().as_bytes();
+    if let Ok(held) = std::fs::read(&file) {
+        if held.split(|b| *b == 0).any(|m| m == raw) {
+            return Ok(());
+        }
+    }
+    let mut rec = raw.to_vec();
+    rec.push(0);
+    let mut f = res!(std::fs::OpenOptions::new().create(true).append(true).open(&file));
+    res!(f.write_all(&rec));
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn note_mark(_trash: &Path, _since_ms: u64, _mark: &Path) -> Outcome<()> {
+    // Nothing recorded: a restore refuses every file, as it does a file kept from no mark.
+    Ok(())
+}
+
+/// The marks the turn's trash names, each absolute and plain names below the root.
+fn marks_noted(turn: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    #[cfg(unix)]
+    if let Ok(held) = std::fs::read(turn.join(MARKS_FILE)) {
+        use std::os::unix::ffi::OsStrExt;
+        out.extend(held.split(|b| *b == 0)
+            .filter(|m| !m.is_empty())
+            .map(|m| PathBuf::from(std::ffi::OsStr::from_bytes(m))));
+    }
+    if let Ok(held) = std::fs::read_to_string(turn.join(MARKS_LINES)) {
+        out.extend(held.split('\n').filter(|l| !l.is_empty()).map(PathBuf::from));
+    }
+    out.retain(|m| m.is_absolute()
+        && m.components().skip(1).all(|c| matches!(c, Component::Normal(_))));
+    out
+}
+
+/// The deepest of `marks` holding `p`, or an empty path, which no restore writes beneath.
+fn mark_for(marks: &[PathBuf], p: &Path) -> PathBuf {
+    marks.iter()
+        .filter(|m| p.starts_with(m))
+        .max_by_key(|m| m.as_os_str().len())
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// Links `victim` into the trash, or copies it where the link cannot be made.
 ///
 /// An error is a removal refused: what the trash does not hold cannot be put back, and every
 /// sentence the hand and the page say about a counted removal says that it can.  The design
 /// counted an oversized file twice and let it go uncopied (§4.3); that loses it for good, which
 /// is why a file too large to copy is refused instead (audit F6).
-fn keep(trash: &Path, since_ms: u64, victim: &Path) -> Outcome<()> {
+fn keep(trash: &Path, since_ms: u64, victim: &Path, mark: &Path) -> Outcome<()> {
+    res!(note_mark(trash, since_ms, mark));
     // The same path taken twice in one turn keeps both, a layer apart.
     let mut layer = 0;
     let mut dest = trash_path(trash, since_ms, layer, victim);
@@ -658,15 +1008,22 @@ fn read_path(pid: u32, addr: u64) -> Option<PathBuf> {
     None
 }
 
-/// The absolute path a call named, resolved the way the kernel will.
+/// The absolute path a call named, resolved the way the kernel will: link by link from the
+/// caller's own cwd or descriptor, `..` applied to the directory a link led to, never to the
+/// text.  The last name is followed only where `follow_last` says the kernel would.
 #[cfg(target_os = "linux")]
-fn resolve(pid: u32, dirfd: i32, addr: u64) -> Option<PathBuf> {
+fn resolve(pid: u32, dirfd: i32, addr: u64, follow_last: bool) -> Option<PathBuf> {
     let p = match read_path(pid, addr) {
         Some(p) => p,
         None    => return None,
     };
-    let full = if p.is_absolute() {
-        p
+    // The caller's root, which `/` and `..` at the top name, as the hand sees it.
+    let root = match std::fs::read_link(fmt!("/proc/{}/root", pid)) {
+        Ok(r)  => r,
+        Err(_) => return None,
+    };
+    let base = if p.is_absolute() {
+        root.clone()
     } else {
         let link = if dirfd == AT_FDCWD {
             fmt!("/proc/{}/cwd", pid)
@@ -674,27 +1031,106 @@ fn resolve(pid: u32, dirfd: i32, addr: u64) -> Option<PathBuf> {
             fmt!("/proc/{}/fd/{}", pid, dirfd)
         };
         match std::fs::read_link(link) {
-            Ok(base) => base.join(p),
+            Ok(base) => base,
             Err(_)   => return None,
         }
     };
-    let mut clean = PathBuf::new();
-    for c in full.components() {
-        match c {
-            Component::CurDir		=> (),
-            Component::ParentDir	=> { clean.pop(); },
-            other					=> clean.push(other.as_os_str()),
+    walk(pid, &root, base, &p, follow_last)
+}
+
+/// How many links the kernel follows in one lookup before it answers ELOOP.
+#[cfg(target_os = "linux")]
+const LINKS_MAX: usize = 40;
+
+/// `p` walked from the directory `base` (from `root` when `p` is absolute, and never above
+/// it) as the kernel walks it for the thread `tid`: each name joined to a directory already
+/// resolved, each link replaced by its target in place, and `..` taken from where the walk
+/// has got to.  `/proc/self` and `/proc/thread-self` name the caller,
+/// not the hand, and `/dev/fd` and the like reach them through their links.  `None` for a walk
+/// the kernel would refuse with ELOOP, or a link that cannot be read.
+#[cfg(target_os = "linux")]
+fn walk(tid: u32, root: &Path, base: PathBuf, p: &Path, follow_last: bool) -> Option<PathBuf> {
+    let mut cur = if p.is_absolute() { root.to_path_buf() } else { base };
+    let mut todo = names(p);
+    let mut links = 0;
+    while let Some(name) = todo.pop_front() {
+        if name == ".." {
+            if cur != root {
+                cur.pop(); // `/..` is `/`.
+            }
+            continue;
+        }
+        let next = cur.join(&name);
+        if todo.is_empty() && !follow_last {
+            return Some(next);
+        }
+        let target = match callers_own(&next, tid) {
+            Some(t) => Some(t),
+            None    => match std::fs::symlink_metadata(&next) {
+                Ok(m) if m.file_type().is_symlink() => match std::fs::read_link(&next) {
+                    Ok(t)  => Some(t),
+                    Err(_) => return None,
+                },
+                _ => None,
+            },
+        };
+        match target {
+            // A directory, a file, or nothing yet: what the kernel would make or refuse there.
+            None => cur = next,
+            Some(t) => {
+                links += 1;
+                if links > LINKS_MAX {
+                    return None;
+                }
+                if t.is_absolute() {
+                    cur = root.to_path_buf();
+                }
+                let mut ahead = names(&t);
+                ahead.append(&mut todo);
+                todo = ahead;
+            },
         }
     }
-    // The last name is what the call acts on and is never followed; the directory
-    // holding it is, so it is resolved.
-    match (clean.parent(), clean.file_name()) {
-        (Some(dir), Some(name)) => match dir.canonicalize() {
-            Ok(d)  => Some(d.join(name)),
-            Err(_) => Some(clean.clone()),
-        },
-        _ => Some(clean),
+    Some(cur)
+}
+
+/// The names of `p` in order, `..` kept as a name and `.` dropped.
+#[cfg(target_os = "linux")]
+fn names(p: &Path) -> std::collections::VecDeque<std::ffi::OsString> {
+    p.components().filter_map(|c| match c {
+        Component::Normal(n)	=> Some(n.to_os_string()),
+        Component::ParentDir	=> Some(std::ffi::OsString::from("..")),
+        _						=> None,
+    }).collect()
+}
+
+/// What `/proc/self` and `/proc/thread-self` are links to for the thread `tid`, which the
+/// hand's own reading of them would get wrong.
+#[cfg(target_os = "linux")]
+fn callers_own(p: &Path, tid: u32) -> Option<PathBuf> {
+    if p == Path::new("/proc/self") {
+        Some(PathBuf::from(fmt!("/proc/{}", tgid_of(tid))))
+    } else if p == Path::new("/proc/thread-self") {
+        Some(PathBuf::from(fmt!("/proc/{}/task/{}", tgid_of(tid), tid)))
+    } else {
+        None
     }
+}
+
+/// The process holding the thread `tid`; `tid` itself if that cannot be read, which names the
+/// same cwd and descriptors unless the thread has unshared them.
+#[cfg(target_os = "linux")]
+fn tgid_of(tid: u32) -> u32 {
+    if let Ok(s) = std::fs::read_to_string(fmt!("/proc/{}/status", tid)) {
+        for line in s.lines() {
+            if let Some(v) = line.strip_prefix("Tgid:") {
+                if let Ok(n) = v.trim().parse::<u32>() {
+                    return n;
+                }
+            }
+        }
+    }
+    tid
 }
 
 /// Answers one run's held calls until the last process holding the filter has gone.
@@ -770,7 +1206,8 @@ pub fn watch(
         let sc = Some(req.data.syscall);
         let a = req.data.args;
         let pid = req.pid;
-        let path_at = |dfd: u64, addr: u64| resolve(pid, dfd as u32 as i32, addr);
+        // Removals and renames act on the last name itself.
+        let path_at = |dfd: u64, addr: u64| resolve(pid, dfd as u32 as i32, addr, false);
 
         let verdict = if sc == unlink || sc == rmdir {
             path_at(AT_FDCWD as u32 as u64, a[0]).map(|p| judge.remove(&p, sc == rmdir))
@@ -858,7 +1295,7 @@ pub fn watch(
                         continue;
                     }
                 }
-                match keep(&w.trash, w.since_ms, &victim) {
+                match keep(&w.trash, w.since_ms, &victim, &mark) {
                     Ok(()) => {
                         tally.counted.fetch_add(1, Ordering::Relaxed);
                         if sample.len() < SAMPLE_MAX {
@@ -1064,8 +1501,8 @@ mod tests {
         res!(std::fs::create_dir_all(base.join("mark/sub")));
         res!(std::fs::write(&a, "a"));
         res!(std::fs::write(&b, "b"));
-        res!(keep(&trash, 42, &a));
-        res!(keep(&trash, 42, &b));
+        res!(keep(&trash, 42, &a, &base.join("mark")));
+        res!(keep(&trash, 42, &b, &base.join("mark")));
         res!(std::fs::remove_file(&a));
         res!(std::fs::remove_dir_all(base.join("mark/sub")));
         res!(std::fs::write(&a, "new"));
@@ -1073,6 +1510,357 @@ mod tests {
         assert_eq!((1, 1), (put, left));
         assert_eq!("b", res!(std::fs::read_to_string(&b)));
         assert_eq!("new", res!(std::fs::read_to_string(&a)));
+        Ok(())
+    }
+
+    /// **A restore follows no link: a folder swapped for one is refused, its target untouched.**
+    ///
+    /// The fence-origin attack (WMF4): a command removes a kept file, then puts a link where
+    /// its folder was, aimed at somewhere the user can write.  Undo must not write through it.
+    #[cfg(unix)]
+    #[test]
+    fn a_restore_never_writes_through_a_link() -> Outcome<()> {
+        let base = res!(tree("trash-link"));
+        let trash = base.join("trash");
+        let mark = base.join("mark");
+        let away = base.join("away");
+        let a = mark.join("sub/a.json");
+        res!(std::fs::create_dir_all(mark.join("sub")));
+        res!(std::fs::create_dir_all(&away));
+        res!(std::fs::write(&a, "forged"));
+        res!(keep(&trash, 43, &a, &mark));
+        res!(std::fs::remove_dir_all(mark.join("sub")));
+        res!(std::os::unix::fs::symlink(&away, mark.join("sub")));
+        let (put, left) = res!(restore(&trash, 43));
+        assert!(std::fs::symlink_metadata(away.join("a.json")).is_err(),
+            "the restore wrote through a link to outside the mark");
+        assert_eq!((0, 1), (put, left));
+        Ok(())
+    }
+
+    /// **A restore writes nothing into `.daimond`, and nothing a turn kept from no mark.**
+    #[cfg(unix)]
+    #[test]
+    fn a_restore_keeps_out_of_daimond_and_unmarked_places() -> Outcome<()> {
+        let base = res!(tree("trash-daimond"));
+        let trash = base.join("trash");
+        let mark = base.join("mark");
+        let press = mark.join(".daimond/marks-here");
+        let plain = mark.join("plain.txt");
+        res!(std::fs::create_dir_all(mark.join(".daimond")));
+        res!(std::fs::write(&press, "forged"));
+        res!(std::fs::write(&plain, "p"));
+        res!(keep(&trash, 44, &press, &mark));
+        res!(keep(&trash, 44, &plain, &mark));
+        res!(std::fs::remove_file(&press));
+        res!(std::fs::remove_file(&plain));
+        assert_eq!((1, 1), res!(restore(&trash, 44)));
+        assert!(std::fs::symlink_metadata(&press).is_err(), "a press file was put back");
+        assert_eq!("p", res!(std::fs::read_to_string(&plain)));
+        // A turn whose trash names no mark puts nothing back.
+        let other = base.join("other.txt");
+        res!(std::fs::write(&other, "o"));
+        res!(keep(&trash, 45, &other, Path::new("")));
+        res!(std::fs::remove_file(&other));
+        assert_eq!((0, 1), res!(restore(&trash, 45)));
+        assert!(std::fs::symlink_metadata(&other).is_err());
+        Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod qa_wmf4 {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn qtree(name: &str) -> Outcome<PathBuf> {
+        let home = res!(std::env::var("HOME").map_err(|e| err!(e, "No HOME."; Test)));
+        let dir = PathBuf::from(home).join(".cache/daimond-handdelete/qa-wmf4").join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        res!(std::fs::create_dir_all(&dir));
+        Ok(res!(dir.canonicalize()))
+    }
+
+    fn shm(name: &str) -> Outcome<PathBuf> {
+        let dir = PathBuf::from(fmt!("/dev/shm/qa-wmf4-{}", std::process::id())).join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        res!(std::fs::create_dir_all(&dir));
+        Ok(dir)
+    }
+
+    fn empty(d: &Path) -> bool {
+        std::fs::read_dir(d).map(|mut r| r.next().is_none()).unwrap_or(true)
+    }
+
+    // RACE: a racer flips mark/sub between a folder and a link to `away` while restores run.
+    #[test]
+    fn q1_race_component_and_leaf_swap() -> Outcome<()> {
+        let base = res!(qtree("q1"));
+        let trash = base.join("trash");
+        let mark = base.join("mark");
+        let away = base.join("away");
+        res!(std::fs::create_dir_all(mark.join("sub")));
+        res!(std::fs::create_dir_all(away.join("sub")));
+        let stop = Arc::new(AtomicBool::new(false));
+        let s2 = stop.clone();
+        let (m2, a2) = (mark.clone(), away.clone());
+        let racer = std::thread::spawn(move || {
+            while !s2.load(Ordering::Relaxed) {
+                let _ = std::fs::rename(m2.join("sub"), m2.join("sub.d"));
+                let _ = std::os::unix::fs::symlink(&a2, m2.join("sub"));
+                let _ = std::os::unix::fs::symlink(a2.join("leaf"), m2.join("sub.d/a.json"));
+                std::thread::yield_now();
+                let _ = std::fs::remove_file(m2.join("sub"));
+                let _ = std::fs::rename(m2.join("sub.d"), m2.join("sub"));
+                std::thread::yield_now();
+                let _ = std::fs::remove_file(m2.join("sub/a.json"));
+                let _ = std::fs::remove_dir(m2.join("sub"));
+                let _ = std::os::unix::fs::symlink(&a2, m2.join("sub"));
+                std::thread::yield_now();
+                let _ = std::fs::remove_file(m2.join("sub"));
+            }
+        });
+        let (mut put, mut left) = (0, 0);
+        for t in 1000..4000u64 {
+            let kept = trash_path(&trash, t, 0, &mark.join("sub/a.json"));
+            res!(std::fs::create_dir_all(res!(kept.parent().ok_or_else(|| err!("p"; Missing)))));
+            res!(std::fs::write(&kept, "k"));
+            res!(note_mark(&trash, t, &mark));
+            let (p, l) = res!(restore(&trash, t));
+            put += p; left += l;
+            let stray: Vec<_> = res!(std::fs::read_dir(&away)).flatten()
+                .map(|e| e.file_name()).filter(|n| n != "sub").collect();
+            assert!(stray.is_empty() && empty(&away.join("sub")), "wrote through a link at turn {}: {:?}", t, stray);
+            let _ = std::fs::remove_file(mark.join("sub/a.json"));
+        }
+        stop.store(true, Ordering::Relaxed);
+        let _ = racer.join();
+        println!("q1 put={} left={}", put, left);
+        assert!(std::fs::symlink_metadata(away.join("a.json")).is_err(), "wrote through sub link");
+        assert!(std::fs::symlink_metadata(away.join("sub/a.json")).is_err(), "wrote through");
+        assert!(std::fs::symlink_metadata(away.join("leaf")).is_err(), "wrote through leaf link");
+        Ok(())
+    }
+
+    // The mark itself, and an ancestor of it, swapped for a link.
+    #[test]
+    fn q2_mark_or_ancestor_is_a_link() -> Outcome<()> {
+        let base = res!(qtree("q2"));
+        let trash = base.join("trash");
+        let mark = base.join("p/mark");
+        let away = base.join("away");
+        res!(std::fs::create_dir_all(mark.join("sub")));
+        res!(std::fs::create_dir_all(away.join("mark/sub")));
+        res!(std::fs::create_dir_all(away.join("sub")));
+        let a = mark.join("sub/a.json");
+        res!(std::fs::write(&a, "a"));
+        res!(keep(&trash, 50, &a, &mark));
+        res!(std::fs::remove_file(&a));
+        // The mark is a link.
+        res!(std::fs::rename(&mark, base.join("p/mark.real")));
+        res!(std::os::unix::fs::symlink(&away, &mark));
+        assert_eq!((0, 1), res!(restore(&trash, 50)));
+        assert!(empty(&away.join("sub")), "restore went through the mark link");
+        // An ancestor is a link.
+        res!(std::fs::remove_file(&mark));
+        res!(std::fs::rename(base.join("p"), base.join("p.real")));
+        res!(std::os::unix::fs::symlink(&away, base.join("p")));
+        assert_eq!((0, 1), res!(restore(&trash, 50)));
+        assert!(empty(&away.join("mark/sub")), "restore went through an ancestor link");
+        // Kept file still held.
+        assert!(trash_path(&trash, 50, 0, &a).exists());
+        Ok(())
+    }
+
+    // CROSS-FS: trash on tmpfs, mark on the home filesystem.
+    #[test]
+    fn q3a_cross_fs_regular_file() -> Outcome<()> {
+        let base = res!(qtree("q3a"));
+        let trash = res!(shm("q3a"));
+        let mark = base.join("mark");
+        res!(std::fs::create_dir_all(mark.join("d")));
+        let a = mark.join("d/a.txt");
+        res!(std::fs::write(&a, "cross"));
+        res!(std::fs::set_permissions(&a, std::fs::Permissions::from_mode(0o640)));
+        res!(keep(&trash, 51, &a, &mark));
+        res!(std::fs::remove_dir_all(mark.join("d")));
+        assert_eq!((1, 0), res!(restore(&trash, 51)));
+        assert_eq!("cross", res!(std::fs::read_to_string(&a)));
+        assert_eq!(0o640, res!(std::fs::metadata(&a)).permissions().mode() & 0o777);
+        // Over an existing file across filesystems: no clobber.
+        res!(keep(&trash, 52, &a, &mark));
+        res!(std::fs::write(&a, "theirs"));
+        assert_eq!((0, 1), res!(restore(&trash, 52)));
+        assert_eq!("theirs", res!(std::fs::read_to_string(&a)));
+        Ok(())
+    }
+
+    #[test]
+    fn q3b_cross_fs_link_goes_back_as_a_link() -> Outcome<()> {
+        let base = res!(qtree("q3b"));
+        let trash = res!(shm("q3b"));
+        let mark = base.join("mark");
+        res!(std::fs::create_dir_all(&mark));
+        let l = mark.join("ln");
+        res!(std::os::unix::fs::symlink("target/x", &l));
+        res!(keep(&trash, 53, &l, &mark));
+        res!(std::fs::remove_file(&l));
+        let got = res!(restore(&trash, 53));
+        assert_eq!((1, 0), got, "a kept link on another filesystem was not put back");
+        assert_eq!(PathBuf::from("target/x"), res!(std::fs::read_link(&l)));
+        Ok(())
+    }
+
+    // Partial cross-fs copy: run only with QA_FSIZE=1 under `trap '' XFSZ`, alone.
+    #[test]
+    fn q3c_cross_fs_copy_failure_leaves_no_partial() -> Outcome<()> {
+        if std::env::var("QA_FSIZE").is_err() { return Ok(()); }
+        use rustix::process::{getrlimit, setrlimit, Resource, Rlimit};
+        let base = res!(qtree("q3c"));
+        let trash = res!(shm("q3c"));
+        let mark = base.join("mark");
+        res!(std::fs::create_dir_all(&mark));
+        let a = mark.join("big.bin");
+        let data = vec![7u8; 256 * 1024];
+        res!(std::fs::write(&a, &data));
+        res!(keep(&trash, 54, &a, &mark));
+        res!(std::fs::remove_file(&a));
+        let was = getrlimit(Resource::Fsize);
+        let _ = setrlimit(Resource::Fsize, Rlimit { current: Some(64 * 1024), maximum: was.maximum });
+        let got = restore(&trash, 54);
+        let _ = setrlimit(Resource::Fsize, was);
+        println!("q3c first restore {:?}", got.as_ref().ok());
+        let now = std::fs::metadata(&a).map(|m| m.len()).ok();
+        assert!(now.is_none() || now == Some(data.len() as u64),
+            "a failed cross-fs restore left a partial file of {:?} bytes at the original path", now);
+        Ok(())
+    }
+
+    // Trash from before the fix: no marks file.
+    #[test]
+    fn q4_trash_from_before_the_fix() -> Outcome<()> {
+        let base = res!(qtree("q4"));
+        let trash = base.join("trash");
+        let a = base.join("mark/a.txt");
+        let kept = trash_path(&trash, 55, 0, &a);
+        res!(std::fs::create_dir_all(res!(kept.parent().ok_or_else(|| err!("p"; Missing)))));
+        res!(std::fs::write(&kept, "old"));
+        assert_eq!((0, 1), res!(restore(&trash, 55)));
+        assert!(std::fs::symlink_metadata(&a).is_err());
+        assert_eq!("old", res!(std::fs::read_to_string(&kept)), "pre-fix trash was lost");
+        Ok(())
+    }
+
+    // Restore over an existing file, link, folder.
+    #[test]
+    fn q5_restore_over_something_present() -> Outcome<()> {
+        let base = res!(qtree("q5"));
+        let trash = base.join("trash");
+        let mark = base.join("mark");
+        res!(std::fs::create_dir_all(&mark));
+        let (f, l, d) = (mark.join("f"), mark.join("l"), mark.join("d"));
+        for p in [&f, &l, &d] { res!(std::fs::write(p, "kept")); res!(keep(&trash, 56, p, &mark)); }
+        res!(std::fs::write(&f, "theirs"));
+        res!(std::fs::remove_file(&l));
+        res!(std::os::unix::fs::symlink("/nonexistent/dangling", &l));
+        res!(std::fs::remove_file(&d));
+        res!(std::fs::create_dir(&d));
+        assert_eq!((0, 3), res!(restore(&trash, 56)));
+        assert_eq!("theirs", res!(std::fs::read_to_string(&f)));
+        assert_eq!(PathBuf::from("/nonexistent/dangling"), res!(std::fs::read_link(&l)));
+        assert!(res!(std::fs::symlink_metadata(&d)).is_dir());
+        assert!(trash_path(&trash, 56, 0, &f).exists(), "the kept file left the trash");
+        Ok(())
+    }
+
+    // Odd bytes in file names below a plain mark.
+    #[test]
+    fn q6a_odd_bytes_in_file_names() -> Outcome<()> {
+        let base = res!(qtree("q6a"));
+        let trash = base.join("trash");
+        let mark = base.join("mark");
+        res!(std::fs::create_dir_all(&mark));
+        let names: [&[u8]; 6] = [b"a\xffb", b"line\nbreak", b"cr\r", b" sp", b"-dash", b"\x01ctl"];
+        for n in names.iter() {
+            let p = mark.join(OsStr::from_bytes(n));
+            res!(std::fs::write(&p, n));
+            res!(keep(&trash, 57, &p, &mark));
+            res!(std::fs::remove_file(&p));
+        }
+        assert_eq!((6, 0), res!(restore(&trash, 57)));
+        for n in names.iter() {
+            assert_eq!(n.to_vec(), res!(std::fs::read(mark.join(OsStr::from_bytes(n)))));
+        }
+        Ok(())
+    }
+
+    // Odd bytes in the MARK: the removal is counted and kept, so it must be restorable.
+    #[test]
+    fn q6b_odd_bytes_in_the_mark() -> Outcome<()> {
+        let base = res!(qtree("q6b"));
+        let trash = base.join("trash");
+        let mut fails = Vec::new();
+        for (i, m) in [&b"m\xff"[..], &b"m\r"[..], &b"m\nx"[..]].iter().enumerate() {
+            let mark = base.join(OsStr::from_bytes(m));
+            res!(std::fs::create_dir_all(&mark));
+            let a = mark.join("a.txt");
+            res!(std::fs::write(&a, "a"));
+            let t = 60 + i as u64;
+            res!(keep(&trash, t, &a, &mark));
+            res!(std::fs::remove_file(&a));
+            let got = res!(restore(&trash, t));
+            if got != (1, 0) { fails.push(fmt!("{:?} -> {:?}", OsStr::from_bytes(m), got)); }
+        }
+        assert!(fails.is_empty(), "counted+kept but not restorable: {:?}", fails);
+        Ok(())
+    }
+
+    // An ancestor with search but no read permission (e.g. a 0711 home).
+    #[test]
+    fn q7_search_only_ancestor() -> Outcome<()> {
+        let base = res!(qtree("q7"));
+        let trash = base.join("trash");
+        let locked = base.join("locked");
+        let mark = locked.join("mark");
+        res!(std::fs::create_dir_all(&mark));
+        let a = mark.join("a.txt");
+        res!(std::fs::write(&a, "a"));
+        res!(keep(&trash, 70, &a, &mark));
+        res!(std::fs::remove_file(&a));
+        res!(std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o311)));
+        let got = restore(&trash, 70);
+        let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755));
+        assert_eq!((1, 0), res!(got), "restore refused below a search-only folder");
+        Ok(())
+    }
+
+    // A filesystem without RENAME_NOREPLACE (EINVAL), with a file appearing after the check:
+    // simulated on one thread by seccomp (renameat2 -> EINVAL, newfstatat -> ENOENT).
+    #[test]
+    fn q8_noreplace_fallback_never_clobbers() -> Outcome<()> {
+        use libseccomp::{ScmpAction, ScmpFilterContext, ScmpSyscall};
+        let base = res!(qtree("q8"));
+        let trash = base.join("trash");
+        let mark = base.join("mark");
+        res!(std::fs::create_dir_all(&mark));
+        let a = mark.join("a.txt");
+        res!(std::fs::write(&a, "kept"));
+        res!(keep(&trash, 80, &a, &mark));
+        res!(std::fs::remove_file(&a));
+        res!(std::fs::write(&a, "theirs"));
+        let t2 = trash.clone();
+        let h = std::thread::spawn(move || -> Option<(u32, u32)> {
+            let mut ctx = ScmpFilterContext::new(ScmpAction::Allow).ok()?;
+            ctx.add_rule(ScmpAction::Errno(22), ScmpSyscall::from_name("renameat2").ok()?).ok()?;
+            ctx.add_rule(ScmpAction::Errno(2), ScmpSyscall::from_name("newfstatat").ok()?).ok()?;
+            ctx.load().ok()?;
+            restore(&t2, 80).ok()
+        });
+        let got = h.join().ok().flatten();
+        println!("q8 restore {:?}", got);
+        assert_eq!("theirs", res!(std::fs::read_to_string(&a)), "the fallback rename clobbered it");
         Ok(())
     }
 }

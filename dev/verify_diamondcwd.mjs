@@ -64,20 +64,21 @@ await p.evaluate(async (root) => {
 			}));
 		},
 	};
-	window.__app = (scope) => {
+	// The marks are the engine's to read (HIST-SAFE U2) and the read is its own async call
+	// (ENGINE-REENTRY): the page names the Diamond and its toolkits, nothing more.
+	window.__app = async (scope) => {
 		const app = new mod.DaimondApp(
 			'http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		if (scope) {
-			app.set_diamond_scope(scope.own, JSON.stringify(scope.attached || []),
-				JSON.stringify(scope.read_only || []), JSON.stringify(scope.toolkits || []),
-				JSON.stringify(scope.unconfirmed || []));
+			const reach = await app.read_scope_reach(String(scope.own).replace(/^diamonds\//, ''));
+			app.set_diamond_scope(reach, JSON.stringify(scope.toolkits || []));
 		}
 		return app;
 	};
 	// One `run`, and what the hand was sent for it.
 	window.__run = async (scope, args) => {
 		window.__sent = [];
-		const app = __app(scope);
+		const app = await __app(scope);
 		const said = await app.run_tool('run', JSON.stringify(args));
 		return { said: said, sent: window.__sent };
 	};

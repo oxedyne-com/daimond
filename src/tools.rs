@@ -7537,6 +7537,7 @@ struct Overwrite {
     counted: Option<(String, String)>,  // (keeper, file) the open folder's tally counted
     wiped:   bool,                      // under half of the file left: a delete by another verb
     copy:    Option<Vec<u8>>,           // a wipe's copy: the file as the turns found it
+    shown:   Option<crate::diamond_versions::Seen>, // the user's file as they were shown it: see `Tool::ask_first`
 }
 
 /// A restore's hold on the copy its act keeps: see `Tool::restore_hold`.
@@ -9502,6 +9503,32 @@ fn overwrite_unkept_refusal(raw: &str, why: &str) -> String {
     fmt!("Refused: no copy of what '{}' holds now could be kept ({}), so overwriting it could \
         not be undone, and it was left as it is. Do not look for another way to change it. If it \
         should change, tell the user which file and why, and let them do it.", raw, said)
+}
+
+/// A change to a file of the user's that the person already declined this turn, or one inside or
+/// around it (UNBLOCK-26 U3): refused without asking again.
+#[cfg(any(target_arch = "wasm32", test))]
+fn change_declined_refusal(raw: &str) -> String {
+    fmt!("The user already chose not to have '{}' changed in this turn. Nothing was changed. Do \
+        not ask again or make this change another way; finish the rest and say in your answer \
+        what you would have changed.", raw)
+}
+
+/// The user's file changed while they were asked about changing it: the change they agreed to was
+/// to the file as it was shown, so it is not written over what stands there now.
+#[cfg(any(target_arch = "wasm32", test))]
+fn changed_while_asked_refusal(raw: &str) -> String {
+    fmt!("'{}' changed while the user was being asked, so nothing was written: they agreed to the \
+        change against the file as it was then. Read it again, and if the change is still wanted, \
+        make it against the file as it is now.", raw)
+}
+
+/// A change to a file of the user's that cannot be shown to them, so cannot be asked about.
+#[cfg(any(target_arch = "wasm32", test))]
+fn change_unshown_refusal(raw: &str) -> String {
+    fmt!("'{}' is the user's file and this change to it cannot be shown to them (it is not text), \
+        so it was not made. Nothing was changed. Tell the user what you would change and let \
+        them do it.", raw)
 }
 
 /// The file's own bytes out of a whole-file read, or the reason they are not recoverable.
@@ -14139,6 +14166,18 @@ mod licence {
                     time, or tell the user what you would move.", path, inner, path)));
             }
             Ok(Licence { path: path.to_string() })
+        }
+
+        /// [`ToolContext::licence`] under the marks as they stand now, not as they stood when this
+        /// call began: for an act that waited on the person, while a mark may have been withdrawn
+        /// or made read-only (UNBLOCK-26 U3).  Narrower or the same, never wider.
+        #[cfg(target_arch = "wasm32")]
+        pub async fn licence_now(&self, path: &str) -> Result<Licence, String> {
+            let now = match self.bounds_now().await {
+                Ok(b)  => ToolContext { no_write: b, ..self.clone() },
+                Err(e) => return Err(refusal_line(&e.plain())),
+            };
+            ToolContext { no_write: now.write_bounds(), ..now.clone() }.licence(path)
         }
 
         /// The first fenced place strictly beneath `path`, or `None` where everything under it may
@@ -21154,9 +21193,13 @@ impl Tool {
                     },
                     None      => None,
                 };
-                if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &out).await {
-                    Self::overwrite_failed(&over).await;
-                    return Err(e);
+                match Self::write_over(ctx, &lic, &raw, &out, &over).await {
+                    Ok(None)      => {},
+                    Ok(Some(why)) => {
+                        Self::overwrite_failed(&over).await;
+                        return Ok(MessageContent::text(why));
+                    },
+                    Err(e)        => { Self::overwrite_failed(&over).await; return Err(e); },
                 }
                 if let Some(dia) = ctx.keeper() {
                     let found = Found::of(Some(&bytes));
@@ -21197,9 +21240,13 @@ impl Tool {
                     },
                     None      => None,
                 };
-                if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &out).await {
-                    Self::overwrite_failed(&over).await;
-                    return Err(e);
+                match Self::write_over(ctx, &lic, &raw, &out, &over).await {
+                    Ok(None)      => {},
+                    Ok(Some(why)) => {
+                        Self::overwrite_failed(&over).await;
+                        return Ok(MessageContent::text(why));
+                    },
+                    Err(e)        => { Self::overwrite_failed(&over).await; return Err(e); },
                 }
                 if let Some(dia) = ctx.keeper() {
                     let found = Found::of(Some(&bytes));
@@ -21577,13 +21624,29 @@ impl Tool {
                                 is written through the hand, which carries text. Restore it from \
                                 the Diamond's History instead.", raw)))),
                         };
+                        // HIS FILE, ASKED ABOUT: written only over the text he was shown.
+                        let bound = match Self::machine_bound(ctx, &lic, &raw, &spec, &over).await {
+                            Ok(b)    => b,
+                            Err(why) => {
+                                Self::overwrite_failed(&over).await;
+                                return Ok(MessageContent::text(why));
+                            },
+                        };
+                        let change = match &bound {
+                            Some((l, s)) => MachineChange::WriteIf(l, &text, s),
+                            None         => MachineChange::Write(&lic, &text),
+                        };
                         let got = match machine_change("file_revert",
-                            MachineChange::Write(&lic, &text), &root, &cwd, &spec,
+                            change, &root, &cwd, &spec,
                             &ctx.no_write).await
                         {
                             Ok(g)  => g,
                             Err(e) => { Self::overwrite_failed(&over).await; return Err(e); },
                         };
+                        if let Some(said) = Self::changed_under_ask(&bound, &raw, &got) {
+                            Self::overwrite_failed(&over).await;
+                            return Ok(MessageContent::text(said));
+                        }
                         if let Err(why) = got {
                             Self::overwrite_failed(&over).await;
                             return Err(err!("{}", why; IO, File, Write));
@@ -21593,9 +21656,13 @@ impl Tool {
                         (abs, true)
                     },
                     Reach::Storage => {
-                        if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &body).await {
-                            Self::overwrite_failed(&over).await;
-                            return Err(e);
+                        match Self::write_over(ctx, &lic, &raw, &body, &over).await {
+                            Ok(None)      => {},
+                            Ok(Some(why)) => {
+                                Self::overwrite_failed(&over).await;
+                                return Ok(MessageContent::text(why));
+                            },
+                            Err(e)        => { Self::overwrite_failed(&over).await; return Err(e); },
                         }
                         // This agent has just changed the file, so what it last saw of it is
                         // what it just wrote -- otherwise its own next write meets the
@@ -22389,13 +22456,29 @@ impl Tool {
                                     Err(why) => return Ok(MessageContent::text(why)),
                                 }
                             }
+                            // HIS FILE, ASKED ABOUT: written only over the text he was shown.
+                            let bound = match Self::machine_bound(ctx, &lic, &to, &spec, &over).await {
+                                Ok(b)    => b,
+                                Err(why) => {
+                                    Self::overwrite_failed(&over).await;
+                                    return Ok(MessageContent::text(why));
+                                },
+                            };
+                            let change = match &bound {
+                                Some((l, s)) => MachineChange::WriteIf(l, &text, s),
+                                None         => MachineChange::Write(&lic, &text),
+                            };
                             let got = match machine_change("web_fetch",
-                                MachineChange::Write(&lic, &text), &root, &cwd, &spec,
+                                change, &root, &cwd, &spec,
                                 &ctx.no_write).await
                             {
                                 Ok(g)  => g,
                                 Err(e) => { Self::overwrite_failed(&over).await; return Err(e); },
                             };
+                            if let Some(said) = Self::changed_under_ask(&bound, &to, &got) {
+                                Self::overwrite_failed(&over).await;
+                                return Ok(MessageContent::text(said));
+                            }
                             if got.is_err() {
                                 Self::overwrite_failed(&over).await;
                             }
@@ -22465,11 +22548,13 @@ impl Tool {
                             };
                             let n    = raw.bytes.len();
                             let hash = content_hash(&raw.bytes);
-                            if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &raw.bytes)
-                                .await
-                            {
-                                Self::overwrite_failed(&over).await;
-                                return Err(e);
+                            match Self::write_over(ctx, &lic, &to, &raw.bytes, &over).await {
+                                Ok(None)      => {},
+                                Ok(Some(why)) => {
+                                    Self::overwrite_failed(&over).await;
+                                    return Ok(MessageContent::text(why));
+                                },
+                                Err(e)        => { Self::overwrite_failed(&over).await; return Err(e); },
                             }
                             if let Some((dia, before)) = keep {
                                 let found = Found::of(before.as_deref());
@@ -22588,9 +22673,13 @@ impl Tool {
                     Ok(k)    => k,
                     Err(why) => return Ok(MessageContent::text(why)),
                 };
-                if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &pdf).await {
-                    Self::overwrite_failed(&over).await;
-                    return Err(e);
+                match Self::write_over(ctx, &lic, &out_rel, &pdf, &over).await {
+                    Ok(None)      => {},
+                    Ok(Some(why)) => {
+                        Self::overwrite_failed(&over).await;
+                        return Ok(MessageContent::text(why));
+                    },
+                    Err(e)        => { Self::overwrite_failed(&over).await; return Err(e); },
                 }
                 if let Some((dia, before)) = kept {
                     let found = Found::of(Some(&before));
@@ -23681,8 +23770,20 @@ impl Tool {
                 } else {
                     (None, crate::diamond_versions::Seen::Unread)
                 };
-                let got = match machine_change("file_write",
-                    restore_write(&rest, &lic, &content, &seen), &root, &cwd, &spec,
+                // HIS FILE, ASKED ABOUT: written under the marks as they stand now, and only over
+                // the text he was shown.
+                let bound = match Self::machine_bound(ctx, &lic, &raw, &spec, &over).await {
+                    Ok(b)    => b,
+                    Err(why) => {
+                        Self::overwrite_failed(&over).await;
+                        return Ok(MessageContent::text(why));
+                    },
+                };
+                let change = match &bound {
+                    Some((l, s)) => MachineChange::WriteIf(l, &content, s),
+                    None         => restore_write(&rest, &lic, &content, &seen),
+                };
+                let got = match machine_change("file_write", change, &root, &cwd, &spec,
                     &ctx.no_write).await
                 {
                     Ok(g)  => g,
@@ -23694,6 +23795,9 @@ impl Tool {
                 };
                 if got.is_err() {
                     Self::overwrite_failed(&over).await;
+                }
+                if let Some(said) = Self::changed_under_ask(&bound, &raw, &got) {
+                    return Ok(MessageContent::text(said));
                 }
                 if let Some(said) = Self::restore_hand_changed(ctx, &raw, &rest, &got).await {
                     return Ok(MessageContent::text(said));
@@ -23886,7 +23990,7 @@ impl Tool {
             return Err(e);
         }
         if let Some((bytes, note)) = office {
-            match Self::restore_store_write(ctx, &raw, &lic, &bytes, &rest).await {
+            match Self::restore_store_write(ctx, &raw, &lic, &bytes, &rest, &over).await {
                 Ok(None)       => {},
                 Ok(Some(said)) => {
                     Self::overwrite_failed(&over).await;
@@ -23909,7 +24013,7 @@ impl Tool {
                 fmt!("Wrote {} bytes to {}.{}{}{}", bytes.len(), path, note, place_line,
                     Self::file_write_nudge(content.len()))));
         }
-        match Self::restore_store_write(ctx, &raw, &lic, content.as_bytes(), &rest).await {
+        match Self::restore_store_write(ctx, &raw, &lic, content.as_bytes(), &rest, &over).await {
             Ok(None)       => {},
             Ok(Some(said)) => {
                 Self::overwrite_failed(&over).await;
@@ -24110,7 +24214,7 @@ impl Tool {
             Ok(h)    => h,
             Err(why) => return Ok(MessageContent::text(why)),
         };
-        match Self::restore_store_write(ctx, &raw, lic, &body, &rest).await {
+        match Self::restore_store_write(ctx, &raw, lic, &body, &rest, &None).await {
             Ok(None)       => {},
             Ok(Some(said)) => return Ok(MessageContent::text(said)),
             Err(e)         => {
@@ -24203,7 +24307,41 @@ impl Tool {
                         Err(why) => return Ok(MessageContent::text(why)),
                     }
                 }
-                for (i, (old, new)) in hunks.iter().enumerate() {
+                // HIS FILE, ASKED ABOUT: ONE write of the whole text he was shown the change
+                // to, over the text he was shown alone, rather than hunk by hunk.
+                let bound = match Self::machine_bound(ctx, &lic, &raw, &spec, &over).await {
+                    Ok(b)    => b,
+                    Err(why) => {
+                        Self::overwrite_failed(&over).await;
+                        return Ok(MessageContent::text(why));
+                    },
+                };
+                if let Some((l, seen)) = &bound {
+                    let whole = match after.as_deref().map(std::str::from_utf8) {
+                        Some(Ok(t)) => t,
+                        _           => {
+                            Self::overwrite_failed(&over).await;
+                            return Ok(MessageContent::text(change_unshown_refusal(&raw)));
+                        },
+                    };
+                    let got = match machine_change("file_edit",
+                        MachineChange::WriteIf(l, whole, seen), &root, &cwd, &spec,
+                        &ctx.no_write).await
+                    {
+                        Ok(g)  => g,
+                        Err(e) => Err(fmt!("file_edit: {}", e.plain())),
+                    };
+                    if let Some(said) = Self::changed_under_ask(&bound, &raw, &got) {
+                        Self::overwrite_failed(&over).await;
+                        return Ok(MessageContent::text(said));
+                    }
+                    if let Err(why) = got {
+                        Self::overwrite_failed(&over).await;
+                        return Err(err!("{}", why; IO, File, Write));
+                    }
+                }
+                let sent = if bound.is_some() { 0 } else { hunks.len() };
+                for (i, (old, new)) in hunks.iter().take(sent).enumerate() {
                     let got = match machine_change("file_edit",
                         MachineChange::Edit(&lic, old, new), &root, &cwd, &spec,
                         &ctx.no_write).await
@@ -24365,9 +24503,13 @@ impl Tool {
             Self::overwrite_failed(&over).await;
             return Err(e);
         }
-        if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, updated.as_bytes()).await {
-            Self::overwrite_failed(&over).await;
-            return Err(e);
+        match Self::write_over(ctx, &lic, &raw, updated.as_bytes(), &over).await {
+            Ok(None)      => {},
+            Ok(Some(why)) => {
+                Self::overwrite_failed(&over).await;
+                return Ok(MessageContent::text(why));
+            },
+            Err(e)        => { Self::overwrite_failed(&over).await; return Err(e); },
         }
         if let Some(dia) = ctx.keeper() {
             let found = Found::of(Some(&bytes));
@@ -24505,8 +24647,24 @@ impl Tool {
             },
             None => None,
         };
+        // HIS FILE IS ASKED ABOUT FIRST (UNBLOCK-26 U3), after the bound and before the open
+        // folder's count: a delete he was shown and applied is not counted against him again.
+        let mut asked = false;
+        if let Some((dia, now, _)) = &keep {
+            let key = normalise(&path);
+            if Self::asks_first(ctx, dia, &key, now).await {
+                if let Err(why) = Self::ask_first(ctx, dia, &key, &raw, now,
+                    crate::held_change::Change::Delete).await
+                {
+                    Self::let_go(&claimed).await;
+                    Self::restore_failed(&rest).await;
+                    return Ok(MessageContent::text(why));
+                }
+                asked = true;
+            }
+        }
         let counted = match &keep {
-            Some((d, _, copy)) if open => {
+            Some((d, _, copy)) if open && !asked => {
                 let file = crate::diamond_versions::open_file_key(&path, copy);
                 match Self::open_delete_gate(d, &path, &file, &raw, OpenAct::Delete).await {
                     Ok(true)  => Some((d.clone(), file)),
@@ -24540,6 +24698,32 @@ impl Tool {
                 },
             },
             _ => None,
+        };
+        // AFTER HIS APPLY, under the marks as they stand now and only the file he was shown.
+        let lic = if asked {
+            let shown = keep.as_ref().map(|(_, now, _)| now.as_slice());
+            let lic = match ctx.licence_now(lic.path()).await {
+                Ok(l)    => Some(l),
+                Err(_)   => None,
+            };
+            let same = match &lic {
+                Some(_) => match crate::wasm::opfs::read_file(ctx.root, &path).await {
+                    Ok(b)  => Some(b.as_slice()) == shown,
+                    Err(_) => false,
+                },
+                None    => false,
+            };
+            match (lic, same) {
+                (Some(l), true) => l,
+                _               => {
+                    Self::let_go(&held).await;
+                    Self::restore_failed(&rest).await;
+                    give_back();
+                    return Ok(MessageContent::text(changed_while_asked_refusal(&raw)));
+                },
+            }
+        } else {
+            lic
         };
         // Absence from this device means "not here"; removal from the cloud index means
         // "gone". Those are different things, and only an explicit delete does the
@@ -24608,16 +24792,67 @@ impl Tool {
                 };
                 // WHAT THE MOVE CARRIES, read through the hand and its room reserved before
                 // it goes, so both of its ends are recorded (`Tool::move_ends`).
+                // HIS FILE OR FOLDER IS ASKED ABOUT FIRST (UNBLOCK-26 U3), once the move's bound
+                // has passed.
+                let mut asked = false;
+                let mut shown: Option<Vec<u8>> = None;  // one file he was shown, which binds it
                 let hold = match ctx.keeper() {
                     Some(d) => {
                         let files = Self::machine_move_read(&d, (&abs, &raw),
                             (&dest, &to_raw), &cwd, &spec, &ctx.no_write).await;
-                        match Self::move_ends(&d, &raw, files).await {
-                            Ok(h)    => Some((d, h)),
+                        let folder = match files.as_slice() {
+                            [f] if f.from == abs => false,
+                            []                   => match machine_before(&abs, &cwd, &spec,
+                                &ctx.no_write).await
+                            {
+                                (None, Some(why)) => hand_said_directory(&why),
+                                _                 => false,
+                            },
+                            _                    => true,
+                        };
+                        let (ask, before) = Self::move_asks(ctx, &d, &abs, folder, &files).await;
+                        let h = match Self::move_ends(&d, &raw, files).await {
+                            Ok(h)    => h,
                             Err(why) => return Ok(MessageContent::text(why)),
+                        };
+                        if ask {
+                            let showing = before.as_deref().unwrap_or_default();
+                            if let Err(why) = Self::ask_first(ctx, &d, &abs, &raw, showing,
+                                crate::held_change::Change::Move(&normalise(&to))).await
+                            {
+                                Self::move_failed(&d, &h);
+                                return Ok(MessageContent::text(why));
+                            }
+                            asked = true;
+                            shown = before;
                         }
+                        Some((d, h))
                     },
                     None => None,
+                };
+                // AFTER HIS APPLY, under the marks as they stand now, and one file only as he
+                // was shown it.
+                let (from_lic, to_lic) = if asked {
+                    let ends = (ctx.licence_now(from_lic.path()).await,
+                        ctx.licence_now(to_lic.path()).await);
+                    let same = match &shown {
+                        None    => true,
+                        Some(b) => match machine_before(&abs, &cwd, &spec, &ctx.no_write).await {
+                            (Some(n), _) => n == *b,
+                            _            => false,
+                        },
+                    };
+                    match (ends, same) {
+                        ((Ok(f), Ok(t)), true) => (f, t),
+                        _                      => {
+                            if let Some((d, h)) = &hold {
+                                Self::move_failed(d, h);
+                            }
+                            return Ok(MessageContent::text(changed_while_asked_refusal(&raw)));
+                        },
+                    }
+                } else {
+                    (from_lic, to_lic)
                 };
                 let got = match machine_change("file_move",
                     MachineChange::Move(&from_lic, &to_lic), &root, &cwd, &spec,
@@ -24680,15 +24915,63 @@ impl Tool {
         // WHAT THE MOVE CARRIES, read and its room reserved before it goes, so both of its
         // ends are recorded (`Tool::move_ends`).  Keyed on the scoped paths, as
         // `Tool::captured_write` keys a write.
+        // HIS FILE OR FOLDER IS ASKED ABOUT FIRST (UNBLOCK-26 U3), once the move's bound has
+        // passed.
+        let mut asked = false;
+        let mut shown: Option<Vec<u8>> = None;  // one file he was shown, which binds it
         let hold = match ctx.keeper() {
             Some(d) => {
                 let files = Self::store_move_read(ctx, &d, &from, &to).await;
-                match Self::move_ends(&d, &raw, files).await {
-                    Ok(h)    => Some((d, h)),
+                let folder = matches!(crate::wasm::opfs::is_directory(ctx.root, &from).await,
+                    Ok(true));
+                let key = normalise(&from);
+                let (ask, before) = if folder {
+                    // Walked from the scoped path, as browser storage names it.
+                    Self::move_asks(ctx, &d, &from, true, &files).await
+                } else {
+                    Self::move_asks(ctx, &d, &key, false, &files).await
+                };
+                let h = match Self::move_ends(&d, &raw, files).await {
+                    Ok(h)    => h,
                     Err(why) => return Ok(MessageContent::text(why)),
+                };
+                if ask {
+                    let showing = before.as_deref().unwrap_or_default();
+                    if let Err(why) = Self::ask_first(ctx, &d, &key, &raw, showing,
+                        crate::held_change::Change::Move(&normalise(&to))).await
+                    {
+                        Self::move_failed(&d, &h);
+                        return Ok(MessageContent::text(why));
+                    }
+                    asked = true;
+                    shown = before;
                 }
+                Some((d, h))
             },
             None => None,
+        };
+        // AFTER HIS APPLY, under the marks as they stand now, and one file only as he was shown it.
+        let (from_lic, to_lic) = if asked {
+            let ends = (ctx.licence_now(from_lic.path()).await,
+                ctx.licence_now(to_lic.path()).await);
+            let same = match &shown {
+                None    => true,
+                Some(b) => match crate::wasm::opfs::read_file(ctx.root, &from).await {
+                    Ok(n)  => n == *b,
+                    Err(_) => false,
+                },
+            };
+            match (ends, same) {
+                ((Ok(f), Ok(t)), true) => (f, t),
+                _                      => {
+                    if let Some((d, h)) = &hold {
+                        Self::move_failed(d, h);
+                    }
+                    return Ok(MessageContent::text(changed_while_asked_refusal(&raw)));
+                },
+            }
+        } else {
+            (from_lic, to_lic)
         };
         if let Err(e) = crate::wasm::opfs::move_licensed(ctx.root, &from_lic, &to_lic).await {
             if let Some((d, h)) = &hold {
@@ -24956,9 +25239,13 @@ impl Tool {
             Ok(k)    => k,
             Err(why) => return Ok(Err(why)),
         };
-        if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, lic, png).await {
-            Self::overwrite_failed(&over).await;
-            return Err(e);
+        match Self::write_over(ctx, lic, raw, png, &over).await {
+            Ok(None)      => {},
+            Ok(Some(why)) => {
+                Self::overwrite_failed(&over).await;
+                return Ok(Err(why));
+            },
+            Err(e)        => { Self::overwrite_failed(&over).await; return Err(e); },
         }
         if let Some((dia, before)) = kept {
             let found = Found::of(Some(&before));
@@ -25386,6 +25673,171 @@ impl Tool {
         }
     }
 
+    /// Must a model's turn ask the person before it changes the file at `key`, as `now` holds it?
+    /// Yes for a file in a place the user marked that the keeper did not make
+    /// ([`crate::wasm::diamond::authored_by_user`], which answers "his" when unsure); never for the
+    /// keeper's own home, the user's own door, or a restore he asked for (UNBLOCK-26 U3).
+    ///
+    /// **A mark lets a turn write in a folder; it never said the turn may rewrite what he wrote
+    /// there.**  On 18 Oct 2026 a daimon filed a letter into his biography with two `file_edit`
+    /// calls in a folder held through the hand, and nothing asked.
+    ///
+    /// # Arguments
+    /// * `key` - As the captures name it: normalised, or absolute on the machine.
+    #[cfg(target_arch = "wasm32")]
+    async fn asks_first(ctx: &ToolContext, dia: &str, key: &str, now: &[u8]) -> bool {
+        ctx.by_model && ctx.restoring == 0
+            && (key.starts_with('/') || stored_is_mark(dia, key))
+            && crate::wasm::diamond::authored_by_user(dia, key, now).await
+    }
+
+    /// Ask the person whether the turn may make `change` to `key`, a file of theirs, showing them
+    /// `before` and the change ([`crate::wasm::deletes::ask_change`]), and wait.  Nothing is written
+    /// before this answers; `Err` is the sentence for the model where nothing may be.
+    ///
+    /// **Every answer but Apply is final for the rest of the turn** at that path and around it
+    /// ([`crate::diamond_versions::ChangeRefusals`]), so a retry, a worker or another verb is
+    /// refused unasked rather than asked again.  An Apply binds only the bytes shown: the caller
+    /// lands the change under the marks as they stand then and over those bytes alone.
+    ///
+    /// # Arguments
+    /// * `raw` - The path as the model wrote it, for the sentences.
+    #[cfg(target_arch = "wasm32")]
+    async fn ask_first(ctx: &ToolContext, dia: &str, key: &str, raw: &str, before: &[u8],
+        change: crate::held_change::Change<'_>)
+        -> Result<(), String>
+    {
+        if crate::wasm::diamond::change_refused(dia, key) {
+            return Err(change_declined_refusal(raw));
+        }
+        let answer = crate::wasm::deletes::ask_change(dia, key, before, change, &ctx.turn_tag())
+            .await;
+        match answer.told(raw) {
+            None       => Ok(()),
+            Some(told) => {
+                crate::wasm::diamond::refuse_change(dia, key);
+                Err(told)
+            },
+        }
+    }
+
+    /// Must a model's move of `key` ask the person first, and what is he shown?  One file is asked
+    /// about as [`Tool::asks_first`] has it, and one that could not be read counts as his; a folder
+    /// in browser storage where any file under it is his ([`Tool::store_folder_his`]); a folder on
+    /// the machine always, since the hand's walk is not read here (UNBLOCK-26 U3).  The bytes come
+    /// back only for one file that was read, which the move is then bound to.
+    #[cfg(target_arch = "wasm32")]
+    async fn move_asks(ctx: &ToolContext, dia: &str, key: &str, folder: bool, files: &[MoveRead])
+        -> (bool, Option<Vec<u8>>)
+    {
+        let machine = key.starts_with('/');
+        if !ctx.by_model || ctx.restoring != 0 || !(machine || stored_is_mark(dia, &normalise(key))) {
+            return (false, None);
+        }
+        if folder {
+            return (machine || Self::store_folder_his(ctx, dia, key).await, None);
+        }
+        match files.first().map(|f| &f.read) {
+            Some(Ok(b)) => (Self::asks_first(ctx, dia, key, b).await, Some(b.clone())),
+            _           => (true, None),
+        }
+    }
+
+    /// Does the folder at `path` in browser storage hold a file of the user's?  Walked to
+    /// `FOLDER_WALK_MAX` entries; past that, or where a listing or a read fails, the answer is yes.
+    #[cfg(target_arch = "wasm32")]
+    async fn store_folder_his(ctx: &ToolContext, dia: &str, path: &str) -> bool {
+        const FOLDER_WALK_MAX: usize = 256;
+        let max = crate::diamond_versions::VERSION_FILE_MAX as u32;
+        let mut dirs = vec![path.to_string()];
+        let mut walked = 0usize;
+        while let Some(dir) = dirs.pop() {
+            let names = match crate::wasm::opfs::list_dir_names(ctx.root, &dir).await {
+                Ok(n)  => n,
+                Err(_) => return true,
+            };
+            for (name, is_dir) in names {
+                walked += 1;
+                if walked > FOLDER_WALK_MAX {
+                    return true;
+                }
+                let at = fmt!("{}/{}", dir.trim_end_matches('/'), name);
+                if is_dir {
+                    dirs.push(at);
+                    continue;
+                }
+                let now = match crate::wasm::opfs::read_file_capped(ctx.root, &at, max).await {
+                    Ok((b, _)) => b,
+                    Err(_)     => return true,
+                };
+                if Self::asks_first(ctx, dia, &normalise(&at), &now).await {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Land `bytes` at the path `lic` names, after [`Tool::before_overwrite`]: over whatever stands
+    /// there where nobody was asked; where the person was, under the marks as they stand now and
+    /// only over the bytes they were shown.  `Ok(Some(why))` where it was not written for that.
+    #[cfg(target_arch = "wasm32")]
+    async fn write_over(ctx: &ToolContext, lic: &Licence, raw: &str, bytes: &[u8],
+        over: &Option<Overwrite>)
+        -> Outcome<Option<String>>
+    {
+        let seen = match over.as_ref().and_then(|o| o.shown.as_ref()) {
+            Some(s) => s,
+            None    => {
+                res!(crate::wasm::opfs::write_licensed(ctx.root, lic, bytes).await);
+                return Ok(None);
+            },
+        };
+        let now = match ctx.licence_now(lic.path()).await {
+            Ok(l)    => l,
+            Err(why) => return Ok(Some(why)),
+        };
+        match res!(crate::wasm::opfs::write_licensed_if(ctx.root, &now, bytes, seen).await) {
+            None    => Ok(None),
+            Some(_) => Ok(Some(changed_while_asked_refusal(raw))),
+        }
+    }
+
+    /// [`Tool::write_over`]'s licence on the machine: `None` where nobody was asked, else the
+    /// licence under the marks as they stand now and the bytes the person was shown, which the
+    /// hand writes over alone (`MachineChange::WriteIf`) -- or the refusal where it cannot.
+    #[cfg(target_arch = "wasm32")]
+    async fn machine_bound(ctx: &ToolContext, lic: &Licence, raw: &str, spec: &LinkedFence,
+        over: &Option<Overwrite>)
+        -> Result<Option<(Licence, crate::diamond_versions::Seen)>, String>
+    {
+        let seen = match over.as_ref().and_then(|o| o.shown.clone()) {
+            Some(s) => s,
+            None    => return Ok(None),
+        };
+        if !spec.write_if {
+            return Err(refusal_line(&write_if_unheld_refusal(raw)));
+        }
+        match ctx.licence_now(lic.path()).await {
+            Ok(l)    => Ok(Some((l, seen))),
+            Err(why) => Err(why),
+        }
+    }
+
+    /// The sentence where a bound machine write ([`Tool::machine_bound`]) found the file changed
+    /// since the person was shown it, and wrote nothing.
+    #[cfg(target_arch = "wasm32")]
+    fn changed_under_ask(bound: &Option<(Licence, crate::diamond_versions::Seen)>, raw: &str,
+        got: &Result<String, String>)
+        -> Option<String>
+    {
+        match (bound, got) {
+            (Some(_), Err(why)) if hand_found(why).is_some() =>
+                Some(changed_while_asked_refusal(raw)),
+            _ => None,
+        }
+    }
+
     /// Give up a hold whose act did not happen: its reservation is released and its note
     /// withdrawn.
     #[cfg(target_arch = "wasm32")]
@@ -25462,8 +25914,26 @@ impl Tool {
         } else {
             None
         };
+        // HIS FILE IS ASKED ABOUT FIRST (UNBLOCK-26 U3): nothing is written before he says Apply,
+        // and only over the bytes he was shown.
+        let mut shown: Option<crate::diamond_versions::Seen> = None;
+        if let Some(b) = before {
+            if Self::asks_first(ctx, dia, &key, b).await {
+                let asked = match after {
+                    None    => Err(change_unshown_refusal(raw)),
+                    Some(a) => Self::ask_first(ctx, dia, &key, raw, b,
+                        crate::held_change::Change::Write(a)).await,
+                };
+                if let Err(why) = asked {
+                    Self::let_go(&claimed).await;
+                    return Err(why);
+                }
+                shown = Some(crate::diamond_versions::Seen::of(Some(b)));
+            }
+        }
         let mut counted: Option<(String, String)> = None;
-        if wiped && !machine && ctx.root == FileRoot::Workspace
+        // A change he was shown and applied is not asked about again as a wipe.
+        if wiped && shown.is_none() && !machine && ctx.root == FileRoot::Workspace
             && crate::wasm::opfs::folder_open() && !is_store_path(kept)
         {
             let file = crate::diamond_versions::open_file_key(&key,
@@ -25489,7 +25959,7 @@ impl Tool {
             },
             None => None,
         };
-        Ok(Overwrite { held, counted, wiped, copy })
+        Ok(Overwrite { held, counted, wiped, copy, shown })
     }
 
     /// Give up an overwrite that did not land: its hold, and its count in the open folder's tally.
@@ -25948,15 +26418,13 @@ impl Tool {
     /// the person is asked about next, and the sentence to answer with comes back.
     #[cfg(target_arch = "wasm32")]
     async fn restore_store_write(ctx: &ToolContext, raw: &str, lic: &Licence, bytes: &[u8],
-        rest: &Option<RestoreHold>)
+        rest: &Option<RestoreHold>, over: &Option<Overwrite>)
         -> Outcome<Option<String>>
     {
+        // Outside a restore, the write the person may have been asked about ([`Tool::write_over`]).
         let held = match rest {
             Some(h) => h,
-            None    => {
-                res!(crate::wasm::opfs::write_licensed(ctx.root, lic, bytes).await);
-                return Ok(None);
-            },
+            None    => return Self::write_over(ctx, lic, raw, bytes, over).await,
         };
         let seen = crate::diamond_versions::Seen::of(held.before.as_deref());
         match res!(crate::wasm::opfs::write_licensed_if(ctx.root, lic, bytes, &seen).await) {

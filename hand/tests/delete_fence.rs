@@ -533,6 +533,37 @@ async fn a_rename_over_an_old_file_is_counted_and_kept() -> Outcome<()> {
     Ok(())
 }
 
+/// **`rm lnk/../f000.txt` counts and keeps the file the kernel removes.**  With `lnk` a link to
+/// `src/deep`, the kernel takes `..` from the link's target, so it removes `src/f000.txt`.
+/// Base: the meter took `..` as text, judged a name that is not there, and let it go unkept.
+#[tokio::test]
+async fn rm_through_dotdot_after_a_link_is_counted_and_kept() -> Outcome<()> {
+    let n = res!(Nested::make("meter-dotdot"));
+    res!(std::fs::create_dir_all(n.mark.join("src/deep")));
+    res!(std::os::unix::fs::symlink("src/deep", n.mark.join("lnk")));
+    let old = n.mark.join("src/f000.txt");
+    let r = res!(run("meter-dotdot", &["/bin/rm", "lnk/../f000.txt"],
+        &n.mark, &n.rw(), &[], &[], n.since).await);
+    assert_eq!(1, r.counted, "the removal through lnk/.. went uncounted: {}", r.said());
+    assert_eq!("file 0\n", res!(std::fs::read_to_string(kept(n.since, &old))),
+        "the file removed through lnk/.. is not in the trash: {}", r.said());
+    Ok(())
+}
+
+/// **`rm /proc/self/cwd/...` counts and keeps the caller's file.**  `/proc/self` names the
+/// command, not the hand.  Base: the hand read it as its own cwd, outside every mark.
+#[tokio::test]
+async fn rm_through_proc_self_cwd_is_counted_and_kept() -> Outcome<()> {
+    let n = res!(Nested::make("meter-proc-self"));
+    let old = n.mark.join("src/f000.txt");
+    let r = res!(run("meter-proc-self", &["/bin/rm", "/proc/self/cwd/src/f000.txt"],
+        &n.mark, &n.rw(), &[], &[], n.since).await);
+    assert_eq!(1, r.counted, "the removal through /proc/self/cwd went uncounted: {}", r.said());
+    assert_eq!("file 0\n", res!(std::fs::read_to_string(kept(n.since, &old))),
+        "the file removed through /proc/self/cwd is not in the trash: {}", r.said());
+    Ok(())
+}
+
 /// **Replacing more old files than the budget is held at the budget, as removing them is.**
 #[tokio::test]
 async fn replacing_old_files_past_the_budget_is_held() -> Outcome<()> {
@@ -659,5 +690,78 @@ async fn git_inside_a_mark_still_works() -> Outcome<()> {
     }
     assert_eq!(PLANTED, files_under(&n.mark) - files_under(&n.mark.join(".git")),
         "the work tree did not come back whole on main");
+    Ok(())
+}
+
+// QA round 2 (half A): the resolver on the delete meter, standard tools only.
+
+async fn qa_counted(case: &str, script: &str, victim: &str) -> Outcome<()> {
+    qa_linked(case, &[], script, victim).await
+}
+
+async fn qa_linked(case: &str, links: &[(String, String)], script: &str, victim: &str) -> Outcome<()> {
+    let n = res!(Nested::make(case));
+    for (to, name) in links { res!(std::os::unix::fs::symlink(to, n.mark.join(name))); }
+    let old = n.mark.join(victim);
+    let want = res!(std::fs::read_to_string(&old));
+    let r = res!(run(case, &["/bin/sh", "-c", script], &n.mark, &n.rw(), &[], &[], n.since).await);
+    assert!(!old.exists() || script.contains("mv -f"), "{}: the command did not remove {}: {}", case, victim, r.said());
+    assert_eq!(1, r.counted, "{}: uncounted: {}", case, r.said());
+    assert_eq!(want, res!(std::fs::read_to_string(kept(n.since, &old))), "{}: not kept: {}", case, r.said());
+    Ok(())
+}
+
+#[tokio::test]
+async fn qa2_mv_over_through_proc_self_cwd() -> Outcome<()> {
+    qa_counted("qa2-mv-self", "echo n > new.txt && mv -f new.txt /proc/self/cwd/src/f003.txt", "src/f003.txt").await
+}
+
+#[tokio::test]
+async fn qa2_rm_through_dev_fd_dirfd() -> Outcome<()> {
+    qa_counted("qa2-devfd", "exec 3<src && rm /dev/fd/3/f006.txt", "src/f006.txt").await
+}
+
+#[tokio::test]
+async fn qa2_rm_through_proc_thread_self_cwd() -> Outcome<()> {
+    qa_counted("qa2-thrself", "rm /proc/thread-self/cwd/src/f009.txt", "src/f009.txt").await
+}
+
+#[tokio::test]
+async fn qa2_rm_through_a_link_to_proc_self_cwd() -> Outcome<()> {
+    qa_linked("qa2-lnself", &[(fmt!("/proc/self/cwd"), fmt!("me"))], "rm me/src/f012.txt", "src/f012.txt").await
+}
+
+#[tokio::test]
+async fn qa2_rm_through_proc_self_root() -> Outcome<()> {
+    let abs = s(&home_cache().join("cases/qa2-root/granted/proj/src/f018.txt"));
+    qa_counted("qa2-root", &fmt!("rm /proc/self/root{}", abs), "src/f018.txt").await
+}
+
+#[tokio::test]
+async fn qa2_rm_through_forty_links_is_counted() -> Outcome<()> {
+    let mut l = vec![(fmt!("src"), fmt!("l0"))];
+    for i in 1..40 { l.push((fmt!("l{}", i - 1), fmt!("l{}", i))); }
+    qa_linked("qa2-forty", &l, "rm l39/f015.txt", "src/f015.txt").await
+}
+
+#[tokio::test]
+async fn qa2_rm_through_forty_one_links_fails_unchanged() -> Outcome<()> {
+    let n = res!(Nested::make("qa2-fortyone"));
+    res!(std::os::unix::fs::symlink("src", n.mark.join("l0")));
+    for i in 1..41 { res!(std::os::unix::fs::symlink(fmt!("l{}", i - 1), n.mark.join(fmt!("l{}", i)))); }
+    let r = res!(run("qa2-fortyone", &["/bin/rm", "l40/f021.txt"], &n.mark, &n.rw(), &[], &[], n.since).await);
+    assert!(n.mark.join("src/f021.txt").is_file(), "41 links removed a file: {}", r.said());
+    Ok(())
+}
+
+#[tokio::test]
+async fn qa2_symlink_loop_changes_nothing_and_ends() -> Outcome<()> {
+    let n = res!(Nested::make("qa2-loop"));
+    res!(std::os::unix::fs::symlink("a", n.mark.join("b")));
+    res!(std::os::unix::fs::symlink("b", n.mark.join("a")));
+    let before = files_under(&n.mark);
+    let r = res!(run("qa2-loop", &["/bin/sh", "-c", "rm a/src/f000.txt; mv a/x src/f003.txt; rm -f a; exit 0"],
+        &n.mark, &n.rw(), &[], &[], n.since).await);
+    assert_eq!(before, files_under(&n.mark), "a loop changed the tree: {}", r.said());
     Ok(())
 }

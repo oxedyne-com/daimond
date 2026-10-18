@@ -30,6 +30,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 
 const OUT   = process.env.CONS_OUT || `${os.homedir()}/.cache/daimond/${process.env.RC_SLOT || 'solo'}/consistency`;
 const PROF  = process.env.CONS_PROFILE || `${OUT}/profile`;
@@ -553,7 +554,12 @@ async function cappOfferFace(pre) {
 		else CAP.notCovered.push({ label: 'capp offer', reason: 'offer off by design (TMPLOFF: CAPP_MERGE_OFFERED is false)', surface: `${CFG}/${pre}diamond_capp_offer` });
 		return true;
 	}
-	if (!shown) { log('MISSING', `${CFG}/${pre}diamond_capp_offer`, 'no offer on the forked Log Life'); CAP.missing.push(`${CFG}/${pre}diamond_capp_offer`); return true; }
+	if (!shown) {
+		// A merge the app's load proof refused is recorded as `refused` and never offered again: say so, as that is the seed's fault to mend.
+		const why = await ev(async () => { try { const d = JSON.parse(await window.__free.list_diamonds()).find((x) => x.name === 'Log Life'); const m = await import('/pkg/oxedyne_daimond.js');
+			const r = JSON.parse(await m.store_read('diamonds/' + d.id + '/capp.json')); return r.refused ? 'the merge was refused at v' + r.refused + ' (it did not load)' : r.declined ? 'declined at v' + r.declined : ''; } catch (e) { return ''; } });
+		log('MISSING', `${CFG}/${pre}diamond_capp_offer`, 'no offer on the forked Log Life' + (why ? ': ' + why : '')); CAP.missing.push(`${CFG}/${pre}diamond_capp_offer`); return true;
+	}
 	await grab(pre + 'diamond_capp_offer');
 	if (await click('#capp-offer details > summary')) { await wait(400); await grab(pre + 'diamond_capp_conflicts'); await click('#capp-offer details > summary'); await wait(300); }
 	else CAP.missing.push(`${CFG}/${pre}diamond_capp_conflicts`);
@@ -694,10 +700,54 @@ async function ratingPanel(id, pre) {
 	if (pre) await ev((id) => { try { window.DaimondPanels.show(id); } catch (e) {} }, id); else await panels(['rail', 'ai', id]);
 	await wait(500);
 }
+// ── UNBLOCK-26 U5 (r573): a change to a file he made, asked first on a Pending tile ──────────────
+// In the page, idempotent: three LIVE change asks put through the page's own `DaimondDeletes.change` (an edit with a diff, a fold and a cut-off
+// count; a move; a binary delete), so each tile carries Apply and Don't Change. A tile left from an earlier page reads expired (`.pend-consent`)
+// and is not counted. `path` is the edit's file. Nothing is pressed; the promises stand until `changeDrop`.
+const CHANGE_CARDS = '#pending-list .pend-card';
+const CHANGE_FIX = ({ path, wait }) => {
+	const live = () => [...document.querySelectorAll('#pending-list .pend-card')].filter((c) => c.querySelector('.pend-change-head') && !c.querySelector('.pend-consent'));
+	const api = !!(window.DaimondDeletes && window.DaimondDeletes.change);
+	if (!api || live().length >= 3) return { api, live: live().length };
+	const base = { keeper: '', turn: '', to: '', wait: wait, add: 0, del: 0, more: 0, text: true, rows: [] };
+	const ask = (o) => { try { window.DaimondDeletes.change(JSON.stringify(Object.assign({}, base, o))); } catch (e) { /* counted below */ } };
+	ask({ act: 'write', path: path, add: 2, del: 1, more: 14, rows: [
+		{ k: ' ', t: '# Kitchen quotes' }, { k: '-', t: 'Benchtop: $4,200' }, { k: '+', t: 'Benchtop: $3,950 (stone, 40 mm, with the splashback upstand)' },
+		{ k: '+', t: 'Splashback: tiles' }, { k: '~', n: 12 }, { k: ' ', t: 'Total' }] });
+	ask({ act: 'move', path: 'notes/kitchen-old.md', to: 'archive/2026/kitchen-old.md' });
+	ask({ act: 'delete', path: 'photos/benchtop.jpg', text: false });
+	return { api, asked: 3 };
+};
+/// Take the change tiles down as a person would: Don't Change on a live one, Dismiss on an expired one.
+const changeDrop = () => ev(() => { for (let i = 0; i < 6; i++) {
+	const c = [...document.querySelectorAll('#pending-list .pend-card')].find((x) => x.querySelector('.pend-change-head'));
+	const b = c && c.querySelector('.pend-no'); if (!b) break; b.click(); } });
+/// The change ask's three tiles, one in view at a time, as `ratingSurfaces` reads the proposals'. `pre` is '' on a computer and 'p_' on a phone.
+async function changeSurfaces(pre) {
+	await quiet();
+	await ratingPanel('pending', pre);
+	await changeDrop(); await wait(200);
+	const fx = await ev(CHANGE_FIX, { path: 'quotes/kitchen-renovation-quotes-final.md', wait: 3600000 }); await wait(500);
+	const cards = () => ev((q) => [...document.querySelectorAll(q)].map((c, j) => (c.querySelector('.pend-change-head') ? j : -1)).filter((j) => j >= 0), CHANGE_CARDS);
+	const at = await cards();
+	log('change fixtures', pre || 'desk', JSON.stringify(fx), 'tiles', at.length);
+	if (at.length !== 3) { CAP.missing.push(`${CFG}/${pre}pending_change_0`, `${CFG}/${pre}pending_change_1`, `${CFG}/${pre}pending_change_2`); }
+	else {
+		const only = (i) => ev(({ q, i }) => document.querySelectorAll(q).forEach((c, j) => { c.style.display = j === i ? '' : 'none'; }), { q: CHANGE_CARDS, i });
+		const seeTile = (i) => ev(({ q, i }) => { const t = document.querySelectorAll(q)[i], a = t && t.querySelector('.pend-acts'); if (a) a.scrollIntoView({ block: 'center' }); }, { q: CHANGE_CARDS, i });
+		for (let k = 0; k < 3; k++) { await only(at[k]); await seeTile(at[k]); await wait(250); await grab(`${pre}pending_change_${k}`, '#panel-pending'); }
+		await ev((q) => document.querySelectorAll(q).forEach((c) => { c.style.display = ''; }), CHANGE_CARDS);
+	}
+	await changeDrop(); await wait(300);
+	await quiet();
+}
+
 /// The Pending tiles of the proposals (collapsed, then each headline opened), the Edit dialog (as opened, then with a line the engine's lint
 /// refuses), and the Models page with its Trust column scrolled into view. `pre` is '' on a computer and 'p_' on a phone.
 async function ratingSurfaces(pre, wk) {
 	await quiet();
+	// The proposals' tiles are read by index: a change ask's tile left by a varlen pass would shift them.
+	await ratingPanel('pending', pre); await changeDrop(); await wait(200);
 	const fx = await ratingFixtures();
 	log('rating fixtures', pre || 'desk', JSON.stringify(fx));
 	await ratingPanel('pending', pre);
@@ -835,6 +885,7 @@ async function deskSurfaces() {
 		await grab('panel_' + id, `#panel-${id}`);
 	}
 	await ratingSurfaces('');
+	await changeSurfaces('');
 	// The file viewer and editor.
 	await panels(['rail', 'ai', 'work']);
 	for (const [name, re] of [['viewer_text', '^\\s*notes\\.md'], ['viewer_image', 'plan\\.svg'], ['viewer_csv', 'budget\\.csv'], ['viewer_long', 'a-very-long']]) {
@@ -940,6 +991,7 @@ async function phoneSurfaces(wk) {
 	await quiet();
 	await carrySurfaces(wk);
 	await ratingSurfaces('p_', wk);
+	await changeSurfaces('p_');
 }
 
 // The surfaces the 5.2.9 carry needs (G1, rule 4: every instance). Each starts from a known place, the main chat on the chat panel with
@@ -1005,26 +1057,52 @@ function saveCap(name) { fs.writeFileSync(`${OUT}/cap_${name}.json`, JSON.string
 // ── Modes that drive a browser ──────────────────────────────────────────
 // #12: the forked Log Life the seed lays down. The base is the served past page nearest today's, the person's change is a comment added to a
 // script line the template has since changed (so the offer has one place both changed), and the page still runs.
+// THE MERGE MUST LOAD (r573 by-role). The app proves a merge before it offers it and refuses one that drops a definition the template's other
+// lines call (TMPL2, `cappProveMerge`), writing the refusal into the record so no later open offers it. The first changed line after
+// `<script>` stopped being safe when the template grew `TYPED` beside `readSets`: the conflict kept the old `readSets` and lost `anyTyped` and
+// `untype`, which the merged page still calls, so every capture found no offer. Each candidate line is merged here as the app merges it
+// (`DaimondVersions.merge3`) and taken only when the merge has a conflict, drops none of the template's declarations, and keeps no line of the
+// person's that calls something the merged page no longer declares.
 function lifelogFork() {
-	const dir = path.join(import.meta.dirname, '..', 'www', 'capps', 'lifelog');
-	const now = fs.readFileSync(path.join(dir, 'crystal.html'), 'utf8').split('\n');
+	const www = path.join(import.meta.dirname, '..', 'www');
+	const dir = path.join(www, 'capps', 'lifelog');
+	const fresh = fs.readFileSync(path.join(dir, 'crystal.html'), 'utf8');
+	const now = fresh.split('\n');
 	const have = new Set(now);
-	let best = null;
+	const ctx = { window: { addEventListener() {}, removeEventListener() {} }, document: { addEventListener() {}, visibilityState: 'visible' }, setTimeout, clearTimeout };
+	vm.createContext(ctx);
+	vm.runInContext(fs.readFileSync(path.join(www, 'js', 'versions.js'), 'utf8'), ctx);
+	const merge3 = ctx.window.DaimondVersions.merge3;
+	const decl = (t) => new Set([...t.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(|\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)/g)].map((m) => m[1] || m[2]));
+	const calls = (ls) => [...ls.join('\n').matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
+	const want = decl(fresh);
+	const bases = [];
 	for (const f of fs.readdirSync(path.join(dir, 'base'))) {
 		const ls = fs.readFileSync(path.join(dir, 'base', f), 'utf8').split('\n');
 		const off = ls.filter((l) => !have.has(l)).length;
-		if (off && (!best || off < best.off)) best = { hash: f.replace(/\.html$/, ''), ls, off };
+		if (off) bases.push({ hash: f.replace(/\.html$/, ''), ls, off });
 	}
-	const ls = best.ls, from = ls.indexOf('<script>');
-	let ticks = 0, at = -1;
-	for (let i = 0; i < ls.length - 1; i++) {
-		const l = ls[i];
-		if (i > from && ticks % 2 === 0 && !have.has(l) && !l.includes('`') && /;\s*$/.test(l) && ls.indexOf(l) === ls.lastIndexOf(l)) { at = i; break; }
-		ticks += (l.match(/`/g) || []).length;
+	bases.sort((x, y) => x.off - y.off);
+	for (const best of bases) {
+		const ls = best.ls, from = ls.indexOf('<script>'), base = ls.join('\n'), had = decl(base);
+		let ticks = 0;
+		for (let i = 0; i < ls.length - 1; i++) {
+			const l = ls[i];
+			if (i > from && ticks % 2 === 0 && !have.has(l) && !l.includes('`') && /;\s*$/.test(l) && ls.indexOf(l) === ls.lastIndexOf(l)) {
+				const mine = ls.slice(); mine[i] = l + ' // kept as I had it';
+				const page = mine.join('\n');
+				const m = merge3(base, page, fresh);
+				if (m && m.conflicts.length && m.text !== page) {
+					const got = decl(m.text);
+					const lost = [...want].some((d) => !got.has(d));
+					const dangling = m.conflicts.some((c) => calls(c.mine).some((n) => had.has(n) && !got.has(n)));
+					if (!lost && !dangling) return { hash: best.hash, page };
+				}
+			}
+			ticks += (l.match(/`/g) || []).length;
+		}
 	}
-	if (at < 0) at = from + 1;
-	ls[at] = ls[at] + ' // kept as I had it';
-	return { hash: best.hash, page: ls.join('\n') };
+	return null;
 }
 
 async function seed() {
@@ -1178,6 +1256,8 @@ async function seed() {
 		await page.waitForSelector('.dlg-card .dlg-ok', { timeout: 8000 });
 		await ev(() => { const c = [...document.querySelectorAll('.dlg-card')].filter((x) => x.getClientRects().length).pop(); if (c) c.querySelector('.dlg-ok').click(); });
 		await wait(2500);
+		const fork = lifelogFork();
+		if (!fork) { log('seed: no served Log Life base gives a fork whose merge loads'); await s.close().catch(() => {}); process.exit(3); }
 		const got = await ev(async (a) => {
 			const d = JSON.parse(await window.__free.list_diamonds()).find((x) => x.name === 'Log Life');
 			if (!d) return 'no Log Life';
@@ -1187,7 +1267,7 @@ async function seed() {
 			rec.files['crystal.html'] = a.hash;
 			await m.store_write('diamonds/' + d.id + '/capp.json', JSON.stringify(rec));
 			return true;
-		}, lifelogFork());
+		}, fork);
 		if (got !== true) { log('seed: ' + got); await s.close().catch(() => {}); process.exit(3); }
 	}
 	// Three diamonds, three different shapes of the same tile (D-20260929-03
@@ -1700,7 +1780,8 @@ const USER = /^Log Life$|Kitchen|Thesis|Tax return|Compare the three|Flights to|
 // G23: a leading glyph joined straight to its word ("▸Custom") must not carry
 // the word out with it -- strip glyphs before splitting, not just punctuation.
 const GLY_CHARS = /[▸▾▶▼►◂◀←-⇿✎✕×⟳↺⋯☰✓✔•◈⚙⊕‹›»«⤓⬇⬆↗●○★☆…✏✂⧉⎘⏸■□◆◇≡✖✗✘⚠ℹ❓❗+＋📎🔒🔓📄📁🗑⭐⚡]/gu;
-const words = (t) => t.replace(GLY_CHARS, ' ').replace(/[“”"'‘’()[\]…:.,!?]/g, ' ').split(/\s+/).filter((w) => /^\p{L}/u.test(w));
+// A contraction is one word: "Don't Change" is Title, not "Don", "t", "Change" (mixed) (r573).
+const words = (t) => t.replace(/(\p{L})['’](\p{L})/gu, '$1$2').replace(GLY_CHARS, ' ').replace(/[“”"'‘’()[\]…:.,!?]/g, ' ').split(/\s+/).filter((w) => /^\p{L}/u.test(w));
 function casingOf(t) {
 	// G4(a): a text whose first word character is a figure is data, not copy
 	// ("▸ 0 linked diamonds").
@@ -2129,6 +2210,10 @@ const VSLOTS = [
 	['steer tile Diamond name', '#pending-list', '.pend-card', '.pend-diamond', V_NAME, /Thesis/, 'pending'],
 	['steer tile model id',     '#pending-list', '.pend-card', '.pend-line', { text: V_MODEL.map((m) => 'Add a note for ' + m) }, /Add a note for glm/, 'pending'],
 	['steer tile note line',    '#pending-list', '.pend-card', '.pend-steer-line', V_NOTE, /Add a note for glm/, 'pending'],
+	// UNBLOCK-26 U5 (r573): a change ask's tile. The headline names the file; the folder line names where it sits; a diff line runs long.
+	['change tile file name',   '#pending-list', '.pend-card', '.pend-change-head', { text: V_FILE.map((f) => 'Change ' + f + '?') }, /kitchen-renovation-quotes-final/, 'pendchange'],
+	['change tile folder',      '#pending-list', '.pend-card', '.pend-change-in', { text: V_DIR.map((d) => 'In ' + d) }, /kitchen-renovation-quotes-final/, 'pendchange'],
+	['change tile diff line',   '#pending-list', '.pend-card', '.hist-diff-line.add', { text: V_NOTE.map((n) => '+' + n) }, /kitchen-renovation-quotes-final/, 'pendchange'],
 	['steer edit line',         'OVERLAY', '.dlg-card', '.dlg-input', { val: V_LINE200 }, null, 'steeredit'],
 	['steer edit refusal',      'OVERLAY', '.dlg-card', '.dlg-err', V_LINT, null, 'steeredit'],
 	['trust cell',              '#panel-modeldash', 'tbody tr', 'td:last-child', V_TRUST, /glm-5\.2/, 'models'],
@@ -2300,6 +2385,12 @@ async function vSetup(kind) {
 		await wait(300);
 	}
 	if (kind === 'headmore') { await mainChat(); await click('#chead-more'); await wait(700); }
+	if (kind === 'pendchange') {
+		const ph = page.viewportSize().width <= 760;
+		await ratingPanel('pending', ph ? 'p_' : '');
+		await ev(CHANGE_FIX, { path: 'quotes/kitchen-renovation-quotes-final.md', wait: 3600000 }); await wait(500);
+		await ev(() => { const c = [...document.querySelectorAll('#pending-list .pend-card')].find((x) => x.querySelector('.pend-change-head') && x.querySelector('.hist-diff')); if (c) c.scrollIntoView({ block: 'center' }); });
+	}
 	if (kind === 'pending' || kind === 'steeredit' || kind === 'models') {
 		const ph = page.viewportSize().width <= 760;
 		await ratingFixtures();

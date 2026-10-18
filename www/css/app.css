@@ -1997,6 +1997,8 @@ span.arte-open { cursor: default; }
    the gap between the dots and the words -- `gap` alone would set it to the
    spacing BETWEEN the dots, which is far too tight for a sentence. */
 .chat-spinner-say { margin-left: 6px; font-size: var(--fs-xs); color: var(--text-secondary); }
+/* A caption that is the way to its question (a change waiting in Pending): pressable. */
+.chat-spinner-say.chat-spinner-go { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 /* Each mark is a DIAMOND, the app's own (owner review 2026-10-04, replacing the three
    circles). It is drawn as the same clip-path polygon as `.ctile-dot`, not a square
    rotated 45 degrees: a rotation changes the box the layout sees and a radius blunts the
@@ -2079,7 +2081,10 @@ span.arte-open { cursor: default; }
    header without moving the header. Email already had it; mail.css, files.css
    and spend.css carry the same number. */
 .agents-empty { font-size: var(--fs-xs); color: var(--text-muted); padding: 2px 10px; }
-.agent-find { padding-top: 2px; padding-bottom: 2px; }
+/* The search and its tag disclosure take the same inset as the body under them: the
+   rail's 4px left the field and "Filter by tag" 6px outside the panel's text edge
+   (x 1132 against 1138 at 1440px, 12 against 18 on a phone; r573 by-role). */
+.agent-find { padding: 2px var(--dock-inset); }
 /* Chips on an agent tile: parent Diamond, its inherited tags, the model. */
 .acard .achips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0 2px; }
 .acard .diamond-chip { font-weight: 500; }
@@ -3571,6 +3576,11 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .turn-file-rest { color: var(--text-secondary); padding: 4px 0 0; }	/* reads as the fold button does (its font: inherit), but is not one */
 .hist-diff-line.add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .hist-diff-line.del { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+/* The op column is the role's, not the text's: every line's text starts one column in, whatever its op (History and Pending alike). */
+.hist-diff-line::before { content: ' '; margin-right: 3px; }	/* the glyph gap every drawn glyph keeps; the same on every line, so the text edge holds */
+.hist-diff-line.add::before { content: '+'; }
+.hist-diff-line.del::before { content: '-'; }
+.hist-diff-line.fold { color: var(--text-muted); font-style: italic; }
 
 /* What the versions do NOT cover, said once under the list. */
 .hist-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-2xs); color: var(--text-muted); }

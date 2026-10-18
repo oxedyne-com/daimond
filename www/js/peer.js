@@ -4359,7 +4359,7 @@
 	//                Report-only; the turn is handed back.
 	// ════════════════════════════════════════════════════════════
 
-	var BLOCKER_KINDS = ['consent', 'ask', 'fsa', 'lock', 'provider', 'place', 'toolkit', 'run'];
+	var BLOCKER_KINDS = ['consent', 'ask', 'fsa', 'lock', 'provider', 'place', 'toolkit', 'run', 'change'];
 
 	// ── Permits: the three engine questions a hand-off routes home ──
 	//
@@ -4370,8 +4370,10 @@
 	// relay, and answered allow/deny under their own kind. A yes grants THIS TURN only: the
 	// engine's turn-scoped allow, never a mark (a mark is in force only where it was pressed,
 	// markshere.js R2), save the toolkit, which the answering device writes to the Diamond.
-	var PERMIT_ASKS = ['place', 'toolkit', 'run'];
-	var PERMIT_YES = { place: 'allow-place', toolkit: 'allow-kit', run: 'allow' };
+	// UNBLOCK-26 U5: `change` -- an edit, delete or move of a file he made, shown as a
+	// diff and asked of him alone; the autonomous setting never answers it.
+	var PERMIT_ASKS = ['place', 'toolkit', 'run', 'change'];
+	var PERMIT_YES = { place: 'allow-place', toolkit: 'allow-kit', run: 'allow', change: 'allow-change' };
 	// Why a permit was not granted, as the asking device is told it.
 	var PERMIT_WHYS = ['refused', 'timeout', 'unsupported'];
 	// The engine's word for each, so the model is told the same reason the person is
@@ -4541,6 +4543,9 @@
 		if (permitAsk(kind) && (!spec.target || spec.target !== String(selfId || ''))) {
 			spec.answerable = false;						// not this device's question
 		}
+		// A change is answered only on its Pending tile, where the change is drawn: a bare
+		// Allow under a cut-short quote would be a yes to a diff nobody saw (UNBLOCK-26 U5).
+		else if (kind === 'change')                      spec.controls = [];
 		else if (kind === 'consent' || permitAsk(kind))  spec.controls = ['grant', 'deny'];
 		else if (kind === 'ask' && spec.options.length)  spec.controls = ['choose'];
 		else                                             spec.controls = ['runhere'];

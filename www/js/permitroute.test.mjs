@@ -132,7 +132,8 @@ test('A4b: a permit is answered by its target alone, from the tile or the lease 
 		// The footer: Allow/Deny on the target only; elsewhere a report with no control.
 		const b = P.makeBlocker({ kind: kind, cid: 'c1', detail: 'x', target: 'PHONE' });
 		assert.equal(b.target, 'PHONE');
-		same(P.blockerTileSpec(b, 'argonaut', 'PHONE').controls, ['grant', 'deny']);
+		// A change is answered on its Pending tile alone, where the change is drawn (UNBLOCK-26 U5).
+		same(P.blockerTileSpec(b, 'argonaut', 'PHONE').controls, kind === 'change' ? [] : ['grant', 'deny']);
 		for (const self of ['TABLET', 'RUNNER', '', undefined]) {
 			const s = P.blockerTileSpec(b, 'argonaut', self);
 			same(s.controls, []); assert.equal(s.answerable, false);
@@ -240,7 +241,9 @@ test('B3: silence is a refusal at the unchanged deadline, told "timeout", never 
 	assert.equal(await r.api.routePermitAsk(r.rc, 'run', 'ls', '{}'), 'deny-timeout');
 	await settle();
 	assert.equal(grants(r.posted)[0].choice, 'timeout');
-	assert.match(lift('putPermitAsk'), /var wait = DaimondPeer\.CONSENT_DEADLINE_MS \|\| 60000;/);
+	// A permit with no wait of its own (place, toolkit, run) keeps the 60 s; only a change
+	// passes its ten minutes (r573, changeask.test B4).
+	assert.match(lift('putPermitAsk'), /var wait = \(Number\(waitMs\) > 0\) \? Number\(waitMs\) : \(DaimondPeer\.CONSENT_DEADLINE_MS \|\| 60000\);/);
 	assert.doesNotMatch(lift('putPermitAsk'), /parkRunnerTurn/);
 });
 

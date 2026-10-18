@@ -83,3 +83,56 @@ test("a tile's getter answers while a Diamond's scope is being read", { skip: !e
 		assert.throws(() => other.set_diamond_scope(reach, '[]'));
 	}
 });
+
+// SCOPEREACH (18 Oct 2026): b3c06a03 split the call and updated only the page, so three dev/
+// verifiers still passed a string id and died in `_assertClass` ("expected instance of
+// ScopeReach"). Every caller in dev/*.mjs and www/js must hand `set_diamond_scope` a value it
+// bound from `read_scope_reach`. The 4-argument page-asserted form (`'diamonds/' + id, marks,
+// …`) predates HIST-SAFE U2 and was refused before the split; the files still carrying it are
+// frozen below, so a NEW stale caller anywhere fails here.
+const DEV = join(HERE, '..', '..', 'dev');
+const JSDIR = HERE;
+const PRE_U2 = new Set([
+	'e5bprobe_store.mjs', 'e5probe_mint.mjs', 'q5probe_launder.mjs', 'q5probe_launder_hand.mjs',
+	'r51bprobe_store.mjs', 'r51cprobe_store.mjs', 'r51dprobe_store.mjs', 'r51hdprobe_hand.mjs',
+	'r51probe_store.mjs', 'r51qa_hand.mjs', 'r51qa_more.mjs', 'r51qa_store.mjs', 'r51qb_attack.mjs',
+	'r51qc_hand.mjs', 'r51qc_handguard.mjs', 'r51qc_store.mjs', 'r522hk1_tabs.mjs',
+	'r52hrprobe_hand.mjs', 'r52hrqa2_hand.mjs', 'r52hrqa2_sync.mjs', 'r52hrqa3_hand.mjs',
+	'r52hrqa3_sync.mjs', 'r52hrqa_hand.mjs', 'verify_handmeterless.mjs', 'verify_scope.mjs',
+]);
+
+export function staleScopeCalls(name, src) {
+	const bad = [];
+	const reaches = new Set();
+	for (const m of src.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?[^;\n]*\.read_scope_reach\s*\(/g)) reaches.add(m[1]);
+	const lines = src.split('\n');
+	lines.forEach((line, i) => {
+		const t = line.replace(/\/\/.*$/, '');
+		for (const m of t.matchAll(/\.set_diamond_scope\s*\(\s*([^,)]*)/g)) {
+			const first = m[1].trim();
+			if (reaches.has(first)) continue;
+			if (PRE_U2.has(name) && /^'diamonds\//.test(first)) continue;
+			bad.push(name + ':' + (i + 1) + ' set_diamond_scope(' + first + ', …)');
+		}
+	});
+	return bad;
+}
+
+test('every dev/ and www/js caller hands set_diamond_scope a read_scope_reach result', () => {
+	const bad = [];
+	for (const [dir, ext] of [[DEV, /\.mjs$/], [JSDIR, /\.m?js$/]]) {
+		if (!existsSync(dir)) continue;
+		for (const name of readdirSync(dir)) {
+			if (!ext.test(name) || name === 'scopereentry.test.mjs') continue;
+			bad.push(...staleScopeCalls(name, readFileSync(join(dir, name), 'utf8')));
+		}
+	}
+	assert.deepEqual(bad, [], 'set_diamond_scope given something other than a ScopeReach: ' + bad.join('; '));
+});
+
+test('the scan itself catches the stale forms', () => {
+	assert.equal(staleScopeCalls('x.mjs', "await e.set_diamond_scope(id, '[]');").length, 1);
+	assert.equal(staleScopeCalls('x.mjs', "e.set_diamond_scope(String(id), '[]');").length, 1);
+	assert.equal(staleScopeCalls('x.mjs', "const r = await e.read_scope_reach(String(id));\ne.set_diamond_scope(r, '[]');").length, 0);
+	assert.equal(staleScopeCalls('x.mjs', "e.set_diamond_scope('diamonds/' + id, '[]', '[]', '[]');").length, 1);
+});
