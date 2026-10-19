@@ -13,7 +13,14 @@
          leaves Email, names it in `kept`, B adopts the rest;
      H3  B moved the default since: Undo leaves the default;
      H4  the default on Fireworks, a device with no Fireworks key:
-         `here` false, `using`, `missing` 'Fireworks AI'.
+         `here` false, `using`, `missing` 'Fireworks AI';
+     H5  Move Them Too onto a model that lacks a Diamond's Effort
+         level, which drops at the next read: Undo brings the
+         level back with the model, and leaves an Effort chosen
+         since (red on 529df246);
+     H6  B picks Y for a Diamond after the move, or moves the
+         default under a follower: Undo writes no level onto Y
+         (red on cd3359c36).
 
    Two devices, each in its own vm realm with its own storage:
    the REAL models.js, stamp.js and store.js, and the REAL
@@ -74,6 +81,7 @@ function hisShape() {
 const PAGE = ['readJson', 'diamondModels', 'setDiamondModel', 'blankDiamondModel', 'mergeDiamondModel',
 	'adoptDiamondModel', 'modelPicksOf', 'diamondPicks', 'chatPicks', 'summarisingPick', 'setFoldPick',
 	'chatDisplayName', 'everyoneTargets', 'clearPick', 'setPick', 'settlePicks',
+	'diamondEffort', 'diamondModel', 'setDiamondEffort',
 	'withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
 	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit', 'mergeFold',
 	'mergeChatRecords', 'touchChatMeta', 'touchChatModel'];
@@ -267,6 +275,75 @@ async function main() {
 			check('H4 B runs a follower on it, not on Fireworks', b.M.effective(null, 'daimon').model === DS, b.M.effective(null, 'daimon'));
 			const t = a.M.everyoneStanding();
 			check('H4 A, with the key, is here', t && t.here === true && t.missing === '' && t.using.model === FWGLM, t);
+		}
+	}
+
+	// ── H5 Undo brings back an Effort level dropped meanwhile ────────
+	console.log('\nH5: Undo after Move Them Too brings back an Effort level the new model lacked');
+	{
+		const sh = hisShape();
+		sh.models['d-pin'] = rec(OR, DS, '', '', '', '', 'high');	// pinned, with an Effort on that model
+		const a = await device(sh), b = await device(sh);
+		await both(a, b);
+		if (has(a, ['setEveryone', 'undoEveryone'])) {
+			const eff = (d, id) => d.page.diamondEffort(id);
+			check('H5 both Diamonds start on high', eff(a, 'd-oxegen') === 'high' && eff(a, 'd-pin') === 'high');
+			const u = a.M.setEveryone(X, true);
+			// The next read, on the new model, which offers no such level: dropped quietly.
+			check('H5 the new model drops the level', eff(a, 'd-oxegen') === '' && eff(a, 'd-pin') === '');
+			const r = a.M.undoEveryone(u);
+			check('H5 nothing is kept', r && r.kept.length === 0, r);
+			check('H5 the pin is back', a.recs()['d-pin'].model === DS, a.recs()['d-pin']);
+			check('H5 the follower\'s Effort is back with the default', eff(a, 'd-oxegen') === 'high', a.recs()['d-oxegen']);
+			check('H5 the pinned Diamond\'s Effort is back with its model', eff(a, 'd-pin') === 'high', a.recs()['d-pin']);
+			await both(a, b);
+			check('H5 B holds both levels after sync', eff(b, 'd-oxegen') === 'high' && eff(b, 'd-pin') === 'high',
+				[b.recs()['d-oxegen'], b.recs()['d-pin']]);
+		}
+		// An Effort chosen after the drop is a newer decision, and Undo leaves it.
+		const c = await device(sh);
+		if (has(c, ['setEveryone', 'undoEveryone'])) {
+			const u = c.M.setEveryone(X, true);
+			c.page.diamondEffort('d-oxegen');
+			c.page.setDiamondEffort('d-oxegen', 'low');
+			c.M.undoEveryone(u);
+			check('H5 an Effort chosen since stays', c.recs()['d-oxegen'].effort === 'low', c.recs()['d-oxegen']);
+		}
+	}
+
+	// ── H6 a level goes back only with its model ─────────────────────
+	console.log('\nH6: Undo leaves the Effort off a Diamond whose model was picked since on B');
+	{
+		const sh = hisShape();
+		sh.models['d-pin'] = rec(OR, DS, '', '', '', '', 'high');
+		const a = await device(sh), b = await device(sh);
+		await both(a, b);
+		if (has(a, ['setEveryone', 'undoEveryone'])) {
+			const u = a.M.setEveryone(X, true);
+			a.page.diamondEffort('d-pin');
+			a.page.diamondEffort('d-oxegen');
+			await both(a, b);
+			b.page.setDiamondModel('d-pin', { provider: OR, model: GLM });	// Y for the pin
+			b.page.setDiamondModel('d-oxegen', { provider: OR, model: GLM });	// the follower pins Y
+			await both(a, b);
+			const r = a.M.undoEveryone(u);
+			check('H6 the pin is kept as B chose it', a.recs()['d-pin'].model === GLM, a.recs()['d-pin']);
+			check('H6 no high written onto the pin\'s Y', a.recs()['d-pin'].effort === '', a.recs()['d-pin']);
+			check('H6 no high written onto the follower\'s Y', a.recs()['d-oxegen'].effort === '', a.recs()['d-oxegen']);
+			check('H6 neither Effort is counted restored', r && r.restored === u.fields.length - 1 + 1, [r, u.fields.length]);
+		}
+		// B moves the default since: a follower's level stays off, with the default.
+		const c = await device(sh), d = await device(sh);
+		await both(c, d);
+		if (has(c, ['setEveryone', 'undoEveryone'])) {
+			const u = c.M.setEveryone(X, true);
+			c.page.diamondEffort('d-oxegen');
+			await both(c, d);
+			d.M.setDefault(OR, GLM);
+			await both(c, d);
+			c.M.undoEveryone(u);
+			check('H6 a follower on a default moved since gets no level', c.recs()['d-oxegen'].effort === '', c.recs()['d-oxegen']);
+			check('H6 the pin, put back, still gets its level', c.page.diamondEffort('d-pin') === 'high', c.recs()['d-pin']);
 		}
 	}
 

@@ -2460,6 +2460,7 @@
 			return { held: 'merge' };
 		}
 		inFlight = true;
+		diag('push start', 'base=v' + (serverVersion | 0));	// the round gate is held from here (U2FIX)
 		pushing  = true;
 		// OWED FROM HERE (F-S5-4). A throw anywhere below -- collectParcel, sigOf, the
 		// encryption -- must not leave the work looking paid: a push that could not even

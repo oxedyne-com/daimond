@@ -214,7 +214,7 @@ if (typeof L.say === 'function') {
 	const fns = names.map((n) => extractFn(src, n));
 	if (fns0.every(Boolean)) {
 		const S = {
-			_steerApp: {}, _saidThere: {}, _peerStopping: {}, _progressView: {}, chats: [], current: null, tombs: [], drained: [], said: [], mids: 0,
+			_steerApp: {}, _steerDetached: {}, _saidThere: {}, _peerStopping: {}, _progressView: {}, chats: [], current: null, tombs: [], drained: [], said: [], mids: 0,
 			dispatched: [], dispatchOk: true, queuedHere: [], clock: 0,
 			enqueueMessage: (c, text) => { S.queuedHere.push(text); },
 			// The hand-off: the turn's message pushed under the id given, else a fresh one.

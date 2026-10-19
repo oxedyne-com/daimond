@@ -2098,7 +2098,8 @@
 		if (picks && target && target.kind === 'diamond' && picks.diamond) got = picks.diamond(target.id);
 		if (picks && target && target.kind === 'chat'    && picks.chat)    got = picks.chat(target.chat);
 		got = got || {};
-		return { daimon: got.daimon || blankPair(), workers: got.workers || blankPair(), images: got.images || blankPair() };
+		return { daimon: got.daimon || blankPair(), workers: got.workers || blankPair(), images: got.images || blankPair(),
+			effort: got.effort || { level: '', provider: '', model: '', at: 0 } };
 	}
 
 	/// A pick as it runs here, or null when it names no model or its provider cannot run
@@ -2169,16 +2170,19 @@
 	/// before), and the plan's `follow`, `own`, `equal` and `imagesKept`.
 	///
 	/// Without `moveAll` a pick is cleared only where clearing changes nothing that runs now. A
-	/// daimon equal to `to` follows. A Workers pick falls back to its daimon, not to the
-	/// default, so it is cleared only where it equals `to` and its daimon is on `to` too; the
-	/// global Workers pick only where every daimon that reads it is on `to`. Drafting falls back
-	/// to the default, and Summarising is cleared when equal, as the migration clears it.
+	/// daimon equal to `to` follows. A Workers pick falls back to the global Workers pick, and
+	/// only then to its daimon, so it is cleared only where it equals `to`, the global pick (if
+	/// any) is `to` too, and its daimon is on `to`; the global Workers pick only where every
+	/// daimon that reads it is on `to`. Drafting falls back to the default, and Summarising is
+	/// cleared when equal, as the migration clears it.
 	function everyoneSweep(to, moveAll) {
 		var out = { fields: [], follow: { daimons: 0, chats: 0 }, own: [], equal: [], imagesKept: [] };
 		var d = pairOf(store.def);
 		var moves = d.provider !== to.provider || d.model !== to.model;	// do followers switch?
 		var held  = false;	// does a daimon other than `to` read the global Workers pick?
 		var list  = (picks && typeof picks.list === 'function' && picks.list()) || [];
+		var gw    = pairOf(store.workers);
+		var gwTo  = !gw.model || isPick(gw, to);	// is the next link of an own Workers pick `to`?
 		list.forEach(function (t) {
 			var kind = t.target.kind, own = ownPicks(t.target);
 			var ref  = kind === 'chat' ? { kind: 'chat', id: (t.target.chat && t.target.chat.id) || t.target.id || '' }
@@ -2187,7 +2191,7 @@
 			var dEq  = isPick(own.daimon, to);
 			var dGo  = !!own.daimon.model && (moveAll || dEq);
 			var onTo = !own.daimon.model || dGo;	// its daimon runs on `to` from now
-			var wGo  = !!own.workers.model && (moveAll || (onTo && isPick(own.workers, to)));
+			var wGo  = !!own.workers.model && (moveAll || (onTo && gwTo && isPick(own.workers, to)));
 			if (dGo) out.fields.push({ target: t.target, ref: ref, role: 'daimon',  before: pairOf(own.daimon) });
 			if (wGo) out.fields.push({ target: t.target, ref: ref, role: 'workers', before: pairOf(own.workers) });
 			if (!own.daimon.model && moves) out.follow[kind === 'chat' ? 'chats' : 'daimons']++;
@@ -2206,7 +2210,7 @@
 			else out.own.push(who);
 			if (isPick(pick, to)) out.equal.push(who);
 		};
-		var dr = pairOf(store.draft), wk = pairOf(store.workers);
+		var dr = pairOf(store.draft), wk = gw;
 		var sp = pairOf(picks && typeof picks.summarising === 'function' && picks.summarising());
 		job('drafting',    dr, moveAll || isPick(dr, to));
 		job('workers',     wk, moveAll || (isPick(wk, to) && !held));
@@ -2228,11 +2232,19 @@
 	/// Everyone uses `pick`: set the default and clear every pick equal to it; with `moveAll`
 	/// (Move Them Too) every text-model pick. One synchronous change set, so one store write and
 	/// one sync parcel. The undo record, `{ def: { wrote, before }, fields: [{ target, role,
-	/// wrote, before }] }`, holds every pair it wrote over, for a compare-and-set Undo (U2b).
+	/// wrote, before }], efforts: [{ target, before, at }] }`, holds every pair it wrote over,
+	/// for a compare-and-set Undo (U2b), and each Diamond's Effort as it stood: a model that
+	/// lacks the level drops it at the next read (`diamondEffort`), and Undo brings it back.
 	function setEveryone(pick, moveAll) {
 		var to   = pairOf(pick);
 		var sw   = to.model ? everyoneSweep(to, !!moveAll) : { fields: [] };
-		var undo = { def: { wrote: pairOf(to), before: pairOf(store.def) }, fields: [] };
+		var undo = { def: { wrote: pairOf(to), before: pairOf(store.def) }, fields: [], efforts: [] };
+		var list = (picks && typeof picks.list === 'function' && picks.list()) || [];
+		list.forEach(function (t) {
+			var e = t.target.kind === 'diamond' && ownPicks(t.target).effort;
+			if (e && e.level) undo.efforts.push({ target: { kind: 'diamond', id: t.target.id },
+				before: { level: e.level, provider: e.provider || '', model: e.model || '' }, at: +e.at || 0 });
+		});
 		store.def   = to;
 		store.defAt = DaimondStamp.next(store.defAt);		// which device chose last, for the merge
 		sw.fields.forEach(function (f) {
@@ -2276,10 +2288,13 @@
 			})[0];
 			return hit || null;
 		};
+		var defBack = false;	// is the default put back?
+		var pinned  = {};		// Diamond id -> was its own model put back?
 		if (rec.def && rec.def.wrote) {
 			if (samePair(store.def, rec.def.wrote)) {
 				store.def   = pairOf(rec.def.before);
 				store.defAt = DaimondStamp.next(store.defAt);
+				defBack     = true;
 				out.restored++;
 			} else {
 				out.kept.push({ name: '', kind: 'default', role: 'default' });
@@ -2288,6 +2303,8 @@
 		(rec.fields || []).forEach(function (f) {
 			var ref = f.target || {}, slot = ref.kind === 'jobs' && JOB_SLOT[f.role];
 			var t   = ref.kind === 'jobs' ? { target: { kind: 'jobs' }, name: '' } : named(ref);
+			var own = ref.kind === 'diamond' && f.role === 'daimon';
+			if (own) pinned[ref.id] = false;
 			var now = !t ? null
 				: slot ? pairOf(store[slot])
 				: ref.kind === 'jobs' ? (f.role === 'summarising' && picks && typeof picks.summarising === 'function'
@@ -2297,6 +2314,7 @@
 				out.kept.push({ name: (t && t.name) || '', kind: ref.kind || '', role: f.role });
 				return;
 			}
+			if (own) pinned[ref.id] = true;
 			if (samePair(now, f.before)) return;
 			if (slot) {
 				store[slot]        = pairOf(f.before);
@@ -2304,9 +2322,27 @@
 			} else if (picks && typeof picks.set === 'function') {
 				picks.set(t.target, f.role, pairOf(f.before));
 			} else {
+				if (own) pinned[ref.id] = false;
 				out.kept.push({ name: t.name || '', kind: ref.kind || '', role: f.role });
 				return;
 			}
+			out.restored++;
+		});
+		// An Effort level the meanwhile model lacked was dropped quietly, on its own stamp. Put it
+		// back with the model only where it is still that drop: an Effort chosen since, here or on
+		// another device, moved the stamp and stays. A level that never dropped needs nothing.
+		// The level goes back only onto the model it was set for: the Diamond's own model, or
+		// the default it still follows, put back above. A model picked since keeps no stray level.
+		(rec.efforts || []).forEach(function (e) {
+			var t = e && e.target && named(e.target);
+			if (!t || !e.before || !e.before.level || !picks || typeof picks.set !== 'function') return;
+			var own = ownPicks(t.target);
+			var back = Object.prototype.hasOwnProperty.call(pinned, e.target.id) ? pinned[e.target.id]
+				: defBack && !own.daimon.model;
+			if (!back) return;
+			var now = own.effort;
+			if (now.level || (+now.at || 0) !== (+e.at || 0)) return;
+			picks.set(t.target, 'effort', e.before);
 			out.restored++;
 		});
 		if (picks && typeof picks.settle === 'function') picks.settle();

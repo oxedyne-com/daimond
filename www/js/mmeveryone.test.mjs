@@ -11,7 +11,9 @@
      G2  Keep Theirs;
      G3  6 Diamonds + 3 chats, 3 exceptions, one equal: the plan;
      G4  one call, one change set, every write landed on return;
-     G5  setDefault(p, m) clears a Diamond pinned to that pair.
+     G5  setDefault(p, m) clears a Diamond pinned to that pair;
+     G6  Keep Theirs keeps an own Workers pick equal to the pick
+         while a global Workers pick on another model would catch it.
 
    The REAL models.js, and the REAL daimond.js functions behind
    the reader it binds (testlift.mjs). Red proof:
@@ -258,6 +260,35 @@ async function main() {
 		check('G5 the default moved', def(d) === OR + '|' + GLMF, def(d));
 		check('G5 Kernel notes, pinned to it, now follows', daimon(r['d-kernel']) === '|', r['d-kernel']);
 		check('G5 Daimond, on another daimon, keeps its Workers', workers(r['d-daimond']) === OR + '|' + GLMF, r['d-daimond']);
+	}
+
+	// ── G6 a clear never lands on a global Workers pick ──────────────
+	console.log('\nG6: an own Workers pick equal to the pick stays while the global Workers pick is another model');
+	{
+		const models = migrated();
+		models['d-kernel'] = rec(OR, GLMF, OR, GLMF);	// daimon and Workers both on the pick
+		models['d-reit']   = rec('', '', OR, GLMF);		// follows the default, Workers on the pick
+		const d = await device(hisShape({ models, jobs: { workers: { provider: FW, model: FWDS } } }));
+		if (has(d, ['setEveryone', 'planEveryone'])) {
+			const w0 = ['d-kernel', 'd-reit'].map((id) => d.M.effective({ kind: 'diamond', id }, 'workers'));
+			const plan = d.M.planEveryone(X);
+			check('G6 the plan names both as keeping their Workers', ['Kernel notes', 'Reit Hoogland'].every((n) =>
+				(plan.own || []).some((w) => w.name === n && w.roles.includes('workers'))), plan.own);
+			d.M.setEveryone(X, false);
+			const r = d.recs();
+			check('G6 Kernel notes keeps its Workers', workers(r['d-kernel']) === OR + '|' + GLMF, r['d-kernel']);
+			check('G6 Reit keeps its Workers', workers(r['d-reit']) === OR + '|' + GLMF, r['d-reit']);
+			const w1 = ['d-kernel', 'd-reit'].map((id) => d.M.effective({ kind: 'diamond', id }, 'workers'));
+			check('G6 their workers still run on the pick', w0.concat(w1).every((w) => w.model === GLMF), w0.concat(w1));
+			check('G6 the global Workers pick stays', d.M.getJob('workers').model === FWDS, d.M.getJob('workers'));
+		}
+		// With the global Workers pick on the pick too, the same Workers picks are copies and go.
+		const e = await device(hisShape({ models, jobs: { workers: { provider: OR, model: GLMF } } }));
+		if (has(e, ['setEveryone'])) {
+			e.M.setEveryone(X, false);
+			check('G6 equal all the way down, Kernel notes\' Workers follow', workers(e.rec('d-kernel')) === '|', e.rec('d-kernel'));
+			check('G6 and its workers still run on the pick', e.M.effective({ kind: 'diamond', id: 'd-kernel' }, 'workers').model === GLMF);
+		}
 	}
 
 	console.log('\n' + (checks - failures) + '/' + checks + ' passed');

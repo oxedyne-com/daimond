@@ -20,7 +20,9 @@
          lacks, is refused by `peerReady` before the claim: the real
          `DaimondPeer.runErrand` writes no lease, runs nothing, hands
          it back `undeliverable` (cause `models`) and acks, so the
-         asker runs it here at once (D-20261018-09 PR).
+         asker runs it here at once (D-20261018-09 PR). Its diag reads
+         `ready MODELS` and never `handed back`, which only a post-claim
+         401 logs, once (diag_preclaim_merge.md; red on 529df246).
 
    Two sandboxes (node:vm), each with its own storage and the REAL
    store.js, stamp.js and models.js; the REAL daimond.js functions
@@ -62,7 +64,7 @@ function liftMethod(src, name) {
 const FNS = ['readJson', 'diamondModels', 'diamondModel', 'modelPicksOf', 'diamondPicks', 'chatPicks',
 	'summarisingPick', 'diamondWorkerModel', 'diamondVisionModel', 'turnModelOf', 'chatWorkerModel',
 	'taskWantsVision', 'turnModelsOfDiamond', 'turnModelsOfChat', 'turnModelsOfRun', 'errandModelOf',
-	'sentModelsOf', 'steerModelsFor', 'steerModelFor', 'peerRunErrandDeps', 'diamondCanRun',
+	'sentModelsOf', 'claimedModelsOf', 'steerModelsFor', 'steerModelFor', 'peerRunErrandDeps', 'diamondCanRun',
 	'errandUnrunnable', 'peerReady', 'askerReadiness', 'lackedNote', 'runnerTurnOpts'];
 const METHODS = ['holdTurn', 'turnModelsFor', 'spawn', 'dispatch', 'routeFor'];
 const VARS = ['DIAMOND_MODELS_KEY', 'IMAGE_EXT'];
@@ -227,6 +229,9 @@ async function main() {
 	check('an unmarked Diamond pair runs the Diamond\'s own (B)', pr(oldU) === pr(B), pr(oldU));
 
 	console.log('E4 a marked set the runner cannot run is handed back 401');
+	const HB = / unrunnable here, handed back/;
+	const handedBack = (R) => R.own.diags.filter((l) => HB.test(l)).length;
+	bare.own.diags.length = 0;
 	const fwChat = { id: 'c2', name: 'Fw', model: B.model, provider: B.provider, messages: [] };
 	const fwSent = asker.fn('errandModelOf')(fwChat);
 	const h4 = await handOff(bare, { id: 'c2', name: 'Fw', model: '', provider: '', messages: [] }, fwSent);
@@ -235,13 +240,16 @@ async function main() {
 	const h4w = await handOff(bare, { id: 'c1', name: 'Chat', model: '', provider: '', messages: [] }, sent);
 	check('a runnable daimon with unrunnable Workers: 401, not run', !!h4w.err && h4w.err.code === 401 && bare.own.ran.length === 0,
 		h4w.err ? 'code ' + h4w.err.code : 'ran, workers ' + pr(h4w.set && h4w.set.workers));
+	check('E5 each post-claim chat 401 logs one hand-back line', handedBack(bare) === 2, bare.own.diags);
 	bare.own.ran.length = 0;
+	bare.own.diags.length = 0;
 	let dErr = null;
 	try { await bare.fn('peerRunErrandDeps')({}).runTurn({ chat: { id: 'cd', diamondId: dA.id, messages: [] } }, 'hi',
 		{ turnId: 't-d', model: JSON.parse(JSON.stringify(dsent)) }); }
 	catch (e) { dErr = e; }
 	check('a Diamond turn with unrunnable Workers: 401, not steered', !!dErr && dErr.code === 401 && bare.own.ran.length === 0,
 		dErr ? 'code ' + dErr.code : 'steered');
+	check('E5 the post-claim Diamond 401 logs exactly one hand-back line', handedBack(bare) === 1, bare.own.diags);
 
 	console.log('E5 a set the runner cannot run is refused before the claim, and the asker runs it here');
 	const stale = { provider: 'openrouter', model: 'or/stale', url: '' };	// an unmarked pair
@@ -254,8 +262,11 @@ async function main() {
 	const ready = (R, f) => R.fn('peerRunErrandDeps')({}).ready(Object.assign({ turnId: 't-' + f.chatId, through: null },
 		JSON.parse(JSON.stringify(f))), []);
 	for (const [what, f] of unrun) {
+		bare.own.diags.length = 0;
 		const rd = await ready(bare, f);
 		check('ready refuses ' + what + ' with cause models', !!rd && rd.ok === false && rd.cause === 'models', JSON.stringify(rd));
+		check('E5 its diag reads ready MODELS, never a hand-back', bare.own.diags.some((l) => /^ready MODELS /.test(l))
+			&& handedBack(bare) === 0, bare.own.diags);
 	}
 	const okChat = await ready(runner, { chatId: 'c1', model: sent });
 	const okDia  = await ready(bare, { chatId: 'co', diamondId: 'dO', model: stale });

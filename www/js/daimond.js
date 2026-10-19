@@ -12618,6 +12618,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// belongs to.
 	var crystalRunning = Object.create(null);   // diamondId -> true while a steer or fold runs
 	var _steerApp = Object.create(null);        // diamondId -> the app its steer runs on, while it runs (UNBLOCK-27 R7)
+	var _steerDetached = Object.create(null);   // diamondId -> true while that steer is another device's turn (r578)
 	var _saidThere = Object.create(null);       // turnId -> [{ chatId, mid, text }] said to its runner, until its report (UNBLOCK-27 R7)
 
 	/// Is THIS Diamond mid-turn? Asked of an id rather than of the app, which is the
@@ -28617,8 +28618,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// provider refusal (runnerErrorKind), so the lease releases unsettled and the
 					// asker's tile reads failed with [Run here]; its dispatch backstop runs it there
 					// if still open. Nothing was spent. The asker's marked set (C3, U1e) is
-					// `sentModelsOf`'s to judge, which throws this same 401; an unmarked one runs the Diamond's.
-					var marked = sentModelsOf(ropts && ropts.model);
+					// `sentModelsOf`'s to judge, which throws this same 401 (logged here, as the
+					// hand-back it is, by `claimedModelsOf`); an unmarked one runs the Diamond's.
+					var marked = claimedModelsOf(ropts && ropts.model);
 					if (!marked && typeof diamondCanRun === 'function' && !diamondCanRun(did)) {
 						var eKey = new Error('the diamond’s model has no usable api key on this device');
 						eKey.code = 401;
@@ -28666,7 +28668,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// this device cannot run was refused before the claim (`peerReady`); a key removed since
 				// throws the 401 here, before anything runs. An unmarked pair (an older asker's) is null,
 				// and the turn resolves on this device as it always did.
-				var sentSet = sentModelsOf(ropts && ropts.model);
+				var sentSet = claimedModelsOf(ropts && ropts.model);
 				// D3 — the prompt is already in the reconstructed transcript, so tell
 				// runTurn to run against it rather than append a second copy.
 				// The errand's own note (sealed with it) is written as given: the runner's copy of the person's
@@ -30834,11 +30836,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (!window.DaimondPeer || !DaimondPeer.recoverDecision || !DaimondPeer.runErrand) return;
 			var tid = String(turnId || '');
-			// Pull the lease door and collect the post box first, so a peer's claim (lease)
-			// or answer (parcel) is seen before the decision -- the same order
-			// peerCollectOnReturn uses, so the two recovery drivers read identical truth.
+			// Collect the post box and read the lease door first, so a peer's answer (post) or
+			// claim (lease) is seen before the decision.
+			//
+			// THE LEASE DOOR ALONE, OFF THE ROUND GATE (U2FIX, rig r572w modelunrun). This was a
+			// whole `DaimondSync.pull()`, which waits out any sync round in flight, up to its 18 s
+			// bound: a turn handed back by a runner that could not run its models waited 9.3 s
+			// behind this device's own push before it ran here. The decision reads only the lease
+			// (`recoverDecision`: a live foreign claim, or a settled one) and the chat, so the
+			// door's own read is all it needs (`leaseGet`, the read the lease CAS and a lease wake
+			// use), adopted as a wake adopts it.
 			try { if (window.DaimondPost && DaimondPost.collect) await DaimondPost.collect(); } catch (e) { /* offline */ }
-			try { if (window.DaimondSync && DaimondSync.pull) await DaimondSync.pull(); } catch (e) { /* offline */ }
+			try {
+				if (window.DaimondSync && DaimondSync.leaseGet && window.DaimondLease && DaimondLease.adopt) {
+					var door = await DaimondSync.leaseGet();
+					// An unreadable door is unknown, never vacant (sync.js `leaseGet`): nothing adopted.
+					if (door && !door.unread) DaimondLease.adopt(door.leases);
+				}
+			} catch (e) { /* offline: the lease view this device holds decides */ }
 			var chat = null;
 			for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === chatId) { chat = chats[i]; break; }
 			// A report-driven call may carry no/empty chatId; resolve by the turn's
@@ -40436,9 +40451,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// was simply no daimon half of `enqueueMessage`, and with none the queue
 			// badge on a Diamond tile could never have anything to say either.
 			//
-			// Queued, never interjected: `steer_crystal` borrows the session mutably
-			// for the whole turn and offers no seam to deliver into, which is exactly
-			// what `interjectMessage` needs and cannot have here.
+			// Said into the running turn where the switch keeps the turn here, and queued
+			// where it names a runner (`sayIntoHere`, the chat's rule): the queue drains
+			// through the election (`steerQueued`), so a word typed in a finishing turn's
+			// tail goes where the switch says rather than into a turn that may have no
+			// seam left to hear it (U2FIX, rig r572w followup).
 			//
 			// ASKED OF THIS DAIMON. It asked `crystalBusy`, one flag for the whole
 			// app, so a turn running on ANOTHER Diamond queued this one -- tester
@@ -40512,7 +40529,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// it ran here, unelected, behind a switch naming argonaut. They queue instead, and the
 		// queue sends through the election as it drains (`sendQueued`).
 		if (chat._generating || recoveringHere(chat)) {
-			if (chat._generating && current === chat && !seatNamesRunner(chat) && interjectMessage(chat, text, words)) return;
+			if (chat._generating && current === chat && sayIntoHere(chat, text, words)) return;
 			enqueueMessage(chat, text, words);
 			return;
 		}
@@ -40628,6 +40645,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function enqueueMessage(chat, text, words) {
 		chat._queue = chat._queue || [];
 		chat._queue.push(text);
+		diag('queue held', 'chat=' + String(chat.id || '') + ' queued=' + chat._queue.length);
 		journalQueue(chat);
 		giveUpSent(chat, words === undefined ? text : words);
 		syncSendMode();
@@ -40642,8 +40660,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// wasm bundle, or a chat whose agent has been thrown away — so the caller falls
 	/// back to the queue rather than dropping what was typed.
 	function interjectMessage(chat, text, words, from) {
-		var into = interjectInto(chat);
-		if (!into) return false;
+		var into = interjectInto(chat, from);
+		if (!into) { diag('said not', 'chat=' + String(chat.id || '') + ' no turn here to hear it'); return false; }
 		// A person's message, so it takes the note of what has been rated since the model last heard, composed
 		// now and sent with the words. A correction already waiting has told what it told, so this one starts
 		// where that one was typed. The same string goes on the record when it lands (`landInterjection`).
@@ -40653,7 +40671,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var pre = from ? String(from.pre || '') : ratingPre(chat, notes.length ? notes[notes.length - 1].at : undefined);
 		var at = (chat.messages || []).length;
 		try { into(text, pre || undefined); }
-		catch (e) { return false; }
+		catch (e) { diag('said not', 'chat=' + String(chat.id || '') + ' the turn refused it: ' + ((e && e.message) || e)); return false; }
+		diag('said into', 'chat=' + String(chat.id || '') + (from ? ' from another device' : '') + ' at=' + at);
 		chat._interject = chat._interject || [];
 		chat._interject.push(text);
 		notes.push({ pre: pre, at: at, mid: from ? String(from.id || '') : '' });
@@ -40670,22 +40689,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// A DIAMOND'S TURN IS SPOKEN TO TOO (UNBLOCK-27 R7). It runs on an agent `steer_crystal`
 	/// composes for the turn, which shares the Diamond's queue on the app it runs on
 	/// (`interject_daimon`), so mid-turn words reach it at its next seam as a chat's do.
-	function interjectInto(chat) {
+	///
+	/// A TURN RUN HERE FOR ANOTHER DEVICE HEARS ONLY THAT DEVICE (r578). Its end hands back what
+	/// it never heard to the device that asked (`reclaimInterjections`, `keep` false), so a word
+	/// typed here would be dropped by both. Only words relayed over its lease (`from`) go in; a
+	/// word typed here queues behind the turn and goes out through the election.
+	function interjectInto(chat, from) {
 		if (!chat) return null;
 		if (chat.diamondId) {
 			var did = String(chat.diamondId), fa = _steerApp[did];
 			if (!fa || typeof fa.interject_daimon !== 'function') return null;
+			if (_steerDetached[did] && !from) return null;
 			return function (text, pre) { fa.interject_daimon(did, text, pre); };
 		}
 		if (!chat.app || typeof chat.app.interject !== 'function') return null;
 		return function (text, pre) { chat.app.interject(text, pre); };
 	}
 
+	/// Say words typed at `chat` into the turn running HERE, but only where the switch keeps its
+	/// turns here (UNBLOCK-1 QFOLLOW). The one rule for a chat's send and a Diamond's: with the
+	/// switch on a runner, false, so the caller queues and the queue sends through the election.
+	function sayIntoHere(chat, text, words) {
+		if (seatNamesRunner(chat)) {
+			diag('said not', 'chat=' + String(chat.id || '') + ' switch names a runner: queued for the election');
+			return false;
+		}
+		return interjectMessage(chat, text, words);
+	}
+
 	/// Where words sent to Diamond chat `target` go while a turn of it may be running: said into
 	/// the turn running here, said to the runner of one handed off, queued behind one that cannot
 	/// hear them here, or handed off as the next turn. False: none of these, so it steers here.
 	async function sendToDiamondTurn(target, text, words) {
-		if (diamondBusy(target.diamondId) && !recoveringHere(target) && interjectMessage(target, text, words)) return true;
+		if (diamondBusy(target.diamondId) && !recoveringHere(target) && sayIntoHere(target, text, words)) return true;
 		var heldThere = diamondBusy(target.diamondId) ? null : peerHeldTurnOf(target);
 		if (heldThere && await sayToRunner(target, heldThere, text, words)) return true;
 		if (diamondBusy(target.diamondId) || recoveringHere(target)) { enqueueMessage(target, text, words); return true; }
@@ -40863,15 +40899,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { left = Array.prototype.slice.call(chat.app.take_interjections() || []); }
 			catch (e) { left = []; }
 		}
+		var took = left.length;
 		if (keep === false) left = [];		// said on another device, which keeps its own copy
 		chat._interject = [];
 		chat._interjectNote = [];
 		// Drained whatever happens, but only put back where there is something to put
 		// it back into: a locked app has just taken the user's content off the screen,
 		// and a deleted chat has nowhere to send it.
-		if (left.length && !locked && chats.indexOf(chat) !== -1) {
+		var back = !!left.length && !locked && chats.indexOf(chat) !== -1;
+		if (back) {
 			chat._queue = (chat._queue || []).length ? left.concat(chat._queue) : left;
 		}
+		if (took) diag('said back', 'chat=' + String(chat.id || '') + ' unheard=' + took
+			+ (back ? ' queued=' + chat._queue.length : keep === false ? ' kept by its device' : ' dropped: nowhere to put it'));
 		journalQueue(chat);
 		if (current === chat) renderQueue();
 	}
@@ -41212,17 +41252,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// re-enter while this Diamond is marked busy, and this runs as that mark comes off.
 	function drainSteerQueue(rec, diamondId, failed) {
 		if (!rec || !(rec._queue || []).length) return;
+		var dq = function (how) { diag('queue drain', 'chat=' + String(rec.id || '') + ' queued=' + rec._queue.length + ' ' + how); };
 		if (_unloading || !currentDiamond || currentDiamond.id !== diamondId) {
 			// Left where it is, badged on the tile, with HOW the turn ended remembered
 			// -- `resumeSteerQueue` needs it to decide send or hand back when the user
 			// comes back, exactly as `resumeQueue` does for a chat.
+			dq('left: its Diamond is not on screen');
 			rec._queueFailed = !!failed;
 			updateQueueBadges();
 			return;
 		}
-		if (failed) { returnQueue(rec); return; }
+		if (failed) { dq('handed back: the turn failed'); returnQueue(rec); return; }
 		rec._queueFailed = false;
-		if (askHolds()) { renderQueue(); return; }		// held under the open question, as a chat's is
+		if (askHolds()) { dq('held under the open question'); renderQueue(); return; }		// held under the open question, as a chat's is
+		dq('next to the election');
 		var next = rec._queue.shift();
 		renderQueue();
 		setTimeout(function () { steerQueued(rec, diamondId, next); }, 0);
@@ -41236,6 +41279,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return;
 		}
 		if (!currentDiamond || currentDiamond.id !== diamondId || diamondBusy(diamondId)) {
+			diag('queue drain', 'chat=' + String(rec.id || '') + ' kept: the election kept it here and it cannot run now');
 			rec._queue = [text].concat(rec._queue || []);
 			updateQueueBadges();
 			renderQueue();
@@ -41261,7 +41305,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Only into the composer of the chat that is actually on screen. A background
 		// chat's queue stays where it is, still visible when the user returns to it,
 		// rather than being pasted into a conversation it was not meant for.
-		if (current !== chat) return;
+		if (current !== chat) { diag('queue back', 'chat=' + String(chat.id || '') + ' queued=' + q.length + ' left: not on screen'); return; }
+		diag('queue back', 'chat=' + String(chat.id || '') + ' queued=' + q.length + ' into the composer');
 		chat._queue = [];
 		chatInput.value = chatInput.value.trim() ? text + '\n\n' + chatInput.value : text;
 		fitComposer();
@@ -54797,6 +54842,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var same = function (a, b) { return !!a.model && a.model === b.model && a.provider === b.provider; };
 		var all = diamondModels();
 		var dr  = M.storedChoice('draft') || { provider: '', model: '' };
+		// A cleared Workers pick falls to the global Workers pick, and a cleared Images pick to the
+		// global Images pick, before either reaches the daimon, so a pick equal to its daimon is a
+		// copy only where that global link is unset or equal too.
+		var gw  = norm((M.storedChoice('workers') || {}).provider, (M.storedChoice('workers') || {}).model);
+		var gi  = norm((M.storedChoice('images') || {}).provider, (M.storedChoice('images') || {}).model);
+		var via = function (g, p) { return !g.model || same(g, p); };
 		var mine = { at: Date.now(), diamondModels: JSON.parse(JSON.stringify(all)), chats: {},
 			draft: { provider: dr.provider, model: dr.model },
 			fold: { provider: cfg.foldProvider || '', model: cfg.foldModel || '' } };
@@ -54826,16 +54877,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var vm = norm(r.visionProvider, r.visionModel);
 			var inForce = dm.model ? dm : d, pick = {}, cl = [];
 			if (same(dm, d)) { pick.provider = ''; pick.model = ''; cl.push('daimon'); }
-			var wKept = !!wk.model && !same(wk, inForce);
+			var wKept = !!wk.model && !(same(wk, inForce) && via(gw, inForce));
 			if (wk.model && !wKept) { pick.workerProvider = ''; pick.workerModel = ''; cl.push('workers'); }
-			if (same(vm, wKept ? wk : inForce)) { pick.visionProvider = ''; pick.visionModel = ''; cl.push('images'); }
+			var vNext = gi.model ? gi : wKept ? wk : gw.model ? gw : inForce;	// what a cleared Images runs on
+			if (same(vm, wKept ? wk : inForce) && same(vm, vNext)) { pick.visionProvider = ''; pick.visionModel = ''; cl.push('images'); }
 			if (!r.ranModel) seeds[id] = { ranProvider: inForce.provider, ranModel: inForce.model };
 			if (cl.length) clearedD[id] = cl;
 			if (Object.keys(pick).length) picks[id] = pick;
 		});
 		var plan = own.map(function (c) {
 			var cm = norm(c.provider, c.model), wk = norm(c.workerProvider, c.workerModel);
-			var p = { c: c, m: same(cm, d), w: same(wk, cm.model ? cm : d) };
+			var p = { c: c, m: same(cm, d), w: same(wk, cm.model ? cm : d) && via(gw, wk) };
 			if (p.m || p.w) clearedC[c.id] = [].concat(p.m ? ['daimon'] : [], p.w ? ['workers'] : []);
 			return p;
 		});
@@ -55000,13 +55052,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			? DaimondModels.effective({ kind: 'diamond', id: id }, 'daimon') : { provider: '', model: '' };
 	}
 
-	/// A model record's own picks, as `DaimondModels.effective` reads them: '' where unset.
+	/// A model record's own picks, as `DaimondModels.effective` reads them: '' where unset. The
+	/// daimon's Effort rides along as `{ level, provider, model, at }`, the model it was set for
+	/// and its stamp, so the Undo of *Everyone uses* can put back a level dropped meanwhile.
 	function modelPicksOf(rec) {
 		rec = rec || {};
 		return {
 			daimon:  { provider: rec.provider || '',       model: rec.model || '' },
 			workers: { provider: rec.workerProvider || '', model: rec.workerModel || '' },
 			images:  { provider: rec.visionProvider || '', model: rec.visionModel || '' },
+			effort:  { level: rec.effort || '', provider: rec.effortProvider || '', model: rec.effortModel || '',
+				at: +rec.eat || 0 },
 		};
 	}
 
@@ -55053,12 +55109,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function clearPick(target, role) { setPick(target, role, null); }
 
 	/// Write one text pick, `pair` as `{ provider, model }` (null clears it), as `clearPick`
-	/// names them: the Undo of *Everyone uses* puts a cleared pick back through here (U2b).
+	/// names them: the Undo of *Everyone uses* puts a cleared pick back through here (U2b),
+	/// and a Diamond's `'effort'`, `{ level, provider, model }` as `modelPicksOf` reads it.
 	/// An unchanged pick writes nothing, so it keeps its stamp.
 	function setPick(target, role, pair) {
 		if (!target) return;
 		var pv = (pair && pair.model) ? (pair.provider || '') : '', md = (pair && pair.model) || '';
 		if (target.kind === 'jobs') { if (role === 'summarising') setFoldPick(pv, md); return; }
+		if (role === 'effort') {
+			var lv = (pair && pair.level) || '';
+			if (target.kind === 'diamond') setDiamondModel(target.id, { effort: lv,
+				effortProvider: lv ? pv : '', effortModel: lv ? md : '' });
+			return;
+		}
 		var ks = role === 'daimon' ? ['provider', 'model'] : role === 'workers' ? ['workerProvider', 'workerModel'] : null;
 		if (!ks) return;
 		if (target.kind === 'diamond') {
@@ -66403,17 +66466,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Diamond primary (`src: 'diamond'`, no `workers`) as `{ daimon }` alone, its workers
 	/// resolving on this device as they always did; and null for an unmarked pair, an older
 	/// asker's stale chat-record copy, which runs this device's own resolution. A marked half this
-	/// device cannot run is NOT swapped for its own: it throws 401. Asked before the claim
-	/// (`errandUnrunnable`), that refuses the turn and the asker runs it at once; met after it (a
-	/// key removed in between), the turn fails as a provider refusal (`runnerErrorKind`).
+	/// device cannot run is NOT swapped for its own: it throws 401, naming the `half` and `model`.
+	/// Asked before the claim (`errandUnrunnable`), that refuses the turn and the asker runs it at
+	/// once; met after it (a key removed in between), the turn fails as a provider refusal
+	/// (`runnerErrorKind`). It logs nothing: each caller says what the 401 means in its own phase,
+	/// `peerReady` as `ready MODELS`, the post-claim guards through `claimedModelsOf`.
 	function sentModelsOf(sent) {
 		if (!sent || !sent.model || (sent.src !== 'asker' && sent.src !== 'diamond')) return null;
 		function run(p, half) {
 			var r = window.DaimondModels && DaimondModels.resolve(p.provider || '', p.model);
 			if (r) return { provider: r.provider, model: r.model };
-			diag('daimon model', half + '=' + p.model + ' unrunnable here, handed back');
 			var eKey = new Error('the turn’s ' + half + ' model has no usable api key on this device');
-			eKey.code = 401;
+			eKey.code  = 401;
+			eKey.half  = half;
+			eKey.model = p.model;
 			throw eKey;
 		}
 		var daimon = run(sent, 'daimon');
@@ -66425,6 +66491,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			workers: { provider: w.provider, model: w.model, chosen: !!(sent.workers && sent.workers.chosen) },
 			images:  { provider: im.provider, model: im.model, chosen: !!(sent.images && sent.images.chosen) },
 		};
+	}
+
+	/// `sentModelsOf` for a turn already claimed, where its 401 really hands the turn back, and so
+	/// is logged as that, once.
+	function claimedModelsOf(sent) {
+		try { return sentModelsOf(sent); }
+		catch (e) {
+			if (e && e.code === 401 && e.half) diag('daimon model', e.half + '=' + e.model + ' unrunnable here, handed back');
+			throw e;
+		}
 	}
 
 	/// The set a daimon turn on Diamond `id` runs on: the one a hand-off's errand carries
@@ -67205,8 +67281,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 		var fa = diamondApp(diamondId, dsPair, steerEff);	// the turn's model (`steerModelFor`), at the turn's Effort
 		_steerApp[diamondId] = fa;		// what words said mid-turn are handed to (UNBLOCK-27 R7)
+		if (detached) _steerDetached[diamondId] = true;
+		else delete _steerDetached[diamondId];
 		var saidBack = function () {
-			if (_steerApp[diamondId] === fa) delete _steerApp[diamondId];
+			if (_steerApp[diamondId] === fa) { delete _steerApp[diamondId]; delete _steerDetached[diamondId]; }
 			reclaimInterjections(rec, function () {
 				return (fa && typeof fa.take_daimon_interjections === 'function') ? fa.take_daimon_interjections(diamondId) : [];
 			}, !detached);

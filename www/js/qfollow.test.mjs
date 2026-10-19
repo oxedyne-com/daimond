@@ -84,6 +84,7 @@ function world(over) {
 		updateQueueBadges: () => {},
 		returnQueue: (c) => { log.push(['returnQueue']); },
 		askHolds: () => false,
+		diag: () => {},
 		recoveringHere: () => false,
 		diamondBusy: () => false,
 		turnHold: () => null,
@@ -110,7 +111,7 @@ function world(over) {
 }
 
 const QUEUE = ['drainQueue', 'sendQueued?'];
-const SEND  = ['sendPressed', 'seatSwitchFor?', 'seatNamesRunner?'];
+const SEND  = ['sendPressed', 'sayIntoHere?', 'seatSwitchFor?', 'seatNamesRunner?'];
 const STEER = ['drainSteerQueue', 'steerQueued?'];
 
 test('Q1: a queued follow-up goes to the election first, and is not run here', async () => {

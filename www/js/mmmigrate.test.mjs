@@ -12,6 +12,7 @@
    (testlift.mjs), one sandbox per device. Red proof:
 
      MM_SRC_REV=14ef947b node www/js/mmmigrate.test.mjs   # F1, F6 fail
+     MM_SRC_REV=529df246 node www/js/mmmigrate.test.mjs   # F8 fails
      node www/js/mmmigrate.test.mjs                       # all pass
 
    F6's peer always runs 14ef947b's code, by `git show`.
@@ -84,7 +85,7 @@ function device(src, stampSrc, o) {
 	localStorage.setItem(MKEY, JSON.stringify(o.models || sh.models));
 	// The models store as models.js holds it: `storedChoice` reads it raw, null with no provider.
 	const ms = { providers: o.empty ? {} : { openrouter: 1, fireworks: 1 }, def: o.def || DEF, defAt: S,
-		draft: sh.draft, draftAt: S };
+		draft: sh.draft, draftAt: S, workers: (o.jobs && o.jobs.workers) || null, images: (o.jobs && o.jobs.images) || null };
 	const win = {};
 	new Function('window', 'Date', stampSrc)(win, DateStub);
 	win.DaimondModels = {
@@ -282,6 +283,30 @@ console.log('\nF7: two devices both migrating converge');
 		[atA.map(pair), atB.map(pair)]);
 	check('F7 and both hold the migrated map', atA.map(pair).join(',') === '|||,|||,' + OR + '|' + GLM + '||', atA.map(pair));
 	check('F7 a follower stays a follower on both', daimon(A.rec('d-reit')) === '|' && daimon(B.rec('d-reit')) === '|');
+}
+
+// ── F8 a copy is cleared only where the global link agrees ──────────────────
+console.log('\nF8: a Workers or Images copy stays where a global Workers or Images pick would catch it');
+{
+	const models = {
+		'd-wk':  rec(OR, GLMF, OR, GLMF),		// Workers a copy of its daimon
+		'd-vm':  rec(OR, GLMF, '', '', OR, GLMF),	// Images a copy of its daimon
+		'd-def': rec(OR, DEF.model, OR, DEF.model, OR, DEF.model),
+	};
+	const chats = [{ id: 'c9', name: 'nine', provider: OR, model: GLM, workerProvider: OR, workerModel: GLM, updatedAt: S, metaAt: S }];
+	const A = device(APP, STAMP, { models, chats, jobs: { workers: { provider: FW, model: FWDS }, images: { provider: OR, model: GEM } } });
+	run('F8 runs', A);
+	const r = A.recs();
+	check('F8 a Workers copy stays over a global Workers pick', workers(r['d-wk']) === OR + '|' + GLMF, r['d-wk']);
+	check('F8 an Images copy stays over a global Images pick', images(r['d-vm']) === OR + '|' + GLMF, r['d-vm']);
+	check('F8 copies of the default stay too', workers(r['d-def']) === OR + '|' + DEF.model && images(r['d-def']) === OR + '|' + DEF.model, r['d-def']);
+	check('F8 the daimon copy of the default still follows', daimon(r['d-def']) === '|', r['d-def']);
+	check('F8 a chat\'s Workers copy stays over a global Workers pick', pair(A.chats[0]) === OR + '|' + GLM + '|' + OR + '|' + GLM, pair(A.chats[0]));
+	// The global picks on the same models: the copies are copies all the way down, and go.
+	const B = device(APP, STAMP, { models: copy(models), chats: copy(chats),
+		jobs: { workers: { provider: OR, model: GLMF }, images: { provider: OR, model: GLMF } } });
+	run('F8 equal-globals run', B);
+	check('F8 with the global picks equal, the copies follow', workers(B.rec('d-wk')) === '|' && images(B.rec('d-vm')) === '|', B.recs());
 }
 
 console.log('\n' + (checks - failures) + '/' + checks + ' passed');

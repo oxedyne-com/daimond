@@ -125,7 +125,7 @@ const have = names.filter((n) => !!src[n]);
 const calls_ = { interject: [], rendered: 0, gave: [], committed: [] };	// what the stubs saw
 function scope() {
 	const mid = { n: 0 };
-	const stubs = { newMid: () => 'mi' + (++mid.n), nowTs: () => Date.now(), commitRatings: (id) => { calls_.committed.push(id); return false; },
+	const stubs = { diag: () => {}, newMid: () => 'mi' + (++mid.n), nowTs: () => Date.now(), commitRatings: (id) => { calls_.committed.push(id); return false; },
 		giveUpSent: (c, w) => { calls_.gave.push(w); }, syncSendMode: () => {}, renderQueue: () => { calls_.rendered++; }, journalQueue: () => {}, _steerApp: {}, current: null };
 	return new Function('window', 'DaimondRatings', ...Object.keys(stubs), have.map((n) => src[n]).join('\n') + '\nreturn { ' + have.join(', ') + ' };')(win, R, ...Object.values(stubs));
 }
