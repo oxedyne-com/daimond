@@ -402,7 +402,7 @@
 	'wire.role_help': '你的角色提示词。在 prompts/ 中编辑它。',
 	'wire.safety_help': '每轮都会附加在你的编辑之后，无法通过修改角色提示词移除。',
 	'wire.tools_help': '只列出这段对话实际拥有的工具 — 不会虚假承诺。',
-	'wire.machine_help': '由强制执行它的同一道围栏写出，说明与实际不会不符。',
+	'wire.machine_help': '模型来自系统消息；这台电脑能触及的范围由强制执行它的同一道围栏写出，有变化时随你的消息发送。',
 	'wire.schemas_help': '每个工具的 JSON 模式，在每次请求中发送。',
 	'wire.diamond_help': '这一轮的文件夹、附件和记忆，每次都重新组装。',
 	'wire.standing_help': '你的 DAIMOND.md，会附加到每一轮的系统消息里。',

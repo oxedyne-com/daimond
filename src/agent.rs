@@ -1169,7 +1169,7 @@ impl Agent {
     ///
     /// A triggered daimon turn -- mail arriving, a schedule firing -- has no person waiting on
     /// its reply (D-20261016-17, rulings section 16: "Post nothing in this chat").  Its word is
-    /// a `pending_raise`, a `pending_clear`, or `pending_none` (offered in such a turn alone).  An
+    /// a `pending_raise`, a `pending_clear`, or `pending_none` (refused outside such a turn).  An
     /// empty final reply after one of them completed, with no call failed or refused, is a quiet
     /// [`TurnEnd::Answered`], whatever the model reasoned: no "report what you did" nudge, which
     /// is what made the model post routine mail in the chat (review R569 R4), and no "ended
@@ -1392,8 +1392,8 @@ impl Agent {
         // `Limits`. Written every turn rather than once, so an arm that changes it between two
         // turns of one conversation is obeyed by the second of them.
         registry.ctx.set_compound(self.limits.borrow().compound);
-        // AND WHETHER THIS TURN REPORTS ON PENDING ALONE, which offers `pending_none` and leads its
-        // message with the note that names its three endings (MAIL-FIX2 item 2).
+        // AND WHETHER THIS TURN REPORTS ON PENDING ALONE, which lets `pending_none` run and leads
+        // its message with the note that names its three endings (MAIL-FIX2 item 2).
         let pending_only = self.pending_only.get();
         registry.ctx.set_pending_only(pending_only);
         let pre = match (pending_only, pre.is_empty()) {
@@ -1466,10 +1466,18 @@ impl Agent {
         }
         working.extend(prior);
 
-        if registry.is_empty() {
-            return self.run_streaming(session, working, on_event).await;
-        }
-        self.run_tool_loop(session, working, registry, on_event).await
+        // THE CONVERSATION'S HOST GOES IN HERE AND COMES BACK OUT ON EVERY EXIT (r578b F2, F5).
+        // A round settles the pin as it ends, but a turn that fails, stops or is cut short returns
+        // before that, and a stall has by then cleared the client's pin while the session kept the
+        // dead host for the next turn to ask first.  Both paths, with tools or without.
+        self.llm.set_pin(session.pin.clone());
+        let out = if registry.is_empty() {
+            self.run_streaming(session, working, on_event).await
+        } else {
+            self.run_tool_loop(session, working, registry, on_event).await
+        };
+        session.pin = self.llm.pin();
+        out
     }
 
     /// Pure-chat path: stream tokens as they arrive (no tools).
@@ -1525,6 +1533,8 @@ impl Agent {
             ).await;
             match result {
                 Ok(resp) => {
+                    // The host this round leaves the conversation pinned to (r578b F5).
+                    session.pin = self.llm.settle_pin(&resp);
                     // The working is NOT emitted here. It went out delta by delta while the
                     // round was running (the `Delta::Reasoning` arm above), which is the only
                     // way it can do the job it is drawn for: a reasoning model spends most of
@@ -7558,6 +7568,81 @@ mod tests {
         assert_eq!(one.pin.map(|p| p.host), Some("InferenceNet".to_string()));
     }
 
+    /// QA-B r578 F2 (failing first).  The pinned host goes quiet twice, so the round is asked
+    /// again and the turn then fails.  `exclude_stalled` cleared the CLIENT's pin, but the turn
+    /// returns on the error before `settle_pin`, so the SESSION keeps the stalled host and the
+    /// next turn's `set_pin` asks it first again.
+    #[tokio::test]
+    async fn test_pin_qab_a_turn_failed_by_a_stall_does_not_keep_the_stalled_host_00() {
+        let registry = one_tool();
+        let named = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"id\":\"gen-1\",\"provider\":\"InferenceNet\",\"model\":\"m\",\
+                 \"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\
+                 \"delta\":{\"content\":\"Hi\"}}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let silent = || crate::llm::tests::Reply::KeepAlive {
+            first: Some("data: {\"provider\":\"InferenceNet\",\"choices\":[{\"delta\":\
+                {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
+            every_ms: 100,
+            total_ms: 20_000,
+        };
+        let (port, _seen) = crate::llm::tests::start_stub(vec![named, silent(), silent()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        llm.set_stream_idle_ms(1_000);
+        let model = llm.model.clone();
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut s = Session::new(fmt!("s1"), fmt!("one"), model.clone());
+        let res = a.run_turn(&mut s, fmt!("hello"), &registry, &mut |_| {}).await;
+        assert!(res.is_ok(), "{:?}", res);
+        assert_eq!(s.pin.as_ref().map(|p| p.host.as_str()), Some("InferenceNet"));
+        let res = a.run_turn(&mut s, fmt!("again"), &registry, &mut |_| {}).await;
+        assert!(res.is_err(), "two silences should fail the turn: {:?}", res);
+        assert_ne!(s.pin.as_ref().map(|p| p.host.as_str()), Some("InferenceNet"),
+            "the conversation kept the host that just stalled twice as its pin");
+    }
+
+    /// r578b F5 (QA-B, failing first): a turn with no tools pins the host that answered it, and
+    /// the next such turn is handed that pin, as a tool turn is.  The request body shows the pin
+    /// only to OpenRouter, so the hand-in is read off the pin itself: a standing pin is not moved
+    /// by a round a fallback answered, and a turn handed none would pin the fallback.
+    #[tokio::test]
+    async fn test_r578b_a_tool_less_turn_pins_its_host_and_the_next_one_asks_it_first_00() {
+        let named = |host: &str, text: &str| crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                fmt!("data: {{\"id\":\"gen-1\",\"provider\":\"{}\",\"model\":\"m\",\
+                    \"object\":\"chat.completion.chunk\",\"choices\":[{{\"index\":0,\
+                    \"delta\":{{\"content\":\"{}\"}}}}]}}\n\n", host, text),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            named("DeepInfra", "Hi"), named("Novita", "Again"),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let model = llm.model.clone();
+        let a = Agent::new(llm, "You are Daimond.");
+        let registry = no_tools();
+        let mut s = Session::new(fmt!("s1"), fmt!("one"), model.clone());
+        let res = a.run_turn(&mut s, fmt!("hello"), &registry, &mut |_| {}).await;
+        assert!(res.is_ok(), "{:?}", res);
+        assert_eq!(s.pin.as_ref().map(|p| p.host.as_str()), Some("DeepInfra"),
+            "a tool-less turn did not pin the host that answered it");
+        // The client's own pin cleared, as another conversation on this agent would leave it, so
+        // only the session's can carry the host over.
+        a.llm.set_pin(None);
+        let res = a.run_turn(&mut s, fmt!("again"), &registry, &mut |_| {}).await;
+        assert!(res.is_ok(), "{:?}", res);
+        assert_eq!(s.pin.as_ref().map(|p| p.host.as_str()), Some("DeepInfra"),
+            "the next tool-less turn was not handed its conversation's pin");
+    }
+
     #[test]
     fn test_the_stop_after_three_continuations_names_both_figures_00() {
         // A model told only "the round limit" after six hundred rounds would reasonably expect
@@ -7858,6 +7943,42 @@ mod tests {
         let (_, bodies) = pending_only_turn_seen(call_then_empty("pending_none")).await;
         assert!(bodies[0].contains("reports only through the Pending panel"), "the note is missing");
         assert!(bodies[0].contains("\"pending_none\""), "pending_none was not offered");
+    }
+
+    /// r578b A1 (QA-A, failing first): a pending-only turn between two ordinary ones must not
+    /// change the system message or the tools array, going in or coming out.  Each change is a
+    /// full miss of the provider's cache on that turn's first request.
+    #[tokio::test]
+    async fn test_r578b_a_pending_only_turn_keeps_the_system_message_and_tools_byte_identical_00() {
+        let mut registry = one_tool();
+        registry.tools.push(crate::tools::Tool::PendingNone);
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            sse_saying("one"), sse_saying("two"), sse_saying("three"),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(10);
+        let mut session = Session::new(fmt!("s1"), fmt!("mail"), fmt!("model"));
+        for (pending, ask) in [(false, "hello"), (true, "new mail arrived"), (false, "and now?")] {
+            a.set_pending_only(pending);
+            let _ = a.run_turn(&mut session, fmt!("{}", ask), &registry, &mut |_| {}).await;
+        }
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        assert_eq!(3, bodies.len(), "one request a turn was expected");
+        let sys = |b: &str| crate::llm::extract_json_objects(b, "messages")
+            .and_then(|m| m.into_iter().next())
+            .unwrap_or_else(|| panic!("no system message in {}", b));
+        let tools = |b: &str| crate::llm::extract_json_objects(b, "tools")
+            .unwrap_or_else(|| panic!("no tools in {}", b));
+        for i in 1..3 {
+            assert_eq!(sys(&bodies[0]), sys(&bodies[i]),
+                "turn {} changed the system message, a full cache miss", i + 1);
+            assert_eq!(tools(&bodies[0]), tools(&bodies[i]),
+                "turn {} changed the tools array, a full cache miss", i + 1);
+        }
+        assert!(bodies[1].contains("reports only through the Pending panel"),
+            "the pending-only turn lost its note");
     }
 
     /// The other side of the same rule: a call that went wrong is not routine, so a pending-only

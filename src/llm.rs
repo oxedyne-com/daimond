@@ -726,6 +726,26 @@ pub struct ChatResponse {
     /// complete HTTP 200, and sending the same request again costs money and
     /// produces the same cut.
     pub truncated:         bool,
+    pub provider:          String,  // the host that answered, as `ChatOnceResponse::provider`
+    pub stalled:           bool,    // as `ChatOnceResponse::stalled`
+}
+
+/// What a finished round says about its host, for [`LlmClient::settle_pin`]: either kind of
+/// response, so a turn with tools and one without pin by the same rule (r578b F5).
+pub trait PinRound {
+    fn host(&self) -> &str;
+    /// Did the round end neither stopped nor stalled, so its host is worth asking again?
+    fn ended_clean(&self) -> bool;
+}
+
+impl PinRound for ChatOnceResponse {
+    fn host(&self) -> &str { &self.provider }
+    fn ended_clean(&self) -> bool { !self.aborted && !self.stalled }
+}
+
+impl PinRound for ChatResponse {
+    fn host(&self) -> &str { &self.provider }
+    fn ended_clean(&self) -> bool { !self.aborted && !self.stalled }
 }
 
 /// A tool call that arrived as TEXT, written in the model's own native call syntax, with no
@@ -1702,6 +1722,8 @@ impl LlmClient {
             retries:           resp.retries,
             thinking:          resp.thinking,
             truncated:         resp.truncated,
+            provider:          resp.provider,
+            stalled:           resp.stalled,
         })
     }
 
@@ -2388,9 +2410,11 @@ impl LlmClient {
     /// still gets a fresh connection and, on OpenRouter, a fresh choice of provider.
     ///
     /// A stall on the conversation's pinned host also clears the pin, whatever else holds: the
-    /// host that answers the retry is the one [`settle_pin`](Self::settle_pin) pins next.
+    /// host that answers the retry is the one [`settle_pin`](Self::settle_pin) pins next.  A
+    /// stall that names no host (keep-alives and no data chunk) clears it too: the pinned host
+    /// was asked first, so it is the likely culprit, though not proven enough to ignore.
     fn exclude_stalled(&self, culprit: &str, ignore: &mut Vec<String>) {
-        let pinned = matches!(&*self.pin.borrow(), Some(p) if !culprit.is_empty() && p.host == culprit);
+        let pinned = matches!(&*self.pin.borrow(), Some(p) if culprit.is_empty() || p.host == culprit);
         if pinned { *self.pin.borrow_mut() = None; }
         if culprit.is_empty() || self.provider_routing.borrow().only { return; }
         if ignore.iter().any(|p| p == culprit) { return; }
@@ -2413,11 +2437,11 @@ impl LlmClient {
     /// moved by a round a fallback answered: the pinned host is still the one asked for.  A
     /// stalled or stopped round names no host worth asking for again, and a pin taken under
     /// another model is dropped, whichever round this was.
-    pub fn settle_pin(&self, resp: &ChatOnceResponse) -> Option<HostPin> {
+    pub fn settle_pin<R: PinRound>(&self, resp: &R) -> Option<HostPin> {
         let mut pin = self.pin.borrow_mut();
         if matches!(&*pin, Some(p) if p.model != self.model) { *pin = None; }
-        if pin.is_none() && !resp.aborted && !resp.stalled && !resp.provider.is_empty() {
-            *pin = Some(HostPin { model: self.model.clone(), host: resp.provider.clone() });
+        if pin.is_none() && resp.ended_clean() && !resp.host().is_empty() {
+            *pin = Some(HostPin { model: self.model.clone(), host: resp.host().to_string() });
         }
         pin.clone()
     }
@@ -7410,6 +7434,22 @@ pub mod tests {
         // A stall on some OTHER host leaves the pin alone.
         client.exclude_stalled("Novita", &mut Vec::new());
         assert_eq!(client.pin().map(|p| p.host), Some("DeepInfra".to_string()));
+    }
+
+    /// QA-B r578 F1 (failing first).  The r540 stall -- `: OPENROUTER PROCESSING` and no data
+    /// chunk -- names no host, so `exclude_stalled("")` is what the stream loop calls.  Under a
+    /// pin the request that went quiet was steered to the pinned host first, so the retry must
+    /// not be steered straight back to it: before r578 the retry floated to a fresh host.
+    #[test]
+    fn test_pin_qab_an_unnamed_stall_does_not_send_the_retry_back_to_the_pinned_host_00() {
+        let client = test_client("openrouter.ai", 443, "z-ai/glm-5.3");
+        let msgs = [ChatMessage::user("hi".to_string())];
+        client.settle_pin(&pin_round("InferenceNet"));
+        let mut ignore = Vec::new();
+        client.exclude_stalled("", &mut ignore);
+        let retry = client.build_body_ignoring(&msgs, None, true, &ignore);
+        assert!(!retry.contains("\"order\":[\"InferenceNet\"]"),
+            "a stall that named nobody sent the retry back to the pinned host: {}", retry);
     }
 
     #[test]

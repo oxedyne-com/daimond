@@ -312,7 +312,7 @@
 	'wire.role_help': 'Seu prompt de papel. Edite-o em prompts/.',
 	'wire.safety_help': 'Adicionado após suas edições, a cada turno. Não pode ser removido editando seu prompt.',
 	'wire.tools_help': 'Só as ferramentas que esta conversa realmente tem — nada prometido à toa.',
-	'wire.machine_help': 'Escrito a partir da mesma cerca que o aplica — não pode contradizê-la.',
+	'wire.machine_help': 'O modelo, da mensagem de sistema; e o que este computador alcança, escrito a partir da mesma cerca que o aplica e enviado com sua mensagem quando muda.',
 	'wire.schemas_help': 'O esquema JSON de cada ferramenta, enviado em cada requisição.',
 	'wire.diamond_help': 'A pasta, os anexos e a memória deste turno, montados a cada vez.',
 	'wire.standing_help': 'Seu DAIMOND.md, anexado à mensagem de sistema de cada turno.',

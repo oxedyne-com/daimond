@@ -316,7 +316,7 @@
 	'wire.role_help': 'Votre prompt de rôle. Modifiez-le dans prompts/.',
 	'wire.safety_help': 'Ajouté après vos modifications, chaque tour. Ne peut être retiré en éditant votre prompt.',
 	'wire.tools_help': 'Seulement les outils que cette conversation détient réellement — rien de promis à tort.',
-	'wire.machine_help': 'Écrit depuis la même barrière qui l\'impose — ne peut pas la contredire.',
+	'wire.machine_help': 'Le modèle, depuis le message système ; et ce que cet ordinateur peut atteindre, écrit depuis la même barrière qui l\'impose et envoyé avec votre message quand il change.',
 	'wire.schemas_help': 'Le schéma JSON de chaque outil, envoyé à chaque requête.',
 	'wire.diamond_help': 'Le dossier, les pièces jointes et la mémoire de ce tour, recomposés à chaque fois.',
 	'wire.standing_help': 'Votre DAIMOND.md, ajouté au message système de chaque tour.',

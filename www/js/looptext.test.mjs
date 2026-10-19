@@ -163,3 +163,36 @@ test("every conversation's first turn note carries today's date in ISO and the u
 	// ISO for the model whatever the page shows: never a Holocene year.
 	assert.ok(!brief.includes('1' + iso), brief);
 });
+
+// ── The Wire draws what is sent, where it is said to be (r578b A3, A4) ──────────
+// A4: the machine note moved out of the system message into the turn note, so the band "This
+// computer" held only the model note. The engine names the `<machine>` block as the note carries
+// it, and the page draws it under that band and out of the note band: each sent byte drawn once.
+test("the Wire names the turn note's <machine> block, and the page draws it under This computer", { skip: !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wasm here' }, async () => {
+	const m = await import(join(PKG, 'oxedyne_daimond.js'));
+	m.initSync({ module: readFileSync(join(PKG, 'oxedyne_daimond_bg.wasm')) });
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
+	const wire = JSON.parse(await app.wire_chat_system());
+	const blk = wire.note.match(/^<machine>\n[\s\S]*?\n<\/machine>$/m);
+	assert.ok(blk, "a first turn's note carries no <machine> block:\n" + wire.note);
+	assert.equal(wire.machine_note, blk[0], 'the Wire does not name the machine block the note carries');
+	const at = APP.indexOf("wireBand(t('wire.machine')");
+	assert.ok(at > 0, 'no This computer band');
+	const near = APP.slice(Math.max(0, at - 1500), at + 1500);
+	assert.ok(/machine_note/.test(near), 'the This computer band does not draw the turn note\'s machine block');
+});
+
+// A3: a Diamond's Wire composed its turn note as if no block had ever been sent, so it showed every
+// block while saying "as they changed since their last copy". It is handed the conversation the next
+// steer would start from, and the engine reads it as `steer_crystal` does.
+test("a Diamond's Wire composes its note over the conversation the next turn starts from", () => {
+	const RS = readFileSync(join(HERE, '..', '..', 'src', 'wasm', 'app.rs'), 'utf8');
+	const ws = RS.slice(RS.indexOf('pub async fn wire_system('));
+	const body = ws.slice(0, ws.indexOf('\n    }\n'));
+	assert.ok(!/wire_json\([^)]*&\[\]\)/.test(body), 'wire_system still composes its note over no conversation');
+	assert.ok(/seed_prior\(/.test(body), 'wire_system does not read the prior as steer_inner does');
+	const si = RS.slice(RS.indexOf('async fn steer_inner('));
+	assert.ok(/seed_prior\(/.test(si.slice(0, 6000)), 'steer_inner and the Wire read the prior by different code');
+	const call = APP.slice(APP.indexOf('app.wire_system(did'), APP.indexOf('app.wire_system(did') + 300);
+	assert.ok(/daimonPrior\(/.test(call), 'the page does not hand the Wire the prior it hands steer_crystal');
+});

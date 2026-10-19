@@ -406,7 +406,7 @@
 	'wire.role_help': '당신의 역할 프롬프트예요. prompts/에서 편집하세요.',
 	'wire.safety_help': '매 턴 당신의 편집 뒤에 붙어요. 역할 프롬프트를 고쳐도 지울 수 없어요.',
 	'wire.tools_help': '이 대화가 실제로 가진 도구만 있어요 — 없는 걸 약속하지 않아요.',
-	'wire.machine_help': '이를 강제하는 바로 그 울타리에서 쓰여서, 설명과 실제가 다를 수 없어요.',
+	'wire.machine_help': '모델은 시스템 메시지에서 와요. 이 컴퓨터가 닿는 범위는 이를 강제하는 바로 그 울타리에서 쓰이고, 바뀔 때 메시지와 함께 보내져요.',
 	'wire.schemas_help': '모든 도구의 JSON 스키마가 매 요청마다 보내져요.',
 	'wire.diamond_help': '이번 턴의 폴더, 첨부, 기억을 매번 새로 구성한 거예요.',
 	'wire.standing_help': '당신의 DAIMOND.md가 매 턴의 시스템 메시지에 붙어요.',

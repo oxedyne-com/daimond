@@ -744,7 +744,9 @@ pub const FOLD_NOTE: &str =
 	 nothing inside it is parsed, and your headings reach the reader as literal hashes.\n\n\
 	 Never fold the whole answer. Above the fold goes the answer itself and any caveat on it — a \
 	 qualification behind a fold is one they will act without — and a fold with nothing above it \
-	 opens on nothing. When the whole answer IS a sentence or two, fold nothing.";
+	 opens on nothing. When the whole answer IS a sentence or two, fold nothing.\n\n\
+	 Placeholders like \"[folded …]\" in earlier replies are a removed feature: never write one; a \
+	 fold always holds its full text.";
 
 /// That a verifier is run with `verify` and not built out of `run` calls, appended to every role
 /// whose turn is watched by a person.
@@ -2341,10 +2343,23 @@ mod tests {
 	/// than a label. Recorded rather than quietly widened, so the next reader can see what the
 	/// extra tokens bought and cut the right one if they must. Nothing in here is decorative; the
 	/// cut that costs least is the parenthetical list of what counts as working.
+	///
+	/// 275 since r578b (2026-10-19): the last sentence disowns the `[folded …]` placeholders that
+	/// conversations from before r578 still hold and now send word for word (QA-B F8).
 	#[test]
 	fn test_the_fold_note_stays_inside_its_budget() {
 		let n = FOLD_NOTE.chars().count() / 4;
-		assert!(n <= 260, "the fold note is about {} tokens, over its budget: {}", n, FOLD_NOTE);
+		assert!(n <= 275, "the fold note is about {} tokens, over its budget: {}", n, FOLD_NOTE);
+	}
+
+	/// r578b F8 (QA-B): conversations from before r578 hold the model's own placeholders, such as
+	/// `[folded to the user, 1010 characters…]`, and they now go out word for word.  The note
+	/// says they are a removed feature, so the model does not copy them as a format.
+	#[test]
+	fn test_r578b_the_fold_note_disowns_the_old_fold_placeholders() {
+		assert!(FOLD_NOTE.contains("[folded"), "the note does not name the placeholder: {}", FOLD_NOTE);
+		assert!(FOLD_NOTE.contains("never write one"), "the note does not forbid it: {}", FOLD_NOTE);
+		assert!(FOLD_NOTE.contains("full text"), "the note does not say a fold keeps its text: {}", FOLD_NOTE);
 	}
 
 	/// **The verifier ARGUMENT reaches the two roles that pay for it, and the worker is told the

@@ -167,7 +167,7 @@ pub struct TurnState {
     // arm can be read against on the parity bank.  Flipping the default is one line here once
     // the gate has reported.
     pub compound: bool,
-    // A pending-only turn (`crate::agent::Agent::set_pending_only`), which alone is offered
+    // A pending-only turn (`crate::agent::Agent::set_pending_only`), which alone may call
     // `pending_none`. A setting like `compound` beside it, written at the start of every turn.
     pub pending_only: bool,
     // The turn's byte ledger
@@ -14021,7 +14021,7 @@ impl ToolContext {
     }
 
     /// Mark this agent's turns as reporting through the Pending panel alone, which is what
-    /// offers `pending_none`.  Written by [`crate::agent::Agent::run_turn`] at every turn.
+    /// lets `pending_none` run.  Written by [`crate::agent::Agent::run_turn`] at every turn.
     pub fn set_pending_only(&self, on: bool) {
         lock_cache(&self.read_seen).pending_only = on;
     }
@@ -17172,6 +17172,18 @@ const PENDING_CLEARED: &str = "Cleared.";
 // What `pending_none` answers: the turn's word is in, so the model ends the turn.
 const PENDING_NONE_SAID: &str = "Noted: nothing raised. End now, with no reply.";
 
+/// `pending_none`, the quiet end of a turn that reports through the Pending panel alone.  Offered
+/// on every turn so the tool list never changes (r578b A1), so the refusal is made here, at the
+/// call, in both builds: a turn with a person waiting on it answers them in its chat.
+fn pending_none(ctx: &ToolContext) -> Outcome<String> {
+    if !ctx.pending_only_on() {
+        return Err(err!(
+            "Tool 'pending_none' ends a turn that reports through the Pending panel alone; this \
+            turn has a person waiting on it, so answer them in the chat."; Invalid, Input));
+    }
+    Ok(PENDING_NONE_SAID.to_string())
+}
+
 /// Did this `pending_raise` / `pending_clear` result change the panel?  A clear that found
 /// nothing and a raise the person had already dismissed are `Done` but changed nothing, so they
 /// are not a turn's report (src/agent.rs `Claims::alerted`, review AP-3).
@@ -20004,7 +20016,7 @@ impl Tool {
             Tool::MailDraft   => "Write an email and leave it in the user's drafts. THIS IS THE WHOLE OF YOUR ACCESS TO SENDING AND IT DOES NOT SEND: it composes a proper message and saves it as a draft in the Mail panel, where the user reads it, corrects it and presses Send themselves. No tool puts a message on the wire, so do not look for one -- say you have prepared a draft. Headers, MIME and encoding are built for you, so write the body as plain text.",
             Tool::PendingRaise => "Put an alert on the user's Pending panel, the one place they look for alerts, on every device; do not also post it in your chat. Raising a 'key' again updates that item in place. Clear it with pending_clear once the condition is over.",
             Tool::PendingClear => "Take this Diamond's alert off the user's Pending panel, on every device, by its 'key'.",
-            Tool::PendingNone  => "Nothing here needs the user: call this, then end with no reply.",
+            Tool::PendingNone  => "Pending-only turns: nothing needs the user, so call this, then end with no reply.",
             Tool::StateSet     => "Set one '## key' section of STATE.md; empty text drops it. Past 4 KiB the oldest go to the archive.",
             Tool::Compound    => "Several READS in one round, answered in order, each under a '--- [n]' header. Each op in 'ops' names one read and carries that read's own arguments: {\"op\":\"list\",\"path\":\"src\"}, {\"op\":\"read\",\"paths\":[\"a.js\",\"b.js\"]}, {\"op\":\"search\",\"query\":\"fmt\",\"glob\":\"**/*.js\"}. Use it whenever reads go together. A refused op keeps its slot and says why; the rest still run. The ops share one byte budget, and the header names any op it cut. READS only.",
         }
@@ -20308,7 +20320,7 @@ impl Tool {
                 the image, or run the OCR yourself with 'shell'."; Unimplemented)),
             Tool::MailList | Tool::MailSearch | Tool::MailRead | Tool::MailDraft =>
                 Self::mail_unavailable(),
-            Tool::PendingNone => Ok(PENDING_NONE_SAID.to_string()),
+            Tool::PendingNone => pending_none(ctx),
             Tool::StateSet => Err(err!(
                 "Tool 'state_set' sets a section of a Diamond's STATE.md in the browser's storage; \
                 this is the native build, which has no Diamonds in it."; Unimplemented)),
@@ -22870,7 +22882,7 @@ impl Tool {
             Tool::MailSearch => Self::mail_search(args_json).await,
             Tool::MailRead   => Self::mail_read(args_json).await,
             Tool::MailDraft  => Self::mail_draft(args_json).await,
-            Tool::PendingNone => Ok(PENDING_NONE_SAID.to_string()),
+            Tool::PendingNone => pending_none(ctx),
             Tool::StateSet => return Self::state_set(args_json, ctx).await,
             // The page keeps the alert under the turn's own Diamond, never the model's word.
             Tool::PendingRaise | Tool::PendingClear => {
@@ -30172,9 +30184,10 @@ impl ToolRegistry {
             // gate is the OFFER and not the dispatch, exactly as `file_show`'s is: a model that
             // names it anyway gets the tool, which costs nothing and surprises nobody.
             .filter(|t| !(matches!(t, Tool::Compound) && !self.ctx.compound_on()))
-            // AND NOT `pending_none` OUTSIDE A PENDING-ONLY TURN. It is that turn's quiet end, and
-            // a turn with a person waiting on it answers in its chat (MAIL-FIX2 item 2).
-            .filter(|t| !(matches!(t, Tool::PendingNone) && !self.ctx.pending_only_on()))
+            // `pending_none` IS OFFERED ON EVERY TURN and refused at the call outside a
+            // pending-only one (r578b A1): offered on that turn alone, it changed the tools array
+            // and the system message's tool sentence going in and coming out, two full misses of
+            // the provider's cache.  See `pending_none`.
             // AND NOT A TOOL THIS FAMILY DOES NOT ADDRESS.  Measured, never precautionary: see
             // `crate::profile::Family::withholds` for the bank row behind each one.
             .filter(|t| !self.family.get().withholds(t))
@@ -49544,6 +49557,10 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         // one round instead of many" clause, with STATE.md's per-section rule added) and
         // `file_show` 58 (the list of picture formats). Net +130: 47,453 pending-only with
         // compound on (47 under), 47,357 compound on, 46,184 off.
+        //
+        // 2026-10-19, `pending_none` OFFERED ON EVERY TURN (r578b A1, so a pending-only turn no
+        // longer changes the tools array), its description 18 longer to say which turns it is for:
+        // every belt now pays it, so the compound-on figure is the pending-only one, 47,499.
         const BUDGET: usize = 47_500;
 
         set_locked_packs("");
@@ -49596,15 +49613,12 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             "the prefix with `compound` switched on is {} characters, over the {} budget: tighten \
             the text, which is paid on every round of the trial arm, and do not raise the number",
             on, BUDGET);
-        // AND A PENDING-ONLY TURN, which is offered `pending_none` as well (MAIL-FIX2 item 2),
-        // measured with the trial arm on too, the dearest belt a daimon can be handed.
+        // AND A PENDING-ONLY TURN PAYS THE SAME, byte for byte: `pending_none` is offered on
+        // every turn (r578b A1), so the turn that may call it changes nothing in the request.
         trial.ctx.set_pending_only(true);
         let mail: usize = trial.offered().iter()
             .map(|t| t.description().len() + t.parameters().len()).sum();
-        println!("[prefix] pending-only, compound on: {} (pending_none alone {})", mail, mail - on);
-        assert!(mail <= BUDGET,
-            "the prefix of a pending-only turn with `compound` on is {} characters, over the {} \
-            budget: tighten the text, and do not raise the number", mail, BUDGET);
+        assert_eq!(on, mail, "a pending-only turn changed the tool prefix, a full cache miss");
         // AND WHAT AN ACCOUNT THAT HAS BOUGHT NOTHING PAYS, which is the gate in `offered`
         // measured rather than asserted about: five of the thirty-six are sold, and on the
         // commonest account they are not in the request at all.
@@ -49709,7 +49723,7 @@ impl Tool {
                 "ocr needs the browser's OCR bridge."; Unimplemented)),
             Tool::MailList | Tool::MailSearch | Tool::MailRead | Tool::MailDraft =>
                 Self::mail_unavailable(),
-            Tool::PendingNone => Ok(PENDING_NONE_SAID.to_string()),
+            Tool::PendingNone => pending_none(ctx),
             Tool::StateSet => Err(err!(
                 "Tool 'state_set' sets a section of a Diamond's STATE.md in the browser's storage; \
                 this is the native build, which has no Diamonds in it."; Unimplemented)),
@@ -50602,19 +50616,22 @@ mod tests_pending {
         assert!(offered.contains(&Tool::PendingClear), "pending_clear is held but not offered");
     }
 
-    /// MAIL-FIX2 item 2: `pending_none` is a pending-only turn's quiet end, held on every daimon
-    /// and offered only once the turn is marked pending-only.  It changes nothing, so it runs
-    /// the same in either build.
-    #[test]
-    fn test_pending_none_is_offered_only_in_a_pending_only_turn_00() {
-        assert_eq!(Some(Tool::PendingNone), Tool::from_name("pending_none"));
-        assert!(Tool::daimon().contains(&Tool::PendingNone));
-        assert!(!Tool::browser().contains(&Tool::PendingNone));
+    /// r578b A1 (QA-A): `pending_none` is offered on every turn, so the tools array and the
+    /// system message's tool sentence stay byte-identical across a pending-only turn and the
+    /// provider's cache holds; outside such a turn the call is refused with a plain tool error,
+    /// through the same door both builds dispatch by.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_r578b_pending_none_is_offered_always_and_refused_outside_a_pending_only_turn_00() {
         let reg = ToolRegistry::new(Tool::daimon(), super::tests::ctx());
-        assert!(!reg.offered().contains(&Tool::PendingNone), "offered to a turn a person waits on");
+        let normal = reg.offered();
+        assert!(normal.contains(&Tool::PendingNone), "not offered to an ordinary turn");
+        let refused = Tool::PendingNone.execute("{}", &reg.ctx).await;
+        assert!(refused.is_err(), "pending_none ran in a turn a person waits on: {:?}", refused);
+        assert!(Tool::PendingNone.execute_sync("{}", &reg.ctx).is_err(), "the test shim disagrees");
         reg.ctx.set_pending_only(true);
-        assert!(reg.offered().contains(&Tool::PendingNone), "not offered to a pending-only turn");
-        let said = Tool::PendingNone.execute_sync("{}", &reg.ctx).expect("pending_none failed");
+        assert_eq!(normal, reg.offered(), "a pending-only turn changed the tool offer");
+        let said = Tool::PendingNone.execute("{}", &reg.ctx).await.expect("pending_none failed");
         assert!(said.as_text().starts_with("Noted"), "pending_none answered: {:?}", said);
     }
 

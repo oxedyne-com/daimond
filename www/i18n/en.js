@@ -1011,7 +1011,7 @@
 	'wire.role_help':     'Your role prompt. Edit it in prompts/.',
 	'wire.safety_help':   'Appended after your edits, every turn. Cannot be removed from your prompt.',
 	'wire.tools_help':    'Only the tools this conversation actually holds — nothing promised falsely.',
-	'wire.machine_help':  'Written from the same fence that enforces it — cannot disagree.',
+	'wire.machine_help':  'The model, from the system message; and what this computer can reach, written from the same fence that enforces it and sent with your message when it changes.',
 	'wire.schemas_help':  'Every tool\'s JSON schema, sent every request.',
 	'wire.diamond_help':  'This turn\'s folder, attachments and memory, composed fresh each time.',
 	'wire.standing_help': 'Your DAIMOND.md, appended to every turn\'s system message.',

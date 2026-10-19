@@ -44723,14 +44723,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// is tuned from exactly that (`lens gaps`). One row per round, keyed `w`
 					// like the worker's other rows; a stall gets its own kind, as in `runTurn`.
 					wround += 1;
+					// The round's own prompt and cached tokens (r578 U3), which the round's
+					// `round` rows take too: without this they took the feed's starting
+					// {0,0} and stated a prompt and a cache of nothing (r578b F3).
+					var wuse = wrounds.meta(ev);
 					dsEvent(ev.stalled ? 'stalled' : 'round_meta', {
 						w: String(run.id || ''), r: wround,
 						gen: String(ev.gen || '').slice(0, 40),
 						finish: String(ev.finish || '').slice(0, 24),
 						nfinish: String(ev.nfinish || '').slice(0, 24),
 						provider: String(ev.provider || '').slice(0, 40),
-						// The round's own prompt and cached tokens (r578 U3).
-						p: Math.round(Number(ev.p) || 0), ca: Math.round(Number(ev.ca) || 0),
+						p: wuse.p, ca: wuse.ca,
 						b: Math.round(Number(ev.b) || 0), f: Math.round(Number(ev.f) || 0),
 						g: Math.round(Number(ev.g) || 0), ms: Math.round(Number(ev.ms) || 0),
 					});
@@ -73425,7 +73428,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// HELD: this await borrows the chat's own app for as long as it takes, and a
 			// turn starting underneath it must wait rather than throw. See `engineHold`.
 			w = JSON.parse(await engineHold(app, did
-				? app.wire_system(did, JSON.stringify(marks.toolkits  || []))
+				// The conversation the next steer starts from, as `doSteer` lays it, so the turn
+				// note drawn is the one that turn sends: only what changed since its last copy.
+				? app.wire_system(did, JSON.stringify(marks.toolkits  || []), daimonPrior(current))
 				: app.wire_chat_system()));
 		} catch (e) { dropWire(); return; }
 		// Still the thread this render was started for, and still wanted. Re-read rather than
@@ -73487,13 +73492,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (w.tools_sentence) {
 			group._body.appendChild(wireBand(t('wire.tools'), t('wire.tools_why'), t('wire.tools_help'), w.tools_sentence));
 		}
-		if (w.machine) {
-			group._body.appendChild(wireBand(t('wire.machine'), t('wire.machine_why'), t('wire.machine_help'), w.machine));
+		// THIS COMPUTER is two texts on the wire: the model note, in the system message, and the
+		// machine note, which rides in the turn note (r578) whenever it changed. The engine names
+		// the second as the note carries it (`machine_note`), so it is drawn here, under the band
+		// that says what it is, and cut from the note's band: each byte sent is drawn once (r578b A4).
+		var mnote = String(w.machine_note || ''), note = String(w.note || '');
+		var mat = mnote ? note.indexOf(mnote) : -1;
+		if (mat >= 0) note = (note.slice(0, mat) + note.slice(mat + mnote.length)).replace(/\n{3,}/g, '\n\n').trim();
+		else mnote = '';
+		var machine = [String(w.machine || ''), mnote].filter(Boolean).join('\n\n');
+		if (machine) {
+			group._body.appendChild(wireBand(t('wire.machine'), t('wire.machine_why'), t('wire.machine_help'), machine));
 		}
 		// THE TURN'S NOTE (r578): what changes from turn to turn rides with the person's message,
 		// not in the system message, so it is drawn apart from the bands above it.
-		if (w.note) {
-			group._body.appendChild(wireBand(t('wire.note'), t('wire.note_why'), t('wire.note_help'), w.note));
+		if (note) {
+			group._body.appendChild(wireBand(t('wire.note'), t('wire.note_why'), t('wire.note_help'), note));
 		}
 		group._body.appendChild(wireBand(
 			t('wire.schemas', { n: (w.names || []).length }), t('wire.schemas_why'),

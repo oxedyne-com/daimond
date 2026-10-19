@@ -316,7 +316,7 @@
 	'wire.role_help': 'Dein Rollenprompt. Bearbeite ihn in prompts/.',
 	'wire.safety_help': 'Jede Runde nach deinen Änderungen angehängt. Aus deinem Rollenprompt nicht entfernbar.',
 	'wire.tools_help': 'Nur die Tools, die dieses Gespräch tatsächlich hat — nichts fälschlich versprochen.',
-	'wire.machine_help': 'Aus demselben Zaun geschrieben, der es durchsetzt — kann nicht widersprechen.',
+	'wire.machine_help': 'Das Modell, aus der Systemnachricht; und was dieser Computer erreicht, aus demselben Zaun geschrieben, der es durchsetzt, und mit deiner Nachricht gesendet, wenn es sich ändert.',
 	'wire.schemas_help': 'Das JSON-Schema jedes Tools, bei jeder Anfrage gesendet.',
 	'wire.diamond_help': 'Ordner, Anhänge und Erinnerung dieses Zugs, jedes Mal neu zusammengestellt.',
 	'wire.standing_help': 'Deine DAIMOND.md, jeder Systemnachricht jeder Runde angehängt.',

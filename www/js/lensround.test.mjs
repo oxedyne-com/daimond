@@ -71,13 +71,15 @@ test('a round_meta of prompt 78000 and cached 74000 yields a round row of ctx 78
 	assert.equal(got.length, 1);
 	assert.equal(got[0].ctx, 78000, 'ctx is not this round\'s prompt tokens');
 	assert.equal(got[0].ca, 74000, 'ca is not this round\'s cached tokens');
+	// And the host that answered, so one row holds host, prompt and cached tokens (r578b F7).
+	assert.equal(got[0].prov, 'InferenceNet', 'the round row does not name the provider that served it');
 	// A second call in the same round states the same round's figures.
 	rf.add({ turn: 'T1', r: 2, win: 131072, msgs: 13, tool: 'file_write' });
 	assert.deepEqual(rows('T1').map((e) => [e.ctx, e.ca]), [[78000, 74000], [78000, 74000]]);
 	// A new turn's feed starts from nothing, never from another turn's round.
 	const fresh = DS.roundFeed();
 	fresh.add({ turn: 'T2', r: 1, tool: 'file_read' });
-	assert.deepEqual(rows('T2').map((e) => [e.ctx, e.ca]), [[0, 0]]);
+	assert.deepEqual(rows('T2').map((e) => [e.ctx, e.ca, e.prov]), [[0, 0, '']]);
 });
 
 test('the fold past 60 rounds still folds, on the rounds\' own figures', () => {
@@ -101,10 +103,12 @@ test('daimond.js builds every round row from the round\'s own event, the daimon\
 	assert.ok(!/live_last_prompt_tokens\)\s*\|\|\s*0,/.test(src) && !/live_cached_tokens\)\s*\|\|\s*0,/.test(src),
 		'a round row still reads a live_* getter off an app that may not be the one running');
 	const arms = src.split("ev.type === 'round_meta'").slice(1).map((s) => s.slice(0, 1600));
-	assert.equal(arms.length, 3, 'the chat, the worker and the daimon each have a round_meta arm');
+	assert.ok(arms.length >= 3, 'the chat, the worker and the daimon each have a round_meta arm');
 	arms.forEach((arm, i) => {
 		assert.ok(/\bp:\s/.test(arm) && /\bca:\s/.test(arm), 'round_meta arm ' + i + ' does not carry p and ca');
+		// EVERY arm feeds its own rounds (r578b F3): the worker's did not, so its `round` rows
+		// took the feed's starting {0,0} and stated a prompt and a cache of nothing. Any arm
+		// added later is held to the same.
+		assert.ok(/\w*rounds\.meta\(ev\)/.test(arm), 'round_meta arm ' + i + ' does not feed its round rows (rounds.meta(ev))');
 	});
-	assert.equal((src.match(/rounds\.meta\(ev\)/g) || []).length, 2,
-		'the chat and the daimon round rows are not fed from their round_meta');
 });

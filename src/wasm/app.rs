@@ -2152,17 +2152,25 @@ impl DaimondApp {
     ///   what the turn will actually carry.  A view composed without them described a briefing
     ///   nobody would be sent.  The marks are the engine's to read (HIST-SAFE U2); a third
     ///   argument is an old caller's lists, and is refused.
+    /// * `prior` - The conversation the Diamond's next turn starts from, the list the page hands
+    ///   [`DaimondApp::steer_crystal`], so the turn note shown is the one that turn sends: only
+    ///   the blocks changed since their last copy (r578b A3).  Absent, the note is a turn's that
+    ///   opens on no earlier copy: every block.  A string is an old caller's lists, refused.
     pub async fn wire_system(
         &self,
         diamond_id:  String,
         toolkits:    String,
-        legacy:      JsValue,
+        prior:       JsValue,
     )
         -> Result<String, JsValue>
     {
-        if !legacy.is_undefined() {
-            return Err(to_js_err(refuse(LEGACY_BOUNDS)));
-        }
+        let sent = match prior.is_undefined() {
+            true  => Vec::new(),
+            false => match prior.dyn_into::<js_sys::Array>() {
+                Ok(a)  => seed_prior(&a),
+                Err(_) => return Err(to_js_err(refuse(LEGACY_BOUNDS))),
+            },
+        };
         if diamond_id.trim().is_empty() {
             return Err(to_js_err(refuse("wire_system was given no Diamond id. A chat's own \
                 conversation is shown by wire_chat_system; nothing was composed.")));
@@ -2177,9 +2185,9 @@ impl DaimondApp {
             Ok(t)  => t,
             Err(e) => return Err(to_js_err(e)),
         };
-        // A Diamond's conversation is the page's to hand over, so the note shown is the one a
-        // turn opening on no earlier copy would carry: every block.
-        Ok(wire_json(&turn.agent, &turn.registry, &turn.local, &[]))
+        // A Diamond's conversation is the page's to hand over, and it is read here as the turn
+        // reads it, so the note shown is the one that turn would carry.
+        Ok(wire_json(&turn.agent, &turn.registry, &turn.local, &sent))
     }
 
     /// The Wire for an ordinary chat's own conversation: this app's agent and registry, as
@@ -3169,20 +3177,72 @@ fn wire_json(
     // AND THE NOTE THE NEXT TURN WOULD CARRY (r578), from the same composer the turn uses, so the
     // band cannot drift from the request: the frozen system above, and this, which is not in it.
     let note = crate::prompts::turn_note(&agent.blocks.borrow(), sent);
+    // THE MACHINE NOTE, AS THE TURN NOTE CARRIES IT (r578b A4). It moved out of the system message
+    // and into the note, which left the band "This computer" holding the model note alone. Named
+    // here as the exact text of the note, so the page draws it under that band and out of the
+    // note's, and every byte sent is drawn once. Empty where this turn does not restate it.
+    let machine_note = note_block(&note, crate::prompts::Block::Machine);
     let defs = registry.definitions_json().unwrap_or_else(|| fmt!("[]"));
     fmt!(
         "{{\"role\":\"{}\",\"tools_sentence\":\"{}\",\"machine\":\"{}\",\"local\":\"{}\",\
-         \"note\":\"{}\",\"schemas_len\":{},\"schemas\":{},\"names\":{}}}",
+         \"note\":\"{}\",\"machine_note\":\"{}\",\"schemas_len\":{},\"schemas\":{},\"names\":{}}}",
         crate::llm::json_escape(&role),
         crate::llm::json_escape(&tools),
         crate::llm::json_escape(&brief),
         crate::llm::json_escape(local),
         crate::llm::json_escape(&note),
+        crate::llm::json_escape(machine_note),
         defs.len(),
         defs,
         fmt!("[{}]", registry.tool_names().iter()
             .map(|n| fmt!("\"{}\"", crate::llm::json_escape(n)))
             .collect::<Vec<_>>().join(",")))
+}
+
+/// A conversation handed over by the page, read as a turn starts from it: each message the page
+/// can read, then paired up so a lost tool reply costs this read and not every turn after it.
+/// [`DaimondApp::steer_crystal`] and the Wire both read it here, so the two cannot differ.
+fn seed_prior(prior: &js_sys::Array) -> Vec<ChatMessage> {
+    let mut seeded: Vec<ChatMessage> = Vec::new();
+    for item in prior.iter() {
+        if let Some(m) = js_to_message(&item) {
+            seeded.push(m);
+        }
+    }
+    crate::protocol::pair_up(seeded)
+}
+
+/// Block `b` in a turn note exactly as written there, tags and all, or `""` where the note does
+/// not carry it.  Found by its own tag on a line of its own, `<tag/>` for an emptied block.
+fn note_block(note: &str, b: crate::prompts::Block) -> &str {
+    let tag = b.tag();
+    let empty = fmt!("<{}/>", tag);
+    let open = fmt!("<{}>\n", tag);
+    let close = fmt!("\n</{}>", tag);
+    for (at, line) in line_starts(note) {
+        if line == empty {
+            return &note[at..at + empty.len()];
+        }
+        if note[at..].starts_with(&open) {
+            // The same reading as `prompts::block_in`, so the two agree on where a block ends.
+            let body = at + open.len();
+            return match note[body..].find(&close) {
+                Some(j) => &note[at..body + j + close.len()],
+                None    => "",
+            };
+        }
+    }
+    ""
+}
+
+/// Each line of `s` with the byte offset it starts at.
+fn line_starts(s: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut at = 0;
+    s.split('\n').map(move |l| {
+        let here = at;
+        at += l.len() + 1;
+        (here, l)
+    })
 }
 
 /// Today's line for a turn's briefing, on this browser's clock and in its zone: the same day
@@ -3830,13 +3890,7 @@ impl DaimondApp {
         // restored from backups, so a conversation that has lost a tool reply somewhere
         // along the way is a thing that will happen. It must cost this one call rather
         // than every turn from here on.
-        let mut seeded: Vec<ChatMessage> = Vec::new();
-        for item in prior.iter() {
-            if let Some(m) = js_to_message(&item) {
-                seeded.push(m);
-            }
-        }
-        session.messages = crate::protocol::pair_up(seeded);
+        session.messages = seed_prior(&prior);
         // THE LAST WORD OF THE TURN BEFORE THIS ONE, for the tail note's "never twice in a row"
         // -- cloned out now, because a fold during the turn may replace it with a notice and a
         // read after the turn would need a second, overlapping borrow of `session.messages`.

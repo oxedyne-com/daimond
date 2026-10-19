@@ -1391,9 +1391,11 @@
 	/// `inferFold` watches -- and `ca` the cached tokens of that one request, no longer
 	/// the turn's running total. Read off the event and not the app's `live_*` getters,
 	/// which drew 0 on every daimon round: the daimon runs on its own app and agent.
+	/// `prov`, the host that served the round, rides with them (r578b F7), so one row
+	/// holds host, prompt and cached tokens and the cache-hit rate is read off it alone.
 	function roundFeed() {
 		var seen = 0, held = null;
-		var use = { p: 0, ca: 0 };			// the last round_meta's own figures
+		var use = { p: 0, ca: 0, prov: '' };	// the last round_meta's own figures
 		function send() {
 			if (!held) return;
 			var row = held;
@@ -1403,8 +1405,9 @@
 		return {
 			meta: function (ev) {
 				use = {
-					p:  Math.round(Number(ev && ev.p) || 0),
-					ca: Math.round(Number(ev && ev.ca) || 0),
+					p:    Math.round(Number(ev && ev.p) || 0),
+					ca:   Math.round(Number(ev && ev.ca) || 0),
+					prov: String((ev && ev.provider) || '').slice(0, 40),
 				};
 				return { p: use.p, ca: use.ca };
 			},
@@ -1413,6 +1416,7 @@
 				// A caller that states its own figures keeps them.
 				if (p.ctx == null) p.ctx = use.p;
 				if (p.ca == null) p.ca = use.ca;
+				if (p.prov == null) p.prov = use.prov;
 				seen += 1;
 				if (seen <= ROUND_EACH) { event('round', p); return; }
 				var ctx = Number(p.ctx) || 0;
