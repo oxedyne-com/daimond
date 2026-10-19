@@ -389,6 +389,27 @@ impl MessageContent {
         }
     }
 
+    /// The same content with `tail` added straight after its last text, no separator: the app's
+    /// notes on a tool result carry their own leading newline.  Content with no text in it gets
+    /// `tail` as a text part of its own at the end.
+    pub fn trailed_by(&self, tail: &str) -> Self {
+        match self {
+            Self::Text(s) => Self::Text(fmt!("{}{}", s, tail)),
+            Self::Parts(parts) => {
+                let mut out = parts.clone();
+                let last = out.iter_mut().rev().find_map(|p| match p {
+                    ContentPart::Text(t)  => Some(t),
+                    ContentPart::Image(_) => None,
+                });
+                match last {
+                    Some(t) => t.push_str(tail),
+                    None    => out.push(ContentPart::Text(tail.to_string())),
+                }
+                Self::Parts(out)
+            },
+        }
+    }
+
     /// The content as text, with each image standing in for itself by name.
     ///
     /// Borrowed in the common case and built only when there are parts, so the panels, the ledger
@@ -568,7 +589,7 @@ pub enum ChatMessage {
     /// outright on every subsequent turn.
     Assistant { content: MessageContent, tool_calls: Vec<ToolCall> },
     /// Tool call result returned to the LLM.
-    Tool { tool_call_id: String, content: MessageContent },
+    Tool { tool_call_id: String, content: MessageContent, post: String },	// `post`: the app's notes after the result, empty for none
 }
 
 impl ChatMessage {
@@ -615,7 +636,7 @@ impl ChatMessage {
 
     /// A tool reply, paired to the call it answers.
     pub fn tool<C: Into<MessageContent>>(tool_call_id: String, content: C) -> Self {
-        Self::Tool { tool_call_id, content: content.into() }
+        Self::Tool { tool_call_id, content: content.into(), post: String::new() }
     }
 
     /// Serialise to a JDAT map, for the session store and the session export.
@@ -667,10 +688,14 @@ impl ChatMessage {
                     m.insert(dat!("tool_calls"), Dat::List(calls));
                 }
             }
-            Self::Tool { tool_call_id, content } => {
+            Self::Tool { tool_call_id, content, post } => {
                 m.insert(dat!("role"), dat!("tool"));
                 m.insert(dat!("tool_call_id"), dat!(tool_call_id.clone()));
                 m.insert(dat!("content"), content.to_dat());
+                // Only where there is one, so an unnoted result is the map an r577 build wrote.
+                if !post.is_empty() {
+                    m.insert(dat!("post"), dat!(post.clone()));
+                }
             }
         }
         m
@@ -726,7 +751,11 @@ impl ChatMessage {
                     Some(Dat::Str(s)) => s.clone(),
                     _ => return Err(err!("ChatMessage: tool missing 'tool_call_id'."; Invalid, Input)),
                 };
-                Ok(Self::Tool { tool_call_id, content })
+                let post = match m.get(&dat!("post")) {
+                    Some(Dat::Str(s)) => s.clone(),
+                    _ => String::new(),
+                };
+                Ok(Self::Tool { tool_call_id, content, post })
             }
             _ => Err(err!("ChatMessage: unknown role '{}'.", role; Invalid, Input)),
         }
@@ -746,6 +775,24 @@ impl ChatMessage {
         match self {
             Self::User { pre, .. } => pre,
             _                      => "",
+        }
+    }
+
+    /// The app's notes after a tool result: empty for none, and for every other role.
+    pub fn post(&self) -> &str {
+        match self {
+            Self::Tool { post, .. } => post,
+            _                       => "",
+        }
+    }
+
+    /// The same tool result with `line` added to the end of its notes; every other role comes
+    /// back unchanged.
+    pub fn noted_after(self, line: &str) -> Self {
+        match self {
+            Self::Tool { tool_call_id, content, post } =>
+                Self::Tool { tool_call_id, content, post: fmt!("{}{}", post, line) },
+            other => other,
         }
     }
 
@@ -786,15 +833,15 @@ impl ChatMessage {
                 Self::User { content, pre: pre.clone(), mid: mid.clone() },
             Self::Assistant { tool_calls, .. } =>
                 Self::Assistant { content, tool_calls: tool_calls.clone() },
-            Self::Tool { tool_call_id, .. } =>
-                Self::Tool { tool_call_id: tool_call_id.clone(), content },
+            Self::Tool { tool_call_id, post, .. } =>
+                Self::Tool { tool_call_id: tool_call_id.clone(), content, post: post.clone() },
         }
     }
 }
 
 
 /// The conversation as a provider is sent it: each user message's app note, a blank line, then
-/// the person's words.
+/// the person's words; and each tool result's words, then its notes (`post`, r578).
 ///
 /// **THE ONE PLACE A NOTE BECOMES TEXT.**  The session keeps `pre` and `content` apart, so the
 /// transcript, the store and an export show only what the person typed, and this is where the two
@@ -808,12 +855,15 @@ impl ChatMessage {
 /// # Arguments
 /// * `msgs` - The conversation, oldest first, system message included.
 pub fn join_notes(msgs: &[ChatMessage]) -> std::borrow::Cow<'_, [ChatMessage]> {
-    if msgs.iter().all(|m| m.pre().is_empty()) {
+    if msgs.iter().all(|m| m.pre().is_empty() && m.post().is_empty()) {
         return std::borrow::Cow::Borrowed(msgs);
     }
     std::borrow::Cow::Owned(msgs.iter().map(|m| match m {
         ChatMessage::User { content, pre, mid } if !pre.is_empty() =>
             ChatMessage::User { content: content.led_by(pre), pre: String::new(), mid: mid.clone() },
+        ChatMessage::Tool { tool_call_id, content, post } if !post.is_empty() =>
+            ChatMessage::Tool { tool_call_id: tool_call_id.clone(), content: content.trailed_by(post),
+                post: String::new() },
         other => other.clone(),
     }).collect())
 }
@@ -822,6 +872,20 @@ pub fn join_notes(msgs: &[ChatMessage]) -> std::borrow::Cow<'_, [ChatMessage]> {
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Session                                                        │
 // └───────────────────────────────────────────────────────────────┘
+
+/// The OpenRouter host a conversation is pinned to, for the model it was pinned under.
+///
+/// Asking OpenRouter for the host that answered the last round keeps the provider's prompt
+/// cache warm: a hop to another host is a full-prompt miss (r578, 6% of in-turn rounds).  The
+/// model is kept beside the host because a pin is only good for the model it was taken
+/// under, so a model change makes it no pin at all.  See `LlmClient::settle_pin`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HostPin {
+    pub model:  String,
+    pub host:   String,                                 // OpenRouter's display name, verbatim
+}
+
+pub const PIN_KEY: &str = "host_pin";               // no r577 reader decodes it, so loads unpinned there
 
 /// A chat session belonging to a user.
 #[derive(Clone, Debug)]
@@ -846,6 +910,7 @@ pub struct Session {
     /// Zero means no provider reported a figure, not that the session was
     /// free; the caller prices those turns from its table instead.
     pub cost_usd:            f64,
+    pub pin:                 Option<HostPin>,       // the conversation's OpenRouter host
 }
 
 impl Session {
@@ -889,6 +954,7 @@ impl Session {
             last_prompt_tokens: 0,
             cached_tokens: 0,
             cost_usd: 0.0,
+            pin: None,
         }
     }
 
@@ -904,6 +970,12 @@ impl Session {
         m.insert(dat!("last_prompt_tokens"), Dat::U64(self.last_prompt_tokens));
         m.insert(dat!("cached_tokens"), Dat::U64(self.cached_tokens));
         m.insert(dat!("cost_usd"), dat!(self.cost_usd));
+        if let Some(p) = &self.pin {
+            let mut pm = DaticleMap::new();
+            pm.insert(dat!("model"), dat!(p.model.clone()));
+            pm.insert(dat!("host"),  dat!(p.host.clone()));
+            m.insert(dat!(PIN_KEY), Dat::Map(pm));
+        }
         m
     }
 
@@ -972,10 +1044,20 @@ impl Session {
             Some(Dat::F64(f)) => **f,
             _ => 0.0,
         };
+        // Optional as the two above are, and a malformed one is no pin rather than a refusal:
+        // the worst it costs is one round on whichever host OpenRouter picks.
+        let pin = match m.get(&dat!(PIN_KEY)) {
+            Some(Dat::Map(pm)) => match (pm.get(&dat!("model")), pm.get(&dat!("host"))) {
+                (Some(Dat::Str(model)), Some(Dat::Str(host))) if !host.is_empty() =>
+                    Some(HostPin { model: model.clone(), host: host.clone() }),
+                _ => None,
+            },
+            _ => None,
+        };
         Ok(Self {
             id, name, created_at, model, messages,
             prompt_tokens, completion_tokens, last_prompt_tokens,
-            cached_tokens, cost_usd,
+            cached_tokens, cost_usd, pin,
         })
     }
 }
@@ -1089,11 +1171,12 @@ pub fn pair_up(msgs: Vec<ChatMessage>) -> Vec<ChatMessage> {
                 });
                 // Then the replies, keeping only those that answer a call we kept.
                 for k in (i + 1)..j {
-                    if let ChatMessage::Tool { tool_call_id, content } = &msgs[k] {
+                    if let ChatMessage::Tool { tool_call_id, content, post } = &msgs[k] {
                         if kept.iter().any(|tc| &tc.id == tool_call_id) {
                             out.push(ChatMessage::Tool {
                                 tool_call_id: tool_call_id.clone(),
                                 content:      content.clone(),
+                                post:         post.clone(),
                             });
                         }
                     }
@@ -1256,6 +1339,11 @@ pub enum AgentEvent {
         first_ms:             u64,
         gap_ms:               u64,
         ms:                   u64,
+        // THIS round's own usage, not the turn's running total: the lens `round` row is built
+        // from them, because the page's `live_*` getters belong to whichever app it asks and
+        // a daimon's turn runs on another (r578 U3).
+        prompt_tokens:        u64,
+        cached_tokens:        u64,
     },
     /// A chunk of the model's own reasoning, as it arrives.
     ///
@@ -1438,7 +1526,7 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("truncated"));
             }
             Self::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled,
-                bytes, first_ms, gap_ms, ms } => {
+                bytes, first_ms, gap_ms, ms, prompt_tokens, cached_tokens } => {
                 m.insert(dat!("type"), dat!("round_meta"));
                 m.insert(dat!("gen"),      dat!(gen_id.clone()));
                 m.insert(dat!("finish"),   dat!(finish_reason.clone()));
@@ -1449,6 +1537,8 @@ impl AgentEvent {
                 m.insert(dat!("f"),        Dat::U64(*first_ms));
                 m.insert(dat!("g"),        Dat::U64(*gap_ms));
                 m.insert(dat!("ms"),       Dat::U64(*ms));
+                m.insert(dat!("p"),        Dat::U64(*prompt_tokens));
+                m.insert(dat!("ca"),       Dat::U64(*cached_tokens));
             }
             Self::Done => {
                 m.insert(dat!("type"), dat!("done"));
@@ -2452,11 +2542,43 @@ mod tests {
         assert_eq!(msg, msg2);
     }
 
+    /// A tool result's notes travel with it through the store, and a map from a build that never
+    /// wrote one (or a map carrying a key this build does not know) still reads.
+    #[test]
+    fn test_appendonly_a_tool_post_note_survives_the_store_and_its_absence_reads_empty() {
+        let msg = ChatMessage::tool("call_9".to_string(), MessageContent::text("42"))
+            .noted_after("\n[turn state: round 3]");
+        assert_eq!("\n[turn state: round 3]", msg.post());
+        let dm = msg.to_datmap();
+        let back = match ChatMessage::from_datmap(&dm) {
+            Ok(m)  => m,
+            Err(e) => panic!("the noted result did not read back: {}", e),
+        };
+        assert_eq!(msg, back, "the note was lost in the store");
+        assert_eq!("42", back.text(), "the note leaked into the result itself");
+        // An r577 map: no `post`, and a key this build has never heard of.
+        let mut old = ChatMessage::tool("call_9".to_string(), MessageContent::text("42")).to_datmap();
+        assert!(old.get(&dat!("post")).is_none(), "an unnoted result grew a key");
+        old.insert(dat!("later"), dat!("a key from a newer build"));
+        match ChatMessage::from_datmap(&old) {
+            Ok(m)  => assert_eq!("", m.post()),
+            Err(e) => panic!("a map with an unknown key was refused: {}", e),
+        }
+        // And the join sends the note after the words, once, leaving the stored copy apart.
+        let msgs = vec![msg.clone()];
+        let sent = join_notes(&msgs);
+        assert_eq!("42\n[turn state: round 3]", sent[0].text());
+        assert_eq!("", sent[0].post());
+        // A turn's notes are kept by an elision of the result, which rewrites only its content.
+        assert_eq!(msg.post(), msg.with_content(MessageContent::text("x")).post());
+    }
+
     #[test]
     fn test_chat_message_tool_roundtrip() {
         let msg = ChatMessage::Tool {
             tool_call_id: "call_123".to_string(),
             content: MessageContent::text("42"),
+            post: String::new(),
         };
         let dm = msg.to_datmap();
         let msg2 = ChatMessage::from_datmap(&dm).unwrap();
@@ -2548,6 +2670,48 @@ mod tests {
         assert_eq!(s.cost_usd, 0.0);
     }
 
+    #[test]
+    fn test_session_pin_round_trips_and_an_r577_reader_ignores_it_00() {
+        let mut s = Session::new("s1".to_string(), "Pinned".to_string(), "z-ai/glm-5.3".to_string());
+        s.pin = Some(HostPin { model: "z-ai/glm-5.3".to_string(), host: "InferenceNet".to_string() });
+        let m = s.to_datmap();
+        let back = match Session::from_datmap(&m) {
+            Ok(v)  => v,
+            Err(e) => panic!("a pinned session did not load: {}", e),
+        };
+        assert_eq!(back.pin, s.pin, "the pin did not survive the round trip");
+        // An r577 reader decodes by these keys alone, each with an `_ =>` fallback, so a key
+        // outside them is never read.  The pin must be such a key and touch none of them.
+        const R577_KEYS: [&str; 10] = ["id", "name", "created_at", "model", "messages",
+            "prompt_tokens", "completion_tokens", "last_prompt_tokens", "cached_tokens", "cost_usd"];
+        let mut bare = s.clone();
+        bare.pin = None;
+        let unpinned = bare.to_datmap();
+        let mut extra = Vec::new();
+        for (k, v) in m.iter() {
+            match unpinned.get(k) {
+                Some(w) => assert_eq!(v, w, "the pin changed an r577 field: {:?}", k),
+                None    => extra.push(k.clone()),
+            }
+        }
+        assert_eq!(extra, vec![dat!(PIN_KEY)], "the pin is not one key of its own");
+        assert!(!R577_KEYS.contains(&PIN_KEY), "the pin's key is one an r577 reader reads");
+        // A map with no pin -- every r577 save -- loads unpinned.
+        let old = match Session::from_datmap(&unpinned) {
+            Ok(v)  => v,
+            Err(e) => panic!("an unpinned session did not load: {}", e),
+        };
+        assert_eq!(old.pin, None);
+        // A malformed pin is no pin, never a refused session.
+        let mut odd = unpinned.clone();
+        odd.insert(dat!(PIN_KEY), dat!("InferenceNet"));
+        let odd = match Session::from_datmap(&odd) {
+            Ok(v)  => v,
+            Err(e) => panic!("a malformed pin refused the session: {}", e),
+        };
+        assert_eq!(odd.pin, None);
+    }
+
     // ── What a session store must give back ─────────────────────────────
     //
     // The rule every OpenAI-compatible provider enforces, written here and nowhere
@@ -2597,6 +2761,7 @@ mod tests {
         s.messages.push(ChatMessage::Tool {
             tool_call_id: fmt!("call_abc"),
             content:      MessageContent::text(fmt!("fn parse() {{}}")),
+            post:         String::new(),
         });
         s.messages.push(ChatMessage::Assistant {
             content: MessageContent::text(fmt!("It is one function.")), tool_calls: Vec::new(),

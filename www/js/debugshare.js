@@ -1384,8 +1384,16 @@
 	/// prompt it covered) -- so a marathon turn cannot fill the outbox. `flush()`
 	/// at the end of the turn sends a part-filled fold. Replaces the old "round 1,
 	/// every 5th and the last" throttle, which left the rounds between unseen.
+	///
+	/// `meta(ev)` takes the round's `round_meta` event, which the engine sends before
+	/// the round's tool calls, and every row `add` writes after it carries THAT round's
+	/// own figures (r578 U3): `ctx` the prompt tokens its request sent -- the meaning
+	/// `inferFold` watches -- and `ca` the cached tokens of that one request, no longer
+	/// the turn's running total. Read off the event and not the app's `live_*` getters,
+	/// which drew 0 on every daimon round: the daimon runs on its own app and agent.
 	function roundFeed() {
 		var seen = 0, held = null;
+		var use = { p: 0, ca: 0 };			// the last round_meta's own figures
 		function send() {
 			if (!held) return;
 			var row = held;
@@ -1393,8 +1401,18 @@
 			event('round', row);
 		}
 		return {
+			meta: function (ev) {
+				use = {
+					p:  Math.round(Number(ev && ev.p) || 0),
+					ca: Math.round(Number(ev && ev.ca) || 0),
+				};
+				return { p: use.p, ca: use.ca };
+			},
 			add: function (p) {
 				if (!p || typeof p !== 'object') return;
+				// A caller that states its own figures keeps them.
+				if (p.ctx == null) p.ctx = use.p;
+				if (p.ca == null) p.ca = use.ca;
 				seen += 1;
 				if (seen <= ROUND_EACH) { event('round', p); return; }
 				var ctx = Number(p.ctx) || 0;

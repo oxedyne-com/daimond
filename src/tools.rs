@@ -1840,29 +1840,38 @@ impl Standing {
     /// Empty where all three are, which is a Diamond whose files have not been seeded yet -- and
     /// the composer says nothing rather than three empty headings.
     pub fn prompt_text(&self) -> String {
+        fmt!("{}{}{}", self.requirements_text(), self.state_text(), self.decisions_text())
+    }
+
+    /// The requirements paragraph of [`prompt_text`](Self::prompt_text), empty for none; one
+    /// block of a turn's note (r578), so a STATE edit does not restate it.
+    pub fn requirements_text(&self) -> String {
+        match self.requirements.trim().is_empty() {
+            true  => String::new(),
+            false => fmt!("\n\n{} — what this Diamond is for, whole:\n{}",
+                REQUIREMENTS_FILE, self.requirements.trim_end()),
+        }
+    }
+
+    /// The state paragraph of [`prompt_text`](Self::prompt_text), empty for none.
+    pub fn state_text(&self) -> String {
+        match self.state.trim().is_empty() {
+            true  => String::new(),
+            false => fmt!("\n\n{} — where things are, whole:\n{}",
+                STATE_FILE, self.state.trim_end()),
+        }
+    }
+
+    /// The decisions' tail paragraph of [`prompt_text`](Self::prompt_text), empty for none.
+    pub fn decisions_text(&self) -> String {
         let tail = decisions_tail(&self.decisions);
-        if self.requirements.trim().is_empty()
-            && self.state.trim().is_empty()
-            && tail.trim().is_empty()
-        {
-            return String::new();
-        }
-        let mut out = String::new();
-        if !self.requirements.trim().is_empty() {
-            out.push_str(&fmt!("\n\n{} — what this Diamond is for, whole:\n{}",
-                REQUIREMENTS_FILE, self.requirements.trim_end()));
-        }
-        if !self.state.trim().is_empty() {
-            out.push_str(&fmt!("\n\n{} — where things are, whole:\n{}",
-                STATE_FILE, self.state.trim_end()));
-        }
-        if !tail.trim().is_empty() {
-            out.push_str(&fmt!(
+        match tail.trim().is_empty() {
+            true  => String::new(),
+            false => fmt!(
                 "\n\n{} — the last {} lines (recall searches the rest, and \
                 `.daimond/decisions-archive.md` holds what has retired):\n{}",
-                DECISIONS_FILE, DECISIONS_HOT_LINES, tail));
+                DECISIONS_FILE, DECISIONS_HOT_LINES, tail),
         }
-        out
     }
 
     /// What the block above costs in the system message on every round, in bytes.
@@ -3988,6 +3997,18 @@ pub fn crystal_prompt_text(s: &CrystalSplit, files: &Standing) -> String {
 /// * `files` - As for [`crystal_prompt_text`].
 /// * `keeper` - Whether the reader is the daimon that owns the crystal and may mend it.
 pub fn crystal_prompt_for(s: &CrystalSplit, files: &Standing, keeper: bool) -> String {
+    crystal_text(s, files, keeper, true)
+}
+
+/// The crystal alone, as a turn's note carries it in its own block (r578): the hot part, its
+/// fault and the outline of the rest, without the three standing files, which ride in blocks of
+/// their own.  `files` still sets the hot room the outline names.
+pub fn crystal_block_for(s: &CrystalSplit, files: &Standing, keeper: bool) -> String {
+    crystal_text(s, files, keeper, false)
+}
+
+fn crystal_text(s: &CrystalSplit, files: &Standing, keeper: bool, with_files: bool) -> String {
+    let standing = if with_files { files.prompt_text() } else { String::new() };
     // The fault of the RAW text, whichever shape the prompt takes.  A crystal that rides whole is
     // the turn that has to mend it, and the one place a daimon is sure to look; a split one is
     // told too, because the decoder behind the split is lenient and the hot part it shows is a
@@ -4016,19 +4037,19 @@ pub fn crystal_prompt_for(s: &CrystalSplit, files: &Standing, keeper: bool) -> S
             crystal.json and mend it in place with file_edit, at the place named.", f),
     };
     if s.whole {
-        return fmt!("\n\nCurrent crystal.json:\n{}{}{}", s.hot, fault, files.prompt_text());
+        return fmt!("\n\nCurrent crystal.json:\n{}{}{}", s.hot, fault, standing);
     }
     if s.excerpt {
         return fmt!(
             "\n\nCurrent crystal.json — an EXCERPT ({} of {} bytes): it does not parse and is \
             too big to ride whole, so this is its start and the part round the fault:\n{}{}{}",
-            s.hot_bytes, s.total_bytes, s.hot, fault, files.prompt_text());
+            s.hot_bytes, s.total_bytes, s.hot, fault, standing);
     }
     let mut out = fmt!(
         "\n\nCurrent crystal.json — the HOT part ({} of {} bytes; the rest is reachable, not \
         gone):\n{}{}{}\n\nThe cold part of the crystal, by section (crystal_read fetches one; \
         recall searches all of it and everything this conversation has folded):\n",
-        s.hot_bytes, s.total_bytes, s.hot, fault, files.prompt_text());
+        s.hot_bytes, s.total_bytes, s.hot, fault, standing);
     for row in &s.outline {
         if row.heading.is_empty() {
             out.push_str(&fmt!("- {} — {} bytes\n", row.key, row.bytes));

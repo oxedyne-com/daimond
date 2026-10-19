@@ -137,15 +137,24 @@ test('a recovered turn answers with the prose after its last tool, and keeps the
 	assert.ok(said !== -1 && said < log, 'the recovered working is not put before its call');
 });
 
-// ── Today, in every turn's briefing (the real engine) ──────────
+// ── Today, in every conversation's opening turn note (the real engine) ──────────
+// r578 (rulings §17): the date changes daily, so it rides in the turn note's <today> block, not
+// the frozen system message; the block is restated whenever its text differs from its last copy
+// and after a fold (prompts::turn_note, agent::restate_blocks).
 const PKG = process.env.LOOPTEXT_PKG || join(HERE, '..', 'pkg');
 
-test("every turn's briefing carries today's date in ISO and the user's zone", { skip: !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wasm here' }, async () => {
+test("every conversation's first turn note carries today's date in ISO and the user's zone", { skip: !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wasm here' }, async () => {
 	const m = await import(join(PKG, 'oxedyne_daimond.js'));
 	m.initSync({ module: readFileSync(join(PKG, 'oxedyne_daimond_bg.wasm')) });
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
-	// A chat's own briefing is wire_chat_system's: wire_system is a Diamond's and takes no lists from the page (HIST-SAFE U2).
-	const brief = JSON.parse(await app.wire_chat_system()).machine;
+	// A chat's own wire is wire_chat_system's: wire_system is a Diamond's and takes no lists from the page (HIST-SAFE U2).
+	// `note` is what the next turn sends; with no conversation yet it is the opening note, every block.
+	const wire = JSON.parse(await app.wire_chat_system());
+	const m2 = wire.note.match(/^<today>\n([\s\S]*?)\n<\/today>$/m);
+	assert.ok(m2, "the opening turn note carries no <today> block:\n" + wire.note);
+	const brief = m2[1];
+	// And not in the frozen system message, which would break the cached prefix every day.
+	assert.ok(!wire.machine.includes('## Today'), 'the date is back in the system message:\n' + wire.machine);
 	const d = new Date();
 	const iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 	assert.ok(brief.includes(iso), "the briefing does not say today's date:\n" + brief);

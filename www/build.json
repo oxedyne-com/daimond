@@ -1,1 +1,1 @@
-{"build":"c744ea16ae91","note":"Models menu latent fixes; a handed-back turn and a word typed into a busy Diamond go where they should."}
+{"build":"7c82a3bc65a0","note":"The model is sent each reply as you see it, the prompt only grows, and a conversation keeps one OpenRouter host."}

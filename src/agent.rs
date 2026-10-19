@@ -71,6 +71,25 @@ pub struct Said {
     pub pre:  String,	// joined ahead of `text` on the wire, never shown as it; empty for none
 }
 
+/// Give the session's copy of a tool result the notes its sent copy now carries (r578).
+///
+/// The round loop writes the budget and turn-state lines onto the SENT copy; a session without
+/// them would make the next turn send that result without them, a rewrite of bytes the provider
+/// has cached.  Found by its call id, the newest first, since the two lists are numbered apart.
+fn keep_post(session: &mut Session, sent: &ChatMessage) {
+    let (id, note) = match sent {
+        ChatMessage::Tool { tool_call_id, post, .. } => (tool_call_id, post),
+        _ => return,
+    };
+    let at = session.messages.iter().rposition(|m|
+        matches!(m, ChatMessage::Tool { tool_call_id, .. } if tool_call_id == id));
+    if let Some(j) = at {
+        if let ChatMessage::Tool { post, .. } = &mut session.messages[j] {
+            *post = note.clone();
+        }
+    }
+}
+
 /// A fresh, empty interjection queue.
 pub fn new_interjections() -> Interjections {
     Rc::new(RefCell::new(Vec::new()))
@@ -183,6 +202,15 @@ pub struct Agent {
     /// Diamond.
     diamond:             Rc<RefCell<String>>,
     pending_only:        Cell<bool>,                     // reports on Pending, see `set_pending_only`
+    /// What this turn's standing context holds, block by block: the crystal, the three files,
+    /// what is attached, the machine, the date, the tree.  Never composed into the system
+    /// message, which must not change between two turns of one conversation (r578): each block
+    /// rides in the turn's own note and is restated only when it changed; see
+    /// [`crate::prompts::turn_note`].  Shared on clone for the reason `briefing` is.
+    pub blocks:          Rc<RefCell<crate::prompts::TurnBlocks>>,
+    /// The caller's own note for the turn in flight, before the blocks were put ahead of it, so
+    /// a fold mid-turn can restate every block over the same words.  Not shared on clone.
+    turn_pre:            RefCell<String>,
 }
 
 
@@ -550,6 +578,8 @@ impl Agent {
             pending_only:    Cell::new(false),
             ending:          Rc::new(RefCell::new(None)),
             diamond:         Rc::new(RefCell::new(String::new())),
+            blocks:          Rc::new(RefCell::new(crate::prompts::TurnBlocks::default())),
+            turn_pre:        RefCell::new(String::new()),
         }
     }
 
@@ -1101,6 +1131,29 @@ impl Agent {
         *self.briefing.borrow_mut() = text.to_string();
     }
 
+    /// Set what this turn's standing context holds, block by block (r578).
+    ///
+    /// Called before a turn, beside [`set_briefing`](Self::set_briefing), which now carries only
+    /// what cannot change between two turns of a conversation.
+    pub fn set_blocks(&self, blocks: crate::prompts::TurnBlocks) {
+        *self.blocks.borrow_mut() = blocks;
+    }
+
+    /// Rewrite the turn's opening note to carry every block, ahead of the caller's own note.
+    fn restate_blocks(&self, session: &mut Session) {
+        let note = crate::prompts::turn_note(&self.blocks.borrow(), &[]);
+        if note.is_empty() {
+            return;	// no blocks at all, so nothing was cut that needs saying again
+        }
+        let caller = self.turn_pre.borrow().clone();
+        if let Some(ChatMessage::User { pre, .. }) = session.messages.get_mut(self.turn_start.get()) {
+            // Only the message this turn opened with, whose note ends in the caller's own.
+            if pre.ends_with(caller.as_str()) {
+                *pre = crate::prompts::join_note(&note, &caller);
+            }
+        }
+    }
+
     /// Say which Diamond this turn is steering, so a fold can file its notes into its files.
     ///
     /// Empty -- the default -- is a chat, which has no Diamond and no files, and whose fold
@@ -1356,6 +1409,13 @@ impl Agent {
         // moves it; see `Agent::turn_start`.
         self.turn_start.set(session.messages.len());
         self.fold_rest.set(0);
+        // THE TURN'S STANDING CONTEXT RIDES IN ITS OWN NOTE (r578), each block only where it
+        // differs from its latest copy in the conversation as sent, so the system message stays
+        // byte-identical from turn to turn and the provider's cache holds across them.  Stored
+        // with the message, so a reload sends the same bytes.  See `prompts::turn_note`.
+        let blocks = crate::prompts::turn_note(&self.blocks.borrow(), &session.messages);
+        *self.turn_pre.borrow_mut() = pre.clone();
+        let pre = crate::prompts::join_note(&blocks, &pre);
         // Append the user message to the persisted history.
         session.messages.push(ChatMessage::user_noted(user_msg, pre).marked(mid));
 
@@ -1432,7 +1492,7 @@ impl Agent {
                 return self.stop_halted(rounds, &Claims::default(), None, on_event).await;
             }
             self.fold_if_needed(session, &mut working, 0, Fold::IfNeeded, on_event).await;
-            let sent = compact::conversation_bytes(&working, &self.llm.open_folds());
+            let sent = compact::conversation_bytes(&working);
             let mut full = String::new();
             rounds += 1;
             let result = self.llm.chat_stream(
@@ -1667,9 +1727,7 @@ impl Agent {
 
     /// The event that tells the page a call has started.
     ///
-    /// The ID travels with it. A stored conversation's `say` fold is opened and closed on the
-    /// page, and the page has to be able to name WHICH call it is talking about when it tells the
-    /// engine what is open -- see `set_open_folds`. Nothing else reads it.
+    /// The ID travels with it, so the event names WHICH call it is.
     ///
     /// One function because a batch announces its first call before it runs and the rest as their
     /// results are recorded, and two spellings of the same event would eventually differ.
@@ -1902,6 +1960,7 @@ impl Agent {
             crate::turn_state::TurnState::new(&ask, self.limits.borrow().no_progress_rounds)
         };
         loop {
+            self.llm.set_pin(session.pin.clone());          // this conversation's host (r578 U3)
             // A STOPPED TURN GOES NO FURTHER, asked before anything of the next round -- the
             // cap's fold, the proactive fold, the request -- can spend.  The seam below asks it
             // too; this is the top of a round a nudge `continue`s straight into, and of the first.
@@ -1967,7 +2026,7 @@ impl Agent {
                 let horizon = round_at[swept - 1 - result_age];
                 compact::retire_results(&mut working, horizon, result_cap);
             }
-            let mut sent = compact::conversation_bytes(&working, &self.llm.open_folds());
+            let mut sent = compact::conversation_bytes(&working);
 
             // Stream this round's assistant text as it arrives; the tool
             // calls (if any) are returned assembled once the round ends.
@@ -2006,7 +2065,7 @@ impl Agent {
                             refolded = true;
                             if self.fold_if_needed(session, &mut working, schema, Fold::Refused,
                                 on_event).await.changed() {
-                                sent = compact::conversation_bytes(&working, &self.llm.open_folds());
+                                sent = compact::conversation_bytes(&working);
                                 continue;
                             }
                         }
@@ -2084,7 +2143,11 @@ impl Agent {
                 first_ms:             resp.first_ms,
                 gap_ms:               resp.gap_ms,
                 ms:                   resp.ms,
+                prompt_tokens:        resp.prompt_tokens,
+                cached_tokens:        resp.cached_tokens,
             });
+            // The host this round leaves the conversation pinned to (r578 U3).
+            session.pin = self.llm.settle_pin(&resp);
 
             // Cancelled mid-stream: keep the partial answer already
             // streamed and end the turn cleanly, without an error.  STOPPED AFTER THE STREAM
@@ -2761,12 +2824,21 @@ impl Agent {
                     };
                     (left, usd, frac)
                 };
-                compact::note_budget(&mut working, rounds_left, usd_left, fraction_left);
+                let from = round_at.last().copied().unwrap_or(working.len());
+                if let Some(i) = compact::note_budget(&mut working, from, rounds_left, usd_left,
+                    fraction_left)
+                {
+                    keep_post(session, &working[i]);
+                }
             }
-            // AND WHERE THE TURN STANDS, every round, after the budget line so that line's strip
-            // never cuts this one (R3), with the deliver line from K quiet rounds (R4).
+            // AND WHERE THE TURN STANDS, every round, after the budget line (R3), with the deliver
+            // line from K quiet rounds (R4).  Both on this round's own result, and both KEPT with
+            // the session's copy of it, so the next turn sends the bytes this one cached (r578).
             let line = state.end_round(rounds);
-            compact::note_turn_state(&mut working, &line);
+            let from = round_at.last().copied().unwrap_or(working.len());
+            if let Some(i) = compact::note_turn_state(&mut working, from, &line) {
+                keep_post(session, &working[i]);
+            }
         }
     }
 
@@ -3097,20 +3169,13 @@ impl Agent {
     )
         -> Refit
     {
-        // THE FOLDS THE USER HAS OPEN, taken once for the whole fold. Every size below is a
-        // size on the wire, and a closed fold's detail is not on the wire: `msg_bytes` asks the
-        // serialiser's own `sent_args_len` what a `say` costs, and that answer depends on this
-        // set. A copy rather than a borrow, because the page may set the folds again while the
-        // summarising call is in flight and a live borrow at that moment would panic.
-        let open = self.llm.open_folds();
-
         // A refusal is the only occasion the provider ever says anything about the size of
         // its window. Believing it is what lets a chat against a model nobody published a
         // window for recover instead of folding to a budget that was never the real one --
         // and it is why a fold the USER asked for must not come through here, since that
         // one carries no news at all.
         if why.teaches_window() {
-            let refused = self.gauge.tokens(compact::conversation_bytes(working, &open) + schema);
+            let refused = self.gauge.tokens(compact::conversation_bytes(working) + schema);
             self.limits.borrow_mut().learn_from_refusal(refused);
         }
         let (budget, tail, model, shape) = {
@@ -3118,13 +3183,13 @@ impl Agent {
             let cap = self.reply_cap();
             (l.budget(cap), l.tail_budget(cap), l.fold_model.clone(), l.fold_shape)
         };
-        let before = compact::conversation_bytes(&session.messages, &open);
+        let before = compact::conversation_bytes(&session.messages);
         // Size read two ways -- the up-front byte estimate and the provider's real prompt_tokens
         // from the last round -- because the estimate under-counts and can sit under budget while
         // the real carry has passed it. `last_prompt_tokens` refreshes after this round's own send,
         // so a fold prompted by it is corrected within the round and does not repeat once the carry
         // is back under. See `compact::needs_fold`.
-        let est = self.gauge.tokens(compact::conversation_bytes(working, &open) + schema);
+        let est = self.gauge.tokens(compact::conversation_bytes(working) + schema);
         if !compact::needs_fold(est, session.last_prompt_tokens, budget, why.forces()) {
             return Refit::Untouched;
         }
@@ -3150,7 +3215,7 @@ impl Agent {
         let ceiling = self.gauge.bytes(budget).saturating_sub(schema);
         let keep = self.gauge.bytes(tail).min(ceiling);
         let mut cut = compact::tail_start(&session.messages, keep, compact::MIN_KEEP_MESSAGES,
-            ceiling, &open);
+            ceiling);
         // A FOLD AT THE ROUND LIMIT THAT FOLDS NOTHING IS THE COMMON CASE, not the rare one.
         // `tail_start` answers 0 whenever the whole conversation fits the tail budget, and a
         // turn stopped at ten rounds has not filled 48,000 tokens -- so the leg that continues
@@ -3161,7 +3226,7 @@ impl Agent {
         // answers 0 when there is genuinely nothing worth folding.
         let capped = cut == 0 && why.at_the_cap();
         if capped {
-            cut = compact::capped_cut(&session.messages, ceiling, &open);
+            cut = compact::capped_cut(&session.messages, ceiling);
         }
         // THE TURN'S OWN ASK SURVIVES A CUT THROUGH THE TURN.  The cut may land inside the turn
         // in flight -- a floor at its start would stop a long turn ever folding -- so the
@@ -3172,13 +3237,13 @@ impl Agent {
         // `compact::pinned_opening`.
         let ts = if matches!(why, Fold::ByHand) { usize::MAX } else { self.turn_start.get() };
         if let Some(p) = compact::pinned_opening(&session.messages, ts, cut) {
-            let pb   = compact::msg_bytes(p, &open);
+            let pb   = compact::msg_bytes(p);
             let ceil = ceiling.saturating_sub(pb);
             cut = if capped {
-                compact::capped_cut(&session.messages, ceil, &open)
+                compact::capped_cut(&session.messages, ceil)
             } else {
                 compact::tail_start(&session.messages, keep.saturating_sub(pb),
-                    compact::MIN_KEEP_MESSAGES, ceil, &open)
+                    compact::MIN_KEEP_MESSAGES, ceil)
             };
         }
         let pin = compact::pinned_opening(&session.messages, ts, cut).cloned();
@@ -3189,7 +3254,7 @@ impl Agent {
         // fold is asked for whatever it frees, so only the first test binds it.
         if cut > 0 {
             let only_notes = session.messages[..cut].iter().all(compact::is_fold_notice);
-            let freed = compact::conversation_bytes(&session.messages[..cut], &open);
+            let freed = compact::conversation_bytes(&session.messages[..cut]);
             let worth = self.gauge.bytes(gain + compact::FOLD_MAX_TOKENS as u64);
             if only_notes || (!why.forces() && freed < worth) {
                 cut = 0;
@@ -3251,7 +3316,7 @@ impl Agent {
                 Ok(new) => {
                     // A fold that made the conversation bigger is not a fold; it happens
                     // when the folded part was small and the note is not.
-                    if compact::conversation_bytes(&new, &open) < before {
+                    if compact::conversation_bytes(&new) < before {
                         session.messages = new;
                         folded = cut;
                         // AND THE BOUNDARY COMES WITH IT. A fold renumbers the conversation, so
@@ -3266,6 +3331,14 @@ impl Agent {
                         // Where the opening was pinned it is the message behind the notice.
                         self.turn_start.set(if pin.is_some() { 1 } else {
                             compact::prior_end_after_fold(self.turn_start.get(), cut) });
+                        // AND THE TURN'S NOTE RESTATES EVERY BLOCK (r578).  The copies the fold
+                        // cut are gone from what the model reads, and a fold is a new cache epoch,
+                        // so rewriting this one note costs nothing the fold had not already cost.
+                        // Between turns there is no turn in flight: the next one's note is worked
+                        // out against the folded conversation and restates them by itself.
+                        if !matches!(why, Fold::ByHand) {
+                            self.restate_blocks(session);
+                        }
                     }
                 },
                 // Refused rather than allowed to orphan a tool call. Eliding below still
@@ -3312,13 +3385,13 @@ impl Agent {
         let target = self.gauge.bytes((budget as f64 * compact::FOLD_TARGET) as u64)
             .saturating_sub(schema);
         let mut elided = compact::elide_bulk(&mut sent, target,
-            compact::MIN_KEEP_MESSAGES, &open);
-        elided += compact::elide_bulk(&mut sent, ceiling, 1, &open);
+            compact::MIN_KEEP_MESSAGES);
+        elided += compact::elide_bulk(&mut sent, ceiling, 1);
         // Measured on what will be SENT, since that is what the sentence below is about.
-        let after = compact::conversation_bytes(&sent, &open);
+        let after = compact::conversation_bytes(&sent);
         // NO PROGRESS, NO REPEAT: left above the target, or freed less than a fold's worth, the
         // turn does not run this again until it has grown by that much.  See `fold_rest`.
-        let was = compact::conversation_bytes(working, &open);
+        let was = compact::conversation_bytes(working);
         let left = self.gauge.tokens(after + schema);
         if after > target || was.saturating_sub(after) < self.gauge.bytes(gain) {
             self.fold_rest.set(left.max(est) + gain);
@@ -4351,6 +4424,180 @@ mod tests {
             .filter(|m| m.role() == "user").collect();
         assert_eq!(2, users.len());
         assert_eq!("", users[1].pre(), "a turn started with run_turn carries no note");
+    }
+
+    // ── r578: the prompt only grows ─────────────────────────────────────
+
+    /// The top-level elements of a JSON array that starts at `body[at]` (`[`), string-aware.
+    fn json_array_items(body: &str, at: usize) -> Vec<String> {
+        let b = body.as_bytes();
+        let mut items = Vec::new();
+        let (mut depth, mut in_str, mut esc) = (0i32, false, false);
+        let mut start = at + 1;
+        for i in at..b.len() {
+            let c = b[i];
+            if in_str {
+                match (esc, c) {
+                    (true, _)     => esc = false,
+                    (false, b'\\') => esc = true,
+                    (false, b'"') => in_str = false,
+                    _             => {},
+                }
+                continue;
+            }
+            match c {
+                b'"'        => in_str = true,
+                b'[' | b'{' => depth += 1,
+                b']' | b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if body[start..i].trim().len() > 0 {
+                            items.push(body[start..i].trim().to_string());
+                        }
+                        return items;
+                    }
+                },
+                b',' if depth == 1 => {
+                    items.push(body[start..i].trim().to_string());
+                    start = i + 1;
+                },
+                _ => {},
+            }
+        }
+        panic!("an unterminated messages array in: {}", body);
+    }
+
+    /// A request body's messages, as the bytes it sent them as: the system message apart.
+    fn sent_messages(body: &str) -> (String, Vec<String>) {
+        let at = match body.find("\"messages\":[") {
+            Some(i) => i + "\"messages\":".len(),
+            None    => panic!("no messages in: {}", body),
+        };
+        let mut all = json_array_items(body, at);
+        assert!(!all.is_empty() && all[0].contains("\"role\":\"system\""),
+            "the request does not open on its system message: {}", body);
+        let sys = all.remove(0);
+        (sys, all)
+    }
+
+    fn appendonly_blocks(state: &str, tree: &str) -> crate::prompts::TurnBlocks {
+        let mut b = crate::prompts::TurnBlocks::default();
+        b.set(crate::prompts::Block::Crystal, "CRYSTAL-ALPHA");
+        b.set(crate::prompts::Block::State, state);
+        b.set(crate::prompts::Block::Tree, tree);
+        b
+    }
+
+    /// **The gate (r578): two turns of one conversation send one system message, and every
+    /// request's messages are a byte-prefix of the next one's.**  Turn 1 runs four tool rounds,
+    /// two of them under `BUDGET_NOTE_UNDER`, so both the budget note and the turn-state line are
+    /// written; between the turns STATE and the tree change; turn 2's note restates those two
+    /// blocks and nothing else.  A model id that takes no cache marker, so the bytes the
+    /// provider caches on are exactly the bytes compared.
+    #[tokio::test]
+    async fn test_appendonly_two_turns_send_one_system_and_only_append_00() {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            round_costing(0.35), round_costing(0.35), round_costing(0.20), round_costing(0.05),
+            plain_answer(),
+            tool_round(&[("file_write", r#"{"path":"b.txt","content":"2"}"#)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client_for(port, "openai/gpt-5.1");
+        llm.retry.max_attempts = 1;
+        assert!(!crate::llm::model_caches_on_request("openai/gpt-5.1"));
+        let a = Agent::new(llm, "You are Daimond.");
+        {
+            let mut l = a.limits.borrow_mut();
+            l.sweep_every = 1;
+            l.written_age = 100;
+            l.result_age = 100;
+            l.retire_keep_turns = 2;
+        }
+        a.set_spend_cap_usd(1.0);
+        a.set_blocks(appendonly_blocks("STATE-ONE", "TREE-ONE"));
+        let mut session = Session::new(fmt!("s1"), fmt!("appendonly"), fmt!("openai/gpt-5.1"));
+        let ran = a.run_turn(&mut session, fmt!("build it"), &registry, &mut |_| {}).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        let turn1 = sent_bodies(&seen).len();
+        assert_eq!(5, turn1, "turn 1 did not run its four tool rounds and its answer");
+        // Between the turns: a STATE edit and a file write that moves the tree.
+        a.set_blocks(appendonly_blocks("STATE-TWO", "TREE-TWO"));
+        let ran = a.run_turn(&mut session, fmt!("and now the tests"), &registry, &mut |_| {}).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        let bodies = sent_bodies(&seen);
+        assert_eq!(turn1 + 2, bodies.len());
+
+        let parsed: Vec<(String, Vec<String>)> = bodies.iter().map(|b| sent_messages(b)).collect();
+        for (i, (sys, _)) in parsed.iter().enumerate() {
+            assert_eq!(&parsed[0].0, sys, "request {} sent another system message", i);
+            for t in ["CRYSTAL-ALPHA", "STATE-ONE", "STATE-TWO", "TREE-ONE", "TREE-TWO"] {
+                assert!(!sys.contains(t), "the system message carries {}: {}", t, sys);
+            }
+        }
+        // Turn 1 carried every block, in its own note.
+        let first = &parsed[0].1;
+        assert!(first[0].contains("CRYSTAL-ALPHA") && first[0].contains("STATE-ONE")
+            && first[0].contains("TREE-ONE"), "turn 1's note lacks a block: {}", first[0]);
+        // Under the budget line twice, so the strip that once rewrote round 3 would show here.
+        assert!(bodies[turn1 - 1].contains("rounds and US$"),
+            "the budget note never fired, so the gate proves nothing about it: {}", bodies[turn1 - 1]);
+        assert!(bodies[turn1 - 1].contains("turn state: "), "no turn-state line was sent");
+        // Round to round, and turn to turn: each request's messages open the next one's.
+        for i in 1..bodies.len() {
+            let (prev, next) = (&parsed[i - 1].1, &parsed[i].1);
+            assert!(prev.len() < next.len(), "request {} did not grow", i);
+            for (k, m) in prev.iter().enumerate() {
+                assert_eq!(m, &next[k], "request {} rewrote message {} of request {}", i, k, i - 1);
+            }
+        }
+        // Turn 1's final reply follows its last request's messages, as turn 2 sends them.
+        let carried = &parsed[turn1].1[parsed[turn1 - 1].1.len()];
+        assert!(carried.contains("\"role\":\"assistant\"") && carried.contains("Done"),
+            "turn 1's answer is not where turn 2 resumes: {}", carried);
+        // Turn 2's own note: the two changed blocks, and only those.
+        let opening = match parsed[turn1].1.last() {
+            Some(m) => m.clone(),
+            None    => panic!("turn 2 sent nothing"),
+        };
+        assert!(opening.contains("and now the tests"), "{}", opening);
+        assert!(opening.contains("STATE-TWO") && opening.contains("TREE-TWO"),
+            "turn 2's note does not restate what changed: {}", opening);
+        assert!(!opening.contains("CRYSTAL-ALPHA"), "an unchanged block was restated: {}", opening);
+        // The notes on tool results were stored with them, so a reload sends the same bytes.
+        assert!(session.messages.iter().any(|m| m.post().contains("turn state: ")),
+            "the turn-state line was not kept with the result");
+    }
+
+    /// After a fold, the next request's note restates every block: the copies the fold cut are
+    /// gone from what the model reads.
+    #[tokio::test]
+    async fn test_appendonly_a_fold_restates_every_block_00() {
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![completion(structured_fold_reply()), plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let blocks = appendonly_blocks("STATE-ONE", "TREE-ONE");
+        let mut session = foldable_session(30, 3_000);
+        session.messages[0] = ChatMessage::user_noted(fmt!("ask 0"),
+            crate::prompts::turn_note(&blocks, &[]));
+        a.set_blocks(blocks);
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &no_tools(),
+            &mut |ev| events.push(ev)).await;
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. })),
+            "nothing was folded, so the test proves nothing");
+        let bodies = sent_bodies(&seen);
+        let req = match bodies.iter().rev().find(|b| b.contains("carry on")) {
+            Some(b) => b.clone(),
+            None    => panic!("the turn's own request was not sent"),
+        };
+        let (_, msgs) = sent_messages(&req);
+        let last = match msgs.last() { Some(m) => m.clone(), None => panic!("no messages") };
+        for t in ["CRYSTAL-ALPHA", "STATE-ONE", "TREE-ONE"] {
+            assert!(last.contains(t), "the fold left {} unsaid: {}", t, last);
+        }
+        assert_eq!(1, req.matches("CRYSTAL-ALPHA").count(), "the crystal went twice: {}", req);
     }
 
     /// A correction said into a running turn takes its note with it, into the next round's
@@ -7256,6 +7503,61 @@ mod tests {
             "the live and the session-borrowing figures disagree once the turn has ended");
     }
 
+    #[tokio::test]
+    async fn test_pin_follows_each_conversation_and_round_meta_carries_its_own_tokens_00() {
+        // One agent, as a worker's app or a cached Diamond app is, serving two conversations.
+        // Each keeps the host that answered IT, the hand-off at the round's head never lets
+        // one conversation's pin leak into the other's, and every round's trace event states
+        // that round's own prompt and cached tokens -- what the lens `round` row is built from.
+        let registry = one_tool();
+        let sse = |host: &str, delta: &str, usage: &str| crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                fmt!("data: {{\"id\":\"gen-1\",\"provider\":\"{}\",\"model\":\"m\",\
+                    \"object\":\"chat.completion.chunk\",\"choices\":[{{\"index\":0,\
+                    \"delta\":{}}}]}}\n\n", host, delta),
+                fmt!("data: {{\"choices\":[],\"usage\":{}}}\n\n", usage),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let call = "{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\"type\":\"function\",\
+            \"function\":{\"name\":\"file_write\",\"arguments\":\
+            \"{\\\"path\\\":\\\"a.txt\\\",\\\"content\\\":\\\"1\\\"}\"}}]}";
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            sse("InferenceNet", call,
+                "{\"prompt_tokens\":78000,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":74000}}"),
+            sse("InferenceNet", "{\"content\":\"Done\"}",
+                "{\"prompt_tokens\":78100,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":77900}}"),
+            sse("DeepInfra", "{\"content\":\"Hi\"}",
+                "{\"prompt_tokens\":900,\"completion_tokens\":2}"),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let model = llm.model.clone();
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(10);
+        let mut one = Session::new(fmt!("s1"), fmt!("one"), model.clone());
+        let mut metas: Vec<(u64, u64, String)> = Vec::new();
+        let res = a.run_turn(&mut one, fmt!("go"), &registry, &mut |ev| {
+            if let AgentEvent::RoundMeta { prompt_tokens, cached_tokens, provider, .. } = ev {
+                metas.push((prompt_tokens, cached_tokens, provider));
+            }
+        }).await;
+        assert!(res.is_ok(), "{:?}", res);
+        assert_eq!(metas, vec![
+            (78000, 74000, "InferenceNet".to_string()),
+            (78100, 77900, "InferenceNet".to_string()),
+        ], "a round's trace event did not state that round's own tokens");
+        assert_eq!(one.pin, Some(crate::protocol::HostPin { model: model.clone(), host: "InferenceNet".to_string() }),
+            "the conversation did not keep the host that answered it");
+        let mut two = Session::new(fmt!("s2"), fmt!("two"), model.clone());
+        let res = a.run_turn(&mut two, fmt!("hello"), &registry, &mut |_| {}).await;
+        assert!(res.is_ok(), "{:?}", res);
+        assert_eq!(two.pin.map(|p| p.host), Some("DeepInfra".to_string()),
+            "the second conversation inherited the first one's host");
+        assert_eq!(one.pin.map(|p| p.host), Some("InferenceNet".to_string()));
+    }
+
     #[test]
     fn test_the_stop_after_three_continuations_names_both_figures_00() {
         // A model told only "the round limit" after six hundred rounds would reasonably expect
@@ -8450,7 +8752,7 @@ mod tests {
         let mut as_sent = session.messages.clone();
         as_sent.push(ChatMessage::user(fmt!("carry on")));
         assert_eq!(0, compact::tail_start(&as_sent,
-            1_000, compact::MIN_KEEP_MESSAGES, 1_000, &a.llm.open_folds()),
+            1_000, compact::MIN_KEEP_MESSAGES, 1_000),
             "the fixture must be too short to fold, or this tests the other half");
 
         let registry = no_tools();
@@ -8538,7 +8840,7 @@ mod tests {
         let mut as_sent = session.messages.clone();
         as_sent.push(ChatMessage::user(fmt!("carry on")));
         assert_eq!(0, compact::tail_start(&as_sent,
-            1_000, compact::MIN_KEEP_MESSAGES, 1_000, &a.llm.open_folds()),
+            1_000, compact::MIN_KEEP_MESSAGES, 1_000),
             "the fixture must be too short to fold, or this tests the other half");
 
         let registry = no_tools();
@@ -8824,7 +9126,7 @@ mod tests {
         // trials. `compact::capped_cut` is what gives this turn a note at all.
         let mut session = foldable_session(10, 1_200);
         assert_eq!(0, compact::tail_start(&session.messages, u64::MAX,
-            compact::MIN_KEEP_MESSAGES, u64::MAX, &crate::llm::OpenSet::new()),
+            compact::MIN_KEEP_MESSAGES, u64::MAX),
             "the fixture has to be one the ordinary cut declines, or this proves nothing");
         let mut working = session.messages.clone();
         let mut events: Vec<AgentEvent> = Vec::new();
@@ -8879,7 +9181,7 @@ mod tests {
         // than assumed: a change to the gauge or to `FOLD_AT` that closed it would otherwise make
         // this test pass while testing nothing.
         let tokens = a.gauge.tokens(
-            compact::conversation_bytes(&session.messages, &a.llm.open_folds()));
+            compact::conversation_bytes(&session.messages));
         let honest = a.limits().budget(a.reply_cap());
         let blind  = a.limits().budget(a.llm.max_tokens);
         assert!(honest < tokens && tokens <= blind,

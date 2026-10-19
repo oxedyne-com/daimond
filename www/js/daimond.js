@@ -18505,8 +18505,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `say` could refuse that -- src/tools.rs calls an empty summary "the one
 		// failure worth refusing" -- but markup cannot be refused, so it is drawn
 		// OPEN instead. Not unwrapped: unwrapping throws the model's own label
-		// away, and it leaves the screen showing a body the open set calls closed,
-		// so the next payload would strip the only thing the reader can see.
+		// away, and it leaves the screen showing a body the open set calls closed.
 		//
 		// Decided ONCE, where the control is made, and it cannot thrash: the text
 		// above a fold is final the moment that fold's opening marker completes,
@@ -18514,7 +18513,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (headless) d.classList.add('md-fold-bare');
 		// A fold the model itself marked `open`, or one drawn open for the reason
 		// above, is on screen from the first frame -- so it belongs in the open set
-		// too: what the reader can see is what the next payload carries.
+		// too, and the next redraw keeps it open.
 		if ((seg.open || headless) && !(seg.key in _openFolds)) _openFolds[seg.key] = 1;
 		d.open = !!_openFolds[seg.key];
 		d.addEventListener('toggle', function () { foldToggled(d); });
@@ -18523,9 +18522,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Carry a fold-inside-a-fold's open state across the frame that rebuilds it.
 	///
-	/// A nested fold takes no key of its own (dev/CONTRACT_FOLD.md §8): the OUTER
-	/// body is what travels to the model or does not, and an inner fold goes with
-	/// it either way. So there is nothing to restore one from, and it is
+	/// A nested fold takes no key of its own (dev/CONTRACT_FOLD.md §8): it belongs
+	/// to the OUTER body. So there is nothing to restore one from, and it is
 	/// remembered by its label for the length of a single redraw instead --
 	/// enough that a reader who opens one while the answer is still arriving does
 	/// not have it shut in their face on the next frame.
@@ -18545,7 +18543,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		Object.keys(was).forEach(function (k) { if (got[k]) got[k].open = true; });
 	}
 
-	/// A reader opened or closed a fold, so the payload follows the screen.
+	/// A reader opened or closed a fold, so the next redraw and a reload keep it so.
 	///
 	/// The first `toggle` a fold fires is the initial state settling rather than
 	/// a gesture, and it is told apart here by the set already agreeing with the
@@ -18557,7 +18555,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!!el.open === !!_openFolds[k]) return;
 		if (el.open) _openFolds[k] = 1; else delete _openFolds[k];
 		saveTextFolds();
-		if (current && current.app) pushOpenFolds(current.app);
 	}
 
 	/// Draw the accumulated assistant text into its bubble.  See `_asstSegs`.
@@ -18832,10 +18829,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Drawn from the `say` call's own arguments, which is what makes this work on BOTH paths for
 	/// free -- the live turn and a reload both arrive here through `renderToolCall`.
 	///
-	/// THE DETAIL IS HELD LOCALLY AND NOT ON THE WIRE. `strip_said` in src/llm.rs replaces it in
-	/// every later payload, so opening the fold costs nothing and re-sending it costs nothing
-	/// either. The transcript record on this side keeps the whole call, which is why the fold
-	/// still opens after a reload.
+	/// The transcript record keeps the whole call, which is why the fold still opens after a
+	/// reload. The wire carries it whole too (daimond_rulings.md §17).
 	///
 	/// It is drawn as an ASSISTANT message and not as a tool step, because that is what it is: the
 	/// answer. A `say` in the Steps drawer would be an answer the user has to turn on a debugging
@@ -18844,24 +18839,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `args` - The call's arguments, as JSON. Unparseable ones return false and fall through to
 	///   the ordinary tool block, which is honest: a fold nobody can read is not a fold.
-	/// Which `say` folds are open, by tool-call id. Read straight into the payload before every
-	/// turn: an open fold's detail travels with the request, a closed one's does not.
-	///
-	/// THE FOLD IS THE CONTEXT CONTROL. A fold the user closed is one they are done with; a fold
-	/// they opened is one they are reading, and the next thing they say is likely to be about it.
-	/// So the gesture that manages their screen manages the model's working set too, and the two
-	/// things that ought to agree do. There is no second control to learn.
+	/// Which text folds the reader has open, by fold key, so a redraw and a reload draw each one
+	/// as they left it. Display state only: the wire carries every fold whole.
 	var _openFolds = Object.create(null);
-
-	/// Hand the engine the open set before a turn goes out.
-	///
-	/// The WHOLE set every time, never a delta: a fold closed since the last turn has to leave the
-	/// payload, and an accumulating set could only grow.
-	function pushOpenFolds(app) {
-		if (!app || typeof app.set_open_folds !== 'function') return;
-		try { app.set_open_folds(JSON.stringify(Object.keys(_openFolds))); }
-		catch (e) { /* an older engine simply strips them all, which is the old behaviour */ }
-	}
 
 	// Which TEXT folds the reader has open, kept across a reload.
 	//
@@ -18871,9 +18851,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// one global set would have two threads opening each other's folds, and the
 	// chat record itself is not this change's to alter.
 	//
-	// A tool-call id never begins with a run of digits and a colon, which is what
-	// keeps the two namespaces sharing `_openFolds` apart. Only the text folds are
-	// stored: a `say` fold's id belongs to a call that will not recur.
+	// Only text-fold keys are held, and `TEXT_FOLD` is their shape.
 	var FOLDS_KEY = 'daimond-open-folds';
 	var TEXT_FOLD = /^[0-9]+:/;
 
@@ -18912,9 +18890,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// depths in the model's own prose now, as a `<details>` element -- but a conversation
 	/// saved before that still carries `say` tool_calls, and the history-replay path draws
 	/// them through here. Delete this and those answers render as NOTHING the moment tool
-	/// steps are hidden: silent loss, in conversations the user already has. The engine's
-	/// half is `strip_said` in src/llm.rs, kept for the same reason.
-	function renderSaid(args, callId) {
+	/// steps are hidden: silent loss, in conversations the user already has.
+	function renderSaid(args) {
 		var o;
 		try { o = JSON.parse(args || '{}'); } catch (e) { return false; }
 		if (!o || typeof o.summary !== 'string' || !o.summary.trim()) return false;
@@ -18926,13 +18903,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		body.innerHTML = DaimondRender.md(o.summary);
 		div.appendChild(body);
 		var detail = String(o.detail == null ? '' : o.detail);
-		var id = String(callId || '');
 		if (detail.trim()) {
 			var btn = document.createElement('button');
 			btn.className = 'said-more lead-disc';
 			btn.setAttribute('aria-expanded', 'false');
 			// The size is on the control on purpose: it is the whole of what the reader needs to
-			// decide whether to open it, and it is the number this tool exists to keep off the wire.
+			// decide whether to open it.
 			var size = fmtTok(Math.round(detail.length / 4));
 			// A caret and a number. Everything that used to be on the button -- what it holds,
 			// that it is kept here, that it is not re-sent -- is true, worth knowing once, and
@@ -18946,10 +18922,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			div.appendChild(btn); div.appendChild(more);
 			btn.addEventListener('click', function () {
 				var open = more.style.display === 'none';
-				// The payload follows the screen. Opening one costs a cache miss on the next
-				// turn, because a message already in the prefix is rewritten; it is stable again
-				// after that.
-				if (id) { if (open) _openFolds[id] = 1; else delete _openFolds[id]; }
 				// Rendered on first open, not on draw: a thread of forty folded answers would
 				// otherwise parse and lay out forty documents nobody has asked to see.
 				if (open && !more.dataset.drawn) {
@@ -18959,9 +18931,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				more.style.display = open ? '' : 'none';
 				btn.setAttribute('aria-expanded', open ? 'true' : 'false');
 				btn.textContent = size;
-				// The tooltip carries the state's consequence, which CHANGES: open, the model is
-				// holding this too. That is the sentence worth having, and it belongs where it is
-				// read on purpose rather than skimmed past.
 				btn.title = t(open ? 'say.less_help' : 'say.more_help', { n: size });
 			});
 			addMsgCopy(div, o.summary + '\n\n' + detail);
@@ -19431,7 +19400,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function renderToolCall(name, args, callId, ts) {
 		// The answer, not a step. Only ever a STORED call -- see `renderSaid`, which says
 		// why the reader outlives the tool.
-		if (name === 'say' && renderSaid(args, callId)) { _saidJust = true; return; }
+		if (name === 'say' && renderSaid(args)) { _saidJust = true; return; }
 		_saidJust = false;
 		// The QUESTION, not a step. A tool block would put the thing the turn is
 		// waiting on behind a debugging view that is off by default.
@@ -41433,9 +41402,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { await scopeTurnApp(chat, app, threadBounds); }
 		catch (e) { appendError(friendlyError(e)); return; }
 
-		// What the user has open right now, so the payload matches their screen. See `_openFolds`.
-		pushOpenFolds(app);
-
 		// The turn id: a fresh mid for an ordinary turn, or the EXISTING dispatched
 		// prompt's mid for a peer turn (D3), so the journal, the rebuild and the
 		// assistant grouping all key on the message already in the transcript.
@@ -41748,22 +41714,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				writing = false;
 				if (umid) runnerDeaf(umid, false);		// a call: the turn has a seam ahead (R7c)
 				// TRAINING WHEELS — the debug feed's `round`, one per tool-call round.
-				// `ctx` is `last_prompt_tokens`: what the LAST request actually sent,
-				// which is also what the feed's fold inference watches for a drop --
-				// its name is load-bearing, see `inferFold` in debugshare.js. `ca` is
-				// the cumulative cached share and `msgs` this chat's own message count,
-				// both cheap tells for the prompt-token-carry cost this exists to
-				// diagnose. The tool NAME travels; its arguments never do, for the
-				// reason below. Past 60 rounds `rounds` folds ten to a row (see above).
-				// MID-TURN: `run_turn` holds the session mutably right here, so this
-				// reads the `live_*` getters (agent-side Cells, no session borrow)
-				// rather than `last_prompt_tokens` / `cached_tokens`, which draw zero
-				// while a turn is in flight.
+				// `ctx` is the prompt tokens THIS round's request sent, which is also what
+				// the feed's fold inference watches for a drop -- its name is load-bearing,
+				// see `inferFold` in debugshare.js. `ca` is THIS round's cached tokens
+				// (r578 U3; it was the turn's running total) and `msgs` this chat's own
+				// message count, cheap tells for the prompt-token-carry cost this exists to
+				// diagnose. Both come from the round's own `round_meta` (`rounds.meta`
+				// below), not the app's `live_*` getters. The tool NAME travels; its
+				// arguments never do, for the reason below. Past 60 rounds `rounds` folds
+				// ten to a row (see above).
 				rounds.add({
 					turn: String(umid), r: callN,
-					ctx:  (app && app.live_last_prompt_tokens) || 0,
 					win:  (app && app.context_window) || 0,
-					ca:   (app && app.live_cached_tokens) || 0,
 					msgs: chat.messages.length,
 					tool: String(ev.name || '').slice(0, 40),
 				});
@@ -42029,12 +41991,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// because a stall is exactly the thing proposal 15 needed traced and a
 				// reader filtering the feed should not have to know the field name to
 				// find it. See `AgentEvent::RoundMeta` (src/protocol.rs).
+				// The round's own prompt and cached tokens (r578 U3), which the next `round`
+				// row takes too.
+				var use = rounds.meta(ev);
 				dsEvent(ev.stalled ? 'stalled' : 'round_meta', {
 					turn: String(umid), r: callN,
 					gen: String(ev.gen || '').slice(0, 40),
 					finish: String(ev.finish || '').slice(0, 24),
 					nfinish: String(ev.nfinish || '').slice(0, 24),
 					provider: String(ev.provider || '').slice(0, 40),
+					p: use.p, ca: use.ca,
 					// The round's timing facts (U3a RM): bytes, ms to the first byte, the
 					// longest quiet after it, and the round's length. `lens gaps` reads them.
 					b: Math.round(Number(ev.b) || 0), f: Math.round(Number(ev.f) || 0),
@@ -44763,6 +44729,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						finish: String(ev.finish || '').slice(0, 24),
 						nfinish: String(ev.nfinish || '').slice(0, 24),
 						provider: String(ev.provider || '').slice(0, 40),
+						// The round's own prompt and cached tokens (r578 U3).
+						p: Math.round(Number(ev.p) || 0), ca: Math.round(Number(ev.ca) || 0),
 						b: Math.round(Number(ev.b) || 0), f: Math.round(Number(ev.f) || 0),
 						g: Math.round(Number(ev.g) || 0), ms: Math.round(Number(ev.ms) || 0),
 					});
@@ -66883,12 +66851,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			prov:  String(dsPair.provider || '').slice(0, 24),
 			d:     depth,
 		});
-		// What the user has open right now, so the payload matches their screen --
-		// the same call `runTurn` makes, and it was missing here. A Diamond's app
-		// starts with an EMPTY open set, so every `<details>` body was stripped
-		// from every steer regardless of what was open on screen: the two-depth
-		// answer was inert on the one surface a Diamond is developed from.
-		pushOpenFolds(rec.app);
 		// `syncComposer` raises the dots as well as putting Stop on the button, so
 		// what this turn is doing has to be on the record before it is called.
 		rec._busy = tOr('chat.busy', 'Thinking…');
@@ -67072,15 +67034,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Keyed on the Diamond's own record, which is the turn here; the chat
 				// path's `round` is keyed on the turn's mid. Folded past 60 rounds,
 				// same rule as `runTurn`'s: this loop runs ~150 rounds deep.
-				// MID-TURN, same as `runTurn`'s own `round` payload: `steer_crystal`
-				// holds the session mutably right here, so this reads the `live_*`
-				// getters rather than `last_prompt_tokens` / `cached_tokens`, which
-				// draw zero while a turn is in flight.
+				// `ctx` and `ca` are the round's own, from its `round_meta` (r578 U3): this
+				// read `rec.app`'s `live_*` getters and drew 0 on every round, because the
+				// daimon runs on `fa`, an app of its own, with an agent composed per turn.
 				rounds.add({
 					turn: String(dumid), r: callN,
-					ctx:  (rec.app && rec.app.live_last_prompt_tokens) || 0,
-					win:  (rec.app && rec.app.context_window) || 0,
-					ca:   (rec.app && rec.app.live_cached_tokens) || 0,
+					win:  (fa && fa.context_window) || 0,
 					msgs: rec.messages.length,
 					tool: String(ev.name || '').slice(0, 40),
 					dia:  1,
@@ -67209,12 +67168,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} else if (ev.type === 'round_meta') {
 				// See the same arm in `runTurn`. The daimon's own turn is where proposal
 				// 15's round happened, so this is the arm that actually matters.
+				var use = rounds.meta(ev);
 				dsEvent(ev.stalled ? 'stalled' : 'round_meta', {
 					turn: String(dumid), r: callN,
 					gen: String(ev.gen || '').slice(0, 40),
 					finish: String(ev.finish || '').slice(0, 24),
 					nfinish: String(ev.nfinish || '').slice(0, 24),
 					provider: String(ev.provider || '').slice(0, 40),
+					p: use.p, ca: use.ca,
 					b: Math.round(Number(ev.b) || 0), f: Math.round(Number(ev.f) || 0),
 					g: Math.round(Number(ev.g) || 0), ms: Math.round(Number(ev.ms) || 0),
 					dia: 1,
@@ -73529,6 +73490,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (w.machine) {
 			group._body.appendChild(wireBand(t('wire.machine'), t('wire.machine_why'), t('wire.machine_help'), w.machine));
 		}
+		// THE TURN'S NOTE (r578): what changes from turn to turn rides with the person's message,
+		// not in the system message, so it is drawn apart from the bands above it.
+		if (w.note) {
+			group._body.appendChild(wireBand(t('wire.note'), t('wire.note_why'), t('wire.note_help'), w.note));
+		}
 		group._body.appendChild(wireBand(
 			t('wire.schemas', { n: (w.names || []).length }), t('wire.schemas_why'),
 			t('wire.schemas_help'), schemas, schemaTok));
@@ -74266,7 +74232,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (window.DEBUG_SHARE && DEBUG_SHARE.roundFeed) return DEBUG_SHARE.roundFeed();
 		} catch (e) { /* the feed must never break the app */ }
-		return { add: function () {}, flush: function () {} };
+		return { add: function () {}, flush: function () {}, meta: function () { return { p: 0, ca: 0 }; } };
 	}
 
 	// The Lens's picture of this screen: a toast before every one, and a Diamond page that cannot

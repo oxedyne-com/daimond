@@ -334,7 +334,29 @@ const afterViewer = (t) => {
 	while (k < lines.length && lines[k].startsWith('- the page ')) k++;
 	return k > 0 && k < lines.length && lines[k] === '' ? lines.slice(k + 1).join('\n').trim() : t;
 };
-const afterNote = (text) => afterViewer(afterRating(text));
+// r578 U2's turn note leads the message, ahead of any caller's note: `[Standing context for this
+// turn. ...]`, then blocks `<tag/>` or `<tag>\n...\n</tag>`, a blank line between (`turn_note` in
+// prompts.rs). Read as plain, it hid every directive behind it, so a Diamond's `@tools` turn was
+// answered as prose. A note that does not parse is left whole.
+const TURN_NOTE_LEAD = '[Standing context for this turn.';
+const afterTurnNote = (text) => {
+	const t = String(text || '').trim();
+	if (!t.startsWith(TURN_NOTE_LEAD)) return t;
+	let i = t.indexOf(']');
+	if (i < 0) return t;
+	i++;
+	for (;;) {
+		const rest = t.slice(i).replace(/^\s+/, '');
+		const at = t.length - rest.length;
+		const m = /^<([a-z]+)(\/?)>/.exec(rest);
+		if (!m) return rest;
+		if (m[2]) { i = at + m[0].length; continue; }
+		const close = rest.indexOf('\n</' + m[1] + '>');
+		if (close < 0) return t;
+		i = at + close + m[1].length + 4;
+	}
+};
+const afterNote = (text) => afterViewer(afterRating(afterTurnNote(text)));
 const afterRating = (text) => {
 	const t = String(text || '').trim();
 	if (!t.startsWith('[Daimond:')) return t;

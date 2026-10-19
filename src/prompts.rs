@@ -672,11 +672,10 @@ pub const QUIET_NOTE: &str =
 
 /// How to answer at two depths, appended to every role whose reader is a person.
 ///
-/// The long half of an answer is for somebody once. Left in the open it is read past, and left in
-/// the transcript it is re-sent on every later turn for the life of the conversation -- so an
-/// explanation the user skipped is charged for again and again. A fold puts the short answer where
-/// it can be read and the working behind a disclosure they open if they want it, and
-/// [`crate::llm::sent_text_len`] takes a closed one's body off the wire.
+/// The long half of an answer is for somebody once, and left in the open it is read past. A fold
+/// puts the short answer where it can be read and the working behind a disclosure they open if
+/// they want it. Folds are for the person reading: the wire carries every fold verbatim
+/// (daimond_rulings.md §17, 2026-10-19).
 ///
 /// **This is now the ONLY enforcement point, which is why it is longer than a note usually is.**
 /// While folding was a tool, `Tool::Say` REFUSED a call whose summary was empty -- the one failure
@@ -745,8 +744,7 @@ pub const FOLD_NOTE: &str =
 	 nothing inside it is parsed, and your headings reach the reader as literal hashes.\n\n\
 	 Never fold the whole answer. Above the fold goes the answer itself and any caveat on it — a \
 	 qualification behind a fold is one they will act without — and a fold with nothing above it \
-	 opens on nothing. When the whole answer IS a sentence or two, fold nothing. A closed fold's \
-	 body does not come back to you next turn.";
+	 opens on nothing. When the whole answer IS a sentence or two, fold nothing.";
 
 /// That a verifier is run with `verify` and not built out of `run` calls, appended to every role
 /// whose turn is watched by a person.
@@ -1556,6 +1554,245 @@ fn kit_ask_note(bounds: &[Bound]) -> String {
 		if rest.contains(&Toolkit::Git) { " Git: on commit, merge, rebase or tag." } else { "" })
 }
 
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ THE TURN'S NOTE: WHAT CHANGES BETWEEN TURNS, OUT OF THE SYSTEM MESSAGE    │
+// └───────────────────────────────────────────────────────────────────────────┘
+//
+// r578 (2026-10-19, audit rows 2 and 3, ruling §17): the system message is the head of the cached
+// prefix, and everything a turn learns afresh -- the crystal, the three files, what is attached,
+// the activity, the machine, the date, the tree -- used to be composed into it.  So the first
+// round of almost every turn re-billed the whole prompt at the full input rate.  These blocks now
+// ride in the opening user message's `pre` note, stored with it, and each is restated only when
+// its text differs from its latest copy in the conversation as sent.  Nothing sent is rewritten.
+
+/// One named block of a turn's standing context, in the order a note carries them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Block {
+	Crystal,
+	Requirements,
+	State,
+	Decisions,
+	Objectives,
+	Attached,
+	Activity,
+	Machine,
+	Today,
+	Tree,
+	Packs,
+}
+
+impl Block {
+
+	pub const ALL: [Block; 11] = [
+		Block::Crystal,
+		Block::Requirements,
+		Block::State,
+		Block::Decisions,
+		Block::Objectives,
+		Block::Attached,
+		Block::Activity,
+		Block::Machine,
+		Block::Today,
+		Block::Tree,
+		Block::Packs,
+	];
+
+	/// The tag a block is wrapped in, which is also how its latest copy is found again.
+	pub fn tag(&self) -> &'static str {
+		match self {
+			Self::Crystal		=> "crystal",
+			Self::Requirements	=> "requirements",
+			Self::State			=> "state",
+			Self::Decisions		=> "decisions",
+			Self::Objectives	=> "objectives",
+			Self::Attached		=> "attached",
+			Self::Activity		=> "activity",
+			Self::Machine		=> "machine",
+			Self::Today			=> "today",
+			Self::Tree			=> "tree",
+			Self::Packs			=> "packs",
+		}
+	}
+}
+
+/// What a turn's standing context holds, block by block, as the app composed it for this turn.
+///
+/// An absent block and an empty one are the same thing: nothing to say.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TurnBlocks {
+	set: Vec<(Block, String)>,
+}
+
+impl TurnBlocks {
+
+	/// Put `text` in block `b`, replacing what was there.  Surrounding whitespace is not part of
+	/// a block, so a producer's leading blank lines cannot make two equal blocks differ.
+	pub fn set(&mut self, b: Block, text: &str) {
+		let text = text.trim().to_string();
+		match self.set.iter_mut().find(|(k, _)| *k == b) {
+			Some(slot) => slot.1 = text,
+			None       => self.set.push((b, text)),
+		}
+	}
+
+	pub fn get(&self, b: Block) -> &str {
+		self.set.iter().find(|(k, _)| *k == b).map(|(_, t)| t.as_str()).unwrap_or("")
+	}
+
+	/// Does no block say anything?
+	pub fn is_empty(&self) -> bool {
+		self.set.iter().all(|(_, t)| t.is_empty())
+	}
+}
+
+/// How a note that carries blocks opens.  Said every time a block is, because a model reading a
+/// note with two blocks in it must not conclude the others have gone.
+pub const TURN_NOTE_LEAD: &str =
+	"[Standing context for this turn. A block not repeated here is unchanged since its last copy \
+	 above; an empty one, <name/>, no longer applies.]";
+
+/// One block as a note carries it.
+fn block_text(b: Block, text: &str) -> String {
+	match text.is_empty() {
+		true  => fmt!("<{}/>", b.tag()),
+		false => fmt!("<{}>\n{}\n</{}>", b.tag(), text, b.tag()),
+	}
+}
+
+/// The text of block `b` in one note, or `None` where that note does not carry it.
+///
+/// A copy whose text happens to hold its own closing tag reads back short, so it differs from the
+/// block and is restated: the failure costs bytes, never a missing fact.
+pub fn block_in(note: &str, b: Block) -> Option<String> {
+	let tag = b.tag();
+	let empty = fmt!("<{}/>", tag);
+	let open = fmt!("<{}>\n", tag);
+	let close = fmt!("\n</{}>", tag);
+	let mut at = 0usize;
+	while at <= note.len() {
+		let rest = &note[at..];
+		let hit = [(rest.find(&open), false), (rest.find(&empty), true)].into_iter()
+			.filter_map(|(i, e)| i.map(|i| (i, e)))
+			.min_by_key(|(i, _)| *i);
+		let (i, is_empty) = match hit {
+			Some(h) => h,
+			None    => return None,
+		};
+		let start = at + i;
+		// Only at the start of a line, so a tag quoted inside another block's text is not one.
+		if start == 0 || note.as_bytes()[start - 1] == b'\n' {
+			if is_empty {
+				return Some(String::new());
+			}
+			let body = start + open.len();
+			return match note[body..].find(&close) {
+				Some(j) => Some(note[body..body + j].to_string()),
+				None    => None,
+			};
+		}
+		at = start + 1;
+	}
+	None
+}
+
+/// The latest copy of block `b` the conversation carries, newest user note first.
+pub fn sent_block(sent: &[crate::protocol::ChatMessage], b: Block) -> Option<String> {
+	sent.iter().rev().find_map(|m| match m.pre().is_empty() {
+		true  => None,
+		false => block_in(m.pre(), b),
+	})
+}
+
+/// This turn's note: every block whose text differs from its latest copy in `sent`, in
+/// [`Block::ALL`] order, under [`TURN_NOTE_LEAD`].  Empty where nothing changed.
+///
+/// `sent` empty restates every block that says anything, which is what a turn after a fold needs.
+///
+/// # Arguments
+/// * `blocks` - What the app composed for this turn.
+/// * `sent` - The conversation as this turn sends it, before its own message is added.
+pub fn turn_note(blocks: &TurnBlocks, sent: &[crate::protocol::ChatMessage]) -> String {
+	let mut said = Vec::new();
+	for b in Block::ALL {
+		let cur = blocks.get(b);
+		match sent_block(sent, b) {
+			Some(prev) if prev == cur => {},
+			None if cur.is_empty()    => {},	// never said, and nothing to say
+			_                         => said.push(block_text(b, cur)),
+		}
+	}
+	match said.is_empty() {
+		true  => String::new(),
+		false => fmt!("{}\n\n{}", TURN_NOTE_LEAD, said.join("\n\n")),
+	}
+}
+
+/// `note` ahead of `rest`, a blank line between, and either alone where the other is empty.
+pub fn join_note(note: &str, rest: &str) -> String {
+	match (note.is_empty(), rest.is_empty()) {
+		(true, _)      => rest.to_string(),
+		(false, true)  => note.to_string(),
+		(false, false) => fmt!("{}\n\n{}", note, rest),
+	}
+}
+
+#[cfg(test)]
+mod turn_note_tests {
+
+	use super::*;
+	use crate::protocol::ChatMessage;
+
+	fn blocks(pairs: &[(Block, &str)]) -> TurnBlocks {
+		let mut b = TurnBlocks::default();
+		for (k, t) in pairs {
+			b.set(*k, t);
+		}
+		b
+	}
+
+	#[test]
+	fn test_appendonly_turn_note_restates_only_what_changed_00() {
+		let one = blocks(&[(Block::Crystal, "\n\n{\"goal\":\"g\"}"), (Block::State, "S1"),
+			(Block::Tree, "T1")]);
+		let first = turn_note(&one, &[]);
+		assert!(first.starts_with(TURN_NOTE_LEAD), "{}", first);
+		for t in ["{\"goal\":\"g\"}", "S1", "T1"] {
+			assert!(first.contains(t), "a first turn must carry every block: {}", first);
+		}
+		let sent = vec![ChatMessage::user_noted("go".to_string(), first.clone()),
+			ChatMessage::assistant("done".to_string())];
+		// Nothing changed, nothing said.
+		assert_eq!("", turn_note(&one, &sent));
+		// STATE and the tree changed; the crystal did not.
+		let two = blocks(&[(Block::Crystal, "{\"goal\":\"g\"}"), (Block::State, "S2"),
+			(Block::Tree, "T2")]);
+		let next = turn_note(&two, &sent);
+		assert!(next.contains("<state>\nS2\n</state>"), "{}", next);
+		assert!(next.contains("<tree>\nT2\n</tree>"), "{}", next);
+		assert!(!next.contains("crystal"), "an unchanged block was restated: {}", next);
+		// The latest copy wins: against both notes, STATE as S2 is news to nobody.
+		let mut later = sent.clone();
+		later.push(ChatMessage::user_noted("again".to_string(), next));
+		assert_eq!("", turn_note(&two, &later));
+		// A block that has gone is said to have gone, once.
+		let gone = blocks(&[(Block::Crystal, "{\"goal\":\"g\"}"), (Block::Tree, "T2")]);
+		let said = turn_note(&gone, &later);
+		assert!(said.contains("\n<state/>"), "{}", said);
+		later.push(ChatMessage::user_noted("and".to_string(), said));
+		assert_eq!("", turn_note(&gone, &later));
+		// A block never sent and still empty is not mentioned.
+		assert!(!turn_note(&gone, &later).contains("packs"));
+	}
+
+	#[test]
+	fn test_appendonly_block_in_ignores_a_tag_quoted_mid_line_00() {
+		let note = "<state>\nsee the <tree>\nfile\n</state>\n\n<tree>\nT\n</tree>";
+		assert_eq!(Some("see the <tree>\nfile".to_string()), block_in(note, Block::State));
+		assert_eq!(Some("T".to_string()), block_in(note, Block::Tree));
+		assert_eq!(None, block_in(note, Block::Crystal));
+	}
+}
+
 /// What a turn with nowhere to run a command is told, in place of the paragraph about folders.
 ///
 /// **It is here because the tools are not.**  `ToolRegistry::offered` withholds `run`, `runs` and
@@ -2096,7 +2333,7 @@ mod tests {
 	/// validates the markup and nothing can refuse it, so the note is the only place left that
 	/// can hold those rules. It reached about 193 carrying them: the whole-answer ban and its
 	/// reason, the converse for a one-line answer, the caveat rule, and that a closed body does
-	/// not come back.
+	/// not come back (dropped 2026-10-19 with the strip that made it true).
 	///
 	/// **It went to 260 on 2026-08-23 for two rules of the owner's**, both of them things the
 	/// note as written had actively caused: that EVERY answer of more than a couple of sentences

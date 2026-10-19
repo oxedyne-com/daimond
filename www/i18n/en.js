@@ -1006,8 +1006,8 @@
 	// The safe answer when nobody touched the page for half an hour and the model
 	// gave no `if_silent` of its own to use instead. Never a fabricated choice.
 	'ask.no_answer': 'No answer was given.',
-	'say.more_help':      'About {n} tokens. Sent to the model only once the fold is open.',
-	'say.less_help':      'About {n} tokens; visible to the model while this stays open.',
+	'say.more_help':      'About {n} tokens.',
+	'say.less_help':      'About {n} tokens.',
 	'wire.role_help':     'Your role prompt. Edit it in prompts/.',
 	'wire.safety_help':   'Appended after your edits, every turn. Cannot be removed from your prompt.',
 	'wire.tools_help':    'Only the tools this conversation actually holds — nothing promised falsely.',
@@ -1027,6 +1027,9 @@
 	'wire.tools_why':     'from the registry',
 	'wire.machine':       'This computer',
 	'wire.machine_why':   'from the fence',
+	'wire.note': 'This turn\'s note',
+	'wire.note_why': 'rides with your message',
+	'wire.note_help': 'The crystal, files, date and tree as they changed since their last copy. Sent with your next message, so the system message above stays cached.',
 	'wire.diamond':       'This diamond',
 	'wire.diamond_why':   'this turn only',
 	'wire.standing':      'Standing instructions',

@@ -43,11 +43,8 @@
 //      ways, closed and then open, so a measurement that can only ever say "no"
 //      cannot pass for a proof.
 //
-//   5. THE OPEN SET REACHES WASM. `DaimondApp.set_open_folds` is wrapped on its
-//      prototype and the real one still called, so what is recorded is what the
-//      engine was actually handed. Opening a fold has to put that fold's key into
-//      it. (What the ENGINE then does with the set is the Rust half's, and is not
-//      asserted here.)
+//   5. (Retired 2026-10-19, r578: the open set no longer crosses to wasm; the wire
+//      carries every fold verbatim. See dev/CONTRACT_FOLD.md Amendment 4.)
 //
 //   6. A FOLD WITH NOTHING ABOVE IT IS DRAWN OPEN. `say` could refuse an empty
 //      summary — src/tools.rs calls it "the one failure worth refusing", because
@@ -96,7 +93,7 @@
 //   node dev/verify_twodepth.mjs --break flicker     # 1: the half-written fold drawn
 //   node dev/verify_twodepth.mjs --break alwaysopen  # 4: a fold that never shuts
 //   node dev/verify_twodepth.mjs --break bodygone    # 4: a body that never shows
-//   node dev/verify_twodepth.mjs --break openbroken  # 5: the gesture not recorded
+//   node dev/verify_twodepth.mjs --break openbroken  # 10: the gesture not recorded
 //   node dev/verify_twodepth.mjs --break rawlabel    # 8: the label as live markup
 //   node dev/verify_twodepth.mjs --break bareclosed  # 6: nothing above it, shut
 //   node dev/verify_twodepth.mjs --break barequiet   # 6: the decision left unsaid
@@ -251,8 +248,8 @@ const BREAKS = {
 		with: 'details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }\n'
 			+ 'details.md-fold > .md-fold-body { display: none; }',
 	}],
-	// The gesture that manages the reader's screen no longer manages the model's
-	// working set: the fold opens, and the engine is told nothing.
+	// The gesture is not recorded: the fold opens on screen, and the reader's
+	// choice is not there after a reload.
 	openbroken: [{
 		file: 'js/daimond.js',
 		find: '\t\tif (el.open) _openFolds[k] = 1; else delete _openFolds[k];',
@@ -413,48 +410,6 @@ try {
 	await page.waitForFunction(() => window.DaimondRender && window.DaimondRender.foldScan,
 		null, { timeout: 20000 });
 
-	// ── 0c. EVERY turn pushes the open set, not just the one that was checked ──
-	//
-	// Static, and deliberately so: the browser checks below drive an ordinary
-	// chat, and an ordinary chat was never the path that was broken. `doSteer`
-	// -- the Diamond's own thread, which is the surface Daimond is developed
-	// from -- set `_generating` and streamed without ever calling
-	// `pushOpenFolds`, so a Diamond's app carried an EMPTY open set for its
-	// whole life and every fold body was stripped from every payload. The
-	// feature worked, was tested, and was inert where it mattered most.
-	//
-	// So the property is not "a turn pushes the open set" but "there is no turn
-	// that does not". Each `_generating = true` is a turn beginning; the push
-	// must be within reach of it in the same function. A third turn path added
-	// without the call reddens here rather than in a month of use.
-	{
-		const js = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
-		const lines = js.split('\n');
-		const starts = [], missing = [];
-		lines.forEach((ln, i) => { if (/_generating\s*=\s*true/.test(ln)) starts.push(i); });
-		// IN THE SAME FUNCTION: from the enclosing function's own header -- the
-		// nearest line above, indented less than the flag, that opens a function --
-		// to its closing brace. It was a sixty-line window, which read the property
-		// as "nearby" and went red when `doSteer` grew 130 lines between its push
-		// (daimond.js:32083) and its flag, the push still in place.
-		const indent = (ln) => (/^\s*/.exec(ln)[0]).replace(/ {4}/g, '\t').length;
-		for (const i of starts) {
-			const own = indent(lines[i]);
-			let j = i - 1;
-			while (j >= 0 && !(indent(lines[j]) < own && /\bfunction\b/.test(lines[j])
-				&& !/^\s*\/\//.test(lines[j]))) j--;
-			let k = i + 1;
-			const top = j >= 0 ? indent(lines[j]) : 0;
-			while (k < lines.length && !(indent(lines[k]) <= top && /^\s*\}/.test(lines[k]))) k++;
-			const body = lines.slice(Math.max(0, j), k).join('\n');
-			if (j < 0 || !/^\s*pushOpenFolds\s*\(/m.test(body)) missing.push(`daimond.js:${i + 1}`);
-		}
-		check(`0c every turn pushes what is open on screen (${starts.length} turn path(s))`,
-			starts.length >= 2 && missing.length === 0,
-			missing.length ? `no pushOpenFolds near ${missing.join(', ')}`
-				: `${starts.length} turn path(s), all push`);
-	}
-
 	// ── 1. The key, against the fixture ───────────────────────────────
 	//
 	// Body length is counted in CODE POINTS on both sides, because the contract
@@ -528,7 +483,7 @@ try {
 	await page.evaluate(() => {
 		const out = document.getElementById('chat-output');
 		const asst = () => out.querySelectorAll('.chat-msg-assistant');
-		const st = { made: 0, uid: 0, samples: [], sent: [], base: asst().length };
+		const st = { made: 0, uid: 0, samples: [], base: asst().length };
 		window.__twodepth = st;
 		const mine = () => asst()[st.base] || null;
 		const stamp = (el) => {
@@ -567,27 +522,12 @@ try {
 		st.stop = () => { obs.disconnect(); cancelAnimationFrame(st.raf); };
 	});
 
-	// The engine's own door, wrapped and still called. What is recorded is what
-	// the wasm boundary was handed, not what this file hoped it would be.
-	const shimmed = await page.evaluate(async () => {
-		const m = await import('/pkg/oxedyne_daimond.js');
-		const P = m.DaimondApp && m.DaimondApp.prototype;
-		if (!P || typeof P.set_open_folds !== 'function') return false;
-		const orig = P.set_open_folds;
-		P.set_open_folds = function (json) {
-			window.__twodepth.sent.push(json);
-			return orig.call(this, json);
-		};
-		return true;
-	});
-	check('0b the engine offers `set_open_folds` to wrap', shimmed === true);
-
 	// ── 2 & 3. A real turn, streamed ──────────────────────────────────
 	await chat(s, '@text ' + STREAMED);
 	const run = await page.evaluate(() => {
 		const st = window.__twodepth;
 		st.stop();
-		return { made: st.made, samples: st.samples, sent: st.sent.slice() };
+		return { made: st.made, samples: st.samples };
 	});
 	const seen = run.samples;
 	const last = seen[seen.length - 1] || { all: 0, seg: -1, body: -1, fold: false };
@@ -660,15 +600,6 @@ try {
 	check('4c pressing the label puts it on screen — the same two facts, the other way',
 		!!shown && shown.open === true && shown.rect && shown.hit,
 		shown ? JSON.stringify(shown) : null);
-
-	// ── 5. The open set, at the wasm boundary ─────────────────────────
-	const sent = await page.evaluate(() => window.__twodepth.sent.slice());
-	const lastSent = sent.length ? sent[sent.length - 1] : '';
-	let parsed = null;
-	try { parsed = JSON.parse(lastSent); } catch (e) { /* the check below says so */ }
-	check('5a opening a fold hands the engine a set with that fold\'s key in it',
-		Array.isArray(parsed) && parsed.indexOf('0:What was actually wrong') >= 0,
-		lastSent ? lastSent.slice(0, 160) : 'nothing was ever handed to the engine');
 
 	// ── 6. A fold with nothing above it ───────────────────────────────
 	await chat(s, '@text ' + BARE);
@@ -865,10 +796,10 @@ try {
 	//
 	// Everything above this point tests a fold the MODEL wrote, and 5 answers in 76
 	// carried one. The app places the seam now: the model writes a line beginning
-	// `Fold:` and the app builds the element, keys it, strips it and draws it. So
+	// `Fold:` and the app builds the element, keys it and draws it. So
 	// what has to be proved is the expansion -- character for character, because
 	// the engine builds the same string in Rust and a key the two disagree about is
-	// a fold the reader opens that never leaves the payload -- and the refusals,
+	// a fold whose open state is lost -- and the refusals,
 	// which are the half that keeps a length rule from becoming FOLD-ALL.
 	const seamed = await page.evaluate((cases) => cases.map((c) => {
 		const got = window.DaimondRender.seamText(c.input, true);
