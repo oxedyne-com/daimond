@@ -137,12 +137,11 @@ pub const FOLD_AT_MAX: f64 = 0.95;	// above it the provider refuses before the f
 /// fired, for a hundred and fifty rounds, each carrying the lot.  A ceiling only a runaway
 /// reaches is not a ceiling.
 ///
-/// LOWERED AGAIN TO 80,000 ON 2026-09-13, off the tune loop's own measurement over 190 trials:
-/// the `cap80` arm cut cost by 27% against `cur` with no utility lost.  This moved the cap
-/// BELOW the default window's own fraction (131,072 * 0.65 = ~85k) for the first time, so a
-/// default-window chat now folds at this cap rather than at its own fraction too -- exactly
-/// the behaviour the 190 trials measured and found no utility lost in, not an accident of this
-/// figure sitting where it used to.
+/// 120,000 SINCE 2026-09-12.  It was lowered to 80,000 on 2026-09-13 off the tune loop's `cap80`
+/// arm and raised back the same day: no trial's prompt had peaked above 48K, so that arm never
+/// bound and its saving was repeat noise, while a real daimon turn peaks above 90K and 80,000
+/// would fold it twice for no measured gain.  The owner kept 120,000 on 2026-10-20 (D-20261020-02).
+/// A default-window chat (131,072 * 0.65 = ~85k) therefore folds at its own fraction, under it.
 ///
 /// It is now the DEFAULT of [`Limits::context_cap`] rather than the figure itself, because the
 /// owner has to be able to see it and move it: a number that decides what a turn costs, and
@@ -207,7 +206,7 @@ pub const SPEND_CAP_MAX_USD: f64 = 1000.0;
 // `test_a_workers_true_ceiling_is_the_leg_times_its_continuations_00` in agent.rs.
 pub const WORKER_MAX_ROUNDS:    usize = 100;
 pub const WORKER_CONTINUATIONS: usize = 1;	// one breath, not three
-pub const WORKER_CONTEXT_CAP:   u64   = 96_000;
+pub const WORKER_CONTEXT_CAP:   u64   = 0;	// none: a worker folds at its parent's cap
 pub const WORKER_KEEP:          f64   = 0.3;
 pub const WORKER_SPEND_CAP_USD: f64   = 1.0;
 
@@ -235,16 +234,6 @@ pub const ORPHAN_GRACE_ROUNDS: usize = 5;
 /// runner's own fan-out drain (10 min).  A ceiling and not a target -- a gather answers the moment
 /// its workers are terminal, so the wait only bites while one is genuinely still running.
 pub const GATHER_TIMEOUT_S: u64 = 600;
-
-/// Milliseconds the page lets one worker's `run_turn` run before it stops the worker with a report
-/// of its own, inside [`GATHER_TIMEOUT_S`] so `gather` always has a terminal answer to hand back.
-///
-/// The one source of the figure (r543 QA N1): `www/js/daimond.js` reads it through the wasm's
-/// `worker_wall_clock_ms`, and a round's wait for its first data is bounded inside it
-/// (`llm::attempt_wait`), so a model that never answers is reported as that and not as a worker
-/// the clock stopped.
-pub const WORKER_WALL_CLOCK_MS: u64 = 540_000;
-const _: () = assert!(WORKER_WALL_CLOCK_MS < GATHER_TIMEOUT_S * 1_000);
 
 /// Fraction of the budget kept verbatim at the end of the conversation.
 ///
@@ -451,7 +440,6 @@ pub struct Limits {
 	// tree nobody tunes changes.
 	pub retire_prior: bool,		// retire a turn's predecessors on the way out; see `retire_upto`
 	pub retire_keep_turns: u32,	// completed turns left whole first; see `RETIRE_KEEP_TURNS`
-	pub written_age:  usize,	// rounds a write's body must be old; see `IN_TURN_RETIRE_AGE`
 	pub result_age:   usize,	// rounds a result must be old; see `IN_TURN_RESULT_AGE`
 	pub result_cap:   usize,	// bytes left whole however old; see `IN_TURN_RESULT_CAP`
 	pub sweep_every:  usize,	// rounds between sweeps; see `IN_TURN_RETIRE_EVERY`
@@ -530,7 +518,6 @@ impl Default for Limits {
 			worker:     false,
 			retire_prior: true,
 			retire_keep_turns: RETIRE_KEEP_TURNS,
-			written_age:  IN_TURN_RETIRE_AGE,
 			result_age:   IN_TURN_RESULT_AGE,
 			result_cap:   IN_TURN_RESULT_CAP,
 			sweep_every:  IN_TURN_RETIRE_EVERY,
@@ -626,8 +613,8 @@ impl Limits {
 	/// so a setting that arrives mid-run cannot lift a worker back over the ceiling either.
 	///
 	/// Idempotent, because it is called again on every setting: each field is a `min` against a
-	/// figure that is already at or below the ceiling -- `context_cap` aside, where the ceiling
-	/// can now be the looser of the two; see the comment at that field below.  A zero is read as
+	/// figure that is already at or below the ceiling -- `context_cap` aside, which is the
+	/// parent's own; see the comment at that field below.  A zero is read as
 	/// "the user has not chosen" exactly as [`Limits::budget`] reads it, so the shipped default
 	/// is what the ceiling is taken against rather than nought.
 	pub fn hold_to_worker(&mut self) {
@@ -637,26 +624,17 @@ impl Limits {
 		// everywhere else here, so it means the shipped figure rather than a ceiling of nothing:
 		// a preset of nought rounds would end every worker before its first call.
 		let rounds = if self.worker_max_rounds == 0 { WORKER_MAX_ROUNDS } else { self.worker_max_rounds };
-		let wcap   = if self.worker_context_cap == 0 { WORKER_CONTEXT_CAP } else { self.worker_context_cap };
 		let wkeep  = if self.worker_keep <= 0.0 { WORKER_KEEP } else { self.worker_keep };
 		let wspend = if self.worker_spend_usd <= 0.0 { WORKER_SPEND_CAP_USD } else { self.worker_spend_usd };
 		self.max_rounds = self.max_rounds.min(rounds).max(1);
 		// A continuation count of zero IS a choice -- one leg and no more -- so it is not read
 		// as absent the way the four above are.
 		self.max_continuations = self.max_continuations.min(self.worker_continuations);
-		// UNLIKE THE OTHER FOUR, THE CHAT'S OWN FIGURE CAN NOW BE THE TIGHTER ONE: since
-		// 2026-09-13 `WORKER_CONTEXT_CAP` (96,000) sits ABOVE `ABSOLUTE_CAP` (80,000), so a plain
-		// `min` against whatever the chat holds would floor every untouched worker at the chat's
-		// generic default and the raised preset would never be reached.  Nobody having chosen a
-		// cap is not the same as somebody having chosen the shipped default on purpose, so both
-		// "zero" and "exactly the shipped default" read as no choice at all here -- the worker
-		// gets its own preset -- and only a figure the user moved AWAY from that default still
-		// binds it tighter.
-		let cap = if self.context_cap == 0 || self.context_cap == ABSOLUTE_CAP {
-			wcap
-		} else {
-			self.context_cap.min(wcap)
-		};
+		// THE CARRY IS THE PARENT'S OWN (2026-10-20, r578c): a worker starts as a copy of its
+		// parent's conversation, so it folds where the parent folds -- a user cap above 120,000
+		// included.  Only a tune that names a worker figure still lowers it.
+		let own = if self.context_cap == 0 { ABSOLUTE_CAP } else { self.context_cap };
+		let cap = if self.worker_context_cap == 0 { own } else { own.min(self.worker_context_cap) };
 		self.context_cap = cap.clamp(CONTEXT_CAP_MIN, CONTEXT_CAP_MAX);
 		self.keep = self.keep.min(wkeep);
 		let spend = if self.spend_cap_usd <= 0.0 { DEFAULT_SPEND_CAP_USD } else { self.spend_cap_usd };
@@ -1962,30 +1940,20 @@ pub fn elide_bulk(
 ///
 /// NOT every round, and the reason is the bill this section exists to reduce.  Every byte of the
 /// prompt that changes costs a prefix-cache MISS on the round after it, charged at the full input
-/// rate -- so a sweep that rewrote one file body per round would pay a miss every round to save a
+/// rate -- so a sweep that rewrote one result per round would pay a miss every round to save a
 /// carry it had already mostly saved.  Ten rounds amortises the miss over the nine that follow it,
 /// and a long turn still gets a dozen sweeps.
 pub const IN_TURN_RETIRE_EVERY: usize = 10;
 
-/// Rounds a write must be old before its body is retired mid-turn.
-///
-/// The model reads its own last two or three rounds closely -- it checks what it wrote, edits it
-/// again, reads an error against it.  Three rounds is past that and well inside the hundred and
-/// fifty a capped turn runs.
-pub const IN_TURN_RETIRE_AGE: usize = 3;
-
 /// Rounds a tool RESULT must be old before it is retired mid-turn.
 ///
 /// **The result is what a long turn is mostly made of**, and until now nothing aged one: the
-/// arguments were retired at three rounds and the results were carried whole to the end of the
-/// turn, so a worker that read twenty files re-sent all twenty on every round after the last of
+/// results were carried whole to the end of the turn, so a worker that read twenty files re-sent all twenty on every round after the last of
 /// them.  A measured turn sat at 77.5K tokens a round for 85 rounds with nothing ever too big to
 /// fold, which is the same arithmetic `ABSOLUTE_CAP` was lowered for -- 97% of it a cache hit,
 /// cheap per token and ruinous in total.
 ///
-/// Longer than [`IN_TURN_RETIRE_AGE`] and deliberately so.  A write's body is on disk the moment
-/// its reply comes back, so three rounds is generous for an ARGUMENT; a result is working memory,
-/// and a model reads back over the last several rounds of it -- a file it read four rounds ago is
+/// A result is working memory, and a model reads back over the last several rounds of it -- a file it read four rounds ago is
 /// a file it is probably still editing.
 ///
 /// DOUBLED TO 16 ON 2026-09-13.  Eight left a worker re-reading what the sweep had just retired
@@ -2002,15 +1970,6 @@ pub const IN_TURN_RESULT_AGE: usize = 16;
 /// what the stub says.  Below it are the one-line confirmations a turn is mostly made of by
 /// COUNT, and they are not what it is made of by size.
 pub const IN_TURN_RESULT_CAP: usize = 2_048;
-
-/// Bytes of tool-call arguments left whole; above it the bulky value is retired.
-///
-/// A call's arguments are usually a path and a flag -- tens of bytes -- and the ones that are
-/// not are the write tools, whose arguments carry the whole of a file.  Those are the dearest
-/// thing in a long turn after the results themselves, and they were never aged at all:
-/// [`elide_bulk`] deliberately leaves `tool_calls` alone so it cannot orphan a reply, and
-/// leaving the ARGUMENTS alone is not what that guarantee requires.
-pub const ARG_RETIRE_CAP: usize = 512;
 
 /// Completed turns left verbatim in the sent copy before retirement begins.
 ///
@@ -2110,9 +2069,12 @@ pub fn prior_end(msgs: &[ChatMessage], keep: u32) -> usize {
 	0
 }
 
-/// Retire the tool results and bulky tool-call arguments in `msgs[..end]`.
+/// Retire the tool results in `msgs[..end]`.
 ///
-/// Assistant prose, user messages, the system prompt and a fold's own notice are all left
+/// **Results only** (daimond_rulings.md §17, D-20261020-01).  A tool call's arguments are the
+/// model's own past actions and reach it exactly as it sent them: they are what it copies, and
+/// a shortened write it met as its own came back as a write of nothing (a copied `retired` key
+/// reached a new `file_edit` on 2026-10-08).  Assistant prose, user messages, the system prompt and a fold's own notice are all left
 /// exactly as they are: the first two cannot be read again from anywhere, and the notice is
 /// already the compressed form of everything it replaced.
 ///
@@ -2140,17 +2102,6 @@ pub fn retire_upto(msgs: &mut [ChatMessage], end: usize) -> usize {
 				n += 1;
 			}
 		}
-		// The ARGUMENTS last, because the stubs above are built from them.
-		if let Some(lighter) = retired_args(&calls) {
-			if let ChatMessage::Assistant { content, .. } = &msgs[i] {
-				msgs[i] = ChatMessage::Assistant {
-					content:    content.clone(),
-					tool_calls: lighter.clone(),
-				};
-				n += 1;
-			}
-			say_args_retired(msgs, i, end, &calls, &lighter);
-		}
 		i += 1 + calls.len();
 	}
 	n
@@ -2175,61 +2126,9 @@ pub fn prior_end_after_fold(prior_end: usize, cut: usize) -> usize {
 	1 + prior_end.saturating_sub(cut)
 }
 
-/// Retire only the bulky ARGUMENTS of the write and edit calls in `msgs[..end]`.
-///
-/// The in-turn half, and deliberately narrower than [`retire_upto`]: a result the model is
-/// still working from must survive the turn that is reading it, but the body it WROTE is
-/// already on disk by the time the reply comes back, and the reply is what says so.  So the
-/// body is what can go early, and only once the call has been answered -- an unanswered call
-/// may still be in flight, and a retired argument is not what should reach a retry.
-///
-/// # Arguments
-/// * `msgs` - The SENT copy of the conversation, edited in place.
-/// * `end` - One past the last message that may be retired; the caller's round horizon.
-pub fn retire_written(msgs: &mut [ChatMessage], end: usize) -> usize {
-	let end = end.min(msgs.len());
-	let mut n = 0;
-	let mut i = 0;
-	while i < end {
-		let calls = match &msgs[i] {
-			ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() =>
-				tool_calls.clone(),
-			_ => { i += 1; continue; },
-		};
-		let mut lighter = calls.clone();
-		let mut moved = false;
-		for (k, tc) in calls.iter().enumerate() {
-			if !carries_a_body(&tc.name) {
-				continue;
-			}
-			// ANSWERED, or it is left alone.  A call whose reply has not arrived is a call
-			// whose arguments may still be needed.
-			match msgs.get(i + 1 + k) {
-				Some(ChatMessage::Tool { tool_call_id, .. }) if *tool_call_id == tc.id => {},
-				_ => continue,
-			}
-			if let Some(args) = retired_arg_object(tc) {
-				lighter[k].arguments = args;
-				moved = true;
-			}
-		}
-		if moved {
-			if let ChatMessage::Assistant { content, .. } = &msgs[i] {
-				msgs[i] = ChatMessage::Assistant { content: content.clone(),
-					tool_calls: lighter.clone() };
-				n += 1;
-			}
-			say_args_retired(msgs, i, end, &calls, &lighter);
-		}
-		i += 1 + calls.len();
-	}
-	n
-}
-
 /// Retire the big, old tool RESULTS in `msgs[..end]`, leaving everything else alone.
 ///
-/// The other in-turn half, beside [`retire_written`], and the one that carries the weight: a
-/// turn's results are most of its bytes and nothing aged them at all.  A result older than the
+/// The in-turn half: a turn's results are most of its bytes and nothing aged them at all.  A result older than the
 /// caller's horizon and larger than `over` is replaced by [`result_stub`] -- the tool, what it was
 /// called on, what became of it, the size of what went, and that it can be called again.  The
 /// stored transcript is not touched, by the ruling at the top of this section: the lossy form is
@@ -2282,6 +2181,21 @@ pub fn retire_results(msgs: &mut [ChatMessage], end: usize, over: usize) -> usiz
 		i += 1 + calls.len();
 	}
 	n
+}
+
+/// The in-turn sweep, once per round at the top of the round, on the loop's own arithmetic.
+///
+/// `round_at` holds where each round of the turn began, this one last.  Every
+/// `sweep_every`th round the results older than `result_age` rounds and larger than
+/// `result_cap` bytes are retired.  One function for the loop and its tests, so a fixture
+/// cannot flatter the sweep by running it more often or reaching further back than the app.
+pub fn sweep_in_turn(msgs: &mut [ChatMessage], round_at: &[usize], l: &Limits) -> usize {
+	let every = l.sweep_every.max(1);	// a cadence of nought would be a modulo by nought
+	let swept = round_at.len();
+	if swept > l.result_age && swept % every == 0 {
+		return retire_results(msgs, round_at[swept - 1 - l.result_age], l.result_cap);
+	}
+	0
 }
 
 /// Say what is left of the turn, in the LAST tool result rather than in the system prompt.
@@ -2406,11 +2320,6 @@ pub fn note_reconcile(msgs: &mut Vec<ChatMessage>, prior_tail: Option<&ChatMessa
 	true
 }
 
-/// Does this tool's arguments object carry a whole file, rather than a path and a flag?
-fn carries_a_body(name: &str) -> bool {
-	matches!(name, "file_write" | "file_edit" | "doc_edit" | "artefact_add" | "crystal_write")
-}
-
 /// The one line that stands in for a tool result, or `None` to leave the message alone.
 ///
 /// `None` covers three cases and they are not the same: the message is not a tool reply at
@@ -2446,87 +2355,6 @@ fn result_stub(tc: &ToolCall, reply: &ChatMessage) -> Option<String> {
 		CallOutcome::Failed  => ", failed",
 	};
 	Some(fmt!("[{}{} — {} retired{}", call_label(tc), how, gone, RESULT_RETIRED_TAIL))
-}
-
-/// The calls of one assistant turn with their bulky arguments retired, or `None` where none
-/// of them had any.
-fn retired_args(calls: &[ToolCall]) -> Option<Vec<ToolCall>> {
-	let mut out   = calls.to_vec();
-	let mut moved = false;
-	for (k, tc) in calls.iter().enumerate() {
-		if let Some(args) = retired_arg_object(tc) {
-			out[k].arguments = args;
-			moved = true;
-		}
-	}
-	if moved { Some(out) } else { None }
-}
-
-/// One call's arguments, rewritten small, or `None` to leave them as the model wrote them.
-///
-/// **The replacement is a JSON OBJECT, not a sentence.**  `llm::message_to_json` escapes these
-/// arguments into a string for the OpenAI dialect and embeds them as JSON for Anthropic's, so
-/// a stub that was not parseable would be a malformed request on one of the two paths.  The
-/// key arguments are kept verbatim for the same reason the fold's ledger keeps paths: what a
-/// call was made ON is the part that is worth carrying, and it is cheap.
-///
-/// `say` is skipped outright.  It is the answer the user reads, and the wire carries it as they
-/// see it (daimond_rulings.md §17): a stub in its place would be a hollow fold the model learns
-/// to copy.
-fn retired_arg_object(tc: &ToolCall) -> Option<String> {
-	if tc.name == "say" || tc.arguments.len() <= ARG_RETIRE_CAP {
-		return None;
-	}
-	// ONLY THE CALL'S OWN KEYS, and no key of the stub's: a model copies the shape of the calls
-	// it has seen, and a `retired` key carried here came back as an argument of a new
-	// `file_edit` (the Ontheism crystal, 2026-10-08, finding 7).  What went is said in the
-	// result instead, by [`say_args_retired`].
-	let object = |cap: bool| -> String {
-		let mut kept: Vec<String> = Vec::new();
-		for key in ARGS_KEPT {
-			if let Some(v) = extract_json_string(&tc.arguments, key) {
-				if v.is_empty() {
-					continue;
-				}
-				let v = if cap { clip(&v, STUB_ARG_CAP) } else { v };
-				kept.push(fmt!("\"{}\":\"{}\"", key, crate::llm::json_escape(&v)));
-			}
-		}
-		fmt!("{{{}}}", kept.join(","))
-	};
-	// Already retired, or never held anything but the kept keys: the object rebuilt WHOLE from
-	// itself is itself.  Rebuilt clipped it would not be, since a clip of a clip grows.
-	if object(false) == tc.arguments {
-		return None;
-	}
-	Some(object(true))
-}
-
-/// The keys a retired call keeps, which are what the call was made ON.
-const ARGS_KEPT: [&str; 5] = ["path", "to", "url", "name", "cwd"];
-
-/// Each retired call's result opened with a line saying its arguments went, so that a call
-/// that now reads `file_write {"path":"a"}` is not taken for a write of nothing.
-///
-/// In the RESULT, which is read and never copied, rather than in the arguments, which are both.
-/// A result that holds pictures is left alone: its parts are not one text to prefix.
-fn say_args_retired(msgs: &mut [ChatMessage], i: usize, end: usize, was: &[ToolCall],
-	now: &[ToolCall])
-{
-	for (k, (a, b)) in was.iter().zip(now.iter()).enumerate() {
-		let j = i + 1 + k;
-		if a.arguments == b.arguments || j >= end || j >= msgs.len() {
-			continue;
-		}
-		let text = match &msgs[j] {
-			ChatMessage::Tool { content: MessageContent::Text(t), tool_call_id, .. }
-				if *tool_call_id == a.id => t.clone(),
-			_ => continue,
-		};
-		msgs[j] = msgs[j].with_content(MessageContent::text(fmt!(
-			"[{} bytes of this call's arguments are retired; it already happened, and what it \
-			 did follows]\n{}", a.arguments.len(), text)));
-	}
 }
 
 /// A call named the way a person reads it: the tool, then what it was called on.
@@ -3441,13 +3269,13 @@ mod tests {
 		assert!(l.worker, "nothing marks this agent as a worker");
 		assert_eq!(100,    l.max_rounds);
 		assert_eq!(1,      l.max_continuations);
-		assert_eq!(96_000, l.context_cap);
+		assert_eq!(ABSOLUTE_CAP, l.context_cap, "a worker does not fold at its parent's cap");
 		assert_eq!(0.3,    l.keep);
 		assert_eq!(1.0,    l.spend_cap_usd);
-		// And the ceiling is what the per-round carry is actually bounded by, which is the figure
-		// the bill is made of: a worker on a million-token window carries 96,000 and not 852,000.
+		// And the cap is what the per-round carry is actually bounded by, which is the figure the
+		// bill is made of: a worker on a million-token window carries 120,000 and not 852,000.
 		l.window = 1_310_720;
-		assert_eq!(96_000, l.budget(0));
+		assert_eq!(120_000, l.budget(0));
 	}
 
 	/// A call that reached here under a Claude Code alias labels exactly as the same call
@@ -3485,7 +3313,7 @@ mod tests {
 		l.hold_to_worker();
 		assert_eq!(100,    l.max_rounds);
 		assert_eq!(1,      l.max_continuations);
-		assert_eq!(96_000, l.context_cap);
+		assert_eq!(200_000, l.context_cap, "the parent's own cap did not reach its worker");
 		assert_eq!(0.3,    l.keep);
 		assert_eq!(1.0,    l.spend_cap_usd);
 		// A TIGHTER CHOICE IS THE USER'S AND IS KEPT. The preset lowers; it does not set.
@@ -3511,8 +3339,13 @@ mod tests {
 		l.context_cap = 0;
 		l.spend_cap_usd = 0.0;
 		l.hold_to_worker();
-		assert_eq!(96_000, l.context_cap);
+		assert_eq!(ABSOLUTE_CAP, l.context_cap);
 		assert_eq!(1.0,    l.spend_cap_usd);
+		// A TUNED WORKER FIGURE still lowers it, which is what the tune arms measure.
+		let mut l = Limits::default();
+		l.worker_context_cap = 96_000;
+		l.hold_to_worker();
+		assert_eq!(96_000, l.context_cap);
 	}
 
 	#[test]
@@ -3543,11 +3376,9 @@ mod tests {
 
 	#[test]
 	fn test_a_small_window_still_folds_at_its_fraction_00() {
-		// Below the cap the fraction wins unchanged. DEFAULT_WINDOW no longer qualifies as
-		// "small" for this: at 0.65 its own fraction is ~85k, which since 2026-09-13 sits ABOVE
-		// the 80,000 cap -- see `test_a_large_window_folds_at_the_cap_not_its_fraction_00`'s
-		// sibling case, now true of the default window too. 100,000 and 60,000 both still clear
-		// the cap, so they are the fixtures here instead.
+		// Below the cap the fraction wins unchanged. 100,000 and 60,000 both sit under the
+		// 120,000 cap at any `fold_at` up to 0.65, so they hold whatever the cap is moved to
+		// inside its tested band.
 		let mut l = Limits::default();
 		l.window = 100_000;
 		assert_eq!((100_000.0 * FOLD_AT) as u64, l.budget(0));
@@ -4484,7 +4315,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_a_finished_turns_results_and_write_bodies_are_retired_00() {
+	fn test_a_finished_turns_results_are_retired_00() {
 		// THE MEASUREMENT THE CHANGE EXISTS FOR. Nothing here is over any ceiling: the point is
 		// that a turn which never trips a fold still re-sends two finished turns on every one of
 		// its rounds, and that is where the money went.
@@ -4496,13 +4327,14 @@ mod tests {
 		let after = conversation_bytes(&v);
 		let now   = conversation_bytes(&v[..end]);
 		assert!(n > 0, "a three-turn transcript retired nothing");
-		// The FINISHED turns, measured on their own: that is what was retired, and the whole
-		// conversation's figure is diluted by the turn in flight, which is kept entire.
-		assert!(now * 20 < was,
-			"the finished turns went from {} bytes to {}, which is not the order of saving \
-			 claimed", was, now);
+		// The FINISHED turns, measured on their own: what is left is their write bodies, which
+		// stay as the model sent them (daimond_rulings.md §17), and a line per result.
+		let bodies: u64 = args_of(&v[..end]).iter().map(|a| a.len() as u64).sum();
+		assert!(now < bodies + 2_000,
+			"the finished turns went from {} bytes to {}, against {} of arguments", was, now, bodies);
+		assert!(now * 2 < was, "the finished turns went from {} bytes to {}", was, now);
 		// And the conversation as a whole, which is what a round actually carries.
-		assert!(after * 2 < before, "{} bytes became {}", before, after);
+		assert!(after * 3 < before * 2, "{} bytes became {}", before, after);
 		// Not one message was added, removed or reordered, so no tool call can have been
 		// orphaned -- the same guarantee `elide_bulk` rests on.
 		assert_eq!(three_turns().len(), v.len());
@@ -4537,26 +4369,157 @@ mod tests {
 		assert!(ran.contains("run cargo build"), "{}", ran);
 	}
 
+	/// Every tool call's arguments in `v`, in order, as the model sent them.
+	fn args_of(v: &[ChatMessage]) -> Vec<String> {
+		let mut out = Vec::new();
+		for m in v {
+			if let ChatMessage::Assistant { tool_calls, .. } = m {
+				for tc in tool_calls {
+					out.push(tc.arguments.clone());
+				}
+			}
+		}
+		out
+	}
+
+	/// No argument object carries a key of retirement's own, and no result says its call's
+	/// arguments went: the model copies the calls it sees, and a copied `retired` key reached
+	/// a new `file_edit` on 2026-10-08.
+	fn no_retired_args(v: &[ChatMessage]) {
+		for a in args_of(v) {
+			assert!(!a.contains("retired"), "an argument object names retirement: {}", clip(&a, 120));
+		}
+		for m in v {
+			assert!(!m.text().contains("arguments are retired"),
+				"a result says its call's arguments went: {}", clip(&m.text(), 120));
+		}
+	}
+
 	#[test]
-	fn test_a_retired_write_keeps_its_path_and_stays_an_object_00() {
-		// `llm::message_to_json` escapes these arguments into a string for the OpenAI dialect
-		// and embeds them as JSON for Anthropic's, so a stub that was a bare sentence would be
-		// a malformed request on one of the two paths and nothing here would say so.
+	fn test_a_prior_turn_retire_leaves_every_argument_as_sent_00() {
+		// RESULTS ONLY (daimond_rulings.md §17, D-20261020-01). The model's own past calls are
+		// what it copies, so they reach it byte for byte; only what came BACK is shortened.
 		let mut v = three_turns();
-		retire_prior(&mut v, 0);
-		let args = match &v[5] {
-			ChatMessage::Assistant { tool_calls, .. } => tool_calls[0].arguments.clone(),
-			other => panic!("the write turn is {:?}", other.role()),
-		};
-		assert!(args.len() < ARG_RETIRE_CAP, "the body is still there: {} bytes", args.len());
-		assert!(args.starts_with('{') && args.ends_with('}'), "{}", args);
-		assert_eq!(Some(fmt!("src/a.rs")), extract_json_string(&args, "path"),
-			"the path the call was made on did not survive: {}", args);
-		// No key of the stub's own: a model copies the calls it has seen, and a `retired` key
-		// came back as an argument of a new `file_edit` (finding 7, 2026-10-08).
-		assert!(!args.contains("retired"), "the stub carries a key no call takes: {}", args);
-		assert!(v[6].text().contains("bytes of this call's arguments are retired"),
-			"the size that went is not stated beside the call: {}", v[6].text());
+		// A 20 kB write in the first turn, answered, beside the fixture's 40 kB ones.
+		v.insert(9, asks("w20", "file_write",
+			&fmt!("{{\"path\":\"src/big.rs\",\"content\":\"{}\"}}", "w".repeat(20_000))));
+		v.insert(10, replies("w20", "Wrote src/big.rs (20000 bytes)."));
+		let sent = args_of(&v);
+		let n = retire_prior(&mut v, 0);
+		assert!(n > 0, "nothing was retired, so this proves nothing");
+		assert_eq!(sent, args_of(&v), "a prior turn's tool-call arguments were rewritten");
+		// The RESULTS before the keep window are still stubbed.
+		assert!(v[3].text().ends_with(RESULT_RETIRED_TAIL), "{}", v[3].text());
+		assert!(v[8].text().ends_with(RESULT_RETIRED_TAIL), "{}", v[8].text());
+		no_retired_args(&v);
+		// And at the shipped keep, the same.
+		let mut w = three_turns();
+		let sent = args_of(&w);
+		retire_prior(&mut w, RETIRE_KEEP_TURNS);
+		assert_eq!(sent, args_of(&w));
+		assert!(w[3].text().ends_with(RESULT_RETIRED_TAIL), "{}", w[3].text());
+		no_retired_args(&w);
+	}
+
+	#[test]
+	fn test_an_in_turn_sweep_leaves_every_argument_as_sent_00() {
+		// The sweep the loop runs, on the loop's own arithmetic, over a forty-round turn that
+		// writes a 20 kB body at round two and smaller ones every fifth round.
+		let l = Limits::default();
+		let mut working = vec![user("rewrite the parser")];
+		let mut round_at: Vec<usize> = Vec::new();
+		let mut swept = 0;
+		for r in 1..=40 {
+			round_at.push(working.len());
+			swept += sweep_in_turn(&mut working, &round_at, &l);
+			let id = fmt!("c{}", r);
+			let (call, args, reply) = if r == 2 {
+				("file_write", fmt!("{{\"path\":\"src/big.rs\",\"content\":\"{}\"}}",
+					"w".repeat(20_000)), fmt!("Wrote src/big.rs (20000 bytes)."))
+			} else if r % 5 == 0 {
+				("file_write", fmt!("{{\"path\":\"src/f{}.rs\",\"content\":\"{}\"}}",
+					r, "z".repeat(4_000)), fmt!("Wrote src/f{}.rs (4000 bytes).", r))
+			} else {
+				("file_read", fmt!("{{\"path\":\"src/f{}.rs\"}}", r),
+					"let x = compute(&thing);\n".repeat(330))
+			};
+			working.push(asks(&id, call, &args));
+			working.push(replies(&id, &reply));
+		}
+		assert!(swept > 0, "the sweep never fired, so this proves nothing");
+		let mut whole: Vec<String> = Vec::new();
+		for r in 1..=40 {
+			whole.push(if r == 2 {
+				fmt!("{{\"path\":\"src/big.rs\",\"content\":\"{}\"}}", "w".repeat(20_000))
+			} else if r % 5 == 0 {
+				fmt!("{{\"path\":\"src/f{}.rs\",\"content\":\"{}\"}}", r, "z".repeat(4_000))
+			} else {
+				fmt!("{{\"path\":\"src/f{}.rs\"}}", r)
+			});
+		}
+		assert_eq!(whole, args_of(&working), "an in-turn sweep rewrote a tool call's arguments");
+		// Old RESULTS are still retired: round one's read is well past the horizon.
+		assert!(working[2].text().ends_with(RESULT_RETIRED_TAIL), "{}", working[2].text());
+		no_retired_args(&working);
+	}
+
+	/// What each round of a fifty-round daimon session sends, prior-turn retirement at the top
+	/// of every turn and the in-turn sweep every round, both as the loop runs them.
+	///
+	/// Four turns of 8, 12, 10 and 20 rounds over a working tree: reads of 6 kB, whole-file
+	/// writes of 2-12 kB, edits of a kilobyte and a half, builds with 2.5 kB of output.
+	fn daimon_session(last: usize) -> Vec<u64> {
+		let l = Limits::default();
+		let mut stored = vec![ChatMessage::system("You are Daimond.")];
+		let mut sent = Vec::new();
+		let mut r = 0usize;
+		for (t, rounds) in [8usize, 12, 10, last].iter().enumerate() {
+			stored.push(user(&fmt!("turn {}: carry on with the parser", t)));
+			let mut working = stored.clone();
+			retire_prior(&mut working, RETIRE_KEEP_TURNS);
+			let mut round_at: Vec<usize> = Vec::new();
+			for _ in 0..*rounds {
+				r += 1;
+				round_at.push(working.len());
+				sweep_in_turn(&mut working, &round_at, &l);
+				sent.push(conversation_bytes(&working));
+				let id = fmt!("c{}", r);
+				let (call, args, reply) = match r % 4 {
+					0 => ("file_write", fmt!("{{\"path\":\"src/m{}.rs\",\"content\":\"{}\"}}",
+							r, "fn body() {}\n".repeat(150 + (r * 61) % 770)),
+						fmt!("Wrote src/m{}.rs.", r)),
+					1 => ("file_edit", fmt!("{{\"path\":\"src/m{}.rs\",\"old\":\"{}\",\"new\":\"{}\"}}",
+							r, "a".repeat(700), "b".repeat(800)),
+						fmt!("Edited src/m{}.rs.", r)),
+					2 => ("run", fmt!("{{\"argv\":[\"cargo\",\"build\"]}}"),
+						"warning: unused variable\n".repeat(100)),
+					_ => ("file_read", fmt!("{{\"path\":\"src/m{}.rs\"}}", r),
+						"let x = compute(&thing);\n".repeat(240)),
+				};
+				for m in [asks(&id, call, &args), replies(&id, &reply)] {
+					working.push(m.clone());
+					stored.push(m);
+				}
+			}
+			stored.push(says("Done for now."));
+		}
+		sent
+	}
+
+	#[test]
+	fn test_a_fifty_round_session_measured_00() {
+		// THE SIZE EFFECT OF KEEPING ARGUMENTS, printed so the figure is in the run's output.
+		let sent = daimon_session(20);
+		assert_eq!(50, sent.len());
+		let mean = sent.iter().sum::<u64>() / 50;
+		let max = sent.iter().copied().max().unwrap_or(0);
+		println!("fifty-round session, per-round sent bytes: mean {}, max {}, last {}; by round {:?}",
+			mean, max, sent[49], sent);
+		// And where a long last turn reaches `ABSOLUTE_CAP`, at four bytes a token.
+		let long = daimon_session(600);
+		let at = long.iter().position(|b| b / 4 > ABSOLUTE_CAP);
+		println!("same session, last turn 600 rounds: round {:?} of {} first passes {} tokens",
+			at.map(|i| i + 1), long.len(), ABSOLUTE_CAP);
 	}
 
 	#[test]
@@ -4619,8 +4582,9 @@ mod tests {
 		assert!(n > 0, "keeping one turn retired nothing at all");
 		assert_eq!(v[10..], w[10..],
 			"the turn just finished was retired, which is the thing the keep exists to stop");
-		assert!(conversation_bytes(&w[..10]) * 20
-			< conversation_bytes(&v[..10]),
+		// What is left of turn 0 is its write body, which stays as sent, and a line a result.
+		let body: u64 = args_of(&v[..10]).iter().map(|a| a.len() as u64).sum();
+		assert!(conversation_bytes(&w[..10]) < body + 2_000,
 			"turn 0 was not retired, so the keep has turned the measure off rather than \
 			 moved its boundary");
 	}
@@ -4748,15 +4712,9 @@ mod tests {
 		let mut sent = Vec::new();
 		for r in 1..=rounds {
 			round_at.push(working.len());
-			let swept = round_at.len();
-			// Exactly the loop's own arithmetic, so the fixture cannot flatter the sweep by
-			// retiring more often or reaching further back than the app does.
-			if swept > IN_TURN_RETIRE_AGE && swept % IN_TURN_RETIRE_EVERY == 0 {
-				retire_written(&mut working, round_at[swept - 1 - IN_TURN_RETIRE_AGE]);
-			}
-			if sweep && swept > IN_TURN_RESULT_AGE && swept % IN_TURN_RETIRE_EVERY == 0 {
-				retire_results(&mut working, round_at[swept - 1 - IN_TURN_RESULT_AGE],
-					IN_TURN_RESULT_CAP);
+			// The loop's own sweep, so the fixture cannot flatter it.
+			if sweep {
+				sweep_in_turn(&mut working, &round_at, &Limits::default());
 			}
 			sent.push(conversation_bytes(&working));
 			// A working turn's shape: mostly file reads, a write every fifth round, a listing
@@ -4797,9 +4755,11 @@ mod tests {
 		println!("per-round sent bytes over 80 rounds: mean {} -> {}, last {} -> {}",
 			mw, mn, was[79], now[79]);
 		// The last round is where the whole carry has accumulated, so it is the honest headline.
-		assert!(now[79] * 3 < was[79],
+		// Its sixteen 4 kB write bodies stay as the model sent them (daimond_rulings.md §17).
+		assert!(now[79] * 2 < was[79],
 			"the last round still carries most of the turn: {} -> {}", was[79], now[79]);
-		assert!(mn * 2 < mw, "the mean per-round carry did not halve: {} -> {}", mw, mn);
+		// Not halved now the write bodies stay: 265,064 -> 138,851 on 2026-10-20, 48% off.
+		assert!(mn * 10 < mw * 6, "the mean per-round carry fell by under 40%: {} -> {}", mw, mn);
 		// AND IT IS STILL GROWING, not flat: the sweep leaves the recent rounds whole, so a turn
 		// that needed folding still gets folded. A sweep that had flattened this would have taken
 		// the working memory with it.
@@ -4817,32 +4777,6 @@ mod tests {
 		// And something WAS taken, further back, or the loop above proves nothing.
 		assert!(swept[..tail_from].iter().any(|m| m.text().ends_with(RESULT_RETIRED_TAIL)),
 			"no result was retired at all");
-	}
-
-	#[test]
-	fn test_in_turn_retirement_takes_bodies_and_leaves_results_00() {
-		// The in-turn half is narrower on purpose: the model is still reading this turn's
-		// results, but the body it WROTE is on disk and the reply it just got says so.
-		let mut v = vec![
-			user("do the work"),
-			asks("w1", "file_write",
-				&fmt!("{{\"path\":\"src/x.rs\",\"content\":\"{}\"}}", "z".repeat(4_000))),
-			replies("w1", "Wrote src/x.rs (4000 bytes)."),
-			asks("r1", "file_read", "{\"path\":\"src/x.rs\"}"),
-			replies("r1", &"line\n".repeat(2_000)),
-		];
-		let end = v.len();
-		let n = retire_written(&mut v, end);
-		assert_eq!(1, n, "the write body was not retired, or something else was");
-		// The READ's result is untouched: retiring it is the between-turns rule, not this one.
-		assert_eq!(10_000, v[4].content().text_len(),
-			"an in-turn result was retired as though the turn had ended");
-		match &v[1] {
-			ChatMessage::Assistant { tool_calls, .. } =>
-				assert!(tool_calls[0].arguments.len() < ARG_RETIRE_CAP,
-					"{}", tool_calls[0].arguments),
-			other => panic!("{:?}", other.role()),
-		}
 	}
 
 	#[test]
@@ -5049,30 +4983,6 @@ mod tests {
 		let again = v.clone();
 		retire_results(&mut v, 5, IN_TURN_RESULT_CAP);
 		assert_eq!(again[1].text(), v[1].text());
-	}
-
-	#[test]
-	fn test_an_unanswered_write_keeps_its_arguments_00() {
-		// A call with no reply may still be in flight, and a retried call must carry what the
-		// model asked for rather than a note about what it asked for.
-		let args = fmt!("{{\"path\":\"src/x.rs\",\"content\":\"{}\"}}", "z".repeat(4_000));
-		let mut v = vec![user("do the work"), asks("w1", "file_write", &args)];
-		let end = v.len();
-		assert_eq!(0, retire_written(&mut v, end));
-		match &v[1] {
-			ChatMessage::Assistant { tool_calls, .. } => assert_eq!(args, tool_calls[0].arguments),
-			other => panic!("{:?}", other.role()),
-		}
-	}
-
-	#[test]
-	fn test_the_horizon_bounds_what_in_turn_retirement_reaches_00() {
-		// The newest rounds are what the model is working in, so the sweep is given a position
-		// and not the whole list. A sweep that ignored it would take the body of the file the
-		// model is about to be asked a question about.
-		let args = fmt!("{{\"path\":\"src/x.rs\",\"content\":\"{}\"}}", "z".repeat(4_000));
-		let mut v = vec![user("go"), asks("w1", "file_write", &args), replies("w1", "Wrote it.")];
-		assert_eq!(0, retire_written(&mut v, 1), "the sweep reached past its horizon");
 	}
 
 	#[test]
@@ -5929,7 +5839,6 @@ mod tests {
 		let was = v[0].text().to_string();
 		let n = v.len();
 		retire_upto(&mut v, n);
-		retire_written(&mut v, n);
 		retire_results(&mut v, n, 0);
 		elide_bulk(&mut v, 100, 1);
 		assert_eq!(was, v[0].text(),

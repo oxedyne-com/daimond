@@ -14,7 +14,10 @@
 //      edit before turn 2 and an unrelated file write before turn 3;
 //   3. turn 2's note restates <state> (it changed) and not <crystal> (it did not);
 //   4. no request's system message carries the crystal, STATE, REQUIREMENTS or "Recently
-//      changed".
+//      changed";
+//   5. turn 1 sends the tree whole and turn 3, after a file write, only its changes, said as a
+//      change list (r578c, D-20261020-03).  The turn after a fold sending both whole is proved
+//      natively: `agent::tests::test_appendonly_a_fold_after_a_change_list_sends_the_tree_whole_00`.
 //
 // It reports the size of turn 1's note, which is the standing context a fresh Diamond turn
 // pays for once.
@@ -166,6 +169,20 @@ try {
 	check('5. turn 2\'s note restates <state> with the edit, and not <crystal>',
 		note2.includes(STATE_TWO) && !/<crystal>/.test(note2),
 		`${note2.length} chars; tags ${(note2.match(/<([a-z]+)>/g) || []).join(' ')}`);
+
+	// ── 3b. THE TREE AND THE ACTIVITY GO AS CHANGES (r578c, D-20261020-03) ──
+	// Turn 1 sends the tree whole; turn 3, after a file write between the turns, sends only the
+	// tree's changes, said as a change list, and never the tree's own heading again.
+	const note3 = pre(turns[2]);
+	const blockOf = (note, tag) => { const m = note.match(new RegExp('(^|\\n)<' + tag + '>\\n([\\s\\S]*?)\\n</' + tag + '>')); return m ? m[2] : null; };
+	const tree1 = blockOf(note1, 'tree'), tree3 = blockOf(note3, 'tree');
+	check('5b. turn 1 sends the tree whole', !!tree1 && tree1.includes('## Where you are'),
+		tree1 ? `${tree1.length} chars` : 'no <tree> in turn 1');
+	check('5c. turn 3, after a file write, sends the tree as a change list, not whole',
+		!!tree3 && /change list/.test(tree3.split('\n')[0]) && !tree3.includes('## Where you are')
+			&& /^[+~-] diamonds\//m.test(tree3),
+		tree3 ? `${tree3.length} chars vs ${tree1 ? tree1.length : 0} whole: ${JSON.stringify(tree3.slice(0, 160))}`
+			: 'no <tree> in turn 3');
 
 	// ── 4. NOTHING THAT CHANGES IS IN THE SYSTEM MESSAGE ──────────────────
 	const leak = ['Current crystal.json', 'STATE-ONE', STATE_TWO, 'O1 Keep the prefix', 'Recently changed']

@@ -155,16 +155,6 @@ pub fn grow_on_purpose(mb: u32) -> f64 {
     heap_bytes()
 }
 
-/// The page's ceiling on one worker's `run_turn`, in milliseconds.
-///
-/// Read by `Workers.start` in `daimond.js` so the figure has one source,
-/// [`WORKER_WALL_CLOCK_MS`](crate::agent::compact::WORKER_WALL_CLOCK_MS), which the round's own
-/// wait for first data is bounded inside.
-#[wasm_bindgen]
-pub fn worker_wall_clock_ms() -> f64 {
-    crate::agent::compact::WORKER_WALL_CLOCK_MS as f64
-}
-
 /// The linear memory in whole megabytes, for a trail line.
 ///
 /// Separate from [`heap_bytes`] because the JS side wants bytes and every caller
@@ -863,6 +853,19 @@ pub fn compose_prompt_with(role: &str, text: &str, model: &str, steer: &str) -> 
         Ok(r)  => r.compose_with(text, model, steer),
         Err(_) => text.to_string(),
     }
+}
+
+/// The one user message a fork worker's copy ends on: `role` (the user's worker role, empty for
+/// the default) and the task.  See [`crate::prompts::worker_handoff`].
+#[wasm_bindgen]
+pub fn worker_handoff(role: &str, task: &str) -> String {
+    crate::prompts::worker_handoff(role, task)
+}
+
+/// Drop the parent copy filed under `id`: its worker has ended (r578c).
+#[wasm_bindgen]
+pub fn fork_forget(id: &str) {
+    crate::fork::forget(id)
 }
 
 /// Why a steering note is refused, as a code, or empty when it is admitted: `empty`, `control`,

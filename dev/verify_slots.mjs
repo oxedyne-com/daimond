@@ -22,7 +22,7 @@ const json = (body, status = 200) => ({ status, contentType: 'application/json',
 const OR_BASE = 'https://openrouter.ai/api/v1';
 const OR_URL  = `${OR_BASE}/chat/completions`;
 const FLOAT   = 200;
-const WORKER_SAYS = /You are a worker agent dispatched/;
+const WORKER_SAYS = /You are (now )?a worker agent,? dispatched/;
 // A key whose slot is legible in a haystack.
 const keyForSlot = (slot) => `sk-or-v1-SLOT${slot}-zqxwmarker000000000000000000000000000000`;
 const slotOf = (auth) => { const m = /SLOT(\d+)-/.exec(auth || ''); return m ? Number(m[1]) : null; };

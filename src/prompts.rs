@@ -188,7 +188,7 @@ pub enum Role {
 	Chat,
 	/// A Diamond's daimon: keeps the crystal, dispatches workers.
 	Daimon,
-	/// A dispatched worker: one task, its own context, reports back.
+	/// A dispatched worker: a copy of its parent's conversation, one task, reports back.
 	Worker,
 	/// The reducer: folds one delta into the crystal, and nothing else.
 	Reducer,
@@ -364,9 +364,8 @@ impl Role {
 			out.push_str(&fmt!("\n\n{}", RATING_NOTE));
 		}
 		// THE DAIMON ALONE, because the three files are a Diamond's and a chat has no Diamond.
-		// A worker has one only as a scope, never as a memory: it cannot see this conversation
-		// and does not come back, so a rule about what to record across turns would be a rule
-		// about turns it does not have.
+		// A worker has one only as a scope, never as a memory: it does not come back, so a rule
+		// about what to record across turns would be a rule about turns it does not have.
 		if matches!(self, Self::Daimon) {
 			out.push_str(&fmt!("\n\n{}", NEVER_FORGET_NOTE));
 			out.push_str(&fmt!("\n\n{}", CRYSTAL_TIME_NOTE));
@@ -839,8 +838,7 @@ pub const INSTRUCTIONS_SEED: &str =
 	 every worker they dispatch -- and is read again each turn, so an edit takes effect on your \
 	 next message. Write here what you would otherwise say twice.\n\n\
 	 ## The work\n\n\
-	 Say in a line or two what you are building, what it is called, and where its files are. A \
-	 worker cannot see this conversation, so this is the only place it learns any of that.\n\n\
+	 Say in a line or two what you are building, what it is called, and where its files are.\n\n\
 	 ## How to answer me\n\n\
 	 - Lead with the answer, then the reason.\n\
 	 - Name the file and the line for anything said about code.\n\
@@ -941,7 +939,7 @@ pub const DEFAULT_CHAT: &str =
 	 by reading it, testing it, and sending it back when it is wrong. Do the work \
 	 yourself only when a task is genuinely indivisible, or when briefing a worker \
 	 would take longer than doing it: a worker cannot ask you anything, so its task has \
-	 to say everything, and for a one-line change that briefing IS the work. Everything \
+	 to be clear, and for a one-line change that briefing IS the work. Everything \
 	 above that line goes to a worker. When in doubt, dispatch and review.\n\n\
 	 When you cannot retrieve something the user asked for — a tool failed, or \
 	 returned a page without the answer on it — say so plainly and stop. Never \
@@ -970,8 +968,10 @@ pub const DEFAULT_CHAT: &str =
 	 asked to reply to something, write the draft and tell them it is waiting; do not \
 	 claim to have sent it. Their own sent mail is at mail/<address>/sent/.\n\n\
 	 You can dispatch workers. spawn_agent starts one at once and it runs while you carry on; \
-	 call it several times in the SAME turn to run several at once. Each runs in its own \
-	 context and cannot see this conversation, so its task must say everything it needs. When \
+	 call it several times in the SAME turn to run several at once. Each starts as a copy of \
+	 this conversation, so its task need only say what that worker is to do; pass context \
+	 \"brief\" only for a narrow, self-contained task when this conversation is long and mostly \
+	 unrelated to it, or for a worker on a different model, and then state everything it needs. When \
 	 you have nothing left to do until they report, call gather once, naming them: their \
 	 reports come back to you here, in this turn, and you read and check them before you \
 	 answer. Do not gather before you have given them time — do your own part of the work \
@@ -995,7 +995,7 @@ pub const DEFAULT_DAIMON: &str =
 	 by reading it, testing it, and sending it back when it is wrong. Do the work \
 	 yourself only when a task is genuinely indivisible, or when briefing a worker \
 	 would take longer than doing it: a worker cannot ask you anything, so its task has \
-	 to say everything, and for a one-line change that briefing IS the work. Everything \
+	 to be clear, and for a one-line change that briefing IS the work. Everything \
 	 above that line goes to a worker. When in doubt, dispatch and review.\n\n\
 	 Three things are yours to do.\n\n\
 	 First, the crystal. It is two files. `crystal.json` is the reduced state of this \
@@ -1027,9 +1027,11 @@ pub const DEFAULT_DAIMON: &str =
 	 rather than guessing from the hot part alone.\n\n\
 	 Second, agents. Most tasks are work rather than record-keeping, and work is \
 	 what workers are for, so dispatch one with `spawn_agent` as the ordinary \
-	 course rather than the exception. Each worker runs in its OWN context \
-	 with the full workspace file tools; it cannot see this conversation, so \
-	 the `task` you give it must say everything it needs to know. To run \
+	 course rather than the exception. Each worker starts as a copy of this \
+	 conversation, so the `task` you give it need only say what that worker is to do; \
+	 pass context \"brief\" only for a narrow, self-contained task when this conversation \
+	 is long and mostly unrelated to it, or for a worker on a different model, and then \
+	 state everything it needs. To run \
 	 several agents at once, call `spawn_agent` several times in the SAME turn \
 	 — they then run in parallel. If the user asks for two agents, call it \
 	 twice. When you have nothing left to do until they report, call `gather` \
@@ -1074,8 +1076,9 @@ pub const DEFAULT_DAIMON: &str =
 	 Use the tools you have. If an instruction cannot be carried out, say why, \
 	 briefly.";
 
-/// A dispatched worker's role: one bounded task, in its own context, over the
-/// user's real workspace, ending in a summary terse enough to fold.
+/// A brief worker's role (`context:"brief"`): one bounded task, in its own context, over the
+/// user's real workspace, ending in a summary terse enough to fold.  Its system prompt; the task
+/// is its first message.  A fork worker gets [`DEFAULT_WORKER_HANDOFF`] instead (r578c).
 ///
 /// The closing paragraph is the one a reader might think redundant.  A worker that has been told
 /// to write a summary still writes it as a covering note, because nothing has told it that the
@@ -1111,6 +1114,42 @@ pub const DEFAULT_WORKER: &str =
 	 result, not a file you read. The report is the whole of what it will ever see, \
 	 so it carries all four: what changed, the files, how it was verified, and any \
 	 question left open.";
+
+/// The fork worker's role (r578c, 2026-10-20): the same rules as [`DEFAULT_WORKER`], said as the
+/// hand-off appended to a copy of the parent's conversation rather than as a system prompt -- see
+/// [`worker_handoff`].  A brief worker (`context:"brief"`) still gets [`DEFAULT_WORKER`].
+pub const DEFAULT_WORKER_HANDOFF: &str =
+	"You are now a worker agent, dispatched from the conversation above to carry out \
+	 exactly one task. You have all of that conversation and its tools, but you \
+	 cannot dispatch workers of your own, and you cannot ask questions — use your \
+	 judgement and finish the task.\n\n\
+	 Because you cannot ask, Daimond asks for you: before you click or type on a \
+	 web page, the user is shown what you are about to do and decides. One they \
+	 decline is their answer, not a fault to work around — say what you wanted it \
+	 for and carry on with what you can do without it.\n\n\
+	 When you are done, end with a short summary of what you found or changed: \
+	 what a colleague would need to know, and nothing else. That summary is \
+	 folded into a shared crystal, so keep it dense and free of filler.\n\n\
+	 It is also READ AND CHECKED by the agent that sent you, which will open what \
+	 you changed and may send the task back. So write it to be verified rather than \
+	 believed: name the files you touched, the commands you ran and what they \
+	 answered, and say plainly what you could not do. Check your own work before you \
+	 report it: where the work has verifiers of its own, `verify` runs one, and the \
+	 report names the verifier and the numbers it gave rather than calling the work \
+	 good. A summary that reports success \
+	 without saying what would show it is the one thing a reviewer cannot use.\n\n\
+	 NOTHING ELSE OF YOURS REACHES THAT AGENT — not your own rounds, not a tool \
+	 result, not a file you read. The report is the whole of what it will ever see, \
+	 so it carries all four: what changed, the files, how it was verified, and any \
+	 question left open.";
+
+/// The one user message a fork worker's copy of its parent ends on (r578c): its role, then its
+/// task.  `role` is the user's own worker role, empty for [`DEFAULT_WORKER_HANDOFF`].
+pub fn worker_handoff(role: &str, task: &str) -> String {
+	let role = if role.trim().is_empty() { DEFAULT_WORKER_HANDOFF } else { role.trim() };
+	fmt!("{}\n\n## Your task\n\n{}", role, task.trim())
+}
+
 
 // ── What machine this is ─────────────────────────────────────────────────────
 //
@@ -1697,6 +1736,186 @@ pub fn block_in(note: &str, b: Block) -> Option<String> {
 	None
 }
 
+// ┌───────────────────────────────────────────────────────────────────────────┐
+// │ TWO BLOCKS GO AS CHANGES                                                  │
+// └───────────────────────────────────────────────────────────────────────────┘
+//
+// r578c (2026-10-20, D-20261020-03, QA-A A2): the activity record grows a line a turn and the
+// tree carries byte sizes, so restating either whole whenever its text moved cost 12-23k tokens
+// over a 30-turn Diamond.  Each is now sent whole once, and after that as what changed: the
+// record's new lines, the tree's added, gone and changed entries.  The copy the model holds is
+// read back from the conversation itself -- the latest whole copy with every change list after
+// it applied -- so a reload, the Wire and the turn all agree.  With no whole copy left (a fold, a
+// first turn, a conversation handed over without its notes) the block goes whole.
+//
+// A change list keeps the block's own tag and opens on a line saying what it is.  An r578b reader
+// takes a block's latest copy for its whole text, finds that line unequal to any whole block, and
+// so sends the block whole: it can never take a change list for the tree.
+
+/// How a block's later copies are sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Restate {
+	Whole,		// the whole text again
+	News,		// the entries not yet sent (the activity record)
+	Changes,	// entries added, gone and changed, matched by key (the tree)
+}
+
+impl Block {
+
+	fn restate(&self) -> Restate {
+		match self {
+			Self::Activity	=> Restate::News,
+			Self::Tree		=> Restate::Changes,
+			_				=> Restate::Whole,
+		}
+	}
+
+	/// The first line of a copy that is not the whole block.
+	fn delta_head(&self) -> &'static str {
+		match self.restate() {
+			Restate::News		=> ACTIVITY_NEWS_HEAD,
+			Restate::Changes	=> TREE_CHANGES_HEAD,
+			Restate::Whole		=> "",
+		}
+	}
+}
+
+pub const ACTIVITY_NEWS_HEAD: &str =
+	"[Only the lines new since its last copy above, newest first; every line there still stands.]";
+pub const TREE_CHANGES_HEAD: &str =
+	"[A change list against its last copy above: + added, - no longer listed, ~ changed; every \
+	 other entry there still stands.]";
+
+/// The body of a change list after its head, or `None` where `copy` is a whole block.
+fn delta_body(b: Block, copy: &str) -> Option<&str> {
+	let head = b.delta_head();
+	match head.is_empty() {
+		true  => None,
+		false => match copy.strip_prefix(head) {
+			Some("")                             => Some(""),
+			Some(rest) if rest.starts_with('\n') => Some(&rest[1..]),
+			_                                    => None,
+		},
+	}
+}
+
+/// What a change list matches a line of block `b` by.
+fn line_key(b: Block, line: &str) -> &str {
+	match b.restate() {
+		Restate::Changes => crate::tools::orientation_line_key(line),
+		_                => line.trim(),
+	}
+}
+
+/// A copy's lines as compared: trimmed, the blank ones gone.
+fn view_lines(text: &str) -> Vec<String> {
+	text.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).map(|l| l.to_string()).collect()
+}
+
+/// Apply one change list's `body` to what the model holds of block `b`.
+fn apply_delta(b: Block, view: &mut Vec<String>, body: &str) {
+	match b.restate() {
+		Restate::Whole   => {},
+		Restate::News    => {
+			// Above the entries already held, as the record itself puts its newest first.
+			let at = view.iter().position(|l| crate::activity::is_prompt_entry(l))
+				.unwrap_or(view.len());
+			let _ = view.splice(at..at, view_lines(body));
+		},
+		Restate::Changes => for line in body.lines() {
+			if let Some(entry) = line.strip_prefix("+ ").or_else(|| line.strip_prefix("~ ")) {
+				let k = line_key(b, entry).to_string();
+				match view.iter().position(|l| line_key(b, l) == k) {
+					Some(i) => view[i] = entry.trim().to_string(),
+					None    => view.push(entry.trim().to_string()),
+				}
+			} else if let Some(k) = line.strip_prefix("- ") {
+				view.retain(|l| line_key(b, l) != k);
+			}
+		},
+	}
+}
+
+/// What the model holds of block `b`, as lines: its latest whole copy in `sent` with each change
+/// list after it applied.  `None` where `sent` holds no whole copy.
+fn sent_view(sent: &[crate::protocol::ChatMessage], b: Block) -> Option<Vec<String>> {
+	let copies: Vec<String> = sent.iter()
+		.filter(|m| !m.pre().is_empty())
+		.filter_map(|m| block_in(m.pre(), b))
+		.collect();
+	let base = match copies.iter().rposition(|c| delta_body(b, c).is_none()) {
+		Some(i) => i,
+		None    => return None,
+	};
+	let mut view = view_lines(&copies[base]);
+	for c in &copies[base + 1..] {
+		if let Some(body) = delta_body(b, c) {
+			apply_delta(b, &mut view, body);
+		}
+	}
+	Some(view)
+}
+
+/// The lines of a change list taking `view` to `cur`, empty where there is no news.
+fn delta_lines(b: Block, view: &[String], cur: &str) -> Vec<String> {
+	let now = view_lines(cur);
+	match b.restate() {
+		Restate::Whole   => Vec::new(),
+		// The record only grows: a line the cap no longer shows is still true, so not news.
+		Restate::News    => now.into_iter()
+			.filter(|l| crate::activity::is_prompt_entry(l) && !view.contains(l))
+			.collect(),
+		Restate::Changes => {
+			let mut out = Vec::new();
+			for l in &now {
+				let k = line_key(b, l);
+				match view.iter().find(|v| line_key(b, v) == k) {
+					None                => out.push(fmt!("+ {}", l)),
+					Some(v) if v != l   => out.push(fmt!("~ {}", l)),
+					Some(_)             => {},
+				}
+			}
+			for v in view {
+				let k = line_key(b, v);
+				if !now.iter().any(|l| line_key(b, l) == k) {
+					out.push(fmt!("- {}", k));
+				}
+			}
+			out
+		},
+	}
+}
+
+/// Block `b` as this turn's note carries it, or `None` where the model already holds it.
+///
+/// A change list only where it is shorter than the block itself.
+fn block_note(b: Block, cur: &str, sent: &[crate::protocol::ChatMessage]) -> Option<String> {
+	match (b.restate(), sent_view(sent, b)) {
+		(Restate::Whole, _) => match sent_block(sent, b) {
+			Some(prev) if prev == cur => None,
+			None if cur.is_empty()    => None,	// never said, and nothing to say
+			_                         => Some(block_text(b, cur)),
+		},
+		(_, None) if cur.is_empty()     => None,
+		(_, None)                       => Some(block_text(b, cur)),
+		(_, Some(view)) if cur.is_empty() => match view.is_empty() {
+			true  => None,
+			false => Some(block_text(b, "")),
+		},
+		(_, Some(view)) => {
+			let lines = delta_lines(b, &view, cur);
+			if lines.is_empty() {
+				return None;
+			}
+			let delta = fmt!("{}\n{}", b.delta_head(), lines.join("\n"));
+			match delta.len() < cur.len() {
+				true  => Some(block_text(b, &delta)),
+				false => Some(block_text(b, cur)),
+			}
+		},
+	}
+}
+
 /// The latest copy of block `b` the conversation carries, newest user note first.
 pub fn sent_block(sent: &[crate::protocol::ChatMessage], b: Block) -> Option<String> {
 	sent.iter().rev().find_map(|m| match m.pre().is_empty() {
@@ -1705,8 +1924,9 @@ pub fn sent_block(sent: &[crate::protocol::ChatMessage], b: Block) -> Option<Str
 	})
 }
 
-/// This turn's note: every block whose text differs from its latest copy in `sent`, in
-/// [`Block::ALL`] order, under [`TURN_NOTE_LEAD`].  Empty where nothing changed.
+/// This turn's note: every block whose text differs from what `sent` already holds of it, in
+/// [`Block::ALL`] order, under [`TURN_NOTE_LEAD`].  Empty where nothing changed.  The activity and
+/// the tree go as their changes where a whole copy is there to amend (r578c).
 ///
 /// `sent` empty restates every block that says anything, which is what a turn after a fold needs.
 ///
@@ -1714,15 +1934,9 @@ pub fn sent_block(sent: &[crate::protocol::ChatMessage], b: Block) -> Option<Str
 /// * `blocks` - What the app composed for this turn.
 /// * `sent` - The conversation as this turn sends it, before its own message is added.
 pub fn turn_note(blocks: &TurnBlocks, sent: &[crate::protocol::ChatMessage]) -> String {
-	let mut said = Vec::new();
-	for b in Block::ALL {
-		let cur = blocks.get(b);
-		match sent_block(sent, b) {
-			Some(prev) if prev == cur => {},
-			None if cur.is_empty()    => {},	// never said, and nothing to say
-			_                         => said.push(block_text(b, cur)),
-		}
-	}
+	let said: Vec<String> = Block::ALL.iter()
+		.filter_map(|b| block_note(*b, blocks.get(*b), sent))
+		.collect();
 	match said.is_empty() {
 		true  => String::new(),
 		false => fmt!("{}\n\n{}", TURN_NOTE_LEAD, said.join("\n\n")),
@@ -1792,6 +2006,160 @@ mod turn_note_tests {
 		assert_eq!(Some("see the <tree>\nfile".to_string()), block_in(note, Block::State));
 		assert_eq!(Some("T".to_string()), block_in(note, Block::Tree));
 		assert_eq!(None, block_in(note, Block::Crystal));
+	}
+
+	/// A tree as `tools::orientation_tree_note` writes it: `files` under one Diamond, each
+	/// `(name, bytes)`, most recent first.
+	fn tree(files: &[(&str, usize)]) -> String {
+		let total: usize = files.iter().map(|(_, n)| *n).sum();
+		let mut s = fmt!("## Where you are\n\nYour working folder is the workspace root; paths are \
+			relative to it.\n\ndiamonds/ ({} files, {} B)\n  diamonds/d/ ({} files, {} B)",
+			files.len(), total, files.len(), total);
+		for (name, n) in files {
+			s.push_str(&fmt!("\n    diamonds/d/{} ({} B)", name, n));
+		}
+		s.push_str(&fmt!("\n\nRecently changed: {}", files.iter().take(8)
+			.map(|(name, _)| fmt!("diamonds/d/{}", name)).collect::<Vec<_>>().join(", ")));
+		s
+	}
+
+	const SOME_FILES: [(&str, usize); 8] = [("STATE.md", 40), ("crystal.json", 512),
+		("REQUIREMENTS.md", 300), ("DECISIONS.md", 120), ("notes/plan.md", 900),
+		("notes/ideas.md", 410), ("widgets/clock.html", 2048), ("widgets/clock.css", 640)];
+
+	/// D-20261020-03: after a file write the turn's note carries the tree's changes, said as a
+	/// change list, and not the whole tree again.  A turn after that one with nothing new says
+	/// nothing, so the model's reading of the two copies is the tree as it stands.
+	#[test]
+	fn test_appendonly_a_write_sends_only_the_tree_changes_00() {
+		let t1 = tree(&SOME_FILES);
+		let first = turn_note(&blocks(&[(Block::Tree, &t1)]), &[]);
+		assert!(first.contains(&t1), "a first turn sends the tree whole: {}", first);
+		let mut sent = vec![ChatMessage::user_noted("go".to_string(), first),
+			ChatMessage::assistant("done".to_string())];
+		// One file written, one grown.
+		let mut files = SOME_FILES.to_vec();
+		files[0].1 = 64;
+		files.insert(0, ("two.md", 8));
+		let t2 = tree(&files);
+		let next = turn_note(&blocks(&[(Block::Tree, &t2)]), &sent);
+		let body = match block_in(&next, Block::Tree) {
+			Some(b) => b,
+			None    => panic!("the tree change was not said: {}", next),
+		};
+		assert!(body.len() < t2.len() && !body.contains("## Where you are"),
+			"the tree went whole again: {}", body);
+		assert!(body.lines().next().unwrap_or("").contains("change"),
+			"the block does not say it is a change list: {}", body);
+		for line in ["+ diamonds/d/two.md (8 B)", "~ diamonds/d/STATE.md (64 B)",
+			"~ diamonds/d/ (9 files, 5002 B)"] {
+			assert!(body.lines().any(|l| l == line), "{:?} missing from: {}", line, body);
+		}
+		assert!(!body.contains("widgets/clock.css (640 B)"), "an unchanged entry went: {}", body);
+		sent.push(ChatMessage::user_noted("again".to_string(), next));
+		sent.push(ChatMessage::assistant("ok".to_string()));
+		assert_eq!("", turn_note(&blocks(&[(Block::Tree, &t2)]), &sent),
+			"the change list was not read back as the tree it makes");
+		// A file gone is said to have gone, by its path.
+		files.remove(0);
+		let t3 = tree(&files);
+		let gone = turn_note(&blocks(&[(Block::Tree, &t3)]), &sent);
+		let body = block_in(&gone, Block::Tree).unwrap_or_default();
+		assert!(body.lines().any(|l| l == "- diamonds/d/two.md"), "{}", body);
+		sent.push(ChatMessage::user_noted("and".to_string(), gone));
+		assert_eq!("", turn_note(&blocks(&[(Block::Tree, &t3)]), &sent));
+	}
+
+	/// An activity record as `activity::prompt_block` writes it, newest first.
+	fn activity(lines: &[&str], older: usize) -> String {
+		let mut s = String::from("Recent activity in this Diamond, newest first, from every device \
+			(written by the app at the end of each turn; recall searches all of it):\n");
+		for l in lines {
+			s.push_str(&fmt!("- {}\n", l));
+		}
+		if older > 0 {
+			s.push_str(&fmt!("({} older lines not shown; recall finds them.)\n", older));
+		}
+		s
+	}
+
+	/// D-20261020-03: a turn's note carries only the activity lines newer than the copy the model
+	/// already has.  The count of older lines the cap hides is not news.
+	#[test]
+	fn test_appendonly_activity_sends_only_its_new_lines_00() {
+		let old = ["2026-10-20 09:10 v3 (devA) asked: add a clock | changed: widgets/clock.html",
+			"2026-10-20 09:02 v2 (devA) asked: plan it | said: Planned.",
+			"2026-10-20 08:55 v1 (devA) asked: start | said: Started."];
+		let a1 = activity(&old, 0);
+		let first = turn_note(&blocks(&[(Block::Activity, &a1)]), &[]);
+		let mut sent = vec![ChatMessage::user_noted("go".to_string(), first),
+			ChatMessage::assistant("done".to_string())];
+		let new = "2026-10-20 09:20 v4 (devA) asked: style it | changed: widgets/clock.css";
+		let mut lines = vec![new];
+		lines.extend(old.iter().copied());
+		let a2 = activity(&lines, 0);
+		let next = turn_note(&blocks(&[(Block::Activity, &a2)]), &sent);
+		let body = match block_in(&next, Block::Activity) {
+			Some(b) => b,
+			None    => panic!("the new line was not said: {}", next),
+		};
+		assert!(body.contains(new), "{}", body);
+		for l in old {
+			assert!(!body.contains(l), "an old line went again: {}", body);
+		}
+		assert!(body.lines().next().unwrap_or("").contains("new"),
+			"the block does not say it holds new lines only: {}", body);
+		sent.push(ChatMessage::user_noted("again".to_string(), next));
+		// The cap now hides the oldest line: nothing new to say.
+		let a3 = activity(&lines[..3], 1);
+		assert_eq!("", turn_note(&blocks(&[(Block::Activity, &a3)]), &sent));
+	}
+
+	/// D-20261020-03 rule 5: a reader from r578b, which takes a block's latest copy for its
+	/// whole text, must find a change list unequal to every whole block, so it sends the block
+	/// whole rather than trusting a delta as the tree.
+	#[test]
+	fn test_appendonly_an_older_reader_never_takes_a_change_list_for_the_tree_00() {
+		let t1 = tree(&SOME_FILES);
+		let mut sent = vec![ChatMessage::user_noted("go".to_string(),
+			turn_note(&blocks(&[(Block::Tree, &t1)]), &[]))];
+		let mut files = SOME_FILES.to_vec();
+		files.insert(0, ("two.md", 8));
+		let t2 = tree(&files);
+		sent.push(ChatMessage::user_noted("again".to_string(),
+			turn_note(&blocks(&[(Block::Tree, &t2)]), &sent)));
+		// What r578b reads as the latest tree: the change list, which no whole tree equals.
+		let latest = sent_block(&sent, Block::Tree).unwrap_or_default();
+		assert_ne!(t2, latest, "an older reader would take the change list for the tree");
+		assert_ne!(t1, latest);
+		assert!(latest.contains("last copy above"),
+			"a change list must say what it amends: {}", latest);
+	}
+
+	/// After a fold, or with the copy a change list amends gone from the conversation, both
+	/// blocks are sent whole.
+	#[test]
+	fn test_appendonly_with_no_whole_copy_both_blocks_go_whole_00() {
+		let t1 = tree(&SOME_FILES);
+		let a1 = activity(&["2026-10-20 08:55 v1 (devA) asked: start | said: Started."], 0);
+		let b1 = blocks(&[(Block::Activity, &a1), (Block::Tree, &t1)]);
+		let whole = turn_note(&b1, &[]);
+		let sent = vec![ChatMessage::user_noted("go".to_string(), whole.clone())];
+		let mut files = SOME_FILES.to_vec();
+		files.insert(0, ("two.md", 8));
+		let t2 = tree(&files);
+		let a2 = activity(&["2026-10-20 09:20 v2 (devA) asked: more | said: More.",
+			"2026-10-20 08:55 v1 (devA) asked: start | said: Started."], 0);
+		let b2 = blocks(&[(Block::Activity, &a2), (Block::Tree, &t2)]);
+		let delta = turn_note(&b2, &sent);
+		// The whole copy folded away, the change list kept: the next note cannot lean on it.
+		let kept = vec![ChatMessage::user_noted("again".to_string(), delta)];
+		let next = turn_note(&b2, &kept);
+		assert_eq!(Some(t2.clone()), block_in(&next, Block::Tree), "{}", next);
+		assert_eq!(Some(a2.trim().to_string()), block_in(&next, Block::Activity), "{}", next);
+		// And a turn after a fold, which reads no history at all.
+		let fresh = turn_note(&b2, &[]);
+		assert_eq!(Some(t2), block_in(&fresh, Block::Tree));
 	}
 }
 
@@ -2989,9 +3357,25 @@ mod tests {
 				"the opening never says a {} reads this file, which is the whole reason to \
 				write in it: {}", who, opening);
 		}
-		// The sentence that makes the first section worth filling in: a worker cannot see the
-		// conversation, so this file is the only place it learns what the work is.
-		assert!(INSTRUCTIONS_SEED.contains("cannot see this conversation"));
+		// A worker starts as a copy of its parent's conversation unless asked for brief (r578c,
+		// D-20261020-05), so the seed must not tell anyone it cannot see it.
+		assert!(!INSTRUCTIONS_SEED.contains("cannot see this conversation"));
+	}
+
+	/// **The chat and the daimon are told the two worker kinds in the same words** (r578c M,
+	/// D-20261020-05): a copy by default, `brief` for the narrow self-contained task.
+	#[test]
+	fn test_chat_and_daimon_say_the_two_worker_kinds_alike_00() {
+		for (who, p) in [("chat", DEFAULT_CHAT), ("daimon", DEFAULT_DAIMON)] {
+			let flat: String = p.split_whitespace().collect::<Vec<_>>().join(" ");
+			for w in ["starts as a copy of this conversation", "pass context \"brief\" only for a \
+				narrow, self-contained task when this conversation is long and mostly unrelated to \
+				it, or for a worker on a different model, and then state everything it needs"]
+			{
+				let w: String = w.split_whitespace().collect::<Vec<_>>().join(" ");
+				assert!(flat.contains(&w), "the {} default does not say '{}': {}", who, w, flat);
+			}
+		}
 	}
 
 	/// **The seed names commands this build really carries**, so the first thing a user reads
@@ -3781,8 +4165,7 @@ mod tests {
 		assert!(!Role::Chat.compose("").contains("REQUIREMENTS.md"),
 			"a chat with no Diamond was told about a Diamond's files");
 		assert!(!Role::Worker.compose("").contains("REQUIREMENTS.md"),
-			"a worker that cannot see this conversation was given a rule about carrying \
-			across turns");
+			"a worker, which has no next turn, was given a rule about carrying across turns");
 	}
 
 	/// **The look-before-and-after rule reaches the daimon, survives a rewrite, and stops there.**

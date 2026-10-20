@@ -74,7 +74,7 @@ const gw = {
 	onlyFor:  null,
 };
 /// The marker in a worker's system prompt (src/wasm/diamond.rs: WORKER_PROMPT).
-const WORKER_SAYS = /You are a worker agent dispatched/;
+const WORKER_SAYS = /You are (now )?a worker agent,? dispatched/;
 
 async function stubGateway(page) {
 	// bootstrap(): register the device key, prove possession, take a session.

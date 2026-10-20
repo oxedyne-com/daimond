@@ -417,6 +417,15 @@ pub fn render(e: &Entry) -> String {
 	}
 }
 
+/// How each entry's line opens in [`prompt_block`].
+const PROMPT_ENTRY_LEAD: &str = "- ";
+
+/// Is this line of [`prompt_block`] one of the record's entries, rather than its heading or its
+/// count of older lines?  A turn note sends the entries it has not sent before (r578c).
+pub fn is_prompt_entry(line: &str) -> bool {
+	line.starts_with(PROMPT_ENTRY_LEAD)
+}
+
 /// The record as the prompt carries it: newest first, whole lines only, at most `cap` bytes,
 /// saying how many older lines `recall` still reaches. Empty for an empty record.
 ///
@@ -432,7 +441,7 @@ pub fn prompt_block(entries: &[Entry], cap: usize) -> String {
 	let mut out = String::from(head);
 	let mut shown = 0usize;
 	for e in entries.iter().rev() {
-		let line = fmt!("- {}\n", render(e));
+		let line = fmt!("{}{}\n", PROMPT_ENTRY_LEAD, render(e));
 		// The footer's room is kept, so the block never passes the cap.
 		if out.len() + line.len() + 80 > cap {
 			break;

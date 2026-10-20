@@ -813,13 +813,11 @@ const plan = (messages, tools) => {
 			return { text: Array.from({ length: n }, (_, i) => `chunk-${i + 1}`).join(' ') , slowChunks: true };
 		}
 
-		// A REPLY BIG ENOUGH TO BE CLIPPED, and quickly.
+		// A BIG REPLY, and quickly.
 		//
-		// The worker report clip is measured in bytes -- `capReportBytes` keeps a head and a
-		// tail and drops the middle -- and nothing here could produce a reply long enough to
-		// reach it: `@long` paces itself at 120 ms a chunk, so the sixteen kilobytes the
-		// loosest preset allows would take three minutes. This is the same thing without the
-		// pacing, because what wants the bytes is a size check and not a look at the screen.
+		// A worker's report travels whole (r578c), and a size check wants tens of kilobytes:
+		// `@long` paces itself at 120 ms a chunk, so sixteen kilobytes would take three
+		// minutes. This is the same thing without the pacing.
 		case 'big': {
 			const n = Math.max(1, numArg(d.rest, 20000, 'big'));
 			const word = 'filler ';

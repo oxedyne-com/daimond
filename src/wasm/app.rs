@@ -655,6 +655,34 @@ impl DaimondApp {
         }
     }
 
+    /// Start this worker as a copy of its parent (r578c): the request the parent's spawn round
+    /// held, filed under `id` by the engine.  The worker takes the parent's belt and Diamond with
+    /// it, so its tools array and its dispatch match and `crystal_read` reads the same crystal.
+    /// Call after `set_unsupervised` and before the first turn, and again on a re-mint; the copy
+    /// stays filed until [`crate::wasm::entry::fork_forget`].  Answers the copy's size in bytes.
+    ///
+    /// A worker with no `id` is a brief worker and never calls this (D-20261020-05).
+    pub fn adopt_fork(&mut self, id: &str) -> Result<f64, JsValue> {
+        let f = match crate::fork::get(id) {
+            Some(f) => f,
+            None    => return Err(JsValue::from_str(&fmt!(
+                "adopt_fork: no parent copy is filed under '{}'; it ended or was never issued.", id))),
+        };
+        let bytes = f.bytes() as f64;
+        let mut session = match self.session.try_borrow_mut() {
+            Ok(s)  => s,
+            Err(_) => return Err(JsValue::from_str(
+                "adopt_fork: a turn is running on this worker; adopt its copy before the first.")),
+        };
+        self.registry.tools = f.belt.clone();
+        // A chat's copy names no Diamond; the worker keeps the one its scope gave it.
+        if !f.daimon_of.is_empty() {
+            self.registry.ctx.daimon_of = f.daimon_of.clone();
+        }
+        self.agent.adopt_fork(f, &mut session);
+        Ok(bytes)
+    }
+
     /// Whether this agent holds the dispatch tool.
     pub fn can_dispatch(&self) -> bool {
         self.registry.tools.contains(&Tool::SpawnAgent)
@@ -1640,7 +1668,7 @@ impl DaimondApp {
         fmt!("{{\"worker\":{},\"max_rounds\":{},\"continuations\":{},\"context_cap\":{},\
             \"keep\":{},\"spend_cap_usd\":{},\"fold_at\":{},\"retire_prior\":{},\
             \"retire_keep_turns\":{},\
-            \"written_age\":{},\"result_age\":{},\"result_cap\":{},\"sweep_every\":{},\
+            \"result_age\":{},\"result_cap\":{},\"sweep_every\":{},\
             \"worker_max_rounds\":{},\"worker_continuations\":{},\"worker_context_cap\":{},\
             \"worker_keep\":{},\"worker_spend_usd\":{},\"gather_timeout_s\":{},\
             \"orphan_grace_rounds\":{},\
@@ -1653,7 +1681,7 @@ impl DaimondApp {
             l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
             l.fold_at, l.retire_prior,
             l.retire_keep_turns,
-            l.written_age, l.result_age, l.result_cap, l.sweep_every,
+            l.result_age, l.result_cap, l.sweep_every,
             l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
             l.worker_keep, l.worker_spend_usd, l.gather_timeout_s,
             l.orphan_grace_rounds,
@@ -2982,6 +3010,16 @@ impl DaimondApp {
         -> Result<String, JsValue>
     {
         self.fold_apply_inner(&id, &proposal, &delta, &note).await.map_err(to_js_err)
+    }
+
+    /// Does a turn hold this app's conversation now?
+    ///
+    /// While one does, the session's spend getters below read zero, so a bill taken then books
+    /// nothing and, once marked, is never taken again: 33 workers in eight days were billed
+    /// US$0 that way (r578c T).  The page asks this before it bills, and bills only a settled app.
+    #[wasm_bindgen(getter)]
+    pub fn turn_held(&self) -> bool {
+        self.session.try_borrow_mut().is_err()
     }
 
     /// Cumulative prompt tokens billed to this session.

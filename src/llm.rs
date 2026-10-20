@@ -234,21 +234,25 @@ const STALL_RETRIES: u32 = 1;
 /// at 90 s, nor cut mid-thought at 60 s.
 const STALL_WAIT_FACTOR: u64 = 5;
 
-/// The most a round may wait, across all its attempts, for real data: a minute inside the page's
-/// worker wall clock, so a model that never answers ends with its own reason before the page
-/// stops the worker (r543 QA N1).
-const ROUND_QUIET_MS: u64 = crate::agent::compact::WORKER_WALL_CLOCK_MS - 60_000;
+/// The most a round may wait, across all its attempts, for real data, as a multiple of the idle
+/// ceiling: its two attempts' widest waits back to back, 2 x 5 x 60 s = 600 s by default.  It was
+/// 480 s, a minute inside the page's 540 s worker wall clock, which r578c T removed: that clock
+/// killed healthy slow workers, and this bound is the round's own, so a model that never answers
+/// ends the round with its own reason and nothing outside the engine has to time it.  A worker's
+/// whole turn is bounded by its rounds, its spend and, once its turn has ended,
+/// `compact::ORPHAN_GRACE_ROUNDS`.
+const ROUND_QUIET_FACTOR: u64 = 2 * STALL_WAIT_FACTOR;
 
 /// The waits of one attempt at a round: how long its first data may take, and the most any quiet
 /// before real data may last, given the `elapsed` milliseconds of the round so far.
 ///
 /// The first attempt gives a provider 1.5 x the idle ceiling to begin; the one retry gives it
 /// 5 x, so a model that thinks silently is not cut a second time.  Neither may carry the round
-/// past [`ROUND_QUIET_MS`].
+/// past [`ROUND_QUIET_FACTOR`] x the idle ceiling.
 fn attempt_wait(idle: u64, stall_tries: u32, elapsed: u64) -> (u64, u64) {
     let first_ms = if stall_tries == 0 { idle.saturating_mul(3) / 2 }
                    else { idle.saturating_mul(STALL_WAIT_FACTOR) };
-    (first_ms, ROUND_QUIET_MS.saturating_sub(elapsed).max(1))
+    (first_ms, idle.saturating_mul(ROUND_QUIET_FACTOR).saturating_sub(elapsed).max(1))
 }
 
 /// How much longer a non-streaming reply may take to arrive than a stream's first byte.
@@ -257,8 +261,7 @@ fn attempt_wait(idle: u64, stall_tries: u32, elapsed: u64) -> (u64, u64) {
 /// the WHOLE body in one piece, where `stream_sse` only needs the first token to arrive within
 /// `stream_idle_ms`.  A non-streaming provider generates the entire answer before it sends a
 /// byte, so a slow fold must not be cut at the streaming ceiling: its first-byte bound is this
-/// multiple of the idle figure -- 5 x 60 s = 300 s by default, still inside the page's worker wall
-/// clock ([`WORKER_WALL_CLOCK_MS`](crate::agent::compact::WORKER_WALL_CLOCK_MS)) that wraps the round.
+/// multiple of the idle figure -- 5 x 60 s = 300 s by default.
 const REPLY_WAIT_FACTOR: u64 = 5;
 
 /// How hard an OpenAI-dialect model is asked to reason: OpenRouter's `reasoning.effort`.
@@ -1813,8 +1816,8 @@ impl LlmClient {
         let turn_began = now_ms();
         let idle = self.stream_idle_ms.get();
         loop {
-            // A STOPPED TURN SENDS NOTHING MORE, asked at the top of EVERY attempt.  A Stop, a
-            // pause or the 540 s wall clock in `www/js/daimond.js` may land during the backoff
+            // A STOPPED TURN SENDS NOTHING MORE, asked at the top of EVERY attempt.  A Stop or a
+            // pause in `www/js/daimond.js` may land during the backoff
             // between attempts or between two rounds, where there is no request to cancel; the
             // halt is the turn's and stays set, so it is read here before anything goes out.  It
             // was read only once a retry was in hand, from the last controller armed, and an
@@ -2843,6 +2846,21 @@ impl LlmClient {
         { go(&mut self.think.borrow_mut()); }
     }
 
+    /// Every thinking block this client holds, by tool-call id, for a worker's copy (r578c).
+    pub fn carry_export(&self) -> Vec<(String, Vec<String>)> {
+        #[cfg(not(target_arch = "wasm32"))]
+        { match self.think.lock() { Ok(g) => g.turns.clone(), Err(_) => Vec::new() } }
+        #[cfg(target_arch = "wasm32")]
+        { self.think.borrow().turns.clone() }
+    }
+
+    /// Take a parent's thinking blocks, so the copied assistant turns serialise byte for byte.
+    pub fn carry_import(&self, turns: &[(String, Vec<String>)]) {
+        for (id, blocks) in turns {
+            self.carry_put(id, blocks.clone());
+        }
+    }
+
     /// What this client is currently asking of a thinking model.
     pub fn thinking_tune(&self) -> ThinkTune {
         self.tune.get()
@@ -3480,7 +3498,7 @@ impl LlmClient {
         let text_val = match raced {
             Raced::Idle => {
                 // The body never resolved.  Read the abort flag BEFORE tearing the fetch down
-                // (which itself fires the signal): if a Stop or the 540 s wall clock already
+                // (which itself fires the signal): if a Stop or a pause already
                 // landed, this is a cancel; otherwise it is a first-byte-class stall.  Either
                 // way TERMINAL -- `classify` on the timeout tag, and an abort is never
                 // retryable -- so the body wait no longer re-enters the ladder (was the hole
@@ -9835,7 +9853,7 @@ pub mod tests {
     /// A first-byte/idle timeout is a stall, and a stall is not fixed by retrying it: another
     /// identical attempt only waits out the same ceiling again. So the round ends as an error
     /// after one connection, never as a fabricated success and never as a resend storm. This is
-    /// the transport half of the vision self-verify fix: the JS wall clock (seq 290) is the
+    /// the transport half of the vision self-verify fix: the round's own quiet bound is the
     /// outer bound and the tools.rs wording refuses to read a non-reporting worker as a pass;
     /// this stops the hang that started it.
     #[tokio::test]
@@ -9886,8 +9904,8 @@ pub mod tests {
     /// An abort that lands during a retry backoff halts the ladder at the top of the next
     /// attempt, rather than opening another connection.
     ///
-    /// This is the abort-authority half of the ruling. On the browser a user's Stop and the
-    /// 540 s wall clock in `www/js/daimond.js` both fire `abort()`, and a fresh
+    /// This is the abort-authority half of the ruling. On the browser a user's Stop and a
+    /// pause in `www/js/daimond.js` both fire `abort()`, and a fresh
     /// `AbortController` is armed per attempt -- so the retry loop, not the per-fetch
     /// controller, has to be what stops the ladder. Here a 500 backs the first attempt off; the
     /// abort fires during that backoff (native `abort` sets the shared flag the wasm controller
@@ -10783,14 +10801,14 @@ pub mod tests {
         }
     }
 
-    /// r543 QA N1: a round whose provider sends one empty chunk and then only keep-alives, asked
-    /// twice, ends with its own reason inside the page's worker wall clock, so a worker in that
-    /// state ends "did not answer" and not "stopped after 540s, no result".  At the default
-    /// ceiling the two attempts were held 300 s each, 600 s in all.
+    /// r543 QA N1, re-anchored by r578c T: a round whose provider sends one empty chunk and then
+    /// only keep-alives, asked twice, ends with its own reason inside its own quiet bound, a
+    /// multiple of the idle ceiling.  There is no page clock outside it any more, so this bound
+    /// is the whole of what ends a round that never answers.
     #[test]
-    fn stalled_round_ends_inside_the_worker_wall_clock() {
-        let wall = crate::agent::compact::WORKER_WALL_CLOCK_MS;
+    fn stalled_round_ends_inside_its_own_quiet_bound() {
         for idle in [DEFAULT_STREAM_IDLE_MS, 30_000, 120_000] {
+            let bound = idle * ROUND_QUIET_FACTOR;
             let mut now = 0u64;
             for tries in 0..=STALL_RETRIES {
                 let (first_ms, cap) = attempt_wait(idle, tries, now);
@@ -10804,8 +10822,10 @@ pub mod tests {
                 }
                 now += 1_000;                                           // the resend
             }
-            assert!(now < wall, "idle {} ms: the stalled round ended at {} ms, past the {} ms \
-                worker wall clock", idle, now, wall);
+            // One keep-alive step and one resend per attempt is the test clock's own grain.
+            let grain = (STALL_RETRIES as u64 + 1) * 6_000;
+            assert!(now <= bound + grain, "idle {} ms: the stalled round ended at {} ms, past \
+                its {} ms quiet bound", idle, now, bound);
         }
     }
 

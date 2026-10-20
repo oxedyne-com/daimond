@@ -172,6 +172,7 @@ function device(name, door, turns, held) {
 		// The worker pool, far enough for a turn's fan-out: the REAL \`gather\`, and the REAL lines
 		// of \`dispatch\` that tie a batch to the turn that dispatched it.
 		function workerEndingNote() { return ''; }
+		function workerKind() { return 'brief'; }
 		function reportBody(r) { return r.report || ''; }
 		function withCommas(s) { return s; }
 		function reportHasSubstance(r) { return !!r.report; }

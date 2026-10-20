@@ -211,6 +211,11 @@ pub struct Agent {
     /// The caller's own note for the turn in flight, before the blocks were put ahead of it, so
     /// a fold mid-turn can restate every block over the same words.  Not shared on clone.
     turn_pre:            RefCell<String>,
+    // The parent's request this worker was copied from (r578c); see `crate::fork`.  Its system
+    // text is sent verbatim, and its tools array too while the model is the parent's.
+    fork:                RefCell<Option<std::sync::Arc<crate::fork::Fork>>>,
+    fork_same:           Cell<bool>,	// the worker's model is the parent's
+    fork_fresh:          Cell<bool>,	// the copy has not yet had its first turn
 }
 
 
@@ -580,7 +585,29 @@ impl Agent {
             diamond:         Rc::new(RefCell::new(String::new())),
             blocks:          Rc::new(RefCell::new(crate::prompts::TurnBlocks::default())),
             turn_pre:        RefCell::new(String::new()),
+            fork:            RefCell::new(None),
+            fork_same:       Cell::new(false),
+            fork_fresh:      Cell::new(false),
         }
+    }
+
+    /// Start this worker as a copy of its parent's latest request (r578c).
+    ///
+    /// The conversation is the parent's as sent, and so is the system message.  On the parent's
+    /// own model the tools array, the host pin and the thinking blocks come too, so the first
+    /// round is the parent's request plus one message and reuses its cache.  On another model
+    /// the copy is still whole, but the tools array is this agent's own -- a family's tool names
+    /// and a model's thinking signatures do not carry -- and there is no cache to reuse.
+    pub fn adopt_fork(&self, f: std::sync::Arc<crate::fork::Fork>, session: &mut Session) {
+        session.messages = f.messages.clone();
+        let same = f.model == self.llm.model;
+        if same {
+            session.pin = f.pin.clone();
+            self.llm.carry_import(&f.carry);
+        }
+        self.fork_same.set(same);
+        self.fork_fresh.set(true);
+        *self.fork.borrow_mut() = Some(f);
     }
 
     /// How the last turn on this agent ended.
@@ -758,7 +785,7 @@ impl Agent {
     }
 
     /// Hold this agent to what a dispatched worker may have: a hundred rounds, one continuation,
-    /// a 96,000-token carry, a tail of three tenths and a dollar.
+    /// the parent's own carry, a tail of three tenths and a dollar.
     ///
     /// **The mark is sticky and every figure is a ceiling**, so this may be called before or after
     /// the user's own settings reach the app and the answer is the same.  `Workers.start` applies
@@ -813,9 +840,6 @@ impl Agent {
             // reachable rather than read as "absent".
             if let Some(n) = crate::llm::extract_json_number(text, "retire_keep_turns") {
                 l.retire_keep_turns = n as u32;
-            }
-            if let Some(n) = crate::llm::extract_json_number(text, "written_age") {
-                if n > 0 { l.written_age = n as usize; }
             }
             if let Some(n) = crate::llm::extract_json_number(text, "result_age") {
                 if n > 0 { l.result_age = n as usize; }
@@ -1421,7 +1445,13 @@ impl Agent {
 
         // Build the working conversation: system prompt + history.
         let mut working = Vec::with_capacity(session.messages.len() + 1);
-        if !self.system_prompt.is_empty() {
+        let fork = self.fork.borrow().clone();
+        if let Some(f) = fork.as_ref() {
+            // A WORKER SENDS ITS PARENT'S SYSTEM MESSAGE, byte for byte (r578c).
+            if !f.system.is_empty() {
+                working.push(ChatMessage::system(f.system.clone()));
+            }
+        } else if !self.system_prompt.is_empty() {
             // ONE COMPOSER, read here and by the Wire view. The sentence naming the tools is
             // derived from the registry because a fixed one once promised a shell tool the
             // browser build has not got, so a capable model called it, failed, and reported the
@@ -1439,10 +1469,11 @@ impl Agent {
             working.push(ChatMessage::system(sys));
         }
         // RETIRED ON THE WAY OUT, and this is the seam.  Everything before the sentence just
-        // pushed belongs to a turn that has ENDED: its tool results have been read and acted on,
-        // and its file writes are on disk.  Carried whole they are re-sent on every one of this
-        // turn's rounds -- a hundred and fifty of them, at the cached-input rate, which is how a
-        // turn came to cost five dollars without any single request ever being too big.
+        // pushed belongs to a turn that has ENDED: its tool results have been read and acted on.
+        // Its tool-call ARGUMENTS are not touched: they are the model's own past actions, and it
+        // copies what it sees (daimond_rulings.md §17).  The results, carried whole, are re-sent
+        // on every one of this turn's rounds -- a hundred and fifty of them, at the cached-input
+        // rate, which is how a turn came to cost five dollars without any request being too big.
         //
         // On the COPY, never on `session.messages`: the owner's ruling is that the model gets the
         // shortened version and his transcript keeps every word.  See `compact::retire_upto` and
@@ -1458,6 +1489,11 @@ impl Agent {
         // the content again -- see `compact::RETIRE_KEEP_TURNS` for the trial.
         let keep = self.limits.borrow().retire_keep_turns;
         self.prior_end.set(compact::prior_end(&session.messages, keep));
+        // A FRESH COPY IS NOT RETIRED AGAIN: it is the parent's request as sent, already retired
+        // at the parent's own boundary, and moving that boundary would change its bytes.
+        if self.fork_fresh.replace(false) {
+            self.prior_end.set(0);
+        }
         let mut prior = session.messages.clone();
         // Under a switch, so the measure can be turned off and its worth measured rather than
         // asserted -- see `Agent::set_tune`. On by default, which is what shipped.
@@ -1888,7 +1924,11 @@ impl Agent {
         registry:   &ToolRegistry,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
-        let tools_json = registry.definitions_json();
+        // A worker on its parent's model sends its parent's tools array, byte for byte (r578c).
+        let tools_json = match (self.fork.borrow().as_ref(), self.fork_same.get()) {
+            (Some(f), true) => f.tools.clone(),
+            _               => registry.definitions_json(),
+        };
         // The tool schema rides on every request and is not in the conversation, so it is
         // counted separately -- a budget blind to it is short by however many tools are
         // registered, which for the browser set is several thousand tokens.
@@ -2000,42 +2040,14 @@ impl Agent {
                 round_at.clear();
             }
             round_at.push(working.len());
-            // THE WRITE BODIES THIS TURN HAS ALREADY FINISHED WITH.  A `file_write` carries the
-            // whole of a file in its ARGUMENTS, and nothing aged them: `elide_bulk` clips a tool
-            // RESULT and leaves `tool_calls` untouched, so a turn that wrote twenty files carried
-            // twenty files in every round after the last of them.  The result has come back, so
-            // the write has happened and the file can be read again.
-            //
-            // In batches rather than every round; see `compact::IN_TURN_RETIRE_EVERY`.
-            //
-            // THE FOUR FIGURES ARE READ OFF `Limits`, not off the constants they default to, so
-            // that `Agent::set_tune` can move them and a measurement can have an arm with the
-            // sweeps effectively off. Lifted out of the borrow in one go: the loop awaits below,
-            // and a `RefCell` borrow held across an await is a panic waiting for a second caller.
-            // A sweep cadence of zero would be a modulo by zero, so the floor is one round.
-            let (written_age, result_age, result_cap, sweep_every) = {
-                let l = self.limits.borrow();
-                (l.written_age, l.result_age, l.result_cap, l.sweep_every.max(1))
-            };
-            let swept = round_at.len();
-            if swept > written_age && swept % sweep_every == 0 {
-                let horizon = round_at[swept - 1 - written_age];
-                compact::retire_written(&mut working, horizon);
-            }
-            // AND THE RESULTS THE TURN HAS FINISHED READING, which is where the bytes actually are.
-            // The write bodies above are the dearest thing in a long turn AFTER the results, and
-            // the results were carried whole to the end of it: a turn that read twenty files
-            // re-sent all twenty on every round after the last of them, which is how a prompt
-            // settles at 77.5K and stays there for eighty-five rounds.
-            //
-            // A longer horizon than the bodies get, and the same batch: see
-            // `compact::IN_TURN_RESULT_AGE` for why sixteen rounds rather than three, and
-            // `compact::IN_TURN_RETIRE_EVERY` for why both run every tenth round rather than every
-            // round. One cache miss for the pair of them.
-            if swept > result_age && swept % sweep_every == 0 {
-                let horizon = round_at[swept - 1 - result_age];
-                compact::retire_results(&mut working, horizon, result_cap);
-            }
+            // THE RESULTS THE TURN HAS FINISHED READING, in batches; see
+            // `compact::sweep_in_turn`. The figures are read off `Limits`, not off the constants
+            // they default to, so that `Agent::set_tune` can move them. Copied out of the borrow:
+            // the loop awaits below, and a `RefCell` borrow held across an await is a panic
+            // waiting for a second caller.
+            let limits = self.limits.borrow().clone();
+            compact::sweep_in_turn(&mut working, &round_at, &limits);
+            let (swept, sweep_every) = (round_at.len(), limits.sweep_every.max(1));
             let mut sent = compact::conversation_bytes(&working);
 
             // Stream this round's assistant text as it arrives; the tool
@@ -2399,6 +2411,24 @@ impl Agent {
                 content: MessageContent::text(resp.content.clone()),
                 tool_calls: resp.tool_calls.clone(),
             };
+            // A ROUND THAT ASKS FOR A WORKER HOLDS ITS REQUEST AS SENT (r578c), before the asking
+            // turn joins it: each worker starts as this request plus its own hand-off.  See
+            // `crate::fork`.  A worker's own spawn is refused at the call, so it holds nothing.
+            if !registry.ctx.is_unsupervised() && resp.tool_calls.iter()
+                .any(|t| crate::tools::Tool::from_name(&t.name) == Some(crate::tools::Tool::SpawnAgent))
+            {
+                let (system, messages) = crate::fork::Fork::from_working(&working);
+                registry.ctx.hold_fork(crate::fork::Fork {
+                    model:     self.llm.model.clone(),
+                    system,
+                    tools:     tools_json.clone(),
+                    belt:      registry.tools.clone(),
+                    daimon_of: registry.ctx.daimon_of.clone(),
+                    messages,
+                    carry:     self.llm.carry_export(),
+                    pin:       self.llm.pin(),
+                });
+            }
             working.push(asked.clone());
             session.messages.push(asked);
 
@@ -4240,9 +4270,11 @@ mod tests {
         assert!(l.worker);
         assert_eq!(100,    l.max_rounds, "the chat's round setting reached a worker");
         assert_eq!(1,      l.max_continuations);
-        assert_eq!(96_000, l.context_cap, "the chat's carry ceiling reached a worker");
+        // The carry is the one figure a worker takes from its parent whole: it starts as a copy
+        // of the parent's conversation, so it folds where the parent folds (r578c).
+        assert_eq!(200_000, l.context_cap, "the chat's carry ceiling did not reach its worker");
         assert_eq!(1.0,    l.spend_cap_usd, "the chat's dollar ceiling reached a worker");
-        assert_eq!(96_000, l.budget(0), "a worker's per-round carry is not bounded");
+        assert_eq!(200_000, l.budget(0), "a worker's per-round carry is not the parent's");
         // A tighter setting is still the user's, whichever order it arrives in.
         a.set_max_rounds(15);
         assert_eq!(15, a.limits().max_rounds);
@@ -4490,6 +4522,177 @@ mod tests {
         (sys, all)
     }
 
+    // ── r578c: a worker starts as a copy of its parent ──────────────────
+
+    /// A parent turn whose first round asks for a worker, then a worker on `model` adopting the
+    /// copy that round held.  Returns the parent's first request and the worker's first request.
+    ///
+    /// The parent's conversation already holds a picture, and the turn carries a steering note
+    /// and a crystal block, so each can be looked for in the worker's request.
+    async fn parent_and_worker(model: &str) -> (String, String) {
+        let belt = vec![crate::tools::Tool::FileWrite, crate::tools::Tool::SpawnAgent];
+        let mut registry = one_tool();
+        registry.tools = belt.clone();
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("spawn_agent", r#"{"name":"counter","task":"count the files"}"#)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client_for(port, "openai/gpt-5.1");
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_blocks(appendonly_blocks("STATE-ONE", "TREE-ONE"));
+        let mut session = Session::new(fmt!("s1"), fmt!("fork"), fmt!("openai/gpt-5.1"));
+        let png = match oxedyne_fe2o3_text::base64::decode(COVER_PNG_B64) {
+            Ok(b)  => b,
+            Err(e) => panic!("the documented base64 must decode: {}", e),
+        };
+        session.messages.push(ChatMessage::user(MessageContent::parts(vec![
+            crate::protocol::ContentPart::Text("here is the cover".to_string()),
+            crate::protocol::ContentPart::Image(crate::protocol::ImagePart::new(
+                crate::protocol::ImageMedia::Png, png, "cover.png".to_string())),
+        ])));
+        session.messages.push(ChatMessage::Assistant {
+            content:    MessageContent::text("I see it."),
+            tool_calls: Vec::new(),
+        });
+        // THE COPY IS TAKEN WHERE THE PAGE WOULD TAKE IT: at the spawn call, while the turn holds
+        // it.  It is dropped when the turn ends.
+        let mut held: Option<std::sync::Arc<crate::fork::Fork>> = None;
+        let ran = a.run_turn_noted(&mut session, fmt!("split the work"), fmt!("STEER-NOTE"),
+            String::new(), &registry, &mut |e| {
+                if held.is_none() {
+                    if let AgentEvent::ToolCall { .. } = e {
+                        held = registry.ctx.held_fork();
+                    }
+                }
+            }).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        assert!(registry.ctx.held_fork().is_none(), "the parent's copy outlived its turn");
+        let f = match held {
+            Some(f) => f,
+            None    => panic!("the spawn round held no copy"),
+        };
+        let id = crate::fork::issue(f);
+        let parent = match sent_bodies(&seen).first() {
+            Some(b) => b.clone(),
+            None    => panic!("the parent sent nothing"),
+        };
+
+        // The worker: its own app and provider, the parent's belt, unsupervised.
+        let (port2, seen2) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
+        let mut llm2 = crate::llm::tests::stub_client_for(port2, model);
+        llm2.retry.max_attempts = 1;
+        let w = Agent::new(llm2, "You are a worker.");
+        let mut wreg = one_tool();
+        wreg.tools = belt;
+        wreg.ctx.set_unsupervised();
+        let mut ws = Session::new(fmt!("w1"), fmt!("worker"), model.to_string());
+        let f = match crate::fork::get(&id) {
+            Some(f) => f,
+            None    => panic!("the issued copy is not filed under {}", id),
+        };
+        w.adopt_fork(f, &mut ws);
+        let hand = crate::prompts::worker_handoff("", "count the files");
+        let ran = w.run_turn(&mut ws, hand, &wreg, &mut |_| {}).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        crate::fork::forget(&id);
+        assert!(crate::fork::get(&id).is_none(), "a forgotten copy is still filed");
+        let worker = match sent_bodies(&seen2).first() {
+            Some(b) => b.clone(),
+            None    => panic!("the worker sent nothing"),
+        };
+        (parent, worker)
+    }
+
+    /// The `tools` array a request sent, as its bytes.
+    fn sent_tools(body: &str) -> String {
+        let at = match body.find("\"tools\":[") {
+            Some(i) => i + "\"tools\":".len(),
+            None    => panic!("no tools in: {}", body),
+        };
+        json_array_items(body, at).join(",")
+    }
+
+    /// **The gate (r578c): a worker's first request is its parent's request, byte for byte, plus
+    /// one user message carrying its role and its task.**  System message, tools array and every
+    /// message, the picture, the steering note and the crystal included.
+    #[tokio::test]
+    async fn test_a_worker_starts_as_its_parents_request_plus_one_message_00() {
+        let (parent, worker) = parent_and_worker("openai/gpt-5.1").await;
+        let (psys, pmsgs) = sent_messages(&parent);
+        let (wsys, wmsgs) = sent_messages(&worker);
+        assert_eq!(psys, wsys, "the worker did not send its parent's system message");
+        assert_eq!(sent_tools(&parent), sent_tools(&worker),
+            "the worker did not send its parent's tools array");
+        assert_eq!(pmsgs.len() + 1, wmsgs.len(),
+            "the worker's request is not the parent's plus one message: {:?}", wmsgs);
+        assert_eq!(pmsgs[..], wmsgs[..pmsgs.len()],
+            "the worker's messages do not start with its parent's, byte for byte");
+        let last = &wmsgs[pmsgs.len()];
+        assert!(last.contains("\"role\":\"user\""), "the hand-off is not a user message: {}", last);
+        assert!(last.contains("count the files"), "the hand-off does not carry the task: {}", last);
+        assert!(last.contains("worker"), "the hand-off does not say it is a worker: {}", last);
+        // WHAT THE OLD BRIEF LEFT BEHIND reaches it now.
+        let png_one_line: String = COVER_PNG_B64.split_whitespace().collect();
+        assert!(worker.contains(&png_one_line), "the owner's picture did not reach the worker");
+        assert!(worker.contains("STEER-NOTE"), "the steering note did not reach the worker");
+        assert!(worker.contains("CRYSTAL-ALPHA"), "the crystal did not reach the worker");
+    }
+
+    /// On another model the copy is still whole -- system message and every message -- but the
+    /// tools array is the worker's own, and nothing of the parent's host or thinking carries.
+    #[tokio::test]
+    async fn test_a_worker_on_another_model_still_gets_the_whole_copy_00() {
+        let (parent, worker) = parent_and_worker("anthropic/claude-haiku-4.5").await;
+        let (psys, pmsgs) = sent_messages(&parent);
+        let (wsys, wmsgs) = sent_messages(&worker);
+        // THE TEXT, NOT THE ENVELOPE: the worker's own provider wraps it as it wraps any system
+        // message -- with a cache marker, once the prefix is long enough to take one.
+        let text = match psys.find("\"content\":\"") {
+            Some(i) => psys[i + "\"content\":".len()..].trim_end_matches('}').to_string(),
+            None    => panic!("the parent's system message is not one text: {}", psys),
+        };
+        assert!(wsys.contains(&text), "the worker did not send its parent's system text: {}", wsys);
+        assert_eq!(pmsgs.len() + 1, wmsgs.len(),
+            "the worker's request is not the parent's plus one message: {:?}", wmsgs);
+        assert!(worker.contains("count the files"), "the hand-off does not carry the task");
+        assert!(worker.contains("STEER-NOTE"), "the steering note did not reach the worker");
+    }
+
+    /// One parent turn whose first round asks for a worker with `args`, then answers.  Returns
+    /// every request it sent.
+    async fn parent_spawning(args: &str) -> Vec<String> {
+        let mut registry = one_tool();
+        registry.tools = vec![crate::tools::Tool::FileWrite, crate::tools::Tool::SpawnAgent];
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("spawn_agent", args)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client_for(port, "openai/gpt-5.1");
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_blocks(appendonly_blocks("STATE-ONE", "TREE-ONE"));
+        let mut session = Session::new(fmt!("s1"), fmt!("kind"), fmt!("openai/gpt-5.1"));
+        let ran = a.run_turn(&mut session, fmt!("split the work"), &registry, &mut |_| {}).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        sent_bodies(&seen)
+    }
+
+    /// **The gate (r578c M): the tools array and the system message are the same bytes whichever
+    /// kind of worker a turn asks for**, so the choice never costs the parent its cache.
+    #[tokio::test]
+    async fn test_the_parents_request_is_the_same_bytes_for_either_worker_kind_00() {
+        let full  = parent_spawning(r#"{"name":"counter","task":"count the files"}"#).await;
+        let brief = parent_spawning(
+            r#"{"name":"counter","task":"count the files","context":"brief"}"#).await;
+        assert_eq!(2, full.len(), "the full turn did not run its two rounds");
+        assert_eq!(full.len(), brief.len(), "the brief turn ran another number of rounds");
+        for (i, (f, b)) in full.iter().zip(brief.iter()).enumerate() {
+            assert_eq!(sent_tools(f), sent_tools(b), "request {}: the tools array moved", i);
+            assert_eq!(sent_messages(f).0, sent_messages(b).0, "request {}: the system moved", i);
+        }
+    }
+
     fn appendonly_blocks(state: &str, tree: &str) -> crate::prompts::TurnBlocks {
         let mut b = crate::prompts::TurnBlocks::default();
         b.set(crate::prompts::Block::Crystal, "CRYSTAL-ALPHA");
@@ -4520,7 +4723,6 @@ mod tests {
         {
             let mut l = a.limits.borrow_mut();
             l.sweep_every = 1;
-            l.written_age = 100;
             l.result_age = 100;
             l.retire_keep_turns = 2;
         }
@@ -4608,6 +4810,57 @@ mod tests {
             assert!(last.contains(t), "the fold left {} unsaid: {}", t, last);
         }
         assert_eq!(1, req.matches("CRYSTAL-ALPHA").count(), "the crystal went twice: {}", req);
+    }
+
+    /// A tree of `n` files under one folder, one entry a line, as the orientation note lists them.
+    fn appendonly_tree(n: usize, extra: Option<&str>) -> String {
+        let mut s = fmt!("## Where you are\n\nYour working folder is the workspace root.\n\nd/");
+        if let Some(name) = extra {
+            s.push_str(&fmt!("\n  d/{} (8 B)", name));
+        }
+        for i in 0..n {
+            s.push_str(&fmt!("\n  d/file-{:02}.md ({} B)", i, 100 + i));
+        }
+        s
+    }
+
+    /// D-20261020-03: a turn after a file write sends the tree's changes only, and the turn after
+    /// a fold, whose history held only that change list, sends the tree whole again.
+    #[tokio::test]
+    async fn test_appendonly_a_fold_after_a_change_list_sends_the_tree_whole_00() {
+        let one = appendonly_blocks("STATE-ONE", &appendonly_tree(20, None));
+        let two = appendonly_blocks("STATE-ONE", &appendonly_tree(20, Some("written.md")));
+        let mut first = vec![ChatMessage::user_noted(fmt!("ask 0"),
+            crate::prompts::turn_note(&one, &[]))];
+        let delta = crate::prompts::turn_note(&two, &first);
+        assert!(delta.contains("+ d/written.md (8 B)") && !delta.contains("file-07"),
+            "the turn after the write did not send the tree's changes only: {}", delta);
+        first.push(ChatMessage::assistant(fmt!("done")));
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![completion(structured_fold_reply()), plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        session.messages[0] = first[0].clone();
+        // The change list rides late in the history, so the fold keeps it and cuts its base.
+        let at = session.messages.len() - 2;
+        session.messages[at] = ChatMessage::user_noted(fmt!("ask late"), delta);
+        a.set_blocks(two);
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &no_tools(),
+            &mut |ev| events.push(ev)).await;
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. })),
+            "nothing was folded, so the test proves nothing");
+        let bodies = sent_bodies(&seen);
+        let req = match bodies.iter().rev().find(|b| b.contains("carry on")) {
+            Some(b) => b.clone(),
+            None    => panic!("the turn's own request was not sent"),
+        };
+        let (_, msgs) = sent_messages(&req);
+        let last = match msgs.last() { Some(m) => m.clone(), None => panic!("no messages") };
+        for t in ["d/file-07.md (107 B)", "d/written.md (8 B)", "STATE-ONE", "CRYSTAL-ALPHA"] {
+            assert!(last.contains(t), "the fold left {} unsaid: {}", t, last);
+        }
     }
 
     /// A correction said into a running turn takes its note with it, into the next round's
@@ -5089,7 +5342,6 @@ mod tests {
         let l = a.limits();
         assert!(l.retire_prior, "a default agent does not retire its prior turns");
         assert_eq!(compact::RETIRE_KEEP_TURNS,    l.retire_keep_turns);
-        assert_eq!(compact::IN_TURN_RETIRE_AGE,   l.written_age);
         assert_eq!(compact::IN_TURN_RESULT_AGE,   l.result_age);
         assert_eq!(compact::IN_TURN_RESULT_CAP,   l.result_cap);
         assert_eq!(compact::IN_TURN_RETIRE_EVERY, l.sweep_every);
@@ -5108,7 +5360,7 @@ mod tests {
 
         // AND IT ROUND-TRIPS.  Every key the loop sets, in one object, read back out of the
         // getter a control and a trial both draw from.
-        let tune = r#"{"retire_prior":false,"retire_keep_turns":3,"written_age":6,
+        let tune = r#"{"retire_prior":false,"retire_keep_turns":3,
             "result_age":16,"result_cap":4096,
             "sweep_every":5,"worker_max_rounds":100,"worker_continuations":2,
             "worker_context_cap":96000,"worker_keep":0.45,"worker_spend_usd":2.5}"#;
@@ -5116,7 +5368,6 @@ mod tests {
         let l = a.limits();
         assert!(!l.retire_prior, "retire_prior stayed on");
         assert_eq!(3,      l.retire_keep_turns);
-        assert_eq!(6,      l.written_age);
         assert_eq!(16,     l.result_age);
         assert_eq!(4_096,  l.result_cap);
         assert_eq!(5,      l.sweep_every);
@@ -5129,7 +5380,6 @@ mod tests {
         // what lets an arm be written as the one figure it varies.
         if let Err(e) = a.set_tune(r#"{"result_age":20}"#) { panic!("{}", e); }
         assert_eq!(20, a.limits().result_age);
-        assert_eq!(6,  a.limits().written_age);
         // Not an object is refused rather than silently tuning nothing: an arm that measured the
         // default while reporting itself as tuned is a figure about the wrong engine.
         assert!(a.set_tune("result_age=20").is_err(), "a tune that is not an object was taken");
@@ -5161,8 +5411,8 @@ mod tests {
         // trial that got the order wrong would silently measure `cur`.
         let late = make_test_agent();
         late.set_worker_limits();
-        if let Err(e) = late.set_tune(r#"{"worker_context_cap":96000}"#) { panic!("{}", e); }
-        assert_eq!(compact::WORKER_CONTEXT_CAP, late.limits().context_cap,
+        if let Err(e) = late.set_tune(r#"{"worker_max_rounds":150}"#) { panic!("{}", e); }
+        assert_eq!(compact::WORKER_MAX_ROUNDS, late.limits().max_rounds,
             "a tune after the hold raised a ceiling");
     }
 
@@ -5290,14 +5540,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_an_off_tune_leaves_a_long_turns_write_bodies_where_they_are_00() {
-        // THE SAME TWELVE ROUNDS, TWICE.  The in-turn sweep fires at round ten on the shipped
-        // figures, so a twelve-round turn is the shortest fixture that shows the measure working;
-        // the `off` arm of the tune loop sets the two ages past any turn's length, and the proof
-        // that it is off is that the bytes of the eleventh request are the UNSWEPT ones.
-        //
-        // Asserted against what the provider was SENT, never against the session: the owner's
-        // ruling is that the transcript keeps every word whichever way this is tuned.
+    async fn test_a_long_turns_write_bodies_reach_the_model_whole_00() {
+        // RESULTS ONLY (daimond_rulings.md §17, D-20261020-01), at the wire. Twelve rounds of
+        // 4 kB writes, on the shipped figures and on the tightest sweep a tune allows: every one
+        // of the twelve bodies is in the last request exactly as the model wrote it, and no
+        // argument object carries a key of retirement's own for the model to copy.
         let body = "x".repeat(4_000);
         let args = fmt!(r#"{{"path":"a.txt","content":"{}"}}"#, body);
         let ran_with = |tune: &'static str, args: String| async move {
@@ -5322,27 +5569,15 @@ mod tests {
             };
             bodies
         };
-
-        // The shipped figures: the sweep fires and the old write bodies are gone from the request.
-        let shipped = ran_with("", args.clone()).await;
-        assert!(shipped.len() > compact::IN_TURN_RETIRE_EVERY,
-            "the turn did not reach the sweep: {} requests", shipped.len());
-        let last = match shipped.last() { Some(b) => b.clone(), None => panic!("no request") };
-        assert!(last.contains("retired"),
-            "the shipped sweep did not retire a write body, so the off arm proves nothing");
-        let kept_shipped = last.matches(&body).count();
-
-        // The `off` arm: both ages past any turn's length, which is as off as the engine allows.
-        let off = ran_with(r#"{"written_age":100000,"result_age":100000}"#, args.clone()).await;
-        let last_off = match off.last() { Some(b) => b.clone(), None => panic!("no request") };
-        assert!(!last_off.contains("retired"),
-            "the off tune still retired something");
-        let kept_off = last_off.matches(&body).count();
-        assert!(kept_off > kept_shipped,
-            "the off arm carried {} whole bodies and the shipped one {} -- the tune changed \
-            nothing", kept_off, kept_shipped);
-        // Every one of the twelve, whole, which is the unswept run by definition.
-        assert_eq!(12, kept_off, "the off arm dropped a write body anyway");
+        for tune in ["", r#"{"sweep_every":1,"result_age":1,"result_cap":1}"#] {
+            let sent = ran_with(tune, args.clone()).await;
+            assert!(sent.len() > compact::IN_TURN_RETIRE_EVERY,
+                "the turn did not reach the sweep: {} requests", sent.len());
+            let last = match sent.last() { Some(b) => b.clone(), None => panic!("no request") };
+            assert_eq!(12, last.matches(&body).count(),
+                "a write body was taken out of the request under tune {:?}", tune);
+            assert!(!last.contains("arguments are retired"), "under tune {:?}", tune);
+        }
     }
 
     #[tokio::test]
@@ -6458,6 +6693,7 @@ mod tests {
             report: fmt!("{}", report),
             usd,
             rounds: 6,
+            writes: 0,
             terminal,
         }
     }

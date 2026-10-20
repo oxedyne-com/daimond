@@ -109,6 +109,7 @@ const page = new Function('window', 'localStorage', 'cfg', 'DaimondModels', 'cha
 		return Promise.resolve('');
 	}
 	function workerEndingNote() { return ''; }
+	function workerKind() { return 'brief'; }
 	function reportBody(r) { return 'found ' + r.name; }
 	function reportHasSubstance() { return true; }
 	function withCommas(x) { return x; }

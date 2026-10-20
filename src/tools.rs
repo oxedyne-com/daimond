@@ -307,6 +307,9 @@ pub struct TurnState {
     // billed for them.  A chat holds its own app and its own cache, where the key is the empty
     // string and the map holds one entry.  See `WorkerLedger`.
     pub workers: HashMap<String, WorkerLedger>,
+    // The parent's request at the round that asks for a worker (r578c), keyed like the turn's
+    // holds; see `crate::fork`.  Dropped when the turn ends.
+    pub forks: HashMap<String, Arc<crate::fork::Fork>>,
 }
 
 /// One worker this turn started, as the page named it back.
@@ -337,6 +340,7 @@ pub struct ScriptedReport {
     pub report:   String,
     pub usd:      f64,
     pub rounds:   usize,
+    pub writes:   usize,    // file writes that succeeded
     pub terminal: bool,     // false is a worker still running, which a gather waits on
 }
 
@@ -8727,7 +8731,7 @@ pub(crate) fn format_orientation_tree(
             kind.push(fmt!("{} stale file{}", cut_files, if cut_files == 1 { "" } else { "s" }));
         }
         let kind_desc = if kind.is_empty() { fmt!("entries") } else { kind.join(", ") };
-        fmt!("\n… {} more ({}); file_glob to see them", dropped, kind_desc)
+        fmt!("\n{}{} more ({}); file_glob to see them", ORIENTATION_CUT_LEAD, dropped, kind_desc)
     };
 
     let (lines, cut_dirs, cut_files) = fit_at(cap);
@@ -8758,10 +8762,33 @@ pub(crate) fn format_orientation_tree(
 /// * `cwd` - The turn's own working folder, workspace-relative; empty for the workspace root.
 pub(crate) fn orientation_cwd_line(cwd: &str) -> String {
     if cwd.is_empty() {
-        fmt!("Your working folder is the workspace root; paths are relative to it.")
+        fmt!("{} the workspace root; paths are relative to it.", ORIENTATION_CWD_LEAD)
     } else {
-        fmt!("Your working folder is `{}/`; paths are relative to the workspace root, not to \
-            this folder.", cwd)
+        fmt!("{} `{}/`; paths are relative to the workspace root, not to this folder.",
+            ORIENTATION_CWD_LEAD, cwd)
+    }
+}
+
+// How the orientation note's own lines open, which is how one copy's line is matched to
+// another's in a change list (`orientation_line_key`).
+const ORIENTATION_CWD_LEAD:     &str = "Your working folder is";
+const ORIENTATION_RECENT_LEAD:  &str = "Recently changed:";
+const ORIENTATION_CUT_LEAD:     &str = "\u{2026} ";
+
+/// What one line of the orientation note is about, so two copies of the tree can be compared
+/// entry by entry (r578c, D-20261020-03): an entry's path without its size, or the lead of one
+/// of the note's own sentences.  A line's indent is not part of it.
+pub(crate) fn orientation_line_key(line: &str) -> &str {
+    let l = line.trim();
+    for lead in [ORIENTATION_CWD_LEAD, ORIENTATION_RECENT_LEAD, ORIENTATION_CUT_LEAD] {
+        if l.starts_with(lead) {
+            return lead;
+        }
+    }
+    // `path (12 B)` or `dir/ (3 files, 1 KB)`; a name may hold " (" itself, so the last one.
+    match (l.ends_with(')'), l.rfind(" (")) {
+        (true, Some(i)) => &l[..i],
+        _               => l,
     }
 }
 
@@ -8776,7 +8803,7 @@ pub(crate) fn orientation_recent_lines(recent: &[String], max: usize) -> String 
         return String::new();
     }
     let shown: Vec<&String> = recent.iter().take(max).collect();
-    fmt!("Recently changed: {}", shown.iter().map(|s| s.as_str())
+    fmt!("{} {}", ORIENTATION_RECENT_LEAD, shown.iter().map(|s| s.as_str())
         .collect::<Vec<_>>().join(", "))
 }
 
@@ -11538,10 +11565,15 @@ async fn egress_ask_detail(_turn: &str, _tool: &str, _url: &str, _detail: &str) 
 /// The request a bridged `spawn_agent` hands the page: the worker, the turn that asked for it, and
 /// the two facts about the conversation that must cross the dispatch boundary with it -- whether
 /// it has read a stranger's words, and what it has said about reaching the web (`web`, see
-/// [`ToolContext::web_consent_word`]).
-pub fn spawn_payload(name: &str, task: &str, turn: &str, tainted: bool, web: &str) -> String {
-    fmt!("{{\"name\":\"{}\",\"task\":\"{}\",\"turn\":\"{}\",\"tainted\":{},\"web\":\"{}\"}}",
-        json_escape(name), json_escape(task), json_escape(turn), tainted, json_escape(web))
+/// [`ToolContext::web_consent_word`]).  `fork` names the parent's copy the worker starts from and
+/// `fb` its size in bytes (r578c); an empty `fork` is a brief worker, which starts from its task.
+pub fn spawn_payload(name: &str, task: &str, turn: &str, tainted: bool, web: &str, fork: &str,
+    fb: usize) -> String
+{
+    fmt!("{{\"name\":\"{}\",\"task\":\"{}\",\"turn\":\"{}\",\"tainted\":{},\"web\":\"{}\",\
+        \"fork\":\"{}\",\"fb\":{}}}",
+        json_escape(name), json_escape(task), json_escape(turn), tainted, json_escape(web),
+        json_escape(fork), fb)
 }
 
 pub async fn egress_check(tool: &str, url: &str, ctx: &ToolContext) -> Option<String> {
@@ -13965,6 +13997,19 @@ impl ToolContext {
         c.places.remove(&key);
         c.place_ask.remove(&key);
         c.refused.remove(&key);
+        c.forks.remove(&key);
+    }
+
+    /// Hold the parent's request as sent, for the workers this round asks for (r578c).
+    pub fn hold_fork(&self, f: crate::fork::Fork) {
+        let key = self.hold_key();
+        lock_cache(&self.read_seen).forks.insert(key, Arc::new(f));
+    }
+
+    /// The request this turn holds for its workers, if a round has asked for one.
+    pub fn held_fork(&self) -> Option<Arc<crate::fork::Fork>> {
+        let key = self.hold_key();
+        lock_cache(&self.read_seen).forks.get(&key).cloned()
     }
 
     /// Which turn of a named conversation the page is running: the Diamond, or the empty
@@ -18490,18 +18535,60 @@ fn file_edited_all(path: &str, data: &str, hunks: &[(String, String)])
 //
 // A browser page too old to carry the bridge falls back to the unbridged ANSWER at the call (see
 // `spawn_agent_page`), which corrects this description where it turns out to be optimistic.
+//
+// THE TWO KINDS ARE CHOSEN HERE, in text that never changes (D-20261020-05).  One tool and one
+// schema on every turn, so the tools array -- and the parent's cache -- does not move with the
+// choice; `spawn_context_desc!` is the one wording both builds share.
+macro_rules! spawn_context_desc { () => {
+    " context \"full\" (default): a copy of this conversation, when the task needs what was said, \
+    read, decided or attached here, or earlier workers' findings. \"brief\": role and task only, \
+    for a narrow, self-contained task when this conversation is long and unrelated, or a worker \
+    on another model (a copy works there, uncached). With \"brief\" the task must say everything."
+} }
+
+// EVERY CHARACTER HERE IS PAID ON EVERY ROUND (`test_the_daimons_tool_prefix_stays_inside_its_
+// budget`), so the steering above is as short as plain allows and the schema carries no prose.
 #[cfg(target_arch = "wasm32")]
-const SPAWN_AGENT_DESC: &str = "Start one worker now on one bounded task, in its own context \
-    with the workspace file tools. It runs while you keep working. Call `gather` to read its \
-    report inside this turn; a report you do not gather reaches you as a later turn. One call \
-    per worker; several calls start several workers at once.";
+const SPAWN_AGENT_DESC: &str = concat!("Start a worker now on one bounded task; it runs while you \
+    work. `gather` reads its report this turn, else it reports as a later turn.",
+    spawn_context_desc!());
 
 #[cfg(not(target_arch = "wasm32"))]
-const SPAWN_AGENT_DESC: &str = "Ask for a worker to carry out one bounded task in its own \
-    context, with the workspace file tools. NOTHING STARTS UNTIL THIS TURN ENDS: every worker \
-    asked for in a turn begins when you stop, and you cannot wait for one here -- their reports \
-    reach you as a later turn. So ask for every worker you want, finish your own answer, and \
-    stop. One call per worker.";
+const SPAWN_AGENT_DESC: &str = concat!("Ask for a worker on one bounded task. NOTHING STARTS UNTIL \
+    THIS TURN ENDS: workers begin when you stop and report as a later turn.", spawn_context_desc!());
+
+/// How a worker starts: as a copy of its parent's conversation, or from its task alone.
+///
+/// The parent chooses, through `spawn_agent`'s `context` argument; see `SPAWN_AGENT_DESC` for
+/// when each is the right one.  Omitted means `Full`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpawnContext {
+    Full,   // the parent's request, byte for byte, then the hand-off
+    Brief,  // the worker role as system prompt, the task as first message
+}
+
+impl SpawnContext {
+    /// Read `context` from a `spawn_agent` call.  Absent or empty is `Full`.
+    pub fn read(args_json: &str) -> Outcome<Self> {
+        let raw = extract_json_string(args_json, "context").unwrap_or_default();
+        match raw.trim().to_lowercase().as_str() {
+            "" | "full" => Ok(Self::Full),
+            "brief"     => Ok(Self::Brief),
+            other       => Err(err!(
+                "spawn_agent: 'context' is \"{}\", which is not a kind of worker; use \"full\" \
+                (a copy of this conversation, the default) or \"brief\" (its task alone).",
+                other; Invalid, Input)),
+        }
+    }
+
+    /// The word the page, the lens and a report heading use.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Full  => "full",
+            Self::Brief => "brief",
+        }
+    }
+}
 
 /// The least a `gather` may be told to wait, in seconds.
 ///
@@ -20116,7 +20203,7 @@ impl Tool {
             Tool::Runs => r#"{"type":"object","properties":{"stop":{"type":"string","description":"Stop this run. It is the IDENTIFIER from this tool's own listing, such as 'run-1-bash' -- never a process id, never a program name and never a pattern. Leave it out to list without stopping anything."},"signal":{"type":"string","description":"Which signal to send with 'stop': 'term' to ask it to stop (the default), 'kill' to insist, 'int' to interrupt it as Ctrl-C would."},"read":{"type":"string","description":"Hand over the output being held for this run from before the page reloaded. The listing names which runs have any. It is handed over once and then let go, so read it before stopping that run."}},"required":[]}"#,
             Tool::Serve => r#"{"type":"object","properties":{"act":{"type":"string","enum":["start","stop","list"],"description":"Default 'list'"},"path":{"type":"string","description":"For 'start': workspace-relative folder to serve, inside a folder added on this computer"},"port":{"type":"integer","description":"For 'start': 1024-65535 (default 8800 and up)"},"id":{"type":"string","description":"For 'stop': the identifier 'start' or 'list' gave"}},"required":[]}"#,
             Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program, then each argument separately."},"cwd":{"type":"string","description":"Workspace-relative directory to run in (default: the workspace root, where file-tool paths resolve). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit, ms (default 120000, max 900000)"},"max_bytes":{"type":"integer","description":"Output bytes carried (default 16000, max 80000)."}},"required":["argv"]}"#,
-            Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
+            Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string"},"task":{"type":"string"},"context":{"type":"string","enum":["full","brief"]}},"required":["name","task"]}"#,
             Tool::Gather => r#"{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"},"description":"Worker names. Omit for every one this turn started and has not gathered."},"timeout_s":{"type":"integer","description":"Seconds to wait before answering with what has finished, 10..600. Default 600."},"partial":{"type":"boolean","description":"Answer at the FIRST report, not waiting for all. Default false."}}}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
             Tool::WebClose => r#"{"type":"object","properties":{}}"#,
@@ -20634,6 +20721,7 @@ impl Tool {
         if task.trim().is_empty() {
             return Err(err!("spawn_agent: 'task' must not be empty."; Invalid, Input));
         }
+        res!(SpawnContext::read(args_json));
         // NOT "dispatched". Nothing has been dispatched: `www/js/daimond.js` collects every
         // `spawn_agent` call a turn makes and starts the workers AFTER the turn ends, so at the
         // moment this sentence is written no worker request has reached the relay and none can
@@ -20672,6 +20760,16 @@ impl Tool {
                 from a stranger's words rather than the user's; the worker carries that mark.");
         }
         Ok(out)
+    }
+
+    /// The parent's copy a worker of `kind` starts from: the request this turn's spawn round
+    /// held for a full worker, nothing for a brief one -- nor for a full one where no round held
+    /// a copy (a page-less caller), which then starts brief.
+    pub fn spawn_fork(ctx: &ToolContext, kind: SpawnContext) -> Option<Arc<crate::fork::Fork>> {
+        match kind {
+            SpawnContext::Full  => ctx.held_fork(),
+            SpawnContext::Brief => None,
+        }
     }
 
     /// The taint sentence `spawn_agent` adds where the turn has read a stranger's words.
@@ -20805,15 +20903,22 @@ impl Tool {
             let body   = extract_json_string(o, "report").unwrap_or_default();
             let rounds = extract_json_number(o, "rounds").unwrap_or(0);
             let spent  = extract_json_f64(o, "usd").unwrap_or(0.0);
+            let writes = extract_json_number(o, "writes").unwrap_or(0);
+            // The kind it ran as, from a page that says; an older page's report goes unmarked.
+            let kind   = extract_json_string(o, "context")
+                .filter(|k| !k.is_empty())
+                .map(|k| fmt!(" [{}]", k))
+                .unwrap_or_default();
             usd += spent;
             if !id.is_empty() {
                 ids.push(id.clone());
             }
             let who = if name.is_empty() { id.clone() } else { name };
             let text = body.trim();
-            blocks.push(fmt!("### {}{}\n{}",
+            blocks.push(fmt!("### {}{}{}\n{}",
                 who,
-                Self::gather_ending_note(&status, rounds, spent),
+                kind,
+                Self::gather_ending_note(&status, rounds, spent, writes),
                 if text.is_empty() { "(no report)" } else { text }));
         }
 
@@ -20896,20 +21001,34 @@ impl Tool {
     ///
     /// Mirrors `workerEndingNote` in `www/js/daimond.js`; see [`Self::gather_result`] for why
     /// the vocabulary is shared.  `done` says nothing, because the ordinary case needs no note.
-    fn gather_ending_note(status: &str, rounds: u64, usd: f64) -> String {
+    fn gather_ending_note(status: &str, rounds: u64, usd: f64, writes: u64) -> String {
         // A non-`done` ending carries NO verdict: the worker was cut off (a round or spend cap,
-        // an error, or a stop -- the JS wall-clock stop reuses `capped`) before it could report.
-        // The heading says so, so a partial run is never read as a verification or a pass.
+        // an error, or a stop) before it could report.  The heading says so, so a partial run is
+        // never read as a verification or a pass.  A stop names the rounds and the spend too
+        // (r578c T): the page waits for the stopped turn to settle, so both are the worker's own,
+        // and a reader told nothing of them re-dispatched work already paid for.
+        let wrote = Self::gather_wrote(writes);
         match status {
             "capped" => fmt!(
-                " — stopped at the round cap after {} rounds, US${:.4} (no verdict; treat as \
-                 unverified)\n\n(partial — continue with resume)", rounds, usd),
+                " — stopped at the round cap after {} rounds, US${:.4}{} (no verdict; treat as \
+                 unverified)\n\n(partial — continue with resume)", rounds, usd, wrote),
             "spend_cap" => fmt!(
-                " — stopped at the spend cap after {} rounds, US${:.4} (no verdict; treat as \
-                 unverified)\n\n(partial — continue with resume)", rounds, usd),
+                " — stopped at the spend cap after {} rounds, US${:.4}{} (no verdict; treat as \
+                 unverified)\n\n(partial — continue with resume)", rounds, usd, wrote),
             "error"   => fmt!(" — error (no verdict; treat as unverified)"),
-            "stopped" => fmt!(" — stopped (no verdict; treat as unverified)"),
-            _         => fmt!(" — done, {} rounds, US${:.4}", rounds, usd),
+            "stopped" => fmt!(" — stopped after {} rounds, US${:.4}{} (no verdict; treat as \
+                 unverified)", rounds, usd, wrote),
+            _         => fmt!(" — done, {} rounds, US${:.4}{}", rounds, usd, wrote),
+        }
+    }
+
+    /// The clause a gathered heading carries for a worker that wrote files: its work is on disk
+    /// whatever its report says, so a reader checks the files before sending it again.
+    fn gather_wrote(writes: u64) -> String {
+        match writes {
+            0 => String::new(),
+            1 => fmt!(", 1 file write (check its files before re-dispatching)"),
+            n => fmt!(", {} file writes (check its files before re-dispatching)", n),
         }
     }
 
@@ -20939,9 +21058,9 @@ impl Tool {
             match script.iter().find(|r| r.name == w.name) {
                 Some(r) if r.terminal => reports.push(fmt!(
                     "{{\"id\":\"{}\",\"name\":\"{}\",\"status\":\"{}\",\"rounds\":{},\
-                     \"usd\":{},\"report\":\"{}\"}}",
+                     \"usd\":{},\"writes\":{},\"report\":\"{}\"}}",
                     json_escape(&w.id), json_escape(&r.name), json_escape(&r.status),
-                    r.rounds, r.usd, json_escape(&r.report))),
+                    r.rounds, r.usd, r.writes, json_escape(&r.report))),
                 _ => pending.push(fmt!("{{\"id\":\"{}\",\"name\":\"{}\"}}",
                     json_escape(&w.id), json_escape(&w.name))),
             }
@@ -20955,9 +21074,9 @@ impl Tool {
             match script.iter().find(|r| &r.name == n && r.terminal) {
                 Some(r) => reports.push(fmt!(
                     "{{\"id\":\"{}\",\"name\":\"{}\",\"status\":\"{}\",\"rounds\":{},\
-                     \"usd\":{},\"report\":\"{}\"}}",
+                     \"usd\":{},\"writes\":{},\"report\":\"{}\"}}",
                     json_escape(&r.name), json_escape(&r.name), json_escape(&r.status),
-                    r.rounds, r.usd, json_escape(&r.report))),
+                    r.rounds, r.usd, r.writes, json_escape(&r.report))),
                 None => unresolved.push(fmt!("\"{}\"", json_escape(n))),
             }
         }
@@ -21007,6 +21126,7 @@ impl Tool {
         if task.trim().is_empty() {
             return Err(err!("spawn_agent: 'task' must not be empty."; Invalid, Input));
         }
+        let kind = res!(SpawnContext::read(args_json));
         // THE TURN TRAVELS WITH THE REQUEST.  One `window.DaimondWorkers` serves every
         // conversation in the page, and several run turns at once -- a chat on screen and an
         // errand on a runner, or two Diamonds steering -- so the pump cannot work out whose
@@ -21016,15 +21136,30 @@ impl Tool {
         // a flag captured when the turn opened would send a worker out clean carrying
         // instructions absorbed from a web page.
         // AND SO IS THE WEB ANSWER (UNBLOCK-21): one consent per chat, inherited by its workers.
+        // THE WORKER STARTS AS A COPY OF THIS REQUEST (r578c): the round that made this call held
+        // it, and the page carries only its id.  None held -- a page-less caller, or no spawn
+        // round -- and the worker is a brief worker, started from its task alone.
+        // ── WHERE THE TWO WORKER KINDS SPLIT (D-20261020-05): see `spawn_fork`.  The page's
+        // `Workers.start` branches on `run.fork`, so an empty id is a brief worker there.
+        let fork = Self::spawn_fork(ctx, kind).map(|f| (f.bytes(), crate::fork::issue(f)));
+        let (fid, fb) = match &fork {
+            Some((b, id)) => (id.as_str(), *b),
+            None          => ("", 0),
+        };
         let payload = spawn_payload(&name, &task, &ctx.turn_tag(), ctx.is_tainted(),
-            ctx.web_consent_word());
+            ctx.web_consent_word(), fid, fb);
         let answered = match crate::wasm::workers::spawn(&payload).await {
             Ok(j)  => j,
             // The bridge is absent, so nothing started and the unbridged sentence is the true
             // one.  Every OTHER failure is the page refusing, which is answered below.
-            Err(_) => return Ok(MessageContent::text(res!(Self::spawn_agent(args_json, ctx)))),
+            Err(_) => {
+                if !fid.is_empty() { crate::fork::forget(fid); }
+                return Ok(MessageContent::text(res!(Self::spawn_agent(args_json, ctx))));
+            },
         };
         if !extract_json_bool(&answered, "started").unwrap_or(false) {
+            // Nothing will adopt the copy, so it is dropped now rather than at the bound.
+            if !fid.is_empty() { crate::fork::forget(fid); }
             let why = extract_json_string(&answered, "why")
                 .unwrap_or_else(|| fmt!("the app stopped the fan-out"));
             let said = fmt!(
@@ -21040,10 +21175,12 @@ impl Tool {
         }
         let id = extract_json_string(&answered, "id").unwrap_or_default();
         ctx.note_spawned(&id, &name);
+        // The kind it STARTS as, which is brief when a full copy was asked for and none was held.
+        let ran = if fid.is_empty() { SpawnContext::Brief } else { SpawnContext::Full };
         let mut out = fmt!(
-            "Worker '{}' ({}) has STARTED and is running now. Call gather when you need its \
-             report, or finish your answer and it reports back as a later turn.",
-            name, if id.is_empty() { fmt!("no id") } else { id });
+            "Worker '{}' ({}) has STARTED as a {} worker and is running now. Call gather when you \
+             need its report, or finish your answer and it reports back as a later turn.",
+            name, if id.is_empty() { fmt!("no id") } else { id }, ran.word());
         out.push_str(Self::spawn_taint_note(ctx));
         Ok(MessageContent::text(out))
     }
@@ -30124,15 +30261,13 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// The tools this registry actually OFFERS, which on a dispatched worker is not everything
-    /// it holds.
+    /// The tools this registry actually OFFERS, which is not always everything it holds.
     ///
-    /// [`Tool::FileShow`] is the one whose subject is the READER rather than the workspace, and it
-    /// refuses a worker at execution: nobody is watching that transcript.  The withholding used to
-    /// stop there, so the refusal was all a worker ever got -- it was shown the schema on every
-    /// request of every round and refused the moment it believed what it had been shown.  Taken
-    /// out of the offer, [`Tool::worker_may_not_show`] becomes the backstop it was meant to be
-    /// rather than the mechanism.
+    /// **A dispatched worker is offered exactly what its parent is** (r578c, 2026-10-20): it starts
+    /// as a copy of the parent's request, tools array included, so its first round reuses the
+    /// parent's cache.  What a worker may not do -- `file_show`, `ask`, `spawn_agent`, `gather` --
+    /// is refused AT THE CALL with a plain tool error; see [`Tool::worker_may_not_show`] and
+    /// [`Self::try_dispatch_asking`].  An offer that differed was a cache miss on every worker.
     ///
     /// **The `say` tool stood here beside it and no longer exists.**  Folding an answer is written
     /// into the model's own prose as a `<details>` element now, so what withholds it from a worker
@@ -30148,7 +30283,6 @@ impl ToolRegistry {
     /// [`dispatch`](Self::dispatch) still resolves it, so a worker that names it anyway gets the
     /// refusal that tells it what to do instead, and not "tool 'file_show' is not available here."
     pub fn offered(&self) -> Vec<Tool> {
-        let unsupervised = self.ctx.is_unsupervised();
         // AND NOT THE MACHINE TOOLS WHERE THERE IS NO MACHINE FOLDER.  `run`, `runs` and `verify`
         // come to about 1,600 tokens of schema between them -- `run`'s description alone is a
         // paragraph -- and they rode on every request of every round of every turn on a page with
@@ -30163,7 +30297,6 @@ impl ToolRegistry {
         // it probes for a tool it cannot see and reports the app as broken.
         let nowhere_to_run = machine_rooted_seen() == Some(false);
         self.tools.iter()
-            .filter(|t| !(unsupervised && matches!(t, Tool::FileShow | Tool::Ask)))
             .filter(|t| !(nowhere_to_run
                 && matches!(t, Tool::Run | Tool::Runs | Tool::Verify | Tool::Serve)))
             // AND NOT A TOOL THE ACCOUNT HAS NOT BOUGHT, which is the prefix half of the gate
@@ -30340,6 +30473,14 @@ impl ToolRegistry {
         let model = || ToolContext { by_model: true, no_write: now.write_bounds(),
             ..now.clone() };
         let ctx = model();
+        // A WORKER DOES NOT DISPATCH WORKERS.  It is offered `spawn_agent` and `gather` because its
+        // tools array is its parent's (r578c), and refused here, at the call.
+        if ctx.is_unsupervised() && matches!(Tool::from_name(name), Some(Tool::SpawnAgent | Tool::Gather)) {
+            return Ok(MessageContent::text(refusal_line(
+                "Nothing was started. You are a dispatched worker, and a worker does not dispatch \
+                workers of its own or wait on any: do this part of the work yourself and say in \
+                your report what is left.")));
+        }
         ctx.take_place_ask();
         let mut out = self.dispatch_in(name, args_json, &ctx).await;
         if let (Ok(_), Some(pa)) = (&out, ctx.take_place_ask()) {
@@ -36403,8 +36544,35 @@ mod tests {
             report:   fmt!("{}", report),
             usd,
             rounds:   6,
+            writes:   0,
             terminal: true,
         }
+    }
+
+    /// r578c T: a worker stopped from the page after it ran is gathered with its own rounds, its
+    /// own spend and the files it wrote, and with its own words.  The 540 s clock that was told
+    /// to the parent as "0 rounds, US$0.0000 … stopped after 540s, no result" is gone; a stop now
+    /// waits for the turn to settle, so these are the worker's figures.
+    #[test]
+    fn test_gather_states_a_stopped_workers_rounds_spend_and_writes_00() {
+        let mut halt = worker("halt", "stopped", "HALT-OWN-WORDS\n\n(stopped: the person pressed Stop)", 0.0312);
+        halt.rounds = 7;
+        halt.writes = 3;
+        let mut cap = worker("cap", "capped", "CAPBODY", 0.0100);
+        cap.rounds = 24;
+        cap.writes = 1;
+        let c = scripted(vec![halt, cap]);
+        c.note_spawned("w1", "halt");
+        c.note_spawned("w2", "cap");
+        let said = Tool::gather_scripted("{}", &c).expect("gather");
+        assert!(said.contains("### halt — stopped after 7 rounds, US$0.0312, 3 file writes"),
+            "a stopped worker's heading lost its figures: {}", said);
+        assert!(said.contains("stopped at the round cap after 24 rounds, US$0.0100, 1 file write "),
+            "a capped worker's heading lost its write: {}", said);
+        assert!(said.contains("HALT-OWN-WORDS") && said.contains("the person pressed Stop"),
+            "a stopped worker's own words or its stop reason were lost: {}", said);
+        assert!(!said.contains("0 rounds, US$0.0000"),
+            "a worker that ran was told as having run nothing: {}", said);
     }
 
     /// `gather` with no `names` waits for every worker this turn started and has NOT read back.
@@ -36462,7 +36630,7 @@ mod tests {
             worker("probe",  "error",     "PROBEBODY",  0.0),
             worker("halt",   "stopped",   "HALTBODY",   0.0),
             ScriptedReport { name: fmt!("writer"), status: fmt!("done"),
-                report: fmt!("never"), usd: 0.5, rounds: 0, terminal: false },
+                report: fmt!("never"), usd: 0.5, rounds: 0, writes: 0, terminal: false },
         ]);
         for (i, n) in ["audit", "census", "ledger", "probe", "halt", "writer"].iter().enumerate() {
             c.note_spawned(&fmt!("w{}", i + 1), n);
@@ -36509,7 +36677,7 @@ mod tests {
     fn test_gather_with_no_finisher_guards_against_a_fabricated_pass_00() {
         let c = scripted(vec![
             ScriptedReport { name: fmt!("verify"), status: fmt!("done"),
-                report: fmt!("never"), usd: 0.0, rounds: 0, terminal: false },
+                report: fmt!("never"), usd: 0.0, rounds: 0, writes: 0, terminal: false },
         ]);
         c.note_spawned("w1", "verify");
         let said = Tool::gather_scripted("{}", &c).expect("gather");
@@ -38859,7 +39027,11 @@ mod tests {
             assert_eq!(None, w.web_consent(), "'{}' was taken as the conversation's answer", word);
         }
 
-        let payload = spawn_payload("a", "t", "turn1", true, chat.web_consent_word());
+        let payload = spawn_payload("a", "t", "turn1", true, chat.web_consent_word(), "f7", 1234);
+        assert!(payload.contains("\"fork\":\"f7\",\"fb\":1234"),
+            "the dispatch did not carry the parent's copy: {}", payload);
+        let brief = spawn_payload("a", "t", "turn1", false, "", "", 0);
+        assert!(brief.contains("\"fork\":\"\""), "a brief worker named a copy: {}", brief);
         assert!(payload.contains("\"web\":\"allow\""), "the dispatch did not carry the answer: {}", payload);
         assert!(payload.contains("\"tainted\":true"), "the taint stopped travelling: {}", payload);
     }
@@ -39385,10 +39557,11 @@ mod tests {
         assert!(defs.contains("\"verify\""),
             "a worker is not SENT the verify schema, so it cannot call the tool: {}",
             &defs[..defs.len().min(200)]);
-        // The control on that filter: the withholding it does do is still done.
-        assert!(!defs.contains("\"file_show\""),
-            "the offer filter stopped withholding the document panel, so the assertion above \
-             proves nothing about `verify` in particular");
+        // And the worker is offered exactly its parent's list since r578c: a worker starts as a
+        // copy of its parent's request, tools array included.
+        let chat = ToolRegistry::new(Tool::browser(), ctx());
+        assert_eq!(chat.definitions_json(), worker.definitions_json(),
+            "a worker's tools array differs from its parent's");
 
         // CHARGED.  `call_outcome` reads the opening of a tool reply and decides which column of
         // the fold's ledger the call lands in.  A worker's verify result must land in the same one
@@ -46950,26 +47123,15 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
                 "a {} is still sent the fold's schema on every request of every round", who);
         }
 
-        // And `file_show`'s rule, unchanged: the two actors with a reader hold it, a worker does
-        // not, and the withholding is worth real bytes rather than being a gesture.
+        // And `file_show`'s rule since r578c: every actor is offered it -- a worker's tools array
+        // is its parent's, byte for byte -- and a worker is refused at the call.
         assert!(chat_defs.contains("\"file_show\""), "a chat's schema lost the document panel");
         assert!(daimon_defs.contains("\"file_show\""), "a daimon's schema lost the document panel");
-        assert!(!worker_defs.contains("\"file_show\""),
-            "a worker still pays for the document panel on every request of every round");
+        assert_eq!(chat_defs, worker_defs, "a worker's tools array differs from its parent's");
         assert!(chat.tool_names().iter().any(|n| n == "file_show"),
             "a chat is no longer offered 'file_show', which is the actor it is FOR");
-        assert!(!worker.tool_names().iter().any(|n| n == "file_show"),
-            "a worker is still offered 'file_show', so the note in `Tool::browser` describes an \
-             intention nobody implemented");
-        // The description alone runs 1,443 characters and the schema 339, so the two belts differ
-        // by well over a thousand bytes on every request of every round.  A margin rather than an
-        // equality, because the wording is edited and this test is not about its length.
-        assert!(worker_defs.len() + 1_000 < chat_defs.len(),
-            "the worker's schema is {} bytes against the chat's {}, so nothing was actually \
-             withheld", worker_defs.len(), chat_defs.len());
-        // Withheld from the OFFER only. A worker that names it anyway must still meet the refusal
-        // that tells it what to do instead, and not "not available here", which says nothing
-        // about the report it should be writing.
+        // Refused at the call. A worker that names it must meet the refusal that tells it what to
+        // do instead, and not "not available here", which says nothing about its report.
         assert!(worker.tools.contains(&Tool::FileShow),
             "the tool was taken out of the registry itself, so the refusal that tells a worker \
              to name the file in its report can no longer be reached");
@@ -47259,12 +47421,102 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert!(chat_defs.contains("\"ask\""), "a chat cannot put a question to the user");
         assert!(daimon_defs.contains("\"ask\""),
             "a daimon cannot put a question -- and it is the turn `/decisions` is typed at");
-        assert!(!worker_defs.contains("\"ask\""),
-            "a worker pays for the question card's schema on every request of every round, for a \
-             tool it will always be refused");
+        assert_eq!(chat_defs, worker_defs,
+            "a worker's tools array differs from its parent's, so its first request cannot reuse \
+             the parent's cache (r578c)");
         assert!(worker.tools.contains(&Tool::Ask),
             "the tool was taken out of the registry itself, so the refusal that tells a worker to \
              put the question in its report can no longer be reached");
+    }
+
+    /// **A worker is offered `spawn_agent` and `gather` and refused both at the call** (r578c).
+    #[tokio::test]
+    async fn test_a_worker_is_refused_a_worker_at_the_call() {
+        // A Diamond's worker: its belt is the daimon's, which holds the two.
+        let worker = ToolRegistry::new(Tool::daimon(), ctx());
+        worker.ctx.set_unsupervised();
+        let names = worker.tool_names();
+        for n in ["spawn_agent", "gather", "file_show", "ask"] {
+            assert!(names.iter().any(|x| x == n), "a worker is not offered '{}'", n);
+        }
+        for (n, a) in [("spawn_agent", r#"{"name":"w","task":"t"}"#), ("gather", "{}")] {
+            let out = worker.dispatch(n, a).await.as_text().into_owned();
+            assert_eq!(CallOutcome::Refused, call_outcome(&out), "'{}' was not refused: {}", n, out);
+            assert!(out.contains("dispatched worker"), "{}", out);
+        }
+        // The control: the daimon's own spawn is not refused.
+        let chat = ToolRegistry::new(Tool::daimon(), ctx());
+        let out = chat.dispatch("spawn_agent", r#"{"name":"w","task":"t"}"#).await.as_text().into_owned();
+        assert_ne!(CallOutcome::Refused, call_outcome(&out), "{}", out);
+    }
+
+    // ── r578c M: the parent chooses the worker kind (D-20261020-05) ──────
+
+    /// **`context` omitted is a full copy; `"brief"` is a fresh start; anything else is a plain
+    /// tool error**, said by the argument's name, so a model that misspells it is told so rather
+    /// than handed a kind it did not ask for.
+    #[test]
+    fn test_spawn_context_defaults_to_full_and_refuses_a_stranger_00() {
+        let read = |a: &str| SpawnContext::read(a);
+        assert_eq!(Some(SpawnContext::Full), read(r#"{"name":"w","task":"t"}"#).ok());
+        assert_eq!(Some(SpawnContext::Full), read(r#"{"name":"w","task":"t","context":"full"}"#).ok());
+        assert_eq!(Some(SpawnContext::Full), read(r#"{"name":"w","task":"t","context":""}"#).ok());
+        assert_eq!(Some(SpawnContext::Brief), read(r#"{"name":"w","task":"t","context":"brief"}"#).ok());
+        assert_eq!(Some(SpawnContext::Brief), read(r#"{"name":"w","task":"t","context":" Brief "}"#).ok());
+        let bad = match read(r#"{"name":"w","task":"t","context":"half"}"#) {
+            Err(e) => e.to_string(),
+            Ok(k)  => panic!("an unknown kind was read as {:?}", k),
+        };
+        assert!(bad.contains("context") && bad.contains("half") && bad.contains("brief"),
+            "the refusal does not name the argument, the value and the kinds: {}", bad);
+        // The native door refuses it the same way, before anything is recorded.
+        assert!(Tool::spawn_agent(r#"{"name":"w","task":"t","context":"half"}"#, &ctx()).is_err());
+        assert!(Tool::spawn_agent(r#"{"name":"w","task":"t","context":"brief"}"#, &ctx()).is_ok());
+    }
+
+    /// **A brief worker carries no copy, whatever the round held; a full one carries the round's.**
+    #[test]
+    fn test_a_brief_spawn_carries_no_copy_00() {
+        let c = ctx();
+        assert!(Tool::spawn_fork(&c, SpawnContext::Full).is_none(), "a copy from nowhere");
+        c.hold_fork(crate::fork::Fork { model: fmt!("m"), ..Default::default() });
+        assert!(Tool::spawn_fork(&c, SpawnContext::Brief).is_none(), "a brief worker took the copy");
+        match Tool::spawn_fork(&c, SpawnContext::Full) {
+            Some(f) => assert_eq!("m", f.model),
+            None    => panic!("a full worker was handed no copy"),
+        }
+    }
+
+    /// **A gathered report names the kind its worker ran as**, so the parent reading it knows
+    /// whether the worker had the conversation or only its task.  A report with no kind (an
+    /// older page) is headed as before.
+    #[test]
+    fn test_a_gathered_report_names_the_kind_its_worker_ran_as_00() {
+        let args = GatherArgs { wait: Vec::new(), unknown: Vec::new(), timeout_s: 0, partial: false };
+        let json = r#"{"reports":[
+            {"id":"w1","name":"reader","status":"done","rounds":2,"usd":0.01,"report":"A","context":"full"},
+            {"id":"w2","name":"counter","status":"done","rounds":1,"usd":0.01,"report":"B","context":"brief"},
+            {"id":"w3","name":"old","status":"done","rounds":1,"usd":0.01,"report":"C"}],
+            "pending":[],"unresolved":[],"timed_out":false,"cancelled":false,"waited_ms":0}"#;
+        let (text, _, _) = Tool::gather_result(json, &args);
+        assert!(text.contains("### reader [full] — done"), "{}", text);
+        assert!(text.contains("### counter [brief] — done"), "{}", text);
+        assert!(text.contains("### old — done"), "{}", text);
+    }
+
+    /// **The schema offers both kinds and the description says when to choose each**, in one
+    /// stable text: the tools array is the same bytes whichever kind a turn asks for.
+    #[test]
+    fn test_spawn_agent_offers_both_kinds_and_says_when_00() {
+        let schema = Tool::SpawnAgent.parameters();
+        assert!(schema.contains(r#""context":{"type":"string","enum":["full","brief"]"#), "{}", schema);
+        assert!(!schema.contains(r#""required":["name","task","context"]"#), "context is optional");
+        let desc = Tool::SpawnAgent.description();
+        for w in ["\"full\"", "\"brief\"", "default", "attached", "another model", "uncached",
+            "self-contained", "must say everything"]
+        {
+            assert!(desc.contains(w), "the description does not say '{}': {}", w, desc);
+        }
     }
 
     /// **The schema asks for exactly what the door requires**, so a model that fills the schema in

@@ -52,6 +52,7 @@ pub mod diamond_versions;
 /// Target-agnostic on purpose: the rules are a browser's, but the codec is a pure string
 /// transform whose reversibility is the whole of its correctness, and that is provable
 /// natively rather than only in a page.  The edge that applies it is [`wasm::opfs`].
+pub mod fork;
 pub mod fsname;
 /// The question a turn puts before it changes a file the person made, and what each answer
 /// means.  Target-agnostic; the asking edge is `wasm::deletes::ask_change`.

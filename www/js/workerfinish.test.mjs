@@ -21,12 +21,12 @@
             back; a stranger name lands in `unresolved` so the
             engine can refuse it by name.
 
-     FIX 4  `Workers.start`'s local `runTurnCapped` puts a wall-clock
-            ceiling (`WORKER_WALL_CLOCK_MS`, below `GATHER_TIMEOUT_S`)
-            under `run.app.run_turn`: a hung worker is aborted and
-            given a terminal `capped` status and a real report,
-            rather than a `gather` that waits out its own 600s and
-            answers "still running".
+     FIX 4  (r578c T) a worker's turn has NO page wall clock: the
+            540s `runTurnCapped` race killed healthy slow workers
+            and cleaned up under a live turn. The engine bounds each
+            round's wait itself; `start` awaits `run_turn` directly.
+            Behaviour is driven in `workertimer.test.mjs`; here the
+            source holds the absence.
 
      FIX 5  `dispatch` takes a worker's `provider` from the SAME
             route (`mm`) its `model` already came from, not from the
@@ -37,7 +37,6 @@
    Run:  node www/js/workerfinish.test.mjs
          node www/js/workerfinish.test.mjs --break norecover  # FIX 3 lookup off
          node www/js/workerfinish.test.mjs --break aserror     # FIX 1 role reverted
-         node www/js/workerfinish.test.mjs --break noceiling   # FIX 4 ceiling neutered
          node www/js/workerfinish.test.mjs --break oldprovider # FIX 5 reverted
    ============================================================ */
 import { readFileSync } from 'node:fs';
@@ -51,7 +50,7 @@ const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return (i >= 0 && process.argv[i + 1]) ? process.argv[i + 1] : '';
 })();
-const BREAKS = ['norecover', 'aserror', 'noceiling', 'oldprovider'];
+const BREAKS = ['norecover', 'aserror', 'oldprovider'];
 if (BREAK && !BREAKS.includes(BREAK)) {
 	console.error(`unknown break '${BREAK}'; one of: ${BREAKS.join(', ')}`);
 	process.exit(2);
@@ -109,36 +108,6 @@ function build(name, freeNames, transform) {
 	return new Function(...params, src);
 }
 
-// The text of a local `var NAME = function (args) { ... };` -- `runTurnCapped`
-// is a closure inside `Workers.start`, not a `name: function` method or a
-// top-level `function NAME`, so neither extractor above finds it. Brace-matched
-// from the SAME opening `{` `methodSource` uses, but returns the function
-// EXPRESSION text (`function (args) { ... }`) rather than just its body, so it
-// can be handed to `new Function` as something to `return`, closing over
-// whatever free names that wrapper is given.
-function localFnSource(name) {
-	const head = new RegExp('var\\s+' + name + '\\s*=\\s*function\\s*\\(([^)]*)\\)\\s*\\{');
-	const m = head.exec(SRC);
-	if (!m) throw new Error('local function not found: ' + name);
-	const fnStart = m.index + m[0].indexOf('function');
-	let i = m.index + m[0].length - 1, depth = 0;
-	for (; i < SRC.length; i++) {
-		const c = SRC[i];
-		if (c === '{') depth++;
-		else if (c === '}') { depth--; if (depth === 0) break; }
-	}
-	return SRC.slice(fnStart, i + 1);
-}
-
-// A FACTORY for `runTurnCapped`: call it with real values for the free names
-// it reads from `Workers.start`'s scope (`run`, `sink`, `WORKER_WALL_CLOCK_MS`)
-// and it returns the real `function (task) { ... }`, closing over them.
-function buildLocalFn(name, freeNames, transform) {
-	const src = transform ? transform(localFnSource(name)) : localFnSource(name);
-	// eslint-disable-next-line no-new-func
-	return new Function(...freeNames, 'return (' + src + ');');
-}
-
 // ── FIX 3: finishAwait recovers a finished worker by name ────────────
 {
 	// The break: neuter the diamond match so `find` returns nothing and every
@@ -147,7 +116,7 @@ function buildLocalFn(name, freeNames, transform) {
 		? body.replace(/return String\(x\.diamondId[\s\S]*?self\.isTerminal\(x\.status\);/,
 			'return false; // --break norecover')
 		: body;
-	const finishAwait = build('finishAwait', ['dsEvent'], transform);
+	const finishAwait = build('finishAwait', ['dsEvent', 'workerWrites', 'workerKind'], transform);
 
 	function run(w, how) {
 		let out = null;
@@ -158,7 +127,7 @@ function buildLocalFn(name, freeNames, transform) {
 			persist: () => {}, render: () => {},
 		};
 		w.resolve = (json) => { out = JSON.parse(json); };
-		finishAwait.call(self, () => {}, w, how);
+		finishAwait.call(self, () => {}, () => 0, (r) => (r && r.forked ? 'full' : 'brief'), w, how);
 		return out;
 	}
 
@@ -198,7 +167,7 @@ function buildLocalFn(name, freeNames, transform) {
 			isTerminal: (s) => ['done'].includes(s), persist: () => {}, render: () => {} };
 		const w = { turn: 't3', ids: [], names: ['survey'], diamond: 'D1', at: Date.now(),
 			resolve: (j) => { out = JSON.parse(j); } };
-		build('finishAwait', ['dsEvent'], transform).call(self, () => {}, w, 'cancelled');
+		build('finishAwait', ['dsEvent', 'workerWrites'], transform).call(self, () => {}, () => 0, w, 'cancelled');
 		return out;
 	})();
 	check('FIX3 a cancelled settle recovers nothing',
@@ -274,86 +243,26 @@ function buildLocalFn(name, freeNames, transform) {
 		!SRC.includes('Ask again with a narrower task if the work still matters.'));
 }
 
-// ── FIX 4: the worker wall-clock ceiling settles a hung `run_turn` ────
+// ── FIX 4: no wall clock on a worker's turn (r578c T) ───────────────
 {
-	// The break: gut the ceiling's effect (abort/status/report) but keep the
-	// early return, so the race still resolves and nothing hangs -- only the
-	// FIX's consequences disappear, which is what the checks below must catch.
-	const transform = (src) => BREAK === 'noceiling'
-		? src.replace(/if\s*\(winner\s*!==\s*'capped'\)\s*return;[\s\S]*?run\.said\s*=\s*\(run\.said[\s\S]*?\]\);/,
-			"if (winner !== 'capped') return; // --break noceiling: rest removed")
-		: src;
-	const factory = buildLocalFn('runTurnCapped', ['run', 'sink', 'WORKER_WALL_CLOCK_MS'], transform);
-
-	async function drive(runTurnImpl, ceilingMs) {
-		const run = { status: 'running', text: '', _tail: '', said: [],
-			app: { run_turn: runTurnImpl, aborted: false, abort() { this.aborted = true; } } };
-		const runTurnCapped = factory(run, () => {}, ceilingMs);
-		let threw = null;
-		try { await runTurnCapped('do the task'); } catch (e) { threw = e; }
-		return { run, threw };
+	const at = SRC.indexOf('start: async function (run) {');
+	const start = SRC.slice(at, SRC.indexOf('\n\t\tstop: function (run) {', at));
+	check('FIX4 no `runTurnCapped` race is left in the page', !SRC.includes('runTurnCapped'));
+	check('FIX4 the page no longer reads an engine wall clock', !SRC.includes('worker_wall_clock_ms'));
+	check('FIX4 `start` sets no timer of its own', !/setTimeout\s*\(/.test(start));
+	check('FIX4 `start` awaits the turn directly',
+		start.includes('await run.app.run_turn('));
+	let compactRs = null;
+	try { compactRs = readFileSync(join(HERE, '..', '..', 'src', 'compact.rs'), 'utf8'); }
+	catch (e) { /* src/ not shipped alongside www/js in every checkout */ }
+	if (compactRs != null) {
+		check('FIX4 the engine constant `WORKER_WALL_CLOCK_MS` is gone',
+			!compactRs.includes('WORKER_WALL_CLOCK_MS'));
 	}
-
-	// A worker whose provider call never settles at all -- the exact shape of
-	// the hang this fix answers. Plain, non-adaptive assertions: under
-	// `--break noceiling` these must FAIL, which is what proves they bite.
-	{
-		const { run } = await drive(() => new Promise(() => {}), 40);
-		check('FIX4 a hung run_turn is aborted', run.app.aborted === true, run.app.aborted);
-		check('FIX4 status lands on the terminal "capped", not left running',
-			run.status === 'capped', run.status);
-		check('FIX4 a real, non-empty report is produced',
-			/stopped after \d+s, no result/.test(run._tail), run._tail);
-	}
-
-	// A worker that finishes well inside the ceiling is untouched by it.
-	{
-		const { run } = await drive(() => Promise.resolve(), 5000);
-		check('FIX4 a worker that finishes in time is not aborted', run.app.aborted === false);
-		check('FIX4 its status is left for the caller to set', run.status === 'running', run.status);
-	}
-
-	// A real rejection inside the window still propagates, exactly as the
-	// un-raced `await` it replaced -- the auth-remint catch in `start` depends
-	// on seeing it unchanged.
-	{
-		const { threw, run } = await drive(() => Promise.reject(new Error('auth refused')), 5000);
-		check('FIX4 a genuine rejection still propagates through the race',
-			!!threw && threw.message === 'auth refused', threw && threw.message);
-		check('FIX4 a propagated rejection leaves status alone (no false "capped")',
-			run.status === 'running', run.status);
-	}
-
-	// These read the real, untransformed SRC -- unaffected by `--break
-	// noceiling`, which only edits the extracted copy above -- so they run
-	// unconditionally and hold under every break.
-	//
-	// The ceiling only protects `gather` if it fires well inside GATHER_TIMEOUT_S
-	// (600s, src/compact.rs) -- a ceiling above or equal to it would race the
-	// SAME timeout gather is already waiting on, and either could win.
-	//
-	// r543 QA N1: the ceiling has ONE source, `WORKER_WALL_CLOCK_MS` in
-	// src/compact.rs, which the engine also bounds a round's first-data wait
-	// inside. The page reads it through the wasm export, never a literal of its
-	// own that could drift from the engine's figure.
-	check('FIX4 the page reads its ceiling from the engine, not a literal',
-		/var\s+WORKER_WALL_CLOCK_MS\s*=\s*Number\(\s*Sbj\.worker_wall_clock_ms\(\)\s*\)/.test(SRC)
-			&& !/WORKER_WALL_CLOCK_MS\s*=\s*\d/.test(SRC));
-	let rustMs = null, rustS = null;
-	try {
-		const compactRs = readFileSync(join(HERE, '..', '..', 'src', 'compact.rs'), 'utf8');
-		rustMs = Number((/WORKER_WALL_CLOCK_MS:\s*u64\s*=\s*([\d_]+)/.exec(compactRs) || [])[1]?.replace(/_/g, ''));
-		rustS = Number((/GATHER_TIMEOUT_S:\s*u64\s*=\s*(\d+)/.exec(compactRs) || [])[1]);
-	} catch (e) { /* src/ not shipped alongside www/js in every checkout */ }
-	if (rustS != null) {
-		check('FIX4 the engine\'s ceiling constant parses to a number', Number.isFinite(rustMs), rustMs);
-		check('FIX4 the ceiling sits below gather\'s own 600s timeout',
-			rustMs < rustS * 1000, `${rustMs}ms vs ${rustS}s`);
-	}
-	check('FIX4 `isTerminal` already treats capped as terminal',
+	check('FIX4 `isTerminal` still treats capped as terminal',
 		methodSource('isTerminal').body.includes("'capped'"));
-	check('FIX4 the post-run_turn status guard preserves a capped run',
-		SRC.includes("run.status !== 'stopped' && run.status !== 'paused' && run.status !== 'capped'"));
+	check('FIX4 the post-run_turn status guard keeps a stopped or paused run',
+		SRC.includes("run.status !== 'stopped' && run.status !== 'paused') {"));
 }
 
 // ── FIX 5: a vision-routed worker's provider comes from ITS OWN route ─

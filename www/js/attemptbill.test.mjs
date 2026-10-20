@@ -182,7 +182,7 @@ console.log('worker: a 402 mid-turn, re-minted, run again; the `finally` bills l
 console.log("daimond.js: where each attempt is billed");
 {
 	const a = DAIMOND.indexOf('var wmeter = null;');
-	const fin = DAIMOND.indexOf('} finally {', DAIMOND.indexOf('await runTurnCapped(run.task);', a));
+	const fin = DAIMOND.indexOf('} finally {', DAIMOND.indexOf('await run.app.run_turn(firstAsk(run), sink);', a));
 	const blk = DAIMOND.slice(a, fin);
 	const rm = blk.indexOf('DaimondModels.remintSlot(');
 	const bill = blk.indexOf('billAttempt();', rm);

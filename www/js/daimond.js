@@ -4052,6 +4052,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return null;
 	}
 
+	/// How many of this worker's file writes succeeded. Its work is on disk whatever its
+	/// report says, so a gathered heading names them (r578c T).
+	function workerWrites(r) {
+		return (r.tools || []).filter(function (t) {
+			return t && t.status === 'done'
+				&& (t.name === 'file_write' || t.name === 'file_edit' || t.name === 'dir_create');
+		}).length;
+	}
+
+	/// The clause a heading carries for a worker that wrote files; `gather_wrote` in src/tools.rs.
+	function workerWroteClause(r) {
+		var n = workerWrites(r);
+		return n === 0 ? '' : ', ' + n + ' file write' + (n === 1 ? '' : 's')
+			+ ' (check its files before re-dispatching)';
+	}
+
 	/// What `gather` says about a worker that did not simply answer, so a reader is
 	/// told the truth instead of meeting a blank "(no report)" and re-dispatching a
 	/// worker that starts from nothing. `done` says nothing -- the ordinary case
@@ -4083,16 +4099,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		switch (r.status) {
 			case 'capped':
 				return ' — stopped at the round cap after ' + rounds + ' rounds, US$' + usd
-					+ '\n\n(partial — continue with resume)';
+					+ workerWroteClause(r) + '\n\n(partial — continue with resume)';
 			case 'spend_cap':
 				return ' — stopped at the spend cap after ' + rounds + ' rounds, US$' + usd
-					+ '\n\n(partial — continue with resume)';
+					+ workerWroteClause(r) + '\n\n(partial — continue with resume)';
 			case 'error':
 				return ' — error';
 			case 'blocked':
 				return ' — not done: stopped on something it could not get past';
+			// A STOP NAMES ITS ROUNDS AND SPEND (r578c T): the page waits for the stopped turn to
+			// settle, so both are the worker's own, and a parent told nothing re-dispatches work
+			// already paid for.
 			case 'stopped':
-				return ' — stopped';
+				return ' — stopped after ' + rounds + ' rounds, US$' + usd + workerWroteClause(r);
 			default:
 				return '';
 		}
@@ -4125,47 +4144,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (line) body = body.split(line).join('');
 		});
 		return body.trim().length > 0;
-	}
-
-	/// Keep the head and tail of a worker's FINAL ANSWER, byte-safe, for the report handed
-	/// back to the daimon that dispatched it -- see `gather`. Bytes, not characters: the
-	/// cap is a wire-size promise (~8 KB), and a character count would let one emoji-heavy
-	/// paragraph blow it. Never corrupts a multi-byte character split by the cut --
-	/// `TextDecoder` with `fatal: false` turns an incomplete trailing sequence into one
-	/// U+FFFD rather than invalid bytes or a thrown error.
-	function capReportBytes(text, head, tail) {
-		var enc = new TextEncoder();
-		var bytes = enc.encode(text || '');
-		if (bytes.length <= head + tail) {
-			return { text: text || '', rawBytes: bytes.length, sentBytes: bytes.length };
-		}
-		var dec = new TextDecoder('utf-8', { fatal: false });
-		var headText = dec.decode(bytes.subarray(0, head));
-		var tailText = dec.decode(bytes.subarray(bytes.length - tail));
-		var out = headText + '\n\n[… ' + withCommas(bytes.length - head - tail) + ' bytes elided …]\n\n' + tailText;
-		return { text: out, rawBytes: bytes.length, sentBytes: enc.encode(out).length };
-	}
-
-	/// The head and tail bytes a worker's report is clipped to, from `cfg.tune`.
-	///
-	/// Read rather than held, because the tune is a string the user or a trial arm may change
-	/// between dispatches and a figure cached at load would be the one before the change.
-	///
-	/// RAISED TO 4 KB / 12 KB ON 2026-09-13, from the 2 KB / 6 KB this replaced: the tune loop's
-	/// `wloose` arm, with a report four times the size, scored 1.00/1.00 on the two worker tasks
-	/// where the tighter clip scored 0.33/0.67.
-	function reportClip() {
-		var head = 4096, tail = 12288;
-		try {
-			var t = JSON.parse((cfg && cfg.tune) || '{}') || {};
-			if (typeof t.worker_report_head === 'number' && t.worker_report_head > 0) {
-				head = t.worker_report_head;
-			}
-			if (typeof t.worker_report_tail === 'number' && t.worker_report_tail > 0) {
-				tail = t.worker_report_tail;
-			}
-		} catch (e) { /* a tune that will not parse clips at the shipped figures */ }
-		return { head: head, tail: tail };
 	}
 
 	/// The debug feed's word for how a turn ended, from the engine's own `TurnEnd::wire()`
@@ -20818,6 +20796,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// # Arguments
 	/// * `app` - The freshly built DaimondApp for one worker.
+	// ── A worker's two starts (r578c; D-20261020-05) ───────────────────────
+	//
+	// THE PATHS SPLIT ON `run.fork`.  A fork worker carries the id of the engine's copy of its
+	// parent's request (`spawn_agent_page` in src/tools.rs) and adopts it after every build:
+	// the parent's system message, tools array and messages, byte for byte, then one user
+	// message with its role and task (`worker_handoff`).  A brief worker -- no id, a copy gone
+	// (a reload), a continuation or a resume -- keeps the old start: the worker role and crystal
+	// as its system prompt (`build`) and the task as its first message.
+
+	/// Will this run start as a copy?  The parent chose (`spawn_agent`'s `context`, read in the
+	/// engine, which sends no id for "brief"); a continuation or a resume starts brief.
+	function forkable(run) {
+		return !!run.fork && !run.resume && !(run._priorSession && run._priorSession.length);
+	}
+
+	/// The kind a worker ran as, for the lens and the report heading: "full" or "brief".
+	function workerKind(run) { return run && run.forked ? 'full' : 'brief'; }
+
+	/// Adopt the parent's copy onto `run.app`, or leave a brief worker.  Sets `run.forked`.
+	function adoptFork(run) {
+		run.forked = false;
+		if (!forkable(run)) return;
+		if (!run.app || typeof run.app.adopt_fork !== 'function') return;
+		try { run.app.adopt_fork(run.fork); run.forked = true; }
+		catch (e) { /* the copy is gone: the brief start the app was built with stands */ }
+	}
+
+	/// A worker's first message: the hand-off for a fork worker, the task for a brief one.
+	function firstAsk(run) {
+		if (!run.forked) return run.task;
+		try { return Wasm.worker_handoff((Prompts && Prompts.md.worker) || '', run.task || ''); }
+		catch (e) { return run.task; }
+	}
+
+	/// Drop the engine's copy once the worker is over.  Idempotent.
+	function forkForget(run) {
+		if (!run || !run.fork) return;
+		try { Wasm.fork_forget(run.fork); } catch (e) { /* an older engine holds none */ }
+	}
+
 	function markAlone(app) {
 		if (!app || typeof app.set_unsupervised !== 'function'
 			|| typeof app.is_unsupervised !== 'function') {
@@ -39009,7 +39027,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The baseline is the new app's own counters, once it stands: restored to the chat's
 		// totals when there was a session to restore, and zero when there was none (a chat's
 		// first turn). Set only then, so a rebuild that failed leaves the dying app's own.
-		var s0 = appSpend(app);
+		var s0 = appSpend(app) || { p: 0, c: 0, ca: 0, cost: 0 };		// a new app holds no turn
 		chat.prevPrompt = s0.p; chat.prevCompletion = s0.c; chat.prevCached = s0.ca; chat.prevCost = s0.cost;
 		if (chat._generating) chat._runApp = app;		// the turn goes on on the new session, which Stop must now reach
 		return app;
@@ -42759,6 +42777,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// An app's cumulative spend. Read only while no turn holds the app: the getters
 	/// borrow the session `run_turn` holds mutably (the `live_*` ones serve mid-turn).
 	function appSpend(app) {
+		// NULL WHILE A TURN STILL HOLDS THE APP (r578c T). The session's counters read zero
+		// then (`turn_held`), and a bill taken on that zero booked nothing and moved the
+		// baseline to it: 33 workers in eight days were billed US$0 that way. A caller
+		// bills a settled app, or nothing yet.
+		if (app && app.turn_held) return null;
 		return {
 			p:		(app && app.prompt_tokens) || 0,
 			c:		(app && app.completion_tokens) || 0,
@@ -42780,6 +42803,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// chat's first-turn retry runs on an app built with nothing to restore, from zero.
 	function billChatSpend(chat, app, turnId) {
 		var now = appSpend(app);
+		// Held by a turn still running: nothing is billed and the baseline stands, so the
+		// next bill on this app takes what it spent rather than nobody (r578c T).
+		if (!now) return { p: 0, c: 0, ca: 0, cost: 0, entry: null };
 		var d = {
 			p:		Math.max(0, now.p - (chat.prevPrompt || 0)),
 			c:		Math.max(0, now.c - (chat.prevCompletion || 0)),
@@ -43350,7 +43376,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// the call and puts it here.
 					var tainted = !!(o && o.tainted);
 					var ids = self.dispatch(live.diamondId || '', live.diamondName || '',
-						[{ name: name, task: task }], tainted, pick, live.depth | 0,
+						// THE PARENT'S COPY (r578c): the engine held the request this call was made
+						// in and sends its id; the worker adopts it at start. No id: a brief worker.
+						[{ name: name, task: task, fork: String((o && o.fork) || ''), fb: (o && o.fb) | 0 }],
+						tainted, pick, live.depth | 0,
 						{ chatId: live.chatId || '', chatName: live.chatName || '',
 							turnId: turn, how: live.how || null, web: String((o && o.web) || ''), models: tm });
 					if (!ids || !ids.length) {
@@ -43472,9 +43501,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						status: String(r.status || 'done'),
 						rounds: (r.ended && r.ended.rounds) || 0,
 						usd:    r.costUsd || 0,
-						// `r.report` is the capped final answer -- see the `finally` in `start`,
-						// and `reportClip` for the two figures. `r.text` is the fallback for a
-						// worker that died before it ever answered.
+						writes: workerWrites(r),
+						context: workerKind(r),		// the engine heads the report with it
+						// `r.report` is the whole final answer -- see the `finally` in `start`.
+						// `r.text` is the fallback for a worker that died before it ever answered.
 						report: String(r.report != null ? r.report : (r.text || '')),
 					});
 				} else {
@@ -43504,6 +43534,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						status: String(r.status || 'done'),
 						rounds: (r.ended && r.ended.rounds) || 0,
 						usd:    r.costUsd || 0,
+						writes: workerWrites(r),
+						context: workerKind(r),
 						report: String(r.report != null ? r.report : (r.text || '')),
 					});
 				});
@@ -43843,6 +43875,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					batch: batch,
 					name: spec.name || ('agent-' + self.seq),
 					task: spec.task || '',
+					// The engine's copy of the parent's request, and its size (r578c); '' for a
+					// brief worker, which starts from `task` alone (D-20261020-05).
+					fork: spec.fork || '',
+					forkBytes: spec.fb | 0,
 					diamondId: diamondId,
 					diamondName: diamondName,
 					// Which chat sent it, when a chat did. `start` reads this to decide which
@@ -44048,7 +44084,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `(no report)` body still knows what happened rather than reading
 			// silence as nothing having been found.
 			var parts = mine.slice().reverse().map(function (r) {
-				var head = '### ' + (r.name || r.id) + workerEndingNote(r);
+				// The kind it ran as, said as `gather` says it (src/tools.rs `gather_result`).
+				var head = '### ' + (r.name || r.id) + ' [' + workerKind(r) + ']' + workerEndingNote(r);
 				var body = reportBody(r);
 				if (!body) {
 					// A blank body is not silence: name the work behind it so the reader
@@ -44401,6 +44438,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// worker that started and never ended. Measured 2026-09-12: w17-w19 on build
 			/// 4d4fd190f1ef each have a `start` row and no `end` row.
 			var closeEarly = function () {
+				forkForget(run);
 				dsEvent('worker', {
 					w:     String(run.id || ''),
 					dia:   String(run.diamondId || ''),
@@ -44428,6 +44466,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				model: String(run.model || '').slice(0, 48),
 				at:    'start',
 				turn:  String(run.turnId || ''),
+				ab:    jsonBytes(run.task || ''),	// the task's bytes
+				pb:    run.forkBytes | 0,		// the parent's copy, bytes; 0 for a brief worker
+				// THE KIND IT STARTS AS (D-20261020-05), joined to its `end` row by `w`, so
+				// which kind does better per task can be read off the feed.
+				cx:    forkable(run) ? 'full' : 'brief',
 			});
 			var self = this;
 			var runNode = this.nodeOf(run);
@@ -44443,9 +44486,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				closeEarly();
 				return;
 			}
-			// The worker cannot see the conversation that dispatched it, so hand
+			// A BRIEF worker cannot see the conversation that dispatched it, so hand
 			// it what it would otherwise be missing: the house rules, and the
-			// crystal of the Diamond it is working for.
+			// crystal of the Diamond it is working for.  A fork worker (r578c) adopts
+			// its parent's request in `scope` and sends that system message instead;
+			// this one stands only if the copy is gone.
 			//
 			// The data as it is on disk, not a rendering of it. A rendering drops any key
 			// the renderer does not know, and the keys a reducer has invented are exactly
@@ -44528,6 +44573,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (sent && sent.diamondId) await scopeAgentTo(run.app, sent.diamondId);
 				else if (run.chatId) await scopeChatTo(run.app, run.chatId);
 				else await scopeAgentTo(run.app, run.diamondId);
+				adoptFork(run);
 			};
 			var build = function () {
 				if (onCredits) {
@@ -44768,41 +44814,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A worker runs in this tab exactly as a chat turn does, so it needs the screen
 			// awake for the same reason. The count is shared; see `WakeLock`.
 			WakeLock.hold();
-			// A wall-clock ceiling on a single `run_turn` call, BELOW `GATHER_TIMEOUT_S`
-			// (600s, src/compact.rs). Without one, a worker whose provider call never settles
-			// -- no resolve, no reject -- hangs the `await` here forever, and the daimon's
-			// `gather` sits out its own 600s wait and reports "still running" rather than
-			// anything a model can act on. This fires first, aborts the run and produces a
-			// terminal report of its own, so `gather` always has a real answer to hand back.
-			// ONE SOURCE (r543 QA N1): the figure is the engine's, which bounds a round's wait
-			// for first data inside it, so a model that never answers says so before this
-			// fires. Read here, not at load, because the wasm is not initialised at load.
-			var WORKER_WALL_CLOCK_MS = Number(Sbj.worker_wall_clock_ms());
-			// Races `run_turn` against `WORKER_WALL_CLOCK_MS`. A rejection that arrives
-			// before the ceiling fires is rethrown, exactly as an un-raced `await` would --
-			// so the auth-remint catch below sees it unchanged. One that arrives (or never
-			// arrives) after the ceiling has already aborted the run is swallowed: the run
-			// is terminal by then and nothing is left awaiting that promise.
-			var runTurnCapped = function (task) {
-				var capped = false;
-				var real = run.app.run_turn(task, sink).catch(function (e) {
-					if (!capped) throw e;
-				});
-				return Promise.race([
-					real,
-					new Promise(function (resolve) {
-						setTimeout(function () { capped = true; resolve('capped'); }, WORKER_WALL_CLOCK_MS);
-					}),
-				]).then(function (winner) {
-					if (winner !== 'capped') return;
-					try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
-					run.status = 'capped';
-					var said = 'stopped after ' + Math.round(WORKER_WALL_CLOCK_MS / 1000) + 's, no result';
-					run.text += (run.text ? '\n' : '') + said;
-					run._tail = said;
-					run.said = (run.said || []).concat([said]);
-				});
-			};
+			// NO WALL CLOCK ON A WORKER'S TURN (r578c T, 2026-10-20). A 540 s race on the whole
+			// `run_turn` killed 33 of 70 workers in eight days while they worked, and its stop
+			// returned before the turn had settled: the bill read 0, the report became the clock's
+			// sentence, the rounds read 0 and the session export failed. The hang it was built for
+			// is bounded inside the engine, round by round (`llm::attempt_wait`), and a long worker
+			// is bounded by its rounds, its spend cap and, once its turn has ended,
+			// `ORPHAN_GRACE_ROUNDS`; `gather` answers `pending` for one still running. The turn is
+			// awaited as a chat's is, and every stop -- Stop, pause, a vision move -- only aborts,
+			// so the `finally` below runs on a settled turn.
 			// ONE BILL PER ATTEMPT (r543 QA F-A2-2). A re-mint runs the task again on a NEW app,
 			// and the bill used to read only the app standing in the `finally`: the rounds the
 			// dying app had spent before its 402 never reached the ledger. Each app is billed for
@@ -44825,8 +44845,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var billAttempt = function () {
 				var wapp = run.app;
 				if (!wapp || wapp === wbilled) return;
-				wbilled = wapp;
+				// Every caller has awaited the turn, so the app has settled; one that has not is
+				// left unbilled rather than marked billed on its zero (see `appSpend`).
 				var ws = appSpend(wapp);
+				if (!ws) return;
+				wbilled = wapp;
 				recordSpend(run.model, ws.p, ws.c, ws.ca, ws.cost, run.provider, run.diamondId || '',
 					(run.prov && run.prov.rid) || '', wmeter ? wmeter.facts('w') : null);
 				wspent.p += ws.p; wspent.c += ws.c; wspent.ca += ws.ca; wspent.cost += ws.cost;
@@ -44850,10 +44873,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try {
 					// Cleared as it is read, so one re-route buys one vision nudge: a worker
 					// paused by hand afterwards resumes on the ordinary one.
-					var nudge = run.resume ? (run._vision ? VISION_NUDGE : RESUME_NUDGE) : run.task;
+					var nudge = run.resume ? (run._vision ? VISION_NUDGE : RESUME_NUDGE) : firstAsk(run);
 					run._vision = false;
 					wmeter = turnMeter(Date.now());
-					await runTurnCapped(nudge);
+					await run.app.run_turn(nudge, sink);
 				} catch (e) {
 					if (!authFail || run.status === 'stopped' || run.status === 'paused') throw e;
 					reminted = true; authFail = false;
@@ -44890,23 +44913,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// this would quietly hand the retry the whole workspace.
 					await scope();
 					wmeter = turnMeter(Date.now());
-					await runTurnCapped(run.task);
+					await run.app.run_turn(firstAsk(run), sink);
 				}
-				// A stopped worker keeps whatever it managed to do; it did not fail.
-				// A capped one is terminal too -- `runTurnCapped` has already written its
-				// status and report -- and must not be overwritten by the `done` default
-				// below, which is exactly what happened before this guard included it.
+				// A stopped or paused worker keeps whatever it managed to do; it did not fail.
 				//
 				// The engine's OWN word for how the turn ended, not a blanket `done` --
 				// see `workerEndStatus`. `run.ended` is unset only when the turn produced
 				// no `ended` event at all (nothing ran that could end it), which is `done`
 				// by default rather than a status nothing maps to.
-				if (run.status !== 'stopped' && run.status !== 'paused' && run.status !== 'capped') {
+				if (run.status !== 'stopped' && run.status !== 'paused') {
 					run.status = run.ended ? workerEndStatus(run.ended.how, run.ended.why) : 'done';
 				}
 			} catch (e) {
 				if (run.status !== 'stopped' && run.status !== 'paused') { run.status = 'error'; run.text = friendlyError(e); }
 			} finally {
+				forkForget(run);
 				WakeLock.release();
 				// A worker spends the user's money like anything else, so it is metered like
 				// anything else: this bills the attempt that ran last (see `billAttempt`). A
@@ -44928,24 +44949,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// if it were the answer (forge #16). `run.text` remains only for a run
 				// that never finished a single tool call.
 				var _tailText = (run._tail || '').trim();
-				// HOW MUCH OF THE REPORT TRAVELS, from the tune where there is one. The two
-				// figures were literals here, so the one measure that decides what a daimon
-				// ever learns from a worker could not be varied -- and the middle of a long
-				// report is exactly where the fact it was sent for tends to sit. Defaults are
-				// the literals they replace, so an untuned install is unchanged.
-				var _clip = reportClip();
+				// THE REPORT TRAVELS WHOLE (r578c, 2026-10-20). It was clipped to a 4 KB head and a
+				// 12 KB tail, and the middle of a long report is exactly where the fact it was
+				// sent for tends to sit; the parent's own fold is what bounds its carry.
 				var _src = _tailText ? run._tail
 					: (run._segs && run._segs.length ? run._segs[run._segs.length - 1] : (run.text || ''));
-				var _capped = capReportBytes(_src.trim(), _clip.head, _clip.tail);
+				var _report = _src.trim();
+				// A STOP FROM THE PAGE IS SAID AFTER THE WORKER'S OWN WORDS, never instead of them
+				// (r578c T). The sentence is the app's, so it joins `run.said`, which is what
+				// `reportHasSubstance` subtracts: a report holding only it has nothing to read.
+				if (run._stopSaid) {
+					var _why = '(' + run._stopSaid + ')';
+					_report = _report ? _report + '\n\n' + _why : _why;
+					run.said = (run.said || []).concat([_why]);
+					run._stopSaid = '';
+				}
 
-				run.report = _capped.text;
-				// WHAT THE CLIP ACTUALLY COST, on the run as well as in the feed event below.
-				// The feed is an upload buffer: a caller in the page -- the Agents panel, or
-				// `dev/tune/run.mjs` -- cannot read it back, so the one measure of how much of
-				// a report a daimon was denied was write-only. Two numbers, kept beside the
-				// report they describe.
-				run.reportRaw  = _capped.rawBytes;
-				run.reportSent = _capped.sentBytes;
+				run.report = _report;
+				// The report's size, on the run as well as in the feed event below: the feed is an
+				// upload buffer that a caller in the page -- the Agents panel, or
+				// `dev/tune/run.mjs` -- cannot read back. Sent equals raw now nothing is cut.
+				run.reportRaw  = new TextEncoder().encode(_report).length;
+				run.reportSent = run.reportRaw;
 					run._segs = null;		// spent: the report is composed, the narration stays in `run.text`
 				// The agent's OWN conversation, ids and all, so a continuation dispatched
 				// later can pick this run's thread back up with its folds and tool history
@@ -44997,7 +45022,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					p:     wspent.p, c: wspent.c, ca: wspent.ca,
 					usd:   Math.round((wspent.cost || 0) * 1e6) / 1e6,
 					r:     (run.ended && run.ended.rounds) || 0,
-					rb:    _capped.rawBytes, sb: _capped.sentBytes,
+					wr:    wround,			// the rounds this page saw, beside the engine's own `r`
+					rb:    run.reportRaw, sb: run.reportSent,
 				});
 				this.active--;
 				if (run.slot) { self.giveSlot(run.slot); if (window.DaimondModels) DaimondModels.forgetSlot(run.slot); }
@@ -45047,6 +45073,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			if (run.status !== 'running') return;
 			run.status = 'stopped';
+			run._stopSaid = 'stopped: the person pressed Stop';		// appended to its report; see `start`
 			try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
 			this.persist();
 			this.render();
@@ -45087,6 +45114,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			if (run.status !== 'running') return;
 			run.status = 'paused';
+			run._stopSaid = 'paused: its work was paused';
 			try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
 			this.persist(); this.render();
 		},
@@ -45154,6 +45182,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Decided here, applied in `start`'s `finally` AFTER the spend is recorded.
 			run._reroute = { to: to, from: run.model, pending: true };
 			run.status = 'paused';
+			run._stopSaid = 'paused: moved to a model that can see the picture';
 			try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
 			this.persist();
 			this.render();
@@ -47996,6 +48025,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// parameter comment on `recordSpend`.
 	function meterDiamondTurn(app, diamondId, turnId) {
 		if (!app || !window.DaimondLedger) return null;
+		// A held app reads zero, and a zero kept as the reading bills its whole total again
+		// next time; it is read once it has settled (r578c T, `appSpend`).
+		if (app.turn_held) return null;
 		var prev = _diamondMeter.get(app) || { p: 0, c: 0, ca: 0, cost: 0 };
 		var p = app.prompt_tokens || 0, c = app.completion_tokens || 0;
 		var ca = app.cached_tokens || 0, cost = app.cost_usd || 0;
