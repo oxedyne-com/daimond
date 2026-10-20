@@ -188,6 +188,7 @@
 		st[k] = !!open;
 		try { localStorage.setItem(FOLD_KEY, JSON.stringify(st)); } catch (e) { /* nothing to remember with */ }
 		applyFold();
+		queueFit();
 	}
 
 	function bindFolds() {
@@ -215,6 +216,70 @@
 		});
 		// A language change repaints the two labels this file owns.
 		if (window.DaimondI18n && DaimondI18n.onChange) DaimondI18n.onChange(applyFold);
+	}
+
+	// ── Each list a window of five whole tiles ─────────────────
+	//
+	// UNBLOCK-30, the owner on 2026-10-20: "i can only see one or two diamond
+	// tiles or chat tiles at once, we need dual scrolling to provide scrollable
+	// windows of say min height 5 tiles". Each list's floor is five of its own
+	// tiles, measured here rather than written as pixels in mobile.css, so a
+	// tile that grows a tag row or a line keeps five on screen. The drawer
+	// scrolls for whatever the two windows push below the screen.
+	//
+	// The floor is the larger of two readings: where the fifth tile ends,
+	// which counts a group head such as "Today" between tiles, and five of the
+	// tallest tile with the list's gaps, which holds the window still when a
+	// search leaves fewer than five to measure.
+	var WIN_TILES = 5;
+	var fitQueued = false;
+
+	function listFloor(list, rowSel) {
+		if (!list || !list.getClientRects().length) return 0;   // folded away
+		var cs = getComputedStyle(list);
+		var gap = parseFloat(cs.rowGap) || 0;
+		var padT = parseFloat(cs.paddingTop) || 0, padB = parseFloat(cs.paddingBottom) || 0;
+		var top = list.getBoundingClientRect().top + (parseFloat(cs.borderTopWidth) || 0) - list.scrollTop;
+		var rows = list.querySelectorAll(rowSel), seen = 0, tall = 0, fifth = 0;
+		for (var i = 0; i < rows.length && seen < 12; i++) {
+			var b = rows[i].getBoundingClientRect();
+			if (!b.height) continue;                               // filtered out
+			seen++;
+			if (b.height > tall) tall = b.height;
+			if (seen === WIN_TILES) fifth = b.bottom - top + padB;
+		}
+		if (!tall) return 0;
+		return Math.ceil(Math.max(fifth, padT + padB + WIN_TILES * tall + (WIN_TILES - 1) * gap));
+	}
+
+	function fitLists() {
+		fitQueued = false;
+		var rail = document.getElementById('panel-rail');
+		if (!rail) return;
+		var pairs = [['--rail-win-d', '#diamond-list', '.diamond-box'], ['--rail-win-c', '#session-list', '.session-box']];
+		pairs.forEach(function (p) {
+			if (!isPhone()) { rail.style.removeProperty(p[0]); return; }
+			var px = listFloor(document.querySelector(p[1]), p[2]);
+			if (!px) return;                                         // keep the last reading
+			if (rail.style.getPropertyValue(p[0]) !== px + 'px') rail.style.setProperty(p[0], px + 'px');
+		});
+	}
+	function queueFit() {
+		if (fitQueued) return;
+		fitQueued = true;
+		requestAnimationFrame(fitLists);
+		setTimeout(function () { if (fitQueued) fitLists(); }, 50);  // headless-safe
+	}
+	function bindFit() {
+		['diamond-list', 'session-list'].forEach(function (id) {
+			var l = document.getElementById(id);
+			if (!l) return;
+			if (window.MutationObserver) new MutationObserver(queueFit).observe(l, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
+			if (typeof ResizeObserver !== 'undefined') new ResizeObserver(queueFit).observe(l);
+		});
+		window.addEventListener('resize', queueFit);
+		if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueFit);
+		queueFit();
 	}
 
 	// ── The keyboard, which `dvh` does not answer ───────────────
@@ -984,6 +1049,7 @@
 
 		// The drawer's own accordion, and the keyboard fit that goes with it.
 		bindFolds();
+		bindFit();
 		fitVisual();
 
 		// The hamburger and the scrim.

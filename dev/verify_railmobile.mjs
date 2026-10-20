@@ -254,13 +254,15 @@ try {
 		`identity ${m.idRow.h}px, needs ${m.needs.h}px, calm ${m.calm.h}px, tally ${m.spend.h}px, #astat-model ${m.modelRow.h}px, #admin ${m.admin.h}px`);
 	check('and the identity row survives that fold, which is the only route to Settings',
 		m.userRow.drawn && m.userRow.h >= 34, m.userRow.h + 'px');
-	check('each list is bounded and scrolls inside itself rather than the drawer',
-		m.sessionList.scroll > m.sessionList.client && m.rail.scroll === m.rail.client,
+	// UNBLOCK-30 (2026-10-20): each list is a window of at least five whole tiles and
+	// the DRAWER scrolls for what the two windows push below the screen. Until then this
+	// asked for a drawer that never scrolled and lists sharing 65% of it, which is the
+	// design that let every row added to the rail come out of the lists.
+	check('each list is bounded and scrolls inside itself, and the drawer scrolls for the rest',
+		m.sessionList.scroll > m.sessionList.client,
 		`chats ${m.sessionList.client}/${m.sessionList.scroll}, drawer ${m.rail.client}/${m.rail.scroll}`);
-	check('the two lists now hold at least 65% of the drawer (they held 35%)',
-		(m.diamondList.h + m.sessionList.h) / m.rail.h >= 0.65,
-		`${m.diamondList.h} + ${m.sessionList.h} of ${m.rail.h} = `
-			+ Math.round(100 * (m.diamondList.h + m.sessionList.h) / m.rail.h) + '%');
+	check('the Chats list is a window of at least five whole tiles (UNBLOCK-30)',
+		m.chatsWhole >= 5, `${m.chatsWhole} whole of ${m.chats}, list ${m.sessionList.h}px`);
 	check('with both sections open the Chats list has room for three tiles (it had 1.5)',
 		m.sessionList.client >= 3 * m.chatRowH,
 		`${m.sessionList.client}px at ${m.chatRowH}px a tile`);
@@ -319,24 +321,29 @@ try {
 	const insets = await p.evaluate(() => {
 		const r = document.getElementById('panel-rail');
 		const cs = getComputedStyle(r);
-		const list = document.getElementById('session-list').getBoundingClientRect();
-		return { padT: cs.paddingTop, padB: cs.paddingBottom, padL: cs.paddingLeft,
-			listBottom: Math.round(list.bottom), vh: innerHeight };
+		// The drawer's last content, with the drawer scrolled to its end.
+		r.scrollTop = r.scrollHeight;
+		const last = document.getElementById('admin').getBoundingClientRect();
+		const out = { padT: cs.paddingTop, padB: cs.paddingBottom, padL: cs.paddingLeft,
+			listBottom: Math.round(last.bottom), vh: innerHeight };
+		r.scrollTop = 0;
+		return out;
 	});
 	check('the drawer holds its content off the notch and the home indicator',
 		insets.padT === '52px' && insets.padB === '42px' && insets.padL === '20px',
 		`${insets.padT} / ${insets.padB} / ${insets.padL}`);
 	check('and nothing runs under the indicator when it does',
 		insets.listBottom <= insets.vh - 34,
-		`chats foot ${insets.listBottom}, screen ${insets.vh}`);
+		`drawer's foot at its scroll end ${insets.listBottom}, screen ${insets.vh}`);
 
 	// ── The keyboard, which `100dvh` does not shrink for ─────────────────
 	await p.evaluate(() => document.documentElement.style.setProperty('--vvh', '500px'));
 	await p.waitForTimeout(250);
 	const kb = await survey(p);
-	check('a raised keyboard shortens the drawer, and the lists with it',
-		kb.rail.h === 500 && kb.sessionList.h < before.chats,
-		`drawer ${kb.rail.h}px, chats ${kb.sessionList.h}px (was ${before.chats}px)`);
+	// The lists keep their five-tile windows and the shortened drawer scrolls to them.
+	check('a raised keyboard shortens the drawer, which scrolls rather than cutting a list',
+		kb.rail.h === 500 && kb.sessionList.h >= before.chats - 1 && kb.rail.scroll > kb.rail.client,
+		`drawer ${kb.rail.h}px scroll ${kb.rail.client}/${kb.rail.scroll}, chats ${kb.sessionList.h}px (was ${before.chats}px)`);
 	await p.evaluate(() => document.documentElement.style.removeProperty('--vvh'));
 
 	consoleClean(s, 'WebKit 390x844');

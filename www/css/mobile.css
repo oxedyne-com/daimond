@@ -165,19 +165,32 @@
 		/* Takes the room that is left rather than a share of the viewport. Capping
 		   this in `dvh` was the first attempt and it was wrong twice over: BOTH
 		   lists live inside it, so the cap squeezed the pair into the top of the
-		   drawer and left a third of the screen empty underneath. */
-		flex: 1 1 auto;
-		min-height: 0;
+		   drawer and left a third of the screen empty underneath.
+
+		   It grows into spare room and never SHRINKS below its content, which is
+		   the two lists at their five-tile floor plus the rows around them. Until
+		   UNBLOCK-30 it was `flex: 1 1 auto; min-height: 0; overflow: hidden`, so
+		   every row added above, between or below the lists came out of them --
+		   the search field (26d2e1760), the status foot's runway, tallies and
+		   cylinders (7c9f0eb5d, ed863bd29) -- until a phone showed one Diamond and
+		   two chats. The drawer scrolls instead, so nothing can cut a list to a
+		   sliver. `overflow` stays visible: a scroll container's automatic minimum
+		   is zero, which is exactly the squeeze. */
+		flex: 1 0 auto;
 		display: flex;
 		flex-direction: column;
-		overflow: hidden;
 	}
+	/* The status foot keeps its own height too; what does not fit, the drawer scrolls to. */
+	.panel.rail .admin { flex: none; }
 	/* The two lists then split that room between them and scroll inside it, which
 	   is exactly what they do on a desktop. The floor stops either one collapsing
 	   to nothing when the other is long. */
 	.panel.rail .diamond-list,
 	.panel.rail .session-list {
 		flex: 1 1 0;
+		/* Five whole tiles at least, measured from the tiles themselves by
+		   `mobile.js` `fitLists` (the owner, 2026-10-20: "scrollable windows of
+		   say min height 5 tiles"). The rem is only the floor before it runs. */
 		min-height: 5.5rem;
 		overflow-y: auto;
 		overscroll-behavior: contain;
@@ -189,6 +202,8 @@
 		   between five whole tiles and six. */
 		gap: 4px;
 	}
+	.panel.rail .diamond-list { min-height: var(--rail-win-d, 5.5rem); }
+	.panel.rail .session-list { min-height: var(--rail-win-c, 5.5rem); }
 	/* The built-in group spaces its own tiles with a margin rather than the
 	   list's gap -- see the note beside `.rail-builtin` in app.css -- so it takes
 	   the phone's 4px here too. */
@@ -278,7 +293,6 @@
 	/* Unfolded, the strip scrolls inside itself rather than pushing the lists
 	   back down to their floor: every open section is bounded, which is the whole
 	   rule this block is written around. */
-	.panel.rail .admin { flex: 0 1 auto; min-height: 0; }
 	.panel.rail[data-fold-status="on"] .admin-status { max-height: calc(0.45 * var(--rail-h, 100dvh)); overflow-y: auto; overscroll-behavior: contain; }
 	.panel.rail #handle-rail-split { display: none; }
 
