@@ -152,6 +152,22 @@ pub struct AllOf<F: Future> {
     done: Vec<Option<F::Output>>,
 }
 
+/// `work`'s output, or `None` if `stop` is ready first; the loser is dropped.  `work` is polled
+/// first, so a result that is already there is never thrown away for a stop that landed beside it.
+pub async fn unless<F: Future, S: Future<Output = ()>>(work: F, stop: S) -> Option<F::Output> {
+    let mut work = std::pin::pin!(work);
+    let mut stop = std::pin::pin!(stop);
+    std::future::poll_fn(move |cx| {
+        if let Poll::Ready(v) = work.as_mut().poll(cx) {
+            return Poll::Ready(Some(v));
+        }
+        match stop.as_mut().poll(cx) {
+            Poll::Ready(()) => Poll::Ready(None),
+            Poll::Pending   => Poll::Pending,
+        }
+    }).await
+}
+
 /// Run every future together.  The outputs come back in the order the futures were given, not the
 /// order they finished.
 pub fn all_of<F: Future>(futs: Vec<F>) -> AllOf<F> {

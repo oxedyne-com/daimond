@@ -243,16 +243,21 @@ const STALL_WAIT_FACTOR: u64 = 5;
 /// `compact::ORPHAN_GRACE_ROUNDS`.
 const ROUND_QUIET_FACTOR: u64 = 2 * STALL_WAIT_FACTOR;
 
+/// The absolute ceiling on [`ROUND_QUIET_FACTOR`] x the idle ceiling (r578d A4): a chat with a
+/// 120 s idle figure would otherwise sit 20 minutes on a provider that never answers.
+const ROUND_QUIET_CEILING_MS: u64 = 600_000;
+
 /// The waits of one attempt at a round: how long its first data may take, and the most any quiet
 /// before real data may last, given the `elapsed` milliseconds of the round so far.
 ///
 /// The first attempt gives a provider 1.5 x the idle ceiling to begin; the one retry gives it
 /// 5 x, so a model that thinks silently is not cut a second time.  Neither may carry the round
-/// past [`ROUND_QUIET_FACTOR`] x the idle ceiling.
+/// past [`ROUND_QUIET_FACTOR`] x the idle ceiling, nor past [`ROUND_QUIET_CEILING_MS`].
 fn attempt_wait(idle: u64, stall_tries: u32, elapsed: u64) -> (u64, u64) {
     let first_ms = if stall_tries == 0 { idle.saturating_mul(3) / 2 }
                    else { idle.saturating_mul(STALL_WAIT_FACTOR) };
-    (first_ms, idle.saturating_mul(ROUND_QUIET_FACTOR).saturating_sub(elapsed).max(1))
+    let bound = idle.saturating_mul(ROUND_QUIET_FACTOR).min(ROUND_QUIET_CEILING_MS);
+    (first_ms.min(bound), bound.saturating_sub(elapsed).max(1))
 }
 
 /// How much longer a non-streaming reply may take to arrive than a stream's first byte.
@@ -544,6 +549,7 @@ pub struct Halt(std::rc::Rc<HaltInner>);
 #[derive(Debug, Default)]
 struct HaltInner {
     set:  std::cell::Cell<bool>,
+    wait: std::cell::RefCell<Vec<std::task::Waker>>,                // who awaits `fired`
     #[cfg(target_arch = "wasm32")]
     ctrl: std::cell::RefCell<Option<web_sys::AbortController>>,    // the request in flight
 }
@@ -557,6 +563,25 @@ impl Halt {
     pub fn fire(&self) {
         self.0.set.set(true);
         self.tear_down();
+        let woken = std::mem::take(&mut *self.0.wait.borrow_mut());
+        for w in woken {
+            w.wake();
+        }
+    }
+
+    /// Ready once the turn is stopped: what a wait that would not otherwise see a Stop -- a tool
+    /// call in flight -- is raced against, so a Stop ends it at once and not when it returns.
+    pub fn fired(&self) -> impl std::future::Future<Output = ()> + '_ {
+        std::future::poll_fn(move |cx| {
+            if self.is_set() {
+                return std::task::Poll::Ready(());
+            }
+            let mut wait = self.0.wait.borrow_mut();
+            if !wait.iter().any(|w| w.will_wake(cx.waker())) {
+                wait.push(cx.waker().clone());
+            }
+            std::task::Poll::Pending
+        })
     }
 
     /// Has this turn been stopped?
@@ -10826,6 +10851,31 @@ pub mod tests {
             let grain = (STALL_RETRIES as u64 + 1) * 6_000;
             assert!(now <= bound + grain, "idle {} ms: the stalled round ended at {} ms, past \
                 its {} ms quiet bound", idle, now, bound);
+        }
+    }
+
+    /// r578d A4: the quiet bound is a multiple of the idle ceiling, but never past ten minutes.
+    /// A chat with a 120 s idle ceiling would otherwise sit 20 minutes on a provider that never
+    /// answers before saying so.
+    #[test]
+    fn stalled_round_never_waits_past_ten_minutes() {
+        for idle in [DEFAULT_STREAM_IDLE_MS, 120_000, 600_000] {
+            let mut now = 0u64;
+            for tries in 0..=STALL_RETRIES {
+                let (first_ms, cap) = attempt_wait(idle, tries, now);
+                let mut w = StreamWatch::new(now, idle, first_ms).capped(cap);
+                w.data(now, Pulse { grew: false, thinking: false });    // a role, nothing in it
+                loop {
+                    now += 5_000;                                       // a keep-alive
+                    w.heard(now);
+                    if w.expired(now) { break; }
+                    assert!(now < 3_600_000, "the watch never gave up");
+                }
+                now += 1_000;                                           // the resend
+            }
+            let grain = (STALL_RETRIES as u64 + 1) * 6_000;
+            assert!(now <= 600_000 + grain, "idle {} ms: the stalled round ended at {} ms, past \
+                the 600 s ceiling", idle, now);
         }
     }
 

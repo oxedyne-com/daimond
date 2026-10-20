@@ -148,11 +148,68 @@ pub(crate) fn settle_js<T: Into<JsValue>>(v: T) -> JsFuture {
 /// [`settle_js`].  Every extern import the app's JavaScript answers is declared `catch` and
 /// returns `Result<JsValue, JsValue>` rather than `js_sys::Promise`, because the JS side's
 /// word that it returns a promise is not something the boundary can rest on.
+///
+/// **Bounded (QA r578c A2).**  A page door that never answers held its turn for good: a Stop now
+/// ends the turn at once (`Agent::run_tool_loop`), but a worker nobody watches has nobody to
+/// press it.  So a door gets [`DOOR_CEILING_MS`], or [`settle_call_within`] a bound of its own,
+/// and running past it is a plain error the model reads like any other.
 pub(crate) async fn settle_call(r: Result<JsValue, JsValue>) -> Result<JsValue, JsValue> {
+    settle_call_within(r, DOOR_CEILING_MS).await
+}
+
+/// The most a page door may take to answer a call that names no bound of its own: Claude Code's
+/// longest command, ten minutes.
+pub(crate) const DOOR_CEILING_MS: u64 = 10 * 60 * 1_000;
+
+/// What a door whose call carries its own `timeout_ms` is given over it, for the far side to
+/// stop the work and say so before the ceiling speaks for it.
+const DOOR_GRACE_MS: u64 = 2 * 60 * 1_000;
+
+/// The bound for a door whose request carries its own `timeout_ms` (a command, a verifier, a
+/// gather): that bound and [`DOOR_GRACE_MS`], never less than [`DOOR_CEILING_MS`].
+pub(crate) fn door_bound(request_json: &str) -> u64 {
+    match crate::llm::extract_json_number(request_json, "timeout_ms") {
+        Some(t) => t.saturating_add(DOOR_GRACE_MS).max(DOOR_CEILING_MS),
+        None    => DOOR_CEILING_MS,
+    }
+}
+
+/// [`settle_call`] with the bound given, in milliseconds.
+pub(crate) async fn settle_call_within(r: Result<JsValue, JsValue>, ms: u64)
+    -> Result<JsValue, JsValue>
+{
     match r {
-        Ok(v)  => settle_js(v).await,
+        Ok(v)  => match crate::agent::batch::unless(settle_js(v), ceiling(ms)).await {
+            Some(out) => out,
+            None      => Err(JsValue::from_str(&fmt!(
+                "The page did not answer this call within {} minutes, so it was given up. It may \
+                have partly run; check before relying on its effect.", ms / 60_000))),
+        },
         Err(e) => Err(e),
     }
+}
+
+/// Ready after `ms`.  Where no timer can be set it is never ready: a ceiling that fired at once
+/// would fail every call, where `llm::sleep_ms` only shortens a pause.
+async fn ceiling(ms: u64) {
+    use wasm_bindgen::JsCast;
+    let ms = ms.min(i32::MAX as u64) as i32;
+    let mut set = false;
+    let promise = js_sys::Promise::new(&mut |resolve: js_sys::Function, _reject| {
+        set = match web_sys::window() {
+            Some(win) => win.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+                .is_ok(),
+            None      => match js_sys::global().dyn_into::<web_sys::WorkerGlobalScope>() {
+                Ok(scope) => scope
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms).is_ok(),
+                Err(_)    => false,
+            },
+        };
+    });
+    if !set {
+        return std::future::pending().await;
+    }
+    let _ = settle_js(promise).await;
 }
 
 /// Map a Daimond [`Error`] into a `JsValue` suitable for rejecting a

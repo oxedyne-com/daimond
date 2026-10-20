@@ -4014,42 +4014,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Which prior run, if any, this fresh dispatch is a continuation of.
 	///
-	/// Two ways in: `task` itself says so (`continue: ...`, whatever a daimon writes
-	/// when it means to pick a worker's own thread back up), or `name` matches a run
-	/// already dispatched for this Diamond -- a named worker recurring by name is
-	/// read as the same worker carrying on. Either is enough on its own: a
-	/// name match finds its own run whether or not the task happens to say
-	/// `continue:`, and a `continue:` task with no name match falls back to the
-	/// Diamond's own most recently finished stashed session, on the read that
-	/// "carry on" without a name means carry on from whatever this Diamond was
-	/// last doing.
+	/// Only a task that says so itself (`continue: ...`) asks for one; a name match
+	/// alone never does, so a same-named worker of a later turn takes the current copy
+	/// (r578d A1). And only a run of THE SAME CONVERSATION is a candidate: the same
+	/// Diamond and the same chat. A chat's workers carry no Diamond id, so the chat id
+	/// is what keeps one chat's worker from restoring another chat's stashed session,
+	/// which since r578c can be that chat's whole conversation. With a `continue:`
+	/// task, the newest run of this conversation with the same name wins, else the
+	/// newest of this conversation at all.
 	///
 	/// `runs` is searched newest-first (`Workers.runs` is unshifted, so it already
-	/// is), and only a run carrying a stashed `_session` is a candidate -- one still
-	/// running, or one that came back with nothing to stash, is not.
-	///
-	/// # Arguments
-	/// * `runs` - `Workers.runs`, newest first.
-	/// * `diamondId` - The Diamond this dispatch is for; a run of another Diamond's
-	///   is never a continuation of this one.
-	/// * `name` - This spec's own name, or empty.
-	/// * `task` - This spec's task text.
-	function priorSessionRun(runs, diamondId, name, task) {
-		var continuing = typeof task === 'string' && /^\s*continue:/i.test(task);
-		var i, r;
+	/// is), and only a run carrying a stashed `_session` is a candidate.
+	function priorSessionRun(runs, diamondId, chatId, name, task) {
+		if (typeof task !== 'string' || !/^\s*continue:/i.test(task)) return null;
+		diamondId = String(diamondId || '');
+		chatId    = String(chatId || '');
+		if (!diamondId && !chatId) return null;	// no conversation to continue
+		var mine = (runs || []).filter(function (r) {
+			return r && String(r.diamondId || '') === diamondId && String(r.chatId || '') === chatId
+				&& r._session && r._session.length;
+		});
 		if (name) {
-			for (i = 0; i < runs.length; i++) {
-				r = runs[i];
-				if (r.diamondId === diamondId && r.name === name && r._session && r._session.length) return r;
-			}
+			for (var i = 0; i < mine.length; i++) if (mine[i].name === name) return mine[i];
 		}
-		if (continuing) {
-			for (i = 0; i < runs.length; i++) {
-				r = runs[i];
-				if (r.diamondId === diamondId && r._session && r._session.length) return r;
-			}
-		}
-		return null;
+		return mine.length ? mine[0] : null;
 	}
 
 	/// How many of this worker's file writes succeeded. Its work is on disk whatever its
@@ -22389,13 +22377,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var rrc = strict ? null : permitRunnerTurn(req);
 			if (rrc) return await routePermitAsk(rrc, 'run', shownCmd,
 				JSON.stringify({ cwd: String(req.detail || '').slice(0, 300) }));
+			// BOUNDED AS THE NETWORK QUESTION IS (QA r578c A2). Unbounded, a worker's
+			// command question stood until somebody came, and its turn with it: Stop
+			// could not settle it, and nothing billed, reported or gathered. Running
+			// out is a no that says nobody answered, never a yes.
+			var runTimedOut = false;
+			var runWaitMs = netAskDeadline(opts);
 			var okRun = await confirmDialog(
 				t('permmode.run_body', { cmd: shownCmd, cwd: String(req.detail || '').slice(0, 300) }),
 				t('permmode.run_ok'),
 				// Re-check of 2026-09-23: this question is raised by the running turn, not
 				// by anything the person just did, so it takes R6's guard (see `dialog`).
-				{ title: t('permmode.run_title'), danger: false, guard: true });
-			return okRun ? 'allow' : 'deny';    // never remembered: every time means every time.
+				{ title: t('permmode.run_title'), danger: false, guard: true,
+					deadlineMs: runWaitMs,
+					onDeadline: function () { runTimedOut = true; } });
+			if (okRun) return 'allow';    // never remembered: every time means every time.
+			if (!runTimedOut) return 'deny';
+			trail('run consent', 'nobody answered within ' + Math.round(runWaitMs / 1000)
+				+ 's, so the command did not run: ' + cmd.slice(0, 120));
+			return DaimondPeer.permitNoWord('timeout');
 		}
 		// A TOOLCHAIN ON FIRST USE (Workspace round 2, E1). The engine asks before a
 		// command that needs a toolkit this Diamond has not been granted: "Let <Diamond>
@@ -43393,7 +43393,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						return JSON.stringify({ started: false,
 							why: 'the worker pump would not take it' });
 					}
-					return JSON.stringify({ started: true, id: ids[0], name: name });
+					// THE KIND IT IS SET TO START AS (r578d A6), for the engine's STARTED line: a
+					// continuation starts brief whatever the parent asked for. The report heading
+					// says the kind it ran as, should the copy be gone by the time it starts.
+					var made = self.runs.find(function (r) { return r.id === ids[0]; });
+					return JSON.stringify({ started: true, id: ids[0], name: name,
+						cx: (made && forkable(made)) ? 'full' : 'brief' });
 				})
 				.catch(function (e) {
 					return JSON.stringify({ started: false, why: friendlyError(e) });
@@ -43950,13 +43955,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// A CONTINUATION KEEPS ITS FOLDS AND TOOL HISTORY, unlike the plain
 				// `resume()` button below, which reseeds prose alone because it has
 				// nothing else to seed with. `priorSessionRun` finds the run this one
-				// picks up from -- by name, within this Diamond, or (when the task says
-				// so itself) the diamond's own most recent stashed session -- and
+				// picks up from -- only when the task says `continue:`, and only within
+				// this same conversation (Diamond and chat; r578d A1) -- and
 				// `start()` restores it before the task runs. The matched run's spend
 				// carries forward too, on the same footing as a manual resume: a
 				// continuation's tile should show the running total, not a total that
 				// restarted at what THIS leg alone cost.
-				var priorRun = priorSessionRun(self.runs, diamondId, run.name, run.task);
+				var priorRun = priorSessionRun(self.runs, diamondId, chatId, run.name, run.task);
 				if (priorRun) {
 					run._priorSession   = priorRun._session;
 					run.priorPrompt     = priorRun.promptTokens     || 0;
@@ -44453,6 +44458,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					at:    'end',
 					out:   String(run.status || '').slice(0, 16),
 					turn:  String(run.turnId || ''),
+					cx:    workerKind(run),	// the kind adopted; brief when it never got that far
 					p: 0, c: 0, ca: 0, usd: 0, r: 0, rb: 0, sb: 0,
 				});
 				// A worker that died before its loop is terminal too, so a gather waiting on it
@@ -44475,9 +44481,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				turn:  String(run.turnId || ''),
 				ab:    jsonBytes(run.task || ''),	// the task's bytes
 				pb:    run.forkBytes | 0,		// the parent's copy, bytes; 0 for a brief worker
-				// THE KIND IT STARTS AS (D-20261020-05), joined to its `end` row by `w`, so
-				// which kind does better per task can be read off the feed.
-				cx:    forkable(run) ? 'full' : 'brief',
+				// No `cx` here: the copy is adopted later, in `scope`, and may be gone by then.
+				// The kind it RAN as is on the `end` row (r578d A6).
 			});
 			var self = this;
 			var runNode = this.nodeOf(run);
@@ -44639,7 +44644,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				closeEarly();
 				return;
 			}
-			// A CONTINUATION dispatched by name or `continue:` -- see `priorSessionRun`
+			// A CONTINUATION dispatched by `continue:` -- see `priorSessionRun`
 			// in `dispatch` -- picks the matched run's own conversation back up, ids and
 			// folds and all, exactly as a reloaded chat does (`restore_session` in
 			// `buildApp`). Checked FIRST and ahead of `run.resume` below: a fresh
@@ -45026,6 +45031,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// difference between them. The `gather` row names the runs it read (`w`),
 					// which is the join, and it carries the turn as well.
 					turn:  String(run.turnId || ''),
+					// THE KIND IT RAN AS (D-20261020-05; r578d A6), from the adoption itself, so
+					// which kind does better per task can be read off the feed.
+					cx:    workerKind(run),
 					p:     wspent.p, c: wspent.c, ca: wspent.ca,
 					usd:   Math.round((wspent.cost || 0) * 1e6) / 1e6,
 					r:     (run.ended && run.ended.rounds) || 0,
@@ -45059,8 +45067,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		},
 
 		stop: function (run) {
+			// A worker that never ran, or is held with no live turn, has no `finally` to
+			// drop its copy of the parent, so Stop drops it here (r578d A5).  Pause keeps
+			// it: a held worker that is resumed before it ever ran still starts full.
 			if (run.status === 'queued') {
 				this.queue = this.queue.filter(function (r) { return r !== run; });
+				forkForget(run);
 				run.status = 'stopped';
 				this.persist();
 				this.render();
@@ -45073,6 +45085,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the same case, offered the same pair of buttons below.
 			if (run.status === 'paused' || run.status === 'interrupted'
 				|| run.status === 'capped' || run.status === 'spend_cap') {
+				forkForget(run);
 				run.status = 'stopped';
 				this.persist();
 				this.render();

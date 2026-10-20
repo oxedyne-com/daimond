@@ -579,7 +579,7 @@ impl MessageContent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChatMessage {
     System { content: MessageContent },
-    User { content: MessageContent, pre: String, mid: String },	// `pre`: the app's note; `mid`: the transcript row; empty for none
+    User { content: MessageContent, pre: String, mid: String, opens: bool },	// `pre`: the app's note; `mid`: the transcript row; empty for none; `opens`: see `opening`
     /// Assistant turn, with whatever tool calls it asked for.
     ///
     /// The calls are part of the message and are persisted with it.  They used to be
@@ -589,7 +589,7 @@ pub enum ChatMessage {
     /// outright on every subsequent turn.
     Assistant { content: MessageContent, tool_calls: Vec<ToolCall> },
     /// Tool call result returned to the LLM.
-    Tool { tool_call_id: String, content: MessageContent, post: String },	// `post`: the app's notes after the result, empty for none
+    Tool { tool_call_id: String, content: MessageContent, post: String, retired: bool },	// `post`: the app's notes after the result, empty for none; `retired`: see `as_retired`
 }
 
 impl ChatMessage {
@@ -601,12 +601,12 @@ impl ChatMessage {
 
     /// A user message.
     pub fn user<C: Into<MessageContent>>(content: C) -> Self {
-        Self::User { content: content.into(), pre: String::new(), mid: String::new() }
+        Self::User { content: content.into(), pre: String::new(), mid: String::new(), opens: false }
     }
 
     /// A user message that carries an app note beside the person's words.
     pub fn user_noted<C: Into<MessageContent>>(content: C, pre: String) -> Self {
-        Self::User { content: content.into(), pre, mid: String::new() }
+        Self::User { content: content.into(), pre, mid: String::new(), opens: false }
     }
 
     /// The same message tied to the transcript row it was said as, by that row's id.  Every other
@@ -617,9 +617,31 @@ impl ChatMessage {
     /// turn's place under the other's.
     pub fn marked(self, mid: String) -> Self {
         match self {
-            Self::User { content, pre, .. } if !mid.is_empty() => Self::User { content, pre, mid },
+            Self::User { content, pre, opens, .. } if !mid.is_empty() =>
+                Self::User { content, pre, mid, opens },
             other => other,
         }
+    }
+
+    /// The same user message marked as the one a turn opened with; every other role comes back
+    /// unchanged.
+    ///
+    /// **Structure, never text** (r578d, QA-B B1).  A conversation holds user messages the person
+    /// never typed: a Diamond turn ends with the app's own notes ("this turn changed N files",
+    /// the reconcile line, a failed load proof), and an interjection lands mid-turn.  Counting
+    /// those as turns put `compact::prior_end`'s boundary on the app's last note, so "keep the
+    /// last turn whole" retired the turn just finished.  Only the message a turn is run on is
+    /// marked, where it is pushed, and the mark travels with it through the store and the page.
+    pub fn opening(self) -> Self {
+        match self {
+            Self::User { content, pre, mid, .. } => Self::User { content, pre, mid, opens: true },
+            other => other,
+        }
+    }
+
+    /// Did a turn open with this message?  See [`ChatMessage::opening`].
+    pub fn opens_turn(&self) -> bool {
+        matches!(self, Self::User { opens: true, .. })
     }
 
     /// An assistant message that asked for nothing.
@@ -636,7 +658,7 @@ impl ChatMessage {
 
     /// A tool reply, paired to the call it answers.
     pub fn tool<C: Into<MessageContent>>(tool_call_id: String, content: C) -> Self {
-        Self::Tool { tool_call_id, content: content.into(), post: String::new() }
+        Self::Tool { tool_call_id, content: content.into(), post: String::new(), retired: false }
     }
 
     /// Serialise to a JDAT map, for the session store and the session export.
@@ -662,8 +684,11 @@ impl ChatMessage {
                 m.insert(dat!("role"), dat!("system"));
                 m.insert(dat!("content"), content.to_dat());
             }
-            Self::User { content, pre, mid } => {
+            Self::User { content, pre, mid, opens } => {
                 m.insert(dat!("role"), dat!("user"));
+                if *opens {
+                    m.insert(dat!("opens"), Dat::Bool(true));
+                }
                 m.insert(dat!("content"), content.to_dat());
                 // Written only when there is a note, so an ordinary message's map is the shape
                 // it always was and a reader of an older snapshot sees nothing new.  Beside the
@@ -688,8 +713,12 @@ impl ChatMessage {
                     m.insert(dat!("tool_calls"), Dat::List(calls));
                 }
             }
-            Self::Tool { tool_call_id, content, post } => {
+            Self::Tool { tool_call_id, content, post, retired } => {
                 m.insert(dat!("role"), dat!("tool"));
+                // Only where it was, so a result never sent short is the map an r578c build wrote.
+                if *retired {
+                    m.insert(dat!("retired"), Dat::Bool(true));
+                }
                 m.insert(dat!("tool_call_id"), dat!(tool_call_id.clone()));
                 m.insert(dat!("content"), content.to_dat());
                 // Only where there is one, so an unnoted result is the map an r577 build wrote.
@@ -726,7 +755,8 @@ impl ChatMessage {
                     Some(Dat::Str(s)) => s.clone(),
                     _                 => String::new(),
                 };
-                Ok(Self::User { content, pre, mid })
+                let opens = matches!(m.get(&dat!("opens")), Some(Dat::Bool(true)));
+                Ok(Self::User { content, pre, mid, opens })
             }
             "assistant" => {
                 // Absent is an assistant turn that asked for nothing, and every snapshot
@@ -755,7 +785,8 @@ impl ChatMessage {
                     Some(Dat::Str(s)) => s.clone(),
                     _ => String::new(),
                 };
-                Ok(Self::Tool { tool_call_id, content, post })
+                let retired = matches!(m.get(&dat!("retired")), Some(Dat::Bool(true)));
+                Ok(Self::Tool { tool_call_id, content, post, retired })
             }
             _ => Err(err!("ChatMessage: unknown role '{}'.", role; Invalid, Input)),
         }
@@ -790,10 +821,27 @@ impl ChatMessage {
     /// back unchanged.
     pub fn noted_after(self, line: &str) -> Self {
         match self {
-            Self::Tool { tool_call_id, content, post } =>
-                Self::Tool { tool_call_id, content, post: fmt!("{}{}", post, line) },
+            Self::Tool { tool_call_id, content, post, retired } =>
+                Self::Tool { tool_call_id, content, post: fmt!("{}{}", post, line), retired },
             other => other,
         }
+    }
+
+    /// The same tool result marked as sent in its retired form from now on; every other role comes
+    /// back unchanged.  The content is NOT touched: the stored conversation keeps every word
+    /// (daimond_rulings.md §17), and the mark is what lets every later request send the same stub,
+    /// byte for byte, instead of the whole result again.  See `compact::restub`.
+    pub fn as_retired(self) -> Self {
+        match self {
+            Self::Tool { tool_call_id, content, post, .. } =>
+                Self::Tool { tool_call_id, content, post, retired: true },
+            other => other,
+        }
+    }
+
+    /// Is this a tool result already sent in its retired form?  See [`ChatMessage::as_retired`].
+    pub fn is_retired(&self) -> bool {
+        matches!(self, Self::Tool { retired: true, .. })
     }
 
     /// The transcript row a user message was said as: empty for none, and for every other role.
@@ -829,12 +877,13 @@ impl ChatMessage {
     pub fn with_content(&self, content: MessageContent) -> Self {
         match self {
             Self::System { .. } => Self::System { content },
-            Self::User { pre, mid, .. } =>
-                Self::User { content, pre: pre.clone(), mid: mid.clone() },
+            Self::User { pre, mid, opens, .. } =>
+                Self::User { content, pre: pre.clone(), mid: mid.clone(), opens: *opens },
             Self::Assistant { tool_calls, .. } =>
                 Self::Assistant { content, tool_calls: tool_calls.clone() },
-            Self::Tool { tool_call_id, post, .. } =>
-                Self::Tool { tool_call_id: tool_call_id.clone(), content, post: post.clone() },
+            Self::Tool { tool_call_id, post, retired, .. } =>
+                Self::Tool { tool_call_id: tool_call_id.clone(), content, post: post.clone(),
+                    retired: *retired },
         }
     }
 }
@@ -859,11 +908,12 @@ pub fn join_notes(msgs: &[ChatMessage]) -> std::borrow::Cow<'_, [ChatMessage]> {
         return std::borrow::Cow::Borrowed(msgs);
     }
     std::borrow::Cow::Owned(msgs.iter().map(|m| match m {
-        ChatMessage::User { content, pre, mid } if !pre.is_empty() =>
-            ChatMessage::User { content: content.led_by(pre), pre: String::new(), mid: mid.clone() },
-        ChatMessage::Tool { tool_call_id, content, post } if !post.is_empty() =>
+        ChatMessage::User { content, pre, mid, opens } if !pre.is_empty() =>
+            ChatMessage::User { content: content.led_by(pre), pre: String::new(), mid: mid.clone(),
+                opens: *opens },
+        ChatMessage::Tool { tool_call_id, content, post, retired } if !post.is_empty() =>
             ChatMessage::Tool { tool_call_id: tool_call_id.clone(), content: content.trailed_by(post),
-                post: String::new() },
+                post: String::new(), retired: *retired },
         other => other.clone(),
     }).collect())
 }
@@ -1171,12 +1221,13 @@ pub fn pair_up(msgs: Vec<ChatMessage>) -> Vec<ChatMessage> {
                 });
                 // Then the replies, keeping only those that answer a call we kept.
                 for k in (i + 1)..j {
-                    if let ChatMessage::Tool { tool_call_id, content, post } = &msgs[k] {
+                    if let ChatMessage::Tool { tool_call_id, content, post, retired } = &msgs[k] {
                         if kept.iter().any(|tc| &tc.id == tool_call_id) {
                             out.push(ChatMessage::Tool {
                                 tool_call_id: tool_call_id.clone(),
                                 content:      content.clone(),
                                 post:         post.clone(),
+                                retired:      *retired,
                             });
                         }
                     }
@@ -2273,6 +2324,21 @@ mod content_tests {
         assert_eq!("", ChatMessage::assistant("a".to_string()).marked("u5".to_string()).mid());
     }
 
+    /// A turn's opening keeps its mark through the store, the join, an elision and an id, and
+    /// only a user message takes one (r578d, QA-B B1).
+    #[test]
+    fn test_a_turns_opening_keeps_its_mark_through_the_store_and_the_join() {
+        let msg = ChatMessage::user_noted("go".to_string(), NOTE.to_string()).opening()
+            .marked("u7".to_string());
+        assert!(msg.opens_turn());
+        let back = ChatMessage::from_datmap(&msg.to_datmap()).expect("read back");
+        assert_eq!(msg, back);
+        assert!(join_notes(&[msg.clone()])[0].opens_turn(), "the join dropped the mark");
+        assert!(msg.with_content(MessageContent::from("x".to_string())).opens_turn());
+        assert!(ChatMessage::user("note".to_string()).to_datmap().get(&dat!("opens")).is_none());
+        assert!(!ChatMessage::assistant("a".to_string()).opening().opens_turn());
+    }
+
     /// The elision a fold makes keeps the note with the message it belongs to.
     #[test]
     fn test_replacing_a_user_message_s_content_keeps_its_note() {
@@ -2579,6 +2645,7 @@ mod tests {
             tool_call_id: "call_123".to_string(),
             content: MessageContent::text("42"),
             post: String::new(),
+            retired: false,
         };
         let dm = msg.to_datmap();
         let msg2 = ChatMessage::from_datmap(&dm).unwrap();
@@ -2762,6 +2829,7 @@ mod tests {
             tool_call_id: fmt!("call_abc"),
             content:      MessageContent::text(fmt!("fn parse() {{}}")),
             post:         String::new(),
+            retired:      false,
         });
         s.messages.push(ChatMessage::Assistant {
             content: MessageContent::text(fmt!("It is one function.")), tool_calls: Vec::new(),

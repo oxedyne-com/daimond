@@ -5903,8 +5903,8 @@ pub fn kit_after_note(argv: &[String], kits: &[Toolkit], answer: Permit) -> Stri
 fn permit_no_clause(no: PermitNo) -> &'static str {
     match no {
         PermitNo::Refused   => "the user said not now",
-        PermitNo::TimedOut  => "the question went to the user's other device, which didn't answer \
-            in time, so the user did not say no",
+        PermitNo::TimedOut  => "the user was asked and didn't answer in time, so the user did not \
+            say no",
         PermitNo::Unasked   => "this device could not ask on the user's other device, so the user \
             did not say no",
         PermitNo::Absent    => "the user could not be asked on this device, so the user did not \
@@ -11264,12 +11264,12 @@ pub enum Permit {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PermitNo {
     Refused,    // the user said no
-    TimedOut,   // the other device did not answer in time
+    TimedOut,   // asked, here or on the other device, and not answered in time
     Unasked,    // the question could not be put to the other device
     Absent,     // the question could not be put on this device
 }
 
-/// The page's word for a permit the other device did not answer in time.
+/// The page's word for a permit asked and not answered in time.
 pub const PERMIT_TIMEOUT_WORD: &str = "deny-timeout";
 
 /// The page's word for a permit that could not be asked on the other device.
@@ -11753,8 +11753,8 @@ pub fn run_decision(mode: Mode, argv: &[String], answer: Option<Permit>) -> Egre
         Some(Permit::No(PermitNo::Refused)) => Egress::Refuse(run_refusal(argv,
             "The user was asked, and said no.", true)),
         Some(Permit::No(PermitNo::TimedOut)) => Egress::Refuse(run_refusal(argv,
-            "The question went to the user's other device, which didn't answer in time, so the \
-            user did not say no; an unanswered request is not consent.", false)),
+            "The user was asked and didn't answer in time, here or on the device the turn came \
+            from, so the user did not say no; an unanswered request is not consent.", false)),
         Some(Permit::No(PermitNo::Unasked)) => Egress::Refuse(run_refusal(argv,
             "This device could not ask on the user's other device, so the user did not say no; \
             an unasked request is not consent.", false)),
@@ -18540,22 +18540,27 @@ fn file_edited_all(path: &str, data: &str, hunks: &[(String, String)])
 // schema on every turn, so the tools array -- and the parent's cache -- does not move with the
 // choice; `spawn_context_desc!` is the one wording both builds share.
 macro_rules! spawn_context_desc { () => {
-    " context \"full\" (default): a copy of this conversation, when the task needs what was said, \
-    read, decided or attached here, or earlier workers' findings. \"brief\": role and task only, \
-    for a narrow, self-contained task when this conversation is long and unrelated, or a worker \
-    on another model (a copy works there, uncached). With \"brief\" the task must say everything."
+    " Choose how it starts with `context`. \"full\" (the default) gives it a copy of this \
+    conversation and your tools: pick it when the task needs what was said, read, decided or \
+    attached here, or earlier workers' findings. \"brief\" gives it its role and the task alone: \
+    pick it for a narrow, self-contained task when this conversation is long and unrelated, or for \
+    a worker on another model (a copy works there, but uncached). With \"brief\" the task must say \
+    everything the worker needs."
 } }
 
-// EVERY CHARACTER HERE IS PAID ON EVERY ROUND (`test_the_daimons_tool_prefix_stays_inside_its_
-// budget`), so the steering above is as short as plain allows and the schema carries no prose.
+// The tools array is cached (§17), so these words are paid once per cache, not per round: they
+// say plainly when to pick each kind, and the budget test only alarms on growth well past them.
 #[cfg(target_arch = "wasm32")]
-const SPAWN_AGENT_DESC: &str = concat!("Start a worker now on one bounded task; it runs while you \
-    work. `gather` reads its report this turn, else it reports as a later turn.",
+const SPAWN_AGENT_DESC: &str = concat!("Start one worker now on one bounded task; it runs while you \
+    keep working. Call `gather` to read its report inside this turn; a report you do not gather \
+    reaches you as a later turn. One call per worker; several calls start several workers at once.",
     spawn_context_desc!());
 
 #[cfg(not(target_arch = "wasm32"))]
-const SPAWN_AGENT_DESC: &str = concat!("Ask for a worker on one bounded task. NOTHING STARTS UNTIL \
-    THIS TURN ENDS: workers begin when you stop and report as a later turn.", spawn_context_desc!());
+const SPAWN_AGENT_DESC: &str = concat!("Ask for a worker to carry out one bounded task. NOTHING \
+    STARTS UNTIL THIS TURN ENDS: every worker asked for in a turn begins when you stop, and you \
+    cannot wait for one here -- their reports reach you as a later turn. So ask for every worker \
+    you want, finish your own answer, and stop. One call per worker.", spawn_context_desc!());
 
 /// How a worker starts: as a copy of its parent's conversation, or from its task alone.
 ///
@@ -18587,6 +18592,34 @@ impl SpawnContext {
             Self::Full  => "full",
             Self::Brief => "brief",
         }
+    }
+
+    /// The kind a started worker starts as, which is the page's to say (r578d A6): a copy was
+    /// issued (`fid`) and the page, which knows a continuation from a fresh start, answered
+    /// `cx` with the kind it set the run to.  A page that answers no `cx` predates the field,
+    /// and the issued id is all there is to go on.
+    pub fn started(fid: &str, answered: &str) -> Self {
+        if fid.is_empty() { return Self::Brief; }
+        match extract_json_string(answered, "cx").as_deref() {
+            Some("brief") => Self::Brief,
+            _             => Self::Full,
+        }
+    }
+}
+
+#[cfg(test)]
+mod spawn_context_tests {
+    use super::*;
+
+    #[test]
+    fn test_the_started_kind_is_the_one_the_page_set_not_the_one_asked_for() {
+        assert_eq!(SpawnContext::Brief, SpawnContext::started("f1", r#"{"started":true,"cx":"brief"}"#),
+            "a continuation the page started brief was called full");
+        assert_eq!(SpawnContext::Full, SpawnContext::started("f1", r#"{"started":true,"cx":"full"}"#));
+        assert_eq!(SpawnContext::Brief, SpawnContext::started("", r#"{"started":true,"cx":"full"}"#),
+            "no copy was issued, so it cannot start full");
+        assert_eq!(SpawnContext::Full, SpawnContext::started("f1", r#"{"started":true}"#),
+            "an older page's answer");
     }
 }
 
@@ -20203,7 +20236,7 @@ impl Tool {
             Tool::Runs => r#"{"type":"object","properties":{"stop":{"type":"string","description":"Stop this run. It is the IDENTIFIER from this tool's own listing, such as 'run-1-bash' -- never a process id, never a program name and never a pattern. Leave it out to list without stopping anything."},"signal":{"type":"string","description":"Which signal to send with 'stop': 'term' to ask it to stop (the default), 'kill' to insist, 'int' to interrupt it as Ctrl-C would."},"read":{"type":"string","description":"Hand over the output being held for this run from before the page reloaded. The listing names which runs have any. It is handed over once and then let go, so read it before stopping that run."}},"required":[]}"#,
             Tool::Serve => r#"{"type":"object","properties":{"act":{"type":"string","enum":["start","stop","list"],"description":"Default 'list'"},"path":{"type":"string","description":"For 'start': workspace-relative folder to serve, inside a folder added on this computer"},"port":{"type":"integer","description":"For 'start': 1024-65535 (default 8800 and up)"},"id":{"type":"string","description":"For 'stop': the identifier 'start' or 'list' gave"}},"required":[]}"#,
             Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program, then each argument separately."},"cwd":{"type":"string","description":"Workspace-relative directory to run in (default: the workspace root, where file-tool paths resolve). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit, ms (default 120000, max 900000)"},"max_bytes":{"type":"integer","description":"Output bytes carried (default 16000, max 80000)."}},"required":["argv"]}"#,
-            Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string"},"task":{"type":"string"},"context":{"type":"string","enum":["full","brief"]}},"required":["name","task"]}"#,
+            Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the worker, e.g. 'research-opfs'"},"task":{"type":"string","description":"What this worker is to do. With context full it has this conversation, so say only its own part; with brief, say everything it needs."},"context":{"type":"string","enum":["full","brief"]}},"required":["name","task"]}"#,
             Tool::Gather => r#"{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"},"description":"Worker names. Omit for every one this turn started and has not gathered."},"timeout_s":{"type":"integer","description":"Seconds to wait before answering with what has finished, 10..600. Default 600."},"partial":{"type":"boolean","description":"Answer at the FIRST report, not waiting for all. Default false."}}}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
             Tool::WebClose => r#"{"type":"object","properties":{}}"#,
@@ -21175,8 +21208,9 @@ impl Tool {
         }
         let id = extract_json_string(&answered, "id").unwrap_or_default();
         ctx.note_spawned(&id, &name);
-        // The kind it STARTS as, which is brief when a full copy was asked for and none was held.
-        let ran = if fid.is_empty() { SpawnContext::Brief } else { SpawnContext::Full };
+        // The kind it STARTS as: brief when no copy was held, or when the page set it brief (a
+        // continuation picks its own thread back up).  A report heading names the kind it RAN as.
+        let ran = SpawnContext::started(fid, &answered);
         let mut out = fmt!(
             "Worker '{}' ({}) has STARTED as a {} worker and is running now. Call gather when you \
              need its report, or finish your answer and it reports back as a later turn.",
@@ -30480,6 +30514,19 @@ impl ToolRegistry {
                 "Nothing was started. You are a dispatched worker, and a worker does not dispatch \
                 workers of its own or wait on any: do this part of the work yourself and say in \
                 your report what is left.")));
+        }
+        // NOR DOES IT ACT AS ITS PARENT (QA r578c A3).  A full copy of a daimon carries the
+        // daimon's tools array, and these six change the person's Pending panel or the parent's
+        // Diamond record -- the parent's own acts, from a turn nobody watches.  Crystal reads,
+        // recall and `link_list` stay open.
+        if ctx.is_unsupervised() && matches!(Tool::from_name(name), Some(
+            Tool::PendingRaise | Tool::PendingClear | Tool::PendingNone | Tool::StateSet
+            | Tool::LinkAdd | Tool::LinkRemove))
+        {
+            return Ok(MessageContent::text(refusal_line(
+                "Nothing was changed. You are a dispatched worker, and alerts, STATE.md and the \
+                Diamond's links are your parent's to change: say in your report what should \
+                change and why.")));
         }
         ctx.take_place_ask();
         let mut out = self.dispatch_in(name, args_json, &ctx).await;
@@ -47450,6 +47497,32 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert_ne!(CallOutcome::Refused, call_outcome(&out), "{}", out);
     }
 
+    /// **A worker is refused, at the call, every tool that changes the person's Pending panel or
+    /// the parent's Diamond** (QA r578c A3): a full copy carries the daimon's tools array for the
+    /// cache, and these are the parent's own acts.  The reads stay open.
+    #[tokio::test]
+    async fn test_a_worker_is_refused_the_parents_own_acts_at_the_call() {
+        let worker = ToolRegistry::new(Tool::daimon(), ctx());
+        worker.ctx.set_unsupervised();
+        for (n, a) in [
+            ("pending_raise", r#"{"key":"k","headline":"h","needs":true}"#),
+            ("pending_clear", r#"{"key":"k"}"#),
+            ("pending_none",  "{}"),
+            ("state_set",     r#"{"key":"Next","text":"x"}"#),
+            ("link_add",      r#"{"from":"a","to":"b","kind":"uses"}"#),
+            ("link_remove",   r#"{"from":"a","to":"b","kind":"uses"}"#),
+        ] {
+            assert!(worker.tool_names().iter().any(|x| x == n), "a worker is not offered '{}'", n);
+            let out = worker.dispatch(n, a).await.as_text().into_owned();
+            assert_eq!(CallOutcome::Refused, call_outcome(&out), "'{}' was not refused: {}", n, out);
+            assert!(out.contains("dispatched worker"), "{}", out);
+        }
+        for (n, a) in [("link_list", "{}"), ("recall", r#"{"query":"x"}"#)] {
+            let out = worker.dispatch(n, a).await.as_text().into_owned();
+            assert!(!out.contains("dispatched worker"), "a read '{}' was refused: {}", n, out);
+        }
+    }
+
     // ── r578c M: the parent chooses the worker kind (D-20261020-05) ──────
 
     /// **`context` omitted is a full copy; `"brief"` is a fresh start; anything else is a plain
@@ -49813,7 +49886,14 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         // 2026-10-19, `pending_none` OFFERED ON EVERY TURN (r578b A1, so a pending-only turn no
         // longer changes the tools array), its description 18 longer to say which turns it is for:
         // every belt now pays it, so the compound-on figure is the pending-only one, 47,499.
-        const BUDGET: usize = 47_500;
+        //
+        // 2026-10-20, AN ALARM, NOT A BUDGET (r578d).  Under §17 the tools array is a fixed
+        // prefix the provider caches: it is paid in full once per cache and at the cached rate
+        // on every later round, so a sentence of plain guidance costs almost nothing per round,
+        // and a ceiling held to the character was forcing wording a model needs out of it (the
+        // `spawn_agent` choice of full or brief).  The number now sits well above today's size,
+        // only to catch runaway growth; under it, write what is clear rather than what is short.
+        const BUDGET: usize = 60_000;
 
         set_locked_packs("");
         let belt = Tool::daimon();
@@ -49849,8 +49929,8 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             println!("[prefix]   {:>5} {:>5}  {}", d, s, n);
         }
         assert!(desc + schema <= BUDGET,
-            "the daimon's tool prefix is {} characters, over the {} budget: it is paid on every \
-            round of every turn, so weigh the addition rather than raising the number",
+            "the daimon's tool prefix is {} characters, over the {} alarm: it is cached, but it is \
+            paid in full on every cache miss, so find what grew before raising the number",
             desc + schema, BUDGET);
         // AND WHAT THE TRIAL ARM PAYS.  `compound` is held back until a tune switches it on, so
         // the figure above never carried it; the arm that does pays it on every round of every
@@ -49862,8 +49942,8 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             .map(|t| t.description().len() + t.parameters().len()).sum();
         println!("[prefix] with compound switched on: {} (compound alone {})", on, on - (desc + schema));
         assert!(on <= BUDGET,
-            "the prefix with `compound` switched on is {} characters, over the {} budget: tighten \
-            the text, which is paid on every round of the trial arm, and do not raise the number",
+            "the prefix with `compound` switched on is {} characters, over the {} alarm: find what \
+            grew before raising the number",
             on, BUDGET);
         // AND A PENDING-ONLY TURN PAYS THE SAME, byte for byte: `pending_none` is offered on
         // every turn (r578b A1), so the turn that may call it changes nothing in the request.

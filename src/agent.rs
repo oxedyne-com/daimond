@@ -265,6 +265,15 @@ impl Fold {
 }
 
 
+/// What [`Agent::fold_plan`] decided: the figures the fold works to, and where it cuts.
+struct FoldPlan {
+	budget:  u64,					// tokens the request must fit
+	ceiling: u64,					// bytes, the budget less the tool schemas
+	gain:    u64,					// tokens a pass must free to be worth its cost
+	cut:     usize,					// messages folded; 0 shortens the copy only
+	pin:     Option<ChatMessage>,	// the turn's opening, set back behind the notice
+}
+
 /// What a pass of [`Agent::fold_if_needed`] did to the request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refit {
@@ -840,6 +849,10 @@ impl Agent {
             // reachable rather than read as "absent".
             if let Some(n) = crate::llm::extract_json_number(text, "retire_keep_turns") {
                 l.retire_keep_turns = n as u32;
+            }
+            // Nought is the pre-D-20261020-11 rule, every boundary, and an arm wants it.
+            if let Some(f) = crate::llm::extract_json_f64(text, "retire_at") {
+                l.retire_at = f.clamp(0.0, 1.0);
             }
             if let Some(n) = crate::llm::extract_json_number(text, "result_age") {
                 if n > 0 { l.result_age = n as usize; }
@@ -1441,7 +1454,7 @@ impl Agent {
         *self.turn_pre.borrow_mut() = pre.clone();
         let pre = crate::prompts::join_note(&blocks, &pre);
         // Append the user message to the persisted history.
-        session.messages.push(ChatMessage::user_noted(user_msg, pre).marked(mid));
+        session.messages.push(ChatMessage::user_noted(user_msg, pre).marked(mid).opening());
 
         // Build the working conversation: system prompt + history.
         let mut working = Vec::with_capacity(session.messages.len() + 1);
@@ -1497,8 +1510,21 @@ impl Agent {
         let mut prior = session.messages.clone();
         // Under a switch, so the measure can be turned off and its worth measured rather than
         // asserted -- see `Agent::set_tune`. On by default, which is what shipped.
+        //
+        // ONLY PAST THE LINE (D-20261020-11). What went out short before goes out short again,
+        // byte for byte, so the cached prefix holds; anything newer is retired only once the
+        // conversation nears the fold, once, and marked so it stays that way. See
+        // `compact::RETIRE_AT`.
         if self.limits.borrow().retire_prior {
-            compact::retire_upto(&mut prior, self.prior_end.get());
+            compact::restub(&mut prior);
+            let line = self.limits.borrow().retire_line(self.reply_cap());
+            let est = self.gauge.tokens(compact::conversation_bytes(&working)
+                + compact::conversation_bytes(&prior));
+            if compact::past_line(est, session.last_prompt_tokens, line)
+                && compact::retire_upto(&mut prior, self.prior_end.get()) > 0
+            {
+                compact::carry_retired(&mut session.messages, &prior);
+            }
         }
         working.extend(prior);
 
@@ -1815,6 +1841,11 @@ impl Agent {
         // rounds.  A model not proven to take pictures is told to the tool as blind, so a picture
         // is never spent on a model that has not been shown to read one.
         registry.ctx.set_blind(!self.llm.sight_proven());
+        // A call that never returns, for the tests of a Stop that lands mid-call.
+        #[cfg(test)]
+        if tc.name == HANGS {
+            return std::future::pending().await;
+        }
         self.over_the_road(registry, &tc.name, &tc.arguments, on_event).await
     }
 
@@ -2046,7 +2077,12 @@ impl Agent {
             // the loop awaits below, and a `RefCell` borrow held across an await is a panic
             // waiting for a second caller.
             let limits = self.limits.borrow().clone();
-            compact::sweep_in_turn(&mut working, &round_at, &limits);
+            let past = compact::past_line(
+                self.gauge.tokens(compact::conversation_bytes(&working) + schema),
+                session.last_prompt_tokens, limits.retire_line(self.reply_cap()));
+            if compact::sweep_in_turn(&mut working, &round_at, &limits, past) > 0 {
+                compact::carry_retired(&mut session.messages, &working);
+            }
             let (swept, sweep_every) = (round_at.len(), limits.sweep_every.max(1));
             let mut sent = compact::conversation_bytes(&working);
 
@@ -2503,7 +2539,13 @@ impl Agent {
                 let closed: Vec<bool> = group.iter().map(|tc| state.refuses(&tc.name)).collect();
                 let shut = state.refusal();
                 let truncated = resp.truncated;
-                let outs: Vec<Outcome<MessageContent>> = if group.len() == 1 {
+                // RACED AGAINST THE TURN'S STOP (QA r578c A2).  A halt was read only between
+                // calls, so a call that never returned -- a page bridge that wedged, a question
+                // nobody answers -- held Stop and pause off for good, and with them the bill, the
+                // report and the gather the page runs when a turn ends.  Claude Code's Esc
+                // interrupts a running tool; so does this.
+                let halt = self.llm.halt();
+                let run = async { if group.len() == 1 {
                     if pre[0] {
                         // Answered in the record loop below, once the original's outcome is known.
                         vec![Ok(MessageContent::text(String::new()))]
@@ -2534,6 +2576,33 @@ impl Agent {
                         })
                         .collect();
                     batch::all_of(futs).await
+                } };
+                let outs: Vec<Outcome<MessageContent>> = match batch::unless(run, halt.fired()).await {
+                    Some(outs) => outs,
+                    None       => {
+                        // Every call of the group is answered as stopped, in the model's order and
+                        // with the events alternating as ever; what the group's calls wrote to
+                        // their sinks before the Stop is dropped with them.  The calls after the
+                        // group are paired off, and the turn ends at this seam.
+                        for (n, tc) in group.iter().enumerate() {
+                            if n > 0 {
+                                on_event(Self::announce(tc));
+                            }
+                            let text = STOPPED_CALL.to_string();
+                            on_event(AgentEvent::ToolResult {
+                                name:    tc.name.clone(),
+                                result:  text.clone(),
+                                outcome: crate::tools::CallOutcome::Failed,
+                                paused:  String::new(),
+                                class:   String::new(),
+                            });
+                            let reply = ChatMessage::tool(tc.id.clone(), MessageContent::text(text));
+                            working.push(reply.clone());
+                            session.messages.push(reply);
+                        }
+                        self.abandon_round(session, &mut working);
+                        return self.stop_halted(rounds, &claims, Some(registry), on_event).await;
+                    },
                 };
                 for (n, (tc, out)) in group.iter().zip(outs).enumerate() {
                     // Announced here for every call after the first, whose announcement went out
@@ -3178,6 +3247,139 @@ impl Agent {
         compact::looks_like_overflow(e, self.gauge.tokens(bytes), budget)
     }
 
+    /// Whether a fold is due and where it would cut, decided before anything is asked of a
+    /// model.  [`Agent::fold_if_needed`] acts on it, and the Wire asks it of the conversation a
+    /// turn will open on (r578d B3), so the two cannot disagree about a turn that folds first.
+    /// `None` is no fold; a plan with `cut` 0 shortens the sent copy and folds nothing.
+    ///
+    /// # Arguments
+    /// * `est` - The estimated tokens of the request, tool schemas included.
+    /// * `real` - The provider's own prompt tokens from the last round, 0 where none is known.
+    /// * `ts` - The index of the turn's opening message, `usize::MAX` for none to keep.
+    /// * `rest` - Tokens the carry must reach before an unforced pass runs again.
+    fn fold_plan(&self, msgs: &[ChatMessage], est: u64, real: u64, schema: u64, why: Fold,
+        ts: usize, rest: u64)
+        -> Option<FoldPlan>
+    {
+        let (budget, tail) = {
+            let l = self.limits.borrow();
+            let cap = self.reply_cap();
+            (l.budget(cap), l.tail_budget(cap))
+        };
+        // Size read two ways -- the up-front byte estimate and the provider's real prompt_tokens
+        // from the last round -- because the estimate under-counts and can sit under budget while
+        // the real carry has passed it. `last_prompt_tokens` refreshes after this round's own send,
+        // so a fold prompted by it is corrected within the round and does not repeat once the carry
+        // is back under. See `compact::needs_fold`.
+        if !compact::needs_fold(est, real, budget, why.forces()) {
+            return None;
+        }
+        // AN EARLIER PASS THIS TURN COULD NOT GET UNDER THE TARGET, so the same pass is not run
+        // again until the carry has grown by a fold's worth.  See `Agent::fold_rest`.
+        if !why.forces() && est < rest {
+            return None;
+        }
+        let gain = (budget as f64 * compact::MIN_FOLD_GAIN) as u64;
+        // The hard ceiling is the budget itself: however few messages that leaves, a tail
+        // bigger than what may be sent is a fold that changed nothing.
+        let ceiling = self.gauge.bytes(budget).saturating_sub(schema);
+        let keep = self.gauge.bytes(tail).min(ceiling);
+        let mut cut = compact::tail_start(&msgs, keep, compact::MIN_KEEP_MESSAGES,
+            ceiling);
+        // A FOLD AT THE ROUND LIMIT THAT FOLDS NOTHING IS THE COMMON CASE, not the rare one.
+        // `tail_start` answers 0 whenever the whole conversation fits the tail budget, and a
+        // turn stopped at ten rounds has not filled 48,000 tokens -- so the leg that continues
+        // started from the raw log with no plan in front of it, and no summary was ever made.
+        // That is why a fold fired once in four hundred and twenty-two bank trials.  At this one
+        // door the question is different: the log is about to be re-sent on every round of the
+        // next leg, so it is worth replacing with a note.  See `compact::capped_cut`, which
+        // answers 0 when there is genuinely nothing worth folding.
+        let capped = cut == 0 && why.at_the_cap();
+        if capped {
+            cut = compact::capped_cut(&msgs, ceiling);
+        }
+        // THE TURN'S OWN ASK SURVIVES A CUT THROUGH THE TURN.  The cut may land inside the turn
+        // in flight -- a floor at its start would stop a long turn ever folding -- so the
+        // opening message is set back verbatim behind the notice, and its bytes come out of the
+        // tail it joins: the cut is chosen again against what is left, which only moves it
+        // later.  See `compact::pinned_opening`.
+        if let Some(p) = compact::pinned_opening(&msgs, ts, cut) {
+            let pb   = compact::msg_bytes(p);
+            let ceil = ceiling.saturating_sub(pb);
+            cut = if capped {
+                compact::capped_cut(&msgs, ceil)
+            } else {
+                compact::tail_start(&msgs, keep.saturating_sub(pb),
+                    compact::MIN_KEEP_MESSAGES, ceil)
+            };
+        }
+        let pin = compact::pinned_opening(&msgs, ts, cut).cloned();
+        // A FOLD THAT FREES TOO LITTLE IS NOT PAID FOR.  A cut over nothing but an earlier fold
+        // note re-summarises a summary, and one that frees less than a tenth of the budget, net
+        // of the note it writes, is re-triggered by the next tool result: on 2026-10-12 that was
+        // sixteen paid summaries in sixteen rounds, each folding one message or none.  A forced
+        // fold is asked for whatever it frees, so only the first test binds it.
+        if cut > 0 {
+            let only_notes = msgs[..cut].iter().all(compact::is_fold_notice);
+            let freed = compact::conversation_bytes(&msgs[..cut]);
+            let worth = self.gauge.bytes(gain + compact::FOLD_MAX_TOKENS as u64);
+            if only_notes || (!why.forces() && freed < worth) {
+                cut = 0;
+            }
+        }
+        Some(FoldPlan { budget, ceiling, gain, cut, pin })
+    }
+
+    /// Will a turn opening on `prior` fold before its first request?  The question
+    /// [`Agent::run_turn_noted`] meets at its first round, asked of the request it would build:
+    /// the system message, the earlier turns retired, and the turn's own note.  The words the
+    /// user is about to send are not known here, so they count as none.
+    pub fn opens_with_fold(&self, prior: &[ChatMessage], registry: &ToolRegistry) -> bool {
+        let note = crate::prompts::turn_note(&self.blocks.borrow(), prior);
+        let mut msgs = prior.to_vec();
+        msgs.push(ChatMessage::user_noted(String::new(), note));
+        let mut sent = msgs.clone();
+        let (keep, retire) = {
+            let l = self.limits.borrow();
+            (l.retire_keep_turns, l.retire_prior)
+        };
+        if retire {
+            compact::retire_upto(&mut sent, compact::prior_end(&msgs, keep));
+        }
+        // The system message as the turn composes it (see `run_turn_noted`), counted the same way.
+        let system = match self.system_prompt.is_empty() {
+            true  => 0,
+            false => {
+                let (mut sys, tools, brief) = self.system_parts(registry);
+                for part in [tools, brief] {
+                    if !part.is_empty() {
+                        sys.push_str("\n\n");
+                        sys.push_str(&part);
+                    }
+                }
+                compact::msg_bytes(&ChatMessage::system(sys))
+            },
+        };
+        let schema = match registry.is_empty() {
+            true  => 0,
+            false => registry.definitions_json().map(|d| d.len() as u64).unwrap_or(0),
+        };
+        let est = self.gauge.tokens(system + compact::conversation_bytes(&sent) + schema);
+        match self.fold_plan(&msgs, est, 0, schema, Fold::IfNeeded, msgs.len() - 1, 0) {
+            Some(p) => p.cut > 0,
+            None    => false,
+        }
+    }
+
+    /// The note a turn opening on `prior` sends, for the Wire: only the blocks changed since
+    /// their last copy, or every block where the turn folds first and restates them all.
+    pub fn wire_note(&self, prior: &[ChatMessage], registry: &ToolRegistry) -> String {
+        match self.opens_with_fold(prior, registry) {
+            true  => crate::prompts::turn_note(&self.blocks.borrow(), &[]),
+            false => crate::prompts::turn_note(&self.blocks.borrow(), prior),
+        }
+    }
+
     /// Fold the conversation if it no longer fits, and rebuild `working` from what is left.
     ///
     /// Returns whether anything changed.  Two mechanisms, tried in that order and both
@@ -3218,28 +3420,21 @@ impl Agent {
             let refused = self.gauge.tokens(compact::conversation_bytes(working) + schema);
             self.limits.borrow_mut().learn_from_refusal(refused);
         }
-        let (budget, tail, model, shape) = {
+        let (model, shape) = {
             let l = self.limits.borrow();
-            let cap = self.reply_cap();
-            (l.budget(cap), l.tail_budget(cap), l.fold_model.clone(), l.fold_shape)
+            (l.fold_model.clone(), l.fold_shape)
         };
         let before = compact::conversation_bytes(&session.messages);
-        // Size read two ways -- the up-front byte estimate and the provider's real prompt_tokens
-        // from the last round -- because the estimate under-counts and can sit under budget while
-        // the real carry has passed it. `last_prompt_tokens` refreshes after this round's own send,
-        // so a fold prompted by it is corrected within the round and does not repeat once the carry
-        // is back under. See `compact::needs_fold`.
         let est = self.gauge.tokens(compact::conversation_bytes(working) + schema);
-        if !compact::needs_fold(est, session.last_prompt_tokens, budget, why.forces()) {
-            return Refit::Untouched;
-        }
-        // AN EARLIER PASS THIS TURN COULD NOT GET UNDER THE TARGET, so the same pass is not run
-        // again until the carry has grown by a fold's worth.  See `Agent::fold_rest`.
-        if !why.forces() && est < self.fold_rest.get() {
-            return Refit::Untouched;
-        }
-        let gain = (budget as f64 * compact::MIN_FOLD_GAIN) as u64;
-
+        // A fold the user asked for runs between turns, where `turn_start` names the last turn's
+        // opening and pinning it would carry an old request forward.  See `Agent::fold_plan`.
+        let ts = if matches!(why, Fold::ByHand) { usize::MAX } else { self.turn_start.get() };
+        let FoldPlan { budget, ceiling, gain, cut, pin } = match self.fold_plan(&session.messages,
+            est, session.last_prompt_tokens, schema, why, ts, self.fold_rest.get())
+        {
+            Some(p) => p,
+            None    => return Refit::Untouched,
+        };
         let mut folded  = 0usize;
         let mut trouble = String::new();
         // WHO WROTE THE SUMMARY, for the product record its notice carries: the model the fold
@@ -3250,56 +3445,6 @@ impl Agent {
         let mut by_sp    = String::new();
         // Whether the note came back in the layout, which the feed carries and the bank counts.
         let mut structured = false;
-        // The hard ceiling is the budget itself: however few messages that leaves, a tail
-        // bigger than what may be sent is a fold that changed nothing.
-        let ceiling = self.gauge.bytes(budget).saturating_sub(schema);
-        let keep = self.gauge.bytes(tail).min(ceiling);
-        let mut cut = compact::tail_start(&session.messages, keep, compact::MIN_KEEP_MESSAGES,
-            ceiling);
-        // A FOLD AT THE ROUND LIMIT THAT FOLDS NOTHING IS THE COMMON CASE, not the rare one.
-        // `tail_start` answers 0 whenever the whole conversation fits the tail budget, and a
-        // turn stopped at ten rounds has not filled 48,000 tokens -- so the leg that continues
-        // started from the raw log with no plan in front of it, and no summary was ever made.
-        // That is why a fold fired once in four hundred and twenty-two bank trials.  At this one
-        // door the question is different: the log is about to be re-sent on every round of the
-        // next leg, so it is worth replacing with a note.  See `compact::capped_cut`, which
-        // answers 0 when there is genuinely nothing worth folding.
-        let capped = cut == 0 && why.at_the_cap();
-        if capped {
-            cut = compact::capped_cut(&session.messages, ceiling);
-        }
-        // THE TURN'S OWN ASK SURVIVES A CUT THROUGH THE TURN.  The cut may land inside the turn
-        // in flight -- a floor at its start would stop a long turn ever folding -- so the
-        // opening message is set back verbatim behind the notice, and its bytes come out of the
-        // tail it joins: the cut is chosen again against what is left, which only moves it
-        // later.  A fold the user asked for runs between turns, where `turn_start` names the
-        // last turn's opening and pinning it would carry an old request forward.  See
-        // `compact::pinned_opening`.
-        let ts = if matches!(why, Fold::ByHand) { usize::MAX } else { self.turn_start.get() };
-        if let Some(p) = compact::pinned_opening(&session.messages, ts, cut) {
-            let pb   = compact::msg_bytes(p);
-            let ceil = ceiling.saturating_sub(pb);
-            cut = if capped {
-                compact::capped_cut(&session.messages, ceil)
-            } else {
-                compact::tail_start(&session.messages, keep.saturating_sub(pb),
-                    compact::MIN_KEEP_MESSAGES, ceil)
-            };
-        }
-        let pin = compact::pinned_opening(&session.messages, ts, cut).cloned();
-        // A FOLD THAT FREES TOO LITTLE IS NOT PAID FOR.  A cut over nothing but an earlier fold
-        // note re-summarises a summary, and one that frees less than a tenth of the budget, net
-        // of the note it writes, is re-triggered by the next tool result: on 2026-10-12 that was
-        // sixteen paid summaries in sixteen rounds, each folding one message or none.  A forced
-        // fold is asked for whatever it frees, so only the first test binds it.
-        if cut > 0 {
-            let only_notes = session.messages[..cut].iter().all(compact::is_fold_notice);
-            let freed = compact::conversation_bytes(&session.messages[..cut]);
-            let worth = self.gauge.bytes(gain + compact::FOLD_MAX_TOKENS as u64);
-            if only_notes || (!why.forces() && freed < worth) {
-                cut = 0;
-            }
-        }
         let mut summarised = false;
         if cut > 0 {
             // Built before the summarising call, so a call that fails still leaves a
@@ -3414,8 +3559,12 @@ impl Agent {
         // The same switch the outbound seam is under, and it has to be the SAME switch: retiring
         // here while the turn did not would hand the fold a shorter history than the turn is
         // carrying, and a fold is the one place that difference becomes permanent.
+        // A fold is a new cache epoch, so retiring here costs nothing the fold had not; marked, so
+        // the turns after it send the same stubs (D-20261020-11).
         if self.limits.borrow().retire_prior {
+            compact::restub(&mut sent);
             compact::retire_upto(&mut sent, self.prior_end.get().min(session.messages.len()));
+            compact::carry_retired(&mut session.messages, &sent);
         }
         //
         // TO THE TARGET, NOT TO THE LINE.  Shortened only until it was under the trigger, the
@@ -4118,6 +4267,11 @@ pub enum Settled {
 	Unrun,		// past `TRUNCATED_CALL_CAP` on a cut reply
 }
 
+/// What a tool call the person stopped while it ran is answered with.  It may have partly run,
+/// and the model is told so rather than left to assume it did nothing.
+const STOPPED_CALL: &str = "Stopped: the person stopped the turn while this call was running. \
+    It may have partly run; check before relying on its effect.";
+
 /// Settle a reply's calls before any of them runs.
 ///
 /// Lens turn `mv42uu3m-9m-0hlao` (2026-10-12): one reply, cut at its output limit, carried 390
@@ -4223,6 +4377,10 @@ pub fn build_tls_client_config() -> Outcome<Arc<ClientConfig>> {
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Tests                                                          │
 // └───────────────────────────────────────────────────────────────┘
+
+/// The name of a test tool whose call never returns (`Agent::one_call`).
+#[cfg(test)]
+const HANGS: &str = "test_hangs";
 
 #[cfg(test)]
 mod tests {
@@ -4863,6 +5021,49 @@ mod tests {
         }
     }
 
+    /// r578d B3: the Wire's note is the note the turn sends.  A turn that opens with a fold restates
+    /// every block whole, and the Wire, asking the same fold plan, shows that and not a delta.
+    #[tokio::test]
+    async fn test_the_wire_note_is_the_turns_when_the_turn_opens_with_a_fold() {
+        let blocks = appendonly_blocks("STATE-ONE", &appendonly_tree(20, None));
+        let whole = crate::prompts::turn_note(&blocks, &[]);
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![completion(structured_fold_reply()), plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        session.messages[0] = ChatMessage::user_noted(fmt!("ask 0"), whole.clone());
+        a.set_blocks(blocks.clone());
+        let delta = crate::prompts::turn_note(&blocks, &session.messages);
+        assert_ne!(whole, delta, "unfolded, the note would be the same, so the test proves nothing");
+        let shown = a.wire_note(&session.messages, &no_tools());
+        assert_eq!(whole, shown, "the Wire showed a delta for a turn that folds first");
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("carry on"), &no_tools(),
+            &mut |ev| events.push(ev)).await;
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. })),
+            "nothing was folded, so the turn did not open with a fold");
+        let bodies = sent_bodies(&seen);
+        let req = match bodies.iter().rev().find(|b| b.contains("carry on")) {
+            Some(b) => b.clone(),
+            None    => panic!("the turn's own request was not sent"),
+        };
+        let (_, msgs) = sent_messages(&req);
+        let last = match msgs.last() { Some(m) => m.clone(), None => panic!("no messages") };
+        assert!(last.contains(&crate::llm::json_escape(&shown)),
+            "the turn sent a different note from the Wire's: {}", last);
+
+        // And a turn that does not fold is shown the changes only, as it sends them.
+        let b = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        b.set_context_window(1_310_720);
+        b.set_blocks(blocks.clone());
+        let small = foldable_session(30, 3_000);
+        let mut prior = small.messages.clone();
+        prior[0] = ChatMessage::user_noted(fmt!("ask 0"), whole.clone());
+        assert!(!b.opens_with_fold(&prior, &no_tools()), "a wide window folded");
+        assert_eq!(crate::prompts::turn_note(&blocks, &prior), b.wire_note(&prior, &no_tools()));
+    }
+
     /// A correction said into a running turn takes its note with it, into the next round's
     /// request, and the event the page draws it from carries the words only.
     #[tokio::test]
@@ -5127,6 +5328,49 @@ mod tests {
         let answered = session.messages.iter().filter(|m| matches!(m, ChatMessage::Tool { .. }))
             .count();
         assert_eq!((1, 1), (asked, answered));
+        assert!(matches!(events.last(), Some(AgentEvent::Done)));
+    }
+
+    /// A Stop or a pause that lands WHILE a tool call is running ends the turn at once, not when
+    /// the call returns: the call is answered as stopped and the turn ends `Stopped`, so the
+    /// page's settle path runs (QA r578c A2).  Claude Code's Esc interrupts a running tool.
+    #[tokio::test]
+    async fn test_a_stop_during_a_tool_call_ends_the_turn_at_once() {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[(HANGS, "{}")]),
+            tool_round(&[("file_write", r#"{"path":"b.txt","content":"2"}"#)]),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let halt = a.llm.halt();
+        let mut session = Session::new(fmt!("s1"), fmt!("stop"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let mut keep = |ev: AgentEvent| events.push(ev);
+        let (ran, ()) = tokio::join!(
+            tokio::time::timeout(std::time::Duration::from_secs(5),
+                a.run_turn(&mut session, fmt!("go"), &registry, &mut keep)),
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                halt.fire();
+            });
+        let ran = match ran {
+            Ok(r)  => r,
+            Err(_) => panic!("Stop did not end a turn whose tool call never returns"),
+        };
+        assert!(ran.is_ok(), "a stopped turn is a clean stop: {:?}", ran.err());
+        assert_eq!(Some(TurnEnd::Stopped), a.ending().map(|e| e.how));
+        assert_eq!(1, crate::llm::tests::connections(&seen), "a request went out after the Stop");
+        // The abandoned call is answered, plainly, so the conversation a Continue sends is whole.
+        let replies: Vec<String> = session.messages.iter().filter_map(|m| match m {
+            ChatMessage::Tool { .. } => Some(m.text().to_string()),
+            _                        => None,
+        }).collect();
+        assert_eq!(1, replies.len(), "the stopped call is not answered: {:?}", replies);
+        assert!(replies[0].contains("Stopped"), "not a plain stopped result: {}", replies[0]);
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::ToolResult { result, .. }
+            if result.contains("Stopped"))), "the page was not told the call was stopped");
         assert!(matches!(events.last(), Some(AgentEvent::Done)));
     }
 
@@ -5595,7 +5839,7 @@ mod tests {
         let mut llm = crate::llm::tests::stub_client(port);
         llm.retry.max_attempts = 1;
         let a = Agent::new(llm, "You are Daimond.");
-        if let Err(e) = a.set_tune(r#"{"retire_keep_turns":0}"#) { panic!("{}", e); }
+        if let Err(e) = a.set_tune(r#"{"retire_keep_turns":0,"retire_at":0}"#) { panic!("{}", e); }
         let mut session = Session::new(fmt!("s1"), fmt!("retire"), fmt!("model"));
         let body = "source line\n".repeat(2_000);
         session.messages.push(ChatMessage::user("read it"));
@@ -5639,6 +5883,8 @@ mod tests {
         let mut llm = crate::llm::tests::stub_client(port);
         llm.retry.max_attempts = 1;
         let a = Agent::new(llm, "You are Daimond.");
+        // The mechanism, not the line: a conversation this small is retired only with the line at nought.
+        if let Err(e) = a.set_tune(r#"{"retire_at":0}"#) { panic!("{}", e); }
         let mut session = Session::new(fmt!("s1"), fmt!("keep"), fmt!("model"));
         // Two finished turns, each a read of its own file, so one figure tells them apart.
         for (id, path, line) in [("r1", "src/a.rs", "older line\n"), ("r2", "src/b.rs", "newer line\n")] {
@@ -5668,6 +5914,48 @@ mod tests {
              than moved back one turn");
         assert!(sent.contains("file_read src/a.rs 1-200"),
             "the older turn's retired result does not name the call that made it");
+    }
+
+    /// Two finished turns, each a read of its own file, so one figure tells them apart.
+    fn two_read_turns(session: &mut Session) {
+        for (id, path, line) in [("r1", "src/a.rs", "older line\n"), ("r2", "src/b.rs", "newer line\n")] {
+            session.messages.push(ChatMessage::user(fmt!("read {}", path)).opening());
+            session.messages.push(ChatMessage::Assistant {
+                content:    MessageContent::text(""),
+                tool_calls: vec![crate::protocol::ToolCall {
+                    id: fmt!("{}", id), name: fmt!("file_read"),
+                    arguments: fmt!(r#"{{"path":"{}","offset":1,"end":200}}"#, path),
+                }],
+            });
+            session.messages.push(ChatMessage::tool(fmt!("{}", id), line.repeat(2_000)));
+            session.messages.push(ChatMessage::assistant("I have read it."));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_below_the_line_a_finished_turn_goes_whole_00() {
+        // D-20261020-11, "Only past a size line" (QA-B r578c B2). Retiring at every turn boundary
+        // rewrote the turn before last on every turn, and each rewrite re-billed the conversation
+        // from there at the full input rate. A conversation well under the line keeps every
+        // result whole, so a turn is a pure extension of the last one and the cache carries it.
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("line"), fmt!("model"));
+        two_read_turns(&mut session);
+        let _ = a.run_turn(&mut session, fmt!("now change it"), &registry, &mut |_| {}).await;
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's record: {}", e),
+        };
+        assert!(!bodies.is_empty(), "no request reached the provider");
+        let sent = bodies.join("\n");
+        assert!(sent.contains("older line\\nolder line") && sent.contains("newer line\\nnewer line"),
+            "a result was shortened in a conversation of ~12k tokens, far under the line");
+        assert!(!sent.contains("retired; call it again"), "a stub went out below the line");
     }
 
     /// The request a ten-round turn ends on, each round costing `usd` of the five-dollar ceiling,
@@ -6839,7 +7127,7 @@ mod tests {
         llm.retry.max_attempts = 1;
         let a = Agent::new(llm, "You are Daimond.");
         a.set_max_rounds(12);
-        if let Err(e) = a.set_tune(r#"{"sweep_every":1,"result_age":3}"#) {
+        if let Err(e) = a.set_tune(r#"{"sweep_every":1,"result_age":3,"retire_at":0}"#) {
             panic!("the tune must be taken: {}", e);
         }
         let mut session = Session::new(fmt!("s1"), fmt!("retire"), fmt!("model"));

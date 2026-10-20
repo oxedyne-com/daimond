@@ -55,13 +55,38 @@ impl Fork {
 			+ self.tools.as_ref().map(|t| t.len()).unwrap_or(0)
 			+ crate::agent::compact::conversation_bytes(&self.messages) as usize
 	}
+
+	/// The memory the copy holds, in bytes.  Unlike [`Fork::bytes`], which weighs a picture by
+	/// what it costs the model, this counts its raw bytes, which is what the store keeps.
+	pub fn held_bytes(&self) -> usize {
+		let mut n = self.system.len() + self.tools.as_ref().map(|t| t.len()).unwrap_or(0);
+		for m in &self.messages {
+			let mut w = crate::agent::compact::msg_bytes(m) as usize;
+			for img in m.content().images() {
+				w = w.saturating_sub(crate::agent::compact::image_bytes(img) as usize);
+				w += img.data.len() + img.source.len();
+			}
+			n += w;
+		}
+		for (k, v) in &self.carry {
+			n += k.len() + v.iter().map(|t| t.len()).sum::<usize>();
+		}
+		n
+	}
 }
 
 // Issued copies
 //
-// Bounded, oldest out: a worker that never reached its app leaves its copy here until 64 more have
-// been issued.  A Mutex and not a thread-local, because the native tool loop may hop threads.
-const ISSUED_MAX: usize = 64;
+// Bounded by the memory they hold, oldest out.  A Mutex and not a thread-local, because the
+// native tool loop may hop threads.
+//
+// 32 MiB, because the page runs at most 8 workers at once (`Workers.MAX`) and each may hold a
+// copy from a different round.  A copy's text is bounded by compaction (120k tokens, about
+// 480 KB), so what fills the store is pictures: 8 copies of a conversation carrying a few
+// photos (about 4 MiB each) fit, and that is a small share of a phone tab's memory.  A copy is
+// counted once however many workers of one fan-out share it, and the newest is always kept,
+// whatever its size, so the worker it was issued for still finds it.
+const ISSUED_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 static ISSUED: Mutex<Vec<(String, Arc<Fork>)>> = Mutex::new(Vec::new());
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -78,11 +103,66 @@ pub fn issue(f: Arc<Fork>) -> String {
 	let id = fmt!("f{}", NEXT.fetch_add(1, Ordering::Relaxed));
 	let mut g = issued();
 	g.push((id.clone(), f));
-	if g.len() > ISSUED_MAX {
-		let drop = g.len() - ISSUED_MAX;
-		g.drain(..drop);
-	}
+	trim(&mut g, ISSUED_MAX_BYTES);
 	id
+}
+
+/// Drop the oldest copies until the distinct copies held weigh at most `cap` bytes, keeping the
+/// newest whatever its size.
+fn trim(v: &mut Vec<(String, Arc<Fork>)>, cap: usize) {
+	loop {
+		let mut seen: Vec<&Arc<Fork>> = Vec::new();
+		let mut total = 0usize;
+		for (_, f) in v.iter() {
+			if !seen.iter().any(|s| Arc::ptr_eq(s, f)) {
+				total += f.held_bytes();
+				seen.push(f);
+			}
+		}
+		if total <= cap || v.len() <= 1 { return; }
+		v.remove(0);
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::protocol::ImageMedia;
+	use crate::protocol::ImagePart;
+	use crate::protocol::MessageContent;
+	use crate::protocol::ContentPart;
+
+	fn pictured(n: usize) -> Arc<Fork> {
+		let img = ImagePart::new(ImageMedia::Png, vec![0u8; n], "p.png".to_string());
+		Arc::new(Fork {
+			messages: vec![ChatMessage::user(MessageContent::Parts(vec![ContentPart::Image(img)]))],
+			..Default::default()
+		})
+	}
+
+	#[test]
+	fn test_a_copy_is_weighed_by_its_raw_picture_bytes() {
+		let f = pictured(1_000_000);
+		assert!(f.held_bytes() >= 1_000_000, "held {} for a 1 MB picture", f.held_bytes());
+	}
+
+	#[test]
+	fn test_the_store_is_bounded_by_bytes_oldest_out_and_a_shared_copy_counts_once() {
+		let mut v: Vec<(String, Arc<Fork>)> = Vec::new();
+		let shared = pictured(400_000);
+		for i in 0..3 { v.push((fmt!("s{}", i), shared.clone())); }
+		trim(&mut v, 1_000_000);
+		assert_eq!(v.len(), 3, "one copy shared by a fan-out was counted three times");
+		v.push((fmt!("a"), pictured(400_000)));
+		v.push((fmt!("b"), pictured(400_000)));
+		trim(&mut v, 1_000_000);
+		let ids: Vec<&str> = v.iter().map(|(k, _)| k.as_str()).collect();
+		assert_eq!(ids, vec!["a", "b"], "the oldest copy did not go first");
+		v.push((fmt!("huge"), pictured(5_000_000)));
+		trim(&mut v, 1_000_000);
+		let ids: Vec<&str> = v.iter().map(|(k, _)| k.as_str()).collect();
+		assert_eq!(ids, vec!["huge"], "the newest copy must stay, whatever its size");
+	}
 }
 
 /// The copy filed under `id`, left in place so a re-minted worker can take it again.

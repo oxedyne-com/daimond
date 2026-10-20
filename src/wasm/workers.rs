@@ -102,7 +102,9 @@ pub async fn spawn(payload: &str) -> Outcome<String> {
 /// * `payload` - `{"ids":[…],"timeout_ms":…,"partial":…}` as the tool composed it.
 pub async fn await_reports(payload: &str) -> Outcome<String> {
     let p = res!(pump("awaitReports"));
-    match crate::wasm::settle_call(p.await_reports(payload)).await {
+    match crate::wasm::settle_call_within(p.await_reports(payload), crate::wasm::door_bound(payload))
+        .await
+    {
         Ok(v)  => answered(v),
         Err(e) => Err(err!("{}", refusal(&e); IO, Invalid)),
     }

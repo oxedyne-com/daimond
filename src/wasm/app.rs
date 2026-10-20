@@ -1223,9 +1223,10 @@ impl DaimondApp {
                 match js_prop(&item, "role").unwrap_or_default().as_str() {
                     // A person's message keeps the app's note the page stored beside it, so the model
                     // reads the same history after a reload as before it.
+                    // A prose transcript's user rows are what turns were run on, so each opens one.
                     "user"      => session.messages.push(ChatMessage::user_noted(
                         content, js_prop(&item, "pre").unwrap_or_default())
-                        .marked(js_prop(&item, "mid").unwrap_or_default())),
+                        .marked(js_prop(&item, "mid").unwrap_or_default()).opening()),
                     "assistant" => session.messages.push(ChatMessage::assistant(content)),
                     _ => continue,
                 }
@@ -1352,7 +1353,7 @@ impl DaimondApp {
     {
         Session::write_held(&self.session, |session| match role.as_str() {
             "user"      => session.messages.push(ChatMessage::user_noted(
-                content, pre.unwrap_or_default()).marked(mid.unwrap_or_default())),
+                content, pre.unwrap_or_default()).marked(mid.unwrap_or_default()).opening()),
             "assistant" => session.messages.push(ChatMessage::assistant(content)),
             _ => {},
         }).map_err(to_js_err)
@@ -1667,7 +1668,7 @@ impl DaimondApp {
         // the wrong engine. Read out of `Limits` after every band and ceiling, as the rest are.
         fmt!("{{\"worker\":{},\"max_rounds\":{},\"continuations\":{},\"context_cap\":{},\
             \"keep\":{},\"spend_cap_usd\":{},\"fold_at\":{},\"retire_prior\":{},\
-            \"retire_keep_turns\":{},\
+            \"retire_keep_turns\":{},\"retire_at\":{},\
             \"result_age\":{},\"result_cap\":{},\"sweep_every\":{},\
             \"worker_max_rounds\":{},\"worker_continuations\":{},\"worker_context_cap\":{},\
             \"worker_keep\":{},\"worker_spend_usd\":{},\"gather_timeout_s\":{},\
@@ -1680,7 +1681,7 @@ impl DaimondApp {
             \"fold_shape\":\"{}\",\"family\":\"{}\",\"claude_names\":{}}}",
             l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
             l.fold_at, l.retire_prior,
-            l.retire_keep_turns,
+            l.retire_keep_turns, l.retire_at,
             l.result_age, l.result_cap, l.sweep_every,
             l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
             l.worker_keep, l.worker_spend_usd, l.gather_timeout_s,
@@ -3214,7 +3215,10 @@ fn wire_json(
     let (role, tools, brief) = agent.system_parts(registry);
     // AND THE NOTE THE NEXT TURN WOULD CARRY (r578), from the same composer the turn uses, so the
     // band cannot drift from the request: the frozen system above, and this, which is not in it.
-    let note = crate::prompts::turn_note(&agent.blocks.borrow(), sent);
+    // AND A TURN THAT OPENS WITH A FOLD restates every block whole, so the Wire asks the turn's
+    // own fold plan before composing (r578d B3); `fold_first` says so beside the note.
+    let fold_first = agent.opens_with_fold(sent, registry);
+    let note = agent.wire_note(sent, registry);
     // THE MACHINE NOTE, AS THE TURN NOTE CARRIES IT (r578b A4). It moved out of the system message
     // and into the note, which left the band "This computer" holding the model note alone. Named
     // here as the exact text of the note, so the page draws it under that band and out of the
@@ -3223,12 +3227,13 @@ fn wire_json(
     let defs = registry.definitions_json().unwrap_or_else(|| fmt!("[]"));
     fmt!(
         "{{\"role\":\"{}\",\"tools_sentence\":\"{}\",\"machine\":\"{}\",\"local\":\"{}\",\
-         \"note\":\"{}\",\"machine_note\":\"{}\",\"schemas_len\":{},\"schemas\":{},\"names\":{}}}",
+         \"note\":\"{}\",\"fold_first\":{},\"machine_note\":\"{}\",\"schemas_len\":{},\"schemas\":{},\"names\":{}}}",
         crate::llm::json_escape(&role),
         crate::llm::json_escape(&tools),
         crate::llm::json_escape(&brief),
         crate::llm::json_escape(local),
         crate::llm::json_escape(&note),
+        fold_first,
         crate::llm::json_escape(machine_note),
         defs.len(),
         defs,
@@ -4654,9 +4659,14 @@ fn message_to_js(msg: &ChatMessage) -> JsValue {
             set("role", &JsValue::from_str("system"));
             set("content", &JsValue::from_str(&content.as_text()));
         }
-        ChatMessage::User { content, pre, mid } => {
+        ChatMessage::User { content, pre, mid, opens } => {
             set("role", &JsValue::from_str("user"));
             set("content", &JsValue::from_str(&content.as_text()));
+            // Which messages opened a turn, so `compact::prior_end` finds the same boundary after
+            // a reload; only where true, so every other message keeps the shape it had.
+            if *opens {
+                set("opens", &JsValue::TRUE);
+            }
             // Beside the words and only when there is one, as the JDAT form does, so the page's
             // bubble reads `content` alone and an ordinary message keeps the shape it had.
             if !pre.is_empty() {
@@ -4687,8 +4697,12 @@ fn message_to_js(msg: &ChatMessage) -> JsValue {
                 set("tool_calls", &calls);
             }
         }
-        ChatMessage::Tool { tool_call_id, content, post } => {
+        ChatMessage::Tool { tool_call_id, content, post, retired } => {
             set("role", &JsValue::from_str("tool"));
+            // Sent short since it was retired (r578d), so the next turn sends the same stub.
+            if *retired {
+                set("retired", &JsValue::TRUE);
+            }
             set("tool_call_id", &JsValue::from_str(tool_call_id));
             set("content", &JsValue::from_str(&content.as_text()));
             // The app's notes after the result (r578), only where there are any, so the next
@@ -4711,12 +4725,21 @@ fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
     let content = js_prop(item, "content").unwrap_or_default();
     match js_prop(item, "role").unwrap_or_default().as_str() {
         "system" => Some(ChatMessage::system(content)),
-        "user"   => Some(ChatMessage::user_noted(
-            content, js_prop(item, "pre").unwrap_or_default())
-            .marked(js_prop(item, "mid").unwrap_or_default())),
+        "user"   => {
+            let m = ChatMessage::user_noted(content, js_prop(item, "pre").unwrap_or_default())
+                .marked(js_prop(item, "mid").unwrap_or_default());
+            let opens = js_sys::Reflect::get(item, &JsValue::from_str("opens"))
+                .map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+            Some(if opens { m.opening() } else { m })
+        },
         "tool"   => match js_prop(item, "tool_call_id") {
-            Some(id) if !id.is_empty() => Some(ChatMessage::tool(id, content)
-                .noted_after(&js_prop(item, "post").unwrap_or_default())),
+            Some(id) if !id.is_empty() => {
+                let m = ChatMessage::tool(id, content)
+                    .noted_after(&js_prop(item, "post").unwrap_or_default());
+                let retired = js_sys::Reflect::get(item, &JsValue::from_str("retired"))
+                    .map(|v| v.as_bool() == Some(true)).unwrap_or(false);
+                Some(if retired { m.as_retired() } else { m })
+            },
             _ => None,
         },
         "assistant" => {

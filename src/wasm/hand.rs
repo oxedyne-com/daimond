@@ -159,7 +159,7 @@ pub async fn status() -> Outcome<String> {
 /// * `spec_json` - The `exec` request, already rendered as the wire's JSON.
 pub async fn run(spec_json: &str) -> Outcome<String> {
     let r = res!(relay());
-    match crate::wasm::settle_call(r.run(spec_json)).await {
+    match crate::wasm::settle_call_within(r.run(spec_json), crate::wasm::door_bound(spec_json)).await {
         Ok(v)  => stringify(&v),
         Err(e) => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e)))),
     }

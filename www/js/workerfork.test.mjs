@@ -117,6 +117,40 @@ kase('a copy that is gone, a continuation and a resume all fall back to the brie
 	eq(old.forked, false, 'an engine without adopt_fork');
 });
 
+// A1 (QA-A r578c): a continuation is keyed by the conversation, and only `continue:` asks for one.
+const priorSessionRun = build('priorSessionRun', [])();
+
+kase('a worker never continues another chat\'s copy, whatever its name (A1)', () => {
+	// Chat A's "researcher" finished holding A's whole conversation.
+	const runs = [{ diamondId: '', chatId: 'chatA', name: 'researcher', _session: ['A-conversation'] }];
+	eq(priorSessionRun(runs, '', 'chatB', 'researcher', 'look into it'), null, 'chat B, same name');
+	eq(priorSessionRun(runs, '', 'chatB', 'researcher', 'continue: look into it'), null, 'chat B, continue:');
+	eq(priorSessionRun(runs, '', 'chatB', '', 'continue: carry on'), null, 'chat B, continue: with no name');
+	eq(priorSessionRun(runs, '', '', 'researcher', 'continue: x'), null, 'no conversation at all');
+});
+
+kase('a name alone never continues: the same Diamond\'s worker takes the current copy (A1)', () => {
+	const old = { diamondId: 'D1', chatId: '', name: 'researcher', _session: ['stale'] };
+	eq(priorSessionRun([old], 'D1', '', 'researcher', 'look into it'), null, 'same Diamond, same name');
+	const run = { fork: 'f1', task: 'look into it', _priorSession: null, app: stubApp(new Set(['f1'])) };
+	adoptFork(run);
+	eq(run.forked, true, 'the current copy is adopted');
+});
+
+kase('continue: picks up the same conversation\'s run, by name first (A1)', () => {
+	const mine  = { diamondId: 'D1', chatId: '', name: 'researcher', _session: ['mine'] };
+	const other = { diamondId: 'D1', chatId: '', name: 'writer', _session: ['other'] };
+	const elsew = { diamondId: 'D2', chatId: '', name: 'researcher', _session: ['elsewhere'] };
+	eq(priorSessionRun([elsew, other, mine], 'D1', '', 'researcher', 'continue: go on'), mine, 'by name');
+	eq(priorSessionRun([elsew, other, mine], 'D1', '', '', 'Continue: go on'), other, 'newest of this Diamond');
+	const chat = { diamondId: '', chatId: 'chatA', name: 'researcher', _session: ['A'] };
+	eq(priorSessionRun([chat], '', 'chatA', 'researcher', 'continue: go on'), chat, 'the same chat');
+});
+
+kase('dispatch passes the run\'s chat to priorSessionRun (A1)', () => {
+	ok(SRC.indexOf('priorSessionRun(self.runs, diamondId, chatId, run.name, run.task)') > 0, 'dispatch call');
+});
+
 kase('the kind a worker ran as: full after an adoption, brief otherwise (D-20261020-05)', () => {
 	const full = { fork: 'f1', task: 't', app: stubApp(new Set(['f1'])) };
 	adoptFork(full);
@@ -130,10 +164,21 @@ kase('the kind a worker ran as: full after an adoption, brief otherwise (D-20261
 	eq(workerKind({ fork: 'f1' }), 'brief', 'a run that never started');
 });
 
-kase('the start event carries cx, the kind it starts as', () => {
+kase('cx is the kind adopted: on both end rows, never guessed on the start row (A6)', () => {
 	const at = START.indexOf("at:    'start',");
 	const ev = START.slice(at, START.indexOf('});', at));
-	ok(/cx:\s+forkable\(run\) \? 'full' : 'brief'/.test(ev), 'no cx: ' + ev);
+	ok(!/\bcx:/.test(ev), 'the start row guesses the kind before the copy is adopted: ' + ev);
+	const early = START.slice(START.indexOf('var closeEarly = function () {'));
+	const er = early.slice(early.indexOf("at:    'end',"), early.indexOf('});'));
+	ok(/cx:\s+workerKind\(run\)/.test(er), 'closeEarly end row: ' + er);
+	const last = SRC.lastIndexOf("at:    'end',", SRC.indexOf('rb:    run.reportRaw, sb: run.reportSent,'));
+	const lr = SRC.slice(last, SRC.indexOf('});', last));
+	ok(/cx:\s+workerKind\(run\)/.test(lr), 'final end row: ' + lr);
+});
+
+kase('the spawn answer says the kind the page set the run to, for the STARTED line (A6)', () => {
+	ok(/return JSON\.stringify\(\{ started: true, id: ids\[0\], name: name,\s+cx: /.test(SRC),
+		'the spawn answer carries no cx');
 });
 
 kase('reports name the kind: both gather report rows and the later-turn heading', () => {
@@ -163,6 +208,16 @@ kase('Workers.start adopts after EVERY build (scope) and opens with firstAsk, th
 kase('the copy is forgotten on both endings: closeEarly and the finally block', () => {
 	ok(/var closeEarly = function \(\) \{\n\t\t\t\tforkForget\(run\);/.test(START), 'closeEarly');
 	ok(/\} finally \{\n\t\t\t\tforkForget\(run\);/.test(START), 'finally');
+});
+
+kase('a queued or paused worker that is Stopped drops its copy (A5)', () => {
+	const at = SRC.indexOf('\t\tstop: function (run) {');
+	const body = SRC.slice(at, SRC.indexOf('\n\t\t},', at));
+	const queued = body.slice(body.indexOf("if (run.status === 'queued')"), body.indexOf('return;'));
+	ok(queued.indexOf('forkForget(run);') > 0, 'the queued branch of stop keeps the copy');
+	const held = body.slice(body.indexOf("if (run.status === 'paused'"));
+	ok(held.slice(0, held.indexOf('return;')).indexOf('forkForget(run);') > 0,
+		'the paused branch of stop keeps the copy');
 });
 
 kase('the start event carries ab (task bytes) and pb (the copy\'s bytes)', () => {

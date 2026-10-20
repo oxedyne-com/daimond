@@ -440,6 +440,7 @@ pub struct Limits {
 	// tree nobody tunes changes.
 	pub retire_prior: bool,		// retire a turn's predecessors on the way out; see `retire_upto`
 	pub retire_keep_turns: u32,	// completed turns left whole first; see `RETIRE_KEEP_TURNS`
+	pub retire_at:    f64,		// fraction of the fold budget past which results retire; see `RETIRE_AT`
 	pub result_age:   usize,	// rounds a result must be old; see `IN_TURN_RESULT_AGE`
 	pub result_cap:   usize,	// bytes left whole however old; see `IN_TURN_RESULT_CAP`
 	pub sweep_every:  usize,	// rounds between sweeps; see `IN_TURN_RETIRE_EVERY`
@@ -518,6 +519,7 @@ impl Default for Limits {
 			worker:     false,
 			retire_prior: true,
 			retire_keep_turns: RETIRE_KEEP_TURNS,
+			retire_at:    RETIRE_AT,
 			result_age:   IN_TURN_RESULT_AGE,
 			result_cap:   IN_TURN_RESULT_CAP,
 			sweep_every:  IN_TURN_RETIRE_EVERY,
@@ -546,6 +548,15 @@ impl Default for Limits {
 }
 
 impl Limits {
+
+	/// Tokens past which old tool results are retired: [`RETIRE_AT`] of [`Limits::budget`], so the
+	/// line moves with the fold point and always sits under it.
+	///
+	/// # Arguments
+	/// * `max_completion` - The cap the client puts on generated tokens.
+	pub fn retire_line(&self, max_completion: u32) -> u64 {
+		(self.budget(max_completion) as f64 * self.retire_at.clamp(0.0, 1.0)) as u64
+	}
 
 	/// The largest prompt this turn should send, in tokens.
 	///
@@ -1995,6 +2006,30 @@ pub const IN_TURN_RESULT_CAP: usize = 2_048;
 /// which is the noise floor every other figure in that report has to clear.
 pub const RETIRE_KEEP_TURNS: u32 = 1;
 
+/// Fraction of the fold budget ([`Limits::budget`]) past which old tool results are retired.
+///
+/// **Below it nothing is shortened, at a turn boundary or mid-turn** (daimond_rulings.md §17,
+/// D-20261020-11, "Only past a size line").  Retiring at every boundary rewrote the turn before
+/// last on every turn, and a provider's prompt cache pays out only on a byte-identical prefix, so
+/// each turn re-billed the conversation from the oldest newly retired result at the full input
+/// rate (QA-B r578c B2: 5 breaks in 5 boundaries on a read-heavy Diamond).  A result carried whole
+/// costs the cached rate, a tenth or less; a rewrite costs the full rate on everything after it.
+/// So results are kept whole and cached while the conversation is small, and shortened ONCE as it
+/// nears the fold -- one cache miss -- after which the turns append again on the shorter prefix.
+/// [`ChatMessage::as_retired`] is what keeps a result short on every later request, byte for byte.
+///
+/// **Two-thirds, and tied to the budget rather than a figure of its own**: at the shipped 120k
+/// [`ABSOLUTE_CAP`] the line is the owner's ~80k, and on a smaller window, whose fold comes
+/// sooner, it comes sooner with it, so the shortening always has room to land before a fold.  Lower
+/// shortens earlier and more often; one turns it into a fold's companion; nought is the old rule,
+/// every boundary, and is the arm a measurement of this one compares against (`set_tune`'s
+/// `retire_at`).
+///
+/// Claude Code keeps tool results verbatim and lets caching carry them until context is large; its
+/// API context edit (`clear_tool_uses`) likewise fires at an input-token threshold and keeps the
+/// call inputs.  This is the same rule.
+pub const RETIRE_AT: f64 = 2.0 / 3.0;
+
 /// How the turn's budget line opens, and the marker that finds an earlier one to remove.
 ///
 /// On its own line inside the last tool result, so removing it is a truncation rather than a
@@ -2041,25 +2076,29 @@ pub fn retire_prior(msgs: &mut [ChatMessage], keep: u32) -> usize {
 
 /// Where retirement stops: the start of the oldest turn that is to be left whole.
 ///
-/// With `keep` of nought that is the last [`ChatMessage::User`], because that is where the
-/// current turn begins: at the top of a turn the user's sentence has just been pushed, so
-/// everything before it belongs to a turn that has ended.  Each further turn kept walks the
-/// boundary back over one more user message, so `keep` of one leaves the turn just finished
-/// exactly as the model saw it.
+/// With `keep` of nought that is the message the current turn opened with, because at the top of
+/// a turn the user's sentence has just been pushed, so everything before it belongs to a turn that
+/// has ended.  Each further turn kept walks the boundary back over one more opening, so `keep` of
+/// one leaves the turn just finished exactly as the model saw it.
 ///
 /// Zero when the user has not spoken that often, which retires nothing -- a conversation with
 /// two turns in it and two to keep has no finished turn to take anything from.
 ///
-/// **A mid-turn interjection counts as a user message here**, so a turn that was interrupted
-/// keeps MORE than it was asked to rather than less.  That is the safe direction: the cost is
-/// a few tokens, and the alternative is retiring results the turn in flight is reading.
+/// **A turn is counted by the message it opened with, never by role alone** (r578d, QA-B B1).
+/// The app's own end-of-turn notes and a mid-turn interjection are user messages too, and while
+/// they counted, a Diamond turn that changed files ended with two of them and the boundary landed
+/// on the last: the read the model had just finished went as a stub on the very next turn.  See
+/// [`ChatMessage::opening`].  A conversation stored before the mark carries none, so the part of it
+/// before the first marked opening counts every user message, as it always did.
 ///
 /// # Arguments
 /// * `keep` - Completed turns left whole; see [`RETIRE_KEEP_TURNS`].
 pub fn prior_end(msgs: &[ChatMessage], keep: u32) -> usize {
+	let first = msgs.iter().position(|m| m.opens_turn()).unwrap_or(msgs.len());
 	let mut seen = 0;
 	for (i, m) in msgs.iter().enumerate().rev() {
-		if matches!(m, ChatMessage::User { .. }) {
+		let opens = m.opens_turn() || (i < first && matches!(m, ChatMessage::User { .. }));
+		if opens {
 			if seen == keep {
 				return i;
 			}
@@ -2098,6 +2137,46 @@ pub fn retire_upto(msgs: &mut [ChatMessage], end: usize) -> usize {
 				break;
 			}
 			if let Some(stub) = result_stub(tc, &msgs[j]) {
+				msgs[j] = msgs[j].with_content(MessageContent::text(stub)).as_retired();
+				n += 1;
+			}
+		}
+		i += 1 + calls.len();
+	}
+	n
+}
+
+/// Send again, as stubs, the results an earlier request already sent short.
+///
+/// The stored conversation keeps every result whole and only marks the ones that went out retired
+/// ([`ChatMessage::as_retired`]), so a copy built from it has to be shortened again at the same
+/// places, or the next request would carry the whole result where the last carried its stub and
+/// the cached prefix would end there.  [`result_stub`] is a function of the call and the whole
+/// result, so the stub rebuilt here is the stub that went out.  A result already short -- a
+/// worker's copy of its parent's request -- is left as it is.
+///
+/// Returns how many results were shortened.
+///
+/// # Arguments
+/// * `msgs` - The SENT copy of the conversation, edited in place.
+pub fn restub(msgs: &mut [ChatMessage]) -> usize {
+	let mut n = 0;
+	let mut i = 0;
+	while i < msgs.len() {
+		let calls = match &msgs[i] {
+			ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() =>
+				tool_calls.clone(),
+			_ => { i += 1; continue; },
+		};
+		for (k, tc) in calls.iter().enumerate() {
+			let j = i + 1 + k;
+			if j >= msgs.len() {
+				break;
+			}
+			if !msgs[j].is_retired() {
+				continue;
+			}
+			if let Some(stub) = result_stub(tc, &msgs[j]) {
 				msgs[j] = msgs[j].with_content(MessageContent::text(stub));
 				n += 1;
 			}
@@ -2105,6 +2184,47 @@ pub fn retire_upto(msgs: &mut [ChatMessage], end: usize) -> usize {
 		i += 1 + calls.len();
 	}
 	n
+}
+
+/// Mark in the stored conversation every result `sent` went out retired, by the call it answers.
+///
+/// By id rather than by index, because the sent copy leads with the system message (and a worker's
+/// with its parent's) and a turn in flight pushes to both lists; an id names one call.
+///
+/// Returns how many stored results were newly marked.
+///
+/// # Arguments
+/// * `stored` - The session's own conversation, whose content is never touched.
+/// * `sent` - The copy that was, or is about to be, sent.
+pub fn carry_retired(stored: &mut [ChatMessage], sent: &[ChatMessage]) -> usize {
+	let ids: std::collections::HashSet<&str> = sent.iter().filter_map(|m| match m {
+		ChatMessage::Tool { tool_call_id, retired: true, .. } => Some(tool_call_id.as_str()),
+		_ => None,
+	}).collect();
+	if ids.is_empty() {
+		return 0;
+	}
+	let mut n = 0;
+	for m in stored.iter_mut() {
+		let hit = matches!(m, ChatMessage::Tool { tool_call_id, retired: false, .. }
+			if ids.contains(tool_call_id.as_str()));
+		if hit {
+			*m = m.clone().as_retired();
+			n += 1;
+		}
+	}
+	n
+}
+
+/// Is the conversation past the line old results retire at?  Either figure over it is past, as
+/// for [`needs_fold`]: the estimate before a request, the provider's own count after one.
+///
+/// # Arguments
+/// * `est_tokens` - The gauge's byte-based estimate of the prompt about to be sent.
+/// * `real_tokens` - The provider's `prompt_tokens` from the last round, or 0 if none yet.
+/// * `line` - See [`Limits::retire_line`].
+pub fn past_line(est_tokens: u64, real_tokens: u64, line: u64) -> bool {
+	est_tokens > line || real_tokens > line
 }
 
 /// Where the prior-turn boundary lands once a fold has moved every index behind it.
@@ -2174,7 +2294,7 @@ pub fn retire_results(msgs: &mut [ChatMessage], end: usize, over: usize) -> usiz
 				_ => continue,
 			}
 			if let Some(stub) = result_stub(tc, &msgs[j]) {
-				msgs[j] = msgs[j].with_content(MessageContent::text(stub));
+				msgs[j] = msgs[j].with_content(MessageContent::text(stub)).as_retired();
 				n += 1;
 			}
 		}
@@ -2187,12 +2307,16 @@ pub fn retire_results(msgs: &mut [ChatMessage], end: usize, over: usize) -> usiz
 ///
 /// `round_at` holds where each round of the turn began, this one last.  Every
 /// `sweep_every`th round the results older than `result_age` rounds and larger than
-/// `result_cap` bytes are retired.  One function for the loop and its tests, so a fixture
-/// cannot flatter the sweep by running it more often or reaching further back than the app.
-pub fn sweep_in_turn(msgs: &mut [ChatMessage], round_at: &[usize], l: &Limits) -> usize {
+/// `result_cap` bytes are retired -- **only once the conversation is `past` the line**
+/// ([`RETIRE_AT`]); below it a long turn appends and the cache carries it, by the same ruling
+/// the turn boundary follows.  One function for the loop and its tests, so a fixture cannot
+/// flatter the sweep by running it more often or reaching further back than the app.
+pub fn sweep_in_turn(msgs: &mut [ChatMessage], round_at: &[usize], l: &Limits, past: bool)
+	-> usize
+{
 	let every = l.sweep_every.max(1);	// a cadence of nought would be a modulo by nought
 	let swept = round_at.len();
-	if swept > l.result_age && swept % every == 0 {
+	if past && swept > l.result_age && swept % every == 0 {
 		return retire_results(msgs, round_at[swept - 1 - l.result_age], l.result_cap);
 	}
 	0
@@ -4431,7 +4555,7 @@ mod tests {
 		let mut swept = 0;
 		for r in 1..=40 {
 			round_at.push(working.len());
-			swept += sweep_in_turn(&mut working, &round_at, &l);
+			swept += sweep_in_turn(&mut working, &round_at, &l, true);
 			let id = fmt!("c{}", r);
 			let (call, args, reply) = if r == 2 {
 				("file_write", fmt!("{{\"path\":\"src/big.rs\",\"content\":\"{}\"}}",
@@ -4481,7 +4605,7 @@ mod tests {
 			for _ in 0..*rounds {
 				r += 1;
 				round_at.push(working.len());
-				sweep_in_turn(&mut working, &round_at, &l);
+				sweep_in_turn(&mut working, &round_at, &l, true);
 				sent.push(conversation_bytes(&working));
 				let id = fmt!("c{}", r);
 				let (call, args, reply) = match r % 4 {
@@ -4621,6 +4745,62 @@ mod tests {
 	}
 
 	#[test]
+	fn test_only_a_turns_opening_message_counts_as_a_turn_00() {
+		// QA-B r578c B1. A Diamond turn ends with the app's own notes, and those are user
+		// messages too; counted as turns they put the boundary of "keep the last turn whole" on
+		// the reconcile note, and the read the model has only just finished went as a stub.
+		let open = |s: &str| user(s).opening();
+		let v = vec![
+			open("read a.md and fix it"),
+			asks("r1", "file_read", "{\"path\":\"a.md\"}"),
+			replies("r1", &"a".repeat(4_096)),
+			says("Fixed."),
+			user(&crate::diamond_versions::tail_note(3, &["a.md".to_string()])),
+			user(RECONCILE_NOTE),
+			open("now b.md"),
+		];
+		assert_eq!(0, prior_end(&v, 1), "the app's notes were counted as turns");
+		assert_eq!(6, prior_end(&v, 0), "the turn in flight opens at its own message");
+		// An interjection is the person's, mid-turn, and opens nothing either.
+		let w = vec![
+			open("read a.md"),
+			asks("r1", "file_read", "{\"path\":\"a.md\"}"),
+			replies("r1", &"a".repeat(4_096)),
+			user("and b.md while you are there"),
+			says("Done."),
+			open("thanks; now c.md"),
+		];
+		assert_eq!(0, prior_end(&w, 1), "an interjection was counted as a turn");
+		// A conversation stored before the mark existed has none, and every user message there
+		// still counts, as it always did: the first marked opener is where structure takes over.
+		let mut old = w.clone();
+		old[0] = user("read a.md");
+		old[5] = user("thanks; now c.md");
+		assert_eq!(3, prior_end(&old, 1), "an unmarked history changed its boundary");
+		old[5] = open("thanks; now c.md");
+		assert_eq!(3, prior_end(&old, 1), "the unmarked part before the first opener counts as before");
+	}
+
+	#[test]
+	fn test_a_result_retired_once_goes_short_on_every_later_request_00() {
+		// D-20261020-11: shortened once, past the line, and then the turns append. The stored
+		// copy keeps every word and carries the mark; a copy built from it next turn must send the
+		// very stub the last one did, or the cached prefix ends at that result.
+		let mut stored = three_turns();
+		let mut sent = stored.clone();
+		assert!(retire_upto(&mut sent, 19) > 0);
+		assert!(carry_retired(&mut stored, &sent) > 0);
+		assert!(stored.iter().any(|m| m.text().len() >= 60_000), "the record lost its words");
+		let mut next = stored.clone();
+		restub(&mut next);
+		assert_eq!(sent, next, "the next request does not repeat the stubs byte for byte");
+		// And a copy already short, a worker's, is left as it is.
+		let mut again = next.clone();
+		assert_eq!(0, restub(&mut again));
+		assert!(!past_line(10, 10, 10) && past_line(11, 0, 10) && past_line(0, 11, 10));
+	}
+
+	#[test]
 	fn test_the_kept_boundary_survives_a_fold_00() {
 		// `prior_end_after_fold` shifts an index and knows nothing about turns, so the question
 		// is whether the KEEP-aware boundary is still the right message on the other side.  The
@@ -4714,7 +4894,7 @@ mod tests {
 			round_at.push(working.len());
 			// The loop's own sweep, so the fixture cannot flatter it.
 			if sweep {
-				sweep_in_turn(&mut working, &round_at, &Limits::default());
+				sweep_in_turn(&mut working, &round_at, &Limits::default(), true);
 			}
 			sent.push(conversation_bytes(&working));
 			// A working turn's shape: mostly file reads, a write every fifth round, a listing
