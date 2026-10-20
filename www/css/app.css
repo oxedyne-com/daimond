@@ -310,6 +310,8 @@ svg { display: block; }
    push its own last rows out under the clip. */
 .spend > .spend-view { flex: 1 1 auto; min-height: 0; }
 .rail { width: var(--rail-w); gap: 0; }
+/* The phone drawer's scroller (mobile.css); a desktop rail lays its children out as if it were not there. */
+.rail-scroll { display: contents; }
 .panel.nt { transition: none; }
 .panel.closed { display: none; }
 

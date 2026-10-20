@@ -946,7 +946,7 @@ async function phoneSurfaces(wk) {
 	await fileSurfaces('p_', wk);
 	await page.fill('#chat-input', 'A draft long enough to wrap onto a second line of the composer on a phone.').catch(() => {});
 	await wait(300); await grab('p_composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
-	await click('#drawer-btn'); await wait(900);
+	await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(900);
 	await ev(() => document.querySelectorAll('#panel-rail details').forEach((d) => { d.open = true; }));
 	await grab('p_drawer', '#panel-rail');
 	await ev(() => { const r = document.querySelector('#panel-rail .rail-scroll') || document.getElementById('panel-rail'); r.scrollTop = 99999; }); await wait(300);
@@ -979,7 +979,7 @@ async function phoneSurfaces(wk) {
 	await quiet();
 	await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(300);
 	for (const [name, sel, drawer] of [['p_menu_settings', '#settings-menu-btn'], ['p_admin', '#user-row', 1], ['p_dlg_newdiamond', '#new-diamond-btn', 1], ['p_menu_handmode', '#hand-mode-chip'], ['p_dlg_chatcog', '#session-list .chat-box .tile-cog', 1]]) {
-		await overlay(name, async () => { if (drawer) { await click('#drawer-btn'); await wait(700); } return click(sel); });
+		await overlay(name, async () => { if (drawer) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(700); } return click(sel); });
 	}
 	await quiet();
 	await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700);

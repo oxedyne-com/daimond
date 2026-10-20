@@ -267,6 +267,15 @@
 		     stays live beside them: the user can ask Daimond what an app password is
 		     while the box asking for one is still on screen. -->
 		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="diamonds" data-i18n-label="panel.rail">
+			<!-- The drawer's scroller, inside the drawer's frame and never the frame
+			     itself (FIRE ublk30b). On a phone the frame carries the slide's
+			     `transform`, which makes it the containing block of the fixed Admin
+			     panel; while the frame was also the scroller, the panel opened at the
+			     top of the SCROLLED content, and with the drawer at its foot Back sat
+			     430px above the screen. With the scroll here, the panel is placed
+			     against a frame that never scrolls. `display: contents` on a desktop,
+			     so the rail's own layout there is unchanged. -->
+			<div class="rail-scroll" id="rail-scroll">
 			<div class="rail-top" id="rail-top">
 				<!-- The global pause, which is not a seventh setting: it is the ROOT
 				     of the tree every other traffic light hangs off, so it is green
@@ -675,6 +684,7 @@
 					</div>
 				</div>
 			</div>
+			</div><!-- #rail-scroll -->
 		</aside>
 		<div class="phandle" id="handle-rail" data-panel="rail" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
 

@@ -393,7 +393,7 @@ function PROBE(arg) {
 		// its own top edge while it is scrolled to the top does not.  Those controls
 		// cannot be reached at all.
 		railClipped: (() => {
-			const rl = document.getElementById('panel-rail');
+			const rl = document.getElementById('rail-scroll') || document.getElementById('panel-rail');	// the drawer's scroller
 			if (!rl || !document.body.classList.contains('drawer-open')) return null;
 			const rr = rect(rl);
 			const out = [];

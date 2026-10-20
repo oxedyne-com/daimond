@@ -111,7 +111,8 @@ const survey = (p) => p.evaluate(() => {
 
 /// Scroll the drawer to its end: is the money foot whole on screen?
 const foot = (p) => p.evaluate(() => {
-	const r = document.getElementById('panel-rail'), f = document.getElementById('spend-row');
+	const r = document.querySelector('#panel-rail .rail-scroll') || document.getElementById('panel-rail');
+	const f = document.getElementById('spend-row');
 	if (!r || !f) return { ok: false, why: 'no rail or spend row' };
 	r.scrollTop = r.scrollHeight;
 	const rb = r.getBoundingClientRect(), fb = f.getBoundingClientRect();
@@ -119,6 +120,58 @@ const foot = (p) => p.evaluate(() => {
 		why: `spend row ${Math.round(fb.top)}–${Math.round(fb.bottom)}, drawer ${Math.round(rb.top)}–${Math.round(rb.bottom)}, scroll ${r.clientHeight}/${r.scrollHeight}` };
 	return res;
 });
+
+/// The drawer's scroller: an inner `.rail-scroll` once the drawer's frame stopped
+/// being its scroller (FIRE ublk30b), the rail itself before that.
+const SCROLLER = `document.querySelector('#panel-rail .rail-scroll') || document.getElementById('panel-rail')`;
+
+/// Open Settings from `from` -- 'top' or 'foot' of an open drawer, or 'closed' for
+/// a drawer that is put away -- and press its Back where a finger would.
+///
+/// ublk30 shipped a drawer that scrolls, and the Admin panel is `position: fixed`
+/// inside it: the drawer's `transform` made it the panel's containing block, so the
+/// panel opened at the top of the SCROLLED content. Tapping the identity row at the
+/// drawer's foot put Back at y = -430 (both crawls, TRAPPED admin: home). A panel
+/// opened with the drawer closed rode the closed drawer off the left edge. Back
+/// must be whole on the screen, the topmost thing at its centre (a covered Back is
+/// as trapped as a lost one), and a tap there must close the panel.
+const adminBack = async (p, from) => {
+	await p.evaluate(() => { const a = document.getElementById('admin');
+		if (a && a.classList.contains('admin-open') && window.DaimondAdmin) DaimondAdmin.close(); });
+	await p.waitForTimeout(300);
+	if (from === 'closed') {
+		await p.evaluate(() => window.DaimondShell && DaimondShell.closeDrawer());
+		await p.waitForTimeout(500);
+		await p.evaluate(() => DaimondAdmin.home());
+	} else {
+		await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer());
+		await p.waitForTimeout(500);
+		await p.evaluate(`(() => { const r = ${SCROLLER}; r.scrollTop = ${from === 'foot' ? 'r.scrollHeight' : '0'}; })()`);
+		await p.waitForTimeout(300);
+		await p.tap('#user-row');
+	}
+	await p.waitForTimeout(700);
+	const m = await p.evaluate(`(() => {
+		const r = ${SCROLLER}, c = document.getElementById('admin-close');
+		const b = c.getBoundingClientRect(), x = b.left + b.width / 2, y = b.top + b.height / 2;
+		const at = document.elementFromPoint(x, y);
+		const whole = b.width > 0 && b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight;
+		return { x, y, whole, top: !!at && (at === c || c.contains(at)),
+			at: at ? (at.id || String(at.className) || at.tagName) : 'nothing (off the screen)',
+			scroll: Math.round(r.scrollTop) + ' of ' + (r.scrollHeight - r.clientHeight),
+			open: document.getElementById('admin').classList.contains('admin-open') };
+	})()`);
+	let closed = false;
+	if (m.whole && m.top) {
+		await p.touchscreen.tap(m.x, m.y);
+		await p.waitForTimeout(500);
+		closed = await p.evaluate(() => !document.getElementById('admin').classList.contains('admin-open'));
+	}
+	return { ok: m.open && m.whole && m.top && closed,
+		why: `open ${m.open}, drawer scrolled ${m.scroll}, Back centre ${Math.round(m.x)},${Math.round(m.y)}, `
+			+ `whole ${m.whole}, topmost ${m.top} (${m.at}), a tap closed it ${closed}` };
+};
+const ADMIN_FROM = [['top', 'an open drawer at its top'], ['foot', 'a drawer scrolled to its foot'], ['closed', 'a closed drawer']];
 
 const sessions = [];
 try {
@@ -147,6 +200,10 @@ try {
 		const f = await foot(p);
 		check('scrolling the drawer reaches its foot, tallies and cylinders whole', f.ok, f.why);
 		if (SHOT) await p.screenshot({ path: SHOT.replace(/\.png$/, '') + '_foot.png' });
+		for (const [from, says] of ADMIN_FROM) {
+			const a = await adminBack(p, from);
+			check(`Chromium: Settings opened from ${says} has Back whole on screen, on top, and a tap closes it`, a.ok, a.why);
+		}
 	}
 	{
 		const s = await world('webkit');
@@ -156,6 +213,10 @@ try {
 			m.c.n >= 5 && m.c.of >= 5, `${m.c.n} of ${m.c.of} whole in ${m.c.h}px, a tile ${m.c.tile}px`);
 		const f = await foot(s.page);
 		check('WebKit: scrolling the drawer reaches its foot', f.ok, f.why);
+		for (const [from, says] of ADMIN_FROM) {
+			const a = await adminBack(s.page, from);
+			check(`WebKit: Settings opened from ${says} has Back whole on screen, on top, and a tap closes it`, a.ok, a.why);
+		}
 		console.log('  NOT COVERED  WebKit Diamonds count: Playwright WebKit has no OPFS to hold a Diamond');
 	}
 } finally {

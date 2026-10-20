@@ -156,7 +156,7 @@ const survey = (p) => p.evaluate(() => {
 		.every((h) => h.querySelector('.rail-fold') === h.lastElementChild);
 	return {
 		vw: innerWidth, vh: innerHeight,
-		rail: box('#panel-rail'), railTop: box('#rail-top'),
+		rail: box('#panel-rail'), scroller: box('#rail-scroll'), railTop: box('#rail-top'),
 		diamondList: box('#diamond-list'), sessionList: box('#session-list'),
 		admin: box('#admin'), status: box('#admin-status'),
 		idRow: box('#panel-rail .astat-id'), userRow: box('#user-row'),
@@ -260,7 +260,7 @@ try {
 	// design that let every row added to the rail come out of the lists.
 	check('each list is bounded and scrolls inside itself, and the drawer scrolls for the rest',
 		m.sessionList.scroll > m.sessionList.client,
-		`chats ${m.sessionList.client}/${m.sessionList.scroll}, drawer ${m.rail.client}/${m.rail.scroll}`);
+		`chats ${m.sessionList.client}/${m.sessionList.scroll}, drawer ${m.scroller.client}/${m.scroller.scroll}`);
 	check('the Chats list is a window of at least five whole tiles (UNBLOCK-30)',
 		m.chatsWhole >= 5, `${m.chatsWhole} whole of ${m.chats}, list ${m.sessionList.h}px`);
 	check('with both sections open the Chats list has room for three tiles (it had 1.5)',
@@ -319,7 +319,8 @@ try {
 	await p.addStyleTag({ content: ':root { --safe-t: 44px; --safe-b: 34px; --safe-l: 12px; }' });
 	await p.waitForTimeout(250);
 	const insets = await p.evaluate(() => {
-		const r = document.getElementById('panel-rail');
+		// The drawer's scroller holds the insets: the frame no longer scrolls (FIRE ublk30b).
+		const r = document.getElementById('rail-scroll');
 		const cs = getComputedStyle(r);
 		// The drawer's last content, with the drawer scrolled to its end.
 		r.scrollTop = r.scrollHeight;
@@ -342,8 +343,8 @@ try {
 	const kb = await survey(p);
 	// The lists keep their five-tile windows and the shortened drawer scrolls to them.
 	check('a raised keyboard shortens the drawer, which scrolls rather than cutting a list',
-		kb.rail.h === 500 && kb.sessionList.h >= before.chats - 1 && kb.rail.scroll > kb.rail.client,
-		`drawer ${kb.rail.h}px scroll ${kb.rail.client}/${kb.rail.scroll}, chats ${kb.sessionList.h}px (was ${before.chats}px)`);
+		kb.rail.h === 500 && kb.sessionList.h >= before.chats - 1 && kb.scroller.scroll > kb.scroller.client,
+		`drawer ${kb.rail.h}px scroll ${kb.scroller.client}/${kb.scroller.scroll}, chats ${kb.sessionList.h}px (was ${before.chats}px)`);
 	await p.evaluate(() => document.documentElement.style.removeProperty('--vvh'));
 
 	consoleClean(s, 'WebKit 390x844');

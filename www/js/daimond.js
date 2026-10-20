@@ -23226,6 +23226,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var drawerOpener = null;		// what to give the keyboard back to
 
 		function showDrawer(title, formMode, key) {
+			// On a phone the panel's home is the drawer, so the drawer comes first:
+			// opened while the drawer was put away, the panel rode the closed drawer
+			// off the left edge and under its `visibility: hidden`, and Back with it
+			// (FIRE ublk30b, flow backlog of 18 Oct). Opening it here puts the drawer
+			// layer under Admin's, which is where Back from Admin lands anyway.
+			if (window.DaimondShell && DaimondShell.isPhone && DaimondShell.isPhone()
+				&& !document.body.classList.contains('drawer-open')) DaimondShell.openDrawer();
 			if (adminWrap) {
 				adminWrap.classList.add('admin-open');
 				adminWrap.classList.toggle('admin-form-mode', !!formMode);

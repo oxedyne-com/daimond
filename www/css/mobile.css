@@ -100,14 +100,36 @@
 		/* The drawer is fixed to the viewport, so it is outside #app's frame and
 		   has to hold the hardware off its own contents: installed, its first
 		   control sat under the status bar and its last under the home
-		   indicator. */
-		padding: calc(8px + var(--safe-t)) 8px calc(8px + var(--safe-b)) calc(8px + var(--safe-l));
+		   indicator. `.rail-scroll` below holds them, as the drawer's scroller. */
+		padding: 0;
 		transform: translateX(-100%);
 		transition: transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s .28s;
 		box-shadow: 0 0 40px rgba(0, 0, 0, .45);
 		will-change: transform;
+		/* The FRAME, which never scrolls: `.rail-scroll` below does (FIRE ublk30b).
+		   The slide's `transform` makes this box the containing block of the fixed
+		   Admin panel, so the panel is placed against whatever box this is -- and
+		   while it was also the scroller, the panel opened at the top of the
+		   scrolled content. With the drawer at its foot that put Settings' Back
+		   430px above the screen (ublk30's crawls, TRAPPED admin: home). The frame
+		   keeps the slide, the scrim's edge and the panel's anchor; its content
+		   scrolls one box in, past which the fixed panel is not carried. */
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	/* The drawer's scroller. The frame's padding moved here with the scroll, so
+	   the content still runs under the hardware insets as it scrolls, as it did
+	   when the frame scrolled. NOT positioned, transformed or contained: any of
+	   those would make it the panel's containing block again. */
+	.panel.rail .rail-scroll {
+		display: flex;
+		flex-direction: column;
+		flex: 1 1 auto;
+		min-height: 0;
 		overflow-y: auto;
 		overscroll-behavior: contain;
+		padding: calc(8px + var(--safe-t)) 8px calc(8px + var(--safe-b)) calc(8px + var(--safe-l));
 	}
 	/* The drawer is the scroller, and nothing inside it may be. Two competing
 	   scroll regions inside a 100dvh column meant the lists absorbed every
