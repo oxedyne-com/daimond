@@ -34,6 +34,13 @@ function kase(name, fn) {
 	else { console.log('  ok   ' + name); }
 }
 
+async function akase(name, fn) {
+	cases++; bad = null;
+	try { await fn(); } catch (e) { if (!bad) bad = 'threw ' + (e && e.message); }
+	if (bad) { failures++; console.log('  FAIL ' + name + '  (' + bad + ')'); }
+	else { console.log('  ok   ' + name); }
+}
+
 // A top-level `function NAME(args) { ... }`, brace-matched, as an expression.
 function fnSource(name) {
 	const m = new RegExp('\\n\\tfunction ' + name + '\\s*\\(([^)]*)\\)\\s*\\{').exec(SRC);
@@ -47,6 +54,10 @@ function fnSource(name) {
 	return SRC.slice(m.index + 1, i + 1);
 }
 function build(name, free) {
+	// A function the page lacks fails the cases that call it, not the whole file.
+	if (!new RegExp('\\n\\tfunction ' + name + '\\s*\\(').test(SRC)) {
+		return () => () => { throw new Error('function not found: ' + name); };
+	}
 	// eslint-disable-next-line no-new-func
 	return new Function(...free, 'return (' + fnSource(name) + ');');
 }
@@ -77,7 +88,10 @@ const Wasm = {
 const Prompts = { md: {} };
 const forkable   = build('forkable', [])();
 const workerKind = build('workerKind', [])();
-const adoptFork  = build('adoptFork', ['forkable'])(forkable);
+// n1: the kind is settled at adoption, and whoever asked for it is answered then.
+const settleKind  = build('settleKind', ['workerKind'])(workerKind);
+const startedKind = build('startedKind', ['workerKind'])(workerKind);
+const adoptFork  = build('adoptFork', ['forkable', 'settleKind'])(forkable, settleKind);
 const firstAsk   = build('firstAsk', ['Wasm', 'Prompts'])(Wasm, Prompts);
 const forkForget = build('forkForget', ['Wasm'])(Wasm);
 
@@ -147,8 +161,19 @@ kase('continue: picks up the same conversation\'s run, by name first (A1)', () =
 	eq(priorSessionRun([chat], '', 'chatA', 'researcher', 'continue: go on'), chat, 'the same chat');
 });
 
+// QA r578d-A (LOW, failing-first): a NAMED continue: whose name matches no run of this
+// conversation must not pick up a differently named worker's thread. Claude Code resumes an
+// agent only by its own id; a name that names nobody continues nobody.
+kase('QA r578d-A: a named continue: with no run of that name continues nothing', () => {
+	const other = { diamondId: 'D1', chatId: '', name: 'writer', _session: ['other'] };
+	eq(priorSessionRun([other], 'D1', '', 'researcher', 'continue: go on'), null,
+		'researcher picked up the writer\'s conversation');
+});
+
 kase('dispatch passes the run\'s chat to priorSessionRun (A1)', () => {
-	ok(SRC.indexOf('priorSessionRun(self.runs, diamondId, chatId, run.name, run.task)') > 0, 'dispatch call');
+	// The spec's own name (D3): `run.name` is 'agent-N' for a nameless worker, which
+	// would make every nameless `continue:` a named one that matches nothing.
+	ok(SRC.indexOf("priorSessionRun(self.runs, diamondId, chatId, spec.name || '', run.task)") > 0, 'dispatch call');
 });
 
 kase('the kind a worker ran as: full after an adoption, brief otherwise (D-20261020-05)', () => {
@@ -181,9 +206,51 @@ kase('the spawn answer says the kind the page set the run to, for the STARTED li
 		'the spawn answer carries no cx');
 });
 
+// n1: THE KIND IS SAID WHEN IT IS KNOWN. A worker that starts now is announced once its copy is
+// adopted (or its start fell short), so "STARTED full" is never said of one that will run brief.
+// A queued one is announced as queued, and the kind it ran as is in its report.
+const kindSaid    = build('workerKindSaid', ['workerKind'])(workerKind);
+
+await akase('n1: the started kind is answered at adoption, not at dispatch', async () => {
+	const gone = { fork: 'f9', task: 't', app: stubApp(new Set()) };
+	let said = null;
+	const p = startedKind(gone).then(k => { said = k; });
+	eq(said, null, 'answered before the copy was adopted');
+	adoptFork(gone);
+	await p;
+	eq(said, 'brief', 'a copy gone by adoption was announced');
+	const full = { fork: 'f1', task: 't', app: stubApp(new Set(['f1'])) };
+	adoptFork(full);
+	eq(await startedKind(full), 'full', 'an adopted copy, asked after');
+	const died = { fork: 'f1', task: 't' };
+	const q = startedKind(died);
+	settleKind(died);
+	eq(await q, 'brief', 'a start that fell short before adoption');
+});
+
+kase('n1: a copy that was gone by adoption says so in its report heading', () => {
+	const gone = { fork: 'f9', task: 't', app: stubApp(new Set()) };
+	adoptFork(gone);
+	ok(/^brief\b.*copy.*gone/.test(kindSaid(gone)), 'the fallback is not said: ' + kindSaid(gone));
+	const full = { fork: 'f1', task: 't', app: stubApp(new Set(['f1'])) };
+	adoptFork(full);
+	eq(kindSaid(full), 'full', 'full');
+	eq(kindSaid({ fork: '', task: 't' }), 'brief', 'asked brief');
+});
+
+kase('n1: spawn waits for a running worker\'s kind and says a queued one is queued', () => {
+	const at = SRC.indexOf('var made = self.runs.find(function (r) { return r.id === ids[0]; });');
+	const body = SRC.slice(at, SRC.indexOf('.catch(function (e) {', at));
+	ok(/made\.status === 'queued'/.test(body), 'no queued branch: ' + body.slice(0, 200));
+	ok(/startedKind\(made\)/.test(body), 'the answer does not wait for adoption');
+	ok(!/forkable\(made\) \? 'full'/.test(body) || /queued: true/.test(body), 'a running worker is announced at dispatch');
+	const early = START.slice(START.indexOf('var closeEarly = function () {'));
+	ok(/settleKind\(run\)/.test(early.slice(0, early.indexOf('};'))), 'closeEarly leaves the spawn waiting');
+});
+
 kase('reports name the kind: both gather report rows and the later-turn heading', () => {
-	eq((SRC.match(/context: workerKind\(r\),/g) || []).length, 2, 'gather report rows');
-	ok(SRC.indexOf("var head = '### ' + (r.name || r.id) + ' [' + workerKind(r) + ']' + workerEndingNote(r);") > 0,
+	eq((SRC.match(/context: workerKindSaid\(r\),/g) || []).length, 2, 'gather report rows');
+	ok(SRC.indexOf("var head = '### ' + (r.name || r.id) + ' [' + workerKindSaid(r) + ']' + workerEndingNote(r);") > 0,
 		'later-turn heading');
 });
 

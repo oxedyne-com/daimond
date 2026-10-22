@@ -173,6 +173,7 @@ function device(name, door, turns, held) {
 		// of \`dispatch\` that tie a batch to the turn that dispatched it.
 		function workerEndingNote() { return ''; }
 		function workerKind() { return 'brief'; }
+		function workerKindSaid() { return 'brief'; }
 		function reportBody(r) { return r.report || ''; }
 		function withCommas(s) { return s; }
 		function reportHasSubstance(r) { return !!r.report; }

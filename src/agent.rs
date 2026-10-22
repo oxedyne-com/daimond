@@ -854,6 +854,10 @@ impl Agent {
             if let Some(f) = crate::llm::extract_json_f64(text, "retire_at") {
                 l.retire_at = f.clamp(0.0, 1.0);
             }
+            // Nought is the r578d rule, every boundary past the line.
+            if let Some(f) = crate::llm::extract_json_f64(text, "retire_step") {
+                l.retire_step = f.clamp(0.0, 1.0);
+            }
             if let Some(n) = crate::llm::extract_json_number(text, "result_age") {
                 if n > 0 { l.result_age = n as usize; }
             }
@@ -1515,13 +1519,25 @@ impl Agent {
         // byte for byte, so the cached prefix holds; anything newer is retired only once the
         // conversation nears the fold, once, and marked so it stays that way. See
         // `compact::RETIRE_AT`.
+        //
+        // ONCE, THEN APPEND (QA r578d B1): a conversation already shortened is shortened again
+        // only for a growth step's worth of saving, else left whole for the summary; see
+        // `compact::RETIRE_STEP`.  AND THE TOOL LIST COUNTS (B2): it rides on every request, and
+        // the mid-turn and summary checks count it, so a Diamond's ~13k tokens of tools no longer
+        // put its line ~13k later than a chat's.
         if self.limits.borrow().retire_prior {
             compact::restub(&mut prior);
-            let line = self.limits.borrow().retire_line(self.reply_cap());
+            let (line, step) = {
+                let l = self.limits.borrow();
+                (l.retire_line(self.reply_cap()), l.retire_step(self.reply_cap()))
+            };
+            let schema = self.schema_bytes(registry);
             let est = self.gauge.tokens(compact::conversation_bytes(&working)
-                + compact::conversation_bytes(&prior));
+                + compact::conversation_bytes(&prior) + schema);
+            let end = self.prior_end.get();
             if compact::past_line(est, session.last_prompt_tokens, line)
-                && compact::retire_upto(&mut prior, self.prior_end.get()) > 0
+                && compact::retire_due(&prior, end, self.gauge.bytes(step))
+                && compact::retire_upto(&mut prior, end) > 0
             {
                 compact::carry_retired(&mut session.messages, &prior);
             }
@@ -1955,11 +1971,7 @@ impl Agent {
         registry:   &ToolRegistry,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
-        // A worker on its parent's model sends its parent's tools array, byte for byte (r578c).
-        let tools_json = match (self.fork.borrow().as_ref(), self.fork_same.get()) {
-            (Some(f), true) => f.tools.clone(),
-            _               => registry.definitions_json(),
-        };
+        let tools_json = self.tools_json(registry);
         // The tool schema rides on every request and is not in the conversation, so it is
         // counted separately -- a budget blind to it is short by however many tools are
         // registered, which for the browser set is several thousand tokens.
@@ -2588,7 +2600,7 @@ impl Agent {
                             if n > 0 {
                                 on_event(Self::announce(tc));
                             }
-                            let text = STOPPED_CALL.to_string();
+                            let text = stopped_call(&tc.name).to_string();
                             on_event(AgentEvent::ToolResult {
                                 name:    tc.name.clone(),
                                 result:  text.clone(),
@@ -3330,11 +3342,33 @@ impl Agent {
         Some(FoldPlan { budget, ceiling, gain, cut, pin })
     }
 
+    /// The tools array a request carries.  A worker on its parent's model sends its parent's,
+    /// byte for byte (r578c).
+    fn tools_json(&self, registry: &ToolRegistry) -> Option<String> {
+        match (self.fork.borrow().as_ref(), self.fork_same.get()) {
+            (Some(f), true) => f.tools.clone(),
+            _               => registry.definitions_json(),
+        }
+    }
+
+    /// Bytes of the tools array riding beside the conversation: nothing where the turn runs
+    /// without tools, which is `run_streaming`'s request.
+    fn schema_bytes(&self, registry: &ToolRegistry) -> u64 {
+        match registry.is_empty() {
+            true  => 0,
+            false => self.tools_json(registry).map(|s| s.len() as u64).unwrap_or(0),
+        }
+    }
+
     /// Will a turn opening on `prior` fold before its first request?  The question
     /// [`Agent::run_turn_noted`] meets at its first round, asked of the request it would build:
     /// the system message, the earlier turns retired, and the turn's own note.  The words the
-    /// user is about to send are not known here, so they count as none.
-    pub fn opens_with_fold(&self, prior: &[ChatMessage], registry: &ToolRegistry) -> bool {
+    /// user is about to send are not known here, so they count as none.  `real` is the
+    /// provider's prompt tokens from the last round, `session.last_prompt_tokens`, which the
+    /// turn reads beside the estimate (r578e D4); 0 where none is known.
+    pub fn opens_with_fold(&self, prior: &[ChatMessage], registry: &ToolRegistry, real: u64)
+        -> bool
+    {
         let note = crate::prompts::turn_note(&self.blocks.borrow(), prior);
         let mut msgs = prior.to_vec();
         msgs.push(ChatMessage::user_noted(String::new(), note));
@@ -3360,12 +3394,9 @@ impl Agent {
                 compact::msg_bytes(&ChatMessage::system(sys))
             },
         };
-        let schema = match registry.is_empty() {
-            true  => 0,
-            false => registry.definitions_json().map(|d| d.len() as u64).unwrap_or(0),
-        };
+        let schema = self.schema_bytes(registry);
         let est = self.gauge.tokens(system + compact::conversation_bytes(&sent) + schema);
-        match self.fold_plan(&msgs, est, 0, schema, Fold::IfNeeded, msgs.len() - 1, 0) {
+        match self.fold_plan(&msgs, est, real, schema, Fold::IfNeeded, msgs.len() - 1, 0) {
             Some(p) => p.cut > 0,
             None    => false,
         }
@@ -3373,8 +3404,8 @@ impl Agent {
 
     /// The note a turn opening on `prior` sends, for the Wire: only the blocks changed since
     /// their last copy, or every block where the turn folds first and restates them all.
-    pub fn wire_note(&self, prior: &[ChatMessage], registry: &ToolRegistry) -> String {
-        match self.opens_with_fold(prior, registry) {
+    pub fn wire_note(&self, prior: &[ChatMessage], registry: &ToolRegistry, real: u64) -> String {
+        match self.opens_with_fold(prior, registry, real) {
             true  => crate::prompts::turn_note(&self.blocks.borrow(), &[]),
             false => crate::prompts::turn_note(&self.blocks.borrow(), prior),
         }
@@ -4272,6 +4303,22 @@ pub enum Settled {
 const STOPPED_CALL: &str = "Stopped: the person stopped the turn while this call was running. \
     It may have partly run; check before relying on its effect.";
 
+/// What a stopped COMMAND is answered with: its process was told to stop (QA r578d D1).  The
+/// hand's `run` sends it `term` as the call is dropped (`wasm::hand::run`), and a native command
+/// is killed with its future (`executor`), so the model is told the command is no longer running
+/// rather than left to wait on it or start it again beside itself.
+const STOPPED_COMMAND: &str = "Stopped: the person stopped the turn while this command was \
+    running, and the command was told to stop. It may have partly run; check before relying on \
+    its effect.";
+
+/// The answer a call stopped while it ran is given, by the tool it called.
+fn stopped_call(name: &str) -> &'static str {
+    match name {
+        "run" | "verify" | "serve" | "shell"	=> STOPPED_COMMAND,
+        _					=> STOPPED_CALL,
+    }
+}
+
 /// Settle a reply's calls before any of them runs.
 ///
 /// Lens turn `mv42uu3m-9m-0hlao` (2026-10-12): one reply, cut at its output limit, carried 390
@@ -5036,7 +5083,7 @@ mod tests {
         a.set_blocks(blocks.clone());
         let delta = crate::prompts::turn_note(&blocks, &session.messages);
         assert_ne!(whole, delta, "unfolded, the note would be the same, so the test proves nothing");
-        let shown = a.wire_note(&session.messages, &no_tools());
+        let shown = a.wire_note(&session.messages, &no_tools(), session.last_prompt_tokens);
         assert_eq!(whole, shown, "the Wire showed a delta for a turn that folds first");
         let mut events: Vec<AgentEvent> = Vec::new();
         let _ = a.run_turn(&mut session, fmt!("carry on"), &no_tools(),
@@ -5060,8 +5107,35 @@ mod tests {
         let small = foldable_session(30, 3_000);
         let mut prior = small.messages.clone();
         prior[0] = ChatMessage::user_noted(fmt!("ask 0"), whole.clone());
-        assert!(!b.opens_with_fold(&prior, &no_tools()), "a wide window folded");
-        assert_eq!(crate::prompts::turn_note(&blocks, &prior), b.wire_note(&prior, &no_tools()));
+        assert!(!b.opens_with_fold(&prior, &no_tools(), 0), "a wide window folded");
+        assert_eq!(crate::prompts::turn_note(&blocks, &prior), b.wire_note(&prior, &no_tools(), 0));
+    }
+
+    /// r578e D4: the Wire asks the fold the turn will meet, and the turn reads the provider's own
+    /// count of the last prompt beside the estimate.  A conversation the estimate puts under the
+    /// budget but the real count puts over it opens with a fold, and the Wire must say so.
+    #[test]
+    fn test_the_wire_fold_check_reads_the_real_token_count_00() {
+        let blocks = appendonly_blocks("STATE-ONE", &appendonly_tree(20, None));
+        let whole = crate::prompts::turn_note(&blocks, &[]);
+        let a = Agent::new(crate::llm::tests::stub_client(1), "You are Daimond.");
+        a.set_context_window(20_000);
+        a.set_blocks(blocks.clone());
+        let (budget, tail) = {
+            let l = a.limits.borrow();
+            (l.budget(a.reply_cap()), l.tail_budget(a.reply_cap()))
+        };
+        // Sized between the tail and the budget: a cut exists, but the estimate alone does not fold.
+        let pairs = 20usize;
+        let each = (a.gauge.bytes((budget + tail) / 2) as usize) / pairs;
+        let mut prior = foldable_session(pairs, each).messages;
+        prior[0] = ChatMessage::user_noted(fmt!("ask 0"), whole.clone());
+        assert!(!a.opens_with_fold(&prior, &no_tools(), 0),
+            "the estimate alone folded, so the test proves nothing");
+        assert!(a.opens_with_fold(&prior, &no_tools(), budget + 1),
+            "the real count past the budget did not fold");
+        assert_eq!(whole, a.wire_note(&prior, &no_tools(), budget + 1),
+            "the Wire showed a delta for a turn the real count folds first");
     }
 
     /// A correction said into a running turn takes its note with it, into the next round's
@@ -5372,6 +5446,15 @@ mod tests {
         assert!(events.iter().any(|e| matches!(e, AgentEvent::ToolResult { result, .. }
             if result.contains("Stopped"))), "the page was not told the call was stopped");
         assert!(matches!(events.last(), Some(AgentEvent::Done)));
+    }
+
+    #[test]
+    fn test_a_stopped_command_is_answered_as_stopped_and_another_call_is_not_00() {
+        // QA r578d D1: the command's process is told to stop, and the model is told so.
+        for name in ["run", "verify", "serve", "shell"] {
+            assert!(stopped_call(name).contains("the command was told to stop"), "{}", name);
+        }
+        assert!(!stopped_call("file_write").contains("command"), "a file write named a command");
     }
 
     /// A turn stopped before its first request sends none at all.
@@ -5956,6 +6039,73 @@ mod tests {
         assert!(sent.contains("older line\\nolder line") && sent.contains("newer line\\nnewer line"),
             "a result was shortened in a conversation of ~12k tokens, far under the line");
         assert!(!sent.contains("retired; call it again"), "a stub went out below the line");
+    }
+
+    #[tokio::test]
+    async fn test_past_the_line_results_retire_once_then_the_turns_append_00() {
+        // QA-B r578d (failing-first). D-20261020-11: past the line old results are shortened ONCE
+        // (one cache miss) and then the turns append; "never at every turn boundary". At the record
+        // a conversation that stays past the line after its one shortening (stubs, kept arguments
+        // and notes are a floor retirement cannot go under) retires the newly aged turn at EVERY
+        // later boundary: on world 98 a read-heavy Diamond broke at R28->R29 ... R32->R33, five
+        // boundaries in a row, before its fold. Here the line is put under the conversation so it
+        // is past from the start: turn three retires r1 (the once), and turn four must append --
+        // r2, whole in turn three's request, must go whole again in turn four's.
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![plain_answer(), plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        if let Err(e) = a.set_tune(r#"{"retire_at":0.0001}"#) { panic!("{}", e); }
+        let mut session = Session::new(fmt!("s1"), fmt!("past"), fmt!("model"));
+        two_read_turns(&mut session);
+        let _ = a.run_turn(&mut session, fmt!("turn three"), &registry, &mut |_| {}).await;
+        let _ = a.run_turn(&mut session, fmt!("turn four"), &registry, &mut |_| {}).await;
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's record: {}", e),
+        };
+        assert_eq!(2, bodies.len(), "two turns, one request each");
+        assert!(!bodies[0].contains("older line\\nolder line"), "the once did not happen: r1 went whole");
+        assert!(bodies[0].contains("newer line\\nnewer line"), "turn three shortened the turn just finished");
+        assert!(bodies[1].contains("newer line\\nnewer line"),
+            "turn four rewrote turn three's prefix: r2 went whole and then as a stub, a second shortening at an ordinary boundary");
+    }
+
+    #[tokio::test]
+    async fn test_the_turn_start_line_counts_the_tool_list_00() {
+        // QA-B r578d B2. The tool list rides on every request (~13k tokens for the browser set)
+        // and the mid-turn and summary checks count it; the turn-start check did not, so a
+        // Diamond crossed the line ~13k tokens later than a chat.  Here the line sits between the
+        // conversation alone and the conversation with its tool list: past it, r1 retires.
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_agent_test") {
+            Ok(d)  => d,
+            Err(e) => panic!("a scratch directory: {}", e),
+        };
+        let registry = tools_in(dir, crate::tools::Tool::browser());
+        let (port, seen) = crate::llm::tests::start_stub(vec![plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("tools"), fmt!("model"));
+        two_read_turns(&mut session);
+        let schema = registry.definitions_json().map(|d| d.len() as u64).unwrap_or(0);
+        let (conv, tools) = (a.gauge.tokens(compact::conversation_bytes(&session.messages)),
+            a.gauge.tokens(schema));
+        assert!(tools > 6_000, "the browser tool list is only {} tokens, too few to tell", tools);
+        let budget = a.limits.borrow().budget(a.reply_cap());
+        let at = (conv + 3_000) as f64 / budget as f64;
+        if let Err(e) = a.set_tune(&fmt!(r#"{{"retire_at":{}}}"#, at)) { panic!("{}", e); }
+        let _ = a.run_turn(&mut session, fmt!("turn three"), &registry, &mut |_| {}).await;
+
+        let bodies = match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("the stub's record: {}", e),
+        };
+        assert!(!bodies.is_empty(), "no request reached the provider");
+        assert!(!bodies[0].contains("older line\\nolder line"),
+            "past the line with its tool list counted, r1 still went whole");
     }
 
     /// The request a ten-round turn ends on, each round costing `usd` of the five-dollar ceiling,

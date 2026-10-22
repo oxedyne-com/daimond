@@ -441,6 +441,7 @@ pub struct Limits {
 	pub retire_prior: bool,		// retire a turn's predecessors on the way out; see `retire_upto`
 	pub retire_keep_turns: u32,	// completed turns left whole first; see `RETIRE_KEEP_TURNS`
 	pub retire_at:    f64,		// fraction of the fold budget past which results retire; see `RETIRE_AT`
+	pub retire_step:  f64,		// fraction of the fold budget a re-shortening must save; see `RETIRE_STEP`
 	pub result_age:   usize,	// rounds a result must be old; see `IN_TURN_RESULT_AGE`
 	pub result_cap:   usize,	// bytes left whole however old; see `IN_TURN_RESULT_CAP`
 	pub sweep_every:  usize,	// rounds between sweeps; see `IN_TURN_RETIRE_EVERY`
@@ -520,6 +521,7 @@ impl Default for Limits {
 			retire_prior: true,
 			retire_keep_turns: RETIRE_KEEP_TURNS,
 			retire_at:    RETIRE_AT,
+			retire_step:  RETIRE_STEP,
 			result_age:   IN_TURN_RESULT_AGE,
 			result_cap:   IN_TURN_RESULT_CAP,
 			sweep_every:  IN_TURN_RETIRE_EVERY,
@@ -556,6 +558,11 @@ impl Limits {
 	/// * `max_completion` - The cap the client puts on generated tokens.
 	pub fn retire_line(&self, max_completion: u32) -> u64 {
 		(self.budget(max_completion) as f64 * self.retire_at.clamp(0.0, 1.0)) as u64
+	}
+
+	/// Tokens a shortening after the first must save; see [`RETIRE_STEP`].
+	pub fn retire_step(&self, max_completion: u32) -> u64 {
+		(self.budget(max_completion) as f64 * self.retire_step.clamp(0.0, 1.0)) as u64
 	}
 
 	/// The largest prompt this turn should send, in tokens.
@@ -2030,6 +2037,19 @@ pub const RETIRE_KEEP_TURNS: u32 = 1;
 /// call inputs.  This is the same rule.
 pub const RETIRE_AT: f64 = 2.0 / 3.0;
 
+/// What a conversation already shortened once must have grown by, in results it could still
+/// shorten, before it is shortened again: a sixth of [`Limits::budget`], ~20k tokens at the shipped
+/// 120k, so between the line and the fold there is room for one more at most.
+///
+/// **Once, not at every boundary (QA r578d B1, D-20261020-11).**  The stubs, the model's own
+/// arguments and the notes are a floor retirement cannot go under, so a conversation shortened
+/// once can stay past the line; and past it, every boundary retired the turn that had just aged,
+/// one cache miss each -- five in a row on a read-heavy Diamond before its fold.  Each shortening
+/// re-bills everything after the first result it touches at the full input rate, so one is worth
+/// it only for a real saving; anything less is left whole for the summary to take.  Nought is
+/// the r578d rule, every boundary past the line (`set_tune`'s `retire_step`).
+pub const RETIRE_STEP: f64 = 1.0 / 6.0;
+
 /// How the turn's budget line opens, and the marker that finds an earlier one to remove.
 ///
 /// On its own line inside the last tool result, so removing it is a truncation rather than a
@@ -2225,6 +2245,44 @@ pub fn carry_retired(stored: &mut [ChatMessage], sent: &[ChatMessage]) -> usize 
 /// * `line` - See [`Limits::retire_line`].
 pub fn past_line(est_tokens: u64, real_tokens: u64, line: u64) -> bool {
 	est_tokens > line || real_tokens > line
+}
+
+/// Is a shortening due at this boundary of a conversation past the line?  The first is, always;
+/// after it, only once the results [`retire_upto`] would shorten in `msgs[..end]` would save
+/// `step` bytes.  See [`RETIRE_STEP`].
+///
+/// The first is read off the conversation itself -- a result marked retired is a shortening that
+/// happened -- so it holds across a reload, and a fold, which takes the marked results into its
+/// summary, starts the count again.
+pub fn retire_due(msgs: &[ChatMessage], end: usize, step: u64) -> bool {
+	if !msgs.iter().any(|m| m.is_retired()) {
+		return true;
+	}
+	retirable_bytes(msgs, end) >= step
+}
+
+/// Bytes [`retire_upto`] would save on `msgs[..end]`, without shortening anything.
+pub fn retirable_bytes(msgs: &[ChatMessage], end: usize) -> u64 {
+	let end = end.min(msgs.len());
+	let mut n = 0u64;
+	let mut i = 0;
+	while i < end {
+		let calls = match &msgs[i] {
+			ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => tool_calls,
+			_ => { i += 1; continue; },
+		};
+		for (k, tc) in calls.iter().enumerate() {
+			let j = i + 1 + k;
+			if j >= end {
+				break;
+			}
+			if let Some(stub) = result_stub(tc, &msgs[j]) {
+				n += msg_bytes(&msgs[j]).saturating_sub(stub.len() as u64);
+			}
+		}
+		i += 1 + calls.len();
+	}
+	n
 }
 
 /// Where the prior-turn boundary lands once a fold has moved every index behind it.

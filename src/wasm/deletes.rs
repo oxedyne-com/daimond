@@ -39,7 +39,11 @@ const DELETES_GLOBAL: &str = "DaimondDeletes";
 /// * `count` - How many it has deleted or wiped there this turn.
 /// * `limit` - How many a turn may do that to there before the person is asked.
 /// * `act` - What it wants to do to `path`: `delete` or `wipe`.
-pub async fn ask_to_go_on(keeper: &str, path: &str, count: usize, limit: usize, act: &str) -> bool {
+/// * `turn` - The turn's tag (`ToolContext::turn_tag`), by which the turn's Stop closes the
+///   question (QA r578d-A D2).
+pub async fn ask_to_go_on(keeper: &str, path: &str, count: usize, limit: usize, act: &str, turn: &str)
+    -> bool
+{
     let win = match web_sys::window() {
         Some(w) => w,
         None    => return false,
@@ -53,8 +57,8 @@ pub async fn ask_to_go_on(keeper: &str, path: &str, count: usize, limit: usize, 
         _                        => return false,
     };
     let payload = fmt!(
-        "{{\"keeper\":\"{}\",\"path\":\"{}\",\"count\":{},\"limit\":{},\"act\":\"{}\"}}",
-        json_escape(keeper), json_escape(path), count, limit, json_escape(act));
+        "{{\"keeper\":\"{}\",\"path\":\"{}\",\"count\":{},\"limit\":{},\"act\":\"{}\",\"turn\":\"{}\"}}",
+        json_escape(keeper), json_escape(path), count, limit, json_escape(act), json_escape(turn));
     let ret = match held.call1(&driver, &JsValue::from_str(&payload)) {
         Ok(v)  => v,
         Err(_) => return false,

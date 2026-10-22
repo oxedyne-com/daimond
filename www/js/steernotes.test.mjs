@@ -90,6 +90,7 @@ function page(o) {
 		'var chats = st.chats, current = null, _sharedClients = new WeakSet(), _diamondApps = {};\n' +
 		'var diamonds = [{ id: "OPT", get touched() { return st.stamp.OPT; } }, { id: "D1", get touched() { return st.stamp.D1; } }];\n' +
 		'var Workers = { cancelAwaits: function () {} };\n' +
+		'function closeTurnAsks() {}\n' +
 		'function trail(a, b) { st.trail.push(a + ": " + b); }\n' +
 		'function bumpDiamonds() { st.bumps++; }\n' +
 		'function appCfgFor(c) { return { model: c.model || "m1" }; }\n' +

@@ -159,9 +159,51 @@ pub async fn status() -> Outcome<String> {
 /// * `spec_json` - The `exec` request, already rendered as the wire's JSON.
 pub async fn run(spec_json: &str) -> Outcome<String> {
     let r = res!(relay());
-    match crate::wasm::settle_call_within(r.run(spec_json), crate::wasm::door_bound(spec_json)).await {
-        Ok(v)  => stringify(&v),
-        Err(e) => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e)))),
+    // A CALL THE TURN GIVES UP ON STOPS ITS COMMAND (QA r578d D1).  A Stop drops this future and
+    // the ceiling below returns without an answer; either way the command went on to its own
+    // timeout, fifteen minutes for a `run` and two hours for a `verify`.  So until the relay
+    // answers, dropping this future sends `term` to the run by the id the request gave it --
+    // what Claude Code does to a Bash process on Esc.
+    let id = crate::llm::extract_json_string(spec_json, "id").unwrap_or_default();
+    let guard = crate::agent::batch::OnAbandon::new(move || stop_abandoned(&id));
+    let bound = crate::wasm::door_bound(spec_json);
+    let p = match r.run(spec_json) {
+        Ok(p)  => p,
+        Err(e) => {
+            guard.settled();
+            return Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e))));
+        },
+    };
+    match crate::agent::batch::unless(crate::wasm::settle_js(p), crate::wasm::ceiling(bound)).await {
+        Some(Ok(v))  => { guard.settled(); stringify(&v) },
+        Some(Err(e)) => {
+            guard.settled();
+            Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&refusal(&e))))
+        },
+        // The guard is dropped armed on the way out, which is what stops the command.
+        None => Ok(fmt!(r#"{{"refused":"{}"}}"#, crate::llm::json_escape(&fmt!(
+            "The machine hand did not finish this command within {} minutes, so it was given up \
+            and the command was told to stop. It may have partly run; check before relying on \
+            its effect.", bound / 60_000)))),
+    }
+}
+
+/// Tell the hand to stop a run nobody is waiting for any more, and let the answer go.
+///
+/// Called from a drop, so nothing here may wait: the signal is posted and its promise settled
+/// on its own task.  A run that has already ended answers with an error nobody needs to read.
+fn stop_abandoned(id: &str) {
+    if id.is_empty() {
+        return;
+    }
+    let r = match relay() {
+        Ok(r)  => r,
+        Err(_) => return,
+    };
+    if let Ok(p) = r.signal(id, "term") {
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = crate::wasm::settle_js(p).await;
+        });
     }
 }
 

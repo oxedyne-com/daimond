@@ -116,7 +116,7 @@ function build(name, freeNames, transform) {
 		? body.replace(/return String\(x\.diamondId[\s\S]*?self\.isTerminal\(x\.status\);/,
 			'return false; // --break norecover')
 		: body;
-	const finishAwait = build('finishAwait', ['dsEvent', 'workerWrites', 'workerKind'], transform);
+	const finishAwait = build('finishAwait', ['dsEvent', 'workerWrites', 'workerKind', 'workerKindSaid'], transform);
 
 	function run(w, how) {
 		let out = null;
@@ -127,7 +127,8 @@ function build(name, freeNames, transform) {
 			persist: () => {}, render: () => {},
 		};
 		w.resolve = (json) => { out = JSON.parse(json); };
-		finishAwait.call(self, () => {}, () => 0, (r) => (r && r.forked ? 'full' : 'brief'), w, how);
+		const kind = (r) => (r && r.forked ? 'full' : 'brief');
+		finishAwait.call(self, () => {}, () => 0, kind, kind, w, how);
 		return out;
 	}
 

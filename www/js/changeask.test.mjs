@@ -89,8 +89,9 @@ function device(o) {
 		asks: P.PERMIT_ASKS, tag: 'tag1', auto: opts.auto }, opts.rc) } : {};
 	const pres = { snapshot: () => ({ PHONE: { lastSeen: Date.now() } }) };
 	const src = ['permitRunnerTurn', 'runnerTurnByTag', 'routePermitAsk', 'putPermitAsk', 'refusePermit',
-		'tellPermit', 'changeName', 'changeHead', 'changeChat', 'changeWaitMs', 'askChange'].map(lift).join('')
+		'tellPermit', 'changeName', 'changeHead', 'changeChat', 'changeWaitMs', 'holdTurnAsk', 'askChange'].map(lift).join('')
 		+ '\nvar CHANGE_WORD = { allow: \'apply\', deny: \'refused\' };'
+		+ '\nvar _turnAsks = Object.create(null);'
 		+ '\nreturn { askChange: askChange };';
 	const f = new Function('DaimondPeer', 'DaimondPost', 'window', 'DaimondPresence', '_consentWait', '_runnerCtx',
 		'_openAskForTurn', 'selfDeviceId', 'raiseBlocker', 'clearBlocker', 'trail', 'Pending', '_parked',

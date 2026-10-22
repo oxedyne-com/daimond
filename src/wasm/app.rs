@@ -658,12 +658,13 @@ impl DaimondApp {
     /// Start this worker as a copy of its parent (r578c): the request the parent's spawn round
     /// held, filed under `id` by the engine.  The worker takes the parent's belt and Diamond with
     /// it, so its tools array and its dispatch match and `crystal_read` reads the same crystal.
-    /// Call after `set_unsupervised` and before the first turn, and again on a re-mint; the copy
-    /// stays filed until [`crate::wasm::entry::fork_forget`].  Answers the copy's size in bytes.
+    /// Call after `set_unsupervised` and before the first turn, and again on a re-mint.  Adoption
+    /// takes the copy out of the store's bound (r578e n2); it stays filed for a re-mint until
+    /// [`crate::wasm::entry::fork_forget`].  Answers the copy's size in bytes.
     ///
     /// A worker with no `id` is a brief worker and never calls this (D-20261020-05).
     pub fn adopt_fork(&mut self, id: &str) -> Result<f64, JsValue> {
-        let f = match crate::fork::get(id) {
+        let f = match crate::fork::take(id) {
             Some(f) => f,
             None    => return Err(JsValue::from_str(&fmt!(
                 "adopt_fork: no parent copy is filed under '{}'; it ended or was never issued.", id))),
@@ -1223,10 +1224,15 @@ impl DaimondApp {
                 match js_prop(&item, "role").unwrap_or_default().as_str() {
                     // A person's message keeps the app's note the page stored beside it, so the model
                     // reads the same history after a reload as before it.
-                    // A prose transcript's user rows are what turns were run on, so each opens one.
-                    "user"      => session.messages.push(ChatMessage::user_noted(
-                        content, js_prop(&item, "pre").unwrap_or_default())
-                        .marked(js_prop(&item, "mid").unwrap_or_default()).opening()),
+                    // A prose transcript's user rows are what turns were run on, so each opens
+                    // one -- save an interjection, said into a turn already running (B3).
+                    "user"      => {
+                        let interject = js_sys::Reflect::get(&item, &JsValue::from_str("interject"))
+                            .ok().and_then(|v| v.as_bool()).unwrap_or(false);
+                        session.messages.push(ChatMessage::user_noted(
+                            content, js_prop(&item, "pre").unwrap_or_default())
+                            .marked(js_prop(&item, "mid").unwrap_or_default()).opening_if(!interject))
+                    },
                     "assistant" => session.messages.push(ChatMessage::assistant(content)),
                     _ => continue,
                 }
@@ -1347,13 +1353,16 @@ impl DaimondApp {
     /// * `pre` - The app's note stored beside a user message, if it had one.  Ignored for an
     ///   assistant's.
     /// * `mid` - The transcript row a user message is, as [`DaimondApp::run_turn`] takes it.
+    /// * `opens` - Whether a turn was run on this user message: true for another device's
+    ///   prompt, false for an interjection or the app's own note (QA r578d-B B3), which would
+    ///   otherwise put `compact::prior_end`'s boundary on the note.
     pub fn append_message(&self, role: String, content: String, pre: Option<String>,
-        mid: Option<String>)
+        mid: Option<String>, opens: bool)
         -> Result<(), JsValue>
     {
         Session::write_held(&self.session, |session| match role.as_str() {
             "user"      => session.messages.push(ChatMessage::user_noted(
-                content, pre.unwrap_or_default()).marked(mid.unwrap_or_default()).opening()),
+                content, pre.unwrap_or_default()).marked(mid.unwrap_or_default()).opening_if(opens)),
             "assistant" => session.messages.push(ChatMessage::assistant(content)),
             _ => {},
         }).map_err(to_js_err)
@@ -2216,7 +2225,8 @@ impl DaimondApp {
         };
         // A Diamond's conversation is the page's to hand over, and it is read here as the turn
         // reads it, so the note shown is the one that turn would carry.
-        Ok(wire_json(&turn.agent, &turn.registry, &turn.local, &sent))
+        // A Diamond's turn runs in a fresh Session, so it has no real count to read: 0.
+        Ok(wire_json(&turn.agent, &turn.registry, &turn.local, &sent, 0))
     }
 
     /// The Wire for an ordinary chat's own conversation: this app's agent and registry, as
@@ -2230,11 +2240,11 @@ impl DaimondApp {
         let (brief, blocks) = self.briefing(&self.registry).await;
         self.agent.set_briefing(&brief);
         self.agent.set_blocks(blocks);
-        let sent = match self.session.try_borrow() {
-            Ok(s)  => s.messages.clone(),
-            Err(_) => Vec::new(),	// a turn is running; the note is then every block
+        let (sent, real) = match self.session.try_borrow() {
+            Ok(s)  => (s.messages.clone(), s.last_prompt_tokens),
+            Err(_) => (Vec::new(), 0),	// a turn is running; the note is then every block
         };
-        Ok(wire_json(&self.agent, &self.registry, "", &sent))
+        Ok(wire_json(&self.agent, &self.registry, "", &sent, real))
     }
 
     /// Create a Diamond at a KNOWN id, or answer with the id if it is already there.
@@ -3209,6 +3219,7 @@ fn wire_json(
     registry: &ToolRegistry,
     local:    &str,
     sent:     &[ChatMessage],
+    real:     u64,	// provider prompt tokens of the last round, 0 for none
 )
     -> String
 {
@@ -3217,8 +3228,9 @@ fn wire_json(
     // band cannot drift from the request: the frozen system above, and this, which is not in it.
     // AND A TURN THAT OPENS WITH A FOLD restates every block whole, so the Wire asks the turn's
     // own fold plan before composing (r578d B3); `fold_first` says so beside the note.
-    let fold_first = agent.opens_with_fold(sent, registry);
-    let note = agent.wire_note(sent, registry);
+    // The real count too, as the turn reads it beside the estimate (r578e D4).
+    let fold_first = agent.opens_with_fold(sent, registry, real);
+    let note = agent.wire_note(sent, registry, real);
     // THE MACHINE NOTE, AS THE TURN NOTE CARRIES IT (r578b A4). It moved out of the system message
     // and into the note, which left the band "This computer" holding the model note alone. Named
     // here as the exact text of the note, so the page draws it under that band and out of the

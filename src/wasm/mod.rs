@@ -191,7 +191,7 @@ pub(crate) async fn settle_call_within(r: Result<JsValue, JsValue>, ms: u64)
 
 /// Ready after `ms`.  Where no timer can be set it is never ready: a ceiling that fired at once
 /// would fail every call, where `llm::sleep_ms` only shortens a pause.
-async fn ceiling(ms: u64) {
+pub(crate) async fn ceiling(ms: u64) {
     use wasm_bindgen::JsCast;
     let ms = ms.min(i32::MAX as u64) as i32;
     let mut set = false;

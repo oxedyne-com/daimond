@@ -112,9 +112,9 @@ const c = await run(`
 		{ role: 'user', content: 'screen words', pre: arg.n1 },
 		{ role: 'assistant', content: 'screen answer' },
 	], 0, 0, 0);
-	eng.append_message('user', 'a late message', arg.n2);
-	eng.append_message('assistant', 'its answer', arg.n2);
-	eng.append_message('user', 'no note here');
+	eng.append_message('user', 'a late message', arg.n2, undefined, true);
+	eng.append_message('assistant', 'its answer', arg.n2, undefined, false);
+	eng.append_message('user', 'no note here', undefined, undefined, true);
 	await eng.run_turn('last words', () => {});
 	return Array.from(eng.export_session()).map((m) => ({ role: m.role, content: m.content, pre: m.pre }));
 `, { n1: NOTE, n2: NOTE2 });

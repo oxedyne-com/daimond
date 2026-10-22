@@ -1131,9 +1131,20 @@
 	}
 
 	/// End a run that will not answer, with the sentence saying why.
+	///
+	/// A COMMAND GIVEN UP IS TOLD TO STOP (QA r578d D1). Nobody is waiting for it any more, and
+	/// left alone it ran on to its own timeout -- fifteen minutes for a `run`, two hours for a
+	/// `verify`. Only on the link it went out on and only while that link lives: a dead link has
+	/// already taken its runs with it, and a signal there would open a new one to say so.
 	function endWith(run, why) {
+		var was = !run.done;
 		note(run, why);
 		settle(run, 'reject', new Error(run.note));
+		var rec = run.link;
+		if (was && run.command && rec && !rec.dead && link === rec) {
+			try { rec.port.postMessage({ t: 'signal', id: run.id, sig: 'term' }); }
+			catch (e) { /* the link is going; it ends the run itself */ }
+		}
 	}
 
 	/// Finish a run once, whichever way it finished.
@@ -1179,6 +1190,7 @@
 				var r = {
 					id:      id,
 					link:    rec,
+					command: true,                       // a process stands behind it; see `endWith`
 					resolve: resolve,
 					reject:  reject,
 					seq:     { out: null, err: null },   // set by the first chunk of each stream

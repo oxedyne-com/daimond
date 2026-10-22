@@ -212,6 +212,36 @@ where
 }
 
 
+/// Runs `f` when dropped, unless [`OnAbandon::settled`] was called first.
+///
+/// **A call the turn gives up on is a call nobody is waiting for, and the far side does not
+/// know.**  A Stop drops the tool's future inside [`unless`] and a door's ceiling returns without
+/// an answer; either way a command on the machine went on to its own timeout -- fifteen minutes
+/// for a `run`, two hours for a `verify` (QA r578d D1).  The guard lives in the future, so it is
+/// dropped with it, and the one thing it does is tell the far side to stop.
+pub struct OnAbandon<F: FnOnce()> {
+    f: Option<F>,
+}
+
+impl<F: FnOnce()> OnAbandon<F> {
+    pub fn new(f: F) -> Self {
+        Self { f: Some(f) }
+    }
+
+    /// The far side answered, so there is nothing left to stop.
+    pub fn settled(mut self) {
+        self.f = None;
+    }
+}
+
+impl<F: FnOnce()> Drop for OnAbandon<F> {
+    fn drop(&mut self) {
+        if let Some(f) = self.f.take() {
+            f();
+        }
+    }
+}
+
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Tests                                                          │
 // └───────────────────────────────────────────────────────────────┘
@@ -339,6 +369,37 @@ mod tests {
         assert!(queue > batch * 2,
             "the queue took {:?} and the batch {:?}, which is not the difference this is for",
             queue, batch);
+    }
+
+    /// QA r578d D1: a call the far side answers sends no stop; a call the turn gives up on --
+    /// a Stop dropping it in [`unless`], or a ceiling it ran past -- sends exactly one.
+    #[test]
+    fn test_an_abandoned_call_tells_the_far_side_to_stop_and_an_answered_one_does_not_00() {
+        let stops = std::cell::Cell::new(0u32);
+        let call = |answers: bool| {
+            let stops = &stops;
+            async move {
+                let guard = OnAbandon::new(|| stops.set(stops.get() + 1));
+                if answers {
+                    guard.settled();
+                    return "answered";
+                }
+                std::future::pending::<()>().await;
+                drop(guard);
+                "never"
+            }
+        };
+        assert_eq!(Some("answered"), block_on(unless(call(true), std::future::ready(()))));
+        assert_eq!(0, stops.get(), "an answered call told the far side to stop");
+
+        assert_eq!(None, block_on(unless(call(false), std::future::ready(()))));
+        assert_eq!(1, stops.get(), "a stopped call left its command running");
+
+        // The ceiling: the call returns without an answer and drops its guard armed.
+        {
+            let _guard = OnAbandon::new(|| stops.set(stops.get() + 1));
+        }
+        assert_eq!(2, stops.get(), "a call given up at its ceiling left its command running");
     }
 
     /// A wait of a known length, so the test above measures a clock and not a poll count.

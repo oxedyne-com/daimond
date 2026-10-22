@@ -4019,9 +4019,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// (r578d A1). And only a run of THE SAME CONVERSATION is a candidate: the same
 	/// Diamond and the same chat. A chat's workers carry no Diamond id, so the chat id
 	/// is what keeps one chat's worker from restoring another chat's stashed session,
-	/// which since r578c can be that chat's whole conversation. With a `continue:`
-	/// task, the newest run of this conversation with the same name wins, else the
-	/// newest of this conversation at all.
+	/// which since r578c can be that chat's whole conversation. A NAMED `continue:`
+	/// continues the newest run of this conversation with that name, or nothing: a
+	/// name that names no run must not pick up a differently named worker's thread
+	/// (QA r578d-A D3). Only a nameless `continue:` takes the newest of this
+	/// conversation at all.
 	///
 	/// `runs` is searched newest-first (`Workers.runs` is unshifted, so it already
 	/// is), and only a run carrying a stashed `_session` is a candidate.
@@ -4036,6 +4038,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		if (name) {
 			for (var i = 0; i < mine.length; i++) if (mine[i].name === name) return mine[i];
+			return null;
 		}
 		return mine.length ? mine[0] : null;
 	}
@@ -19997,6 +20000,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return timer;
 	}
 
+	// ── The questions a turn has up, by its tag (QA r578d-A D2) ──
+	// A Stop ends the turn's Rust future, so an answer to a question it raised -- the run,
+	// network or delete dialog, the askChange Pending tile -- reaches nobody, and the
+	// question stood until its own deadline (2 or 10 min). Each one is filed here under
+	// the tag of the turn that asked (the payload's `turn`, `ToolContext::turn_tag`), and
+	// `abortTurn` closes the ones filed under the stopped turn, each with its safe answer.
+	var _turnAsks = Object.create(null);		// turn tag -> the closers of its questions
+
+	/// File a question's closer under its turn; the returned function unfiles it, and is
+	/// called on every exit. A question with no tag is never filed.
+	function holdTurnAsk(tag, closer) {
+		tag = String(tag || '');
+		if (!tag) return function () {};
+		var set = _turnAsks[tag] || (_turnAsks[tag] = new Set());
+		set.add(closer);
+		return function () {
+			set.delete(closer);
+			if (!set.size && _turnAsks[tag] === set) delete _turnAsks[tag];
+		};
+	}
+
+	/// Close every question the turn tagged `tag` has up.
+	function closeTurnAsks(tag) {
+		tag = String(tag || '');
+		var set = tag ? _turnAsks[tag] : null;
+		if (!set) return;
+		delete _turnAsks[tag];
+		set.forEach(function (closer) {
+			try { closer(); } catch (e) { /* one that fails leaves the rest to close */ }
+		});
+	}
+
 	/// The app's one modal. `opts.deadlineMs`, where a caller sets one, is how long
 	/// it may stand unanswered before it answers itself: the timer calls
 	/// `opts.onDeadline` (so the caller can SAY that nobody answered) and then closes
@@ -20009,7 +20044,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// typing elsewhere, or a person's own press whose yes grants more than the row
 	/// on screen (F1, 2026-09-25: "Use here" opened focused on itself, and a held
 	/// Enter granted a mark nobody meant to confirm). It is focused on its safe
-	/// button and guarded against a stray key; see `guardUntil`.
+	/// button and guarded against a stray key; see `guardUntil`. `opts.turn`, the tag of
+	/// the turn whose question this is, lets that turn's Stop close it (`holdTurnAsk`).
 	function dialog(opts) {
 		return new Promise(function (resolve) {
 			var back = document.createElement('div');
@@ -20135,6 +20171,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			back.appendChild(card);
 			document.body.appendChild(back);
 			var lid = DaimondLayers.open(DaimondLayers.uid('dialog'), function () { close(nothing()); });
+			// A STOPPED TURN'S QUESTION closes as Escape does: nothing it answers reaches anyone.
+			var unhold = holdTurnAsk(opts.turn, function () { close(nothing()); });
 
 			var prev = document.activeElement;
 		// Captured while the opener is still in the document: a panel that redraws
@@ -20169,6 +20207,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (guarded(e)) { e.preventDefault(); e.stopPropagation(); }
 			}
 			function close(value) {
+				if (unhold) { unhold(); unhold = null; }
 				if (deadline) { clearTimeout(deadline); deadline = null; }
 				if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
 				if (guardTimer) { clearTimeout(guardTimer); guardTimer = null; }
@@ -20298,6 +20337,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			onDeadline: opts.onDeadline,
 			ask: opts.ask,
 			guard: opts.guard,
+			turn: opts.turn,
 		});
 	}
 
@@ -20376,7 +20416,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// Put one held-delete question to the person; resolves true only on their yes.
-	function askHeldDelete(body, title, allow) {
+	function askHeldDelete(body, title, allow, turn) {
 		return confirmDialog(body, allow, {
 			title: title,
 			cancelLabel: t('deletes.held_stop'),
@@ -20385,6 +20425,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			onDeadline: function () { return false; },
 			ask: 'delete-held',
 			guard: true,
+			turn: turn,
 		}).then(function (yes) { return yes === true; }, function () { return false; });
 	}
 
@@ -20461,7 +20502,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					try { Pending.fresh(); Pending.render(); } catch (e) { /* the panel is not up */ }
 				}
 			}, wait);
+			// ITS TURN STOPPED (D2): nobody is left to apply the change, so the tile comes
+			// down, answered as unanswered -- he did not refuse it.
+			var unhold = holdTurnAsk(req.turn, function () {
+				settleConsent(id, 'timeout');
+				try { Pending.drop(id); Pending.render(); } catch (e) { /* the panel is not up */ }
+			});
 			_parked[id] = function (verdict) {
+				unhold();
 				clearTimeout(timer);
 				if (chat && chat._busy === words) busySay(chat, prev || tOr('chat.busy', 'Thinking…'));
 				resolve(CHANGE_WORD[verdict] || 'unanswered');
@@ -20479,6 +20527,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var key = String(req.keeper || '');
 			var path = String(req.path || '');
 			var wipe = req.act === 'wipe';
+			var turn = String(req.turn || '');		// the asking turn's tag: its Stop closes this (D2)
 			var next = wipe ? t('deletes.next_wipe', { path: path })
 				: t('deletes.next_delete', { path: path });
 			var vars = { who: deleteAsker(key), path: path, next: next };
@@ -20488,9 +20537,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (last === false) return false;
 					return wipe
 						? askHeldDelete(t('deletes.held_first_wipe', vars),
-							t('deletes.held_title_one_wipe'), t('deletes.held_allow_one_wipe'))
+							t('deletes.held_title_one_wipe'), t('deletes.held_allow_one_wipe'), turn)
 						: askHeldDelete(t('deletes.held_first', vars), t('deletes.held_title_one'),
-							t('deletes.held_allow_one'));
+							t('deletes.held_allow_one'), turn);
 				});
 				_deleteLine[key] = one;
 				var off = function () { if (_deleteLine[key] === one) delete _deleteLine[key]; };
@@ -20500,7 +20549,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (_deleteAsks[key]) return _deleteAsks[key];
 			var n = Math.max(0, req.count | 0);
 			var ask = askHeldDelete(tn('deletes.held_body', n, vars), t('deletes.held_title'),
-				t('deletes.held_allow'));
+				t('deletes.held_allow'), turn);
 			_deleteAsks[key] = ask;
 			var done = function () { delete _deleteAsks[key]; };
 			ask.then(done, done);
@@ -20802,13 +20851,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The kind a worker ran as, for the lens and the report heading: "full" or "brief".
 	function workerKind(run) { return run && run.forked ? 'full' : 'brief'; }
 
-	/// Adopt the parent's copy onto `run.app`, or leave a brief worker.  Sets `run.forked`.
+	/// The kind for a report heading: as `workerKind`, saying so when a copy was asked for and
+	/// was gone by the time the worker started (n1), since the parent was told it would be full.
+	function workerKindSaid(run) {
+		return run && run.fellBack ? 'brief: its copy of the conversation was gone when it started'
+			: workerKind(run);
+	}
+
+	// THE KIND IS SAID WHEN IT IS KNOWN (n1). A worker's kind is settled at adoption, which is
+	// after its mint and its fence; `spawn` answers a worker running now only then, so the
+	// STARTED line never calls full a worker whose copy went while it waited.
+
+	/// Settle the kind `run` started as and answer whoever waits on it.  Idempotent: the first
+	/// settle stands, since a re-mint's adoption cannot change what was already announced.
+	function settleKind(run) {
+		if (run.kindSettled) return;
+		run.kindSettled = true;
+		var w = run._kindWait || [];
+		run._kindWait = null;
+		w.forEach(function (f) { f(workerKind(run)); });
+	}
+
+	/// The kind `run` started as, once it has: at adoption, or at a start that fell short.
+	function startedKind(run) {
+		if (run.kindSettled) return Promise.resolve(workerKind(run));
+		return new Promise(function (f) { (run._kindWait = run._kindWait || []).push(f); });
+	}
+
+	/// Adopt the parent's copy onto `run.app`, or leave a brief worker.  Sets `run.forked`, and
+	/// `run.fellBack` when a copy was asked for and is gone.
 	function adoptFork(run) {
 		run.forked = false;
-		if (!forkable(run)) return;
-		if (!run.app || typeof run.app.adopt_fork !== 'function') return;
-		try { run.app.adopt_fork(run.fork); run.forked = true; }
-		catch (e) { /* the copy is gone: the brief start the app was built with stands */ }
+		run.fellBack = false;
+		if (forkable(run) && run.app && typeof run.app.adopt_fork === 'function') {
+			try { run.app.adopt_fork(run.fork); run.forked = true; }
+			catch (e) { run.fellBack = true; /* the copy is gone: the brief start stands */ }
+		}
+		settleKind(run);
 	}
 
 	/// A worker's first message: the hand-off for a fork worker, the task for a brief one.
@@ -22388,7 +22467,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				t('permmode.run_ok'),
 				// Re-check of 2026-09-23: this question is raised by the running turn, not
 				// by anything the person just did, so it takes R6's guard (see `dialog`).
-				{ title: t('permmode.run_title'), danger: false, guard: true,
+				{ turn: req.turn, title: t('permmode.run_title'), danger: false, guard: true,
 					deadlineMs: runWaitMs,
 					onDeadline: function () { runTimedOut = true; } });
 			if (okRun) return 'allow';    // never remembered: every time means every time.
@@ -22437,6 +22516,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			kshown.className = 'dlg-pre';
 			kshown.textContent = kcmd.length > 300 ? (kcmd.slice(0, 300) + '…') : kcmd;
 			var kyes = await dialog({
+				turn:    req.turn,		// its Stop closes it (D2)
 				kind: 'confirm',
 				ask: 'toolkit',
 				title: t('kit.ask_title', { name: kd.name, kits: klabels.join(', ') }),
@@ -22511,6 +22591,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				pbody.appendChild(pon);
 			}
 			var pyes = await dialog({
+				turn:    req.turn,		// its Stop closes it (D2)
 				kind: 'confirm',
 				ask: 'place',
 				title: t(pwait ? 'place.ask_here_title' : 'place.ask_title', { name: pd.name, place: pplace }),
@@ -22618,6 +22699,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var netTimedOut = false;
 			var netWaitMs = netAskDeadline(opts);
 			var netAns = await dialog({
+				turn:    req.turn,		// its Stop closes it (D2)
 				deadlineMs: netWaitMs,
 				onDeadline: function () { netTimedOut = true; },
 				kind:    'pick',
@@ -22726,7 +22808,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						+ '\n\n{what}\n\nDecline if you did not expect it.',
 					{ what: what }),
 				tOr('social.publish_ok', 'Publish it'),
-				{ title: tOr('social.publish_title', 'Publish this?'), danger: true,
+				{ turn: req.turn, title: tOr('social.publish_title', 'Publish this?'), danger: true,
 					ask: 'publish',
 					deadlineMs: pubWaitMs,
 					onDeadline: function () { pubTimedOut = true; },
@@ -22829,6 +22911,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// uses for its "Always allow". Read at OK, not on change, so a box ticked
 			// and then unticked before the button is pressed is not already obeyed.
 			var searchAns = await dialog({
+				turn:    req.turn,		// its Stop closes it (D2)
 				kind:    'pick',
 				title:   tOr('egress.search_title', 'Search the web?'),
 				message: tOr('egress.search_body',
@@ -22939,7 +23022,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						{ host: host, text: shownText || t('egress.nothing') })
 					: t('egress.type_body', { host: host, text: shownText || t('egress.nothing') }),
 				t('egress.type_ok'),
-				{ title: req.alone
+				{ turn: req.turn, title: req.alone
 					? tOr('permmode.act_worker_title', 'An agent wants to act on a page')
 					: t('egress.type_title', { host: host }),
 					danger: true,
@@ -22966,7 +23049,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						{ host: host })
 					: t('egress.act_body', { host: host }),
 				t('egress.act_ok', { host: host }),
-				{ title: req.alone
+				{ turn: req.turn, title: req.alone
 					? tOr('permmode.act_worker_title', 'An agent wants to act on a page')
 					: t('egress.act_title', { host: host }),
 					danger: true,
@@ -22996,7 +23079,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Re-check of 2026-09-23: R6's guard, but only for the turn's own address --
 				// under `strict` this is the crystal page's own link, raised by the click
 				// that just happened, not by a turn while the person is elsewhere.
-				{ title: t('egress.heavy_title', { host: host }), danger: true, guard: !strict });
+				{ turn: req.turn, title: t('egress.heavy_title', { host: host }), danger: true, guard: !strict });
 			// SPENT ON THIS ONE ADDRESS, in words the engine cannot file as the
 			// conversation's answer — in either direction. A yes here is not a yes to
 			// the web, and a no here is not a no to it: declining one overlong address
@@ -23014,7 +23097,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			ok = await confirmDialog(
 				t('egress.reach_body', { host: host }),
 				t('egress.reach_ok', { host: host }),
-				{ title: t('egress.reach_title', { host: host }), danger: true });
+				{ turn: req.turn, title: t('egress.reach_title', { host: host }), danger: true });
 			return ok ? 'allow' : 'deny';
 		}
 		// ALREADY ANSWERED, so nothing is drawn. `allow-once` rather than `allow`
@@ -23036,7 +23119,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			t('egress.any_ok'),
 			// Re-check of 2026-09-23: raised by the running turn (never reached under
 			// `strict`, which returns above at `reach`): R6's guard applies.
-			{ title: t('egress.any_title'), danger: true, guard: true });
+			{ turn: req.turn, title: t('egress.any_title'), danger: true, guard: true });
 		return ok ? 'allow' : 'deny';
 	}
 
@@ -34737,6 +34820,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// THE APP THE RUNNING TURN HOLDS, not the one the chat holds now: a note, a setting or a key that
 		// moved mid-turn may have dropped `c.app`, and a Stop that read it reached nothing (round F, Opus A F1).
 		var app = c._generating && c._runApp ? c._runApp : c.app;
+		// ITS QUESTIONS COME DOWN WITH IT (QA r578d-A D2): the dialogs and Pending tiles the
+		// turn raised wait on a future the Stop ends, so an answer to them reaches nobody.
+		if (c._turnTag) closeTurnAsks(c._turnTag);
 		if (!app) return;
 		// THE SHARED DAIMON CLIENT IS NEVER STOPPED WHOLE (engine QA E1): it carries every Diamond
 		// on its model, so a record on it is stopped by its tag or not at all.
@@ -38176,9 +38262,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				tail.forEach(function (m) {
 					if (exceptMid && String(m.mid) === String(exceptMid)) return;
 					try {
+						// An interjection was said into a turn, never run as one (B3).
 						chat.app.append_message(m.role, m.content || '',
 							(m.role === 'user' && typeof m.pre === 'string' && m.pre) ? m.pre : undefined,
-							(m.role === 'user' && m.mid) ? String(m.mid) : undefined);
+							(m.role === 'user' && m.mid) ? String(m.mid) : undefined,
+							m.role === 'user' && !m.interject);
 					} catch (e) { /* skip one */ }
 				});
 			}
@@ -38281,7 +38369,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				plan.add.forEach(function (m) {
 					app.append_message(m.role, m.content || '',
 						(m.role === 'user' && typeof m.pre === 'string' && m.pre) ? m.pre : undefined,
-						(m.role === 'user' && m.mid) ? String(m.mid) : undefined);
+						(m.role === 'user' && m.mid) ? String(m.mid) : undefined,
+						m.role === 'user' && !m.interject);		// an interjection opens no turn (B3)
 					h.mids[String(m.mid)] = 1;
 				});
 				return app;
@@ -42653,7 +42742,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// per turn, so the message goes straight into it and `captureSession`
 				// on the next turn persists it. Free either way: nothing is spent.
 				var said = notStartedWords(dispatched.length, gate.why);
-				try { if (app.append_message) app.append_message('user', said); }
+				// The app's note, not a turn: opened, it would take the boundary from the
+				// turn just finished (QA r578d-B B3).
+				try { if (app.append_message) app.append_message('user', said, undefined, undefined, false); }
 				catch (e) { /* an older engine cannot be told; the transcript still says it */ }
 				pushRunRow(chat, umid, { role: 'error_log', content: said,
 					mid: newMid(), ts: Date.now() });
@@ -43393,12 +43484,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						return JSON.stringify({ started: false,
 							why: 'the worker pump would not take it' });
 					}
-					// THE KIND IT IS SET TO START AS (r578d A6), for the engine's STARTED line: a
-					// continuation starts brief whatever the parent asked for. The report heading
-					// says the kind it ran as, should the copy be gone by the time it starts.
+					// THE KIND IT STARTED AS (r578d A6, n1), for the engine's STARTED line: a worker
+					// running now is answered once its copy is adopted, so a copy gone by then is
+					// said as brief. A QUEUED one has not started, so it is said to be queued with
+					// the kind it is set to try for; its report heading says if the copy was gone.
 					var made = self.runs.find(function (r) { return r.id === ids[0]; });
-					return JSON.stringify({ started: true, id: ids[0], name: name,
-						cx: (made && forkable(made)) ? 'full' : 'brief' });
+					if (!made || made.status === 'queued') {
+						return JSON.stringify({ started: true, queued: true, id: ids[0], name: name,
+							cx: (made && forkable(made)) ? 'full' : 'brief' });
+					}
+					return startedKind(made).then(function (cx) {
+						return JSON.stringify({ started: true, id: ids[0], name: name, cx: cx });
+					});
 				})
 				.catch(function (e) {
 					return JSON.stringify({ started: false, why: friendlyError(e) });
@@ -43514,7 +43611,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						rounds: (r.ended && r.ended.rounds) || 0,
 						usd:    r.costUsd || 0,
 						writes: workerWrites(r),
-						context: workerKind(r),		// the engine heads the report with it
+						context: workerKindSaid(r),		// the engine heads the report with it
 						// `r.report` is the whole final answer -- see the `finally` in `start`.
 						// `r.text` is the fallback for a worker that died before it ever answered.
 						report: String(r.report != null ? r.report : (r.text || '')),
@@ -43547,7 +43644,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						rounds: (r.ended && r.ended.rounds) || 0,
 						usd:    r.costUsd || 0,
 						writes: workerWrites(r),
-						context: workerKind(r),
+						context: workerKindSaid(r),
 						report: String(r.report != null ? r.report : (r.text || '')),
 					});
 				});
@@ -43960,8 +44057,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// `start()` restores it before the task runs. The matched run's spend
 				// carries forward too, on the same footing as a manual resume: a
 				// continuation's tile should show the running total, not a total that
-				// restarted at what THIS leg alone cost.
-				var priorRun = priorSessionRun(self.runs, diamondId, chatId, run.name, run.task);
+				// restarted at what THIS leg alone cost. The SPEC's name, not `run.name`:
+				// a nameless worker is called 'agent-N', a name no earlier run carries, so
+				// passing that would turn a nameless `continue:` into a named one that
+				// continues nothing (D3).
+				var priorRun = priorSessionRun(self.runs, diamondId, chatId, spec.name || '', run.task);
 				if (priorRun) {
 					run._priorSession   = priorRun._session;
 					run.priorPrompt     = priorRun.promptTokens     || 0;
@@ -44097,7 +44197,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// silence as nothing having been found.
 			var parts = mine.slice().reverse().map(function (r) {
 				// The kind it ran as, said as `gather` says it (src/tools.rs `gather_result`).
-				var head = '### ' + (r.name || r.id) + ' [' + workerKind(r) + ']' + workerEndingNote(r);
+				var head = '### ' + (r.name || r.id) + ' [' + workerKindSaid(r) + ']' + workerEndingNote(r);
 				var body = reportBody(r);
 				if (!body) {
 					// A blank body is not silence: name the work behind it so the reader
@@ -44451,6 +44551,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// 4d4fd190f1ef each have a `start` row and no `end` row.
 			var closeEarly = function () {
 				forkForget(run);
+				settleKind(run);		// it never reached adoption: a spawn waiting is answered brief
 				dsEvent('worker', {
 					w:     String(run.id || ''),
 					dia:   String(run.diamondId || ''),
@@ -44941,6 +45042,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} finally {
 				forkForget(run);
 				WakeLock.release();
+				settleKind(run);		// a spawn still waiting is never left hanging
 				// A worker spends the user's money like anything else, so it is metered like
 				// anything else: this bills the attempt that ran last (see `billAttempt`). A
 				// resumed worker bills only its own session here -- the paused session was
@@ -47782,11 +47884,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		buy.disabled = true;
 		// Either separator, so "12,50" reads as twelve and a half wherever typed.
 		var tier = function () { return DaimondI18n.tierFor(inp.value.trim().replace(',', '.')); };
+		// What the typed amount charges, said under the row as each preset says its own.
+		var quo = document.createElement('span');
+		quo.className = 'pack-billed pack-quote';
 		inp.addEventListener('input', function () {
 			var tr = tier();
 			buy.disabled = !tr;
 			note.textContent = '';
 			bil.textContent = (tr && !usdDisplay()) ? tr.billedText : '';
+			var qt = tr ? DaimondGateway.quoteText(tr.billedMinor) : null;
+			quo.textContent = qt ? qt.charged + ' · ' + qt.breakdown : '';
 		});
 		inp.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !buy.disabled) buy.click(); });
 		buy.addEventListener('click', async function () {
@@ -47801,6 +47908,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		row.appendChild(inp);
 		row.appendChild(bil);
 		row.appendChild(buy);
+		row.appendChild(quo);
 		return row;
 	}
 
@@ -47897,6 +48005,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.appendChild(loc);
 				b.appendChild(bil);
 				b.title = t('billing.usd_note');
+			}
+			// WHAT THE CARD IS CHARGED (r578e G1): the credit, the model host's fee and the card
+			// and conversion fees, as the gateway prices them, so Stripe's page holds no surprise.
+			var qt = DaimondGateway.quoteText(tier.billedMinor);
+			if (qt) {
+				var tot = document.createElement('span');
+				tot.className = 'pack-billed pack-quote';
+				tot.textContent = qt.charged;
+				var brk = document.createElement('span');
+				brk.className = 'pack-billed pack-quote';
+				brk.textContent = qt.breakdown;
+				b.appendChild(tot);
+				b.appendChild(brk);
 			}
 			b.addEventListener('click', async function () {
 				b.disabled = true;

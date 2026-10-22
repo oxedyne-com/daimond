@@ -88,10 +88,20 @@ impl Fork {
 // whatever its size, so the worker it was issued for still finds it.
 const ISSUED_MAX_BYTES: usize = 32 * 1024 * 1024;
 
-static ISSUED: Mutex<Vec<(String, Arc<Fork>)>> = Mutex::new(Vec::new());
+//
+// ADOPTED COPIES ARE THE WORKER'S (r578e n2).  Once a worker has taken its copy, the memory is held
+// by that worker's agent and bounded by the worker cap, so it moves out of the bound: counted, it
+// pushed out a queued worker's copy and that worker started brief.  It stays filed, uncounted, so
+// a re-mint rebuilding the worker's app adopts it again, and goes when the worker ends.
+static ISSUED: Mutex<Store> = Mutex::new(Store { waiting: Vec::new(), adopted: Vec::new() });
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
-fn issued() -> std::sync::MutexGuard<'static, Vec<(String, Arc<Fork>)>> {
+struct Store {
+	waiting:	Vec<(String, Arc<Fork>)>,	// issued, not yet adopted; bounded
+	adopted:	Vec<(String, Arc<Fork>)>,	// held by a running worker; not counted
+}
+
+fn issued() -> std::sync::MutexGuard<'static, Store> {
 	match ISSUED.lock() {
 		Ok(g)  => g,
 		Err(p) => p.into_inner(),
@@ -102,8 +112,8 @@ fn issued() -> std::sync::MutexGuard<'static, Vec<(String, Arc<Fork>)>> {
 pub fn issue(f: Arc<Fork>) -> String {
 	let id = fmt!("f{}", NEXT.fetch_add(1, Ordering::Relaxed));
 	let mut g = issued();
-	g.push((id.clone(), f));
-	trim(&mut g, ISSUED_MAX_BYTES);
+	g.waiting.push((id.clone(), f));
+	trim(&mut g.waiting, ISSUED_MAX_BYTES);
 	id
 }
 
@@ -163,14 +173,67 @@ mod tests {
 		let ids: Vec<&str> = v.iter().map(|(k, _)| k.as_str()).collect();
 		assert_eq!(ids, vec!["huge"], "the newest copy must stay, whatever its size");
 	}
+
+	/// r578e n2: an adopted copy is the worker's, and stops counting toward the store's bound,
+	/// so it no longer pushes out a queued worker's copy; a re-mint still finds it, and a fan-out
+	/// sibling keeps its own filing of the shared copy.
+	#[test]
+	fn test_an_adopted_copy_leaves_the_bound_and_a_remint_still_finds_it_00() {
+		let mut waiting: Vec<(String, Arc<Fork>)> = Vec::new();
+		let mut adopted: Vec<(String, Arc<Fork>)> = Vec::new();
+		let shared = pictured(600_000);
+		waiting.push((fmt!("a"), shared.clone()));
+		waiting.push((fmt!("a2"), shared.clone()));	// a fan-out sibling, not yet started
+		let got = take_in(&mut waiting, &mut adopted, "a");
+		assert!(got.map(|f| Arc::ptr_eq(&f, &shared)).unwrap_or(false), "adoption found no copy");
+		let ids: Vec<&str> = waiting.iter().map(|(k, _)| k.as_str()).collect();
+		assert_eq!(ids, vec!["a2"], "adoption took the sibling's filing too, or left its own");
+		waiting.push((fmt!("q"), pictured(500_000)));
+		waiting.push((fmt!("r"), pictured(500_000)));
+		trim(&mut waiting, 1_100_000);
+		let ids: Vec<&str> = waiting.iter().map(|(k, _)| k.as_str()).collect();
+		assert_eq!(ids, vec!["q", "r"], "the queued copies were not the ones counted");
+		assert!(take_in(&mut waiting, &mut adopted, "a").is_some(),
+			"a re-mint of the adopted worker found no copy");
+		forget_in(&mut waiting, &mut adopted, "a");
+		assert!(take_in(&mut waiting, &mut adopted, "a").is_none(), "an ended worker's copy stayed");
+	}
 }
 
-/// The copy filed under `id`, left in place so a re-minted worker can take it again.
+/// The copy filed under `id`, waiting or adopted, left where it is.
 pub fn get(id: &str) -> Option<Arc<Fork>> {
-	issued().iter().find(|(k, _)| k == id).map(|(_, f)| f.clone())
+	let g = issued();
+	g.waiting.iter().chain(g.adopted.iter()).find(|(k, _)| k == id).map(|(_, f)| f.clone())
+}
+
+/// The copy filed under `id`, for its worker to adopt: moved out of the bound, and kept so a
+/// re-minted worker can take it again.
+pub fn take(id: &str) -> Option<Arc<Fork>> {
+	let mut g = issued();
+	let s = &mut *g;
+	take_in(&mut s.waiting, &mut s.adopted, id)
+}
+
+fn take_in(waiting: &mut Vec<(String, Arc<Fork>)>, adopted: &mut Vec<(String, Arc<Fork>)>, id: &str)
+	-> Option<Arc<Fork>>
+{
+	if let Some(i) = waiting.iter().position(|(k, _)| k == id) {
+		let e = waiting.remove(i);
+		let f = e.1.clone();
+		adopted.push(e);
+		return Some(f);
+	}
+	adopted.iter().find(|(k, _)| k == id).map(|(_, f)| f.clone())
 }
 
 /// Drop the copy filed under `id`; the worker has ended.
 pub fn forget(id: &str) {
-	issued().retain(|(k, _)| k != id);
+	let mut g = issued();
+	let s = &mut *g;
+	forget_in(&mut s.waiting, &mut s.adopted, id);
+}
+
+fn forget_in(waiting: &mut Vec<(String, Arc<Fork>)>, adopted: &mut Vec<(String, Arc<Fork>)>, id: &str) {
+	waiting.retain(|(k, _)| k != id);
+	adopted.retain(|(k, _)| k != id);
 }

@@ -150,6 +150,18 @@
 			s.threshold_minor, ccy, t('autoreload.when_below_hint')));
 		host.appendChild(field('ar-topup', t('autoreload.buy_amount'),
 			s.topup_minor, ccy, t('autoreload.buy_amount_hint', { max: billed(20000, ccy) })));
+		// WHAT ONE RELOAD CHARGES THE CARD (r578e G1): the credit plus the model host's fee and
+		// the card and conversion fees, which is also what the monthly budget counts. The saved
+		// figure is the gateway's; a figure being typed is priced from its rates, or not at all.
+		var chargeEl = el('div', 'ar-hint', '');
+		chargeEl.id = 'ar-charge';
+		var sayCharge = function () {
+			var m = readForm().topup_minor;
+			var c = (m === s.topup_minor && s.topup_charge_minor > 0) ? s.topup_charge_minor
+				: ((G.creditQuote && G.creditQuote(m)) || {}).total || 0;
+			chargeEl.textContent = c > 0 ? t('autoreload.charge_each', { charge: billed(c, ccy) }) : '';
+		};
+		host.appendChild(chargeEl);
 		host.appendChild(field('ar-budget', t('autoreload.monthly_cap'),
 			s.monthly_budget_minor, ccy, t('autoreload.monthly_cap_hint')));
 
@@ -210,6 +222,9 @@
 		host.appendChild(noteEl);
 
 		paintFields();
+		var topEl = document.getElementById('ar-topup');
+		if (topEl) topEl.addEventListener('input', sayCharge);
+		sayCharge();
 	}
 
 	/// One labelled amount, in whole units.

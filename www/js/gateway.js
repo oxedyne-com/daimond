@@ -1146,11 +1146,51 @@
 			var presets = (Array.isArray(j.presets) ? j.presets : [])
 				.map(function (p) { return Math.round(+p); })
 				.filter(function (p) { return isFinite(p) && p > 0; });
-			offer = { presets: presets, min: Math.round(+j.min_minor), max: Math.round(+j.max_minor) };
+			// What each preset charges, and the rates for any other amount (r578e G1). An older
+			// gateway sends neither, and then nothing is quoted rather than a guess.
+			var quotes = (Array.isArray(j.quotes) ? j.quotes : []).map(function (q) {
+				return { credit: +q.credit_minor, host: +q.host_minor, fees: +q.fees_minor, total: +q.total_minor };
+			}).filter(function (q) { return isFinite(q.total) && q.total > 0; });
+			var f = j.fees || null;
+			var fees = f && [f.host_bps, f.card_bps, f.card_fixed_minor, f.conversion_bps].every(function (v) {
+				return isFinite(+v) && +v >= 0;
+			}) ? { host: +f.host_bps, card: +f.card_bps, fixed: +f.card_fixed_minor, conv: +f.conversion_bps } : null;
+			offer = { presets: presets, min: Math.round(+j.min_minor), max: Math.round(+j.max_minor),
+				quotes: quotes, fees: fees };
 			return offer;
 		})();
 		try { return await offering; }
 		finally { offering = null; }
+	}
+
+	/// What a top-up of `minor` US cents charges the card, itemised as `{credit, host, fees,
+	/// total}`, or null when the gateway has said nothing to price it by. A preset is the
+	/// gateway's own quote; any other amount is priced from its rates exactly as `topup::quote`
+	/// prices it (gateway/src/topup.rs), each part rounded half up to the cent.
+	function creditQuote(minor) {
+		if (!offer) return null;
+		var n = +minor;
+		for (var i = 0; i < offer.quotes.length; i++) {
+			if (offer.quotes[i].credit === n) return Object.assign({}, offer.quotes[i]);
+		}
+		var f = offer.fees;
+		var kept = f ? 10000 - f.card - f.conv : 0;
+		if (!f || kept <= 0 || !isFinite(n) || n < 0 || n !== Math.floor(n)) return null;
+		var half = function (a, b) { return Math.floor((2 * a + b) / (2 * b)); };
+		var total = half(n * (10000 + f.host) + f.fixed * 10000, kept);
+		var host  = half(n * f.host, 10000);
+		return { credit: n, host: host, fees: total - n - host, total: total };
+	}
+
+	/// The quote as words: `{charged, breakdown}`, or null where there is no quote.
+	function quoteText(minor) {
+		var q = creditQuote(minor);
+		if (!q) return null;
+		var b = function (m) { return fmtBilled(m, 'usd'); };
+		return {
+			charged:   t('credits.charged', { total: b(q.total) }),
+			breakdown: t('credits.breakdown', { credit: b(q.credit), host: b(q.host), fees: b(q.fees) }),
+		};
 	}
 
 	/// Why this amount (US cents) may not be bought, as a sentence, or null
@@ -1485,6 +1525,8 @@
 		packs:          function () { return offer ? offer.presets.slice() : []; },
 		creditOffer:    creditOffer,
 		creditRefusal:  creditRefusal,
+		creditQuote:    creditQuote,
+		quoteText:      quoteText,
 		hasOffer:       function () { return !!offer; },
 		state:          function () { return Object.assign({}, state); },
 		/// The contract version this build speaks, for a caller making its own

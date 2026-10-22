@@ -3836,6 +3836,11 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .credit-other .credit-buy { flex: 0 0 auto; cursor: pointer; }
 .credit-other .credit-buy:disabled { opacity: 0.6; cursor: default; }
 .credit-other .pack-billed { opacity: 0.72; font-size: var(--fs-2xs); font-family: var(--font-mono); white-space: nowrap; }
+/* What a top-up charges the card, itemised: its own lines in a pack, and a
+   line of its own under the typed amount. */
+.credit-pack .pack-quote { display: block; }
+.credits-packs .credit-other { flex-wrap: wrap; }
+.credit-other .pack-quote { flex: 1 1 100%; white-space: normal; }
 .credit-other .pack-billed:empty { display: none; }
 /* The billing sentence under the pack grid spans the full row of the flex
    container it sits in. */

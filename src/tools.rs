@@ -18605,6 +18605,25 @@ impl SpawnContext {
             _             => Self::Full,
         }
     }
+
+    /// The STARTED line for a worker the page took, said as it stands (n1): a worker running now
+    /// has its kind settled, because the page answers once the copy is adopted; a queued one
+    /// starts later, so its kind is said as the one it will try for.
+    pub fn started_line(self, name: &str, id: &str, queued: bool) -> String {
+        let id = if id.is_empty() { "no id" } else { id };
+        let then = "Call gather when you need its report, or finish your answer and it reports \
+            back as a later turn.";
+        match (queued, self) {
+            (false, _)          => fmt!("Worker '{}' ({}) has STARTED as a {} worker and is \
+                running now. {}", name, id, self.word(), then),
+            (true, Self::Full)  => fmt!("Worker '{}' ({}) is QUEUED behind the workers already \
+                running and starts when one finishes, as a full worker if its copy of this \
+                conversation is still held then, else as a brief one; its report heading names \
+                the kind it ran as. {}", name, id, then),
+            (true, Self::Brief) => fmt!("Worker '{}' ({}) is QUEUED behind the workers already \
+                running and starts as a brief worker when one finishes. {}", name, id, then),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -18620,6 +18639,18 @@ mod spawn_context_tests {
             "no copy was issued, so it cannot start full");
         assert_eq!(SpawnContext::Full, SpawnContext::started("f1", r#"{"started":true}"#),
             "an older page's answer");
+    }
+
+    #[test]
+    fn test_a_queued_worker_is_not_said_to_be_running() {
+        let run = SpawnContext::Full.started_line("w", "agent-3", false);
+        assert!(run.contains("has STARTED as a full worker and is running now"), "{}", run);
+        let q = SpawnContext::Full.started_line("w", "agent-3", true);
+        assert!(q.contains("is QUEUED"), "a queued worker was said to be running: {}", q);
+        assert!(!q.contains("running now"), "{}", q);
+        assert!(q.contains("brief"), "the parent is not told it may start brief: {}", q);
+        let b = SpawnContext::Brief.started_line("w", "", true);
+        assert!(b.contains("is QUEUED") && b.contains("brief worker"), "{}", b);
     }
 }
 
@@ -21208,13 +21239,12 @@ impl Tool {
         }
         let id = extract_json_string(&answered, "id").unwrap_or_default();
         ctx.note_spawned(&id, &name);
-        // The kind it STARTS as: brief when no copy was held, or when the page set it brief (a
-        // continuation picks its own thread back up).  A report heading names the kind it RAN as.
+        // The kind it STARTED as, which the page answers at adoption (n1): brief when no copy was
+        // held, when the page set it brief or when the copy was gone.  A queued worker has not
+        // started, so it is said to be queued.  A report heading names the kind it RAN as.
         let ran = SpawnContext::started(fid, &answered);
-        let mut out = fmt!(
-            "Worker '{}' ({}) has STARTED as a {} worker and is running now. Call gather when you \
-             need its report, or finish your answer and it reports back as a later turn.",
-            name, if id.is_empty() { fmt!("no id") } else { id }, ran.word());
+        let queued = extract_json_bool(&answered, "queued").unwrap_or(false);
+        let mut out = ran.started_line(&name, &id, queued);
         out.push_str(Self::spawn_taint_note(ctx));
         Ok(MessageContent::text(out))
     }
@@ -24889,7 +24919,7 @@ impl Tool {
         let counted = match &keep {
             Some((d, _, copy)) if open && !asked => {
                 let file = crate::diamond_versions::open_file_key(&path, copy);
-                match Self::open_delete_gate(d, &path, &file, &raw, OpenAct::Delete).await {
+                match Self::open_delete_gate(d, &path, &file, &raw, OpenAct::Delete, &ctx.turn_tag()).await {
                     Ok(true)  => Some((d.clone(), file)),
                     Ok(false) => None,
                     Err(why)  => {
@@ -25871,8 +25901,9 @@ impl Tool {
     /// * `file` - The file, as the tally counts it ([`crate::diamond_versions::open_file_key`]).
     /// * `raw` - The path as the model wrote it, for the sentence.
     /// * `act` - What the call is about to do to it, which the question names.
+    /// * `turn` - The asking turn's tag, so its Stop closes the question.
     #[cfg(target_arch = "wasm32")]
-    async fn open_delete_gate(dia: &str, path: &str, file: &str, raw: &str, act: OpenAct)
+    async fn open_delete_gate(dia: &str, path: &str, file: &str, raw: &str, act: OpenAct, turn: &str)
         -> Result<bool, String>
     {
         use crate::diamond_versions::OpenDelete;
@@ -25884,7 +25915,7 @@ impl Tool {
                 OpenDelete::Ask(n, ticket) => {
                     let limit = crate::diamond_versions::open_deletes_ask();
                     let allow = crate::wasm::deletes::ask_to_go_on(dia, path, n, limit,
-                        act.wire()).await;
+                        act.wire(), turn).await;
                     crate::wasm::diamond::open_delete_answer(dia, ticket, allow);
                     // A stop is this call's answer, whatever became of the turn while it was
                     // asked; a yes is read again from the tally, which says what it now allows.
@@ -26161,7 +26192,7 @@ impl Tool {
         {
             let file = crate::diamond_versions::open_file_key(&key,
                 against.as_deref().unwrap_or_default());
-            match Self::open_delete_gate(dia, &key, &file, raw, OpenAct::Wipe).await {
+            match Self::open_delete_gate(dia, &key, &file, raw, OpenAct::Wipe, &ctx.turn_tag()).await {
                 Ok(true)  => counted = Some((dia.to_string(), file)),
                 Ok(false) => {},
                 Err(why)  => {

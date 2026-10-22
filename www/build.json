@@ -1,1 +1,1 @@
-{"build":"c7ff9d027c69","note":"Like Claude Code: results stay whole until big, Stop interrupts tools, workers resume only by request."}
+{"build":"606f2a6f99c6","note":"Like Claude Code: Stop ends running commands, results shorten once; top-ups now carry card fees, not spend."}

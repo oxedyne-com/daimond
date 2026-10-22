@@ -639,6 +639,12 @@ impl ChatMessage {
         }
     }
 
+    /// [`ChatMessage::opening`] where `opens`, else the message unchanged: for a row the page
+    /// rebuilds, which says itself whether a turn was run on it (QA r578d-B B3).
+    pub fn opening_if(self, opens: bool) -> Self {
+        if opens { self.opening() } else { self }
+    }
+
     /// Did a turn open with this message?  See [`ChatMessage::opening`].
     pub fn opens_turn(&self) -> bool {
         matches!(self, Self::User { opens: true, .. })
@@ -2337,6 +2343,19 @@ mod content_tests {
         assert!(msg.with_content(MessageContent::from("x".to_string())).opens_turn());
         assert!(ChatMessage::user("note".to_string()).to_datmap().get(&dat!("opens")).is_none());
         assert!(!ChatMessage::assistant("a".to_string()).opening().opens_turn());
+    }
+
+    /// A rebuilt row opens a turn only where the page says it did: an app note or an
+    /// interjection appended or restored from prose is not a turn (QA r578d-B B3).
+    #[test]
+    fn test_a_rebuilt_row_opens_a_turn_only_where_the_page_says_so() {
+        let note = ChatMessage::user("agents not started".to_string()).opening_if(false);
+        assert!(!note.opens_turn(), "the app's note was marked as a turn");
+        let turn = ChatMessage::user_noted("go".to_string(), NOTE.to_string())
+            .marked("u9".to_string()).opening_if(true);
+        assert!(turn.opens_turn());
+        assert_eq!("u9", turn.mid(), "the mark dropped the id");
+        assert!(!ChatMessage::assistant("a".to_string()).opening_if(true).opens_turn());
     }
 
     /// The elision a fold makes keeps the note with the message it belongs to.
