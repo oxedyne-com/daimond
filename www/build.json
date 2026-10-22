@@ -1,1 +1,1 @@
-{"build":"f02f1c83bd96","note":"Like Claude Code, a file that fails to read is never overwritten: STATE, DECISIONS, REQUIREMENTS are kept safe."}
+{"build":"29133bba2806","note":"Like Claude Code, old results shorten once per summary, so the cache holds; partial refunds now take a fair share."}

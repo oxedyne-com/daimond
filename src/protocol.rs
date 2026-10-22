@@ -575,6 +575,20 @@ impl MessageContent {
 }
 
 
+/// Whether a tool result goes out whole or as the stub it was first sent as (r578d), and when it
+/// was shortened.  See [`ChatMessage::as_retired`].
+///
+/// **When matters (r578f, QA r578e C1/C2, D-20261020-11).**  Past the line a conversation is
+/// shortened once and then appends until the summary, and a fold keeps its newest messages exactly
+/// as they were, marks and all.  A mark carried through a fold is not a shortening of the folded
+/// conversation, so it is told apart from one made since; see `compact::shortened`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Retired {
+    No,		// sent whole
+    Now,	// sent short, retired since the conversation last folded
+    Before,	// sent short, retired before a fold that kept it
+}
+
 /// A single message in a conversation, mirroring the OpenAI API format.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChatMessage {
@@ -589,7 +603,7 @@ pub enum ChatMessage {
     /// outright on every subsequent turn.
     Assistant { content: MessageContent, tool_calls: Vec<ToolCall> },
     /// Tool call result returned to the LLM.
-    Tool { tool_call_id: String, content: MessageContent, post: String, retired: bool },	// `post`: the app's notes after the result, empty for none; `retired`: see `as_retired`
+    Tool { tool_call_id: String, content: MessageContent, post: String, retired: Retired },	// `post`: the app's notes after the result, empty for none; `retired`: see `as_retired`
 }
 
 impl ChatMessage {
@@ -664,7 +678,7 @@ impl ChatMessage {
 
     /// A tool reply, paired to the call it answers.
     pub fn tool<C: Into<MessageContent>>(tool_call_id: String, content: C) -> Self {
-        Self::Tool { tool_call_id, content: content.into(), post: String::new(), retired: false }
+        Self::Tool { tool_call_id, content: content.into(), post: String::new(), retired: Retired::No }
     }
 
     /// Serialise to a JDAT map, for the session store and the session export.
@@ -721,9 +735,15 @@ impl ChatMessage {
             }
             Self::Tool { tool_call_id, content, post, retired } => {
                 m.insert(dat!("role"), dat!("tool"));
-                // Only where it was, so a result never sent short is the map an r578c build wrote.
-                if *retired {
-                    m.insert(dat!("retired"), Dat::Bool(true));
+                // Only where it was, so a result never sent short is the map an r578c build wrote,
+                // and one retired since the last fold the map an r578e build wrote.
+                match retired {
+                    Retired::No     => {},
+                    Retired::Now    => { m.insert(dat!("retired"), Dat::Bool(true)); },
+                    Retired::Before => {
+                        m.insert(dat!("retired"), Dat::Bool(true));
+                        m.insert(dat!("folded"), Dat::Bool(true));
+                    },
                 }
                 m.insert(dat!("tool_call_id"), dat!(tool_call_id.clone()));
                 m.insert(dat!("content"), content.to_dat());
@@ -791,7 +811,11 @@ impl ChatMessage {
                     Some(Dat::Str(s)) => s.clone(),
                     _ => String::new(),
                 };
-                let retired = matches!(m.get(&dat!("retired")), Some(Dat::Bool(true)));
+                let retired = match (m.get(&dat!("retired")), m.get(&dat!("folded"))) {
+                    (Some(Dat::Bool(true)), Some(Dat::Bool(true)))  => Retired::Before,
+                    (Some(Dat::Bool(true)), _)                      => Retired::Now,
+                    _                                               => Retired::No,
+                };
                 Ok(Self::Tool { tool_call_id, content, post, retired })
             }
             _ => Err(err!("ChatMessage: unknown role '{}'.", role; Invalid, Input)),
@@ -837,17 +861,34 @@ impl ChatMessage {
     /// back unchanged.  The content is NOT touched: the stored conversation keeps every word
     /// (daimond_rulings.md §17), and the mark is what lets every later request send the same stub,
     /// byte for byte, instead of the whole result again.  See `compact::restub`.
+    ///
+    /// A result already marked keeps its mark, so one carried through a fold stays carried.
     pub fn as_retired(self) -> Self {
         match self {
-            Self::Tool { tool_call_id, content, post, .. } =>
-                Self::Tool { tool_call_id, content, post, retired: true },
+            Self::Tool { tool_call_id, content, post, retired: Retired::No } =>
+                Self::Tool { tool_call_id, content, post, retired: Retired::Now },
+            other => other,
+        }
+    }
+
+    /// The same message as a fold keeps it: a result retired since the last fold now counts as
+    /// retired before this one.  See [`Retired`].
+    pub fn as_folded(self) -> Self {
+        match self {
+            Self::Tool { tool_call_id, content, post, retired: Retired::Now } =>
+                Self::Tool { tool_call_id, content, post, retired: Retired::Before },
             other => other,
         }
     }
 
     /// Is this a tool result already sent in its retired form?  See [`ChatMessage::as_retired`].
     pub fn is_retired(&self) -> bool {
-        matches!(self, Self::Tool { retired: true, .. })
+        matches!(self, Self::Tool { retired: Retired::Now | Retired::Before, .. })
+    }
+
+    /// Was this tool result retired since the conversation last folded?  See [`Retired`].
+    pub fn retired_since_fold(&self) -> bool {
+        matches!(self, Self::Tool { retired: Retired::Now, .. })
     }
 
     /// The transcript row a user message was said as: empty for none, and for every other role.
@@ -2664,11 +2705,31 @@ mod tests {
             tool_call_id: "call_123".to_string(),
             content: MessageContent::text("42"),
             post: String::new(),
-            retired: false,
+            retired: Retired::No,
         };
         let dm = msg.to_datmap();
         let msg2 = ChatMessage::from_datmap(&dm).unwrap();
         assert_eq!(msg, msg2);
+    }
+
+    #[test]
+    fn test_a_retired_mark_and_its_fold_survive_the_store_00() {
+        // r578f: a reload past the line reads the same once-state the turn left.
+        for (m, since) in [
+            (ChatMessage::tool(fmt!("c1"), fmt!("body")), false),
+            (ChatMessage::tool(fmt!("c2"), fmt!("body")).as_retired(), true),
+            (ChatMessage::tool(fmt!("c3"), fmt!("body")).as_retired().as_folded(), false),
+        ] {
+            let back = match ChatMessage::from_datmap(&m.to_datmap()) {
+                Ok(b)  => b,
+                Err(e) => panic!("{}", e),
+            };
+            assert_eq!(m, back);
+            assert_eq!(since, back.retired_since_fold(), "{:?}", back);
+        }
+        // A fold does not unmark: a result sent short goes out short again.
+        assert!(ChatMessage::tool(fmt!("c4"), fmt!("b")).as_retired().as_folded().is_retired());
+        assert!(!ChatMessage::tool(fmt!("c5"), fmt!("b")).as_folded().is_retired());
     }
 
     #[test]
@@ -2848,7 +2909,7 @@ mod tests {
             tool_call_id: fmt!("call_abc"),
             content:      MessageContent::text(fmt!("fn parse() {{}}")),
             post:         String::new(),
-            retired:      false,
+            retired:      Retired::No,
         });
         s.messages.push(ChatMessage::Assistant {
             content: MessageContent::text(fmt!("It is one function.")), tool_calls: Vec::new(),

@@ -49,6 +49,7 @@
 
 use crate::llm::{extract_json_number, extract_json_string, extract_json_string_array};
 use crate::protocol::{ChatMessage, ImagePart, MessageContent, ToolCall};
+use crate::protocol::Retired;
 use crate::tools::{CallOutcome, Tool, call_outcome};
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -441,7 +442,6 @@ pub struct Limits {
 	pub retire_prior: bool,		// retire a turn's predecessors on the way out; see `retire_upto`
 	pub retire_keep_turns: u32,	// completed turns left whole first; see `RETIRE_KEEP_TURNS`
 	pub retire_at:    f64,		// fraction of the fold budget past which results retire; see `RETIRE_AT`
-	pub retire_step:  f64,		// fraction of the fold budget a re-shortening must save; see `RETIRE_STEP`
 	pub result_age:   usize,	// rounds a result must be old; see `IN_TURN_RESULT_AGE`
 	pub result_cap:   usize,	// bytes left whole however old; see `IN_TURN_RESULT_CAP`
 	pub sweep_every:  usize,	// rounds between sweeps; see `IN_TURN_RETIRE_EVERY`
@@ -521,7 +521,6 @@ impl Default for Limits {
 			retire_prior: true,
 			retire_keep_turns: RETIRE_KEEP_TURNS,
 			retire_at:    RETIRE_AT,
-			retire_step:  RETIRE_STEP,
 			result_age:   IN_TURN_RESULT_AGE,
 			result_cap:   IN_TURN_RESULT_CAP,
 			sweep_every:  IN_TURN_RETIRE_EVERY,
@@ -558,11 +557,6 @@ impl Limits {
 	/// * `max_completion` - The cap the client puts on generated tokens.
 	pub fn retire_line(&self, max_completion: u32) -> u64 {
 		(self.budget(max_completion) as f64 * self.retire_at.clamp(0.0, 1.0)) as u64
-	}
-
-	/// Tokens a shortening after the first must save; see [`RETIRE_STEP`].
-	pub fn retire_step(&self, max_completion: u32) -> u64 {
-		(self.budget(max_completion) as f64 * self.retire_step.clamp(0.0, 1.0)) as u64
 	}
 
 	/// The largest prompt this turn should send, in tokens.
@@ -1838,7 +1832,9 @@ pub fn fold_keeping(
 	if let Some(p) = pin {
 		out.push(p.clone());
 	}
-	out.extend_from_slice(&msgs[cut..]);
+	// What the fold keeps it keeps byte for byte, but a mark it carries is no longer a
+	// shortening of the conversation it leaves; see `shortened`.
+	out.extend(msgs[cut..].iter().map(|m| m.clone().as_folded()));
 	let before = orphan_count(msgs);
 	let after  = orphan_count(&out);
 	if after > before {
@@ -2037,18 +2033,14 @@ pub const RETIRE_KEEP_TURNS: u32 = 1;
 /// call inputs.  This is the same rule.
 pub const RETIRE_AT: f64 = 2.0 / 3.0;
 
-/// What a conversation already shortened once must have grown by, in results it could still
-/// shorten, before it is shortened again: a sixth of [`Limits::budget`], ~20k tokens at the shipped
-/// 120k, so between the line and the fold there is room for one more at most.
-///
-/// **Once, not at every boundary (QA r578d B1, D-20261020-11).**  The stubs, the model's own
-/// arguments and the notes are a floor retirement cannot go under, so a conversation shortened
-/// once can stay past the line; and past it, every boundary retired the turn that had just aged,
-/// one cache miss each -- five in a row on a read-heavy Diamond before its fold.  Each shortening
-/// re-bills everything after the first result it touches at the full input rate, so one is worth
-/// it only for a real saving; anything less is left whole for the summary to take.  Nought is
-/// the r578d rule, every boundary past the line (`set_tune`'s `retire_step`).
-pub const RETIRE_STEP: f64 = 1.0 / 6.0;
+/// **Once, then append until the summary (r578f, QA r578e C1/C2, D-20261020-11).**  Past the
+/// line a conversation is shortened ONCE -- at the turn boundary or in the tool loop's sweep,
+/// whichever comes first -- and nothing more is retired until a fold renews it; see
+/// [`shortened`].  The stubs, the model's own arguments and the notes are a floor retirement cannot
+/// go under, so a conversation shortened once can stay past the line, and every later shortening
+/// re-bills everything after the first result it touches at the full input rate: r578d did that at
+/// every boundary, r578e every ~20k tokens of new results and every tenth round of a long loop.
+/// The summary at the fold is the relief valve, as it is for Claude Code.
 
 /// How the turn's budget line opens, and the marker that finds an earlier one to remove.
 ///
@@ -2218,7 +2210,7 @@ pub fn restub(msgs: &mut [ChatMessage]) -> usize {
 /// * `sent` - The copy that was, or is about to be, sent.
 pub fn carry_retired(stored: &mut [ChatMessage], sent: &[ChatMessage]) -> usize {
 	let ids: std::collections::HashSet<&str> = sent.iter().filter_map(|m| match m {
-		ChatMessage::Tool { tool_call_id, retired: true, .. } => Some(tool_call_id.as_str()),
+		ChatMessage::Tool { tool_call_id, .. } if m.is_retired() => Some(tool_call_id.as_str()),
 		_ => None,
 	}).collect();
 	if ids.is_empty() {
@@ -2226,7 +2218,7 @@ pub fn carry_retired(stored: &mut [ChatMessage], sent: &[ChatMessage]) -> usize 
 	}
 	let mut n = 0;
 	for m in stored.iter_mut() {
-		let hit = matches!(m, ChatMessage::Tool { tool_call_id, retired: false, .. }
+		let hit = matches!(m, ChatMessage::Tool { tool_call_id, retired: Retired::No, .. }
 			if ids.contains(tool_call_id.as_str()));
 		if hit {
 			*m = m.clone().as_retired();
@@ -2247,42 +2239,18 @@ pub fn past_line(est_tokens: u64, real_tokens: u64, line: u64) -> bool {
 	est_tokens > line || real_tokens > line
 }
 
-/// Is a shortening due at this boundary of a conversation past the line?  The first is, always;
-/// after it, only once the results [`retire_upto`] would shorten in `msgs[..end]` would save
-/// `step` bytes.  See [`RETIRE_STEP`].
+/// Has the conversation been shortened since it last folded?  Past the line, the first of the turn
+/// boundary and the tool loop's sweep to find it not shortens it, and nothing more is retired
+/// until a fold; see [`RETIRE_AT`].
 ///
-/// The first is read off the conversation itself -- a result marked retired is a shortening that
-/// happened -- so it holds across a reload, and a fold, which takes the marked results into its
-/// summary, starts the count again.
-pub fn retire_due(msgs: &[ChatMessage], end: usize, step: u64) -> bool {
-	if !msgs.iter().any(|m| m.is_retired()) {
-		return true;
-	}
-	retirable_bytes(msgs, end) >= step
-}
-
-/// Bytes [`retire_upto`] would save on `msgs[..end]`, without shortening anything.
-pub fn retirable_bytes(msgs: &[ChatMessage], end: usize) -> u64 {
-	let end = end.min(msgs.len());
-	let mut n = 0u64;
-	let mut i = 0;
-	while i < end {
-		let calls = match &msgs[i] {
-			ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => tool_calls,
-			_ => { i += 1; continue; },
-		};
-		for (k, tc) in calls.iter().enumerate() {
-			let j = i + 1 + k;
-			if j >= end {
-				break;
-			}
-			if let Some(stub) = result_stub(tc, &msgs[j]) {
-				n += msg_bytes(&msgs[j]).saturating_sub(stub.len() as u64);
-			}
-		}
-		i += 1 + calls.len();
-	}
-	n
+/// **One state for both, read off the conversation itself** (r578f, QA r578e C1/C2): a result
+/// marked [`Retired::Now`] is a shortening that happened, and the marks are stored, exported and
+/// handed back with the messages, so a reload, a fork or a resume past the line reads the same
+/// answer and does not shorten again.  A fold turns the marks it keeps into [`Retired::Before`]
+/// ([`fold_keeping`]), so the folded conversation starts unshortened and may be shortened once
+/// more when it nears the line again.
+pub fn shortened(msgs: &[ChatMessage]) -> bool {
+	msgs.iter().any(|m| m.retired_since_fold())
 }
 
 /// Where the prior-turn boundary lands once a fold has moved every index behind it.
@@ -2363,21 +2331,31 @@ pub fn retire_results(msgs: &mut [ChatMessage], end: usize, over: usize) -> usiz
 
 /// The in-turn sweep, once per round at the top of the round, on the loop's own arithmetic.
 ///
-/// `round_at` holds where each round of the turn began, this one last.  Every
-/// `sweep_every`th round the results older than `result_age` rounds and larger than
-/// `result_cap` bytes are retired -- **only once the conversation is `past` the line**
-/// ([`RETIRE_AT`]); below it a long turn appends and the cache carries it, by the same ruling
-/// the turn boundary follows.  One function for the loop and its tests, so a fixture cannot
-/// flatter the sweep by running it more often or reaching further back than the app.
+/// `round_at` holds where each round of the turn began, this one last.  On a `sweep_every`th
+/// round the results older than `result_age` rounds and larger than `result_cap` bytes are
+/// retired -- **only once the conversation is `past` the line** ([`RETIRE_AT`]) **and only if it
+/// has not been [`shortened`] since it last folded**; below the line a long turn appends and the
+/// cache carries it, and after the one shortening it appends until the summary, by the same ruling
+/// the turn boundary follows (r578f, QA r578e C1: r578e swept again every tenth round).
+///
+/// **The one shortening does the whole job.**  Where the sweep is first, the finished turns the
+/// boundary would have retired go in the same rewrite (`retire_prior`, keeping
+/// `retire_keep_turns`), since the next boundary will find the conversation already shortened.
+/// One function for the loop and its tests, so a fixture cannot flatter the sweep by running it
+/// more often or reaching further back than the app.
 pub fn sweep_in_turn(msgs: &mut [ChatMessage], round_at: &[usize], l: &Limits, past: bool)
 	-> usize
 {
 	let every = l.sweep_every.max(1);	// a cadence of nought would be a modulo by nought
 	let swept = round_at.len();
-	if past && swept > l.result_age && swept % every == 0 {
-		return retire_results(msgs, round_at[swept - 1 - l.result_age], l.result_cap);
+	if !past || swept <= l.result_age || swept % every != 0 || shortened(msgs) {
+		return 0;
 	}
-	0
+	let mut n = retire_results(msgs, round_at[swept - 1 - l.result_age], l.result_cap);
+	if l.retire_prior {
+		n += retire_upto(msgs, prior_end(msgs, l.retire_keep_turns).min(round_at[0]));
+	}
+	n
 }
 
 /// Say what is left of the turn, in the LAST tool result rather than in the system prompt.
@@ -4497,6 +4475,38 @@ mod tests {
 	}
 
 	#[test]
+	fn test_shortened_once_holds_until_a_fold_renews_it_00() {
+		// r578f, QA r578e C1/C2: one state for the boundary and the sweep, reset by a fold only.
+		let mut v = three_turns();
+		assert!(!shortened(&v), "a conversation nothing retired reads as shortened");
+		assert!(retire_prior(&mut v, 0) > 0, "nothing retired, so this proves nothing");
+		assert!(shortened(&v), "a shortening left no state behind");
+		// The sweep honours it: past the line, on its cadence, with old big results to take.
+		let l = Limits::default();
+		let mut w = v.clone();
+		let mut round_at: Vec<usize> = Vec::new();
+		for r in 0..=l.result_age + l.sweep_every {
+			round_at.push(w.len());
+			assert_eq!(0, sweep_in_turn(&mut w, &round_at, &l, true),
+				"round {}: the sweep shortened a conversation already shortened", r + 1);
+			let id = fmt!("s{}", r);
+			w.push(asks(&id, "file_read", &fmt!("{{\"path\":\"src/s{}.rs\"}}", r)));
+			w.push(replies(&id, &"let y = 1;\n".repeat(600)));
+		}
+		// A fold keeps its tail byte for byte and the marks with it, but the folded conversation
+		// is not shortened yet.
+		let cut = 10;
+		let f = match fold(&v, cut, fmt!("[Daimond folded the earlier part]")) {
+			Ok(f)  => f,
+			Err(e) => panic!("{}", e),
+		};
+		assert!(f[1..].iter().zip(v[cut..].iter()).all(|(a, b)| a.is_retired() == b.is_retired()
+			&& a.text() == b.text()), "the fold changed what it kept");
+		assert!(f.iter().any(|m| m.is_retired()), "the fixture's tail carried no mark");
+		assert!(!shortened(&f), "a fold did not renew the once");
+	}
+
+	#[test]
 	fn test_a_finished_turns_results_are_retired_00() {
 		// THE MEASUREMENT THE CHANGE EXISTS FOR. Nothing here is over any ceiling: the point is
 		// that a turn which never trips a fold still re-sends two finished turns on every one of
@@ -4992,12 +5002,14 @@ mod tests {
 		// the test should not have to re-derive it.
 		println!("per-round sent bytes over 80 rounds: mean {} -> {}, last {} -> {}",
 			mw, mn, was[79], now[79]);
-		// The last round is where the whole carry has accumulated, so it is the honest headline.
-		// Its sixteen 4 kB write bodies stay as the model sent them (daimond_rulings.md §17).
-		assert!(now[79] * 2 < was[79],
-			"the last round still carries most of the turn: {} -> {}", was[79], now[79]);
-		// Not halved now the write bodies stay: 265,064 -> 138,851 on 2026-10-20, 48% off.
-		assert!(mn * 10 < mw * 6, "the mean per-round carry fell by under 40%: {} -> {}", mw, mn);
+		// ONCE, THEN APPEND (r578f, QA r578e C1, D-20261020-11).  The sweep used to fire every
+		// tenth round, each a rewrite near the top of the request, and the turn carried half as
+		// much (265,064 -> 138,851 mean on 2026-10-20) at a cache miss every ten rounds.  Now it
+		// shortens once and every round after appends, cached; the summary bounds the rest.
+		assert!(now[79] < was[79] && mn < mw, "the one shortening saved nothing: {} -> {}", mw, mn);
+		let step = |v: &[u64], r: usize| v[r] as i64 - v[r - 1] as i64;
+		let rewrites = (1..80).filter(|&r| step(&now, r) != step(&was, r)).count();
+		assert_eq!(1, rewrites, "the sweep rewrote the turn {} times", rewrites);
 		// AND IT IS STILL GROWING, not flat: the sweep leaves the recent rounds whole, so a turn
 		// that needed folding still gets folded. A sweep that had flattened this would have taken
 		// the working memory with it.

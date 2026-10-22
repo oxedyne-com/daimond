@@ -4727,8 +4727,13 @@ fn message_to_js(msg: &ChatMessage) -> JsValue {
         ChatMessage::Tool { tool_call_id, content, post, retired } => {
             set("role", &JsValue::from_str("tool"));
             // Sent short since it was retired (r578d), so the next turn sends the same stub.
-            if *retired {
+            // Carried through a fold as well, so a reload knows the folded conversation has not
+            // been shortened yet (r578f).
+            if *retired != crate::protocol::Retired::No {
                 set("retired", &JsValue::TRUE);
+            }
+            if *retired == crate::protocol::Retired::Before {
+                set("folded", &JsValue::TRUE);
             }
             set("tool_call_id", &JsValue::from_str(tool_call_id));
             set("content", &JsValue::from_str(&content.as_text()));
@@ -4763,9 +4768,13 @@ fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
             Some(id) if !id.is_empty() => {
                 let m = ChatMessage::tool(id, content)
                     .noted_after(&js_prop(item, "post").unwrap_or_default());
-                let retired = js_sys::Reflect::get(item, &JsValue::from_str("retired"))
+                let flag = |k: &str| js_sys::Reflect::get(item, &JsValue::from_str(k))
                     .map(|v| v.as_bool() == Some(true)).unwrap_or(false);
-                Some(if retired { m.as_retired() } else { m })
+                Some(match (flag("retired"), flag("folded")) {
+                    (true, true)    => m.as_retired().as_folded(),
+                    (true, false)   => m.as_retired(),
+                    _               => m,
+                })
             },
             _ => None,
         },

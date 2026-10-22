@@ -850,13 +850,10 @@ impl Agent {
             if let Some(n) = crate::llm::extract_json_number(text, "retire_keep_turns") {
                 l.retire_keep_turns = n as u32;
             }
-            // Nought is the pre-D-20261020-11 rule, every boundary, and an arm wants it.
+            // Nought puts the line at the start: shortened once, at the first chance, then
+            // appended until the summary (r578f).
             if let Some(f) = crate::llm::extract_json_f64(text, "retire_at") {
                 l.retire_at = f.clamp(0.0, 1.0);
-            }
-            // Nought is the r578d rule, every boundary past the line.
-            if let Some(f) = crate::llm::extract_json_f64(text, "retire_step") {
-                l.retire_step = f.clamp(0.0, 1.0);
             }
             if let Some(n) = crate::llm::extract_json_number(text, "result_age") {
                 if n > 0 { l.result_age = n as usize; }
@@ -1520,23 +1517,21 @@ impl Agent {
         // conversation nears the fold, once, and marked so it stays that way. See
         // `compact::RETIRE_AT`.
         //
-        // ONCE, THEN APPEND (QA r578d B1): a conversation already shortened is shortened again
-        // only for a growth step's worth of saving, else left whole for the summary; see
-        // `compact::RETIRE_STEP`.  AND THE TOOL LIST COUNTS (B2): it rides on every request, and
-        // the mid-turn and summary checks count it, so a Diamond's ~13k tokens of tools no longer
-        // put its line ~13k later than a chat's.
+        // ONCE, THEN APPEND UNTIL THE SUMMARY (r578f, QA r578e C1/C2): a conversation already
+        // shortened since its last fold -- here or by the tool loop's sweep, one state read off
+        // the stored marks -- is left whole for the summary; see `compact::shortened`.  AND THE
+        // TOOL LIST COUNTS (B2): it rides on every request, and the mid-turn and summary checks
+        // count it, so a Diamond's ~13k tokens of tools no longer put its line ~13k later than a
+        // chat's.
         if self.limits.borrow().retire_prior {
             compact::restub(&mut prior);
-            let (line, step) = {
-                let l = self.limits.borrow();
-                (l.retire_line(self.reply_cap()), l.retire_step(self.reply_cap()))
-            };
+            let line = self.limits.borrow().retire_line(self.reply_cap());
             let schema = self.schema_bytes(registry);
             let est = self.gauge.tokens(compact::conversation_bytes(&working)
                 + compact::conversation_bytes(&prior) + schema);
             let end = self.prior_end.get();
             if compact::past_line(est, session.last_prompt_tokens, line)
-                && compact::retire_due(&prior, end, self.gauge.bytes(step))
+                && !compact::shortened(&prior)
                 && compact::retire_upto(&mut prior, end) > 0
             {
                 compact::carry_retired(&mut session.messages, &prior);
@@ -6042,6 +6037,196 @@ mod tests {
              than moved back one turn");
         assert!(sent.contains("file_read src/a.rs 1-200"),
             "the older turn's retired result does not name the call that made it");
+    }
+
+
+    // ── QA r578e confirm (C1, C2): once past the line, then append ──────────────────
+
+    fn qa_reads(i: usize, k: usize) -> crate::llm::tests::Reply {
+        let mut calls = Vec::new();
+        for j in 0..k {
+            calls.push(r#"{"index":IX,"id":"cID","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"fID.txt\"}"}}"#
+                .replace("IX", &fmt!("{}", j)).replace("ID", &fmt!("{}_{}", i, j)));
+        }
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                fmt!("data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{}]}}}}]}}\n\n", calls.join(",")),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\
+                    \"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    fn qa_files(name: &str, n: usize, k: usize, size: usize) -> crate::tools::ToolRegistry {
+        let dir = match oxedyne_fe2o3_test::scratch::scratch_dir(name) {
+            Ok(d)  => d,
+            Err(e) => panic!("scratch: {}", e),
+        };
+        for i in 0..n {
+            for j in 0..k {
+                let line = fmt!("file {} {} some content for the line\n", i, j);
+                let body = line.repeat(size / line.len() + 1);
+                if let Err(e) = std::fs::write(dir.join(fmt!("f{}_{}.txt", i, j)), body) {
+                    panic!("write: {}", e);
+                }
+            }
+        }
+        tools_in(dir, vec![crate::tools::Tool::FileRead])
+    }
+
+    /// Per consecutive pair: (stubs before, stubs after, common prefix as a share of the earlier body).
+    fn qa_breaks(bodies: &[String]) -> Vec<(usize, usize, usize, f64, usize)> {
+        let stub = "retired; call it again";
+        let mut v = Vec::new();
+        for i in 1..bodies.len() {
+            let (a, b) = (bodies[i - 1].as_bytes(), bodies[i].as_bytes());
+            let mut l = 0;
+            while l < a.len() && l < b.len() && a[l] == b[l] { l += 1; }
+            v.push((i, bodies[i - 1].matches(stub).count(), bodies[i].matches(stub).count(),
+                l as f64 / a.len() as f64, b.len()));
+        }
+        v
+    }
+
+    /// Whether a request body is the summariser's own call (a fold), by its opening line.
+    fn qa_is_fold_call(body: &str) -> bool {
+        ["CONTINUES from your note", "The user asked for this fold.",
+         "Here is the earlier part of the conversation."].iter().any(|m| body.contains(m))
+    }
+
+    /// The ruling (D-20261020-11) per summary epoch: the requests between two summariser calls,
+    /// the first of each epoch dropped (it is the folded conversation, a new prefix by design).
+    /// Per epoch, (index, stubs before, stubs after, common prefix %, len) of every break: a
+    /// shortening, or a pair that does not append (an earlier message changed).
+    fn qa_epochs(bodies: &[String]) -> Vec<Vec<(usize, usize, usize, u32, usize)>> {
+        let stub = "retired; call it again";
+        let mut epochs = vec![Vec::new()];
+        let mut prev: Option<usize> = None;
+        for i in 0..bodies.len() {
+            if qa_is_fold_call(&bodies[i]) { epochs.push(Vec::new()); prev = None; continue; }
+            if let Some(p) = prev {
+                let (a, b) = (bodies[p].as_bytes(), bodies[i].as_bytes());
+                let mut l = 0;
+                while l < a.len() && l < b.len() && a[l] == b[l] { l += 1; }
+                // Appending keeps every earlier message byte for byte up to the last one, which
+                // may carry the moving cache mark.
+                let need = bodies[p].rfind("{\"role\":").unwrap_or(0);
+                let (s0, s1) = (bodies[p].matches(stub).count(), bodies[i].matches(stub).count());
+                if s1 > s0 || l < need {
+                    if let Some(e) = epochs.last_mut() {
+                        e.push((i, s0, s1, (l as f64 * 100.0 / a.len() as f64) as u32, b.len()));
+                    }
+                }
+            }
+            prev = Some(i);
+        }
+        epochs
+    }
+
+    /// Exactly one shortening in the first epoch (the run starts past the line), at most one in
+    /// each later one, and every other pair appends.
+    fn qa_assert_once_per_epoch(what: &str, bodies: &[String]) {
+        let epochs = qa_epochs(bodies);
+        eprintln!("QA-EPOCHS {} requests={} epochs={:?}", what, bodies.len(), epochs);
+        for (n, e) in epochs.iter().enumerate() {
+            let short = e.iter().filter(|r| r.2 > r.1).count();
+            if n == 0 {
+                assert_eq!(1, short, "{}: the first summary epoch shortened {} times: {:?}", what, short, epochs);
+            } else {
+                assert!(short <= 1, "{}: summary epoch {} shortened {} times: {:?}", what, n, short, epochs);
+            }
+            assert_eq!(short, e.len(), "{}: epoch {} has a break that is not the shortening: {:?}", what, n, epochs);
+        }
+    }
+
+    #[tokio::test]
+    async fn qa_r578e_tool_loop_past_the_line_sweeps_more_than_once() {
+        // One turn of 45 rounds, each reading one ~4 kB file, past the line from the start
+        // (retire_at tiny), on a window large enough that nothing folds.
+        let rounds = 45usize;
+        let registry = qa_files("qa_r578e_loop", rounds, 1, 4_000);
+        let mut script: Vec<crate::llm::tests::Reply> = (0..rounds).map(|i| qa_reads(i, 1)).collect();
+        script.push(plain_answer());
+        let (port, seen) = crate::llm::tests::start_stub(script).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        if let Err(e) = a.set_tune(r#"{"retire_at":0.0001}"#) { panic!("{}", e); }
+        let mut session = Session::new(fmt!("s1"), fmt!("loop"), fmt!("model"));
+        let _ = a.run_turn(&mut session, fmt!("read them all"), &registry, &mut |_| {}).await;
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        let mut rewrites = Vec::new();
+        for (i, s0, s1, lcp, _) in qa_breaks(&bodies) {
+            if s1 > s0 { rewrites.push((i, s0, s1, lcp)); }
+        }
+        eprintln!("QA-LOOP requests={} rewrites={:?}", bodies.len(), rewrites);
+        assert!(bodies.len() > 40, "the loop did not run: {} requests", bodies.len());
+        assert!(rewrites.len() <= 1,
+            "past the line one tool loop rewrote earlier results {} times: {:?}", rewrites.len(), rewrites);
+        qa_assert_once_per_epoch("one tool loop", &bodies);
+    }
+
+    #[tokio::test]
+    async fn qa_r578e_boundaries_past_the_line() {
+        // Eight turns, each one round reading K files of SIZE bytes then an answer, past the line
+        // from the start.  Prints every rewrite at a boundary.
+        for (k, size) in [(1usize, 4_000usize), (6, 16_000)] {
+            let turns = 8usize;
+            let registry = qa_files(&fmt!("qa_r578e_bnd_{}", k), turns, k, size);
+            let mut script = Vec::new();
+            for i in 0..turns { script.push(qa_reads(i, k)); script.push(plain_answer()); }
+            let (port, seen) = crate::llm::tests::start_stub(script).await;
+            let mut llm = crate::llm::tests::stub_client(port);
+            llm.retry.max_attempts = 1;
+            let a = Agent::new(llm, "You are Daimond.");
+            if let Err(e) = a.set_tune(r#"{"retire_at":0.0001}"#) { panic!("{}", e); }
+            let mut session = Session::new(fmt!("s1"), fmt!("bnd"), fmt!("model"));
+            for i in 0..turns {
+                let _ = a.run_turn(&mut session, fmt!("turn {}", i), &registry, &mut |_| {}).await;
+            }
+            let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+            qa_assert_once_per_epoch(&fmt!("k={} size={}", k, size), &bodies);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_past_the_line_a_reload_does_not_shorten_again_00() {
+        // r578f: eight turns of 6×16 kB reads past the line, the engine rebuilt from the stored
+        // messages after turn four as a reload is; the once-state is the stored marks, so the
+        // reloaded engine appends rather than shortening a second time.
+        let (k, turns) = (6usize, 8usize);
+        let registry = qa_files("r578f_reload", turns, k, 16_000);
+        let mut script = Vec::new();
+        for i in 0..turns { script.push(qa_reads(i, k)); script.push(plain_answer()); }
+        let (port, seen) = crate::llm::tests::start_stub(script).await;
+        let mk = || {
+            let mut llm = crate::llm::tests::stub_client(port);
+            llm.retry.max_attempts = 1;
+            let a = Agent::new(llm, "You are Daimond.");
+            if let Err(e) = a.set_tune(r#"{"retire_at":0.0001}"#) { panic!("{}", e); }
+            a
+        };
+        let mut a = mk();
+        let mut session = Session::new(fmt!("s1"), fmt!("reload"), fmt!("model"));
+        for i in 0..turns {
+            if i == 4 {
+                let mut back = Vec::new();
+                for m in session.messages.iter() {
+                    match ChatMessage::from_datmap(&m.to_datmap()) {
+                        Ok(b)  => back.push(b),
+                        Err(e) => panic!("{}", e),
+                    }
+                }
+                assert!(compact::shortened(&back), "the store lost the shortening");
+                session.messages = back;
+                a = mk();
+            }
+            let _ = a.run_turn(&mut session, fmt!("turn {}", i), &registry, &mut |_| {}).await;
+        }
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        qa_assert_once_per_epoch("across a reload", &bodies);
     }
 
     /// Two finished turns, each a read of its own file, so one figure tells them apart.

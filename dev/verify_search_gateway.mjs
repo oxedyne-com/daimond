@@ -137,7 +137,7 @@ function fixture(name, port, engine) {
             "search_cost_tavily_per_1k_minor":  "800",
             "search_cost_serper_per_1k_minor":  "100",
             "search_extra_result_per_1k_minor": "100",
-            "search_fee_bps":                   "550",
+            "search_fee_bps":                   "0",
             "max_redirects":                    "3"
         }},\n`;
 	// The real route is REMOVED first, not merely preceded. It did not exist
