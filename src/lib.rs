@@ -86,6 +86,8 @@ pub mod skills;
 /// `STATE.md` as keyed sections, rendered and retired by the engine rather than refused
 /// (UNBLOCK-18).  Pure; the store's half is `wasm::diamond::standing_retired`.
 pub mod state_md;
+/// The three standing files read and seeded through one store, proved without a browser.
+pub mod standing;
 /// The one block of a person's standing notes composed into the chat's and the daimon's prompt,
 /// and the lint that keeps a note from asking the model to chase approval.
 ///

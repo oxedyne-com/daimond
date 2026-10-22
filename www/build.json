@@ -1,1 +1,1 @@
-{"build":"77adc87e0d31","note":"When a task needs a command and no folder is open to commands, Daimond stops and asks one plain question."}
+{"build":"f02f1c83bd96","note":"Like Claude Code, a file that fails to read is never overwritten: STATE, DECISIONS, REQUIREMENTS are kept safe."}

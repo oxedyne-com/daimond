@@ -927,10 +927,15 @@ async fn record_and_stamp(
 
 /// A file's bytes, or `None` when it does not exist.  Any other failure to read is an error.
 async fn read_if_any(path: &str) -> Outcome<Option<Vec<u8>>> {
-    if !res!(opfs::exists(FileRoot::Opfs, path).await) {
+    read_if_any_at(FileRoot::Opfs, path).await
+}
+
+/// [`read_if_any`] under `root`.
+async fn read_if_any_at(root: FileRoot, path: &str) -> Outcome<Option<Vec<u8>>> {
+    if !res!(opfs::exists(root, path).await) {
         return Ok(None);
     }
-    Ok(Some(res!(opfs::read_file(FileRoot::Opfs, path).await)))
+    Ok(Some(res!(opfs::read_file(root, path).await)))
 }
 
 /// Put a file back as it was: its bytes, or gone if it did not exist.
@@ -1398,36 +1403,39 @@ async fn find_crystal_data(id: &str) -> Outcome<Option<String>> {
 }
 
 
+/// The page's store for the three files: OPFS, read through [`read_if_any`] and written through
+/// [`opfs::write_file_if`].
+struct OpfsStanding;
+
+impl crate::standing::StandingStore for OpfsStanding {
+    async fn read_bound(&self, path: &str) -> Outcome<Option<Vec<u8>>> {
+        read_if_any(path).await
+    }
+    async fn write_if(&self, path: &str, bytes: &[u8], expect: Option<&versions::Seen>)
+        -> Outcome<Option<versions::Seen>>
+    {
+        opfs::write_file_if(FileRoot::Opfs, path, bytes, expect).await
+    }
+}
+
 /// The three files beside the crystal, as they sit on disk.
 ///
 /// Empty strings where a Diamond has not been given them yet, which
 /// [`crate::tools::Standing::prompt_text`] renders as nothing at all rather than as three empty
-/// headings.
+/// headings.  **A file that will not read is an error** ([`crate::standing::read_standing_in`]).
 ///
 /// # Arguments
 /// * `id` - The Diamond.
-pub async fn read_standing(id: &str) -> crate::tools::Standing {
-    let read = |leaf: &'static str| {
-        let path = crate::tools::standing_path(leaf, id);
-        async move {
-            opfs::read_file(FileRoot::Opfs, &path).await
-                .map(|b| String::from_utf8_lossy(&b).into_owned())
-                .unwrap_or_default()
-        }
-    };
-    crate::tools::Standing {
-        requirements: read(crate::tools::REQUIREMENTS_FILE).await,
-        decisions:    read(crate::tools::DECISIONS_FILE).await,
-        state:        read(crate::tools::STATE_FILE).await,
-    }
+pub async fn read_standing(id: &str) -> Outcome<crate::tools::Standing> {
+    crate::standing::read_standing_in(&OpfsStanding, id).await
 }
 
 /// What the three cost in the system message per round, in bytes.
 ///
 /// # Arguments
 /// * `id` - The Diamond.
-pub async fn standing_hot_bytes(id: &str) -> usize {
-    read_standing(id).await.hot_bytes()
+pub async fn standing_hot_bytes(id: &str) -> Outcome<usize> {
+    Ok(res!(read_standing(id).await).hot_bytes())
 }
 
 /// The crystal a write's hot part is measured against when the one on disk will not parse: the
@@ -1466,51 +1474,20 @@ pub async fn crystal_hot_last_good(id: &str, old: &str) -> String {
 /// an edit anybody made, so it mints no version, logs no record and changes no stamp -- exactly
 /// as [`migrate_crystal_data`] does with the markdown it converts.
 ///
-/// Idempotent, and total.  A second call finds three files and a crystal with no `open` and
-/// writes nothing.  A crystal that will not parse is left exactly as it is: the daimon that has
-/// to mend it is the one turn that must see it unchanged.
+/// Idempotent.  A second call finds three files and a crystal with no `open` and writes nothing.
+/// A crystal that will not parse is left exactly as it is: the daimon that has to mend it is the
+/// one turn that must see it unchanged.  **A file that will not read fails the call and nothing
+/// is written** (QA-A1 F2, r578f): the template used to land over a `STATE.md` that failed one
+/// read while a save committed.  The logic is [`crate::standing::ensure_standing_in`].
 ///
 /// # Arguments
 /// * `id` - The Diamond.
-pub async fn ensure_standing(id: &str) -> crate::tools::Standing {
-    let mut files = read_standing(id).await;
-    // The crystal's `open[]`, moved once. Done BEFORE the templates are written, so the entries
-    // land in the same file the template seeds rather than in a second one after it.
-    let unfiled = match migrate_open(id).await {
-        Ok(list) => list,
-        Err(e)   => {
-            console_log(&fmt!("Diamond '{}': open[] could not be migrated ({}).", id, e));
-            Vec::new()
-        },
-    };
-    let want = [
-        (crate::tools::REQUIREMENTS_FILE, &mut files.requirements),
-        (crate::tools::DECISIONS_FILE,    &mut files.decisions),
-        (crate::tools::STATE_FILE,        &mut files.state),
-    ];
-    for (leaf, held) in want {
-        if !held.is_empty() {
-            continue;
-        }
-        *held = crate::tools::standing_template(leaf).to_string();
-        if let Err(e) = opfs::write_file(FileRoot::Opfs, &crate::tools::standing_path(leaf, id),
-            held.as_bytes()).await
-        {
-            console_log(&fmt!("Diamond '{}': {} could not be seeded ({}).", id, leaf, e));
-        }
+pub async fn ensure_standing(id: &str) -> Outcome<crate::tools::Standing> {
+    let (files, notes) = res!(crate::standing::ensure_standing_in(&OpfsStanding, id).await);
+    for note in notes {
+        console_log(&fmt!("Diamond '{}': {}", id, note));
     }
-    if !unfiled.is_empty() {
-        files.requirements = crate::tools::file_unfiled(&files.requirements, &unfiled);
-        if let Err(e) = opfs::write_file(FileRoot::Opfs,
-            &crate::tools::standing_path(crate::tools::REQUIREMENTS_FILE, id),
-            files.requirements.as_bytes()).await
-        {
-            console_log(&fmt!(
-                "Diamond '{}': {} open[] entries could not be filed ({}).",
-                id, unfiled.len(), e));
-        }
-    }
-    files
+    Ok(files)
 }
 
 /// A write to one of the three files, with what does not fit moved to its archive.
@@ -1615,15 +1592,17 @@ impl Landed {
 /// landing.  All three wait in the answer for [`Landed::settle`].
 async fn state_landed(root: FileRoot, path: &str, text: String) -> Outcome<Landed> {
     let id = crate::tools::diamond_of_path(path);
+    // A FILE THAT WILL NOT READ IS AN ERROR AND NOT AN EMPTY ONE (r578f sweep): read as empty,
+    // `DECISIONS.md` was replaced by its template and the new lines, and the sections a write
+    // dropped from `STATE.md` left with no archive line.
     let read = |p: String| async move {
-        opfs::read_file(root, &p).await
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_default()
+        read_if_any_at(root, &p).await
+            .map(|b| b.map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default())
     };
-    let old = read(path.to_string()).await;
+    let old = res!(read(path.to_string()).await);
     let touched_path = fmt!("{}/{}/{}{}", crate::tools::STORE_ROOT, id,
         crate::tools::DAIMOND_DIR, crate::state_md::TOUCHED_LEAF);
-    let touched = crate::state_md::touched_parse(&read(touched_path.clone()).await);
+    let touched = crate::state_md::touched_parse(&res!(read(touched_path.clone()).await));
     let land = crate::state_md::land(&old, &text, &touched, now_ms() as u64, &today());
     let archive = crate::tools::standing_archive(crate::tools::STATE_FILE, &id);
     let mut out = Landed { said: land.said(), ..Landed::default() };
@@ -1632,7 +1611,7 @@ async fn state_landed(root: FileRoot, path: &str, text: String) -> Outcome<Lande
     }
     if !land.noted.is_empty() {
         let dpath = crate::tools::standing_path(crate::tools::DECISIONS_FILE, &id);
-        let mut dec = read(dpath.clone()).await;
+        let mut dec = res!(read(dpath.clone()).await);
         if dec.is_empty() {
             dec = crate::tools::standing_template(crate::tools::DECISIONS_FILE).to_string();
         }
@@ -1659,7 +1638,9 @@ async fn state_landed(root: FileRoot, path: &str, text: String) -> Outcome<Lande
 
 /// Append retired lines to a standing file's archive.
 async fn archive_append(root: FileRoot, archive: &str, retired: &str) -> Outcome<()> {
-    let mut all = opfs::read_file(root, archive).await
+    // AN ARCHIVE THAT WILL NOT READ IS AN ERROR AND NOT AN EMPTY ONE (r578f sweep): read as
+    // empty, everything it held was replaced by the lines being retired.
+    let mut all = res!(read_if_any_at(root, archive).await)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
     if !all.is_empty() && !all.ends_with('\n') {
@@ -1713,7 +1694,13 @@ pub async fn write_standing(id: &str, leaf: &str, text: &str) -> Outcome<()> {
 pub async fn absorb_fold_notes(id: &str, notes: &crate::agent::compact::FoldNotes)
     -> Option<crate::agent::compact::FoldNotes>
 {
-    let files = read_standing(id).await;
+    let files = match read_standing(id).await {
+        Ok(f)  => f,
+        Err(e) => {
+            console_log(&fmt!("Diamond '{}': the fold's notes were not filed ({}).", id, e));
+            return None;
+        },
+    };
     // What the archives already hold, as one corpus: the two are compared line by line under
     // different keys, so which file a line came from makes no difference to the answer.
     let mut retired = String::new();
@@ -1782,34 +1769,6 @@ pub(crate) fn today() -> String {
         d.get_full_year(), d.get_month() + 1, d.get_date())
 }
 
-/// Take `open[]` out of a Diamond's crystal, answering with what it held.
-///
-/// Empty where the crystal has no such key, will not parse, or does not exist -- all three of
-/// which mean there is nothing to move and nothing to rewrite.
-///
-/// # Arguments
-/// * `id` - The Diamond.
-async fn migrate_open(id: &str) -> Outcome<Vec<String>> {
-    // Not UTF-8 is "will not parse": this rewrites the file, and a lossy read would have written
-    // U+FFFD over every byte it could not decode.
-    let json = match opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await {
-        Ok(b)  => match crate::tools::utf8_text(&b, &crystal_data_path(id)) {
-            Ok(t)  => t,
-            Err(_) => return Ok(Vec::new()),
-        },
-        Err(_) => return Ok(Vec::new()),
-    };
-    let (rest, open) = match crate::tools::crystal_without_open(&json) {
-        Some(pair) => pair,
-        None       => return Ok(Vec::new()),
-    };
-    res!(opfs::write_file(FileRoot::Opfs, &crystal_data_path(id), rest.as_bytes()).await);
-    console_log(&fmt!(
-        "Diamond '{}': {} open[] entries moved into {} and the key deleted.",
-        id, open.len(), crate::tools::REQUIREMENTS_FILE));
-    Ok(open)
-}
-
 /// Read a Diamond's current page, or empty when it has none.
 ///
 /// Empty is an ordinary answer and not a failure: a Diamond created before pages existed has no
@@ -1866,11 +1825,13 @@ async fn find_crystal_page(id: &str) -> Outcome<String> {
 /// [`read_crystal_page`] reaches for a snapshot when the file is not there, which is right for a
 /// reader and wrong for [`snapshot`]: a recovered page is not a page the user changed, and
 /// treating it as one would write a fresh page snapshot at a version where nothing moved.
-async fn page_on_disk(id: &str) -> String {
-    match opfs::read_file(FileRoot::Opfs, &crystal_page_path(id)).await {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-        Err(_)    => String::new(),
-    }
+///
+/// Empty where there is no page; **a page that will not read is an error** (r578f sweep): read as
+/// empty, it was recorded as the version's page, and an undo to that version blanked the page.
+async fn page_on_disk(id: &str) -> Outcome<String> {
+    Ok(res!(read_if_any(&crystal_page_path(id)).await)
+        .map(|b| String::from_utf8_lossy(&b).to_string())
+        .unwrap_or_default())
 }
 
 /// The newest pre-migration snapshot a Diamond holds, `versions/NNNN.md`, with its text.
@@ -2071,11 +2032,11 @@ async fn snapshot_held(
     }
     let last_good = crystal_hot_last_good(id, &old).await;
     if let Some(msg) = crate::tools::crystal_hot_refusal(
-        data, &old, &last_good, standing_hot_bytes(id).await)
+        data, &old, &last_good, res!(standing_hot_bytes(id).await))
     {
         return Err(err!("{}", msg; Invalid, Input, Size));
     }
-    let disk = page_on_disk(id).await;
+    let disk = res!(page_on_disk(id).await);
     let want: &str = page.unwrap_or(disk.as_str());
     if crate::tools::crystal_page_write_refused(want.len(), disk.len()) {
         return Err(err!("{}", crate::tools::crystal_page_cap_message(want.len());
@@ -2409,10 +2370,11 @@ pub async fn fold_apply(
 {
     let now = now_ms() as u64;
     let hold = res!(hold_versions(id).await);
-    let old = opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await
+    // Read as empty, a crystal that would not read let the landing's loss checks pass anything.
+    let old = res!(read_if_any(&crystal_data_path(id)).await)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
-    let files = read_standing(id).await;
+    let files = res!(read_standing(id).await);
     let last_good = crystal_hot_last_good(id, &old).await;
     let land = match crate::agent::compact::fold_landing(id, &old, &last_good, &files, want,
         &today())
@@ -3606,7 +3568,12 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
             match opfs::read_file_capped(FileRoot::Workspace, &note.path, ceiling).await {
                 Ok((b, total)) if total as usize <= versions::VERSION_FILE_MAX => Body::Held(b),
                 Ok((_, total)) => Body::TooLarge(total as u64),
-                Err(_)         => Body::Gone,
+                // GONE ONLY WHERE IT IS GONE (r578f sweep): a file that stands and will not read
+                // was recorded as deleted, and a restore to the version deleted it.
+                Err(_)         => match opfs::exists(FileRoot::Workspace, &note.path).await {
+                    Ok(false) => Body::Gone,
+                    _         => Body::Unseen,
+                },
             }
         };
         // Whether its act wiped the file is worked out again at the record, from the note's bytes
@@ -4109,7 +4076,7 @@ async fn mint_files_version(_hold: &VersionHold, id: &str, now: u64) -> Outcome<
     if diamond_delta::stands_between(&page_snaps, meta.version, next) {
         let page = match page_at(id, meta.version, &page_snaps).await {
             Ok(Some(p)) => p,
-            _           => page_on_disk(id).await,
+            _           => res!(page_on_disk(id).await),
         };
         res!(write_snapshot(id, next, None, &page, &page_snaps,
             PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await);
@@ -6145,11 +6112,20 @@ pub async fn versions_restore_close_keeping(id: &str, ticket: u64, keep_new: boo
                 Some(b) => *b,
                 None    => continue,        // no page in the version: today's is left
             };
-            let now = opfs::read_file(FileRoot::Opfs, path).await.ok();
             let decided = match r.own.get(&crate::tools::normalise(path)) {
                 Some(h) if h.asked.is_some() && h.yes.is_none() => { keep_crystal = true; continue; },
                 Some(h) => h.yes.clone().unwrap_or_else(|| h.seen.clone()),
                 None    => versions::Seen::Unread,
+            };
+            // A FILE THAT WILL NOT READ IS NOT ABSENT (r578f sweep): read as absent, a crystal
+            // that was absent at the open was written over unasked.  It is put to him instead.
+            let now = match read_if_any(path).await {
+                Ok(n)  => n,
+                Err(_) => {
+                    today.insert(path.clone(), (None, versions::Seen::Unread));
+                    changed.push(path.clone());
+                    continue;
+                },
             };
             if versions::bound(&decided, now.as_deref(), Some(body)) == versions::Bound::Changed {
                 let seen = versions::Seen::of(now.as_deref());
@@ -6307,7 +6283,7 @@ async fn restore_crystal(id: &str, plan: &Plan) -> Outcome<Option<Option<(String
     };
     let page = read_version_page(id, at).await.unwrap_or_default();
     let today = read_crystal_data(id).await.unwrap_or_default();
-    if data == today && (page.trim().is_empty() || page == page_on_disk(id).await) {
+    if data == today && (page.trim().is_empty() || page == res!(page_on_disk(id).await)) {
         return Ok(Some(None));
     }
     Ok(Some(Some((data, page))))
@@ -6854,7 +6830,7 @@ pub async fn union_archive_from(owner: &str, there: &str) -> Outcome<bool> {
         return Ok(false);
     }
     let path = crate::tools::standing_archive(crate::tools::STATE_FILE, owner);
-    let mine = opfs::read_file(FileRoot::Opfs, &path).await
+    let mine = res!(read_if_any(&path).await)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
     let add = crate::state_md::archive_union(&mine, there);
@@ -7562,15 +7538,23 @@ async fn refile_own_versions(_hold: &VersionHold, id: &str, writes: &mut Vec<(St
     // log, which the import joins and never replaces.
     if !plan.moves.is_empty() {
         let row = versions::PruneRecord::renumbered(&plan.moves, &before, now_ms() as u64);
-        let mine = match opfs::read_file(FileRoot::Opfs, &prune_log_path(id)).await {
-            Ok(b)  => String::from_utf8_lossy(&b).into_owned(),
-            Err(_) => String::new(),
-        };
-        if let Err(e) = opfs::write_file(FileRoot::Opfs, &prune_log_path(id),
-            versions::prune_log_refiled(&mine, &plan.moves, &row).as_bytes()).await
-        {
-            console_log(&fmt!("Diamond '{}': the row saying {} version(s) were renumbered could \
-                not be written ({}).", id, plan.moves.len(), e));
+        // A LOG THAT WILL NOT READ IS NOT WRITTEN OVER (r578f sweep): read as empty, every prune
+        // record this device held was replaced by the renumbering row.
+        // The refile has landed by now, so a log that will not read is said and left, as one that
+        // will not write is.
+        match read_if_any(&prune_log_path(id)).await {
+            Ok(b)  => {
+                let mine = b.map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+                if let Err(e) = opfs::write_file(FileRoot::Opfs, &prune_log_path(id),
+                    versions::prune_log_refiled(&mine, &plan.moves, &row).as_bytes()).await
+                {
+                    console_log(&fmt!("Diamond '{}': the row saying {} version(s) were renumbered \
+                        could not be written ({}).", id, plan.moves.len(), e));
+                }
+            },
+            Err(e) => console_log(&fmt!("Diamond '{}': the prune log could not be read ({}), so \
+                the row saying {} version(s) were renumbered was not written.",
+                id, e, plan.moves.len())),
         }
         console_log(&fmt!(
             "Diamond '{}': {} version(s) this device recorded since the copy arriving parted from \

@@ -1490,7 +1490,7 @@ impl DaimondApp {
     /// * `id` - The Diamond whose crystal is wanted.
     pub async fn crystal_hot_text(&self, id: String) -> Result<String, JsValue> {
         let json  = diamond::read_crystal_data(&id).await.unwrap_or_default();
-        let files = diamond::read_standing(&id).await;
+        let files = diamond::read_standing(&id).await.map_err(to_js_err)?;
         let split = crate::tools::crystal_split(
             &json, crate::tools::crystal_hot_room(files.hot_bytes())).map_err(to_js_err)?;
         // A worker is not the crystal's keeper: told the fact, and not to mend the file.
@@ -1510,7 +1510,7 @@ impl DaimondApp {
         // THE ROOM RATHER THAN THE CEILING, because the gauge is what a user checks a refusal
         // against: a panel drawing "hot 3.1 of 16.0 KB" beside a refusal at 15,100 would have
         // the user reading the three files' share as a bug.  `files` is what they weigh.
-        let files = diamond::read_standing(&id).await;
+        let files = diamond::read_standing(&id).await.map_err(to_js_err)?;
         let hot   = crate::tools::crystal_hot_room(files.hot_bytes());
         let split = crate::tools::crystal_split(&json, hot).map_err(to_js_err)?;
         Ok(fmt!(
@@ -3724,7 +3724,7 @@ impl DaimondApp {
         // read ONCE here so the block is byte-stable for every round of this turn -- exactly as
         // the crystal above is.  A file re-read per round would change the system message under
         // a turn that had already sent it, which is the one thing a standing context may not do.
-        let files = diamond::ensure_standing(id).await;
+        let files = res!(diamond::ensure_standing(id).await);
         // THE `nofiles` MEASUREMENT ARM'S OWN DOOR. `files` itself is read and tracked
         // regardless -- the turn-end check below still needs the true content to diff against
         // -- but what goes into THIS turn's prompt is an empty `Standing` when the switch is
@@ -4002,7 +4002,16 @@ impl DaimondApp {
         // number on every call regardless of whether `crystal.json` itself moved, so calling
         // `record_steer` here is what earns the version; it does not need `after` to differ from
         // `before` to do it.
-        let standing_after = diamond::read_standing(id).await;
+        // `None` where one of the three would not read: counted as changed, so a version is
+        // minted rather than missed, and nothing is judged against bytes it never saw (r578f).
+        let standing_after = match diamond::read_standing(id).await {
+            Ok(f)  => Some(f),
+            Err(e) => {
+                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                    "Diamond '{}': the turn's end {}", id, e)));
+                None
+            },
+        };
         let tune = agent.limits();
         // THE VERSION STORE IS HELD FROM THE CRYSTAL'S MINT TO THE FILES' MANIFEST, so no seal, no
         // revert and no other tab mints between them (R2-1; see `diamond::VersionHold`).
@@ -4019,7 +4028,9 @@ impl DaimondApp {
                 // The captures are this turn's now: a thread's turn end from here takes only what
                 // lands after them.
                 steering.take();
-                if after != before || page_after != page_before || standing_after != standing_before {
+                if after != before || page_after != page_before
+                    || standing_after.as_ref() != Some(&standing_before)
+                {
                     let version = res!(diamond::record_steer(&hold, id, &after, &typed).await);
                     minted = Some(version);
                     // ONE `kind:"task"` RECORD PER TICK, carrying what the ledger shows behind it. A
@@ -4046,8 +4057,12 @@ impl DaimondApp {
                         } else {
                             None
                         };
+                        let req_after = match &standing_after {
+                            Some(f) => f.requirements.as_str(),
+                            None    => standing_before.requirements.as_str(),
+                        };
                         for task_id in crate::tools::ticked_tasks(
-                            &standing_before.requirements, &standing_after.requirements)
+                            &standing_before.requirements, req_after)
                         {
                             res!(diamond::record_task_tick(id, version, parent, &task_id, backed).await);
                         }
@@ -4184,8 +4199,8 @@ impl DaimondApp {
         // `dev/CRYSTAL_CONTRACT.md` §5.2 and [`crate::agent::compact::note_reconcile`].
         if tune.tail_note
             && (!ledger.wrote.is_empty() || !ledger.reported.is_empty())
-            && standing_before.requirements == standing_after.requirements
-            && standing_before.state == standing_after.state
+            && standing_after.as_ref().is_some_and(|a|
+                standing_before.requirements == a.requirements && standing_before.state == a.state)
         {
             crate::agent::compact::note_reconcile(&mut session.messages, prior_tail.as_ref());
         }
@@ -4317,7 +4332,7 @@ impl DaimondApp {
         // The three files ride with the crystal, because the reducer is now asked to rewrite
         // them too and a model cannot rewrite a file it has not been shown. Read once, before
         // either round, so the two rounds fold the same delta into the same state.
-        let files = diamond::read_standing(id).await;
+        let files = res!(diamond::read_standing(id).await);
         let last_good = diamond::crystal_hot_last_good(id, &crystal).await;
         let mut want = res!(self.reduce_round(id, delta, &crystal, &files, "").await);
         let lost = crate::agent::compact::fold_losses(&crystal, &files, &want);
