@@ -5701,6 +5701,14 @@ impl Machine {
 // user can actually use.  Wasm is single-threaded, so a thread-local is the whole of the sharing
 // story, and on the native build nothing writes it at all -- `run` is not in that build's belt.
 
+/// What `run` says of itself where there is nowhere to run it; see
+/// [`ToolRegistry::machine_stub_json`].
+pub const RUN_STUB_DESC: &str =
+    "Not available on this device: no folder on this computer is reachable from this page. Call \
+     it only when the ask cannot be done without a command. Nothing runs: the turn ends and the \
+     user is asked for what is missing.";
+pub const RUN_STUB_PARAMS: &str = r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"What you would run."}},"required":["argv"]}"#;
+
 thread_local! {
     /// Whether a folder on this computer was reachable when the turn was briefed.
     static MACHINE_ROOTED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
@@ -19575,6 +19583,11 @@ impl Tool {
         }
     }
 
+    /// Does this tool need a folder on this computer, through the machine hand?
+    pub fn machine(&self) -> bool {
+        matches!(self, Tool::Run | Tool::Runs | Tool::Verify | Tool::Serve)
+    }
+
     /// Has this account NOT bought the pack this tool is sold in?
     ///
     /// Asked of every tool on every round by [`ToolRegistry::offered`], so it answers the
@@ -30360,10 +30373,8 @@ impl ToolRegistry {
         // built, and `prompts::NO_MACHINE_NOTE` then tells the model in one sentence that the
         // tools are not there -- without which the model does not merely fail to run a command,
         // it probes for a tool it cannot see and reports the app as broken.
-        let nowhere_to_run = machine_rooted_seen() == Some(false);
         self.tools.iter()
-            .filter(|t| !(nowhere_to_run
-                && matches!(t, Tool::Run | Tool::Runs | Tool::Verify | Tool::Serve)))
+            .filter(|t| !self.wants_machine(t))
             // AND NOT A TOOL THE ACCOUNT HAS NOT BOUGHT, which is the prefix half of the gate
             // `guard` already holds.  A locked tool's description and schema were sent on every
             // request of every round -- the four mail tools and the Typst compiler come to
@@ -30391,6 +30402,37 @@ impl ToolRegistry {
             .filter(|t| !self.family.get().withholds(t))
             .cloned()
             .collect()
+    }
+
+    /// Is this tool on the belt but withheld because no folder on this computer is reachable?
+    ///
+    /// The one test [`offered`](Self::offered) and the turn's engine both read (UNBLOCK-32 F4).
+    /// A call to such a tool can only be refused, so the engine does not send it: the turn ends
+    /// on one plain question saying what is missing -- see `agent::wanting_told`.  Probing on
+    /// with the file tools is what the Nancy Hopkins turn of 22 Oct did for 15 minutes after it
+    /// had named the blocker itself.
+    pub fn wants_machine(&self, t: &Tool) -> bool {
+        machine_rooted_seen() == Some(false)
+            && t.machine()
+            && self.tools.contains(t)
+    }
+
+    /// The one line of schema that stands in for `run` where [`wants_machine`](Self::wants_machine)
+    /// withholds it, or `None` where it does not.
+    ///
+    /// **A capability the model cannot see is one it probes for**, which is why `NO_MACHINE_NOTE`
+    /// exists; but a sentence gives the engine nothing to act on.  This stub, about 90 tokens
+    /// against the ~1,600 the machine schemas cost, lets the model SAY it needs a command the one
+    /// way the engine can read -- by calling it -- and the engine then ends the turn and asks.
+    pub fn machine_stub_json(&self) -> Option<String> {
+        if !self.wants_machine(&Tool::Run) || self.family.get().withholds(&Tool::Run) {
+            return None;
+        }
+        Some(fmt!(
+            r#"{{"type":"function","function":{{"name":"{}","description":"{}","parameters":{}}}}}"#,
+            Tool::Run.wire_name(self.family.get(), self.claude_names.get()),
+            json_escape(RUN_STUB_DESC), RUN_STUB_PARAMS,
+        ))
     }
 
     /// One sentence naming the packs this account has not bought, for the turn's briefing, or
@@ -30442,9 +30484,11 @@ impl ToolRegistry {
         if offered.is_empty() {
             return None;
         }
-        let defs: Vec<String> = offered.iter()
+        let mut defs: Vec<String> = offered.iter()
             .map(|t| t.definition_json_for(self.family.get(), self.claude_names.get()))
             .collect();
+        // Not in `tool_names`: the briefing says plainly that run is not on the belt.
+        defs.extend(self.machine_stub_json());
         Some(fmt!("[{}]", defs.join(",")))
     }
 
@@ -49721,8 +49765,11 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             assert!(!reg.offered().contains(t), "{} is still offered", t.name());
             assert!(!names.iter().any(|n| n == t.name()),
                 "{} is still named to the model", t.name());
-            assert!(!defs.contains(&fmt!("\"name\":\"{}\"", t.name())),
+            // `run` alone leaves its one-line stub, so a model can still say it needs a command.
+            assert!(!defs.contains(&t.description().chars().take(40).collect::<String>()),
                 "{}'s schema is still in the request", t.name());
+            assert_eq!(*t == Tool::Run, defs.contains(&fmt!("\"name\":\"{}\"", t.name())),
+                "{}'s stub is wrong in the request", t.name());
             // The belt is unchanged, because it is also what the Tools panel shows a person and
             // what `DaimondApp::briefing` reads to decide whether to mention a machine at all.
             assert!(reg.tools.contains(t), "{} left the belt", t.name());

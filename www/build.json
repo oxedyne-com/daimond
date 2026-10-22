@@ -1,1 +1,1 @@
-{"build":"606f2a6f99c6","note":"Like Claude Code: Stop ends running commands, results shorten once; top-ups now carry card fees, not spend."}
+{"build":"77adc87e0d31","note":"When a task needs a command and no folder is open to commands, Daimond stops and asks one plain question."}

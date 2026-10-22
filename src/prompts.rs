@@ -2170,10 +2170,15 @@ mod turn_note_tests {
 /// could only ever earn a refusal -- and a capability a model cannot see is a capability it probes
 /// for and then reports as broken.  One sentence instead, for the same reason
 /// `ToolRegistry::locked_pack_note` is one sentence.
+///
+/// **Since UNBLOCK-32 (22 Oct) it says how to say so.**  `run` stays in the request as a one-line
+/// stub (`ToolRegistry::machine_stub_json`), and a call to it is the engine's signal that the ask
+/// needs a command: nothing is sent and the turn ends on one plain question.
 pub const NO_MACHINE_NOTE: &str =
 	"## This computer\n\nNo folder on this computer is reachable from this page, so run, runs, \
-	 verify and serve are not on your belt at all: do not reach for them and do not report a \
-	 command as having failed. Use your file tools, which work regardless.";
+	 verify and serve cannot work here. If the ask cannot be done without one, call run once with what you would run: \
+	 nothing runs, and the turn ends asking the user for what is missing. Otherwise use your file \
+	 tools, which work regardless.";
 
 /// The reducer's role: fold exactly one delta into the current crystal and emit the
 /// whole new crystal.  A fresh reducer holds no history, so it cannot itself rot.

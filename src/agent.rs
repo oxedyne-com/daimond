@@ -1993,8 +1993,9 @@ impl Agent {
         let mut setbacks = Setbacks::default();
         // Set when a call was held back as a repeat, or a target failed once too often; the turn
         // ends on it, blocked, at the end of the round, so every call of the round still gets its
-        // result.
-        let mut blocked: Option<String> = None;
+        // result.  The flag is whether the user is offered the Decision as well: a turn that
+        // ended wanting a machine asks its one question in the sentence alone (UNBLOCK-32 F4).
+        let mut blocked: Option<(String, bool)> = None;
         // A refusal left standing when the model tries to end gets ONE must-fix nudge.
         let mut refusal_nudged = false;
         // And a page that fails its load proof when the model tries to end gets ONE as well (K1).
@@ -2539,8 +2540,20 @@ impl Agent {
                 let pre: Vec<bool> = (0..group.len())
                     .map(|n| settled[base + n] != Settled::Run)
                     .collect();
+                // AND A CALL THAT NEEDS A MACHINE THIS PAGE HAS NONE OF IS NOT SENT EITHER
+                // (UNBLOCK-32 F4).  It could only be refused, and the model calling it is how it
+                // says the ask needs one; the turn ends at the seam on the question that says
+                // what is missing, rather than probing on with the file tools.
+                let wanting: Vec<bool> = group.iter().zip(pre.iter())
+                    .map(|(tc, p)| !*p && crate::tools::Tool::from_name(&tc.name)
+                        .map_or(false, |t| registry.wants_machine(&t)))
+                    .collect();
                 let held: Vec<Option<(String, String)>> = group.iter().zip(pre.iter())
-                    .map(|(tc, p)| if *p { None } else {
+                    .zip(wanting.iter())
+                    .map(|((tc, p), w)| if *p { None } else if *w {
+                        Some((wanting_said(&tc.name),
+                            wanting_told(&tc.name, &registry.ctx.unconfirmed)))
+                    } else {
                         setbacks.held(&tc.name, &tc.arguments)
                             .map(|head| (held_said(&tc.name, head), held_told(&tc.name, head)))
                     })
@@ -2753,9 +2766,10 @@ impl Agent {
                         text.push_str(&fmt!("\n{}", w));
                     }
                     if let Some(Some((_, told))) = held.get(n) {
-                        blocked.get_or_insert_with(|| told.clone());
+                        let decide = !wanting.get(n).copied().unwrap_or(false);
+                        blocked.get_or_insert_with(|| (told.clone(), decide));
                     } else if let Some(stop) = verdict.stop {
-                        blocked.get_or_insert(stop);
+                        blocked.get_or_insert((stop, true));
                     }
                     if auto {
                         // Taken or not, the engine's look is spent: its result says which.
@@ -2889,8 +2903,8 @@ impl Agent {
             // A TURN THAT IS GOING ROUND IN A CIRCLE IS ENDED, AND THE USER IS ASKED.  At the
             // seam rather than inside the round, so every call the model made this round still
             // gets its own result and the conversation is well formed.
-            if let Some(said) = blocked.take() {
-                self.end_blocked(session, &mut working, said, rounds, &claims, registry,
+            if let Some((said, decide)) = blocked.take() {
+                self.end_blocked(session, &mut working, said, decide, rounds, &claims, registry,
                     on_event).await;
                 return Ok(());
             }
@@ -3024,18 +3038,23 @@ impl Agent {
     /// reads it now.  The Decision is the app's own `ask`, dispatched like any other, so the card,
     /// its answer and the turn after it work exactly as a daimon's own question does; where `ask`
     /// is not on offer, or this is a worker nobody can be asked from, the sentence stands alone.
+    ///
+    /// # Arguments
+    /// * `decide` - Whether to offer the Decision at all; a sentence that is itself the question
+    ///   stands alone, so the user is asked one thing and not two.
     async fn end_blocked(
         &self,
         session:    &mut Session,
         working:    &mut Vec<ChatMessage>,
         said:       String,
+        decide:     bool,
         rounds:     usize,
         claims:     &Claims,
         registry:   &ToolRegistry,
         on_event:   &mut impl FnMut(AgentEvent),
     ) {
         let ask = crate::tools::Tool::Ask;
-        let can_ask = registry.offered().contains(&ask) && !registry.ctx.is_unsupervised();
+        let can_ask = decide && registry.offered().contains(&ask) && !registry.ctx.is_unsupervised();
         on_event(AgentEvent::Text(said.clone()));
         if can_ask {
             let tc = crate::protocol::ToolCall {
@@ -4233,6 +4252,32 @@ fn held_said(name: &str, head: &str) -> String {
 fn held_told(name: &str, head: &str) -> String {
 	fmt!("I did not send {} a third time: the same call, with the same arguments, had already \
 		failed twice with the same error ({}).", name, head)
+}
+
+/// What a call that needs a machine this page has none of is answered with, for the model.
+fn wanting_said(name: &str) -> String {
+	fmt!("{} was not sent: no folder on this computer is reachable from this page, so no command \
+		can run here. The turn ends now and the user is asked for what is missing.", name)
+}
+
+/// The one question a turn that needs a machine it has none of ends on: what is missing, and
+/// what the user can do about it (UNBLOCK-32 F4).
+///
+/// # Arguments
+/// * `waiting` - The folders added on another device and not yet confirmed on this one, from
+///   [`crate::tools::ToolContext::unconfirmed`]; where there are none, what is missing is the
+///   machine hand itself.
+fn wanting_told(name: &str, waiting: &[String]) -> String {
+	match waiting.first() {
+		Some(f)	=> fmt!("This needs a command run on this computer ({}), and `{}` was added on \
+			another device and is not yet confirmed on this one, so nothing can run in it here. \
+			Will you confirm it on this device, with one press on the notice above the message \
+			box, and then ask me again?", name, f),
+		None	=> fmt!("This needs a command run on this computer ({}), and no folder here is \
+			open to commands: Daimond's machine hand is not running on this computer, or no \
+			folder is granted to it. Will you start the hand and grant the folder, and then ask \
+			me again?", name),
+	}
 }
 
 /// The arguments of the Decision the app offers when a turn is blocked.
@@ -7686,6 +7731,75 @@ mod tests {
             "this turn began already short, having spent nothing of its own");
         assert_eq!(crate::tools::TURN_SPEND_BUDGET, registry.ctx.spend_left(),
             "the last turn's spending is still charged to this one");
+    }
+
+    /// One streamed round carrying one call.
+    fn one_call(id: &str, name: &str, args: &str) -> crate::llm::tests::Reply {
+        let args = args.replace('\\', "\\\\").replace('"', "\\\"");
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                fmt!("data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\
+                    \"id\":\"{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\
+                    \"arguments\":\"{}\"}}}}]}}}}]}}\n\n", id, name, args),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// **A turn whose ask needs `run` where no folder is reachable ends on one plain question**
+    /// (UNBLOCK-32 F4, the Nancy Hopkins turn of 22 Oct).
+    ///
+    /// The folder was attached on another device and unconfirmed on this one, so the briefing
+    /// withheld `run`.  The model named the blocker at round 2 and then probed with the file tools
+    /// for 15 minutes.  Scripted the same way here: it calls `run`, then lists folder after folder.
+    /// The engine must send no further call past two, and end `Blocked` on a question that names
+    /// the unconfirmed folder and the one press that confirms it.
+    #[tokio::test]
+    async fn test_a_turn_wanting_a_withheld_run_ends_on_one_question_00() {
+        crate::tools::note_machine_rooted(false);
+        let mut registry = no_tools();
+        registry.tools = vec![crate::tools::Tool::Run, crate::tools::Tool::FileList,
+            crate::tools::Tool::Ask];
+        registry.ctx.unconfirmed = vec![fmt!("diamonds/Nancy Hopkins")];
+        assert!(!registry.offered().contains(&crate::tools::Tool::Run),
+            "the fixture offers run, so nothing is withheld");
+        let mut script = vec![one_call("r0", "run",
+            r#"{"argv":["ffmpeg","-version"]}"#)];
+        for n in 1..8 {
+            script.push(one_call(&fmt!("l{}", n), "file_list", &fmt!(r#"{{"path":"probe{}"}}"#, n)));
+        }
+        script.push(plain_answer());
+        let end = ran(script, &registry, 12).await;
+
+        assert!(end.calls <= 3, "the turn probed on after wanting run: {} calls, {:?}",
+            end.calls, end);
+        assert_eq!(TurnEnd::Blocked, end.how, "{:?}", end);
+        assert_eq!(1, end.said.matches('?').count(), "not one plain question: {}", end.said);
+        assert!(end.said.contains("diamonds/Nancy Hopkins") && end.said.contains("confirm"),
+            "the question does not say what is missing and what to do: {}", end.said);
+    }
+
+    /// And the request still lets a model SAY it needs a command: `run`'s one-line stub goes
+    /// where its schema was withheld, never the full schema, and only while it is withheld.
+    #[tokio::test]
+    async fn test_a_withheld_run_leaves_its_stub_in_the_request_00() {
+        let mut registry = no_tools();
+        registry.tools = vec![crate::tools::Tool::Run, crate::tools::Tool::FileList];
+        crate::tools::note_machine_rooted(true);
+        let rooted = registry.definitions_json().unwrap_or_default();
+        assert!(rooted.contains("There is no implicit shell"), "run's schema is missing: {}", rooted);
+        assert!(!rooted.contains(crate::tools::RUN_STUB_DESC), "the stub rode beside the schema");
+        crate::tools::note_machine_rooted(false);
+        let defs = registry.definitions_json().unwrap_or_default();
+        assert!(defs.contains(crate::tools::RUN_STUB_DESC), "no run stub in the request: {}", defs);
+        assert!(!defs.contains("There is no implicit shell"), "run's full schema went out");
+        assert!(rooted.len() > 2 * defs.len(), "the stub costs what it saves: {} of {}",
+            defs.len(), rooted.len());
+        assert!(!registry.tool_names().iter().any(|n| n == "run"),
+            "the tools sentence names run while the briefing says it cannot work");
     }
 
     #[tokio::test]
