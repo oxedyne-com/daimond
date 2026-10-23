@@ -1,1 +1,1 @@
-{"build":"f422072683cb","note":"Unlike Claude Code per-token billing, top-ups carry fees: auto-reload now caps the card charge and refunds match it."}
+{"build":"bea21de451db","note":"When a task needs a command another device cannot run, the question names that device, never \"this device\"."}

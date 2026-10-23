@@ -129,10 +129,11 @@ async fn run() -> Outcome<()> {
             // What the provider said about the round it just ended, for tracing a cut or a
             // silent stop to its own logs; `stalled` is a round the stream went quiet on.
             AgentEvent::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled,
-                bytes, first_ms, gap_ms, ms } =>
+                bytes, first_ms, gap_ms, ms, prompt_tokens, cached_tokens } =>
                 println!("\n[round] {} finish={} native={} provider={}{} bytes={} first={}ms \
-                    gap={}ms round={}ms", gen_id, finish_reason, native_finish_reason, provider,
-                    if stalled { " (stalled)" } else { "" }, bytes, first_ms, gap_ms, ms),
+                    gap={}ms round={}ms prompt={:?} cached={:?}", gen_id, finish_reason,
+                    native_finish_reason, provider, if stalled { " (stalled)" } else { "" }, bytes,
+                    first_ms, gap_ms, ms, prompt_tokens, cached_tokens),
             // How the turn ended, and what it did.  Printed rather than dropped for the
             // reason every other arm here is: a smoke run is read by somebody deciding
             // whether the turn went the way they meant, and "answered with 4 calls, 1

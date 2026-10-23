@@ -2535,19 +2535,24 @@ impl Agent {
                 let pre: Vec<bool> = (0..group.len())
                     .map(|n| settled[base + n] != Settled::Run)
                     .collect();
-                // AND A CALL THAT NEEDS A MACHINE THIS PAGE HAS NONE OF IS NOT SENT EITHER
-                // (UNBLOCK-32 F4).  It could only be refused, and the model calling it is how it
-                // says the ask needs one; the turn ends at the seam on the question that says
-                // what is missing, rather than probing on with the file tools.
+                // AND A CALL TO THE `run` STUB IS NOT SENT EITHER (UNBLOCK-32 F4).  It could only
+                // be refused, and calling the stub the request offered is how the model says the
+                // ask needs a command; the turn ends at the seam on the question that says what
+                // is missing, rather than probing on with the file tools.  Only the stub
+                // (UNBLOCK-32 F4b): a machine tool never offered gets its own refusal and the
+                // turn goes on.  And never in a worker, which nobody can answer: there the
+                // refusal comes back as a result and the worker carries on to its report.
+                let alone = registry.ctx.is_unsupervised();
                 let wanting: Vec<bool> = group.iter().zip(pre.iter())
                     .map(|(tc, p)| !*p && crate::tools::Tool::from_name(&tc.name)
-                        .map_or(false, |t| registry.wants_machine(&t)))
+                        .map_or(false, |t| registry.stubbed(&t)))
                     .collect();
                 let held: Vec<Option<(String, String)>> = group.iter().zip(pre.iter())
                     .zip(wanting.iter())
                     .map(|((tc, p), w)| if *p { None } else if *w {
-                        Some((wanting_said(&tc.name),
-                            wanting_told(&tc.name, &registry.ctx.unconfirmed)))
+                        Some((wanting_said(&tc.name, alone),
+                            wanting_told(&tc.name, &registry.ctx.unconfirmed,
+                                &crate::tools::device_label())))
                     } else {
                         setbacks.held(&tc.name, &tc.arguments)
                             .map(|head| (held_said(&tc.name, head), held_told(&tc.name, head)))
@@ -2751,8 +2756,12 @@ impl Agent {
                     // it rather than the call failing, and what lifts it is the delivery, not a
                     // mend of the read.  Booked, it stood as an unmended refusal that no write of
                     // the deliverable could clear, so a turn that delivered ended `Blocked`.
+                    // Nor is a worker's wanting call (UNBLOCK-32 F4b): its result told it to carry
+                    // on and say in its report what it could not run, so it is not a refusal to
+                    // mend, and booked it turned a delivered report into `Blocked`.
                     let paused = crate::tools::paused_node(&text).is_some();
-                    let verdict = if closed.get(n).copied().unwrap_or(false) {
+                    let wants = wanting.get(n).copied().unwrap_or(false);
+                    let verdict = if closed.get(n).copied().unwrap_or(false) || (wants && alone) {
                         Verdict::default()
                     } else {
                         setbacks.record(&tc.name, &tc.arguments, &text, outcome, paused)
@@ -2760,9 +2769,18 @@ impl Agent {
                     if let Some(w) = verdict.warn {
                         text.push_str(&fmt!("\n{}", w));
                     }
-                    if let Some(Some((_, told))) = held.get(n) {
-                        let decide = !wanting.get(n).copied().unwrap_or(false);
-                        blocked.get_or_insert_with(|| (told.clone(), decide));
+                    if wants && alone {
+                        // A worker's wanting is its result alone; see `wanting` above.
+                    } else if let Some(Some((_, told))) = held.get(n) {
+                        // THE WANTING QUESTION OUTRANKS A SETBACK earlier in the round (UNBLOCK-32
+                        // F4b): it says what is missing and what to do, where the setback's card
+                        // only says the turn could not get past something.  The first wanting
+                        // call's question stands.
+                        match &blocked {
+                            Some((_, false))        => {},
+                            Some(_) if !wants       => {},
+                            _                       => blocked = Some((told.clone(), !wants)),
+                        }
                     } else if let Some(stop) = verdict.stop {
                         blocked.get_or_insert((stop, true));
                     }
@@ -4250,28 +4268,43 @@ fn held_told(name: &str, head: &str) -> String {
 }
 
 /// What a call that needs a machine this page has none of is answered with, for the model.
-fn wanting_said(name: &str) -> String {
-	fmt!("{} was not sent: no folder on this computer is reachable from this page, so no command \
-		can run here. The turn ends now and the user is asked for what is missing.", name)
-}
-
-/// The one question a turn that needs a machine it has none of ends on: what is missing, and
-/// what the user can do about it (UNBLOCK-32 F4).
 ///
 /// # Arguments
-/// * `waiting` - The folders added on another device and not yet confirmed on this one, from
+/// * `alone` - A worker, which nobody can ask: its turn goes on, and its report says what it
+///   could not run.
+fn wanting_said(name: &str, alone: bool) -> String {
+	if alone {
+		fmt!("{} was not sent: no folder on this computer is reachable from this page, so no \
+			command can run here. Carry on without it, and say in your report what you could not \
+			run or check.", name)
+	} else {
+		fmt!("{} was not sent: no folder on this computer is reachable from this page, so no \
+			command can run here. The turn ends now and the user is asked for what is missing.",
+			name)
+	}
+}
+
+/// The one question a turn that needs a machine it has none of ends on: what is missing, where,
+/// and what the user can do about it (UNBLOCK-32 F4).
+///
+/// It names the device that ran the turn and never says "this device": a handed-off turn is
+/// read on the device it was sent from, where "this one" is the wrong machine (F4b).
+///
+/// # Arguments
+/// * `waiting` - The folders added on another device and not yet confirmed on the runner, from
 ///   [`crate::tools::ToolContext::unconfirmed`]; where there are none, what is missing is the
 ///   machine hand itself.
-fn wanting_told(name: &str, waiting: &[String]) -> String {
+/// * `runner` - The name of the device the turn ran on; see [`crate::tools::device_label`].
+fn wanting_told(name: &str, waiting: &[String], runner: &str) -> String {
 	match waiting.first() {
-		Some(f)	=> fmt!("This needs a command run on this computer ({}), and `{}` was added on \
-			another device and is not yet confirmed on this one, so nothing can run in it here. \
-			Will you confirm it on this device, with one press on the notice above the message \
-			box, and then ask me again?", name, f),
-		None	=> fmt!("This needs a command run on this computer ({}), and no folder here is \
-			open to commands: Daimond's machine hand is not running on this computer, or no \
-			folder is granted to it. Will you start the hand and grant the folder, and then ask \
-			me again?", name),
+		Some(f)	=> fmt!("This needs a command run on {} ({}), and `{}` was added on another \
+			device and is not yet confirmed on {}, so nothing can run in it there. Will you \
+			confirm it on {}, with one press on the notice above the message box there, and \
+			then ask me again?", runner, name, f, runner, runner),
+		None	=> fmt!("This needs a command run on {} ({}), and no folder there is open to \
+			commands: Daimond's machine hand is not running on {}, or no folder is granted to \
+			it. Will you start the hand there and grant the folder, and then ask me again?",
+			runner, name, runner),
 	}
 }
 
@@ -7944,8 +7977,8 @@ mod tests {
     /// the unconfirmed folder and the one press that confirms it.
     #[tokio::test]
     async fn test_a_turn_wanting_a_withheld_run_ends_on_one_question_00() {
-        crate::tools::note_machine_rooted(false);
         let mut registry = no_tools();
+        registry.set_machine_rooted(Some(false));
         registry.tools = vec![crate::tools::Tool::Run, crate::tools::Tool::FileList,
             crate::tools::Tool::Ask];
         registry.ctx.unconfirmed = vec![fmt!("diamonds/Nancy Hopkins")];
@@ -7973,11 +8006,11 @@ mod tests {
     async fn test_a_withheld_run_leaves_its_stub_in_the_request_00() {
         let mut registry = no_tools();
         registry.tools = vec![crate::tools::Tool::Run, crate::tools::Tool::FileList];
-        crate::tools::note_machine_rooted(true);
+        registry.set_machine_rooted(Some(true));
         let rooted = registry.definitions_json().unwrap_or_default();
         assert!(rooted.contains("There is no implicit shell"), "run's schema is missing: {}", rooted);
         assert!(!rooted.contains(crate::tools::RUN_STUB_DESC), "the stub rode beside the schema");
-        crate::tools::note_machine_rooted(false);
+        registry.set_machine_rooted(Some(false));
         let defs = registry.definitions_json().unwrap_or_default();
         assert!(defs.contains(crate::tools::RUN_STUB_DESC), "no run stub in the request: {}", defs);
         assert!(!defs.contains("There is no implicit shell"), "run's full schema went out");
@@ -7985,6 +8018,167 @@ mod tests {
             defs.len(), rooted.len());
         assert!(!registry.tool_names().iter().any(|n| n == "run"),
             "the tools sentence names run while the briefing says it cannot work");
+    }
+
+    /// A turn run as [`ran`] does, keeping what each call was answered with.
+    async fn ran_told(
+        script:     Vec<crate::llm::tests::Reply>,
+        registry:   &ToolRegistry,
+        max_rounds: usize,
+    )
+        -> (TurnEnding, Vec<(String, String)>, String)
+    {
+        let (port, _seen) = crate::llm::tests::start_stub(script).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(max_rounds);
+        let mut session = Session::new(fmt!("s1"), fmt!("audit"), fmt!("model"));
+        let mut results = Vec::new();
+        let mut text = String::new();
+        let _ = a.run_turn(&mut session, fmt!("do the work"), registry, &mut |e| match e {
+            AgentEvent::ToolResult { name, result, .. } => results.push((name, result)),
+            AgentEvent::Text(t)                         => text.push_str(&t),
+            _                                           => {},
+        }).await;
+        match a.ending() {
+            Some(e) => (e, results, text),
+            None    => panic!("a turn ran and said nothing at all about how it ended"),
+        }
+    }
+
+    /// **A worker that calls `verify` where nothing can run is answered and goes on to report**
+    /// (UNBLOCK-32 F4b, QA MED-1).  The worker role says to `verify` its work, so the call is a
+    /// habit, not a statement of need; nobody can answer a worker, and its report must reach
+    /// its parent.  Its `run` stub is answered the same way, as a result.
+    #[tokio::test]
+    async fn test_a_worker_wanting_a_machine_still_reports_00() {
+        use crate::tools::Tool;
+        let mut registry = no_tools();
+        registry.tools = vec![Tool::Run, Tool::Verify, Tool::FileList];
+        registry.set_machine_rooted(Some(false));
+        registry.ctx.set_unsupervised();
+        let script = vec![
+            one_call("l1", "file_list", r#"{"path":"."}"#),
+            one_call("v1", "verify", "{}"),
+            one_call("r1", "run", r#"{"argv":["cargo","test"]}"#),
+            plain_answer(),
+        ];
+        let (end, results, text) = ran_told(script, &registry, 12).await;
+        assert_ne!(TurnEnd::Blocked, end.how, "the worker's turn ended on a question: {:?}", end);
+        assert!(end.said.is_empty(), "a worker was made to ask: {}", end.said);
+        assert!(text.contains("Done"), "the worker's report was not delivered: {:?} {:?}", text, end);
+        assert!(results.iter().any(|(n, _)| n == "verify"), "verify got no result: {:?}", results);
+        let run = results.iter().find(|(n, _)| n == "run");
+        assert!(run.map_or(false, |(_, r)| r.contains("say in your report")),
+            "the worker's run stub was not answered as a result: {:?}", results);
+    }
+
+    /// **A machine tool the request never offered gets its refusal and the turn goes on**
+    /// (UNBLOCK-32 F4b, QA MED-1), as Claude Code answers a tool it never offered.  Only the `run`
+    /// stub is the model saying the ask needs a command.
+    #[tokio::test]
+    async fn test_an_unoffered_machine_tool_is_refused_and_the_turn_goes_on_00() {
+        use crate::tools::Tool;
+        let mut registry = no_tools();
+        registry.tools = vec![Tool::Run, Tool::Serve, Tool::FileList, Tool::Ask];
+        registry.set_machine_rooted(Some(false));
+        assert!(!registry.offered().contains(&Tool::Serve), "the fixture offers serve");
+        let script = vec![
+            one_call("s1", "serve", r#"{"action":"start","path":"site"}"#),
+            one_call("l1", "file_list", r#"{"path":"."}"#),
+            plain_answer(),
+        ];
+        let (end, results, text) = ran_told(script, &registry, 12).await;
+        assert_ne!(TurnEnd::Blocked, end.how, "an un-offered serve ended the turn: {:?}", end);
+        assert!(results.iter().any(|(n, _)| n == "serve"), "serve got no result: {:?}", results);
+        assert!(results.iter().any(|(n, _)| n == "file_list"),
+            "the turn did not go on past the refusal: {:?}", results);
+        assert!(text.contains("Done"), "the turn's answer was lost: {:?}", text);
+    }
+
+    /// **The wanting question outranks a setback earlier in the same round** (UNBLOCK-32 F4b, QA
+    /// LOW-1): it says what is missing and what to do, where the setback's card says only that
+    /// the turn could not get past something.
+    #[tokio::test]
+    async fn test_the_wanting_question_outranks_an_earlier_setback_00() {
+        use crate::tools::Tool;
+        let mut registry = no_tools();
+        registry.tools = vec![Tool::Run, Tool::FileRead, Tool::Ask];
+        registry.set_machine_rooted(Some(false));
+        crate::tools::set_device_label("argonaut");
+        let read = r#"{"path":"missing/nowhere.md"}"#;
+        let args = read.replace('\\', "\\\\").replace('"', "\\\"");
+        let both = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                fmt!("data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\
+                    \"id\":\"f3\",\"type\":\"function\",\"function\":{{\"name\":\"file_read\",\
+                    \"arguments\":\"{}\"}}}},{{\"index\":1,\"id\":\"r1\",\"type\":\"function\",\
+                    \"function\":{{\"name\":\"run\",\"arguments\":\"{{\\\"argv\\\":[\\\"ls\\\"]}}\"}}}}]}}}}]}}\n\n",
+                    args),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let script = vec![
+            one_call("f1", "file_read", read),
+            one_call("f2", "file_read", read),
+            both,
+            plain_answer(),
+        ];
+        let (end, _, _) = ran_told(script, &registry, 12).await;
+        crate::tools::set_device_label("");
+        assert_eq!(TurnEnd::Blocked, end.how, "{:?}", end);
+        assert!(end.said.contains("argonaut") && end.said.contains("start the hand"),
+            "a setback earlier in the round pre-empted the wanting question: {}", end.said);
+    }
+
+    /// **The wanting question names the device that ran the turn, never "this device"**
+    /// (UNBLOCK-32 F4b, QA MED-3): a handed-off turn is read on the device it was sent from.
+    #[test]
+    fn test_the_wanting_question_names_the_runner_00() {
+        let waiting = vec![fmt!("diamonds/Nancy Hopkins")];
+        for said in [wanting_told("run", &waiting, "argonaut"), wanting_told("run", &[], "argonaut")] {
+            assert!(said.contains("on argonaut"), "the runner is not named: {}", said);
+            assert!(!said.contains("this device") && !said.contains("this computer")
+                && !said.contains("this one"), "the sentence says 'this': {}", said);
+            assert_eq!(1, said.matches('?').count(), "not one plain question: {}", said);
+        }
+    }
+
+    /// **The machine answer belongs to the turn's own registry** (UNBLOCK-32 F4b, QA MED-2).  It
+    /// was one value for the whole page, so a second Diamond briefed on the page, or the Wire band
+    /// opened mid-turn, flipped a rooted turn: its `run` schema became the stub and its next `run`
+    /// ended the turn on a false question.
+    #[tokio::test]
+    async fn test_another_briefing_does_not_change_a_live_turns_offer_00() {
+        use crate::tools::Tool;
+        let mut live = no_tools();
+        live.tools = vec![Tool::Run, Tool::FileList, Tool::Ask];
+        live.set_machine_rooted(Some(true));
+        let before = live.definitions_json().unwrap_or_default();
+        // A second Diamond's turn, briefed on the same page with nowhere to run.
+        let mut other = no_tools();
+        other.tools = vec![Tool::Run, Tool::FileList];
+        other.set_machine_rooted(Some(false));
+        // And the Wire band, which views a copy.
+        let view = live.clone();
+        view.set_machine_rooted(Some(false));
+        assert_eq!(Some(true), live.machine_rooted(), "another briefing rewrote the live turn");
+        assert_eq!(before, live.definitions_json().unwrap_or_default(),
+            "the live turn's tools array changed mid-turn");
+        assert!(!live.stubbed(&Tool::Run), "a rooted turn's run became the stub");
+        assert!(other.stubbed(&Tool::Run) && view.stubbed(&Tool::Run),
+            "the other registries did not take their own answer");
+        // And a rooted turn's `run` is sent, never classed as wanting.
+        let script = vec![
+            one_call("r1", "run", r#"{"argv":["true"]}"#),
+            plain_answer(),
+        ];
+        let (end, _, _) = ran_told(script, &live, 12).await;
+        assert_ne!(TurnEnd::Blocked, end.how, "a rooted turn's run ended it: {:?}", end);
     }
 
     #[tokio::test]

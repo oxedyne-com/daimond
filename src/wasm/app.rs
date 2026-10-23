@@ -312,9 +312,12 @@ impl DaimondApp {
         // Which model is carrying this turn, and what it can reach, refreshed now rather than at
         // construction: the fence depends on the Diamond's bounds and on whether the turn is
         // tainted, and asking the hand needs an await the constructor does not have.
-        let (brief, blocks) = self.briefing(&self.registry).await;
+        let (brief, blocks, rooted) = self.briefing(&self.registry).await;
         self.agent.set_briefing(&brief);
         self.agent.set_blocks(blocks);
+        // THIS TURN'S OWN ANSWER, on this turn's own registry, set once before the request is
+        // built (UNBLOCK-32 F4b): nothing else writes it until the next turn here is briefed.
+        self.registry.set_machine_rooted(rooted);
 
         let mut sink = |ev: AgentEvent| {
             let js = event_to_js(&ev);
@@ -2237,14 +2240,18 @@ impl DaimondApp {
         // way out and the constructor cannot: it needs an await to ask the hand.  Without this
         // the band naming this computer is empty until a first turn has gone, which is the
         // same drift in miniature -- a view of the request that is only true afterwards.
-        let (brief, blocks) = self.briefing(&self.registry).await;
+        let (brief, blocks, rooted) = self.briefing(&self.registry).await;
         self.agent.set_briefing(&brief);
         self.agent.set_blocks(blocks);
         let (sent, real) = match self.session.try_borrow() {
             Ok(s)  => (s.messages.clone(), s.last_prompt_tokens),
             Err(_) => (Vec::new(), 0),	// a turn is running; the note is then every block
         };
-        Ok(wire_json(&self.agent, &self.registry, "", &sent, real))
+        // A VIEW, so a copy: the live registry's machine answer belongs to the turn that was
+        // briefed with it, and a band opened mid-turn must not change that turn's offer.
+        let view = self.registry.clone();
+        view.set_machine_rooted(rooted);
+        Ok(wire_json(&self.agent, &view, "", &sent, real))
     }
 
     /// Create a Diamond at a KNOWN id, or answer with the id if it is already there.
@@ -3467,10 +3474,15 @@ impl DaimondApp {
     /// come back empty (no model configured, no hand attached) and then it simply is not said:
     /// this rides on every request of every turn, so an absent capability is not worth describing.
     ///
+    /// The third value is whether a command has anywhere to run (`None` where the belt holds no
+    /// `run`), which a turn's owner sets on its own registry and a view of the request does not.
+    ///
     /// # Arguments
     /// * `registry` - The tools this turn will hold, which decide the fence and whether the model
     ///   is asked to judge its own fan-out.
-    async fn briefing(&self, registry: &ToolRegistry) -> (String, crate::prompts::TurnBlocks) {
+    async fn briefing(&self, registry: &ToolRegistry)
+        -> (String, crate::prompts::TurnBlocks, Option<bool>)
+    {
         use crate::prompts::Block;
         // Read off the client that will actually carry the request, never a constant: a written-
         // down model name is a lie the moment the user switches provider.
@@ -3482,6 +3494,9 @@ impl DaimondApp {
             &self.agent.llm.model,
             &self.agent.llm.host,
             registry.tools.contains(&Tool::SpawnAgent));
+        // Whether a command has anywhere to run, RETURNED and never written here: the caller owns
+        // the registry the turn runs on, and a view of the request must not touch a live turn's.
+        let mut rooted = None;
         // The machine only where a command can actually be run on it. A daimon holds file tools
         // and `spawn_agent` and no `run`, so a paragraph about which folders a command may touch
         // is a paragraph it can never act on -- and it would be paid for on every request of every
@@ -3491,8 +3506,9 @@ impl DaimondApp {
             // the fence the command will actually run under -- which now includes what the user
             // has already said about this turn reaching out. A worker told it had the network and
             // then refused by the fence spends the turn debugging the app.
-            let machine = crate::prompts::machine_briefing(&registry.ctx).await;
+            let (machine, on) = crate::prompts::machine_briefing(&registry.ctx).await;
             blocks.set(Block::Machine, &machine);
+            rooted = Some(on);
         }
         // WHAT DAY IT IS, which no model knows; see `prompts::today_note`.
         let today = today_line();
@@ -3517,7 +3533,7 @@ impl DaimondApp {
         if let Some(packs) = registry.locked_pack_note() {
             blocks.set(Block::Packs, &packs);
         }
-        (s, blocks)
+        (s, blocks, rooted)
     }
 
     /// The daimon, the tools and the crystal ONE steering turn on `id` runs with.
@@ -3840,7 +3856,8 @@ impl DaimondApp {
         agent.set_no_progress_rounds(diamond::no_progress_rounds(id).await);
         // And it starts with no briefing at all, which left the ONE agent that dispatches workers
         // as the one agent that could not judge how many to dispatch.
-        let (brief, machine) = self.briefing(&registry).await;
+        let (brief, machine, rooted) = self.briefing(&registry).await;
+        registry.set_machine_rooted(rooted);
         for b in crate::prompts::Block::ALL {
             if !machine.get(b).is_empty() {
                 blocks.set(b, machine.get(b));

@@ -30073,6 +30073,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// device saw it by; and "another device" for one never named here. Never a
 	/// slice of the id.
 	function deviceLabelFor(id) {
+		var n = deviceNameFor(id);
+		if (n || !id) return n;
+		// This device unnamed is "This device", never "another device" (UNBLOCK-1).
+		return String(id) === String(selfDeviceId() || '') ? t('devices.unknown') : t('devices.another');
+	}
+
+	/// The name a device id is known by, or '' when it has none: `deviceLabelFor`
+	/// without the relative fallback, for words read on ANOTHER device, where
+	/// "This device" would name the wrong one (UNBLOCK-32 F4b).
+	function deviceNameFor(id) {
 		var sid = String(id || '');
 		if (!sid) return '';
 		var n = '';
@@ -30087,9 +30097,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		if (n) { rememberDeviceName(sid, n); return n; }
 		var was = deviceNamesKnown()[sid];
-		if (was && was.n) return was.n;
-		// This device unnamed is "This device", never "another device" (UNBLOCK-1).
-		return sid === String(selfDeviceId() || '') ? t('devices.unknown') : t('devices.another');
+		return (was && was.n) || '';
 	}
 
 	/// The §5 display state of a dispatched turn message, via the pure classifier. The
@@ -42241,6 +42249,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The folders this device knows, as its record stands at the turn's start: the
 				// daimon's `file_revert` asks the engine which rows are another folder's (HK1).
 				await Files.reknow();
+				// This device's name, as the person knows it, so a sentence the turn ends on
+				// says where it ran: on a handed-off turn the reader is elsewhere (UNBLOCK-32 F4b).
+				try {
+					if (Wasm && typeof Wasm.set_device_label === 'function') {
+						Wasm.set_device_label(deviceNameFor(selfDeviceId()));
+					}
+				} catch (eL) { /* the sentence then says "the device running this turn" */ }
 				// F1 TURN START — raise the credits key to a whole turn's headroom BEFORE the
 				// first round, so a turn worth more than the mint float is not refused at the
 				// cap and re-run on a fresh key (billed once for nothing). This also reconciles

@@ -1520,7 +1520,8 @@ fn covers(grant: &str, path: &str) -> bool {
 	path == grant || path.starts_with(&fmt!("{}/", grant.trim_end_matches('/')))
 }
 
-/// The briefing for the hand attached to this page right now, or nothing where none is.
+/// The briefing for the hand attached to this page right now, or nothing where none is, and
+/// whether a command has anywhere to run, for the caller to set on the turn's own registry.
 ///
 /// The status call is the same one `Tool::run` makes, and a hand that is not paired yields an empty
 /// string rather than an error: an absent hand is not a failure of the turn, it is a turn with no
@@ -1535,13 +1536,10 @@ fn covers(grant: &str, path: &str) -> bool {
 /// * `ctx` - The turn, which carries the bounds, whether it is at risk, whether anybody is
 ///   watching it, and what the user has already said about its network.
 #[cfg(target_arch = "wasm32")]
-pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> String {
+pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> (String, bool) {
 	let st = match crate::wasm::hand::status().await {
 		Ok(s)  => s,
-		Err(_) => {
-			crate::tools::note_machine_rooted(false);
-			return NO_MACHINE_NOTE.to_string();
-		},
+		Err(_) => return (NO_MACHINE_NOTE.to_string(), false),
 	};
 	// Composed from the context by the same function `Tool::run` composes it with, so the model
 	// cannot be briefed about one network and then handed another.
@@ -1552,13 +1550,13 @@ pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> String {
 		Some(m) => turn_machine_note(ctx, &m, step, mode),
 		None    => String::new(),
 	};
-	// THE ONE PLACE THE FACT IS ESTABLISHED, and `ToolRegistry::offered` reads it back to decide
-	// whether the machine tools are worth their schema -- see `tools::note_machine_rooted`.  The
-	// predicate is this note's own emptiness rather than `Machine::rooted`, because `machine_note`
-	// returns nothing for every case in which a command would be refused anyway: no hand, a root
-	// that is not a path, or bounds that describe nowhere on the machine.
-	crate::tools::note_machine_rooted(!note.is_empty());
-	if note.is_empty() { NO_MACHINE_NOTE.to_string() } else { note }
+	// THE ONE PLACE THE FACT IS ESTABLISHED, returned for the turn's owner to set on the turn's
+	// own registry, which `ToolRegistry::offered` reads back to decide whether the machine tools
+	// are worth their schema -- see `ToolRegistry::set_machine_rooted`.  The predicate is this
+	// note's own emptiness rather than `Machine::rooted`, because `machine_note` returns nothing for
+	// every case in which a command would be refused anyway: no hand, a root that is not a path,
+	// or bounds that describe nowhere on the machine.
+	if note.is_empty() { (NO_MACHINE_NOTE.to_string(), false) } else { (note, true) }
 }
 
 /// The machine briefing a turn is given: [`machine_note`] for its bounds, and the toolkits still

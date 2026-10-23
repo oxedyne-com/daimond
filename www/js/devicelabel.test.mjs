@@ -60,6 +60,7 @@ function main() {
 		deviceNamesKnown:   extractFn(src, 'deviceNamesKnown'),
 		rememberDeviceName: extractFn(src, 'rememberDeviceName'),
 		deviceLabelFor:     extractFn(src, 'deviceLabelFor'),
+		deviceNameFor:      extractFn(src, 'deviceNameFor'),
 	};
 	const missing = Object.keys(parts).filter((k) => !parts[k]);
 	check('the remembered-name store is in daimond.js', missing.length === 0, 'missing: ' + missing.join(', '));
@@ -84,6 +85,7 @@ function main() {
 		function t(key) { return key === 'devices.another' ? ${JSON.stringify(ANOTHER || 'another device')} : key; }
 		return {
 			label: deviceLabelFor,
+			name: deviceNameFor,
 			beats: function (b) { _beats = b; },
 			roster: function (r) { _reg = r; },
 			self: function (id) { _self = id; },
@@ -118,6 +120,9 @@ function main() {
 	check('never shows a slice of its id', c.indexOf(C.slice(0, 6)) === -1, c);
 	api.self(C);
 	check('is "This device" when it is this device (UNBLOCK-1)', api.label(C) === 'devices.unknown', api.label(C));
+	// The runner's own name for a sentence read on another device (UNBLOCK-32 F4b).
+	check('but has no NAME, so a sentence read elsewhere never says "This device"', api.name(C) === '', api.name(C));
+	check('the name and the label agree for a named device', api.name(A) === 'Kitchen laptop' && api.label(A) === 'Kitchen laptop');
 	api.self('');
 
 	console.log('\n(d) bounded, and the newest name wins');

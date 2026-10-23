@@ -704,6 +704,13 @@ pub fn ran_without_net(result: &str) -> bool {
     crate::tools::ran_without_net(result)
 }
 
+/// Name the device this page runs on, as the person knows it, so a turn's closing question can
+/// say where it ran; see `tools::device_label`.
+#[wasm_bindgen]
+pub fn set_device_label(name: String) {
+    crate::tools::set_device_label(&name);
+}
+
 /// Move to a permission mode, returning the one it replaced.
 ///
 /// This is the ONLY way the mode moves. No tool reaches it, and nothing derived

@@ -5688,18 +5688,47 @@ impl Machine {
     }
 }
 
-// What the hand last said, for a decision that cannot await it
+// Whether a command has anywhere to run, for a decision that cannot await it
 //
 // `ToolRegistry::offered` has to decide whether the machine tools are worth their schema BEFORE
 // the request goes out, and asking the hand is an `await` it does not have -- it is called from
 // `definitions_json`, from `tool_names` and from the Tools panel alike.  So the answer is recorded
 // where it IS asked: `prompts::machine_briefing` is composed once per turn, before the schema
-// array is built, from the same `status()` call `Tool::run` makes.
+// array is built, from the same `status()` call `Tool::run` makes, and returns it; the turn's
+// owner then sets it on the turn's own registry (`ToolRegistry::set_machine_rooted`).
+//
+// ON THE REGISTRY AND NOT THE PAGE (UNBLOCK-32 F4b).  It was a thread-local, one value for the
+// whole page, written by whichever context briefed last: another Diamond's turn, or the Wire band
+// opened mid-turn, flipped a rooted turn to "nowhere to run", swapped `run`'s schema for its stub
+// mid-turn (a prefix-cache miss) and ended the turn on a false question.
 //
 // `None` is "nobody has asked yet" and OFFERS the tools, which is the only safe default: a build
 // with no briefing composer, or the moment before the first one runs, must not withhold a tool the
-// user can actually use.  Wasm is single-threaded, so a thread-local is the whole of the sharing
-// story, and on the native build nothing writes it at all -- `run` is not in that build's belt.
+// user can actually use.
+
+// The name of the device this page runs on
+//
+// A PAGE FACT, not a turn's: every turn on the page runs on the same device, so one value is the
+// truth for all of them, which is why this one may be a thread-local where the machine answer
+// above may not.  Set by the page from its own device label (`set_device_label` in `wasm::entry`)
+// before each turn, because the label can be renamed.  A sentence a turn ends on names the device
+// that ran it, since on a handed-off turn the reader is somewhere else (UNBLOCK-32 F4b).
+
+thread_local! {
+    static DEVICE_LABEL: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Record the name the person knows this device by.
+pub fn set_device_label(name: &str) {
+    DEVICE_LABEL.with(|c| *c.borrow_mut() = name.trim().to_string());
+}
+
+/// The name the person knows this device by, or "the device running this turn" where the page
+/// has not said.
+pub fn device_label() -> String {
+    let n = DEVICE_LABEL.with(|c| c.borrow().clone());
+    if n.is_empty() { "the device running this turn".to_string() } else { n }
+}
 
 /// What `run` says of itself where there is nowhere to run it; see
 /// [`ToolRegistry::machine_stub_json`].
@@ -5708,24 +5737,6 @@ pub const RUN_STUB_DESC: &str =
      it only when the ask cannot be done without a command. Nothing runs: the turn ends and the \
      user is asked for what is missing.";
 pub const RUN_STUB_PARAMS: &str = r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"What you would run."}},"required":["argv"]}"#;
-
-thread_local! {
-    /// Whether a folder on this computer was reachable when the turn was briefed.
-    static MACHINE_ROOTED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
-}
-
-/// Record whether a command has anywhere to run, as the turn's briefing found out.
-///
-/// # Arguments
-/// * `rooted` - Whether the hand named a folder that a fence could be built inside.
-pub fn note_machine_rooted(rooted: bool) {
-    MACHINE_ROOTED.with(|c| c.set(Some(rooted)));
-}
-
-/// Whether a command has anywhere to run, as last established; `None` until something asked.
-pub fn machine_rooted_seen() -> Option<bool> {
-    MACHINE_ROOTED.with(|c| c.get())
-}
 
 /// The value of a `key:<value>` capability entry, where the hand sent one.
 ///
@@ -30171,6 +30182,7 @@ pub struct ToolRegistry {
     /// act on it will not act on the fourth copy, and the fourth copy is paid for on a result the
     /// turn is already short of room for.  Cleared where `read_seen` is, at `begin_turn`.
     hinted: std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>,
+    machine: std::cell::Cell<Option<bool>>, // A folder reachable when this turn was briefed?
 }
 
 impl ToolRegistry {
@@ -30229,7 +30241,23 @@ impl ToolRegistry {
     pub fn new(tools: Vec<Tool>, ctx: ToolContext) -> Self {
         Self { tools, ctx, family: std::cell::Cell::new(crate::profile::Family::Unknown),
             claude_names: std::cell::Cell::new(false),
-            hinted: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())) }
+            hinted: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            machine: std::cell::Cell::new(None) }
+    }
+
+    /// Record whether a command has anywhere to run, as this turn's briefing found out; `None`
+    /// where the briefing did not ask, which offers the machine tools.
+    ///
+    /// Set by the turn's owner from what [`crate::prompts::machine_briefing`] returned, once, before
+    /// the request is built, and never by a view of the request: the offer must not change
+    /// mid-turn, or the prefix cache misses and a call the turn could make is refused.
+    pub fn set_machine_rooted(&self, rooted: Option<bool>) {
+        self.machine.set(rooted);
+    }
+
+    /// Whether a command has anywhere to run, as this turn was briefed; `None` until asked.
+    pub fn machine_rooted(&self) -> Option<bool> {
+        self.machine.get()
     }
 
     /// The same registry, answering `f`'s dialect.
@@ -30323,6 +30351,7 @@ impl ToolRegistry {
             // The same cell, not a copy: a skill turn is the same turn, and a hint already given
             // must not be given again because the registry was narrowed between rounds.
             hinted: self.hinted.clone(),
+            machine: std::cell::Cell::new(self.machine.get()),
         }
     }
 
@@ -30368,7 +30397,7 @@ impl ToolRegistry {
         // and say why, so what was paid for was the chance to be refused: see `Tool::run`'s own
         // check on `Machine::rooted`, and `reach_of`'s.
         //
-        // `machine_rooted_seen` and not a fresh `status()` call: this is synchronous and is asked
+        // `machine_rooted` and not a fresh `status()` call: this is synchronous and is asked
         // once per round.  The briefing establishes the fact once per turn, before the schema is
         // built, and `prompts::NO_MACHINE_NOTE` then tells the model in one sentence that the
         // tools are not there -- without which the model does not merely fail to run a command,
@@ -30412,9 +30441,21 @@ impl ToolRegistry {
     /// with the file tools is what the Nancy Hopkins turn of 22 Oct did for 15 minutes after it
     /// had named the blocker itself.
     pub fn wants_machine(&self, t: &Tool) -> bool {
-        machine_rooted_seen() == Some(false)
+        self.machine.get() == Some(false)
             && t.machine()
             && self.tools.contains(t)
+    }
+
+    /// Is this tool in the request as a stub, its schema withheld, so that a call to it is the
+    /// model saying the ask needs a command?
+    ///
+    /// The one test [`machine_stub_json`](Self::machine_stub_json) and the turn's engine both
+    /// read (UNBLOCK-32 F4b).  Only `run` has a stub: `runs`, `verify` and `serve` are not in the
+    /// request at all, so a call to one is a habit (the worker role says to `verify` its work), not
+    /// a statement of need, and it gets the tool's own refusal and the turn goes on, as Claude
+    /// Code answers a tool it never offered.
+    pub fn stubbed(&self, t: &Tool) -> bool {
+        *t == Tool::Run && self.wants_machine(t) && !self.family.get().withholds(t)
     }
 
     /// The one line of schema that stands in for `run` where [`wants_machine`](Self::wants_machine)
@@ -30425,7 +30466,7 @@ impl ToolRegistry {
     /// against the ~1,600 the machine schemas cost, lets the model SAY it needs a command the one
     /// way the engine can read -- by calling it -- and the engine then ends the turn and asks.
     pub fn machine_stub_json(&self) -> Option<String> {
-        if !self.wants_machine(&Tool::Run) || self.family.get().withholds(&Tool::Run) {
+        if !self.stubbed(&Tool::Run) {
             return None;
         }
         Some(fmt!(
@@ -40782,15 +40823,10 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
     /// `serve` is withheld exactly where `run` is, and the note names it.
     #[test]
     fn test_serve_is_withheld_where_run_is() {
-        struct Forget;
-        impl Drop for Forget {
-            fn drop(&mut self) { MACHINE_ROOTED.with(|c| c.set(None)); }
-        }
-        let _forget = Forget;
         let reg = ToolRegistry::new(Tool::daimon(), ctx());
-        note_machine_rooted(true);
+        reg.set_machine_rooted(Some(true));
         assert!(reg.offered().contains(&Tool::Serve), "serve is withheld on a paired hand");
-        note_machine_rooted(false);
+        reg.set_machine_rooted(Some(false));
         assert!(!reg.offered().contains(&Tool::Serve),
             "serve is still offered where nothing can run");
         assert!(!reg.tool_names().iter().any(|n| n == "serve"),
@@ -40798,7 +40834,6 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert!(crate::prompts::NO_MACHINE_NOTE.contains("serve"),
             "the note does not name serve, so the model probes for a tool it cannot see: {}",
             crate::prompts::NO_MACHINE_NOTE);
-        MACHINE_ROOTED.with(|c| c.set(None));
     }
 
     /// The tool's own shape: on the machine belts, named, and described by what it refuses.
@@ -49729,22 +49764,12 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
     /// chance to be refused.
     #[test]
     fn test_the_machine_tools_are_withheld_where_nothing_can_run() {
-        // PUT BACK EVEN IF AN ASSERT BELOW FAILS. The answer lives in a thread-local and the test
-        // harness reuses threads, so a test that left it at `false` would withhold `verify` from a
-        // later test on the same thread -- a second failure, in another file, caused by this one.
-        struct Forget;
-        impl Drop for Forget {
-            fn drop(&mut self) { MACHINE_ROOTED.with(|c| c.set(None)); }
-        }
-        let _forget = Forget;
-
         let machine = [Tool::Run, Tool::Runs, Tool::Verify];
         let reg = ToolRegistry::new(Tool::daimon(), ctx());
 
         // The control: nobody has asked the hand yet, so nothing is withheld. This is the state a
         // build with no briefing composer is in, and it must be the generous one.
-        MACHINE_ROOTED.with(|c| c.set(None));
-        assert_eq!(None, machine_rooted_seen());
+        assert_eq!(None, reg.machine_rooted());
         for t in &machine {
             assert!(reg.offered().contains(t),
                 "{} is withheld before anything has asked the hand", t.name());
@@ -49752,13 +49777,13 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         let whole = reg.definitions_json().expect("the belt did not empty");
 
         // A hand that named a folder: still offered, which is the other half of the gate.
-        note_machine_rooted(true);
+        reg.set_machine_rooted(Some(true));
         for t in &machine {
             assert!(reg.offered().contains(t), "{} is withheld on a paired hand", t.name());
         }
 
         // And nowhere to run: out of the offer, out of the sentence, out of the schema array.
-        note_machine_rooted(false);
+        reg.set_machine_rooted(Some(false));
         let names = reg.tool_names();
         let defs  = reg.definitions_json().expect("the belt did not empty");
         for t in &machine {
@@ -49786,8 +49811,6 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         for t in &machine {
             assert!(note.contains(t.name()), "the note does not name {}: {}", t.name(), note);
         }
-
-        MACHINE_ROOTED.with(|c| c.set(None));
     }
 
     /// The same prefix, for a model whose own dialect narrows the offer.

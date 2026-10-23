@@ -1733,6 +1733,12 @@ const ALLOW = [
 	// current element wear one.
 	{ role: '*', m: /\.(on|active|current|selected|is-on|tag-inc)\b|aria-current/, p: ['col', 'bg', 'fw'], why: 'the current or selected state is drawn apart on purpose, by colour, fill and weight, never by a border' },
 	{ role: '*', m: /\.danger\b/, p: ['col'], why: 'a destructive action is drawn in the danger colour' },
+	// r578e (bc01aa44e): a credit preset carries what the card is charged and its breakdown once the gateway quotes its rates (fa18e32d124d does),
+	// so it is a priced card of three lines in the figures' mono face, the size and the fill of the credits drawer's other figures, not a text button.
+	// A phone sheet's count (mobile.js mirrorCount) is part of its title, beside the name it counts, so it wears the title's colour, --text-muted, as the
+	// head's own .rail-count it copies does. Read only when the count is non-empty at capture (`:empty` hides it), so it came and went (WebKit, Pending).
+	{ role: 'meta', m: /\.msheet-count\b/, p: ['col'], why: 'a phone sheet\'s count is part of its title and wears the title\'s colour, as the head count it copies does' },
+	{ role: 'text-button', m: /\.credit-pack\b/, p: ['ff', 'fs', 'col', 'bg', 'pad', 'h', 'lh'], why: 'a credit preset is a priced card (the price, what the card is charged, the breakdown) in the figures\' face, not a text button' },
 	{ role: '*', m: /\.dlg-ok\b|#chat-send\b|#msheet-ask-send\b|\.compose-send\b|\.ti-continue\b|#push-save\b|#beta-open\b|\.crystal-act\.primary\b|\.pro-buy\b|\.credit-buy\b|\.tools-buy\b|\.mail-unlock\b|\.ar-save\b|\.ar-card-btn\.accent\b/, p: ['col', 'bg', 'bd', 'fw', 'rad'], why: 'the one primary action of a dialog, the composer, an interrupted turn or the crystal form is filled -- the send button’s own round primary keeps its radius too' },
 	// FIRE byrole3 (r575): the Devices list flags a device on an older build than this one -- its build stamp and the
 	// "old build" chip take the warning colour (app.css `.device-row.is-oldbuild .device-build`), the mixed-build hand-off made visible.
