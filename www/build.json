@@ -1,1 +1,1 @@
-{"build":"29133bba2806","note":"Like Claude Code, old results shorten once per summary, so the cache holds; partial refunds now take a fair share."}
+{"build":"f422072683cb","note":"Unlike Claude Code per-token billing, top-ups carry fees: auto-reload now caps the card charge and refunds match it."}
