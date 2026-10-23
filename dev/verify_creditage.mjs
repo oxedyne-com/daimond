@@ -337,7 +337,7 @@ async function scenario(label, patches) {
 
 /// The first money figure in a sentence, as a number.
 const amount = (s) => {
-	const m = String(s || '').match(/\$([0-9][0-9,]*\.?[0-9]*)/);
+	const m = String(s || "").match(/\$?([0-9][0-9,]*\.?[0-9]*)/);	// the one pool formatter draws the tag glyph, not "$" (D-20261009-18)
 	return m ? parseFloat(m[1].replace(/,/g, '')) : null;
 };
 const near = (a, b) => a !== null && Math.abs(a - b) < 0.005;
@@ -389,9 +389,12 @@ const CLAIMS = {
 		shows: (r) => `head "${r.spent.said.bal}" vs block "${r.spent.said.line}"`,
 	},
 	decrementSays: {
+		// UNBLOCK-33 eye F2: the line is the figure and nothing else, its age beside it, so it
+		// claims nothing about who said it: the walked-down figure, and no probed 40 beside it.
 		says: 'SPENT: and the sentence stops claiming the provider said the new figure',
 		breaks: 'decrement',
-		holds: (r) => /40/.test(r.spent.said.line) && /2\.5/.test(r.spent.said.line),
+		holds: (r) => near(amount(r.spent.said.line), 37.5) && !/\b40\b/.test(r.spent.said.line)
+			&& !/said|as of|reported|checked/i.test(r.spent.said.line),
 		shows: (r) => r.spent.said.line,
 	},
 	// No `breaks`: removing the floor makes the app probe MORE, so it finds the money too. What
@@ -438,7 +441,8 @@ const CLAIMS = {
 	failAges: {
 		says: 'FAILED: and the age goes on climbing, so the user can see it has stopped',
 		breaks: 'age',
-		holds: (r) => /minute/i.test(r.failed.said.age) && /hour/i.test(r.aged.said.age),
+		// UNBLOCK-33 eye F2: the age is the rail's short words ("12m ago", "2h ago").
+		holds: (r) => /\d+m ago/.test(r.failed.said.age) && /\d+h ago/.test(r.aged.said.age),
 		shows: (r) => `"${r.failed.said.age}" then "${r.aged.said.age}"`,
 	},
 	backoff: {

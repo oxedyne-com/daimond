@@ -982,6 +982,10 @@
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); text-transform: none;
 	line-height: 16.2px; letter-spacing: 0;
 }
+/* Eye F7: on the phone a Jobs label sits beside a 16 px value, so it is not the 12 px field label. */
+@media (max-width: 600px) {
+	:root[data-skin="daylight"] .models-job-lab { font-size: var(--dl-sm); }
+}
 /* The Models view's pickers (U3a). The one-field rule above (fill, 6px 8px) outranks app.css's
    `.mp > input.mp-in` here, so a long model name ran under the chevron and an Except row's
    picker, which has no field, drew one. Each keeps its room for the chevron; the row's has no fill. */
@@ -1464,6 +1468,11 @@
 		overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
 	}
 	:root[data-skin="daylight"] .diamond-box > .session-box-tags::-webkit-scrollbar { display: none; }
+	/* On the name's line (app.css, eye F8) the strip keeps its 44px box for the chips' overlays and
+	   stops 12px short of the cog's overlay; the name, not a margin, keeps it off the icon. */
+	/* ONE line at the untagged height (app.css, F8): no padding-block, the 44px overlays hang over the
+	   tile as the cog's do; whole chips only (`foldTags`), so none is cut and none lies under the cog's overlay. */
+	:root[data-skin="daylight"] .session-box-header > .session-box-tags { column-gap: 8px; padding-block: 0; margin-right: 0; padding-right: 12px; }
 	:root[data-skin="daylight"] :is(.tagf-pool, .tagf-active, .session-box-tags) button.tag-chip {
 		overflow-x: clip; overflow-y: visible; min-width: 44px; justify-content: safe center;
 	}

@@ -29,10 +29,12 @@
 //       was and overlap nothing.
 //   D9  the phone still has its own fold and now one drawn by the same code: shut by
 //       default, the toggle's tap area at least 44px.
-//   D11 THE TALLY IS OUT OF THE FOLD (D-20261009-18, owner-approved variant B). Today /
-//       Week / Month stay at the foot of the section, folded or open, at 1440 and at 390;
-//       each figure is the price tag (glyph and bare figure, no "≈", no symbol); on the
-//       phone the identity row and the tally are each a thumb's height, 44px or more.
+//   D11 THE TALLY IS OUT OF THE FOLD (D-20261009-18, owner-approved variant B), and since
+//       UNBLOCK-33 out of the status section and the scroller, pinned at the rail's foot.
+//       It is the money pools, each with its own Today (D-20261023-05: no total Today): with
+//       no pool nothing of money is drawn; with one, every figure is the price tag (glyph
+//       and bare figure, no "≈", no symbol), at 1440 and at 390; on the phone the identity
+//       row and the pools' foot are each a thumb's height, 44px or more.
 //   D10 ONE DOOR (D-20261009-11). Exactly one control in the status header opens the
 //       admin panel, and it is the identity row, named "Settings". A cog beside it
 //       opened the same panel; the owner called that "unnecessary redundancy".
@@ -85,6 +87,19 @@ const survey = (p) => p.evaluate((TOGGLE) => {
 
 const settle = (p, ms = 350) => p.waitForTimeout(ms);
 
+/// One money pool, Daimond credits: this world has no gateway to report a balance, so its
+/// state is stood in for, and the rail repainted by a currency change.
+async function onePool(p) {
+	await p.evaluate(() => {
+		if (!window.__rsGs) window.__rsGs = DaimondGateway.state.bind(DaimondGateway);
+		DaimondGateway.state = () => Object.assign({}, window.__rsGs(), { authed: true, credits: 1250, currency: 'USD' });
+		DaimondI18n.setCurrency('USD');
+	});
+	await settle(p, 400);
+}
+const outside = (p) => p.evaluate(() => { const f = document.getElementById('spend-row');
+	return !!f && !f.closest('#admin-status, .rail-scroll, #rail-top'); });
+
 /// Put away whatever the sign-in left open over the rail, so a measurement is the rail's.
 async function quiet(p) {
 	for (let i = 0; i < 3; i++) { await p.keyboard.press('Escape').catch(() => {}); await p.waitForTimeout(60); }
@@ -118,10 +133,7 @@ check('D1 no status fold chevron on a desktop', !A.toggle.drawn, `drawn=${A.togg
 // one calm line and the tally. The diagnostic rows live in Settings, never here.
 check('D2 the calm line stays on screen, folded', A.summary.drawn, `h=${A.summary.h}`);
 check('D2 no diagnostic row in the rail', !A.detail.drawn || A.detailInSettings, `detail=${A.detail.h} inSettings=${A.detailInSettings}`);
-check('D11 1440 folded: the tally stays on screen', A.spend.drawn, `h=${A.spend.h}`);
-// One figure since D-20261020-14 EV: the tally is Today alone (no Week or Month).
-check('D11 1440: every tally figure is the price tag, no "≈" and no symbol', A.tally.n === 1 && A.tally.tags === 1 && !/[≈$€£¥]/.test(A.tally.text),
-	`${A.tally.tags}/${A.tally.n} tags, "${A.tally.text}"`);
+check('D11 1440, no money pool: no tally and no Today drawn (no total Today)', !A.spend.drawn && A.tally.n === 0, `drawn=${A.spend.drawn} "${A.tally.text}"`);
 check('D2 the identity row stays', A.idRow.drawn && A.userRow.drawn, `id=${A.idRow.h} userRow=${A.userRow.drawn}`);
 check('D2 the folded section is identity, exceptions, calm line and tally, nothing more', A.admin.drawn && A.admin.h <= A.idRow.h + A.needs.h + A.summary.h + A.spend.h + 20, `#admin=${A.admin.h}px id=${A.idRow.h} needs=${A.needs.h} calm=${A.summary.h} tally=${A.spend.h}`);
 
@@ -129,6 +141,13 @@ check('D2 the folded section is identity, exceptions, calm line and tally, nothi
 // The flag is retired: the warning is an exception row with its one act (js/needs.js).
 check('D7 no model: an exception row says so, folded', A.needs.drawn && A.needText.some((t) => /model/i.test(t)), JSON.stringify(A.needText));
 check('D7 the old flag is not drawn beside it', !A.flag.drawn, `flag.drawn=${A.flag.drawn} text="${A.flagText}"`);
+
+// ── D11 at 1440 with one pool: the foot drawn, pinned, every figure a price tag ─
+await onePool(p);
+const A2 = await survey(p);
+check('D11 1440, one pool: its balance and its Today drawn, as price tags, no "≈" and no symbol', A2.spend.drawn && A2.tally.n === 2 && A2.tally.tags === 2 && !/[≈$€£¥]/.test(A2.tally.text),
+	`drawn=${A2.spend.drawn} ${A2.tally.tags}/${A2.tally.n} tags, "${A2.tally.text}"`);
+check('D11 1440: the pools pinned at the rail\'s foot, outside the status section and the scroller', await outside(p));
 
 // ── D3, D4: expand in place, measure what was recovered ─────────────────
 // A stale open state (stored on a phone, the window dragged wide) shows nothing more.
@@ -138,7 +157,7 @@ await signInAs(s, s.name);
 await settle(p, 1400);
 await quiet(p);
 const B = await survey(p);
-check('D1 a stored open state adds nothing on a desktop', Math.abs(B.admin.h - A.admin.h) <= 1 && B.summary.drawn && B.spend.drawn && !B.toggle.drawn && (!B.detail.drawn || B.detailInSettings),
+check('D1 a stored open state adds nothing on a desktop', Math.abs(B.admin.h - A.admin.h) <= 1 && B.summary.drawn && !B.toggle.drawn && (!B.detail.drawn || B.detailInSettings),
 	`#admin=${B.admin.h} (folded ${A.admin.h}) detail=${B.detail.h}`);
 check('D1 and the lists keep their room', Math.abs(A.railTop.h - B.railTop.h) <= 1, `#rail-top ${A.railTop.h} -> ${B.railTop.h}`);
 await p.evaluate(() => { try { localStorage.removeItem('daimond-rail-fold'); } catch (e) {} });
@@ -212,6 +231,7 @@ await p.setViewportSize({ width: 390, height: 844 });
 await settle(p, 700);
 await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer && DaimondShell.openDrawer());
 await settle(p, 600);
+await onePool(p);
 const F = await survey(p);
 const hit = await p.evaluate((TOGGLE) => {
 	const t = document.querySelector(TOGGLE);
@@ -226,7 +246,8 @@ const hit = await p.evaluate((TOGGLE) => {
 	return { ok: n === total, n, total };
 }, TOGGLE);
 check('D9 phone: the toggle is drawn, the section shut by default, the calm line kept', F.toggle.drawn && F.expanded === false && F.summary.drawn, `toggle=${F.toggle.drawn} expanded=${F.expanded}`);
-check('D11 390 folded: the tally stays on screen, as price tags', F.spend.drawn && F.tally.n === 1 && F.tally.tags === 1 && !/[≈$€£¥]/.test(F.tally.text), `drawn=${F.spend.drawn} ${F.tally.tags}/${F.tally.n} "${F.tally.text}"`);
+check('D11 390, one pool: its balance and its Today drawn, as price tags', F.spend.drawn && F.tally.n === 2 && F.tally.tags === 2 && !/[≈$€£¥]/.test(F.tally.text), `drawn=${F.spend.drawn} ${F.tally.tags}/${F.tally.n} "${F.tally.text}"`);
+check('D11 390: the pools pinned at the drawer\'s foot, outside the status section and the scroller', await outside(p));
 check('D11 390: the identity row and the tally are each at least 44px tall', F.idRow.h >= 44 && F.spend.h >= 44, `id=${F.idRow.h} tally=${F.spend.h}`);
 check('D9 phone: the toggle\'s tap area is at least 44px each way', hit.ok, JSON.stringify(hit));
 check('D9 phone: nothing in the identity row overlaps or overflows at 390', F.idOverflow <= 0 && F.userRow.right <= F.toggle.left + 1 + 8, `overflow=${F.idOverflow} userRow.right=${F.userRow.right} toggle.left=${F.toggle.left}`);

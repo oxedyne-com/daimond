@@ -4,10 +4,11 @@
 //
 // Each money pool on the rail is a battery (how full since its last top-up), a dial
 // (the 15-min mean pace against the pool's own full scale) and a range ("6 h left",
-// "idle"). The rail then shows Today, local midnight to now, and nothing else of money.
+// "idle") and its own Today, local midnight to now (D-20261023-05: no total Today),
+// and the rail shows nothing else of money.
 //
 // THE CHECKS, each a property a user can see:
-//   rail    per pool a battery, a dial and a range; no runway line; Today and no Week
+//   rail    per pool a battery, a dial, a range and a Today; no total, no runway line; no Week
 //           or Month; the dial face always in thirds -- the lower uncoloured, the middle
 //           the app's orange (--warn), the upper its red (--danger) -- whatever the
 //           needle reads, like a rev counter's redline; an idle pool rests at 180°.
@@ -25,6 +26,7 @@
 //   lit       the face lit only up to the needle (the commit's first drawing)
 //   needle    the needle never moves
 //   week      Week and Month back on the rail
+//   total     a total Today back beside the pools (owner, 23 Oct: a Today per pool, no total)
 //   runway    the runway line back
 //   level     a top-up never raises the full height
 //   midnight  Today is the trailing 24 h, not the calendar day
@@ -61,8 +63,10 @@ const BREAKS = {
 		"s += '<path class=\"band b' + (i + 1) + '\" d=\"' + arcPath(cx, cy, r, b[0], b[1])",
 		"if (an > b[0] + 0.5) s += '<path class=\"band b' + (i + 1) + '\" d=\"' + arcPath(cx, cy, r, b[0], Math.min(an, b[1]))"],
 	needle: ['js/agentgrid.js', 'angle: idle ? 180 : needleAngle(rate, p.scale),', 'angle: 180,'],
-	week: ['js/daimond.js', '		row.appendChild(day);\n',
-		"		row.appendChild(day); row.appendChild(cell(t('spend.period_week'), tot.week)); row.appendChild(cell(t('spend.period_month'), tot.month));\n"],
+	week: ['js/daimond.js', '			row.appendChild(who); row.appendChild(gau); row.appendChild(day);\n',
+		"			row.appendChild(who); row.appendChild(gau); row.appendChild(day); ['Week', 'Month'].forEach(function (w) { var c = document.createElement('span'); c.className = 'spend-label'; c.textContent = w; row.appendChild(c); });\n"],
+	total: ['js/daimond.js', '		if (ev) row.appendChild(ev);\n',
+		"		if (ev) row.appendChild(ev); var tt = document.createElement('span'); tt.className = 'spend-cell spend-today'; tt.innerHTML = '<span class=\"spend-label\">Today</span><span class=\"spend-amt\">0.00</span>'; row.appendChild(tt);\n"],
 	runway: ['js/daimond.js', '		if (ev) row.appendChild(ev);\n',
 		"		if (ev) row.appendChild(ev); var rw = document.createElement('div'); rw.className = 'spend-runway'; rw.textContent = 'runs out in ~20 h'; row.appendChild(rw);\n"],
 	level: ['js/money.js', 'if (!has || amount > prev.full || (last !== null && amount > last)) {', 'if (!has) {'],
@@ -71,7 +75,7 @@ const BREAKS = {
 	sync: ['js/daimond.js', 'if (!DaimondLedger.adopt(remote.ledger)) return;', 'return;'],
 	syncpaint: ['js/daimond.js', "			try { updateSpend(); } catch (e) { /* nothing is drawn yet */ }\n", ''],
 };
-const BREAK = arg('--break', '');
+const BREAK = arg('--break', process.env.EV_BREAK || '');	// EV_BREAK: the same through dk arms
 if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; one of: ${Object.keys(BREAKS).join(' ')}`); process.exit(2); }
 if (BREAK && BROWSER !== 'chromium') { console.error('--break serves an edited file through page.route; run it under Chromium.'); process.exit(2); }
 const OTHER = arg('--www', '');
@@ -153,10 +157,13 @@ const read = (page) => page.evaluate(() => {
 			bands: d ? { b1: band('b1'), b2: band('b2'), b3: band('b3'), n: d.querySelectorAll('.band').length } : null,
 			mi: (r.querySelector('.evmi') || {}).textContent || null, miLow: !!r.querySelector('.evmi.low') };
 	});
-	const labels = [...el.querySelectorAll('.spend-label')].filter((x) => !x.classList.contains('evnm')).map((x) => x.textContent.trim());
-	const td = el.querySelector('.spend-today .spend-amt');
-	const today = td ? Number(String(td.textContent).replace(/[^0-9.]/g, '')) : null;
-	return { warn: ink('--warn'), danger: ink('--danger'), rows, labels, today,
+	// Labels outside the pools' names and their own Todays: Week, Month or a total Today.
+	const labels = [...el.querySelectorAll('.spend-label')].filter((x) => !x.classList.contains('evnm') && !x.classList.contains('evdl')).map((x) => x.textContent.trim());
+	const days = [...el.querySelectorAll('.evp')].map((r) => { const v = r.querySelector('.evday .evdv'), l = r.querySelector('.evday .evdl');
+		return { label: l ? l.textContent.trim() : null, v: v ? Number(String(v.textContent).replace(/[^0-9.]/g, '')) : null }; });
+	// Today is each pool's own: the spend under test is all OpenRouter's, so the sum is the day's.
+	const today = days.length && days.every((d) => d.v !== null && !Number.isNaN(d.v)) ? Math.round(days.reduce((a, d) => a + d.v, 0) * 1e6) / 1e6 : null;
+	return { warn: ink('--warn'), danger: ink('--danger'), rows, labels, days, today,
 		runway: !!el.querySelector('.spend-runway, .spend-cyls'), text: el.textContent };
 });
 const by = (r, k) => (r && r.rows.find((x) => x.key === k)) || null;
@@ -188,7 +195,8 @@ if (want('rail') || want('needle') || want('level')) {
 			check('rail: every pool has a battery, a dial and a range',
 				!!r && r.rows.length === 3 && r.rows.every((x) => x.level !== null && x.angle !== null && x.mi), r && JSON.stringify(r.rows.map((x) => [x.level, x.angle, x.mi])));
 			check('rail: no runway line, no cylinders', !!r && !r.runway);
-			check('rail: Today, and no Week or Month', !!r && r.labels.join('|') === 'Today' && !/\b(Week|Month)\b/.test(r.text), r && r.labels.join('|'));
+			check('rail: a Today in every pool row, no total Today, no Week or Month', !!r && r.days.length === 3 && r.days.every((d) => d.label === 'Today')
+				&& !r.labels.length && !/\b(Week|Month)\b/.test(r.text), r && JSON.stringify([r.days.map((d) => d.label), r.labels]));
 			check('rail: idle pools rest at 180° and say "idle"',
 				!!r && r.rows.length === 3 && r.rows.every((x) => x.angle === 180 && x.rest && /idle/.test(x.mi)), r && JSON.stringify(r.rows.map((x) => [x.angle, x.rest, x.mi])));
 			const face = (x) => x && x.bands && x.bands.n === 3 && x.bands.b2 === r.warn && x.bands.b3 === r.danger

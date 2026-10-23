@@ -189,6 +189,9 @@
 	/// always had two: `calm` is the per-turn cost beside a message, `fine` is
 	/// the spending panel, which shows a sub-cent turn honestly.
 	function digits(v, mode) {
+		// `held`: money in a pool reads in its currency's own places, whatever its size,
+		// so the rail's balances and Todays are one format (owner-eye items 4, 8).
+		if (mode === 'held') return 0;
 		if (mode === 'fine') {
 			if (v > 0 && v < 0.0995) return 4;
 			if (v > 0 && v < 0.995)  return 3;
@@ -300,7 +303,7 @@
 	// through `billed`, because the card statement reads in dollars.
 
 	/// The bare figure for `v`, already in `ccy`. Four places below a cent and
-	/// three below a unit, as `digits` always gave; never fewer than the
+	/// three below a unit, as `digits` always gave (`held`: its own places); never fewer than the
 	/// currency's own decimals, except that a whole-unit currency (yen, won)
 	/// keeps decimals below one, so a turn never reads as free.
 	function bare(v, ccy, mode) {
@@ -334,12 +337,13 @@
 
 	/// The same for the gateway's minor units. A figure quoted in a currency
 	/// other than US dollars is shown as quoted, never converted twice.
-	function priceMinorParts(minor, src) {
+	function priceMinorParts(minor, src, mode) {
 		src = String(src || 'usd').toUpperCase();
+		mode = mode || 'calm';
 		var v = Math.max(0, +minor || 0) / 100;
 		var ccy = currency();
-		if (src !== 'USD' || ccy === 'USD') return { text: bare(v, src, 'calm'), ccy: src, conv: false };
-		return { text: bare(v * RATE[ccy], ccy, 'calm'), ccy: ccy, conv: true };
+		if (src !== 'USD' || ccy === 'USD') return { text: bare(v, src, mode), ccy: src, conv: false };
+		return { text: bare(v * RATE[ccy], ccy, mode), ccy: ccy, conv: true };
 	}
 	function priceMinor(minor, src) {
 		if (!known(minor)) return '';
@@ -413,8 +417,24 @@
 	function priceTagMinor(minor, src, opts) {
 		opts = opts || {};
 		if (!known(minor)) return null;
-		var p = priceMinorParts(minor, src);
+		var p = priceMinorParts(minor, src, opts.mode);
 		return buildTag(p.text, p.ccy, !!opts.estimated || p.conv, opts);
+	}
+
+	/// A pool's money -- a balance, what is left on a key, a pool's Today -- as its tag, the
+	/// one formatter for it wherever it shows (the rail, Models, Providers): the user's
+	/// currency, that currency's own places, the tag glyph, never "≈" or a letter (rulings
+	/// l.41; owner-eye items 4, 8). `v` is in `src` units: 'USD' for a key, the gateway's
+	/// currency for Daimond credits. null when unknown.
+	function poolTag(v, src, opts) {
+		if (!known(v)) return null;
+		return priceTagMinor(Math.round(+v * 100), src || 'usd', Object.assign({}, opts || {}, { mode: 'held' }));
+	}
+
+	/// `poolTag` inside a string, drawn by `fillPrices`. '' when unknown.
+	function poolMark(v, src) {
+		if (!known(v)) return '';
+		return M_OPEN + 'p' + Math.round(+v * 100) + '||' + String(src || 'usd') + M_SHUT;
 	}
 
 	/// The tag as markup, for a surface built from a string. '' when unknown.
@@ -447,6 +467,10 @@
 	function unmark(body, asText) {
 		var f = body.slice(1).split('|');
 		var est = f[1] === 'e';
+		if (body[0] === 'p') {
+			return asText ? (function (p) { return p.text + ' ' + p.ccy; })(priceMinorParts(+f[0], f[2], 'held'))
+				: priceTagMinor(+f[0], f[2], { mode: 'held' });
+		}
 		if (body[0] === 'm') {
 			return asText ? (function (p) { return p.text + ' ' + p.ccy; })(priceMinorParts(+f[0], f[2]))
 				: priceTagMinor(+f[0], f[2], { estimated: est });
@@ -938,6 +962,8 @@
 		priceTagHtml: priceTagHtml,
 		priceMark:    priceMark,
 		priceMarkMinor: priceMarkMinor,
+		poolTag:      poolTag,
+		poolMark:     poolMark,
 		hasPrice:     hasPrice,
 		fillPrices:   fillPrices,
 		pricesText:   pricesText,

@@ -21,10 +21,14 @@
 // them came out of the two lists and nothing ever made the drawer scroll instead.
 //
 // The arm: each list shows at least five whole tiles, and scrolling the drawer
-// reaches its foot with the money pools and Today whole on screen. Since the EV rail
-// (D-20261020-14) the foot is three pools, each a battery, a dial and a range, and the
-// same floor holds on the desktop rail (1440x900 and 1280x720), which scrolls for what
-// does not fit, as the drawer does. Diamonds are
+// reaches the lists' foot. Since the EV rail (D-20261020-14) the money foot is three
+// pools, each a battery, a dial, a range and its own Today, and since UNBLOCK-33
+// (owner, 23 Oct: "the credit battery icons should be always visible in the rail")
+// it is pinned at the rail's foot, outside the scroller, whole on screen wherever the
+// drawer is scrolled. The five-tile floor is the phone's alone ("The rail's dual
+// scrolling (five-tile floor) is for the phone only"): the desktop rail (1440x900,
+// 1280x720) does not scroll, its lists split the room as before INT (ace6764ca),
+// neither crushed by the other, and the pools are whole at rest. Diamonds are
 // counted in a mobile-emulated Chromium, because Playwright's WebKit has no OPFS
 // to hold one (see verify_railmobile.mjs); the Chats list is counted in both.
 //
@@ -123,16 +127,38 @@ const survey = (p) => p.evaluate(() => {
 		admin: H(document.getElementById('admin')) };
 });
 
-/// Scroll the drawer to its end: is the money foot whole on screen?
-const foot = (p) => p.evaluate(() => {
-	const r = document.querySelector('#panel-rail .rail-scroll') || document.getElementById('panel-rail');
+/// The money foot pinned: whole on screen and outside the drawer's scroller, with the
+/// scroller at its top and at its end; and the scroller's end reaches the Chats list's foot.
+const foot = (p) => p.evaluate(async () => {
+	const rail = document.getElementById('panel-rail'), r = rail && rail.querySelector('.rail-scroll');
+	const f = document.getElementById('spend-row'), c = document.getElementById('session-list');
+	if (!rail || !r || !f || !c) return { ok: false, why: 'no rail, scroller, spend row or Chats list' };
+	const frame = () => new Promise((k) => requestAnimationFrame(() => requestAnimationFrame(k)));
+	const whole = () => { const b = f.getBoundingClientRect(); return b.height > 0 && b.top >= -1 && b.bottom <= innerHeight + 1; };
+	const out = [], inside = r.contains(f);
+	r.scrollTop = 0; await frame(); const top = whole(), t = f.getBoundingClientRect();
+	r.scrollTop = r.scrollHeight; await frame(); const end = whole(), e = f.getBoundingClientRect();
+	const rb = r.getBoundingClientRect(), cb = c.getBoundingClientRect();
+	const reach = r.scrollHeight <= r.clientHeight + 1 || cb.bottom <= rb.bottom + 1;
+	r.scrollTop = 0; await frame();
+	if (inside) out.push('inside the scroller');
+	return { ok: !inside && top && end && Math.abs(t.top - e.top) <= 1 && reach,
+		why: `spend row ${Math.round(t.top)}–${Math.round(t.bottom)} at the top, ${Math.round(e.top)}–${Math.round(e.bottom)} at the end, of ${innerHeight}; `
+			+ `scroller ${r.clientHeight}/${r.scrollHeight}, Chats foot ${Math.round(cb.bottom)} vs ${Math.round(rb.bottom)}${out.length ? '; ' + out.join(', ') : ''}` };
+});
+
+/// The desktop rail: not a scroller, the lists split as before INT and neither crushed,
+/// the pools whole at rest.
+const desk = (p) => p.evaluate(() => {
+	const rail = document.getElementById('panel-rail'), r = rail && rail.querySelector('.rail-scroll');
 	const f = document.getElementById('spend-row');
-	if (!r || !f) return { ok: false, why: 'no rail or spend row' };
-	r.scrollTop = r.scrollHeight;
-	const rb = r.getBoundingClientRect(), fb = f.getBoundingClientRect();
-	const res = { ok: fb.height > 0 && fb.top >= rb.top - 1 && fb.bottom <= rb.bottom + 1,
-		why: `spend row ${Math.round(fb.top)}–${Math.round(fb.bottom)}, drawer ${Math.round(rb.top)}–${Math.round(rb.bottom)}, scroll ${r.clientHeight}/${r.scrollHeight}` };
-	return res;
+	const d = document.getElementById('diamond-list'), c = document.getElementById('session-list');
+	if (!rail || !f || !d || !c) return { scrolls: true, crushed: true, foot: false, why: 'no rail, spend row or lists' };
+	const sc = (e) => { const o = getComputedStyle(e); return o.display !== 'contents' && /auto|scroll/.test(o.overflowY) && e.scrollHeight > e.clientHeight + 1; };
+	const room = d.clientHeight + c.clientHeight, floor = Math.min(72, Math.floor(room / 2) - 1), b = f.getBoundingClientRect();
+	return { scrolls: sc(rail) || (!!r && sc(r)), crushed: d.clientHeight < floor || c.clientHeight < floor,
+		foot: b.height > 0 && b.top >= -1 && b.bottom <= innerHeight + 1,
+		why: `Diamonds ${d.clientHeight} px, Chats ${c.clientHeight} px (floor ${floor}), spend row ${Math.round(b.top)}–${Math.round(b.bottom)} of ${innerHeight}` };
 });
 
 /// The drawer's scroller: an inner `.rail-scroll` once the drawer's frame stopped
@@ -213,27 +239,24 @@ try {
 		await p.fill('#diamond-search', '');
 		await p.waitForTimeout(400);
 		const f = await foot(p);
-		check('scrolling the drawer reaches its foot, the three pools and Today whole', f.ok, f.why);
+		check('the three pools pinned whole at the drawer\'s foot, scrolled or not, and the drawer reaches the lists\' end', f.ok, f.why);
 		if (SHOT) await p.screenshot({ path: SHOT.replace(/\.png$/, '') + '_foot.png' });
 		for (const [from, says] of ADMIN_FROM) {
 			const a = await adminBack(p, from);
 			check(`Chromium: Settings opened from ${says} has Back whole on screen, on top, and a tap closes it`, a.ok, a.why);
 		}
 	}
-	// THE DESKTOP RAIL (D-20261020-14 EV): three pools at the foot, and each list still
-	// a window of five whole tiles; the rail scrolls for what does not fit.
+	// THE DESKTOP RAIL (UNBLOCK-33): three pools whole at the foot with no scrolling, the
+	// lists split as before INT and neither crushed; no five-tile floor, no rail scroller.
 	for (const [browser, vp] of [['chromium', { width: 1440, height: 900 }], ['chromium', { width: 1280, height: 720 }], ['webkit', { width: 1440, height: 900 }]]) {
 		const s = await world(browser, vp);
 		sessions.push(s);
 		const p = s.page, at = `${browser} ${vp.width}x${vp.height}`;
 		check(`${at}: the rail draws three pools`, s.pools === 3, String(s.pools));
-		const m = await survey(p);
-		if (browser === 'chromium') check(`${at}: the Diamonds list shows at least five whole tiles`,
-			m.d.n >= 5 && m.d.of >= 5, `${m.d.n} of ${m.d.of} whole in ${m.d.h}px, a tile ${m.d.tile}px`);
-		check(`${at}: the Chats list shows at least five whole tiles`,
-			m.c.n >= 5 && m.c.of >= 5, `${m.c.n} of ${m.c.of} whole in ${m.c.h}px, a tile ${m.c.tile}px`);
-		const f = await foot(p);
-		check(`${at}: the rail reaches its foot, the three pools and Today whole`, f.ok, f.why);
+		const k = await desk(p);
+		check(`${at}: the rail does not scroll`, !k.scrolls, k.why);
+		check(`${at}: neither list is crushed by the other`, !k.crushed, k.why);
+		check(`${at}: the three pools and their Todays whole on screen at rest`, k.foot, k.why);
 		if (SHOT && browser === 'chromium' && vp.width === 1440) await p.screenshot({ path: SHOT.replace(/\.png$/, '') + '_desk.png' });
 	}
 	{
@@ -244,7 +267,7 @@ try {
 		check('WebKit 390x845: the Chats list shows at least five whole tiles',
 			m.c.n >= 5 && m.c.of >= 5, `${m.c.n} of ${m.c.of} whole in ${m.c.h}px, a tile ${m.c.tile}px`);
 		const f = await foot(s.page);
-		check('WebKit: scrolling the drawer reaches its foot', f.ok, f.why);
+		check('WebKit: the pools pinned whole at the drawer\'s foot, scrolled or not', f.ok, f.why);
 		for (const [from, says] of ADMIN_FROM) {
 			const a = await adminBack(s.page, from);
 			check(`WebKit: Settings opened from ${says} has Back whole on screen, on top, and a tap closes it`, a.ok, a.why);

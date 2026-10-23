@@ -81,7 +81,6 @@ svg { display: block; }
 .astat-copyrow:hover .copy-id,
 .device-row:hover .copy-id,
 .account-fp:hover .copy-id,
-.models-default:hover .copy-id,
 .rel-row:hover .copy-id,
 .rel-build:hover .copy-id { opacity: 1; }
 /* Done, and not done. The colour is the confirmation; nothing moves. */
@@ -314,14 +313,11 @@ svg { display: block; }
    push its own last rows out under the clip. */
 .spend > .spend-view { flex: 1 1 auto; min-height: 0; }
 .rail { width: var(--rail-w); gap: 0; }
-/* The rail's scroller. On a phone it is the drawer's (mobile.css). On the desktop it
-   scrolls only when the two lists at their five-tile floors (mobile.js `fitLists`)
-   and the money pools under them do not fit the window (D-20261020-14 EV); on a
-   tall one nothing moves. */
-.rail-scroll { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; }
-.rail .rail-top { min-height: var(--rail-top-min, 0px); }
-.rail .diamond-list { min-height: var(--rail-win-d, 0px); }
-.rail .session-list { min-height: var(--rail-win-c, 0px); }
+/* The phone drawer's scroller (mobile.css); a desktop rail lays its children out as if it were not there
+   (D-20261023-05: the five-tile dual scrolling is the phone's only). */
+.rail-scroll { display: contents; }
+/* The money pools and Today, pinned under the scroller: they keep their height, the lists give theirs. */
+.rail > .spend-row { flex: none; }
 .panel.nt { transition: none; }
 .panel.closed { display: none; }
 
@@ -811,7 +807,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    columns of pause lights were 6px apart down the rail. On 4px every leading
    edge in the rail starts in the same place: the global light, the section
    labels, and both kinds of tile. */
-.session-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 6px; padding: 0 4px 2px; }
+.session-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; display: flex; flex-direction: column; gap: 6px; padding: 0 4px 2px; }
 
 .new-session-panel { display: flex; gap: 6px; padding: 8px; background: var(--bg-secondary); border: 1px solid transparent; border-radius: var(--radius); flex: none; }
 .new-session-model { flex: 1; min-width: 0; background: var(--bg-tertiary); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); padding: 6px 8px; font-size: var(--fs-sm); }
@@ -967,17 +963,48 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    is the one thing Simple must not take away, because Simple is the view with
    fewer other ways to tell two tiles apart.
 
-   EVERY TAG RENDERS and the row SCROLLS SIDEWAYS rather than wrapping or
+   On the desktop EVERY TAG RENDERS and the row SCROLLS SIDEWAYS rather than wrapping or
    truncating with a +N chip: an unrendered tag cannot be clicked into a filter,
    so the overflow chip hid the one thing a tag exists for. The row does not
    wrap, and `scrollbar-width: none` keeps a scrollbar from stealing a row of
    height on a narrow rail -- the chips say "more this way" by being cut at the
-   edge, which is the affordance a horizontal clip gives for free. */
+   edge, which is the affordance a horizontal clip gives for free. The phone's strip
+   is the exception (below, UNBLOCK-33 F8): whole chips only, the rest one "+N". */
 .session-box-tags {
 	display: flex; flex-wrap: wrap; gap: 4px; row-gap: 4px; margin-top: 3px;
 	overflow: visible;
 }
 .session-box-tags .tag-chip { flex: none; }                /* keep chips their own width */
+/* A Diamond's chips sit on its name's line, after the name, so a tagged tile is one line, not two
+   (D-20261023-05 eye F1/F8). The name keeps its width first: the strip gives way 100x faster and
+   scrolls sideways, cut at its edge, rather than wrapping under. */
+.session-box-header:has(> .session-box-tags) > .session-box-name { flex: 0 1 auto; }
+.session-box-header > .session-box-tags {
+	flex: 0 100 auto; min-width: 0; margin: 0 auto 0 2px; flex-wrap: nowrap;
+	overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+.session-box-header > .session-box-tags::-webkit-scrollbar { display: none; }
+/* The phone's tagged tile is ONE line at the untagged tile's height (UNBLOCK-33 F8; every slot an
+   overflow policy, rulings §7). The name keeps its whole width first; the strip takes what is left
+   (basis 0) and draws only whole chips: `foldTags` (daimond.js) folds the ones that do not fit into
+   one "+N" chip, which fits or is not drawn. The strip does not scroll or clip, so no chip is cut
+   and none reaches the gear's column. Chips sit in the line's height, as on the desktop. */
+@media (max-width: 760px) {
+	.session-box-header:has(> .session-box-tags) > .session-box-name { flex: 0 1 auto; min-width: 0; }
+	.session-box-header > .session-box-tags {
+		flex: 1 1 0; min-width: 0; overflow: visible; flex-wrap: nowrap; margin: 0 0 0 2px;
+	}
+	.session-box-header > .session-box-tags > .tag-chip { padding-top: 0; padding-bottom: 0; }
+	.session-box-header > .session-box-tags > .tag-chip.tag-fold { display: none; }
+	.session-box-header > .session-box-tags > .tag-more { cursor: default; }
+}
+.session-box-tags > .tag-more[hidden] { display: none; }
+/* "+N" is a count, not a tag: no tag's hue (its --tag-h would read as a red tag). */
+html .session-box-header > .session-box-tags > .tag-chip.tag-more:not(.tag-inc):not(.tag-no) {
+	background: var(--bg-tertiary); color: var(--text-secondary); border-color: transparent;
+}
+/* Not a control (the tile under it is), so no tap overlay: the skins' 44px `::after` would hang out of it. */
+html .session-box-header > .session-box-tags > .tag-chip.tag-more:not(.tag-inc):not(.tag-no)::after { content: none; }
 
 /* Simple is a DESIGN, not a subtraction. Take the room the hidden rows leave
    and give it to what is left, or the tile reads as the dense one with holes in
@@ -1283,7 +1310,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 
 /* Diamonds rail list — reuses .session-box styling via the shared class. A long
    list scrolls rather than squeezing the chats out of the pane above it. */
-.diamond-list { display: flex; flex-direction: column; gap: 6px; padding: 0 4px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.diamond-list { display: flex; flex-direction: column; gap: 6px; padding: 0 4px 6px; flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }	/* eye F9 */
 
 /* Find a Diamond: a search box that is always there, and the standing tag pool
    beneath it. */
@@ -3078,21 +3105,26 @@ span.arte-open { cursor: default; }
 /* A tile's rail pulldown, and the Models view's Jobs pulldowns, which have the same size of job. */
 .mp-tile-model > input.mp-in,
 .mp-models-job-sel > input.mp-in { padding: 5px 18px 5px 6px; font-size: var(--fs-xs); }
+.mp-models-job-sel > input.mp-in { font-size: var(--fs-base); }	/* a Jobs value is read at the text size (eye F3) */
 .mp-tile-model::after, .mp-models-job-sel::after { right: 7px; }
 .mp-models-job-sel { flex: 1 1 auto; min-width: 0; }
-/* An Except row's picker: no field, the model's name set right, the chevron after it. */
-.mp-models-exc-sel { flex: 1 1 auto; min-width: 0; }
+/* An Except row's picker: no field, the model's name set right, the chevron after it, and no
+   wider than they are: `--mp-tw` is the name's own width in em, measured by the picker (models.js
+   fitText), plus the padding and border here (4 + 20 + 2 px). So the row's name keeps the width. */
+.mp-models-exc-sel { flex: 0 1 auto; min-width: 0; max-width: 100%; margin-left: auto; }
 .mp-models-exc-sel > input.mp-in {
 	background: transparent; border-color: transparent; text-align: right;
 	padding: 5px 20px 5px 4px; font-size: var(--fs-xs); text-overflow: ellipsis;
+	width: calc(var(--mp-tw, 8em) + 26px); max-width: 100%;
 }
 .mp-models-exc-sel::after { right: 6px; }
 .tile-dlg-field .mp-tile-model > input.mp-in,
 .tile-dlg-model .mp-tile-model > input.mp-in { padding: 7px 22px 7px 8px; font-size: var(--fs-sm); }
 .tile-dlg-field .mp-tile-model::after, .tile-dlg-model .mp-tile-model::after { right: 9px; }
-/* The dialog's pulldown is a `.dlg-input`; its models take the mono face. */
+/* The dialog's pulldown is a `.dlg-input`. A model is shown by its display name, so it takes
+   the text face as every other picker does (D-20261018-09 §3); the id is in the hover. */
 .mp-dlg-input { margin-bottom: 4px; }
-.mp-dlg-select > input.mp-in { font-family: var(--font-mono); font-size: var(--fs-sm); }
+.mp-dlg-select > input.mp-in { font-size: var(--fs-sm); }
 /* The list. It stands on the body, above every dialog. */
 .mp-pop {
 	position: fixed; z-index: 5000; background: var(--bg-secondary); border: 1px solid transparent;
@@ -3100,16 +3132,20 @@ span.arte-open { cursor: default; }
 	overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box;
 }
 .mp-pop[hidden] { display: none; }
-.mp-grp { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 6px 8px 2px; }
+.mp-grp { font-size: var(--fs-2xs); color: var(--text-muted); padding: 6px 8px 2px; }
 .mp-row {
 	display: flex; align-items: baseline; gap: 8px; min-height: 32px; box-sizing: border-box;
 	padding: 6px 8px; border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer;
 }
 .mp-row.mp-act { background: var(--bg-hover); }
 .mp-row.mp-alt { padding-left: 24px; }
-.mp-row[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-text); }
+/* The chosen row is marked by its ink and weight, never a fill: a filled row was the pink block
+   the owner saw (D-20261023-05 audit item 13), and list rows carry no fills (D-20261018-09 U3). */
+.mp-row[aria-selected="true"] { color: var(--accent-text); }
+.mp-row[aria-selected="true"] > .mp-main { font-weight: 600; }
 .mp-row[aria-disabled="true"] { color: var(--text-muted); cursor: default; }
-.mp-main { font-family: var(--font-mono); font-size: var(--fs-sm); min-width: 0; overflow-wrap: anywhere; }
+/* A display name in the text face (D-20261018-09 §3: "in the text face"); the id is the hover's. */
+.mp-main { font-size: var(--fs-sm); min-width: 0; overflow-wrap: anywhere; }
 .mp-sub { font-size: var(--fs-2xs); color: var(--text-muted); margin-left: auto; white-space: nowrap; }
 .mp-none { font-size: var(--fs-xs); color: var(--text-muted); padding: 8px; }
 @media (max-width: 760px), (pointer: coarse) {
@@ -5470,8 +5506,13 @@ button.agsq.o { cursor: pointer; }
 /* EV (D-20261020-14): the rail's money pools, each an electric car. One row per pool: a battery
    filled to its balance over the balance at its last top-up (D-20261015-14), the name and balance,
    then a dial for the 15-min pace and the range left at it. Tokens only, no lines but the drawings'. */
-.evpools { flex-basis: 100%; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 10px; }
-.evp { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* A grid with one subgrid row a pool, so the dials and each pool's Today (D-20261023-05) line up
+   down the rail whatever the names. */
+.evpools { flex-basis: 100%; min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; column-gap: 8px; row-gap: 8px; padding: 2px 4px 10px; }
+.evp { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center; min-width: 0; }
+/* Each pool's own Today (D-20261023-05): the row's fourth column, read as the name and balance are. */
+.evday { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 0; white-space: nowrap; }
+.evdv { line-height: 18px; font-variant-numeric: tabular-nums; }
 .evp svg { display: block; overflow: visible; flex: none; }
 .evwho { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 3px; }
 .evnm { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

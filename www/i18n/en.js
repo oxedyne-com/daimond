@@ -108,7 +108,6 @@
 	'copy.what_fingerprint':   'your account fingerprint',
 	'copy.what_device':        'the id of {name}',
 	'copy.what_model':         'model id {id}',
-	'copy.what_default_model': 'the default model id',
 	'copy.what_handle':        'your public handle',
 
 	// ── The top bar ────────────────────────────────────────────
@@ -716,7 +715,7 @@
 	'models.through':              'Through {provider}',
 	'models.key_label':            '{provider} API key',
 	'models.key_add_ph':           'Paste your API key',
-	'models.key_replace_ph':       'Paste a new key to replace this one',
+	'models.key_replace_ph':       'New key',
 	'models.key_save':             'Save Key',
 	'models.key_empty':            'Paste a key first.',
 	'models.count.one':            '{n} model',
@@ -736,7 +735,6 @@
 	'models.top_up_to_use':        'top up to use',
 	'models.top_up':               'Top up your credits →',
 	'models.ask_provider':         'List models',
-	'models.ask_provider_again':   'Ask this provider again',
 	'models.list_asked':           'Listed {when}.',
 	'models.list_never':           'Never asked.',
 	'models.add_key_first':        'Add a key first',
@@ -747,7 +745,6 @@
 	'models.favourites': 'Favourites',
 	'models.find': 'Search models',
 	'models.no_match': 'No model matches',
-	'models.is_default':           'default',
 	'models.model_is_default':     'New chats and diamonds start on this model.',
 	'models.model_make_default':   'Make this the model new chats and diamonds start on.',
 	'models.model_paid':           'Spends your Daimond balance, via {provider}.',
@@ -783,13 +780,13 @@
 	'models.route_clear':          'Clear',
 	'models.routing_disclosure':   'Models…',
 	'models.remove':               'Remove {provider}',
-	'models.starts_on':            'New chats start on: {model}',
-	'models.no_default':           'No default model yet. Star one above.',
 	// ── The Models view, top half (D-20261018-09 U3a); drafting_help titles the Drafting job ──
 	'models.drafting_help':        'Model that drafts proposals from your notes. Defaults to your chat model.',
 	'models.everyone_head': 'Everyone uses',
 	'models.except_head': 'Except',
 	'models.jobs_head': 'Jobs',
+	'models.providers_head': 'Providers',
+	'models.refresh_list': 'Refresh list',
 	// i18n-family: models.job_ = one-way workers images drafting summarising -- the Jobs rows (models.js jobsBlock, ownerName); job_pin shares the prefix
 	'models.job_workers': 'Workers',
 	'models.job_images': 'Images',
@@ -833,9 +830,6 @@
 	// What is left on a provider key, and how that is known. The manual line is
 	// deliberately not called a balance: it is the user's own figure less an
 	// estimate, and saying so is the whole point of showing it.
-	'models.credit_auto':          '{amount} left on this key, as the provider said at {when}.',
-	'models.credit_manual':        '{amount} left. Your {base} from {when}, less about {spent} spent since.',
-	'models.credit_unknown':       'Nothing known about what is left on this key.',
 	'models.credit_check':         'Ask what is left',
 	'models.credit_recheck':       'Ask again',
 	'models.credit_probe_failed':  '{provider} would not say what is left. Tell Daimond instead.',
@@ -846,16 +840,8 @@
 	'models.credit_base_bad':      'That is not an amount. Enter a number of US dollars.',
 	// A probed figure that this device has since watched money leave. It stops
 	// claiming to be what the provider said, because it no longer is.
-	'models.credit_auto_spent':    '{amount} left. The provider said {base} at {when}, less about {spent} spent here since.',
 	// How old the reading is. Without it a figure that has quietly stopped
 	// updating looks exactly like one that is current.
-	'models.age_now':              'Checked just now.',
-	'models.age_mins.one':         'Checked {n} minute ago.',
-	'models.age_mins.other':       'Checked {n} minutes ago.',
-	'models.age_hours.one':        'Checked {n} hour ago.',
-	'models.age_hours.other':      'Checked {n} hours ago.',
-	'models.age_days.one':         'Checked {n} day ago.',
-	'models.age_days.other':       'Checked {n} days ago.',
 	'models.age_failed':           'The last check did not answer, so this figure has not moved since.',
 
 	// ── Search ─────────────────────────────────────────────────

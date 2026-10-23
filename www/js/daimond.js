@@ -14296,25 +14296,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!r) return;
 			// The phone shows this rail as a drawer that scrolls as one column; a
 			// fixed height on one of its lists is not what a thumb wants there.
-			// Each list's floor is five of its own tiles (mobile.js `fitLists`), on the
-			// desktop too since the EV rail: the divider moves between the two floors.
-			var railEl = document.getElementById('panel-rail');
-			var floor = function (v) {
-				var x = railEl ? parseFloat(railEl.style.getPropertyValue(v)) : NaN;
-				return x > MIN_H.list ? x : MIN_H.list;
-			};
-			var fd = floor('--rail-win-d'), fc = floor('--rail-win-c');
-			if (isMobile() || r.room <= fd + fc) {
+			// The five-tile floor (mobile.js `fitLists`) is the phone's alone (UNBLOCK-33).
+			if (isMobile()) {
 				r.list.style.flex = '';
 				r.list.style.height = '';
-				if (handle) handle.style.display = isMobile() ? 'none' : '';
+				if (handle) handle.style.display = 'none';
+				return;
+			}
+			// Too short for two floors: the lists halve the room. Left to the CSS, the
+			// Diamonds list (`flex: 0 1 auto`) kept its content's height and the Chats
+			// list (`flex: 1`, basis 0) went to nothing: 2 px at 1280x720 with a tag
+			// filter once the pools were pinned at the rail's foot (UNBLOCK-33).
+			if (r.room <= MIN_H.list * 2) {
+				if (handle) handle.style.display = '';
+				r.list.style.flex   = '0 0 auto';
+				r.list.style.height = Math.max(0, Math.floor(r.room / 2)) + 'px';
 				return;
 			}
 			if (handle) handle.style.display = '';
 			var cut = railH !== null ? railH
 				: Math.round((railWas === null ? 0.5 : railWas) * r.room);
 			railFit = cut;
-			var want = Math.max(fd, Math.min(cut, r.room - fc));
+			var want = Math.max(MIN_H.list, Math.min(cut, r.room - MIN_H.list));
 			r.list.style.flex   = '0 0 auto';
 			r.list.style.height = want + 'px';
 		}
@@ -41396,8 +41399,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (meta) return meta;
 		meta = document.createElement('div');
 		meta.className = 'session-box-meta';
-		box.insertBefore(meta, box.querySelector('.session-box-tags')
-			|| box.querySelector('.diamond-meter') || null);
+		box.insertBefore(meta, box.querySelector(':scope > .session-box-tags')
+			|| box.querySelector(':scope > .diamond-meter') || null);
 		return meta;
 	}
 
@@ -43238,6 +43241,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { marks = (D && D.topups) ? D.topups() : {}; } catch (e) { marks = {}; }
 		try { DaimondI18n.currencies().forEach(function (c) { fx[c.code] = c.rate; }); } catch (e) { fx = {}; }
 		try { log = (L && L.rate) ? L.reprice(L.entries()) : null; } catch (e) { log = null; }
+		var d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+		var midnight = d0.getTime();
 		var list = M.pools({
 			authed:    !!st.authed,
 			credits:   (typeof st.credits === 'number') ? { minor: st.credits, currency: st.currency, entries: st.entries } : null,
@@ -43246,12 +43251,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			historyOf: function (pv) {
 				return (log && L.rateHistory) ? L.rateHistory(pv, M.RATE_WINDOW_MS, M.SCALE_SPAN_MS, now, log) : [];
 			},
+			// Each pool's own Today, local midnight to now (D-20261023-05): no total is drawn.
+			spentOf:   function (pv) { return (log && L.spent) ? L.spent(pv, midnight, now, log) : null; },
 			fx:        fx,
 			marks:     marks,
 			now:       now,
 			label:     function (kind, name) {
-				return kind === 'credits' ? t('money.daimond_credits')
-					: t(kind === 'limit' ? 'money.pool_limit' : 'money.pool_credit', { provider: name });
+				// A key's pool is named for its provider, as the owner reads it (audit item 5).
+				return kind === 'credits' ? t('money.daimond_credits') : name;
 			},
 		});
 		try { if (D && D.noteTopups) D.noteTopups(list); } catch (e) { /* the level just resets */ }
@@ -43330,8 +43337,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				: DaimondI18n.priceText(v);
 		};
 		var tag = function (p, v) {
-			return p.key === 'credits' ? DaimondI18n.priceTagMinor(Math.round(v * 100), p.currency)
-				: DaimondI18n.priceTag(v);
+			return DaimondI18n.poolTag(v, p.key === 'credits' ? p.currency : 'USD');
 		};
 		var box = document.createElement('div'); box.className = 'evpools'; box.setAttribute('role', 'list');
 		list.forEach(function (p) {
@@ -43358,8 +43364,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (cut[1]) mi.appendChild(document.createTextNode(cut[1]));
 			} else mi.textContent = left;
 			gau.appendChild(mi);
+			// The pool's own Today (D-20261023-05), a fourth column in every row: no total.
+			var day = document.createElement('span'); day.className = 'evday';
+			var dl = document.createElement('span'); dl.className = 'spend-label evdl'; dl.textContent = t('spend.period_day');
+			var dv = document.createElement('span'); dv.className = 'spend-amt evdv';
+			var dt = (p.today !== null) ? DaimondI18n.poolTag(p.today, 'USD') : null;
+			if (dt) dv.appendChild(dt); else dv.textContent = (p.today !== null) ? DaimondI18n.priceText(p.today) : '\u2014';
+			day.appendChild(dl); day.appendChild(dv);
 			row.innerHTML = G.batterySvg(p.level, p.low);
-			row.appendChild(who); row.appendChild(gau);
+			row.appendChild(who); row.appendChild(gau); row.appendChild(day);
 			box.appendChild(row);
 		});
 		return box;
@@ -43401,59 +43414,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		paintSpendHour();
 		if (locked) { el.innerHTML = ''; el.style.display = 'none'; return; }
 		el.dataset.hasCredits = (window.DaimondGateway && DaimondGateway.state().authed) ? '1' : '';
-		// NOT `t`: that is this file's translation function, and a `var t` here
-		// shadows it for the whole function -- including the `cell` below, which
-		// calls it. `var` hoists, so the shadow is in force before the assignment
-		// and the call throws "t is not a function".
-		var tot;
-		// A LEDGER THAT WILL NOT READ is a broken store, not a state the app moves
-		// through; the row keeps its last drawing rather than vanishing, because a
-		// row that comes and goes is the fault this one has just stopped being.
-		try { tot = DaimondLedger.totals(); } catch (e) { return; }
-		// THE ROW IS PERMANENT, and it reads $0.00 until something is spent.
-		//
-		// It used to hide itself while the totals were zero, so it APPEARED the
-		// moment the first turn cost anything -- a second after the user pressed
-		// Send, with their hand still in the rail. The strip is anchored to the
-		// foot of the rail, so the row arriving lifted everything above it: the
-		// new-chat button and the chats menu among them, and every control in the
-		// Admin drawer. That is the rule www/css/workspace.css states -- a
-		// transient element must never sit in the flow of clickable targets -- and
-		// the answer is the one `.astat-sync` already takes two rows above: the row
-		// never changes height, and only the figures in it vary.
-		//
-		// IT COULD NOT BE DONE UNTIL THE DRAWER WAS BOUNDED, and that is worth the
-		// sentence because the attempt was made, measured and taken back out first.
-		// `.admin-body` was capped at `min(70vh, 540px)` -- a figure equal to the
-		// room above the strip as it then stood -- so a strip 14px taller pushed
-		// the OPEN drawer 14px further up and `#new-diamond-btn`'s centre went
-		// under `.admin-scroll`. It is bounded by the rail now (`boundDrawer`), so
-		// a taller strip takes height off the drawer instead.
-		//
-		// Nothing is invented to fill it. Day, week and month are the same three
-		// cells they always were, reading zero, which is the true answer; and the
-		// door to the Spending panel is reachable from the first run rather than
-		// only after money has gone.
-		el.style.display = '';
+		// THE POOLS, each with its own Today (D-20261023-05, superseding the single trip
+		// meter of D-20261022-07): local midnight to now, from the account's synced ledger.
+		// There is no total, so with no pool there is no Today, and the row is not drawn.
+		// It is pinned at the rail's foot, outside every scroller, so its arrival takes
+		// height from the lists and moves no control above it.
 		var row = document.createElement('div');
-		function cell(label, part) {
-			var c = document.createElement('div'); c.className = 'spend-cell';
-			var l = document.createElement('span'); l.className = 'spend-label'; l.textContent = label;
-			var a = document.createElement('span'); a.className = 'spend-amt';
-			// A total resting partly on a model outside the price table says so in the
-			// tag's title, so an estimate is not presented as an exact figure.
-			var tag = DaimondI18n.priceTag(part.usd, { estimated: part.estimated,
-				note: part.estimated ? t('spend.includes_estimate') : '' });
-			if (tag) a.appendChild(tag);
-			c.appendChild(l); c.appendChild(a); return c;
-		}
-		// THE POOLS, then TODAY as the trip meter (D-20261022-07): local midnight to now,
-		// from the account's synced ledger. Week and Month are the Spending panel's.
 		var ev = poolsBlock();
 		if (ev) row.appendChild(ev);
-		var day = cell(t('spend.period_day'), tot.day);
-		day.classList.add('spend-today');
-		row.appendChild(day);
 		// A quiet "faster than usual" note when the live rate runs well
 		// above the user's own normal. It informs; it never blocks — the
 		// only thing that blocks is a big fan-out, at the dispatch gate.
@@ -43476,6 +43444,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			el.innerHTML = '';
 			while (row.firstChild) el.appendChild(row.firstChild);
 		}
+		// Empty (no pool, no note) it is not drawn.
+		el.style.display = el.firstChild ? '' : 'none';
 		if (quiet) return;
 		// A turn spends credits and writes to the workspace, so the status rows
 		// above these figures are stale the moment they are drawn.
@@ -59004,6 +58974,60 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+	/// THE PHONE'S TAG STRIP DRAWS WHOLE CHIPS ONLY (UNBLOCK-33 F8, rulings §7 "give every
+	/// text slot an overflow policy"). On the name's line a sideways scroller cut its last chip
+	/// under the gear ("perso", "healt") and took the name's last pixel ("Diamond project …").
+	/// Here the name has its width first (app.css: the strip's basis is 0), and the chips that
+	/// do not fit whole fold, from the end, into one "+N" chip; if even "+N" does not fit it is
+	/// not drawn. The desktop strip is untouched (every chip, as before).
+	var tagFoldMq = window.matchMedia('(max-width: 760px)');
+	function foldTags(strip) {
+		var chips = Array.prototype.filter.call(strip.children, function (c) {
+			return c.classList.contains('tag-chip') && !c.classList.contains('tag-more');
+		});
+		var more = strip.querySelector(':scope > .tag-more');
+		chips.forEach(function (c) { c.classList.remove('tag-fold'); });
+		if (more) more.hidden = true;
+		if (!tagFoldMq.matches || !strip.isConnected || !strip.clientWidth) return;
+		var cs = getComputedStyle(strip);
+		var edge = strip.getBoundingClientRect().right - (parseFloat(cs.paddingRight) || 0) + 0.5;
+		var fits = function (el) { return el.getBoundingClientRect().right <= edge; };
+		if (!chips.length || fits(chips[chips.length - 1])) return;
+		if (!more) {
+			more = document.createElement('span');
+			more.className = 'tag-chip tag-sm tag-more';
+			strip.appendChild(more);
+		}
+		more.hidden = false;
+		var hid = [];
+		for (var k = chips.length - 1; k >= 0; k--) {
+			chips[k].classList.add('tag-fold');
+			hid.unshift(chips[k].textContent);
+			more.textContent = '+' + hid.length;
+			more.title = hid.join(', ');
+			more.setAttribute('aria-label', more.textContent + ': ' + more.title);
+			if (fits(more)) return;
+		}
+		more.hidden = true;
+	}
+	/// Fold again whenever the strip or a chip changes size: the drawer opening (a closed
+	/// drawer measures 0), a turn of the phone, a theme with other chip padding.
+	var tagFoldRo = window.ResizeObserver ? new ResizeObserver(function (es) {
+		var seen = new Set();
+		es.forEach(function (e) {
+			var s = e.target.classList.contains('session-box-tags') ? e.target : e.target.parentElement;
+			if (s && !seen.has(s)) { seen.add(s); foldTags(s); }
+		});
+	}) : null;
+	function foldTagsWatch(strip) {
+		if (!tagFoldRo) return;
+		tagFoldRo.observe(strip);
+		Array.prototype.forEach.call(strip.children, function (c) { tagFoldRo.observe(c); });
+	}
+	tagFoldMq.addEventListener && tagFoldMq.addEventListener('change', function () {
+		document.querySelectorAll('.session-box-header > .session-box-tags').forEach(foldTags);
+	});
+
 	function diamondBox(f) {
 		var box = document.createElement('div');
 		// As on a chat tile: `paintRailRow` is the one place that decides which of
@@ -59204,12 +59228,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A row with nothing in it still costs its margin-top, so it is not appended
 		// at all rather than appended empty.
 
-		// Tags in their own row, below the meta. EVERY tag renders and the row
+		// Tags on the name's line, after the name (D-20261023-05 eye F1/F8: a row of their
+		// own made a tagged tile two lines, and the rail showed one tile a list at 1280x720
+		// and hid Chats on the phone). EVERY tag renders and the row
 		// scrolls sideways when they do not fit, because the +N overflow chip hid
 		// the very thing a tag exists for: an excluded tag cannot be clicked back
 		// into a filter, and a Diamond you cannot see the filing of is a Diamond
 		// you cannot find by it. A chip scrolled out of view is still in the tab
-		// order and still a click away; a chip never rendered is neither.
+		// order and still a click away; a chip never rendered is neither. THE PHONE
+		// is the exception (UNBLOCK-33 F8, the lead's ruling): there the cut chip
+		// lay under the gear, so `foldTags` draws whole chips and one "+N".
 		var tags = tagsOf(f);
 		if (tags.length > 0) {
 			var tagsRow = document.createElement('div');
@@ -59224,7 +59252,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
 				tagsRow.appendChild(chip);
 			});
-			box.appendChild(tagsRow);
+			header.insertBefore(tagsRow, name.nextSibling);
+			foldTagsWatch(tagsRow);
 		}
 		// THE METER ROW GOES LAST, BELOW THE TAGS, which is where it was asked to be.
 		// It is built further up and appended here: the comment on its construction

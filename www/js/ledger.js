@@ -694,8 +694,15 @@
 	/// the caller has it already; otherwise the store is read.
 	function rate(pv, windowMs, now, list) {
 		if (!(typeof windowMs === 'number' && windowMs > 0) || typeof now !== 'number' || !isFinite(now)) return 0;
+		return spent(pv, now - windowMs, now, list) * (HOUR_MS / windowMs);
+	}
+
+	/// What was billed to `pv` (one provider id or a list of them) after `from` and up to
+	/// `now`, in US dollars: a pool's own Today when `from` is local midnight (D-20261023-05).
+	function spent(pv, from, now, list) {
+		if (typeof from !== 'number' || typeof now !== 'number' || !isFinite(now)) return 0;
 		var want = Array.isArray(pv) ? pv : [pv];
-		var from = now - windowMs, sum = 0;
+		var sum = 0;
 		var log = Array.isArray(list) ? list : reprice(load());
 		for (var i = 0; i < log.length; i++) {
 			var e = log[i];
@@ -703,7 +710,7 @@
 			if (want.indexOf(e.pv || '') < 0) continue;
 			sum += e.u || 0;
 		}
-		return sum * (HOUR_MS / windowMs);
+		return sum;
 	}
 
 	/// The pool's own history of rates: the spend billed to `pv` in each window of
@@ -830,6 +837,7 @@
 		typicalTurn: typicalTurn,
 		perProvider: perProvider,
 		rate:        rate,
+		spent:       spent,
 		rateHistory: rateHistory,
 		repriced:    repriced,
 		series:      series,

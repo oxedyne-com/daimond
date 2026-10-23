@@ -43,7 +43,6 @@
 	'copy.what_fingerprint': 'l’empreinte de votre compte',
 	'copy.what_device': 'l’identifiant de {name}',
 	'copy.what_model': 'l’identifiant du modèle {id}',
-	'copy.what_default_model': 'l’identifiant du modèle par défaut',
 	'copy.what_handle':        'votre nom public',
 
 	// ── The top bar ────────────────────────────────────────────
@@ -1190,7 +1189,7 @@
 	'models.through': 'Via {provider}',
 	'models.key_label': 'Clé API {provider}',
 	'models.key_add_ph': 'Collez votre clé API',
-	'models.key_replace_ph': 'Collez une nouvelle clé pour remplacer celle-ci',
+	'models.key_replace_ph': 'Nouvelle clé',
 	'models.key_save': 'Enregistrer la clé',
 	'models.key_empty': 'Collez d’abord une clé.',
 	'models.count.one': '{n} modèle',
@@ -1209,7 +1208,6 @@
 	'models.top_up_to_use': 'rechargez pour utiliser',
 	'models.top_up': 'Rechargez vos crédits →',
 	'models.ask_provider': 'Lister les modèles',
-	'models.ask_provider_again': 'Redemander à ce fournisseur',
 	'models.list_asked': 'Listé {when}.',
 	'models.list_never': 'Jamais demandé.',
 	'models.add_key_first': 'Ajoutez d’abord une clé',
@@ -1219,7 +1217,6 @@
 	'models.favourites': 'Favoris',
 	'models.find': 'Rechercher un modèle',
 	'models.no_match': 'Aucun modèle ne correspond',
-	'models.is_default': 'par défaut',
 	'models.model_is_default': 'Les nouveaux chats et diamonds démarrent sur ce modèle.',
 	'models.model_make_default': 'Faire démarrer les nouveaux chats et diamonds sur ce modèle.',
 	'models.model_paid': 'Dépense votre solde Daimond, via {provider}.',
@@ -1254,8 +1251,6 @@
 	'models.route_clear': 'Effacer',
 	'models.routing_disclosure': 'Modèles…',
 	'models.remove': 'Retirer {provider}',
-	'models.starts_on': 'Les nouveaux chats démarrent sur : {model}',
-	'models.no_default': 'Aucun modèle par défaut. Mettez une étoile à l’un des modèles ci-dessus.',
 	'models.none_yet': 'Aucun fournisseur',
 	'models.not_offered': 'non proposé',
 	'models.err_refused': 'Le service de comptes a refusé (HTTP {status}).',
@@ -1264,9 +1259,6 @@
 	'models.err_key_refused': 'Le fournisseur a refusé la clé (HTTP {status}).',
 	// What is left on a provider key, and how that is known. The manual line is
 	// deliberately not called a balance: it is the user’s own figure less an estimate.
-	'models.credit_auto': 'Il reste {amount} sur cette clé, selon le fournisseur le {when}.',
-	'models.credit_manual': 'Il reste {amount}. Vos {base} du {when}, moins environ {spent} dépensés depuis.',
-	'models.credit_unknown': 'On ne sait rien de ce qui reste sur cette clé.',
 	'models.credit_check': 'Demander ce qu’il reste',
 	'models.credit_recheck': 'Redemander',
 	'models.credit_probe_failed': '{provider} n’a pas voulu dire ce qu’il reste. Dites-le vous-même à Daimond.',
@@ -1277,16 +1269,8 @@
 	'models.credit_base_bad': 'Ce n’est pas un montant. Saisissez un nombre de dollars américains.',
 	// Un chiffre demandé au fournisseur, dont cet appareil a vu partir de
 	// l’argent depuis.
-	'models.credit_auto_spent': 'Il reste {amount}. Le fournisseur annonçait {base} le {when}, moins environ {spent} dépensés ici depuis.',
 	// L’âge du chiffre. Sans lui, un montant qui ne bouge plus ressemble
 	// exactement à un montant à jour.
-	'models.age_now': 'Vérifié à l’instant.',
-	'models.age_mins.one': 'Vérifié il y a {n} minute.',
-	'models.age_mins.other': 'Vérifié il y a {n} minutes.',
-	'models.age_hours.one': 'Vérifié il y a {n} heure.',
-	'models.age_hours.other': 'Vérifié il y a {n} heures.',
-	'models.age_days.one': 'Vérifié il y a {n} jour.',
-	'models.age_days.other': 'Vérifié il y a {n} jours.',
 	'models.age_failed': 'La dernière vérification n’a pas répondu, ce chiffre n’a donc pas bougé depuis.',
 
 	// ── The Web panel, continued ───────────────────────────────
@@ -3534,6 +3518,8 @@
 	'models.everyone_head': 'Tout le monde utilise',
 	'models.except_head': 'Sauf',
 	'models.jobs_head': 'Tâches',
+	'models.providers_head': 'Fournisseurs',
+	'models.refresh_list': 'Actualiser la liste',
 	'models.job_workers': 'Workers',
 	'models.job_images': 'Images',
 	'models.job_drafting': 'Brouillons',

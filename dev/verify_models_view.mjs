@@ -282,12 +282,16 @@ async function openPanel() {
 const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /// Choose `text` (a row's leading words) in the picker `mp` (a Locator on the `.mp` wrapper).
+// `text` is the row's name; `{ name, provider }` picks that provider's twin, since a row
+// now shows only the model's name (MODELS-TIDY item 1) and its payer on the sub-line.
 async function choose(mp, text) {
 	const inp = mp.locator('input.mp-in');
 	await inp.scrollIntoViewIfNeeded();
 	await inp.click();
 	await p.waitForSelector('#mp-pop', { state: 'visible', timeout: 5000 });
-	const row = p.locator('#mp-pop .mp-row').filter({ has: p.locator('.mp-main', { hasText: new RegExp('^\\s*' + reEsc(text) + '(\\s|·|\\(|$)') }) }).first();
+	const nm = typeof text === 'string' ? text : text.name;
+	const rows = typeof text === 'string' ? p.locator('#mp-pop .mp-row') : p.locator(`#mp-pop .mp-row[data-provider="${text.provider}"]`);
+	const row = rows.filter({ has: p.locator('.mp-main', { hasText: new RegExp('^\\s*' + reEsc(nm) + '(\\s|·|\\(|$)') }) }).first();
 	await row.scrollIntoViewIfNeeded();
 	await row.click();
 	await p.waitForTimeout(400);
@@ -392,7 +396,7 @@ try {
 		&& ['Oxegen', 'Hematite', 'Ontheism', 'Reit Hoogland'].every(n => prior.dia[n] === '|||||'),
 		'his shape: Daimond and Email pinned, the other four following', JSON.stringify(prior.dia));
 	const PN = await p.evaluate((P) => window.DaimondModels.providerName(P), P);
-	const X_T = `GLM 5.3 Flash · ${PN}`;	// X under the mock's own key: the same model is on "Fireworks AI" too
+	const X_T = { name: 'GLM 5.3 Flash', provider: P };	// X under the mock's own key: the same model is on "Fireworks AI" too
 	const rail = await p.evaluate(() => [...document.querySelectorAll('#diamond-list .diamond-box')]
 		.map(b => ((b.querySelector('.session-box-name') || {}).textContent || '').trim()));
 	const others = rail.filter(n => n && !NAMES.includes(n));
@@ -411,7 +415,8 @@ try {
 	check(v1.firstIn && v1.heads[0] === 'Everyone uses', 'V1 Everyone uses is the first control', JSON.stringify(v1.heads));
 	check(/^DeepSeek V4\.1 Flash\b/.test(v1.value), 'V1 it shows the standing default by its display name', v1.value);
 	check(/^About \S+ a turn$/.test(v1.turn.trim()), 'V1 under it, what a turn costs', v1.turn);
-	check(!v1.draftOld && v1.foot && v1.jobs.length === 4, 'Jobs holds Workers, Images, Drafting, Summarising; the old Drafting row is gone',
+	check(!v1.draftOld && !v1.foot && v1.jobs.length === 4,	// MODELS-TIDY: the "New chats start on" foot is gone (spec l.150)
+	 'Jobs holds Workers, Images, Drafting, Summarising; the old Drafting row is gone',
 		v1.jobs.join(' '));
 	await shotAs('rest_desk');
 
@@ -503,7 +508,7 @@ try {
 		localStorage.setItem('daimond-diamond-models', JSON.stringify(all));
 	}, { id: ids.Oxegen, P, X_M });
 	await openPanel();
-	await choose(jobMp('workers'), `Fast · ${PN}`);
+	await choose(jobMp('workers'), { name: 'Fast', provider: P });
 	const gw = await p.evaluate(() => window.DaimondModels.storedChoice('workers'));
 	check(gw && gw.model === 'mock/fast', 'Jobs → Workers sets the global Workers pick', JSON.stringify(gw));
 	await choose(everyoneMp(), X_T);
@@ -540,7 +545,7 @@ try {
 		localStorage.setItem('daimond-diamond-models', JSON.stringify(all));
 	}, { id: ids.Ontheism, P, PEER_M });
 	await openPanel();
-	await choose(everyoneMp(), `Eyes · ${PN}`);
+	await choose(everyoneMp(), { name: 'Eyes', provider: P });
 	await p.click('#models-list .models-ask button.models-move');
 	await p.waitForTimeout(400);
 	clearMockLog();

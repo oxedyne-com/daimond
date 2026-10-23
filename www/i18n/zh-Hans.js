@@ -47,7 +47,6 @@
 	'copy.what_fingerprint':   '你的账户指纹',
 	'copy.what_device':        '设备 {name} 的 ID',
 	'copy.what_model':         '模型 ID {id}',
-	'copy.what_default_model': '默认模型 ID',
 	'copy.what_handle':        '你的公开名称',
 
 	// ── 顶栏 ───────────────────────────────────────────────────
@@ -174,7 +173,7 @@
 	'models.through':              '经由 {provider}',
 	'models.key_label':            '{provider} API 密钥',
 	'models.key_add_ph':           '粘贴你的 API 密钥',
-	'models.key_replace_ph':       '粘贴新密钥以替换此密钥',
+	'models.key_replace_ph':       '新密钥',
 	'models.key_save':             '保存密钥',
 	'models.key_empty':            '请先粘贴密钥。',
 	'models.count.one':            '{n} 个模型',
@@ -194,7 +193,6 @@
 	'models.top_up_to_use':        '充值后可用',
 	'models.top_up':               '给额度充值 →',
 	'models.ask_provider': '列出模型',
-	'models.ask_provider_again':   '再问一次这家提供商',
 	'models.list_asked':           '{when} 列出的。',
 	'models.list_never':           '从没问过。',
 	'models.add_key_first':        '请先添加密钥',
@@ -205,7 +203,6 @@
 	'models.favourites': '常用模型',
 	'models.find': '搜索模型',
 	'models.no_match': '没有匹配的模型',
-	'models.is_default':           '默认',
 	'models.model_is_default':     '新的聊天和 diamond 都从这个模型开始。',
 	'models.model_make_default':   '让新的聊天和 diamond 都从这个模型开始。',
 	'models.model_paid':           '经由 {provider}，花你的 Daimond 余额。',
@@ -240,8 +237,6 @@
 	'models.route_clear':          '清除',
 	'models.routing_disclosure':   '模型…',
 	'models.remove':               '移除 {provider}',
-	'models.starts_on':            '新聊天从这个模型开始：{model}',
-	'models.no_default':           '还没有默认模型。给上面的一个加星。',
 	'models.none_yet':             '还没有提供商',
 	'models.not_offered':          '未提供',
 	'models.err_refused':          '账户服务拒绝了（HTTP {status}）。',
@@ -250,9 +245,6 @@
 	'models.err_key_refused':      '提供商拒绝了这个密钥（HTTP {status}）。',
 	// 一把提供商密钥上还剩多少，以及这个数是怎么来的。手填的那一行故意不叫
 	// “余额”：它是用户自己报的数，减去估算出来的花费。
-	'models.credit_auto':          '这把密钥还剩 {amount}，是提供商在 {when} 说的。',
-	'models.credit_manual':        '还剩 {amount}。你在 {when} 报的 {base}，减去此后估算花掉的 {spent}。',
-	'models.credit_unknown':       '这把密钥还剩多少，无从得知。',
 	'models.credit_check':         '问问还剩多少',
 	'models.credit_recheck':       '再问一次',
 	'models.credit_probe_failed':  '{provider} 不肯说还剩多少。那就直接告诉 Daimond。',
@@ -262,15 +254,7 @@
 	'models.credit_base_update':   '更新我填的数',
 	'models.credit_base_bad':      '这不是一个金额。请输入美元数字。',
 	// 问来的数目，减去此后这台设备亲眼看着花掉的钱。
-	'models.credit_auto_spent':    '还剩 {amount}。提供商在 {when} 说的是 {base}，减去此后在这里花掉的约 {spent}。',
 	// 数字有多旧。没有这一句，停住不动的数字和最新的数字看着一模一样。
-	'models.age_now':              '刚刚查过。',
-	'models.age_mins.one':         '{n} 分钟前查过。',
-	'models.age_mins.other':       '{n} 分钟前查过。',
-	'models.age_hours.one':        '{n} 小时前查过。',
-	'models.age_hours.other':      '{n} 小时前查过。',
-	'models.age_days.one':         '{n} 天前查过。',
-	'models.age_days.other':       '{n} 天前查过。',
 	'models.age_failed':           '上次查询没有回应，这个数字从那以后就没有动过。',
 
 	// ── 搜索 ───────────────────────────────────────────────────
@@ -3549,6 +3533,8 @@
 	'models.everyone_head': '所有人使用',
 	'models.except_head': '例外',
 	'models.jobs_head': '任务',
+	'models.providers_head': '提供商',
+	'models.refresh_list': '刷新列表',
 	'models.job_workers': '工作者',
 	'models.job_images': '图像',
 	'models.job_drafting': '起草',

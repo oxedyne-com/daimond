@@ -258,34 +258,13 @@
 		if (!rail) return;
 		var pairs = [['--rail-win-d', '#diamond-list', '.diamond-box'], ['--rail-win-c', '#session-list', '.session-box']];
 		pairs.forEach(function (p) {
+			// The floor is the phone's alone (UNBLOCK-33, 23 Oct): the desktop rail's
+			// lists give their height to the money pools pinned at its foot.
+			if (!isPhone()) { rail.style.removeProperty(p[0]); return; }
 			var px = listFloor(document.querySelector(p[1]), p[2]);
 			if (!px) return;                                         // keep the last reading
 			if (rail.style.getPropertyValue(p[0]) !== px + 'px') rail.style.setProperty(p[0], px + 'px');
 		});
-		fitTop(rail);
-	}
-
-	/// THE DESKTOP RAIL holds the same floor (D-20261020-14 EV, the owner's pick of
-	/// variant F): the money pools at its foot took room from the two lists, and a
-	/// window of two tiles is the fault UNBLOCK-30 named on the phone. `#rail-top`
-	/// may not shrink below what it holds with both lists at their floors, so on a
-	/// short window `.rail-scroll` (a real scroller on the desktop too, app.css)
-	/// scrolls instead. `applyRailSplit` keeps the divider between the two floors.
-	/// On a phone the drawer is the scroller and `#rail-top` is not bounded.
-	function fitTop(rail) {
-		var top = document.getElementById('rail-top');
-		if (!top || isPhone()) { rail.style.removeProperty('--rail-top-min'); return; }
-		var lists = { 'diamond-list': '--rail-win-d', 'session-list': '--rail-win-c' };
-		var gap = parseFloat(getComputedStyle(top).rowGap) || 0, need = 0, shown = 0;
-		for (var i = 0; i < top.children.length; i++) {
-			var k = top.children[i];
-			if (!k.getClientRects().length) continue;               // not drawn
-			shown++;
-			var v = lists[k.id];
-			need += v ? (parseFloat(rail.style.getPropertyValue(v)) || 0) : k.getBoundingClientRect().height;
-		}
-		var px = Math.ceil(need + gap * Math.max(0, shown - 1));
-		if (rail.style.getPropertyValue('--rail-top-min') !== px + 'px') rail.style.setProperty('--rail-top-min', px + 'px');
 	}
 	function queueFit() {
 		if (fitQueued) return;

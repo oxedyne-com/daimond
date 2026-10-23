@@ -43,7 +43,6 @@
 	'copy.what_fingerprint': 'la huella de tu cuenta',
 	'copy.what_device': 'el ID de {name}',
 	'copy.what_model': 'el ID del modelo {id}',
-	'copy.what_default_model': 'el ID del modelo predeterminado',
 	'copy.what_handle':        'tu nombre público',
 
 	// ── The top bar ────────────────────────────────────────────
@@ -1186,7 +1185,7 @@
 	'models.through': 'A través de {provider}',
 	'models.key_label': 'Clave API de {provider}',
 	'models.key_add_ph': 'Pega tu clave API',
-	'models.key_replace_ph': 'Pega una clave nueva para reemplazar esta',
+	'models.key_replace_ph': 'Clave nueva',
 	'models.key_save': 'Guardar clave',
 	'models.key_empty': 'Pega primero una clave.',
 	'models.count.one': '{n} modelo',
@@ -1205,7 +1204,6 @@
 	'models.top_up_to_use': 'recarga para usar',
 	'models.top_up': 'Recarga tus créditos →',
 	'models.ask_provider': 'Listar modelos',
-	'models.ask_provider_again': 'Preguntar de nuevo a este proveedor',
 	'models.list_asked': 'Listado {when}.',
 	'models.list_never': 'Nunca se preguntó.',
 	'models.add_key_first': 'Añade antes una clave',
@@ -1215,7 +1213,6 @@
 	'models.favourites': 'Favoritos',
 	'models.find': 'Buscar modelos',
 	'models.no_match': 'Ningún modelo coincide',
-	'models.is_default': 'predeterminado',
 	'models.model_is_default': 'Los chats y diamonds nuevos arrancan con este modelo.',
 	'models.model_make_default': 'Hacer que los chats y diamonds nuevos arranquen con este modelo.',
 	'models.model_paid': 'Gasta tu saldo de Daimond, vía {provider}.',
@@ -1250,8 +1247,6 @@
 	'models.route_clear': 'Borrar',
 	'models.routing_disclosure': 'Modelos…',
 	'models.remove': 'Quitar {provider}',
-	'models.starts_on': 'Los chats nuevos arrancan con: {model}',
-	'models.no_default': 'Todavía no hay modelo predeterminado. Marca con la estrella uno de arriba.',
 	'models.none_yet': 'Aún no hay proveedor',
 	'models.not_offered': 'no ofrecido',
 	'models.err_refused': 'El servicio de cuentas rechazó la petición (HTTP {status}).',
@@ -1260,9 +1255,6 @@
 	'models.err_key_refused': 'El proveedor rechazó la clave (HTTP {status}).',
 	// What is left on a provider key, and how that is known. The manual line is
 	// deliberately not called a balance: it is the user’s own figure less an estimate.
-	'models.credit_auto': 'Quedan {amount} en esta clave, según el proveedor el {when}.',
-	'models.credit_manual': 'Quedan {amount}. Tus {base} del {when}, menos unos {spent} gastados desde entonces.',
-	'models.credit_unknown': 'No se sabe nada de lo que queda en esta clave.',
 	'models.credit_check': 'Preguntar qué queda',
 	'models.credit_recheck': 'Volver a preguntar',
 	'models.credit_probe_failed': '{provider} no ha querido decir qué queda. Díselo tú a Daimond.',
@@ -1272,16 +1264,8 @@
 	'models.credit_base_update': 'Actualizar mi cifra',
 	'models.credit_base_bad': 'Eso no es un importe. Escribe un número de dólares estadounidenses.',
 	// Una cifra consultada de la que este dispositivo ya vio salir dinero.
-	'models.credit_auto_spent': 'Quedan {amount}. El proveedor dijo {base} el {when}, menos unos {spent} gastados aquí desde entonces.',
 	// Qué antigüedad tiene la cifra. Sin esto, una que se ha quedado quieta
 	// parece igual de reciente que una al día.
-	'models.age_now': 'Consultado hace un momento.',
-	'models.age_mins.one': 'Consultado hace {n} minuto.',
-	'models.age_mins.other': 'Consultado hace {n} minutos.',
-	'models.age_hours.one': 'Consultado hace {n} hora.',
-	'models.age_hours.other': 'Consultado hace {n} horas.',
-	'models.age_days.one': 'Consultado hace {n} día.',
-	'models.age_days.other': 'Consultado hace {n} días.',
 	'models.age_failed': 'La última consulta no obtuvo respuesta, así que esta cifra no se ha movido desde entonces.',
 
 	// ── The Web panel, continued ───────────────────────────────
@@ -3519,6 +3503,8 @@
 	'models.everyone_head': 'Todos usan',
 	'models.except_head': 'Excepto',
 	'models.jobs_head': 'Tareas',
+	'models.providers_head': 'Proveedores',
+	'models.refresh_list': 'Actualizar lista',
 	'models.job_workers': 'Trabajadores',
 	'models.job_images': 'Imágenes',
 	'models.job_drafting': 'Borradores',

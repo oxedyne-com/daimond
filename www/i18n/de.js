@@ -45,7 +45,6 @@
 	'copy.what_fingerprint': 'Deinen Konto-Fingerabdruck',
 	'copy.what_device': 'Die ID von {name}',
 	'copy.what_model': 'Modell-ID {id}',
-	'copy.what_default_model': 'Die ID des Standardmodells',
 	'copy.what_handle':        'Deinen öffentlichen Namen',
 
 	// ── The top bar ────────────────────────────────────────────
@@ -1189,7 +1188,7 @@
 	'models.through': 'Über {provider}',
 	'models.key_label': '{provider}-API-Schlüssel',
 	'models.key_add_ph': 'API-Schlüssel einfügen',
-	'models.key_replace_ph': 'Neuen Schlüssel einfügen, um diesen zu ersetzen',
+	'models.key_replace_ph': 'Neuer Schlüssel',
 	'models.key_save': 'Schlüssel speichern',
 	'models.key_empty': 'Zuerst einen Schlüssel einfügen.',
 	'models.count.one': '{n} Modell',
@@ -1208,7 +1207,6 @@
 	'models.top_up_to_use': 'zum Nutzen aufladen',
 	'models.top_up': 'Guthaben aufladen →',
 	'models.ask_provider': 'Modelle auflisten',
-	'models.ask_provider_again': 'Diesen Anbieter erneut fragen',
 	'models.list_asked': 'Zuletzt aufgelistet {when}.',
 	'models.list_never': 'Noch nie gefragt.',
 	'models.add_key_first': 'Erst einen Schlüssel hinzufügen',
@@ -1218,7 +1216,6 @@
 	'models.favourites': 'Favoriten',
 	'models.find': 'Modelle suchen',
 	'models.no_match': 'Kein Modell passt',
-	'models.is_default': 'Standard',
 	'models.model_is_default': 'Neue Chats und Diamonds starten mit diesem Modell.',
 	'models.model_make_default': 'Neue Chats und Diamonds mit diesem Modell starten lassen.',
 	'models.model_paid': 'Gibt dein Daimond-Guthaben aus, über {provider}.',
@@ -1253,8 +1250,6 @@
 	'models.route_clear': 'Löschen',
 	'models.routing_disclosure': 'Modelle…',
 	'models.remove': '{provider} entfernen',
-	'models.starts_on': 'Neue Chats starten mit: {model}',
-	'models.no_default': 'Noch kein Standardmodell. Markiere oben eines mit dem Stern.',
 	'models.none_yet': 'Noch kein Anbieter',
 	'models.not_offered': 'nicht angeboten',
 	'models.err_refused': 'Der Kontodienst hat abgelehnt (HTTP {status}).',
@@ -1263,9 +1258,6 @@
 	'models.err_key_refused': 'Der Anbieter hat den Schlüssel abgelehnt (HTTP {status}).',
 	// What is left on a provider key, and how that is known. The manual line is
 	// deliberately not called a balance: it is the user’s own figure less an estimate.
-	'models.credit_auto': 'Noch {amount} auf diesem Schlüssel, laut Anbieter am {when}.',
-	'models.credit_manual': 'Noch {amount}. Deine {base} vom {when}, abzüglich rund {spent} seither.',
-	'models.credit_unknown': 'Über den Rest auf diesem Schlüssel ist nichts bekannt.',
 	'models.credit_check': 'Nachfragen, was übrig ist',
 	'models.credit_recheck': 'Noch einmal fragen',
 	'models.credit_probe_failed': '{provider} wollte nicht sagen, was übrig ist. Sag es Daimond stattdessen selbst.',
@@ -1275,16 +1267,8 @@
 	'models.credit_base_update': 'Meine Angabe aktualisieren',
 	'models.credit_base_bad': 'Das ist kein Betrag. Gib eine Zahl in US-Dollar ein.',
 	// Eine abgefragte Zahl, von der dieses Gerät seither Geld abgehen sah.
-	'models.credit_auto_spent': 'Noch {amount}. Der Anbieter nannte {base} am {when}, abzüglich rund {spent}, die seither hier ausgegeben wurden.',
 	// Wie alt die Angabe ist. Ohne das sieht eine Zahl, die stillsteht, genauso
 	// aus wie eine aktuelle.
-	'models.age_now': 'Gerade eben abgefragt.',
-	'models.age_mins.one': 'Vor {n} Minute abgefragt.',
-	'models.age_mins.other': 'Vor {n} Minuten abgefragt.',
-	'models.age_hours.one': 'Vor {n} Stunde abgefragt.',
-	'models.age_hours.other': 'Vor {n} Stunden abgefragt.',
-	'models.age_days.one': 'Vor {n} Tag abgefragt.',
-	'models.age_days.other': 'Vor {n} Tagen abgefragt.',
 	'models.age_failed': 'Die letzte Abfrage blieb ohne Antwort, seither hat sich diese Zahl nicht bewegt.',
 
 	// ── The Web panel, continued ───────────────────────────────
@@ -3526,6 +3510,8 @@
 	'models.everyone_head': 'Alle nutzen',
 	'models.except_head': 'Außer',
 	'models.jobs_head': 'Aufgaben',
+	'models.providers_head': 'Anbieter',
+	'models.refresh_list': 'Liste aktualisieren',
 	'models.job_workers': 'Worker',
 	'models.job_images': 'Bilder',
 	'models.job_drafting': 'Entwürfe',

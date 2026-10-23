@@ -49,7 +49,6 @@
 	'copy.what_fingerprint':   '계정 지문',
 	'copy.what_device':        '{name}의 ID',
 	'copy.what_model':         '모델 ID {id}',
-	'copy.what_default_model': '기본 모델 ID',
 	'copy.what_handle':        '공개 이름',
 
 	// ── 상단 바 ────────────────────────────────────────────────
@@ -176,7 +175,7 @@
 	'models.through':              '{provider} 경유',
 	'models.key_label':            '{provider} API 키',
 	'models.key_add_ph':           'API 키 붙여넣기',
-	'models.key_replace_ph':       '새 키를 붙여넣어 이 키를 교체',
+	'models.key_replace_ph':       '새 키',
 	'models.key_save':             '키 저장',
 	'models.key_empty':            '먼저 키를 붙여넣으세요.',
 	'models.count.one':            '모델 {n}개',
@@ -196,7 +195,6 @@
 	'models.top_up_to_use':        '쓰려면 충전',
 	'models.top_up':               '크레딧 충전하기 →',
 	'models.ask_provider': '모델 목록 보기',
-	'models.ask_provider_again':   '이 제공자에게 다시 물어보기',
 	'models.list_asked':           '{when}에 목록을 받았어요.',
 	'models.list_never':           '한 번도 물어본 적 없어요.',
 	'models.add_key_first':        '키를 먼저 추가하세요',
@@ -207,7 +205,6 @@
 	'models.favourites': '자주 쓰는 모델',
 	'models.find': '모델 검색',
 	'models.no_match': '일치하는 모델이 없습니다',
-	'models.is_default':           '기본',
 	'models.model_is_default':     '새 채팅과 diamond은 이 모델에서 시작해요.',
 	'models.model_make_default':   '새 채팅과 diamond이 이 모델에서 시작하게 해요.',
 	'models.model_paid':           '{provider}을(를) 거쳐 Daimond 잔액을 써요.',
@@ -242,8 +239,6 @@
 	'models.route_clear':          '지우기',
 	'models.routing_disclosure':   '모델…',
 	'models.remove':               '{provider} 지우기',
-	'models.starts_on':            '새 채팅이 시작할 모델: {model}',
-	'models.no_default':           '아직 기본 모델이 없어요. 위에서 하나에 별을 달아 주세요.',
 	'models.none_yet':             '제공자 없음',
 	'models.not_offered':          '제공 안 됨',
 	'models.err_refused':          '계정 서비스가 거절했어요(HTTP {status}).',
@@ -252,9 +247,6 @@
 	'models.err_key_refused':      '제공자가 키를 거절했어요(HTTP {status}).',
 	// 제공자 키에 얼마나 남았는지, 그리고 그걸 어떻게 아는지. 직접 적은 줄을
 	// 일부러 ‘잔액’이라 부르지 않아요. 본인이 적은 숫자에서 어림한 지출을 뺀 값이니까요.
-	'models.credit_auto':          '이 키에 {amount} 남았어요. {when}에 제공자가 그렇게 알려 줬어요.',
-	'models.credit_manual':        '{amount} 남았어요. {when}에 적어 둔 {base}에서 그 뒤로 쓴 {spent}쯤을 뺀 값이에요.',
-	'models.credit_unknown':       '이 키에 얼마가 남았는지는 알 수 없어요.',
 	'models.credit_check':         '얼마 남았는지 묻기',
 	'models.credit_recheck':       '다시 묻기',
 	'models.credit_probe_failed':  '{provider}이(가) 얼마 남았는지 알려 주지 않았어요. 대신 Daimond에 알려 주세요.',
@@ -264,15 +256,7 @@
 	'models.credit_base_update':   '내가 적은 금액 고치기',
 	'models.credit_base_bad':      '금액이 아니에요. 미국 달러 숫자를 넣어 주세요.',
 	// 물어본 금액에서, 그 뒤로 이 기기가 지켜본 지출을 뺀 값이에요.
-	'models.credit_auto_spent':    '{amount} 남았어요. {when}에 제공자가 알려 준 {base}에서, 그 뒤로 여기서 쓴 {spent}쯤을 뺀 값이에요.',
 	// 숫자가 얼마나 오래됐는지. 이것이 없으면 멈춘 숫자와 최신 숫자가 똑같아 보여요.
-	'models.age_now':              '방금 확인했어요.',
-	'models.age_mins.one':         '{n}분 전에 확인했어요.',
-	'models.age_mins.other':       '{n}분 전에 확인했어요.',
-	'models.age_hours.one':        '{n}시간 전에 확인했어요.',
-	'models.age_hours.other':      '{n}시간 전에 확인했어요.',
-	'models.age_days.one':         '{n}일 전에 확인했어요.',
-	'models.age_days.other':       '{n}일 전에 확인했어요.',
 	'models.age_failed':           '지난번 확인은 응답이 없어서, 그 뒤로 이 숫자는 그대로예요.',
 
 	// ── 검색 ───────────────────────────────────────────────────
@@ -3559,6 +3543,8 @@
 	'models.everyone_head': '모두 사용',
 	'models.except_head': '예외',
 	'models.jobs_head': '작업',
+	'models.providers_head': '제공자',
+	'models.refresh_list': '목록 새로 고침',
 	'models.job_workers': '워커',
 	'models.job_images': '이미지',
 	'models.job_drafting': '초안',

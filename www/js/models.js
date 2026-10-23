@@ -2034,11 +2034,11 @@
 		return null;
 	}
 
-	/// A balance as money, from a USD figure rather than the gateway's minor units.
-	/// A price-tag mark, drawn as the tag wherever the string lands
-	/// (`fillPrices`, `pricesHtml`, or `pricesText` where no tag can be drawn).
+	/// What is on a key, from its US dollar figure, as a mark drawn wherever the string lands
+	/// (`fillPrices`, `pricesHtml`, `pricesText`): the one pool formatter the rail uses too
+	/// (`DaimondI18n.poolTag`).
 	function usd(v) {
-		return DaimondI18n.priceMark(v, { mode: 'fine' });
+		return DaimondI18n.poolMark(v, 'USD');
 	}
 
 	/// Every model Daimond can reach, across every provider with a key.
@@ -2089,7 +2089,7 @@
 				why:     mine ? credits.why : '',
 				via:     mine ? credits.via : '',
 				balance: mine
-					? (credits.state === 'ready' ? DaimondI18n.priceMarkMinor(credits.bal, credits.cur) : '')
+					? (credits.state === 'ready' ? DaimondI18n.poolMark(credits.bal / 100, credits.cur) : '')
 					: (cr ? usd(cr.usd) : ''),
 				state:   mine ? credits.state : '',
 				// How the balance beside the name is known, so the row can say. Empty when
@@ -3136,8 +3136,10 @@
 	function keyLabel(p) {
 		// [glyph role, words]: the glyph is drawn by its `.lead-*` role, never typed (app.css).
 		if (!p.minted) {
+			// A key that is set says nothing: the field's "Paste a new key to replace this one"
+			// already says it (D-20261018-09 §6 took "key set" out).
 			return p.sealed ? ['lead-lock', t('models.sealed')]
-				: p.hasKey ? ['lead-key', t('models.key_set')] : ['lead-warn', t('models.no_key')];
+				: p.hasKey ? ['', ''] : ['lead-warn', t('models.no_key')];
 		}
 		switch (p.state) {
 			case 'ready':     return ['', ''];                        // the balance says it better
@@ -3166,7 +3168,8 @@
 		wrap.appendChild(html('<div class="models-credit-age"></div>'));
 		paintCredit(wrap);
 
-		// Ask the provider, where it will answer.
+		// The provider's one "Ask again", inside its own row (D-20261018-09 §6, "Moved into
+		// Providers"); the catalogue's button below refreshes the list and asks nothing else.
 		if (p.canProbeCredit) {
 			var ask = document.createElement('button');
 			ask.className = 'models-refetch';
@@ -3183,8 +3186,9 @@
 			wrap.appendChild(ask);
 		}
 
-		// And the user's own figure, always available: it is the only thing that works for a
-		// provider that will not answer, and the thing to fall back on when a probe fails.
+		// And the user's own figure, only where the provider cannot answer (eye F2, D-20261023-05
+		// item 9): there it is the only way to know; where it can, "Ask again" is the one way.
+		if (p.canProbeCredit) return wrap;
 		// A div and a button rather than a form: nothing here needs submit semantics, and a
 		// form inside a settings panel is one stray Enter away from navigating the page.
 		var row = document.createElement('div');
@@ -3194,6 +3198,7 @@
 		input.className = 'models-credit-input';
 		input.inputMode = 'decimal';
 		input.placeholder = t('models.credit_base_ph');
+		fitPlaceholder(input);
 		input.setAttribute('aria-label', t('models.credit_base_label'));
 		var set = document.createElement('button');
 		set.type = 'button';
@@ -3384,26 +3389,9 @@
 	/// figure, the moment it was read, and the spending applied since, in the same shape the
 	/// manual sentence has always used.
 	function creditSentence(c) {
-		if (c && c.mode === 'auto') {
-			if (c.spentUsd > 0) {
-				return t('models.credit_auto_spent', {
-					amount: usd(c.usd),
-					base:   usd(c.probedUsd),
-					spent:  usd(c.spentUsd),
-					when:   window.DaimondTime.fmtLocal(c.asOf, 'when'),
-				});
-			}
-			return t('models.credit_auto', { amount: usd(c.usd), when: window.DaimondTime.fmtLocal(c.asOf, 'when') });
-		}
-		if (c && c.mode === 'manual') {
-			return t('models.credit_manual', {
-				amount: usd(c.usd),
-				base:   usd(c.baseUsd),
-				spent:  usd(c.spentUsd),
-				when:   window.DaimondTime.fmtLocal(c.baseAt, 'when'),
-			});
-		}
-		return t('models.credit_unknown');
+		// The figure and its tag, and nothing else: its age is the line beside it (eye F2).
+		if (c && (c.mode === 'auto' || c.mode === 'manual')) return t('models.balance_left', { amount: usd(c.usd) });
+		return '';
 	}
 
 	/// How old the reading is, and whether the last attempt to renew it answered.
@@ -3436,13 +3424,14 @@
 	/// this line is whether the number is minutes or hours old, and a reader who has to work out
 	/// which from a timestamp is being asked to do the app's job.
 	function agoWords(ts) {
+		// The short words the rail's tiles use ("2m ago"), beside the figure (eye F2).
 		var secs = Math.max(0, Date.now() - ts) / 1000;
-		if (secs < 90) return t('models.age_now');
+		if (secs < 90) return t('sync.when_just_now');
 		var mins = Math.round(secs / 60);
-		if (mins < 60) return tn('models.age_mins', mins);
+		if (mins < 60) return t('sync.when_mins', { n: mins });
 		var hrs = Math.round(mins / 60);
-		if (hrs < 24) return tn('models.age_hours', hrs);
-		return tn('models.age_days', Math.round(hrs / 24));
+		if (hrs < 24) return t('sync.when_hours', { n: hrs });
+		return t('sync.when_days', { n: Math.round(hrs / 24) });
 	}
 
 	/// Write both sentences into a credit block that is already on screen.
@@ -3451,7 +3440,7 @@
 		var c    = creditFor(id);
 		var line = wrap.querySelector('.models-credit-line');
 		var age  = wrap.querySelector('.models-credit-age');
-		if (line) DaimondI18n.fillPrices(line, creditSentence(c));
+		if (line) { var said = creditSentence(c); DaimondI18n.fillPrices(line, said); line.style.display = said ? '' : 'none'; }
 		if (!age) return;
 		var words = ageSentence(id, c);
 		age.textContent = words;
@@ -3491,7 +3480,7 @@
 	/// left alone: its balance is the gateway's, not a probe's, and it has no age to carry.
 	function paintBal(bal, id, c) {
 		if (id === CREDITS) return;
-		if (c) bal.textContent = t('models.balance_left', { amount: DaimondI18n.held(c.usd, 'USD') });
+		if (c) DaimondI18n.fillPrices(bal, t('models.balance_left', { amount: usd(c.usd) }));
 		var words = ageSentence(id, c);
 		if (words) bal.setAttribute('title', words); else bal.removeAttribute('title');
 		if (words && creditStale(id, c)) bal.setAttribute('data-stale', '1');
@@ -3548,23 +3537,11 @@
 			el.appendChild(jobsBlock());
 		}
 
+		// *Providers*, headed as the sections above are (D-20261018-09 §4a). *Everyone uses*
+		// names the default, so the old "New chats start on" sentence and its copy square are
+		// gone (§6); its id is in the picker's hover and search, and in the model's own row.
+		el.appendChild(secHead(t('models.providers_head')));
 		renderProviders(el);
-
-		var d = getDefault();
-
-		var foot = document.createElement('div');
-		foot.className = 'models-default';
-		foot.textContent = d.provider && d.model
-			? t('models.starts_on', { model: providerName(d.provider) + ' · ' + d.model })
-			: t('models.no_default');
-		// The one model id worth copying without opening a provider first. It copies
-		// the BARE id, not the sentence around it: the sentence names the provider
-		// for a reader, and nothing takes it as input.
-		if (d.provider && d.model) {
-			var fc = copyBtn(tOr('copy.what_default_model', 'the default model id'), d.model);
-			if (fc) foot.appendChild(fc);
-		}
-		el.appendChild(foot);
 	}
 
 	// ── The Models view, top half (D-20261018-09 U3a) ───────────────
@@ -3599,8 +3576,9 @@
 		return joinNames(parts);
 	}
 
-	/// What one typical turn on `pair` costs: under a US cent in tenths of a cent ("0.2¢"),
-	/// otherwise the money figure. '' with nothing to go on.
+	/// What one typical turn on `pair` costs: under a US cent in tenths of a cent ("0.2¢", the
+	/// spec's line), otherwise a price mark (the tag glyph and the bare figure, no "≈" and no
+	/// letter: rulings l.41, owner-eye item 8). '' with nothing to go on.
 	function turnCost(pair) {
 		var tt = (window.DaimondLedger && DaimondLedger.typicalTurn && pair.model)
 			? DaimondLedger.typicalTurn(pair.provider, pair.model) : null;
@@ -3610,7 +3588,7 @@
 			return new Intl.NumberFormat(DaimondI18n.locale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 })
 				.format(c) + '¢';
 		}
-		return DaimondI18n.money(tt.usd, 'fine');
+		return DaimondI18n.priceMark(tt.usd, { mode: 'fine' });
 	}
 
 	/// The name a plan or an Undo gives one field's owner: a Diamond or chat by its name, a
@@ -3654,7 +3632,7 @@
 		});
 
 		var cost = turnCost(cur);
-		if (cost) box.appendChild(elt('div', 'models-sub models-turn', t('models.turn_cost', { cost: cost })));
+		if (cost) box.appendChild(DaimondI18n.fillPrices(elt('div', 'models-sub models-turn', ''), t('models.turn_cost', { cost: cost })));
 		if (!st.here && !everyoneAsk) {
 			box.appendChild(elt('div', 'models-sub models-not-here', st.using.model
 				? t('models.everyone_not_here', { provider: st.missing, model: displayName(st.using.provider || '', st.using.model) })
@@ -3744,7 +3722,9 @@
 		if (!rows.length) return null;
 		var box = elt('div', 'models-except');
 		box.appendChild(secHead(t('models.except_head')));
-		rows.forEach(function (x) { box.appendChild(exceptRow(x, def)); });
+		// By name, as his pick lists them (eye F5).
+		rows.slice().sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); })
+			.forEach(function (x) { box.appendChild(exceptRow(x, def)); });
 		return box;
 	}
 
@@ -3821,10 +3801,10 @@
 	function headBalance(p) {
 		if (p.minted) {
 			return credits.state === 'ready' && typeof credits.bal === 'number'
-				? t('models.balance_left', { amount: DaimondI18n.held(credits.bal / 100, credits.cur) }) : '';
+				? t('models.balance_left', { amount: DaimondI18n.poolMark(credits.bal / 100, credits.cur) }) : '';
 		}
 		var c = p.credit;
-		return c ? t('models.balance_left', { amount: DaimondI18n.held(c.usd, 'USD') }) : '';
+		return c ? t('models.balance_left', { amount: usd(c.usd) }) : '';
 	}
 
 	/// The provider rows, one per key, drawn into `box`: each head holds the name and the
@@ -3848,7 +3828,7 @@
 			head.innerHTML =
 				  '<span class="models-caret" aria-hidden="true"></span>'
 				+ '<span class="models-prov-name">' + esc(p.name) + '</span>'
-				+ (bal ? '<span class="models-bal">' + esc(bal) + '</span>' : '');
+				+ (bal ? '<span class="models-bal">' + DaimondI18n.pricesHtml(bal, esc) + '</span>' : '');
 			head.title = p.paid
 				? t('models.row_paid_help', { provider: p.via || t('models.the_provider') })
 				: t('models.row_own_help', { provider: p.name });
@@ -3900,7 +3880,7 @@
 					// working, so a row that cannot ask yet still draws the button, disabled,
 					// saying why.
 					refetch.textContent = !p.hasKey ? t('models.add_key_first')
-						: p.count ? t('models.ask_provider_again')
+						: p.count ? t('models.refresh_list')
 						: t('models.ask_provider');
 					refetch.disabled = !p.ready;
 					refetch.addEventListener('click', async function () {
@@ -3915,13 +3895,11 @@
 					});
 					body.appendChild(refetch);
 
-					// When the list was last asked for, under the button that asks again.
-					var age = document.createElement('div');
-					age.className = 'models-list-age';
-					age.textContent = p.fetched
+					// When the list was last asked for, in the hover of the button that asks again
+					// (eye F2: the line under it was furniture).
+					refetch.title = p.fetched
 						? t('models.list_asked', { when: window.DaimondTime.fmtLocal(p.fetched, 'when') })
 						: t('models.list_never');
-					body.appendChild(age);
 				}
 
 				// Per-model OpenRouter routing. `LlmClient::set_provider_routing` only ever sends
@@ -3974,9 +3952,11 @@
 		});
 	}
 
-	/// One offer of a catalogue entry as a row: the model's name in the text face (or, for
-	/// `alt`, another payer of the same model as "Through Fireworks AI"), its id in the hover
-	/// and the copy. Clicking it makes that offer the default.
+	/// One offer of a catalogue entry as a row: the model's name in the text face, with who pays
+	/// under it when that needs saying (always for `alt`, another payer of the same model:
+	/// "Through Fireworks AI"), its id in the hover and the copy. Clicking it makes that offer
+	/// the default, which *Everyone uses* above then names; the row itself carries no star and
+	/// no "default" pill (D-20261018-09 §6), and `.on` is for the hover's words only.
 	function modelRow(e, o, alt, d) {
 		var pr    = store.providers[o.provider] || {};
 		var paid  = o.provider === CREDITS;
@@ -3987,12 +3967,10 @@
 		mr.className = 'models-model' + (alt ? ' alt' : '') + (isDef ? ' on' : '');
 		mr.dataset.provider = o.provider;
 		mr.dataset.model    = o.model;
-		mr.innerHTML = '<span class="models-star">' + (isDef ? '★' : '☆') + '</span>'
-			+ '<span class="models-id">'
-			+   (alt ? '' : '<span class="models-nm">' + esc(e.name) + '</span>')
+		mr.innerHTML = '<span class="models-id">'
+			+   '<span class="models-nm">' + esc(e.name) + '</span>'
 			+   (via ? '<span class="models-through">' + esc(via) + '</span>' : '')
-			+ '</span>'
-			+ (isDef ? '<span class="models-def">' + esc(t('models.is_default')) + '</span>' : '');
+			+ '</span>';
 		mr.title = o.model + '\n'
 			+ t(isDef ? 'models.model_is_default' : 'models.model_make_default') + '\n'
 			+ (paid ? t('models.model_paid', { provider: credits.via || t('models.the_provider') })
@@ -4029,6 +4007,7 @@
 		input.className = 'models-key-input';
 		input.autocomplete = 'off';
 		input.placeholder = t(p.hasKey ? 'models.key_replace_ph' : 'models.key_add_ph');
+		fitPlaceholder(input);
 		input.setAttribute('aria-label', t('models.key_label', { provider: p.name }));
 		var set = document.createElement('button');
 		set.type = 'button';
@@ -4196,15 +4175,18 @@
 		/// shortcut that read differently from the row it stands for would be worse
 		/// than no shortcut, because the economy marking is the part that matters.
 		///
-		/// `inFav` adds the provider's name, and that is not an inconsistency but
-		/// the opposite. A row's full meaning includes the group heading above it;
-		/// under "Favourites" that heading is gone, so reproducing only the row's
-		/// own text would LOSE information — and two providers offering the same
-		/// model under the user's own key would then draw two identical shortcuts.
+		/// The text is the model's display name and nothing else (D-20261023-05 audit items
+		/// 6, 7, 14): who pays is the row's second line, `via`, never a suffix, and the default
+		/// carries no mark (D-20261018-09 §6 removed the stars). The closed field shows the
+		/// same name (`repaint`), so a list label can never leak into a field.
 		///
-		/// A twin's other payers are rows of their own under the first ("Through Fireworks
-		/// AI", `alt`): picking one is picking who is billed, so each stays selectable, but
-		/// the model's name is drawn once. The id is in the title and the search, not the text.
+		/// `inFav` names the payer on that second line: under "Favourites" the group heading
+		/// is gone, and two providers offering the same model would otherwise draw two
+		/// identical shortcuts.
+		///
+		/// A twin's other payers are rows of their own under the first (`alt`), named like it,
+		/// with "Through Fireworks AI" under the name: picking one is picking who is billed, so
+		/// each stays selectable. The id is in the title and the search, not the text.
 		function optionFor(p, m, inFav, alt) {
 			var name = displayName(p.id, m);
 			var o = document.createElement('option');
@@ -4213,12 +4195,9 @@
 			o.dataset.pname    = p.name;
 			o.dataset.paid     = p.paid ? '1' : '';
 			o.dataset.name     = name;
-			o.dataset.via      = alt ? '' : throughLine(p.id, m);
+			o.dataset.via      = alt || inFav ? t('models.through', { provider: p.name }) : throughLine(p.id, m);
 			if (alt) o.dataset.alt = '1';
-			o.textContent = (alt ? t('models.through', { provider: p.name }) : name)
-				+ (p.paid ? ' · ' + t('models.econ_credits') : '')
-				+ (inFav || (!alt && twins[useKey(p.id, m)]) ? ' · ' + p.name : '')
-				+ (d.provider === p.id && d.model === m ? '  ★' : '');
+			o.textContent = name + (p.paid ? ' · ' + t('models.econ_credits') : '');
 			o.title = p.name + ' · ' + m + ' — '
 				+ (p.paid ? t('models.model_paid', { provider: p.via || t('models.the_provider') })
 					: t('models.model_own', { provider: p.name }));
@@ -4249,14 +4228,21 @@
 			// account is the case this picker has always described, and describing it twice —
 			// once here and once on every option — would make the marking mean less, not more:
 			// the mark has to be the exception to read as one.
-			g.label = p.paid
+			// The pulldown draws the head from `dataset.marks`, so its balance is the pool's tag;
+			// `label` is the same head as plain text, for a native list.
+			var head = p.paid
 				? p.name
-					+ (p.balance ? ' · ' + DaimondI18n.pricesText(t('models.balance_left', { amount: p.balance })) : '')
+					+ (p.balance ? ' · ' + t('models.balance_left', { amount: p.balance }) : '')
 					+ (p.via ? ' — ' + t('models.via', { provider: p.via }) : '')
 					+ (p.ready ? '' : ' (' + t(p.state === 'nocredits'
 						? 'models.top_up_to_use' : 'models.connecting') + ')')
 				: p.name + (p.sealed ? ' (' + t('models.sealed_unlock') + ')'
 					: p.hasKey ? '' : ' (' + t('models.no_key') + ')');
+			// The head's price marks become text here and the tag glyph in the picker (fillPrices);
+			// with no i18n loaded (the node tests) the head stands as it is, as t() does.
+			var I = window.DaimondI18n;
+			g.label = I ? I.pricesText(head) : head;
+			if (I && I.hasPrice(head)) g.dataset.marks = head;
 			// Each model once, under the group of its preferred payer, its twins' payers after it.
 			cat.forEach(function (e) {
 				if (e.offers[0].provider !== p.id) return;
@@ -4354,7 +4340,7 @@
 			for (i = 0; i < kids.length; i++) {
 				var k = kids[i];
 				if (k.tagName === 'OPTGROUP') {
-					items.push({ grp: k.label || '' });
+					items.push({ grp: k.label || '', marks: k.dataset.marks || '' });
 					for (var j = 0; j < k.children.length; j++) items.push({ o: k.children[j] });
 				} else if (k.tagName === 'OPTION') items.push({ o: k });
 			}
@@ -4380,6 +4366,16 @@
 	}
 
 	/// Turn a native `<select>` into the filter field. Call it once the select is in its place.
+	/// A field in the code face is never narrower than its placeholder, in any locale: its
+	/// `min-width` is the placeholder's length in `ch` (a wide CJK or Hangul glyph is two),
+	/// plus its padding and border (models.css, 8 + 8 + 2 px) and 1ch of air. Its form wraps
+	/// the button under it when the pair will not fit, so the field is never cut instead.
+	function fitPlaceholder(input) {
+		var s = input.placeholder || '', n = 1;
+		for (var i = 0; i < s.length; i++) n += /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/.test(s[i]) ? 2 : 1;
+		input.style.minWidth = 'calc(' + n + 'ch + 18px)';
+	}
+
 	function picker(sel) {
 		if (!sel) return null;
 		if (sel._mp) return sel._mp;
@@ -4408,6 +4404,21 @@
 		sel.classList.add('mp-native');
 
 		var isOpen = false, query = '', items = [], rows = [], act = -1, side = '', tick = 0;
+		// An Except row's picker is text, not a field: it is as wide as the name it shows.
+		var fits = wrap.classList.contains('mp-models-exc-sel');
+		if (fits && document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(function () { fitText(); });
+		/// The shown name's width in em, at the field's own face, into `--mp-tw` (app.css).
+		/// In em, so the phone's 16 px and the desk's size both take it without a re-measure.
+		function fitText() {
+			if (isOpen) return;	// a search being typed keeps the width it opened at
+			var s = inp.value;
+			if (!s) { inp.style.removeProperty('--mp-tw'); return; }
+			var cs = getComputedStyle(inp.isConnected ? inp : document.body);
+			var c = (picker._cv = picker._cv || document.createElement('canvas')).getContext('2d');
+			if (!c) return;
+			c.font = (cs.fontStyle || 'normal') + ' ' + (cs.fontWeight || '400') + ' 100px ' + cs.fontFamily;
+			inp.style.setProperty('--mp-tw', (Math.ceil(c.measureText(s).width) / 100 + 0.05).toFixed(3) + 'em');
+		}
 
 		function labelText() {
 			var l = sel.labels && sel.labels[0];
@@ -4416,9 +4427,13 @@
 		}
 		function repaint() {
 			var o = sel.selectedOptions && sel.selectedOptions[0];
-			if (!isOpen) inp.value = o ? o.textContent.trim() : '';
+			// The display name, never the list label: a list row's decorations belong to the
+			// list. A kept pick says it is not offered; an option with no model (a "Default"
+			// or "Same as daimon" choice) has only its words.
+			if (!isOpen) inp.value = !o ? '' : (o.dataset.name && !o.dataset.kept ? o.dataset.name : o.textContent.trim());
 			inp.disabled = sel.disabled;
 			inp.placeholder = t('models.find');
+			if (fits) fitText();
 			inp.title = sel.title || '';
 			inp.setAttribute('aria-label', labelText());
 		}
@@ -4447,10 +4462,16 @@
 			// Below, unless there is more room above and too little below to be worth it.
 			if (!side) side = (low >= 220 || low >= up) ? 'below' : 'above';
 			var room = Math.max(120, side === 'below' ? low - 4 : up - 4);
-			var width = Math.max(r.width, Math.min(320, vw - 16));
+			// Inside the panel that holds the field as well as the viewport: a pulldown in the
+			// rail (Models, a tile) never overhangs the rail's edge (D-20261023-05 audit item 15).
+			var host = inp.closest('.panel');
+			var hr   = host ? host.getBoundingClientRect() : null;
+			var lo   = Math.max(ox + 8, hr ? hr.left + 4 : -Infinity);
+			var hi   = Math.min(ox + vw - 8, hr ? hr.right - 4 : Infinity);
+			var width = Math.max(r.width, Math.min(320, hi - lo));
 			mpPop.style.width     = width + 'px';
 			mpPop.style.maxHeight = Math.min(360, room) + 'px';
-			var left = Math.min(Math.max(r.left, ox + 8), ox + vw - 8 - width);
+			var left = Math.min(Math.max(r.left, lo), hi - width);
 			mpPop.style.left = left + 'px';
 			var h = mpPop.offsetHeight;
 			mpPop.style.top = (side === 'below' ? r.bottom + 4 : Math.max(oy + 8, r.top - 4 - h)) + 'px';
@@ -4468,7 +4489,7 @@
 				if (it.grp !== undefined) {
 					var g = document.createElement('div');
 					g.className = 'mp-grp';
-					g.textContent = it.grp;
+					if (it.marks) DaimondI18n.fillPrices(g, it.marks); else g.textContent = it.grp;
 					mpPop.appendChild(g);
 					// A group heading ends in what keeps its models from running.
 					var m = /\(([^)]*)\)\s*$/.exec(it.grp);
@@ -4487,13 +4508,11 @@
 				if (o.title) el.title = o.title;
 				var main = document.createElement('span');
 				main.className = 'mp-main';
-				// A flat list has lost the row above an alt payer, so it names the model again.
-				var flatAlt = words.length && o.dataset.alt;
-				main.textContent = flatAlt ? o.dataset.name : o.textContent.trim();
+				main.textContent = o.textContent.trim();
 				if (o.dataset.alt && !words.length) el.classList.add('mp-alt');
 				el.appendChild(main);
 				// "Through X" always; a flat list has also lost the heading that said whose model it is.
-				var via  = flatAlt ? t('models.through', { provider: o.dataset.pname || '' }) : (o.dataset.via || '');
+				var via  = o.dataset.via || '';
 				var subT = via || (words.length ? (o.dataset.pname || '') : '');
 				if (o.disabled && reason) subT += (subT ? ' · ' : '') + reason;
 				if (subT && (via || words.length)) {

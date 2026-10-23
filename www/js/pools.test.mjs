@@ -68,8 +68,9 @@ const M = load('money.js');
 const N = load('needs.js');
 const LEDGER = source('ledger.js');
 const rateSrc = liftFn(LEDGER, 'rate');
+const spentSrc = liftFn(LEDGER, 'spent');	// rate's sum since D-20261023-05 (a pool's own Today); absent before
 const rate = rateSrc
-	? new Function('HOUR_MS', 'reprice', 'load', rateSrc + '\nreturn rate;')(3600e3, (x) => x, () => [])
+	? new Function('HOUR_MS', 'reprice', 'load', (spentSrc || '') + '\n' + rateSrc + '\nreturn rate;')(3600e3, (x) => x, () => [])
 	: null;
 
 /// The pools as the record drew them, where `pools` does not exist: the money

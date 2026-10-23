@@ -374,11 +374,12 @@
 	///   `rateOf(pv, windowMs)` is the ledger's spend in US$ per hour for that
 	///   provider id (`DaimondLedger.rate`); `historyOf(pv)` its spending 15-min
 	///   windows' rates (`DaimondLedger.rateHistory`); `fx` is units of a currency per US$;
-	///   `marks` the synced top-up marks by pool key; `label(kind, name)` words a
+	///   `marks` the synced top-up marks by pool key; `spentOf(pv)` the US$ billed to that
+	///   provider id since local midnight (the pool's own Today); `label(kind, name)` words a
 	///   pool, kind 'credits' | 'credit' | 'limit'.
 	///
 	/// Each pool: `{ key, label, provider, currency, amount, kind, binds, full,
-	/// level, mark, rate15, rateDay, minutes, minutesDay, empty, scale, scaleFrom }`,
+	/// level, mark, rate15, rateDay, minutes, minutesDay, empty, scale, scaleFrom, today }`,
 	/// the rates and the dial's full scale per hour in the pool's currency (null when they cannot be put in it). A key
 	/// that reports no balance has no pool.
 	function pools(st) {
@@ -391,6 +392,7 @@
 		};
 		var rateOf = st.rateOf || function () { return null; };
 		var historyOf = st.historyOf || function () { return []; };
+		var spentOf = st.spentOf || function () { return null; };
 		var out = [];
 		function add(key, label, provider, ccy, amount, kind, binds, led) {
 			var r15 = rateOf(key, RATE_WINDOW_MS), rd = rateOf(key, DAY_WINDOW_MS);
@@ -418,6 +420,7 @@
 				empty:      !(amount > 0),
 				scale:      sc.scale,
 				scaleFrom:  sc.from,
+				today:      spentOf(key),
 			});
 		}
 		var c = st.credits;

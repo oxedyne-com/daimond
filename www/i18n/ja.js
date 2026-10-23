@@ -48,7 +48,6 @@
 	'copy.what_fingerprint':   'アカウントのフィンガープリント',
 	'copy.what_device':        '{name} の ID',
 	'copy.what_model':         'モデル ID {id}',
-	'copy.what_default_model': '既定のモデル ID',
 	'copy.what_handle':        '公開名',
 
 	// ── 上部バー ───────────────────────────────────────────────
@@ -175,7 +174,7 @@
 	'models.through':              '{provider} 経由',
 	'models.key_label':            '{provider} の API キー',
 	'models.key_add_ph':           'API キーを貼り付け',
-	'models.key_replace_ph':       '新しいキーを貼り付けて置き換え',
+	'models.key_replace_ph':       '新しいキー',
 	'models.key_save':             'キーを保存',
 	'models.key_empty':            '先にキーを貼り付けてください。',
 	'models.count.one':            'モデル {n} 個',
@@ -195,7 +194,6 @@
 	'models.top_up_to_use':        '使うにはチャージ',
 	'models.top_up':               'クレジットをチャージする →',
 	'models.ask_provider': 'モデルを一覧表示',
-	'models.ask_provider_again':   'このプロバイダーにもう一度尋ねる',
 	'models.list_asked':           '{when}に一覧を取得しました。',
 	'models.list_never':           '一度も尋ねていません。',
 	'models.add_key_first':        '先に鍵を追加してください',
@@ -206,7 +204,6 @@
 	'models.favourites': 'よく使うモデル',
 	'models.find': 'モデルを検索',
 	'models.no_match': '一致するモデルはありません',
-	'models.is_default':           '既定',
 	'models.model_is_default':     '新しいチャットと diamond はこのモデルで始まります。',
 	'models.model_make_default':   '新しいチャットと diamond をこのモデルで始めるようにします。',
 	'models.model_paid':           '{provider} 経由で、Daimond の残高を使います。',
@@ -241,8 +238,6 @@
 	'models.route_clear':          '消去',
 	'models.routing_disclosure':   'モデル…',
 	'models.remove':               '{provider} を削除',
-	'models.starts_on':            '新しいチャットの開始モデル：{model}',
-	'models.no_default':           '既定のモデルがまだありません。上のどれかに星を付けてください。',
 	'models.none_yet':             'プロバイダーなし',
 	'models.not_offered':          '提供なし',
 	'models.err_refused':          'アカウントサービスに拒否されました（HTTP {status}）。',
@@ -251,9 +246,6 @@
 	'models.err_key_refused':      'プロバイダーが鍵を拒否しました（HTTP {status}）。',
 	// プロバイダーの鍵に残っている分と、それがどうして分かるのか。手入力の行を
 	// あえて「残高」と呼ばないのは、利用者自身の申告から見積もりを引いた数字だからです。
-	'models.credit_auto':          'この鍵の残りは {amount} です。{when} 時点でプロバイダーが答えた額です。',
-	'models.credit_manual':        '残りは {amount} です。{when} の {base} から、その後の約 {spent} を引いた額です。',
-	'models.credit_unknown':       'この鍵に何が残っているかは分かりません。',
 	'models.credit_check':         '残りを聞く',
 	'models.credit_recheck':       'もう一度聞く',
 	'models.credit_probe_failed':  '{provider} は残りを教えてくれませんでした。代わりに Daimond に教えてください。',
@@ -263,15 +255,7 @@
 	'models.credit_base_update':   '自分の申告を更新',
 	'models.credit_base_bad':      '金額ではありません。米ドルの数値を入力してください。',
 	// 問い合わせた額から、その後この端末が見届けた支出を差し引いたもの。
-	'models.credit_auto_spent':    '残りは {amount} です。{when} 時点でプロバイダーが答えた {base} から、その後ここで使った約 {spent} を引いた額です。',
 	// 数字の古さ。これがないと、止まったままの数字と最新の数字が同じに見えます。
-	'models.age_now':              'たった今確認しました。',
-	'models.age_mins.one':         '{n} 分前に確認しました。',
-	'models.age_mins.other':       '{n} 分前に確認しました。',
-	'models.age_hours.one':        '{n} 時間前に確認しました。',
-	'models.age_hours.other':      '{n} 時間前に確認しました。',
-	'models.age_days.one':         '{n} 日前に確認しました。',
-	'models.age_days.other':       '{n} 日前に確認しました。',
 	'models.age_failed':           '前回の確認は応答がなかったため、この数字はそれ以降動いていません。',
 
 	// ── 検索 ───────────────────────────────────────────────────
@@ -3561,6 +3545,8 @@
 	'models.everyone_head': '全員が使うモデル',
 	'models.except_head': '例外',
 	'models.jobs_head': 'ジョブ',
+	'models.providers_head': 'プロバイダー',
+	'models.refresh_list': '一覧を更新',
 	'models.job_workers': 'ワーカー',
 	'models.job_images': '画像',
 	'models.job_drafting': '下書き',

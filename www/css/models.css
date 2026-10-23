@@ -48,21 +48,11 @@
 	font-family: var(--font); font-size: var(--fs-xs);
 }
 .settings-section .models-model:hover { background: var(--bg-hover); color: var(--text-primary); }
-/* The default is said by its star and its DEFAULT chip; a fill on top of them was the pink row. */
-.models-model.on    { color: var(--accent-text); }
-/* Another payer of the model above: indented under it, its "Through X" the whole row. */
+/* Another payer of the model above: indented under it, named as it is, "Through X" under the name. */
 .models-model.alt   { padding-left: 28px; }
 .models-nm          { display: block; }
 .models-through     { display: block; font-size: var(--fs-3xs); color: var(--text-muted); }
-.models-star { width: 12px; }
 .models-id   { flex: 1; word-break: break-all; }
-/* var(--font-sans) does not exist, so the badge inherited the row's monospace
-   -- the one thing it is meant NOT to look like. */
-.models-def  {
-	font-family: var(--font); font-size: var(--fs-3xs); font-weight: 600;
-	padding: 1px 6px; border-radius: 999px;
-	background: var(--accent); color: var(--on-fill, #fff);
-}
 
 /* The radius is the skin's, not a number: `--radius-sm` is 6px in the sharp skin, so nothing
    moves there, and 10px in the warm one, where a 6px button beside a 10px field was the one
@@ -90,12 +80,6 @@
 	color: var(--text-secondary);
 }
 
-.models-default {
-	margin-top: 6px; padding: 6px 0;
-	font-size: var(--fs-2xs); color: var(--text-secondary);
-	border-top: 1px solid var(--border);
-}
-
 /* The top half (D-20261018-09 U3a): Everyone uses, Except, Jobs. Rows carry no fill, only
    the panel's tokens, so they read alike in every palette and skin; a head is the display face.
    The confirm is the one raised surface, because it is the one thing waiting on an answer. */
@@ -115,14 +99,20 @@
 .models-exc { padding: 6px 0; }
 /* The kind glyph hangs in the gutter, so a row's name and its "Through" line sit on the panel's
    text edge with every other line of the section (verify_consistency text-edge). */
-.models-exc-top { position: relative; display: flex; align-items: center; gap: 8px; min-height: 32px; }
-.models-exc-top::before { position: absolute; right: calc(100% + 5px); color: var(--text-muted); font-size: var(--fs-2xs); }
+/* The name is whole on the left and the model is text sized to itself, set right with its chevron,
+   on the same line (var_va_rest_phone). A pair too long for one line puts the model on the next,
+   still set right, rather than cutting either: the name is only cut when it alone is wider than
+   the row. */
+.models-exc-top { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-height: 32px; }
+/* The kind glyph sits inside the row, before the name, on every size, as his pick draws it
+   (var_va_rest_desk, eye F3); it no longer hangs in the gutter. */
+.models-exc-top::before { flex: 0 0 auto; color: var(--text-muted); font-size: var(--fs-2xs); }
 .models-exc[data-kind="diamond"] .models-exc-top::before { content: '◆'; }
 .models-exc[data-kind="chat"] .models-exc-top::before { content: '▪'; }
 .models-exc-name {
-	flex: 0 1 auto; max-width: 52%; min-width: 0;
+	flex: 0 1 auto; max-width: 100%; min-width: 0;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-	font-size: var(--fs-xs); color: var(--text-primary);
+	font-size: var(--fs-base); color: var(--text-primary);
 }
 .models-exc-sub { overflow-wrap: anywhere; }
 .models-job {
@@ -138,6 +128,11 @@
 .settings-section .models-done button.models-undo:hover { background: var(--bg-hover); }
 @media (max-width: 600px) {
 	.models-exc-top, .models-job { min-height: 44px; }
+	/* The phone's fields are 16px or more (mobile.css, no iOS zoom), so a row's name takes the
+	   same size as its model, and its kind glyph sits inside the text edge, not in a gutter the
+	   phone does not have (D-20261023-05 audit item 11, var_va_rest_phone). */
+	.models-exc-name { font-size: var(--fs-xl); }
+	.models-job-lab { font-size: var(--fs-sm); }	/* eye F7: the label is not 11 px under a 16 px value */
 	.settings-section .models-ask button, .settings-section .models-done button { min-height: 44px; }
 }
 
@@ -159,6 +154,13 @@
 	/* So the control strip's corners are the card's corners, in either skin. */
 	overflow: hidden;
 }
+/* Eye F2 (D-20261023-05 item 9): no box and no sentence. The figure with its tag, its age
+   beside it ("1,876.53 left · 2m ago"), then the one way to renew it. */
+.models-credit { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 8px; background: transparent; margin: 2px 0 6px; }
+.models-credit > .models-credit-line { padding: 4px 0; }
+.models-credit > .models-credit-age { padding: 0; }
+.models-credit > .models-credit-age:not(:empty)::before { content: '· '; }
+.models-credit > .models-credit-form { flex-basis: 100%; padding: 4px 0 0; border-top: 0; background: transparent; }
 /* The sentence that says what is known and how it is known. It wraps: a manual figure names the
    base, the estimated spend and the date, and cutting that short would lose the caveat. It is
    the block's headline, so it is set in the panel's ordinary reading size and its ordinary
@@ -208,7 +210,7 @@
    balances the pair -- the button takes the field's height exactly, rather than landing near
    it -- and the strip runs the full width of the card, ruled off from the figure above. */
 .models-credit-form {
-	display: flex; align-items: stretch; gap: 6px; width: 100%;
+	display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; width: 100%;
 	padding: 8px 11px 9px;
 	border-top: 1px solid var(--border);
 	background: var(--bg-secondary);
@@ -218,7 +220,7 @@
    credit pair below it so the two read as one kind of control. */
 .models-key       { display: flex; flex-direction: column; gap: 6px; }
 .models-key-state { font-size: var(--fs-2xs); color: var(--text-secondary); }
-.models-key-form  { display: flex; align-items: stretch; gap: 6px; width: 100%; }
+.models-key-form  { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; width: 100%; }
 .settings-section .models-key-form > .models-refetch { flex: none; white-space: nowrap; }
 /* Sized to the buttons beside it (`.models-refetch`), NOT to `.settings-section input`, whose
    9px/base is a form-field scale and would tower over the row. Monospace, as the balance on the
@@ -255,7 +257,7 @@
    person reads to find out what the field wants; WCAG 2.2 SC 1.4.3 exempts it
    from nothing. `--text-muted` is the rung for this and carries 4.83-6.65 on
    `--bg-primary` across the eleven. */
-.settings-section .models-credit-input::placeholder, .settings-section .models-key-input::placeholder { color: var(--text-muted); }
+.settings-section .models-credit-input::placeholder, .settings-section .models-key-input::placeholder { color: var(--text-muted); font-family: var(--font); }
 /* And the caret's own ring on the buttons, matching the admin rows: a button that answered only
    to hover left a keyboard user with nothing to see. */
 .settings-section .models-credit .models-refetch:focus-visible {
@@ -300,3 +302,4 @@
 .models-routing-disc { margin: 4px 8px 6px; }
 .models-routing-disc > summary { cursor: pointer; }	/* the rest: the one disclosure head (skin-daylight.css) */
 .models-routing-disc .models-routing { padding-left: 8px; }
+.settings-section .models-credit > .models-refetch { margin: 0 0 0 auto; }

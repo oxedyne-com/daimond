@@ -33,13 +33,13 @@
    (BYOK, Pro, the spend readout) that money.js and release.js turn on and off --
    folded they are all away, and unfolded each is back under whichever rule owns
    it. The identity row is the section's header, and a header stays. */
-/* The spend tally is NOT folded (D-20261009-18): Today / Week / Month stay at the
-   foot of the section, folded or open, at every width. */
-.panel.rail:not([data-fold-status="on"]) .admin-status > *:not(.astat-id):not(.spend-row):not(.astat-needs):not(.astat-summary) { display: none !important; }
+/* The spend tally is not in this section: it is pinned at the rail's foot, outside
+   the fold and the scroller (D-20261009-18, D-20261023-05). */
+.panel.rail:not([data-fold-status="on"]) .admin-status > *:not(.astat-id):not(.astat-needs):not(.astat-summary) { display: none !important; }
 /* A desktop has no status fold, so an open state stored on a phone (the key is per
    device, but a window can be dragged across the breakpoint) changes nothing here. */
 @media (min-width: 761px) {
-	.panel.rail .admin-status > *:not(.astat-id):not(.spend-row):not(.astat-needs):not(.astat-summary) { display: none !important; }
+	.panel.rail .admin-status > *:not(.astat-id):not(.astat-needs):not(.astat-summary) { display: none !important; }
 }
 #msheet     { display: none; }
 #scrim      { display: none; }
@@ -100,8 +100,9 @@
 		/* The drawer is fixed to the viewport, so it is outside #app's frame and
 		   has to hold the hardware off its own contents: installed, its first
 		   control sat under the status bar and its last under the home
-		   indicator. `.rail-scroll` below holds them, as the drawer's scroller. */
-		padding: 0;
+		   indicator. `.rail-scroll` below holds them, as the drawer's scroller;
+		   the home indicator's inset is the frame's, under the pinned money foot. */
+		padding: 0 0 var(--safe-b);
 		transform: translateX(-100%);
 		transition: transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s .28s;
 		box-shadow: 0 0 40px rgba(0, 0, 0, .45);
@@ -129,8 +130,13 @@
 		min-height: 0;
 		overflow-y: auto;
 		overscroll-behavior: contain;
-		padding: calc(8px + var(--safe-t)) 8px calc(8px + var(--safe-b)) calc(8px + var(--safe-l));
+		padding: calc(8px + var(--safe-t)) 8px 8px calc(8px + var(--safe-l));
 	}
+	/* The money pools and Today, pinned under the scroller (D-20261023-05): the batteries
+	   never scroll away; the two lists' windows give up the height. */
+	/* Its rule is the edge the lists scroll under, in either skin (the id outranks the
+	   daylight skin's borderless `.spend-row`, written for a row inside the status block). */
+	.panel.rail > #spend-row { flex: none; padding: 8px 8px 8px calc(8px + var(--safe-l)); border-top: 1px solid var(--border); }
 	/* The drawer is the scroller, and nothing inside it may be. Two competing
 	   scroll regions inside a 100dvh column meant the lists absorbed every
 	   shortfall instead of overflowing: at 320x568 the Diamonds list came out

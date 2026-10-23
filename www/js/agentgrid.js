@@ -332,6 +332,7 @@
 			var idle = !(rate > 0) || (!empty && typeof p.minutes !== 'number');
 			return { key: p.key, label: p.label, amount: p.amount, currency: p.currency, pool: p,
 				level: lv, full: p.full, rate: rate, scale: p.scale, idle: idle,
+				today: (typeof p.today === 'number' && isFinite(p.today)) ? p.today : null,
 				angle: idle ? 180 : needleAngle(rate, p.scale),
 				range: idle ? null : empty ? { n: '0', unit: 'min' } : range(p.minutes),
 				low: lv < 0.1 || (day !== null && !empty && day < 1440),

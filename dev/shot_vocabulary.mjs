@@ -123,6 +123,12 @@ await pause(1200);
 await grab('vocab-tile-chat.png', '.session-list .session-box', { pad: 8 });
 await grab('vocab-chead.png',     '#panel-ai .chead', { pad: 8 });
 await grab('vocab-composer.png',  '#panel-ai .chat-input-bar', { pad: 8 });
+// The spend row is the money pools (D-20261023-05: each its own Today, none without a
+// pool): one pool, Daimond credits, is stood in for, as this world has no gateway.
+await p.evaluate(() => { const gs = DaimondGateway.state.bind(DaimondGateway);
+	DaimondGateway.state = () => Object.assign({}, gs(), { authed: true, credits: 1250, currency: 'USD' });
+	DaimondI18n.setCurrency('USD'); });
+await pause(500);
 await grab('vocab-spendrow.png',  '#spend-row', { pad: 10 });
 
 // ── The admin panel ──────────────────────────────────────────────────
@@ -130,8 +136,8 @@ await p.evaluate(() => { const b = document.getElementById('user-row'); if (b) b
 await pause(900);
 await p.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); });
 await pause(500);
-// Stopped above the spend row, which has a crop of its own: one picture per
-// term, or a reader cannot tell which part of it the word names.
+// The spend row has a crop of its own and, since UNBLOCK-33, sits below the status
+// section at the rail's foot: one picture per term. grabTo still stops at it.
 await grabTo('vocab-rows.png', '#admin-status', '#spend-row');
 
 // ── A Diamond's two faces ────────────────────────────────────────────

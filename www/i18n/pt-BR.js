@@ -43,7 +43,6 @@
 	'copy.what_fingerprint': 'a impressão digital da sua conta',
 	'copy.what_device': 'o ID de {name}',
 	'copy.what_model': 'o ID do modelo {id}',
-	'copy.what_default_model': 'o ID do modelo padrão',
 	'copy.what_handle':        'o seu nome público',
 
 	// ── The top bar ────────────────────────────────────────────
@@ -1185,7 +1184,7 @@
 	'models.through': 'Por meio de {provider}',
 	'models.key_label': 'Chave de API do {provider}',
 	'models.key_add_ph': 'Cole sua chave de API',
-	'models.key_replace_ph': 'Cole uma nova chave para substituir esta',
+	'models.key_replace_ph': 'Nova chave',
 	'models.key_save': 'Salvar chave',
 	'models.key_empty': 'Cole uma chave primeiro.',
 	'models.count.one': '{n} modelo',
@@ -1204,7 +1203,6 @@
 	'models.top_up_to_use': 'recarregue para usar',
 	'models.top_up': 'Recarregue seus créditos →',
 	'models.ask_provider': 'Listar modelos',
-	'models.ask_provider_again': 'Perguntar de novo a este provedor',
 	'models.list_asked': 'Listado {when}.',
 	'models.list_never': 'Nunca perguntado.',
 	'models.add_key_first': 'Adicione uma chave primeiro',
@@ -1214,7 +1212,6 @@
 	'models.favourites': 'Favoritos',
 	'models.find': 'Buscar modelos',
 	'models.no_match': 'Nenhum modelo corresponde',
-	'models.is_default': 'padrão',
 	'models.model_is_default': 'Novos chats e diamonds começam neste modelo.',
 	'models.model_make_default': 'Fazer novos chats e diamonds começarem neste modelo.',
 	'models.model_paid': 'Gasta seu saldo Daimond, via {provider}.',
@@ -1249,8 +1246,6 @@
 	'models.route_clear': 'Limpar',
 	'models.routing_disclosure': 'Modelos…',
 	'models.remove': 'Remover {provider}',
-	'models.starts_on': 'Novos chats começam em: {model}',
-	'models.no_default': 'Ainda não há modelo padrão. Marque com a estrela um dos de cima.',
 	'models.none_yet': 'Ainda sem provedor',
 	'models.not_offered': 'não oferecido',
 	'models.err_refused': 'O serviço de contas recusou (HTTP {status}).',
@@ -1259,9 +1254,6 @@
 	'models.err_key_refused': 'O provedor recusou a chave (HTTP {status}).',
 	// What is left on a provider key, and how that is known. The manual line is
 	// deliberately not called a balance: it is the user’s own figure less an estimate.
-	'models.credit_auto': 'Restam {amount} nesta chave, segundo o provedor em {when}.',
-	'models.credit_manual': 'Restam {amount}: os seus {base} de {when}, menos cerca de {spent} gastos desde então.',
-	'models.credit_unknown': 'Não se sabe nada sobre o que resta nesta chave.',
 	'models.credit_check': 'Perguntar quanto resta',
 	'models.credit_recheck': 'Perguntar de novo',
 	'models.credit_probe_failed': '{provider} não quis dizer quanto resta. Diga você mesmo ao Daimond.',
@@ -1271,16 +1263,8 @@
 	'models.credit_base_update': 'Atualizar o meu valor',
 	'models.credit_base_bad': 'Isso não é um valor. Digite um número de dólares americanos.',
 	// Um número consultado do qual este aparelho já viu sair dinheiro.
-	'models.credit_auto_spent': 'Restam {amount}. O provedor disse {base} em {when}, menos cerca de {spent} gastos aqui desde então.',
 	// A idade do número. Sem ela, um valor que parou de mudar parece igualzinho
 	// a um que está em dia.
-	'models.age_now': 'Consultado agora mesmo.',
-	'models.age_mins.one': 'Consultado há {n} minuto.',
-	'models.age_mins.other': 'Consultado há {n} minutos.',
-	'models.age_hours.one': 'Consultado há {n} hora.',
-	'models.age_hours.other': 'Consultado há {n} horas.',
-	'models.age_days.one': 'Consultado há {n} dia.',
-	'models.age_days.other': 'Consultado há {n} dias.',
 	'models.age_failed': 'A última consulta não respondeu, então este número não se moveu desde então.',
 
 	// ── The Web panel, continued ───────────────────────────────
@@ -3518,6 +3502,8 @@
 	'models.everyone_head': 'Todos usam',
 	'models.except_head': 'Exceto',
 	'models.jobs_head': 'Tarefas',
+	'models.providers_head': 'Provedores',
+	'models.refresh_list': 'Atualizar lista',
 	'models.job_workers': 'Workers',
 	'models.job_images': 'Imagens',
 	'models.job_drafting': 'Rascunhos',

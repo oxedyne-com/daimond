@@ -467,15 +467,17 @@ const panel = await p.evaluate(() => {
 	return {
 		shown:  !!(document.getElementById('admin-models') || {}).offsetParent,
 		heads:  heads,
-		footer: (document.querySelector('.models-default') || {}).textContent || '',
+		footer: !!document.querySelector('.models-default'),
+		text:   (document.getElementById('admin-models') || {}).textContent || '',
 	};
 });
 check('the Models row opens the models form', panel.shown === true);
 check('and it lists every provider', panel.heads.length === 2, panel.heads.join(', '));
-check('and says plainly what a new chat will start on',
-	/Groq/.test(panel.footer) && /llama-3\.3-70b/.test(panel.footer), panel.footer.trim());
+// MODELS-TIDY (spec l.150, D-20261018-09): the "New chats start on" line and its raw id are gone.
+check('and draws no "New chats start on" line or raw id',
+	!panel.footer && !/New chats start on|llama-3\.3-70b/.test(panel.text), panel.text.replace(/\s+/g, ' ').slice(0, 160));
 
-// Expand one and check the star is on the model itself.
+// Expand one and check the default is marked on the model itself, with no star.
 await p.evaluate(() => {
 	[...document.querySelectorAll('.models-prov-head')]
 		.find(h => /Groq/.test(h.textContent)).click();
@@ -487,8 +489,8 @@ const expanded = await p.evaluate(() => {
 	return { models, on: el ? el.textContent : '', onModel: el ? el.dataset.model : '' };
 });
 // The row draws the model's plain name (U3a's displayName); the id is the row's data-model.
-check('expanding a provider shows its models, with the default starred',
-	expanded.models.length === 2 && /★/.test(expanded.on) && expanded.onModel === 'llama-3.3-70b'
+check('expanding a provider shows its models, the default marked on, no star',
+	expanded.models.length === 2 && !/[★☆]/.test(expanded.models.join(' ')) && expanded.onModel === 'llama-3.3-70b'
 		&& /Llama 3\.3 70B/.test(expanded.on),
 	expanded.on.replace(/\s+/g, ' ') + ' [' + expanded.onModel + ']');
 
@@ -595,20 +597,33 @@ check('and it sits outside the list that render() rewrites wholesale',
 	!line.there ? 'there is no line to place'
 		: line.inList ? 'inside #models-list, where the next redraw will take it' : 'beside the list');
 
+// UNBLOCK-33 eye F2: the "I have this much" field is drawn only for a provider that cannot be
+// asked (Groq here); one that can (OpenRouter) has "Ask again" and no field. Both rows open.
+await p.evaluate(() => {
+	for (const id of ['groq', 'openrouter']) {
+		const row = document.querySelector(`.models-prov[data-prov="${id}"]`);
+		if (row && !row.querySelector('.models-prov-body')) row.querySelector('.models-prov-head').click();
+	}
+});
+await p.waitForTimeout(300);
 const form = await p.evaluate(() => ({
-	input: !!document.querySelector('.models-credit-input'),
-	set:   !!document.querySelector('.models-credit-form .models-refetch'),
+	input: !!document.querySelector('.models-prov[data-prov="groq"] .models-credit-input'),
+	set:   !!document.querySelector('.models-prov[data-prov="groq"] .models-credit-form .models-refetch'),
+	onOr:  !!document.querySelector('.models-prov[data-prov="openrouter"] .models-credit-input'),
+	orOpen: !!document.querySelector('.models-prov[data-prov="openrouter"] .models-prov-body'),
 }));
-check('the expanded provider offers the “I have this much” field',
+check('the expanded provider that cannot be asked offers the “I have this much” field',
 	form.input && form.set, JSON.stringify(form));
+check('and one that can be asked (OpenRouter, open) has no such field',
+	form.orOpen && !form.onOr, JSON.stringify(form));
 
 // `abc` is not an amount. Until this landed the field simply did not take: an early return with
 // no message, no styling and nothing whatever to say what was wrong with what had been typed.
 const typed = await p.evaluate(() => {
 	const M    = window.DaimondModels;
 	const want = window.DaimondI18n ? DaimondI18n.t('models.credit_base_bad') : '';
-	const inp  = document.querySelector('.models-credit-input');
-	const btn  = document.querySelector('.models-credit-form .models-refetch');
+	const inp  = document.querySelector('.models-prov[data-prov="groq"] .models-credit-input');
+	const btn  = document.querySelector('.models-prov[data-prov="groq"] .models-credit-form .models-refetch');
 	const held = () => JSON.stringify(M.providers().map(x => [x.id, (x.credit || {}).baseUsd]));
 	const before = held();
 	inp.value = 'abc';
@@ -646,8 +661,8 @@ check('and it is still on screen after the provider list redraws',
 // And a figure that IS a number clears it: a panel that goes on complaining about something
 // already fixed teaches the user to stop reading it.
 const cleared = await p.evaluate(() => {
-	const inp = document.querySelector('.models-credit-input');
-	const btn = document.querySelector('.models-credit-form .models-refetch');
+	const inp = document.querySelector('.models-prov[data-prov="groq"] .models-credit-input');
+	const btn = document.querySelector('.models-prov[data-prov="groq"] .models-credit-form .models-refetch');
 	inp.value = '12.50';
 	btn.click();
 	const n = document.getElementById('models-note');
@@ -715,7 +730,9 @@ const readRow = (id) => p.evaluate((pid) => {
 	const own  = body ? [...body.children].filter(e => e.classList.contains('models-refetch')
 		&& e.textContent.trim() !== topUp) : [];
 	const btn  = own[0] || null;
-	const age  = body ? body.querySelector('.models-list-age') : null;
+	// UNBLOCK-33 eye F2: when the list was asked for is the hover of the button that asks
+	// again (its `title`), no longer a line of its own under it.
+	const age  = btn && btn.title ? btn : null;
 	return {
 		row:     true,
 		open:    !!body,
@@ -724,13 +741,13 @@ const readRow = (id) => p.evaluate((pid) => {
 		off:     btn ? btn.disabled : null,
 		btnBox:  box(btn),
 		age:     !!age,
-		ageText: age ? age.textContent.trim() : '',
+		ageText: age ? age.title.trim() : '',
 		ageBox:  box(age),
 	};
 }, id);
 
 const words = await p.evaluate(() => ({
-	again:  DaimondI18n.t('models.ask_provider_again'),
+	again:  DaimondI18n.t('models.refresh_list'),	// MODELS-TIDY: a listed row's button asks for the list only (spec l.150)
 	first:  DaimondI18n.t('models.ask_provider'),
 	nokey:  DaimondI18n.t('models.add_key_first'),
 	never:  DaimondI18n.t('models.list_never'),
@@ -742,13 +759,13 @@ check('a provider that ALREADY lists models is still offered a way to ask again'
 	listed.asks === 1 && !!listed.btnBox && listed.btnBox.w > 0 && listed.btnBox.h > 0,
 	listed.asks === 0 ? 'no ask on a row with a list — it can be asked once and never again'
 		: `${listed.asks} asks, box ${JSON.stringify(listed.btnBox)}`);
-check('and the label says AGAIN, not the words for a provider that has never answered',
+check('and the label says Refresh list, not the words for a provider that has never answered',
 	listed.text === words.again && listed.text !== words.first, `“${listed.text}”`);
 check('and it is live, because this row can ask', listed.off === false, 'disabled=' + listed.off);
 check('the row says when the list was last asked for',
 	listed.age && !!listed.ageBox && listed.ageBox.h > 0
 	&& listed.ageText.length > 0 && listed.ageText !== words.never,
-	listed.age ? `“${listed.ageText}”` : 'no .models-list-age — a count with no date on it');
+	listed.age ? `“${listed.ageText}”` : 'no title on the Refresh list button — a count with no date on it');
 
 await openRow('together');
 const keyless = await readRow('together');
@@ -794,8 +811,10 @@ const dated = await p.evaluate(async (stamp) => {
 	await DaimondI18n.setLocale('de');
 	window.DaimondModels.render();
 	const at = (pid) => {
-		const e = document.querySelector('.models-prov[data-prov="' + pid + '"] .models-list-age');
-		return e ? e.textContent.trim() : '';
+		// The list ask's hover (eye F2): the body's own button, not the credit block's.
+		const body = document.querySelector('.models-prov[data-prov="' + pid + '"] .models-prov-body');
+		const e = body ? [...body.children].find(x => x.classList.contains('models-refetch')) : null;
+		return e ? (e.title || '').trim() : '';
 	};
 	const out = { asked: at('groq'), never: at('together'),
 		// In the locale the line is drawn in. The app dates it in ITS locale, which is 'de'
@@ -1104,8 +1123,10 @@ const pick = await p.evaluate(async (rx) => {
 	return {
 		named: named.length,
 		text:  named.map(main),
-		alt:   alt ? main(alt) : '',
-		altId: alt ? alt.id : '',
+		// MODELS-TIDY (item 3): a twin's row is named; who pays is its sub-line.
+		alt:     alt ? ((alt.querySelector('.mp-sub') || {}).textContent || '').trim() : '',
+		altName: alt ? main(alt) : '',
+		altId:   alt ? alt.id : '',
 	};
 }, TWIN_RX.source);
 const fwName = await p.evaluate(() => (window.DaimondModels.providers().find(x => x.id === 'fireworks') || {}).name);
@@ -1129,8 +1150,8 @@ if (pick.altId) {
 		return r ? { provider: r.provider, model: r.model, key: r.apiKey } : null;
 	}, pick.altId);
 }
-check('P2 the picker names the twin’s other payer, “' + through + '”',
-	pick.alt === through, `“${pick.alt}”`);
+check('P2 the picker names the twin, and under it its other payer, “' + through + '”',
+	pick.alt === through && pick.altName === TWIN_NM, `“${pick.altName}” / “${pick.alt}”`);
 check('P2 and picking it bills the Fireworks key',
 	!!billed && billed.provider === 'fireworks' && billed.key === 'fw-key' && billed.model === TWIN_FW,
 	JSON.stringify(billed));
