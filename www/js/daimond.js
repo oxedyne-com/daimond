@@ -24565,6 +24565,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (ids.length === 1) {
 				homeView.appendChild(el('div', 'admin-note', t('devices.only_this')));
 			}
+			if (window.DaimondGateway && DaimondGateway.gwFetch) runnerMintRow(homeView);
 		}
 
 		/// Name a device the always-on runner, or clear the nomination with ''. Pushes
@@ -24785,6 +24786,84 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { DaimondSync.nudge(); } catch (e) { /* not syncing */ }
 			}
 			renderHome();
+		}
+
+		/// PAIR A COMPUTER AS A RUNNER (FIRST-RUN MINT-UI). The press mints a pairing token at
+		/// the gateway and shows the one line to run on that computer, with Copy and how long
+		/// it lasts; a second press mints a fresh one. The token is the computer's way in until
+		/// it joins, so it lives in this row and nowhere else: never stored, synced or logged,
+		/// and gone from the row when the gateway's ten minutes are up. Only a signed-in device
+		/// can mint (the door is session-authed), so it is shown only on the device that asked.
+		var RUNNER_MINT_URL = '/api/runner/pair/mint';
+		var RUNNER_MINT_CMD = '/opt/kimberlite/bin/runner pair ';
+		var RUNNER_MINT_TOKEN_RE = /^[A-Za-z0-9_-]{8,128}$/;
+		// The line on show, in memory only, so a redraw of the list (a beat, a rename) keeps
+		// it rather than wiping it mid-copy: { line, until } or null.
+		var _runnerMinted = null;
+		function runnerMintRow(view) {
+			var go = document.createElement('button');
+			go.type = 'button';
+			go.className = 'admin-item';
+			go.textContent = t('devices.runner_mint');
+			var out = document.createElement('div');
+			view.appendChild(go);
+			view.appendChild(out);
+			var lapse = null;
+			function clear() {
+				if (lapse) clearTimeout(lapse);
+				lapse = null;
+				while (out.firstChild) out.removeChild(out.firstChild);
+			}
+			function say(msg) { clear(); out.appendChild(el('div', 'admin-note', msg)); }
+			function show(line, ms) {
+				clear();
+				// Laid out as a device row, so its Copy sits in the same right-hand column as
+				// every device's: the line in the name cell, Copy in the copy cell, and an
+				// unseen rename-sized slot holding the rename column open.
+				var row = el('div', 'device-row');
+				var cell = row.appendChild(el('div', 'device-name'));
+				cell.appendChild(el('pre', 'capp-conflict-code', line));
+				row.appendChild(idCopyBtn(t('devices.runner_mint_what'), line));
+				var acts = row.appendChild(el('div', 'device-acts'));
+				var slot = acts.appendChild(el('span', 'device-rename'));
+				slot.setAttribute('aria-hidden', 'true');
+				slot.style.visibility = 'hidden';
+				out.appendChild(row);
+				out.appendChild(el('div', 'admin-note',
+					t('devices.runner_mint_expiry', { n: Math.max(1, Math.round(ms / 60000)) })));
+				lapse = setTimeout(function () {
+					lapse = null;
+					_runnerMinted = null;
+					say(t('devices.runner_mint_lapsed'));
+				}, ms);
+			}
+			if (_runnerMinted && _runnerMinted.until > Date.now()) {
+				show(_runnerMinted.line, _runnerMinted.until - Date.now());
+			}
+			go.addEventListener('click', async function () {
+				if (go.disabled) return;
+				go.disabled = true;
+				var j = null, status = 0;
+				try {
+					var r = await DaimondGateway.gwFetch(RUNNER_MINT_URL, {
+						method: 'POST', credentials: 'same-origin', cache: 'no-store',
+					});
+					status = (r && r.status) || 0;
+					if (r && r.ok) j = await r.json();
+				} catch (e) { j = null; }
+				go.disabled = false;
+				var tok = (j && j.ok === true && typeof j.token === 'string'
+					&& RUNNER_MINT_TOKEN_RE.test(j.token)) ? j.token : '';
+				if (!tok) {
+					_runnerMinted = null;
+					say(status === 401 ? t('devices.runner_mint_signin') : t('devices.runner_mint_failed'));
+					return;
+				}
+				var line = RUNNER_MINT_CMD + tok;
+				var ms = (Number(j.expires_in) > 0 ? Number(j.expires_in) : 600) * 1000;
+				_runnerMinted = { line: line, until: Date.now() + ms };
+				show(line, ms);
+			});
 		}
 
 		function el(tag, cls, text) {

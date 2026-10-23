@@ -400,6 +400,12 @@
 	'devices.replaced':         'replaced',
 	'devices.replaced_aria':    'A device that is here now has taken this one’s place. It is safe to remove.',
 	'devices.prune_one':        'Remove the replaced device',
+	'devices.runner_mint': 'Pair a computer as a runner',
+	'devices.runner_mint_expiry': 'Run this on the computer within {n} minutes.',
+	'devices.runner_mint_what': 'the pairing command',
+	'devices.runner_mint_lapsed': 'That token has expired. Pair again for a new one.',
+	'devices.runner_mint_failed': 'Could not make a pairing token. Try again.',
+	'devices.runner_mint_signin': 'Sign in again to pair a computer.',
 	'devices.prune_many':       'Remove {n} replaced devices',
 	// The build each device is running, and the flag when it is behind this one.
 	'devices.build':            'build {id}',
