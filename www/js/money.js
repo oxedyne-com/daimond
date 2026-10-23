@@ -213,19 +213,38 @@
 	var SCALE_DEFAULT  = 5;					// per hour, in the pool's currency, until then
 	var SCALE_PCT      = 0.95;				// the history's 95th percentile
 
-	/// The top-up mark after a reading of `amount` at `now`. A balance that rose
-	/// since the last reading was topped up, and is the new full height from then
-	/// on; one that fell or held is being spent. A pool with no mark takes this
-	/// reading as its full height. `last` is this device's own last reading and
-	/// never travels; `full` and `at` are the synced mark.
-	function markNext(prev, amount, now) {
+	/// The synced-register rule (stamp.js), which loads before this file.
+	function stamp() {
+		var S = (typeof window !== 'undefined' && window) ? window.DaimondStamp : null;
+		if (!S) throw new Error('money.js: DaimondStamp is missing; stamp.js loads first (index.html).');
+		return S;
+	}
+
+	/// The top-up mark after a reading of `amount` at `now`, from the source `src`
+	/// (the pool's `binds`: 'credit', 'limit', or '' for one that has no choice). A
+	/// balance that rose since the last reading was topped up, and is the new full
+	/// height from then on; one that fell or held is being spent. A pool with no mark
+	/// takes this reading as its full height. `last` and `src` are this device's own
+	/// last reading and never travel; `full` and `at` are the synced mark.
+	///
+	/// A rise that comes with a change of source is not a top-up (PS1 review M2, 23
+	/// Oct): a capped key read as its cap during a failed account read was a rise of
+	/// 12 to 100, and the false mark synced to every device. A new mark is stamped by
+	/// `DaimondStamp.next` over the one it replaces (L1), so a device whose clock is
+	/// slow still outranks the mark it saw.
+	function markNext(prev, amount, now, src) {
 		if (typeof amount !== 'number' || !isFinite(amount)) return prev || null;
 		var has = prev && typeof prev.full === 'number' && isFinite(prev.full);
 		var last = (prev && typeof prev.last === 'number') ? prev.last : (has ? prev.full : null);
-		if (!has || amount > prev.full || (last !== null && amount > last)) {
-			return { full: amount, at: now, last: amount };
+		var was = (prev && typeof prev.src === 'string') ? prev.src : null;
+		var own = (typeof src === 'string') ? src : null;
+		var swap = has && was !== null && own !== null && was !== own;	// a change of source
+		if (!swap) {
+			if (!has || amount > prev.full || (last !== null && amount > last)) {
+				return { full: amount, at: stamp().next(has ? prev.at : 0, now), last: amount, src: own };
+			}
 		}
-		return { full: prev.full, at: prev.at || 0, last: amount };
+		return { full: prev.full, at: prev.at || 0, last: amount, src: own };
 	}
 
 	/// The credits pool's mark as the gateway's ledger has it, from `/api/balance`'s
@@ -238,18 +257,26 @@
 	/// and is written to disk only when the mark moves, and buying credits reloads the page
 	/// (Stripe), so a top-up that left the balance under the old full height read as no
 	/// rise: full 50, spent to 10, bought 20, read 30 of 50. The ledger knows it was 30 of 30.
+	///
+	/// `at` is the newest entry that shaped the mark, the credit or a later refund (INT QA
+	/// L-a, 23 Oct): stamped with the credit alone, a lowered full met the pre-refund one at
+	/// one `at`, the greater full won the merge, and the refund was drawn as spending again.
 	function ledgerMark(entries) {
 		if (!Array.isArray(entries)) return null;
-		var cut = 0;	// refunds and adjustments down since the credit, in minor units
+		var cut  = 0;	// refunds and adjustments down since the credit, in minor units
+		var late = 0;	// the newest of them, Unix ns
 		for (var i = 0; i < entries.length; i++) {
-			var e = entries[i] || {}, d = +e.delta_minor;
+			var e = entries[i] || {}, d = +e.delta_minor, ts = +e.ts || 0;
 			if (!isFinite(d)) continue;
 			if (d > 0 && (e.kind === 'topup' || e.kind === 'grant' || e.kind === 'adjust')) {
 				var b = +e.balance;
 				if (!isFinite(b)) return null;
-				return { full: (b + cut) / 100, at: Math.floor((+e.ts || 0) / 1e6) };
+				return { full: (b + cut) / 100, at: Math.floor(Math.max(ts, late) / 1e6) };
 			}
-			if (d < 0 && (e.kind === 'refund' || e.kind === 'adjust')) cut += d;
+			if (d < 0 && (e.kind === 'refund' || e.kind === 'adjust')) {
+				cut += d;
+				if (ts > late) late = ts;
+			}
 		}
 		return null;
 	}
@@ -259,9 +286,7 @@
 	function markWins(a, b) {
 		if (!a || typeof a.full !== 'number' || !isFinite(a.full)) return false;
 		if (!b || typeof b.full !== 'number' || !isFinite(b.full)) return true;
-		var x = +a.at || 0, y = +b.at || 0;
-		if (x !== y) return x > y;
-		return a.full > b.full;
+		return stamp().beats(a.at, a.full, b.at, b.full, function (v) { return +v; });
 	}
 
 	/// Merge another device's marks into `mine`, in place, by later top-up time.
@@ -271,14 +296,17 @@
 	/// A mark taken from the other device drops this device's `last`: the top-up
 	/// it records is one this device may not have read yet, and its next reading,
 	/// above the old `last` but below the new full height, is that top-up already
-	/// counted, not a second one.
+	/// counted, not a second one. Its `src` stays: what this device last read from
+	/// is unchanged by another's top-up.
 	function marksMerge(mine, theirs) {
 		var moved = false;
 		if (!mine || !theirs || typeof theirs !== 'object') return false;
 		Object.keys(theirs).sort().forEach(function (k) {
 			var r = theirs[k];
 			if (!markWins(r, mine[k])) return;
+			var src = mine[k] && mine[k].src;	// this device's source still stands
 			mine[k] = { full: +r.full, at: +r.at || 0 };
+			if (typeof src === 'string') mine[k].src = src;
 			moved = true;
 		});
 		return moved;
@@ -369,8 +397,8 @@
 			// The ledger's mark stands while the reading is under it; a reading above it is a
 			// credit the last `/api/balance` had not seen yet, and `markNext` takes the rise.
 			var mark = (led && led.full > 0 && amount <= led.full)
-				? { full: led.full, at: led.at, last: amount }
-				: markNext(marks[key], amount, now);
+				? { full: led.full, at: led.at, last: amount, src: binds }
+				: markNext(marks[key], amount, now, binds);
 			var sc = fullScale(historyOf(key), ccy, st.fx);
 			out.push({
 				key:        key,

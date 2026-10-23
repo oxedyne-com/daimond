@@ -12263,8 +12263,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			(diamonds || []).map(function (d) { return d.name; }), 'diamond')) + 1;
 	}
 
-	// Short, readable model name for a tile chip (drops the provider path).
-	function shortModel(m) { return m ? String(m).split('/').pop() : 'default'; }
+	/// A model as every tile, chip and toast draws it: the name the Models menu gives it
+	/// (`DaimondModels.displayName`), never the raw id, which stays in the hover (INT QA L-c).
+	/// `provider` is the one billing it, or '' where unknown, when a twin's name serves.
+	function shortModel(m, provider) {
+		if (!m) return 'default';
+		return (window.DaimondModels && DaimondModels.displayName)
+			? DaimondModels.displayName(provider || '', String(m)) : String(m).split('/').pop();
+	}
 
 	// ── Masked secret inputs ───────────────────────────────────
 	// Secrets (the API key, the passphrase) are held in plain *text* inputs
@@ -16605,10 +16611,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// its Diamond's model (`turnModelOf`), never a copy of its own. The open Diamond
 	/// and the app default fill in behind them.
 	function respModel() {
-		var m = (current && turnModelOf(current).model)
-			|| (currentDiamond && currentDiamond.id && diamondModel(currentDiamond.id).model)
-			|| (cfg && cfg.model) || '';
-		return m ? shortModel(m) : '';
+		var own = current ? turnModelOf(current) : null;
+		var dia = (currentDiamond && currentDiamond.id) ? diamondModel(currentDiamond.id) : null;
+		var at  = (own && own.model) ? own : (dia && dia.model) ? dia
+			: { provider: '', model: (cfg && cfg.model) || '' };
+		return at.model ? shortModel(at.model, at.provider) : '';
 	}
 
 	/// The tile header's own local time, right of the peek and left of the
@@ -36067,9 +36074,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (chat.status === 'pending' && current === chat) renderPendingCentre(chat);
 			if (current === chat) renderEffortStep();
 			toast(t('tile.chat_model_changed', {
-				from: shortModel(before.model) || t('tile.model_none'),
-				to:   shortModel(res.model),
-			}) + effortClearedNote(eff, res.model));
+				from: shortModel(before.model, before.provider) || t('tile.model_none'),
+				to:   shortModel(res.model, res.provider),
+			}) + effortClearedNote(eff, res.provider, res.model));
 		});
 
 		r.appendChild(lab); r.appendChild(sel);
@@ -36081,8 +36088,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// The quiet half-sentence a model change adds when it cleared an Effort the new model
 	/// does not offer, or '' when nothing was cleared.
-	function effortClearedNote(eff, model) {
-		return (eff && eff.cleared) ? ' ' + t('tile.effort_cleared', { model: shortModel(model) }) : '';
+	function effortClearedNote(eff, provider, model) {
+		return (eff && eff.cleared) ? ' ' + t('tile.effort_cleared', { model: shortModel(model, provider) }) : '';
 	}
 
 	/// The tile's two colours, and a way back to the theme's own.
@@ -37080,9 +37087,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The receipt: what moved, and that the thread came with it. The one toast; no other
 		// path that moves a Diamond's model says so per Diamond.
 		toast(t('tile.model_changed', {
-			from: shortModel(before.model) || t('tile.model_none'),
-			to:   shortModel(p.model),
-		}) + effortClearedNote(eff, p.model));
+			from: shortModel(before.model, before.provider) || t('tile.model_none'),
+			to:   shortModel(p.model, p.provider),
+		}) + effortClearedNote(eff, p.provider, p.model));
 	}
 
 	/// A settings dialog for something that is not a tile: a title, a body somebody
@@ -38055,7 +38062,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			top.className = 'tile-active-top';
 			var chip = document.createElement('span');
 			chip.className = 'tile-model-chip';
-			chip.textContent = shortModel(s.model); chip.title = s.model || '';
+			chip.textContent = shortModel(s.model, s.provider); chip.title = s.model || '';
 			top.appendChild(chip);
 			// FOLD AND KEEP MOVED INTO THE COG (CHAT-15): every row used to carry
 			// both, always, whether or not there was even a Diamond to fold into --
@@ -45769,7 +45776,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			if (run.model) {
 				var mc = document.createElement('span'); mc.className = 'achip-model';
-				mc.textContent = shortModel(run.model); mc.title = run.model;
+				mc.textContent = shortModel(run.model, run.provider); mc.title = run.model;
 				// A task that named an image was routed by modality, so the chip says which
 				// half of the secondary it got. Where no vision model is set that is the
 				// TEXT model — the fallback §1.4 asks for — and the title is where it says
@@ -45789,7 +45796,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var came = movedFrom(run);
 				if (came) {
 					mc.classList.add('achip-rerouted');
-					mc.textContent = shortModel(came) + ' → ' + shortModel(run.model);
+					mc.textContent = shortModel(came, '') + ' → ' + shortModel(run.model, run.provider);
 					mc.title = came + ' → ' + run.model;
 				}
 				chips.appendChild(mc);
@@ -57770,7 +57777,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// called now. The chip's derived phrase is deliberately NOT searched: it is a
 		// description every unnamed chat shares, so "chat" would match all of them and
 		// match nothing in particular -- and a relative time moves under the query.
-		var hay = [run.name, run.task, run.diamondName, agentChatName(run), shortModel(run.model)]
+		var hay = [run.name, run.task, run.diamondName, agentChatName(run), run.model || '',
+			run.model ? shortModel(run.model, run.provider) : '']
 			.concat(agentTagsOf(run)).join(' ').toLowerCase();
 		return hay.indexOf(agentQuery) !== -1;
 	}
@@ -58910,7 +58918,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (dm && dm.model) {
 			var mchip = document.createElement('span');
 			mchip.className = 'tile-model-chip diamond-model';
-			mchip.textContent = shortModel(dm.model);
+			mchip.textContent = shortModel(dm.model, dm.provider);
 			mchip.title = t('tile.diamond_model_help', { model: dm.model });
 			meta.appendChild(mchip);
 		}

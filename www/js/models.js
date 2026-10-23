@@ -1784,8 +1784,9 @@
 				}
 			}
 		} catch (e) { account = null; }
+		var known = (typeof account === 'number' && isFinite(account));
 		var remaining = null, binds = '';
-		if (capped && typeof account === 'number' && isFinite(account) && account < keyData.limit_remaining) {
+		if (capped && known && account < keyData.limit_remaining) {
 			remaining = account; binds = 'credit';
 		} else if (capped) {
 			// The cap is the lower, or the account would not say: the cap is what this key
@@ -1800,6 +1801,11 @@
 		// holds is not kept.
 		p = store.providers[id];
 		if (!p || keyFor(id) !== key) return null;
+		// A failed account read on a capped key whose credit was binding keeps that reading
+		// (PS1 review M2, 23 Oct): the cap is not what it can spend, and the flip from 12 of
+		// credit to a cap of 100 read as a top-up that synced to every device.
+		if (capped && !known && p.credit && p.credit.mode === 'auto' && p.credit.binds === 'credit'
+			&& typeof p.credit.remainingUsd === 'number' && isFinite(p.credit.remainingUsd)) return null;
 		var asOf = Date.now();
 		p.credit = {
 			mode:         'auto',
@@ -2946,8 +2952,8 @@
 			var m = p && p.key && p.mark;
 			if (!m || typeof m.full !== 'number') return;
 			var was = marks[p.key];
-			if (!was || was.full !== m.full || (+was.at || 0) !== (+m.at || 0)) moved = true;
-			marks[p.key] = { full: m.full, at: +m.at || 0, last: m.last };
+			if (!was || was.full !== m.full || (+was.at || 0) !== (+m.at || 0) || was.src !== m.src) moved = true;
+			marks[p.key] = { full: m.full, at: +m.at || 0, last: m.last, src: m.src };
 		});
 		if (moved) saveQuiet();
 	}

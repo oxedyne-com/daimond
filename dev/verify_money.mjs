@@ -33,8 +33,12 @@ const check = (cond, msg, detail) => {
 	console.log((cond ? '  ok   ' : '  FAIL ') + msg + (detail ? ' -- ' + detail : ''));
 };
 
+// The page's window as money.js sees it: stamp.js loads first (index.html), and the
+// top-up marks are stamped by it (PS1 review L1).
+const WIN = {};
+new Function('window', fs.readFileSync(path.join(ROOT, 'www/js/stamp.js'), 'utf8'))(WIN);
 const mod = { exports: {} };
-new Function('module', fs.readFileSync(path.join(ROOT, 'www/js/money.js'), 'utf8'))(mod);
+new Function('module', 'window', fs.readFileSync(path.join(ROOT, 'www/js/money.js'), 'utf8'))(mod, WIN);
 const M = mod.exports;
 
 const prov = (o) => Object.assign({ id: 'p', name: 'OpenAI', paid: false, hasKey: true,

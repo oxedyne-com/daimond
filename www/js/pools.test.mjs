@@ -17,6 +17,14 @@
    A8 (PS1 review M1, INT provstatus 23 Oct) fails at MM_SRC_REV=ca893eafe
    and under `node www/js/pools.test.mjs --break ledger`, which puts the
    credits pool back on this device's own last reading.
+
+   A9 and A10 (PS1 review M2 and L1, PS1-F 23 Oct) fail at MM_SRC_REV=5da2ad750
+   and under `--break probe` (a failed account read takes the cap), `--break
+   source` (a rise across a change of source is a top-up) and `--break stamp`
+   (a mark stamped with the raw clock).
+
+   A11 (INT QA L-a, PS1-G 23 Oct) fails at MM_SRC_REV=6ca70f3ff and under
+   `--break refund` (the ledger mark stamped with the credit alone).
    ============================================================ */
 import { createRequire } from 'node:module';
 import test from 'node:test';
@@ -30,19 +38,30 @@ const bi = process.argv.indexOf('--break');
 const BREAK = bi > 0 ? process.argv[bi + 1] : '';
 const BREAKS = {
 	ledger: ['money.js', (s) => s.replace("'exact', '', ledgerMark(c.entries));", "'exact', '', null);")],
+	probe:  ['models.js', (s) => s.replace("if (capped && !known && p.credit && p.credit.mode === 'auto'", "if (false && p.credit")],
+	source: ['money.js', (s) => s.replace('var swap = has && was !== null', 'var swap = false && was !== null')],
+	stamp:  ['money.js', (s) => s.replace('at: stamp().next(has ? prev.at : 0, now),', 'at: now,')],
+	refund: ['money.js', (s) => s.replace('at: Math.floor(Math.max(ts, late) / 1e6)', 'at: Math.floor(ts / 1e6)')],
 };
 if (BREAK && !BREAKS[BREAK]) { console.error(`ABORT: no break called "${BREAK}"`); process.exit(2); }
 
-/// A CommonJS-style module from its source text (rev-aware through testlift).
-function load(file) {
-	const module = { exports: {} };
+/// The source of `www/js/<file>` (rev-aware through testlift), with the break applied.
+function broken(file) {
 	let src = source(file);
 	if (BREAK && BREAKS[BREAK][0] === file) {
 		const out = BREAKS[BREAK][1](src);
 		if (out === src) { console.error(`ABORT: the "${BREAK}" break no longer matches`); process.exit(2); }
 		src = out;
 	}
-	new Function('module', 'window', 'globalThis', src)(module, undefined, {});
+	return src;
+}
+/// The page's window as these modules see it: stamp.js loads first (index.html).
+const WIN = {};
+new Function('window', source('stamp.js'))(WIN);
+/// A CommonJS-style module from its source text.
+function load(file) {
+	const module = { exports: {} };
+	new Function('module', 'window', 'globalThis', broken(file))(module, WIN, {});
 	return module.exports;
 }
 const M = load('money.js');
@@ -246,4 +265,106 @@ test('A8: a reload between a spend and a top-up still reads the top-up as full (
 	assert.equal(byKey(poolsOf(st(1000, spends)), 'credits').full, 50);
 	// And the rail hands the pools the ledger it holds.
 	assert.match(liftFn(source('daimond.js'), 'moneyPools'), /credits:[^\n]*entries: st\.entries/);
+});
+
+test('A9: a failed account read keeps a capped key\'s credit, and a change of source is no top-up (M2)', async () => {
+	// Cap 100, account 12: the credit binds. One /credits read fails.
+	const body = liftFn(broken('models.js'), 'askCredit');
+	assert.ok(body, 'askCredit present');
+	async function ask(prior, keyData, credits) {
+		const store = { providers: { openrouter: { name: 'OpenRouter', credit: prior } } };
+		const fetch = async (u) => {
+			const leaf = u.split('/').pop();
+			if (leaf === 'credits' && credits === 'throw') throw new Error('offline');
+			const data = leaf === 'key' ? keyData : credits;
+			return { ok: !!data, json: async () => ({ data }) };
+		};
+		const fn = new Function('store', 'providerUrl', 'keyFor', 'canProbeCredit', 'siblingUrl', 'fetch', 'save',
+			body + '\nreturn askCredit;')(store, () => 'https://openrouter.ai/api/v1/chat/completions',
+			() => 'sk-or-test', () => true, (url, leaf) => 'https://openrouter.ai/api/v1/' + leaf, fetch, () => {});
+		const got = await fn('openrouter');
+		return { got, credit: store.providers.openrouter.credit };
+	}
+	const prior = { mode: 'auto', remainingUsd: 12, asOf: NOW - MIN, binds: 'credit', baseUsd: null, baseAt: null };
+	const capKey = { limit: 100, limit_remaining: 100 };
+	for (const fail of [null, 'throw']) {
+		const r = await ask(Object.assign({}, prior), capKey, fail);
+		assert.equal(r.got, null, 'a failed account read is a failed probe');
+		assert.equal(r.credit.remainingUsd, 12, 'the credit reading stands, not the cap (' + fail + ')');
+		assert.equal(r.credit.binds, 'credit');
+	}
+	// With no reading yet, the cap is all that is known, and it is named as the cap.
+	const first = await ask(undefined, capKey, null);
+	assert.equal(first.credit.remainingUsd, 100);
+	assert.equal(first.credit.binds, 'limit');
+
+	// The defence: a mark whose source changed takes no rise, so nothing false syncs.
+	const t0 = NOW - 60 * MIN;
+	const marks = { openrouter: { full: 12, at: t0, last: 12, src: 'credit' } };
+	const [flip] = M.pools({ now: NOW - MIN, marks, providers: [key('openrouter', 'OpenRouter', 100, 'limit')] });
+	assert.equal(flip.full, 12, 'the cap is not a top-up');
+	assert.equal(flip.mark.at, t0, 'and writes no new mark');
+	marks.openrouter = flip.mark;
+	const [back] = M.pools({ now: NOW, marks, providers: [key('openrouter', 'OpenRouter', 10, 'credit')] });
+	assert.equal(back.full, 12);
+	assert.ok(Math.abs(back.level - 10 / 12) < 1e-9, 'level 10 of 12, not 0.10: ' + back.level);
+	assert.deepEqual(M.marksParcel(marks), { openrouter: { full: 12, at: t0 } }, 'the parcel carries the old mark');
+	// A real top-up within one source is still a rise.
+	marks.openrouter = back.mark;
+	assert.equal(M.pools({ now: NOW, marks, providers: [key('openrouter', 'OpenRouter', 40, 'credit')] })[0].full, 40);
+	// The source is kept with the mark on this device.
+	assert.match(liftFn(source('models.js'), 'noteTopups'), /src: m\.src/);
+});
+
+test('A10: a top-up seen on a device five minutes slow beats the mark it saw (L1)', () => {
+	// The desktop's mark is full 50 at NOW. The phone, 5 min slow, has merged it.
+	const desk = { openrouter: { full: 50, at: NOW } };
+	const phone = {};
+	assert.equal(M.marksMerge(phone, M.marksParcel(desk)), true);
+	const slow = NOW - 5 * MIN;
+	const step = (marks, usd, now) => {
+		const [p] = M.pools({ now, providers: [key('openrouter', 'OpenRouter', usd)], marks });
+		marks[p.key] = p.mark;
+		return p;
+	};
+	step(phone, 10, slow + MIN);							// spent down to 10
+	const p = step(phone, 30, slow + 2 * MIN);				// a later top-up, true full 30
+	assert.equal(p.full, 30);
+	assert.ok(p.mark.at > NOW, 'stamped over the mark it replaces: ' + (p.mark.at - NOW));
+	assert.equal(M.marksMerge(desk, M.marksParcel(phone)), true, 'the desktop takes the later top-up');
+	assert.equal(desk.openrouter.full, 30, 'both settle on 30, not 50');
+	assert.equal(M.marksMerge(phone, M.marksParcel(desk)), false, 'and nothing moves back');
+	// At one stamp the greater full height wins, on either side.
+	assert.equal(M.markWins({ full: 40, at: 5 }, { full: 30, at: 5 }), true);
+	assert.equal(M.markWins({ full: 30, at: 5 }, { full: 40, at: 5 }), false);
+	assert.equal(M.markWins({ full: 30, at: 5 }, { full: 30, at: 5 }), false);
+});
+
+test('A11: a refund after a top-up wins the merge, so sync does not bring back the old height (L-a)', () => {
+	const NS = 1e6;
+	const t0 = NOW - 60 * MIN, t1 = NOW - 10 * MIN;
+	const topup  = { ts: t0 * NS, kind: 'topup', delta_minor: 1000, balance: 1000 };
+	const refund = { ts: t1 * NS, kind: 'refund', delta_minor: -300, balance: 700 };
+	// B painted before the refund; A after it.
+	const paint = (marks, minor, entries) => {
+		const c = byKey(poolsOf({ authed: true, now: NOW, marks, providers: [],
+			credits: { minor, currency: 'usd', entries } }), 'credits');
+		marks[c.key] = { full: c.mark.full, at: c.mark.at };
+		return c;
+	};
+	const B = {}, A = {};
+	assert.equal(paint(B, 1000, [topup]).full, 10);
+	assert.equal(paint(A, 700, [refund, topup]).full, 7);
+	assert.ok(A.credits.at > B.credits.at, 'the refunded mark is the later one');
+	// Merge in both orders: both settle on 7.
+	const A1 = JSON.parse(JSON.stringify(A)), B1 = JSON.parse(JSON.stringify(B));
+	M.marksMerge(A1, M.marksParcel(B1));
+	M.marksMerge(B1, M.marksParcel(A1));
+	assert.equal(A1.credits.full, 7, 'A kept the refund');
+	assert.equal(B1.credits.full, 7, 'B took the refund');
+	const A2 = JSON.parse(JSON.stringify(A)), B2 = JSON.parse(JSON.stringify(B));
+	M.marksMerge(B2, M.marksParcel(A2));
+	M.marksMerge(A2, M.marksParcel(B2));
+	assert.equal(A2.credits.full, 7);
+	assert.equal(B2.credits.full, 7);
 });

@@ -2657,13 +2657,10 @@ impl LlmClient {
                     out.push_str(",\"allow_fallbacks\":true");
                 }
                 // Where a host has been measured slow, OpenRouter's own choice among the rest
-                // leans to the quick ones: by throughput where nothing is ordered (an order,
-                // typed or the pin, is tried first and a sort beside it is undocumented), and a
-                // floor it prefers to meet either way.
+                // prefers hosts that meet a throughput floor.  Never a `sort`: it switches off
+                // OpenRouter's price weighting, and the fast hosts are often the dear ones, so
+                // a turn would cost up to 2.6x without his say (INT QA M-a, 2026-10-23).
                 if !measured.is_empty() {
-                    if routing.order.is_empty() && pinned.is_none() {
-                        out.push_str(",\"sort\":\"throughput\"");
-                    }
                     out.push_str(&fmt!(",\"preferred_min_throughput\":{}",
                         crate::hostspeed::SLOW_TPS as u64));
                 }
@@ -7626,6 +7623,27 @@ pub mod tests {
         let mut stalled = pin_round("FastCo");
         stalled.stalled = true;
         assert_eq!(or.settle_pin(&stalled), None, "a pin that just stalled was kept");
+        crate::hostspeed::clear();
+    }
+
+    /// INT QA M-a (failing first).  A host measured slow is left out and a throughput floor is
+    /// preferred, but the request carries no `sort`, which would switch off OpenRouter's price
+    /// weighting and bill the turn at the fastest host's price.
+    #[test]
+    fn test_hostspeed_measured_slow_request_keeps_price_weighting_00() {
+        const M: &str = "deepseek/deepseek-chat-v3.1";
+        crate::hostspeed::clear();
+        let now = crate::hostspeed::wall_ms();
+        for i in 0..3 {
+            crate::hostspeed::record(M, "SlowCo", crate::hostspeed::Sample {
+                at: now - 1_000 + i, first_ms: 9_000, gen_ms: 40_000, out: 400, stalled: false });
+        }
+        let or = test_client("openrouter.ai", 443, M);
+        let msgs = [ChatMessage::user("hi".to_string())];
+        let body = or.build_body(&msgs, None, true);
+        assert!(body.contains("\"ignore\":[\"SlowCo\"]"), "the slow host was asked for: {}", body);
+        assert!(body.contains("\"preferred_min_throughput\":20"), "no throughput floor: {}", body);
+        assert!(!body.contains("\"sort\""), "a measured-slow request sorts, dropping price: {}", body);
         crate::hostspeed::clear();
     }
 

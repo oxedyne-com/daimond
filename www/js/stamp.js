@@ -29,8 +29,12 @@
 		return (isFinite(n) && n > 0) ? Math.floor(n) : 0;
 	}
 
-	/// The stamp for a local write that replaces a value stamped `prev`.
-	function next(prev) { return Math.max(Date.now(), ms(prev) + 1); }
+	/// The stamp for a local write that replaces a value stamped `prev`. `now` is the
+	/// caller's clock where it passes one (a pure module given its time), else `Date.now()`.
+	function next(prev, now) {
+		var t = (typeof now === 'number' && isFinite(now)) ? now : Date.now();
+		return Math.max(t, ms(prev) + 1);
+	}
 
 	/// A value's canonical form: JSON with every object's keys sorted, so two
 	/// devices holding the same value compare it as the same string.
