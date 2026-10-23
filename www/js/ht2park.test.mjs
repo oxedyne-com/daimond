@@ -16,7 +16,7 @@
      P3 round owed: three wakes in a round re-run it exactly once,
         and every row is folded.
      P4 locked: no park after it, one `leaving` within 1 s, under
-        the park's own wake id.
+        the tab's one wake id (HT-ID).
      P5 a round past 30 s: parking stops, one `leaving`; the round
         ending parks again.
      P6 five failed parks, then the channel comes back: a park at
@@ -25,10 +25,15 @@
      P8 arming the runner cuts a 45 s park in flight: a 20 s park
         within 1 s, so the 30 s bound holds from the arming (in this
         tab, and from another tab's storage write).
-     P9 TABCLOSE: the park registers its wake id with sync.js, so the
-        page's close (`presenceGone`) leaves it too.
+     P9 HT-ID: the park parks under the tab's one wake id (sync.js
+        `wakeId`), the origin the page's close leaves.
+     P10 HT-ID F2: an outage with a round in flight (its collects fail
+        too, so the round's retry and the park's backoff nap at once):
+        the channel coming back parks within 1 s, for every outage
+        length from 20 s to 195 s.
 
    Red proof:  MM_SRC_REV=e638b372f node www/js/ht2park.test.mjs
+               (P4, P9's one id and P10: MM_SRC_REV=aeb8a3f11)
    Breaks:     node www/js/ht2park.test.mjs --break <name>
    ============================================================ */
 import { source } from './testlift.mjs';
@@ -46,7 +51,8 @@ const BREAKS = {
 	runner:  ['return parkAsRunner() ? PARK_RUNNER_MS : PARK_MS;', 'return PARK_MS;'],			// P7
 	posture: ["window.addEventListener('daimond:posture', function () { parkPosture(); });", ''],	// P8
 	cut:     ['if (!h || !h.cut || h.ms <= parkMs()) return false;', 'return false;'],		// P8, P8b
-	origin:  ['if (window.DaimondSync && DaimondSync.presenceOrigin) DaimondSync.presenceOrigin(WAKE_ID);', ''],	// P9
+	origin:  ['if (window.DaimondSync && DaimondSync.presenceOrigin) DaimondSync.presenceOrigin(wid);', ''],	// P9
+	naps:    ['var naps = _parkNaps;\n\t\t_parkNaps = [];\n\t\tnaps.forEach(', 'var naps = _parkNaps.slice(-1);\n\t\t_parkNaps = [];\n\t\tnaps.forEach('],	// P10
 };
 if (BREAK && !BREAKS[BREAK]) {
 	console.error('unknown break ' + BREAK + '; known: ' + Object.keys(BREAKS).join(', '));
@@ -121,7 +127,7 @@ function makeTab(opts) {
 		const at = clock.now();
 		if (p.has('above')) {
 			const above = Number(p.get('above')), ms = Number(p.get('ms'));
-			const park = { at, above, ms, end: 0 };
+			const park = { at, above, ms, end: 0, w: p.get('w') };
 			log.parks.push(park);
 			if (down) { park.end = at; return Promise.resolve({ status: 500, json: () => Promise.resolve({ ok: false }) }); }
 			if (top() > above) { park.end = at; return Promise.resolve(ok({ ok: true, waited: true, changed: true, seq: top() })); }
@@ -144,6 +150,7 @@ function makeTab(opts) {
 		if (p.has('since')) {
 			const since = Number(p.get('since'));
 			log.collects.push({ at, since });
+			if (down && opts.collectsDown) return Promise.resolve({ status: 500, json: () => Promise.resolve({ ok: false }) });
 			return Promise.resolve(ok({ ok: true, rows: rows.filter((r) => (r.seq | 0) > since), more: false }));
 		}
 		return Promise.resolve(ok({ ok: true }));
@@ -183,7 +190,7 @@ function makeTab(opts) {
 		DaimondGateway: { clientApi: () => 9, gwFetch },
 		DaimondRunner: { KEY: 'daimond-runner-posture', on: () => !!opts.runner },
 		DaimondSync: { presenceLeaving: (w) => { log.leavings.push({ at: clock.now(), w }); return true; },
-			presenceOrigin: (w) => { log.origins.push(w); } },
+			presenceOrigin: (w) => { log.origins.push(w); }, wakeId: () => 'wk-tab' },
 		// A row whose envelope is SLOW:<ms> takes that long to fold: the slow round.
 		DaimondPeer: {
 			peek: (env) => {
@@ -271,8 +278,9 @@ console.log('HT2c park and round (' + (BREAK ? '--break ' + BREAK : 'clean')
 		ps.length >= 2 ? 'above ' + ps[1].above + ' at ' + (ps[1].at - T0) + ' ms' : 'no second park');
 	check('P2 no 1 Hz loop: at most 2 parks in 10 s', ps.length <= 2, ps.length + ' parks');
 	const og = [...new Set(tab.log.origins)];
-	check('P9 TABCLOSE: the park registers its own wake id to leave with the page',
-		og.length === 1 && /^p/.test(String(og[0])) && (!ps[0].w || ps[0].w === og[0]), og.join() || 'none');
+	check('P9 HT-ID: the park parks under the tab\'s one wake id, the id that leaves with the page',
+		og.length === 1 && og[0] === 'wk-tab' && ps.every((p) => p.w === 'wk-tab'),
+		og.join() + ' / ' + [...new Set(ps.map((p) => p.w))].join());
 	tab.P().parkStop();
 }
 
@@ -290,7 +298,7 @@ console.log('HT2c park and round (' + (BREAK ? '--break ' + BREAK : 'clean')
 	await tab.clock.advance(1000);
 	const soon = tab.log.leavings.filter((l) => l.at <= at + 1000);
 	check('P4 locked: one `leaving` within 1 s', soon.length === 1, soon.length + ' leavings');
-	check('P4 the leaving names the park\'s own wake id', soon.length === 1 && /^p/.test(String(soon[0].w)),
+	check('P4 the leaving names the tab\'s one wake id', soon.length === 1 && soon[0].w === 'wk-tab',
 		soon.length ? 'w ' + soon[0].w : '');
 	await tab.clock.advance(120000);
 	check('P4 locked: no park after it', tab.log.parks.length === n, (tab.log.parks.length - n) + ' parks after');
@@ -389,6 +397,34 @@ for (const how of ['daimond:posture', 'storage']) {
 	check('P8c a runner already armed: its 20 s park is not cut', tab.log.parks.length === 1 && !tab.log.parks[0].end,
 		tab.log.parks.length + ' parks');
 	tab.P().parkStop();
+}
+
+// ── P10: an outage with a round in flight; the channel back ends every wait (HT-ID F2) ──
+{
+	const late = [];
+	for (let out = 20000; out <= 195000; out += 7000) {
+		const tab = makeTab({ collectsDown: true });
+		await settle();
+		tab.P().parkStart();
+		await settle(20);
+		await tab.clock.advance(3000);
+		tab.setDown(true);
+		tab.wake(2);						// the held park answers: a round begins as the gateway goes
+		await settle(20);
+		await tab.clock.advance(out);
+		const n = tab.log.parks.length;
+		const at = tab.clock.now();
+		tab.setDown(false);
+		tab.emit('daimond:channel-back');
+		await settle(20);
+		await tab.clock.advance(60000);
+		const next = tab.log.parks[n];
+		const d = next ? next.at - at : Infinity;
+		if (d > 1000) late.push((out / 1000) + 's:' + (next ? (d / 1000) + 's' : 'none'));
+		tab.P().parkStop();
+	}
+	check('P10 an outage with a round in flight: a park within 1 s of the channel back, every outage 20-195 s',
+		late.length === 0, late.length ? 'late ' + late.join(' ') : '26 outages');
 }
 
 console.log('\n' + checks + ' checks, ' + (failures ? failures + ' FAILURE(S)' : 'ALL PASS'));

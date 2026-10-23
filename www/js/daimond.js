@@ -23184,7 +23184,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// the composer DOM blind. The ORDER and the errand it runs are tested in
 	// peer.test.mjs via DaimondPeer.buildDispatch.
 	window.__daimondDispatchToPeer = function (chat, turnId, promptText, scopePaths) {
-		return dispatchToPeer(chat, turnId, promptText, scopePaths);
+		return handOffTurn(chat, turnId, promptText, scopePaths);
 	};
 
 	/// A link a crystal page asked the app to follow, put to the user.
@@ -27055,6 +27055,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_renderSynced = true;
 	}
 
+	/// The prompt a "not run" row asks again: the one it carries, else its turn's own.
+	function notRunAsk(chat, m) {
+		var ask = String((m && m.itext) || '');
+		if (ask) return ask;
+		((chat && chat.messages) || []).forEach(function (x) {
+			if (x && x.role === 'user' && (x.mid === m.iturn || x.iturn === m.iturn)) ask = x.content || '';
+		});
+		return ask;
+	}
+
 	/// Badge a recovered assistant message as interrupted, with a Continue button that runs the
 	/// turn again. `m.iturn` groups every message of the interrupted turn; `m.itext` is the prompt
 	/// to re-run.
@@ -27072,6 +27082,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		var label = document.createElement('span');
 		label.className = 'ti-label';
+		// A HAND-OFF THE DOOR TURNED AWAY BEFORE IT LEFT (SEND-UNHANDED): the turn ran nowhere,
+		// and says so. Retry asks it again as a send is asked, through `retryTurn`'s lost route:
+		// the switch decides where it runs, and every device's Retry names one turn, one lease.
+		if (m.why === 'notrun') {
+			label.className = 'ti-label lead-warn';
+			label.textContent = t('turn.not_run');
+			var nb = document.createElement('button');
+			nb.className = 'ti-continue';
+			nb.textContent = t('turn.retry');
+			nb.addEventListener('click', function () { retryTurn(current, m.iturn, notRunAsk(current, m), { lost: true }); });
+			foot.appendChild(label); foot.appendChild(nb);
+			div.appendChild(foot);
+			return;
+		}
 		// A HANDED-OFF RUN THE RUNNER LOST (r545 F-C2-1): the device running it reloaded,
 		// and the turn ended there as it stood rather than run again from its first round.
 		// What it had done is above; Retry runs the whole turn afresh, a new turn, never a
@@ -27163,6 +27187,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var holder = turnRunnerId(m.iturn);
 		var name = runnerLabel(holder);
 		if      (st === 'no-peer-awake') label.textContent = t('turn.peer_none');
+		else if (st === 'ending')        { label.className = 'ti-label lead-warn'; label.textContent = t('turn.not_run'); }
 		else if (st === 'claimed')       label.textContent = name ? t('turn.peer_claimed_named', { name: name }) : t('turn.peer_claimed');
 		else if (st === 'running')       label.textContent = name ? t('turn.peer_running_named', { name: name }) : t('turn.peer_running');
 		else if (st === 'awaiting-consent') {
@@ -27455,7 +27480,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Is a hand-off tile in display state `st` the state of a turn still running? Done,
 	/// failed and interrupted are how a turn ended, not how it is going.
 	function handoffLive(st) {
-		return st !== 'done' && st !== 'failed' && st !== 'interrupted' && st !== 'not-dispatched';
+		return st !== 'done' && st !== 'failed' && st !== 'interrupted' && st !== 'ending' && st !== 'not-dispatched';
 	}
 
 	/// Draw a turn HANDED TO A PEER as its own hand-off tile, live for the whole
@@ -27481,7 +27506,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// else the CHOSEN target tentatively ("Sending to X…") -- present-progressive, an
 		// intention not a claim, so seq 217's honesty holds. Generic only when no target.
 		var dl   = handoffClaimLabel(m);				// the real lease holder, or ''
-		var tgt  = dl ? '' : handoffTargetLabel(m);		// the chosen target, pre-claim
+		var tgt  = (dl || st === 'ending') ? '' : handoffTargetLabel(m);	// the chosen target, pre-claim
 		var line = dl  ? tOr('chat.handed_off', 'Handed off to {name}', { name: dl })
 			: tgt ? t('turn.peer_sending_named', { name: tgt })
 			:       tOr('chat.who_handoff', 'Hand-off');
@@ -27537,7 +27562,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// loud rather than left as a silent local run, with the status on the tooltip. A
 		// re-dispatch clears `refused` (markTurnDispatched), so this shows only while the
 		// refusal stands. A refusal the turn then ran here for is said once, on the
-		// person's own message (`seatNoteOnPrompt`), which outlives this tile.
+		// person's own message (`seatNote`), which outlives this tile.
 		if (m.refused && !m.refused.noted) {
 			return { text: t('seat.refused', { name: seatNameOf(m.toDevice, m.toName) }),
 				why: String(m.refused.why || ''), warn: true };
@@ -27599,6 +27624,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			existing.parkCount    = mark.parkCount | 0;
 			existing.itext        = mark.itext;
 			existing.ts           = Date.now();
+			if (mark.stepAway) existing.stepAway = true; else delete existing.stepAway;
 			delete existing.refused;		// a re-dispatch supersedes the last refusal
 			delete existing.busyBy;			// and the last seat's busy hand-back (Q19)
 			delete existing.threadBy;		// and its thread hand-back (D2)
@@ -27631,6 +27657,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			};
 			// The device the errand was elected to, tried from the first send (R4b).
 			if (Array.isArray(mark.tried) && mark.tried.length) rec.triedDevices = mark.tried.slice();
+			if (mark.stepAway) rec.stepAway = true;
 			chat.messages.push(touchMsg(rec));
 		}
 		diag('handoff mark', (chat && chat.id) + ' turn=' + mark.iturn
@@ -27663,7 +27690,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The push is NOT awaited, and that is the point -- but it is also not forgotten:
 	/// it is kicked off here and its cost is logged when it lands, so a slow parcel is
 	/// still visible without anybody waiting for it. Answers `{ ok, why }`.
-	async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts) {
+	///
+	/// `handOffTurn` is the ONE ENTRY every caller uses, AND IT OWNS THE REFUSAL
+	/// (SEND-UNHANDED, diag-elect b). A refusal made
+	/// before the mark -- a transport this build lacks, a runner that has not shown it
+	/// runs the turn's set (`unable`), a thread that cannot be built, a throw -- left
+	/// nothing behind the prompt, and each caller read it its own way: the send had already
+	/// cleared the composer, so its turn ended in an error line with no Retry and ran
+	/// nowhere. So the entry answers it, the same for every caller: a person's pause is
+	/// said as the local run says it (as before), and every other refusal leaves a durable
+	/// "not run" row on the turn, whose Retry asks it again through `retryTurn` (one turn
+	/// id, one lease, following the switch). It is never run here in silence instead
+	/// (owner §1: "if argonaut is selected, it runs there"). A refusal after the mark has
+	/// its own placeholder, stamp and recovery, and is left to them.
+	async function handOffTurn(chat, turnId, promptText, scopePaths, opts) {
+		var st = { marked: false }, r;
+		try { r = await dispatchToPeer(chat, turnId, promptText, scopePaths, opts, st); }
+		catch (e) { r = { ok: false, why: String((e && e.message) || e) }; }
+		if (!r) r = { ok: false, why: 'the hand-off door gave no answer' };
+		if (!r.ok && !st.marked) answerUnhanded(chat, turnId, promptText, r);
+		return r;
+	}
+
+	/// The door itself, called only by `handOffTurn`, the entry: `st.marked` is set the
+	/// moment the turn's placeholder is written, so the entry can tell a refusal before it.
+	async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts, st) {
 		diag('dispatch start', 'chat=' + (chat && chat.id) + ' turn=' + turnId
 			+ (opts && opts.toName ? ' to=' + String(opts.toId || '').slice(0, 8) : ''));
 		// A PERSON'S PAUSE HOLDS A HAND-OFF AS IT HOLDS A TURN RUN HERE (R2 QA, F2). This is
@@ -27684,7 +27735,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// through here, so here the errand is addressed, and only to a device that has shown it
 		// honours the model set the errand carries: one before the Models menu runs a following
 		// chat on its own default and says nothing. Asked before anything is marked or posted,
-		// in the same run as the election that named it; `unable` tells the caller to run it here.
+		// in the same run as the election that named it; `unable` is answered by the entry: not run, with Retry.
 		var runTo = String((opts && opts.runTo) || '');
 		if (!honoursModelSet(runTo)) {
 			diag('dispatch refused', 'turn=' + turnId + ' runner ' + (runTo ? runTo.slice(0, 8) : 'unnamed')
@@ -27762,6 +27813,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And the device the errand was elected to, whether or not the tile names it, so the
 		// backstop does not hand the turn straight back to it (`electedTried`, R4b).
 		if (opts && Array.isArray(opts.tried) && opts.tried.length) plan.mark.tried = opts.tried.slice();
+		// A step-away hand-off (a turn already running here, handed on as the page went) is
+		// marked so, since one its runner did not take is run here, not ended "not run".
+		if (opts && opts.stepAway) plan.mark.stepAway = true;
 		// 1. MARK THE LOCAL TURN FIRST. The DURABLE `why:'dispatched'` placeholder --
 		//    and, through `drawHistoryMessage`, its hand-off tile -- is written BEFORE
 		//    the post, so a refused post is a TRANSCRIPT event a store-driven rebuild
@@ -27769,6 +27823,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		//    (D-20260918-27). It is a local write, so it does not reintroduce the seq-223
 		//    flush wait: the errand is still posted ahead of the parcel PUSH below.
 		markTurnDispatched(chat, plan.mark);
+		if (st) st.marked = true;
 		// The placeholder AS THE CHAT HOLDS IT NOW. Read again after every await: a sync
 		// merge in that window (`mergeMessages`) replaces the object, and a refusal stamped
 		// on the old one was lost with it (UNBLOCK-1 DISPATCH-FAIL).
@@ -27780,18 +27835,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			return null;
 		}
-		// A REFUSED HAND-OFF RUNS HERE AT ONCE, by one door for every refusal (an unpostable
-		// prompt, a refused post): the durable placeholder is stamped with the refusal, the
-		// seat note says so, and `recoverOneLocally` takes the turn on, which moves the
-		// switch, the tile and its header to this device (UNBLOCK-1 DISPATCH-FAIL, I9).
-		function refuseAndRunHere(status, why) {
+		// A HAND-OFF REFUSED AFTER ITS MARK ENDS "NOT RUN", by one door for every refusal (an
+		// unpostable prompt, a refused post). It used to run here at once (UNBLOCK-1
+		// DISPATCH-FAIL, I9); the rulings (§1 l.17, rig law NR) say a turn the switch sent
+		// never runs elsewhere: the placeholder is stamped with the refusal, and
+		// `endHandOffNotRun` takes and settles the turn's lease (a post whose answer was lost
+		// may still have landed), writes the "not run" row with Retry and drops the placeholder.
+		function refuseAndEndNotRun(status, why) {
 			var ph = placeholderNow();
 			if (!ph) return;
 			ph.refused = { status: status | 0, why: why, ts: Date.now() };
-			ph.refused.noted = seatNoteOnPrompt(chat, turnId, t('seat.ran_here_refused', { name: seatNameOf(ph.toDevice, ph.toName) }));
 			touchMsg(ph);
-			try { touchChat(chat); persistChats(); if (ownsChat(chat)) renderHistory(chat.messages); } catch (e) { /* the record stands regardless */ }
-			try { recoverOneLocally(chat, ph); } catch (e) { /* backstop + recovery-on-return remain */ }
+			try { touchChat(chat); persistChats(); } catch (e) { /* the record stands regardless */ }
+			try { endHandOffNotRun(chat, ph, 'refused after the mark: ' + why); } catch (e) { /* backstop + recovery-on-return remain */ }
 		}
 		// 2. SEAL THE ERRAND, dropping the thread seed if the sealed envelope would not
 		//    fit the relay. A large recent tail both DUPLICATES what a synced peer already
@@ -27832,7 +27888,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!fitsPostDoor(body && body.envelope)) {
 			var whyBig = t('errand.prompt_too_large');
 			diag('dispatch FAILED', 'turn=' + turnId + ' unpostable: prompt over the relay door');
-			refuseAndRunHere(0, whyBig);
+			refuseAndEndNotRun(0, whyBig);
 			return { ok: false, why: whyBig, refused: true };
 		}
 		// 2b. THE ERRAND IS NEVER BEHIND THE PARCEL (UNBLOCK-1, D-20261013-02). A whole-
@@ -27862,7 +27918,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// correct route (it is the same money-safe path the +95 s backstop takes).
 			var whyR = (res && res.why) || 'the relay would not take the errand';
 			diag('dispatch FAILED', 'turn=' + turnId + ' ' + whyR + ' status=' + (res && res.status | 0));
-			refuseAndRunHere((res && res.status) | 0, whyR);
+			refuseAndEndNotRun((res && res.status) | 0, whyR);
 			return { ok: false, why: whyR, refused: true };
 		}
 		// (a) THE ERRAND POSTED, and WHAT IT WEIGHED. The seed count is named -- and a
@@ -29271,6 +29327,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (DaimondPeer.handBackReport(report)) {
 					delete _openAsk[tid];
 					noteHandBack(report);
+					if (report.cause) _handBackCause[tid] = String(report.cause);
 					_handBack[tid] = String(report.chatId || '');
 					reclaimHandBack(report).then(function () {
 						if (_handBack[tid] == null) return;		// decided meanwhile
@@ -30235,8 +30292,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var lease  = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(m.iturn) : null;
 		var report = peerReports[String(m.iturn)] || null;
 		var ask    = _openAsk[String(m.iturn)] || null;
+		var tid = String(m.iturn);
 		return DaimondPeer.uiState(m, lease, report, selfDeviceId(), Date.now(), ask,
-			!!_localRecovering[String(m.iturn)]);
+			_localEnding[tid] ? 'end' : !!_localRecovering[tid]);
 	}
 
 	/// Stamp the GLOBAL park count onto a turn's synced dispatched placeholder, so a
@@ -30286,16 +30344,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondPeer && DaimondPeer.turnInWindow
 			&& !DaimondPeer.turnInWindow([tid, ph && ph.mid], [], Date.now())) { continueTurn(chat, tid, text); return; }
 		// A re-dispatch that would hand it to a peer again, carrying the GLOBAL count.
-		// If no peer is awake, dispatchToPeer's caller falls back to a local run. A turn a
-		// person's pause holds is not handed on (F2): it is continued HERE, where the same
-		// pause refuses it in words, rather than left parked with nothing said.
-		// It goes to the runner the switch offers, the one election every hand-off reads; with
-		// none that runs the turn's set (D-20261018-09 OR) the door answers `unable`, and it runs here.
+		// A turn a person's pause holds is not handed on (F2): it is continued HERE, where the
+		// same pause refuses it in words, rather than left parked with nothing said.
+		// It goes to the runner the switch offers, the one election every hand-off reads; any
+		// other refusal before the mark (none that runs the turn's set, D-20261018-09 OR) is
+		// answered by the entry: a "not run" row with Retry, never a silent run here.
 		try {
 			var sw = seatSwitchFor(chat);
-			dispatchToPeer(chat, tid, text, Array.isArray(chat.holds) ? chat.holds : [],
+			handOffTurn(chat, tid, text, Array.isArray(chat.holds) ? chat.holds : [],
 				{ parkCount: count, runTo: (sw && sw.runner) ? sw.runner.deviceId : '' })
-				.then(function (r) { if (r && (r.paused || r.unable)) continueTurn(chat, tid, text); });
+				.then(function (r) { if (r && r.paused) continueTurn(chat, tid, text); });
 		} catch (e) { continueTurn(chat, tid, text); }
 	}
 
@@ -30569,6 +30627,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// point both drivers funnel through. (Found by adversarial QA, 2026-09-07: two
 	// concurrent same-device recoveries billed the turn twice.)
 	var _localRecovering = Object.create(null);
+	// The turnIds this device is ENDING "not run" right now (`endHandOffNotRun`): taken on to
+	// be ended, never to run, so nothing reads this device as their runner (SUHT-I9).
+	var _localEnding = Object.create(null);
 
 	/// The device running dispatched turn `tid` as this device knows it: the lease holder,
 	/// else this device from the moment it takes a hand-off that fell back here on itself
@@ -30579,10 +30640,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var id = String(tid || '');
 		if (!id) return '';
 		try {
+			// A lease held only to end the turn names nobody (`DaimondPeer.endingLease`).
 			var h = (window.DaimondLease && DaimondLease.holder) ? DaimondLease.holder(id) : null;
 			if (h) return String(h);
 		} catch (e) { /* no lease view: only this tab's own run is known */ }
-		return _localRecovering[id] ? String(selfDeviceId() || '') : '';
+		return (_localRecovering[id] && !_localEnding[id]) ? String(selfDeviceId() || '') : '';
 	}
 
 	/// Is a turn of this chat being taken back to run here (`_localRecovering`), its claim not
@@ -30888,10 +30950,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Skip a turn already being recovered locally here (a refused hand-off runs
 				// it at once and holds the SELF lease); the wake path must not run it again.
 				if (_localRecovering[String(jobs[k].m.iturn)]) continue;
-				// A turn nobody ran is run here (owner, D-20261009-23: no re-seat to another
-				// desktop). Under the turn's work claim (`recoverOneLocally`), so a turn
-				// another tab of this device is running is not run again.
-				await recoverOneLocally(jobs[k].chat, jobs[k].m);
+				// A STEP-AWAY HAND-OFF nobody ran is run here (owner, D-20261009-23: no re-seat to
+				// another desktop), under the turn's work claim (`recoverOneLocally`), so a turn
+				// another tab of this device is running is not run again. A turn the switch sent
+				// that its runner did not take ends "not run" with Retry (rulings §1 l.17), as the
+				// backstop ends it (`runDispatchFallback`); it is never run here.
+				if (jobs[k].m.stepAway) await recoverOneLocally(jobs[k].chat, jobs[k].m);
+				else await endHandOffNotRun(jobs[k].chat, jobs[k].m, 'runner '
+					+ (String(jobs[k].m.toDevice || '').slice(0, 8) || '?') + ' never claimed it (found on return)');
 			}
 		} finally { _recovering = false; }
 	}
@@ -30930,7 +30996,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				new Promise(function (r) { setTimeout(r, PRESENCE_READ_CAP_MS); }),
 			]);
 		} catch (e) { landed = false; }
-		return landed ? ((window.DaimondPresence && DaimondPresence.snapshot()) || {}) : null;
+		if (landed) return (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+		// NOT LANDED IS UNKNOWN, a timeout as much as a failure (QA-HT-B F1): `refreshPresence`
+		// marks the map lost only on a non-200 or a throw, so a read still in flight at the cap
+		// left the switch drawing the runner the send could not confirm. Marked here, so the
+		// switch redraws to Here on `daimond:presence` until a read lands.
+		try { if (window.DaimondPresence && DaimondPresence.lost) DaimondPresence.lost(); }
+		catch (e) { /* the switch keeps what it drew */ }
+		return null;
 	}
 
 	/// Arm the recovery backstop for one dispatched turn. Idempotent per turn.
@@ -31042,18 +31115,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var handed = DaimondPeer.triedAfterHandBack(m.handedBack, report);
 			var busy   = (report.status === 'busy' || report.busy > 0) ? String(report.by) : '';
 			var thread = report.cause === 'thread' ? String(report.by) : '';	// D2
-			var was    = JSON.stringify([m.triedDevices || [], m.handedBack || [], m.busyBy || '', m.threadBy || '']);
+			// THE CAUSE, KEPT ON THE PLACEHOLDER (QA-HT-B F3): a `models-behind` hand-back ends the
+			// turn "not run" (`runDispatchFallback`), and a reload between the report and that
+			// decision must still know it.
+			var cause  = report.cause ? String(report.cause) : '';
+			var was    = JSON.stringify([m.triedDevices || [], m.handedBack || [], m.busyBy || '', m.threadBy || '', m.handBackCause || '']);
 			m.triedDevices = tried;
 			m.handedBack   = handed;
 			if (busy) m.busyBy = busy;
 			if (thread) m.threadBy = thread;
-			// The turn now runs here because the runner was busy: the person's own message
-			// says so, in one line that outlives the hand-off tile (D-20261009-23).
-			var noted = busy ? seatNoteOnPrompt(chat, tid,
-				t('seat.ran_here_busy', { name: seatNameOf(busy, '') })) : false;
-			if (JSON.stringify([m.triedDevices, m.handedBack, m.busyBy || '', m.threadBy || '']) === was && !noted) return;
+			if (cause) m.handBackCause = cause;
+			// A busy runner's hand-back no longer runs the turn here: it ends "not run" with
+			// Retry (`runDispatchFallback`), so no "ran here" line goes on the prompt.
+			if (JSON.stringify([m.triedDevices, m.handedBack, m.busyBy || '', m.threadBy || '', m.handBackCause || '']) === was) return;
 			touchMsg(m);
-			try { touchChat(chat); persistChats(); if (noted && ownsChat(chat)) renderHistory(chat.messages); }
+			try { touchChat(chat); persistChats(); }
 			catch (e) { /* the in-memory record still guides a re-dispatch */ }
 			diag('handoff handback noted', 'turn=' + tid + ' by=' + String(report.by).slice(0, 8)
 				+ ' handedBack=' + handed.length + (busy ? ' busy' : '') + (thread ? ' thread' : '')
@@ -31062,8 +31138,64 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	var _fallbackInFlight = Object.create(null);	// turn id -> a runDispatchFallback awaiting its reads
+	var _handBackCause    = Object.create(null);	// turn id -> a hand-back's cause, should the placeholder miss it
 
-	async function runDispatchFallback(chatId, turnId) {
+	/// END A SENT TURN "NOT RUN" RATHER THAN RUN IT HERE (rulings §1 l.17; QA-HT-B F3). For a
+	/// turn the switch sent to a runner that did not take it -- withdrawn on loss (HT2 M9), or
+	/// handed back `models-behind` -- after `recoverDecision` found no live foreign lease and no
+	/// answer. The turn's lease is first taken here and settled, so the errand still in the box
+	/// can never run late on the runner beside the person's Retry; then the "not run" row is
+	/// written (`answerUnhanded`) and the placeholder goes. A take a runner's claim won leaves
+	/// the turn to that runner; a door that could not be read decides nothing and looks again.
+	///
+	/// THE TAKE SAYS WHY IT IS HELD (SUHT-I9). Read as a run, the asker's own claim drew
+	/// "iphone is picking this up." with Stop for the 3.5 s before the row, here and on every
+	/// device the lease synced to. So the take carries `intent: 'end'` (`DaimondPeer.endingLease`),
+	/// and this device marks the turn as ending (`_localEnding`) before its first await: from
+	/// the first frame to the row, every runner reader reads nobody's run.
+	async function endHandOffNotRun(chat, m, why) {
+		var tid = String((m && m.iturn) || '');
+		if (!tid || _localRecovering[tid]) return;
+		_localRecovering[tid] = String(chat.id || '') || true;
+		_localEnding[tid] = true;
+		var claim = null;
+		try {
+			claim = await claimTurnHere(tid);
+			if (!claim) { diag('handoff not run stand-down', 'turn=' + tid + ' a run of it is under way on this device'); return; }
+			if (window.DaimondLease && DaimondLease.take && window.DaimondPeer && DaimondPeer.syncCas && DaimondPeer.settleLease) {
+				var self = selfDeviceId();
+				var cas  = DaimondPeer.syncCas(peerSyncShim());
+				var took = await DaimondLease.take(tid, { holder: self, ts: Date.now(), intent: 'end' }, cas, leaseClockNow);
+				if (!took || !took.won) {
+					var tw = String((took && took.why) || '?');
+					diag('handoff not run stand-down', 'turn=' + tid + ' lease ' + tw + ' holder=' + String((took && took.holder) || '').slice(0, 8));
+					if (DaimondPeer.standDownUndecided && DaimondPeer.standDownUndecided(tw)) {
+						try { scheduleDispatchFallback(chat.id, tid, UNDECIDED_RECOLLECT_MS); } catch (e) { /* recovery-on-return still nets it */ }
+					}
+					return;
+				}
+				try {
+					await DaimondPeer.settleLease('turn', tid, self, 'done', cas, leaseClockNow);
+					await DaimondPeer.settleLease('turn', tid, self, 'released', cas, leaseClockNow);
+				} catch (e) { /* the lease ages out at its deadline */ }
+			}
+			diag('handoff not run', 'turn=' + tid + ' ' + why);
+			answerUnhanded(chat, tid, String(m.itext || ''), { ok: false, why: why });
+			if ((chat.messages || []).some(function (x) { return x && x.why === 'notrun' && String(x.iturn) === tid; })) {
+				try { dropDispatchedPlaceholder(tid); } catch (e) { /* the row stands either way */ }
+				try { clearDispatchFallback(tid); } catch (e) { /* the timer finds no placeholder */ }
+			}
+		} finally {
+			if (claim) claim.release();
+			delete _localRecovering[tid];
+			delete _localEnding[tid];
+			redrawRunner();
+		}
+	}
+
+	/// `opts.notRun` (a reason): the turn this device sent is withdrawn (HT2 M9), so where the
+	/// backstop would run it here it ends "not run" instead (`endHandOffNotRun`).
+	async function runDispatchFallback(chatId, turnId, opts) {
 		var tid = String(turnId || ''), mine = false;
 		try {
 			if (!window.DaimondPeer || !DaimondPeer.recoverDecision || !DaimondPeer.runErrand) return;
@@ -31113,6 +31245,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// can always tell where it ran. A held hand-back stays held while the lease is
 			// a peer's: the runner's release is on its way (`redriveHandBacks`).
 			if (!DaimondPeer.recoverDecision(m, lease, fin, selfDeviceId(), Date.now())) {
+				// A HAND-BACK UNDER A SETTLED LEASE IS NOT RUN, AND SAYS SO (SEND-UNHANDED, r4a6
+				// fault B). The runner reported it could not take the turn, but its claim settled
+				// (`done`) on the way out, which reads as finished here: no answer is coming, so the
+				// turn ran nowhere. It ends in the "not run" row with Retry, as a refusal before the
+				// mark does, and the placeholder goes, so the row is the turn's one ending.
+				if (_handBack[tid] != null && DaimondPeer.settledLease && DaimondPeer.settledLease(lease)
+					&& String(m.dispatchedBy || '') === String(selfDeviceId()) && !dispatchedAnswerPresent(chat, m)) {
+					delete _handBack[tid];
+					diag('handoff handback settled', 'turn=' + tid + ' handed back under a settled lease: not run');
+					answerUnhanded(chat, tid, String(m.itext || ''), { ok: false, why: 'handed back under a settled lease' });
+					if ((chat.messages || []).some(function (x) { return x && x.why === 'notrun' && String(x.iturn) === tid; })) {
+						try { dropDispatchedPlaceholder(tid); } catch (e) { /* the row stands either way */ }
+					}
+					return;
+				}
 				// Held only for a turn this device sent: no other device will run it.
 				if (String(m.dispatchedBy || '') !== String(selfDeviceId())
 					|| DaimondPeer.dispatchState(m, lease, selfDeviceId(), Date.now()) !== 'peer-held') delete _handBack[tid];
@@ -31126,11 +31273,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the still-running turn a second time. `_localRecovering` is the synchronous "this device is running that turn"
 			// set; the lease stays the cross-device arbiter.
 			if (_localRecovering[tid]) return;
-			// The runner never claimed within the backstop window: the turn runs here
-			// (owner, D-20261009-23), never re-seated on another desktop. Money-safe:
-			// recoverDecision above confirmed no live foreign lease holds it, and the run
-			// takes the turn's work claim, so a sibling tab running it stands this down (F1).
-			await recoverOneLocally(chat, m);
+			// A TURN THE SWITCH SENT THAT ITS RUNNER DID NOT TAKE ENDS "NOT RUN" (rulings §1 l.17,
+			// QA-HT-B F3): withdrawn because its runner stopped listening, or handed back because
+			// the runner had not reached this device's models by the deadline. Never run here.
+			//
+			// AND A RUNNER'S REFUSAL BEFORE THE RUN (kfix f94184180, E-PORT): it hands the lease
+			// back (`LeaseAct::HandBack`), which reads `released`, unsettled, `cut: 'refused'`,
+			// never `done`, so `settledLease` is false and `recoverDecision` lets it through. The
+			// runner said it did not run the turn: it ends "not run" the same way.
+			var notRun = (opts && opts.notRun) ? String(opts.notRun)
+				: ((m.handBackCause || _handBackCause[tid]) === 'models-behind' ? 'handed back: the runner had not reached this turn\'s models'
+				: ((lease && lease.mode === 'released' && String(lease.cut || '') === 'refused') ? 'the runner refused it before the run' : ''));
+			if (notRun) { await endHandOffNotRun(chat, m, notRun); return; }
+			// A STEP-AWAY HAND-OFF (`stepAway`) is a turn already running here that this device
+			// handed on as it went to the background; the switch did not send it. One its runner
+			// did not take is run here (owner, D-20261009-23), never re-seated on another desktop.
+			// Money-safe: recoverDecision above confirmed no live foreign lease holds it, and the
+			// run takes the turn's work claim, so a sibling tab running it stands this down (F1).
+			if (m.stepAway) { await recoverOneLocally(chat, m); return; }
+			// EVERY OTHER TURN THE SWITCH SENT ENDS "NOT RUN" TOO (rulings §1 l.17 as extended: one
+			// ending for every turn the switch sent that its runner did not take). A busy runner,
+			// a runner that could not take the thread or run the models, and a runner that never
+			// claimed it within the backstop window (D-20261009-23: "If argonaut is selected, it
+			// runs there") each leave the "not run" row with Retry; none runs here.
+			var rn    = String(m.toDevice || '').slice(0, 8) || '?';
+			var cause = String(m.handBackCause || _handBackCause[tid] || '');
+			if (m.busyBy) { await endHandOffNotRun(chat, m, 'handed back: runner ' + String(m.busyBy).slice(0, 8) + ' was busy'); return; }
+			if (m.threadBy || cause === 'thread') { await endHandOffNotRun(chat, m, 'handed back: runner ' + rn + ' could not take the thread'); return; }
+			if (cause === 'models') { await endHandOffNotRun(chat, m, 'handed back: runner ' + rn + ' could not run this turn\'s models'); return; }
+			await endHandOffNotRun(chat, m, cause ? 'handed back by runner ' + rn + ': ' + cause
+				: (lease && lease.mode === 'released') ? 'runner ' + rn + ' let it go unrun'
+				: 'runner ' + rn + ' never claimed it within the backstop window');
 		} catch (e) { /* the 15-min deadline + [Run here] remain the ultimate backstop */ }
 		finally { if (mine) delete _fallbackInFlight[tid]; }
 	}
@@ -31138,9 +31311,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// WITHDRAW ON LOSS (HT2 M9, design 2.6). On each presence change: a turn this device
 	/// handed to a runner that has since stopped listening, with no claim on it, is taken
 	/// back now through the backstop's own path (`runDispatchFallback`: the lease door read,
-	/// then `recoverOneLocally`, whose run takes the lease by CAS), never by taking the lease
-	/// first. A runner's claim that landed first wins the CAS and the turn runs there. The
-	/// backstop timer stays armed behind it.
+	/// then `endHandOffNotRun`, which takes the lease by CAS and settles it), never by taking
+	/// the lease first. A runner's claim that landed first wins the CAS and the turn runs
+	/// there. Otherwise the turn ends "not run" with Retry, never run here (rulings §1 l.17,
+	/// QA-HT-B F3). The backstop timer stays armed behind it.
 	function withdrawLostHandoffs() {
 		if (!window.DaimondPeer || !DaimondPeer.withdrawOnLoss) return;
 		var snap = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
@@ -31153,7 +31327,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(tid) : null;
 			if (!DaimondPeer.withdrawOnLoss(m, lease, snap[String(m.toDevice)], self, now)) return;
 			diag('handoff withdraw', 'turn=' + tid + ' runner ' + String(m.toDevice).slice(0, 8) + ' stopped listening unclaimed');
-			runDispatchFallback(chat.id, tid);
+			runDispatchFallback(chat.id, tid, { notRun: 'withdrawn: runner ' + String(m.toDevice).slice(0, 8) + ' stopped listening, unclaimed' });
 		});
 	}
 
@@ -31405,23 +31579,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// "unknown device". The status code behind a refusal stays on the tooltip.
 	function seatNameOf(id, name) {
 		return (id && deviceLabelFor(id)) || (name ? String(name) : '') || t('devices.unknown');
-	}
-
-	/// Put a "ran here" line on the person's own message of a dispatched turn, kept on
-	/// the record so it survives the hand-off tile and every redraw. Did it change?
-	function seatNoteOnPrompt(chat, turnId, text) {
-		if (!chat || !chat.messages || !turnId || !text) return false;
-		var tid = String(turnId);
-		for (var i = chat.messages.length - 1; i >= 0; i--) {
-			var m = chat.messages[i];
-			if (!m || m.role !== 'user') continue;
-			if (String(m.mid) !== tid && String(m.iturn || '') !== tid) continue;
-			if (m.seatNote === text) return false;
-			m.seatNote = text;
-			touchMsg(m);
-			return true;
-		}
-		return false;
 	}
 
 	/// The plan as it stands right now, or null when nothing can be said (no chat open,
@@ -31865,31 +32022,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return id ? [id] : [];
 	}
 
-	/// Say, in the transcript, a hand-off the door turned away before it marked the turn
-	/// (R53-U8, 2026-09-25). `dispatchToPeer` answers a refusal made before its placeholder
-	/// is written -- a person's pause, a transport this build lacks, a throw -- with no row
-	/// behind the prompt, and the send-time caller had already written the prompt and
-	/// cleared the composer: the backstop found no placeholder and let go, so the turn was
-	/// neither run, nor handed on, nor refused in words. A refusal after the mark has its
-	/// own row and its own recovery, and any row of the turn past its prompt means it is
-	/// answered for, so this writes only where nothing else will.
-	function sayIfUnhanded(chat, turnId, r) {
+	/// Answer, in the transcript, a hand-off the door turned away before it marked the turn
+	/// (R53-U8, 2026-09-25; SEND-UNHANDED). Called only by `handOffTurn`, the one entry,
+	/// so no caller reads a refusal its own way.
+	///
+	/// - A person's pause is said in their words, as the local run would say it, where
+	///   nothing else answers for the turn (as before).
+	/// - Every other refusal leaves a durable "not run" row on the turn: an answer row,
+	///   interrupted, `why: 'notrun'`, drawn as the turn's quiet tile with a Retry wired to
+	///   `retryTurn` (`markInterrupted`). It syncs like any row, so every device shows it.
+	///   Where the turn already has a row of its own past its prompt (a step-away from a
+	///   run under way here, whose interruption is its own answer) nothing is added; a
+	///   parked turn's placeholder does not count, since a refused re-run is still not run.
+	///   A second refusal of the same turn refreshes its row rather than adding one.
+	function answerUnhanded(chat, turnId, text, r) {
 		try {
 			var tid = String(turnId || '');
-			var msgs = (chat && chat.messages) || [];
+			if (!chat || !tid) return;
+			var msgs = chat.messages || (chat.messages = []);
+			var paused = !!(r && r.paused);
+			var why = String((r && r.why) || 'the hand-off door gave no reason');
+			var have = null;
 			for (var i = msgs.length - 1; i >= 0; i--) {
 				var m = msgs[i];
-				if (m && String(m.iturn || '') === tid && m.role !== 'user') return;
+				if (!m || String(m.iturn || '') !== tid || m.role === 'user') continue;
+				if (paused) return;
+				if (m.why === 'notrun') { have = m; continue; }
+				if (m.why === 'dispatched') continue;
+				return;
 			}
-			var paused = !!(r && r.paused);
-			var said = paused ? DaimondModels.pauseError(r.node).message
-				: friendlyError(new Error(String((r && r.why) || 'the hand-off door gave no reason')));
-			chat.messages.push({ role: paused ? 'note_log' : 'error_log', content: said,
-				mid: newMid(), iturn: tid, ts: Date.now() });
-			diag('dispatch unhanded', 'turn=' + tid + ' ' + (paused ? 'paused at ' + r.node : String((r && r.why) || '?')));
-			if (ownsChat(chat)) renderHistory(chat.messages);
+			if (paused) {
+				msgs.push(touchMsg({ role: 'note_log', content: DaimondModels.pauseError(r.node).message,
+					mid: newMid(), iturn: tid, ts: Date.now() }));
+				diag('dispatch unhanded', 'turn=' + tid + ' paused at ' + r.node);
+			} else if (have) {
+				have.notRun = { why: why, unable: !!(r && r.unable), ts: Date.now() };
+				touchMsg(have);
+				diag('dispatch not run', 'turn=' + tid + ' again: ' + why);
+			} else {
+				msgs.push(touchMsg({ role: 'assistant', content: '', interrupted: true, why: 'notrun',
+					iturn: tid, itext: String(text || ''), mid: newMid(), ts: Date.now(),
+					notRun: { why: why, unable: !!(r && r.unable), ts: Date.now() } }));
+				diag('dispatch not run', 'turn=' + tid + ' ' + why);
+			}
 			touchChat(chat);
 			persistChats();
+			if (ownsChat(chat)) renderHistory(chat.messages);
 		} catch (e) { /* the prompt stands in the transcript either way */ }
 	}
 
@@ -31948,8 +32126,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// that did not land keeps the turn Here (HT2 M1).
 				var read = await sendPresenceRead();
 				if (!read) {
-					diag('handoff send read', 'presence read did not land in ' + PRESENCE_READ_CAP_MS + 'ms; Here');
-					return false;
+					// THE PERSON PRESSED THE RUNNER AND THE READ DID NOT LAND (QA-HT-B F1, rulings §1
+					// l.9, l.17). A turn the switch sends to a runner never runs elsewhere silently:
+					// it ends as the "not run" row with Retry on this device, the same terminal as a
+					// refusal at the door (`answerUnhanded`), and the election is logged. A chat the
+					// switch showed no runner for (or pinned Here) runs here, as before.
+					var rcid = String(chat.id || '');
+					var pressed = !!_seatShownRunner[rcid] && !chatSeatHere(chat);
+					diag('handoff send read', 'presence read did not land in ' + PRESENCE_READ_CAP_MS + 'ms; '
+						+ (pressed ? 'not run (runner ' + _seatShownRunner[rcid] + ' pressed)' : 'Here'));
+					try { autoLogElection(presence, self, nominee, { dispatch: false, reason: pressed ? 'read-missed-notrun' : 'read-missed-here' },
+						false, 0, isPhoneViewport()); } catch (e) { /* best-effort */ }
+					try { renderSeatSwitch(); } catch (e) { /* the next beat redraws it */ }
+					if (!pressed || turnHold(chat)) return false;
+					var nmid = mid || newMid();
+					giveUpSent(chat, words === undefined ? text : words);
+					commitRatings(chat.id, { });
+					var nts = Date.now();
+					if (ownsChat(chat)) {
+						try { appendUserMessage(text, nts, undefined, undefined, !!app); } catch (e) { /* the record below is the truth */ }
+					}
+					pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: nmid, iturn: nmid, ts: nts,
+						effort: turnEffortOf(chat) }), !app);
+					answerUnhanded(chat, nmid, text, { ok: false, why: 'presence read did not land in '
+						+ PRESENCE_READ_CAP_MS + 'ms; runner ' + _seatShownRunner[rcid] + ' unconfirmed' });
+					return true;
 				}
 				presence = read;
 				refreshLanded = true;
@@ -32147,11 +32348,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// is handled INSIDE `dispatchToPeer`: it stamps the durable placeholder and
 			// runs the turn locally (money-safe via the lease), so there is no DOM-only
 			// `appendError` to be wiped and no dead turn to recover from nothing.
-			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
+			handOffTurn(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
 				{ toId: advId, toName: advName, runTo: DaimondPeer.peerIdOf(d.peer), t0: tSend, diamondId: String(chat.diamondId || ''),
 					tried: electedTried(d) }
-			).then(function (r) { if (!r || !r.ok) sayIfUnhanded(chat, umid, r); },
-				function (e) { sayIfUnhanded(chat, umid, { ok: false, why: String((e && e.message) || e) }); });
+			);	// a refusal is answered by the entry itself: not run, with Retry
 			// Arm the last-resort recovery backstop: if no peer claims this within ~one
 			// freshness window, run it here rather than let the spinner hang to the
 			// 15-min deadline (Fix B). Money-safe via the take-if-vacant lease. A turn
@@ -32243,8 +32443,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// inside runs first and is synchronous, so recovery-on-return sees the turn
 				// as dispatched even if the push/post do not finish — and a dispatched turn
 				// no peer ran is reclaimable.
-				try { dispatchToPeer(chat, turn.turnId, turn.text, Array.isArray(chat.holds) ? chat.holds : [],
-					{ diamondId: String(chat.diamondId || ''), tried: electedTried(d), runTo: DaimondPeer.peerIdOf(d.peer) }); }
+				try { handOffTurn(chat, turn.turnId, turn.text, Array.isArray(chat.holds) ? chat.holds : [],
+					{ diamondId: String(chat.diamondId || ''), tried: electedTried(d), runTo: DaimondPeer.peerIdOf(d.peer), stepAway: true }); }
 				catch (e) { /* recovery-on-return is the net */ }
 			});
 		} catch (e) { /* the page is going; nothing here may throw into unload */ }

@@ -8,7 +8,8 @@
    the 10 s bound. The decision reads only the lease door and the chat, so the
    door's own read (`leaseGet`) is all it needs.
 
-     H1  with a push holding the round gate, the turn still runs here, at once
+     H1  with a push holding the round gate, the turn is still decided at once
+         (since SEND-UNHANDED part 3: "not run" with Retry, not run here)
      H2  the door's lease map is adopted before the decision reads it
      H3  an unreadable door adopts nothing, and the view held here decides
      H4  a live foreign claim on the door stands the fallback down
@@ -31,7 +32,8 @@ function world(over) {
 	let view = {};
 	const env = {
 		log, chat, m,
-		chats: [chat], _handBack: { T1: 'c1' }, _localRecovering: {}, _fallbackInFlight: {},
+		chats: [chat], _handBack: { T1: 'c1' }, _handBackCause: {}, _localRecovering: {}, _fallbackInFlight: {},
+		endHandOffNotRun: async (c, mm) => { log.push(['notRun', mm.iturn]); },
 		door: { version: 3, leases: { T1: { holder: 'PHONE', vacated: true } }, unread: false },
 		DaimondPost: { collect: async () => { log.push('collect'); } },
 		// A push holds the round gate for the whole test: a pull waits behind it, as `gatedPull` does.
@@ -73,10 +75,15 @@ async function within(p) {
 	for (let i = 0; i < 4; i++) await tick();
 }
 
-test('H1: with a push holding the round gate, the handed-back turn runs here at once', async () => {
+// Since SEND-UNHANDED part 3 (rulings §1 l.17) a handed-back turn the switch sent is decided at once
+// as "not run" with Retry (`endHandOffNotRun`), never run here; H1 and H3 asserted `runHere` before.
+const ended = (w) => w.log.some((x) => Array.isArray(x) && x[0] === 'notRun')
+	&& !w.log.some((x) => Array.isArray(x) && x[0] === 'runHere');
+
+test('H1: with a push holding the round gate, the handed-back turn is decided at once (not run)', async () => {
 	const w = world();
 	await within(rig(w)('c1', 'T1'));
-	assert.ok(w.log.some((x) => Array.isArray(x) && x[0] === 'runHere'), 'ran here: ' + JSON.stringify(w.log));
+	assert.ok(ended(w), 'decided: ' + JSON.stringify(w.log));
 	assert.ok(w.log.indexOf('pull') < 0, 'no gated pull: ' + JSON.stringify(w.log));
 	assert.equal(w.log[0], 'collect', 'the post box is still collected first');
 });
@@ -95,12 +102,12 @@ test('H3: an unreadable door adopts nothing; the view held here decides', async 
 	w.door = { version: 0, leases: {}, unread: true };
 	await within(rig(w)('c1', 'T1'));
 	assert.ok(!w.log.some((x) => Array.isArray(x) && x[0] === 'adopt'), JSON.stringify(w.log));
-	assert.ok(w.log.some((x) => Array.isArray(x) && x[0] === 'runHere'), JSON.stringify(w.log));
+	assert.ok(ended(w), JSON.stringify(w.log));
 });
 
 test('H4: a live foreign claim on the door stands the fallback down', async () => {
 	const w = world();
 	w.door = { version: 4, leases: { T1: { holder: 'ARGONAUT', live: true } }, unread: false };
 	await within(rig(w)('c1', 'T1'));
-	assert.ok(!w.log.some((x) => Array.isArray(x) && x[0] === 'runHere'), JSON.stringify(w.log));
+	assert.ok(!w.log.some((x) => Array.isArray(x) && (x[0] === 'runHere' || x[0] === 'notRun')), JSON.stringify(w.log));
 });

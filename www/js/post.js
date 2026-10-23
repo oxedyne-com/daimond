@@ -1586,9 +1586,21 @@
 
 	// ── The wire ───────────────────────────────────────────────
 
-	/// This tab's wake channel, so the relay taps this device's OTHER tabs and
-	/// not the one that is already parked.
-	var WAKE_ID = 'p' + Math.random().toString(36).slice(2, 10);
+	/// ONE TAB, ONE ORIGIN (HT-ID, design §2.2 "origin = the tab's WAKE_ID"). The park
+	/// parks under the tab's own wake id, sync.js's, the id its posture is stated under,
+	/// so the gateway holds the tab's doors and its posture in one origin: the posture of
+	/// a tab whose door is held is never the old client's, kept only to the 5 min TTL,
+	/// and the tab's one `leaving` withdraws both. Notify skips an origin per channel,
+	/// and errand wakes name none, so sharing the id never silences this tab's park.
+	/// A page without sync.js parks under an id of its own, as before.
+	var OWN_WAKE_ID = 'p' + Math.random().toString(36).slice(2, 10);
+	function parkWakeId() {
+		try {
+			var w = window.DaimondSync && DaimondSync.wakeId && DaimondSync.wakeId();
+			if (w) return String(w);
+		} catch (e) { /* sync.js absent */ }
+		return OWN_WAKE_ID;
+	}
 
 	/// This device's id, for the park's `device` parameter. Read from identity.js at
 	/// call time rather than cached: a device that is not unlocked yet has none, and an
@@ -3182,7 +3194,7 @@
 	var _receipts   = 0;		// receipt collects made, for a verifier
 	var _leavings   = 0;		// `leaving` statements made, for a verifier
 	var _parkLeft   = false;	// has this park said it is leaving since it last parked?
-	var _parkNap    = null;		// the backoff wait in progress, so a channel coming back can end it
+	var _parkNaps   = [];		// every backoff wait in progress, so a channel coming back ends them all
 	var _parkHold   = null;		// the park in flight: { ms, cut }, so arming the runner can end it
 
 	/// How long to wait after `n` consecutive failures. Doubling, capped.
@@ -3202,12 +3214,20 @@
 	/// How long the next park asks the gateway to hold it.
 	function parkMs() { return parkAsRunner() ? PARK_RUNNER_MS : PARK_MS; }
 
-	/// The backoff wait, ended early by `parkRecover`.
+	/// A backoff wait, ended early by `parkRecover`. ONE PER WAITER (HT-ID F2): the park
+	/// loop's backoff and the round's retry wait at once in an outage, and when they
+	/// shared one slot the channel coming back woke only whichever napped last, leaving
+	/// the other asleep up to a full rung (60 s) -- a runner unparked after the gateway
+	/// was back, the very gap [L1] closes.
 	function parkNap(ms) {
 		return new Promise(function (resolve) {
 			var nap = { done: resolve, timer: 0 };
-			nap.timer = setTimeout(function () { if (_parkNap === nap) _parkNap = null; resolve(); }, ms);
-			_parkNap = nap;
+			nap.timer = setTimeout(function () {
+				var i = _parkNaps.indexOf(nap);
+				if (i >= 0) _parkNaps.splice(i, 1);
+				resolve();
+			}, ms);
+			_parkNaps.push(nap);
 		});
 	}
 
@@ -3218,12 +3238,12 @@
 	function parkRecover() {
 		_parkFails  = 0;
 		_roundFails = 0;
-		var nap = _parkNap;
-		if (nap) {
-			_parkNap = null;
+		var naps = _parkNaps;
+		_parkNaps = [];
+		naps.forEach(function (nap) {
 			try { clearTimeout(nap.timer); } catch (e) { /* already fired */ }
 			nap.done();
-		}
+		});
 	}
 
 	/// THE RUNNER'S BOUND HOLDS FROM THE MOMENT IT IS ARMED (owner: the 30 s bound stands
@@ -3238,15 +3258,15 @@
 	}
 
 	/// This device can no longer claim what its park would be woken for (H4, device
-	/// half): say so through the presence door, once per stop, under the park's own
-	/// wake id, which is the origin the gateway holds its doors under.
+	/// half): say so through the presence door, once per stop, under the tab's wake id,
+	/// the one origin the gateway holds its doors and its posture under.
 	function parkLeave() {
 		if (_parkLeft) return false;
 		_parkLeft = true;
 		var sent = false;
 		try {
 			sent = !!(window.DaimondSync && DaimondSync.presenceLeaving
-				&& DaimondSync.presenceLeaving(WAKE_ID));
+				&& DaimondSync.presenceLeaving(parkWakeId()));
 		} catch (e) { sent = false; }
 		if (sent) _leavings++;
 		return sent;
@@ -3376,8 +3396,10 @@
 			if (gen !== _parkGen) return;
 			_parks++;
 			_parkLeft = false;
-			// The park's origin leaves with the page (sync.js `presenceGone`, TABCLOSE).
-			try { if (window.DaimondSync && DaimondSync.presenceOrigin) DaimondSync.presenceOrigin(WAKE_ID); }
+			// The park's origin is the tab's, so it leaves with the page in the tab's one
+			// `leaving` (sync.js `presenceGone`, TABCLOSE); registering it is a no-op then.
+			var wid = parkWakeId();
+			try { if (window.DaimondSync && DaimondSync.presenceOrigin) DaimondSync.presenceOrigin(wid); }
 			catch (e) { /* sync.js absent: the gateway's grace ends the door */ }
 			var began = Date.now();
 			var ms = parkMs();
@@ -3404,7 +3426,7 @@
 				_parkHold = hold;
 				try {
 					r = await call('GET', undefined, '?above=' + above
-						+ '&ms=' + ms + '&w=' + encodeURIComponent(WAKE_ID)
+						+ '&ms=' + ms + '&w=' + encodeURIComponent(wid)
 						+ '&device=' + encodeURIComponent(selfDeviceIdForPark()), ms + PARK_SLACK_MS, hold);
 				} finally {
 					if (_parkHold === hold) _parkHold = null;

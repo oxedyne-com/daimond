@@ -1,1 +1,1 @@
-{"build":"2d1d654107ff","note":"Models pickers show plain model names, Providers loses its clutter, and the rail keeps its batteries in view."}
+{"build":"24b81d0943c6","note":"A turn sent to one runner runs only there, an idle runner stays the runner, and a turn it did not take says Not run."}

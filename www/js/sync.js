@@ -509,7 +509,39 @@
 	// This tab's own channel id, named on the channel AND on every push, so the
 	// gateway can wake the account's other devices without waking this one. It
 	// starts with a letter so it is unambiguously a string in a query.
-	var WAKE_ID = 'wk' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+	//
+	// RELOAD-ID: the id is the TAB's, not the page load's. A reload's new page parks at
+	// about +0.2 s but states only at about +1.2 s; under a fresh id the old page's
+	// posture was swept 2 s after its `leaving` while the new one had not yet said
+	// anything, and the device's switch flipped across every reload. So the id lives in
+	// sessionStorage (one per tab, kept across reloads), beside a "live" mark the page
+	// clears on `pagehide` and sets again on `pageshow`. A page that loads and finds the
+	// mark still set is not a reload but a COPY of a running tab (a duplicated tab, or
+	// one opened with its opener's session): it mints its own id, so two tabs never
+	// share one. Every access is guarded (Safari's private mode throws on storage).
+	var WAKE_KEY = 'daimond-wake-id', WAKE_LIVE_KEY = 'daimond-wake-live';
+	var WAKE_ID = (function () {
+		var fresh = 'wk' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+		var ss = null;
+		try { ss = window.sessionStorage || null; } catch (e) { ss = null; }
+		if (!ss) return fresh;
+		var id = fresh;
+		try {
+			var kept = ss.getItem(WAKE_KEY);
+			if (kept && /^wk[0-9a-z]+$/.test(kept) && !ss.getItem(WAKE_LIVE_KEY)) id = kept;
+			ss.setItem(WAKE_KEY, id);
+			ss.setItem(WAKE_LIVE_KEY, '1');
+		} catch (e) { /* storage refused: this load's own id */ }
+		try {
+			window.addEventListener('pagehide', function () {
+				try { ss.removeItem(WAKE_LIVE_KEY); } catch (e) { /* */ }
+			});
+			window.addEventListener('pageshow', function () {
+				try { ss.setItem(WAKE_KEY, id); ss.setItem(WAKE_LIVE_KEY, '1'); } catch (e) { /* */ }
+			});
+		} catch (e) { /* no window events: nothing to keep */ }
+		return id;
+	})();
 	var wakeMode    = '';		// '' | 'ws' | 'poll' | 'off'
 	var wakeSock    = null;		// The live WebSocket, if there is one.
 	var wakeTimer   = null;		// Reconnect handle.
@@ -3373,8 +3405,10 @@
 		var id = selfDeviceId() || (runnerHeld ? String(postureLast.device_id || '') : '');
 		if (!id) return false;
 		var origin = w ? String(w) : WAKE_ID;
-		// Back in view, the tab states itself in full again.
-		if (origin === WAKE_ID) postureFull = true;
+		// NOT `postureFull` here (HT-ID F3): a re-statement on the next pulse would undo
+		// the departure while a hidden phone's JS still runs. The tab states in full again
+		// on its return to view (`visibilitychange`, `pageshow`) or when its own read finds
+		// the gateway no longer holds it (`mine` absent, the M3 self-check).
 		try {
 			call('POST', { device_id: id, w: origin, leaving: true }, '?presence=1', { keepalive: true })
 				.catch(function () { /* the page is going; the gateway's grace ends it anyway */ });
@@ -5182,6 +5216,9 @@
 		presenceLeaving: presenceLeaving,
 		/// `presenceOrigin(w)`: another origin of this tab, which leaves on `pagehide` with it.
 		presenceOrigin: presenceOrigin,
+		/// `wakeId()`: this tab's one origin (HT-ID): its posture, its wake socket and
+		/// post.js's errand park all name it.
+		wakeId: function () { return WAKE_ID; },
 		/// `presenceGone()`: the page-close departure, every origin it holds; true when any sent.
 		presenceGone: presenceGone,
 		/// REAL REMOVAL (owner ruling 2026-09-12). `removeDevice(id)` tells the gateway

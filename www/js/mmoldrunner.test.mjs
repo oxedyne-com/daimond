@@ -14,7 +14,7 @@
          on this device's set;
      O2  a runner with it is offered, and the door hands it the errand;
      O3  Retry (the parked re-run) and a say into a running turn obey
-         the same rule.
+         the same rule; a refused re-run is "not run", with Retry.
 
    Lifts the REAL functions out of daimond.js and runs them with the
    REAL peer.js election. Red proof: git stash; node this file.
@@ -53,7 +53,7 @@ const win = { addEventListener() {}, dispatchEvent() { return true; } };
 }
 const P = win.DaimondPeer;
 
-const NAMES = ['honoursModelSet', 'turnPresence', 'seatSwitchFor', 'dispatchToPeer', 'reRunParked', 'sayToRunner'];
+const NAMES = ['honoursModelSet', 'turnPresence', 'seatSwitchFor', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'reRunParked', 'sayToRunner'];
 function world(rosterLine) {
 	const now = Date.now();
 	const W = { built: [], ran: [], said: [], roster: { argonaut1: Object.assign({ name: 'argonaut' }, rosterLine) } };
@@ -83,6 +83,7 @@ function world(rosterLine) {
 		giveUpSent: () => {}, pushUserRecord: () => {}, appendInterjected: () => {}, syncSendMode: () => {},
 		current: null, storedPre: () => '', storedEffort: () => null, turnEffortOf: () => null, errandModelOf: () => ({}),
 		autonomousPosture: () => false, msgTombsOwed: () => [], selfDeviceIdOf: () => 'phone1',
+		touchMsg: (m) => m, touchChat: () => {}, persistChats: () => {}, ownsChat: () => false, renderHistory: () => {},
 	};
 	env.window = env;
 	const have = NAMES.map((n) => [n, lift(n)]).filter((x) => x[1]);
@@ -113,11 +114,15 @@ async function main() {
 
 		console.log('O3 (' + label.slice(0, 2) + ')' + ' Retry and say obey the same rule');
 		W.built.length = 0;
-		W.f.reRunParked({ id: 'c1', messages: [] }, 't2', 'again');
+		const parked = { id: 'c1', messages: [] };
+		W.f.reRunParked(parked, 't2', 'again');
 		await tick(); await tick();
-		check(able ? 'the parked re-run is handed to it' : 'the parked re-run runs here, not handed to it',
-			able ? (W.built.length === 1 && W.ran.length === 0) : (W.built.length === 0 && W.ran.indexOf('t2') >= 0),
-			'built=' + W.built.length + ' ran=' + JSON.stringify(W.ran));
+		// SEND-UNHANDED (lead ruling): a turn the door cannot hand to the runner the switch
+		// names is not run here in silence; it says "not run", with Retry.
+		const notRun = parked.messages.filter((m) => m.why === 'notrun' && m.iturn === 't2').length;
+		check(able ? 'the parked re-run is handed to it' : 'the parked re-run is not handed to it, nor run here: not run, with Retry',
+			able ? (W.built.length === 1 && W.ran.length === 0) : (W.built.length === 0 && W.ran.length === 0 && notRun === 1),
+			'built=' + W.built.length + ' ran=' + JSON.stringify(W.ran) + ' notrun=' + notRun);
 		const said = W.f.sayToRunner ? await W.f.sayToRunner(chat, { iturn: 't3' }, 'and this', 'and this') : null;
 		check(able ? 'words said into its running turn reach it' : 'words are not said into its running turn: they go as the next turn',
 			able ? (said === true && W.said.length === 1) : (said === false && W.said.length === 0), 'said=' + said + ' sent=' + W.said.length);

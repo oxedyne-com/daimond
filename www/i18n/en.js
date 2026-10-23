@@ -2450,6 +2450,7 @@
 	'turn.interrupted':       'Interrupted. The browser closed before this finished.',
 	'turn.runner_lost':       'Interrupted. The device running this reloaded before it finished.',
 	'turn.retry':             'Retry',
+	'turn.not_run':           'Not run. The hand-off couldn’t start.',
 	'turn.interrupted_early': 'Interrupted before it could answer.',
 	'turn.offline':           'The connection dropped before this finished.',
 	'turn.offline_early':     'The connection dropped before an answer arrived.',
@@ -2485,8 +2486,6 @@
 	'seat.here':                 'Here',
 	'seat.switch':               'Where the next turn runs',
 	'seat.ran_here':             'Ran here · {name} wasn’t reachable',
-	'seat.ran_here_busy':        'Ran here · {name} was busy',
-	'seat.ran_here_refused':     'Ran here · {name} couldn’t take it',
 	'errand.prompt_too_large':   'the prompt alone is larger than the relay accepts',
 	// ── WHERE A TASK OTHER THAN A TURN RUNS (owner design, 2026-09-14) ──
 	// A compile and a publish are placed by the same election a turn is, and the

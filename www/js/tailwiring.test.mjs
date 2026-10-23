@@ -471,7 +471,7 @@ async function main() {
 		const makeFn = (recovering) => {
 			// The backstop hands the turn to `recoverOneLocally(chat, m)`, which runs it here
 			// (no re-seat to another desktop since D-20261009-23).
-			const localSpy = [];
+			const localSpy = [], endSpy = [];
 			const peer  = { REASON_DISPATCHED: 'dispatched', recoverDecision: () => true, runErrand: () => {} };
 			const lease = { record: () => null };
 			const stubs = {
@@ -485,12 +485,14 @@ async function main() {
 				_localRecovering:            recovering ? { t1: true } : Object.create(null),
 				_fallbackInFlight:           Object.create(null),
 				_handBack:                   Object.create(null),
+				_handBackCause:              Object.create(null),
 				diag:                        () => {},
 				recoverOneLocally:           async (chat, m, o) => { localSpy.push(o); },
+				endHandOffNotRun:            async (chat, m, why) => { endSpy.push(why); },
 			};
 			const names = Object.keys(stubs);
 			const fn = new Function(...names, fnSrc + '\nreturn runDispatchFallback;')(...names.map((n) => stubs[n]));
-			return { fn, localSpy };
+			return { fn, localSpy, endSpy };
 		};
 
 		// (d1) GUARD ON: a turn already recovering locally is not run again.
@@ -498,15 +500,16 @@ async function main() {
 		const on = makeFn(true);
 		await on.fn('c1', 't1');
 		check('(d1) backstop stands down while _localRecovering[tid] is set (no second run)',
-			on.localSpy.length === 0, { local: on.localSpy.length });
+			on.localSpy.length === 0 && on.endSpy.length === 0, { local: on.localSpy.length, end: on.endSpy.length });
 
-		// (d2) GUARD OFF: with no local recovery in flight, the backstop still runs the
-		// turn here -- the guard is surgical, not a blanket stand-down.
+		// (d2) GUARD OFF: with no local recovery in flight, the backstop still decides the
+		// turn -- the guard is surgical, not a blanket stand-down. Until SEND-UNHANDED part 3
+		// it ran it here; a turn the switch sent now ends "not run" (rulings §1 l.17).
 		const off = makeFn(false);
 		await off.fn('c1', 't1');
-		check('(d2) with no local recovery in flight, the backstop runs it here, with no re-seat option',
-			off.localSpy.length === 1 && off.localSpy[0] === undefined,
-			{ local: off.localSpy.length, opts: off.localSpy[0] });
+		check('(d2) with no local recovery in flight, the backstop ends it "not run", never runs it here',
+			off.localSpy.length === 0 && off.endSpy.length === 1,
+			{ local: off.localSpy.length, end: off.endSpy });
 	}
 
 	console.log(failures ? ('\nFAIL -- ' + failures + '/' + checks + ' checks') : ('\nALL PASS -- ' + checks + '/' + checks));

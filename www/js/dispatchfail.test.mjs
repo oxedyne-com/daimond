@@ -15,7 +15,7 @@
      H1-H3  daimond.js (lifted): an answer that ran here never names this device as the
             hand-off target, and a refused hand-off is drawn as the refusal
      F1-F3  daimond.js (lifted): a refused post stamps the placeholder the chat holds NOW
-            and runs that one here
+            and ends that one "not run" (SEND-UNHANDED part 2; it ran here before)
 
    Run: node www/js/dispatchfail.test.mjs
    ============================================================ */
@@ -166,7 +166,8 @@ async function refusedPost(mode) {
 		markTurnDispatched: (ch, mark) => { ch.messages.push({ role: 'assistant', content: '', why: 'dispatched', iturn: mark.iturn, toDevice: DESK, toName: 'argonaut' }); },
 		seatNoteOnPrompt: () => true, seatNameOf: (id, nm) => nm || id,
 		touchMsg: () => {}, touchChat: () => {}, persistChats: () => { rec.persisted++; }, ownsChat: () => false, renderHistory: () => {},
-		recoverOneLocally: (ch, m) => { rec.recovered = m; },
+		recoverOneLocally: (ch, m) => { rec.ranHere = m; },
+		endHandOffNotRun: (ch, m) => { rec.recovered = m; },
 		t: (k) => k,
 	};
 	const { fns } = sliceDaimond(w, ['dispatchToPeer'], stub);
@@ -177,7 +178,9 @@ async function refusedPost(mode) {
 {
 	const r = await refusedPost('post');
 	check('F1 a refused post is stamped on the placeholder the chat holds now', !!(r.ph && r.ph.refused && r.ph.refused.status === 500), J(r.ph));
-	check('F2   and that placeholder is the one run here', r.rec.recovered === r.ph && !!r.ph, J([!!r.rec.recovered, r.rec.recovered === r.ph]));
+	// Rulings §1 l.17 (SEND-UNHANDED part 2): a refused post ends "not run", never run here.
+	check('F2   and that placeholder is the one ended "not run", none run here', r.rec.recovered === r.ph && !!r.ph && !r.rec.ranHere,
+		J([!!r.rec.recovered, r.rec.recovered === r.ph, !!r.rec.ranHere]));
 	const s = await refusedPost('seal');
 	check('F3 a refused seal is stamped on the placeholder the chat holds now', !!(s.ph && s.ph.refused), J(s.ph));
 }

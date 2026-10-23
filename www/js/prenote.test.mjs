@@ -249,12 +249,14 @@ console.log('\nThe three paths set it, and nothing else does');
 	same('path 5 (an interjection landing) is a person\'s message', by.landInterjection, ['true']);
 	same('the journal recovery restores the mark it was opened with', by.recoverUserRecord, ['meta.app !== true']);
 	// A Continue's nudge is handed off too since UNBLOCK-1 QFOLLOW, and it is the app's.
-	same('path 3 (the peer-dispatch push): a person\'s send, unless the app wrote it (a Continue\'s nudge)', by.maybeAutoDispatch, ['!app']);
+	// Two sites since SEND-UNHANDED part 2 (QA-HT-B F1: a missed presence read with the runner pressed writes the
+	// prompt and its "not run" row); each must carry the same gate, so the set of gates is compared.
+	same('path 3 (the peer-dispatch push): a person\'s send, unless the app wrote it (a Continue\'s nudge)', [...new Set(by.maybeAutoDispatch)], ['!app']);
 	same('path 4 (the Diamond send): gated on how.said, which only a person\'s typing passes', by.runSteer, ['!!(how && how.said)']);
 	// J9: the ratings are committed (a pending draft is a rating_log) before the note is composed
 	const idxs = []; { const re = /\bpushUserRecord\(/g; let mm; while ((mm = re.exec(SRC))) if (!/function\s*$/.test(SRC.slice(Math.max(0, mm.index - 16), mm.index))) idxs.push(mm.index); }
 	const committedFirst = idxs.map((i) => { const k = SRC.lastIndexOf('commitRatings(', i); return { owner: ownerAt(SRC, i), ok: k > 0 && ownerAt(SRC, k) === ownerAt(SRC, i) }; });
-	same('every send path commits the ratings before it composes the note (so a pending draft is already a record)', committedFirst.filter((c) => !['landInterjection', 'recoverUserRecord'].includes(c.owner)).map((c) => c.owner + ':' + c.ok).sort(), ['maybeAutoDispatch:true', 'runSteer:true', 'runTurn:true', 'sayToRunner:true']);
+	same('every send path commits the ratings before it composes the note (so a pending draft is already a record)', [...new Set(committedFirst.filter((c) => !['landInterjection', 'recoverUserRecord'].includes(c.owner)).map((c) => c.owner + ':' + c.ok))].sort(), ['maybeAutoDispatch:true', 'runSteer:true', 'runTurn:true', 'sayToRunner:true']);
 	{ const ij = lift(SRC, 'interjectMessage') || ''; check('and so does the interjection, at the typing step, before it composes', ij.indexOf('commitRatings(') > 0 && ij.indexOf('commitRatings(') < ij.indexOf('ratingPre('), ij.slice(0, 200)); }
 	check('no send path pushes its user record by hand any more',
 		!/chat\.messages\.push\(urec\)/.test(SRC) && !/rec\.messages\.push\(\{ role: 'user', content: instruction/.test(SRC)

@@ -2596,8 +2596,10 @@ async function runNominationAcceptance(P, L, check) {
 		const goneNom = { [NOMINEE]: { name: 'argonaut', lastSeen: NOW - (W + 60000), servicedAt: NOW - (W + 60000) },
 			[OTHER]: { name: 'gilgamesh', lastSeen: NOW - 1000, servicedAt: NOW - 1000 } };
 		const d = await runAs(OTHER, NOMINEE, goneNom, 't-to-gone');
-		check('[ctl] a named runner that has gone quiet: an awake device claims (the fallback stands)',
-			d.res.ran === true && d.ran === 1, JSON.stringify([d.res.why, d.ran]));
+		// HT-ID (QA-HT-B F2; rulings §1 l.9, l.15): a turn that names a runner is that
+		// runner's alone, gone quiet or not; the asker's withdraw-on-loss or backstop ends it.
+		check('HT-ID: a named runner that has gone quiet: another awake device still stands down',
+			d.res.ran === false && d.ran === 0 && d.res.why === 'addressee', JSON.stringify([d.res.why, d.ran]));
 
 		// THE WHOLE ROUTE: the switch's choice becomes the errand's `to`, and that device claims.
 		// The nominee is live and listening but busy with ANOTHER chat, so the election seats the

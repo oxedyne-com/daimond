@@ -401,8 +401,8 @@
 			// WHY A HAND-BACK WAS MADE, as a code the sender's tile can name (D2, 11 Oct):
 			// 'thread' when the runner could not rebuild the conversation as sent, 'models' when it
 			// cannot run the turn's models (D-20261018-09 PR), 'models-behind' when it had not yet
-			// reached the asker's horizon on them by the deadline (HT3; the sender runs it here all
-			// the same, and the lens counts it apart). '' otherwise, and from an older runner,
+			// reached the asker's horizon on them by the deadline (HT3; the sender ends it "not run"
+			// with Retry, rulings §1 l.17, and the lens counts it apart). '' otherwise, and from an older runner,
 			// whose hand-back reads as a hand-off that did not finish.
 			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
@@ -1655,15 +1655,23 @@
 	///                     permission to {act}", replacing "Sent to your other devices."
 	///   interrupted    -- the runner cut the run short (its deadline, a poisoned engine)
 	///                     and settled it: "Interrupted on <machine>" + [Retry]
+	///   ending         -- the lease was taken only to END the turn "not run" (`endingLease`),
+	///                     or this device is ending it so (`localRun` 'end'): nothing ran
+	///                     and nobody is on it, live, settled or before the claim lands
 	///   failed         -- report a failure (a terminal park included), OR the lease
 	///                     expired mid-run with no report (the peer stopped): the `why`
 	///                     sentence + [Run here]
 	/// `ask` is a collected consent-ask envelope for this turn, or null. `localRun` says
 	/// this device has taken the turn on itself (a hand-off that fell back here) before
-	/// its own claim lands: it reads `claimed`, by this device, never "Sending to <runner>".
+	/// its own claim lands: it reads `claimed`, by this device, never "Sending to <runner>";
+	/// 'end' says this device is ending it "not run", which reads `ending`.
 	function uiState(turn, lease, report, selfId, now, ask, localRun) {
 		if (!turn || turn.why !== REASON_DISPATCHED) return 'not-dispatched';
 		var n = now == null ? Date.now() : now;
+		// ENDED, NOT RUN (SUHT-I9). Before any report: a runner's hand-back report is what
+		// sends a turn here to be ended, and read first it drew "<asker> is picking this up".
+		// Its own end before the claim lands reads so too, unless a live run's lease says otherwise.
+		if (endingLease(lease) || (localRun === 'end' && !liveLease(lease, n))) return 'ending';
 		// A report settles it either way, and outlives the lease.
 		if (report && report.t === 'report') {
 			if (report.status === 'done')   return 'done';
@@ -1702,7 +1710,7 @@
 		// THE TURN FELL BACK HERE (UNBLOCK-1 DISPATCH-FAIL): from the moment this device
 		// takes it on, its own claim may take a store round trip (39 s in the rig's stall)
 		// or replace a lapsed one. A live lease, its own included, still says the rest.
-		if (localRun && !liveLease(lease, n)) return 'claimed';
+		if (localRun === true && !liveLease(lease, n)) return 'claimed';
 		// No report yet: read the lease.
 		if (liveLease(lease, n)) {
 			return lease.mode === 'running' ? 'running' : 'claimed';
@@ -3486,17 +3494,23 @@
 	/// addressed to a busy runner is queued there on purpose (O3). The 14:03 fault (13 Oct)
 	/// was gilgamesh taking a turn named for a busy argonaut. Answers true (stand down),
 	/// false (this is the addressee: claim, whoever the nominee is) or null when the
-	/// errand names nobody, names a runner that already handed it back, or names one no
-	/// longer live -- then the nomination decides, as before.
+	/// errand names nobody or names a runner that already handed it back -- then the
+	/// nomination decides, as before.
+	///
+	/// WHATEVER THE ADDRESSEE'S STATE (HT-ID, QA-HT-B F2; rulings §1 l.9, l.15). An errand
+	/// that names a runner is that runner's alone. A collector does not judge the runner
+	/// gone: under derived presence a runner reads not-live 10 s after its park dies, and
+	/// at once while a reloaded tab has parked but not yet stated, so a liveness gate here
+	/// handed argonaut's turn to gilgamesh. If the runner cannot take it, the asker's
+	/// withdraw-on-loss or backstop ends it. "Any awake device" stays for an errand with no
+	/// addressee. `presence`, `now` and `windowMs` are kept for the callers' signature.
 	function addresseeStandDown(errand, selfId, presence, now, windowMs) {
 		var e = errand || {};
 		var to = String(e.to || '');
 		if (!to) return null;
 		if (to === String(selfId || '')) return false;
 		if (triedList(e.tried).indexOf(to) >= 0) return null;
-		var rec = (presence || {})[to];
-		var n = now == null ? Date.now() : now;
-		return recGenuine(rec, n, windowMs || DISPATCH_FRESH_MS) ? true : null;
+		return true;
 	}
 
 	// ════════════════════════════════════════════════════════════
@@ -3575,6 +3589,13 @@
 	function liveLease(r, now) {
 		return !!r && r.mode !== 'released' && leaseMs(r.expiry) > now;
 	}
+
+	/// Was a turn's lease taken to END the turn rather than run it (SUHT-I9)? The asker takes
+	/// a hand-off's lease as itself before it ends the turn "not run" (`endHandOffNotRun`), so
+	/// the errand still in the box can never run late on the runner. Such a claim arbitrates
+	/// like any other, but nobody is running the turn: every reader that names a RUNNER --
+	/// `leaseHolder`, `leaseHeldBy`, `uiState` -- reads it as nobody's run, on every device.
+	function endingLease(r) { return !!r && !!r.ending; }
 
 	/// Is a record DEAD: vacant, and past the last moment any copy of it anywhere
 	/// could still read live, by one TTL of grace? A released tombstone (expiry 0)
@@ -3848,10 +3869,11 @@
 		return moved;
 	}
 
-	/// The live holder of a turn's lease at `now`, or null when it is vacant.
+	/// The device RUNNING a turn: the live holder of its lease at `now`, or null when it is
+	/// vacant or held only to end the turn (`endingLease`), which is nobody's run.
 	function leaseHolder(turnId, now) {
 		var r = _leases[String(turnId)];
-		return liveLease(r, now == null ? authorityNow() : now) ? r.holder : null;
+		return liveLease(r, now == null ? authorityNow() : now) && !endingLease(r) ? r.holder : null;
 	}
 
 	/// The full lease record for a turn, or null. What the guards and the UI state
@@ -3930,7 +3952,7 @@
 		for (var id in _leases) {
 			if (!Object.prototype.hasOwnProperty.call(_leases, id)) continue;
 			var r = _leases[id];
-			if (liveLease(r, n) && String(r.holder || '') === who) return true;
+			if (liveLease(r, n) && !endingLease(r) && String(r.holder || '') === who) return true;
 		}
 		return false;
 	}
@@ -4089,6 +4111,9 @@
 				expiry: (deadline && deadline > now) ? deadline : (now + LEASE_TTL_MS),
 				renewedAt: now,
 			};
+			// WHY IT IS HELD (SUHT-I9): `opts.intent` 'end' takes the turn only to end it, and
+			// says so on the record, so no device reads its holder as the turn's runner.
+			if (o.intent === 'end') claim.ending = 1;
 			var mine = { [tid]: claim };
 			if (mk && !(liveMark(mcur) && leaseMs(mcur.gen) === leaseMs(mk.gen))) {
 				mine[String(mk.key)] = markRecord(mk.gen, mk.floor, now, mcur);
@@ -4200,6 +4225,7 @@
 				expiry: exp, renewedAt: now,
 			};
 			if (cur.blocker) bumped.blocker = cur.blocker;		// a hold is not an unblock
+			if (cur.ending) bumped.ending = 1;					// held to end, never a run (SUHT-I9)
 			if (cur.said) bumped.said = cur.said;			// nor does it unsay what was said (UNBLOCK-27 R7)
 			if (cur.unheard) bumped.unheard = cur.unheard;		// nor take back a receipt (UNBLOCK-27 R7c)
 			var proposed = mergeLeases({ [tid]: bumped }, snap.leases, now);
@@ -4428,6 +4454,7 @@
 			// THE CUT MARK (check_f234 fix 1): kept once written, as `settled` is.
 			var cutMark = String(cut || cur.cut || '');
 			if (cutMark) next.cut = cutMark;
+			if (cur.ending) next.ending = 1;				// held to end, never a run (SUHT-I9)
 			var proposed = mergeLeases({ [tid]: next }, snap.leases, now);
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { leaseWrite(proposed); return { ok: true }; }
@@ -4512,6 +4539,7 @@
 				renewedAt: Math.max(now, leaseMs(cur.renewedAt)),
 			};
 			if (settle || cur.settled) revoked.settled = 1;	// STOP-ON-PEER: a stopped turn is never re-run
+			if (cur.ending) revoked.ending = 1;				// held to end, never a run (SUHT-I9)
 			// Settling a record already released: one ms on, so the same-holder merge (whose
 			// released-vs-released tie goes to the incoming copy) keeps the stamp.
 			if (settle && cur.mode === 'released') revoked.renewedAt = Math.max(now, leaseMs(cur.renewedAt) + 1);
@@ -4873,6 +4901,7 @@
 				renewedAt: Math.max(now, leaseMs(cur.renewedAt) + 1),
 			};
 			if (blocker) next.blocker = makeBlocker(blocker);
+			if (cur.ending) next.ending = 1;				// held to end, never a run (SUHT-I9)
 			if (cur.said) next.said = cur.said;			// what was said into the turn waits on (UNBLOCK-27 R7)
 			if (cur.unheard) next.unheard = cur.unheard;		// and so does the runner's receipt (UNBLOCK-27 R7c)
 			var proposed = mergeLeases({ [tid]: next }, snap.leases, now);
@@ -7021,6 +7050,7 @@
 		'awaiting-consent': '',			// blocked on a live question
 		blocked:            '',			// blocked on the runner
 		done:               '',			// the answer draws itself
+		ending:             '',			// ended "not run": its row brings Retry
 	};
 	/// The one control a dispatched turn's footer offers for a §5 state, or '' for none.
 	///
@@ -7131,6 +7161,7 @@
 		busyHoldsFor:       busyHoldsFor,
 		settlingReport: settlingReport,
 		settledLease:  settledLease,
+		endingLease:   endingLease,
 		frameWhole:    frameWhole,
 		frameJson:     frameJson,
 		frameWorkers:  frameWorkers,
