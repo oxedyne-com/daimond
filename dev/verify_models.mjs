@@ -48,6 +48,11 @@
 //   node dev/verify_models.mjs --break loudfail      # an ask nobody made putting its error up
 //   node dev/verify_models.mjs --break nobootcall    # the boot never asks; only the panel does
 //   node dev/verify_models.mjs --break routingdrop   # the routing field drops setRouting on change
+//   node dev/verify_models.mjs --break twinsplit     # P1: v4p1 not read as v4.1, the twin drawn twice
+//   node dev/verify_models.mjs --break altbill       # P2: a twin's other payer billed to the first
+//   node dev/verify_models.mjs --break idtext        # P3: the id where the catalogue name belongs
+//   node dev/verify_models.mjs --break pinkfill      # P4: app.css's fill reaching the model rows
+//   node dev/verify_models.mjs --break headclutter   # P5: key state and model count back in the head
 //   node dev/verify_models.mjs                       # and then, clean
 import fs from 'node:fs';
 import path from 'node:path';
@@ -201,6 +206,46 @@ const BREAKS = {
 			"inp.addEventListener('change', function () { setRouting(providerId, model, inp.value); });",
 			"inp.addEventListener('change', function () { /* dropped */ });"),
 	},
+	// U5a (D-20261018-09): one plain row per provider, one model once.
+	twinsplit: {
+		what: 'Fireworks\u2019 v4p1 read literally, so its DeepSeek and OpenRouter\u2019s never pair',
+		file: 'www/js/models.js',
+		type: 'text/javascript',
+		edit: (src) => src.replace(
+			"return (cut === -1 ? s : s.slice(cut + 1)).toLowerCase().replace(/(\\d)p(?=\\d)/g, '$1.');",
+			"return (cut === -1 ? s : s.slice(cut + 1)).toLowerCase();"),
+	},
+	altbill: {
+		what: 'a twin\u2019s other payer drawn but billed to the first, so picking it decides nothing',
+		file: 'www/js/models.js',
+		type: 'text/javascript',
+		edit: (src) => src.replace(
+			"if (byId[x.provider]) g.appendChild(optionFor(byId[x.provider], x.model, false, true));",
+			"g.appendChild(optionFor(p, e.offers[0].model, false, true));"),
+	},
+	idtext: {
+		what: 'the id drawn where the catalogue name belongs',
+		file: 'www/js/models.js',
+		type: 'text/javascript',
+		edit: (src) => src.replace(
+			"\tfunction displayName(provider, model) {\n",
+			"\tfunction displayName(provider, model) {\n\t\treturn String(model || '');\n"),
+	},
+	pinkfill: {
+		what: 'the panel\u2019s fill rule reaching every classed button again, as it shipped',
+		file: 'www/css/app.css',
+		type: 'text/css',
+		edit: (src) => src.split('.settings-section button:not([class])').join('.settings-section button:not(.admin-item)'),
+	},
+	headclutter: {
+		what: 'the provider head carrying the key state and the model count again',
+		file: 'www/js/models.js',
+		type: 'text/javascript',
+		edit: (src) => src.replace(
+			"+ (bal ? '<span class=\"models-bal\">' + esc(bal) + '</span>' : '');",
+			"+ (bal ? '<span class=\"models-bal\">' + esc(bal) + '</span>' : '')"
+			+ " + '<span class=\"models-meta\">' + esc(t('models.key_set')) + ' \\u00b7 ' + p.count + '</span>';"),
+	},
 };
 if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}"`);
 
@@ -256,6 +301,12 @@ const CATALOGUE = JSON.stringify({ data: [{ id: 'listed-a' }, { id: 'listed-b' }
 
 const s = await open({
 	name: 'models', connect: false,
+	// WORKERS BLOCKED, because every count below is a `page.route` count. In WebKit a page the
+	// app's service worker controls is invisible to `page.route`, even for a request the worker
+	// passes straight through (dev/harness.mjs, 12 Oct). The fixture catalogues then went out to
+	// the dev server and came back 502: the stale row kept `listed-old` and the loop check read
+	// "page 1, browser 0" (22 Oct, WebKit 66/2, Chromium 68/0). Nothing here is about the worker.
+	serviceWorkers: 'block',
 	route: async (pg) => {
 		// Before any of the app's own scripts: `models.js` reads `window.fetch` at the moment it
 		// asks, so this is the call it makes.
@@ -432,12 +483,14 @@ await p.evaluate(() => {
 await p.waitForTimeout(400);
 const expanded = await p.evaluate(() => {
 	const models = [...document.querySelectorAll('.models-model')].map(m => m.textContent.trim());
-	const on = (document.querySelector('.models-model.on') || {}).textContent || '';
-	return { models, on };
+	const el = document.querySelector('.models-model.on');
+	return { models, on: el ? el.textContent : '', onModel: el ? el.dataset.model : '' };
 });
+// The row draws the model's plain name (U3a's displayName); the id is the row's data-model.
 check('expanding a provider shows its models, with the default starred',
-	expanded.models.length === 2 && /★/.test(expanded.on) && /llama-3\.3-70b/.test(expanded.on),
-	expanded.on.replace(/\s+/g, ' '));
+	expanded.models.length === 2 && /★/.test(expanded.on) && expanded.onModel === 'llama-3.3-70b'
+		&& /Llama 3\.3 70B/.test(expanded.on),
+	expanded.on.replace(/\s+/g, ' ') + ' [' + expanded.onModel + ']');
 
 // ── Per-model OpenRouter routing ──────────────────────────────────────────
 //
@@ -446,6 +499,8 @@ check('expanding a provider shows its models, with the default starred',
 // field this section drives is that missing piece. OpenRouter joins here, AFTER the two-provider
 // panel checks above, so it does not perturb the count they assert.
 
+await p.route('https://openrouter.ai/api/v1/models/**/endpoints', (r) => r.fulfill({ status: 404,
+	headers: { 'access-control-allow-origin': '*' }, contentType: 'application/json', body: '{}' }));
 const routed = await p.evaluate(() => {
 	const M = window.DaimondModels;
 	M.addProvider('openrouter', {});
@@ -463,51 +518,59 @@ await p.evaluate(() => {
 });
 await p.waitForTimeout(400);
 
+// U5b: the typed field is gone; each model has a routing detail of host rows (dev/verify_routingrows.mjs drives
+// them against measured figures). Opening a detail asks OpenRouter for that model's hosts; this run answers 404.
 const fields = await p.evaluate(() => {
 	const or   = document.querySelector('[data-prov="openrouter"]');
 	const groq = document.querySelector('[data-prov="groq"]');
 	return {
-		orCount:   or   ? or.querySelectorAll('.models-routing-input').length   : -1,
-		groqCount: groq ? groq.querySelectorAll('.models-routing-input').length : -1,
-		ph:        (or && or.querySelector('.models-routing-input') || {}).placeholder || '',
-		help:      (or && or.querySelector('.models-routing-help') || {}).textContent || '',
+		orCount:   or   ? or.querySelectorAll('details.models-routing').length   : -1,
+		groqCount: groq ? groq.querySelectorAll('details.models-routing').length : -1,
+		typed:     document.querySelectorAll('.models-routing-input').length,
+		ph:        document.documentElement.outerHTML.includes('prefer, -avoid, !'),
 	};
 });
-check('an OpenRouter provider gets a routing field on every one of its models',
-	fields.orCount === 2, `${fields.orCount} field(s)`);
+check('an OpenRouter provider gets a routing detail on every one of its models',
+	fields.orCount === 2, `${fields.orCount} detail(s)`);
 check('a non-OpenRouter provider gets none',
-	fields.groqCount === 0, `${fields.groqCount} field(s) on Groq`);
-check('the field carries the syntax placeholder and a one-line help',
-	fields.ph === 'prefer, -avoid, !' && fields.help.length > 0,
-	JSON.stringify(fields));
+	fields.groqCount === 0, `${fields.groqCount} detail(s) on Groq`);
+check('no typed routing field and no syntax placeholder are drawn',
+	fields.typed === 0 && !fields.ph, JSON.stringify(fields));
 
-// Typed, and saved on `change` — not on every keystroke, which is what `input` would be.
+// A stored preference is drawn as rows (open, since there is a choice to show), and a row's control writes it.
+const readOr = () => p.evaluate(() => {
+	const d = [...document.querySelectorAll('[data-prov="openrouter"] details.models-routing')]
+		.find(x => x.dataset.routeKey === 'openrouter\nanthropic/claude-opus-5');
+	if (!d) return null;
+	const rows = {};
+	d.querySelectorAll('.models-route-row').forEach(r => { rows[r.dataset.host] =
+		([...r.querySelectorAll('.models-route-btn')].find(b => b.getAttribute('aria-pressed') === 'true') || {}).dataset?.choice || ''; });
+	const only = d.querySelector('.models-route-only input');
+	return { open: d.open, rows, only: !!(only && only.checked) };
+});
+await p.evaluate(() => { window.DaimondModels.setRouting('openrouter', 'anthropic/claude-opus-5', 'Novita, -DeepInfra, !'); window.DaimondModels.render(); });
+await p.waitForTimeout(400);
+const shown = await readOr();
+check('a stored "Novita, -DeepInfra, !" is drawn as rows: Novita Prefer, DeepInfra Avoid, only-these on',
+	!!shown && shown.open && shown.rows.Novita === 'prefer' && shown.rows.DeepInfra === 'avoid' && shown.only, JSON.stringify(shown));
 const saved = await p.evaluate(() => {
-	const M   = window.DaimondModels;
-	const inp = document.querySelector('[data-prov="openrouter"] .models-routing-input');
-	inp.value = 'Novita, -DeepInfra, !';
-	inp.dispatchEvent(new Event('change', { bubbles: true }));
-	return M.routing('openrouter', 'anthropic/claude-opus-5');
+	const d = [...document.querySelectorAll('[data-prov="openrouter"] details.models-routing')]
+		.find(x => x.dataset.routeKey === 'openrouter\nanthropic/claude-opus-5');
+	const r = d && d.querySelector('.models-route-row[data-host="DeepInfra"]');
+	const b = r && r.querySelector('.models-route-btn[data-choice="auto"]');
+	if (b) b.click();
+	return window.DaimondModels.routing('openrouter', 'anthropic/claude-opus-5');
 });
-check('the typed preference reaches DaimondModels.setRouting on change',
-	saved === 'Novita, -DeepInfra, !', JSON.stringify(saved));
+check('Auto on DeepInfra reaches DaimondModels.setRouting as "Novita, !"', saved === 'Novita, !', JSON.stringify(saved));
 
-// Collapse and reopen: the field holds no state of its own, so what is on screen after a
-// fresh render must be exactly what the store has, not what the closed input happened to hold.
-await p.evaluate(() => {
-	[...document.querySelectorAll('.models-prov-head')]
-		.find(h => /OpenRouter/.test(h.textContent)).click();		// close
-});
-await p.waitForTimeout(200);
-await p.evaluate(() => {
-	[...document.querySelectorAll('.models-prov-head')]
-		.find(h => /OpenRouter/.test(h.textContent)).click();		// reopen
-});
-await p.waitForTimeout(300);
-const echoed = await p.evaluate(() =>
-	(document.querySelector('[data-prov="openrouter"] .models-routing-input') || {}).value || '');
-check('and the saved preference is echoed back on reopen',
-	echoed === 'Novita, -DeepInfra, !', `“${echoed}”`);
+// Collapse and reopen the provider: the rows hold no state of their own, so what is drawn is what the store has.
+for (let i = 0; i < 2; i++) {
+	await p.evaluate(() => { [...document.querySelectorAll('.models-prov-head')].find(h => /OpenRouter/.test(h.textContent)).click(); });
+	await p.waitForTimeout(250);
+}
+const echoed = await readOr();
+check('and the saved preference is drawn back on reopen',
+	!!echoed && echoed.rows.Novita === 'prefer' && !('DeepInfra' in echoed.rows) && echoed.only, JSON.stringify(echoed));
 
 // ── The panel's message line ────────────────────────────────────────────
 //
@@ -644,7 +707,13 @@ const readRow = (id) => p.evaluate((pid) => {
 	const row = document.querySelector('.models-prov[data-prov="' + pid + '"]');
 	if (!row) return { row: false };
 	const body = row.querySelector('.models-prov-body');
-	const own  = body ? [...body.children].filter(e => e.classList.contains('models-refetch')) : [];
+	// A list ask, not the minted row's Top up: that button shares the class, and is drawn only
+	// when a LIVE gateway says the account is empty (`nocredits`). With no gateway the row reads
+	// offline and has none, so counting it made "gains no ask" pass or fail on the world's
+	// gateway rather than on the row (22 Oct: 0 asks with :9799 down, 1 ask with it up).
+	const topUp = DaimondI18n.t('models.top_up');
+	const own  = body ? [...body.children].filter(e => e.classList.contains('models-refetch')
+		&& e.textContent.trim() !== topUp) : [];
 	const btn  = own[0] || null;
 	const age  = body ? body.querySelector('.models-list-age') : null;
 	return {
@@ -968,6 +1037,155 @@ check('the gate holds one ask, one failure and nothing in flight',
 		return st.busy === false && st.fails === 1 && st.ok === false;
 	}),
 	JSON.stringify(await p.evaluate(() => window.DaimondModels.listAsks().loopp)));
+
+// ── One plain row per provider, one model once (D-20261018-09 U5a) ─────────
+//
+// The owner, 20 Oct, on the Providers entry: one row per key holding its name and its balance,
+// nothing else; a model once, by the name its catalogue gives it, wherever two providers offer
+// it. OpenRouter and Fireworks both sell DeepSeek V4.1 Flash, Fireworks spelling it `v4p1`, so
+// it was drawn twice, by id, in a row filled with the panel's accent. P1-P5 read each fault.
+
+const TWIN_OR = 'deepseek/deepseek-v4.1-flash';
+const TWIN_FW = 'accounts/fireworks/models/deepseek-v4p1-flash';
+const TWIN_NM = 'DeepSeek V4.1 Flash';
+await p.evaluate(async (f) => {
+	const M   = window.DaimondModels;
+	const raw = JSON.parse(localStorage.getItem('daimond-models-v2'));
+	const row = (name, url, key, models, rates) => ({
+		name, url, key, keyEnc: '', models, fetched: Date.now(), rates,
+	});
+	raw.providers = {
+		openrouter: row('OpenRouter', 'https://openrouter.ai/api/v1/chat/completions', 'or-key',
+			[f.or, 'qwen/qwen3-max'],
+			{ [f.or]: { name: 'DeepSeek: ' + f.nm }, 'qwen/qwen3-max': { name: 'Qwen: Qwen3 Max' } }),
+		fireworks:  row('Fireworks AI', 'https://api.fireworks.ai/inference/v1/chat/completions', 'fw-key',
+			[f.fw, 'accounts/fireworks/models/glm-5p2']),
+	};
+	localStorage.setItem('daimond-models-v2', JSON.stringify(raw));
+	M.init({});
+	await M.unseal();
+	M.setDefault('openrouter', 'qwen/qwen3-max');
+	M.render();
+}, { or: TWIN_OR, fw: TWIN_FW, nm: TWIN_NM });
+await p.evaluate(() => { const r = document.getElementById('astat-model'); if (r && !document.querySelector('.models-prov')) r.click(); });
+await p.waitForTimeout(500);
+await openRow('openrouter');
+await openRow('fireworks');
+await p.mouse.move(0, 0);
+
+const TWIN_RX = /deepseek-v4(\.|p)1-flash/;
+const lists = await p.evaluate((rx) => {
+	const re = new RegExp(rx);
+	const rows = [...document.querySelectorAll('.models-model')];
+	const named = rows.filter(r => !r.classList.contains('alt') && re.test((r.dataset.model || '') + ' ' + r.textContent));
+	const alt = rows.find(r => r.classList.contains('alt') && r.dataset.provider === 'fireworks' && re.test(r.dataset.model || ''));
+	return {
+		named: named.length,
+		text:  named.map(r => (r.querySelector('.models-nm') || r).textContent.replace(/\s+/g, ' ').trim()),
+		title: named.map(r => r.title.split('\n')[0]),
+		alt:   alt ? (alt.querySelector('.models-through') || alt).textContent.replace(/\s+/g, ' ').trim() : '',
+	};
+}, TWIN_RX.source);
+
+// The picker: a fresh select, filled as a chat's model field is, opened as a person opens it.
+const pick = await p.evaluate(async (rx) => {
+	const re = new RegExp(rx), M = window.DaimondModels;
+	const sel = document.createElement('select');
+	sel.id = 'u5a-sel';
+	document.body.appendChild(sel);
+	M.fillSelect(sel);
+	const api = M.picker(sel);
+	if (api && api.input) api.input.click();
+	await new Promise(r => setTimeout(r, 250));
+	const rows = [...document.querySelectorAll('#mp-pop .mp-row')];
+	const main = (r) => ((r.querySelector('.mp-main') || r).textContent || '').trim();
+	const named = rows.filter(r => !r.classList.contains('mp-alt') && re.test(r.dataset.value + ' ' + main(r)));
+	const alt = rows.find(r => r.classList.contains('mp-alt') && r.dataset.provider === 'fireworks' && re.test(r.dataset.value));
+	return {
+		named: named.length,
+		text:  named.map(main),
+		alt:   alt ? main(alt) : '',
+		altId: alt ? alt.id : '',
+	};
+}, TWIN_RX.source);
+const fwName = await p.evaluate(() => (window.DaimondModels.providers().find(x => x.id === 'fireworks') || {}).name);
+const through = await p.evaluate((n) => DaimondI18n.t('models.through', { provider: n }), fwName);
+
+check('P1 a model two providers sell is ONE row in the Providers list',
+	lists.named === 1, `${lists.named} rows: ${lists.text.join(' | ')}`);
+check('P1 and ONE row in the picker',
+	pick.named === 1, `${pick.named} rows: ${pick.text.join(' | ')}`);
+
+// P2: the other payer is a line under it, and picking that line bills that key.
+let billed = null;
+if (pick.altId) {
+	billed = await p.evaluate(async (id) => {
+		const el = document.getElementById(id);
+		el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+		el.click();
+		await new Promise(r => setTimeout(r, 150));
+		const o = document.getElementById('u5a-sel').selectedOptions[0];
+		const r = o ? window.DaimondModels.resolve(o.dataset.provider, o.value) : null;
+		return r ? { provider: r.provider, model: r.model, key: r.apiKey } : null;
+	}, pick.altId);
+}
+check('P2 the picker names the twin’s other payer, “' + through + '”',
+	pick.alt === through, `“${pick.alt}”`);
+check('P2 and picking it bills the Fireworks key',
+	!!billed && billed.provider === 'fireworks' && billed.key === 'fw-key' && billed.model === TWIN_FW,
+	JSON.stringify(billed));
+const panelBill = await p.evaluate(() => {
+	const alt = [...document.querySelectorAll('.models-model.alt')].find(r => r.dataset.provider === 'fireworks');
+	if (!alt) return null;
+	alt.click();
+	const r = window.DaimondModels.resolve('', '');
+	return r ? { provider: r.provider, model: r.model, key: r.apiKey } : null;
+});
+check('P2 and in the list, its “Through” line makes Fireworks the payer of a new chat',
+	lists.alt === through && !!panelBill && panelBill.provider === 'fireworks' && panelBill.key === 'fw-key',
+	`“${lists.alt}” → ${JSON.stringify(panelBill)}`);
+await p.evaluate(() => {
+	window.DaimondModels.setDefault('openrouter', 'qwen/qwen3-max');
+	const s2 = document.getElementById('u5a-sel');
+	if (s2 && s2._mp) s2._mp.close(true);
+	if (s2) s2.remove();
+	window.DaimondModels.render();
+});
+await p.waitForTimeout(200);
+
+// P3: the catalogue's name, in the text face; the id in the hover.
+check('P3 a model shows its catalogue name, not its id',
+	lists.text[0] === TWIN_NM && (pick.text[0] || '').startsWith(TWIN_NM),
+	`list “${lists.text[0]}”, picker “${pick.text[0]}”`);
+check('P3 and the id is still there, in the hover',
+	lists.title[0] === TWIN_OR, `“${lists.title[0]}”`);
+
+// P4: no row carries a fill; each is the panel's ground, in both palettes.
+for (const theme of ['obsidian', 'porcelain']) {
+	await p.evaluate((t) => { window.DaimondTheme.set(t); window.DaimondModels.render(); }, theme);
+	await p.waitForTimeout(400);
+	await p.mouse.move(0, 0);
+	const fills = await p.evaluate(() => [...document.querySelectorAll('.models-model, .models-prov-head')]
+		.map(r => ({ c: r.className, bg: getComputedStyle(r).backgroundColor }))
+		.filter(x => x.bg !== 'rgba(0, 0, 0, 0)' && x.bg !== 'transparent'));
+	const n = await p.evaluate(() => document.querySelectorAll('.models-model').length);
+	check(`P4 no list row or head is filled (${theme})`, n > 0 && fills.length === 0,
+		n ? fills.slice(0, 3).map(x => x.c + ' ' + x.bg).join('; ') : 'no rows drawn');
+}
+
+// P5: the heads hold the name and the balance, and nothing else.
+const heads = await p.evaluate(() => {
+	const t = DaimondI18n.t, bad = [];
+	const banned = [t('models.key_set'), t('models.no_key'), t('models.count.other', { n: 2 })];
+	document.querySelectorAll('.models-prov-head').forEach(h => {
+		const extra = [...h.children].filter(c => !/^(models-caret|models-prov-name|models-bal)$/.test(c.className));
+		const txt = h.textContent;
+		if (extra.length || banned.some(b => b && txt.includes(b))) bad.push(txt.replace(/\s+/g, ' ').trim());
+	});
+	return { n: document.querySelectorAll('.models-prov-head').length, bad };
+});
+check('P5 a provider’s head holds only its name and balance',
+	heads.n === 2 && heads.bad.length === 0, heads.bad.join(' | ') || `${heads.n} heads`);
 
 await shot(s, 'models');
 const errs = s.errs.filter(e => !/favicon|404|401|net::ERR/.test(e));

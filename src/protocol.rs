@@ -1442,6 +1442,12 @@ pub enum AgentEvent {
         // a daimon's turn runs on another (r578 U3).
         prompt_tokens:        u64,
         cached_tokens:        u64,
+        // The round's output and its host speed (D-20261020-10): output tokens, milliseconds to
+        // the first token that grew the reply (keep-alives are bytes, not tokens), and from
+        // there to the end; see `ChatOnceResponse::tok_ms` in `src/llm.rs`.
+        completion_tokens:    u64,
+        tok_ms:               u64,
+        gen_ms:               u64,
     },
     /// A chunk of the model's own reasoning, as it arrives.
     ///
@@ -1624,7 +1630,8 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("truncated"));
             }
             Self::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled,
-                bytes, first_ms, gap_ms, ms, prompt_tokens, cached_tokens } => {
+                bytes, first_ms, gap_ms, ms, prompt_tokens, cached_tokens,
+                completion_tokens, tok_ms, gen_ms } => {
                 m.insert(dat!("type"), dat!("round_meta"));
                 m.insert(dat!("gen"),      dat!(gen_id.clone()));
                 m.insert(dat!("finish"),   dat!(finish_reason.clone()));
@@ -1637,6 +1644,9 @@ impl AgentEvent {
                 m.insert(dat!("ms"),       Dat::U64(*ms));
                 m.insert(dat!("p"),        Dat::U64(*prompt_tokens));
                 m.insert(dat!("ca"),       Dat::U64(*cached_tokens));
+                m.insert(dat!("o"),        Dat::U64(*completion_tokens));
+                m.insert(dat!("tf"),       Dat::U64(*tok_ms));
+                m.insert(dat!("gm"),       Dat::U64(*gen_ms));
             }
             Self::Done => {
                 m.insert(dat!("type"), dat!("done"));

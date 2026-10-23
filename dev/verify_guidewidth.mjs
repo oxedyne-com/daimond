@@ -14,6 +14,7 @@
 //   node dev/verify_guidewidth.mjs                # the live tree
 //   node dev/verify_guidewidth.mjs --width 360    # another phone
 //   node dev/verify_guidewidth.mjs --break wide   # a 3000 px block in each page: expected to FAIL
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import path from 'node:path';
 const { chromium } = await import('./pw.mjs');

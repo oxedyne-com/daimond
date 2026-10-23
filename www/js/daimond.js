@@ -14290,7 +14290,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!r) return;
 			// The phone shows this rail as a drawer that scrolls as one column; a
 			// fixed height on one of its lists is not what a thumb wants there.
-			if (isMobile() || r.room <= MIN_H.list * 2) {
+			// Each list's floor is five of its own tiles (mobile.js `fitLists`), on the
+			// desktop too since the EV rail: the divider moves between the two floors.
+			var railEl = document.getElementById('panel-rail');
+			var floor = function (v) {
+				var x = railEl ? parseFloat(railEl.style.getPropertyValue(v)) : NaN;
+				return x > MIN_H.list ? x : MIN_H.list;
+			};
+			var fd = floor('--rail-win-d'), fc = floor('--rail-win-c');
+			if (isMobile() || r.room <= fd + fc) {
 				r.list.style.flex = '';
 				r.list.style.height = '';
 				if (handle) handle.style.display = isMobile() ? 'none' : '';
@@ -14300,7 +14308,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var cut = railH !== null ? railH
 				: Math.round((railWas === null ? 0.5 : railWas) * r.room);
 			railFit = cut;
-			var want = Math.max(MIN_H.list, Math.min(cut, r.room - MIN_H.list));
+			var want = Math.max(fd, Math.min(cut, r.room - fc));
 			r.list.style.flex   = '0 0 auto';
 			r.list.style.height = want + 'px';
 		}
@@ -23206,6 +23214,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// dialog. One settings form exists in the document; it changes host.
 	var DaimondAdmin = (function () {
 		var body, homeView, settingsView, creditsView, releaseView, pushView, formView, modal, slot, closeBtn;
+		var limitsView, searchView, foldersView;   // Settings sections reached from a home row
 		var adminWrap, titleEl;   // #admin (toggles .admin-open) and the drawer title
 		var drawerOpen = false;
 		// Which of the two forms is on screen. The panel used to hold one view (Settings, which
@@ -23221,6 +23230,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return !!el && el.offsetParent !== null;
 		}
 
+		/// Every view but home and the form, which each have rules of their own.
+		function views() {
+			return [settingsView, creditsView, releaseView, pushView, limitsView, searchView, foldersView];
+		}
+		/// Put every view in `views` away. Version too: it was once the one view nothing
+		/// put away, so the drawer re-opened with the release history still hanging below
+		/// whatever was asked for next.
+		function hideViews() {
+			views().forEach(function (v) { if (v) v.style.display = 'none'; });
+		}
+
 		/// Put the open view back in the panel, and take the modal down.
 		///
 		/// Every view the modal can host, not just the two it started with: Version
@@ -23230,7 +23250,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// a child of `body` already.
 		function toPanel() {
 			if (formView && formView.parentNode !== body) body.appendChild(formView);
-			[settingsView, creditsView, releaseView, pushView].forEach(function (v) {
+			views().forEach(function (v) {
 				if (v && v.parentNode !== body) body.insertBefore(v, formView);
 			});
 			modal.style.display = 'none';
@@ -23369,13 +23389,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function closeAdmin() {
 			endForm();
 			toPanel();                       // if it was in the modal, bring it back + drop it
-			settingsView.style.display = 'none';
-			if (creditsView) creditsView.style.display = 'none';
-			// Version too. It was the one view nothing put away: the drawer closed
-			// on it and re-opened with the whole release history still hanging below
-			// whatever was asked for next.
-			if (releaseView) releaseView.style.display = 'none';
-			if (pushView) pushView.style.display = 'none';
+			hideViews();
 			if (homeView) homeView.style.display = 'none';
 			curView = null;
 			if (adminWrap) adminWrap.classList.remove('admin-open', 'admin-form-mode');
@@ -23410,10 +23424,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function homeContent() {
 			endForm();
 			toPanel();
-			settingsView.style.display = 'none';
-			if (creditsView) creditsView.style.display = 'none';
-			if (releaseView) releaseView.style.display = 'none';
-			if (pushView) pushView.style.display = 'none';
+			hideViews();
 			curView = null;
 			homeView.style.display = '';
 			renderHome();
@@ -23425,9 +23436,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function settings(note) {
 			endForm();
 			homeView.style.display = 'none';
-			if (creditsView) creditsView.style.display = 'none';
-			if (releaseView) releaseView.style.display = 'none';
-			if (pushView) pushView.style.display = 'none';
+			hideViews();
 			curView = settingsView;
 			settingsView.style.display = '';
 			document.getElementById('byok-note').textContent = note || '';
@@ -23442,9 +23451,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function release() {
 			endForm();
 			homeView.style.display = 'none';
-			settingsView.style.display = 'none';
-			if (creditsView) creditsView.style.display = 'none';
-			if (pushView) pushView.style.display = 'none';
+			hideViews();
 			curView = releaseView;
 			releaseView.style.display = '';
 			drawRelease();
@@ -23491,9 +23498,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function credits(note) {
 			endForm();
 			homeView.style.display = 'none';
-			settingsView.style.display = 'none';
-			if (releaseView) releaseView.style.display = 'none';
-			if (pushView) pushView.style.display = 'none';
+			hideViews();
 			curView = creditsView;
 			creditsView.style.display = '';
 			drawCredits(note);
@@ -23527,15 +23532,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function push() {
 			endForm();
 			homeView.style.display = 'none';
-			settingsView.style.display = 'none';
-			if (creditsView) creditsView.style.display = 'none';
-			if (releaseView) releaseView.style.display = 'none';
+			hideViews();
 			if (!pushView) return;
 			curView = pushView;
 			pushView.style.display = '';
 			fillPushSettings();
 			if (available()) { toPanel(); showDrawer(t('drawer.push'), false, 'drawer.push'); }
 			else toModal(t('drawer.push'), false, 'drawer.push');
+		}
+
+		/// Show one of the Settings sections a home row opens -- Limits, Search, Folders --
+		/// drawn by `draw`, under the heading `key` names.
+		///
+		/// Their controls stood in Models until D-20261018-09 U4, thirteen selects of turn
+		/// limits, a search engine and two folders in a view named for the models. Only the
+		/// controls moved: every one still reads and writes the key it always did.
+		function section(view, key, draw) {
+			if (!view) return;
+			endForm();
+			homeView.style.display = 'none';
+			hideViews();
+			curView = view;
+			view.style.display = '';
+			draw();
+			if (available()) { toPanel(); showDrawer(t(key), false, key); }
+			else toModal(t(key), false, key);
+		}
+		function drawSearch()  { SearchRow.render(); }
+		function drawFolders() { TermRootRow.renderGrant(); TermRootRow.render(); }
+		function limits()  { section(limitsView,  'drawer.limits',  renderLimitRows); }
+		function search()  { section(searchView,  'drawer.search',  drawSearch); }
+		function folders() { section(foldersView, 'drawer.folders', drawFolders); }
+
+		/// Redraw home if it is the view standing open, and leave any other alone.
+		function refreshHome() {
+			var up = drawerOpen || (modal && modal.style.display !== 'none');
+			if (!up || !homeView || homeView.style.display === 'none') return;
+			try { renderHome(); } catch (e) { console.warn('admin: home would not redraw', e); }
 		}
 
 		// ── Following a language change ───────────────────────
@@ -23678,25 +23711,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& homeView.contains(document.activeElement)
 				? (document.activeElement.textContent || '').trim() : '';
 			renderHomeBody();
-			// The Terminal's folder. A machine setting belongs where a person looks for one --
-			// the same reason the sync switch and the doorbell are on this panel and not
-			// behind the settings form. It shipped inside the MODELS view first and the owner
-			// could not find it, which is the whole argument made once more.
-			//
-			// Appended after the body because `renderHomeBody` clears the view, and KEPT as a
-			// node reference because that clearing detaches it: the markup stays in
-			// index.html so it is translated and greppable like every other row.
-			try {
-				var tr = TermRootRow.kept || document.getElementById('termroot-section');
-				if (tr) {
-					TermRootRow.kept = tr;
-					var gr = TermRootRow.keptGrant || document.getElementById('grantroot-section');
-					if (gr) { TermRootRow.keptGrant = gr; homeView.appendChild(gr); }
-					homeView.appendChild(tr);
-					TermRootRow.renderGrant();
-					TermRootRow.render();
-				}
-			} catch (e) { /* no hand has answered yet */ }
 			if (!hadFocus) return;
 			var again = null;
 			var all = homeView.querySelectorAll('button, [role="button"], input, select, textarea');
@@ -23752,6 +23766,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// and its git toolkit work with no identity at all, and a person who has
 				// skipped the account screen still has repositories. What DIFFERS without
 				// an account is only how long the token lasts, and the panel says so.
+				// The run settings likewise: none of them needs an account.
+				runSection();
 				pushSection();
 				return;
 			}
@@ -23843,6 +23859,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.title = t(r.blurb) + ' ' + t('home.prompt_opens', { path: Prompts.path(r.id) });
 			});
 
+			runSection();
 			// Where a push goes, and the token it goes with.
 			pushSection();
 
@@ -24109,6 +24126,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.addEventListener('click', fn);
 				homeView.appendChild(b);
 				return b;
+			}
+
+			/// The ways through to the settings that are not models: how far a turn may run,
+			/// what the agent searches with, and the folders a hand may reach. Folders is
+			/// offered only once a hand has offered one, as its rows always were.
+			function runSection() {
+				homeView.appendChild(el('div', 'admin-sec', t('home.sec_running')));
+				var lb = item(t('home.limits'), limits);
+				lb.id = 'admin-open-limits';
+				lb.title = t('home.limits_help');
+				var sb = item(t('home.search'), search);
+				sb.id = 'admin-open-search';
+				sb.title = t('home.search_help');
+				if (TermRootRow && TermRootRow.offers()) {
+					var fb = item(t('home.folders'), folders);
+					fb.id = 'admin-open-folders';
+					fb.title = t('home.folders_help');
+				}
 			}
 
 			/// The way through to the push credential, with the host it currently
@@ -24894,11 +24929,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function moneyRows(st, arow) {
 			var M = window.DaimondMoney;
 			if (!M) return false;          // a stripped build: the caller's line is better than none
-			var list = moneyList(st);
+			var pools = moneyPools(st);
+			var list = moneyList(st, pools);
 
-			needPots = list.map(function (r) {
-				return { key: r.key, provider: r.provider || '', minutes: r.minutes, label: r.label,
-					what: r.provider ? tOr('needs.key_what', '{provider} key', { provider: r.provider }) : r.label };
+			// The Status row's Top Up reads each pool's 24 h rate, never the dial's 15 min one:
+			// a busy quarter-hour is not a reason to go and pay.
+			needPots = pools.map(function (p) {
+				return { key: p.key, provider: p.provider || '', minutesDay: p.minutesDay, label: p.label,
+					what: p.label };
 			});
 			if (!list.length) {
 				// Nothing true to say about any pot. Not a dash -- an empty place
@@ -25226,6 +25264,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			creditsView  = document.getElementById('admin-credits');
 			releaseView  = document.getElementById('admin-release');
 			pushView     = document.getElementById('admin-push');
+			limitsView   = document.getElementById('admin-limits');
+			searchView   = document.getElementById('admin-search');
+			foldersView  = document.getElementById('admin-folders');
 			formView     = document.getElementById('admin-form');
 			modal        = document.getElementById('settings-modal');
 			slot         = document.getElementById('settings-slot');
@@ -25235,14 +25276,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// purpose: it is a question a caller is waiting on an answer to, and its
 			// strings are marked as they are built instead.
 			painter(homeView,     renderHome);
-			// The model list AND the rows beneath it. `renderSettingsRows`, not
-			// `fillSettings`: the latter re-seeds the provider box from `cfg` and can
-			// go to the network, and a language change must not take a half-typed key
-			// with it -- the same call the push view makes for the same reason.
+			// The model list, and not `fillSettings`: that re-seeds the provider box from
+			// `cfg` and can go to the network, and a language change must not take a
+			// half-typed key with it -- the same call the push view makes for the same reason.
 			painter(settingsView, function () {
 				if (window.DaimondModels) DaimondModels.render();
-				renderSettingsRows();
 			});
+			painter(limitsView,   renderLimitRows);
+			painter(searchView,   drawSearch);
+			painter(foldersView,  drawFolders);
 			painter(creditsView,  function () {
 				// Only a note the CALLER put there survives, and it survives because
 				// `apply` has just put it into the new language -- which is what the
@@ -25346,11 +25388,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// while the drawer is shut -- opening it renders anyway -- and the
 			// narrow-window modal counts as standing open, since the same view is
 			// what it is holding.
-			window.addEventListener('daimond:handle', function () {
-				var up = drawerOpen || (modal && modal.style.display !== 'none');
-				if (!up || !homeView || homeView.style.display === 'none') return;
-				try { renderHome(); } catch (e) { console.warn('admin: the handle row would not redraw', e); }
-			});
+			window.addEventListener('daimond:handle', refreshHome);
 			closeAdmin();   // the drawer starts hidden; only the Status strip shows
 			status();
 		}
@@ -25358,6 +25396,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return {
 			init: init, available: available, settings: settings, credits: credits,
 			release: release, push: push,
+			limits: limits, search: search, folders: folders, refreshHome: refreshHome,
 			toggle: toggleSettings,
 			home: home, homeContent: homeContent, form: form, closeModal: closeModal,
 			clear: clear, status: status, summary: renderStatusSummary,
@@ -38119,6 +38158,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var held = chat._appPair;
 			if (!held || chat._generating
 				|| (held.model === (want.model || '') && held.provider === (want.provider || ''))) {
+				// The routing rows change the stored routing between turns (U5b), and an engine
+				// that is kept would otherwise send what it was built with until the next reload.
+				if (held && !chat._generating) applyProviderRouting(chat.app, held.provider, held.model);
 				return reconcileEngine(chat, exceptMid);
 			}
 			diag('chat engine', 'chat=' + String(chat.id || '').slice(0, 12) + ' model ' + held.model + ' -> ' + (want.model || '') + ', rebuilt');
@@ -42116,18 +42158,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The round's own prompt and cached tokens (r578 U3), which the next `round`
 				// row takes too.
 				var use = rounds.meta(ev);
-				dsEvent(ev.stalled ? 'stalled' : 'round_meta', {
-					turn: String(umid), r: callN,
-					gen: String(ev.gen || '').slice(0, 40),
-					finish: String(ev.finish || '').slice(0, 24),
-					nfinish: String(ev.nfinish || '').slice(0, 24),
-					provider: String(ev.provider || '').slice(0, 40),
-					p: use.p, ca: use.ca,
-					// The round's timing facts (U3a RM): bytes, ms to the first byte, the
-					// longest quiet after it, and the round's length. `lens gaps` reads them.
-					b: Math.round(Number(ev.b) || 0), f: Math.round(Number(ev.f) || 0),
-					g: Math.round(Number(ev.g) || 0), ms: Math.round(Number(ev.ms) || 0),
-				});
+				dsEvent(ev.stalled ? 'stalled' : 'round_meta',
+					roundMetaRow({ turn: String(umid), r: callN }, ev, use));
+				if (window.DaimondHostSpeed) DaimondHostSpeed.saveSoon();
 				// F1 MID-TURN TOP-UP. `ensure` at turn start gave the key `wantMinor` of
 				// headroom above its usage then; this turn's own draw since eats into it.
 				// When three-quarters of that is gone, raise the key again -- UN-AWAITED,
@@ -42989,10 +43022,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { see: none, end: none, image: none, facts: function () { return null; } };
 	}
 
-	/// The money rows (js/money.js) for the gateway state `st`: shared by the rail's
-	/// status row (DaimondAdmin's moneyRows) and the Balance cylinders in #spend-row,
-	/// so the two can never disagree about a pool. [] in a build with no money.js.
-	function moneyList(st) {
+	/// The money pools (js/money.js `pools`) for the gateway state `st`, one per paying
+	/// source (D-20261020-13): each its binding balance, its full height from the synced
+	/// top-up mark, and its own rates from the synced ledger, 15 min for the dial and 24 h
+	/// for the Status row. The governor's 60 s rate is the governor's and is not read here.
+	/// Exchange rates are DaimondI18n's table (approximate, dated `ratesAsOf`).
+	function moneyPools(st) {
+		var M = window.DaimondMoney, D = window.DaimondModels, L = window.DaimondLedger;
+		if (!M || !M.pools) return [];
+		st = st || {};
+		var provs = [], marks = {}, fx = {}, log = null, now = Date.now();
+		try { provs = (D && D.providers()) || []; } catch (e) { provs = []; }
+		try { marks = (D && D.topups) ? D.topups() : {}; } catch (e) { marks = {}; }
+		try { DaimondI18n.currencies().forEach(function (c) { fx[c.code] = c.rate; }); } catch (e) { fx = {}; }
+		try { log = (L && L.rate) ? L.reprice(L.entries()) : null; } catch (e) { log = null; }
+		var list = M.pools({
+			authed:    !!st.authed,
+			credits:   (typeof st.credits === 'number') ? { minor: st.credits, currency: st.currency, entries: st.entries } : null,
+			providers: provs,
+			rateOf:    function (pv, w) { return log ? L.rate(pv, w, now, log) : null; },
+			historyOf: function (pv) {
+				return (log && L.rateHistory) ? L.rateHistory(pv, M.RATE_WINDOW_MS, M.SCALE_SPAN_MS, now, log) : [];
+			},
+			fx:        fx,
+			marks:     marks,
+			now:       now,
+			label:     function (kind, name) {
+				return kind === 'credits' ? t('money.daimond_credits')
+					: t(kind === 'limit' ? 'money.pool_limit' : 'money.pool_credit', { provider: name });
+			},
+		});
+		try { if (D && D.noteTopups) D.noteTopups(list); } catch (e) { /* the level just resets */ }
+		return list;
+	}
+
+	/// The money rows (js/money.js) for the gateway state `st`, read by the rail's
+	/// status rows (DaimondAdmin's moneyRows). A row with a balance takes its pool's
+	/// name and its pool's own runway (`pools`, from `moneyPools`), so the rows and the
+	/// Balance cylinders in #spend-row can never disagree about a pool. [] in a build
+	/// with no money.js.
+	function moneyList(st, pools) {
 		var M = window.DaimondMoney;
 		if (!M) return [];
 		st = st || {};
@@ -43011,13 +43080,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		} catch (e) { /* the figures simply stay unknown */ }
 
-		var rate = null;
-		try {
-			var g = window.DaimondGovernor && DaimondGovernor.status();
-			if (g && typeof g.rateUsdMin === 'number') rate = g.rateUsdMin;
-		} catch (e) { /* no rate: no runway, which money.js handles */ }
-
-		return M.rows({
+		var out = M.rows({
 			// Whether there is a Daimond account is an INPUT here, not a gate.
 			authed:        !!st.authed,
 			// A number, for the runway arithmetic. The FIGURE the reader sees is
@@ -43033,36 +43096,71 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			ownManyLabel:  t('money.own_keys'),
 			ownOneLabel:   function (name) { return t('money.own_key', { provider: name }); },
 			providers:     provs,
-			rateUsdPerMin: rate,
+			rateUsdPerMin: null,
 		});
+		var by = {};
+		(pools || []).forEach(function (p) { by[p.key] = p; });
+		out.forEach(function (r) {
+			var p = by[r.key === 'credits' ? 'credits' : (r.pid || '')];
+			if (!p || r.kind === 'spent') return;
+			r.label   = p.label;
+			r.minutes = p.minutes;
+			r.atRisk  = (p.minutes !== null && p.minutes <= M.RISK_MINUTES);
+			if (r.atRisk) r.tone = 'warn';
+		});
+		return out;
 	}
 
-	/// The Balance cell of #spend-row: one cylinder per money pool with a balance, full
-	/// height the balance right after its last top-up (remembered in localStorage under
-	/// 'daimond-credcyl'), and a runway line above the tallies for a pool that runs out
-	/// within a day at the present rate. Draws nothing when no pool has a balance.
-	function balanceCell(el) {
+	/// The money pools at the head of #spend-row, each an electric car (D-20261020-14):
+	/// a battery filled to its balance over the balance at its last top-up (the synced
+	/// mark, `DaimondModels.topups`), a dial whose needle is the pool's 15-min mean
+	/// pace against its own full scale (`DaimondMoney.fullScale`), and the range left
+	/// at that pace. Everything comes from the account's synced ledger, so spend on
+	/// any device moves every device's dial. Nothing is drawn when no pool has a balance.
+	function poolsBlock() {
 		var G = window.DaimondAgentGrid;
-		if (!G || !G.pools) return;
-		var store = {};
-		try { store = JSON.parse(localStorage.getItem('daimond-credcyl') || '{}') || {}; } catch (e) { store = {}; }
-		var list = G.pools(moneyList((window.DaimondGateway && DaimondGateway.state()) || {}), store);
-		try { localStorage.setItem('daimond-credcyl', JSON.stringify(store)); } catch (e) { /* the level just resets */ }
-		if (!list.length) return;
-		var low = G.runwayPool(list);
-		if (low) {
-			var rw = document.createElement('div'); rw.className = 'spend-runway';
-			rw.textContent = t('spend.runs_out', { pool: low.label, h: G.runwayHours(low) });
-			el.insertBefore(rw, el.firstChild);
-		}
-		var c = document.createElement('div'); c.className = 'spend-cell spend-balance';
-		var l = document.createElement('span'); l.className = 'spend-label'; l.textContent = t('spend.balance');
-		var cy = document.createElement('span'); cy.className = 'spend-cyls';
-		cy.innerHTML = list.map(function (p) {
-			return G.cylinderSvg(p.level, p.low, t('spend.cyl_title', { pool: p.label,
-				amt: DaimondI18n.priceText(p.usd), full: DaimondI18n.priceText(p.peak) }));
-		}).join('');
-		c.appendChild(l); c.appendChild(cy); el.appendChild(c);
+		if (!G || !G.pools) return null;
+		var list = G.pools(moneyPools((window.DaimondGateway && DaimondGateway.state()) || {}));
+		if (!list.length) return null;
+		// A credits pool is in the account's own currency; a key's is in US dollars.
+		var amt = function (p, v) {
+			return p.key === 'credits' ? DaimondI18n.moneyMinor(Math.round(v * 100), p.currency)
+				: DaimondI18n.priceText(v);
+		};
+		var tag = function (p, v) {
+			return p.key === 'credits' ? DaimondI18n.priceTagMinor(Math.round(v * 100), p.currency)
+				: DaimondI18n.priceTag(v);
+		};
+		var box = document.createElement('div'); box.className = 'evpools'; box.setAttribute('role', 'list');
+		list.forEach(function (p) {
+			var left = p.range ? t('spend.ev_left_' + p.range.unit, { n: p.range.n }) : t('spend.ev_idle');
+			var words = t(p.range ? 'spend.ev_title' : 'spend.ev_title_idle', { pool: p.label,
+				amt: amt(p, p.amount), full: amt(p, p.full), rate: amt(p, p.rate), left: left });
+			var row = document.createElement('div');
+			row.className = 'evp'; row.setAttribute('role', 'listitem');
+			row.dataset.pool = p.key; row.title = words; row.setAttribute('aria-label', words);
+			var who = document.createElement('span'); who.className = 'evwho';
+			var nm = document.createElement('span'); nm.className = 'spend-label evnm'; nm.textContent = p.label;
+			var bal = document.createElement('span'); bal.className = 'spend-amt evbal';
+			var tg = tag(p, p.amount);
+			if (tg) bal.appendChild(tg); else bal.textContent = amt(p, p.amount);
+			who.appendChild(nm); who.appendChild(bal);
+			var gau = document.createElement('span'); gau.className = 'evgau';
+			gau.innerHTML = G.dialSvg(p.angle, p.idle);
+			// The figure in the primary ink and its unit quieter, in each language's own order.
+			var mi = document.createElement('span'); mi.className = 'evmi' + (p.idle ? ' rest' : '') + (p.short ? ' low' : '');
+			if (p.range) {
+				var cut = t('spend.ev_left_' + p.range.unit, { n: '\u0000' }).split('\u0000');
+				if (cut[0]) mi.appendChild(document.createTextNode(cut[0]));
+				var fig = document.createElement('b'); fig.textContent = p.range.n; mi.appendChild(fig);
+				if (cut[1]) mi.appendChild(document.createTextNode(cut[1]));
+			} else mi.textContent = left;
+			gau.appendChild(mi);
+			row.innerHTML = G.batterySvg(p.level, p.low);
+			row.appendChild(who); row.appendChild(gau);
+			box.appendChild(row);
+		});
+		return box;
 	}
 
 	// The global spend readout at the foot of the Diamonds/Chats panel: day
@@ -43072,7 +43170,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Agents panel, from the same ledger the spend row reads. It is painted with the row and
 	/// again each minute, because an hour's window moves with no spending at all: a quiet panel
 	/// must see its figure fall as old turns leave the window.
-	var spendHourTimer = null;
+	var gridFadeTimer = null;
 	function paintSpendHour() {
 		var f = document.getElementById('agents-spendh');
 		if (!f || !window.DaimondLedger || !window.DaimondAgentGrid) return;
@@ -43080,8 +43178,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { usd = DaimondAgentGrid.lastHourUsd(DaimondLedger.entries(), Date.now()); } catch (e) { return; }
 		var txt = DaimondI18n.billed(usd);
 		if (f.textContent !== txt) f.textContent = txt;
-		if (!spendHourTimer) {
-			spendHourTimer = setInterval(paintSpendHour, 60e3);
+		if (!gridFadeTimer) {
+			gridFadeTimer = true;
 			// The 24 h fade moves with no event at all, so the grid (only the grid) is redrawn
 			// every five minutes: squares deepen their fade and leave once their day is out.
 			setInterval(function () {
@@ -43090,9 +43188,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
-	function updateSpend() {
+	/// The minute timer. The hour's figure, the pools' 15-min windows and Today all move
+	/// with no event at all: a quiet pool's needle falls as its window empties, and Today
+	/// starts again at local midnight. `quiet` repaints the rail only when a figure moved.
+	var spendMinuteTimer = null;
+	function updateSpend(quiet) {
 		var el = document.getElementById('spend-row');
 		if (!el || !window.DaimondLedger) return;
+		if (!spendMinuteTimer) spendMinuteTimer = setInterval(function () { updateSpend(true); }, 60e3);
 		paintSpendHour();
 		if (locked) { el.innerHTML = ''; el.style.display = 'none'; return; }
 		el.dataset.hasCredits = (window.DaimondGateway && DaimondGateway.state().authed) ? '1' : '';
@@ -43130,7 +43233,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// door to the Spending panel is reachable from the first run rather than
 		// only after money has gone.
 		el.style.display = '';
-		el.innerHTML = '';
+		var row = document.createElement('div');
 		function cell(label, part) {
 			var c = document.createElement('div'); c.className = 'spend-cell';
 			var l = document.createElement('span'); l.className = 'spend-label'; l.textContent = label;
@@ -43142,10 +43245,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (tag) a.appendChild(tag);
 			c.appendChild(l); c.appendChild(a); return c;
 		}
-		el.appendChild(cell(t('spend.period_day'),    tot.day));
-		el.appendChild(cell(t('spend.period_week'),   tot.week));
-		el.appendChild(cell(t('spend.period_month'),  tot.month));
-		balanceCell(el);
+		// THE POOLS, then TODAY as the trip meter (D-20261022-07): local midnight to now,
+		// from the account's synced ledger. Week and Month are the Spending panel's.
+		var ev = poolsBlock();
+		if (ev) row.appendChild(ev);
+		var day = cell(t('spend.period_day'), tot.day);
+		day.classList.add('spend-today');
+		row.appendChild(day);
 		// A quiet "faster than usual" note when the live rate runs well
 		// above the user's own normal. It informs; it never blocks — the
 		// only thing that blocks is a big fan-out, at the dispatch gate.
@@ -43159,15 +43265,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					+ ' ' + t('gov.per_min', { rate: DaimondI18n.priceMark(g.rateUsdMin) }));
 				note.title = t('gov.run_spent',
 					{ spent: DaimondI18n.priceText(g.burstSpent), budget: DaimondI18n.priceText(g.budget) });
-				el.appendChild(note);
+				row.appendChild(note);
 			}
 		} catch (e) { /* the note is best-effort */ }
-		// THE BALANCE IS A FOURTH CELL now, by the owner's ruling (D-20261015-14, rulings §15),
-		// which overrides the old reasoning that a balance is not a window on spending: it
-		// reads as one because it is drawn as one -- a column of identical cylinders, one per
-		// pool he controls, not a fourth figure beside three. The figures stay in the status
-		// row above; the cylinder says how full the pool is since its last top-up. Drawn
-		// right after Month (balanceCell), before the governor note wraps below.
+		// A row that has not changed is left alone, so the minute's repaint does not
+		// reset a title being read or a hover.
+		if (row.innerHTML !== el.innerHTML) {
+			el.innerHTML = '';
+			while (row.firstChild) el.appendChild(row.firstChild);
+		}
+		if (quiet) return;
 		// A turn spends credits and writes to the workspace, so the status rows
 		// above these figures are stale the moment they are drawn.
 		DaimondAdmin.status();
@@ -44901,16 +45008,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// `round` rows take too: without this they took the feed's starting
 					// {0,0} and stated a prompt and a cache of nothing (r578b F3).
 					var wuse = wrounds.meta(ev);
-					dsEvent(ev.stalled ? 'stalled' : 'round_meta', {
-						w: String(run.id || ''), r: wround,
-						gen: String(ev.gen || '').slice(0, 40),
-						finish: String(ev.finish || '').slice(0, 24),
-						nfinish: String(ev.nfinish || '').slice(0, 24),
-						provider: String(ev.provider || '').slice(0, 40),
-						p: wuse.p, ca: wuse.ca,
-						b: Math.round(Number(ev.b) || 0), f: Math.round(Number(ev.f) || 0),
-						g: Math.round(Number(ev.g) || 0), ms: Math.round(Number(ev.ms) || 0),
-					});
+					dsEvent(ev.stalled ? 'stalled' : 'round_meta',
+						roundMetaRow({ w: String(run.id || ''), r: wround }, ev, wuse));
+					if (window.DaimondHostSpeed) DaimondHostSpeed.saveSoon();
 				} else if (ev.type === 'truncated') {
 					// The provider stopped at the output limit. Recorded on the run rather
 					// than written into its output: it is a fact about the reply, not part
@@ -67360,17 +67460,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// See the same arm in `runTurn`. The daimon's own turn is where proposal
 				// 15's round happened, so this is the arm that actually matters.
 				var use = rounds.meta(ev);
-				dsEvent(ev.stalled ? 'stalled' : 'round_meta', {
-					turn: String(dumid), r: callN,
-					gen: String(ev.gen || '').slice(0, 40),
-					finish: String(ev.finish || '').slice(0, 24),
-					nfinish: String(ev.nfinish || '').slice(0, 24),
-					provider: String(ev.provider || '').slice(0, 40),
-					p: use.p, ca: use.ca,
-					b: Math.round(Number(ev.b) || 0), f: Math.round(Number(ev.f) || 0),
-					g: Math.round(Number(ev.g) || 0), ms: Math.round(Number(ev.ms) || 0),
-					dia: 1,
-				});
+				dsEvent(ev.stalled ? 'stalled' : 'round_meta',
+					roundMetaRow({ turn: String(dumid), r: callN, dia: 1 }, ev, use));
+				if (window.DaimondHostSpeed) DaimondHostSpeed.saveSoon();
 			} else if (ev.type === 'continued') {
 				// The daimon reached its round cap and carried itself on. See the same arm
 				// in `runTurn`: the engine writes nothing into the conversation, so this
@@ -70969,45 +71061,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				label: t(prov ? 'models.enter_key_first' : 'models.choose_provider_first') }]);
 		}
 		if (prov && cfg.apiKey) fetchModels();
-		renderSettingsRows();
 	}
 
-	/// Draw every row this file builds into the Models panel, to what is stored.
+	/// Draw every row of Settings > Limits, to what is stored.
 	///
-	/// Separate from `fillSettings` because a language change needs THIS half and
-	/// not the other: the half above re-seeds the provider box from `cfg` and can
-	/// go to the network, and a redraw must not take a half-typed key with it.
-	/// `DaimondAdmin` paints the panel with this when the language changes, and
-	/// `fillSettings` calls it because a panel being filled needs it too.
+	/// `DaimondAdmin` paints the Limits view with this when it opens and when the
+	/// language changes. Every row writes its own strings HERE rather than where it
+	/// is built: each builds itself once and returns early ever after, so a string
+	/// set at build time is a string in whatever language the panel was first
+	/// opened in -- which is what left six labels and their notes in English behind
+	/// a switch to German, and behind every switch since they were added.
 	///
-	/// Every row writes its own strings HERE rather than where it is built: each
-	/// builds itself once and returns early ever after, so a string set at build
-	/// time is a string in whatever language the panel was first opened in --
-	/// which is what left six labels and their notes in English behind a switch
-	/// to German, and behind every switch since they were added.
-	function renderSettingsRows() {
+	/// The order of the calls is the order on screen, since each row is placed
+	/// before `limits-end` when it is first built.
+	function renderLimitRows() {
 		// The reply-length row reads the starred model's ceiling, so it is redrawn
-		// whenever the settings are, not only when it is first built.
+		// whenever the limits are, not only when it is first built.
 		ReplyLength.render();
 		RoundLimit.render();
 		FoldPoint.render();
 		ContextCap.render();
 		SpendCap.render();
-		FoldModel.render();
 		CrystalCap.render();
 		CrystalPageCap.render();
 		CrystalHotCap.render();
 		VersionsCap.render();
 		DeleteAsk.render();
-		// Which service the agent searches with, and the key for it. Redrawn with
-		// the rest because unlocking is what makes a sealed key readable, and the
-		// row says something different either side of that.
-		SearchRow.render();
-		// Sync and diagnostics are NOT drawn here. They are device-and-account
-		// controls, not model settings, so they live in the account (user-name)
-		// drawer alone -- see `home.sec_sync` in `renderHomeBody`. They used to be
-		// built into this Models view as well, which is the duplication the owner
-		// flagged; the one home is the account drawer.
 	}
 	/// A string from the table, or the English written here when the table has no
 	/// entry for it yet.
@@ -71056,8 +71135,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Build the row once, under the reply-length row it belongs beside.
 		mount: function () {
 			if (document.getElementById('cfg-max-rounds')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
@@ -71068,9 +71147,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-max-rounds-note';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
+			section.insertBefore(note, end);
 			sel.addEventListener('change', function () { RoundLimit.save(sel.value); });
 			return true;
 		},
@@ -71141,8 +71220,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Build the row once, under the round-limit row it belongs beside.
 		mount: function () {
 			if (document.getElementById('cfg-fold-at')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
@@ -71153,9 +71232,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-fold-at-note';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
+			section.insertBefore(note, end);
 			sel.addEventListener('change', function () { FoldPoint.save(sel.value); });
 			return true;
 		},
@@ -71231,8 +71310,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Build the row once, under the fold-point row it belongs beside.
 		mount: function () {
 			if (document.getElementById('cfg-context-cap')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
@@ -71243,9 +71322,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-context-cap-note';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
+			section.insertBefore(note, end);
 			sel.addEventListener('change', function () { ContextCap.save(sel.value); });
 			return true;
 		},
@@ -71322,8 +71401,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Build the row once, under the context-ceiling row it belongs beside.
 		mount: function () {
 			if (document.getElementById('cfg-spend-cap')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
@@ -71331,8 +71410,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-spend-cap';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
 			sel.addEventListener('change', function () { SpendCap.save(sel.value); });
 			return true;
 		},
@@ -71503,9 +71582,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var TermRootRow = {
 		/// What the hand last said about this computer, or null before it has said anything.
 		machine: null,
-		/// The section elements, held across repaints: the settings home clears itself.
-		kept: null,
-		keptGrant: null,
 		/// Which row started the walk: 'terminal' or 'grant'.
 		at: 'terminal',
 
@@ -71514,8 +71590,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Called from wherever `status()` lands rather than asking again: the hand is asked
 		/// once per connection and a second ask would be a second native host.
 		learn: function (m) {
+			var had = TermRootRow.offers();
 			TermRootRow.machine = m || null;
 			try { TermRootRow.render(); } catch (e) { /* the section is not up yet */ }
+			// Settings home offers Folders only while there is a folder to choose.
+			if (had !== TermRootRow.offers()) {
+				try { DaimondAdmin.refreshHome(); } catch (e) { /* the drawer is not up yet */ }
+			}
+		},
+
+		/// Has the hand offered a folder to choose, for either row?
+		offers: function () {
+			var m = TermRootRow.machine;
+			return !!(m && m.root && (m.browse || (m.ceilings || []).length));
 		},
 
 		/// Ask the hand what is inside `path`, and draw it.
@@ -71608,7 +71695,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var browse = document.createElement('button');
 			browse.type = 'button';
 			browse.id = 'termroot-browse';
-			browse.className = 'admin-item';
+			// The same role as Daimond's folder's Change… above it (#grantroot-browse): one action, one look.
+			browse.className = 'termroot-btn';
 			browse.textContent = tOr('termroot.browse', 'Change\u2026');
 			browse.addEventListener('click', function () {
 				if (TermRootRow.open) { TermRootRow.close(); return; }
@@ -71817,13 +71905,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// it was the only item in its own pulldown wearing an article.
 			var eng  = { web: 'Web', news: 'News', academic: 'Academic' };
 
-			// The heading and the two labels, painted rather than left to
-			// `data-i18n`. That attribute writes `t(key)` into the element, and `t`
-			// answers with the KEY when the table has not got there yet — a panel
-			// headed "search.head". `tOr` falls back to English instead, so this
+			// The two labels, painted rather than left to `data-i18n`. That
+			// attribute writes `t(key)` into the element, and `t` answers with the
+			// KEY when the table has not got there yet — a label reading
+			// "search.engine". `tOr` falls back to English instead, so this
 			// half of the release and the i18n lane's half are safe in either order.
-			var head = document.getElementById('search-head');
-			if (head) head.textContent = tOr('search.head', 'Search');
 			var engLab = document.querySelector('label[for="set-search-engine"]');
 			if (engLab) engLab.textContent = tOr('search.engine', 'Search engine');
 			var keyLab = document.querySelector('label[for="set-search-key"]');
@@ -72179,8 +72265,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Build the heading and the row once, beneath the round limit they sit beside.
 		mount: function () {
 			if (document.getElementById('cfg-crystal-cap')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			var head = document.createElement('h4');
 			head.className = 'cfg-fieldhead';
@@ -72191,9 +72277,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-crystal-cap';
-			section.insertBefore(head, form);
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
+			section.insertBefore(head, end);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
 			sel.addEventListener('change', function () { CrystalCap.save(sel.value); });
 			return true;
 		},
@@ -72259,8 +72345,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		mount: function () {
 			if (document.getElementById('cfg-crystal-page-cap')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			// The data row carries the heading the two share, so this one cannot exist
 			// without it and does not try.
@@ -72271,8 +72357,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-crystal-page-cap';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
 			sel.addEventListener('change', function () { CrystalPageCap.save(sel.value); });
 			return true;
 		},
@@ -72327,8 +72413,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		mount: function () {
 			if (document.getElementById('cfg-crystal-hot-cap')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			// The data row carries the heading all three share.
 			if (!CrystalCap.mount()) return false;
@@ -72341,9 +72427,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-crystal-hot-cap-note';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
+			section.insertBefore(note, end);
 			sel.addEventListener('change', function () { CrystalHotCap.save(sel.value); });
 			return true;
 		},
@@ -72438,8 +72524,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		mount: function () {
 			if (document.getElementById('cfg-versions-cap')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			// The data row carries the heading all four share.
 			if (!CrystalCap.mount()) return false;
@@ -72452,9 +72538,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-versions-cap-note';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
+			section.insertBefore(note, end);
 			sel.addEventListener('change', function () { VersionsCap.save(sel.value); });
 			return true;
 		},
@@ -72527,8 +72613,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		mount: function () {
 			if (document.getElementById('cfg-delete-ask')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			if (!VersionsCap.mount()) return false;
 			var lab = document.createElement('label');
@@ -72537,8 +72623,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-delete-ask';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
 			sel.addEventListener('change', function () { DeleteAsk.save(sel.value); });
 			return true;
 		},
@@ -72646,90 +72732,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		applyDeleteAsk(app);
 	}
 
-	/// Which model folds a conversation, and what it is told.
-	///
-	/// A fold is a real, paid call that runs every time a conversation outgrows its
-	/// window, and its output BECOMES the session's memory — so the model doing it is
-	/// worth choosing, and the choice was not on offer anywhere.
-	///
-	/// **It applies only to conversations on its own provider.** `Agent::summarise`
-	/// swaps the model id into a clone of the conversation's own client, so the fold
-	/// travels on the key already in use; a model id from another provider would be
-	/// refused by the wire, or — worse on an endpoint that shrugs — answered by
-	/// something else entirely. So the pair is stored and `applyFoldSettings` sets it
-	/// only where the provider matches. The note under the picker says this, because a
-	/// setting that silently does nothing on half the user's chats is worse than one
-	/// that is not offered at all.
-	var FoldModel = {
-		mount: function () {
-			if (document.getElementById('cfg-fold-model')) return true;
-			var anchor = document.getElementById('cfg-max-rounds');
-			var section = anchor && anchor.parentNode;
-			if (!section) return false;
-			var lab = document.createElement('label');
-			lab.className = 'cfg-fieldlabel';
-			lab.setAttribute('for', 'cfg-fold-model');
-			var sel = document.createElement('select');
-			sel.className = 'settings-select';
-			sel.id = 'cfg-fold-model';
-			var note = document.createElement('p');
-			note.className = 'cfg-fieldnote';
-			// Named, as its siblings are, so the redraw can find it again.
-			note.id = 'cfg-fold-model-note';
-			// Under the round limit, which is the other bound on how a turn behaves.
-			var after = document.getElementById('cfg-max-rounds-note') || anchor;
-			section.insertBefore(lab, after.nextSibling);
-			section.insertBefore(sel, lab.nextSibling);
-			section.insertBefore(note, sel.nextSibling);
-			// After the three are in place, so the field lands between the select and its note.
-			if (window.DaimondModels) DaimondModels.picker(sel);
-			sel.addEventListener('change', function () { FoldModel.save(sel); });
-			return true;
-		},
-
-		render: function () {
-			if (!this.mount()) return;
-			var lab = document.querySelector('label[for="cfg-fold-model"]');
-			if (lab) lab.textContent = tOr('settings.fold_model', 'Fold with');
-			var fnote = document.getElementById('cfg-fold-model-note');
-			if (fnote) {
-				fnote.textContent = tOr('settings.fold_model_note',
-					'Which model writes the summary when a chat is folded.');
-			}
-			var sel = document.getElementById('cfg-fold-model');
-			sel.innerHTML = '';
-			var own = document.createElement('option');
-			own.value = ''; own.dataset.provider = '';
-			own.textContent = tOr('settings.fold_model_own', 'The conversation’s own model');
-			sel.appendChild(own);
-			if (window.DaimondModels) {
-				// Every configured model, grouped by provider, exactly as the tile pickers
-				// are — and then the stored choice re-selected, which `fillSelect` does by
-				// provider and model together.
-				var group = document.createElement('optgroup');
-				group.label = tOr('settings.fold_model_group', 'Fold with instead');
-				sel.appendChild(group);
-				var scratch = document.createElement('select');
-				DaimondModels.fillSelect(scratch, cfg.foldProvider || '', cfg.foldModel || '');
-				while (scratch.firstChild) sel.appendChild(scratch.firstChild);
-			}
-			var want = (cfg.foldProvider || '') + '\u0000' + (cfg.foldModel || '');
-			var hit = false;
-			for (var i = 0; i < sel.options.length; i++) {
-				var o = sel.options[i];
-				if (((o.dataset.provider || '') + '\u0000' + o.value) === want) {
-					sel.selectedIndex = i; hit = true; break;
-				}
-			}
-			if (!hit) sel.selectedIndex = 0;
-		},
-
-		save: function (sel) {
-			var o = sel.options[sel.selectedIndex];
-			setFoldPick((o && o.dataset.provider) || '', (o && o.value) || '');
-			this.render();
-		},
-	};
+	// The fold's model (Summarising) has no control of its own here since D-20261018-09 U4:
+	// it is a Job, drawn in Models beside Drafting. `setFoldPick` below stays its one setter,
+	// and `applyFoldSettings` applies it only to conversations on its own provider.
 
 	/// Both halves of how this app folds: which model writes the summary, and what
 	/// that model is told.
@@ -72882,7 +72887,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				catch (e2) { /* a console that will not take it is not worth a turn */ }
 			}
 		}
-		// Same provider or nothing. See `FoldModel`: the fold rides on the conversation's
+		// Same provider or nothing: `Agent::summarise` rides on the conversation's
 		// own key, so a model id belonging to somebody else's endpoint is not a fold with
 		// a different model — it is a request that fails, or one answered by whatever that
 		// endpoint does with an unknown name.
@@ -72919,11 +72924,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// opening the panel never silently changes their setting.
 		STEPS: [4096, 8192, 16384, 32768, 65536, 131072],
 
-		/// Build the row once, into the Models panel's existing section.
+		/// Build the row once, into Settings > Limits.
 		mount: function () {
 			if (document.getElementById('cfg-max-tokens')) return true;
-			var form = document.getElementById('byok-form');
-			var section = form && form.parentNode;
+			var end = document.getElementById('limits-end');	// Settings > Limits
+			var section = end && end.parentNode;
 			if (!section) return false;
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
@@ -72934,9 +72939,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var note = document.createElement('p');
 			note.className = 'cfg-fieldnote';
 			note.id = 'cfg-max-tokens-note';
-			section.insertBefore(lab, form);
-			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
+			section.insertBefore(lab, end);
+			section.insertBefore(sel, end);
+			section.insertBefore(note, end);
 			sel.addEventListener('change', function () { ReplyLength.save(sel.value); });
 			return true;
 		},
@@ -73116,17 +73121,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		DaimondModels.render();
 		// The starred model may have changed, and with it the ceiling the
 		// reply-length row reads and the figure Automatic resolves to.
-		ReplyLength.render();
-		RoundLimit.render();
-		FoldPoint.render();
-		ContextCap.render();
-		SpendCap.render();
-		FoldModel.render();
-		CrystalCap.render();
-		CrystalPageCap.render();
-		CrystalHotCap.render();
-		VersionsCap.render();
-		DeleteAsk.render();
+		renderLimitRows();
 		var f = document.getElementById('byok-form');
 		if (f) f.style.display = 'none';
 		DaimondAdmin.status();
@@ -74056,6 +74051,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// no file or line, a Promise that never settles, and a poisoned module.
 			// An iPhone looped on exactly that for four sessions.
 			try { install_panic_hook(); } catch (e) { /* an older bundle has none */ }
+			// Last visit's host speeds back into the engine before its first request routes
+			// by them (D-20261020-10).
+			try { if (window.DaimondHostSpeed) DaimondHostSpeed.attach(Wasm); } catch (e) { /* no figures is a fresh start */ }
 			// And the footprint, from the moment there is one to read.
 			try { watchHeap(); } catch (e) { /* an older bundle cannot report it */ }
 			window.__DAIMOND_READY = true;
@@ -74434,7 +74432,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (window.DEBUG_SHARE && DEBUG_SHARE.roundFeed) return DEBUG_SHARE.roundFeed();
 		} catch (e) { /* the feed must never break the app */ }
-		return { add: function () {}, flush: function () {}, meta: function () { return { p: 0, ca: 0 }; } };
+		return { add: function () {}, flush: function () {}, meta: function () { return { p: 0, ca: 0, o: 0 }; } };
+	}
+
+	// ONE `round_meta` (or `stalled`) feed row, for the chat, the worker and the daimon alike, onto
+	// `row`'s own keys (`turn` or `w`, `r`, `dia`). `use` is the round's `rounds.meta(ev)`.
+	// The round's timing facts (U3a RM): `by` body bytes, `f` ms to the first byte, `g` the
+	// longest quiet after it, `ms` the round's length; `lens gaps` reads them. Bytes ride as `by`,
+	// NOT `b`: the feed's envelope `b` is the build tag, and it overwrote them (D-20261020-10).
+	// Host speed (D-20261020-10): `o` output tokens, `tf` ms to the first token that grew the
+	// reply, `tps` tokens a second from there, beside `provider`, the host that served it.
+	function roundMetaRow(row, ev, use) {
+		var num = function (v) { return Math.round(Number(v) || 0); };
+		var o = num(ev.o), gm = num(ev.gm);
+		row.gen      = String(ev.gen || '').slice(0, 40);
+		row.finish   = String(ev.finish || '').slice(0, 24);
+		row.nfinish  = String(ev.nfinish || '').slice(0, 24);
+		row.provider = String(ev.provider || '').slice(0, 40);
+		row.p        = use.p;
+		row.ca       = use.ca;
+		row.by       = num(ev.b);
+		row.f        = num(ev.f);
+		row.g        = num(ev.g);
+		row.ms       = num(ev.ms);
+		row.o        = o;
+		row.tf       = num(ev.tf);
+		row.tps      = (gm > 0 && o > 0) ? Math.round(o * 10000 / gm) / 10 : 0;
+		return row;
 	}
 
 	// The Lens's picture of this screen: a toast before every one, and a Diamond page that cannot

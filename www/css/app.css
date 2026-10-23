@@ -299,7 +299,11 @@ svg { display: block; }
    Improve board superimposed in one cell, reported after a hard refresh (the
    restored layout is where a stacked column gives Improve a short slice). Social
    was fixed here on 2026-08-28; Improve is the twin that was missed. */
-.rail, .agents, .work, .mail, .spend, .social, .tracker { flex: none; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+/* Pending (`.panel.pending`, never bare `.pending`: that is also a session tile's
+   state class) is the fourth. As a block, `#pending-list` took its whole content
+   height and its `overflow-y: auto` never engaged: measured 23 Oct on a computer,
+   the list ran to 912px in an 814px panel, out past the panel's foot. */
+.rail, .agents, .work, .mail, .spend, .social, .tracker, .panel.pending { flex: none; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
 /* The `gap: 6px` above falls between the head and the body and NOWHERE ELSE
    here, which is why this panel needs no correction for it: every other child
    of `.social` is an `.imp-view`, and `.imp-view[hidden]` is `display: none`,
@@ -310,8 +314,14 @@ svg { display: block; }
    push its own last rows out under the clip. */
 .spend > .spend-view { flex: 1 1 auto; min-height: 0; }
 .rail { width: var(--rail-w); gap: 0; }
-/* The phone drawer's scroller (mobile.css); a desktop rail lays its children out as if it were not there. */
-.rail-scroll { display: contents; }
+/* The rail's scroller. On a phone it is the drawer's (mobile.css). On the desktop it
+   scrolls only when the two lists at their five-tile floors (mobile.js `fitLists`)
+   and the money pools under them do not fit the window (D-20261020-14 EV); on a
+   tall one nothing moves. */
+.rail-scroll { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; }
+.rail .rail-top { min-height: var(--rail-top-min, 0px); }
+.rail .diamond-list { min-height: var(--rail-win-d, 0px); }
+.rail .session-list { min-height: var(--rail-win-c, 0px); }
 .panel.nt { transition: none; }
 .panel.closed { display: none; }
 
@@ -2231,8 +2241,12 @@ span.arte-open { cursor: default; }
    pixel in any engine, and the caret is what says typing will land there. */
 .settings-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .settings-select option:disabled { color: var(--text-muted); }
-.settings-section button:not(.admin-item) { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); }
-.settings-section button:not(.admin-item):hover { background: var(--accent-hover); }
+/* The panel's fill button is the UNCLASSED one. A button that carries a class owns its look:
+   `:not(.admin-item)` reached every list row, head and link in a settings panel at (0,2,1),
+   above any one-class rule, so each of them had to out-weigh it and the model rows that did
+   not drew the accent fill (the pink rows, D-20261018-09 fault 10). */
+.settings-section button:not([class]) { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); }
+.settings-section button:not([class]):hover { background: var(--accent-hover); }
 .modal-close { background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 8px 16px; font-size: var(--fs-base); margin-top: 8px; width: 100%; }
 .modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
 
@@ -3061,10 +3075,18 @@ span.arte-open { cursor: default; }
 	border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted);
 	transform: translateY(-70%) rotate(45deg); pointer-events: none;
 }
-/* A tile's rail pulldown, and the drafting pulldown, which has the same size of job. */
+/* A tile's rail pulldown, and the Models view's Jobs pulldowns, which have the same size of job. */
 .mp-tile-model > input.mp-in,
-.mp-models-draft-sel > input.mp-in { padding: 5px 18px 5px 6px; font-size: var(--fs-xs); }
-.mp-tile-model::after, .mp-models-draft-sel::after { right: 7px; }
+.mp-models-job-sel > input.mp-in { padding: 5px 18px 5px 6px; font-size: var(--fs-xs); }
+.mp-tile-model::after, .mp-models-job-sel::after { right: 7px; }
+.mp-models-job-sel { flex: 1 1 auto; min-width: 0; }
+/* An Except row's picker: no field, the model's name set right, the chevron after it. */
+.mp-models-exc-sel { flex: 1 1 auto; min-width: 0; }
+.mp-models-exc-sel > input.mp-in {
+	background: transparent; border-color: transparent; text-align: right;
+	padding: 5px 20px 5px 4px; font-size: var(--fs-xs); text-overflow: ellipsis;
+}
+.mp-models-exc-sel::after { right: 6px; }
 .tile-dlg-field .mp-tile-model > input.mp-in,
 .tile-dlg-model .mp-tile-model > input.mp-in { padding: 7px 22px 7px 8px; font-size: var(--fs-sm); }
 .tile-dlg-field .mp-tile-model::after, .tile-dlg-model .mp-tile-model::after { right: 9px; }
@@ -3084,6 +3106,7 @@ span.arte-open { cursor: default; }
 	padding: 6px 8px; border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer;
 }
 .mp-row.mp-act { background: var(--bg-hover); }
+.mp-row.mp-alt { padding-left: 24px; }
 .mp-row[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-text); }
 .mp-row[aria-disabled="true"] { color: var(--text-muted); cursor: default; }
 .mp-main { font-family: var(--font-mono); font-size: var(--fs-sm); min-width: 0; overflow-wrap: anywhere; }
@@ -3759,15 +3782,17 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .pro-offer, .pro-owned { border: 1px solid transparent; border-radius: var(--radius-sm); padding: 12px; background: var(--bg-secondary); }
 .pro-offer p { margin: 0 0 8px; font-size: var(--fs-base); color: var(--text-primary); line-height: 1.45; }
 .pro-offer .pro-fine { font-size: var(--fs-sm); color: var(--text-secondary); }
+/* The two sells in the Credits drawer are fill buttons by their own class: they used to borrow
+   the fill from `.settings-section button`, which reached every classed button in a panel. */
+.pro-buy, .credit-buy { background: var(--accent); color: var(--on-fill, #fff); border: none; border-radius: var(--radius-sm); padding: 9px 16px; font-size: var(--fs-base); }
+.pro-buy:hover, .credit-buy:hover { background: var(--accent-hover); }
 .pro-buy { width: 100%; margin-top: 4px; cursor: pointer; }
 .pro-buy:disabled { opacity: 0.6; cursor: default; }
 .pro-err { margin-top: 6px; font-size: var(--fs-sm); color: var(--danger, #c0392b); }
 .pro-owned { color: var(--text-primary); font-size: var(--fs-base); line-height: 1.45; }
-/* Cancel, under the confirmation, is a link (`pro-link`), not a second sell. The class had no rule, so it took
-   `.settings-section button`'s accent fill and 9px 16px -- a filled button saying "Cancel subscription" in the
-   calm box (gatefix, by-role gate: inline-link). It is drawn as the app's other inline links are (`.post-link`),
-   at the selector weight it has to beat, hover included. */
-.settings-section button.pro-link, .settings-section button.pro-link:hover {
+/* Cancel, under the confirmation, is a link (`pro-link`), not a second sell (gatefix, by-role gate: inline-link).
+   It is drawn as the app's other inline links are (`.post-link`), hover included. */
+.pro-link, .pro-link:hover {
 	display: block; margin: 8px 0 0; padding: 0; border: 0; border-radius: 0; background: none;
 	font: inherit; color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
 }
@@ -4161,7 +4186,23 @@ body.resizing { cursor: col-resize; user-select: none; }
    cannot be judged, so it is both and the reader chooses which. */
 .pending-actions { display: flex; align-items: center; gap: 6px; }
 .pending-sort { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--fs-2xs); padding: 2px 4px; max-width: 120px; }
-.pending-list { display: flex; flex-direction: column; gap: 6px; padding: 8px; overflow-y: auto; }
+/* `scrollbar-gutter: stable`: the list's scrollbar takes its room whether or not
+   it is drawn, so a tile does not narrow by the scrollbar's width (14px on a
+   computer) when one grows past the list's height (varlen, a 600-byte note in
+   a list of 5 tiles, 23 Oct). */
+.pending-list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; overflow-y: auto; scrollbar-gutter: stable; }
+/* A bounded flex column shrinks its children to fit before it scrolls them. The
+   tiles must keep their own height and let the list scroll: measured 23 Oct on a
+   phone sheet, a tile shrunk to 339px drew its presses 508px down, under the
+   list's edge, where nothing could press them. */
+.pending-list > * { flex: none; }
+/* A change tile's diff takes `.hist-diff`'s `flex: 1 0 100%`, which is a WIDTH in
+   the History rows it was written for (a wrapping row: the diff takes a line of
+   its own). In a tile, a column, the same 100% is the tile's HEIGHT: once the
+   list sizes the tile, the diff's basis became the tile's height and the tile
+   was sized as if the diff were not in it (measured 23 Oct: a 338px tile, 534px
+   of content, its Apply and Don't Change drawn under the list's edge). */
+.pend-card > .hist-diff { flex: none; }
 .pend-card {
 	background: var(--bg-tertiary); border: 1px solid transparent;
 	border-radius: var(--radius-sm); padding: 8px 10px;
@@ -5426,18 +5467,39 @@ button.agsq.o { cursor: pointer; }
 .acard .abtn-go { background: var(--warn); color: var(--bg-primary); }
 .pill.wait { color: var(--warn); background: var(--warn-bg); }
 
-/* CREDIT-CYL (D-20261015-14): the rail's Balance cell, one transparent cylinder per pool he
-   controls beside Today / Week / Month; full height is the balance right after the last top-up. */
-.spend-balance { flex: none; }
-.spend-cyls { display: flex; gap: 8px; padding-top: 2px; }
-.spend-cyls svg { display: block; overflow: visible; }
-.spend-cyls .glass { fill: color-mix(in srgb, var(--text-primary) 5%, transparent); stroke: color-mix(in srgb, var(--text-primary) 42%, transparent); stroke-width: 1; }
-.spend-cyls .rim { fill: none; stroke: color-mix(in srgb, var(--text-primary) 42%, transparent); stroke-width: 1; }
-.spend-cyls .liq { fill: color-mix(in srgb, var(--text-secondary) 55%, transparent); }
-.spend-cyls .liqtop { fill: color-mix(in srgb, var(--text-secondary) 80%, transparent); }
-.spend-cyls .low .liq { fill: color-mix(in srgb, var(--warn) 60%, transparent); }
-.spend-cyls .low .liqtop { fill: color-mix(in srgb, var(--warn) 90%, transparent); }
-.spend-runway { flex-basis: 100%; padding: 0 4px 4px; font-size: var(--dl-2xs, 11.5px); line-height: 14px; color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* EV (D-20261020-14): the rail's money pools, each an electric car. One row per pool: a battery
+   filled to its balance over the balance at its last top-up (D-20261015-14), the name and balance,
+   then a dial for the 15-min pace and the range left at it. Tokens only, no lines but the drawings'. */
+.evpools { flex-basis: 100%; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 2px 4px 10px; }
+.evp { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.evp svg { display: block; overflow: visible; flex: none; }
+.evwho { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 3px; }
+.evnm { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evbal { display: block; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.evgau { flex: none; width: 116px; display: flex; align-items: flex-end; gap: 7px; min-width: 0; }
+/* The range: one line, the figure in the primary ink and its unit quieter; amber under an hour. */
+.evmi { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font); font-size: var(--fs-xs); line-height: 14px; margin-bottom: -1px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.evmi b { font-weight: 600; color: var(--text-primary); }
+.evmi.low, .evmi.low b { color: var(--warn); }
+/* The battery: the cylinder's glass and charge, with a terminal; a low charge reads amber. */
+.evb .glass { fill: color-mix(in srgb, var(--text-primary) 5%, transparent); stroke: color-mix(in srgb, var(--text-primary) 42%, transparent); stroke-width: 1; }
+.evb .rim { fill: none; stroke: color-mix(in srgb, var(--text-primary) 42%, transparent); stroke-width: 1; }
+.evb .term { fill: color-mix(in srgb, var(--text-primary) 42%, transparent); }
+.evb .liq { fill: color-mix(in srgb, var(--text-secondary) 55%, transparent); }
+.evb .liqtop { fill: color-mix(in srgb, var(--text-secondary) 80%, transparent); }
+.evb.low .liq { fill: color-mix(in srgb, var(--warn) 60%, transparent); }
+.evb.low .liqtop { fill: color-mix(in srgb, var(--warn) 90%, transparent); }
+/* The dial in thirds (D-20261022-07): the lower uncoloured, the middle orange, the upper red,
+   always shown, like a rev counter's redline; the needle alone says the pace. */
+.evd .band { fill: none; stroke-linecap: butt; }
+.evd .band.b1 { stroke: color-mix(in srgb, var(--text-primary) 16%, transparent); }
+.evd .band.b2 { stroke: var(--warn); }
+.evd .band.b3 { stroke: var(--danger); }
+.evd .tick { stroke: color-mix(in srgb, var(--text-primary) 35%, transparent); stroke-width: 1; stroke-linecap: round; }
+.evd .ndl { fill: var(--text-primary); }
+.evd .hub { fill: var(--bg-secondary); stroke: var(--text-primary); stroke-width: 1.3; }
+.evd.rest .ndl { fill: var(--text-muted); }
+.evd.rest .hub { stroke: var(--text-muted); }
 
 /* The grid's lens (think pass §2): Cost, Rating and Device recolour the squares;
    their places do not move. The colour rides --k, set per square from agentgrid.js. */

@@ -35,6 +35,7 @@
 // run under `xvfb-run` still went to the compositor and opened a window on the owner's
 // desktop. Importing this strips the two variables from `process.env`, which is all a
 // launcher that spreads `process.env` needs. See dev/display.mjs.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import './display.mjs';
 import { guardRan } from './verdict.mjs';
 const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;

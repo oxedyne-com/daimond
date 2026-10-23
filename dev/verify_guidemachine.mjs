@@ -21,6 +21,7 @@
 //   node dev/verify_guidemachine.mjs
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no model, no extension.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';

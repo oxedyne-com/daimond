@@ -209,6 +209,46 @@ const prov = (o) => Object.assign({ id: 'p', name: 'OpenAI', paid: false, hasKey
 		JSON.stringify(rows));
 }
 
+// ══ THE POOLS (D-20261020-13 PS1) ══════════════════════════════════
+// One pool per paying source, each with its own binding number and its own rate.
+// The rail's runway line and tint read the 24 h mileage (minutesDay), as the Status
+// Top Up row does; the 15-min one (minutes) is for the dial. A burst on one pool
+// must never make another one cry wolf.
+{
+	const H = 60;
+	const rates = { openrouter: { 15: 30, day: 0.5 }, groq: { 15: 0, day: 0 } };
+	const ps = M.pools({
+		authed: true, credits: { minor: 500, currency: 'aud' },
+		providers: [
+			{ id: 'openrouter', name: 'OpenRouter', hasKey: true, paid: false,
+				credit: { mode: 'auto', usd: 20, binds: 'limit' } },
+			{ id: 'groq', name: 'Groq', hasKey: true, paid: false, credit: { mode: 'manual', usd: 9 } },
+			{ id: 'nokey', name: 'X', hasKey: false, paid: false, credit: { mode: 'auto', usd: 9 } },
+		],
+		rateOf: (pv, w) => { const r = rates[pv]; return r ? (w === M.RATE_WINDOW_MS ? r[15] : r.day) : 2; },
+		fx: { AUD: 1.5 }, marks: { openrouter: { full: 40, at: 1, last: 20 } }, now: 1000,
+	});
+	check(ps.map(p => p.key).join(',') === 'credits,openrouter,groq',
+		'one pool per paying source with a balance, none for a key not held', ps.map(p => p.key).join(','));
+	const cr = ps[0], or = ps[1], gq = ps[2];
+	check(cr.currency === 'AUD' && cr.amount === 5 && cr.rateDay === 3,
+		'the credits pool stays in the account currency, its rate converted by FX', `${cr.currency} ${cr.amount} ${cr.rateDay}`);
+	check(or.binds === 'limit' && / key limit$/.test(or.label),
+		'a key names the number that binds it (key limit, not account credit)', `${or.binds} ${or.label}`);
+	check(gq.binds === '' && gq.kind === 'estimate',
+		'a hand-entered balance is an estimate and claims no binding number', `${gq.binds} ${gq.kind}`);
+	check(Math.round(or.minutes) === 40 && Math.round(or.minutesDay) === 40 * H,
+		'the burst rate and the day rate give two mileages', `${or.minutes} / ${or.minutesDay}`);
+	check(or.full === 40 && or.level === 0.5,
+		'the level reads against the synced top-up mark', `${or.full} ${or.level}`);
+	check(gq.minutes === null && gq.minutesDay === null,
+		'an idle pool has no mileage at all, whatever its neighbour burns', `${gq.minutes} ${gq.minutesDay}`);
+	const mine = { openrouter: { full: 40, at: 5, last: 20 } };
+	M.marksMerge(mine, { openrouter: { full: 25, at: 9, last: 25 } });
+	check(mine.openrouter.full === 25 && mine.openrouter.at === 9,
+		'synced top-ups merge by the later top-up, whichever device saw it', JSON.stringify(mine.openrouter));
+}
+
 // ══ THE REAL RAIL ══════════════════════════════════════════════════
 // The pure half above was proved with a mock box injected into the page, which
 // tested the wording rules and NOTHING about whether the rail draws them. It

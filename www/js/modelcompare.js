@@ -73,6 +73,7 @@
 	function ratings() { return (typeof window !== 'undefined') ? window.DaimondRatings : null; }
 	function prov() { return (typeof window !== 'undefined') ? window.DaimondProvenance : null; }
 	function pricing() { return (typeof window !== 'undefined') ? window.DaimondPricing : null; }
+	function hostSpeed() { return (typeof window !== 'undefined') ? window.DaimondHostSpeed : null; }
 	function cmp(a, b) { return a < b ? -1 : (a > b ? 1 : 0); }
 
 	// ── Extensions, words (C6) ─────────────────────────────────
@@ -519,6 +520,22 @@
 			untied[key] = (untied[key] || 0) + e.u;
 		});
 
+		// The speed columns by host (D-20261020-10): each model's measured hosts, from
+		// `DaimondHostSpeed.figures()` (or `opts.hostSpeeds`), under the row of the model they served.
+		// The turn-level `first`/`end`/`stall` cells stay the model's own; these say which host made them.
+		var HS = hostSpeed();
+		var speeds = Array.isArray(o.hostSpeeds) ? o.hostSpeeds : (HS ? HS.figures() : []);
+		var byModel = {};
+		speeds.forEach(function (f) {
+			if (!f || !f.model || !f.host) return;
+			var id = ident(f.model) || {}, cm = str(id.cm) || str(f.model);
+			(byModel[cm] || (byModel[cm] = [])).push({ host: str(f.host), rounds: num(f.rounds) || 0, tps: num(f.tps),
+				firstMs: num(f.firstMs), stallShare: num(f.stallShare) || 0, slow: !!f.slow, why: str(f.why) });
+		});
+		Object.keys(byModel).forEach(function (cm) {
+			byModel[cm].sort(function (a, b) { return cmp(b.tps === null ? -1 : b.tps, a.tps === null ? -1 : a.tps) || cmp(a.host, b.host); });
+		});
+
 		var out = Object.keys(rows).sort().map(function (key) {
 			var r = rows[key], costs = [], acc = 0, accAll = 0, fts = [], durs = [], ftN = 0, stalls = 0;
 			var tc = 0, te = 0, mc1 = 0, imT = 0, imF = 0, heads = [];
@@ -562,7 +579,8 @@
 			};
 			var j = judged(RR, kindRoll, allRoll, r, split, Object.assign({ kind: kind }, o), heads);
 			Object.keys(j).forEach(function (k) { cells[k] = j[k]; });
-			return { key: key, cm: r.cm, pv: r.pv, fam: r.fam, n: r.turns.length, cells: cells, untied: untied[key] || 0 };
+			return { key: key, cm: r.cm, pv: r.pv, fam: r.fam, n: r.turns.length, cells: cells, untied: untied[key] || 0,
+				hosts: byModel[r.cm] || [] };
 		});
 		var spare = 0;
 		Object.keys(untied).forEach(function (k) { spare += untied[k]; });

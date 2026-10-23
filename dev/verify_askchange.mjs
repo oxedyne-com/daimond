@@ -19,7 +19,7 @@
 // Needs a world for the mock provider: `eval "$(bash dev/world.sh N --env)"`, and the wasm built
 // (`dev/build-wasm.sh --no-opt`).  `AC_ONLY=A1,A3` runs a subset.
 
-import { open } from './harness.mjs';
+import { open, answerChanges } from './harness.mjs';
 import { armFilter, guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -135,25 +135,15 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 await install(true);
 const id = await p.evaluate(() => __k.app.create_diamond('ask change'));
 
-// The page's question, stubbed: answers `window.__answer` (a word, or a function of the payload)
-// and records every payload it is shown.
-await p.evaluate(() => {
-	window.__asks = [];
-	window.__answer = 'refused';
-	window.DaimondDeletes = window.DaimondDeletes || {};
-	window.DaimondDeletes.change = async (raw) => {
-		const o = JSON.parse(raw);
-		window.__asks.push(o);
-		const a = window.__answer;
-		return typeof a === 'function' ? await a(o) : a;
-	};
-});
+// The page's question, stubbed: answers `window.__changeAnswer` (a word, or a function of the
+// payload) and records every payload it is shown.
+await answerChanges(p, 'refused');
 // One arm: fresh files written by the person (the test's own door), a fresh question log.
 const arm = (fn, arg) => p.evaluate(async ({ id, src, arg }) => {
-	window.__asks = [];
-	window.__answer = 'refused';
+	window.__changeAsks = [];
+	window.__changeAnswer = 'refused';
 	const f = new Function('return (' + src + ')')();
-	return await f({ ...__k, id, asks: () => window.__asks, answer: (a) => { window.__answer = a; } }, arg);
+	return await f({ ...__k, id, asks: () => window.__changeAsks, answer: (a) => { window.__changeAnswer = a; } }, arg);
 }, { id, src: fn.toString(), arg });
 const short = (x) => JSON.stringify(x).slice(0, 260);
 
@@ -164,7 +154,7 @@ if (want('A1')) {
 			{ path: 'vault/a1.md', old_string: 'line two', new_string: 'LINE TWO' });
 		const afterNo = await read('vault/a1.md');
 		const askedNo = asks().map((a) => ({ act: a.act, path: a.path, add: a.add, del: a.del }));
-		window.__asks = [];
+		window.__changeAsks = [];
 		answer('apply');
 		await mod.write_file('vault/a1b.md', 'Dear Jason,\nline two\n');
 		const yes = await turn(id, ['vault'], 'file_edit',

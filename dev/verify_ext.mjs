@@ -61,6 +61,7 @@
 // served locally (serve.mjs) and passed in, so the check runs offline against the same
 // chain. Needs dev/serve.mjs (DAIMOND_PORT, default 8777). Headed: MV3 service workers
 // need a real browser, so run it under xvfb.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';

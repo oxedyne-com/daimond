@@ -146,7 +146,8 @@
 	border-radius: 8px;
 	border: 1px solid transparent;
 	background: var(--accent);
-	color: #fff;
+	/* The fill's own ink: white is 3.6:1 on the dark palettes' lighter accent. */
+	color: var(--on-fill, #fff);
 	cursor: pointer;
 	font-size: var(--fs-base);
 	/* The thumb's floor. This card is answered on a phone as often as not. */

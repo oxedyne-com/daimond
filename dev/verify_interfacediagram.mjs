@@ -42,6 +42,7 @@
 //
 // Needs dev/serve.mjs only: the guide is flat files and loads none of the app.
 // Writes its screenshots to dev/shots/ifdiag-*.png.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

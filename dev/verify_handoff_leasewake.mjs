@@ -29,6 +29,7 @@
 // flight and one trailing, so a wake lands in one door round-trip plus at most 1 s.
 //
 //   node dev/verify_handoff_leasewake.mjs [--webkit]
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { pair, send, until, storedMsgs, placeholders, keepErrandsOff, checker, settle } from './handoffpair.mjs';
 import { reload } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';

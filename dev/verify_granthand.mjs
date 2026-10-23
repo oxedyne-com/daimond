@@ -33,6 +33,7 @@
 // Needs nothing running: it serves ext/ itself and stubs the two chrome APIs
 // i18n.js reaches for, so the strings come from _locales exactly as they do in
 // the browser.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';

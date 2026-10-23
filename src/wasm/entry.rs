@@ -182,6 +182,26 @@ pub fn fs_logical_name(name: &str) -> String {
     crate::fsname::decode(name)
 }
 
+/// Each model+host pairing's measured speed over the window, as a JSON array: `model`, `host`,
+/// `rounds`, `stalls`, `first_ms`, `tps`, `out`, `last_at`, and `slow` ("" or why routing leaves
+/// the host out).  `www/js/hostspeed.js` is its one reader (D-20261020-10).
+#[wasm_bindgen]
+pub fn host_speeds() -> String {
+    crate::hostspeed::figures_json()
+}
+
+/// The measured window as the page keeps it in localStorage between visits.
+#[wasm_bindgen]
+pub fn host_speeds_save() -> String {
+    crate::hostspeed::save()
+}
+
+/// Take back what [`host_speeds_save`] wrote; the answer is the count of lines that did not read.
+#[wasm_bindgen]
+pub fn host_speeds_load(text: &str) -> u32 {
+    crate::hostspeed::load(text) as u32
+}
+
 /// Panic on purpose, so the hook itself can be proved rather than assumed.
 ///
 /// A diagnostic that has never been seen working is a diagnostic nobody should

@@ -28,6 +28,7 @@
 //   node dev/verify_handoff_seat.mjs                 (A WebKit, the iPhone's engine)
 //   SEAT_A=chromium node dev/verify_handoff_seat.mjs (A Chromium)
 
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import {
 	checker,
 	pair,

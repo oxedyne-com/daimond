@@ -67,6 +67,7 @@
 // compositor and opened a real window on the owner's desktop while he was
 // working. `dev/display.mjs`, imported below, takes both variables out, so the
 // command above is now true as written.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { port } from './ports.mjs';
 import fs from 'node:fs';
 import http from 'node:http';

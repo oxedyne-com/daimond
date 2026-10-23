@@ -34,6 +34,12 @@ import vm from 'node:vm';
 
 const OUT   = process.env.CONS_OUT || `${os.homedir()}/.cache/daimond/${process.env.RC_SLOT || 'solo'}/consistency`;
 const PROF  = process.env.CONS_PROFILE || `${OUT}/profile`;
+// `--break` (varlen only), anywhere on the line: the steer tile's head is moved inside its tile by 4px a line of the note, so the gate must
+// go red on 'steer tile note line'. It proves the head check still sees a real shift now that a scroller's own scroll is taken out (VMEASURE).
+const BREAK = process.argv.includes('--break');
+if (BREAK) process.argv.splice(process.argv.indexOf('--break'), 1);
+// CONS_VONLY: a varlen pass takes only the slots whose name matches this pattern (the locale surfaces are skipped), for a quick reading of one.
+const VONLY = process.env.CONS_VONLY ? new RegExp(process.env.CONS_VONLY) : null;
 const MODE  = process.argv[2] || 'all';
 // The www tree this run starts on, so the by-role evidence it files (dev/gate_evidence.mjs, deploy.sh step 0h) is for the tree that was measured.
 const WWW0  = MODE === 'all' ? spawnSync('git', ['rev-parse', 'HEAD:www'], { cwd: path.join(import.meta.dirname, '..'), encoding: 'utf8' }).stdout.trim() : '';
@@ -171,7 +177,9 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 			}
 		}
 		// A leading svg/img icon: its size and the gap to the label.
-		const ic = [...el.querySelectorAll('svg, img')].find((x) => vis(x));
+		// The EV pools' battery and dial (svg.evb, svg.evd, D-20261020-14) are gauges, figures drawn beside a
+		// two-line name, not an icon leading a label; the price tags in the same row are still measured.
+		const ic = [...el.querySelectorAll('svg, img')].find((x) => vis(x) && !(x.matches && x.matches('svg.evb, svg.evd')));
 		if (ic) {
 			const ir = ic.getBoundingClientRect();
 			// Leading only on the label's own line: a figure's tag glyph on the line under its label (the phone's spend tally, r544) is not
@@ -861,7 +869,9 @@ async function deskSurfaces() {
 	}
 	await quiet();
 	// Admin: every view of the drawer, top and bottom, then the forms its rows open.
-	for (const v of ['home', 'settings', 'credits', 'release', 'push']) {
+	// Limits and Search left the Models view (D-20261018-09 U4); Folders is offered only
+	// once a hand offers a folder, which a seeded world has not, so it is not drawn here.
+	for (const v of ['home', 'settings', 'credits', 'release', 'push', 'limits', 'search']) {
 		await quiet();
 		if (!(await click('#user-row'))) { CAP.missing.push(`${CFG}/admin_${v}`); continue; }
 		await wait(600);
@@ -871,6 +881,27 @@ async function deskSurfaces() {
 		await ev(() => { const b = document.getElementById('admin-scroll') || document.getElementById('admin'); b.scrollTop = 99999; }); await wait(250);
 		await grab('admin_' + v + '_end', '#admin');
 	}
+	// U5b (D-20261018-09): the Models view with OpenRouter routing rows drawn. A fixture, like RATING_FIX: an OpenRouter provider
+	// whose catalogue (two models) and per-model host lists are answered in the page, and measured figures for the first model
+	// with long host names (one slow, so "Avoided" and its reason are drawn; one preferred). The second model has no rounds, and
+	// its hosts come from the endpoints list once its routing is opened. Everything is taken back after the grab.
+	await quiet();
+	if (await click('#user-row')) {
+		await wait(600);
+		const rt = await ev(ROUTE_FIX, ROUTE_ARGS);
+		await wait(900);
+		if (rt === true) {
+			await ev((m2) => { const d = [...document.querySelectorAll('details.models-routing')].find((x) => x.dataset.routeKey === 'openrouter\n' + m2);
+				if (d && !d.open) d.querySelector('summary').click(); }, ROUTE_ARGS.M2);
+			await wait(700);
+			const n = await ev(() => document.querySelectorAll('.models-route-row').length);
+			if (n >= 4) {
+				await ev(() => { const r = document.querySelector('.models-routing'); if (r) r.scrollIntoView({ block: 'start' }); }); await wait(250);
+				await grab('admin_models_routing', '.models-routing');	// the routing rows only: the Models view as a whole is INT's (lead's ruling, 23 Oct)
+			} else CAP.missing.push(`${CFG}/admin_models_routing (${JSON.stringify(n)} rows)`);
+		} else CAP.missing.push(`${CFG}/admin_models_routing (${JSON.stringify(rt)})`);
+		await ev(ROUTE_UNDO);
+	} else CAP.missing.push(`${CFG}/admin_models_routing`);
 	for (const re of ['^Change name', '^Change passphrase', '^Set up git push', '^Edit the Chat prompt', '^Forget this identity', '^Social settings']) {
 		await overlay('form_' + re.replace(/\W+/g, '').slice(0, 16), async () => { await click('#user-row'); await wait(600); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(400); return clickText('#admin .admin-item', re); });
 	}
@@ -1104,6 +1135,49 @@ function lifelogFork() {
 	}
 	return null;
 }
+
+// U5b's fixture for the routing rows (see the admin pass). The host names are the longest a real host list has reason to carry.
+const ROUTE_ARGS = { M: 'acme/routing-gate-measured', M2: 'acme/routing-gate-unmeasured',
+	MEASURED: ['Extraordinarily Long Inference Host Name Incorporated (EU-West)', 'Quick Host', 'Slow Regional Cloud Provider Limited'],
+	LISTED: ['Another Exceptionally Long Inference Provider Name (US-East-2)', 'DeepInfra', 'Novita'] };
+const ROUTE_FIX = async ({ M, M2, MEASURED, LISTED }) => {
+	const DM = window.DaimondModels, HS = window.DaimondHostSpeed;
+	if (!DM || !HS) return 'no DaimondModels / DaimondHostSpeed';
+	const real = window.fetch;
+	const json = (o, st) => Promise.resolve(new Response(JSON.stringify(o), { status: st || 200, headers: { 'content-type': 'application/json' } }));
+	window.__rtUndo = { fetch: real, figures: HS.figures, added: !DM.providers().some((p) => p.id === 'openrouter') };
+	window.fetch = function (u) {
+		const s = String((u && u.url) || u);
+		if (!/^https:\/\/openrouter\.ai\//.test(s)) return real.apply(this, arguments);
+		if (/\/models\/.+\/endpoints$/.test(s)) return json({ data: { endpoints: (s.includes(M2) ? LISTED : MEASURED).map((h) => ({ provider_name: h })) } });
+		if (/\/models$/.test(s)) return json({ data: [{ id: M }, { id: M2 }] });
+		return json({}, 404);
+	};
+	const now = Date.now();
+	const mine = [
+		{ model: M, host: MEASURED[0], rounds: 14, tps: 96, firstMs: 900, stallShare: 0, slow: false, why: '', lastAt: now - 60e3, out: 400 },
+		{ model: M, host: MEASURED[1], rounds: 9, tps: 140, firstMs: 600, stallShare: 0, slow: false, why: '', lastAt: now - 600e3, out: 400 },
+		{ model: M, host: MEASURED[2], rounds: 12, tps: 4, firstMs: 9000, stallShare: 0, slow: true, why: 'rate', lastAt: now - 900e3, out: 400 },
+	];
+	const orig = HS.figures;
+	HS.figures = () => orig().concat(mine);
+	if (window.__rtUndo.added) DM.addProvider('openrouter');
+	await DM.setKey('openrouter', 'sk-or-gate-fixture');
+	try { await DM.fetchModels('openrouter'); } catch (e) { return 'fetchModels: ' + e.message; }
+	DM.setRouting('openrouter', M, MEASURED[1]);
+	const st = document.getElementById('astat-model');
+	if (st && !(document.getElementById('admin-models') || {}).offsetParent) st.click();
+	DM.render();
+	const h = document.querySelector('[data-prov="openrouter"] .models-prov-head');
+	if (h && h.getAttribute('aria-expanded') !== 'true') h.click();
+	return true;
+};
+const ROUTE_UNDO = () => {
+	const u = window.__rtUndo; if (!u) return;
+	window.fetch = u.fetch; if (window.DaimondHostSpeed) window.DaimondHostSpeed.figures = u.figures;
+	try { if (u.added) window.DaimondModels.removeProvider('openrouter'); else window.DaimondModels.setRouting('openrouter', 'acme/routing-gate-measured', ''); } catch (e) { /* the next pass starts clean either way */ }
+	window.__rtUndo = null;
+};
 
 async function seed() {
 	if (process.env.DAIMOND_MOCK_SCRIPT) fs.writeFileSync(process.env.DAIMOND_MOCK_SCRIPT, JSON.stringify(SCRIPT));
@@ -1583,7 +1657,7 @@ const ROLES = [
 	['dialog-action',   'title',    (it) => it.ctrl && (has(it, 'push-save') || it.id === 'push-save' || it.id === 'beta-open') || it.ctrl && within(it, /dlg-actions|modal-actions|tile-dlg-actions|dlg-foot|compose-foot/)],
 	// G5: a toggle that opens a section reads as a disclosure, not a toggle
 	// (ahead of toggle-option below, whose `-toggle\b` would otherwise claim it).
-	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-prov-head'))],
+	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-prov-head') || has(it, 'models-route-head'))],
 	['toggle-option',   'sentence', (it) => it.ctrl && (has(it, 'dview-btn') || within(it, /\.seg\b|\.size-row|-toggle\b|\.files-scope|\.imp-chips|\.net-row|\.tile-dlg-seg|\.files-mode\b/) && !has(it, 'files-mode-btn') || has(it, 'grid-opt'))],
 	// The walk-back pair is the composer's wherever it sits: in the bar on a computer, in the composer row on a phone (D-20261014-08).
 	['composer-button', 'none',     (it) => it.ctrl && ((within(it, /chat-input-bar|msheet-ask/) || /#chat-(jump|end)\b/.test(it.sig)) && !/^(input|textarea)$/.test(it.tag))],
@@ -2249,7 +2323,7 @@ const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], [
 	['chat head menu', 'OVERLAY', 'headmore']];
 
 // In the page: set (or restore) one slot, then read every part's geometry.
-const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, val, restore }) => {
+const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, val, restore, brk }) => {
 	const W = window.__vl = window.__vl || {};
 	const cs = (e) => getComputedStyle(e);
 	const vis = (e) => { if (!e.getClientRects().length) return false; const s = cs(e); if (s.visibility === 'hidden' || +s.opacity === 0) return false; const r = e.getBoundingClientRect(); return r.width >= 1 && r.height >= 1; };
@@ -2311,6 +2385,12 @@ const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, val, restore
 		const add = []; for (let i = 0; i < count; i++) { const c = proto.cloneNode(true); c.style.display = ''; const tw = document.createTreeWalker(c, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() ? 1 : 3 }); const n = tw.nextNode(); if (n) n.nodeValue = words[i % words.length]; S.appendChild(c); add.push(c); }
 		W.undo.push(() => { add.forEach((c) => c.remove()); k.forEach((c) => { c.style.display = ''; }); });
 	}
+	const linesOf = (e) => { const rg = document.createRange(); rg.selectNodeContents(e); const tops = new Set(); for (const q of rg.getClientRects()) if (q.width > 0.5) tops.add(Math.round(q.top)); return tops.size; };
+	if (brk) {
+		// `--break`: a real head shift, inside the tile, that grows with the note's lines (base and every variant), for the gate to catch.
+		const H = T.querySelector('.pend-head');
+		if (H) { const o = [H.style.position, H.style.top]; H.style.position = 'relative'; H.style.top = (4 * linesOf(S)) + 'px'; W.undo.push(() => { H.style.position = o[0]; H.style.top = o[1]; }); }
+	}
 	void document.body.offsetHeight;
 	const cr = C.getBoundingClientRect();
 	const path = (e, root) => { const p = []; for (let a = e; a && a !== root; a = a.parentElement) { const c = (typeof a.className === 'string' ? a.className : '').trim().split(/\s+/)[0]; const par = a.parentElement; const i = par ? [...par.children].indexOf(a) : 0; p.unshift(a.tagName.toLowerCase() + (a.id ? '#' + a.id : c ? '.' + c : '') + ':' + i); } return p.join('>'); };
@@ -2320,14 +2400,20 @@ const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, val, restore
 	const shown = (e) => { const r = e.getBoundingClientRect(); let l = r.left, t = r.top, rr = r.right, b = r.bottom;
 		for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) { const s = cs(a); if (!/hidden|clip|auto|scroll/.test(s.overflowX + s.overflowY)) continue; const q = a.getBoundingClientRect(); l = Math.max(l, q.left); t = Math.max(t, q.top); rr = Math.min(rr, q.right); b = Math.min(b, q.bottom); }
 		const area = Math.max(0, rr - l) * Math.max(0, b - t), full = r.width * r.height; return full ? Math.round(100 * area / full) : 100; };
+	// Where a part is in its scrollers' content, not on the screen: the viewport box plus every scrolling ancestor's scroll (and the page's).
+	// A scroller at its end clamps its scrollTop when its content gets shorter (a steer note a line shorter in the last Pending tile, brought
+	// into view at the list's largest scrollTop), and every part in it moves on the screen by the line lost: the browser's scroll, not a layout
+	// fault, and the reason for the 17px "head shift" of 23 Oct. Taken out here, a part's move is one in the layout, inside its tile or of the
+	// tile in its list, and a real one still reads (`--break`). Measured per part, so parts in different scrollers each lose their own.
+	const scr = (e) => { let x = scrollX, y = scrollY; for (let a = e.parentElement; a && a !== document.documentElement && a !== document.body; a = a.parentElement) { if (a.scrollTop || a.scrollLeft) { x += a.scrollLeft; y += a.scrollTop; } } return [x, y]; };
 	const CTRL = 'button, [role="button"], a[href], input, select, textarea, summary, svg, img, canvas';
 	const leaves = (root, skip, pr) => { const out = []; for (const e of [root, ...root.querySelectorAll('*')]) {
 		if (e.closest('svg') && e.tagName !== 'svg') continue; if (skip && skip(e)) continue; if (!vis(e)) continue;
 		const own = [...e.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim());
 		const kids = [...e.children].some(vis);
 		if (!own && kids && !e.matches(CTRL)) continue;
-		const r = e.getBoundingClientRect(), s = cs(e);
-		out.push({ k: path(e, pr || C), c: cls(e), x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), ln: own ? lines(e) : 0,
+		const r = e.getBoundingClientRect(), s = cs(e), o = scr(e);
+		out.push({ k: path(e, pr || C), c: cls(e), x: Math.round(r.left + o[0]), y: Math.round(r.top + o[1]), w: Math.round(r.width), h: Math.round(r.height), ln: own ? lines(e) : 0,
 			ov: e.scrollWidth > e.clientWidth + 1 && /hidden|clip/.test(s.overflowX) ? (s.textOverflow === 'ellipsis' ? 'ellipsis' : 'cut') : '', sh: shown(e), t: own ? e.textContent.trim().slice(0, 24) : '' });
 		if (out.length > 400) break; } return out; };
 	const inSlot = slot ? (e) => S.contains(e) || e.contains(S) : null;
@@ -2336,7 +2422,8 @@ const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, val, restore
 	return {
 		ti, n: comps.length, hscroll: document.documentElement.scrollWidth > innerWidth + 1 ? document.documentElement.scrollWidth - innerWidth : 0,
 		ctxOver: C.scrollWidth > C.clientWidth + 1 && !/auto|scroll/.test(cs(C).overflowX) ? C.scrollWidth - C.clientWidth : 0,
-		comp: { x: Math.round(trr.left), y: Math.round(trr.top), w: Math.round(trr.width), h: Math.round(trr.height), over: T.scrollWidth > T.clientWidth + 1 ? T.scrollWidth - T.clientWidth : 0 },
+		scrolled: scr(T),
+		comp: { x: Math.round(trr.left + scr(T)[0]), y: Math.round(trr.top + scr(T)[1]), w: Math.round(trr.width), h: Math.round(trr.height), over: T.scrollWidth > T.clientWidth + 1 ? T.scrollWidth - T.clientWidth : 0 },
 		slot: { x: Math.round(sr.left), y: Math.round(sr.top), w: Math.round(sr.width), h: Math.round(sr.height), ln: lines(S), hid: S.tagName === 'TEXTAREA' ? Math.max(0, S.scrollHeight - S.clientHeight) : 0, ov: S.scrollWidth > S.clientWidth + 1 ? (cs(S).textOverflow === 'ellipsis' ? 'ellipsis' : 'cut') : '', sh: shown(S), past: Math.round(Math.max(0, sr.right - trr.right)) },
 		parts: leaves(T, inSlot, T),
 		inner: leaves(S, null, S).slice(0, 12),
@@ -2478,19 +2565,22 @@ async function varlenPass(phone) {
 		await wait((typeof ms === 'number' ? ms : 10000) + 100);
 		draft = false;
 	};
+	const brk = (name) => BREAK && name === 'steer tile note line';
 	for (const [name, ctx, comp, slot, vals, pick, setup] of VSLOTS) {
+		if (VONLY && !VONLY.test(name)) continue;
 		if (draft) await letCommit();
 		const gone = await place(setup, ctx);
 		draft = setup === 'ratetags';
 		if (gone) { recs.push({ name, cfg: CFG, notCovered: gone }); log('varlen', CFG, name, 'NOT COVERED', gone); continue; }
 		const pk = pick ? { s: pick.source, f: pick.flags } : null;
-		const base = await ev(VMEASURE, { ctx, comp, slot, pick: pk });
+		const base = await ev(VMEASURE, { ctx, comp, slot, pick: pk, brk: brk(name) });
+		if (brk(name)) await ev(VMEASURE, { restore: 1 });
 		if (!base || base.err || base.miss) { recs.push({ name, cfg: CFG, notCovered: (base && (base.err || base.miss)) || 'no measure' }); log('varlen', CFG, name, 'NOT COVERED', base && (base.miss || base.err)); continue; }
 		const shots = { base: await vShot(name + '_base', base.clip) };
 		const variants = [];
 		const V = Array.isArray(vals) ? vals.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.path ? vals.path.map((v, i) => [['short', 'long', 'vlong'][i], { fpath: v }]) : vals.text ? vals.text.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.val ? vals.val.map((v, i) => [['short', 'long', 'vlong'][i], { val: v }]) : vals.count.map((n, i) => [['few', 'several', 'many'][i], { count: n }]);
 		for (const [vn, arg] of V) {
-			const m = await ev(VMEASURE, { ctx, comp, slot, idx: base.ti, ...arg });
+			const m = await ev(VMEASURE, { ctx, comp, slot, idx: base.ti, brk: brk(name), ...arg });
 			if (m && !m.err && !m.miss) { shots[vn] = await vShot(name + '_' + vn, m.clip); variants.push([vn, m]); }
 			await ev(VMEASURE, { restore: 1 });
 		}
@@ -2499,6 +2589,7 @@ async function varlenPass(phone) {
 	}
 	// Every label at once: en, then de and fr, the same surface re-read.
 	for (const [name, ctx, setup] of VLOCALE) {
+		if (VONLY) break;
 		if (draft) await letCommit();
 		if (setup === 'headmore' && !phone) { recs.push({ name: 'locale: ' + name, cfg: CFG, na: 'phone only: a computer\'s head has no ⋯ menu' }); log('varlen', CFG, 'locale', name, 'not applicable'); continue; }
 		const by = {};

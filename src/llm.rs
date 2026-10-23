@@ -764,16 +764,19 @@ pub trait PinRound {
     fn host(&self) -> &str;
     /// Did the round end neither stopped nor stalled, so its host is worth asking again?
     fn ended_clean(&self) -> bool;
+    fn stalled(&self) -> bool;
 }
 
 impl PinRound for ChatOnceResponse {
     fn host(&self) -> &str { &self.provider }
     fn ended_clean(&self) -> bool { !self.aborted && !self.stalled }
+    fn stalled(&self) -> bool { self.stalled }
 }
 
 impl PinRound for ChatResponse {
     fn host(&self) -> &str { &self.provider }
     fn ended_clean(&self) -> bool { !self.aborted && !self.stalled }
+    fn stalled(&self) -> bool { self.stalled }
 }
 
 /// A tool call that arrived as TEXT, written in the model's own native call syntax, with no
@@ -1009,6 +1012,11 @@ pub struct ChatOnceResponse {
     pub first_ms:             u64,
     pub gap_ms:               u64,
     pub ms:                   u64,
+    // The host's speed for this round (D-20261020-10): ms from the request to the first token
+    // (keep-alives are bytes, not tokens, so `first_ms` cannot say this), and ms from that token
+    // to the end.  Both 0 where no token came, and on the non-streaming path.
+    pub tok_ms:               u64,
+    pub gen_ms:               u64,
 }
 
 impl ChatOnceResponse {
@@ -1855,6 +1863,10 @@ impl LlmClient {
             let mut emitted = false;
             let (first_ms, quiet_cap) = attempt_wait(idle, stall_tries,
                 now_ms().saturating_sub(turn_began));
+            // The host's speed (D-20261020-10): when this attempt went out, and when its first
+            // token came -- the first chunk that grew the reply, which a keep-alive does not.
+            let asked = now_ms();
+            let mut tok_at: Option<u64> = None;
             let outcome = {
                 let mut sink = |w: Wire<'_>| -> Pulse {
                     match w {
@@ -1868,6 +1880,7 @@ impl LlmClient {
                                 if matches!(d, Delta::Text(_)) { emitted = true; }
                                 on_token(d);
                             });
+                            if tok_at.is_none() && acc.size() > before { tok_at = Some(now_ms()); }
                             // PROGRESS IS GROWTH.  A role-only chunk or a usage block parses and
                             // adds nothing, and does not hold the watchdog off; it does show the
                             // provider took the request.  And a model reasoning with no answer
@@ -1910,6 +1923,9 @@ impl LlmClient {
                     // Only the provider THIS round named is blamed and left out.  A round
                     // that named nobody leaves nothing out, and the error names the model.
                     let named = acc.provider().to_string();
+                    crate::hostspeed::record(&self.model, &named, crate::hostspeed::Sample {
+                        at: crate::hostspeed::wall_ms(), stalled: true,
+                        ..crate::hostspeed::Sample::default() });
                     if stall_tries < STALL_RETRIES {
                         stall_tries += 1;
                         self.exclude_stalled(&named, &mut stall_ignore);
@@ -1941,6 +1957,24 @@ impl LlmClient {
                     resp.first_ms = first_ms;
                     resp.gap_ms   = gap_ms;
                     resp.ms       = now_ms().saturating_sub(turn_began);
+                    let ended = now_ms();
+                    if let Some(t) = tok_at {
+                        resp.tok_ms = t.saturating_sub(asked);
+                        resp.gen_ms = ended.saturating_sub(t);
+                    }
+                    // EVERY ROUND IS MEASURED, whoever asked for it: a chat's, a daimon's, a
+                    // worker's and a fold's all come through here.  A stopped round is the
+                    // person's doing and says nothing about the host.
+                    if !aborted {
+                        let host = if resp.provider.is_empty() { &self.host } else { &resp.provider };
+                        crate::hostspeed::record(&self.model, host, crate::hostspeed::Sample {
+                            at:       crate::hostspeed::wall_ms(),
+                            first_ms: resp.tok_ms,
+                            gen_ms:   resp.gen_ms,
+                            out:      resp.completion_tokens,
+                            stalled,
+                        });
+                    }
                     // ANTHROPIC REPORTS NO `cost` AT ALL: the account is billed and the API says
                     // nothing about what one call cost, so `into_response` above always hands
                     // back zero here. The spend cap is inert against that zero and the ledger
@@ -1969,11 +2003,18 @@ impl LlmClient {
                     // not for that refusal, so it is sent once more without the exclusion; if
                     // that stalls too, the ordinary end applies and the person is told the
                     // model did not answer, never the 404.
-                    if !stall_ignore.is_empty() && !unexcluded && !started && !e.retryable
-                        && e.status != 0
+                    // The hosts left out for being measured slow are the same case: where they
+                    // were all the model had, they stand down for a while and the request goes
+                    // again without them.
+                    let measured = self.measured_avoid();
+                    if (!stall_ignore.is_empty() || !measured.is_empty()) && !unexcluded && !started
+                        && !e.retryable && e.status != 0
                     {
                         unexcluded = true;
                         stall_ignore.clear();
+                        if !measured.is_empty() {
+                            crate::hostspeed::stand_down(&self.model, crate::hostspeed::wall_ms());
+                        }
                         let cur = Self::resend_of(&blind_msgs, &stripped, messages);
                         body = self.build_body_ignoring(cur, tools, true, &stall_ignore);
                         continue;
@@ -2177,7 +2218,7 @@ impl LlmClient {
             native_finish_reason: String::new(),
             provider:             String::new(),
             // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.
-            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0,
+            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0, tok_ms: 0, gen_ms: 0,
         }.classified()
     }
 
@@ -2449,6 +2490,17 @@ impl LlmClient {
         ignore.push(culprit.to_string());
     }
 
+    /// The hosts measured slow for this model that a request to OpenRouter leaves out.  None
+    /// when the person set `only`, nor one they typed into `order`: their choice outranks a
+    /// measurement.
+    fn measured_avoid(&self) -> Vec<String> {
+        if !self.host.contains("openrouter") { return Vec::new(); }
+        let routing = self.provider_routing.borrow();
+        if routing.only { return Vec::new(); }
+        crate::hostspeed::avoid(&self.model).into_iter()
+            .filter(|h| !routing.order.iter().any(|o| o == h)).collect()
+    }
+
     /// Hand this client the conversation's pin for the round about to be sent.
     pub fn set_pin(&self, pin: Option<HostPin>) {
         *self.pin.borrow_mut() = pin;
@@ -2465,10 +2517,21 @@ impl LlmClient {
     /// moved by a round a fallback answered: the pinned host is still the one asked for.  A
     /// stalled or stopped round names no host worth asking for again, and a pin taken under
     /// another model is dropped, whichever round this was.
+    ///
+    /// A pinned host is let go when this round stalled on it, or when its measured speed over
+    /// the window (`crate::hostspeed`) is slow; a host measured slow is never pinned.  A quick
+    /// pinned host is kept, so the conversation's prompt cache is met again (D-20261020-10).
     pub fn settle_pin<R: PinRound>(&self, resp: &R) -> Option<HostPin> {
         let mut pin = self.pin.borrow_mut();
         if matches!(&*pin, Some(p) if p.model != self.model) { *pin = None; }
-        if pin.is_none() && resp.ended_clean() && !resp.host().is_empty() {
+        if matches!(&*pin, Some(p) if (resp.stalled() && p.host == resp.host())
+            || crate::hostspeed::is_slow(&self.model, &p.host))
+        {
+            *pin = None;
+        }
+        if pin.is_none() && resp.ended_clean() && !resp.host().is_empty()
+            && !crate::hostspeed::is_slow(&self.model, resp.host())
+        {
             *pin = Some(HostPin { model: self.model.clone(), host: resp.host().to_string() });
         }
         pin.clone()
@@ -2544,10 +2607,12 @@ impl LlmClient {
         // this app must never guess it would ignore one gracefully. No provider name is
         // hard-coded on this side; every entry here is whatever the user typed.
         if self.host.contains("openrouter") {
+            // HOSTS MEASURED SLOW for this model (D-20261020-10), from `crate::hostspeed`.
+            let measured = self.measured_avoid();
             let routing = self.provider_routing.borrow();
             // The person's list first, then what this request adds; none twice.
             let mut ignore: Vec<&String> = routing.ignore.iter().collect();
-            for e in extra {
+            for e in extra.iter().chain(measured.iter()) {
                 if !ignore.iter().any(|p| *p == e) { ignore.push(e); }
             }
             // THE CONVERSATION'S HOST, asked for first so its prompt cache is met again, with
@@ -2590,6 +2655,17 @@ impl LlmClient {
                     out.push_str("\"allow_fallbacks\":false");
                 } else if pinned.is_some() {
                     out.push_str(",\"allow_fallbacks\":true");
+                }
+                // Where a host has been measured slow, OpenRouter's own choice among the rest
+                // leans to the quick ones: by throughput where nothing is ordered (an order,
+                // typed or the pin, is tried first and a sort beside it is undocumented), and a
+                // floor it prefers to meet either way.
+                if !measured.is_empty() {
+                    if routing.order.is_empty() && pinned.is_none() {
+                        out.push_str(",\"sort\":\"throughput\"");
+                    }
+                    out.push_str(&fmt!(",\"preferred_min_throughput\":{}",
+                        crate::hostspeed::SLOW_TPS as u64));
                 }
                 out.push_str("},");
             }
@@ -5552,7 +5628,7 @@ impl StreamAcc {
             native_finish_reason: self.native_finish_reason,
             provider:             self.provider,
             // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.
-            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0,
+            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0, tok_ms: 0, gen_ms: 0,
         }.classified()
     }
 }
@@ -5930,7 +6006,7 @@ impl AnthropicAcc {
             native_finish_reason: String::new(),
             provider:             String::new(),
             // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.
-            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0,
+            bytes: 0, first_ms: 0, gap_ms: 0, ms: 0, tok_ms: 0, gen_ms: 0,
         }.classified()
     }
 }
@@ -7477,6 +7553,80 @@ pub mod tests {
         // A stall on some OTHER host leaves the pin alone.
         client.exclude_stalled("Novita", &mut Vec::new());
         assert_eq!(client.pin().map(|p| p.host), Some("DeepInfra".to_string()));
+    }
+
+    /// D-20261020-10 (failing first).  A mock provider where host SlowCo answers model M slowly and
+    /// FastCo quickly, three rounds each, through the real stream path: every round is recorded
+    /// with its host and speeds, the next OpenRouter request for M leaves SlowCo out, a pin on
+    /// SlowCo (measured slow) or on a host that just stalled is let go, and a quick pin is kept.
+    #[tokio::test]
+    async fn test_hostspeed_slow_host_recorded_ignored_and_unpinned_00() {
+        const M: &str = "deepseek/deepseek-v4.1-flash";
+        // One round as OpenRouter streams it: the role chunk names the host, the first token
+        // follows, and the usage chunk ends it -- `every_ms` apart.
+        fn round(host: &str, every_ms: u64) -> Reply {
+            Reply::Trickle { every_ms, chunks: vec![
+                fmt!("data: {{\"provider\":\"{}\",\"choices\":[{{\"delta\":{{\"role\":\"assistant\",\
+                    \"content\":\"\"}}}}]}}\n\n", host),
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n".to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":\
+                    {\"prompt_tokens\":900,\"completion_tokens\":2000}}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ]}
+        }
+        crate::hostspeed::clear();
+        let mut script = Vec::new();
+        for _ in 0..3 {
+            script.push(round("FastCo", 40));
+            script.push(round("SlowCo", 400));
+        }
+        let (port, _seen) = start_stub(script).await;
+        let client = stub_client_for(port, M);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        for i in 0..6 {
+            let mut tokens = Vec::new();
+            let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
+                Ok(r)  => r,
+                Err(e) => panic!("round {} failed: {}", i, e),
+            };
+            assert_eq!(resp.completion_tokens, 2000);
+            assert!(resp.tok_ms > 0 && resp.gen_ms > 0, "round {} untimed: {} {}", i, resp.tok_ms, resp.gen_ms);
+        }
+
+        // Recorded, by model and the host OpenRouter named.
+        let figs = crate::hostspeed::figures_at(crate::hostspeed::wall_ms());
+        let slow = figs.iter().find(|f| f.model == M && f.host == "SlowCo").cloned();
+        let fast = figs.iter().find(|f| f.model == M && f.host == "FastCo").cloned();
+        let (slow, fast) = match (slow, fast) {
+            (Some(s), Some(f)) => (s, f),
+            _ => panic!("a host's rounds were not recorded: {:?}", figs),
+        };
+        assert_eq!((slow.rounds, fast.rounds), (3, 3));
+        assert_eq!(slow.out, 6000, "output tokens not counted");
+        assert!(slow.first_ms.unwrap_or(0) >= 300, "SlowCo's first-token wait: {:?}", slow.first_ms);
+        let (ts, tf) = (slow.tps.unwrap_or(0.0), fast.tps.unwrap_or(0.0));
+        assert!(ts > 0.0 && tf > ts * 4.0, "rates: SlowCo {} FastCo {}", ts, tf);
+        assert_eq!(slow.slow, "behind", "SlowCo, at under half FastCo's rate, is not judged slow");
+        assert_eq!(fast.slow, "", "FastCo was judged slow");
+
+        // The next request for M through OpenRouter leaves SlowCo out, and only SlowCo.
+        let or = test_client("openrouter.ai", 443, M);
+        let body = or.build_body(&msgs, None, true);
+        assert!(body.contains("\"ignore\":[\"SlowCo\"]"), "SlowCo is still asked for: {}", body);
+        assert!(!body.contains("FastCo"), "a quick host was left out: {}", body);
+
+        // A pin on the slow host is let go, and the slow host is not pinned again.
+        or.set_pin(Some(HostPin { model: M.to_string(), host: "SlowCo".to_string() }));
+        assert_eq!(or.settle_pin(&pin_round("SlowCo")), None, "a host measured slow kept its pin");
+        // A quick pin is kept, so the prompt cache is met again.
+        or.set_pin(Some(HostPin { model: M.to_string(), host: "FastCo".to_string() }));
+        assert_eq!(or.settle_pin(&pin_round("FastCo")).map(|p| p.host), Some("FastCo".to_string()),
+            "a quick pinned host was let go");
+        // And a quick host that stalled this round is let go too.
+        let mut stalled = pin_round("FastCo");
+        stalled.stalled = true;
+        assert_eq!(or.settle_pin(&stalled), None, "a pin that just stalled was kept");
+        crate::hostspeed::clear();
     }
 
     /// QA-B r578 F1 (failing first).  The r540 stall -- `: OPENROUTER PROCESSING` and no data

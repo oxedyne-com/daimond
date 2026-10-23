@@ -23,6 +23,7 @@
 //
 // Headed, because Chromium loads an unpacked extension in no other mode. Serves its
 // own pages on its own port from 8877, into its own profile, journal and folder.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';

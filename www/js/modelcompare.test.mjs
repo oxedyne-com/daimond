@@ -663,5 +663,20 @@ kase('Q27: same parts and ledger in any order give the same grid', () => {
 	eq(MC.grid([part(ts)], L.slice().reverse(), {}), MC.grid([part(ts.slice().reverse())], L, {}));
 });
 
+kase('grid: speed split by host (D-20261020-10) -> each row lists its model\'s hosts, fastest first', () => {
+	const hs = [
+		{ model: 'model-a', host: 'SlowCo', rounds: 6, tps: 9.5, firstMs: 31000, stallShare: 0.5, slow: true, why: 'stalls' },
+		{ model: 'model-a', host: 'FastCo', rounds: 8, tps: 61.2, firstMs: 900, stallShare: 0, slow: false, why: '' },
+		{ model: 'model-b', host: 'Other', rounds: 3, tps: 30, firstMs: 1200, stallShare: 0, slow: false, why: '' },
+	];
+	const g = MC.grid([part(many(3, {}))], [], { hostSpeeds: hs });
+	const r = row(g, 'model-a');
+	eq(r.hosts.map(h => [h.host, h.tps, h.slow]), [['FastCo', 61.2, false], ['SlowCo', 9.5, true]]);
+	eq(r.hosts[1].firstMs, 31000, 'first token by host');
+	eq(r.hosts[1].stallShare, 0.5, 'stall share by host');
+	// No figures at all is an empty list, never a missing field.
+	eq(row(MC.grid([part(many(3, {}))], [], { hostSpeeds: [] }), 'model-a').hosts, []);
+});
+
 console.log('\n' + cases + ' cases, ' + failures + ' failed');
 process.exit(failures ? 1 : 0);

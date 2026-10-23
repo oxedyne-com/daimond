@@ -549,14 +549,25 @@
 								<button type="button" id="byok-save" data-i18n="models.save_start">Save &amp; start</button>
 							</div>
 							<div id="byok-note" class="login-error"></div>
-							<p class="cfg-hint" data-i18n-html="models.privacy"><strong>Everything stays on this device</strong> — your keys, chats and files live only in this browser; nothing is sent to us.</p>
 						</div>
+					</div>
 
-						<!-- Search: which outside service the agent searches with.
-						     Directly under the model picker because it is the same kind of
-						     decision — which outside service does my agent use — and it is
-						     a SETTING rather than a line in a prompt file, because a prompt
+					<!-- Limits: how far one turn and one conversation may go, and how large a
+					     crystal grows. Reached from its Settings home row. js/daimond.js builds
+					     the rows (`RoundLimit` and its siblings), each placed before `limits-end`
+					     in the order `renderLimitRows` draws them. They sat in Models until
+					     D-20261018-09 U4. -->
+					<div class="admin-view" id="admin-limits" style="display:none">
+						<div class="settings-section" id="limits-section">
+							<div id="limits-end"></div>
+						</div>
+					</div>
+
+					<div class="admin-view" id="admin-search" style="display:none">
+						<!-- Search: which outside service the agent searches with. A
+						     SETTING rather than a line in a prompt file, because a prompt
 						     line is advice a model may ignore and this has to be enforced.
+						     Its own view since D-20261018-09 U4, because it is not a model.
 
 						     EVERY string here is painted by `SearchRow.render` in
 						     js/daimond.js and NOT by `data-i18n`, which is deliberate and
@@ -568,7 +579,6 @@
 						     safe to arrive in either order. The English below is what
 						     shows before the first paint, and only then. -->
 						<div class="settings-section" id="search-section">
-							<h3 id="search-head">Search</h3>
 							<div class="search-engine-row">
 								<label class="cfg-fieldlabel" for="set-search-engine">Search engine</label>
 								<select id="set-search-engine" class="settings-select"></select>
@@ -587,7 +597,9 @@
 								<p class="search-engine-note" id="search-key-warn" data-warn="1" style="display:none"></p>
 							</div>
 						</div>
+					</div>
 
+					<div class="admin-view" id="admin-folders" style="display:none">
 						<!-- The Terminal's folder. A terminal is the user at a keyboard and a
 						     command is a daimon, so the two may be different sizes -- and the
 						     choice is made HERE rather than only in install.sh, because a
@@ -1883,6 +1895,12 @@
 <!-- modelcompare.js: the model Compare roll-up (task kind read from the transcript, accepted answers,
      quantile and Wilson bands, the ranking, the card's snapshot), all pure. After ratingroll.js, whose
      cells and chat parts it reads and fills. -->
+<!-- hostspeed.js: each model's measured speed on each host, read off the engine (D-20261020-10), kept
+     across visits. Before modelcompare.js, whose speed columns split by host from it. -->
+<script src="js/hostspeed.js"></script>
+<!-- routingrows.js: a model's OpenRouter routing as rows of hosts, Auto / Prefer / Avoid, mapped to the
+     stored routing text models.js parses (D-20261018-09 U5b). Pure; read by models.js at render. -->
+<script src="js/routingrows.js"></script>
 <script src="js/modelcompare.js"></script>
 <!-- steering.js: what the page may propose from the rating cells (a switch, a note, a review), and the
      fixed sentence for each note, all pure. After ratingroll.js, whose cells it reads. -->

@@ -1260,6 +1260,9 @@ const server = http.createServer((req, res) => {
 			// The reasoning level asked for, absent when none was, so a verifier can tell
 			// "sent low" from "sent nothing".
 			...(payload.reasoning ? { reasoning: payload.reasoning } : {}),
+			// OpenRouter's provider routing (order, ignore, allow_fallbacks, sort), absent when none
+			// was sent, so a verifier reads what the routing rows made of the request (U5b).
+			...(payload.provider ? { provider: payload.provider } : {}),
 			auth:      !!(req.headers.authorization),
 			images,		// picture parts in this request, either dialect
 			...(refused ? { refusedImages: true } : {}),

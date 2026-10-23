@@ -21,7 +21,10 @@
 // them came out of the two lists and nothing ever made the drawer scroll instead.
 //
 // The arm: each list shows at least five whole tiles, and scrolling the drawer
-// reaches its foot with the tallies and cylinders whole on screen. Diamonds are
+// reaches its foot with the money pools and Today whole on screen. Since the EV rail
+// (D-20261020-14) the foot is three pools, each a battery, a dial and a range, and the
+// same floor holds on the desktop rail (1440x900 and 1280x720), which scrolls for what
+// does not fit, as the drawer does. Diamonds are
 // counted in a mobile-emulated Chromium, because Playwright's WebKit has no OPFS
 // to hold one (see verify_railmobile.mjs); the Chats list is counted in both.
 //
@@ -43,10 +46,12 @@ const check = (name, pass, detail) => {
 
 /// A signed-in phone session holding a realistic account: tagged Diamonds, a day's
 /// chats, and the money foot an account with credits draws.
-async function world(browser) {
-	const s = await open({ name: 'railh' + browser.slice(0, 2) + (Date.now() % 100000), browser, touch: true, connect: false, ua: UA });
+async function world(browser, desk = null) {
+	const s = await open(desk
+		? { name: 'railhd' + browser.slice(0, 2) + (Date.now() % 100000), browser, connect: false, viewport: desk }
+		: { name: 'railh' + browser.slice(0, 2) + (Date.now() % 100000), browser, touch: true, connect: false, ua: UA });
 	const p = s.page;
-	await p.setViewportSize({ width: 390, height: 845 });
+	if (!desk) await p.setViewportSize({ width: 390, height: 845 });
 	await p.waitForFunction(() => !!window.DaimondCore, null, { timeout: 30000 });
 	await p.evaluate(async () => {
 		const m = await import('/pkg/oxedyne_daimond.js');
@@ -74,21 +79,30 @@ async function world(browser) {
 	});
 	await p.reload({ waitUntil: 'domcontentloaded' });
 	await signInAs(s, s.name);
-	await p.waitForTimeout(2000);
-	// The credit cylinders and a runway line, as `balanceCell` draws them for an
-	// account with credits: this world has no gateway to report a balance.
-	await p.evaluate(() => {
-		const el = document.getElementById('spend-row'), G = window.DaimondAgentGrid;
-		if (!el || !G) return;
-		const rw = document.createElement('div'); rw.className = 'spend-runway';
-		rw.textContent = 'Daimond credits run out in about 5 h.';
-		el.insertBefore(rw, el.firstChild);
-		const c = document.createElement('div'); c.className = 'spend-cell spend-balance';
-		c.innerHTML = '<span class="spend-label">Balance</span><span class="spend-cyls">'
-			+ G.cylinderSvg(0.6, false, 'a') + G.cylinderSvg(0.2, true, 'b') + '</span>';
-		el.appendChild(c);
+	// The seeded lists drawn before they are measured: a fixed 2 s once measured an
+	// empty Diamonds list on a loaded machine (0 of 0 at 1440x900). WebKit has no OPFS,
+	// so it waits for the Chats alone; a list that never fills still FAILs below.
+	await p.waitForFunction((d) => document.querySelectorAll('#session-list .session-box').length >= 5
+		&& (!d || document.querySelectorAll('#diamond-list .diamond-box').length >= 5), browser === 'chromium', { timeout: 20000 }).catch(() => {});
+	await p.waitForTimeout(500);
+	// The money foot of an account with three pools (D-20261020-14 EV): Daimond credits,
+	// an OpenRouter key limit and an Anthropic credit, each a battery, a dial and a range,
+	// drawn by the rail's own `poolsBlock`. This world has no gateway to report a
+	// balance, so the gateway state and the providers are stood in for.
+	const pools = await p.evaluate(async () => {
+		const gs = DaimondGateway.state.bind(DaimondGateway);
+		DaimondGateway.state = () => Object.assign({}, gs(), { authed: true, credits: 1250, currency: 'USD' });
+		DaimondModels.providers = () => [
+			{ id: 'openrouter', name: 'OpenRouter', hasKey: true, paid: false, credit: { mode: 'auto', usd: 37.18, binds: 'limit' } },
+			{ id: 'anthropic', name: 'Anthropic', hasKey: true, paid: false, credit: { mode: 'manual', usd: 8.4 } },
+		];
+		DaimondLedger.record({ ts: Date.now(), model: 'mock/fast', promptTokens: 100, completionTokens: 100, costUsd: 0.5, provider: 'openrouter' });
+		DaimondI18n.setCurrency('USD');
+		await new Promise((r) => setTimeout(r, 400));
+		return document.querySelectorAll('#spend-row .evp').length;
 	});
-	await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer());
+	s.pools = pools;
+	if (!desk) await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer());
 	await p.waitForTimeout(600);
 	return s;
 }
@@ -179,6 +193,7 @@ try {
 		const s = await world('chromium');
 		sessions.push(s);
 		const p = s.page;
+		check('Chromium 390x845: the rail draws three pools', s.pools === 3, String(s.pools));
 		const m = await survey(p);
 		check('Chromium 390x845: the Diamonds list shows at least five whole tiles',
 			m.d.n >= 5 && m.d.of >= 5, `${m.d.n} of ${m.d.of} whole in ${m.d.h}px, a tile ${m.d.tile}px`);
@@ -198,16 +213,33 @@ try {
 		await p.fill('#diamond-search', '');
 		await p.waitForTimeout(400);
 		const f = await foot(p);
-		check('scrolling the drawer reaches its foot, tallies and cylinders whole', f.ok, f.why);
+		check('scrolling the drawer reaches its foot, the three pools and Today whole', f.ok, f.why);
 		if (SHOT) await p.screenshot({ path: SHOT.replace(/\.png$/, '') + '_foot.png' });
 		for (const [from, says] of ADMIN_FROM) {
 			const a = await adminBack(p, from);
 			check(`Chromium: Settings opened from ${says} has Back whole on screen, on top, and a tap closes it`, a.ok, a.why);
 		}
 	}
+	// THE DESKTOP RAIL (D-20261020-14 EV): three pools at the foot, and each list still
+	// a window of five whole tiles; the rail scrolls for what does not fit.
+	for (const [browser, vp] of [['chromium', { width: 1440, height: 900 }], ['chromium', { width: 1280, height: 720 }], ['webkit', { width: 1440, height: 900 }]]) {
+		const s = await world(browser, vp);
+		sessions.push(s);
+		const p = s.page, at = `${browser} ${vp.width}x${vp.height}`;
+		check(`${at}: the rail draws three pools`, s.pools === 3, String(s.pools));
+		const m = await survey(p);
+		if (browser === 'chromium') check(`${at}: the Diamonds list shows at least five whole tiles`,
+			m.d.n >= 5 && m.d.of >= 5, `${m.d.n} of ${m.d.of} whole in ${m.d.h}px, a tile ${m.d.tile}px`);
+		check(`${at}: the Chats list shows at least five whole tiles`,
+			m.c.n >= 5 && m.c.of >= 5, `${m.c.n} of ${m.c.of} whole in ${m.c.h}px, a tile ${m.c.tile}px`);
+		const f = await foot(p);
+		check(`${at}: the rail reaches its foot, the three pools and Today whole`, f.ok, f.why);
+		if (SHOT && browser === 'chromium' && vp.width === 1440) await p.screenshot({ path: SHOT.replace(/\.png$/, '') + '_desk.png' });
+	}
 	{
 		const s = await world('webkit');
 		sessions.push(s);
+		check('WebKit 390x845: the rail draws three pools', s.pools === 3, String(s.pools));
 		const m = await survey(s.page);
 		check('WebKit 390x845: the Chats list shows at least five whole tiles',
 			m.c.n >= 5 && m.c.of >= 5, `${m.c.n} of ${m.c.of} whole in ${m.c.h}px, a tile ${m.c.tile}px`);

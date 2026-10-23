@@ -31,7 +31,7 @@ test('Bypass is a red row with Guard; Guarded and Ask are silent', () => {
 });
 
 test('a key with under a day of runway raises "~N h left" and Top Up', () => {
-	const pots = [{ key: 'byok', provider: 'openrouter', what: 'OpenRouter key', label: 'Your OpenRouter key', minutes: 20 * 60 }];
+	const pots = [{ key: 'byok', provider: 'openrouter', what: 'OpenRouter key', label: 'Your OpenRouter key', minutesDay: 20 * 60 }];
 	const [r] = N.compute({ pots });
 	assert.equal(r.id, 'money:byok');
 	assert.equal(r.tone, 'warn');
@@ -41,12 +41,12 @@ test('a key with under a day of runway raises "~N h left" and Top Up', () => {
 	assert.equal(r.vars.what, 'OpenRouter key');
 	assert.equal(r.url, 'https://openrouter.ai/settings/credits');
 	// under an hour it counts minutes, never "~0 h"
-	const [m] = N.compute({ pots: [{ key: 'byok', label: 'Your OpenRouter key', minutes: 12 }] });
+	const [m] = N.compute({ pots: [{ key: 'byok', label: 'Your OpenRouter key', minutesDay: 12 }] });
 	assert.equal(m.key, 'needs.money_mins');
 	assert.equal(m.vars.n, 12);
 	// a day or more, no rate, or an empty pot (null runway): silent
-	assert.deepEqual(ids({ pots: [{ key: 'byok', label: 'k', minutes: 24 * 60 }] }), []);
-	assert.deepEqual(ids({ pots: [{ key: 'byok', label: 'k', minutes: null }] }), []);
+	assert.deepEqual(ids({ pots: [{ key: 'byok', label: 'k', minutesDay: 24 * 60 }] }), []);
+	assert.deepEqual(ids({ pots: [{ key: 'byok', label: 'k', minutesDay: null }] }), []);
 });
 
 test('update ready raises Reload', () => {
@@ -70,7 +70,7 @@ test('no model and a stalled sync are exceptions too', () => {
 test('order: red first, then amber in the design order', () => {
 	const all = ids({
 		updateReady: true, hand: 'bypass', noModel: true, syncStalledMs: 3 * 3600e3,
-		pots: [{ key: 'byok', label: 'Your OpenRouter key', minutes: 600 }],
+		pots: [{ key: 'byok', label: 'Your OpenRouter key', minutesDay: 600 }],
 	});
 	assert.deepEqual(all, ['bypass', 'money:byok', 'update', 'sync', 'model']);
 });

@@ -173,7 +173,8 @@ async function main() {
 	check('it is enabled, so it reads as a value and not a refusal', !!kept && kept.disabled === false);
 	check('it is the first option', opts(sGone)[0] === kept);
 	check('it says the model is not offered',
-		!!kept && kept.textContent.indexOf('m-gone') === 0 && kept.textContent.indexOf('models.not_offered') !== -1,
+		!!kept && kept.textContent.indexOf(M.displayName('fw', 'm-gone')) === 0
+			&& kept.textContent.indexOf('models.not_offered') !== -1 && kept.title === 'm-gone',
 		kept ? kept.textContent : '');
 	check('the offered models are all still there',
 		opts(sGone).length === baseCount + 1, opts(sGone).length + ' vs ' + (baseCount + 1));

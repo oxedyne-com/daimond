@@ -11,6 +11,7 @@
 // starts covering the chip, with nothing to say so. So the guess is checked.
 // The SVG keeps Inkscape's labels (`oxedyne`, `made_with_mostly_ai_icon`), and
 // this measures where those two groups actually are.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

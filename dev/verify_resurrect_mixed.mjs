@@ -30,6 +30,7 @@
 // Usage (from the f4 tree; the live tree needs www/pkg and nothing else of its own):
 //   node dev/verify_resurrect_mixed.mjs <case|all> <liveTree> [--worlds 92,94] [--gw <binary>]
 // Ports: the f4 app on 8777+W1, the live app on 8777+W2, the gateway on 9700+W1. Headless.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';

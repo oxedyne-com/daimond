@@ -760,7 +760,8 @@
    dates) and a phone (pending cards) disagreed. One colour for the role (by-role,
    12 Oct). The mono stamps keep their own reading (`:is(.ctile-meta, ...)` above).
    A merge conflict's line reference joined on 18 Oct (r573), once the by-role seed
-   reached a Pending Capp offer and measured it. */
+   reached a Pending Capp offer and measured it. The Models view's sub-lines (a turn's cost, an
+   Except row's provider and jobs) joined on 22 Oct (U3a), measured by the same gate.  */
 :root[data-skin="daylight"] .tile-when-sub,
 :root[data-skin="daylight"] .tile-model-chip,
 :root[data-skin="daylight"] .tile-meter,
@@ -778,6 +779,7 @@
 :root[data-skin="daylight"] .rel-meta,
 :root[data-skin="daylight"] .hist-when,
 :root[data-skin="daylight"] .capp-conflict-meta,
+:root[data-skin="daylight"] .models-sub,
 :root[data-skin="daylight"] .cmeter { color: var(--dl-faint); }
 
 /* ── Tag chips: the colours stay, the outlines go ──────────── */
@@ -964,15 +966,7 @@
 /* One section head (D-20260929-03 §8), the design's own form -- .pop-head:
    12px, --w-strong, --text-muted, no letter-spacing. Admin's, a tile
    dialog's, Spending's and Model stats' each drew at their own size,
-   weight, colour or spacing.
-   `#search-head` kept OUT of this `:is()` (D-20260929-03 residual pass): an
-   id anywhere in the group raises the WHOLE group's specificity to an id's,
-   which silently outranked the later disclosure-fold rule below for
-   `.tile-dlg-adv-sum` -- it also carries `.tile-dlg-head` -- and set its
-   weight to `--w-strong` instead of that rule's own `--w-text`. */
-:root[data-skin="daylight"] #search-head {
-	font-size: var(--dl-xs); font-weight: var(--w-strong); color: var(--text-muted); letter-spacing: 0; line-height: 1.6;
-}
+   weight, colour or spacing. */
 /* R6: one line-height for the group (`.mem-title` was 16.2px against the
    rest's 19.2, its own rule never having set one). */
 :root[data-skin="daylight"] :is(.pop-head, .admin-sec, .tile-dlg-head, .spend-sec-title, .mdash-sec-title, .cfg-fieldhead,
@@ -983,11 +977,17 @@
    drew at 10.5 or 14px, some bold, some muted, one lower-cased by
    text-transform. */
 :root[data-skin="daylight"] :is(.tag-box-label,
-	.imp-with-label, .models-draft-lab, .tile-dlg-label, .spend-stat-lbl, .about-ver-label,
-	.cfg-fieldlabel, .crystal-form-hot, .start-label, .mail-globals-label, .capp-conflict-label) {
+	.imp-with-label, .models-job-lab, .tile-dlg-label, .spend-stat-lbl, .about-ver-label,
+	.cfg-fieldlabel, .crystal-form-hot, .start-label, .mail-globals-label, .capp-conflict-label, .models-route-only) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); text-transform: none;
 	line-height: 16.2px; letter-spacing: 0;
 }
+/* The Models view's pickers (U3a). The one-field rule above (fill, 6px 8px) outranks app.css's
+   `.mp > input.mp-in` here, so a long model name ran under the chevron and an Except row's
+   picker, which has no field, drew one. Each keeps its room for the chevron; the row's has no fill. */
+:root[data-skin="daylight"] .mp-models-everyone-sel > input.mp-in { padding-right: 28px; }
+:root[data-skin="daylight"] .mp-models-job-sel > input.mp-in { padding: 5px 18px 5px 6px; }
+:root[data-skin="daylight"] .mp-models-exc-sel > input.mp-in { background-color: transparent; padding: 5px 20px 5px 4px; }
 /* ── Sentence case throughout ─────────────────────────────── */
 /* Every label the other skins set in capitals is set as written here, so a
    head reads as a name rather than a shout. Collected from every sheet that
@@ -1034,13 +1034,13 @@
 
 /* One disclosure head (D-20260929-03, remaining.md cluster 4), replacing the
    partial §10 rule: every fold trigger -- rail Built-in, the release notes'
-   sealed builds, a tag filter toggle, a model provider or memory head, a
+   sealed builds, a tag filter toggle, a model provider, routing or memory head, a
    dialog's advanced section, a diamond's links and artefacts, a file tree's
    rest and system rows -- is 12px, --w-text, --text-muted, one line height
    and one hit box. The per-class blocks below keep only what this rule does
    not set: colour on hover, the fold triangle, focus rings. */
 :root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .rel-about > summary, .tagf-toggle, .arte-strip,
-	.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
+	.models-prov-head, .models-route-head, .models-routing-disc > summary, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
 	.sys-head, .cap-more, .capp-conflicts > summary) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 19px;
 	padding: 4px 8px 4px 4px; min-height: 27px; box-sizing: border-box; background: transparent; border-color: transparent;
@@ -1411,7 +1411,7 @@
 		.imp-chip) { min-width: 44px; }
 	/* Disclosures: */
 	:root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .tagf-toggle, .arte-strip,
-		.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
+		.models-prov-head, .models-route-head, .models-routing-disc > summary, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
 		.sys-head, .cap-more, .capp-conflicts > summary) { min-height: 44px; }
 	:root[data-skin="daylight"] .crystal-act.mem-raw-btn { height: auto; min-height: 44px; }
 	/* A Pending tile's headline is a 44px row. */

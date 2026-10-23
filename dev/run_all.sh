@@ -39,6 +39,7 @@
 # sources it from ~/usr/code/ai/claude/notes/daimond_nightly/tools, so on 2026-09-25
 # every one of its 14 automatic reruns started in the notes directory, found no
 # `dev/verify_*.mjs` there and ran nothing -- and an "ENV 0" bucket read as a finding.
+bash "$(dirname "$0")/predeploy_guard.sh" run_all.sh "$@" || exit $?	# first: deploy first, refused (41) on code that is not live (D-20261023-04)
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT=$(pwd)
 

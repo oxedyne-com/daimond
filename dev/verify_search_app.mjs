@@ -247,9 +247,11 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 // row painted only by the module would pass with no listener attached at all.
 {
 	await p.evaluate(() => {
-		// The Models view is where the Search section lives. Opened the way the
-		// rail opens it, so the section is on screen rather than merely in the DOM.
-		const row = document.getElementById('astat-model');
+		// Search is a Settings section of its own (D-20261018-09 U4), no longer in
+		// the Models view. Opened from its home row, the way a person opens it, so
+		// the section is on screen rather than merely in the DOM.
+		if (window.DaimondAdmin) window.DaimondAdmin.home();
+		const row = document.getElementById('admin-open-search');
 		if (row) row.click();
 	});
 	await p.waitForTimeout(500);

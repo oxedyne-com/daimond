@@ -1,11 +1,11 @@
 /* ============================================================
-   Test — the Agents panel's grid and the rail's credit cylinders
-   (D-20261015-10, D-20261015-14).
+   Test — the Agents panel's grid and the rail's money pools
+   (D-20261015-10, D-20261015-14, D-20261020-14).
    ------------------------------------------------------------
    Drives the real agentgrid.js with no browser: what colour a run
    is, how runs fall into rows by origin, that nothing is pinned
    unless a person pinned it (a waiting run is amber, not opened),
-   and the cylinder's full height and level.
+   and each pool's battery, dial and range.
 
      node --test www/js/agentgrid.test.mjs
    ============================================================ */
@@ -73,55 +73,62 @@ test('pins: nothing is pinned by itself, a press toggles, a gone run drops out',
 	assert.deepEqual(G.prunePins(['w1', 'w9'], [run('w1', 'done')]), ['w1']);
 });
 
-test('cylinder: full height is the balance right after the last top-up', () => {
-	let s = G.peakNext(null, 10);
-	assert.deepEqual(s, { peak: 10, last: 10 });
-	s = G.peakNext(s, 6);                 // spending: the full height holds
-	assert.equal(s.peak, 10);
-	s = G.peakNext(s, 4);
-	assert.equal(s.peak, 10);
-	s = G.peakNext(s, 9);                 // a top-up from 4 to 9: the new full height is 9
-	assert.equal(s.peak, 9);
-	s = G.peakNext(s, 9);
-	assert.equal(s.peak, 9);
+test('battery: level is the balance over the full height', () => {
 	assert.equal(G.level(4.5, 9), 0.5);
 	assert.equal(G.level(0, 10), 0);
 	assert.equal(G.level(12, 10), 1);
 	assert.equal(G.level(5, 0), 0);
 });
 
-test('cylinder: drawn as an svg with a glass body and a level, every pool identical', () => {
-	const a = G.cylinderSvg(0.5, false, 'A');
-	const b = G.cylinderSvg(0.5, false, 'B');
-	assert.match(a, /^<svg /);
+test('battery: an svg cell with a terminal, filled to its level; an empty pool has no charge', () => {
+	const a = G.batterySvg(0.5, false);
+	assert.match(a, /^<svg class="evb"/);
 	assert.match(a, /class="glass"/);
+	assert.match(a, /class="term"/);
 	assert.match(a, /class="liq"/);
-	assert.equal(a.replace(/\bA\b/g, 'B'), b);
-	assert.doesNotMatch(G.cylinderSvg(0, false, 'E'), /class="liq"/, 'an empty pool has no liquid');
-	assert.match(G.cylinderSvg(0.1, true, 'L'), /class="cyl low"/);
+	assert.match(a, /data-level="0.5000"/);
+	assert.match(a, /aria-hidden="true"/, 'the row says it in words');
+	assert.doesNotMatch(G.batterySvg(0, false), /class="liq"/);
+	assert.match(G.batterySvg(0.05, true), /class="evb low"/);
 });
 
-test('pools: one cylinder per pool with a known balance, low only under a day', () => {
-	const rows = [
-		{ key: 'credits', label: 'Daimond credits', kind: 'exact', usd: 0, minutes: null },
-		{ key: 'own', label: 'Your OpenRouter key', kind: 'estimate', usd: 37.18, minutes: 1212 },
-		{ key: 'x', label: 'Spent only', kind: 'spent', usd: 4, minutes: null },
+test('dial: three bands, the needle by the pace over the full scale, at rest when idle', () => {
+	assert.equal(G.needleAngle(0, 5), 180);
+	assert.equal(G.needleAngle(2.5, 5), 270);
+	assert.equal(G.needleAngle(50, 5), 360, 'past full scale the needle stops at the end');
+	const d = G.dialSvg(270, false);
+	for (const b of ['b1', 'b2', 'b3']) assert.match(d, new RegExp('class="band ' + b + '"'));
+	assert.doesNotMatch(d, /class="lit /, 'the face is not lit to the needle');
+	assert.match(G.dialSvg(180, true), /class="evd rest"/);
+	for (const b of ['b1', 'b2', 'b3']) assert.match(G.dialSvg(180, true), new RegExp('class="band ' + b + '"'), 'an idle face still shows its thirds');
+});
+
+test('range: whole minutes, hours or days; idle has none', () => {
+	assert.deepEqual(G.range(55), { n: '55', unit: 'min' });
+	assert.deepEqual(G.range(360), { n: '6', unit: 'h' });
+	assert.deepEqual(G.range(17 * 1440), { n: '17', unit: 'd' });
+	assert.deepEqual(G.range(200 * 1440), { n: '99+', unit: 'd' });
+	assert.equal(G.range(null), null);
+});
+
+test('pools: one row per money pool; the charge low under a tenth or a day at its 24 h rate', () => {
+	const pools = [
+		{ key: 'credits', label: 'Daimond credits', amount: 0, full: 10, minutes: null, minutesDay: null, rate15: 0, scale: 5 },
+		{ key: 'openrouter', label: 'OpenRouter credit', amount: 37.18, full: 37.18, minutes: 300, minutesDay: 1212, rate15: 7.4, scale: 10 },
+		{ key: 'fireworks', label: 'Fireworks AI credit', amount: 18.59, full: 37.18, minutes: 30, minutesDay: 2000, rate15: 37, scale: 40 },
 	];
-	const store = {};
-	const p = G.pools(rows, store);
-	assert.equal(p.length, 2, 'a pool with no balance has no cylinder');
-	assert.deepEqual(p.map((x) => x.key), ['credits', 'own']);
+	const p = G.pools(pools);
+	assert.deepEqual(p.map((x) => x.key), ['credits', 'openrouter', 'fireworks']);
+	assert.equal(p[0].idle, true);
+	assert.equal(p[0].angle, 180);
+	assert.equal(p[0].low, true, 'an empty battery is a low charge');
 	assert.equal(p[1].low, true);
-	assert.equal(p[0].low, false, 'an empty pool has no runway, so it is not "running out"');
-	assert.equal(p[1].level, 1, 'the first reading is the full height');
-	assert.deepEqual(store.own, { peak: 37.18, last: 37.18 });
-	// Spending lowers the level against the stored full height.
-	const q = G.pools([{ key: 'own', label: 'k', kind: 'exact', usd: 18.59, minutes: 2000 }], store);
-	assert.equal(q[0].level, 0.5);
-	assert.equal(q[0].low, false);
-	assert.equal(G.runwayPool(p).key, 'own');
-	assert.equal(G.runwayPool(q), null);
-	assert.equal(G.runwayHours(p[1]), 20);
+	assert.equal(p[2].low, false, 'a busy quarter-hour on a pool good for a day is not a low charge');
+	assert.equal(p[2].short, true, 'but its range, under an hour at this pace, is');
+	assert.equal(p[1].level, 1);
+	assert.equal(p[2].level, 0.5);
+	assert.ok(p[2].angle > p[1].angle);
+	assert.deepEqual(p[1].range, { n: '5', unit: 'h' });
 });
 
 test('lens: State paints nothing over the state colour; Cost is lightness by spend, log scale', () => {

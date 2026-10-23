@@ -122,6 +122,7 @@
 // run this at once, and neither is the world's own gateway port -- a store this
 // run counts rows in cannot be one anything else is allowed to write to.
 
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { port } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';

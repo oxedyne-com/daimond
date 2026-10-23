@@ -13,6 +13,7 @@
 // Asserts the auth contract (no token → 401, wrong token → 401, right token →
 // 200 summary), then screenshots the dashboard desktop + mobile into dev/shots.
 
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';

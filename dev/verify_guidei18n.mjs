@@ -2,6 +2,7 @@
 // The translated guide page: does it wear the app's palette (which it now gets
 // from the app's own stylesheet rather than a copy), and does a change of
 // language actually move the reader to the translated page?
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const SP = new URL('shots/', import.meta.url).pathname;

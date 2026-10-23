@@ -16,7 +16,7 @@
 .settings-section .models-prov-head {
 	display: flex; align-items: flex-start; gap: 8px; width: 100%;
 	cursor: pointer; text-align: left;
-	border: 0; color: var(--text-primary);
+	background: transparent; border: 0; color: var(--text-primary);
 }
 .settings-section .models-prov-head:hover { background: var(--bg-hover); }
 /* R10 (D-20260929-03 r526 residual): the disclosure group's own muted, not
@@ -45,13 +45,15 @@
 	display: flex; align-items: flex-start; gap: 8px; width: 100%;
 	padding: 5px 8px; border-radius: 6px; cursor: pointer; text-align: left;
 	background: transparent; border: 0; color: var(--text-secondary);
-	font-family: var(--font-mono); font-size: var(--fs-2xs);
+	font-family: var(--font); font-size: var(--fs-xs);
 }
-/* `button.` lifts this to app.css's `.settings-section button:not(.admin-item):hover`
-   (0,3,1), and the later sheet wins: without it a hovered model row took the FILL
-   button's accent-hover under row ink (obsidian 1.66:1, porcelain ~2.4:1). */
-.settings-section button.models-model:hover { background: var(--bg-hover); color: var(--text-primary); }
-.models-model.on    { color: var(--accent-text); background: var(--accent-soft); }
+.settings-section .models-model:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* The default is said by its star and its DEFAULT chip; a fill on top of them was the pink row. */
+.models-model.on    { color: var(--accent-text); }
+/* Another payer of the model above: indented under it, its "Through X" the whole row. */
+.models-model.alt   { padding-left: 28px; }
+.models-nm          { display: block; }
+.models-through     { display: block; font-size: var(--fs-3xs); color: var(--text-muted); }
 .models-star { width: 12px; }
 .models-id   { flex: 1; word-break: break-all; }
 /* var(--font-sans) does not exist, so the badge inherited the row's monospace
@@ -89,23 +91,54 @@
 }
 
 .models-default {
-	margin-top: 6px; padding: 6px 2px;
+	margin-top: 6px; padding: 6px 0;
 	font-size: var(--fs-2xs); color: var(--text-secondary);
 	border-top: 1px solid var(--border);
 }
 
-/* The drafting-model row: a label and its select, under the default. A refinement of
-   the default rather than a peer of it, so it is quieter -- no rule above it, and the
-   label at the panel's chip size. */
-.models-draft {
-	margin-top: 4px; padding: 2px;
+/* The top half (D-20261018-09 U3a): Everyone uses, Except, Jobs. Rows carry no fill, only
+   the panel's tokens, so they read alike in every palette and skin; a head is the display face.
+   The confirm is the one raised surface, because it is the one thing waiting on an answer. */
+.models-everyone, .models-except, .models-jobs { padding: 6px 0 10px; }
+.models-head {
+	font-family: var(--font-display); font-size: var(--fs-sm); color: var(--text-primary);
+	margin: 4px 0 8px;
+}
+.models-sub { font-size: var(--fs-2xs); line-height: 1.45; color: var(--text-secondary); }
+.models-turn, .models-not-here { margin-top: 6px; }
+.models-ask {
+	margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm);
+	background: var(--bg-tertiary); font-size: var(--fs-xs); line-height: 1.5; color: var(--text-primary);
+}
+.models-ask-btns, .models-done { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.models-done { font-size: var(--fs-xs); color: var(--text-secondary); }
+.models-exc { padding: 6px 0; }
+/* The kind glyph hangs in the gutter, so a row's name and its "Through" line sit on the panel's
+   text edge with every other line of the section (verify_consistency text-edge). */
+.models-exc-top { position: relative; display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.models-exc-top::before { position: absolute; right: calc(100% + 5px); color: var(--text-muted); font-size: var(--fs-2xs); }
+.models-exc[data-kind="diamond"] .models-exc-top::before { content: '◆'; }
+.models-exc[data-kind="chat"] .models-exc-top::before { content: '▪'; }
+.models-exc-name {
+	flex: 0 1 auto; max-width: 52%; min-width: 0;
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	font-size: var(--fs-xs); color: var(--text-primary);
+}
+.models-exc-sub { overflow-wrap: anywhere; }
+.models-job {
+	display: flex; align-items: center; gap: 10px; min-height: 36px;
 	font-size: var(--fs-2xs); color: var(--text-secondary);
 }
-.models-draft-lab {
-	display: flex; align-items: center; gap: 6px;
-}
-.models-draft-sel {
-	flex: 1 1 auto; min-width: 0;
+.models-job-lab { flex: 0 0 34%; }
+/* Move Them Too keeps the panel's filled button; Keep Theirs and Undo are the quiet answer. */
+.settings-section .models-ask button, .settings-section .models-done button { padding: 7px 14px; font-size: var(--fs-xs); }
+.settings-section .models-ask button.models-keep,
+.settings-section .models-done button.models-undo { background: transparent; color: var(--text-primary); padding: 7px 8px; }
+.settings-section .models-ask button.models-keep:hover,
+.settings-section .models-done button.models-undo:hover { background: var(--bg-hover); }
+@media (max-width: 600px) {
+	.models-exc-top, .models-job { min-height: 44px; }
+	.settings-section .models-ask button, .settings-section .models-done button { min-height: 44px; }
 }
 
 /* What is left on this provider's key, inside its expanded body. It sits between the provider
@@ -181,11 +214,17 @@
 	background: var(--bg-secondary);
 }
 .settings-section .models-credit-form > .models-refetch { flex: none; white-space: nowrap; }
+/* The key, inside the opened row: what it is, and the field that replaces it, laid out as the
+   credit pair below it so the two read as one kind of control. */
+.models-key       { display: flex; flex-direction: column; gap: 6px; }
+.models-key-state { font-size: var(--fs-2xs); color: var(--text-secondary); }
+.models-key-form  { display: flex; align-items: stretch; gap: 6px; width: 100%; }
+.settings-section .models-key-form > .models-refetch { flex: none; white-space: nowrap; }
 /* Sized to the buttons beside it (`.models-refetch`), NOT to `.settings-section input`, whose
    9px/base is a form-field scale and would tower over the row. Monospace, as the balance on the
    provider row is: an amount is read digit by digit. The well is the deepest surface, which is
    the one shade that is recessed in all three palettes rather than only in the dark one. */
-.settings-section .models-credit-input {
+.settings-section .models-credit-input, .settings-section .models-key-input {
 	flex: 1; min-width: 0;
 	padding: 6px 8px; font-size: var(--fs-2xs);
 	font-family: var(--font-mono);
@@ -204,7 +243,7 @@
    for the same real outline the app's other twenty-one fields carry, drawn outside the
    control against the surface, where it measures 3.87-6.75. The three steps survive: the
    pointer firms the border, the keyboard draws the ring. */
-.settings-section .models-credit-input:focus {
+.settings-section .models-credit-input:focus, .settings-section .models-key-input:focus {
 	outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
 }
 /* The quiet rung, plainly, like the other ten placeholders in this app.
@@ -216,42 +255,48 @@
    person reads to find out what the field wants; WCAG 2.2 SC 1.4.3 exempts it
    from nothing. `--text-muted` is the rung for this and carries 4.83-6.65 on
    `--bg-primary` across the eleven. */
-.settings-section .models-credit-input::placeholder { color: var(--text-muted); }
+.settings-section .models-credit-input::placeholder, .settings-section .models-key-input::placeholder { color: var(--text-muted); }
 /* And the caret's own ring on the buttons, matching the admin rows: a button that answered only
    to hover left a keyboard user with nothing to see. */
 .settings-section .models-credit .models-refetch:focus-visible {
 	outline: 2px solid var(--accent); outline-offset: 1px;
 }
 
-/* Per-model OpenRouter routing, under the model's own button. Indented to read as the model
-   row's own furniture rather than a new row of its own -- the label wraps the field, so the
-   accessible name and the visible one are the same text. */
+/* Per-model OpenRouter routing, under the model's own button (U5b): a row per host measured for
+   the model, each with its figures and one Auto / Prefer / Avoid control. Indented to read as the
+   model row's own furniture; no fill on a row, so only the pressed segment carries the accent. */
 .models-routing { padding: 2px 8px 6px 26px; }
-.models-routing-lab {
-	display: flex; align-items: center; gap: 6px;
+.models-route-head { cursor: pointer; }	/* size, colour, line and box: the one disclosure head (skin-daylight.css) */
+/* Closed until opened, unless measured or chosen: opening asks OpenRouter for this model's hosts. */
+.models-route-body { padding-top: 2px; }
+.models-route-none { font-size: var(--fs-3xs); color: var(--text-muted); }
+.models-route-row { padding: 4px 0; border-top: 1px solid var(--border); }
+.models-route-row:first-of-type { border-top: 0; }
+.models-route-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.models-route-host {
+	flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere;
+	font-size: var(--fs-2xs); color: var(--text-primary);
+}
+.models-route-last { flex: none; font-size: var(--fs-3xs); color: var(--text-muted); }
+.models-route-figs,
+.models-route-why {
+	font-size: var(--fs-3xs); color: var(--text-secondary); line-height: 1.4; overflow-wrap: anywhere;
+}
+.models-route-why { color: var(--warn, var(--text-secondary)); }
+.models-route-why.kept { color: var(--text-secondary); }
+.models-routing .models-route-seg { padding: 4px 0 0; max-width: 260px; }
+.models-route-only {	/* size, colour and line: the one field label (skin-daylight.css) */
+	display: flex; align-items: center; gap: 6px; padding-top: 6px;
+}
+.models-route-odd {
+	display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 4px;
 	font-size: var(--fs-3xs); color: var(--text-secondary);
 }
-.settings-section .models-routing-input {
-	flex: 1; min-width: 0;
-	padding: 4px 7px; font-size: var(--fs-2xs);
-	font-family: var(--font-mono);
-	background: var(--bg-primary); border: 1px solid transparent;
-	border-radius: var(--radius-sm); color: var(--text-primary);
-	transition: border-color .12s ease;
-}
-.settings-section .models-routing-input:focus {
-	outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
-}
-.settings-section .models-routing-input::placeholder { color: var(--text-muted); }
-.models-routing-help {
-	padding-top: 2px; font-size: var(--fs-3xs); color: var(--text-secondary); line-height: 1.4;
-}
+.models-route-typed { font-family: var(--font-mono); overflow-wrap: anywhere; min-width: 0; }
 
 /* The same field, for a model the fetched catalogue no longer lists -- see `isRoutable &&
    !p.count` in models.js. A native disclosure rather than a button-plus-state: there is no
    redraw to keep in step with an open flag the way the provider row itself needs one. */
 .models-routing-disc { margin: 4px 8px 6px; }
-.models-routing-disc > summary {
-	cursor: pointer; font-size: var(--fs-2xs); color: var(--text-secondary);
-}
+.models-routing-disc > summary { cursor: pointer; }	/* the rest: the one disclosure head (skin-daylight.css) */
 .models-routing-disc .models-routing { padding-left: 8px; }

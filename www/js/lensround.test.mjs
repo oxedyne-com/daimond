@@ -65,7 +65,7 @@ test('a round_meta of prompt 78000 and cached 74000 yields a round row of ctx 78
 	const rf = DS.roundFeed();
 	// What `event_to_js` hands the page for a round, read off a real OpenRouter usage block.
 	const use = rf.meta({ type: 'round_meta', provider: 'InferenceNet', p: 78000, ca: 74000 });
-	assert.deepEqual(use, { p: 78000, ca: 74000 }, 'the round_meta row is not given the round\'s own figures');
+	assert.deepEqual(use, { p: 78000, ca: 74000, o: 0 }, 'the round_meta row is not given the round\'s own figures');
 	rf.add({ turn: 'T1', r: 1, win: 131072, msgs: 12, tool: 'file_read' });
 	const got = rows('T1');
 	assert.equal(got.length, 1);
@@ -104,8 +104,11 @@ test('daimond.js builds every round row from the round\'s own event, the daimon\
 		'a round row still reads a live_* getter off an app that may not be the one running');
 	const arms = src.split("ev.type === 'round_meta'").slice(1).map((s) => s.slice(0, 1600));
 	assert.ok(arms.length >= 3, 'the chat, the worker and the daimon each have a round_meta arm');
+	// One helper builds every arm's row (D-20261020-10), and it carries p and ca.
+	const helper = src.slice(src.indexOf('function roundMetaRow('), src.indexOf('function roundMetaRow(') + 1600);
+	assert.ok(/row\.p\s*=\s*use\.p/.test(helper) && /row\.ca\s*=\s*use\.ca/.test(helper), 'roundMetaRow does not carry p and ca');
 	arms.forEach((arm, i) => {
-		assert.ok(/\bp:\s/.test(arm) && /\bca:\s/.test(arm), 'round_meta arm ' + i + ' does not carry p and ca');
+		assert.ok(/roundMetaRow\(/.test(arm), 'round_meta arm ' + i + ' does not build its row with roundMetaRow');
 		// EVERY arm feeds its own rounds (r578b F3): the worker's did not, so its `round` rows
 		// took the feed's starting {0,0} and stated a prompt and a cache of nothing. Any arm
 		// added later is held to the same.

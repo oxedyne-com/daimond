@@ -8,12 +8,12 @@
 // and a finger both work. The same control everywhere -- not a new one per site.
 //
 // Seven sites draw a model pulldown today, each a native <select>:
-//   1 the Models panel, "Drafting model"          .models-draft-sel
+//   1 the Models panel, Jobs → Drafting           .models-job-sel[data-job=drafting]
 //   2 New Diamond, the model and the worker model  .dlg-select (x2)
 //   3 a Diamond's settings: daimon, Workers, "Workers, images"
 //   4 the pending chat tile, its model and its worker model (rarely reachable: a chat
 //     that can start is started, so these two are checked in the source)
-//   5 Settings, "Fold with"                        #cfg-fold-model
+//   5 Settings, "Fold with"                        (removed by U4; U3a redraws it)
 //   6 the add-provider form, "Default model"       #cfg-model
 // The native <select> stays in the page as the STATE (options, value, change event,
 // DaimondModels.pick), hidden; the drawn control is an input beside it. So the checks
@@ -368,12 +368,12 @@ const tag = (name, finder) => p.evaluate(({ name, finder }) => {
 
 // ── Site 1 and 6: the Models panel ──────────────────────────────────
 await p.evaluate(() => document.getElementById('astat-model').click());
-const panel = await until(() => p.evaluate(() => !!document.querySelector('.models-draft-sel')), 8000);
-check('draft: the Models panel opens with its drafting-model pulldown', panel);
+const panel = await until(() => p.evaluate(() => !!document.querySelector('.models-job-sel[data-job=drafting]')), 8000);
+check('draft: the Models panel opens with its Jobs → Drafting pulldown', panel);
 if (panel) {
-	await tag('draft', "() => document.querySelector('.models-draft-sel')");
+	await tag('draft', "() => document.querySelector('.models-job-sel[data-job=drafting]')");
 	await exercise('draft', { rank: true, rerender: true,
-		finder: "() => document.querySelector('.models-draft-sel')" });
+		finder: "() => document.querySelector('.models-job-sel[data-job=drafting]')" });
 	await closeAll();
 }
 
@@ -437,24 +437,12 @@ if (added === '') {
 	await closeAll();
 }
 
-// ── Site 5: Settings, Fold with ─────────────────────────────────────
-let foldReach = false;
-for (const btn of ['settings-btn', 'astat-model']) {
-	await p.evaluate((b) => { const e = document.getElementById(b); if (e) e.click(); }, btn);
-	foldReach = await until(() => p.evaluate(() => {
-		const f = document.getElementById('cfg-fold-model');
-		if (!f) return false;
-		const w = f.nextElementSibling && f.nextElementSibling.classList.contains('mp') ? f.nextElementSibling : f;
-		return w.getClientRects().length > 0;
-	}), 4000);
-	if (foldReach) break;
-}
-check('fold: Settings shows the "Fold with" pulldown', foldReach);
-if (foldReach) {
-	await tag('fold', "() => document.getElementById('cfg-fold-model')");
-	await exercise('fold', { rank: true });
-	await closeAll();
-}
+// ── Site 5: Settings, Fold with -- gone (D-20261018-09 U4) ──────────
+// U4 took "Fold with" out of Settings and left its stored value and setter alone;
+// U3a draws it again as Summarising, under Jobs, and brings this site back with it.
+// Until then the one property is that no stray copy of the old control is drawn.
+check('fold: "Fold with" is gone from Settings until U3a draws Summarising',
+	await p.evaluate(() => !document.getElementById('cfg-fold-model')));
 
 // ── Site 2: New Diamond ─────────────────────────────────────────────
 await p.evaluate(() => document.getElementById('new-diamond-btn').click());

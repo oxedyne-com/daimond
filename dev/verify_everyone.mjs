@@ -31,6 +31,8 @@
 //   node dev/verify_everyone.mjs --break undoblind    # Undo overwrites a later change
 //   node dev/verify_everyone.mjs --break toasts       # a toast per Diamond
 //   node dev/verify_everyone.mjs --break noteearly    # the note on change, not at turn start
+//   node dev/verify_everyone.mjs --rev 90eaed816      # the base's www js (green: the product was fine)
+//   node dev/verify_everyone.mjs --old-check         # the old worker test: red, 0 fork workers seen
 //
 // Every break is a SOURCE patch of the named seam, served through `page.route` (the
 // seams are closures the page cannot reach). Each anchor must land exactly once, or the
@@ -42,6 +44,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, newChat, connectMock, scratch, shot, steerDiamond, storedChats, mockLog, clearMockLog,
 	contentText, revealComposer } from './harness.mjs';
+import { isWorker } from './workermarks.mjs';
 
 const BI  = process.argv.indexOf('--break');
 const BEQ = process.argv.find(a => a.startsWith('--break='));
@@ -121,6 +124,24 @@ for (const b of (SRC_BREAKS[BREAK] || [])) {
 	}
 	served[b.file] = body.replace(b.find, b.with);
 }
+// --rev SHA: serve every www/js and www/i18n file this branch changed as it stood at SHA (the
+// base run). --old-check: tell workers as the check did before workermarks.mjs (no spawn_agent
+// among the tools), which misses every fork worker since r578c (it keeps the daimon's tools).
+const RVI = process.argv.indexOf('--rev');
+const REV = RVI >= 0 ? (process.argv[RVI + 1] || '') : '';
+const OLD_CHECK = process.argv.includes('--old-check');
+if (REV) {
+	const { execFileSync } = await import('node:child_process');
+	const root = path.join(HERE, '..');
+	const files = execFileSync('git', ['diff', '--name-only', REV, 'HEAD', '--', 'www/js', 'www/i18n'], { cwd: root, encoding: 'utf8' })
+		.split('\n').filter(f => f && /\.js$/.test(f));
+	for (const f of files) {
+		try { served[f.replace(/^www\//, '')] = execFileSync('git', ['show', REV + ':' + f], { cwd: root, encoding: 'utf8' }); }
+		catch (e) { /* new on this branch: served as is */ }
+	}
+	console.log(`  ..   serving ${files.length} www js file(s) as at ${REV}`);
+}
+const workerOf = OLD_CHECK ? (e => !(e.tools || []).includes('spawn_agent')) : isWorker;
 
 let failures = 0;
 const realFw = [];	// requests that tried the real Fireworks
@@ -422,9 +443,10 @@ try {
 	CHATS.forEach(n => { post[n] = modelsOf(`post-${n}`); });
 	check([...NAMES, ...CHATS].every(n => post[n].length >= 1 && post[n].every(m => m === X_M)),
 		'after Move Them Too every next turn runs on GLM 5.3 Flash', JSON.stringify(post));
-	const workerReqs = mockLog().filter(e => /wk-(Daimond|Email) say ok/.test(lastUser(e)) && !(e.tools || []).includes('spawn_agent'));
+	const workerReqs = mockLog().filter(e => /wk-(Daimond|Email) say ok/.test(lastUser(e)) && workerOf(e));
 	check(workerReqs.length >= 2 && workerReqs.every(e => e.model === X_M),
-		'and their workers too', `${workerReqs.length} worker request(s) on ${JSON.stringify([...new Set(workerReqs.map(e => e.model))])}`);
+		'and their workers too', `${workerReqs.length} worker request(s) on ${JSON.stringify([...new Set(workerReqs.map(e => e.model))])}`
+		+ (workerReqs.length >= 2 ? '' : ' | wk- requests: ' + JSON.stringify(mockLog().filter(e => /wk-/.test(JSON.stringify(e.messages || []))).map(e => ({ m: e.model, worker: isWorker(e), tools: (e.tools || []).length, u: lastUser(e).slice(0, 80) })))));
 	const hist1 = await historyCounts(ids);
 	const added = Object.fromEntries(NAMES.map(n => [n, hist1[n] - hist0[n]]));
 	check(NAMES.every(n => added[n] === 1), 'History shows one model entry per Diamond, at its next turn',
@@ -446,7 +468,12 @@ try {
 		const all = JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}');
 		const r = JSON.parse(JSON.stringify(all[id] || {}));
 		r.provider = P; r.model = PEER_M;
-		r.at = window.DaimondStamp ? DaimondStamp.next(+r.at || 0) : Date.now() + 1000;
+		// As the other device's setDiamondModel writes it: the daimon pair stamped past its own
+		// `dat` and `at`, and `dat` dropped as equal to `at`. Bumping `at` alone left a copied `dat`
+		// in force whenever Email's Workers pair was the newer one, and the merge rightly kept ours.
+		const prev = Math.max(typeof r.dat === 'number' ? r.dat : 0, +r.at || 0);
+		r.at = window.DaimondStamp ? DaimondStamp.next(prev) : Date.now() + 1000;
+		delete r.dat;
 		const got = await window.DaimondCore.applySync({ diamonds: [{ id: id, data: '', touched: 0, model: r }] }, Date.now());
 		const now = JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}')[id] || {};
 		return { failed: (got && got.failed) || [], model: now.model || '' };

@@ -150,7 +150,9 @@ async function main() {
 	const applySrc = lift('applySight');
 	check('applySight is defined in daimond.js', !!applySrc);
 	const calls = src.split('applySight(').length - 2;		// less the definition
-	const routed = src.split('applyProviderRouting(').length - 2;
+	// Less U5b's kept-engine refresh (ensureApp): it re-sends the stored routing on an engine already set up for this
+	// model, so effort and sight, set at that setup, are already there.
+	const routed = src.split('applyProviderRouting(').length - 2 - src.split('applyProviderRouting(chat.app, held.').length + 1;
 	check('it is called wherever provider routing is applied (chat, worker, daimon)',
 		calls === routed && calls === 3, calls + ' vs ' + routed);
 	const seen = [];

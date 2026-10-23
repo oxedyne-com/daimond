@@ -167,7 +167,9 @@ async function main() {
 		check('an older engine with no setter, or one that throws, is no error', !threw);
 	}
 	const calls = src.split('applyEffort(').length - 2;
-	const routed = src.split('applyProviderRouting(').length - 2;
+	// Less U5b's kept-engine refresh (ensureApp): it re-sends the stored routing on an engine already set up for this
+	// model, so effort and sight, set at that setup, are already there.
+	const routed = src.split('applyProviderRouting(').length - 2 - src.split('applyProviderRouting(chat.app, held.').length + 1;
 	check('it is applied wherever provider routing is (chat, worker, daimon)', calls >= routed && routed === 3,
 		calls + ' vs ' + routed);
 

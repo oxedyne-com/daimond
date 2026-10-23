@@ -4935,7 +4935,8 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("truncated"));
         }
         AgentEvent::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled,
-            bytes, first_ms, gap_ms, ms, prompt_tokens, cached_tokens } => {
+            bytes, first_ms, gap_ms, ms, prompt_tokens, cached_tokens,
+            completion_tokens, tok_ms, gen_ms } => {
             set("type",     &JsValue::from_str("round_meta"));
             set("gen",      &JsValue::from_str(gen_id));
             set("finish",   &JsValue::from_str(finish_reason));
@@ -4948,6 +4949,9 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("ms",       &JsValue::from_f64(*ms as f64));
             set("p",        &JsValue::from_f64(*prompt_tokens as f64));
             set("ca",       &JsValue::from_f64(*cached_tokens as f64));
+            set("o",        &JsValue::from_f64(*completion_tokens as f64));
+            set("tf",       &JsValue::from_f64(*tok_ms as f64));
+            set("gm",       &JsValue::from_f64(*gen_ms as f64));
         }
         AgentEvent::Continued { n, rounds_so_far } => {
             set("type",   &JsValue::from_str("continued"));

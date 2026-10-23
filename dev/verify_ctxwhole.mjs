@@ -328,8 +328,13 @@ check(again.fold && again.above > 0 && /above this line/i.test(again.says),
 
 // ── 6. The setting ───────────────────────────────────────────────────────────
 line('6. the fold point is the user\'s to set');
-const row = await s.page.evaluate(() => {
-	const sel = document.getElementById('cfg-fold-at');
+// Settings -> Limits holds it since D-20261018-09 U4, built when its home row opens it.
+const row = await s.page.evaluate(async () => {
+	if (window.DaimondAdmin) window.DaimondAdmin.home();
+	const open = document.getElementById('admin-open-limits');
+	if (open) open.click();
+	await new Promise(r => setTimeout(r, 400));
+	const sel = document.querySelector('#admin-limits #cfg-fold-at');
 	if (!sel) return { there: false };
 	return {
 		there:   true,

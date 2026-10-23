@@ -286,6 +286,7 @@
 			out.mode         = r.mode;
 			out.remainingUsd = r.remainingUsd;
 			out.asOf         = r.asOf;
+			if (r.binds) out.binds = r.binds; else delete out.binds;
 		}
 		return out;
 	}
@@ -350,6 +351,7 @@
 			if (mine && !DaimondStamp.beats(r.at, [r.provider, r.model], mine.at, [mine.provider, mine.model])) return;
 			(into.lastRun = into.lastRun || {})[slot] = copy(r);
 		});
+		if (from.topups && window.DaimondMoney) DaimondMoney.marksMerge(into.topups = into.topups || {}, from.topups);
 		return moved;
 	}
 
@@ -1206,6 +1208,13 @@
 		return { levels: levels, dflt: levels.indexOf(d) >= 0 ? d : '' };
 	}
 
+	/// The catalogue's own name for a model ("DeepSeek: DeepSeek V4.1 Flash"), or '' when it
+	/// gives none beyond the id. Kept so lists can show a person's name for the model.
+	function nameOf(m, mid) {
+		var n = (m && typeof m.name === 'string') ? m.name.trim() : '';
+		return (n && n !== mid) ? n.slice(0, 120) : '';
+	}
+
 	/// Ask a provider what it can run. The list is cached, because a chat's model can be
 	/// switched from its header and re-asking on every switch would be rude to the provider
 	/// and slow for the user.
@@ -1232,11 +1241,13 @@
 			var rr = ratesOf(m);
 			var sees = sightOf(m);
 			var eff  = effortsOf(m);
-			if (!mid || (!rr && sees === null && !eff)) return;
-			// The pictures flag and the Effort levels ride the rates row, so they are stored,
-			// merged and synced with them.
+			var nm   = nameOf(m, mid);
+			if (!mid || (!rr && sees === null && !eff && !nm)) return;
+			// The pictures flag, the Effort levels and the catalogue's own name for the model
+			// ride the rates row, so they are stored, merged and synced with them.
 			var row = rr || {};
 			if (sees !== null) row.sees = sees;
+			if (nm) row.name = nm;
 			if (eff) {
 				row.efforts = eff.levels;
 				if (eff.dflt) row.effortDefault = eff.dflt;
@@ -1713,7 +1724,8 @@
 	/// was true (`asOf`), because a balance drawn from disk with no timestamp is a number that
 	/// was true once and is now a claim.
 	///
-	/// Returns `{ remainingUsd, asOf, capped }` or null.
+	/// Returns `{ remainingUsd, asOf, capped, binds }` or null; `binds` is 'limit' or 'credit',
+	/// whichever of the key's cap and the account's credit is the smaller.
 	///
 	/// Every route to a probe comes through here — unlock, a pasted key, the tab returning, the
 	/// beat, the panel, the button — so this is where the attempt is stamped and its outcome
@@ -1755,21 +1767,32 @@
 		} catch (e) { return null; }
 		if (!keyData) return null;
 
-		var remaining = null, capped = false;
-		if (typeof keyData.limit === 'number' && typeof keyData.limit_remaining === 'number') {
-			remaining = keyData.limit_remaining;
-			capped = true;
-		} else {
-			// Uncapped: the account's own credit is what this key can spend.
-			try {
-				var rc = await fetch(siblingUrl(url, 'credits'), { headers: auth });
-				if (!rc.ok) return null;
+		// THE BINDING NUMBER (D-20261020-13). A key spends the account's credit, and a capped
+		// key spends no more than its cap besides, so what it can spend is the smaller of the
+		// two, and `binds` says which. An uncapped key's figure is the account's credit alone,
+		// and is named as that, never as the key's: the owner could not find "his key's
+		// balance" on the API Keys page because a key has none.
+		var capped = (typeof keyData.limit === 'number' && typeof keyData.limit_remaining === 'number');
+		var account = null;
+		try {
+			var rc = await fetch(siblingUrl(url, 'credits'), { headers: auth });
+			if (rc.ok) {
 				var jc = await rc.json();
 				var cd = jc.data || jc;
-				if (typeof cd.total_credits === 'number' && typeof cd.total_usage === 'number') {
-					remaining = cd.total_credits - cd.total_usage;
+				if (cd && typeof cd.total_credits === 'number' && typeof cd.total_usage === 'number') {
+					account = cd.total_credits - cd.total_usage;
 				}
-			} catch (e) { return null; }
+			}
+		} catch (e) { account = null; }
+		var remaining = null, binds = '';
+		if (capped && typeof account === 'number' && isFinite(account) && account < keyData.limit_remaining) {
+			remaining = account; binds = 'credit';
+		} else if (capped) {
+			// The cap is the lower, or the account would not say: the cap is what this key
+			// can spend at most, and it is named as the cap.
+			remaining = keyData.limit_remaining; binds = 'limit';
+		} else {
+			remaining = account; binds = 'credit';
 		}
 		if (typeof remaining !== 'number' || !isFinite(remaining)) return null;
 
@@ -1782,13 +1805,14 @@
 			mode:         'auto',
 			remainingUsd: remaining,
 			asOf:         asOf,
+			binds:        binds,
 			// A manual base the user may have set earlier is kept: an auto probe that starts
 			// failing tomorrow should fall back to their figure, not forget it.
 			baseUsd:      (p.credit && typeof p.credit.baseUsd === 'number') ? p.credit.baseUsd : null,
 			baseAt:       (p.credit && typeof p.credit.baseAt === 'number') ? p.credit.baseAt : null,
 		};
 		save();
-		return { remainingUsd: remaining, asOf: asOf, capped: capped };
+		return { remainingUsd: remaining, asOf: asOf, capped: capped, binds: binds };
 	}
 
 	/// Record the user's own figure: "I have $X on this key, as of now".
@@ -1860,6 +1884,7 @@
 				probedUsd: c.remainingUsd,
 				spentUsd:  gone,
 				asOf:      c.asOf,
+				binds:     c.binds || 'credit',
 			};
 		}
 		if (typeof c.baseUsd === 'number' && typeof c.baseAt === 'number') {
@@ -1948,33 +1973,112 @@
 	///
 	/// Providers prefix ids differently — `accounts/fireworks/models/deepseek-v3` and
 	/// `deepseek/deepseek-v3` are one model wearing two names — so only the last segment is
-	/// compared. It is a shallow test and deliberately so: a false match marks two rows that did
-	/// not need marking, which costs a few characters, where a missed one leaves the user unable
-	/// to tell whose money a model spends.
+	/// compared, and Fireworks' version spelling is read as everybody else's: `v4p1` is `v4.1`
+	/// and `glm-5p3` is `glm-5.3` (a `p` between two digits is its decimal point). Without that,
+	/// Email's `deepseek-v4p1-flash` and OpenRouter's `deepseek-v4.1-flash` never paired.
 	function baseName(m) {
 		var s   = String(m || '');
 		var cut = s.lastIndexOf('/');
-		return (cut === -1 ? s : s.slice(cut + 1)).toLowerCase();
+		return (cut === -1 ? s : s.slice(cut + 1)).toLowerCase().replace(/(\d)p(?=\d)/g, '$1.');
 	}
 
-	/// The model names more than one provider serves.
-	///
-	/// Llama, DeepSeek and Qwen are on the credits row AND on half the BYOK providers, so the
-	/// picker shows the same name twice with different economics behind each. They are NOT
-	/// deduped: which of the two is picked decides who gets paid, and that is the user's
-	/// decision to make, not ours to make quietly on their behalf. So both are shown, and both
-	/// are labelled.
-	function dupes() {
-		var seen = {}, dup = {};
+	/// What a person calls `model` on `provider`: the catalogue's `name` without its maker prefix
+	/// ("DeepSeek: DeepSeek V4.1 Flash" reads "DeepSeek V4.1 Flash"), else the name a twin's
+	/// catalogue gives it, else the id's last segment as its maker writes it (`tidyName`).
+	function displayName(provider, model) {
+		var own = catName(provider, model);
+		if (own) return own;
+		var b = baseName(model);
 		for (var id in store.providers) {
-			var names = {};
-			(store.providers[id].models || []).forEach(function (m) { names[baseName(m)] = 1; });
-			for (var n in names) {
-				if (seen[n]) dup[n] = 1;
-				seen[n] = 1;
+			var p = store.providers[id];
+			if (id === provider || !p.rates) continue;
+			for (var mid in p.rates) {
+				if (baseName(mid) === b && p.rates[mid] && p.rates[mid].name) return catName(id, mid);
 			}
 		}
-		return dup;
+		return tidyName(model);
+	}
+
+	function catName(provider, model) {
+		var p = store.providers[provider];
+		var r = p && p.rates && p.rates[model];
+		var n = (r && typeof r.name === 'string') ? r.name : '';
+		var colon = n.indexOf(': ');
+		return colon > 0 ? n.slice(colon + 2) : n;
+	}
+
+	/// The model-list source: every model once, its twins behind other providers folded into it.
+	///
+	/// Returns `[{ name, base, offers: [{ provider, model }] }]` by display name; `offers` puts
+	/// the preferred payer first (`preferredOf`). Which offer is picked decides who is billed,
+	/// so a twin is one row with each other payer named under it, never two rows of one name.
+	/// Only the first id of a provider joins a twin: one provider listing two ids of one bare
+	/// name has two models, not one.
+	function catalogue() {
+		var by = {}, out = [];
+		providers().forEach(function (p) {
+			p.models.forEach(function (m) {
+				var k = baseName(m), e = by[k];
+				if (e && e.offers.some(function (o) { return o.provider === p.id; })) {
+					k = p.id + '\u0000' + m;
+					e = by[k];
+				}
+				if (!e) { e = by[k] = { name: '', base: baseName(m), offers: [] }; out.push(e); }
+				e.offers.push({ provider: p.id, model: m });
+			});
+		});
+		var pref = preferredOf();
+		out.forEach(function (e) {
+			e.offers.sort(function (a, b) { return pref(a.provider) - pref(b.provider); });
+			e.name = displayName(e.offers[0].provider, e.offers[0].model);
+		});
+		out.sort(function (a, b) { return a.name.localeCompare(b.name) || (a.base < b.base ? -1 : a.base > b.base ? 1 : 0); });
+		return out;
+	}
+
+	/// Rank of a provider as payer, lowest first: the default's provider is his preferred one,
+	/// then the rest in the panel's order.
+	function preferredOf() {
+		var d = getDefault(), ids = Object.keys(store.providers);
+		return function (id) { return id === d.provider ? -1 : ids.indexOf(id); };
+	}
+
+	/// The second line a model row carries, "Through Fireworks AI", or '' when it needs none:
+	/// only when the paying provider is not his preferred one, or when another also offers it.
+	function throughLine(provider, model) {
+		var d = getDefault(), b = baseName(model), others = 0;
+		for (var id in store.providers) {
+			if (id === provider) continue;
+			if ((store.providers[id].models || []).some(function (m) { return baseName(m) === b; })) others++;
+		}
+		if (!others && (!d.provider || provider === d.provider)) return '';
+		return t('models.through', { provider: providerName(provider) });
+	}
+
+	// Words a model id spells in lower case that its maker spells otherwise.
+	var NAME_WORDS = { glm: 'GLM', gpt: 'GPT', deepseek: 'DeepSeek', llm: 'LLM', oss: 'OSS', vl: 'VL',
+		ai: 'AI', it: 'IT', moe: 'MoE', openai: 'OpenAI', minimax: 'MiniMax' };
+
+	/// A model id read as its maker writes it, `displayName`'s last fallback when no catalogue
+	/// names it (D-20261018-09 §3): "z-ai/glm-5.3-flash" as "GLM 5.3 Flash". Fireworks' version spelling reads as the others
+	/// do (`v4p1` is V4.1), and a size keeps its unit ("70B"). The id stays in the hover, the
+	/// search text and the details; nothing stores this.
+	function tidyName(model) {
+		var s = String(model || '');
+		var leaf = s.slice(s.lastIndexOf('/') + 1).replace(/(\d)p(\d)/g, '$1.$2');
+		var out = [];
+		leaf.split(/[-_ ]+/).forEach(function (w) {
+			if (!w) return;
+			var lo = w.toLowerCase();
+			var nm = NAME_WORDS[lo] ? NAME_WORDS[lo]
+				: /^v?\d/.test(lo) ? lo.replace(/^v/, 'V').replace(/(\d)([bkm])$/, function (a, d, u) { return d + u.toUpperCase(); })
+				: /^[a-z]\d/.test(lo) ? lo.charAt(0).toUpperCase() + lo.slice(1)
+				: w.charAt(0).toUpperCase() + w.slice(1);
+			// GPT keeps its hyphen before the version: "GPT-5.2 Mini".
+			if (out.length && out[out.length - 1] === 'GPT' && /^\d/.test(nm)) out[out.length - 1] += '-' + nm;
+			else out.push(nm);
+		});
+		return out.join(' ') || s;
 	}
 
 	// ── The default, and resolving a chat's model ───────────────────
@@ -2523,8 +2627,10 @@
 			var priced = !!r && typeof r.in === 'number' && typeof r.out === 'number';
 			var sighted = !!r && typeof r.sees === 'boolean';
 			var levelled = !!r && Array.isArray(r.efforts) && r.efforts.length > 0;
-			if (!priced && !sighted && !levelled) return;
+			var named = !!r && typeof r.name === 'string' && r.name !== '';
+			if (!priced && !sighted && !levelled && !named) return;
 			var row = priced ? { in: r.in, out: r.out } : {};
+			if (named) row.name = r.name;
 			if (priced && typeof r.cached === 'number') row.cached = r.cached;
 			if (priced && typeof r.ctx    === 'number') row.ctx    = r.ctx;
 			if (priced && typeof r.img    === 'number') row.img    = r.img;
@@ -2593,6 +2699,10 @@
 			}
 			out.providers[id] = row;
 		});
+		// The money pools' top-up marks (D-20261020-13), so two devices draw one level. Sent
+		// only once there is one, so a store with none sends the bytes it always did.
+		var marks = window.DaimondMoney ? DaimondMoney.marksParcel(store.topups) : {};
+		if (Object.keys(marks).length) out.topups = marks;
 		return out;
 	}
 
@@ -2712,6 +2822,7 @@
 						mode:         c.mode === 'auto' ? 'auto' : 'manual',
 						remainingUsd: (typeof c.remainingUsd === 'number') ? c.remainingUsd : null,
 						asOf:         (typeof c.asOf === 'number') ? c.asOf : null,
+						binds:        c.binds || '',
 						baseUsd:      r.credit.baseUsd,
 						baseAt:       r.credit.baseAt,
 					};
@@ -2731,6 +2842,10 @@
 			store[slot + 'At']   = rAt;
 			updated++;
 		});
+		// Each pool's top-up mark on its own time, the later top-up winning. An old build's
+		// parcel has none, and changes nothing here.
+		if (remote.topups && typeof remote.topups === 'object' && window.DaimondMoney
+			&& DaimondMoney.marksMerge(store.topups = store.topups || {}, remote.topups)) updated++;
 		// Fill the gaps in the plaintext cache, never overwrite it.
 		if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) {
 			for (var i = 0; i < adopt.length; i++) {
@@ -2773,6 +2888,68 @@
 			if (!landed) throw window.DaimondStore.refusal(KEY);
 		}
 		return { added: added, updated: updated };
+	}
+
+	// ── Top-up marks (D-20261020-13) ────────────────────────────────
+	// The full height of each money pool: its balance right after the last top-up
+	// (D-20261015-14), `{ full, at }` synced in the parcel and `last`, this device's
+	// own last reading, kept beside it. Until this build the marks lived in this
+	// device's localStorage alone, so two devices drew two levels for one pool.
+
+	var CREDCYL = 'daimond-credcyl';		// the per-device copy this replaces
+	var credcylRead = false;
+
+	/// Take the per-device marks once, as a seed under the synced ones, and retire
+	/// them. A single own key's cylinder was keyed 'own'; it seeds that key's pool.
+	function seedTopups() {
+		if (credcylRead) return false;
+		credcylRead = true;
+		var old = null, seeded = false;
+		try { old = JSON.parse(localStorage.getItem(CREDCYL) || 'null'); } catch (e) { old = null; }
+		if (old && typeof old === 'object') {
+			var marks = store.topups = store.topups || {};
+			var own = Object.keys(store.providers).filter(function (id) { return id !== CREDITS && hasKey(id); });
+			Object.keys(old).forEach(function (k) {
+				var o = old[k];
+				var key = (k === 'own') ? (own.length === 1 ? own[0] : '') : k;
+				if (!key || marks[key] || !o || typeof o.peak !== 'number' || !isFinite(o.peak)) return;
+				marks[key] = { full: o.peak, at: 0, last: (typeof o.last === 'number') ? o.last : o.peak };
+				seeded = true;
+			});
+		}
+		try { localStorage.removeItem(CREDCYL); } catch (e) { /* it is simply read again */ }
+		return seeded;
+	}
+
+	/// Write the store without `onChange`. The marks are noted from a paint (the rail's
+	/// money rows and Balance cell), and `onChange` repaints the rail and nudges a sync
+	/// push: from inside a paint that is a nested repaint and a push per top-up seen,
+	/// which flipped verify_credits' rail row to "No credits account" mid-run. A mark is
+	/// not urgent; it travels in the next parcel, which the next turn's spend pushes.
+	function saveQuiet() {
+		takeDisk();
+		noteRunnable();
+		return window.DaimondStore.put(KEY, store, storeLaw);
+	}
+
+	/// The top-up marks by pool key, for `DaimondMoney.pools`.
+	function topups() {
+		if (seedTopups()) saveQuiet();
+		return copy(store.topups || {});
+	}
+
+	/// Keep each pool's mark as `DaimondMoney.pools` left it. Stored only when a
+	/// full height moved, which is once a top-up, so a repaint never writes.
+	function noteTopups(list) {
+		var marks = store.topups = store.topups || {}, moved = false;
+		(list || []).forEach(function (p) {
+			var m = p && p.key && p.mark;
+			if (!m || typeof m.full !== 'number') return;
+			var was = marks[p.key];
+			if (!was || was.full !== m.full || (+was.at || 0) !== (+m.at || 0)) moved = true;
+			marks[p.key] = { full: m.full, at: +m.at || 0, last: m.last };
+		});
+		if (moved) saveQuiet();
 	}
 
 	// ── The panel ───────────────────────────────────────────────────
@@ -2889,30 +3066,161 @@
 		return wrap;
 	}
 
-	/// The one control this model's OpenRouter routing gets: a text field on its own row,
-	/// under the model button, saved on `change` and read back from `DaimondModels.routing`
-	/// on every render -- so the field holds no state of its own and a stale tab cannot show a
-	/// preference the store has since lost. See `parseRouting` for the syntax the help line
-	/// describes.
-	function routingRow(providerId, model) {
-		var wrap = document.createElement('div');
-		wrap.className = 'models-routing';
-		var lab = document.createElement('label');
-		lab.className = 'models-routing-lab';
-		lab.appendChild(document.createTextNode(t('models.routing_label')));
-		var inp = document.createElement('input');
-		inp.type = 'text';
-		inp.className = 'models-routing-input';
-		inp.placeholder = t('models.routing_ph');
-		inp.value = routing(providerId, model);
-		inp.addEventListener('change', function () { setRouting(providerId, model, inp.value); });
-		lab.appendChild(inp);
-		wrap.appendChild(lab);
-		var help = document.createElement('div');
-		help.className = 'models-routing-help';
-		help.textContent = t('models.routing_help');
-		wrap.appendChild(help);
-		return wrap;
+	/// This model's OpenRouter routing, as rows of hosts (D-20261018-09 U5b): one row per host
+	/// measured for it (`DaimondHostSpeed.figures()`, D-20261020-10) with its first token, rate,
+	/// stalls and rounds, the host used last marked, a host the measurement is leaving out shown as
+	/// Avoided with the reason, and an Auto / Prefer / Avoid choice that writes the same stored text
+	/// the typed field did (`DaimondRoutingRows` holds the mapping; `parseRouting` reads it), so the
+	/// engine and an older build read it unchanged.  A stored value the rows cannot say is shown as
+	/// typed, with a Clear, never rewritten.  Drawn from the store on every render.  Appended to `box`;
+	/// the only place routing is drawn.
+	///
+	/// A disclosure per model: open from the start when the model has measured rounds or a stored
+	/// choice, otherwise closed until the person opens it, and kept as they left it (`routeOpen`).
+	/// Opening it asks OpenRouter which hosts serve that one model (`askHosts`, held by
+	/// `DaimondRoutingRows.hostCache`: 30 min, 64 models, in memory), so a model nobody has measured
+	/// still has hosts to Prefer or Avoid; closed rows ask nothing.
+	function routingFor(providerId, model, box) {
+		var RR   = window.DaimondRoutingRows;
+		var typed = routing(providerId, model);
+		var p    = parseRouting(typed);
+		var figs = window.DaimondHostSpeed ? window.DaimondHostSpeed.figures() : [];
+		var loc  = window.DaimondI18n && DaimondI18n.locale ? DaimondI18n.locale() : undefined;
+		var num  = function (v, dp) {
+			try { return Number(v).toLocaleString(loc, { maximumFractionDigits: dp || 0 }); }
+			catch (e) { return String(Math.round(v)); }
+		};
+		var el = function (tag, cls, text) {
+			var n = document.createElement(tag);
+			if (cls) n.className = cls;
+			if (text != null) n.textContent = text;
+			return n;
+		};
+		var write = function (q) { setRouting(providerId, model, RR.text(q)); render(); };
+		var k    = providerId + '\n' + model;
+		var disc = el('details', 'models-routing');
+		disc.dataset.routeKey = k;
+		disc.open = k in routeOpen ? routeOpen[k]
+			: !!typed || figs.some(function (f) { return f && f.model === model; });
+		disc.appendChild(el('summary', 'models-route-head', t('models.route_head')));
+		var wrap = el('div', 'models-route-body');
+		disc.appendChild(wrap);
+		box.appendChild(disc);
+		if (!RR) return;
+		var plain = RR.expressible(p);
+		var fill = function () {
+			wrap.textContent = '';
+			var got   = hostCache() ? hostCache().get(model) : null;
+			var rows  = RR.rows(plain ? p : { order: [], ignore: [], only: false }, figs, model, got ? got.hosts : []);
+			if (!rows.length && plain) wrap.appendChild(el('div', 'models-route-none',
+				t(got && got.state === 'busy' ? 'models.route_asking' : 'models.route_none')));
+			if (got && got.state === 'failed') wrap.appendChild(el('div', 'models-route-none', t('models.route_ask_failed')));
+			rows.forEach(function (r) {
+				var row = el('div', 'models-route-row');
+				row.dataset.host = r.host;
+				var top = el('div', 'models-route-top');
+				top.appendChild(el('span', 'models-route-host', r.host));
+				if (r.last) top.appendChild(el('span', 'models-route-last', t('models.route_last')));
+				row.appendChild(top);
+				if (r.fig) {
+					var f = r.fig, bits = [];
+					if (f.firstMs != null) bits.push(t('models.route_first', { s: num(f.firstMs / 1000, 1) }));
+					if (f.tps != null) bits.push(t('models.route_tps', { tps: num(f.tps) }));
+					var st = Math.round(f.stallShare * f.rounds);
+					if (st) bits.push(tn('models.route_stalls', st));
+					bits.push(tn('models.route_rounds', f.rounds));
+					row.appendChild(el('div', 'models-route-figs', bits.join(' · ')));
+					var why = RR.reason(r);
+					if (why && RR.avoided(r, p.only)) {
+						var v = why.vars, said =
+							  why.kind === 'stalls' ? tn('models.route_why_stalls', why.n, v)
+							: why.kind === 'behind' ? tn('models.route_why_behind', why.n, { tps: num(v.tps), best: num(v.best) })
+							: why.kind === 'wait'   ? tn('models.route_why_wait', why.n, v)
+							:                         tn('models.route_why_rate', why.n, { tps: num(v.tps) });
+						row.appendChild(el('div', 'models-route-why', said));
+					} else if (why && r.choice === 'prefer') {
+						row.appendChild(el('div', 'models-route-why kept', t('models.route_kept')));
+					}
+				} else {
+					row.appendChild(el('div', 'models-route-figs', t('models.route_none')));
+				}
+				if (plain) {
+					var said3 = { auto: t('models.route_auto'), prefer: t('models.route_prefer'), avoid: t('models.route_avoid') };
+					var seg = el('div', 'seg models-route-seg');
+					seg.setAttribute('role', 'group');
+					seg.setAttribute('aria-label', t('models.route_for', { host: r.host }));
+					['auto', 'prefer', 'avoid'].forEach(function (what) {
+						var b = el('button', 'models-route-btn', said3[what]);
+						b.type = 'button';
+						b.dataset.choice = what;
+						b.setAttribute('aria-pressed', r.choice === what ? 'true' : 'false');
+						b.addEventListener('click', function () {
+							if (r.choice !== what) write(RR.set(p, r.host, what));
+						});
+						seg.appendChild(b);
+					});
+					row.appendChild(seg);
+				}
+				wrap.appendChild(row);
+			});
+			if (plain && rows.length) {
+				var lab = el('label', 'models-route-only');
+				var cb  = el('input');
+				cb.type = 'checkbox';
+				cb.checked = p.only;
+				cb.disabled = !p.order.length;	// "only these" of nothing would refuse every host
+				cb.addEventListener('change', function () { write(RR.setOnly(p, cb.checked)); });
+				lab.appendChild(cb);
+				lab.appendChild(document.createTextNode(t('models.route_only')));
+				wrap.appendChild(lab);
+			}
+			if (!plain) {
+				var odd = el('div', 'models-route-odd');
+				odd.appendChild(el('span', 'models-route-typed', t('models.route_typed', { text: typed })));
+				var clr = el('button', 'models-route-clear', t('models.route_clear'));
+				clr.type = 'button';
+				clr.addEventListener('click', function () { setRouting(providerId, model, ''); render(); });
+				odd.appendChild(clr);
+				wrap.appendChild(odd);
+			}
+		};
+		disc._fill = fill;
+		var ask = function () {
+			var c = hostCache();
+			if (c) c.want(model, function () { return askHosts(providerId, model); }, function () {
+				// The answer lands after the draw: refill whichever copy of this detail is on screen now.
+				document.querySelectorAll('details.models-routing').forEach(function (d) {
+					if (d.dataset.routeKey === k && d.open && d._fill) d._fill();
+				});
+			});
+		};
+		disc.addEventListener('toggle', function () {
+			routeOpen[k] = disc.open;
+			if (disc.open) { ask(); fill(); }
+		});
+		if (disc.open) { ask(); fill(); }
+	}
+
+	var routeOpen = {};		// providerId + '\n' + model -> the person left its routing open (true) or shut
+	var routeHosts = null;
+
+	/// The one cache of OpenRouter's hosts per model; see `DaimondRoutingRows.hostCache` for its bounds.
+	function hostCache() {
+		if (!routeHosts && window.DaimondRoutingRows) routeHosts = window.DaimondRoutingRows.hostCache();
+		return routeHosts;
+	}
+
+	/// OpenRouter's list of the hosts serving `model`: GET `/models/{author}/{slug}/endpoints`.  A
+	/// public listing, so no key is sent.  A `:free`-style variant asks for its base model, whose
+	/// list includes the variant's hosts.  Throws on anything but a 2xx, so the cache records a
+	/// failure rather than an empty list.
+	async function askHosts(providerId, model) {
+		var url = providerUrl(providerId);
+		if (!url || !canProbeCredit(url)) throw new Error('not an OpenRouter endpoint');
+		var path = String(model).split(':')[0].split('/').map(encodeURIComponent).join('/');
+		var r = await fetch(siblingUrl(url, 'models/' + path + '/endpoints'));
+		if (!r.ok) throw new Error('HTTP ' + r.status);
+		return r.json();
 	}
 
 	/// The sentence that says what is left and how it is known.
@@ -3029,7 +3337,7 @@
 	/// left alone: its balance is the gateway's, not a probe's, and it has no age to carry.
 	function paintBal(bal, id, c) {
 		if (id === CREDITS) return;
-		if (c) DaimondI18n.fillPrices(bal, t('models.balance_left', { amount: usd(c.usd) }));
+		if (c) bal.textContent = t('models.balance_left', { amount: DaimondI18n.held(c.usd, 'USD') });
 		var words = ageSentence(id, c);
 		if (words) bal.setAttribute('title', words); else bal.removeAttribute('title');
 		if (words && creditStale(id, c)) bal.setAttribute('data-stale', '1');
@@ -3078,8 +3386,300 @@
 			return;
 		}
 
-		var d   = getDefault();
-		var dup = dupes();
+		// The top half, once there is a model to choose: one answer, its exceptions, the jobs.
+		if (list.some(function (p) { return p.count > 0; })) {
+			el.appendChild(everyoneBlock());
+			var exc = exceptBlock();
+			if (exc) el.appendChild(exc);
+			el.appendChild(jobsBlock());
+		}
+
+		renderProviders(el);
+
+		var d = getDefault();
+
+		var foot = document.createElement('div');
+		foot.className = 'models-default';
+		foot.textContent = d.provider && d.model
+			? t('models.starts_on', { model: providerName(d.provider) + ' · ' + d.model })
+			: t('models.no_default');
+		// The one model id worth copying without opening a provider first. It copies
+		// the BARE id, not the sentence around it: the sentence names the provider
+		// for a reader, and nothing takes it as input.
+		if (d.provider && d.model) {
+			var fc = copyBtn(tOr('copy.what_default_model', 'the default model id'), d.model);
+			if (fc) foot.appendChild(fc);
+		}
+		el.appendChild(foot);
+	}
+
+	// ── The Models view, top half (D-20261018-09 U3a) ───────────────
+	// *Everyone uses*, then *Except*, then *Jobs*, above the providers: one answer at the top and
+	// a short list of exceptions. The confirm and the Undo line are module state, not DOM: `render`
+	// redraws on every store change, and a confirm held only in the DOM went at the first pull.
+
+	var everyoneAsk  = null;	// { to }: a change waiting on Move Them Too or Keep Theirs
+	var everyoneDone = null;	// { undo, to } after a change; { kept } after its Undo
+
+	var JOB_ROLES = ['workers', 'images', 'drafting', 'summarising'];
+
+	function elt(tag, cls, text) {
+		var n = document.createElement(tag);
+		if (cls) n.className = cls;
+		if (text != null) n.textContent = text;
+		return n;
+	}
+
+	/// A list of names as the reader's language joins them ("Daimond and Email").
+	function joinNames(names) {
+		try { return new Intl.ListFormat(window.DaimondI18n ? DaimondI18n.locale() : 'en',
+			{ style: 'long', type: 'conjunction' }).format(names); }
+		catch (e) { return names.join(', '); }
+	}
+
+	/// "4 daimons and 2 chats", leaving out a kind there is none of.
+	function countWhat(daimons, chats) {
+		var parts = [];
+		if (daimons) parts.push(DaimondI18n.tn('models.n_daimons', daimons));
+		if (chats)   parts.push(DaimondI18n.tn('models.n_chats', chats));
+		return joinNames(parts);
+	}
+
+	/// What one typical turn on `pair` costs: under a US cent in tenths of a cent ("0.2¢"),
+	/// otherwise the money figure. '' with nothing to go on.
+	function turnCost(pair) {
+		var tt = (window.DaimondLedger && DaimondLedger.typicalTurn && pair.model)
+			? DaimondLedger.typicalTurn(pair.provider, pair.model) : null;
+		if (!tt || !isFinite(tt.usd) || tt.usd < 0) return '';
+		if (DaimondI18n.currency() === 'USD' && tt.usd > 0 && tt.usd < 0.01) {
+			var c = Math.max(tt.usd * 100, 0.1);
+			return new Intl.NumberFormat(DaimondI18n.locale(), { maximumFractionDigits: 1, minimumFractionDigits: 1 })
+				.format(c) + '¢';
+		}
+		return DaimondI18n.money(tt.usd, 'fine');
+	}
+
+	/// The name a plan or an Undo gives one field's owner: a Diamond or chat by its name, a
+	/// Jobs pick by its job, the default as "The default". Nameless records go unnamed.
+	function ownerName(o) {
+		if (o.kind === 'default') return t('models.the_default');
+		if (o.kind === 'jobs')    return t('models.job_' + ((o.roles && o.roles[0]) || o.role || ''));
+		return o.name || '';
+	}
+
+	/// The named Diamonds and chats, `[{ target, name }]`.
+	function namedTargets() {
+		var list = (picks && typeof picks.list === 'function' && picks.list()) || [];
+		return list.filter(function (x) { return !!x.name; });
+	}
+
+	function secHead(text) { return elt('div', 'models-head', text); }
+
+	/// *Everyone uses*: the default as chosen, the turn it costs, and the confirm or Undo line.
+	function everyoneBlock() {
+		var box = elt('div', 'models-everyone');
+		box.appendChild(secHead(t('models.everyone_head')));
+		var st  = everyoneStanding();
+		var cur = everyoneAsk ? everyoneAsk.to : st.pick;
+
+		var sel = elt('select', 'settings-select models-everyone-sel');
+		box.appendChild(sel);
+		fillSelect(sel, cur.provider, cur.model);
+		picker(sel);
+		sel.addEventListener('change', function () {
+			var g = pick(sel);
+			everyoneDone = null;
+			if (!g.model || samePair(g, st.pick)) { everyoneAsk = null; render(); return; }
+			if (!planEveryone(g).own.length) {
+				everyoneAsk  = null;
+				everyoneDone = { undo: setEveryone(g, false), to: g };
+			} else {
+				everyoneAsk = { to: g };
+			}
+			render();
+		});
+
+		var cost = turnCost(cur);
+		if (cost) box.appendChild(elt('div', 'models-sub models-turn', t('models.turn_cost', { cost: cost })));
+		if (!st.here && !everyoneAsk) {
+			box.appendChild(elt('div', 'models-sub models-not-here', st.using.model
+				? t('models.everyone_not_here', { provider: st.missing, model: displayName(st.using.provider || '', st.using.model) })
+				: t('models.everyone_not_here_none', { provider: st.missing })));
+		}
+		if (everyoneAsk)  box.appendChild(askBox(everyoneAsk.to));
+		else if (everyoneDone) { var dl = doneLine(); if (dl) box.appendChild(dl); }
+		return box;
+	}
+
+	/// The inline confirm: what switches, who keeps their own, and the two answers.
+	function askBox(to) {
+		var plan = planEveryone(to);
+		var box  = elt('div', 'models-ask');
+		var n    = plan.follow.daimons + plan.follow.chats;
+		var says = [];
+		if (n) says.push(DaimondI18n.tn('models.everyone_switch', n,
+			{ what: countWhat(plan.follow.daimons, plan.follow.chats) }));
+		var names = plan.own.map(ownerName).filter(Boolean);
+		if (names.length) says.push(DaimondI18n.tn('models.everyone_own', names.length, { names: joinNames(names) }));
+		box.appendChild(elt('div', 'models-ask-text', says.join(' ')));
+		var row  = elt('div', 'models-ask-btns');
+		var move = elt('button', 'models-move', t('models.move_them_too'));
+		var keep = elt('button', 'models-keep', t('models.keep_theirs'));
+		move.type = keep.type = 'button';
+		var go = function (all) {
+			everyoneAsk  = null;
+			everyoneDone = { undo: setEveryone(to, all), to: to };
+			render();
+		};
+		move.addEventListener('click', function () { go(true); });
+		keep.addEventListener('click', function () { go(false); });
+		row.appendChild(move);
+		row.appendChild(keep);
+		box.appendChild(row);
+		return box;
+	}
+
+	/// The line after a change, with its Undo, or after the Undo, what it put back.
+	function doneLine() {
+		var box = elt('div', 'models-done');
+		if (everyoneDone.kept) {
+			var kept = everyoneDone.kept.map(ownerName).filter(Boolean);
+			box.appendChild(elt('span', 'models-done-text', kept.length
+				? DaimondI18n.tn('models.everyone_kept_other', kept.length, { names: joinNames(kept) })
+				: t('models.everyone_undone')));
+			return box;
+		}
+		var to = everyoneDone.to;
+		// A newer choice of the default, here or arriving, ends the offer.
+		if (!samePair(store.def, to)) { everyoneDone = null; return null; }
+		var on = { daimons: 0, chats: 0 }, all = { daimons: 0, chats: 0 }, off = [];
+		namedTargets().forEach(function (x) {
+			var k = x.target.kind === 'chat' ? 'chats' : 'daimons';
+			all[k]++;
+			if (samePair(effective(x.target, 'daimon'), to)) on[k]++;
+			else off.push(x.name);
+		});
+		var model = displayName(to.provider, to.model), text;
+		if (!off.length) {
+			text = t('models.everyone_all', { what: countWhat(all.daimons, all.chats), model: model });
+		} else {
+			var n = on.daimons + on.chats;
+			text = (n ? DaimondI18n.tn('models.everyone_some', n, { what: countWhat(on.daimons, on.chats), model: model }) + ' ' : '')
+				+ DaimondI18n.tn('models.everyone_kept_own', off.length, { names: joinNames(off) });
+		}
+		box.appendChild(elt('span', 'models-done-text', text));
+		var undo = elt('button', 'models-undo', t('models.undo'));
+		undo.type = 'button';
+		undo.addEventListener('click', function () {
+			var rec = everyoneDone && everyoneDone.undo;
+			everyoneDone = { kept: undoEveryone(rec).kept };
+			render();
+		});
+		box.appendChild(undo);
+		return box;
+	}
+
+	/// *Except*: each named Diamond or chat whose model is its own, or with a job of its own.
+	/// Null when there are none, so the section is not drawn.
+	function exceptBlock() {
+		var def  = pairOf(store.def);
+		var rows = namedTargets().filter(function (x) {
+			var own = ownPicks(x.target);
+			return (own.daimon.model && !isPick(own.daimon, def)) || !!own.workers.model || !!own.images.model;
+		});
+		if (!rows.length) return null;
+		var box = elt('div', 'models-except');
+		box.appendChild(secHead(t('models.except_head')));
+		rows.forEach(function (x) { box.appendChild(exceptRow(x, def)); });
+		return box;
+	}
+
+	function exceptRow(x, def) {
+		var own = ownPicks(x.target);
+		var row = elt('div', 'models-exc');
+		row.dataset.kind = x.target.kind;
+		var top = elt('div', 'models-exc-top');
+		top.appendChild(elt('span', 'models-exc-name', x.name));
+		var sel = elt('select', 'models-exc-sel');
+		sel.title = t('models.change_row', { name: x.name });
+		top.appendChild(sel);
+		row.appendChild(top);
+		fillSelect(sel, own.daimon.provider, own.daimon.model);
+		var first = elt('option', '', t('models.default_named', { model: def.model ? displayName(def.provider, def.model) : '—' }));
+		first.value = '';
+		sel.insertBefore(first, sel.firstChild);
+		if (!own.daimon.model) first.selected = true;
+		picker(sel);
+		// "Default" or the default itself clears the pick: the row follows from then on.
+		sel.addEventListener('change', function () {
+			var g = pick(sel);
+			if (!picks || typeof picks.set !== 'function') return;
+			picks.set(x.target, 'daimon', (!g.model || isPick(g, pairOf(store.def))) ? null : g);
+			if (typeof picks.settle === 'function') picks.settle();
+			render();
+		});
+		var sub = [];
+		var run = effective(x.target, 'daimon');
+		if (run.provider && run.provider !== def.provider) sub.push(t('models.through', { provider: providerName(run.provider) }));
+		if (own.workers.model) sub.push(t('models.job_pin', { job: t('models.job_workers'), model: displayName(own.workers.provider, own.workers.model) }));
+		if (own.images.model)  sub.push(t('models.job_pin', { job: t('models.job_images'),  model: displayName(own.images.provider, own.images.model) }));
+		if (sub.length) row.appendChild(elt('div', 'models-sub models-exc-sub', sub.join(' · ')));
+		return row;
+	}
+
+	/// *Jobs*: Workers, Images, Drafting and Summarising, each "Same as daimon" unless set.
+	function jobsBlock() {
+		var box = elt('div', 'models-jobs');
+		box.appendChild(secHead(t('models.jobs_head')));
+		JOB_ROLES.forEach(function (role) {
+			var cur = JOB_SLOT[role] ? pairOf(store[JOB_SLOT[role]])
+				: pairOf(picks && typeof picks.summarising === 'function' && picks.summarising());
+			var lab = elt('label', 'models-job');
+			lab.appendChild(elt('span', 'models-job-lab', t('models.job_' + role)));
+			if (role === 'drafting') lab.title = t('models.drafting_help');
+			var sel = elt('select', 'settings-select models-job-sel');
+			sel.dataset.job = role;
+			lab.appendChild(sel);
+			box.appendChild(lab);
+			fillSelect(sel, cur.provider, cur.model);
+			var same = elt('option', '', t('models.same_as_daimon'));
+			same.value = '';
+			sel.insertBefore(same, sel.firstChild);
+			if (!cur.model) same.selected = true;
+			picker(sel);
+			sel.addEventListener('change', function () {
+				var g = pick(sel);
+				if (JOB_SLOT[role]) setJob(role, g.provider, g.model);
+				else if (picks && typeof picks.set === 'function') {
+					picks.set({ kind: 'jobs' }, 'summarising', g.model ? g : null);
+					if (typeof picks.settle === 'function') picks.settle();
+				}
+				render();
+			});
+		});
+		return box;
+	}
+
+	/// The figure a provider's head shows: what is left, in the currency it is held in
+	/// ("US$18.40 left", "A$12.60 left"), or '' when nothing knows. An own key's figure is
+	/// `p.credit`, the binding number (the smaller of the key's cap and the account's credit);
+	/// the credits row's is the gateway's, in the account's currency.
+	function headBalance(p) {
+		if (p.minted) {
+			return credits.state === 'ready' && typeof credits.bal === 'number'
+				? t('models.balance_left', { amount: DaimondI18n.held(credits.bal / 100, credits.cur) }) : '';
+		}
+		var c = p.credit;
+		return c ? t('models.balance_left', { amount: DaimondI18n.held(c.usd, 'USD') }) : '';
+	}
+
+	/// The provider rows, one per key, drawn into `box`: each head holds the name and the
+	/// balance and nothing else (D-20261018-09 U5a). Opened, a row holds the key, the balance
+	/// and its check, "What is on this key now", the catalogue refresh, its models and Remove.
+	function renderProviders(box) {
+		var list = providers();
+		var d    = getDefault();
+		var cat  = catalogue();
 		list.forEach(function (p) {
 			var row = document.createElement('div');
 			row.className = 'models-prov' + (p.paid ? ' paid' : '');
@@ -3090,30 +3690,18 @@
 			var head = document.createElement('button');
 			head.className = 'models-prov-head';
 			head.setAttribute('aria-expanded', open[p.id] ? 'true' : 'false');	// draws the caret
-			// The name, the balance and the host are three units, each kept whole: the rail is
-			// narrow enough that all three will not fit on one line, and a line broken through
-			// "$8.40 left" leaves a number on one row and its meaning on the next.
-			var key = keyLabel(p);
+			var bal = headBalance(p);
 			head.innerHTML =
 				  '<span class="models-caret" aria-hidden="true"></span>'
-				+ '<span class="models-prov-name">'
-				+   '<span class="models-nm">' + esc(p.name) + '</span>'
-				+   (p.balance ? '<span class="models-bal">'
-						+ DaimondI18n.pricesHtml(t('models.balance_left', { amount: p.balance }), esc) + '</span>' : '')
-				+   (p.via ? '<span class="models-via">'
-						+ esc(t('models.via', { provider: p.via })) + '</span>' : '')
-				+ '</span>'
-				+ '<span class="models-prov-key ' + key[0] + '">' + esc(key[1]) + '</span>'
-				+ '<span class="models-prov-count">' + esc(tn('models.count', p.count)) + '</span>';
+				+ '<span class="models-prov-name">' + esc(p.name) + '</span>'
+				+ (bal ? '<span class="models-bal">' + esc(bal) + '</span>' : '');
 			head.title = p.paid
 				? t('models.row_paid_help', { provider: p.via || t('models.the_provider') })
 				: t('models.row_own_help', { provider: p.name });
 			head.addEventListener('click', function () { open[p.id] = !open[p.id]; render(); });
-			// How old the figure on the head is, for somebody who has not opened the row. The
-			// full account lives in the block below; this is the one fact that cannot wait for a
-			// click, because a number with no age cannot tell you it has stopped moving.
-			var bal = head.querySelector('.models-bal');
-			if (bal) paintBal(bal, p.id, p.credit);
+			// How old the figure is rides the hover, and the stale colour the figure itself.
+			var balEl = head.querySelector('.models-bal');
+			if (balEl) paintBal(balEl, p.id, p.credit);
 			row.appendChild(head);
 
 			if (open[p.id]) {
@@ -3125,6 +3713,8 @@
 				// which is better advice than anything this file knows to give. So it is shown,
 				// rather than flattened into the row's one-word state and thrown away.
 				if (p.paid && p.why) body.appendChild(html('<div class="models-why">' + esc(p.why) + '</div>'));
+				// Whose machine the credits row's words land on, said once, inside the row.
+				if (p.via) body.appendChild(html('<div class="models-via">' + esc(t('models.via', { provider: p.via })) + '</div>'));
 
 				// Out of credits is not an error to read, it is a thing to do: the row says so, and
 				// then offers the doing of it. Nothing else in the panel can be fixed with a button.
@@ -3136,6 +3726,8 @@
 					body.appendChild(top);
 				}
 
+				body.appendChild(keyBlock(p));
+
 				// What is left on this key, and where that figure came from. A row that
 				// shows a balance without saying how it knows is asking to be trusted
 				// about money; a row that shows nothing when it cannot know is the same
@@ -3144,21 +3736,15 @@
 
 				// A catalogue is asked for, never delivered: a provider that answered once
 				// can answer again, and a model released this morning appears on nobody's
-				// screen until somebody asks. This used to be drawn only for a provider
-				// listing NOTHING, so the one user who needed a new model had to call
-				// `DaimondModels.fetchModels` from the browser console — the app had built
-				// the route and then shown it to nobody.
-				//
-				// The minted row is the exception, and only that one: it re-asks itself
-				// after every mint, and Top up above is the single deliberate thing to do
-				// on it. A second button there would offer work that has already happened.
+				// screen until somebody asks. The minted row is the exception: it re-asks
+				// itself after every mint, and Top up above is its single deliberate thing.
 				if (!p.minted) {
 					var refetch = document.createElement('button');
 					refetch.className = 'models-refetch';
 					// The LABEL carries the state; the button's existence never does. A
 					// control that is simply absent is indistinguishable from one that is
-					// working, which is how the defect above survived — so a row that
-					// cannot ask yet still draws the button, disabled, saying why.
+					// working, so a row that cannot ask yet still draws the button, disabled,
+					// saying why.
 					refetch.textContent = !p.hasKey ? t('models.add_key_first')
 						: p.count ? t('models.ask_provider_again')
 						: t('models.ask_provider');
@@ -3167,9 +3753,8 @@
 						refetch.disabled = true;
 						refetch.textContent = t('models.asking');
 						note('');                  // this ask answers for itself
-						// The provider's own words. A key that has been revoked, a base URL
-						// with a typo in it and a rate limit all fail differently, and only
-						// the provider knows which.
+						// The provider's own words: a revoked key, a typo in a base URL and a
+						// rate limit all fail differently, and only the provider knows which.
 						try { await fetchModels(p.id); }
 						catch (e) { note(e && e.message ? e.message : String(e)); }
 						render();
@@ -3177,12 +3762,6 @@
 					body.appendChild(refetch);
 
 					// When the list was last asked for, under the button that asks again.
-					// A date and not the `age_*` family: the credit block a few lines above
-					// already says "Checked twenty minutes ago" about a BALANCE, and two
-					// sentences of that shape in one row read as one fact repeated rather
-					// than two facts of different kinds. No stale colour either — a
-					// catalogue does not move the way a balance does, and a red one here
-					// would teach the eye to skip the red that means something.
 					var age = document.createElement('div');
 					age.className = 'models-list-age';
 					age.textContent = p.fetched
@@ -3191,19 +3770,13 @@
 					body.appendChild(age);
 				}
 
-				// Per-model OpenRouter routing, on the model's own row. Reuses
-				// `canProbeCredit`'s OpenRouter test rather than a second string match
-				// on the same host: `LlmClient::set_provider_routing` only ever sends
-				// this for an `openrouter.ai` endpoint (see `applyProviderRouting` in
-				// daimond.js), so a row that is not one would offer a control that does
-				// nothing.
+				// Per-model OpenRouter routing. `LlmClient::set_provider_routing` only ever sends
+				// it for an `openrouter.ai` endpoint, so another row would offer a dead control.
 				var isRoutable = canProbeCredit(p.url);
 
-				// A provider whose catalogue has not been fetched yet draws no model
-				// rows at all -- see `p.models.forEach` below -- so a routing preference
-				// set earlier (from the console, or from a catalogue that has since
-				// changed) would otherwise become invisible and unreachable. Surfaced
-				// here, collapsed, ONLY when there is something in it to show.
+				// A provider whose catalogue has not been fetched draws no model rows, so a
+				// routing preference set earlier would be unreachable. Surfaced here, collapsed,
+				// only when there is something in it.
 				if (isRoutable && !p.count) {
 					var known = Object.keys((store.providers[p.id] || {}).routing || {});
 					if (known.length) {
@@ -3212,47 +3785,20 @@
 						var sum = document.createElement('summary');
 						sum.textContent = t('models.routing_disclosure');
 						disc.appendChild(sum);
-						known.forEach(function (mm) { disc.appendChild(routingRow(p.id, mm)); });
+						known.forEach(function (mm) { routingFor(p.id, mm, disc); });
 						body.appendChild(disc);
 					}
 				}
 
-				p.models.forEach(function (m) {
-					var isDef = d.provider === p.id && d.model === m;
-					var twin  = !!dup[baseName(m)];
-					var mr = document.createElement('button');
-					mr.className = 'models-model' + (isDef ? ' on' : '');
-					// A model on the credits row is marked wherever it appears, because it is the one
-					// that moves money the user is holding here. A model with a twin on another row is
-					// marked too, on both rows: two identical names doing different things to a
-					// person's wallet is precisely the case a picker must not stay quiet about.
-					mr.innerHTML = '<span class="models-star">' + (isDef ? '★' : '☆') + '</span>'
-						+ '<span class="models-id">' + esc(m) + '</span>'
-						+ (p.paid ? '<span class="models-econ paid">' + esc(t('models.econ_credits')) + '</span>'
-							: twin ? '<span class="models-econ">' + esc(t('models.econ_own')) + '</span>' : '')
-						+ (isDef ? '<span class="models-def">' + esc(t('models.is_default')) + '</span>' : '');
-					mr.title = t(isDef ? 'models.model_is_default' : 'models.model_make_default') + '\n'
-						+ (p.paid ? t('models.model_paid', { provider: p.via || t('models.the_provider') })
-							: t('models.model_own', { provider: p.name }))
-						+ (twin ? '\n' + t('models.model_twin', { provider: p.name }) : '');
-					mr.addEventListener('click', function () { setDefault(p.id, m); render(); });
-					// A model id is a string people paste -- into a config, into a support
-					// message, into another provider's console -- and clicking the row here
-					// picks a default rather than selecting the text. The copy sits OUTSIDE
-					// the row, because the row is a button and a button cannot hold one.
-					// Named by the id itself: a long catalogue of buttons all called "Copy
-					// model id" tells a listener nothing about which model each one is.
-					var cb = copyBtn(tOr('copy.what_model', 'model id {id}', { id: m }), m);
-					if (cb) {
-						var mrow = document.createElement('div');
-						mrow.className = 'models-modelrow';
-						mrow.appendChild(mr);
-						mrow.appendChild(cb);
-						body.appendChild(mrow);
-					} else {
-						body.appendChild(mr);
-					}
-					if (isRoutable) body.appendChild(routingRow(p.id, m));
+				// One model, one row (D-20261018-09 §3): a model lives under its preferred payer,
+				// and each other provider that offers it is a line under it naming that payer.
+				// Which line is picked decides who is billed.
+				cat.forEach(function (e) {
+					if (e.offers[0].provider !== p.id) return;
+					e.offers.forEach(function (o, i) {
+						body.appendChild(modelRow(e, o, i > 0, d));
+						if (canProbeCredit(providerUrl(o.provider))) routingFor(o.provider, o.model, body);
+					});
 				});
 
 				// The credits row is not the user's to remove. It is their balance: taking it out of
@@ -3270,67 +3816,85 @@
 				}
 				row.appendChild(body);
 			}
-			el.appendChild(row);
+			box.appendChild(row);
 		});
-
-		var foot = document.createElement('div');
-		foot.className = 'models-default';
-		foot.textContent = d.provider && d.model
-			? t('models.starts_on', { model: providerName(d.provider) + ' · ' + d.model })
-			: t('models.no_default');
-		// The one model id worth copying without opening a provider first. It copies
-		// the BARE id, not the sentence around it: the sentence names the provider
-		// for a reader, and nothing takes it as input.
-		if (d.provider && d.model) {
-			var fc = copyBtn(tOr('copy.what_default_model', 'the default model id'), d.model);
-			if (fc) foot.appendChild(fc);
-		}
-		el.appendChild(foot);
-
-		// The drafting model, once there is at least one model to draft with. Below
-		// the default because it is a refinement of it: unset, it IS the default.
-		if (list.some(function (p) { return p.count > 0; })) el.appendChild(draftFoot(d));
 	}
 
-	/// The drafting-model row under the default: the model triage.js uses to turn
-	/// notes into proposals. One `<select>` whose first option is "same as chat" —
-	/// picking it clears the setting, so the row can always be put back to the
-	/// zero-config state it starts in — and everything below it is the ordinary model
-	/// list, so a drafting model is chosen exactly the way a chat's is.
-	function draftFoot(d) {
-		var box = document.createElement('div');
-		box.className = 'models-draft';
-		var dr = getDraft();
+	/// One offer of a catalogue entry as a row: the model's name in the text face (or, for
+	/// `alt`, another payer of the same model as "Through Fireworks AI"), its id in the hover
+	/// and the copy. Clicking it makes that offer the default.
+	function modelRow(e, o, alt, d) {
+		var pr    = store.providers[o.provider] || {};
+		var paid  = o.provider === CREDITS;
+		var isDef = d.provider === o.provider && d.model === o.model;
+		var via   = alt ? t('models.through', { provider: providerName(o.provider) })
+			: e.offers.length > 1 ? throughLine(o.provider, o.model) : '';
+		var mr = document.createElement('button');
+		mr.className = 'models-model' + (alt ? ' alt' : '') + (isDef ? ' on' : '');
+		mr.dataset.provider = o.provider;
+		mr.dataset.model    = o.model;
+		mr.innerHTML = '<span class="models-star">' + (isDef ? '★' : '☆') + '</span>'
+			+ '<span class="models-id">'
+			+   (alt ? '' : '<span class="models-nm">' + esc(e.name) + '</span>')
+			+   (via ? '<span class="models-through">' + esc(via) + '</span>' : '')
+			+ '</span>'
+			+ (isDef ? '<span class="models-def">' + esc(t('models.is_default')) + '</span>' : '');
+		mr.title = o.model + '\n'
+			+ t(isDef ? 'models.model_is_default' : 'models.model_make_default') + '\n'
+			+ (paid ? t('models.model_paid', { provider: credits.via || t('models.the_provider') })
+				: t('models.model_own', { provider: pr.name || providerName(o.provider) }));
+		mr.addEventListener('click', function () { setDefault(o.provider, o.model); render(); });
+		// The copy sits OUTSIDE the row, because the row is a button and a button cannot hold
+		// one. It copies the id, which is what a config or a support message wants.
+		var cb = copyBtn(tOr('copy.what_model', 'model id {id}', { id: o.model }), o.model);
+		if (!cb) return mr;
+		var mrow = document.createElement('div');
+		mrow.className = 'models-modelrow';
+		mrow.appendChild(mr);
+		mrow.appendChild(cb);
+		return mrow;
+	}
 
-		var lab = document.createElement('label');
-		lab.className = 'models-draft-lab';
-		lab.textContent = t('models.drafting_label');
-		lab.title = t('models.drafting_help');
-
-		var sel = document.createElement('select');
-		sel.className = 'models-draft-sel';
-		lab.appendChild(sel);
-		fillSelect(sel, dr.provider, dr.model);
-		// The sentinel first, and selected when nothing is set, so drafting reads as
-		// what it is -- the chat model, named rather than left blank.
-		var same = document.createElement('option');
-		same.value = '';
-		same.textContent = (d.provider && d.model)
-			? t('models.drafting_same_on', { model: d.model })
-			: t('models.drafting_same');
-		sel.insertBefore(same, sel.firstChild);
-		if (!dr.model) same.selected = true;
-		picker(sel);
-
-		// A sentinel value of '' clears the setting through `setDraft`, so choosing it
-		// is the one gesture that puts drafting back on the chat model.
-		sel.addEventListener('change', function () {
-			var g = pick(sel);
-			setDraft(g.provider, g.model);
+	/// What a provider's key is, inside its opened row, and the field that replaces it. The
+	/// credits row's key is minted, never his, so it says how the row stands instead.
+	function keyBlock(p) {
+		var wrap = document.createElement('div');
+		wrap.className = 'models-key';
+		var k = keyLabel(p);
+		if (k[1]) {
+			var st = document.createElement('div');
+			st.className = 'models-key-state';
+			st.innerHTML = (k[0] ? '<span class="' + k[0] + '" aria-hidden="true"></span>' : '') + esc(k[1]);
+			wrap.appendChild(st);
+		}
+		if (p.minted) return wrap;
+		var row = document.createElement('div');
+		row.className = 'models-key-form';
+		var input = document.createElement('input');
+		input.type = 'password';
+		input.className = 'models-key-input';
+		input.autocomplete = 'off';
+		input.placeholder = t(p.hasKey ? 'models.key_replace_ph' : 'models.key_add_ph');
+		input.setAttribute('aria-label', t('models.key_label', { provider: p.name }));
+		var set = document.createElement('button');
+		set.type = 'button';
+		set.className = 'models-refetch';
+		set.textContent = t('models.key_save');
+		var commit = async function () {
+			var v = String(input.value || '').trim();
+			if (!v) { note(t('models.key_empty')); return; }
+			note('');
+			await setKey(p.id, v);
 			render();
+		};
+		set.addEventListener('click', commit);
+		input.addEventListener('keydown', function (ev) {
+			if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
 		});
-		box.appendChild(lab);
-		return box;
+		row.appendChild(input);
+		row.appendChild(set);
+		wrap.appendChild(row);
+		return wrap;
 	}
 
 	/// The panel's one message line.
@@ -3450,7 +4014,7 @@
 			.map(function (k) { return { provider: live[k].p, model: live[k].m }; });
 	}
 
-	function fillSelect(sel, provider, model) {
+	function fillSelect(sel, provider, model, opts) {
 		sel.innerHTML = '';
 		var list = providers().filter(function (p) { return p.count > 0; });
 
@@ -3465,7 +4029,13 @@
 		sel.disabled = false;
 
 		var d   = getDefault();
-		var dup = dupes();
+		var cat = catalogue();
+		var byId = {};
+		list.forEach(function (p) { byId[p.id] = p; });
+		var twins = {};	// offers of a model another provider also offers
+		cat.forEach(function (e) {
+			if (e.offers.length > 1) e.offers.forEach(function (o) { twins[useKey(o.provider, o.model)] = 1; });
+		});
 
 		/// One option, wherever it is drawn. The favourites group holds a SECOND
 		/// element for the same model, and the two must carry the same meaning — a
@@ -3477,16 +4047,23 @@
 		/// under "Favourites" that heading is gone, so reproducing only the row's
 		/// own text would LOSE information — and two providers offering the same
 		/// model under the user's own key would then draw two identical shortcuts.
-		function optionFor(p, m, inFav) {
-			var twin = !!dup[baseName(m)];
+		///
+		/// A twin's other payers are rows of their own under the first ("Through Fireworks
+		/// AI", `alt`): picking one is picking who is billed, so each stays selectable, but
+		/// the model's name is drawn once. The id is in the title and the search, not the text.
+		function optionFor(p, m, inFav, alt) {
+			var name = displayName(p.id, m);
 			var o = document.createElement('option');
 			o.value = m;
 			o.dataset.provider = p.id;
 			o.dataset.pname    = p.name;
 			o.dataset.paid     = p.paid ? '1' : '';
-			o.textContent = m
-				+ (p.paid ? ' · ' + t('models.econ_credits') : twin ? ' · ' + t('models.econ_own') : '')
-				+ (inFav ? ' · ' + p.name : '')
+			o.dataset.name     = name;
+			o.dataset.via      = alt ? '' : throughLine(p.id, m);
+			if (alt) o.dataset.alt = '1';
+			o.textContent = (alt ? t('models.through', { provider: p.name }) : name)
+				+ (p.paid ? ' · ' + t('models.econ_credits') : '')
+				+ (inFav || (!alt && twins[useKey(p.id, m)]) ? ' · ' + p.name : '')
 				+ (d.provider === p.id && d.model === m ? '  ★' : '');
 			o.title = p.name + ' · ' + m + ' — '
 				+ (p.paid ? t('models.model_paid', { provider: p.via || t('models.the_provider') })
@@ -3526,8 +4103,15 @@
 						? 'models.top_up_to_use' : 'models.connecting') + ')')
 				: p.name + (p.sealed ? ' (' + t('models.sealed_unlock') + ')'
 					: p.hasKey ? '' : ' (' + t('models.no_key') + ')');
-			p.models.forEach(function (m) { g.appendChild(optionFor(p, m)); });
-			sel.appendChild(g);
+			// Each model once, under the group of its preferred payer, its twins' payers after it.
+			cat.forEach(function (e) {
+				if (e.offers[0].provider !== p.id) return;
+				g.appendChild(optionFor(p, e.offers[0].model));
+				e.offers.slice(1).forEach(function (x) {
+					if (byId[x.provider]) g.appendChild(optionFor(byId[x.provider], x.model, false, true));
+				});
+			});
+			if (g.children.length) sel.appendChild(g);
 		});
 
 		// Select what was asked for. A model that was asked for and is not offered (its provider
@@ -3541,7 +4125,9 @@
 				kept.value            = model;
 				kept.dataset.provider = provider || '';
 				kept.dataset.kept     = '1';
-				kept.textContent      = model + ' · ' + t('models.not_offered');
+				kept.dataset.name     = displayName(provider, model);
+				kept.textContent      = kept.dataset.name + ' · ' + t('models.not_offered');
+				kept.title            = model;
 				sel.insertBefore(kept, sel.firstChild);
 				kept.selected = true;
 			}
@@ -3599,7 +4185,7 @@
 
 	/// What a row is found by: the words shown, the model id, and the provider's id and name.
 	function mpHay(o) {
-		return (o.textContent + ' ' + o.value + ' ' + (o.dataset.provider || '') + ' '
+		return (o.textContent + ' ' + (o.dataset.name || '') + ' ' + o.value + ' ' + (o.dataset.provider || '') + ' '
 			+ (o.dataset.pname || '')).toLowerCase();
 	}
 
@@ -3747,13 +4333,19 @@
 				if (o.title) el.title = o.title;
 				var main = document.createElement('span');
 				main.className = 'mp-main';
-				main.textContent = o.textContent.trim();
+				// A flat list has lost the row above an alt payer, so it names the model again.
+				var flatAlt = words.length && o.dataset.alt;
+				main.textContent = flatAlt ? o.dataset.name : o.textContent.trim();
+				if (o.dataset.alt && !words.length) el.classList.add('mp-alt');
 				el.appendChild(main);
-				// A flat list has lost the heading that said whose model this is.
-				if (words.length && (o.dataset.pname || o.disabled)) {
+				// "Through X" always; a flat list has also lost the heading that said whose model it is.
+				var via  = flatAlt ? t('models.through', { provider: o.dataset.pname || '' }) : (o.dataset.via || '');
+				var subT = via || (words.length ? (o.dataset.pname || '') : '');
+				if (o.disabled && reason) subT += (subT ? ' · ' : '') + reason;
+				if (subT && (via || words.length)) {
 					var sub = document.createElement('span');
 					sub.className = 'mp-sub';
-					sub.textContent = (o.dataset.pname || '') + (o.disabled && reason ? ' · ' + reason : '');
+					sub.textContent = subT;
 					el.appendChild(sub);
 				}
 				mpPop.appendChild(el);
@@ -4069,6 +4661,8 @@
 		noteUse:        noteUse,
 		favourites:     favourites,
 		fillSelect:     fillSelect,
+		// A model's display name, "GLM 5.3 Flash" for z-ai/glm-5.3-flash (U3a).
+		displayName:    displayName,
 		pick:           pick,
 		picker:         picker,
 		// Whether a picked model differs from the one in force, the new model's window,
@@ -4130,6 +4724,8 @@
 		listAsks:       function () { return JSON.parse(JSON.stringify(lists)); },
 		setCreditBase:  setCreditBase,
 		creditFor:      creditFor,
+		topups:         topups,
+		noteTopups:     noteTopups,
 		all:            all,
 		count:          count,
 		getDefault:     getDefault,

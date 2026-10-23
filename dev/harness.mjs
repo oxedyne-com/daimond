@@ -42,6 +42,7 @@
 // Headless by default.  Pass { headed: true } for the extension flows, which
 // need real rendering — and run those under xvfb, never on the user's display.
 
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -439,6 +440,23 @@ function LOG_CHANGE_ASKS(tag) {
 	Object.defineProperty(window, 'DaimondDeletes', { configurable: true,
 		get: () => cur, set: (v) => { cur = trap(v); } });
 }
+
+/// Answer the page's UNBLOCK-26 change question, `DaimondDeletes.change(payload)`, with
+/// `word` ('apply', 'refused', 'unanswered', or an async function of the payload giving one),
+/// in place of the Pending tile. Every payload asked is kept in `window.__changeAsks`; the
+/// answer is `window.__changeAnswer`, so a later arm may change it in the page. Set it again
+/// after a reload.
+export const answerChanges = (page, word) => page.evaluate((w) => {
+	window.__changeAsks = window.__changeAsks || [];
+	if (w !== undefined) window.__changeAnswer = w;
+	window.DaimondDeletes = window.DaimondDeletes || {};
+	window.DaimondDeletes.change = async (raw) => {
+		const o = JSON.parse(raw);
+		window.__changeAsks.push(o);
+		const a = window.__changeAnswer;
+		return typeof a === 'function' ? await a(o) : a;
+	};
+}, word);
 
 export async function open(opts = {}) {
 	const {

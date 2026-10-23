@@ -256,6 +256,20 @@
 		return '≈' + intlMoney(v * RATE[ccy], ccy);
 	}
 
+	/// Money held -- a balance -- in the currency it is held in, always naming that currency:
+	/// "US$18.40", "A$12.60", "18,40 US$". A bare "$" would leave a person guessing which
+	/// dollars, so the US dollar takes its "US" wherever the locale writes only the sign.
+	function held(v, ccy) {
+		v = +v || 0;
+		ccy = String(ccy || 'usd').toUpperCase();
+		var s;
+		try {
+			s = v.toLocaleString(intlLocale(), { style: 'currency', currency: ccy,
+				minimumFractionDigits: decimalsOf(ccy), maximumFractionDigits: decimalsOf(ccy) });
+		} catch (e) { return ccy + ' ' + v.toFixed(2); }
+		return ccy === 'USD' ? s.replace(/(^|[^A-Za-z])\$/, '$1US$') : s;
+	}
+
 	/// A price the user will actually be CHARGED. Always says US dollars out
 	/// loud, and hangs the converted figure off it when there is one, because
 	/// the card statement will read in dollars whatever this panel shows.
@@ -914,6 +928,7 @@
 		money:        money,
 		moneyMinor:   moneyMinor,
 		billed:       billed,
+		held:         held,
 		billedMinor:  billedMinor,
 		price:        price,
 		priceMinor:   priceMinor,

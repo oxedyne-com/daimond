@@ -30,6 +30,7 @@
 //   node dev/verify_wordmark.mjs --selftest   # prove all four checks go red
 //
 // Needs a world: `bash dev/world.sh N --up` then `eval "$(bash dev/world.sh N --env)"`.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 delete process.env.DISPLAY;	// A forwarded DISPLAY means no compositor frames and every wait hangs.
 import os from 'node:os';
 import fs from 'node:fs';

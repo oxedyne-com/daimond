@@ -20,6 +20,7 @@
 // goes back to Send by the turn ending of its own accord cannot pass.
 //
 //   node dev/verify_stoppeer.mjs [--webkit]
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { pair, send, sendDesk, until, storedMsgs, placeholders, checker, settle, modelSaw } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 

@@ -217,7 +217,7 @@
 	.tagf-toggle { padding-top: 5px; padding-bottom: 5px; }
 	.tagf-pool .tag-chip,
 	.tagf-active .tag-chip,
-	.session-box-meta .tag-chip { padding-top: 3px; padding-bottom: 3px; }
+	.session-box-tags .tag-chip { padding-top: 3px; padding-bottom: 3px; }
 	.files-mode-btn { min-height: 24px; padding-top: 4px; padding-bottom: 4px; }
 	.tile-fold { padding-top: 5px; padding-bottom: 5px; }
 	/* The wordmark keeps its 20px ink and gains a 24px target around it. */

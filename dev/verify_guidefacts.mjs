@@ -38,6 +38,7 @@
 //   node dev/verify_guidefacts.mjs --prove    each check, against broken text
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777).
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

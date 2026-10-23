@@ -22,6 +22,7 @@
 
 	var KEY = 'daimond-ledger';					// localStorage key
 	var DAY_MS = 24 * 60 * 60 * 1000;		// one day in ms
+	var HOUR_MS = 60 * 60 * 1000;			// one hour in ms
 	var PRUNE_MS = 90 * DAY_MS;				// retain ~90 days
 	var WEEK_MS = 7 * DAY_MS;				// rolling week
 	var MONTH_MS = 30 * DAY_MS;				// rolling month
@@ -563,6 +564,24 @@
 		return since(entries, now - MONTH_MS);
 	}
 
+	/// What a turn typically costs on `model` (on `provider`'s key where given), for *Everyone
+	/// uses*: `{ usd, estimated }`, or null with no billed turn this month at all.
+	///
+	/// The median billed turn on that model this month. With none, his median turn's tokens
+	/// (prompt and completion, over every model) priced at that model's rate, `estimated` true:
+	/// what the same work would cost there. An entry from before turns named their provider
+	/// counts for any provider, as `perModel` counts it.
+	function typicalTurn(provider, model) {
+		var slice = periodSlice(reprice(load()), 'month', Date.now()).filter(function (e) { return !e.ol; });
+		if (!slice.length || !model) return null;
+		var own = slice.filter(function (e) { return e.m === model && (!provider || !e.pv || e.pv === provider); });
+		if (own.length) return { usd: median(own.map(function (e) { return e.u || 0; })), estimated: false };
+		if (!window.DaimondPricing) return null;
+		var p = median(slice.map(function (e) { return e.p || 0; }));
+		var c = median(slice.map(function (e) { return e.c || 0; }));
+		return { usd: window.DaimondPricing.priceFor(model, p, c, 0, provider).usd, estimated: true };
+	}
+
 	/// Per-model breakdown for a period. `period` is one of 'session',
 	/// 'week', 'month' (default 'month'). Returns an array of
 	/// `{ model, usd, tokens, prompt, completion, turns, reportedUsd,
@@ -666,6 +685,49 @@
 		return out;
 	}
 
+	/// Spend per hour, in US dollars, of the entries billed to `pv` (one provider
+	/// id or a list of them) in the window of `windowMs` ending at `now`: the sum
+	/// over the window divided by its whole length, so one turn followed by quiet
+	/// reads as that turn spread over the window, not as the burst's own pace.
+	/// The ledger merges every device's entries, so spend on another device moves
+	/// this figure once it has synced. `list` is the repriced log to read, when
+	/// the caller has it already; otherwise the store is read.
+	function rate(pv, windowMs, now, list) {
+		if (!(typeof windowMs === 'number' && windowMs > 0) || typeof now !== 'number' || !isFinite(now)) return 0;
+		var want = Array.isArray(pv) ? pv : [pv];
+		var from = now - windowMs, sum = 0;
+		var log = Array.isArray(list) ? list : reprice(load());
+		for (var i = 0; i < log.length; i++) {
+			var e = log[i];
+			if (!e || typeof e.t !== 'number' || e.t <= from || e.t > now) continue;
+			if (want.indexOf(e.pv || '') < 0) continue;
+			sum += e.u || 0;
+		}
+		return sum * (HOUR_MS / windowMs);
+	}
+
+	/// The pool's own history of rates: the spend billed to `pv` in each window of
+	/// `windowMs` over the `spanMs` ending at `now`, in US dollars per hour, one
+	/// figure per window that spent anything (an idle window says nothing about
+	/// how fast the pool runs), oldest first. Read from the synced ledger, so it is
+	/// the account's history, and it keeps nothing of its own: it is bounded by the
+	/// span asked for and by the ledger's own retention (`retentionMs`).
+	function rateHistory(pv, windowMs, spanMs, now, list) {
+		if (!(windowMs > 0) || !(spanMs > 0) || typeof now !== 'number' || !isFinite(now)) return [];
+		var want = Array.isArray(pv) ? pv : [pv];
+		var from = now - spanMs, by = {};
+		var log = Array.isArray(list) ? list : reprice(load());
+		for (var i = 0; i < log.length; i++) {
+			var e = log[i];
+			if (!e || typeof e.t !== 'number' || e.t <= from || e.t > now) continue;
+			if (want.indexOf(e.pv || '') < 0 || !(e.u > 0)) continue;
+			var k = Math.floor((now - e.t) / windowMs);
+			by[k] = (by[k] || 0) + e.u;
+		}
+		return Object.keys(by).map(Number).sort(function (a, b) { return b - a; })
+			.map(function (k) { return by[k] * (HOUR_MS / windowMs); });
+	}
+
 	/// What the one-time reprice changed inside a period:
 	/// `{ turns, usd, was }` over the entries it touched -- `usd` as they
 	/// price now, `was` as they were first guessed. `period` is 'session',
@@ -765,7 +827,10 @@
 		meter:       meter,
 		totals:      totals,
 		perModel:    perModel,
+		typicalTurn: typicalTurn,
 		perProvider: perProvider,
+		rate:        rate,
+		rateHistory: rateHistory,
 		repriced:    repriced,
 		series:      series,
 		samples:     samples,

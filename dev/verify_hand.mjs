@@ -23,6 +23,7 @@
 // Needs nothing else running, and takes the first free port from 8877 rather
 // than the dev server's, so it can be run beside one. Run it headed, under xvfb:
 //	xvfb-run -a -s "-screen 0 1400x900x24" node dev/verify_hand.mjs
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';

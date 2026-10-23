@@ -41,6 +41,7 @@
 // Headless, and it needs nothing running: no extension, no hand binary, no dev
 // server. `www/pkg` must be built, because the engine's own refusal is checked
 // through the real `pty_request`.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { port } from './ports.mjs';
 import fs from 'node:fs';
 import http from 'node:http';

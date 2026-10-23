@@ -21,6 +21,7 @@
 // is required to go red, then restored and required to go green. A check that has only ever
 // been seen passing has not been seen working.
 
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { port, WORLD } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';

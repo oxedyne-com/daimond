@@ -32,7 +32,7 @@
 //   eval "$(bash dev/world.sh 98 --up)"; node dev/verify_history_restore.mjs
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { open, scratch, errors, steerDiamond, pressRowMark, signInAs } from './harness.mjs';
+import { open, scratch, errors, steerDiamond, pressRowMark, signInAs, answerChanges } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -443,7 +443,10 @@ try {
 		await selectDiamond(page, name);
 		return { id, clipped };
 	};
+	// The write is to a file in his marked folder, which the app asks about first (UNBLOCK-26,
+	// r573): answered Apply, as the person who asked for it would, or the turn waits ten minutes.
 	const steerWrite = async (id, rel, content) => {
+		await answerChanges(page, 'apply');
 		await steer(s, `@tool file_write ${JSON.stringify({ path: rel, content })}`, 30000, true);
 		return (await rows(page, id))[0];
 	};

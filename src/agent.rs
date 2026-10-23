@@ -2211,6 +2211,9 @@ impl Agent {
                 ms:                   resp.ms,
                 prompt_tokens:        resp.prompt_tokens,
                 cached_tokens:        resp.cached_tokens,
+                completion_tokens:    resp.completion_tokens,
+                tok_ms:               resp.tok_ms,
+                gen_ms:               resp.gen_ms,
             });
             // The host this round leaves the conversation pinned to (r578 U3).
             session.pin = self.llm.settle_pin(&resp);

@@ -14,6 +14,7 @@
 //
 //   node dev/verify_style.mjs --break openfail   # a cell that cannot open still counts HARD
 //   node dev/verify_style.mjs                    # and then, clean
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { openCell as realOpenCell, defaultCells, VIEWS, cellLabel, enginesAvailable, resetView } from './matrix.mjs';
 
 const CONTRAST_HARD = 3.0;	// below this, text is effectively unreadable — a fail

@@ -11,8 +11,9 @@
 
    facts:
      hand          permission rung ('bypass' is the red one)
-     pots          [{ key, provider, what, label, minutes }] money pots
-                   with their runway in minutes (money.js), or null
+     pots          [{ key, provider, what, label, minutesDay }] money pools
+                   with their mileage in minutes at their own 24 h rate
+                   (money.js `pools`), or null when idle or unknown
      updateReady   a newer build is out (release.js `behind`)
      syncStalledMs how long sync has been stalled, in ms
      noModel       nothing can run
@@ -20,8 +21,10 @@
 (function (root) {
 	'use strict';
 
-	/// A pot with less runway than this raises a row. The design's figure was
-	/// "~20 h left": a day is when a top-up is worth doing now, not tomorrow.
+	/// A pool lasting less than this at its 24 h rate raises a row. The design's
+	/// figure was "~20 h left": a day is when a top-up is worth doing now, not
+	/// tomorrow. The day's rate, not the last minute's (D-20261020-13): one busy
+	/// minute projected over a day cried wolf at a $20 balance.
 	var MONEY_MINUTES = 24 * 60;
 	/// A stall shorter than this is a hiccup the next round clears.
 	var STALL_MS = 10 * 60e3;
@@ -37,11 +40,12 @@
 				vars: {}, act: 'guard', actKey: 'needs.act_guard', actFb: 'Guard' });
 		}
 		(f.pots || []).forEach(function (p) {
-			if (!p || typeof p.minutes !== 'number' || !isFinite(p.minutes)) return;
-			if (p.minutes >= MONEY_MINUTES) return;
+			var left = p && p.minutesDay;
+			if (typeof left !== 'number' || !isFinite(left)) return;
+			if (left >= MONEY_MINUTES) return;
 			var what = p.what || p.label || '';
-			var mins = p.minutes < 60;
-			var n = mins ? Math.max(1, Math.round(p.minutes)) : Math.round(p.minutes / 60);
+			var mins = left < 60;
+			var n = mins ? Math.max(1, Math.round(left)) : Math.round(left / 60);
 			out.push({ id: 'money:' + (p.key || what), tone: 'warn',
 				key: mins ? 'needs.money_mins' : 'needs.money_hours',
 				fb: mins ? '{what}: ~{n} min left' : '{what}: ~{n} h left',

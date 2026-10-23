@@ -21,6 +21,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). Run it headed, under xvfb:
 //	xvfb-run -a node dev/verify_ext_i18n.mjs
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { port } from './ports.mjs';
 import path from 'node:path';
 import os from 'node:os';

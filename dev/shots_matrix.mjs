@@ -5,6 +5,7 @@
 //
 // Pair with verify_style.mjs: that catches the mechanical faults (overflow,
 // contrast, tap size); these images catch the ones only an eye sees.
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

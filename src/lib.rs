@@ -57,6 +57,8 @@ pub mod fsname;
 /// The question a turn puts before it changes a file the person made, and what each answer
 /// means.  Target-agnostic; the asking edge is `wasm::deletes::ask_change`.
 pub mod held_change;
+/// How fast each host serves each model, and the hosts routing leaves out (D-20261020-10).
+pub mod hostspeed;
 pub mod llm;
 pub mod marks;
 /// The system prompt each kind of agent runs under, and the part of it a user

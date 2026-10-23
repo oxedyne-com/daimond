@@ -119,7 +119,8 @@ check('D1 no status fold chevron on a desktop', !A.toggle.drawn, `drawn=${A.togg
 check('D2 the calm line stays on screen, folded', A.summary.drawn, `h=${A.summary.h}`);
 check('D2 no diagnostic row in the rail', !A.detail.drawn || A.detailInSettings, `detail=${A.detail.h} inSettings=${A.detailInSettings}`);
 check('D11 1440 folded: the tally stays on screen', A.spend.drawn, `h=${A.spend.h}`);
-check('D11 1440: every tally figure is the price tag, no "≈" and no symbol', A.tally.n === 3 && A.tally.tags === 3 && !/[≈$€£¥]/.test(A.tally.text),
+// One figure since D-20261020-14 EV: the tally is Today alone (no Week or Month).
+check('D11 1440: every tally figure is the price tag, no "≈" and no symbol', A.tally.n === 1 && A.tally.tags === 1 && !/[≈$€£¥]/.test(A.tally.text),
 	`${A.tally.tags}/${A.tally.n} tags, "${A.tally.text}"`);
 check('D2 the identity row stays', A.idRow.drawn && A.userRow.drawn, `id=${A.idRow.h} userRow=${A.userRow.drawn}`);
 check('D2 the folded section is identity, exceptions, calm line and tally, nothing more', A.admin.drawn && A.admin.h <= A.idRow.h + A.needs.h + A.summary.h + A.spend.h + 20, `#admin=${A.admin.h}px id=${A.idRow.h} needs=${A.needs.h} calm=${A.summary.h} tally=${A.spend.h}`);
@@ -225,7 +226,7 @@ const hit = await p.evaluate((TOGGLE) => {
 	return { ok: n === total, n, total };
 }, TOGGLE);
 check('D9 phone: the toggle is drawn, the section shut by default, the calm line kept', F.toggle.drawn && F.expanded === false && F.summary.drawn, `toggle=${F.toggle.drawn} expanded=${F.expanded}`);
-check('D11 390 folded: the tally stays on screen, as price tags', F.spend.drawn && F.tally.tags === 3 && !/[≈$€£¥]/.test(F.tally.text), `drawn=${F.spend.drawn} ${F.tally.tags}/${F.tally.n} "${F.tally.text}"`);
+check('D11 390 folded: the tally stays on screen, as price tags', F.spend.drawn && F.tally.n === 1 && F.tally.tags === 1 && !/[≈$€£¥]/.test(F.tally.text), `drawn=${F.spend.drawn} ${F.tally.tags}/${F.tally.n} "${F.tally.text}"`);
 check('D11 390: the identity row and the tally are each at least 44px tall', F.idRow.h >= 44 && F.spend.h >= 44, `id=${F.idRow.h} tally=${F.spend.h}`);
 check('D9 phone: the toggle\'s tap area is at least 44px each way', hit.ok, JSON.stringify(hit));
 check('D9 phone: nothing in the identity row overlaps or overflows at 390', F.idOverflow <= 0 && F.userRow.right <= F.toggle.left + 1 + 8, `overflow=${F.idOverflow} userRow.right=${F.userRow.right} toggle.left=${F.toggle.left}`);

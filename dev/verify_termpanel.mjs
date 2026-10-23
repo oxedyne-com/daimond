@@ -930,11 +930,19 @@ try {
 		await installComposer();
 		await p.click('#panel-term [data-act="term-start"]', { force: true });
 		await sleep(300);
-		await p.evaluate(() => { try { DaimondAdmin.home(); } catch (e) { try { DaimondAdmin.status(); } catch (x) {} } });
+		// Both folder rows are in Settings -> Folders since D-20261018-09 U4, reached from
+		// a home row that is offered once the hand has offered a folder, as here.
+		const offered = await p.evaluate(() => {
+			try { DaimondAdmin.home(); } catch (e) { try { DaimondAdmin.status(); } catch (x) {} }
+			const b = document.getElementById('admin-open-folders');
+			if (b) b.click();
+			return !!b;
+		});
 		await sleep(200);
+		check('Settings home offers a Folders row once the hand offers a folder', offered);
 		const row = await p.evaluate(() => {
 			const sec  = document.getElementById('termroot-section');
-			const home = document.getElementById('admin-home');
+			const home = document.getElementById('admin-folders');
 			return {
 				shown:  !!sec && sec.style.display !== 'none',
 				inHome: !!(sec && home && home.contains(sec)),
@@ -999,7 +1007,7 @@ try {
 		// from the terminal's.
 		const grantRow = await p.evaluate(() => {
 			const sec  = document.getElementById('grantroot-section');
-			const home = document.getElementById('admin-home');
+			const home = document.getElementById('admin-folders');
 			return {
 				shown:  !!sec && sec.style.display !== 'none',
 				inHome: !!(sec && home && home.contains(sec)),

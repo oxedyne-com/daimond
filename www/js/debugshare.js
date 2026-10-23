@@ -1395,7 +1395,7 @@
 	/// holds host, prompt and cached tokens and the cache-hit rate is read off it alone.
 	function roundFeed() {
 		var seen = 0, held = null;
-		var use = { p: 0, ca: 0, prov: '' };	// the last round_meta's own figures
+		var use = { p: 0, ca: 0, o: 0, prov: '' };	// the last round_meta's own figures
 		function send() {
 			if (!held) return;
 			var row = held;
@@ -1407,9 +1407,10 @@
 				use = {
 					p:    Math.round(Number(ev && ev.p) || 0),
 					ca:   Math.round(Number(ev && ev.ca) || 0),
+					o:    Math.round(Number(ev && ev.o) || 0),	// output tokens (D-20261020-10)
 					prov: String((ev && ev.provider) || '').slice(0, 40),
 				};
-				return { p: use.p, ca: use.ca };
+				return { p: use.p, ca: use.ca, o: use.o };
 			},
 			add: function (p) {
 				if (!p || typeof p !== 'object') return;
@@ -1417,6 +1418,7 @@
 				if (p.ctx == null) p.ctx = use.p;
 				if (p.ca == null) p.ca = use.ca;
 				if (p.prov == null) p.prov = use.prov;
+				if (p.o == null) p.o = use.o;
 				seen += 1;
 				if (seen <= ROUND_EACH) { event('round', p); return; }
 				var ctx = Number(p.ctx) || 0;

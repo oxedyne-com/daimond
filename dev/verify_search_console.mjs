@@ -93,6 +93,7 @@
 // lane `gateway` registers them. That is reported rather than skipped: an
 // operator whose Search group has nothing in it is looking at the same absence.
 
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';

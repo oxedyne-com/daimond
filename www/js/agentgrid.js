@@ -234,41 +234,23 @@
 		return (pins || []).filter(function (id) { return have[id]; });
 	}
 
-	/// A pool's remembered full height, after one more reading of its balance.
-	///
-	/// A balance that ROSE was topped up, and the new reading is the full height
-	/// from then on; one that fell or held is being spent, and the full height
-	/// stands. The first reading ever is the full height, since it is the only
-	/// "right after" there is.
-	///
-	/// # Arguments
-	/// * `prev` - `{ peak, last }` as stored, or null.
-	/// * `usd` - The balance now.
-	function peakNext(prev, usd) {
-		if (typeof usd !== 'number' || !isFinite(usd)) return prev || null;
-		if (!prev || typeof prev.peak !== 'number' || typeof prev.last !== 'number') {
-			return { peak: usd, last: usd };
-		}
-		if (usd > prev.last) return { peak: usd, last: usd };
-		return { peak: prev.peak, last: usd };
-	}
-
 	/// The level, 0 to 1: the balance now over the full height.
 	function level(usd, peak) {
 		if (!(peak > 0) || !(usd > 0)) return 0;
 		return Math.min(1, usd / peak);
 	}
 
-	/// One cylinder, as SVG text. Every pool is drawn by this one call at one size,
-	/// so two cylinders differ only in their level and the `low` tint.
-	///
-	/// # Arguments
-	/// * `lvl` - 0 to 1.
-	/// * `low` - The pool runs out within a day at the present rate.
-	/// * `title` - What the cylinder says on hover; escaped here.
-	function cylinderSvg(lvl, low, title) {
-		var w = 14, h = 18, ry = 2.5, rx = w / 2 - 0.5;
-		var x0 = 0.5, x1 = w - 0.5, yt = ry + 0.5, yb = h - ry - 0.5;
+	// ── The rail's money pools, each an electric car (D-20261020-14) ──
+	// One row per pool: a battery for how full it is since its last top-up, a dial for
+	// how fast it is going (the 15-min mean), and the range left at that pace.
+
+	/// The battery, as SVG text: an upright cell with a terminal on its lid, filled to
+	/// `lvl` (0 to 1) of the pool's balance at its last top-up. `low` tints the charge
+	/// amber. Decorative: the row's own title and label say what it shows.
+	function batterySvg(lvl, low) {
+		var w = 13, h = 32, cap = 3;
+		var ry = w * 0.18, rx = w / 2 - 0.5;
+		var x0 = 0.5, x1 = w - 0.5, yt = cap + ry + 0.5, yb = h - ry - 0.5;
 		var l = Math.max(0, Math.min(1, Number(lvl) || 0)), yl = yb - l * (yb - yt);
 		var arc = function (sweep) { return 'A' + rx + ' ' + ry + ' 0 0 ' + sweep + ' '; };
 		var body = 'M' + x0 + ' ' + yt + 'L' + x0 + ' ' + yb + arc(0) + x1 + ' ' + yb +
@@ -278,48 +260,91 @@
 				'L' + x1 + ' ' + yl.toFixed(2) + 'Z"/>' +
 				'<ellipse class="liqtop" cx="' + w / 2 + '" cy="' + yl.toFixed(2) + '" rx="' + rx + '" ry="' + ry + '"/>'
 			: '';
-		var esc = String(title || '').replace(/[&<>"]/g, function (c) {
-			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-		});
-		return '<svg class="cyl' + (low ? ' low' : '') + '" width="' + w + '" height="' + h +
-			'" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc + '"><title>' + esc + '</title>' +
-			'<path class="glass" d="' + body + '"/>' + liq +
+		var cw = w * 0.36, c0 = (w - cw) / 2, cry = ry * 0.4, ct = yt - ry * 0.55;
+		var term = '<path class="term" d="M' + c0 + ' ' + ct.toFixed(2) + 'L' + c0 + ' ' + cap + 'A' + cw / 2 + ' ' + cry.toFixed(2) +
+			' 0 0 1 ' + (c0 + cw) + ' ' + cap + 'L' + (c0 + cw) + ' ' + ct.toFixed(2) + 'Z"/>';
+		return '<svg class="evb' + (low ? ' low' : '') + '" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h +
+			'" data-level="' + l.toFixed(4) + '" aria-hidden="true"><path class="glass" d="' + body + '"/>' + liq + term +
 			'<ellipse class="rim" cx="' + w / 2 + '" cy="' + yt + '" rx="' + rx + '" ry="' + ry + '"/></svg>';
 	}
 
+	function polar(cx, cy, r, a) { var t = a * Math.PI / 180; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; }
+	function arcPath(cx, cy, r, a0, a1) {
+		var s = polar(cx, cy, r, a0), e = polar(cx, cy, r, a1);
+		return 'M' + s[0].toFixed(2) + ' ' + s[1].toFixed(2) + 'A' + r + ' ' + r + ' 0 0 1 ' + e[0].toFixed(2) + ' ' + e[1].toFixed(2);
+	}
 
-	/// The rail's cylinders: one per money row with a balance (exact or estimated),
-	/// in the rows' own order. A row that only knows what was spent has no level to
-	/// draw. `store` is `{ key: { peak, last } }`, updated in place with `peakNext`
-	/// so the caller persists it; `low` is a runway of under a day.
-	function pools(moneyRows, store) {
-		store = store || {};
-		return (moneyRows || []).filter(function (r) {
-			return r && (r.kind === 'exact' || r.kind === 'estimate') && typeof r.usd === 'number';
-		}).map(function (r) {
-			var k = r.key || r.label;
-			store[k] = peakNext(store[k], r.usd);
-			return { key: k, label: r.label, usd: r.usd, kind: r.kind, row: r,
-				minutes: (typeof r.minutes === 'number') ? r.minutes : null,
-				level: level(r.usd, store[k].peak), peak: store[k].peak,
-				low: typeof r.minutes === 'number' && r.usd > 0 && r.minutes < 1440 };
+	/// The needle's angle in degrees, 180 (at rest, left) to 360 (full scale, right),
+	/// for `rate` against `scale`, both per hour in the pool's currency.
+	function needleAngle(rate, scale) {
+		if (!(rate > 0) || !(scale > 0)) return 180;
+		return 180 + Math.min(1, rate / scale) * 180;
+	}
+
+	/// The dial, as SVG text: a half circle in thirds (D-20261022-07), the lower third
+	/// uncoloured, the middle orange and the upper red, always shown whatever the pace,
+	/// like a rev counter's redline; the needle alone says the pace. The
+	/// needle stands at `angle` (`needleAngle`); `rest` greys it, for an idle pool.
+	function dialSvg(angle, rest) {
+		var w = 44, h = 24, sw = 2.5, cx = w / 2, cy = h - 2.5, r = w / 2 - sw / 2 - 0.5;
+		var an = Math.max(180, Math.min(360, Number(angle) || 180)), s = '';
+		[[180, 240], [240, 300], [300, 360]].forEach(function (b, i) {
+			s += '<path class="band b' + (i + 1) + '" d="' + arcPath(cx, cy, r, b[0], b[1]) + '" stroke-width="' + sw + '"/>';
 		});
+		for (var i = 0; i <= 4; i++) {
+			var ta = 180 + i * 45, ti = polar(cx, cy, r - sw / 2 - 1.5, ta), tt = polar(cx, cy, r - sw / 2 - (i % 2 ? 3.2 : 4.6), ta);
+			s += '<line class="tick" x1="' + ti[0].toFixed(2) + '" y1="' + ti[1].toFixed(2) + '" x2="' + tt[0].toFixed(2) + '" y2="' + tt[1].toFixed(2) + '"/>';
+		}
+		// A tapered needle: wide at the hub, a point at the tip, a short counterweight behind.
+		var tip = polar(cx, cy, r - sw / 2 - 2, an), nb = polar(cx, cy, 1.8, an + 90), nc = polar(cx, cy, 1.8, an - 90), bk = polar(cx, cy, 2.6, an + 180);
+		s += '<path class="ndl" d="M' + nb[0].toFixed(2) + ' ' + nb[1].toFixed(2) + 'L' + tip[0].toFixed(2) + ' ' + tip[1].toFixed(2) +
+			'L' + nc[0].toFixed(2) + ' ' + nc[1].toFixed(2) + 'L' + bk[0].toFixed(2) + ' ' + bk[1].toFixed(2) + 'Z"/>';
+		s += '<circle class="hub" cx="' + cx + '" cy="' + cy + '" r="2.2"/>';
+		return '<svg class="evd' + (rest ? ' rest' : '') + '" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h +
+			'" data-angle="' + an.toFixed(2) + '" aria-hidden="true">' + s + '</svg>';
 	}
 
-	/// The pool the runway line names: the first one running out within a day.
-	function runwayPool(list) {
-		return (list || []).filter(function (p) { return p.low; })[0] || null;
+	/// The range at the present pace in whole units: `{ n, unit }`, unit 'min', 'h' or
+	/// 'd', or null for an idle pool. Over 99 days reads as "99+ d".
+	function range(minutes) {
+		if (!(typeof minutes === 'number' && isFinite(minutes) && minutes >= 0)) return null;
+		if (minutes < 60)        return { n: String(Math.max(1, Math.round(minutes))), unit: 'min' };
+		if (minutes < 48 * 60)   return { n: String(Math.round(minutes / 60)), unit: 'h' };
+		if (minutes < 100 * 1440) return { n: String(Math.round(minutes / 1440)), unit: 'd' };
+		return { n: '99+', unit: 'd' };
 	}
 
-	/// Whole hours left, at least one.
-	function runwayHours(p) {
-		return Math.max(1, Math.round((p && p.minutes || 0) / 60));
+	/// The rail's pools: one per money pool (`DaimondMoney.pools`), in its own order,
+	/// with what the drawing needs. `low` (an amber charge) is under a tenth of a
+	/// charge, or a pool that lasts under a day at its 24 h rate, the rule the Status
+	/// row's Top Up follows, so a burst never tints a full battery. `short` (an amber
+	/// range) is under an hour at the 15-min pace.
+	function pools(moneyPools) {
+		return (moneyPools || []).filter(function (p) {
+			return p && typeof p.amount === 'number' && isFinite(p.amount);
+		}).map(function (p) {
+			var day = (typeof p.minutesDay === 'number') ? p.minutesDay : null;
+			var lv = level(p.amount, p.full);
+			var rate = (typeof p.rate15 === 'number' && isFinite(p.rate15)) ? p.rate15 : 0;
+			// Idle: nothing spent in the window, or a pace too slow to give a range. An
+			// empty pool that is still being spent is not idle: it has no range left.
+			var empty = !(p.amount > 0);
+			var idle = !(rate > 0) || (!empty && typeof p.minutes !== 'number');
+			return { key: p.key, label: p.label, amount: p.amount, currency: p.currency, pool: p,
+				level: lv, full: p.full, rate: rate, scale: p.scale, idle: idle,
+				angle: idle ? 180 : needleAngle(rate, p.scale),
+				range: idle ? null : empty ? { n: '0', unit: 'min' } : range(p.minutes),
+				low: lv < 0.1 || (day !== null && !empty && day < 1440),
+				short: !idle && (empty || p.minutes < 60) };
+		});
 	}
 
 	var api = {
 		pools:       pools,
-		runwayPool:  runwayPool,
-		runwayHours: runwayHours,
+		batterySvg:  batterySvg,
+		dialSvg:     dialSvg,
+		needleAngle: needleAngle,
+		range:       range,
 		stateOf:     stateOf,
 		originKey:   originKey,
 		rows:        rows,
@@ -331,9 +356,7 @@
 		threadOf:    threadOf,
 		togglePin:   togglePin,
 		prunePins:   prunePins,
-		peakNext:    peakNext,
 		level:       level,
-		cylinderSvg: cylinderSvg,
 	};
 	if (typeof window !== 'undefined') window.DaimondAgentGrid = api;
 	if (typeof module !== 'undefined' && module.exports) module.exports = api;

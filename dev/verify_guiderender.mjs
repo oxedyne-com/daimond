@@ -15,6 +15,7 @@
 //
 //   node dev/verify_guiderender.mjs --break wide   # expected to FAIL
 //   node dev/verify_guiderender.mjs                # and then, clean
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { guardRan } from './verdict.mjs';
 const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;

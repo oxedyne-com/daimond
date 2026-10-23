@@ -359,8 +359,10 @@ check('and it survives a reload', persisted === 8192, `stored maxOut=${persisted
 // nobody can find is not a setting.
 await p.evaluate(() => { document.getElementById('user-row')?.click(); });
 await p.waitForTimeout(400);
+// Settings -> Limits holds it since D-20261018-09 U4, opened from its home row.
 await p.evaluate(() => {
-	const row = document.querySelector('.astat-btn#astat-model') || document.getElementById('astat-model');
+	if (window.DaimondAdmin) window.DaimondAdmin.home();
+	const row = document.getElementById('admin-open-limits');
 	if (row) row.click();
 });
 await p.waitForTimeout(500);
@@ -376,7 +378,7 @@ const knob = await p.evaluate(() => {
 		note:    (note || {}).textContent || '',
 	};
 });
-check('the reply-length control is on screen in the Models panel',
+check('the reply-length control is on screen in Settings, Limits',
 	!!(knob && knob.visible), knob ? `value=${knob.value}` : 'not built');
 check('it offers Automatic and a ladder bounded by the model',
 	!!(knob && /Automatic/.test(knob.options[0]) && knob.options.length > 2),

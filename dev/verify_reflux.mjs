@@ -81,6 +81,7 @@
 // skips it outright unless `DAIMOND_REFLUX_PAID` is set; a daimon asking for it by
 // name gets the run.
 
+import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
