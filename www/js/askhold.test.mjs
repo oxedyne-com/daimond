@@ -60,7 +60,7 @@ function card(q) {
 function world() {
 	const W = { sent: [], steered: [], rendered: 0, unpinned: [], armed: null, out: new El('chat-output') };
 	const names = ['askClose', 'askMarkAnswered', 'askHolds', 'drainQueue', 'armAskIdleBound', 'askCurrent',
-		'askOpenIn', 'steerFromTrigger', 'judgeTriggeredTurn', 'followVerdicts'];
+		'askOpenIn', 'steerFromTrigger', 'triggerHandOff', 'steerTriggerHere', 'claimTimerFire', 'timerFireId', 'keepMailClaim', 'settleMailClaim', 'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
 	W.api = new Function('W', `
 		var ASK_CHOSE = 'Chose: ', ASK_OTHER = 'Other: ', ASK_SILENT_MAX_MS = 3600000, FOLLOW_MAX_MS = 20 * 60 * 1000;
@@ -81,6 +81,9 @@ function world() {
 		var currentDiamond = null;
 		function diamondBusy() { return false; }
 		function daimonChat(f) { return f.rec; }
+		function seatDrawnRunner() { return ''; }		// the switch draws Here: the trigger runs here (STEER-2)
+		function chatSeatHere() { return false; }
+		function selfDeviceId() { return ''; }		// no identity: a timer fires unclaimed
 		function offScreenSteerAllowed() { return true; }
 		async function selectDiamond(f) { currentDiamond = f; }
 		async function doSteer(text) { W.steered.push(text); return ''; }

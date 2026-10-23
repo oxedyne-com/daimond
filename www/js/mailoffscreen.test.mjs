@@ -52,7 +52,7 @@ function world(mailB) {
 	const W = { turns: [], selected: [], busy: new Set(), typed: '', mailB };
 	const A = { id: 'A', name: 'Work' }, B = { id: 'B', name: 'Email' };
 	W.A = A; W.B = B;
-	const body = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail',
+	const body = ['offScreenSteerAllowed', 'steerFromTrigger', 'triggerHandOff', 'steerTriggerHere', 'claimTimerFire', 'timerFireId', 'oweMail',
 		'mailMarkKey', 'mailClaimId', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'].map((n) => extractFn(APP, n)).join('\n');
 	const fire = extractMethod(APP, 'fire'), retry = extractMethod(APP, 'retryMail');
 	W.api = new Function('W', 'DaimondTriggers', `
@@ -66,6 +66,8 @@ function world(mailB) {
 		function diamondBusy(id) { return W.busy.has(id); }
 		function askOpenIn() { return false; }
 		function daimonChat(f) { return f; }
+		function seatDrawnRunner() { return ''; }		// the switch draws Here: the trigger runs here (STEER-2)
+		function chatSeatHere() { return false; }
 		function diamondCanRun() { return true; }
 		function proposeFromTurn() {}
 		// One device, no lease door: the claim (mailclaim.test.mjs) runs unclaimed here.

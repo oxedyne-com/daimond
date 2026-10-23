@@ -366,6 +366,9 @@
 			// Does the SENDER hold the autonomous posture? On the runner it answers this
 			// turn's permits in the sender's place; the runner's own posture never does.
 			auto:    o.auto === true,
+			// A MAIL TRIGGER'S TURN reports on the Pending panel alone (rulings §16): the runner
+			// steers it pending-only, as the device that fired it would have. false from an older sender.
+			pendingOnly: o.pendingOnly === true,
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -1599,7 +1602,7 @@
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
 					gone: gone, to: to, behind: behind, through: through, ids: ids,
-					auto: o.auto === true,
+					auto: o.auto === true, pendingOnly: o.pendingOnly === true,
 				});
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
@@ -3998,7 +4001,48 @@
 			try { _onLeaseChange(); } catch (err) { /* a redraw must never break a sync */ }
 		}
 		if (moved) leaseWatchFire();	// STOP-ON-PEER
+		armLeaseExpiry();
 		return moved;
+	}
+
+	/// THE LEASE VIEW'S CLOCK (D2-2, rc's review of STEER delta 2). A record turns vacant at its
+	/// `expiry`, and a settled tombstone (`settledLease`) stops counting at its death
+	/// (`deadLease`), as functions of TIME: no write marks either, so a crashed or sleeping
+	/// holder left every holder()-drawn view -- a lost row's "is doing this", the composer's
+	/// Stop, the seat switch, the dispatched footer -- standing for up to its whole deadline.
+	/// So the view keeps ONE timeout, re-armed on every write (`leaseWrite` is the only one), at
+	/// the earliest such moment still ahead; when it passes it announces through
+	/// `_onLeaseChange` and re-arms for the next. Nothing ahead, nothing armed. Measured on
+	/// `authorityNow`, the clock `leaseHolder` reads by default.
+	var _leaseExpiryTimer = null;
+	function armLeaseExpiry() {
+		if (_leaseExpiryTimer != null) {
+			try { clearTimeout(_leaseExpiryTimer); } catch (err) { /* already gone */ }
+			_leaseExpiryTimer = null;
+		}
+		var now = authorityNow(), next = 0;
+		for (var id in _leases) {
+			if (!Object.prototype.hasOwnProperty.call(_leases, id)) continue;
+			var r = _leases[id], at = 0;
+			if (liveLease(r, now)) at = leaseMs(r.expiry);
+			else if (settledLease(r) && !isMark(r) && !deadLease(r, now)) {
+				at = Math.max(leaseMs(r.expiry), leaseMs(r.deadline), leaseMs(r.renewedAt)) + LEASE_TTL_MS + 1;
+			}
+			if (at > now && (!next || at < next)) next = at;
+		}
+		if (!next) return;
+		// Capped well inside a 32-bit timer delay; an early wake only announces and re-arms.
+		var wait = Math.min(Math.max(0, next - now) + 1, 6 * 60 * 60 * 1000);
+		_leaseExpiryTimer = setTimeout(leaseExpiryTick, wait);
+		// A node test must not be held open by the view's clock.
+		try { if (_leaseExpiryTimer && _leaseExpiryTimer.unref) _leaseExpiryTimer.unref(); } catch (err) { /* a browser id */ }
+	}
+	function leaseExpiryTick() {
+		_leaseExpiryTimer = null;
+		if (_onLeaseChange) {
+			try { _onLeaseChange(); } catch (err) { /* a redraw must never break the clock */ }
+		}
+		armLeaseExpiry();
 	}
 
 	/// The device RUNNING a turn: the live holder of its lease at `now`, or null when it is
@@ -6190,6 +6234,7 @@
 					return d.runTurn(ctx, e.prompt, { onProgress: nudge, promptInTranscript: true, turnId: turnId, until: deadAt,
 						pre: (typeof e.pre === 'string') ? e.pre : '',
 						effort: (typeof e.effort === 'string') ? e.effort : undefined,
+						pendingOnly: e.pendingOnly === true,
 						model: e.model || null });		// the model the asker resolved (C3)
 				})();
 				turnP.then(null, function () { /* a run raced out by `dead` may still reject */ });

@@ -2142,7 +2142,8 @@ function buildS61Sandbox(P, spy) {
 		daimondFuncSource('retryTurn'),
 		daimondFuncSource('answerAgain'),
 		daimondFuncSource('askAgain'),
-		'async ' + daimondFuncSource('retryRouted'),		// every Retry goes through the election
+		'async ' + daimondFuncSource('retryRouted'),
+		'async ' + daimondFuncSource('continueAsked'),	// Continue goes through the election too (STEER-2)		// every Retry goes through the election
 		daimondFuncSource('tailAfter'),
 		daimondFuncSource('sessionCut'),		// a retraction cuts the stored session (1e)
 	].join('\n')
@@ -2185,6 +2186,7 @@ async function runLocalAskAnswerGuardAcceptance(P, check) {
 			{ mid: 'm2', iturn: 'T2', role: 'user', content: 'Keep going autonomously now' },
 		] };
 		win.continueTurn(chat, 'T2', 'Keep going autonomously now');
+		for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));	// through the election first (STEER-2)
 		check('S6-1 continueTurn: an ordinary interrupted turn is still retracted and re-run (unchanged)',
 			spy.ranTurn.length === 1 && spy.ranTurn[0].text === 'Keep going autonomously now');
 	}

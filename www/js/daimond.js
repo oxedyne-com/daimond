@@ -12684,6 +12684,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// each other's edits. So the flag became a set, keyed by the Diamond the turn
 	// belongs to.
 	var crystalRunning = Object.create(null);   // diamondId -> true while a steer or fold runs
+	var _diamondIdle = Object.create(null);     // diamondId -> wakers of retries waiting on its turn (`awaitDiamondIdle`)
 	var _steerApp = Object.create(null);        // diamondId -> the app its steer runs on, while it runs (UNBLOCK-27 R7)
 	var _steerDetached = Object.create(null);   // diamondId -> true while that steer is another device's turn (r578)
 	var _saidThere = Object.create(null);       // turnId -> [{ chatId, mid, text }] said to its runner, until its report (UNBLOCK-27 R7)
@@ -22287,7 +22288,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the turn here -- money-safe, because the revoke lands before anything starts.
 	async function runBlockedTurnHere(chat, turnId, text) {
 		try { await peerTakeBack(turnId); } catch (e) { /* the run below still claims it */ }
-		try { continueTurn(chat, turnId, text); } catch (e) { /* nothing to run */ }
+		try { continueTurn(chat, turnId, text, false, undefined, false); } catch (e) { /* nothing to run */ }
 	}
 
 	/// Re-decide every still-open ask now that this device is back in front of
@@ -27159,6 +27160,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return ask;
 	}
 
+	/// A lost row whose retry another device has CLAIMED: its `-rt` lease names another holder,
+	/// in any phase of its life (N1, review of STEER delta 1; D2-1, delta 2). Drawn "<device> is
+	/// doing this." with no Retry, as a handed-off turn's tile is, until the retraction arrives
+	/// and removes the row. A run that has ENDED there (`done`, or settled) still owns the turn:
+	/// the `-rt` id is single-use, so a Retry would stand down until the tombstone drains, a
+	/// dead button saying "not run" about an answered turn. Only a vacant, unsettled lease (the
+	/// busy give-back, or one aged out) draws Retry, which can win. The lease view's onChange,
+	/// on a write and at an expiry (D2-2), redraws the history. True when it drew.
+	function drawLostRowRunning(div, foot, m) {
+		var rt = lostRetryMid(m.iturn);
+		var who = '';
+		try { who = peerLeaseClaimed(rt); } catch (e) { return false; }
+		if (!who) return false;
+		var name = '';
+		try { name = who === '?' ? '' : runnerLabel(who); } catch (e) { name = ''; }
+		var spin = document.createElement('span');
+		spin.className = 'ti-spin';
+		spin.innerHTML = '<span class="chat-spinner-dot"></span>'
+			+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
+		var label = document.createElement('span');
+		label.className = 'ti-label';
+		label.textContent = name ? t('turn.peer_running_named', { name: name }) : t('turn.peer_running');
+		foot.appendChild(spin); foot.appendChild(label);
+		div.appendChild(foot);
+		return true;
+	}
+
 	/// Badge a recovered assistant message as interrupted, with a Continue button that runs the
 	/// turn again. `m.iturn` groups every message of the interrupted turn; `m.itext` is the prompt
 	/// to re-run.
@@ -27180,6 +27208,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and says so. Retry asks it again as a send is asked, through `retryTurn`'s lost route:
 		// the switch decides where it runs, and every device's Retry names one turn, one lease.
 		// Asked before the runner-lost row below, whose tag it shares (`isNotRunRow`).
+		if (isLostRow(m) && drawLostRowRunning(div, foot, m)) return;
 		if (isNotRunRow(m)) {
 			label.className = 'ti-label lead-warn';
 			label.textContent = t('turn.not_run');
@@ -27346,7 +27375,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var rh = document.createElement('button');
 			rh.className = 'ti-continue';
 			rh.textContent = t('turn.peer_runhere');
-			rh.addEventListener('click', function () { continueTurn(current, m.iturn, m.itext); });
+			rh.addEventListener('click', function () { continueTurn(current, m.iturn, m.itext, false, undefined, false); });
 			foot.appendChild(rh);
 		} else if (control === 'answeragain') {
 			// An ask-card answer is never sent after the fact, even on a click: the
@@ -27925,6 +27954,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			auto:   autonomousPosture(),
 			tried:  (opts && Array.isArray(opts.handedBack)) ? opts.handedBack : [],	// Q19
 			parkCount: parkCount,
+			pendingOnly: !!(opts && opts.pendingOnly),	// a mail trigger's turn (§16)
 			// The removals no parcel has carried yet, so the errand need not wait on one
 			// (UNBLOCK-1), and the device the switch elected, which alone takes the turn.
 			// `runTo`, not the tile's `toId`: the tile names the starred nominee, while the
@@ -30449,7 +30479,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var report = peerReports[String(m.iturn)] || null;
 		var ask    = _openAsk[String(m.iturn)] || null;
 		var tid = String(m.iturn);
-		return DaimondPeer.uiState(m, lease, report, selfDeviceId(), Date.now(), ask,
+		return DaimondPeer.uiState(m, lease, report, selfDeviceId(), leaseClockNow(), ask,
 			_localEnding[tid] ? 'end' : !!_localRecovering[tid]);
 	}
 
@@ -30489,7 +30519,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (rep && rep.status === 'aborted') return;
 		var count = (rep && rep.status === 'parked') ? (rep.parkCount | 0) : placeholderParkCount(chat, tid);
 		var max = (window.DaimondPeer && DaimondPeer.MAX_PARKS) || 2;
-		if (count >= max) { continueTurn(chat, tid, text); return; }	// at the bound: run here, no more re-dispatch
+		if (count >= max) { continueTurn(chat, tid, text, false, undefined, false); return; }	// at the bound: run here, no more re-dispatch
 		// PAST THE WINDOW, IT RUNS HERE (E-R1). A parked turn waits for a person to come
 		// back, which is usually longer than any device may start a handed-off turn, so a
 		// re-dispatch would be refused by every collector (`turnAgeVerdict`). The person
@@ -30498,7 +30528,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return x && x.why === 'dispatched' && String(x.iturn) === tid;
 		})[0];
 		if (window.DaimondPeer && DaimondPeer.turnInWindow
-			&& !DaimondPeer.turnInWindow([tid, ph && ph.mid], [], Date.now())) { continueTurn(chat, tid, text); return; }
+			&& !DaimondPeer.turnInWindow([tid, ph && ph.mid], [], Date.now())) { continueTurn(chat, tid, text, false, undefined, false); return; }
 		// A re-dispatch that would hand it to a peer again, carrying the GLOBAL count.
 		// A turn a person's pause holds is not handed on (F2): it is continued HERE, where the
 		// same pause refuses it in words, rather than left parked with nothing said.
@@ -30509,8 +30539,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sw = seatSwitchFor(chat);
 			handOffTurn(chat, tid, text, Array.isArray(chat.holds) ? chat.holds : [],
 				{ parkCount: count, runTo: (sw && sw.runner) ? sw.runner.deviceId : '' })
-				.then(function (r) { if (r && r.paused) continueTurn(chat, tid, text); });
-		} catch (e) { continueTurn(chat, tid, text); }
+				.then(function (r) { if (r && r.paused) continueTurn(chat, tid, text, false, undefined, false); });
+		} catch (e) { continueTurn(chat, tid, text, false, undefined, false); }
 	}
 
 	/// The park count stamped on a turn's dispatched placeholder, or 0.
@@ -31214,7 +31244,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (_localRecovering[tid]) return;
 			var lease = null;
 			try { lease = DaimondLease.record(tid); } catch (e) { lease = null; }
-			var held = DaimondPeer.dispatchState({ why: DaimondPeer.REASON_DISPATCHED }, lease, selfDeviceId(), Date.now());
+			var held = DaimondPeer.dispatchState({ why: DaimondPeer.REASON_DISPATCHED }, lease, selfDeviceId(), leaseClockNow());
 			if (held === 'peer-held') return;
 			diag('handoff handback redrive', 'turn=' + tid + ' the runner\'s lease no longer holds it');
 			try { runDispatchFallback(_handBack[tid], tid); } catch (e) { /* the backstop remains */ }
@@ -31456,7 +31486,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				// Held only for a turn this device sent: no other device will run it.
 				if (String(m.dispatchedBy || '') !== String(selfDeviceId())
-					|| DaimondPeer.dispatchState(m, lease, selfDeviceId(), Date.now()) !== 'peer-held') delete _handBack[tid];
+					|| DaimondPeer.dispatchState(m, lease, selfDeviceId(), leaseClockNow()) !== 'peer-held') delete _handBack[tid];
 				else if (_handBack[tid] != null) diag('handoff handback held', 'turn=' + tid + ' the runner\'s lease still reads live here');
 				return;
 			}
@@ -32323,8 +32353,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// hiccup runs locally -- the safe default. `app` marks a prompt the app wrote in the
 	/// person's place (a Continue's nudge), which takes no note and is stored as the app's.
 	/// `drawn` is the runner the switch drew at the press (`seatDrawnRunner`), where the press
-	/// came before this call; read here, before the first wait, where it did not.
-	async function maybeAutoDispatch(chat, text, words, mid, app, drawn) {
+	/// came before this call; read here, before the first wait, where it did not. `how.pendingOnly`
+	/// rides the errand for a mail trigger's turn, which reports on the Pending panel alone (§16).
+	async function maybeAutoDispatch(chat, text, words, mid, app, drawn, how) {
 		try {
 			// A DAIMON DISPATCHES TOO. The election/lease/hand-off is proven for chats and
 			// is switched on for daimons here: the runner services the turn through
@@ -32390,6 +32421,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						false, 0, isPhoneViewport()); } catch (e) { /* best-effort */ }
 					try { renderSeatSwitch(); } catch (e) { /* the next beat redraws it */ }
 					if (!pressed || turnHold(chat)) return false;
+					if (how && how.prep) how.prep();		// a retry's turn is retracted at the commit
 					return endSendNotRun(chat, text, words, mid, app, 'presence read did not land in '
 						+ PRESENCE_READ_CAP_MS + 'ms; runner ' + shown + ' unconfirmed');
 				}
@@ -32502,6 +32534,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// turn here (`shown`, killrunner).
 				try { renderSeatSwitch(); } catch (e) { /* the next beat redraws it */ }
 				if (!shown || chatSeatHere(chat) || turnHold(chat)) return false;
+				if (how && how.prep) how.prep();
 				return endSendNotRun(chat, text, words, mid, app, 'runner ' + shown
 					+ ' was pressed and the election declined it (' + String(d.reason || 'no reason') + ')');
 			}
@@ -32514,6 +32547,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Asked here, in the same synchronous run as `dispatchToPeer`'s own question, so the
 			// two cannot disagree; false, and the local run refuses it in the person's words.
 			if (turnHold(chat)) return false;
+			// A retry's turn leaves the thread here, before the hand-off builds it (`retryDiamond`).
+			if (how && how.prep) how.prep();
 			// Prepared exactly as the explicit path, so the parcel push inside
 			// dispatchToPeer carries the prompt (§4.1). The composer gives up the words
 			// this press sent and nothing typed since (`giveUpSent`), and gives them up
@@ -32595,7 +32630,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `appendError` to be wiped and no dead turn to recover from nothing.
 			handOffTurn(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
 				{ toId: advId, toName: advName, runTo: DaimondPeer.peerIdOf(d.peer), t0: tSend, diamondId: String(chat.diamondId || ''),
-					tried: electedTried(d) }
+					tried: electedTried(d), pendingOnly: !!(how && how.pendingOnly) }
 			);	// a refusal is answered by the entry itself: not run, with Retry
 			// Arm the last-resort recovery backstop: if no peer claims this within ~one
 			// freshness window, run it here rather than let the spinner hang to the
@@ -33008,8 +33043,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `iturn` - The interrupted turn's id; every message of it carries this.
 	/// * `text` - The prompt the turn was sent with, used only for the empty case above.
 	/// * `fresh` - Run the prompt again as a new turn whatever the partial holds (a Retry).
-	function continueTurn(chat, iturn, text, holdRead, fresh) {
+	function continueTurn(chat, iturn, text, holdRead, fresh, pressed) {
 		if (!chat || !text || chat._generating) return;
+		// THE SWITCH AS DRAWN AT THIS PRESS (rulings l.16, l.19; STEER-2): Continue is a person's
+		// press, so the runner it drew now decides where the turn runs, as at Send and Retry,
+		// taken before the hold's read below can redraw it. `pressed === false` is a press of
+		// "Run here" (a blocked or parked turn taken back): the person chose this device.
+		var here = pressed === false;
+		var drawn = false;
+		if (!here) {
+			if (pressed !== undefined) drawn = String(pressed || '');
+			else { try { drawn = seatDrawnRunner(chat); } catch (e) { drawn = ''; } }
+		}
 		// WITHOUT A TURN ID THERE IS NO TURN TO CONTINUE. The finder (`turnMessagesOf`)
 		// compares each message's `iturn` with the id, and an ordinary message has no
 		// `iturn` at all -- so an undefined id would match EVERY message in the chat, and the
@@ -33033,7 +33078,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var release = holdSend(chat);
 			confirmHold(chat).then(function () {
 				release();
-				continueTurn(chat, iturn, text, true, fresh);
+				continueTurn(chat, iturn, text, true, fresh, drawn);
 			});
 			return;
 		}
@@ -33105,7 +33150,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// two devices' Retries name ONE turn and its lease lets one of them run it.
 			// A daimon's lost run too (SUHT-R F2): its retry is fenced as a chat's is.
 			if (mine.some(isLostRow)) {
-				retryTurn(chat, iturn, text, { lost: true });
+				retryTurn(chat, iturn, text, here ? { lost: true } : { lost: true, drawn: drawn });
 				return;
 			}
 			// NOTHING ARRIVED, so there is nothing to keep: the old path, and here it is
@@ -33122,7 +33167,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// mid was tombstoned just above; re-run under it, the new prompt was swept with the
 			// old one and every device kept an answer with no question (noresurrect (4)).
 			if (contOpts && contOpts.turnId) contOpts = Object.assign({}, contOpts, { turnId: newMid() });
-			askAgain(chat, text, contOpts);
+			if (here) askAgain(chat, text, contOpts);
+			else continueAsked(chat, text, contOpts, drawn);
 			return;
 		}
 		// The badge and the button come off, and the partial becomes an ordinary answer. Nothing
@@ -33148,7 +33194,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat.app = null;
 		touchChat(chat); persistChats();
 		renderHistory(chat.messages);
-		continueRouted(chat);
+		continueRouted(chat, here ? undefined : drawn);
+	}
+
+	/// Ask again a turn where nothing arrived, THROUGH THE ONE ENTRY (rulings l.16; STEER-2): the
+	/// switch drawn at the Continue's press decides where it runs, as at Send, and a runner gone
+	/// since the press ends it "not run" with Retry. It ran here (`askAgain`), whatever the switch
+	/// said. Kept here, it runs under the id the hand-off would have named.
+	async function continueAsked(chat, text, opts, drawn) {
+		var mid = (opts && opts.turnId) || newMid();
+		if (await maybeAutoDispatch(chat, text, '', mid, undefined, drawn)) return true;
+		return askAgain(chat, text, Object.assign({}, opts, { mid: mid }));
 	}
 
 	/// Carry on a turn that ran past the lease cap, from the Continue on its stop line.
@@ -33158,9 +33214,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// and no turn id here, because nothing was lost: the runner stopped on purpose. The stop
 	/// must still be the newest thing in the chat; a button that outlived a newer turn (another
 	/// device's, merged in) does nothing and goes.
-	function continueStopped(chat, btn, holdRead) {
+	function continueStopped(chat, btn, holdRead, pressed) {
 		// A chat whose errand is still in flight here is the runner's (check_k K-R1).
 		if (!chat || chat._generating || chatIsActiveErrand(chat.id)) return;
+		// The switch as drawn at this press, before the hold's read can redraw it (STEER-2).
+		var drawn = pressed;
+		if (drawn === undefined) { try { drawn = seatDrawnRunner(chat); } catch (e) { drawn = ''; } }
 		var ms = chat.messages || [];
 		var last = ms.length ? ms[ms.length - 1] : null;
 		if (!last || last.role !== 'end_log' || !endContinuable(last)) { retireContinue(); return; }
@@ -33172,7 +33231,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var release = holdSend(chat);
 			confirmHold(chat).then(function () {
 				release();
-				continueStopped(chat, btn, true);
+				continueStopped(chat, btn, true, drawn);
 			});
 			return;
 		}
@@ -33180,7 +33239,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		retireContinue();
 		chat.app = null;
 		touchChat(chat); persistChats();
-		continueRouted(chat);
+		continueRouted(chat, drawn);
 	}
 
 	/// Carry a turn on WHERE THE SWITCH PUTS IT (UNBLOCK-1 QFOLLOW). A Continue starts a turn,
@@ -33190,11 +33249,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// runner that cannot rebuild that thread hands the turn back, which then runs here and
 	/// says so on its answer. Kept here, the tile says so in one line when the runner the
 	/// switch named was gone (`elected`). 'sent' when handed off, 'here' when run here.
-	async function continueRouted(chat) {
+	async function continueRouted(chat, drawn) {
 		var release = holdSend(chat);
 		var handed = false;
 		try {
-			if (await maybeAutoDispatch(chat, CONTINUE_NUDGE, '', undefined, true)) return 'sent';
+			if (await maybeAutoDispatch(chat, CONTINUE_NUDGE, '', undefined, true, drawn)) return 'sent';
 			handed = true;
 			Promise.resolve(runTurn(chat, CONTINUE_NUDGE, { elected: true, onStart: release })).then(release, release);
 			return 'here';
@@ -33314,14 +33373,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var mine = turnMessagesOf(chat, iturn);
 		if (!mine.length) return false;
 		// ADMITTED BEFORE IT RETRACTS (review LOW-4): a daimon's retry is steered (`askAgain` →
-		// `runSteer`), and a steer cannot start in a Diamond not on this device or one already
-		// running a steer or a fold (`diamondBusy`), where `runSteer` drops a preset. Retracted
-		// first, the turn was gone and nothing asked it, and a lost turn's `-rt` lease was taken
-		// and settled for a run that never started. The row and its Retry stay instead.
+		// `runSteer`), and a steer cannot start in a Diamond not on this device. Retracted first,
+		// the turn was gone and nothing asked it. The row and its Retry stay instead. A Diamond
+		// running a steer or a fold (`diamondBusy`) admits it: the retry waits for that turn to
+		// end (`awaitDiamondIdle`, STEER D3), a lost run's under its `-rt` lease.
 		if (chat.diamondId) {
 			var rf = steerDiamondOf(chat);
-			if (!rf || diamondBusy(rf.id)) {
-				diag('retry not admitted', 'turn=' + iturn + (rf ? ' the Diamond is busy' : ' no such Diamond here'));
+			if (!rf) {
+				diag('retry not admitted', 'turn=' + iturn + ' no such Diamond here');
 				return false;
 			}
 		}
@@ -33337,33 +33396,138 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (lost && (chat.messages || []).some(function (x) {
 			return x && (String(x.mid) === nmid || String(x.iturn || '') === nmid);
 		})) return false;
-		try {
-			if (window.DaimondLedger && DaimondLedger.markRetried) {
-				var ans = null;
-				mine.forEach(function (m) {
-					if (m.role !== 'assistant' || !window.DaimondProvenance) return;
-					DaimondProvenance.of(m).forEach(function (p) { if (p.k === 'answer') ans = p; });
-				});
-				DaimondLedger.markRetried(iturn, nmid, Date.now(), ans ? ans.m : chat.model, ans ? ans.pv : chat.provider);
+		// THE WAIT COMES BEFORE EVERY SIDE EFFECT (STEER-2 F1, rc's review of STEER). A Diamond busy
+		// with its own turn holds a retry that runs Here; while it waits nothing is retracted, flushed
+		// or leased, so a reload mid-wait leaves the row and its Retry where they were. Only the press's
+		// draw is held, in memory (rulings §1 l.19); a runner drawn at the press is handed it now, as
+		// before. Woken, the retry is admitted again from the top, then retracts, claims and runs.
+		if (rf && diamondBusy(rf.id)) {
+			var drawnAt = ropts ? ropts.drawn : undefined;
+			if (drawnAt === undefined) { try { drawnAt = seatDrawnRunner(chat); } catch (e) { drawnAt = ''; } }
+			drawnAt = String(drawnAt || '');
+			if (!drawnAt) {
+				if ((chat._retryWait || []).some(function (w) { return w.of === String(iturn); })) return false;
+				return retryWhenIdle(chat, rf, iturn, text, nmid, Object.assign({}, ropts, { drawn: '' }));
 			}
-		} catch (e) { /* the ledger is best-effort; the retry still runs */ }
-		msgTombstone(mine.map(function (m) { return m.mid; }));
-		sessionCut(chat, mine);
-		chat.messages = (chat.messages || []).filter(function (x) { return mine.indexOf(x) === -1; });
-		chat.app = null;
-		touchChat(chat); persistChats();
-		if (chat.id) ChatStore.compact(chat.id);   // off the chunks, not only hidden on read
-		// The retracted turn leaves the write-ahead log with it, or the next boot
-		// recovers a turn that is being asked again right now.
-		try { if (window.DaimondJournal) DaimondJournal.clearTurn(iturn); }
-		catch (e) { /* the continuation opens an entry of its own */ }
-		renderHistory(chat.messages);
+		}
+		var retract = function () {
+			try {
+				if (window.DaimondLedger && DaimondLedger.markRetried) {
+					var ans = null;
+					mine.forEach(function (m) {
+						if (m.role !== 'assistant' || !window.DaimondProvenance) return;
+						DaimondProvenance.of(m).forEach(function (p) { if (p.k === 'answer') ans = p; });
+					});
+					DaimondLedger.markRetried(iturn, nmid, Date.now(), ans ? ans.m : chat.model, ans ? ans.pv : chat.provider);
+				}
+			} catch (e) { /* the ledger is best-effort; the retry still runs */ }
+			msgTombstone(mine.map(function (m) { return m.mid; }));
+			sessionCut(chat, mine);
+			chat.messages = (chat.messages || []).filter(function (x) { return mine.indexOf(x) === -1; });
+			chat.app = null;
+			touchChat(chat); persistChats();
+			if (chat.id) ChatStore.compact(chat.id);   // off the chunks, not only hidden on read
+			// The retracted turn leaves the write-ahead log with it, or the next boot
+			// recovers a turn that is being asked again right now.
+			try { if (window.DaimondJournal) DaimondJournal.clearTurn(iturn); }
+			catch (e) { /* the continuation opens an entry of its own */ }
+			renderHistory(chat.messages);
+		};
+		// A DIAMOND'S RETRY RETRACTS ONLY AS IT RUNS (STEER-2, lead usr-63): its route is decided
+		// first, its claim and lease taken, and the turn is retracted in the same tick it starts, or
+		// at a hand-off's commit. A reload at any moment before that finds the row and its Retry.
+		if (rf) return retryDiamond(chat, rf, iturn, text, nmid, lost, ropts || {}, retract);
+		retract();
 		// A DAIMON'S RETRY KEEPS ITS ROUTE TOO (R3 3c): it goes to the send door's hand-off
 		// first, so a phone hands it to the runner again and the permit is asked again where
 		// it was asked; only a hand-off that declines runs it here, through `runSteer`.
 		// EVERY RETRY IS ROUTED (UNBLOCK-1 QFOLLOW). The tile's Retry and an edit's resend ran
 		// here, whatever the switch said; the switch decides where a retry runs, as at Send.
 		return retryRouted(chat, text, nmid, lost, ropts && ropts.onStart, ropts ? ropts.drawn : undefined);
+	}
+
+	/// A Diamond's retry, routed, then run as ONE STEP (STEER-2, lead usr-63; rulings §1 l.16,
+	/// l.17, l.19). The switch is asked first with the turn untouched; a hand-off or a "not run"
+	/// end retracts it at its commit (`how.prep`). Kept here, a lost run's retry takes its claim and
+	/// `-rt` lease, and then, in one synchronous step, finds the Diamond idle, retracts the turn and
+	/// starts the steer (`runSteer` marks the Diamond busy before its first await). A Diamond gone
+	/// busy by then gives the lease and the claim back and waits again with nothing retracted, so
+	/// the lease is held from the claim to the run and never across a wait. The removal is flushed
+	/// once the run has started.
+	async function retryDiamond(chat, f, iturn, text, nmid, lost, ropts, retract) {
+		var drawn = ropts.drawn;
+		if (drawn === undefined) { try { drawn = seatDrawnRunner(chat); } catch (e) { drawn = ''; } }
+		ropts = Object.assign({}, ropts, { drawn: String(drawn || '') });
+		var cut = false;
+		var prep = function () { if (!cut) { cut = true; retract(); } };
+		if (await maybeAutoDispatch(chat, text, '', nmid, undefined, ropts.drawn, { prep: prep })) { prep(); return true; }
+		var claim = null, self = selfDeviceId(), cas = null, won = false, watch = null;
+		if (lost) {
+			claim = await claimTurnHere(nmid);
+			if (!claim) {
+				diag('retry stand-down', 'turn=' + nmid + ' a run of it is under way on this device');
+				return false;
+			}
+		}
+		try {
+			if (lost && window.DaimondLease && DaimondLease.take && window.DaimondPeer && DaimondPeer.syncCas) {
+				cas = DaimondPeer.syncCas(peerSyncShim());
+				var took = await DaimondLease.take(nmid, { holder: self, ts: Date.now() }, cas, leaseClockNow);
+				if (!took || !took.won) {
+					var why = String((took && took.why) || '?');
+					diag('retry stand-down', 'turn=' + nmid + ' lease ' + why + ' holder=' + String((took && took.holder) || '').slice(0, 8));
+					if (DaimondPeer.standDownUndecided && DaimondPeer.standDownUndecided(why)) toast(t('turn.retry_undecided'), true);
+					// A stale row pressed while another device runs, or has run, its retry: the row
+					// is the feedback, redrawn at once from the -rt lease as running there (N1,
+					// D2-1: a `done` or settled lease stands down the same way). No toast (l.110).
+					else if (why === 'held' || why === 'settled' || (took && took.holder)) { try { if (current === chat) renderHistory(chat.messages); } catch (e) { /* the lease beat redraws it */ } }
+					return false;
+				}
+				won = true;
+			}
+			// THE ONE STEP: no await from here to the steer's start.
+			if (diamondBusy(f.id)) {
+				diag('retry waits again', 'turn=' + nmid + ' the Diamond turned busy before it ran; its lease given back');
+				if (won) {
+					won = false;
+					try { await DaimondPeer.settleLease('turn', nmid, self, 'released', cas, leaseClockNow); }
+					catch (e) { /* the lease ages out at its deadline */ }
+				}
+				if (claim) { claim.release(); claim = null; }
+				return retryWhenIdle(chat, f, iturn, text, nmid, ropts);
+			}
+			if (won) watch = watchRetryLease(chat, nmid, self, cas);
+			prep();
+			var run = askAgain(chat, text, lost ? { person: true, mid: nmid } : { person: true, mid: nmid, onStart: ropts.onStart });
+			try { if (window.DaimondSync && DaimondSync.flush) Promise.resolve(DaimondSync.flush()).catch(function () {}); }
+			catch (e) { /* the removal travels with the turn's own push */ }
+			return await run;
+		} finally {
+			if (watch) watch();
+			if (won) {
+				try {
+					await DaimondPeer.settleLease('turn', nmid, self, 'done', cas, leaseClockNow);
+					await DaimondPeer.settleLease('turn', nmid, self, 'released', cas, leaseClockNow);
+				} catch (e) { /* the lease ages out at its deadline */ }
+			}
+			if (claim) claim.release();
+		}
+	}
+
+	/// Wait for Diamond `f`'s own turn to end with turn `iturn` untouched, then retry it (STEER-2
+	/// F1). A woken retry keeps the rules queued words keep (F3): a turn that failed or paused, a
+	/// pause still held, or an open Decision (rulings §2 l.37) hands it back to its row, unrun.
+	async function retryWhenIdle(chat, f, iturn, text, nmid, ropts) {
+		var go = await awaitDiamondIdle(chat, f, text, nmid, iturn);
+		if (!go) return false;		// withdrawn: the row and its Retry stand
+		var hold = go === 'failed' ? 'the turn it waited behind failed or paused'
+			: turnHold(chat) ? 'a pause holds it'
+			: askOpenIn(chat) ? 'a Decision is open' : '';
+		if (hold) {
+			diag('retry handed back', 'turn=' + iturn + ' ' + hold);
+			return false;
+		}
+		return retryTurn(chat, iturn, text, ropts);
 	}
 
 	/// A retry ASKED AGAIN WHERE IT WAS ASKED: the turn goes the way a send goes, so a phone
@@ -33376,6 +33540,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (chat && chat.diamondId) {
 			var f = steerDiamondOf(chat);
 			if (!f) return false;
+			// BEHIND THE DIAMOND'S OWN TURN IT WAITS (STEER D3): `runSteer` drops a preset while the
+			// Diamond is busy, and a retry is one, so pressed in a turn, or overtaken by one in the
+			// wait for the hand-off's read or the lease, it was retracted and never asked. Asked
+			// again once that turn ends, in the tick it ends (`setCrystalBusy`).
+			if (diamondBusy(f.id)) {
+				return awaitDiamondIdle(chat, f, text, (opts && opts.mid) || '').then(function (go) {
+					return go ? askAgain(chat, text, opts) : false;
+				});
+			}
 			return runSteer(f, text, 0, null, { person: true, said: true, mid: (opts && opts.mid) || '' });
 		}
 		return runTurn(chat, text, opts);
@@ -33469,7 +33642,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (ended) return;
 			end();
 			diag('retry stopped', 'turn=' + tid + ' ' + why);
-			if (!chat._generating) return;
+			// Still waiting on the Diamond's turn: never asked, and nothing of it runs (F2).
+			if (endRetryWait(chat, -1, false, tid)) return;
+			// ONLY ITS OWN RUN: the turn running in this chat may be the Diamond's other one (F2).
+			if (!chat._generating || (String(chat._runMid || '') !== String(tid) && String(chat._turnTag || '') !== String(tid))) return;
 			chat._aborted = true;
 			chat._stopWhy = 'user';
 			syncSendMode();
@@ -39966,6 +40142,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Per chat id, the newest run of it the runner lost, seen on this device (`peerHeldTurnOf`).
 	var _lostRunOf = {};
 
+	/// WHO CLAIMED turn `tid`'s lease, if not this device, in any phase its record still holds
+	/// (D2-1): a live claim, a `done` run, or a settled tombstone not yet past its life. '' for
+	/// a vacant unsettled record (released without `done`, or expired), one held only to end
+	/// the turn (`ending`, nobody's run), this device's own, or none.
+	function peerLeaseClaimed(tid) {
+		if (!window.DaimondLease) return '';
+		var self = String(selfDeviceId());
+		var h = DaimondLease.holder ? DaimondLease.holder(tid) : null;
+		if (h && String(h) !== self) return String(h);
+		var r = DaimondLease.record ? DaimondLease.record(tid) : null;
+		if (!r || !r.holder || String(r.holder) === self || r.ending) return '';
+		if (!(r.mode === 'done' || (r.mode === 'released' && !!r.settled))) return '';
+		var now = DaimondLease.authorityNow ? DaimondLease.authorityNow() : Date.now();
+		if (DaimondLease.dead && DaimondLease.dead(r, now)) return '';
+		return String(r.holder);
+	}
 	/// Does a device other than this one hold turn `tid`'s live lease?
 	function peerLeaseHeld(tid) {
 		if (!window.DaimondLease || !DaimondLease.holder) return false;
@@ -41194,9 +41386,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// The one door a message leaves by. With no argument it sends what the composer holds
 	/// (Send, Enter). Every other door -- an ask card answered, the phone sheet's Ask, a
-	/// question answered from another device -- passes its own words, which are sent as given
+	/// question answered from another device, a Pending tile's Do it or Discuss -- passes its own words, which are sent as given
 	/// and never written into the box, so what the person is typing there stays theirs.
-	async function sendUserMessage(said) {
+	/// `pressed` is the runner the switch drew at a press made BEFORE this call (a Pending
+	/// tile's Do it or Discuss, which opens its Diamond first); undefined reads the switch now.
+	async function sendUserMessage(said, pressed) {
 		var own = typeof said === 'string';
 		var text = own ? said.trim() : chatInput.value.trim();
 		if (!text) return;
@@ -41205,7 +41399,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `drawn`: the runner the switch drew at this press (`seatDrawnRunner`), taken before the
 		// wait below, where a send in flight can outlast the runner and redraw the switch Here
 		// (rulings l.19; review_suhtr_delta D2).
-		var drawn = target ? seatDrawnRunner(target) : '';
+		var drawn = pressed !== undefined ? String(pressed || '') : (target ? seatDrawnRunner(target) : '');
 		if (target && target._sending) {
 			// The composer's own second press does nothing: its control reads "Sending…".
 			if (!own) return;
@@ -41742,7 +41936,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// and the updater's idea of "busy" count them together.
 	function waitingOn(chat) {
 		if (!chat) return 0;
-		return ((chat._queue || []).length) + ((chat._interject || []).length);
+		return ((chat._queue || []).length) + ((chat._interject || []).length) + ((chat._retryWait || []).length);
 	}
 
 	/// The container the queued bubbles live in, always the last thing in the
@@ -41776,8 +41970,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!chatOutput) return;
 		var waiting = (current && current._interject) || [];
 		var q       = (current && current._queue) || [];
+		// A retry waiting on its Diamond's own turn (`awaitDiamondIdle`) is drawn as queued words are.
+		var rw      = ((current && current._retryWait) || []).map(function (w) { return w.text; });
 		var existing = document.getElementById('chat-queued');
-		if (!waiting.length && !q.length) {
+		if (!waiting.length && !q.length && !rw.length) {
 			if (existing) existing.remove();
 			updateQueueBadges();
 			return;
@@ -41786,6 +41982,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box.innerHTML = '';
 		if (waiting.length) waitingRows(box, t('chat.interject_help'), waiting, t('chat.interject_pending'), unwait);
 		if (q.length)       waitingRows(box, askHolds() ? t('chat.queue_held') : t('chat.queue_help'), q, t('chat.queued_pending'), unqueue);
+		if (rw.length)      waitingRows(box, t('chat.queue_help'), rw, t('chat.queued_pending'), function (i, toComposer) {
+			endRetryWait(current, i, toComposer);
+		});
 		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 		updateQueueBadges();
 	}
@@ -48206,13 +48405,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				Pending.drop(it.id);
 				return;
 			}
+			// THE SWITCH AS DRAWN AT THIS PRESS (rulings l.16, l.19; STEER D4), taken before the hold's
+			// read and the Diamond's opening can redraw it.
+			var drawn = Pending.drawnFor(f);
 			if (await Pending.heldFor(f)) return;
 			await selectDiamond(f, 'chat');
 			if (await Pending.heldFor(f)) return;
 			Pending.drop(it.id);
 			var text = t('pending.proposal_do', { headline: it.headline })
 				+ (it.detail ? '\n' + it.detail : '');
-			await doSteer(text);
+			await Pending.send(f, text, drawn);
+		},
+
+		/// The runner the "Here | <runner>" switch draws for `f`'s conversation at a tile's press.
+		drawnFor: function (f) {
+			try { return seatDrawnRunner(daimonChat(f)); } catch (e) { return ''; }
+		},
+
+		/// Send a tile's words into its Diamond, now open, THROUGH THE ONE ENTRY (rulings l.16;
+		/// STEER D4): Send's door, so the switch drawn at the tile's press decides where the turn
+		/// runs, a turn already running hears it or queues it, and a runner gone since the press
+		/// ends it "not run" with Retry. It steered here straight (`doSteer`), whatever the
+		/// switch said. A Diamond that did not open keeps the words out of another conversation.
+		send: async function (f, text, drawn) {
+			if (!current || current.diamondId !== f.id) {
+				diag('pending send', 'diamond=' + String(f.id || '') + ' not opened: nothing sent');
+				return;
+			}
+			await sendUserMessage(text, drawn);
 		},
 
 		/// Is this Diamond held, so that a tile sending it a turn would be refused? Says
@@ -48248,6 +48468,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// no conversation to return the user TO.
 		discuss: async function (it) {
 			var f = (diamonds || []).find(function (x) { return x.id === it.diamondId; });
+			var drawn = f ? Pending.drawnFor(f) : '';	// at the press (STEER D4), as Do it takes it
 			// Where the conversation it would open is held, the discussion cannot start:
 			// nothing is declined and the tile stays, for once play is pressed (Q6-2).
 			if (f && await Pending.heldFor(f)) return;
@@ -48270,7 +48491,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			await selectDiamond(f, 'chat');
 			var text = t('pending.discuss_prompt', { headline: it.headline })
 				+ (it.detail ? '\n\n' + it.detail : '');
-			await doSteer(text);
+			await Pending.send(f, text, drawn);
 		},
 	};
 
@@ -57256,6 +57477,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { go: true };
 	}
 
+	/// The lease id of one timer firing: the Diamond, the action, and the stretch of its period
+	/// the firing falls in, so two devices whose timers come due together name one firing.
+	function timerFireId(f, ta, now) {
+		var per = Math.max(1, +(ta && ta.minutes) || 30) * 60000;
+		return 'timer:' + String(f.id || '') + ':' + String((ta && ta.id) || '') + ':' + Math.floor(now / per);
+	}
+
+	/// Claim a timer's firing for this device (rulings l.16; STEER-2), as `claimMailArrival`
+	/// claims an arrival: `{ go }` to run it, with what `settleMailClaim` needs; `{ elsewhere }`
+	/// when another device holds or has run this firing, or the one just before it (a firing
+	/// that fell either side of a period's edge), so this one stands down as fired; `{ go: false }`
+	/// to keep the minutes and ask again at the next tick (a door that could not decide). A page
+	/// that cannot coordinate runs it unclaimed, as every timer did before.
+	async function claimTimerFire(f, ta) {
+		var self = selfDeviceId();
+		if (!self || !window.DaimondLease || !DaimondLease.take || !window.DaimondPeer || !DaimondPeer.syncCas) return { go: true };
+		var sync = window.DaimondSync;
+		if (!syncsHere() || (sync && sync.entitled && !sync.entitled())) return { go: true };
+		if (sync && sync.heard && !sync.heard()) return { go: false, why: 'unheard' };
+		var now = Date.now(), tid = timerFireId(f, ta, now);
+		var per = Math.max(1, +(ta && ta.minutes) || 30) * 60000;
+		var prev = DaimondLease.record ? DaimondLease.record(timerFireId(f, ta, now - per)) : null;
+		if (prev && prev.holder && prev.holder !== self && !prev.retired) {
+			diag('timer claim', tid + ' stood down: the firing before it is ' + String(prev.holder).slice(0, 8) + '\'s');
+			return { elsewhere: true };
+		}
+		if (_mailRunning[tid]) return { elsewhere: true };
+		var cas = DaimondPeer.syncCas(peerSyncShim()), took = null;
+		try { took = await DaimondLease.take(tid, { holder: self }, cas, leaseClockNow); }
+		catch (e) { took = { won: false, why: 'unread' }; }
+		if (took && took.won) return { go: true, tid: tid, self: self, cas: cas, mark: null };
+		var why = String((took && took.why) || '');
+		diag('timer claim', tid + ' lost why=' + (why || 'held') + ' holder=' + String((took && took.holder) || '').slice(0, 8));
+		if (!why || why === 'held' || why === 'settled') return { elsewhere: true };
+		if (DaimondPeer.standDownUndecided && DaimondPeer.standDownUndecided(why)) return { go: false, why: why };
+		return { go: true };
+	}
+
 	/// Ask the owed mail again the moment this page first hears the mailbox (`daimond:heard`),
 	/// rather than at the next tick. Armed once per page.
 	var _mailHeardArmed = false;
@@ -57570,6 +57829,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					stop();
 					if (claim) await settleMailClaim(claim, !out || out.went, !!out && out.went && !out.failed, !!out && out.stopped);
 				}
+				// Run by another device (`claimTimerFire`): fired, so its stopwatch restarts here too.
+				if (out.elsewhere) { fired.push({ id: id, actionId: t.id }); continue; }
 				if (!out.went) {
 					if (mail) trailTrigger('mail held', arrival + ' turn not gone');
 					oweMail(id, occasion); continue;
@@ -58770,7 +59031,57 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the one being looked at, and answers no to all of them.
 		var off = !!(currentDiamond && currentDiamond.id !== f.id);
 		if (off && !offScreenSteerAllowed(ta)) return no;
-		if (!currentDiamond) await selectDiamond(f);
+		// ONE DEVICE PER FIRING (rulings l.16; STEER-2): a timer counts on each device that has
+		// it, so two that fire together claim the firing and one runs it; the other stands
+		// down as fired, its stopwatch restarted. A mail arrival is claimed by `Triggers.fire`.
+		var claim = mail ? null : await claimTimerFire(f, ta);
+		if (claim && claim.elsewhere) return { went: false, reply: '', elsewhere: true };
+		if (claim && !claim.go) return no;
+		var stop = keepMailClaim(claim), ran = false;
+		try {
+			// WHERE THE SWITCH POINTS NOW (rulings l.16, l.19): a trigger has no press, so the
+			// runner the switch draws for the Diamond's conversation at this moment takes the
+			// turn, through Send's door. A runner that cannot take it ends it as the "not run"
+			// row with Retry; a switch drawing Here runs it here, as before.
+			var handed = await triggerHandOff(f, text, mail);
+			if (handed) { ran = true; return handed; }
+			if (!currentDiamond) await selectDiamond(f);
+			ran = true;
+			return await steerTriggerHere(f, text, mail, how, off);
+		} finally {
+			stop();
+			if (claim) await settleMailClaim(claim, ran, ran, false);
+		}
+	}
+
+	/// Hand a trigger's turn to the runner the switch draws for `f`'s conversation now, or
+	/// null where it draws Here or no runner. `{ went, reply: '', handed }`: the answer arrives
+	/// with the sync, so there is nothing to offer or judge here; `failed` where the turn
+	/// ended "not run".
+	async function triggerHandOff(f, text, mail) {
+		// A MAIL TURN STAYS HERE (STEER-3 N2, rc's review of STEER delta 1; rulings §16 l.261, "the
+		// Email Diamond posts nothing in chat"). Send's door writes the prompt as a user row in the
+		// thread and a `dispatched` placeholder whose failure ends as a "not run" row there, and no
+		// runner yet advertises that it runs a turn pending-only. Until both hold, a mail turn runs
+		// here pending-only, as live does; timer turns follow the switch. RESUME_MAILHANDOFF.md.
+		if (mail) return null;
+		var chat = daimonChat(f), drawn = '';
+		try { drawn = chat ? seatDrawnRunner(chat) : ''; } catch (e) { drawn = ''; }
+		if (!drawn || chatSeatHere(chat)) return null;
+		// The thread goes with the errand, so it is read first: a chat not resident here has
+		// no fingerprint to hand off with.
+		if (chat._loaded === false) {
+			try { await loadChatMessages(chat); } catch (e) { /* the hand-off ends "not run" */ }
+		}
+		var mid = newMid();
+		if (!(await maybeAutoDispatch(chat, text, '', mid, true, drawn, mail ? { pendingOnly: true } : undefined))) return null;
+		var nr = (chat.messages || []).some(function (m) { return String(m.iturn || '') === mid && isNotRunRow(m); });
+		diag('trigger', 'diamond=' + String(f.id || '') + ' turn=' + mid + (nr ? ' not run' : ' handed to ' + drawn));
+		return { went: true, reply: '', failed: nr, handed: true };
+	}
+
+	/// Run a trigger's turn here, as it always ran: `runSteer` off screen, `doSteer` on it.
+	async function steerTriggerHere(f, text, mail, how, off) {
 		// Judged where nobody may see the thread: off screen, and any mail turn (B-1).
 		var judged = off || mail;
 		var before = _lastSteer[f.id], reply = '';
@@ -68447,10 +68758,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `id` - The Diamond whose turn it is. Nothing marks nothing: a caller with
 	///   no id in hand has no business closing another Diamond's turn.
-	function setCrystalBusy(id, busy) {
+	function setCrystalBusy(id, busy, failed) {
 		if (!id) return;
 		if (busy) crystalRunning[id] = true; else delete crystalRunning[id];
 		syncFoldBusy();
+		// A retry waiting on this Diamond's turn (`awaitDiamondIdle`) goes as the mark comes off,
+		// in this tick: before a queue drained on a later one (`drainSteerQueue`) can start a steer.
+		var ws = !busy && _diamondIdle[id];
+		if (ws) { delete _diamondIdle[id]; ws.forEach(function (w) { w(!!failed); }); }
+	}
+
+	/// Wait, where the press is, for Diamond `f`'s own turn to end, so a retry asked of it is run
+	/// once that turn has gone rather than dropped by `runSteer`'s busy guard (STEER D3). The caller
+	/// holds what makes the retry run once (a lost turn's lease, `runRetryHere`) across the wait.
+	/// The words wait where queued words wait (`renderQueue`, `_retryWait`), and are withdrawn as a
+	/// queued message is. Answers false where the wait was withdrawn or ended
+	/// (`endRetryWait`), and the retry is not asked.
+	async function awaitDiamondIdle(chat, f, text, mid, of) {
+		if (!diamondBusy(f.id)) return true;
+		var w = { text: String(text || ''), mid: String(mid || ''), of: String(of || ''), gone: false, wake: null, failed: false };
+		chat._retryWait = (chat._retryWait || []).concat([w]);
+		diag('retry waits', 'turn=' + w.mid + ' behind the Diamond\'s own turn');
+		renderQueue();
+		try {
+			while (!w.gone && diamondBusy(f.id)) {
+				w.failed = !!(await new Promise(function (r) {
+					w.wake = r;
+					(_diamondIdle[f.id] = _diamondIdle[f.id] || []).push(r);
+				}));
+			}
+		} finally {
+			chat._retryWait = (chat._retryWait || []).filter(function (x) { return x !== w; });
+			renderQueue();
+		}
+		return w.gone ? false : (w.failed ? 'failed' : true);
+	}
+
+	/// End a retry's wait (`awaitDiamondIdle`): the one at `i` in `chat`'s list, or, given a turn
+	/// id, the one asking it. Its words go back to the composer when asked, as an unqueued one's do.
+	function endRetryWait(chat, i, toComposer, mid) {
+		var list = (chat && chat._retryWait) || [];
+		var w = mid ? list.find(function (x) { return x.mid === String(mid); }) : list[i];
+		if (!w || w.gone) return false;
+		w.gone = true;
+		if (w.wake) w.wake();
+		if (toComposer) putInComposer(w.text);
+		return true;
 	}
 
 	/// Fold answers for the conversation the COMPOSER is on, and for no other.
@@ -68590,7 +68943,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			model:      (ropts && ropts.model) || null,	// and the model it resolved (C3)
 			// The claim's deadline (peer.js `deadAt`), the lease the engine's TurnSpec carries (U4b).
 			until:      Number((ropts && ropts.until) || 0),
-		});
+		}, (ropts && ropts.pendingOnly) ? { pendingOnly: true, follow: [] } : undefined);
 	}
 
 	/// THE SET A HANDED-OFF TURN RUNS ON (D-20261018-09 U1e), from its errand's `model`: the set
@@ -69041,6 +69394,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// steer since load, named none and stopped every other Diamond on the model.
 		steerTurn = 'dt' + newMid();
 		rec._turnTag = steerTurn;
+		rec._runMid = dumid;		// the turn this run asks, for a retry's Stop (`watchRetryLease`)
 		runnerRoundTagged(rec.id, detached && detached.turnId, steerTurn, depth);
 		// The Stop button aborts `current.app`, and a daimon's turn does not run on its
 		// own record's app -- it runs on its Diamond's client, `daimonApp`. Pointing the
@@ -69697,7 +70051,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// kept its dots for ever because nothing ever re-decided them.
 			saidBack();
 			syncComposer();
-			setCrystalBusy(diamondId, false);
+			setCrystalBusy(diamondId, false, true);
 			// AFTER the flag comes down, and handed the failure: what was typed while
 			// this ran comes back to the composer rather than being sent into the dark.
 			drainSteerQueue(rec, diamondId, true);
@@ -69722,7 +70076,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (onCrystal()) hideCrystalSpinner();
 		saidBack();
 		syncComposer();
-		setCrystalBusy(diamondId, false);
+		setCrystalBusy(diamondId, false, sawError || !!rec._pausedMid);
 		// A PENDING-ONLY TURN'S AGENTS THAT NEVER START (FIRE MAIL-FU3, post-QA r569cqa2 CQA2-1).
 		// The daimon is still told, in its conversation only: a mail turn posts nothing in its chat
 		// (rulings §16). And the turn is owed an ending that is not `answered`, because what it asked

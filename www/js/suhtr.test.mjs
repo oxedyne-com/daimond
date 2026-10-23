@@ -52,9 +52,9 @@ if (process.env.SUHTR_P1D) {
 		turnHold: () => null, holdSend: () => () => {}, confirmHold: async () => {}, toast() {},
 		selfDeviceId: () => 'OLDDEV', leaseClockNow: () => Date.now(), loadMsgTombs: () => ({}),
 		msgTombstone: (x) => calls.push('tombstone ' + P(x)), sessionCut() {}, touchChat() {}, persistChats() {},
-		ChatStore: { compact() {} }, renderHistory() {}, handoffTargetLabel: () => '', deviceLabelFor: () => '',
+		ChatStore: { compact() {} }, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, handoffTargetLabel: () => '', deviceLabelFor: () => '',
 		retryTurn: (c, i, x, o) => calls.push('retryTurn ' + i + ' ' + P(o)), answerAgain: () => calls.push('answerAgain'),
-		clearBadge() {}, continueRouted: () => calls.push('continueRouted'),
+		clearBadge() {}, continueRouted: () => calls.push('continueRouted'), continueAsked: () => calls.push('continueAsked'), seatDrawnRunner: () => '',
 		newMid: () => 'fresh-mid', maybeAutoDispatch: async () => { calls.push('maybeAutoDispatch'); return false; },
 		runTurn: (c, x, o) => calls.push('runTurn HERE ' + P(x) + ' ' + P(o)),
 		runSteer: (f, x, d, det, how) => calls.push('runSteer HERE ' + P(how)),
@@ -123,7 +123,7 @@ const wrote = {};
 	let n = 0;
 	const { fns } = sliceDaimond(w, ['answerUnhanded'], {
 		touchMsg: (m) => { m._touched = 1; return m; }, newMid: () => 'row' + (++n), touchChat() {}, persistChats() {},
-		ownsChat: () => false, renderHistory() {}, diag() {}, DaimondModels: { pauseError: () => ({ message: 'p' }) },
+		ownsChat: () => false, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, diag() {}, DaimondModels: { pauseError: () => ({ message: 'p' }) },
 	});
 	const chat = { id: 'c1', messages: [{ role: 'user', content: 'go', mid: 'X', iturn: 'X' }] };
 	fns.answerUnhanded(chat, 'X', 'go', { ok: false, why: 'refused after the mark: 500' });
@@ -219,10 +219,11 @@ for (const diamond of [false, true]) {
 		const { fns } = sliceDaimond(w, ['retryTurn'], {
 			selfDeviceId: () => self, leaseClockNow: () => Date.now(), peerSyncShim: () => ({}), diag() {}, toast() {},
 			peerUiStateFor: () => 'x', answerAgain() {}, loadMsgTombs: () => ({}), msgTombstone() {}, sessionCut() {},
-			touchChat() {}, persistChats() {}, ChatStore: { compact() {} }, renderHistory() {}, newMid: () => self + '-m' + (++n),
+			touchChat() {}, persistChats() {}, ChatStore: { compact() {} }, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, newMid: () => self + '-m' + (++n),
 			maybeAutoDispatch: async () => false,
 			claimTurnHere: async () => ({ release() {} }),
 			watchRetryLease: () => () => {}, ownsChat: () => false, chatInput: null, syncSendMode() {},
+			seatDrawnRunner: () => '', turnHold: () => '', askOpenIn: () => false,
 			runTurn: async (c, x, o) => { runs.push(self + ' runTurn ' + (o && o.mid)); },
 			runSteer: async (f, x, dp, det, how) => { runs.push(self + ' runSteer ' + ((how && how.mid) || 'fresh')); },
 			diamonds: [{ id: 'd1' }], currentDiamond: null,
@@ -249,10 +250,10 @@ for (const diamond of [false, true]) {
 		turnHold: () => null, holdSend: () => () => {}, confirmHold: async () => {}, toast() {}, t: (k) => k,
 		retryTurn: (c, i, x, o) => { calls.push(['retry', i, o]); }, askAgain: () => calls.push(['askAgain']),
 		answerAgain: () => calls.push(['answerAgain']), msgTombstone() {}, sessionCut() {}, touchChat() {}, persistChats() {},
-		ChatStore: { compact() {} }, renderHistory() {}, newMid: () => 'fresh', clearBadge() {}, DaimondPeer: { isAskAnswer: () => false },
+		ChatStore: { compact() {} }, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, newMid: () => 'fresh', clearBadge() {}, DaimondPeer: { isAskAnswer: () => false },
 		loadMsgTombs: () => ({}), tombstone() {}, mark() {}, offline() {}, hold() {}, handoffTargetLabel: () => '',
 		selfDeviceId: () => 'A', leaseClockNow: () => Date.now(), deviceLabelFor: () => '', dropDispatchedPlaceholder() {},
-		continueRouted: () => calls.push(['continueRouted']), ensureApp() {}, runTurn: () => calls.push(['runTurn']),
+		continueRouted: () => calls.push(['continueRouted']), continueAsked: () => calls.push(['continueAsked']), seatDrawnRunner: () => '', ensureApp() {}, runTurn: () => calls.push(['runTurn']),
 	});
 	fns.continueTurn(chat, 'X', 'go', false, true);
 	await settle();
@@ -296,7 +297,7 @@ function endWorld(self, door, chat) {
 		dropDispatchedPlaceholder: (tid) => { W.dropped.push(tid); W.order.push('drop');
 			chat.messages = chat.messages.filter((x) => !(x.why === 'dispatched' && x.iturn === tid)); },
 		touchMsg: (m) => m, newMid: () => 'n1', touchChat() {}, persistChats: () => { W.order.push('persist'); },
-		ownsChat: () => false, renderHistory() {}, DaimondModels: { pauseError: () => ({ message: 'p' }) },
+		ownsChat: () => false, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, DaimondModels: { pauseError: () => ({ message: 'p' }) },
 		chats: [chat], dispatchedChat: () => chat, _dispatchedIx: { [chat.messages[0].iturn]: chat.id },
 		dispatchedTurnFinished: () => false, dispatchedAnswerPresent: () => false,
 		recoverOneLocally: async (c, m) => { W.ran.push('recover:' + m.iturn); }, releaseOwnStaleLeases: async () => 0,
@@ -365,7 +366,7 @@ for (const diamond of [false, true]) {
 		let n = 0;
 		return sliceDaimond(makeWindow({ now: Date.now() }), ['answerUnhanded'], {
 			touchMsg: (m) => m, newMid: () => dev + (++n), touchChat() {}, persistChats() {},
-			ownsChat: () => false, renderHistory() {}, diag() {}, DaimondModels: { pauseError: () => ({ message: 'p' }) },
+			ownsChat: () => false, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, diag() {}, DaimondModels: { pauseError: () => ({ message: 'p' }) },
 		}).fns;
 	};
 	const copy = () => ({ id: 'c', diamondId: diamond ? 'f1' : undefined, messages: [{ role: 'user', content: 'go', mid: 'X-rt', iturn: 'X-rt', ts: 1 }] });
@@ -384,8 +385,10 @@ for (const diamond of [false, true]) {
 		&& c.messages.find((m) => m.notRun).notRun.why === 'again', J(c.messages.map((m) => [m.mid, m.notRun && m.notRun.why])));
 }
 
-// ── R6 (LOW-4): a Diamond Retry the steer cannot start (the Diamond busy, or not on this
-// device) is not retracted: the row and its Retry stay, no lease is taken, nothing runs ──
+// ── R6 (LOW-4): a Diamond Retry the steer cannot start (the Diamond not on this device) is not
+// retracted: the row and its Retry stay, no lease is taken, nothing runs. A BUSY Diamond admits it
+// (STEER D3): retracted, it waits for the Diamond's own turn to end -- a lost run's under its X-rt
+// lease -- and then runs once; it was dropped by runSteer's busy guard. ──
 for (const [what, busy, list, lost] of [['busy', true, [{ id: 'd1' }], true], ['not found', false, [], true],
 	['busy, an edit\'s resend', true, [{ id: 'd1' }], false], ['idle (control)', false, [{ id: 'd1' }], true]]) {
 	console.log('R6: Retry in a Diamond ' + what);
@@ -397,21 +400,32 @@ for (const [what, busy, list, lost] of [['busy', true, [{ id: 'd1' }], true], ['
 	w.DaimondSync = { flush: async () => {} };
 	const chat = { id: 'c', diamondId: 'd1', messages: [{ role: 'user', content: 'go', mid: 'X', iturn: 'X' },
 		{ role: 'assistant', content: '', interrupted: true, why: 'notrun', iturn: 'X', itext: 'go', mid: 'X-nr', notRun: { why: 'w' } }] };
-	const { fns } = sliceDaimond(w, ['retryTurn'], {
+	const { fns } = sliceDaimond(w, ['retryTurn', 'setCrystalBusy'], {
 		selfDeviceId: () => 'A', leaseClockNow: () => Date.now(), peerSyncShim: () => ({}), diag() {}, toast() {}, t: (k) => k,
 		peerUiStateFor: () => 'x', answerAgain() {}, loadMsgTombs: () => ({}), msgTombstone: (x) => tombs.push(...x), sessionCut() {},
-		touchChat() {}, persistChats() {}, ChatStore: { compact() {} }, renderHistory() {}, newMid: () => 'fresh',
+		touchChat() {}, persistChats() {}, ChatStore: { compact() {} }, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, newMid: () => 'fresh',
 		maybeAutoDispatch: async () => false, claimTurnHere: async () => ({ release() {} }),
 		watchRetryLease: () => () => {}, ownsChat: () => false, chatInput: null, syncSendMode() {},
+		seatDrawnRunner: () => '', turnHold: () => '', askOpenIn: () => false,
 		runTurn: async () => { runs.push('runTurn'); },
 		runSteer: async (f, x, dp, det, how) => { runs.push('runSteer ' + ((how && how.mid) || 'fresh')); return busy ? '' : 'ok'; },
 		diamonds: list, currentDiamond: null, crystalRunning: busy ? { d1: true } : {},
 	});
-	const r = await fns.retryTurn(chat, 'X', 'go', { lost });
+	// Not awaited whole: a busy Diamond's retry is under way until the turn it waits on ends.
+	const rp = fns.retryTurn(chat, 'X', 'go', { lost });
 	await settle();
+	const r = busy ? null : await rp;
 	const leases = Object.keys(door.peek());
 	if (what.startsWith('idle')) {
 		check('R6 ' + what + ': retracted and run once under X-rt', tombs.includes('X-nr') && runs.length === 1 && runs[0] === 'runSteer X-rt', J([tombs, runs]));
+	} else if (busy) {
+		const want = lost ? 'runSteer X-rt' : 'runSteer fresh';
+		// STEER-2 F1: the wait comes before every side effect, so nothing is retracted or leased in it.
+		check('R6 ' + what + ': nothing retracted, run or leased while busy', !tombs.length
+			&& !runs.length && !leases.length && chat.messages.length === 2, J([tombs, runs, leases]));
+		fns.setCrystalBusy('d1', false);
+		await settle();
+		check('R6 ' + what + ': retracted and run once the Diamond\'s turn ends', tombs.includes('X-nr') && runs.length === 1 && runs[0] === want, J([tombs, runs]));
 	} else {
 		check('R6 ' + what + ': not retracted, nothing run, no lease', !r && !tombs.length && chat.messages.length === 2
 			&& !runs.length && !leases.length, J([r, tombs, runs, leases, chat.messages.length]));

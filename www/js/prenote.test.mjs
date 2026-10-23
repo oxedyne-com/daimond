@@ -277,7 +277,7 @@ console.log('\nThe three paths set it, and nothing else does');
 	// retryRouted too since R3 3c (7c939256): a daimon's routed Retry the hand-off declines is
 	// asked again here, as the person, as its send would be.
 	// Every Retry goes through the election since UNBLOCK-1 QFOLLOW, so retryRouted is askAgain's only caller.
-	same('retryRouted and the fenced lost-run retry (runRetryHere) ask again as the person', calls(SRC, 'askAgain').filter((c) => /person:\s*true/.test(c.text)).map((c) => c.owner).sort(), ['retryRouted', 'runRetryHere']);
+	same('retryRouted, the Diamond one-step retry (retryDiamond) and the fenced lost-run retry (runRetryHere) ask again as the person', calls(SRC, 'askAgain').filter((c) => /person:\s*true/.test(c.text)).map((c) => c.owner).sort(), ['retryDiamond', 'retryRouted', 'runRetryHere']);
 	check('and askAgain passes its options to runTurn as given', /return runTurn\(chat, text, opts\)/.test(lift(SRC, 'askAgain') || ''));
 	const none = rt.filter((c) => !/person:\s*true/.test(c.text)).map((c) => c.text.replace(/\s+/g, ' ').slice(0, 60));
 	check('a Continue, a gather round and a peer turn pass no person flag (so they take no pre)',
@@ -561,7 +561,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	const helper = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'isNotRunRow') + '\n' + lift(SRC, 'isLostRow');	// a lost turn's row (SUHT-R F1)
 	const fns = ['continueTurn', 'retryTurn', 'answerAgain'].map((n) => lift(SRC, n));
 	const cut = lift(SRC, 'tailAfter') + '\n' + lift(SRC, 'sessionCut');	// a retraction cuts the stored session (1e)
-	const ask = lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryRouted');	// retryTurn's way to the model, through the election
+	const ask = lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryRouted') + '\n' + lift(SRC, 'continueAsked');	// Continue's way, through the election (STEER-2)	// retryTurn's way to the model, through the election
 	check('the three doors are in daimond.js', fns.every(Boolean));
 	const spy = () => ({ tombstoned: [], ran: [], journal: [] });
 	function doors(sp, over) {
@@ -611,6 +611,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	{ // continueTurn (fixed at 76d9d1f8): held so the helper cannot regress it
 		const sp = spy(), d = doors(sp), c = cold();
 		run(() => d.continueTurn(c, 't9', 'the question'));
+		for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));	// through the election first (STEER-2)
 		check('continueTurn: the unmarked question is retracted and asked once, with the retracted note', sp.ran.length === 1 && !mids(c).includes('t9') && !sp.ran[0].had.includes('t9')
 			&& sp.ran[0].opts && sp.ran[0].opts.told === '[Daimond: the user rated your answer of 10:01 +1.]', { ran: sp.ran, left: mids(c) });
 	}
@@ -631,7 +632,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 		const c = { id: 'c9', messages: [ U('mold', T(0), 'an earlier question'), A(1, T(1)),
 			U('t7', T(2), 'keep going', { iturn: 't7' }),
 			{ role: 'assistant', content: '', mid: 'mph7', ts: T(3), why: 'dispatched', iturn: 't7' } ] };
-		run(() => d.continueTurn(c, 't7', 'keep going'));
+		run(() => d.continueTurn(c, 't7', 'keep going', false, undefined, false));	// [Run here]: the person chose this device
 		const stored = c.messages.filter((m) => !tombs[m.mid]);
 		const last2 = stored.slice(-2).map((m) => m.role + ':' + m.content);
 		check('[Run here]: the stored transcript holds the prompt, then its answer', last2.join('|') === 'user:keep going|assistant:answer 9', { stored: stored.map((m) => m.mid), tombs });

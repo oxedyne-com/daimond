@@ -137,7 +137,7 @@ function device(name, door, turns, held) {
 		id: 'm1', mailbox: 'alerts@oxegen.io', folder: 'INBOX', instruction: 'Triage the alert.',
 	});
 	W.tick = async () => { if (!W.dead) for (const fn of [...W.timers.values()]) await fn(); };
-	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail', 'mailMarkKey',
+	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'triggerHandOff', 'steerTriggerHere', 'claimTimerFire', 'timerFireId', 'oweMail', 'mailMarkKey',
 		'mailClaimId', 'syncsHere', 'retryMailOnHeard', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks',
 		'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
@@ -150,6 +150,8 @@ function device(name, door, turns, held) {
 		function diamondBusy(id) { return W.busy.has(id); }
 		function askOpenIn() { return false; }
 		function daimonChat(f) { return f; }
+		function seatDrawnRunner() { return ''; }		// the switch draws Here: the trigger runs here (STEER-2)
+		function chatSeatHere() { return false; }
 		function diamondCanRun() { return true; }
 		function proposeFromTurn() {}
 		function diag() {}

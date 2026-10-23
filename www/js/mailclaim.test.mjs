@@ -125,7 +125,7 @@ function device(name, door, turns, opts) {
 	W.mailB = Object.assign(DaimondTriggers.blank('mail'), {
 		id: 'm1', mailbox: 'alerts@oxegen.io', folder: 'INBOX', instruction: 'Triage the alert.',
 	});
-	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'oweMail',
+	const names = ['offScreenSteerAllowed', 'steerFromTrigger', 'triggerHandOff', 'steerTriggerHere', 'claimTimerFire', 'timerFireId', 'oweMail',
 		'mailMarkKey', 'mailClaimId', 'syncsHere', 'retryMailOnHeard', 'claimMailArrival', 'trailTrigger', 'seedMailMark', 'keepMailClaim', 'settleMailClaim', 'owedByMark', 'mailGen', 'mailFloors', 'mailFloorsWrite', 'pruneMailMarks', 'judgeTriggeredTurn', 'followVerdicts'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
 	const vars = ['MAIL_CLAIM_GRACE_MS', 'MAIL_FLOOR_KEY', '_mailFloor', 'FOLLOW_MAX_MS', '_mailHeardArmed'].map((n) => extractVar(APP, n)).join('\n');
@@ -137,6 +137,8 @@ function device(name, door, turns, opts) {
 		function diamondBusy(id) { return W.busy.has(id); }
 		function askOpenIn() { return false; }
 		function daimonChat(f) { return f; }
+		function seatDrawnRunner() { return ''; }		// the switch draws Here: the trigger runs here (STEER-2)
+		function chatSeatHere() { return false; }
 		function diamondCanRun() { return true; }
 		function proposeFromTurn() {}
 		function diag() {}
