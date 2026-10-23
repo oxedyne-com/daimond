@@ -16,13 +16,21 @@
          `src: 'diamond'` primary) runs as before;
      E4  a marked set the runner cannot run is handed back 401
          (`runnerErrorKind`), never swapped for the runner's own;
-     E5  that set, and an unmarked Diamond whose key the runner
-         lacks, is refused by `peerReady` before the claim: the real
+     E5a that set, on a runner that HOLDS the provider row at the
+         asker's stamp (HT3 `at`) but whose key is missing or failed,
+         and an unmarked Diamond whose key the runner lacks, is
+         refused by `peerReady` before the claim, at once: the real
          `DaimondPeer.runErrand` writes no lease, runs nothing, hands
          it back `undeliverable` (cause `models`) and acks, so the
          asker runs it here at once (D-20261018-09 PR). Its diag reads
          `ready MODELS` and never `handed back`, which only a post-claim
-         401 logs, once (diag_preclaim_merge.md; red on 529df246).
+         401 logs, once (diag_preclaim_merge.md; red on 529df246);
+     E5b that set, on a runner that never got the row (its sync
+         stalled), is BEHIND the asker's horizon, not never (HT3,
+         invariant 15): `peerReady` waits to the readiness deadline,
+         then refuses it `models-behind`, which the asker still reads
+         as a hand-back and runs here. Red on cfeb63029, which called
+         it `models` at once.
 
    Two sandboxes (node:vm), each with its own storage and the REAL
    store.js, stamp.js and models.js; the REAL daimond.js functions
@@ -31,7 +39,8 @@
    peer.js for E5. The runner's turn engine is a stub that records
    what `runTurn` is handed. Red proof:
      MM_SRC_REV=14ef947b node www/js/mmerrand.test.mjs
-     MM_SRC_REV=a7b7b69a node www/js/mmerrand.test.mjs   (E5)
+     MM_SRC_REV=a7b7b69a node www/js/mmerrand.test.mjs   (E5a)
+     MM_SRC_REV=cfeb63029 node www/js/mmerrand.test.mjs  (E5b)
    ============================================================ */
 import { source, liftFn } from './testlift.mjs';
 import vm from 'node:vm';
@@ -65,7 +74,7 @@ const FNS = ['readJson', 'diamondModels', 'diamondModel', 'modelPicksOf', 'diamo
 	'summarisingPick', 'diamondWorkerModel', 'diamondVisionModel', 'turnModelOf', 'chatWorkerModel',
 	'taskWantsVision', 'turnModelsOfDiamond', 'turnModelsOfChat', 'turnModelsOfRun', 'errandModelOf',
 	'sentModelsOf', 'claimedModelsOf', 'steerModelsFor', 'steerModelFor', 'peerRunErrandDeps', 'diamondCanRun',
-	'errandUnrunnable', 'peerReady', 'askerReadiness', 'lackedNote', 'runnerTurnOpts'];
+	'errandUnrunnable', 'modelsAt', 'peerReady', 'askerReadiness', 'lackedNote', 'runnerTurnOpts'];
 const METHODS = ['holdTurn', 'turnModelsFor', 'spawn', 'dispatch', 'routeFor'];
 const VARS = ['DIAMOND_MODELS_KEY', 'IMAGE_EXT'];
 function liftVar(src, name) {
@@ -81,7 +90,7 @@ const BODY = VARS.map((v) => liftVar(SRC, v)).join('\n') + '\n' + have.map((f) =
 /// One device: a vm realm with its own storage, models.js and the lifted functions. Every name
 /// the lifted code reaches that is neither lifted, set in `own`, nor a realm global is a
 /// permissive stub (any property, any call, never a thenable).
-async function device(name, keys, def, jobs, seed) {
+async function device(name, keys, def, jobs, seed, rows) {
 	const store = new Map(Object.entries(seed || {}));
 	const ctx = vm.createContext({
 		console: console, crypto: globalThis.crypto, TextEncoder: TextEncoder, TextDecoder: TextDecoder,
@@ -107,6 +116,8 @@ async function device(name, keys, def, jobs, seed) {
 		M.addProvider(k, { url: 'https://' + k + '.example/v1', name: k });
 		await M.setKey(k, k + '-key');
 	}
+	// Rows held with no key: synced here, at or past the asker's stamp, and unopenable.
+	for (const k of (rows || [])) M.addProvider(k, { url: 'https://' + k + '.example/v1', name: k });
 	M.setDefault(def.provider, def.model);
 	// A revision with no Jobs picks (14ef947b) has no Workers pick to send: its arms are red by name.
 	for (const r in (jobs || {})) if (M.setJob) M.setJob(r, jobs[r].provider, jobs[r].model);
@@ -190,6 +201,12 @@ async function main() {
 	const bare   = await device('bare',   ['openrouter'], A, null, { 'daimond-diamond-models':
 		JSON.stringify({ dU: { provider: B.provider, model: B.model }, dO: { provider: A.provider, model: A.model } }) });
 	bare.own.diamonds.push({ id: 'dU', name: 'Unkeyed' }, { id: 'dO', name: 'Keyed' });
+	// The same, but it holds the Fireworks row (made after the asker's, so at or past its stamp)
+	// with no key in it: the fact is here and can never run, which is `never`, not `behind`.
+	const held   = await device('held',   ['openrouter'], A, null, { 'daimond-diamond-models':
+		JSON.stringify({ dU: { provider: B.provider, model: B.model }, dO: { provider: A.provider, model: A.model } }) },
+		['fireworks']);
+	held.own.diamonds.push({ id: 'dU', name: 'Unkeyed' }, { id: 'dO', name: 'Keyed' });
 
 	console.log('E1 a following chat handed off runs the asker\'s default, not the runner\'s');
 	const chatA = { id: 'c1', name: 'Chat', model: '', provider: '', messages: [] };
@@ -251,7 +268,7 @@ async function main() {
 		dErr ? 'code ' + dErr.code : 'steered');
 	check('E5 the post-claim Diamond 401 logs exactly one hand-back line', handedBack(bare) === 1, bare.own.diags);
 
-	console.log('E5 a set the runner cannot run is refused before the claim, and the asker runs it here');
+	console.log('E5a a set the runner holds at the stamp and cannot run is refused before the claim, at once');
 	const stale = { provider: 'openrouter', model: 'or/stale', url: '' };	// an unmarked pair
 	const unrun = [
 		['an unrunnable daimon',                 { chatId: 'c2', model: fwSent }],
@@ -261,11 +278,33 @@ async function main() {
 	];
 	const ready = (R, f) => R.fn('peerRunErrandDeps')({}).ready(Object.assign({ turnId: 't-' + f.chatId, through: null },
 		JSON.parse(JSON.stringify(f))), []);
+	const fwAt = sent && sent.at ? sent.at.fireworks : undefined;
+	check('E5a the errand names the asker\'s Fireworks stamp, and the runner holds the row at or past it',
+		typeof fwAt === 'number' && held.M.stampAt && held.M.stampAt('fireworks') >= fwAt,
+		'at ' + fwAt + ', held ' + (held.M.stampAt ? held.M.stampAt('fireworks') : '(no stampAt)'));
 	for (const [what, f] of unrun) {
+		held.own.diags.length = 0;
+		const rd = await ready(held, f);
+		check('E5a ready refuses ' + what + ' with cause models', !!rd && rd.ok === false && rd.cause === 'models', JSON.stringify(rd));
+		check('E5a its diag reads ready MODELS, never a hand-back', held.own.diags.some((l) => /^ready MODELS /.test(l))
+			&& handedBack(held) === 0, held.own.diags);
+	}
+	// A failed seal at or past the stamp is the other `never`: judged by the same pure rule.
+	const jF = held.M.judgeAt ? held.M.judgeAt({ fireworks: 100 }, { fireworks: { touched: 100, tomb: 0, keyed: true, key: 'failed' } }) : null;
+	check('E5a a held row whose seal failed here is never', !!jF && jF.verdict === 'never', JSON.stringify(jF));
+
+	console.log('E5b a set whose row the runner never got (sync stalled) is behind: models-behind at the deadline');
+	const WAIT = 300;
+	for (const [what, f] of unrun.slice(0, 3)) {
 		bare.own.diags.length = 0;
-		const rd = await ready(bare, f);
-		check('ready refuses ' + what + ' with cause models', !!rd && rd.ok === false && rd.cause === 'models', JSON.stringify(rd));
-		check('E5 its diag reads ready MODELS, never a hand-back', bare.own.diags.some((l) => /^ready MODELS /.test(l))
+		const t0 = Date.now();
+		const rd = await bare.fn('peerReady')(Object.assign({ turnId: 't-' + f.chatId, through: null }, JSON.parse(JSON.stringify(f))), [], WAIT);
+		const took = Date.now() - t0;
+		check('E5b ready refuses ' + what + ' with cause models-behind, at the deadline',
+			!!rd && rd.ok === false && rd.cause === 'models-behind' && took >= WAIT - 20,
+			JSON.stringify(rd) + ' after ' + took + 'ms');
+		check('E5b its diag reads ready MODELS-BEHIND, never MODELS or a hand-back',
+			bare.own.diags.some((l) => /^ready MODELS-BEHIND /.test(l)) && !bare.own.diags.some((l) => /^ready MODELS /.test(l))
 			&& handedBack(bare) === 0, bare.own.diags);
 	}
 	const okChat = await ready(runner, { chatId: 'c1', model: sent });
@@ -284,42 +323,47 @@ async function main() {
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
 	}
 	const P = win.DaimondPeer;
-	const NOW = Date.now(), TID = 't-e5';
-	const leases = { version: 1, map: {} };
-	const cas = {
-		read:  async () => ({ version: leases.version, leases: JSON.parse(JSON.stringify(leases.map)) }),
-		write: async (base, next) => {
-			if (base !== leases.version) return { ok: false, version: leases.version };
-			leases.version++; leases.map = JSON.parse(JSON.stringify(next)); return { ok: true, version: leases.version };
-		},
-	};
-	let ran = 0, acked = 0;
-	const reports = [];
-	const errand = P.makeErrand({ turnId: TID, chatId: 'c1', eid: 'e-' + TID, ts: NOW, deadline: NOW + 15 * 60000,
-		dispatchedBy: 'DESK', to: 'PEER', prompt: 'hi', model: JSON.parse(JSON.stringify(sent)),
-		seed: { chatId: 'c1', title: '', provider: '', model: '', msgs: [{ role: 'user', content: 'hi', mid: TID, ts: NOW }] } });
-	const bareDeps = bare.fn('peerRunErrandDeps')({});
-	const res = await P.runErrand(errand, {
-		selfId: 'PEER', cas: cas, presence: {}, finished: async () => false, busyFor: () => 0, ownTurns: () => [],
-		ready: bareDeps.ready,
-		reconstruct: async () => ({ chat: { id: 'c1', messages: [] }, app: null }),
-		// What the run dep does when it is reached with this set: `sentModelsOf`'s 401.
-		runTurn: async () => { ran++; const e = new Error('the turn’s workers model has no usable api key on this device'); e.code = 401; throw e; },
-		abort: () => {}, pushResult: async () => 1,
-		post: async (r) => { reports.push(r); }, ack: async () => { acked++; },
-		setTimer: (fn) => setInterval(fn, 20), clearTimer: (h) => clearInterval(h),
-	});
-	const lease = leases.map[TID] || null;
-	const rep = reports[reports.length - 1] || null;
-	check('no lease is written and nothing runs', !lease && ran === 0,
-		'lease ' + (lease ? lease.mode + ' by ' + lease.holder : 'none') + ', runTurn ' + ran + ', trace ' + (res.trace || []).join(' '));
-	check('one undeliverable report with cause models', reports.length === 1 && rep.status === 'undeliverable' && rep.cause === 'models',
-		JSON.stringify(rep && { status: rep.status, cause: rep.cause, why: rep.why }));
-	check('the errand is acked once', acked === 1, 'acks ' + acked);
-	const ph = { why: P.REASON_DISPATCHED, dispatchedBy: 'DESK', iturn: TID, mid: 'ph-' + TID, ts: NOW, deadline: NOW + 15 * 60000, itext: 'hi' };
-	check('the asker reads it as a hand-back and runs it here', P.handBackReport(rep) === true
-		&& P.uiState(ph, lease, rep, 'DESK', Date.now()) === 'claimed' && P.recoverDecision(ph, lease, false, 'DESK', Date.now()) === true,
-		'handBack ' + P.handBackReport(rep) + ', tile ' + P.uiState(ph, lease, rep, 'DESK', Date.now()));
+	/// The real `runErrand` on runner R, refusing before the claim with `cause`.
+	async function throughPeer(tag, R, cause) {
+		const NOW = Date.now(), TID = 't-' + tag;
+		const leases = { version: 1, map: {} };
+		const cas = {
+			read:  async () => ({ version: leases.version, leases: JSON.parse(JSON.stringify(leases.map)) }),
+			write: async (base, next) => {
+				if (base !== leases.version) return { ok: false, version: leases.version };
+				leases.version++; leases.map = JSON.parse(JSON.stringify(next)); return { ok: true, version: leases.version };
+			},
+		};
+		let ran = 0, acked = 0;
+		const reports = [];
+		const errand = P.makeErrand({ turnId: TID, chatId: 'c1', eid: 'e-' + TID, ts: NOW, deadline: NOW + 15 * 60000,
+			dispatchedBy: 'DESK', to: 'PEER', prompt: 'hi', model: JSON.parse(JSON.stringify(sent)),
+			seed: { chatId: 'c1', title: '', provider: '', model: '', msgs: [{ role: 'user', content: 'hi', mid: TID, ts: NOW }] } });
+		const rDeps = R.fn('peerRunErrandDeps')({});
+		const res = await P.runErrand(errand, {
+			selfId: 'PEER', cas: cas, presence: {}, finished: async () => false, busyFor: () => 0, ownTurns: () => [],
+			ready: rDeps.ready,
+			reconstruct: async () => ({ chat: { id: 'c1', messages: [] }, app: null }),
+			// What the run dep does when it is reached with this set: `sentModelsOf`'s 401.
+			runTurn: async () => { ran++; const e = new Error('the turn’s workers model has no usable api key on this device'); e.code = 401; throw e; },
+			abort: () => {}, pushResult: async () => 1,
+			post: async (r) => { reports.push(r); }, ack: async () => { acked++; },
+			setTimer: (fn) => setInterval(fn, 20), clearTimer: (h) => clearInterval(h),
+		});
+		const lease = leases.map[TID] || null;
+		const rep = reports[reports.length - 1] || null;
+		check(tag + ' no lease is written and nothing runs', !lease && ran === 0,
+			'lease ' + (lease ? lease.mode + ' by ' + lease.holder : 'none') + ', runTurn ' + ran + ', trace ' + (res.trace || []).join(' '));
+		check(tag + ' one undeliverable report with cause ' + cause, reports.length === 1 && rep.status === 'undeliverable' && rep.cause === cause,
+			JSON.stringify(rep && { status: rep.status, cause: rep.cause, why: rep.why }));
+		check(tag + ' the errand is acked once', acked === 1, 'acks ' + acked);
+		const ph = { why: P.REASON_DISPATCHED, dispatchedBy: 'DESK', iturn: TID, mid: 'ph-' + TID, ts: NOW, deadline: NOW + 15 * 60000, itext: 'hi' };
+		check(tag + ' the asker reads it as a hand-back and runs it here', P.handBackReport(rep) === true
+			&& P.uiState(ph, lease, rep, 'DESK', Date.now()) === 'claimed' && P.recoverDecision(ph, lease, false, 'DESK', Date.now()) === true,
+			'handBack ' + P.handBackReport(rep) + ', tile ' + P.uiState(ph, lease, rep, 'DESK', Date.now()));
+	}
+	await throughPeer('E5a', held, 'models');
+	await throughPeer('E5b', bare, 'models-behind');
 
 	console.log((failures ? 'FAIL' : 'PASS') + ' — ' + (checks - failures) + '/' + checks + ' checks');
 	process.exit(failures ? 1 : 0);

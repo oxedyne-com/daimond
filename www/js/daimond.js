@@ -26131,14 +26131,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// runner honours, so a runner not yet reloaded still runs the asker's daimon half rather than
 	/// its own copy of the Diamond (QA B #5); a current runner takes the whole set from `workers`
 	/// (`sentModelsOf`). An older asker's unmarked pair runs as it always did.
+	///
+	/// THE ASKER'S HORIZON (HT3, design §3.2): `at` names, for every synced provider a half reads,
+	/// the `touched` of that row as this device resolved it, so the runner says "cannot" only at
+	/// or past it and waits below it (`modelsAt`). A row that does not travel (`credits`) is not
+	/// named; the runner judges it on its own key, with no wait. Every half carries a provider id
+	/// [L5]: an empty one is this device's default, named here, since `resolve` on the runner
+	/// would fall back to ITS default; a half with no provider to name is not sent.
 	function errandModelOf(chat) {
 		if (!chat) return { provider: '', model: '', url: '' };
 		var s = chat.diamondId ? turnModelsOfDiamond(chat.diamondId) : turnModelsOfChat(chat);
-		var out = { provider: s.daimon.provider, model: s.daimon.model, url: '' };
+		var M = window.DaimondModels;
+		function named(h) {
+			var p = h.provider || '', m = h.model || '';
+			if (m && !p && M && M.getDefault) p = M.getDefault().provider || '';
+			return (m && p) ? { provider: p, model: m } : { provider: '', model: '' };
+		}
+		var d = named(s.daimon);
+		var out = { provider: d.provider, model: d.model, url: '' };
 		if (!out.model) return out;		// nothing resolved: the runner resolves, as before
+		var w = named(s.workers), im = named(s.images);
 		out.src     = chat.diamondId ? 'diamond' : 'asker';
-		out.workers = { provider: s.workers.provider || '', model: s.workers.model || '', chosen: !!s.workers.chosen };
-		out.images  = { provider: s.images.provider || '', model: s.images.model || '', chosen: !!s.images.chosen };
+		out.workers = { provider: w.provider, model: w.model, chosen: !!(w.model && s.workers.chosen) };
+		out.images  = { provider: im.provider, model: im.model, chosen: !!(im.model && s.images.chosen) };
+		if (M && M.stampAt) {
+			var at = {};
+			[out, out.workers, out.images].forEach(function (h) {
+				var st = h.model ? M.stampAt(h.provider) : null;
+				if (st !== null) at[h.provider] = st;
+			});
+			out.at = at;
+		}
 		return out;
 	}
 
@@ -28164,21 +28187,61 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return diamondCanRun(did) ? '' : 'the diamond’s model has no usable api key on this device';
 	}
 
+	/// The verdict on errand `e`'s models at the asker's horizon (HT3, design §3.3): `{ verdict:
+	/// 'can' | 'never' | 'behind', why, line }`. The synced providers `e.model.at` names are judged
+	/// by `DaimondModels.judgeAt`, pure on `(at, rows held, keyState)`; a half `at` does not name
+	/// (`credits`, minted per device) on this device's own key, with no wait; and a set that
+	/// judges `can` is then resolved as the run will (`errandUnrunnable`). An errand with no `at`
+	/// (an older asker) is judged as before: `can` or `never`, at once.
+	function modelsAt(e, chat) {
+		var M = window.DaimondModels, sent = (e && e.model) || null;
+		var at = (sent && sent.at && typeof sent.at === 'object' && M && M.judgeAt) ? sent.at : null;
+		if (!at) {
+			var why0 = errandUnrunnable(e, chat);
+			return { verdict: why0 ? 'never' : 'can', why: why0, line: 'horizon=none' };
+		}
+		var held = {};
+		Object.keys(at).forEach(function (pid) { held[pid] = M.heldAt(pid); });
+		var j = M.judgeAt(at, held);
+		var line = 'model=' + String(sent.provider || '') + '/' + String(sent.model || '') + ' pid=' + (j.pid || '-')
+			+ ' named=' + j.named + ' held=' + (j.held === null ? 'none' : j.held) + ' key=' + (j.key || '-');
+		// The halves the horizon does not name: this device's own key decides them, at once.
+		var halves = [sent, sent.workers, sent.images].filter(function (h) { return h && h.model && h.provider; });
+		for (var i = 0; i < halves.length; i++) {
+			var h = halves[i];
+			if (Object.prototype.hasOwnProperty.call(at, h.provider) || M.resolve(h.provider, h.model)) continue;
+			return { verdict: 'never', why: 'the turn’s model ' + h.provider + '/' + h.model + ' has no usable api key on this device',
+				line: line + ' unnamed=' + h.provider + ' key=' + M.keyState(h.provider) };
+		}
+		if (j.verdict === 'never') return { verdict: 'never', line: line,
+			why: 'the turn’s model ' + j.pid + ' has no usable api key on this device (key ' + j.key + ')' };
+		if (j.verdict === 'behind') return { verdict: 'behind', line: line,
+			why: 'this device had not yet received the turn’s model ' + j.pid + ' as the asker saw it (key ' + j.key + ')' };
+		var why = errandUnrunnable(e, chat);
+		return { verdict: why ? 'never' : 'can', why: why, line: line };
+	}
+
 	async function peerReady(errand, own, waitMs) {
-		var e = errand || {};
-		var by = Date.now() + (typeof waitMs === 'number' ? waitMs : THROUGH_WAIT_MS);
+		var e = errand || {}, t0 = Date.now();
+		var by = t0 + (typeof waitMs === 'number' ? waitMs : THROUGH_WAIT_MS);
 		if (errand && typeof errand === 'object') readyBy.set(errand, by);
 		function find() {
 			for (var i = 0; i < chats.length; i++) if (chats[i].id === e.chatId) return chats[i];
 			return null;
 		}
-		// A RUNNER NEVER CLAIMS A TURN WHOSE MODELS IT CANNOT RUN (D2 applied to models): refused
-		// here, before any lease, the asker's hand-back runs it at once on the device that has the key.
-		var unrun = errand ? errandUnrunnable(e, find()) : '';
-		if (unrun) {
-			diag('ready MODELS', 'chat=' + e.chatId + ' turn=' + e.turnId + ' -- ' + unrun);
-			return { ok: false, cause: 'models', why: unrun };
+		// A RUNNER NEVER CLAIMS A TURN WHOSE MODELS IT CANNOT RUN (D2 applied to models), and says
+		// "cannot" only at the asker's horizon (HT3): `never` is refused here at once, before any
+		// lease, and the asker's hand-back runs it on the device that has the key; `behind` is
+		// waited on below, to the same deadline as the thread, pulling, and refused as
+		// `models-behind` only when the deadline passes with the horizon unreached.
+		var md = errand ? modelsAt(e, find()) : { verdict: 'can' };
+		function refused(m) {
+			var cause = m.verdict === 'never' ? 'models' : 'models-behind';
+			diag(m.verdict === 'never' ? 'ready MODELS' : 'ready MODELS-BEHIND', 'chat=' + e.chatId + ' turn=' + e.turnId
+				+ ' ' + (m.line || '') + ' -- ' + m.why);
+			return { ok: false, cause: cause, why: m.why };
 		}
+		if (md.verdict === 'never') return refused(md);
 		async function holds() {
 			var c = find();
 			if (c && c._loaded === false) { try { await withinDeadline(loadChatMessages(c), by); } catch (err) { /* waited for below */ } }
@@ -28187,13 +28250,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return askerReadiness(c, e, own, false).ready;
 		}
 		if (!errand) return { ok: true, lacked: '' };
-		var got = await holds();
-		while (!got && Date.now() < by) {
+		var got = await holds(), behind = md.verdict === 'behind', md0 = md;
+		if (behind) diag('ready models-wait', 'chat=' + e.chatId + ' turn=' + e.turnId + ' ' + md.line);
+		while ((!got || behind) && Date.now() < by) {
 			if (window.DaimondSync && DaimondSync.pull) { try { await withinDeadline(DaimondSync.pull(true), by); } catch (err) { /* offline: the bound ends it */ } }
 			try { await withinDeadline(onChatsChangedElsewhere(), by); } catch (err) { /* asked again regardless */ }
-			got = await holds();
-			if (!got && Date.now() < by) await new Promise(function (res) { setTimeout(res, Math.min(500, Math.max(0, by - Date.now()))); });
+			if (behind) {
+				md = modelsAt(e, find());
+				if (md.verdict === 'never') return refused(md);
+				behind = md.verdict === 'behind';
+			}
+			if (!got) got = await holds();
+			// A models wait asks again sooner: a key opening lands in milliseconds once it does.
+			if ((!got || behind) && Date.now() < by) await new Promise(function (res) {
+				setTimeout(res, Math.min(behind ? 250 : 500, Math.max(0, by - Date.now()))); });
 		}
+		if (behind) {
+			md = modelsAt(e, find());
+			if (md.verdict !== 'can') return refused(md);
+		}
+		if (md0.verdict === 'behind') diag('ready models-can', 'chat=' + e.chatId + ' turn=' + e.turnId + ' ' + md.line
+			+ ' waited=' + (Date.now() - t0) + 'ms');
 		if (got) return { ok: true, lacked: '' };
 		var rd = askerReadiness(find(), e, own, false);
 		diag('ready LACKING', 'chat=' + e.chatId + ' turn=' + e.turnId + ' have=' + rd.have + ' want=' + rd.want
@@ -29080,12 +29157,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// until the browser's own multi-minute fetch timeout. Race a 4s cap; on timeout
 			// or any failure, proceed on the local snapshot, which fails toward LIVENESS (a
 			// stale/absent nominee reads offline, so this device CLAIMS rather than stranding
-			// the turn). The lease still guarantees a single runner.
+			// the turn). The lease still guarantees a single runner. The cap is the send's
+			// (PRESENCE_READ_CAP_MS, 2 s, HT2 M1), down from 4 s.
 			try {
 				if (window.DaimondSync && DaimondSync.refreshPresence) {
 					await Promise.race([
 						DaimondSync.refreshPresence(),
-						new Promise(function (r) { setTimeout(r, 4000); }),
+						new Promise(function (r) { setTimeout(r, PRESENCE_READ_CAP_MS); }),
 					]);
 				}
 			} catch (e) { /* the local snapshot stands */ }
@@ -30835,6 +30913,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var NOMINEE_REFRESH_CAP_MS = 4000;		// how long a stale nominee's presence refresh may block the send
 	var NOMINEE_TRUST_MS       = 300000;	// presume a set nominee live this long when the refresh could not confirm it
 	var PRESUMED_FALLBACK_MS   = 12000;		// tight backstop when a nominee was seated UNCONFIRMED (presumed live)
+	var PRESENCE_READ_CAP_MS   = 2000;		// the send-time and collect-time presence read (HT2 M1)
+
+	/// THE SEND-TIME READ (HT2 M1, design 2.6). Against a gateway that derives presence, a
+	/// send that could hand off reads presence first, bounded at PRESENCE_READ_CAP_MS, and
+	/// decides on what it read. The fresh snapshot, or null where the read did not land in
+	/// time or failed: no read, and the turn stays Here rather than going on a guess.
+	async function sendPresenceRead() {
+		var landed = false;
+		try {
+			await Promise.race([
+				Promise.resolve(DaimondSync.refreshPresence()).then(function (j) { landed = !!(j && j.presence); }),
+				new Promise(function (r) { setTimeout(r, PRESENCE_READ_CAP_MS); }),
+			]);
+		} catch (e) { landed = false; }
+		return landed ? ((window.DaimondPresence && DaimondPresence.snapshot()) || {}) : null;
+	}
 
 	/// Arm the recovery backstop for one dispatched turn. Idempotent per turn.
 	/// `fastMs` (optional) shortens the wait for a turn seated on a PRESUMED-live
@@ -30959,14 +31053,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { touchChat(chat); persistChats(); if (noted && ownsChat(chat)) renderHistory(chat.messages); }
 			catch (e) { /* the in-memory record still guides a re-dispatch */ }
 			diag('handoff handback noted', 'turn=' + tid + ' by=' + String(report.by).slice(0, 8)
-				+ ' handedBack=' + handed.length + (busy ? ' busy' : '') + (thread ? ' thread' : ''));
+				+ ' handedBack=' + handed.length + (busy ? ' busy' : '') + (thread ? ' thread' : '')
+				+ (report.cause && report.cause !== 'thread' ? ' cause=' + report.cause : ''));
 		} catch (e) { /* the hand-back still runs the turn here */ }
 	}
 
+	var _fallbackInFlight = Object.create(null);	// turn id -> a runDispatchFallback awaiting its reads
+
 	async function runDispatchFallback(chatId, turnId) {
+		var tid = String(turnId || ''), mine = false;
 		try {
 			if (!window.DaimondPeer || !DaimondPeer.recoverDecision || !DaimondPeer.runErrand) return;
-			var tid = String(turnId || '');
+			// ONE AT A TIME PER TURN. The backstop timer and a withdrawal on loss (HT2 M9) can
+			// both arrive while the other awaits its reads; a second run would then find this
+			// device's own fresh claim, which `runErrand` reads as a re-take and ends Interrupted.
+			if (_fallbackInFlight[tid]) return;
+			_fallbackInFlight[tid] = mine = true;
 			// Collect the post box and read the lease door first, so a peer's answer (post) or
 			// claim (lease) is seen before the decision.
 			//
@@ -31027,6 +31129,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// takes the turn's work claim, so a sibling tab running it stands this down (F1).
 			await recoverOneLocally(chat, m);
 		} catch (e) { /* the 15-min deadline + [Run here] remain the ultimate backstop */ }
+		finally { if (mine) delete _fallbackInFlight[tid]; }
+	}
+
+	/// WITHDRAW ON LOSS (HT2 M9, design 2.6). On each presence change: a turn this device
+	/// handed to a runner that has since stopped listening, with no claim on it, is taken
+	/// back now through the backstop's own path (`runDispatchFallback`: the lease door read,
+	/// then `recoverOneLocally`, whose run takes the lease by CAS), never by taking the lease
+	/// first. A runner's claim that landed first wins the CAS and the turn runs there. The
+	/// backstop timer stays armed behind it.
+	function withdrawLostHandoffs() {
+		if (!window.DaimondPeer || !DaimondPeer.withdrawOnLoss) return;
+		var snap = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+		var self = selfDeviceId(), now = Date.now();
+		Object.keys(_dispatchedIx).forEach(function (tid) {
+			if (_fallbackInFlight[tid] || _localRecovering[tid]) return;
+			var chat = dispatchedChat(tid);
+			var m    = chat ? dispatchedPlaceholderIn(chat, tid) : null;
+			if (!m) return;
+			var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(tid) : null;
+			if (!DaimondPeer.withdrawOnLoss(m, lease, snap[String(m.toDevice)], self, now)) return;
+			diag('handoff withdraw', 'turn=' + tid + ' runner ' + String(m.toDevice).slice(0, 8) + ' stopped listening unclaimed');
+			runDispatchFallback(chat.id, tid);
+		});
 	}
 
 	/// Start LISTENING for dispatched errands: park on the gateway's Post channel and
@@ -31105,6 +31230,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		window.addEventListener('daimond:device-removed', function () {
 			Promise.resolve(onThisDeviceRemoved()).catch(function () {});
 		});
+	} catch (e) { /* no window */ }
+	// A page back from the bfcache or a frozen state has a presence view from before it went,
+	// and under the derived truth no beat refreshes it: the display reads once (HT2 M1).
+	try {
+		var presenceOnReturn = function () {
+			try { if (window.DaimondSync && DaimondSync.refreshPresence) DaimondSync.refreshPresence(); } catch (e) { /* local snapshot stands */ }
+		};
+		window.addEventListener('pageshow', function (ev) { if (ev && ev.persisted) presenceOnReturn(); });
+		document.addEventListener('resume', presenceOnReturn);
 	} catch (e) { /* no window */ }
 	try {
 		document.addEventListener('visibilitychange', function () {
@@ -31198,8 +31332,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			globalDefault:  handoffWhenAway(),
 			freshWindowMs:  DaimondPeer.DISPATCH_FRESH_MS,
 			toggle:         (c && chatSeatHere(c)) ? false : null,
+			needFolder:     chatNeedsFolder(c),
 			runnerOnly:     true,
+			// A re-read did not land (a gateway restart): the map is unknown and seats nobody.
+			presenceUnknown: !!(window.DaimondPresence && DaimondPresence.unknown && DaimondPresence.unknown()),
 		};
+	}
+
+	/// Is this chat's folder ROOTED on this device (F4c, UNBLOCK-32): the real folder open
+	/// here, and a mark of its Diamond or a workspace holding of its own pressed in it? Then
+	/// the turn runs only where a folder is held too, since a runner with none reaches none
+	/// of it and a switch that offers one which then cannot do the turn is a fault (§1).
+	function chatNeedsFolder(chat) {
+		if (!chat || !selfHoldsFolder() || !window.DaimondMarksHere || !DaimondMarksHere.rootedHere) return false;
+		try { return DaimondMarksHere.rootedHere(chat.diamondId || '', chat.id || '', rootHere()); }
+		catch (e) { return false; }
 	}
 
 	// ── THE PERSON'S CHOICE, per chat (owner, D-20261009-23) ──
@@ -31388,7 +31535,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// waking, going quiet, or starting to service errands; the rest are this device's
 	// own doing.
 	try {
-		window.addEventListener('daimond:presence', function () { renderSeatSwitch(); redrawDocSeat(); });
+		window.addEventListener('daimond:presence', function () { renderSeatSwitch(); redrawDocSeat(); withdrawLostHandoffs(); });
 		window.addEventListener('daimond:unlock',   function () { renderSeatSwitch(); redrawDocSeat(); });
 		window.addEventListener('daimond:view',     function () { renderSeatSwitch(); redrawDocSeat(); });
 		// A file written is the one event the seat switch does not care about and the Doc
@@ -31792,7 +31939,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// unconfirmed, not a proof of offline -- so the decision presumes the always-on
 			// runner live over `NOMINEE_TRUST_MS` rather than misrouting to a fresher peer.
 			var refreshLanded = false;
-			if (window.DaimondSync && DaimondSync.refreshPresence) {
+			var derived = !!(window.DaimondSync && DaimondSync.presenceDerived && DaimondSync.presenceDerived());
+			if (derived && DaimondSync.refreshPresence) {
+				// Under the derived truth every send reads, and nothing is presumed: a read
+				// that did not land keeps the turn Here (HT2 M1).
+				var read = await sendPresenceRead();
+				if (!read) {
+					diag('handoff send read', 'presence read did not land in ' + PRESENCE_READ_CAP_MS + 'ms; Here');
+					return false;
+				}
+				presence = read;
+				refreshLanded = true;
+			} else if (window.DaimondSync && DaimondSync.refreshPresence) {
 				if (nomStale) {
 					// (b) THE NOMINEE PRESENCE-REFRESH AWAIT. Capped, because it blocks the
 					// send -- but the cap is generous (NOMINEE_REFRESH_CAP_MS): a cold iOS
@@ -31876,6 +32034,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The person's switch: Here pins the chat; otherwise only the runner the
 				// switch names may take the turn (D-20261009-23).
 				toggle:        chatSeatHere(chat) ? false : null,
+				// The chat's folder is rooted here: only a runner holding one is offered (F4c).
+				needFolder:    chatNeedsFolder(chat),
 				runnerOnly:    true,
 			}, Date.now());
 			// THE SMOKING GUN: exactly what the election saw and chose. This is the
@@ -32186,8 +32346,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return o;
 	}
 
-	function presenceTick() {
-		_beatAt = Date.now();
+	/// This tab's posture now, as a beat states it, or null when it states nothing (a
+	/// hidden phone, no identity yet). `args` is `beatPresence`'s argument list.
+	function postureNow() {
 		try {
 			// A hidden PHONE tab is genuinely suspended, so it must not claim to be
 			// awake. A hidden DESKTOP tab (another window has focus) is still running
@@ -32196,10 +32357,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Gating a desktop on visibility is what made argonaut only count as a peer
 			// while its tab was foregrounded, defeating "hand off while I work elsewhere".
 			if (typeof document !== 'undefined' && document.visibilityState !== 'visible'
-				&& isPhoneViewport()) return;
-			if (!window.DaimondPresence || !DaimondPresence.beat) return;
+				&& isPhoneViewport()) return null;
+			if (!window.DaimondPresence || !DaimondPresence.beat) return null;
 			var id = selfDeviceId();
-			if (!id) return;
+			if (!id) return null;
 			// Broadcast THIS device's own label -- the machine name in the devices list
 			// ("Argonaut Chrome on Linux") -- NOT the account display name. Every device
 			// of one account shares that name ("hoogs"), so beating it leaves the hand-off
@@ -32212,11 +32373,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				name = (_me && (_me.label || _me.name)) || deviceSelfName(id)
 					|| (window.DaimondIdentity && DaimondIdentity.displayName && DaimondIdentity.displayName()) || '';
 			} catch (e) { name = ''; }
-			// Optimistic self-update, then beat the gateway on its OWN lightweight,
-			// non-waking presence path and adopt the authoritative map it answers
-			// with. NOT DaimondSync.push(): presence left the content parcel, so a
-			// beat no longer re-uploads ~163K nor wakes every other device -- the
-			// defect this replaces. A missed beat is safe.
 			// Carry the attention signal on the beat, so an attended device is routable
 			// for a live consent. The optimistic local update carries it directly; the
 			// gateway path (beatPresence) forwards it too, so once the gateway relays
@@ -32252,6 +32408,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// chat it is already running (the turn queues) and passes it over for others.
 			var bsy = 0, bchats = [];
 			try { var bh = busyHere(); bsy = DaimondPeer.busyForRec(bh, ''); bchats = bh.busyChats; } catch (e) { bsy = 0; bchats = []; }
+			return { id: id, name: name, att: att, svc: svc, run: run, mob: mob, hnd: hnd,
+				fold: fold, bsy: bsy, bchats: bchats,
+				args: [id, name, att, svc, run, mob, hnd, fold, bsy, bchats] };
+		} catch (e) { return null; }
+	}
+
+	/// State this tab's posture: locally at once, then to the gateway. `p` is a posture
+	/// the caller already read (`postureNow`). Against a gateway that derives presence
+	/// (HT2, design 2.2), only a CHANGE is stated, so a caller that beats on an event (a
+	/// turn beginning, the lease ticker) states nothing when nothing moved; against any
+	/// other gateway it beats as before.
+	function presenceTick(p) {
+		_beatAt = Date.now();
+		try {
+			p = p || postureNow();
+			if (!p) return;
+			if (window.DaimondSync && DaimondSync.presenceDerived && DaimondSync.presenceDerived()
+				&& DaimondSync.postureDue && !DaimondSync.postureDue.apply(null, p.args)) return;
+			var id = p.id, name = p.name, att = p.att, svc = p.svc, run = p.run, mob = p.mob;
+			var hnd = p.hnd, fold = p.fold, bsy = p.bsy, bchats = p.bchats;
+			// Optimistic self-update, then beat the gateway on its OWN lightweight,
+			// non-waking presence path and adopt the authoritative map it answers
+			// with. NOT DaimondSync.push(): presence left the content parcel, so a
+			// beat no longer re-uploads ~163K nor wakes every other device -- the
+			// defect this replaces. A missed beat is safe.
 			_beatBusy = bsy > 0;
 			DaimondPresence.beat(id, name, Date.now(), att, svc, null, run, mob, hnd, fold, bsy, bchats);
 			// A beat the door could not take yet is OWED, not made. After a reload the first
@@ -32292,6 +32473,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var _beatOwed = false;			// the last beat could not reach the gateway
 	var PRESENCE_EDGE_MS = 1000;	// how often the edge is read
 	function presencePulse() {
+		// THE BEAT RETIRED (HT2 [M4]): while the gateway derives presence, posture is read
+		// every pulse and stated only when it moved (`postureDue`; the `attended` idle
+		// decay is such a move), on return to view and on a reconnect. A gateway that
+		// does not derive is beaten exactly as below.
+		var derived = false;
+		try { derived = !!(window.DaimondSync && DaimondSync.presenceDerived && DaimondSync.presenceDerived()); }
+		catch (e) { derived = false; }
+		if (derived) {
+			var p = postureNow();
+			var go = false;
+			try { go = !!(p && DaimondSync.postureDue.apply(null, p.args)); } catch (e) { go = false; }
+			if (go) presenceTick(p);
+			return;
+		}
 		var due = Date.now() - _beatAt >= ((window.DaimondPresence && DaimondPresence.BEAT_MS) || 45000);
 		if (!due && _beatBusy != null) {
 			var now = false;

@@ -64,8 +64,16 @@ const quiet  = (pg) => pg.evaluate(() => window.DaimondSync.state().quiet);
 const parcel = (pg) => pg.evaluate(async () => JSON.stringify(await window.DaimondSync.parcel()));
 const wakes  = (pg) => pg.evaluate(() => window.DaimondSync.wake().wakes);
 const devId  = (pg) => pg.evaluate(() => window.DaimondIdentity.deviceId());
-const devName = (pg) => pg.evaluate(() =>
-	(window.DaimondIdentity.displayName && window.DaimondIdentity.displayName()) || '');
+// The name this device states for itself (daimond.js postureNow: its machine label, not
+// the account's display name), as its own presence row carries it. Since HT2 the app
+// re-states its own posture within a second of any beat that differs from it, so a beat
+// under another name does not stand and cannot be what a peer sees.
+const devName = (pg) => pg.evaluate(async () => {
+	try { await window.DaimondSync.refreshPresence(); } catch (e) { /* the row may be older */ }
+	const id = window.DaimondIdentity.deviceId();
+	return (window.DaimondPresence.name && window.DaimondPresence.name(id))
+		|| (window.DaimondIdentity.displayName && window.DaimondIdentity.displayName()) || '';
+});
 
 /// Wait until nothing is running and nothing is armed on this page.
 const settle = async (pg, ms = 20000) => {
@@ -81,7 +89,8 @@ const settle = async (pg, ms = 20000) => {
 /// what daimond.js's presenceTick passes.
 const beat = (pg) => pg.evaluate(() => {
 	const id = window.DaimondIdentity.deviceId();
-	const nm = (window.DaimondIdentity.displayName && window.DaimondIdentity.displayName()) || '';
+	const nm = (window.DaimondPresence.name && window.DaimondPresence.name(id))
+		|| (window.DaimondIdentity.displayName && window.DaimondIdentity.displayName()) || '';
 	return window.DaimondSync.beatPresence(id, nm);
 });
 

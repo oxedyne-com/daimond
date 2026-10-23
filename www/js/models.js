@@ -221,6 +221,7 @@
 			keyEnc:  old.apiKeyEnc || '',
 			models:  Array.isArray(models) ? models : [],
 			fetched: 0,
+			touched: stampNow(id),	// a configuration write, stamped like every other (HT3 M8)
 		};
 		if (old.model) store.def = { provider: id, model: old.model };
 		save();
@@ -507,6 +508,8 @@
 	async function unseal(only) {
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return;
 		var ids = Array.isArray(only) ? only : Object.keys(store.providers);
+		// Every seal this pass opens reads `opening` from now, not from its turn in the loop.
+		ids.forEach(function (id) { var p = store.providers[id]; if (p && p.keyEnc && !plain[id]) keyBegin(id, p.keyEnc); });
 		for (var i = 0; i < ids.length; i++) {
 			var id = ids[i], p = store.providers[id];
 			if (!p) continue;
@@ -517,6 +520,7 @@
 				// Opened for the row as it was: a key another tab set meanwhile is opened
 				// by the unseal its merge started.
 				if (store.providers[id] && store.providers[id].keyEnc === enc) plain[id] = k;
+				keyEnd(id, enc, !!k);
 			} else if (p.key) {
 				plain[id] = p.key;
 			}
@@ -707,10 +711,134 @@
 		return !!(p && p.keyEnc && !plain[id]);
 	}
 
-	/// Whether this provider can be used right now: a key, and one we can read.
-	function canRun(id) {
-		return hasKey(id) && !isSealed(id);
+	// ── Key adoption state (HT3, design §3.3, review M7) ─────────────
+	// `isSealed` cannot tell a key still opening from one that will never open here (sealed
+	// under a divergent identity) or from a locked app, and a runner judging a hand-off must:
+	// the first is "behind", a wait, and the other two are "never". Each sealed key's attempt
+	// is recorded here, by the seal it tried, so a newer seal is never judged by an older
+	// one's failure. Memory only, like `plain`, and emptied with it by `lock()`.
+	var keyLog = {};	// id -> { state: 'opening' | 'failed', enc, at, promise, done }
+
+	function unlocked() {
+		return !!(window.DaimondIdentity && DaimondIdentity.isUnlocked());
 	}
+
+	/// An attempt to open `enc`, the row's sealed key, begins: `keyState` reads `opening` until
+	/// `keyEnd`, and `keyOpening` hands out the promise a waiter can race. Set synchronously,
+	/// before the first await of the merge or unseal that opens it, so a row adopted at a newer
+	/// stamp never reads as a settled state while its key is still being unwrapped.
+	function keyBegin(id, enc) {
+		var k = keyLog[id];
+		if (k && k.enc === enc && k.state === 'opening') return;
+		var done = null, promise = new Promise(function (res) { done = res; });
+		keyLog[id] = { state: 'opening', enc: enc, at: Date.now(), promise: promise, done: done };
+		diag('models key', 'provider=' + id + ' ' + (k ? k.state : 'none') + '->opening at=' + keyLog[id].at);
+	}
+
+	/// The attempt on `enc` settled: opened, or failed (it does not unwrap under this identity).
+	function keyEnd(id, enc, ok) {
+		var k = keyLog[id];
+		if (!k || k.enc !== enc) return;
+		var at = Date.now();
+		if (k.done) k.done(!!ok);
+		if (ok) delete keyLog[id];
+		else keyLog[id] = { state: 'failed', enc: enc, at: at, promise: null, done: null };
+		diag('models key', 'provider=' + id + ' ' + k.state + '->' + (ok ? 'opened' : 'failed') + ' at=' + at
+			+ ' took=' + (at - k.at) + 'ms');
+	}
+
+	/// How this device holds the provider's key, the one key predicate (review M7):
+	///   `opened`  readable here, the only state `resolve` runs on;
+	///   `opening` sealed, being unwrapped (a merge's adopt phase, an unseal), or unlocked and
+	///             not yet tried, which every unlock and merge path is about to do;
+	///   `failed`  this seal was tried here and does not open (a divergent identity);
+	///   `locked`  sealed, and the app is locked, so nothing can open it;
+	///   `none`    no row, or a row with no key.
+	function keyState(id) {
+		var p = store.providers[id];
+		if (keyFor(id)) return 'opened';
+		if (!p || !p.keyEnc) return 'none';
+		if (!unlocked()) return 'locked';
+		var k = keyLog[id];
+		if (k && k.enc === p.keyEnc) return k.state;
+		return 'opening';
+	}
+
+	/// The promise of the attempt now opening the provider's key (true when it opened), or
+	/// null when none is in flight: a runner's wait races it rather than polling blind.
+	function keyOpening(id) {
+		var k = keyLog[id], p = store.providers[id];
+		return (k && k.state === 'opening' && p && k.enc === p.keyEnc) ? k.promise : null;
+	}
+
+	/// Does this device hold an opened key for the provider? The one test for "can run
+	/// here": `resolve` runs on exactly `keyFor`, so the default (`runnable`) and the
+	/// panel's `ready` ask the same thing (DIAG_BUSY3 fix 2, 23 Oct 2026).
+	function canRun(id) {
+		return keyState(id) === 'opened';
+	}
+
+	// ── The asker's horizon (HT3, design §3.2-3.3) ──────────────────
+	// An errand names, for each synced provider its model set reads, the `touched` of that row
+	// as the asker resolved it (`at`). A runner says "cannot" only at or past that horizon, or
+	// when the fact can never become usable here; below it the answer is "behind".
+
+	/// The stamp an errand names for provider `id`: its row's `touched`, or null for a row that
+	/// does not travel (`credits`, minted per device) or is not here. Every configuration
+	/// write bumps `touched` (`touch`, `stampNow`), so the stamp moves whenever `resolve`'s
+	/// answer for the row can.
+	function stampAt(id) {
+		var p = store.providers[id];
+		if (!id || id === CREDITS || !p) return null;
+		return ms(p.touched);
+	}
+
+	/// What this device holds of provider `id`, as `judgeAt` reads it: the row's stamp (null
+	/// when there is no row), the tombstone's, whether the row holds any key, and `keyState`.
+	function heldAt(id) {
+		var p = store.providers[id];
+		return {
+			touched: p ? ms(p.touched) : null,
+			tomb:    ms(tombs()[id]),
+			keyed:   !!(p && (p.keyEnc || p.key || plain[id])),
+			key:     keyState(id),
+		};
+	}
+
+	/// The verdict on a hand-off's synced providers at the asker's horizon, a pure function of
+	/// `at` (pid -> stamp named) and `held` (pid -> `heldAt`), so the native runner's
+	/// `wait_through` on a `Horizon` judges the same (design §3.4):
+	///   `never`  the app is locked, or a row at or past its stamp is tombstoned, keyless or
+	///            holds a seal that failed here: refused at once, cause `models`;
+	///   `behind` a row below its stamp (absent included), or its key still opening;
+	///   `can`    every row at or past its stamp with its key opened.
+	/// `never` outranks `behind`, which outranks `can`. A failed seal on a row still below
+	/// its stamp is `behind`: the newer seal it waits for may open. The first pid deciding the
+	/// verdict is named, with its stamps and key, for the verdict line.
+	function judgeAt(at, held) {
+		var ids = Object.keys(at || {}).sort(), behind = null, first = null;
+		for (var i = 0; i < ids.length; i++) {
+			var id = ids[i], named = ms(at[id]);
+			var h = (held && held[id]) || { touched: null, tomb: 0, keyed: false, key: 'none' };
+			var line = { pid: id, named: named, held: h.touched, key: h.key };
+			var past = h.touched !== null && h.touched >= named;
+			if (h.key === 'locked'
+				|| (h.touched === null && h.tomb > 0 && h.tomb >= named)
+				|| (past && (!h.keyed || h.key === 'none' || h.key === 'failed'))) {
+				line.verdict = 'never';
+				return line;
+			}
+			if (!behind && (!past || h.key !== 'opened')) { behind = line; behind.verdict = 'behind'; }
+			if (!first) first = line;
+		}
+		if (behind) return behind;
+		first = first || { pid: '', named: 0, held: null, key: '' };
+		first.verdict = 'can';
+		return first;
+	}
+
+	/// The debug log (`DaimondDiag`), off unless Diagnostics is on; never throws.
+	function diag(tag, d) { try { if (window.DaimondDiag) DaimondDiag.log(tag, d); } catch (e) {} }
 
 	// ── Credits: the key Daimond mints ──────────────────────────────
 	// Credits used to buy everything except the thing the app is for. A user with money in
@@ -2127,12 +2255,16 @@
 	/// arrives from another device whether or not its key can, and `resolve` runs nothing
 	/// without one. A Jobs pick that cannot run falls to its next link (`effective`); the
 	/// default has none, so a keyless one would leave every follower asking for a key while
-	/// this device holds an older default it can run. A sealed key counts, so a lock does not
-	/// move it, and the credits row counts unkeyed, its key being minted here on unlock.
+	/// this device holds an older default it can run. The key must be OPENED here (`canRun`),
+	/// the same test `resolve` runs on: a sealed key counted once, so a merge that adopted a
+	/// newer default before its key opened, or with a key that never opens here, left a
+	/// default this device reported runnable and could not resolve (DIAG_BUSY3, 23 Oct 2026).
+	/// A locked device therefore reads no default until it unlocks; it can run nothing then
+	/// anyway. The credits row counts unkeyed, its key being minted here on unlock.
 	function runnable(choice, at, slot) {
 		var p = choice && choice.provider;
 		if (!p || !store.providers[p] || ms(tombs()[p]) > ms(at)) return false;
-		return slot !== 'def' || p === CREDITS || hasKey(p);
+		return slot !== 'def' || p === CREDITS || canRun(p);
 	}
 
 	/// Remember each choice this device can run as it stands, for `standing`. Asked on
@@ -2569,6 +2701,8 @@
 	/// locked and a stale one is worse than none.
 	function lock() {
 		plain = {};
+		keyLog = {};	// an attempt in flight settles into nothing: `keyState` reads `locked` now
+		diag('models key', 'locked at=' + Date.now() + ': every sealed key reads locked');
 		slots = {};   // the workers' per-slot keys are memory-only too, and go with the rest.
 		credits.state = '';
 		credits.bal   = 0;
@@ -2784,6 +2918,8 @@
 				if (rates) mine.rates = rates;
 				added++;
 				if (mine.keyEnc) adopt.push(id);
+				// DIAG_BUSY3 fix 3: "not merged yet" and "merged, key not opened" told apart.
+				diag('models merge add', 'provider=' + id + ' touched=' + stamp + ' key=' + (mine.keyEnc ? 'sealed' : 'none'));
 			} else {
 				// The later configuration, and at an equal stamp the canonically greater
 				// one, the same on every device.
@@ -2805,6 +2941,7 @@
 						mine.keyEnc = r.keyEnc;
 						mine.key    = '';
 						adopt.push(id);
+						diag('models merge key', 'provider=' + id + ' touched=' + stamp + ' key=sealed');
 					}
 					mine.touched = stamp;
 					updated++;
@@ -2847,6 +2984,8 @@
 			store[slot]          = { provider: String(r.provider || ''), model: String(r.model || '') };
 			store[slot + 'At']   = rAt;
 			updated++;
+			diag('models merge choice', slot + '=' + store[slot].provider + '/' + store[slot].model + ' at=' + rAt
+				+ ' key=' + keyState(store[slot].provider));
 		});
 		// Each pool's top-up mark on its own time, the later top-up winning. An old build's
 		// parcel has none, and changes nothing here.
@@ -2854,6 +2993,9 @@
 			&& DaimondMoney.marksMerge(store.topups = store.topups || {}, remote.topups)) updated++;
 		// Fill the gaps in the plaintext cache, never overwrite it.
 		if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) {
+			// Each adopted seal reads `opening` before the first await below (HT3): the row's
+			// stamp has moved, and a runner judging it must wait for the key, not refuse it.
+			adopt.forEach(function (pid) { var r0 = store.providers[pid]; if (r0 && r0.keyEnc) keyBegin(pid, r0.keyEnc); });
 			for (var i = 0; i < adopt.length; i++) {
 				var pid = adopt[i];
 				// A row whose readable key was just replaced by an incoming sealed one:
@@ -2876,15 +3018,21 @@
 						row.key    = guard[pid].key;
 						if (!plain[pid]) plain[pid] = guard[pid].plain;
 					}
+					keyEnd(pid, enc, true);				// either way this session's key reads opened
+					diag('models merge open', 'provider=' + pid + ' opened=' + (opens ? 'yes' : 'no, kept own') + ' key=' + keyState(pid));
 					continue;							// this session's key stays this session's
 				}
-				if (plain[pid]) continue;				// this session's key stays this session's
+				if (plain[pid]) { keyEnd(pid, enc, true); continue; }	// this session's key stays this session's
 				var opened = '';
 				try { opened = await DaimondIdentity.unwrap(enc); }
 				catch (e) { opened = ''; }				// sealed under something this device cannot open; leave it keyless
 				row = store.providers[pid];
 				if (opened && row && row.keyEnc === enc && !plain[pid]) plain[pid] = opened;
+				keyEnd(pid, enc, !!opened);
+				diag('models merge open', 'provider=' + pid + ' opened=' + (opened ? 'yes' : 'no') + ' key=' + keyState(pid));
 			}
+		} else if (adopt.length) {
+			diag('models merge open', 'locked: ' + adopt.length + ' sealed key(s) left unopened');
 		}
 		if (added || updated) {
 			var landed = save();
@@ -4700,6 +4848,14 @@
 		keyFor:         keyFor,
 		hasKey:         hasKey,
 		isSealed:       isSealed,
+		keyState:       keyState,
+		keyOpening:     keyOpening,
+		canRun:         canRun,
+		// The asker's horizon on a hand-off (HT3): the stamp an errand names, what this
+		// device holds of it, and the pure verdict on the two.
+		stampAt:        stampAt,
+		heldAt:         heldAt,
+		judgeAt:        judgeAt,
 		fetchModels:    fetchModels,
 		// The live rates a provider published, which `DaimondPricing` asks before its table.
 		rateFor:        rateFor,

@@ -56,7 +56,7 @@ const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return i >= 0 ? (process.argv[i + 1] || '') : '';
 })();
-const KNOWN = ['askalways', 'keeparmed', 'doublehold', 'parklocked'];
+const KNOWN = ['askalways', 'keeparmed', 'doublehold', 'parklocked', 'silentarm'];
 if (BREAK && !KNOWN.includes(BREAK)) {
 	console.error('unknown break ' + JSON.stringify(BREAK) + '; known: ' + KNOWN.join(', '));
 	process.exit(2);
@@ -123,8 +123,10 @@ function makeTab(cfg) {
 		visibilityState: cfg.hidden ? 'hidden' : 'visible',
 		addEventListener(k, fn) { (docOn[k] = docOn[k] || []).push(fn); },
 	};
+	const said = [];
 	const win = {
 		addEventListener(k, fn) { (winOn[k] = winOn[k] || []).push(fn); },
+		dispatchEvent(ev) { said.push(ev && ev.type); return true; },
 		localStorage: {
 			getItem: (k) => (local.has(k) ? local.get(k) : null),
 			setItem: (k, v) => local.set(k, String(v)),
@@ -164,6 +166,10 @@ function makeTab(cfg) {
 		// The count is taken every pass, so it never reaches zero again.
 		src = src.replace('if (want && !_held)', 'if (want)');
 	}
+	if (BREAK === 'silentarm') {
+		// Arming says nothing, so a park in flight keeps a device's 45 s hold (post.js).
+		src = src.replace("window.dispatchEvent(new Event('daimond:posture'));", '');
+	}
 	if (BREAK === 'parklocked') {
 		// Parking no longer waits for the identity.
 		src = src.replace('return !!(st && st.posture && st.unlocked);', 'return !!(st && st.posture);');
@@ -179,7 +185,7 @@ function makeTab(cfg) {
 	fn(win, document, clock.setInterval, clock.clearInterval, clock.setTimeout, clock.clearTimeout);
 
 	return {
-		win, document, local, clock, wake, park, asked,
+		win, document, local, clock, wake, park, asked, said,
 		R: () => win.DaimondRunner,
 		posture: () => local.get(KEY) === '1',
 		askedKey: () => local.get(ASK) || '',
@@ -226,6 +232,17 @@ async function main() {
 		check('it is not asked again while armed', tab.asked.n === 1);
 		check('still idle, still no lock after four ticks', tab.wake.held === 0,
 			'held=' + tab.wake.held);
+	}
+
+	console.log('\nrunner: arming says so, once, for the park in flight (HT2 c4)');
+	{
+		const tab = makeTab({ self: 'dev-a', nominee: 'dev-a', answer: false, unlocked: true });
+		await tab.clock.ticks(1);
+		const n0 = tab.said.filter((t) => t === 'daimond:posture').length;
+		tab.R().set(true);
+		tab.R().set(true);
+		const n1 = tab.said.filter((t) => t === 'daimond:posture').length;
+		check('setting the posture on raises daimond:posture once', n1 - n0 === 1, (n1 - n0) + ' raised');
 	}
 
 	console.log('\nrunner: a NO is remembered');

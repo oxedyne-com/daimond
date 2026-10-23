@@ -1,1 +1,1 @@
-{"build":"6eb49213154d","note":"Slow-host routing no longer pays for speed, every tile names its model, and a refund holds across devices."}
+{"build":"9beee2b46cd3","note":"Devices now know which others are truly listening, so a handed-off turn goes to one that can take it, or stays here."}

@@ -187,8 +187,13 @@
 	/// Arm or disarm this machine. Published so a settings control can set it
 	/// outright without going through the nomination prompt.
 	function setPosture(on) {
+		var was = isRunner();
 		if (on) put(RUNNER_KEY, '1'); else drop(RUNNER_KEY);
 		syncWake();
+		// Said, so a park in flight at a device's hold is cut to the runner's (post.js).
+		if (isRunner() !== was) {
+			try { window.dispatchEvent(new Event('daimond:posture')); } catch (e) { /* no window */ }
+		}
 		return isRunner();
 	}
 

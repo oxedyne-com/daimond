@@ -31,7 +31,7 @@ function world(over) {
 	let view = {};
 	const env = {
 		log, chat, m,
-		chats: [chat], _handBack: { T1: 'c1' }, _localRecovering: {},
+		chats: [chat], _handBack: { T1: 'c1' }, _localRecovering: {}, _fallbackInFlight: {},
 		door: { version: 3, leases: { T1: { holder: 'PHONE', vacated: true } }, unread: false },
 		DaimondPost: { collect: async () => { log.push('collect'); } },
 		// A push holds the round gate for the whole test: a pull waits behind it, as `gatedPull` does.

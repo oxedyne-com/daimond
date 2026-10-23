@@ -178,8 +178,8 @@ function makeTab(cfg) {
 	let src = readFileSync(join(HERE, 'post.js'), 'utf8');
 	if (BREAK === 'notimeout') {
 		// The deadline goes: the park is made with no signal, as it was before.
-		src = src.replace("+ '&ms=' + PARK_MS + '&w=' + encodeURIComponent(WAKE_ID), PARK_DEADLINE_MS);",
-			"+ '&ms=' + PARK_MS + '&w=' + encodeURIComponent(WAKE_ID));");
+		src = src.replace("+ '&device=' + encodeURIComponent(selfDeviceIdForPark()), ms + PARK_SLACK_MS);",
+			"+ '&device=' + encodeURIComponent(selfDeviceIdForPark()));");
 	}
 	if (BREAK === 'flatwait') {
 		// The doubling goes: every failure waits the same five seconds.

@@ -641,7 +641,8 @@
 	/// whoever sends it; a read's is `PULL_TIMEOUT_MS` unless it names its own.
 	///
 	/// # Arguments
-	/// * `xtra` - `{ timeoutMs, track, hold }`, and all three are for a READ alone.
+	/// * `xtra` - `{ timeoutMs, track, hold, keepalive }`; the first three are for a READ
+	///            alone, `keepalive` for a write that must outlive the page.
 	///            `timeoutMs` replaces a GET's budget (0 disables it -- the wake poll
 	///            parks far longer and passes 0). `track` registers the GET's
 	///            controller as `pullAbort` so a resume can break it at once; only the
@@ -662,6 +663,9 @@
 			opts.headers['content-type'] = 'application/json';
 			opts.body = JSON.stringify(body);
 		}
+		// A write the page sends as it goes (`leaving`): the browser finishes it after
+		// the page is gone. The same cookie and header as any other call.
+		if (xtra.keepalive) opts.keepalive = true;
 		// Bound every request; track and hand out a READ's controller only, so a push
 		// can be ended by its own deadline and by nothing else.
 		//
@@ -1129,6 +1133,7 @@
 	function noteSynced() {
 		lastSynced = Date.now();
 		try { localStorage.setItem(K_LAST, String(lastSynced)); } catch (e) { /* private mode */ }
+		noteChannelBack();
 	}
 
 	/// Put the too-large refusal on the chip, and leave it there. No hold time: it
@@ -2032,6 +2037,7 @@
 		catch (e) { diag('pull GET error', (Date.now() - tGet) + 'ms'); log('pull network error', e); restStatus(); return -1; }
 		if (res.status !== 200 || !res.json) { diag('pull GET status', res.status + ' after ' + (Date.now() - tGet) + 'ms'); log('pull status', res.status); restStatus(); return -1; }
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
+		wakeGatewayBack();				// and the wake channel's retry returns to its floor [L1]
 		var readWasOwed = readOwed;		// the read owed work was waiting on: see the end
 		readOwed = false;
 		var j = res.json;
@@ -3037,6 +3043,16 @@
 		return ready() && entitled && !_removedSelf;
 	}
 
+	/// May this tab say it is leaving? As `canBeat`, but locked is no bar: a departure
+	/// carries no key material and can only shorten presence, and the lock is the
+	/// moment post.js's park says it (H4): `daimond:lock` fires once the identity is
+	/// already locked. The gateway session stands across a lock.
+	function canLeave() {
+		if (window.DaimondSafe && DaimondSafe.on()) return false;
+		return !!(window.DaimondGateway && DaimondGateway.state && DaimondGateway.state().authed)
+			&& entitled && !_removedSelf;
+	}
+
 	/// SINGLE FLIGHT (SYNC-NETBOUND, diag c2freeze fix 3). At most one beat is on the
 	/// wire. A beat asked for while one is in flight waits as the ONE pending beat, and
 	/// a newer one replaces its state rather than queueing a second, so a held beat
@@ -3072,64 +3088,70 @@
 		});
 	}
 
+	/// The posture statement a beat sends, from `beatPresence`'s arguments. One place, so
+	/// the statement sent and the statement compared (`postureDue`) cannot drift apart.
+	function postureBody(deviceId, name, attended, servicing, runner, mobile,
+		hand, folder, busy, busyChats) {
+		var body = { device_id: String(deviceId || ''), name: String(name || ''), attended: !!attended };
+		// SENT BOTH WAYS (UNBLOCK-1). Omitted when false, a runner that stopped listening
+		// said nothing, the gateway left `serviced_at` out, and `recGenuine` fell back to
+		// the bare beat, so the switch kept offering a desk that would never collect. An
+		// explicit false is stored as the stale marker (`serviced_at: 0`).
+		body.servicing = !!servicing;
+		// The nominated machine's own posture (runner.js): set up to stay awake and
+		// listening, so every other device can tell the nomination from a machine that
+		// is actually arranged to honour it. Sent only when true, so an ordinary
+		// device's beat is unchanged on the wire.
+		if (runner) body.runner = true;
+		// `mobile` is this MACHINE's own answer about whether it is a phone or tablet,
+		// the signal the hand-off election seats a worker on. Sent EXPLICITLY, both ways,
+		// because the alternative the gateway relayed was the device's NAME: a phone
+		// called "gilgamesh" read as a desktop and was handed turns it could not hold.
+		// Omitted only when this device genuinely cannot say, which a gateway relays as
+		// absent so the peer falls back to the old inference rather than to "desktop".
+		if (typeof mobile === 'boolean') body.mobile = mobile;
+		// THE TWO PLACEMENT FIELDS: can this machine reach a machine hand, and does it
+		// hold the real mounted folder rather than a browser replica. They are what
+		// lets another device place a compile or a publish without asking -- a phone
+		// that cannot hold a book's files hands the layout to a machine that can.
+		//
+		// Sent EXPLICITLY, both ways, and NOT sticky at the gateway. A hand unplugged
+		// and a folder grant withdrawn are both live changes, and only an explicit
+		// false can say so; absence then genuinely means "this build cannot say", which
+		// the election reads as unknown and NAMES rather than striking out. `runner`'s
+		// send-only-when-true shape would leave a withdrawn hand reading as present for
+		// as long as the device kept beating.
+		if (typeof hand === 'boolean')   body.hand = hand;
+		if (typeof folder === 'boolean') body.folder = folder;
+		// The turns this machine is running or holding, 0 when idle (H1). Sent EXPLICITLY,
+		// 0 included, because an idle machine must be able to unsay a busy one.
+		if (typeof busy === 'number') body.busy = Math.max(0, busy | 0);
+		// The chats that load is in, ids only, [] included; the gateway bounds the list.
+		if (typeof busy === 'number' && Array.isArray(busyChats)) {
+			body.busy_chats = busyChats.filter(function (c) { return typeof c === 'string' && c; });
+		}
+		// The running build id, so the gateway (once it relays this field) can show the
+		// fleet's build spread in its log and every device can de-prefer a peer on a
+		// superseded build at hand-off. A gateway that does not carry the field ignores
+		// it and the roster's last-known build stands in, exactly like `servicing`.
+		try {
+			var b = window.DaimondUpdater && DaimondUpdater.booted && DaimondUpdater.booted();
+			if (b) body.build = String(b);
+		} catch (e) { /* build not read yet: the beat still stands */ }
+		// WHICH TAB states it (HT2, design 2.2 [H2]): the gateway holds posture per
+		// (device, tab) and merges per device, so argonaut's runner tab and his working tab
+		// each speak for themselves. A gateway before HT1 ignores the field.
+		body.w = WAKE_ID;
+		return body;
+	}
+
 	async function beatOnce(deviceId, name, attended, servicing, runner, mobile,
 		hand, folder, busy, busyChats) {
 		if (!canBeat()) return null;
 		try {
-			// `attended` is the attention signal (foreground + recent interaction) a
-			// live consent routes on. `servicing` says this device is genuinely running
-			// the errand long-poll now (not merely beating) -- the signal a peer's
-			// eligibility gate reads to exclude a throttled background tab. Both are sent
-			// so a gateway that stores them can relay them (`attended_at`/`serviced_at`); a
-			// gateway that does not carry a field ignores it, and the client then falls
-			// back safely (no attended peer -> park; no serviced signal -> the bare beat
-			// stands and the dispatcher-side recovery timer is the backstop).
-			var body = { device_id: String(deviceId || ''), name: String(name || ''), attended: !!attended };
-			// SENT BOTH WAYS (UNBLOCK-1). Omitted when false, a runner that stopped listening
-			// said nothing, the gateway left `serviced_at` out, and `recGenuine` fell back to
-			// the bare beat, so the switch kept offering a desk that would never collect. An
-			// explicit false is stored as the stale marker (`serviced_at: 0`).
-			body.servicing = !!servicing;
-			// The nominated machine's own posture (runner.js): set up to stay awake and
-			// listening, so every other device can tell the nomination from a machine that
-			// is actually arranged to honour it. Sent only when true, so an ordinary
-			// device's beat is unchanged on the wire.
-			if (runner) body.runner = true;
-			// `mobile` is this MACHINE's own answer about whether it is a phone or tablet,
-			// the signal the hand-off election seats a worker on. Sent EXPLICITLY, both ways,
-			// because the alternative the gateway relayed was the device's NAME: a phone
-			// called "gilgamesh" read as a desktop and was handed turns it could not hold.
-			// Omitted only when this device genuinely cannot say, which a gateway relays as
-			// absent so the peer falls back to the old inference rather than to "desktop".
-			if (typeof mobile === 'boolean') body.mobile = mobile;
-			// THE TWO PLACEMENT FIELDS: can this machine reach a machine hand, and does it
-			// hold the real mounted folder rather than a browser replica. They are what
-			// lets another device place a compile or a publish without asking -- a phone
-			// that cannot hold a book's files hands the layout to a machine that can.
-			//
-			// Sent EXPLICITLY, both ways, and NOT sticky at the gateway. A hand unplugged
-			// and a folder grant withdrawn are both live changes, and only an explicit
-			// false can say so; absence then genuinely means "this build cannot say", which
-			// the election reads as unknown and NAMES rather than striking out. `runner`'s
-			// send-only-when-true shape would leave a withdrawn hand reading as present for
-			// as long as the device kept beating.
-			if (typeof hand === 'boolean')   body.hand = hand;
-			if (typeof folder === 'boolean') body.folder = folder;
-			// The turns this machine is running or holding, 0 when idle (H1). Sent EXPLICITLY,
-			// 0 included, because an idle machine must be able to unsay a busy one.
-			if (typeof busy === 'number') body.busy = Math.max(0, busy | 0);
-			// The chats that load is in, ids only, [] included; the gateway bounds the list.
-			if (typeof busy === 'number' && Array.isArray(busyChats)) {
-				body.busy_chats = busyChats.filter(function (c) { return typeof c === 'string' && c; });
-			}
-			// The running build id, so the gateway (once it relays this field) can show the
-			// fleet's build spread in its log and every device can de-prefer a peer on a
-			// superseded build at hand-off. A gateway that does not carry the field ignores
-			// it and the roster's last-known build stands in, exactly like `servicing`.
-			try {
-				var b = window.DaimondUpdater && DaimondUpdater.booted && DaimondUpdater.booted();
-				if (b) body.build = String(b);
-			} catch (e) { /* build not read yet: the beat still stands */ }
+			var body = postureBody(deviceId, name, attended, servicing, runner, mobile,
+				hand, folder, busy, busyChats);
+			postureNoteSent(body);
 			var res = await call('POST', body, '?presence=1');
 			// REMOVED. The beat is the door a removed device meets first and most often,
 			// so it is where the device finds out -- and, because the gateway refuses the
@@ -3137,26 +3159,264 @@
 			// every other device's presence map. `notedRemoval` raises the one event that
 			// wipes and locks, once.
 			if (notedRemoval(res)) return null;
-			if (res.status === 200 && res.json && res.json.presence && window.DaimondPresence) {
-				DaimondPresence.ingest(res.json.presence, res.json.now);
-			}
+			if (res.status !== 200) postureNoteLost();
+			if (res.status === 200) presenceAnswer(res.json);
 			return res.json || null;
-		} catch (e) { log('presence beat failed', e); return null; }
+		} catch (e) { postureNoteLost(); log('presence beat failed', e); return null; }
 	}
 
 	/// Read the account's presence map WITHOUT writing a beat -- a GET to
 	/// `?presence=1` -- and adopt it, for a dispatch-time refresh so the decision
-	/// sees the freshest peers. Quiet on error, like the beat.
+	/// sees the freshest peers. Quiet on error, like the beat. Names this tab
+	/// (`device`, `w`) so a deriving gateway echoes the posture it holds for it (`mine`).
 	async function refreshPresence() {
 		if (!ready() || !entitled) return null;
 		try {
-			var res = await call('GET', undefined, '?presence=1');
-			if (res.status === 200 && res.json && res.json.presence && window.DaimondPresence) {
-				DaimondPresence.ingest(res.json.presence, res.json.now);
-			}
+			var res = await call('GET', undefined, '?presence=1&device='
+				+ encodeURIComponent(selfDeviceId()) + '&w=' + encodeURIComponent(WAKE_ID));
+			if (res.status === 200) presenceAnswer(res.json);
+			else presenceUnread();
 			return res.json || null;
-		} catch (e) { log('presence refresh failed', e); return null; }
+		} catch (e) { log('presence refresh failed', e); presenceUnread(); return null; }
 	}
+
+	/// A re-read that did not answer 200 (HT2, gateway restart): under the derived truth
+	/// the map held is no longer the gateway's, so it is marked unknown and the switch
+	/// reads Here until a read lands, the rule a send follows. Never the old map through
+	/// an outage. An older gateway's map ages by its beats, as before.
+	function presenceUnread() {
+		if (!presDerived) return;
+		try { if (window.DaimondPresence && DaimondPresence.lost) DaimondPresence.lost(); }
+		catch (e) { /* the switch keeps what it drew */ }
+	}
+
+	// ── Presence: the derived truth, its version, posture on change (HT2) ──
+	//
+	// A gateway that DERIVES listening from door events (HT1) answers every presence
+	// read and statement with `derived: true`, the account's presence version `ver`, and
+	// `mine`, the posture it holds for this tab. Design 2.2 and 2.4, wire_ht1.md:
+	//
+	//   - The wake channel says presence moved (`r<ver>` on the socket, `pres` on a park
+	//     answer); a version above the one held is read. Versions compare only within one
+	//     connection [L4], so every reconnect drops the held one and reads regardless.
+	//   - Posture is stated on change, not on a clock: `postureDue` says when. The 45 s
+	//     beat stands only while the last answer did NOT carry `derived` [M4], so a
+	//     rollback to an older gateway beats exactly as before.
+	//   - The self-check [M2]: a read whose `mine` is absent or differs from what this
+	//     tab last stated owes a full re-statement.
+	//   - `leaving` [L2] on `pagehide` (and a phone going hidden), sent keepalive.
+	var presDerived  = false;	// the last presence answer carried `derived: true`
+	var presHeld     = null;	// the presence version read on THIS connection; null after a reconnect
+	var presWant     = 0;		// the highest version the channel has announced
+	var presReading  = false;	// a channel-driven read is in flight
+	var presAgain    = false;	// a reconnect landed during that read: read once more
+	var postureSent  = null;	// the last statement sent, as JSON; null when none, or lost
+	var postureLast  = null;	// the same statement as an object, for the self-check
+	var postureDerived = false;	// it was sent to a gateway that derives
+	var postureAt    = 0;		// when it was sent
+	var postureFull  = true;	// a full re-statement is owed (return to view, reconnect, self-check)
+	var postureOwed  = false;	// one was due while the door could not take it
+	var postureHold  = 0;		// a lost statement is retried no sooner than this
+	var POSTURE_RETRY_MS = 5000;	// how long a lost statement waits before it is retried
+
+	/// Take a presence-door answer: the derived flag, the version, the self-check, then
+	/// the map itself. An answer from a gateway before HT1 carries none of the first
+	/// three, and is read exactly as before.
+	function presenceAnswer(j) {
+		if (!j) return;
+		presDerived = j.derived === true;
+		var v = Number(j.ver);
+		if (j.ver != null && isFinite(v) && (presHeld == null || v > presHeld)) presHeld = v;
+		if (presDerived) postureSelfCheck(j.mine);
+		if (j.presence && window.DaimondPresence) DaimondPresence.ingest(j.presence, j.now, j);
+	}
+
+	/// Does the gateway still hold what this tab last stated? Compared on the posture
+	/// fields alone: `name`, `build` and `servicing` are the gateway's to keep or ignore
+	/// (it ignores `servicing` for a device it holds doors for), and a difference there
+	/// must not re-state on every read.
+	function postureSelfCheck(mine) {
+		var s = postureLast;
+		if (!s) return;
+		if (!mine || typeof mine !== 'object') { postureFull = true; return; }
+		var same = !!mine.attended === !!s.attended && !!mine.runner === !!s.runner;
+		['mobile', 'hand', 'folder'].forEach(function (k) {
+			if (typeof s[k] === 'boolean' && mine[k] !== s[k]) same = false;
+		});
+		if (typeof s.busy === 'number' && (Number(mine.busy) || 0) !== s.busy) same = false;
+		if (Array.isArray(s.busy_chats)) {
+			// The gateway bounds the list (MAX_BUSY_CHATS), so a shorter echo of a long
+			// list is the same statement; a chat it holds that was not sent is not.
+			var mc = Array.isArray(mine.busy_chats) ? mine.busy_chats : [];
+			mc.forEach(function (c) { if (s.busy_chats.indexOf(c) < 0) same = false; });
+			if (mc.length < s.busy_chats.length && mc.length < BUSY_CHATS_ECHO) same = false;
+		}
+		if (!same) postureFull = true;
+	}
+	var BUSY_CHATS_ECHO = 16;	// the gateway's MAX_BUSY_CHATS
+
+	function postureNoteSent(body) {
+		postureSent = JSON.stringify(body);
+		postureLast = body;
+		postureDerived = presDerived;
+		postureAt   = Date.now();
+		postureFull = false;
+		postureOwed = false;
+	}
+
+	/// The statement did not land: it is owed again, after a pause, so a tab offline
+	/// does not post once a second.
+	function postureNoteLost() {
+		postureSent = null;
+		postureHold = Date.now() + POSTURE_RETRY_MS;
+	}
+
+	/// Is a posture statement due now, for `beatPresence`'s arguments? The caller's
+	/// one-second pulse asks; a true answer is followed by `beatPresence` with the same
+	/// arguments. Against a deriving gateway: when a field differs from what was last
+	/// sent (the `attended` idle decay included), or a full re-statement is owed.
+	/// Against any other: the beat as before, every `BEAT_MS`, at once on a busy edge,
+	/// and at once when one was owed while the door was shut.
+	function postureDue(deviceId, name, attended, servicing, runner, mobile,
+		hand, folder, busy, busyChats) {
+		if (!canBeat()) { postureOwed = true; return false; }
+		var now = Date.now();
+		var body = postureBody(deviceId, name, attended, servicing, runner, mobile,
+			hand, folder, busy, busyChats);
+		if (presDerived) {
+			if (now < postureHold) return false;
+			return postureFull || postureOwed || JSON.stringify(body) !== postureSent;
+		}
+		if (postureOwed || !postureAt) return true;
+		if (now - postureAt >= beatMs()) return true;
+		var wasBusy = !!(postureLast && postureLast.busy > 0);
+		return (body.busy > 0) !== wasBusy;
+	}
+
+	function beatMs() {
+		return (window.DaimondPresence && DaimondPresence.BEAT_MS) || 45000;
+	}
+
+	/// Is the 45 s beat retired? Only while the gateway derives [M4].
+	function presenceDerived() { return presDerived; }
+
+	/// The channel says presence moved to `v`. Read it when it is above what this
+	/// connection holds.
+	function presenceHeard(v) {
+		if (!isFinite(v)) return;
+		if (presHeld != null && v <= presHeld) return;
+		if (v > presWant) presWant = v;
+		presenceRead(false);
+	}
+
+	/// A wake-channel (re)connect: the held version means nothing on the new connection
+	/// [L4], so drop it, read whatever the version, and owe a full re-statement [M2].
+	function presenceReconnect() {
+		noteChannelBack();
+		presHeld    = null;
+		presWant    = 0;
+		postureFull = true;
+		presenceRead(true);
+	}
+
+	/// One channel-driven read at a time. A frame above what the read in flight brings
+	/// back reads again when it lands; a reconnect during it always does.
+	function presenceRead(force) {
+		if (presReading) { if (force) presAgain = true; return; }
+		presReading = true;
+		var heldBefore = presHeld;
+		var done = function (j) {
+			presReading = false;
+			var again = presAgain;
+			presAgain = false;
+			// Only an answer that carried a version can say a newer one is still owed:
+			// a failed read waits for the next frame or reconnect rather than spinning.
+			if (j && j.ver != null && presHeld != null && presWant > presHeld) again = true;
+			// The park was sent without `pres` (nothing was held): ask it again, now
+			// that there is a version to wait above.
+			if (heldBefore == null && presHeld != null && wakeParkPres == null) presenceKickPark();
+			if (again) presenceRead(false);
+		};
+		refreshPresence().then(done, function () { done(null); });
+	}
+
+	/// End the held park, so the next asks with the version now held.
+	var wakeParkPres = null;	// the `pres` the park in flight asked with; null when none
+	function presenceKickPark() {
+		if (wakeMode === 'poll' && wakeHold.ac) {
+			wakeKicked = true;
+			try { wakeHold.ac.abort(); } catch (e) { /* already answered */ }
+		}
+	}
+
+	/// Say this tab is going [L2]: `{device_id, w, leaving: true}`, sent keepalive so it
+	/// outlives the page. It can only shorten presence. Through `call`, so it carries
+	/// the session cookie and API header every other request does.
+	///
+	/// `w` names another origin of this tab to close instead: post.js's errand park
+	/// parks under its own wake id, and says it is going when it can no longer claim
+	/// (locked, store gone, a hung round: H4's device half). Answers whether it was sent.
+	function presenceLeaving(w) {
+		// Only to a gateway that derives: one before HT1 reads any presence POST as a
+		// beat, and this one would refresh the device under an empty name.
+		//
+		// UNLESS THIS PAGE HOLDS THE RUNNER FLAG (TABCLOSE). A runner statement made to a
+		// deriving gateway stands there until this origin leaves or the 5 min TTL, so a
+		// departure skipped because the door looked shut at that instant (the session
+		// mid-renewal, the identity locking) left the switch offering a gone tab for
+		// minutes. The statement made to a deriving gateway, or answered by one (a tab's
+		// first word goes before any answer has said so), proves the gateway derives; the
+		// id it named is the id to leave under. The session cookie travels with the
+		// keepalive either way.
+		var runnerHeld = !!(postureLast && postureLast.runner === true && (postureDerived || presDerived));
+		if (!runnerHeld && (!presDerived || !canLeave())) return false;
+		var id = selfDeviceId() || (runnerHeld ? String(postureLast.device_id || '') : '');
+		if (!id) return false;
+		var origin = w ? String(w) : WAKE_ID;
+		// Back in view, the tab states itself in full again.
+		if (origin === WAKE_ID) postureFull = true;
+		try {
+			call('POST', { device_id: id, w: origin, leaving: true }, '?presence=1', { keepalive: true })
+				.catch(function () { /* the page is going; the gateway's grace ends it anyway */ });
+		} catch (e) { /* as above */ }
+		return true;
+	}
+
+	/// The gateway answered again: a wake-channel (re)connect or a round that worked.
+	/// post.js resets its park backoff to the floor on it [L1], so a runner is not left
+	/// dark for a minute after a long outage.
+	function noteChannelBack() {
+		try { window.dispatchEvent(new Event('daimond:channel-back')); } catch (e) { /* no window */ }
+	}
+
+	/// Is this a phone, by its own last statement? A hidden phone is suspended; a hidden
+	/// desktop tab still runs and still listens.
+	function postureMobile() { return !!(postureLast && postureLast.mobile === true); }
+
+	/// THE ONE PAGE-CLOSE PATH (TABCLOSE). Every origin this page parks a door under
+	/// leaves with it: this tab's own WAKE_ID and each other origin registered with
+	/// `presenceOrigin` (post.js's errand park). A park in flight is a door the gateway
+	/// holds for its whole 20 s hold plus the 10 s grace; left unnamed, a closed tab kept
+	/// its device listening for about 25 s, where its `leaving` ends it in 2.
+	var leaveOrigins = [];
+	function presenceOrigin(w) {
+		w = String(w || '');
+		if (w && w !== WAKE_ID && leaveOrigins.indexOf(w) < 0) leaveOrigins.push(w);
+	}
+	function presenceGone() {
+		var sent = presenceLeaving();
+		leaveOrigins.forEach(function (w) { if (presenceLeaving(w)) sent = true; });
+		return sent;
+	}
+
+	try {
+		window.addEventListener('pagehide', function () { presenceGone(); });
+		window.addEventListener('pageshow', function () { postureFull = true; });
+		document.addEventListener('visibilitychange', function () {
+			if (document.visibilityState === 'visible') postureFull = true;
+			else if (postureMobile()) presenceLeaving();
+		});
+	} catch (e) { /* no window: the node tests drive these directly */ }
 
 	// ── Removal: the device that really is gone ────────────────
 	// Owner ruling 2026-09-12: "Remove device" must REALLY remove. Pairing copies the
@@ -3990,6 +4250,8 @@
 			log('wake channel open (ws)');
 			// Frames stored while there was no socket were tapped to nobody: read once.
 			if (Object.keys(progWatch).length) progressTap();
+			// A new connection: read presence whatever its version, and state in full.
+			presenceReconnect();
 		};
 		sock.onmessage = function (ev) {
 			if (gen !== wakeGen) return;
@@ -4000,6 +4262,8 @@
 			var d = String(ev.data);
 			if (d.charAt(0) === 'p') { progressTapped(); return; }
 			if (d.charAt(0) === 'l') { leaseWake(parseInt(d.slice(1), 10) | 0); return; }
+			// `r<ver>`: presence moved (HT1). A millisecond-scale version: never `| 0`.
+			if (d.charAt(0) === 'r') { presenceHeard(parseInt(d.slice(1), 10)); return; }
 			var v = parseInt(d, 10);
 			if (isFinite(v)) wakeHeard(v);
 		};
@@ -4026,6 +4290,9 @@
 			// is an ordinary request through call(), which takes a fresh session
 			// when that is what is wrong and gives up loudly when it cannot.
 			if (wakeMode === 'ws') wakeMode = '';
+			// A channel that carried presence went: nothing tells this tab that a peer moved
+			// until it is back, so the display reads once now (HT2 M1).
+			if (opened && presDerived) refreshPresence();
 			wakeRetry();
 		};
 	}
@@ -4038,6 +4305,18 @@
 		log('wake channel: no websocket through this front door; parking requests instead');
 		wakeMode = 'poll';
 		wakePoll();
+	}
+
+	/// THE RETRY RETURNS TO ITS FLOOR [L1] when a pull is answered 200: the gateway is
+	/// back, so a channel waiting out its backoff opens now rather than up to 45 s on
+	/// (the doubling reaches 30 s, jittered to half as much again, over a 40 s restart).
+	/// The next failure waits the first rung again. At most one attempt per pull answered.
+	function wakeGatewayBack() {
+		wakeBackoff = WAKE_RETRY_MIN_MS;
+		if (!wakeTimer || wakeSock) return;
+		clearTimeout(wakeTimer);
+		wakeTimer = null;
+		wakeStart();
 	}
 
 	/// Come back to the socket after a pause that grows, with jitter on it.
@@ -4063,8 +4342,11 @@
 		if (wakePolling && wakePollGen === gen) return;
 		wakePolling = true;
 		wakePollGen = gen;
+		// A park loop starting is a new connection for presence [L4].
+		var parkFresh = true;
 		try {
 			while (gen === wakeGen && wakeWanted() && wakeMode === 'poll') {
+				if (parkFresh) { parkFresh = false; presenceReconnect(); }
 				var began = Date.now();
 				var res;
 				// Progress taps are asked for only while something is watched: each one
@@ -4075,10 +4357,16 @@
 					// again: the backoff it would grow belongs to the live one.
 					if (gen !== wakeGen) break;
 					wakeKicked = false;
+					// Also wait on presence, above the version this connection holds;
+					// none held yet asks nothing, and the read that lands kicks the park.
+					wakeParkPres = presHeld;
 					res = await call('GET', undefined,
 						'?above=' + heardUpTo() + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID)
-						+ (prog ? '&prog=1' : ''), { timeoutMs: 0, hold: wakeHold });
+						+ (prog ? '&prog=1' : '') + (presHeld != null ? '&pres=' + presHeld : ''),
+						{ timeoutMs: 0, hold: wakeHold });
+					wakeParkPres = null;
 				} catch (e) {
+					wakeParkPres = null;
 					if (gen !== wakeGen) break;
 					// Ended on purpose (`setProgressWanted`): park again at once, asking
 					// the new question. Anything else is the gateway down or the network
@@ -4090,6 +4378,7 @@
 					}
 					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
 					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
+					parkFresh = true;		// the next park is a reconnect
 					continue;
 				}
 				// THE NEWS FIRST, WHATEVER GENERATION HEARD IT -- see wakeProbe.
@@ -4107,6 +4396,10 @@
 				}
 				// STOP-ON-PEER: the lease door moved (a gateway with the Lease channel).
 				if (res.status === 200 && res.json && res.json.lease === true && wakeWanted()) leaseWake(0);
+				// Presence moved above what this connection holds (HT1's `pres`).
+				if (res.status === 200 && res.json && res.json.pres != null && wakeWanted()) {
+					presenceHeard(Number(res.json.pres));
+				}
 				if (gen !== wakeGen) break;
 				if (res.status !== 200) {
 					// A refusal, or a 502 from a gateway that is restarting: both
@@ -4120,6 +4413,7 @@
 					// parking against a door that is shut.
 					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
 					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
+					parkFresh = true;		// the next park is a reconnect
 					continue;
 				}
 				if (!res.json || res.json.waited !== true) {
@@ -4882,6 +5176,14 @@
 		beatPresence:    beatPresence,
 		canBeat:         canBeat,
 		refreshPresence: refreshPresence,
+		postureDue:      postureDue,
+		presenceDerived: presenceDerived,
+		/// `presenceLeaving(w)`: this tab (or its origin `w`) is going [L2]; false when not sent.
+		presenceLeaving: presenceLeaving,
+		/// `presenceOrigin(w)`: another origin of this tab, which leaves on `pagehide` with it.
+		presenceOrigin: presenceOrigin,
+		/// `presenceGone()`: the page-close departure, every origin it holds; true when any sent.
+		presenceGone: presenceGone,
 		/// REAL REMOVAL (owner ruling 2026-09-12). `removeDevice(id)` tells the gateway
 		/// to refuse that device at every door it reaches the account by -- presence,
 		/// the post-box park, the wake relay -- so a removal is a revocation of the

@@ -483,6 +483,7 @@ async function main() {
 				dispatchedTurnFinished:      () => false,
 				selfDeviceId:                () => 'self',
 				_localRecovering:            recovering ? { t1: true } : Object.create(null),
+				_fallbackInFlight:           Object.create(null),
 				_handBack:                   Object.create(null),
 				diag:                        () => {},
 				recoverOneLocally:           async (chat, m, o) => { localSpy.push(o); },

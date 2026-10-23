@@ -51,6 +51,15 @@
 	/// errand or stood down for the nominee.
 	function diag(tag, d) { try { if (window.DaimondDiag) DaimondDiag.log(tag, d); } catch (e) {} }
 
+	/// The errand's daimon model and how this device holds its key, for `collect errand`
+	/// (DIAG_BUSY3 fix 3): a models refusal then reads as "row absent" or "key sealed".
+	function errandModelDiag(e) {
+		var m = e && e.model;
+		if (!m || !m.provider) return ' provider=none';
+		var M = window.DaimondModels, ks = (M && M.keyState) ? M.keyState(m.provider) : '?';
+		return ' provider=' + m.provider + ' model=' + String(m.model || '') + ' key=' + ks;
+	}
+
 	// The schema version the errand and report carry. Bumped when a field's
 	// meaning changes, so a peer never runs an envelope it half-understands.
 	var ENVELOPE_V = 1;
@@ -391,9 +400,11 @@
 			busy:    o.busy | 0,
 			// WHY A HAND-BACK WAS MADE, as a code the sender's tile can name (D2, 11 Oct):
 			// 'thread' when the runner could not rebuild the conversation as sent, 'models' when it
-			// cannot run the turn's models (D-20261018-09 PR). '' otherwise, and from an older
-			// runner, whose hand-back reads as a hand-off that did not finish.
-			cause:   (o.cause === 'thread' || o.cause === 'models') ? o.cause : '',
+			// cannot run the turn's models (D-20261018-09 PR), 'models-behind' when it had not yet
+			// reached the asker's horizon on them by the deadline (HT3; the sender runs it here all
+			// the same, and the lens counts it apart). '' otherwise, and from an older runner,
+			// whose hand-back reads as a hand-off that did not finish.
+			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
 			// final frame carries what it had done, badged (r545 F-C2-1). 0 elsewhere.
 			interrupted: o.interrupted | 0,
@@ -1760,6 +1771,23 @@
 		return true;
 	}
 
+	/// WITHDRAW ON LOSS [M9]: has the runner a turn was sent to stopped listening before
+	/// anyone claimed it? Then the sender withdraws it at once, by taking the turn's lease
+	/// at the lease door as any local recovery does (`recoverDecision`, then the take in
+	/// `runErrand`), rather than waiting out the backstop for a runner that cannot collect.
+	/// The take is the arbiter: if the runner's claim landed first, it wins, the take
+	/// stands down and the turn runs there. Only from a deriving gateway's row (`rec`, the
+	/// runner's): an old gateway's beat cannot say a runner stopped listening, and the
+	/// backstop stays for that and for a runner that listens but never claims.
+	function withdrawOnLoss(turn, lease, rec, selfId, now) {
+		if (!turn || turn.why !== REASON_DISPATCHED || !turn.toDevice) return false;
+		if (!turn.dispatchedBy || String(turn.dispatchedBy) !== String(selfId)) return false;
+		if (!recDerived(rec) || rec.listening !== false) return false;
+		var n = now == null ? Date.now() : now;
+		if (liveLease(lease, n) || settledLease(lease)) return false;	// claimed, or finished
+		return recoverDecision(turn, lease, false, selfId, n);
+	}
+
 	/// The two words an ask-card answer travels under, a wire format between the page
 	/// and the model (daimond.js `ASK_CHOSE`, `ASK_OTHER`), never translated.
 	var ASK_ANSWER_MARKS = ['Chose: ', 'Other: '];
@@ -2017,6 +2045,11 @@
 	var DISPATCH_FRESH_MS = 90000;		// a peer beat older than this is not dispatched to (≈ 1.5 min)
 
 	var _presence = {};					// deviceId -> { name, lastSeen }
+	var _presMeta = null;				// { derived, ver, mine } of the last presence answer
+	// THE MAP IS UNKNOWN (HT2, gateway restart): a re-read that did not answer 200 says the
+	// map held is no longer the gateway's, so it is not shown as if it were. Until a map
+	// lands, the switch reads Here, the rule a send follows when its read does not land.
+	var _presUnknown = false;
 	// How far the relay's clock leads this one, from the last presence answer that
 	// carried the server's `now`; null until one has. The relay's clock is the one an
 	// errand's arrival is stamped on, so it is what a collector ages the post by.
@@ -2032,12 +2065,26 @@
 			if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
 			if (id === self) continue;
 			var rec = p[id];
-			if (!rec || (n - leaseMs(rec.lastSeen)) > w) continue;			// stale
+			if (!recAwake(rec, n, w)) continue;							// stale, or no door held
 			if (!best || leaseMs(rec.lastSeen) > leaseMs(best.lastSeen)) {
 				best = { deviceId: id, name: (rec.name || ''), lastSeen: leaseMs(rec.lastSeen) };
 			}
 		}
 		return best;
+	}
+
+	/// Does a presence record carry the gateway's derived truth (HT1: `listening`,
+	/// `doors`, `stated`)? Absent from an old gateway's row, whose readers keep today's
+	/// age rules (design 2.5, the rollback [M4]).
+	function recDerived(rec) {
+		return !!rec && typeof rec.listening === 'boolean';
+	}
+
+	/// Has some tab of this device stated a posture (HT1 `stated`)? A row a park made
+	/// before any statement says `stated: false` and is never seated, elected or routed a
+	/// consent [M3]; a row from an old gateway cannot say, and counts as stated.
+	function recStated(rec) {
+		return !!rec && rec.stated !== false;
 	}
 
 	/// Is a presence record GENUINELY AVAILABLE to run an errand -- not merely beating,
@@ -2056,8 +2103,16 @@
 	/// timer (daimond.js) is then the backstop that reclaims a turn a phantom never ran.
 	/// A record that DOES carry `servicedAt` is judged strictly: a stale servicing stamp
 	/// (a tab that beat but stopped collecting) is NOT genuine.
+	///
+	/// FROM A GATEWAY THAT DERIVES PRESENCE (HT1, design 2.5 [H1]) the row carries the
+	/// gateway's own `listening`, and that is the whole answer: no stamp is aged, so a
+	/// parked runner whose posture has not changed for an hour is still offered, and one
+	/// whose park died is not, however recent its last statement. A row no tab has stated
+	/// a posture for (`stated: false`, a park before any statement) is never genuine
+	/// [M3]: what it would run with is unknown.
 	function recGenuine(rec, now, windowMs) {
 		if (!rec) return false;
+		if (recDerived(rec)) return rec.listening === true && rec.stated !== false;
 		var w = windowMs || DISPATCH_FRESH_MS;
 		if ((now - leaseMs(rec.lastSeen)) > w) return false;		// not even beating
 		if (rec.servicedAt != null) {								// reported: judge it strictly
@@ -2230,8 +2285,23 @@
 	/// `freshestPeer`) keeps working unchanged and is immune to cross-device clock
 	/// skew. Answers whether the view moved, so a caller can skip a redraw that
 	/// learned nothing.
-	function presenceIngest(serverMap, serverNow) {
+	///
+	/// `answer`, when given, is the whole presence-door answer: a deriving gateway's
+	/// (HT1) `derived`, `ver` and `mine` are kept beside the map (`presenceMeta`). An
+	/// answer without `derived` leaves them unset and the map is read as before.
+	function presenceIngest(serverMap, serverNow, answer) {
 		var recv = Date.now();
+		// A map that lands makes the view known again, and that is a move even when the
+		// map is the one held: the switch drawn Here for the unknown is redrawn.
+		var wasUnknown = _presUnknown;
+		_presUnknown = false;
+		// A map folded into a content pull comes without its answer: the meta stands.
+		if (answer !== undefined) {
+			_presMeta = (answer && answer.derived === true)
+				? { derived: true, ver: answer.ver != null ? Number(answer.ver) : null,
+					mine: (answer.mine && typeof answer.mine === 'object') ? answer.mine : null }
+				: { derived: false, ver: null, mine: null };
+		}
 		var skew = leaseMs(serverNow) - recv;	// how far the server clock leads ours
 		// Kept, for the age of a handed-off turn (`relayNow`): only from an answer that
 		// carried a real server clock, so an absent `now` never reads as a vast lead.
@@ -2293,11 +2363,21 @@
 			// sent: such a peer is busy by its count, as before.
 			var rbc = chatIds(rec.busy_chats != null ? rec.busy_chats : rec.busyChats);
 			if (rbc) recOut.busyChats = rbc;
+			// THE DERIVED TRUTH (HT1, design 2.1-2.2): whether the device holds a door
+			// (`listening`), when the gateway last heard a door event (`heard_at`, its
+			// clock, skew-adjusted), how many parks it holds (`doors`), and whether any
+			// tab of it has stated a posture (`stated`; an unstated row is never seated).
+			// LEFT ABSENT from a gateway that does not derive, so a reader tells "cannot
+			// say" from "not listening".
+			if (typeof rec.listening === 'boolean') recOut.listening = rec.listening;
+			if (rec.heard_at != null) recOut.heardAt = leaseMs(rec.heard_at) - skew;
+			if (rec.doors != null) recOut.doors = Math.max(0, Number(rec.doors) | 0);
+			if (typeof rec.stated === 'boolean') recOut.stated = rec.stated;
 			next[String(id)] = recOut;
 		}
 		var before = JSON.stringify(_presence);
 		_presence = next;
-		return JSON.stringify(_presence) !== before;
+		return wasUnknown || JSON.stringify(_presence) !== before;
 	}
 
 	/// The section as it rides the parcel, or null when empty.
@@ -2312,7 +2392,7 @@
 		for (var id in p) {
 			if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
 			if (id === self) continue;
-			if ((n - leaseMs(p[id].lastSeen)) > w) continue;
+			if (!recAwake(p[id], n, w)) continue;
 			out.push({ deviceId: id, name: p[id].name || '', lastSeen: leaseMs(p[id].lastSeen) });
 		}
 		out.sort(function (a, b) { return b.lastSeen - a.lastSeen; });
@@ -2325,7 +2405,21 @@
 		return (r && r.name) || '';
 	}
 
-	function presenceForget() { _presence = {}; _relaySkew = null; }
+	function presenceForget() { _presence = {}; _relaySkew = null; _presMeta = null; _presUnknown = false; }
+
+	/// A re-read did not land: the map held is unknown until one does. Answers whether
+	/// that moved the view (it was known), so the switch redraws once.
+	function presenceLost() {
+		if (_presUnknown) return false;
+		_presUnknown = true;
+		return true;
+	}
+
+	/// Is the map held unknown (a re-read did not land since the last map)?
+	function presenceUnknown() { return _presUnknown; }
+
+	/// The last presence answer's own fields: `{derived, ver, mine}`, or null before one.
+	function presenceMeta() { return _presMeta; }
 
 	/// Take the relay's clock from any answer that carries one (a collect's `now`),
 	/// without touching the presence view. The same offset a presence answer sets.
@@ -2370,10 +2464,13 @@
 		/// sync path now -- presence rides its own non-waking gateway route, not the
 		/// content parcel -- so it supersedes the freshest-scalar `adopt` above.
 		ingest:   announcing(presenceIngest),
+		lost:     announcing(presenceLost),
+		unknown:  presenceUnknown,
 		/// The awake peers, and one device's name, for the UI and auto-dispatch.
 		awake:    presenceAwake,
 		name:     presenceName,
 		forget:   presenceForget,
+		meta:     presenceMeta,
 		relayNow: relayNow,
 		learnRelayNow: learnRelayNow,
 	};
@@ -2407,8 +2504,13 @@
 	/// beat carries (`attended`), distinct from `lastSeen`: routing a live question to
 	/// an awake-but-unwatched device would just relocate the invisible stall. Absent or
 	/// false is NOT attended, so an attention-indeterminate device is never asked.
+	///
+	/// From a deriving gateway, the merged `attended` while a door is held (`recAwake`)
+	/// and a posture is stated, with no stamp aged: a phone in a person's hand that has
+	/// not changed for five minutes is still attended [H1, M3].
 	function recAttended(rec, now, windowMs) {
 		if (!rec || !rec.attended) return false;
+		if (recDerived(rec)) return rec.stated !== false && recAwake(rec, now, windowMs);
 		var w = windowMs || DISPATCH_FRESH_MS;
 		var seen = leaseMs(rec.attendedAt != null ? rec.attendedAt : rec.lastSeen);
 		return (now - seen) <= w;
@@ -2420,8 +2522,13 @@
 	/// the chat was driven from" is the right place for its consent to land even if the
 	/// person has stepped over to watch the runner -- the consent deadline parks it if
 	/// nobody answers, so an awake-but-unwatched source is a bounded wait, not a hang.
+	///
+	/// From a deriving gateway: a door held, or listening through its grace. Not `doors`
+	/// alone, which a park answering mid-churn drops for a moment with no notify to
+	/// redraw (a door's flap moves no version, wire_ht1).
 	function recAwake(rec, now, windowMs) {
 		if (!rec) return false;
+		if (recDerived(rec)) return (rec.doors | 0) > 0 || rec.listening === true;
 		var w = windowMs || DISPATCH_FRESH_MS;
 		return (now - leaseMs(rec.lastSeen)) <= w;
 	}
@@ -2464,7 +2571,7 @@
 		// nobody answers there the consent deadline parks the turn (bounded). Only when
 		// the source is OFFLINE does routing fall back to an attended peer.
 		var src = String(o.source || '');
-		if (src && src !== self && recAwake(p[src], n, o.windowMs)) {
+		if (src && src !== self && recStated(p[src]) && recAwake(p[src], n, o.windowMs)) {
 			var srec = p[src];
 			return { action: 'ask', peer: {
 				deviceId: src, name: (srec.name || ''), lastSeen: leaseMs(srec.lastSeen), source: true } };
@@ -2757,6 +2864,16 @@
 		return !req || (!!rec && rec[req] === true);
 	}
 
+	/// May the election seat this peer at all: REACHABLE (rulings §1, design 2.5) -- not
+	/// a phone, meeting the caller's requirement (`require`: `hand`, or `folder` for a chat
+	/// whose folder is rooted on the asker, F4c), stated and listening (`recGenuine`, the
+	/// gateway's `listening` where it derives it, else the beat within `w`). Busy is asked
+	/// apart (`busyHere`), so a busy peer is named in `passed`. The one test every seat
+	/// reader calls: the election's four passes and the seat line's runner-silent.
+	function reachable(rec, o, n, w) {
+		return !!rec && !recMobileView(rec) && meetsRequire(rec, o && o.require) && recGenuine(rec, n, w);
+	}
+
 	/// Answers `{ target, reason }` where `target` is `{ deviceId, name, lastSeen, build,
 	/// staleBuild? }` or null (→ run local), and `reason` is one of
 	/// `nominee` / `nominee-presumed` / `worker` / `other-desktop` / `local`. `passed`
@@ -2798,9 +2915,10 @@
 		// label match below recovers it.
 		if (nom && nom !== self && !exclude[nom]) {
 			var nr = p[nom];
-			if (nr && !recMobileView(nr) && meetsRequire(nr, o.require)
-				&& recGenuine(nr, n, nomWin) && !busyHere(nom, nr)) {
-				var presumed = (n - leaseMs(nr.lastSeen)) > w;		// seated on trust, not a fresh beat
+			if (reachable(nr, o, n, nomWin) && !busyHere(nom, nr)) {
+				// Seated on trust, not a fresh beat. Never from a deriving gateway: its row is
+				// seated only while the gateway says it listens, so nothing is presumed.
+				var presumed = !recDerived(nr) && (n - leaseMs(nr.lastSeen)) > w;
 				var nb = String(nr.build || '');
 				var nomStale = !!(cur && nb && nb !== cur);
 				return { target: { deviceId: nom, name: (nr.name || ''), lastSeen: leaseMs(nr.lastSeen), build: nb, staleBuild: nomStale },
@@ -2828,8 +2946,7 @@
 				if (!Object.prototype.hasOwnProperty.call(p, id)) continue;
 				if (id === self || exclude[id]) continue;
 				var r = p[id];
-				if (!r || recMobileView(r) || !meetsRequire(r, o.require)) continue;
-				if (!recGenuine(r, n, w)) continue;		// beating and listening, as (a)
+				if (!reachable(r, o, n, w)) continue;		// beating and listening, as (a)
 				if (normLabel(r.name) !== pref) continue;
 				if (busyHere(id, r)) continue;
 				byLabel.push({ deviceId: id, name: (r.name || ''), lastSeen: leaseMs(r.lastSeen), build: String(r.build || '') });
@@ -2859,8 +2976,7 @@
 			if (!Object.prototype.hasOwnProperty.call(p, id3)) continue;
 			if (id3 === self || exclude[id3]) continue;
 			var r3 = p[id3];
-			if (!r3 || !recRunner(r3) || recMobileView(r3) || !meetsRequire(r3, o.require)) continue;
-			if (!recGenuine(r3, n, w)) continue;		// beating and listening, as (a)
+			if (!recRunner(r3) || !reachable(r3, o, n, w)) continue;		// beating and listening, as (a)
 			if (busyHere(id3, r3)) continue;
 			runners.push({ deviceId: id3, name: (r3.name || ''), lastSeen: leaseMs(r3.lastSeen), build: String(r3.build || '') });
 		}
@@ -2876,8 +2992,7 @@
 			if (!Object.prototype.hasOwnProperty.call(p, id2)) continue;
 			if (id2 === self || exclude[id2]) continue;
 			var r2 = p[id2];
-			if (!r2 || recMobileView(r2) || !meetsRequire(r2, o.require)) continue;
-			if (!recGenuine(r2, n, w)) continue;
+			if (!reachable(r2, o, n, w)) continue;
 			if (busyHere(id2, r2)) continue;
 			desks.push({ deviceId: id2, name: (r2.name || ''), lastSeen: leaseMs(r2.lastSeen), build: String(r2.build || '') });
 		}
@@ -2927,6 +3042,10 @@
 			queueOn:                o.queueOn,
 			// The chat being seated, read against each peer's `busyChats`.
 			chatId:                 o.chatId != null ? o.chatId : c.id,
+			// A chat whose folder is rooted on this device runs only where a folder is
+			// rooted too (F4c, UNBLOCK-32): a runner without one would reach none of it, and
+			// a switch that offers a runner which then cannot do the turn is a fault (§1).
+			require:                o.needFolder ? 'folder' : '',
 		}, n);
 		box.passed = res.passed || [];
 		var target = res.target;
@@ -3026,6 +3145,9 @@
 	/// `no-desktop`.
 	function seatPlan(chat, presence, opts, now) {
 		var o = opts || {}, p = presence || {};
+		// An unknown map seats nobody (`presenceUnknown`): Here, as a send whose read did
+		// not land, never a runner the map last named before the gateway went.
+		if (o.presenceUnknown) p = {};
 		var n = (now == null ? Date.now() : now);
 		var w = o.freshWindowMs || DISPATCH_FRESH_MS;
 		var d = autoDispatchDecision(chat, p, o, n);
@@ -3089,7 +3211,8 @@
 	/// `choice` is what the next send does: `here` when the chat is pinned here
 	/// (`opts.toggle === false`) or there is no runner, else `runner`. `until` is the
 	/// first moment the runner no longer counts as reachable on the beat it has (0 with no
-	/// runner), so the caller can redraw to "Here" then rather than at the next beat (R4).
+	/// runner, or a row the gateway derives), so the caller can redraw to "Here" then
+	/// rather than at the next beat (R4).
 	function seatSwitch(chat, presence, opts, now) {
 		// The runner is found with this device's own run of the chat set aside too, so the
 		// switch still offers the runner the next turn may go back to, unpressed, while the
@@ -3107,7 +3230,9 @@
 			if (plan.reason === 'nominee-presumed' && o.presumeNomineeWindowMs > w) w = o.presumeNomineeWindowMs;
 			// Reachable while it beats and listens within `w` (electTarget, recGenuine), so
 			// the first moment either stamp ages out.
-			if (rec) {
+			// From a deriving gateway nothing ages: the switch is redrawn on each presence
+			// change instead (design 2.5), so there is no moment to arm a timer for.
+			if (rec && !recDerived(rec)) {
 				var last = leaseMs(rec.lastSeen);
 				if (rec.servicedAt != null) last = Math.min(last, leaseMs(rec.servicedAt));
 				until = last + w + 1;
@@ -5207,7 +5332,8 @@
 		diag('collect errand', 'turn=' + turnId
 			+ ' by=' + String(e.dispatchedBy || '').slice(0, 8)
 			+ ' self=' + String(d.selfId || '').slice(0, 8)
-			+ ' nominee=' + String(d.nominatedId || 'none').slice(0, 8));
+			+ ' nominee=' + String(d.nominatedId || 'none').slice(0, 8)
+			+ errandModelDiag(e));
 
 		// D1(a) — NEVER run an errand THIS device dispatched, EXCEPT on a deliberate
 		// local recovery (`allowSelf`). The phone returns from the background and the
@@ -5428,7 +5554,7 @@
 			try { rd = await d.ready(e, own); } catch (err) { rd = { ok: false, why: String((err && err.message) || err) }; }
 			if (rd && rd.ok === false) {
 				var nwhy  = String(rd.why || 'this device cannot rebuild the thread');
-				var ncause = rd.cause || 'thread';	// 'models': it cannot run the turn's set
+				var ncause = rd.cause || 'thread';	// 'models' / 'models-behind': the turn's set (HT3)
 				trace.push('not-ready');
 				diag('collect NOT READY', 'turn=' + turnId + ' -- ' + nwhy);
 				// One console line, as the reconstruct refusal below prints: it is the same refusal
@@ -6348,7 +6474,7 @@
 		var rec = presence ? presence[String(deviceId || '')] : null;
 		if (!rec) return false;
 		var n = now == null ? Date.now() : now;
-		return (n - leaseMs(rec.lastSeen)) <= PRESENCE_FRESH_MS;
+		return recAwake(rec, n, PRESENCE_FRESH_MS);
 	}
 
 	/// Is a note held for another device still inside its window? Pure, over the facts its
@@ -7115,6 +7241,8 @@
 		/// stale peer left over from a mixed-build fleet is de-preferred, and marks the
 		/// chosen record `staleBuild` when it is a known-superseded build.
 		recGenuine:    recGenuine,
+		recDerived:    recDerived,
+		recStated:     recStated,
 		freshestGenuinePeer: freshestGenuinePeer,
 		/// The remote-consent decisions, pure so a test drives the money-safe bound.
 		/// `attendedPeer` -- the freshest device the user is ON (foreground + recent
@@ -7167,6 +7295,7 @@
 		/// locally on its return -- dispatched, not finished, not held by a live peer.
 		/// daimond.js acts on it through the same lease, so it is money-safe.
 		recoverDecision: recoverDecision,
+		withdrawOnLoss:  withdrawOnLoss,
 		/// Should this device stand down from claiming a dispatched turn, deferring to
 		/// the account's nominated always-on runner? Pure; runErrand consults it before
 		/// the lease take, and daimond.js supplies the nominee id + live presence.

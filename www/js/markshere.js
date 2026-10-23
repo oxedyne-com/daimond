@@ -399,6 +399,26 @@
 		return (!!a.ws && !f.ws) || (a.state === 'read' && !f.read);
 	}
 
+	/// Is a Diamond's or a chat's folder ROOTED in the machine folder `root` on this device: a
+	/// mark pressed here on a file or folder in it, or a chat holding opened as its workspace
+	/// here? The asker's half of F4c (UNBLOCK-32): such a turn runs only where a folder is held,
+	/// since a runner with none reaches none of it. The browser store, or a store path, roots
+	/// nothing, and a key with no folder id is a place no mark is in force in.
+	function rootedHere(rec, owner, chatId, root) {
+		var r = rootOf(root);
+		if (r.kind !== 'machine' || !r.fid || !rec) return false;
+		var list = (owner && own(rec.d, owner)) || [], i;
+		for (i = 0; i < list.length; i++) {
+			var p = parseRef(list[i].to);
+			if (list[i].root === root && p.root === 'machine' && !isStorePath(p.path)) return true;
+		}
+		list = (chatId && own(rec.c, chatId)) || [];
+		for (i = 0; i < list.length; i++) {
+			if (list[i].root === root && list[i].ws && !isStorePath(list[i].path)) return true;
+		}
+		return false;
+	}
+
 	// ── Changes to a record ────────────────────────────────────
 	// Each takes a record it may change in place and returns it.
 
@@ -682,6 +702,7 @@
 			return change(function (rec) { return settleRows(rec, owner, rows); }).moved;
 		},
 		chatForce: function (chatId, a, root) { return chatForce(read().rec, chatId, a, here(root)); },
+		rootedHere: function (owner, chatId, root) { return rootedHere(read().rec, owner, chatId, here(root)); },
 		chatWaiting: function (chatId, a, root) { return chatWaiting(read().rec, chatId, a, here(root)); },
 		/// Record a press here on a chat holding: `opts.ws` and `opts.read`, each
 		/// where given. An entry left granting neither is dropped.
@@ -737,6 +758,7 @@
 			waiting: waiting,
 			chatForce: chatForce,
 			chatWaiting: chatWaiting,
+			rootedHere: rootedHere,
 			putEntry: putEntry,
 			dropEntry: dropEntry,
 			dropRoot: dropRoot,

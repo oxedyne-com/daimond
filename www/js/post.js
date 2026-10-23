@@ -1088,7 +1088,16 @@
 
 	try {
 		window.addEventListener('daimond:unlock', function () { wake(); });
+		window.addEventListener('daimond:channel-back', function () { parkRecover(); });
+		// The runner armed, in this tab (runner.js) or another (its key in storage).
+		window.addEventListener('daimond:posture', function () { parkPosture(); });
+		window.addEventListener('storage', function (ev) {
+			if (ev && window.DaimondRunner && ev.key === DaimondRunner.KEY) parkPosture();
+		});
 		window.addEventListener('daimond:lock', function () {
+			// Locked, nothing woken here could be claimed (H4, device half): stop
+			// parking and say this origin is leaving. Unlocking parks again.
+			if (_parking) { parkStop(''); parkLeave(); }
 			forget();
 			try { render(); } catch (e) { /* no panel */ }
 		});
@@ -1606,7 +1615,10 @@
 	/// that passes its deadline answers as the network failing, and a caller that
 	/// sends it again at worst stores a second row under the same address, which
 	/// every reader keys on.
-	async function call(method, body, query, timeoutMs) {
+	///
+	/// `hold`, when given, is handed `cut`, which ends the request now and makes it throw
+	/// with `cut` set: how the park is ended when the runner is armed (`parkPosture`).
+	async function call(method, body, query, timeoutMs, hold) {
 		var opts = {
 			method:      method,
 			credentials: 'same-origin',
@@ -1619,7 +1631,7 @@
 		if (timeoutMs === undefined) {
 			timeoutMs = RELAY_DEADLINE_MS + Math.ceil((opts.body ? opts.body.length : 0) / RELAY_FLOOR_BPS) * 1000;
 		}
-		var ctl = null, timer = null, fired = false;
+		var ctl = null, timer = null, fired = false, cut = false;
 		if (timeoutMs > 0) {
 			try { ctl = new AbortController(); } catch (e) { ctl = null; }
 			if (ctl) {
@@ -1628,6 +1640,10 @@
 					fired = true;
 					try { ctl.abort(); } catch (e) { /* already gone */ }
 				}, timeoutMs);
+				if (hold) hold.cut = function () {
+					cut = true;
+					try { ctl.abort(); } catch (e) { /* already gone */ }
+				};
 			}
 		}
 		var r;
@@ -1642,9 +1658,15 @@
 				to.timedOut = true;
 				throw to;
 			}
+			if (cut) {
+				var ct = new Error('the request was cut by its caller');
+				ct.cut = true;
+				throw ct;
+			}
 			throw e;
 		} finally {
 			if (timer) clearTimeout(timer);
+			if (hold) hold.cut = null;
 		}
 		var j = null;
 		try { j = await r.json(); } catch (e) { j = null; }
@@ -3113,7 +3135,12 @@
 	// Without that check a stripped query turns the park into an unthrottled loop
 	// against the server.
 
-	var PARK_MS   = 45000;		// what the gateway will hold a request for
+	var PARK_MS        = 45000;		// what the gateway will hold a request for
+	/// THE RUNNER PARKS SHORTER (HT2, design §2.3). A laptop that sleeps with its park
+	/// held leaves a dead park the gateway cannot see until it ends, and no re-park
+	/// follows; the door grace then runs out. 20 s + the 10 s grace bounds that at 30 s,
+	/// for about three requests a minute from the one machine. Other devices keep 45 s.
+	var PARK_RUNNER_MS = 20000;
 	/// However fast a park answered, the next one is not immediate. The same
 	/// floor sync.js's own poll keeps, and for the same reason: a gateway that
 	/// answers at once -- because it has news, or because it is behaving oddly --
@@ -3126,14 +3153,19 @@
 	/// connection. A phone once sat FORTY-ONE MINUTES on a dead `/api/post`: it beat
 	/// presence the whole time, looked like the freshest available peer, and serviced
 	/// nothing, so every errand handed to it was handed into a hole. The gateway answers
-	/// a park within `PARK_MS` or says "nothing yet", so anything past that window plus
+	/// a park within its hold or says "nothing yet", so anything past that window plus
 	/// slack is not a slow answer, it is no answer.
-	var PARK_DEADLINE_MS = PARK_MS + 10000;
+	var PARK_SLACK_MS    = 10000;
 	/// A failed park waits before the next, doubling to a minute. The first wait is the
 	/// five seconds this always took; the doubling is what stops a device whose front
 	/// door is down retrying every five seconds for an hour.
 	var PARK_BACKOFF_MS  = 5000;
 	var PARK_BACKOFF_CAP = 60000;
+	/// A ROUND THIS LONG IS A HUNG ONE (H4, device half). The receipt collect answers the
+	/// gateway's owed collect for a slow round, so only this catches a round that will
+	/// never end: the device stops re-parking, says it is leaving, and parks again once
+	/// the round is over.
+	var ROUND_HUNG_MS    = 30000;
 	var _parking  = false;		// is a park in flight or scheduled?
 	var _parkOff  = '';			// why parking stopped, or ''
 	var _parkGen  = 0;			// torn down and restarted, so a stale park is ignored
@@ -3142,6 +3174,16 @@
 	var _roundFails = 0;		// consecutive rounds a park woke that did not read the box
 	var _parkTimeouts = 0;		// parks the watchdog cut, for a verifier
 	var _servicedAt = 0;		// last time a park long-poll round or a collect actually completed
+	var _parkAbove  = 0;		// the box seq the last park answered; the next park waits above it [H3]
+	var _roundRun   = null;		// the park's round in flight (single-flight), or null
+	var _roundAt    = 0;		// when that round's current attempt began, 0 between attempts
+	var _roundOwed  = false;	// a park answered while it ran: it runs once more when it ends
+	var _rounds     = 0;		// rounds the park ran, for a verifier
+	var _receipts   = 0;		// receipt collects made, for a verifier
+	var _leavings   = 0;		// `leaving` statements made, for a verifier
+	var _parkLeft   = false;	// has this park said it is leaving since it last parked?
+	var _parkNap    = null;		// the backoff wait in progress, so a channel coming back can end it
+	var _parkHold   = null;		// the park in flight: { ms, cut }, so arming the runner can end it
 
 	/// How long to wait after `n` consecutive failures. Doubling, capped.
 	function parkBackoff(n) {
@@ -3149,6 +3191,119 @@
 		if (k > 10) k = 10;					// 5 s << 10 is already past the cap
 		var ms = PARK_BACKOFF_MS * Math.pow(2, k);
 		return ms > PARK_BACKOFF_CAP ? PARK_BACKOFF_CAP : ms;
+	}
+
+	/// Does this machine hold the runner posture?
+	function parkAsRunner() {
+		try { return !!(window.DaimondRunner && DaimondRunner.on && DaimondRunner.on()); }
+		catch (e) { return false; }
+	}
+
+	/// How long the next park asks the gateway to hold it.
+	function parkMs() { return parkAsRunner() ? PARK_RUNNER_MS : PARK_MS; }
+
+	/// The backoff wait, ended early by `parkRecover`.
+	function parkNap(ms) {
+		return new Promise(function (resolve) {
+			var nap = { done: resolve, timer: 0 };
+			nap.timer = setTimeout(function () { if (_parkNap === nap) _parkNap = null; resolve(); }, ms);
+			_parkNap = nap;
+		});
+	}
+
+	/// THE BACKOFF RETURNS TO ITS FLOOR [L1] when the gateway is heard again: a
+	/// wake-channel (re)connect or a round that worked (sync.js `daimond:channel-back`).
+	/// The wait in progress ends now, so a runner is not left dark for a minute after a
+	/// long outage; the next failure waits the first rung again.
+	function parkRecover() {
+		_parkFails  = 0;
+		_roundFails = 0;
+		var nap = _parkNap;
+		if (nap) {
+			_parkNap = null;
+			try { clearTimeout(nap.timer); } catch (e) { /* already fired */ }
+			nap.done();
+		}
+	}
+
+	/// THE RUNNER'S BOUND HOLDS FROM THE MOMENT IT IS ARMED (owner: the 30 s bound stands
+	/// for a runner with its posture on). A park in flight asked for a device's 45 s hold,
+	/// not the runner's 20 s, and would keep it for up to 45 s after arming; arming cuts
+	/// it and the loop parks again at once at the runner's hold. Answers whether it cut.
+	function parkPosture() {
+		var h = _parkHold;
+		if (!h || !h.cut || h.ms <= parkMs()) return false;
+		h.cut();
+		return true;
+	}
+
+	/// This device can no longer claim what its park would be woken for (H4, device
+	/// half): say so through the presence door, once per stop, under the park's own
+	/// wake id, which is the origin the gateway holds its doors under.
+	function parkLeave() {
+		if (_parkLeft) return false;
+		_parkLeft = true;
+		var sent = false;
+		try {
+			sent = !!(window.DaimondSync && DaimondSync.presenceLeaving
+				&& DaimondSync.presenceLeaving(WAKE_ID));
+		} catch (e) { sent = false; }
+		if (sent) _leavings++;
+		return sent;
+	}
+
+	/// THE ROUND BESIDE THE PARK [H3]: single-flight. A call while one runs sets the
+	/// round owed, and the round runs once more when it ends, however many parks
+	/// answered meanwhile. A round that could not read the box is owed again and waits
+	/// on the ladder (P1a M3): the park no longer re-answers at once to retry it, so the
+	/// retry is the round's own. A locked record is not a failure of the door.
+	function roundBeside() {
+		if (_roundRun) { _roundOwed = true; return _roundRun; }
+		_roundRun = (async function () {
+			do {
+				_roundOwed = false;
+				_roundAt   = Date.now();
+				_rounds++;
+				var rr = null;
+				try { rr = await round(); }
+				catch (e) { log('a round failed; it is owed again', e); }
+				_roundAt = 0;
+				// A PASS STOPPED ON A ROW IT COULD NOT OPEN (TAKEROW) waits on the ladder
+				// too, or a stall was a collect and an ack about once a second.
+				if (!rr || (rr.ok === false && rr.why !== 'locked') || rr.stopped) {
+					_roundOwed = true;
+					await parkNap(parkBackoff(++_roundFails));
+				} else {
+					_roundFails = 0;
+				}
+			} while (_roundOwed && _parking);
+		})();
+		var mine = _roundRun;
+		mine.then(function () { if (_roundRun === mine) _roundRun = null; },
+			function () { if (_roundRun === mine) _roundRun = null; });
+		return mine;
+	}
+
+	/// Is the park's round past `ROUND_HUNG_MS` in its current attempt?
+	function roundHung() {
+		return !!(_roundRun && _roundAt && Date.now() - _roundAt > ROUND_HUNG_MS);
+	}
+
+	/// THE RECEIPT COLLECT (HT2 plan correction to H3 x H4). A park answering `changed`
+	/// starts an owed collect at the gateway for this device, cleared only by a collect
+	/// naming it; the round in flight has already collected, so a round longer than the
+	/// 10 s bound with a second wake inside it would read as not listening. One bare
+	/// collect from the answered seq clears it at once; its rows (none, from there) are
+	/// not folded, and the owed round collects for real. A collect that fails clears
+	/// nothing, so a wedged device still reads as not listening.
+	function parkReceipt(seq) {
+		var dev = selfDeviceIdForPark();
+		if (!dev) return;
+		_receipts++;
+		try {
+			call('GET', undefined, '?since=' + (seq | 0) + '&device=' + encodeURIComponent(dev),
+				RELAY_DEADLINE_MS).catch(function () { /* the owed collect stands */ });
+		} catch (e) { /* as above */ }
 	}
 
 	/// Tell the debug feed a park was cut. Through `event` rather than
@@ -3173,6 +3328,8 @@
 		_parkGen++;
 		_parkFails = 0;			// a deliberate start is not a continuation of an old outage
 		_roundFails = 0;
+		_parkAbove  = 0;		// a deliberate start asks from what is folded
+		_parkLeft   = false;
 		parkOnce(_parkGen);
 		return true;
 	}
@@ -3203,10 +3360,27 @@
 
 	async function parkOnce(gen) {
 		while (_parking && gen === _parkGen) {
+			// UNABLE TO CLAIM, UNABLE TO PARK (H4, device half). A round past
+			// ROUND_HUNG_MS is hung: no re-park until it ends, and the gateway is told
+			// this origin is leaving, so the device reads as not listening rather than as
+			// a door into a hole. The round ending parks again.
+			if (roundHung()) {
+				parkLeave();
+				var hung = _roundRun;
+				try { await hung; } catch (e) { /* it ended */ }
+				continue;
+			}
 			var st = await read();
-			if (!st) { parkStop(''); return; }
+			// LOCKED OR THE STORE GONE: nothing woken here could be claimed. Stop, and say so.
+			if (!st) { parkStop(''); parkLeave(); return; }
+			if (gen !== _parkGen) return;
 			_parks++;
+			_parkLeft = false;
+			// The park's origin leaves with the page (sync.js `presenceGone`, TABCLOSE).
+			try { if (window.DaimondSync && DaimondSync.presenceOrigin) DaimondSync.presenceOrigin(WAKE_ID); }
+			catch (e) { /* sync.js absent: the gateway's grace ends the door */ }
 			var began = Date.now();
+			var ms = parkMs();
 			var r;
 			try {
 				// `device` names WHICH device is parking, so the gateway can refuse a
@@ -3215,20 +3389,29 @@
 				// listener's door, which is how a handed-off turn reaches a device, so it
 				// is the second door a removed device must not hold. Optional on the wire:
 				// a gateway that does not read it parks exactly as before.
-				// ABOVE THE HIGHEST SEQ FOLDED, not the ack watermark. `through` is pinned
-				// below a HELD errand (takeRow HOLDs an own-dispatch or a nominee stand-down
-				// so the relay keeps it for the peer), and the box's high-water is above it,
-				// so a park keyed on `through` returns instantly (post.rs:608) and `round()`
-				// re-folds the same held rows every PARK_FLOOR_MS -- the 1 Hz spin that tripped
-				// AddressGuard. `seen` climbs past a held row, so the park waits for a row that
-				// is genuinely new. A held row is still re-decided: `collect` fetches from
-				// `through`, and the nominee-fallback re-collect (daimond.js) fires on the
-				// freshness window, so a stand-down still resolves.
-				var above = Math.max(st.through | 0, st.seen | 0);
-				r = await call('GET', undefined, '?above=' + above
-					+ '&ms=' + PARK_MS + '&w=' + encodeURIComponent(WAKE_ID)
-					+ '&device=' + encodeURIComponent(selfDeviceIdForPark()), PARK_DEADLINE_MS);
+				// ABOVE THE SEQ THE LAST PARK ANSWERED [H3], and never below what is folded.
+				// `through` is pinned below a HELD errand (takeRow HOLDs an own-dispatch or
+				// a nominee stand-down so the relay keeps it for the peer), and the box's
+				// high-water is above it, so a park keyed on `through` returns instantly
+				// (post.rs:608): the 1 Hz spin that tripped AddressGuard. `seen` climbs past
+				// a held row, but only when a round's collect reads the box, and the round
+				// now runs beside the park: so the next park asks above the seq the answer
+				// reported, which is what the gateway has, not what was read. A held row is
+				// still re-decided: `collect` fetches from `through`, and the nominee-
+				// fallback re-collect (daimond.js) fires on the freshness window.
+				var above = Math.max(st.through | 0, st.seen | 0, _parkAbove | 0);
+				var hold = { ms: ms, cut: null };
+				_parkHold = hold;
+				try {
+					r = await call('GET', undefined, '?above=' + above
+						+ '&ms=' + ms + '&w=' + encodeURIComponent(WAKE_ID)
+						+ '&device=' + encodeURIComponent(selfDeviceIdForPark()), ms + PARK_SLACK_MS, hold);
+				} finally {
+					if (_parkHold === hold) _parkHold = null;
+				}
 			} catch (e) {
+				// Cut because the runner was armed (`parkPosture`): park again now, at its hold.
+				if (e && e.cut) continue;
 				// The network went, or the watchdog cut a request nothing was ever going
 				// to answer. Neither is a reason to give up on the transport, so this
 				// waits and tries again rather than turning parking off for good -- but
@@ -3236,7 +3419,7 @@
 				// cut park is reported: until it was, a hole in the errand channel was
 				// indistinguishable from a quiet one.
 				if (e && e.timedOut) { _parkTimeouts++; noteParkTimeout(Date.now() - began); }
-				await sleep(parkBackoff(++_parkFails));
+				await parkNap(parkBackoff(++_parkFails));
 				continue;
 			}
 			if (gen !== _parkGen) return;
@@ -3253,7 +3436,7 @@
 			}
 			// A refused park waits on the same doubling ladder a thrown one does, not a flat
 			// five seconds: a door answering 429 is not helped by being asked every 5 s.
-			if (r.status !== 200 || !r.json) { await sleep(parkBackoff(++_parkFails)); continue; }
+			if (r.status !== 200 || !r.json) { await parkNap(parkBackoff(++_parkFails)); continue; }
 			// THE CHECK THIS WHOLE BLOCK EXISTS FOR.
 			if (r.json.waited !== true) {
 				parkStop('no_park');
@@ -3266,30 +3449,16 @@
 			// throttled background tab that only beats (peer.js recGenuine).
 			_servicedAt = Date.now();
 			_parkFails  = 0;		// an answered park clears the outage
-			// THE LISTENER OUTLIVES ITS ROUND. A round that threw used to throw out of
-			// this loop with `_parking` still true, and `parkStart` refuses while it is:
-			// the device went on beating presence and never parked again. The next park
-			// asks again from the same cursor, so a failed round costs one round.
-			//
-			// AND A ROUND THAT COULD NOT READ THE BOX WAITS ON THAT LADDER TOO (P1a M3). The
-			// park answers at once while the box is above `seen`, and `seen` moves only when a
-			// collect reads the box, so a park that works over a collect that does not was a
-			// loop at PARK_FLOOR_MS: 301 parks and 301 collects in five minutes against a
-			// collect answering 502, or 429 -- which is how a home NAT got blocked (D073). A
-			// locked record is not a failure of the door: `round` has nothing to do, and the
-			// park that follows waits on its own.
+			// The cursor the next park waits above. An answer with no `seq` (an older
+			// gateway) leaves it, and the next park asks from what is folded.
+			var seq = (r.json.seq != null && isFinite(+r.json.seq)) ? (+r.json.seq | 0) : 0;
+			if (seq > _parkAbove) _parkAbove = seq;
+			// THE LISTENER OUTLIVES ITS ROUND, AND NO LONGER WAITS FOR IT [H3]. The round
+			// runs beside the park, single-flight; a park answering while it runs owes it
+			// once more, and pays the gateway's owed collect at once with a receipt.
 			if (r.json.changed) {
-				var rr = null;
-				try { rr = await round(); }
-				catch (e) { log('a round failed; the next park asks again', e); }
-				// A PASS STOPPED ON A ROW IT COULD NOT OPEN (TAKEROW) waits on the ladder
-				// too: the box stays above `seen`, so the park answers at once and a stall
-				// was a park, a collect and an ack about once a second (second check, 4).
-				if (!rr || (rr.ok === false && rr.why !== 'locked') || rr.stopped) {
-					await sleep(parkBackoff(++_roundFails));
-					continue;
-				}
-				_roundFails = 0;
+				if (_roundRun) parkReceipt(seq);
+				roundBeside();
 			}
 			var spent = Date.now() - began;
 			if (spent < PARK_FLOOR_MS) await sleep(PARK_FLOOR_MS - spent);
@@ -4322,7 +4491,9 @@
 		parkStart: parkStart,
 		parkStop:  function () { parkStop(''); },
 		parking:   function () { return { on: _parking, off: _parkOff, parks: _parks,
-			fails: _parkFails, timeouts: _parkTimeouts, deadlineMs: PARK_DEADLINE_MS }; },
+			fails: _parkFails, timeouts: _parkTimeouts, deadlineMs: parkMs() + PARK_SLACK_MS,
+			ms: parkMs(), above: _parkAbove, rounds: _rounds, roundOn: !!_roundRun,
+			owed: _roundOwed, receipts: _receipts, leavings: _leavings, hung: roundHung() }; },
 		/// How long to wait after `n` consecutive failed parks. Published for
 		/// www/js/park.test.mjs, which has to prove the doubling without waiting it out.
 		parkBackoff: parkBackoff,
