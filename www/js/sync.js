@@ -416,8 +416,9 @@
 	var unsentTimer       = null;
 	var unsentDue         = 0;	// when the armed retry fires, so a Retry-After can move it
 	var unsentFailVersion = 0;	// the mailbox version when an owed push last failed
-	var unsentTries       = 0;
-	var readSince         = 0;	// When owed work's first read failed, or 0. See armUnsent.
+	var unsentTries       = 0;	// Every try since the last landing, for the log.
+	var ladderTries       = {};	// The tries of each ladder: 'read', 'readpast', 'wire', 'conflict'. See armUnsent.
+	var readSince         = 0;	// When owed work's first read failed (`monoNow`), or 0. See armUnsent.
 	var failKind          = '';	// 'conflict', 'merge', 'read', or anything else: which ladder the retry climbs. See armUnsent.
 	// OWED WORK THAT WAITS ON A READ (CASE 1, 2026-09-25). A 409 says this device's base is
 	// stale, and when the pull that would rebase it fails, every push until a pull lands is
@@ -550,7 +551,7 @@
 	var wakeFails   = 0;		// Sockets that closed without ever opening.
 	var wakeWorked  = false;	// A socket has opened at least once on this page.
 	var wakeBackoff = WAKE_RETRY_MIN_MS;
-	var wakeLostAt  = 0;		// When the channel was lost, or 0. See wakeWait.
+	var wakeLostAt  = 0;		// When the channel was lost (`monoNow`), or 0. See wakeWait.
 	var wakePolling = false;	// A park loop is running.
 	var wakeProbing = false;	// The one-shot park that decides the transport is out.
 	var wakeGen     = 0;		// Bumped on teardown, so an in-flight loop stands down.
@@ -1210,11 +1211,20 @@
 	/// an 8 s ceiling the retry downloaded the whole parcel for up to `PULL_TIMEOUT_MS`,
 	/// waited 4-12 s and began again from byte 0, for as long as the tab was open -- 450
 	/// attempts an hour. So every other failure, the wire's and any exit nobody classified,
-	/// climbs on to `UNSENT_WIRE_MAX_MS`, about twenty rounds in the first hour. The tries
-	/// are shared, so a device that has been failing for a while is not sent back to the
-	/// bottom by a change of kind, and only `paid()` and a link coming back (`onOnline`)
-	/// reset them. A pull that lands is not a reset: a pull that lands followed by an
-	/// upload that fails is the other half of the same slow link.
+	/// climbs on to `UNSENT_WIRE_MAX_MS`, about twenty rounds in the first hour.
+	///
+	/// EACH LADDER COUNTS ITS OWN TRIES (SYNCREAD-R2, 2026-10-23: MED-2, LOW-3). The count was
+	/// one, shared, so a ladder entered late began where the others had left it: past the read
+	/// window the next wait was the wire's ceiling, 150-450 s, after fifteen quick reads, and a
+	/// POST that failed after an outage started there too. Now the read in the window, the read
+	/// past it, the wire and the conflict each climb from their own bottom, and only `paid()`
+	/// resets them. A pull that lands resets only the two read ladders (LOW-6): it proves the
+	/// gateway answered, so the next failed read is a new outage, and a second long outage
+	/// that began at the first one's rung waited up to the ceiling's 450 s. It is not a reset
+	/// of the wire's or the conflict's: a pull that lands followed by an upload that fails is
+	/// the other half of the same slow link, so the wire's ladder counts the uploads that
+	/// failed and a gateway that reads but cannot write still climbs. A link coming back
+	/// (`onOnline`) resets no count: the gateway may still be down.
 	///
 	/// A GATEWAY THAT SAID WHEN TO COME BACK IS OBEYED. A 429 or 503 carrying Retry-After
 	/// (`noteRetryAfter`) is a floor under the wait, jittered above it so a fleet told the
@@ -1228,19 +1238,31 @@
 	/// costs a GET and no parcel, and the work cannot move until one lands, so for
 	/// `OUTAGE_READ_MS` from the first read that failed (`readSince`) its tries are at most
 	/// `UNSENT_READ_MAX_MS` apart: the expedite cadence a hand-off's sender already pulls
-	/// at. Then the wire's ladder, so an hour of failed reads costs about thirty GETs: at
-	/// most fifteen in the window at mid jitter, and the climb to the wire's ceiling after
-	/// it. It was the wire's ladder from the first failure, and a runner whose pull was
-	/// withheld 15 s had climbed to a 9-17 s wait by the time it could read: its answer
+	/// at. Then its own climb from there, `UNSENT_READ_MAX_MS` x 2, 4, 8 ... (8, 16, 32 s ...
+	/// jittered) to the wire's ceiling, so an hour of failed reads costs about thirty-three
+	/// GETs at mid jitter: fifteen in the window, then the climb, which reaches the ceiling
+	/// about four minutes past it. It was the wire's ladder from the first failure, and a
+	/// runner whose pull was withheld 15 s had climbed to a 9-17 s wait by the time it could read: its answer
 	/// came home at +33 s against CASE 1's 40 s.
 	///
 	/// THE WINDOW IS TIME, NOT TRIES (SYNC-READ-TIME, 2026-10-23). It was the first eight
 	/// tries, which span 13.5-40.5 s by the jitter, so after a 30 s gateway restart most
 	/// devices with owed work had reached the 128-384 s rung before the gateway was back.
 	/// A deploy's outage is measured at 2-11 s (79 restarts, Sep-Oct 2026); the window is
-	/// five times the longest. So after an outage of up to a minute, owed work reads
-	/// within 6 s (`UNSENT_READ_MAX_MS` x 1.5) of the gateway's return, whatever the dice.
-	/// `paid()` and a link coming back (`onOnline`) start the window afresh.
+	/// five times the longest. So after an outage where the gateway fails fast, of up to a
+	/// minute, owed work reads within 6 s (`UNSENT_READ_MAX_MS` x 1.5) of the gateway's
+	/// return, whatever the dice. `paid()`, a read that lands and a link coming back
+	/// (`onOnline`) start the window afresh. It is measured on `monoNow` (LOW-4): a wall
+	/// clock stepped an hour back held the 4 s cadence for an hour, about 900 GETs, and one
+	/// stepped forward ended the window early.
+	///
+	/// PAST THE WINDOW THE BOUND GROWS WITH THE OVERRUN (MED-2). The k-th wait past it starts
+	/// no earlier than 4 x (2^k - 1) s into the climb and lasts at most 12 x 2^k s, so after
+	/// a fail-fast outage of T > 60 s owed work reads within 3 x (T - 60 s) + 12 s of the
+	/// return, and never later than the ceiling's 450 s: 42 s after 70 s, 102 s after 90 s,
+	/// where it was 150-450 s (syncread.test.mjs P, Q). The cost is about five GETs an hour
+	/// more than the shared count's leap (pushretry.test.mjs W1), ruled worth it for
+	/// near-real-time sync.
 	///
 	/// THE CEILING IS WHAT FAILED LAST. A retry armed on the wire's ceiling (a partition, a
 	/// link down) and then beaten by a conflict on another trigger was left where it was:
@@ -1254,10 +1276,13 @@
 		if (!unsent) return;
 		var now   = Date.now();
 		var floor = Math.max(0, holdUntil - now);
-		if (failKind === 'read' && !readSince) readSince = now;
+		if (failKind === 'read' && !readSince) readSince = monoNow();
+		var inWindow = failKind === 'read' && monoNow() - readSince < OUTAGE_READ_MS;
 		var cap   = (failKind === 'conflict') ? UNSENT_RETRY_MAX_MS
-			: (failKind === 'read' && now - readSince < OUTAGE_READ_MS) ? UNSENT_READ_MAX_MS
+			: inWindow ? UNSENT_READ_MAX_MS
 			: UNSENT_WIRE_MAX_MS;
+		var ladder = (failKind === 'read') ? (inWindow ? 'read' : 'readpast')
+			: (failKind === 'conflict' || failKind === 'merge') ? failKind : 'wire';
 		var wait  = 0;
 		// Armed beyond the longest jittered wait this kind's ceiling allows.
 		var stale = !!unsentTimer && unsentDue - now > cap * 1.5;
@@ -1270,18 +1295,30 @@
 			if (unsentTimer) { clearTimeout(unsentTimer); unsentTimer = null; }
 			// A version the re-pull gave up on has had its quick tries (`scheduleReapply`),
 			// so it goes straight to the ceiling rather than back to the bottom (S3).
+			// The read past the window climbs on from the window's cadence, not from 1 s.
+			var n    = ladderTries[ladder] | 0;
 			var grow = (failKind === 'merge') ? cap
-				: Math.min(cap, UNSENT_RETRY_MIN_MS * Math.pow(2, unsentTries));
+				: (ladder === 'readpast') ? Math.min(cap, UNSENT_READ_MAX_MS * Math.pow(2, n + 1))
+				: Math.min(cap, UNSENT_RETRY_MIN_MS * Math.pow(2, n));
+			ladderTries[ladder] = n + 1;
 			unsentTries++;
 			// Jittered, as the conflict backoff is, so devices that failed together do not
 			// retry together.
 			wait = Math.round(grow * (0.5 + Math.random()));
 		}
 		if (floor > 0) wait = Math.max(wait, Math.round(floor * (1 + 0.5 * Math.random())));
-		diag('push retry armed', 'try=' + unsentTries + ' ' + (failKind || 'unclassified')
+		diag('push retry armed', 'try=' + unsentTries + ' ' + (failKind || 'unclassified') + '/' + ladder
 			+ (floor > 0 ? ' retry-after=' + floor + 'ms' : '') + ' in ' + wait + 'ms');
 		unsentDue   = now + wait;
 		unsentTimer = setTimeout(function () { unsentTimer = null; retryUnsent(); }, wait);
+	}
+
+	/// A clock no wall-clock step moves, in ms, for the read windows (`readSince`,
+	/// `wakeLostAt`), which are durations, never times (SYNCREAD-R2 LOW-4). Never 0, which
+	/// marks a window unset. A page without `performance` (a test's) reads `Date.now()`.
+	function monoNow() {
+		var p = window.performance;
+		return 1 + ((p && typeof p.now === 'function') ? p.now() : Date.now());
 	}
 
 	/// Note a gateway's Retry-After on a 429 or 503, in seconds or as an HTTP date. Kept as
@@ -1302,6 +1339,7 @@
 		if (unsent && unsentTries) diag('push retry settled', 'after ' + unsentTries + ' tries');
 		unsent      = false;
 		unsentTries = 0;
+		ladderTries = {};
 		readSince   = 0;
 		failKind    = '';
 		readOwed    = false;
@@ -2086,7 +2124,9 @@
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
 		wakeGatewayBack();				// and the wake channel's retry returns to its floor [L1]
 		var readWasOwed = readOwed;		// the read owed work was waiting on: see the end
-		readOwed = false;
+		readOwed  = false;
+		readSince = 0;					// the outage is over: the next failed read opens a new window
+		ladderTries.read = ladderTries.readpast = 0;	// and climbs from the bottom (LOW-6); wire, conflict: paid() only
 		var j = res.json;
 		// The round-trip and the sealed parcel size -- bytes only, no content. A slow
 		// GET or a large parcel is the first thing the "sync is slow" question asks.
@@ -4380,17 +4420,21 @@
 
 	/// The next jittered wait of a lost channel, growing. THE SAME WINDOW AS OWED WORK'S
 	/// READS (SYNC-READ-TIME, 2026-10-23): for `OUTAGE_READ_MS` since the channel was lost
-	/// (`wakeLostAt`) no wait passes `UNSENT_READ_MAX_MS`, then the ladder climbs on to
-	/// `WAKE_RETRY_MAX_MS`. The park loop is a device's only reader while it parks, and at
-	/// 30 s jittered to 45 s it heard a gateway back from a 30 s restart up to 45 s late,
-	/// with or without owed work. One helper for the socket's retry and both park-loop
-	/// sleeps, which were three copies of the ladder.
+	/// (`wakeLostAt`, on `monoNow`: SYNCREAD-R2 LOW-4) no wait passes `UNSENT_READ_MAX_MS`,
+	/// then the ladder climbs on to `WAKE_RETRY_MAX_MS` from `UNSENT_READ_MAX_MS` (4, 8, 16,
+	/// 30 s, jittered), not from the 30 s its doubling had reached inside the window
+	/// (SYNCREAD-R2 MED-2). So after a fail-fast outage of T > 60 s a parked device reads
+	/// within 3 x (T - 60 s) + 6 s of the return, never past 45 s; it was up to 45 s from the
+	/// window's end. The park loop is a device's only reader while it parks, and at 30 s
+	/// jittered to 45 s it heard a gateway back from a 30 s restart up to 45 s late, with or
+	/// without owed work. One helper for the socket's retry and both park-loop sleeps, which
+	/// were three copies of the ladder.
 	function wakeWait() {
-		var now = Date.now();
+		var now = monoNow();
 		if (!wakeLostAt) wakeLostAt = now;
 		var cap  = (now - wakeLostAt < OUTAGE_READ_MS) ? UNSENT_READ_MAX_MS : WAKE_RETRY_MAX_MS;
 		var wait = Math.min(cap, wakeBackoff);
-		wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
+		wakeBackoff = Math.min(cap, wakeBackoff * 2);
 		return wait * (0.5 + Math.random());
 	}
 

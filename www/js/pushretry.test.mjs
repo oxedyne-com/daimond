@@ -43,7 +43,8 @@
 
      W. owed, then every content pull fails for an hour: about thirty
         GETs, not 450 (since SYNC-READ-TIME, 2026-10-23, the first
-        minute reads at the 4 s cadence), and the gap grows to 300 s +-50%.
+        minute reads at the 4 s cadence, and since SYNCREAD-R2 the read
+        climbs from there: 33 at mid jitter), and the gap grows to 300 s +-50%.
      O. owed and offline: no request at all, and `online` starts it.
 
    R, S (CASE 1, 2026-09-25): owed work whose read failed waits on a read.
@@ -400,8 +401,11 @@ console.log('\nW. owed, then every content pull fails on the wire for an hour (S
 	const at = tab.getAt.slice(g0);
 	const gp = gaps(at);
 	// The read window's fifteen at mid jitter (OUTAGE_READ_MS / UNSENT_READ_MAX_MS), then
-	// the wire's ladder from the rung the tries reached, to its ceiling: about thirty.
-	check('W1. an hour of failed pulls costs about thirty GETs, not one every 8 s', at.length <= 30,
+	// the read's own climb from the window's cadence (8, 16, 32 ... s) to the wire's ceiling:
+	// 33 at mid jitter. It was 28 while the shared try count leapt straight to the ceiling
+	// past the window; the five more an hour are RULED worth it (rc-a, SYNCREAD-R2 MED-2):
+	// near-real-time sync after an outage past the window outweighs them.
+	check('W1. an hour of failed pulls costs about thirty GETs, not one every 8 s', at.length <= 33,
 		at.length + ' GETs in 60 min (450 at the old 8 s ceiling)');
 	check('W2. the gap grows to the wire\'s ceiling, 300 s', gp.length > 0 && gp[gp.length - 1] === 300000,
 		'last gaps ' + gp.slice(-3).map((g) => g / 1000 + 's').join(', '));

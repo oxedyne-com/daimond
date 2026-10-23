@@ -4216,7 +4216,14 @@
 				dispatchedBy: String(o.dispatchedBy || ''),
 				mode: 'claimed', deadline: deadline || 0,
 				expiry: (deadline && deadline > now) ? deadline : (now + LEASE_TTL_MS),
-				renewedAt: now,
+				// A RETAKE OUTRANKS THE CLAIM IT REPLACES (SYNCREAD-R2 MED-1). For one holder the
+				// fold keeps the fresher `renewedAt`, and the door's record on a tie, so a retake
+				// stamped no later than this device's own older claim (a clock relearned lower, a
+				// step back, a reload's raw clock) wrote that claim back, and an `intent: 'end'`
+				// lost its `ending`: every device read the asker as the runner, then `done` for a
+				// turn never run. The rule `leaseSetCas` stamps by.
+				renewedAt: (settledCur && String(settledCur.holder || '') === holder)
+					? Math.max(now, leaseMs(settledCur.renewedAt) + 1) : now,
 			};
 			// WHY IT IS HELD (SUHT-I9): `opts.intent` 'end' takes the turn only to end it, and
 			// says so on the record, so no device reads its holder as the turn's runner.

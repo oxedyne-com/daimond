@@ -35,6 +35,14 @@
      X. no owed work, socket channel, 30 s outage at pin 0
      Y. W = 60 s outage at pin 0, owed and not, on both channels
      Z. an hour-long outage: the owed retry's GETs stay bounded
+     P. SYNCREAD-R2 MED-2: past the window. Owed work, parked channel, 70 s
+        and 90 s outages: lands within L(T) = 3 x (T - 60 s) + 12 s (42 s,
+        102 s); idle, parked, 70 s: reads within C(T) = 3 x (T - 60 s) + 6 s
+     Q. SYNCREAD-R2 LOW-3: 30 s down, 8 s of reads landing and POSTs
+        answering 502, 30 s down: lands within B = 6 s, both channels
+     K. SYNCREAD-R2 LOW-4: the wall clock stepped +-1 h 20 s into an outage
+        moves neither window: owed and idle still read within B after a
+        50 s outage, and a five-minute outage costs the GETs it costs unstepped
 
    A device with nothing owed has read once its next request reaches
    the gateway: an answered pull, or a park TAKEN, which the gateway
@@ -52,6 +60,27 @@
      SYNC_JS=<4c94152fd's sync.js> node www/js/syncread.test.mjs
      node www/js/syncread.test.mjs                     # ALL PASS
 
+   SYNCREAD-R2 (rc review of SYNC-READ-TIME, 2026-10-23). Past the window
+   the one shared try count leapt to the wire's ceiling: 141-444 s after a
+   70 s outage. Each ladder now counts its own tries. Red on the record
+   0bc3afb93, 13 checks: P owed at every pin (141.5-444.5 s), P idle pin
+   0.9999 (39.5 s), Q at every pin on both channels (113.5-263 s). Each
+   fix put back alone turns its arms red again:
+     node www/js/syncread.test.mjs --break shared     # one try count: P, Q
+     node www/js/syncread.test.mjs --break landed     # a landed read keeps the window: Q
+     node www/js/syncread.test.mjs --break wakeclimb  # the channel resumes at 30 s: P idle
+   LOW-4 (the windows on performance.now): red on fc467b831, 5 checks:
+   K +1 h owed (lands 30 s after the return) and all four K costs (owed
+   153 / 31 GETs against 48, idle 76 / 18 against 26); on the record the
+   same 5 (none in 60 s; 152 / 24 against 41, 76 / 16 against 24).
+     node www/js/syncread.test.mjs --break wall       # the windows on Date.now: K
+   LOW-6 (a landed read resets the read ladders' counts): red on d01169adf,
+   6 checks, R owed: T = 61 s parked and socket pin 0 (64 s against 15 s),
+   T = 70 s parked at every pin and socket pin 0.9999 (55-120 s against 42 s). R idle pins the live 61 s miss (srt-measure c62d09887366):
+   61.6 s pin 0 and 63.1 s pin 0.5 red on the record 0bc3afb93 (14.9 s, 29.9 s)
+   and under --break wakeclimb; green from 6360ead10.
+     node www/js/syncread.test.mjs --break readcount  # a landed read keeps the counts: R
+
    Run:  node www/js/syncread.test.mjs
    ============================================================ */
 import { readFileSync } from 'node:fs';
@@ -60,6 +89,25 @@ import { dirname, join } from 'node:path';
 import { createHash, webcrypto } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// --break <name>: put one SYNCREAD-R2 fix back, to show the arm that holds it goes red.
+const BREAK = (() => { const i = process.argv.indexOf('--break'); return i > 0 ? process.argv[i + 1] : null; })();
+const BREAKS = {
+	shared:    ['var n    = ladderTries[ladder] | 0;', 'var n    = unsentTries;'],
+	landed:    ['readSince = 0;					// the outage is over', '					// the outage is over'],
+	wakeclimb: ['wakeBackoff = Math.min(cap, wakeBackoff * 2);', 'wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);'],
+	wall:      ["var p = window.performance;", "var p = null;"],
+	readcount: ['ladderTries.read = ladderTries.readpast = 0;', ''],
+};
+function broken(src) {
+	if (!BREAK) return src;
+	const b = BREAKS[BREAK];
+	if (!b) { console.log('no such break: ' + BREAK); process.exit(2); }
+	for (let i = 0; i < b.length; i += 2) {
+		if (!src.includes(b[i])) { console.log('the break text moved: ' + BREAK); process.exit(2); }
+		src = src.replace(b[i], b[i + 1]);
+	}
+	return src;
+}
 let failures = 0;
 function check(name, cond, detail) {
 	const line = name + (detail !== undefined && detail !== '' ? ' — ' + detail : '');
@@ -105,6 +153,8 @@ function makeTab({ sockets }) {
 		parcel: { v: 3, chats: [], note: 'boot' },
 		down: false,				// the gateway is away: Steel answers 502, sockets and parks are cut
 		withhold: false,			// the content pull alone fails (the gateway is up)
+		postsDown: false,			// the parcel POST alone answers 502: reads land, writes do not (LOW-3)
+		skew: 0,					// a wall-clock step: Date moves by it, the page's monotonic clock does not
 		posts: [],					// every parcel POST: { base, ok }
 		reads: [],					// the virtual time of every /api/sync GET the gateway ANSWERED
 		heard: [],					// ...and of every park it TOOK: it compares the version on arrival
@@ -167,6 +217,7 @@ function makeTab({ sockets }) {
 					blob: tab.mailbox.blob, device: 'Phone' }));
 			}
 			const body = JSON.parse(opts.body);
+			if (tab.postsDown) { tab.posts.push({ base: body.base_version | 0, ok: false, status: 502 }); return Promise.resolve(answer(502, null)); }
 			if ((body.base_version | 0) !== tab.mailbox.version) {
 				tab.posts.push({ base: body.base_version | 0, ok: false });
 				return Promise.resolve(answer(409, { ok: false, version: tab.mailbox.version }));
@@ -212,11 +263,13 @@ function makeTab({ sockets }) {
 	win.DaimondCloud = { sha256: async (s) => createHash('sha256').update(s).digest('hex') };
 
 	class VDate extends Date {
-		constructor(...a) { if (a.length) super(...a); else super(BASE + tab.vnow); }
-		static now() { return BASE + tab.vnow; }
+		constructor(...a) { if (a.length) super(...a); else super(BASE + tab.vnow + tab.skew); }
+		static now() { return BASE + tab.vnow + tab.skew; }
 	}
+	// The page's monotonic clock: the virtual time, which no wall-clock step moves.
+	win.performance = { now: () => tab.vnow };
 
-	const body = readFileSync(process.env.SYNC_JS || join(HERE, 'sync.js'), 'utf8');
+	const body = broken(readFileSync(process.env.SYNC_JS || join(HERE, 'sync.js'), 'utf8'));
 	const fn = new Function(
 		'window', 'document', 'crypto', 'localStorage',
 		'TextEncoder', 'TextDecoder',
@@ -357,10 +410,12 @@ for (const pin of [0, 0.5]) {
 	await advance(tab, 3600000);
 	const n = tab.gets - g0;
 	// Stated cost (sync.js 'READ'): at most OUTAGE_READ_MS / (READ_MAX_MS x 0.5) reads in the
-	// window, then the wire's ladder (300 s x 0.5 at the shortest) for the rest of the hour,
-	// per ladder; the parked channel's own loop is a second ladder at WAKE_RETRY_MAX_MS.
-	const owedMax = Math.ceil(W_MS / 2000) + 2 + Math.ceil(3600000 / 150000);
-	const wakeMax = Math.ceil(W_MS / 2000) + 2 + Math.ceil(3600000 / 15000);
+	// window, then the climb to the ceiling (SYNCREAD-R2: owed work's 8, 16, 32, 64, 128 s,
+	// five rungs; the channel's 4, 8, 16 s, three) and the ceiling at its shortest for the rest
+	// of the hour (300 s and 30 s x 0.5), per ladder; the parked channel's own loop is the
+	// second ladder.
+	const owedMax = Math.ceil(W_MS / 2000) + 2 + 5 + Math.ceil(3600000 / 150000);
+	const wakeMax = Math.ceil(W_MS / 2000) + 2 + 3 + Math.ceil(3600000 / 15000);
 	check('Z pin ' + pin + '. an hour of outage costs at most ' + (owedMax + wakeMax) + ' GETs (owed ' + owedMax
 		+ ' + channel ' + wakeMax + ')', n <= owedMax + wakeMax, n + ' GETs in 60 min');
 	tab.down = false;
@@ -368,6 +423,163 @@ for (const pin of [0, 0.5]) {
 	await advance(tab, 460000);
 	check('Z pin ' + pin + '. and once it ends the owed answer still lands, once', holds(tab, 'runner answer')
 		&& landed(tab) === l0 + 1, 'first read ' + s((tab.reads.slice(r0)[0] ?? Infinity) - back));
+}
+
+// ── SYNCREAD-R2 (rc review of SYNC-READ-TIME, 2026-10-23: MED-2, LOW-3, LOW-4) ──
+// Past the window each ladder climbs on its own count from UNSENT_READ_MAX_MS: 8, 16, 32 s
+// ... x the jitter (0.5..1.5) to the wire's 300 s ceiling. The k-th wait past the window
+// begins no earlier than 4 x (2^k - 1) s into it and is at most 12 x 2^k s long, so the
+// read that is waiting when the gateway returns, T - W into the climb, comes within
+//   L(T) = 3 x (T - W) + 12 s   (at most the ceiling's 450 s), whatever the dice:
+// 42 s after a 70 s outage, 102 s after a 90 s one. On the record it was the wire ladder's
+// rung after fifteen shared tries, 150-450 s.
+const L_MS = (outMs) => (outMs <= W_MS ? B_MS : Math.min(450000, 3 * (outMs - W_MS) + 12000));
+
+/// How long after the gateway's return `back` the owed answer landed, from the landings
+/// `watchLand` noted.
+function landTime(tab, back) {
+	const t = tab.landedAt.find((x) => x >= back);
+	return t === undefined ? Infinity : t - back;
+}
+function watchLand(tab) {
+	tab.landedAt = [];
+	const push = tab.posts.push.bind(tab.posts);
+	tab.posts.push = (p) => { if (p.ok) tab.landedAt.push(tab.vnow); return push(p); };
+}
+
+console.log('\nP. MED-2: owed work, parked channel, an outage past the window, at pins 0, 0.5, 0.9999\n');
+for (const outMs of [70000, 90000]) {
+	for (const pin of PINS) {
+		const { tab } = await owing(false, pin);
+		watchLand(tab);
+		await advance(tab, outMs);
+		tab.down = false;
+		const back = tab.vnow;
+		await advance(tab, 500000);
+		const t = landTime(tab, back);
+		check('P ' + (outMs / 1000) + ' s pin ' + pin + '. the owed answer lands within L = ' + (L_MS(outMs) / 1000)
+			+ ' s of the return', t <= L_MS(outMs) && tab.landedAt.length === 1, 'landed ' + s(t)
+			+ ', ' + tab.landedAt.length + ' landing(s)');
+	}
+}
+
+// The channel's own climb past the window, 4, 8, 16 s to its 30 s ceiling: the k-th wait
+// starts no earlier than 2 x (2^k - 1) s into it and lasts at most 6 x 2^k s, so
+//   C(T) = 3 x (T - W) + 6 s, at most 45 s.
+const C_MS = (outMs) => (outMs <= W_MS ? B_MS : Math.min(45000, 3 * (outMs - W_MS) + 6000));
+console.log('\nP. MED-2: no owed work, parked channel, a 70 s outage\n');
+for (const pin of PINS) {
+	const { tab } = await settled(false, pin);
+	const r = await outage(tab, 70000);
+	check('P idle 70 s pin ' + pin + '. the channel reads within C = ' + (C_MS(70000) / 1000) + ' s of the return',
+		r.firstRead <= C_MS(70000), 'first read ' + s(r.firstRead));
+}
+
+console.log('\nQ. LOW-3: 30 s down, 8 s of reads landing and POSTs answering 502, 30 s down again\n');
+for (const sockets of [false, true]) {
+	for (const pin of PINS) {
+		const { tab } = await owing(sockets, pin);
+		watchLand(tab);
+		await advance(tab, 30000);
+		tab.down = false; tab.postsDown = true;
+		await advance(tab, 8000);
+		gatewayDown(tab); tab.postsDown = false;
+		await advance(tab, 30000);
+		tab.down = false;
+		const back = tab.vnow;
+		await advance(tab, 500000);
+		const t = landTime(tab, back);
+		check('Q ' + (sockets ? 'socket' : 'parked') + ' pin ' + pin + '. the owed answer lands within L = '
+			+ (L_MS(30000) / 1000) + ' s of the second return', t <= L_MS(30000) && tab.landedAt.length === 1,
+			'landed ' + s(t) + ', ' + tab.landedAt.length + ' landing(s)');
+	}
+}
+
+// LOW-6 (rc review of SYNCREAD-R2): a landed read proves the gateway answered, so the next
+// failed read is a new outage and climbs from the bottom. Its counts were kept until paid(),
+// so a second long outage after an unpaid push resumed at the first outage's rung: up to the
+// ceiling's 450 s. A 120 s outage climbs readpast; a read lands and its POST answers 502;
+// then a second outage of T > 60 s, and the owed answer lands within L(T) of its return.
+console.log('\nR. LOW-6: 120 s down, up until a read lands and its POST answers 502, then T s down again\n');
+for (const outMs of [61000, 70000, 120000]) {
+	for (const sockets of [false, true]) {
+		for (const pin of PINS) {
+			const { tab } = await owing(sockets, pin);
+			watchLand(tab);
+			await advance(tab, 120000);
+			tab.down = false; tab.postsDown = true;
+			// Up until the owed retry's read lands and its POST answers 502: the first
+			// outage's own climb may hold that read up to L(120 s) after the return.
+			const r0 = tab.reads.length, p0 = tab.posts.length;
+			for (let i = 0; i < 400 && !(tab.reads.length > r0 && tab.posts.slice(p0).some((p) => !p.ok)); i++) await advance(tab, 500);
+			check('R ' + (outMs / 1000) + ' s ' + (sockets ? 'socket' : 'parked') + ' pin ' + pin + ' setup: a read landed, the POST failed',
+				tab.reads.length > r0 && tab.posts.slice(p0).some((p) => !p.ok) && !holds(tab, 'runner answer'), JSON.stringify(tab.posts.slice(p0)));
+			gatewayDown(tab); tab.postsDown = false;
+			await advance(tab, outMs);
+			tab.down = false;
+			const back = tab.vnow;
+			await advance(tab, 500000);
+			const t = landTime(tab, back);
+			check('R ' + (outMs / 1000) + ' s ' + (sockets ? 'socket' : 'parked') + ' pin ' + pin
+				+ '. the owed answer lands within L = ' + (L_MS(outMs) / 1000) + ' s of the second return',
+				t <= L_MS(outMs) && tab.landedAt.length === 1, 'landed ' + s(t) + ', ' + tab.landedAt.length + ' landing(s)');
+		}
+	}
+}
+
+// The live rig's miss (srt-measure c62d09887366): parked channel, nothing owed, a 60.6-61 s
+// outage, read 31-37 s after the return on 0bc3afb93. Here the channel's retries fall on the
+// dice's own phase, so the outages just past 61 s that the record misses are pinned beside
+// 61 s itself: 61.6 s at pin 0 (14.9 s on the record) and 63.1 s at pin 0.5 (29.9 s).
+console.log('\nR. the live case: no owed work, parked channel, a 61-63 s outage\n');
+for (const outMs of [61000, 61600, 63100]) {
+	for (const pin of PINS) {
+		const { tab } = await settled(false, pin);
+		const r = await outage(tab, outMs);
+		check('R idle ' + (outMs / 1000) + ' s pin ' + pin + '. the channel reads within C = ' + (C_MS(outMs) / 1000)
+			+ ' s of the return', r.firstRead <= C_MS(outMs), 'first read ' + s(r.firstRead));
+	}
+}
+
+console.log('\nK. LOW-4: a wall-clock step of 1 h inside the window moves neither window\n');
+for (const step of [3600000, -3600000]) {
+	// Owed work, parked channel, a 50 s outage, the wall clock stepped 20 s into it.
+	const { tab } = await owing(false, 0.5);
+	watchLand(tab);
+	await advance(tab, 20000);
+	tab.skew += step;
+	await advance(tab, 30000);
+	tab.down = false;
+	const back = tab.vnow;
+	await advance(tab, 60000);
+	const t = landTime(tab, back);
+	check('K ' + (step > 0 ? '+' : '-') + '1 h owed. the owed answer still lands within B = 6 s', t <= B_MS, 'landed ' + s(t));
+	// No owed work, parked channel: the wake window alone.
+	const { tab: t2 } = await settled(false, 0.5);
+	gatewayDown(t2);
+	await advance(t2, 20000);
+	t2.skew += step;
+	const r = await outage(t2, 30000);
+	check('K ' + (step > 0 ? '+' : '-') + '1 h idle. the channel still reads within B = 6 s', r.firstRead <= B_MS, 'first read ' + s(r.firstRead));
+}
+for (const owed of [true, false]) {
+	for (const step of [-3600000, 3600000]) {
+		// A five-minute outage with the wall clock stepped 20 s into it costs what one without
+		// does: each window still ends 60 s after its first failure. Owed work counts both
+		// ladders' GETs; with nothing owed, the channel's alone.
+		const run = async (st) => {
+			const { tab } = owed ? await owing(false, 0.5) : await settled(false, 0.5);
+			if (!owed) gatewayDown(tab);
+			const g0 = tab.gets;
+			await advance(tab, 20000);
+			tab.skew += st;
+			await advance(tab, 280000);
+			return tab.gets - g0;
+		};
+		const base = await run(0), moved = await run(step);
+		check('K ' + (step > 0 ? '+' : '-') + '1 h cost, ' + (owed ? 'owed' : 'idle') + '. a five-minute outage costs the same GETs as without the step',
+			moved === base, moved + ' GETs against ' + base);
+	}
 }
 
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASS'));

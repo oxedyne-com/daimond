@@ -22,6 +22,8 @@
      L1-L7  I9-LOWS (rc review, 2026-10-22): an ending lease that expired unsettled reads
             failed (LOW-1); this device's own live run lease does not outrank its own end
             (LOW-2, peer.js and daimond.js); words cannot be said into an ending lease (LOW-4)
+     M      SYNCREAD-R2 MED-1: a retake to end over this device's own live run claim writes
+            `ending` into the door's record, at a frozen, stepped-back or advancing clock
 
    Run: node www/js/notrunlease.test.mjs
    ============================================================ */
@@ -278,6 +280,32 @@ try {
 	await ph.DaimondLease.take(TID, { holder: PHONE, ts: NOW, intent: 'end' }, door, clock);
 	const r = await ph.DaimondLease.say(TID, { id: 's1', text: 'and also' }, door, clock);
 	check('L7 words said into an ending lease are refused: not running', !!r && !r.ok && r.why === 'not_running', J(r));
+}
+
+// ── M: SYNCREAD-R2 MED-1 (rc review, 2026-10-23): the retake's record carries `ending` ──
+// This device's own live run claim (a reload left it), then its own take to END the turn.
+// The fold keeps the fresher `renewedAt` for one holder and the door's record on a tie, so
+// a retake stamped no later than the claim it replaces wrote the old non-ending record:
+// every device read `claimed` with the asker as runner, then `done` for a turn never run.
+// The clock at the retake against the old claim: frozen, stepped back, advancing.
+for (const [tag, dt] of [['frozen (dt 0)', 0], ['stepped back (dt -300 ms)', -300], ['advancing (dt +5 s)', 5000]]) {
+	const ph = loadPeer(), dk = loadPeer(), door = makeDoor();
+	await ph.DaimondLease.take(TID, { holder: PHONE, ts: NOW }, door, clock);
+	const at = () => NOW + dt;
+	const took = await ph.DaimondLease.take(TID, { holder: PHONE, ts: NOW, intent: 'end' }, door, at);
+	const d1 = door.peek()[TID];
+	dk.DaimondLease.adopt(door.peek(), at);
+	const s1 = dk.DaimondPeer.uiState(turn(), dk.DaimondLease.record(TID), null, DESK, at(), null, false);
+	check('M ' + tag + ': the retake wins as a retake, and the door record carries ending',
+		!!(took && took.won && took.retake) && !!(d1 && d1.ending), J([took, d1]));
+	check('M ' + tag + ':   another device reads ending, no runner', s1 === 'ending'
+		&& dk.DaimondLease.holder(TID, at()) === null, J([s1, dk.DaimondLease.holder(TID, at())]));
+	await ph.DaimondPeer.settleLease('turn', TID, PHONE, 'done', door, at);
+	await ph.DaimondPeer.settleLease('turn', TID, PHONE, 'released', door, at);
+	dk.DaimondLease.adopt(door.peek(), at);
+	const r3 = dk.DaimondLease.record(TID);
+	const s3 = dk.DaimondPeer.uiState(turn(), r3, null, DESK, at(), null, false);
+	check('M ' + tag + ':   settled, it still reads ending, not done', s3 === 'ending' && !!(r3 && r3.ending), J([s3, r3]));
 }
 
 console.log('\n' + (checks - failures) + ' of ' + checks + ' checks pass');
