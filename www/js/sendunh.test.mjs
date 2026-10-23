@@ -32,9 +32,11 @@
    the runner pressed. The turn ran Here in silence: no tile line, no
    election logged, the map not marked unknown. It must end in the "not
    run" row (U1-U4), post nothing, log the election and mark the map
-   unknown. F1-ctl (the probe's control): a read that lands and finds the
-   runner gone still runs Here naming it. F1-here: nothing pressed, so a
-   missed read runs Here as before, with the map unknown and the log.
+   unknown. F1-ctl (rc ruling 23 Oct, QA B F5, reversing design M1): a
+   read that lands and finds the pressed runner gone ends "not run" the
+   same way (U1-U4); F1-ctl-here: nothing pressed, it runs Here. F1-here:
+   nothing pressed, so a missed read runs Here as before, with the map
+   unknown and the log.
 
    F3 (QA-HT-B F3): a turn withdrawn on loss (HT2 M9, W1) and a turn
    handed back `models-behind` (M1) used to run here with a note. Each
@@ -52,7 +54,7 @@
 
    Lifts the REAL functions out of daimond.js. Red on f43b648cc (U, H)
    and on 07fecc18c (F1, F3).
-   Breaks: --break entry | draw | lost | settled | readmiss | unknown |
+   Breaks: --break entry | draw | lost | settled | readmiss | declined | unknown |
            withdraw | behind | refused | cutref   (each must go red).
 
    K (lead, kfix f94184180 E-PORT): a runner's refusal before the run hands
@@ -68,6 +70,15 @@
    here). SA / RT-SA: a step-away hand-off (`stepAway`, not sent by the
    switch) still runs here. Red on 447e30d9a.
    Breaks: backstop | busy | thread | models | onreturn | stepaway.
+
+   KR (rig s14suhtr killrunner, review_suhtr HIGH-1, rulings §1 l.9,
+   l.18): the person's choice is what the switch drew AT THE PRESS, on
+   the real renderSeatSwitch over the real peer.js seatSwitch and
+   autoDispatchDecision. The runner drawn, then gone and the switch
+   redrawn plain Here: Send (KRa), Retry (KRb) and a missed read (KRc)
+   each run Here. KRd: drawn at the press, a presence event during the
+   read, declined: "not run". Red on cb1befee3 (KRa-c).
+   Break: sticky (the runner kept until Here is pressed).
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -78,10 +89,11 @@ let SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
 const BREAK = (process.argv.indexOf('--break') >= 0) ? process.argv[process.argv.indexOf('--break') + 1] : '';
 const BREAKS = {
 	entry: ['if (!r.ok && !st.marked) answerUnhanded(chat, turnId, promptText, r);', ''],
-	draw:  ["if (m.why === 'notrun') {", "if (false) {"],
+	draw:  ["if (isNotRunRow(m)) {", "if (false) {"],
 	lost:  ['retryTurn(current, m.iturn, notRunAsk(current, m), { lost: true })', 'retryTurn(current, m.iturn, notRunAsk(current, m))'],
 	settled: ['if (_handBack[tid] != null && DaimondPeer.settledLease', 'if (false && DaimondPeer.settledLease'],
 	readmiss: ['if (!pressed || turnHold(chat)) return false;', 'return false;'],
+	declined: ['if (!shown || chatSeatHere(chat) || turnHold(chat)) return false;', 'return false;'],
 	unknown:  ['try { if (window.DaimondPresence && DaimondPresence.lost) DaimondPresence.lost(); }', 'try { }'],
 	// Since part 3 every path below ends "not run" anyway, so a break runs the turn here first (U1 red).
 	withdraw: ["var notRun = (opts && opts.notRun) ? String(opts.notRun)", "var notRun = (opts && opts.notRun) ? (await recoverOneLocally(chat, m), 'x') && String(opts.notRun)"],
@@ -94,11 +106,19 @@ const BREAKS = {
 	models:   ["if (cause === 'models') { await endHandOffNotRun(chat, m,", "if (cause === 'models') { await recoverOneLocally(chat, m,"],
 	onreturn: ['else await endHandOffNotRun(jobs[k].chat, jobs[k].m,', 'else await recoverOneLocally(jobs[k].chat, jobs[k].m,'],
 	stepaway: ['if (m.stepAway) { await recoverOneLocally(chat, m); return; }', ''],
+	// The sticky store killrunner found: the runner last drawn pressed, kept until Here is pressed.
+	sticky:   [["if (shown === undefined) { try { shown = seatDrawnRunner(chat); }",
+			"if (shown === undefined) { try { shown = (seatDrawnRunner(chat), _seatSticky[String(chat.id || '')]); }"],
+		["\t\t\tdelete run.dataset.device;\n\t\t}\n\t\tbox.hidden = false;",
+			"\t\t\tdelete run.dataset.device;\n\t\t}\n\t\tif (current && onRunner) _seatSticky[String(current.id)] = run.textContent;\n\t\telse if (current && chatSeatHere(current)) delete _seatSticky[String(current.id)];\n\t\tbox.hidden = false;"]],
 };
 if (BREAK) {
 	const b = BREAKS[BREAK];
-	if (!b || SRC.indexOf(b[0]) < 0) { console.log('FAIL — unknown break or its text is gone: ' + BREAK); process.exit(1); }
-	SRC = SRC.replace(b[0], b[1]);
+	const pairs = (b && Array.isArray(b[0])) ? b : [b];
+	for (const pr of pairs) {
+		if (!pr || SRC.indexOf(pr[0]) < 0) { console.log('FAIL — unknown break or its text is gone: ' + BREAK); process.exit(1); }
+		SRC = SRC.replace(pr[0], pr[1]);
+	}
 	console.log('(break: ' + BREAK + ')');
 }
 let failures = 0, checks = 0;
@@ -114,9 +134,10 @@ function lift(name) {
 	return SRC.slice(a, SRC.indexOf('\n\t}\n', a) + 3);
 }
 
-const NAMES = ['runDispatchFallback', 'electProvider', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
-	'reRunParked', 'markInterrupted', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
-	'sendPresenceRead', 'endHandOffNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn'];
+const NAMES = ['runDispatchFallback', 'electProvider', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
+	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
+	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
+	'renderSeatSwitch', 'seatDrawnRunner'];
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──
 const PW = { addEventListener() {}, dispatchEvent() { return true; } };
@@ -167,7 +188,7 @@ function world(fault) {
 	const env = {
 		window: null, Date, String, Object, Array, JSON, Math, Promise, setTimeout, Error,
 		diag: (a, b) => W.diags.push(a + ' ' + b),
-		t: (k) => k, document: { createElement: el },
+		t: (k) => k, document: { createElement: el, getElementById: () => null },
 		selfDeviceId: () => 'phone1', nominatedDeviceId: () => 'argonaut1',
 		turnHold: () => { W.holds++; return (fault === 'paused' && W.holds >= 3) ? 'root' : null; },
 		DaimondModels: { pauseError: (n) => ({ message: 'Paused at ' + n + '.' }) },
@@ -187,7 +208,7 @@ function world(fault) {
 		redrawRunner: () => {}, _dispatchedIx: {}, seatNoteOnPrompt: () => false, seatNameOf: () => 'argonaut',
 		dispatchedPlaceholderIn: (c, tid) => (c.messages || []).find((x) => x.why === 'dispatched' && x.iturn === tid) || null,
 		TAKE: 'won',
-		_seatShownRunner: {}, _seatDropped: {}, renderSeatSwitch: () => {},
+		_seatShownRunner: {}, _seatSticky: {}, renderSeatSwitch: () => {},
 		giveUpSent: () => {}, newMid: (() => { let n = 0; return () => 'm' + (++n); })(),
 		_handoffStart: {}, _electionTrace: {}, deviceLabelFor: () => 'argonaut', dsEvent: () => {},
 		commitRatings: () => {}, ownsChat: () => false, appendUserMessage: () => {},
@@ -250,7 +271,7 @@ function pressRetry(W, chat, row) {
 function verdict(name, W, chat, tid, prompt) {
 	const rows = chat.messages.filter((m) => m && String(m.iturn || '') === tid && m.role !== 'user');
 	const errs = rows.filter((m) => m.role === 'error_log');
-	const notrun = rows.filter((m) => m.why === 'notrun');
+	const notrun = rows.filter((m) => !!m.notRun);
 	check(name + ' U1 not run here in silence', W.ran.length === 0, JSON.stringify(W.ran));
 	check(name + ' U2 no Retry-less error line', errs.length === 0, JSON.stringify(errs.map((m) => m.content)));
 	check(name + ' U3 one durable "not run" row on the turn', notrun.length === 1
@@ -279,7 +300,7 @@ async function main() {
 			// A second refusal of the same turn: one row, refreshed.
 			await (W.f.handOffTurn || W.f.dispatchToPeer)(chat, 'u1', PROMPT, [], { runTo: 'argonaut1' });
 			await settle();
-			const n = chat.messages.filter((m) => m.why === 'notrun' && m.iturn === 'u1').length;
+			const n = chat.messages.filter((m) => !!m.notRun && m.iturn === 'u1').length;
 			check('S-build U5 a second refusal refreshes the row, adds none', n === 1, 'rows ' + n);
 		}
 	}
@@ -314,7 +335,7 @@ async function main() {
 			verdict('H', W, chat, 'h1', PROMPT);
 			check('H the placeholder goes, so the row is the turn\'s one ending', W.dropped === 'h1', String(W.dropped));
 		} else {
-			const n = chat.messages.filter((m) => m.why === 'notrun').length;
+			const n = chat.messages.filter((m) => !!m.notRun).length;
 			check(id + ' no "not run" row, nothing run here', n === 0 && W.ran.length === 0, 'notrun=' + n + ' ran=' + JSON.stringify(W.ran));
 		}
 	}
@@ -339,7 +360,10 @@ async function main() {
 		e.DaimondSync = { push: () => {}, presenceDerived: () => true,
 			refreshPresence: () => lands ? Promise.resolve({ presence: lands, derived: true }) : new Promise(() => {}) };
 		e.DaimondPresence = { snapshot: () => lands || {}, lost: () => { W.lost++; } };
-		e._seatShownRunner = shown ? { c1: 'Chrome on argonaut' } : {};
+		e._seatShownRunner = shown ? { c1: 'Chrome on argonaut' } : {};	// what cb1befee3 read
+		e._seatSticky = shown ? { c1: 'Chrome on argonaut' } : {};		// --break sticky
+		e.seatSwitchFor = () => (shown ? { choice: 'runner', runner: { deviceId: 'argonaut1', label: 'Chrome on argonaut' }, until: 0 }
+			: { choice: 'here', runner: null, until: 0 });
 		e.chatSeatHere = () => !!here;
 		return W;
 	}
@@ -358,15 +382,111 @@ async function main() {
 		check('F1 the map is marked unknown on the timeout', W.lost >= 1, 'lost ' + W.lost);
 	}
 	{
-		console.log('F1-ctl: the read lands, the runner is gone (rc\'s control)');
+		console.log('F1-ctl: the read lands, the pressed runner is gone (rc ruling 23 Oct, QA B F5)');
 		const W = readWorld({ argonaut1: { listening: false } }, true, false);
 		W.env.DaimondPeer.autoDispatchDecision = () => ({ dispatch: false, reason: 'local' });
 		const chat = { id: 'c1', messages: [], holds: [] };
-		const went = await W.f.maybeAutoDispatch(chat, PROMPT, '', 'r2');
+		let went;
+		try { went = await W.f.maybeAutoDispatch(chat, PROMPT, '', 'r2'); } catch (e) { went = 'threw ' + e; }
 		await settle();
-		check('F1-ctl runs Here naming the runner, the election logged', went === false
-			&& W.env._seatDropped.c1 === 'Chrome on argonaut' && W.logged === 1,
-			'went ' + went + ' dropped ' + JSON.stringify(W.env._seatDropped) + ' logged ' + W.logged);
+		check('F1-ctl the send is answered here (no local run follows)', went === true, String(went));
+		check('F1-ctl the prompt stands in the transcript', chat.messages.some((m) => m.role === 'user' && m.iturn === 'r2'));
+		verdict('F1-ctl', W, chat, 'r2', PROMPT);
+		check('F1-ctl nothing posted, the election logged', W.posted === 0 && W.logged === 1, 'posted ' + W.posted + ' logged ' + W.logged);
+	}
+	{
+		console.log('F1-ctl-here: the read lands, the runner is gone, nothing pressed');
+		const W = readWorld({ argonaut1: { listening: false } }, false, false);
+		W.env.DaimondPeer.autoDispatchDecision = () => ({ dispatch: false, reason: 'local' });
+		const chat = { id: 'c1', messages: [], holds: [] };
+		const went = await W.f.maybeAutoDispatch(chat, PROMPT, '', 'r4');
+		await settle();
+		check('F1-ctl-here runs Here as before, no row', went === false && !chat.messages.some((m) => m.notRun || m.why === 'notrun')
+			&& W.logged === 1, 'went ' + went + ' logged ' + W.logged);
+	}
+	// ── KR (rig s14suhtr killrunner, review_suhtr HIGH-1; rulings §1 l.9, l.18): the person's choice is
+	// what the switch drew AT THE PRESS. The REAL renderSeatSwitch draws from the REAL peer.js seatSwitch
+	// over a presence map the arm sets, and the REAL autoDispatchDecision decides. KRa/KRb: the runner drawn,
+	// then gone and redrawn plain Here; Send, then Retry, each run Here. KRc: the same, the read missed.
+	// KRd: drawn at the press, a presence event during the read redraws Here, declined: "not run" (F5).
+	function drawnWorld() {
+		const W = readWorld({}, false, false);
+		const e = W.env;
+		const node = () => ({ hidden: false, textContent: '', title: '', dataset: {}, attrs: {},
+			setAttribute(k, v) { this.attrs[k] = v; } });
+		W.els = { 'seat-switch': node(), 'seat-here': node(), 'seat-runner': node() };
+		e.document = { createElement: el, getElementById: (id) => W.els[id] || null };
+		e.armSeatSwitchTimer = () => {};
+		e.loadDevices = () => ({ phone1: {}, argonaut1: {} });
+		e._seatShownRunner = {}; e._seatSticky = {};
+		const now = Date.now();
+		W.BEATING = { argonaut1: { deviceId: 'argonaut1', label: 'argonaut', lastSeen: now, servicedAt: now,
+			listening: true, awake: true, isDesktop: true, build: '' } };
+		W.presence = W.BEATING;
+		const opts = { selfId: 'phone1', nominatedId: 'argonaut1', isPhone: true, globalDefault: true,
+			freshWindowMs: RP.DISPATCH_FRESH_MS, runnerOnly: true };
+		e.seatSwitchFor = (c) => RP.seatSwitch(c, W.presence, opts, Date.now());
+		e.DaimondPeer.autoDispatchDecision = RP.autoDispatchDecision;
+		e.DaimondPresence = { snapshot: () => W.presence, lost: () => { W.lost++; } };
+		// The read lands with the map as it then stands, and redraws the switch, as `daimond:presence` does.
+		W.read = (next) => () => { W.presence = next; W.f.renderSeatSwitch(); return Promise.resolve({ presence: next, derived: true }); };
+		e.DaimondSync.refreshPresence = W.read({});
+		W.redraw = (p) => { W.presence = p; W.f.renderSeatSwitch(); };
+		W.drawsRunner = () => !W.els['seat-runner'].hidden && W.els['seat-runner'].attrs['aria-pressed'] === 'true';
+		W.drawsHere = () => W.els['seat-runner'].hidden && W.els['seat-here'].attrs['aria-pressed'] === 'true';
+		return W;
+	}
+	const noRow = (chat) => !chat.messages.some((m) => !!m.notRun);
+	const rowsOf = (chat) => JSON.stringify(chat.messages.filter((m) => m.notRun).map((m) => m.notRun.why));
+	{
+		console.log('KRa/KRb: the runner drawn, then gone and redrawn Here; Send, then Retry');
+		const W = drawnWorld();
+		const chat = { id: 'c1', messages: [], holds: [] };
+		W.env.current = chat;
+		check('KR renderSeatSwitch and seatDrawnRunner lifted', W.have.indexOf('renderSeatSwitch') >= 0 && W.have.indexOf('seatDrawnRunner') >= 0,
+			W.have.join());
+		W.redraw(W.BEATING);
+		const drew = W.drawsRunner();
+		W.redraw({});
+		check('KR the real switch drew the runner pressed, then plain Here', drew && W.drawsHere());
+		let went;
+		try { went = await W.f.maybeAutoDispatch(chat, PROMPT, '', 'k1'); } catch (e) { went = 'threw ' + e; }
+		await settle();
+		check('KRa Send runs Here: no "not run" row', went === false && noRow(chat), 'went ' + went + ' rows ' + rowsOf(chat));
+		try { went = await W.f.maybeAutoDispatch(chat, PROMPT, '', 'k1-rt'); } catch (e) { went = 'threw ' + e; }
+		await settle();
+		check('KRb Retry runs Here: no "not run" row', went === false && noRow(chat), 'went ' + went + ' rows ' + rowsOf(chat));
+		check('KR nothing posted, the election logged twice', W.posted === 0 && W.logged === 2, 'posted ' + W.posted + ' logged ' + W.logged);
+	}
+	{
+		console.log('KRc: the runner drawn, then gone and redrawn Here; Send, the read misses');
+		const W = drawnWorld();
+		const chat = { id: 'c1', messages: [], holds: [] };
+		W.env.current = chat;
+		W.redraw(W.BEATING);
+		W.redraw({});
+		W.env.DaimondSync.refreshPresence = () => new Promise(() => {});
+		let went;
+		try { went = await W.f.maybeAutoDispatch(chat, PROMPT, '', 'k3'); } catch (e) { went = 'threw ' + e; }
+		await settle();
+		check('KRc a missed read under a plain Here switch runs Here', went === false && noRow(chat) && W.lost >= 1,
+			'went ' + went + ' rows ' + rowsOf(chat) + ' lost ' + W.lost);
+	}
+	{
+		console.log('KRd: the runner drawn at the press, gone by the send-time read');
+		const W = drawnWorld();
+		const chat = { id: 'c1', messages: [], holds: [] };
+		W.env.current = chat;
+		W.redraw(W.BEATING);
+		const drew = W.drawsRunner();
+		let went;
+		try { went = await W.f.maybeAutoDispatch(chat, PROMPT, '', 'k2'); } catch (e) { went = 'threw ' + e; }
+		await settle();
+		check('KRd the switch drew the runner at the press and Here after the read', drew && W.drawsHere());
+		check('KRd the send ends here (no local run follows)', went === true, String(went));
+		check('KRd the row names the declined runner', /runner argonaut was pressed and the election declined it/.test(
+			(chat.messages.find((m) => m.notRun) || { notRun: {} }).notRun.why || ''), rowsOf(chat));
+		verdict('KRd', W, chat, 'k2', PROMPT);
 	}
 	{
 		console.log('F1-here: the read did not land, no runner pressed');
@@ -375,7 +495,7 @@ async function main() {
 		const went = await W.f.maybeAutoDispatch(chat, PROMPT, '', 'r3');
 		await settle();
 		check('F1-here runs Here as before, the map unknown, the election logged, no row', went === false
-			&& W.lost >= 1 && W.logged === 1 && !chat.messages.some((m) => m.why === 'notrun'),
+			&& W.lost >= 1 && W.logged === 1 && !chat.messages.some((m) => !!m.notRun),
 			'went ' + went + ' lost ' + W.lost + ' logged ' + W.logged);
 	}
 	// ── F3: withdrawn on loss, and handed back models-behind ──
@@ -403,7 +523,7 @@ async function main() {
 				&& W.settled.join() === 'w1:done,w1:released', JSON.stringify({ taken: W.taken, settled: W.settled }));
 			check('W1 the placeholder goes', W.dropped === 'w1', String(W.dropped));
 		} else {
-			const n = chat.messages.filter((m) => m.why === 'notrun').length;
+			const n = chat.messages.filter((m) => !!m.notRun).length;
 			check('W2 the runner\'s claim keeps it: no row, nothing run here, nothing settled', n === 0 && W.ran.length === 0
 				&& W.settled.length === 0, 'notrun=' + n + ' ran=' + JSON.stringify(W.ran) + ' settled=' + W.settled);
 		}
@@ -459,7 +579,7 @@ async function main() {
 			check('B1 the lease is taken and settled, the placeholder goes', W.taken[0] === 'b1'
 				&& W.settled.join() === 'b1:done,b1:released' && W.dropped === 'b1', JSON.stringify({ taken: W.taken, settled: W.settled }));
 		} else {
-			const n = chat.messages.filter((m) => m.why === 'notrun').length;
+			const n = chat.messages.filter((m) => !!m.notRun).length;
 			check('SA a step-away hand-off nobody took still runs here, no row', n === 0 && W.ran.join() === 'recover:b1',
 				'notrun=' + n + ' ran=' + JSON.stringify(W.ran));
 		}
@@ -481,7 +601,7 @@ async function main() {
 			check('RT the placeholder goes', W.dropped === 't1', String(W.dropped));
 		} else {
 			check('RT-SA a step-away hand-off nobody took is run here on return', W.ran.join() === 'recover:t1'
-				&& !chat.messages.some((m) => m.why === 'notrun'), JSON.stringify(W.ran));
+				&& !chat.messages.some((m) => !!m.notRun), JSON.stringify(W.ran));
 		}
 	}
 	{

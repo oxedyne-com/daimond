@@ -3634,7 +3634,6 @@
 	'seat.refused': '正在这里运行 · {name} 无法接手',
 	'seat.here': '这里',
 	'seat.switch': '下一轮在哪里运行',
-	'seat.ran_here': '已在这里运行 · {name} 无法连接',
 	'errand.prompt_too_large': '仅提示词就超过了中继允许的大小',
 	'place.why_here': '需要的一切都在这里。',
 	'place.why_missing_files': '这份文档的文件并非都在这里——缺 {n} 个。',

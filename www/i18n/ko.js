@@ -3644,7 +3644,6 @@
 	'seat.refused': '여기서 실행 중 · {name}이(가) 받을 수 없었어요',
 	'seat.here': '여기',
 	'seat.switch': '다음 차례가 실행될 곳',
-	'seat.ran_here': '여기서 실행했어요 · {name}에 연결할 수 없었어요',
 	'errand.prompt_too_large': '프롬프트만으로도 릴레이가 받아들일 수 있는 크기를 넘어요',
 	'place.why_here': '필요한 것이 모두 여기 있어요.',
 	'place.why_missing_files': '이 문서의 파일이 모두 여기 있지는 않아요 — {n}개 없어요.',

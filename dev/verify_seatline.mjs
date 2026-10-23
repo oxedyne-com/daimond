@@ -25,8 +25,11 @@
      (c) no runner set, a live desktop -> here, plain "Here" (was:
          that desktop);
      (d) a MOBILE device with nothing live -> here, warn, and why;
-     (i) an armed runner posture is the runner with no nominee
-         record stored here, and the switch names it;
+     (i) an armed runner posture that is LISTENING is the runner
+         with no nominee record stored here, and the switch names
+         it; one that beats but has stopped listening (stale
+         serviced_at) is not a seat (UNBLOCK-1: reachable =
+         listening);
      (e) a DESKTOP with nothing live -> here, no warning;
      (f) a phone that beats mobile:true is never a seat;
      (k) a chat pinned Here still offers the runner to go back to;
@@ -96,10 +99,11 @@ try {
 		servicedAt: now - (ageMs || 0), attended: false, mobile: false });
 	const phone = (name, ageMs) => ({ name, lastSeen: now - (ageMs || 0),
 		servicedAt: now - (ageMs || 0), attended: true, mobile: true });
-	// A machine ARMED AS THE RUNNER (runner.js posture on its beat) whose errand-channel
-	// stamp is stale -- the live shape of the 2026-09-13 fault.
+	// A machine ARMED AS THE RUNNER (runner.js posture on its beat) and LISTENING: its
+	// errand-channel stamp is as fresh as its beat. Since UNBLOCK-1 (be54ceef5) a seat
+	// must be reachable, and reachable = listening, so a stale stamp is not a seat.
 	const armed = (name, ageMs) => ({ name, lastSeen: now - (ageMs || 0),
-		servicedAt: 0, attended: false, mobile: false, runner: true });
+		servicedAt: now - (ageMs || 0), attended: false, mobile: false, runner: true });
 	// The app's own options (`seatOpts`): only the switch's runner may take a turn.
 	const opt = (opts) => Object.assign({ selfId: PHONE, isPhone: true, selfMobile: true,
 		freshWindowMs: W, runnerOnly: true }, opts || {});
@@ -154,13 +158,17 @@ try {
 			'why=' + silent.why);
 	}
 
-	// ── (i) THE RUNNER POSTURE IS A SEAT ON ITS OWN (owner, 2026-09-13). ──
+	// ── (i) THE RUNNER POSTURE IS A SEAT ON ITS OWN (owner, 2026-09-13; UNBLOCK-1). ──
 	//
 	// THE LIVE FAULT. The phone said "Runs here -- keep this screen open" with the reason
 	// `no-desktop` while argonaut was beside it: beating, starred, and ARMED. The star lives
 	// in the NOMINATING device's localStorage and reaches a phone only on a full parcel
-	// round, and argonaut's `serviced_at` was stale. `runner:true` -- the machine's own
-	// claim that it is arranged to take a turn -- rode every beat and was read by nothing.
+	// round. `runner:true` -- the machine's own claim that it is arranged to take a turn --
+	// rode every beat and was read by nothing. So a LISTENING armed runner is a seat with
+	// no nominee record here. The 2026-09-13 rule that the posture also outranked a stale
+	// `serviced_at` was superseded by UNBLOCK-1 (be54ceef5): seat and claim use one
+	// liveness test, recGenuine, and reachable = listening. An armed runner whose stamp
+	// is stale cannot collect the errand, so it is not a seat.
 	{
 		const pres = { [ARG]: armed('argonaut', 10000) };		// NO nominatedId: the phone knows nothing
 		const p = plan(pres);
@@ -170,6 +178,9 @@ try {
 			p.reason === 'runner-posture', 'reason=' + p.reason);
 		const x = sw(pres);
 		check('(i) the switch names the armed runner', !!x.runner && x.runner.deviceId === ARG, swStr(x));
+		const deaf = plan({ [ARG]: Object.assign(armed('argonaut', 10000), { servicedAt: now - (W + 60000) }) });
+		check('(i) an armed runner that beats but has stopped LISTENING is not a seat (UNBLOCK-1)',
+			deaf.where === 'local' && deaf.why === 'no-desktop', 'where=' + deaf.where + ' why=' + deaf.why);
 		const cold = plan({ [ARG]: armed('argonaut', W + 60000) });
 		check('(i) an armed runner that has stopped BEATING is still not a seat',
 			cold.where === 'local', 'where=' + cold.where);
@@ -250,13 +261,11 @@ try {
 	// ── (g) THE KEYS THE SWITCH AND TILE NAME ARE IN en.js; THE OLD ONES ARE GONE. ──
 	{
 		const en = loadEn();
-		const need = ['seat.here', 'seat.switch', 'seat.ran_here'];
+		const need = ['seat.here', 'seat.switch'];
 		const missing = need.filter((k) => !en || !en[k]);
 		check('(g) every key the switch and tile name exists in en.js', missing.length === 0, missing.join(' '));
-		check('(g) the ran-here note names the runner that was gone',
-			!!en && String(en['seat.ran_here']).indexOf('{name}') >= 0, String(en && en['seat.ran_here']));
 		const gone = ['seat.on_runner', 'seat.on_desktop', 'seat.on_desktop_runner_off', 'seat.local',
-			'seat.local_mobile', 'turn.peer_takeback', 'turn.peer_takingback', 'seat.retry'].filter((k) => en && en[k]);
+			'seat.local_mobile', 'turn.peer_takeback', 'turn.peer_takingback', 'seat.retry', 'seat.ran_here'].filter((k) => en && en[k]);
 		check('(g) the seat-line, take-back and re-seat keys are gone', gone.length === 0, gone.join(' '));
 		const p = plan({ [ARG]: desk('argonaut', 2000) }, { nominatedId: ARG });
 		check('(g) the plan names no i18n key of its own any more', !('key' in p), Object.keys(p).join(','));

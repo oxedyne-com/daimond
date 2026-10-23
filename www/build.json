@@ -1,1 +1,1 @@
-{"build":"a421a79a8b28","note":"A browser worker gets its key in one ask, sized to its turn, so a long turn no longer stops at two dollars."}
+{"build":"aa1f5b9f350e","note":"A pressed runner that cannot take a turn ends it Not run with Retry, and every Retry of a lost turn runs it once."}

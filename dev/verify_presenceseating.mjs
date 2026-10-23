@@ -185,18 +185,23 @@ try {
 	}
 	// ── EXTRA: THE RUNNER POSTURE, between the star and the generic scan ───────────
 	//
-	// A phantom is excluded above because it only BEATS. A machine that beats AND says
-	// `runner:true` is the opposite case: it has been armed (runner.js holds a wake lock
-	// and keeps the errand long-poll open), and its servicing stamp can lapse for a
-	// round without that ceasing to be true. Live, on 2026-09-13, the phone held no
-	// nominee record and argonaut's stamp was stale, so BOTH the star branch and the
-	// generic scan missed it and the phone ran the turn itself.
+	// A machine that beats, LISTENS and says `runner:true` has been armed (runner.js
+	// holds a wake lock and keeps the errand long-poll open). Live, on 2026-09-13, the
+	// phone held no nominee record, so the star branch missed it; the posture seats it.
+	// The 2026-09-13 claim that the posture also covers a stale servicing stamp was
+	// disproved by UNBLOCK-1 (be54ceef5): seat and claim use one liveness test,
+	// recGenuine, and reachable = listening. An armed runner with a stale stamp cannot
+	// collect the errand, so it is excluded like the phantom above.
 	{
 		const pres = {}; pres[IOS] = phone('iPhone', 1000);
 		pres[ARG] = { name: 'argonaut', lastSeen: now - 1000, servicedAt: now - (W + 30000),
 			attended: false, mobile: false, runner: true };
+		const deaf = P.handoffTarget(pres, { selfId: IOS, windowMs: W }, now);
+		check('EXTRA (UNBLOCK-1): an ARMED runner that beats but has a stale stamp (not listening) is NOT seated -> local',
+			deaf.reason === 'local' && deaf.target === null, 'reason=' + deaf.reason);
+		pres[ARG].servicedAt = now - 1000;		// listening again
 		const res = P.handoffTarget(pres, { selfId: IOS, windowMs: W }, now);
-		check('EXTRA: an ARMED runner is seated on the posture, with no nominee and a stale stamp',
+		check('EXTRA: a LISTENING armed runner is seated on the posture, with no nominee',
 			res.reason === 'runner-posture' && res.target && res.target.deviceId === ARG,
 			'reason=' + res.reason);
 		// ORDERING. A live star elsewhere still wins: the posture sits BELOW (a) and (a').
@@ -207,7 +212,7 @@ try {
 			starred.reason === 'nominee' && starred.target.deviceId === GIL,
 			'reason=' + starred.reason);
 		// And the posture outranks the GENERIC scan: with the star gone, argonaut (armed,
-		// stale stamp) is chosen over gilgamesh (genuine, no posture).
+		// listening) is chosen over gilgamesh (genuine, no posture).
 		const unstarred = P.handoffTarget(pres, { selfId: IOS, windowMs: W }, now);
 		check('EXTRA: the posture outranks a merely-genuine desktop',
 			unstarred.reason === 'runner-posture' && unstarred.target.deviceId === ARG,

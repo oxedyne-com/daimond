@@ -245,7 +245,7 @@ console.log('\nThe three paths set it, and nothing else does');
 	// runSteerHeld is runSteer's body; runSteer itself is the wrapper that releases the claim.
 	const by = {}; sites.forEach((c) => { (by[c.owner] = by[c.owner] || []).push(gate(c)); });
 	// sayToRunner: words said into a turn another device runs join the thread as they are sent (UNBLOCK-27 R7).
-	same('the callers are runTurn, maybeAutoDispatch, runSteerHeld, an interjection landing, words said to a runner and the journal recovery', Object.keys(by).sort(), ['landInterjection', 'maybeAutoDispatch', 'recoverUserRecord', 'runSteerHeld', 'runTurn', 'sayToRunner']);
+	same('the callers are runTurn, maybeAutoDispatch, endSendNotRun, runSteerHeld, an interjection landing, words said to a runner and the journal recovery', Object.keys(by).sort(), ['endSendNotRun', 'landInterjection', 'maybeAutoDispatch', 'recoverUserRecord', 'runSteerHeld', 'runTurn', 'sayToRunner']);
 	same('path 1 (local chat send): gated on the person flag runTurn is given, or on a note a replay hands it', by.runTurn, ["!!opts.person || typeof opts.told === 'string'"]);
 	same('path 5 (an interjection landing) is a person\'s message', by.landInterjection, ['true']);
 	same('the journal recovery restores the mark it was opened with', by.recoverUserRecord, ['meta.app !== true']);
@@ -253,11 +253,12 @@ console.log('\nThe three paths set it, and nothing else does');
 	// Two sites since SEND-UNHANDED part 2 (QA-HT-B F1: a missed presence read with the runner pressed writes the
 	// prompt and its "not run" row); each must carry the same gate, so the set of gates is compared.
 	same('path 3 (the peer-dispatch push): a person\'s send, unless the app wrote it (a Continue\'s nudge)', [...new Set(by.maybeAutoDispatch)], ['!app']);
+	same('the not-run end of a pressed send (endSendNotRun) is a person\'s send, unless the app wrote it', [...new Set(by.endSendNotRun)], ['!app']);
 	same('path 4 (the Diamond send): gated on how.said, which only a person\'s typing passes', by.runSteerHeld, ['!!(how && how.said)']);
 	// J9: the ratings are committed (a pending draft is a rating_log) before the note is composed
 	const idxs = []; { const re = /\bpushUserRecord\(/g; let mm; while ((mm = re.exec(SRC))) if (!/function\s*$/.test(SRC.slice(Math.max(0, mm.index - 16), mm.index))) idxs.push(mm.index); }
 	const committedFirst = idxs.map((i) => { const k = SRC.lastIndexOf('commitRatings(', i); return { owner: ownerAt(SRC, i), ok: k > 0 && ownerAt(SRC, k) === ownerAt(SRC, i) }; });
-	same('every send path commits the ratings before it composes the note (so a pending draft is already a record)', [...new Set(committedFirst.filter((c) => !['landInterjection', 'recoverUserRecord'].includes(c.owner)).map((c) => c.owner + ':' + c.ok))].sort(), ['maybeAutoDispatch:true', 'runSteerHeld:true', 'runTurn:true', 'sayToRunner:true']);
+	same('every send path commits the ratings before it composes the note (so a pending draft is already a record)', [...new Set(committedFirst.filter((c) => !['landInterjection', 'recoverUserRecord'].includes(c.owner)).map((c) => c.owner + ':' + c.ok))].sort(), ['endSendNotRun:true', 'maybeAutoDispatch:true', 'runSteerHeld:true', 'runTurn:true', 'sayToRunner:true']);
 	{ const ij = lift(SRC, 'interjectMessage') || ''; check('and so does the interjection, at the typing step, before it composes', ij.indexOf('commitRatings(') > 0 && ij.indexOf('commitRatings(') < ij.indexOf('ratingPre('), ij.slice(0, 200)); }
 	check('no send path pushes its user record by hand any more',
 		!/chat\.messages\.push\(urec\)/.test(SRC) && !/rec\.messages\.push\(\{ role: 'user', content: instruction/.test(SRC)
@@ -271,11 +272,12 @@ console.log('\nThe three paths set it, and nothing else does');
 	// retryRouted is retryTurn's own tail for a refused permit's Retry, run here when no peer takes it.
 	// retryTurn reaches runTurn through `askAgain`, which hands its options on untouched (a daimon
 	// turn's Retry goes to runSteer there instead, D-20261012-07).
-	same('the person flag reaches runTurn from the composer, the queue (sendQueued) and retryTurn only (a lost run\'s fenced retry through runRetryHere)', withPerson.map((c) => c.owner).sort(), ['retryRouted', 'runRetryHere', 'sendPressed', 'sendQueued']);
+	// A Retry reaches runTurn through askAgain since SUHT-R F2 (one path for a chat's and a daimon's).
+	same('the person flag reaches runTurn from the composer and the queue (sendQueued) only; a Retry through askAgain', withPerson.map((c) => c.owner).sort(), ['sendPressed', 'sendQueued']);
 	// retryRouted too since R3 3c (7c939256): a daimon's routed Retry the hand-off declines is
 	// asked again here, as the person, as its send would be.
 	// Every Retry goes through the election since UNBLOCK-1 QFOLLOW, so retryRouted is askAgain's only caller.
-	same('retryRouted asks again as the person', calls(SRC, 'askAgain').filter((c) => /person:\s*true/.test(c.text)).map((c) => c.owner), ['retryRouted']);
+	same('retryRouted and the fenced lost-run retry (runRetryHere) ask again as the person', calls(SRC, 'askAgain').filter((c) => /person:\s*true/.test(c.text)).map((c) => c.owner).sort(), ['retryRouted', 'runRetryHere']);
 	check('and askAgain passes its options to runTurn as given', /return runTurn\(chat, text, opts\)/.test(lift(SRC, 'askAgain') || ''));
 	const none = rt.filter((c) => !/person:\s*true/.test(c.text)).map((c) => c.text.replace(/\s+/g, ' ').slice(0, 60));
 	check('a Continue, a gather round and a peer turn pass no person flag (so they take no pre)',
@@ -556,7 +558,7 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	// first-copy merge to the stored one), but the question's mid IS the turn's id. A retraction that filters on the
 	// mark alone leaves the question beside the re-ask, and the model is told both (and, with a note, told twice).
 	// One helper finds a turn's messages; no message is marked after it has joined the chat.
-	const helper = lift(SRC, 'turnMessagesOf');
+	const helper = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'isNotRunRow') + '\n' + lift(SRC, 'isLostRow');	// a lost turn's row (SUHT-R F1)
 	const fns = ['continueTurn', 'retryTurn', 'answerAgain'].map((n) => lift(SRC, n));
 	const cut = lift(SRC, 'tailAfter') + '\n' + lift(SRC, 'sessionCut');	// a retraction cuts the stored session (1e)
 	const ask = lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryRouted');	// retryTurn's way to the model, through the election

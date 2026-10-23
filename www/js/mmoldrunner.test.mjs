@@ -125,7 +125,7 @@ async function main() {
 		await tick(); await tick();
 		// SEND-UNHANDED (lead ruling): a turn the door cannot hand to the runner the switch
 		// names is not run here in silence; it says "not run", with Retry.
-		const notRun = parked.messages.filter((m) => m.why === 'notrun' && m.iturn === 't2').length;
+		const notRun = parked.messages.filter((m) => !!m.notRun && m.iturn === 't2').length;
 		check(able ? 'the parked re-run is handed to it' : 'the parked re-run is not handed to it, nor run here: not run, with Retry',
 			able ? (W.built.length === 1 && W.ran.length === 0) : (W.built.length === 0 && W.ran.length === 0 && notRun === 1),
 			'built=' + W.built.length + ' ran=' + JSON.stringify(W.ran) + ' notrun=' + notRun);

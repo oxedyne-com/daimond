@@ -3603,7 +3603,6 @@
 	'seat.refused': 'Executando aqui · {name} não conseguiu assumir',
 	'seat.here': 'Aqui',
 	'seat.switch': 'Onde o próximo turno roda',
-	'seat.ran_here': 'Rodou aqui · {name} não estava acessível',
 	'errand.prompt_too_large': 'só o prompt já é maior do que o relay aceita',
 	'place.why_here': 'Tudo o que precisa está aqui.',
 	'place.why_missing_files': 'Nem todos os arquivos deste documento estão aqui — faltam {n}.',

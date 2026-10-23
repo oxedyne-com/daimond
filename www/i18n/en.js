@@ -2515,7 +2515,6 @@
 	'seat.refused':              'Running here · {name} couldn’t take it',
 	'seat.here':                 'Here',
 	'seat.switch':               'Where the next turn runs',
-	'seat.ran_here':             'Ran here · {name} wasn’t reachable',
 	'errand.prompt_too_large':   'the prompt alone is larger than the relay accepts',
 	// ── WHERE A TASK OTHER THAN A TURN RUNS (owner design, 2026-09-14) ──
 	// A compile and a publish are placed by the same election a turn is, and the

@@ -3652,6 +3652,13 @@
 	/// `leaseHolder`, `leaseHeldBy`, `uiState` -- reads it as nobody's run, on every device.
 	function endingLease(r) { return !!r && !!r.ending; }
 
+	/// Did THIS device end the turn "not run" (SUHT-R F4)? Its own `ending` lease, settled: the
+	/// end won its take and settled, so whatever the turn still lacks (the row, a dropped
+	/// placeholder) is this device's to finish, and nobody runs it.
+	function endedHere(r, selfId) {
+		return endingLease(r) && settledLease(r) && !!selfId && String(r.holder || '') === String(selfId);
+	}
+
 	/// Is a record DEAD: vacant, and past the last moment any copy of it anywhere
 	/// could still read live, by one TTL of grace? A released tombstone (expiry 0)
 	/// must outlive the stale 'running' copy it supersedes, and that copy's expiry is
@@ -7219,6 +7226,7 @@
 		settlingReport: settlingReport,
 		settledLease:  settledLease,
 		endingLease:   endingLease,
+		endedHere:     endedHere,
 		frameWhole:    frameWhole,
 		frameJson:     frameJson,
 		frameWorkers:  frameWorkers,

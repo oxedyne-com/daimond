@@ -3646,7 +3646,6 @@
 	'seat.refused': 'ここで実行中 · {name} が引き受けられませんでした',
 	'seat.here': 'ここ',
 	'seat.switch': '次のターンを実行する場所',
-	'seat.ran_here': 'ここで実行しました · {name} に接続できませんでした',
 	'errand.prompt_too_large': 'プロンプトだけでリレーが受け入れられるサイズを超えています',
 	'place.why_here': '必要なものはすべてここにあります。',
 	'place.why_missing_files': 'この文書のファイルがすべてここにあるわけではありません——{n} 件不足しています。',

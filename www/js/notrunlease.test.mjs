@@ -171,7 +171,7 @@ try {
 	A = device(phW, PHONE, {
 		syncCas: () => door,
 		stub: {
-			answerUnhanded: (ch, tid) => { look('before the row'); ch.messages.push({ role: 'assistant', why: 'notrun', iturn: tid }); },
+			answerUnhanded: (ch, tid) => { look('before the row'); ch.messages.push({ role: 'assistant', interrupted: true, why: 'runner', notRun: { why: 'w' }, iturn: tid }); },
 		},
 	});
 	// The take itself is watched: the frame before it starts and the one after it lands.
@@ -184,7 +184,7 @@ try {
 	await A.endHandOffNotRun(chat, m, 'refused');
 	phW.DaimondLease.take = realTake;
 	check('D1 the ending take says it is held to end the turn', !!(takeOpts && takeOpts.intent === 'end'), J(takeOpts));
-	check('D2 the not-run row was written', chat.messages.some((x) => x.why === 'notrun'));
+	check('D2 the not-run row was written', chat.messages.some((x) => !!x.notRun));
 	const bad = (f) => f.runner === PHONE || RUNNER[f.st] || /peer_claimed|peer_running|iphone/.test(f.foot);
 	const badA = frames.filter(bad);
 	check('D3 no frame on the asker names it as the runner (switch, tile state, footer)', frames.length >= 3 && !badA.length, J(badA.length ? badA : frames));
@@ -210,7 +210,7 @@ try {
 		stub: {
 			chats: [chat], dispatchedChat: () => chat, dispatchedTurnFinished: () => false,
 			dispatchedAnswerPresent: () => false, recoverOneLocally: () => { frames.push({ ranHere: 1 }); },
-			answerUnhanded: (ch, tid) => { look(); ch.messages.push({ role: 'assistant', why: 'notrun', iturn: tid }); },
+			answerUnhanded: (ch, tid) => { look(); ch.messages.push({ role: 'assistant', interrupted: true, why: 'runner', notRun: { why: 'w' }, iturn: tid }); },
 		},
 	});
 	const realTake = phW.DaimondLease.take;
@@ -218,7 +218,7 @@ try {
 	await A.runDispatchFallback(chat.id, TID, { notRun: 'withdrawn: runner stopped listening, unclaimed' });
 	phW.DaimondLease.take = realTake;
 	check('W1 a withdrawn hand-off ends not run through the ending take', !!(takeOpts && takeOpts.intent === 'end')
-		&& chat.messages.some((x) => x.why === 'notrun'), J([takeOpts, chat.messages.map((x) => x.why || x.role)]));
+		&& chat.messages.some((x) => !!x.notRun), J([takeOpts, chat.messages.map((x) => x.why || x.role)]));
 	const bad = frames.filter((f) => f.ranHere || f.runner === PHONE || RUNNER[f.st] || f.held);
 	check('W2   and no frame names the asker as the runner or holds it for Stop', frames.length >= 3 && !bad.length, J(frames));
 } catch (e) { check('W the withdraw route lifts from daimond.js', false, String(e && e.stack || e)); }

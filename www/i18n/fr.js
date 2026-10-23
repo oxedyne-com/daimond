@@ -3619,7 +3619,6 @@
 	'seat.refused': 'Exécution ici · {name} n’a pas pu le prendre',
 	'seat.here': 'Ici',
 	'seat.switch': 'Où s’exécute le prochain tour',
-	'seat.ran_here': 'Exécuté ici · {name} était injoignable',
 	'errand.prompt_too_large': 'l’invite seule dépasse ce que le relais accepte',
 	'place.why_here': 'Tout ce qu’il faut est ici.',
 	'place.why_missing_files': 'Les fichiers de ce document ne sont pas tous ici — {n} manquants.',

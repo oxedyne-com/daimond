@@ -184,7 +184,8 @@ test('Q8: every Retry is routed, an edit\'s resend too', () => {
 	const rt = lift('retryTurn');
 	assert.match(rt, /return retryRouted\(chat, text, nmid, lost, ropts && ropts\.onStart\);\s*\}$/);
 	assert.ok(rt.indexOf('askAgain(') < 0, 'retryTurn asks again only through retryRouted');
-	assert.match(lift('retryRouted'), /return runTurn\(chat, text, \{ person: true, mid: nmid, onStart: onStart \}\);/);
+	// One path for every Retry, a daimon's too (SUHT-R F2): `askAgain` runs the chat's turn or the daimon's steer.
+	assert.match(lift('retryRouted'), /return askAgain\(chat, text, \{ person: true, mid: nmid, onStart: onStart \}\);/);
 });
 
 // Continue: the partial's turn and the stop line, with the fakes the two doors reach for.

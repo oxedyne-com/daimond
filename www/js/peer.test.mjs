@@ -2107,6 +2107,8 @@ function buildS61Sandbox(P, spy) {
 	};
 	const src = [
 		daimondFuncSource('turnMessagesOf'),
+		daimondFuncSource('isNotRunRow'),		// a lost turn's row, read by continueTurn (SUHT-R F1)
+		daimondFuncSource('isLostRow'),
 		daimondFuncSource('continueTurn'),
 		daimondFuncSource('retryTurn'),
 		daimondFuncSource('answerAgain'),

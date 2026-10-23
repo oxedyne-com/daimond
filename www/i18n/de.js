@@ -3611,7 +3611,6 @@
 	'seat.refused': 'Läuft hier · {name} konnte es nicht übernehmen',
 	'seat.here': 'Hier',
 	'seat.switch': 'Wo der nächste Zug läuft',
-	'seat.ran_here': 'Lief hier · {name} war nicht erreichbar',
 	'errand.prompt_too_large': 'Allein die Eingabe ist größer, als das Relay akzeptiert',
 	'place.why_here': 'Alles, was es braucht, ist hier.',
 	'place.why_missing_files': 'Nicht alle Dateien dieses Dokuments sind hier — {n} fehlen.',

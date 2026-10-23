@@ -86,6 +86,9 @@ const lifted = new Function('env', [
 	extractFn(src, 'noteArrive'),
 	extractFn(src, 'finalFrameChat'),
 	extractFn(src, 'dropOtherRunRows'),
+	// The lost-row predicate the adopted frame reads (SUHT-R F1+F3).
+	extractFn(src, 'isNotRunRow'),
+	extractFn(src, 'isLostRow'),
 	extractFn(src, 'adoptFinalFrame'),
 	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame };',
 ].join('\n'));

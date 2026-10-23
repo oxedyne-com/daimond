@@ -3604,7 +3604,6 @@
 	'seat.refused': 'Ejecutando aquí · {name} no pudo aceptarlo',
 	'seat.here': 'Aquí',
 	'seat.switch': 'Dónde se ejecuta el próximo turno',
-	'seat.ran_here': 'Se ejecutó aquí · {name} no estaba disponible',
 	'errand.prompt_too_large': 'el propio mensaje es más grande de lo que el relay acepta',
 	'place.why_here': 'Todo lo que necesita está aquí.',
 	'place.why_missing_files': 'No todos los archivos de este documento están aquí — faltan {n}.',
