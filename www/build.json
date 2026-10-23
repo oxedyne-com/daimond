@@ -1,1 +1,1 @@
-{"build":"aa1f5b9f350e","note":"A pressed runner that cannot take a turn ends it Not run with Retry, and every Retry of a lost turn runs it once."}
+{"build":"b96852ba8d86","note":"A turn Kimberlite runs for you comes back into the history of your Diamond, with who made it and a way to undo it."}

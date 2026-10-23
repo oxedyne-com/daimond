@@ -27183,6 +27183,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (isNotRunRow(m)) {
 			label.className = 'ti-label lead-warn';
 			label.textContent = t('turn.not_run');
+			// Why it did not run, the runner's own words for a refusal (RUN-HIST E), on hover.
+			if (m.notRun && m.notRun.why) label.title = String(m.notRun.why);
 			var nb = document.createElement('button');
 			nb.className = 'ti-continue';
 			nb.textContent = t('turn.retry');
@@ -29405,6 +29407,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try {
 				var tid = String(report.turnId);
 				peerReports[tid] = report;
+				// THE TURN'S ROWS COME HOME WITH IT (RUN-HIST): a settling report that names the
+				// files the turn made or changed on the runner is recorded as a version of its
+				// keeper, so History shows the turn here and, through the parcel, everywhere.
+				if (report.turnRec && DaimondPeer.settlingReport(report)) recordCarriedTurn(report.turnRec);
 				requeueUnheard(report);
 				// A parked / terminal report settles the live question, so retire the
 				// dispatcher's "awaiting" marker; the footer then reads the report state.
@@ -29480,6 +29486,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				deliverGrant(grant);
 				adoptRemoteGrant(grant);
 				noticePermit(grant);
+			});
+			// A runner's account of a turn it undid (RUN-HIST), and the asks still waiting on one.
+			if (DaimondPeer.onUndone) DaimondPeer.onUndone(undoneFromRunner);
+			// An ask the relay let lapse goes again when its runner is seen back.
+			window.addEventListener('daimond:presence', function () {
+				if (!window.DaimondVersions || !DaimondVersions.undoTurnAgain) return;
+				DaimondVersions.undoTurnAgain(undoTurnDeps(), undoTurnProbe().online)
+					.catch(function () { /* the next presence change asks again */ });
 			});
 		} catch (e) { /* remote consent unavailable: a runner falls back to a park */ }
 		// D4 — a lease learned through a SYNC pull (the phone watching the peer claim,
@@ -31439,9 +31453,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// back (`LeaseAct::HandBack`), which reads `released`, unsettled, `cut: 'refused'`,
 			// never `done`, so `settledLease` is false and `recoverDecision` lets it through. The
 			// runner said it did not run the turn: it ends "not run" the same way.
+			//
+			// THE REFUSAL KEEPS ITS WORDS (RUN-HIST E): a runner's hand-back with cause `refused`
+			// carries why ("argonaut has no model key
+			// for this turn: ..."), and the row says it.
+			var hbCause = String(m.handBackCause || _handBackCause[tid] || '');
+			var refRep  = peerReports[tid];
+			var refWhy  = (refRep && refRep.why) ? ': ' + String(refRep.why) : '';
 			var notRun = (opts && opts.notRun) ? String(opts.notRun)
-				: ((m.handBackCause || _handBackCause[tid]) === 'models-behind' ? 'handed back: the runner had not reached this turn\'s models'
-				: ((lease && lease.mode === 'released' && String(lease.cut || '') === 'refused') ? 'the runner refused it before the run' : ''));
+				: (hbCause === 'models-behind' ? 'handed back: the runner had not reached this turn\'s models'
+				: ((hbCause === 'refused' || (lease && lease.mode === 'released' && String(lease.cut || '') === 'refused')) ? 'the runner refused it before the run' + refWhy : ''));
 			if (notRun) { await endHandOffNotRun(chat, m, notRun); return; }
 			// A STEP-AWAY HAND-OFF (`stepAway`) is a turn already running here that this device
 			// handed on as it went to the background; the switch did not send it. One its runner
@@ -64618,6 +64639,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		var list = document.createElement('div');
 		list.className = 'hist-list';
+		_histUndoRows.clear();
+		_histList = list;
 		if (!rows.length) {
 			var none = document.createElement('div');
 			none.className = 'crystal-empty';
@@ -64709,6 +64732,129 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// file first (its note says `before ...`)?
 	function isRestoreRow(r) {
 		return !!r && (r.cause === 'restore' || r.kind === 'restore') && !/^before /.test(r.note || '');
+	}
+
+	// ── A runner turn's Undo, on its History row (RUN-HIST, 23 Oct) ──────
+	//
+	// The files a handed-off turn made are on the runner, so its Undo is asked of the runner
+	// and the row says where that stands: asked, waiting for the runner, too late, no longer
+	// a runner, or what the undo did. Never a button that does nothing.
+
+	/// Record a settling report's `turnRec` and send the new version on. Fired, not awaited:
+	/// a report is folded under the mailbox lock, which no network wait may hold.
+	function recordCarriedTurn(rec) {
+		if (!window.DaimondVersions || !DaimondVersions.recordCarried) return;
+		DaimondVersions.recordCarried(rec).then(function (did) {
+			if (!did) return;
+			if (window.DaimondSync && DaimondSync.flush) DaimondSync.flush().catch(function () {});
+			if (histOpenFor(rec.keeper)) showCrystalHistory();
+		}).catch(function () { /* the next report of the run, or none: the rows are only History */ });
+	}
+
+	/// The live History rows with an Undo of a runner turn, by run, so an answer redraws its row.
+	var _histUndoRows = new Map();
+	var _histList = null;		// the History list last drawn
+
+	/// Is History open on `keeper` now, so a version recorded for it should be drawn?
+	function histOpenFor(keeper) {
+		return !!(currentDiamond && currentDiamond.id === String(keeper || '')
+			&& _histList && _histList.isConnected);
+	}
+
+	/// A runner's `undone` reached this device: keep the result, record the undo's own
+	/// version, and redraw the row that asked.
+	async function undoneFromRunner(env) {
+		var got = { mark: null, recorded: false };
+		try { got = await DaimondVersions.undoneArrived(env); } catch (e) { return; }
+		if (got.recorded && window.DaimondSync && DaimondSync.flush) DaimondSync.flush().catch(function () {});
+		var draw = _histUndoRows.get(String(env.run || ''));
+		if (draw) { try { draw(); } catch (e) { /* the panel's next open draws it */ } }
+		if (got.recorded && histOpenFor(env.keeper)) {
+			try { showCrystalHistory(); } catch (e) { /* the panel's next open shows the undo's entry */ }
+		}
+	}
+
+	/// How an undo-turn is sent: sealed to the account and put in the post box.
+	function undoTurnDeps() {
+		return {
+			by: selfDeviceId(),
+			post: async function (env) {
+				var body = await DaimondPeer.sealForSelf(env);
+				var r = await DaimondPost.post(body);
+				return !!(r && r.ok);
+			},
+		};
+	}
+
+	/// Is runner `id` awake, and is it still one of this account's devices (null: not known)?
+	function undoTurnProbe() {
+		return {
+			online: function (id) {
+				try {
+					return !!(window.DaimondPresence && DaimondPresence.awake(selfDeviceId())
+						.some(function (p) { return p.deviceId === id; }));
+				} catch (e) { return false; }
+			},
+			paired: function (id) {
+				try {
+					if (!window.DaimondPresence || DaimondPresence.unknown()) return null;
+					var snap = DaimondPresence.snapshot();
+					return snap ? !!snap[id] : null;
+				} catch (e) { return null; }
+			},
+		};
+	}
+
+	/// The Undo of a runner turn (or of the undo itself), drawn into `box` as one state.
+	function histAwayUndo(id, r) {
+		var away = r.away, box = document.createElement('div');
+		box.className = 'hist-away';
+		var runner = String(away.onName || deviceNameFor(away.on) || t('devices.another'));
+		var label = r.cause === 'restore' ? 'versions.undo_restore' : 'versions.undo_turn';
+		var said = '';		// a one-off line from the last press (not sent)
+		var draw = function () {
+			box.replaceChildren();
+			var st = DaimondVersions.undoState(away, Date.now(), undoTurnProbe());
+			if (!st.k) { _histUndoRows.delete(String(away.run)); return; }
+			var line = function (key, v) {
+				var p = document.createElement('div');
+				p.className = 'hist-note hist-away-state';
+				p.textContent = t(key, Object.assign({ runner: runner }, v || {}));
+				box.appendChild(p);
+			};
+			var button = function (key, fn) {
+				var b = document.createElement('button');
+				b.className = 'crystal-act hist-undo-turn';
+				b.textContent = t(key);
+				b.addEventListener('click', fn);
+				box.appendChild(b);
+			};
+			var ask = async function () {
+				said = '';
+				var mark = await DaimondVersions.undoTurn(id, away, undoTurnDeps());
+				if (!mark) said = 'versions.undo_not_sent';
+				draw();
+			};
+			var res = st.mark && st.mark.result;
+			if (said) line(said);
+			if (st.k === 'offer') button(label, ask);
+			else if (st.k === 'asked' || st.k === 'offline') {
+				line(st.k === 'asked' ? 'versions.undo_asked' : 'versions.undo_offline');
+			} else if (st.k === 'past') line('versions.undo_past');
+			else if (st.k === 'unpaired') line('versions.undo_unpaired');
+			else if (st.k === 'done') {
+				line('versions.undo_done', { n: res.restored.length, m: res.removed.length });
+				if (res.skipped.length) {
+					line('versions.undo_skipped', { list: res.skipped.map(function (x) { return shownPath(id, x.path); }).join(', ') });
+				}
+			} else if (st.k === 'already') line('versions.undo_already');
+			else if (st.k === 'expired') line('versions.undo_expired');
+			else if (st.k === 'busy') { line('versions.undo_busy'); button(label, ask); }
+			else { line('versions.undo_error', { why: (res && res.why) || t('versions.undo_no_why') }); button(label, ask); }
+		};
+		_histUndoRows.set(String(away.run), draw);
+		draw();
+		return box;
 	}
 
 	/// One version: what it was, what it changed, and the two ways back.
@@ -64804,7 +64950,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A RESTORE IS UNDONE AS ONE (D-20261009-29 item 1): the crystal and every
 		// file it put back go back to what it replaced, in one version of its own,
 		// which can itself be undone.
-		if (files && isRestoreRow(r)) {
+		// A TURN THAT RAN ON A RUNNER is undone there (RUN-HIST): its files are not on this
+		// device, so the local undo below would put back nothing.
+		if (r.away) acts.appendChild(histAwayUndo(id, r));
+		else if (files && isRestoreRow(r)) {
 			var undo = document.createElement('button');
 			undo.className = 'crystal-act hist-undo-restore';
 			undo.textContent = t('versions.undo_restore');

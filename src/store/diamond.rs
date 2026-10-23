@@ -5813,6 +5813,143 @@ pub async fn versions_list(id: &str) -> Outcome<String> {
     Ok(fmt!("[{}]", rows.join(",")))
 }
 
+/// The keeper a runner's turn record is recorded under on the asker (RUN-HIST lead point c): the
+/// store the asker's own turn end keeps the same conversation in, `ctx.keeper()` there --
+/// a Diamond's id, or `chat:<id>` ([`crate::tools::keeper_of_dir`]) for a chat with none.
+///
+/// `id` is the asker's and wins.  The record's own `keeper` answers where `id` is empty, and where
+/// `id` is a chat's bare id the record names as `chat:<id>`: recorded under the bare id it would
+/// land in `diamonds/<id>/versions`, where no History reads it.
+fn carried_keeper(id: &str, head: &str) -> Outcome<String> {
+    let named = extract_json_string(head, "keeper").unwrap_or_default();
+    let id = id.trim();
+    let key = match (id.is_empty(), named.strip_prefix(crate::tools::CHAT_KEEPER)) {
+        (true, _)                                   => named.clone(),
+        (false, Some(chat)) if chat == id           => named.clone(),
+        (false, _)                                  => id.to_string(),
+    };
+    match key.is_empty() {
+        true  => Err(err!("A carried turn names no keeper, and none was given: it would be \
+            recorded where no History reads it."; Invalid, Input)),
+        false => Ok(key),
+    }
+}
+
+/// Record a turn a runner ran for this device, as its report's `turnRec` carried it back (RUN-HIST
+/// S2): one [`Cause::Turn`] version under the keeper the asker's own turn end uses
+/// ([`carried_keeper`]), its rows the runner's files ([`versions::carried_rows`]), and its
+/// [`versions::Away`] the runner's restore reference.  Answers the version and the paths, as
+/// [`versions_record`] does; `Ok(None)` where the record lists no row.
+///
+/// **Idempotent by `away.run`**: a report posted again, or reached from two tabs, finds the version
+/// the first wrote and records nothing.  Asked under the version hold, so two at once cannot both
+/// miss it.
+pub async fn versions_record_carried(id: &str, json: &str)
+    -> Outcome<Option<(u64, Vec<String>)>>
+{
+    let head = versions::carried_head(json);
+    let away = res!(versions::carried_away(json).ok_or_else(|| err!(
+        "A carried turn names no run, so it could not be undone or told from another: not \
+        recorded."; Invalid, Input)));
+    let key = res!(carried_keeper(id, &head));
+    let rows: Vec<Entry> = versions::carried_rows(json).into_iter()
+        .map(versions::carried_entry)
+        .collect();
+    let turn = extract_json_string(&head, "turnId").unwrap_or_default();
+    let ts = match crate::llm::extract_json_number(&head, "ts") {
+        Some(t) if t > 0 => t,
+        _                => now_ms() as u64,
+    };
+    record_away(&key, Cause::Turn, &turn, rows, away, ts).await
+}
+
+/// Record what a runner's undo of a carried turn did (RUN-HIST S2): one [`Cause::Restore`] version,
+/// a row per path it put back or removed, whose [`versions::Away`] is the undo's own reference
+/// (`undone.undo`), so the History offers "Undo this restore" over the same route.  Under the
+/// keeper of the turn it undid where this store holds it, else `id`'s ([`carried_keeper`]).
+/// `Ok(None)` where the answer changed nothing (`already`, `busy`, `expired`, `error`) or named no
+/// path; idempotent by the undo's run, as [`versions_record_carried`] is by the turn's.
+pub async fn versions_record_undone(id: &str, json: &str)
+    -> Outcome<Option<(u64, Vec<String>)>>
+{
+    let (run, mut undo, rows) = match versions::undone_rows(json) {
+        Some(got) => got,
+        None      => return Ok(None),
+    };
+    let key = res!(carried_keeper(id, &versions::carried_head(json)));
+    // The turn it undid: its device's name and its turn id, for the row.
+    let undid = versions_manifests(&key).await.into_iter()
+        .find(|(_, m)| m.away.as_ref().is_some_and(|a| a.run == run));
+    let mut turn = String::new();
+    if let Some((_, m)) = undid {
+        if let Some(a) = &m.away {
+            if undo.on.is_empty() {
+                undo.on = a.on.clone();
+            }
+            if undo.on_name.is_empty() {
+                undo.on_name = a.on_name.clone();
+            }
+        }
+        turn = m.turn;
+    }
+    record_away(&key, Cause::Restore, &turn, rows, undo, now_ms() as u64).await
+}
+
+/// Write one version of a turn another device ran ([`versions_record_carried`],
+/// [`versions_record_undone`]): no bodies -- the bytes are on the runner -- so nothing is put down
+/// and nothing this device's own turn put down is taken back.  Nothing where `rows` is empty or a
+/// version already carries `away.run`.
+async fn record_away(
+    key:  &str,
+    cause: Cause,
+    turn: &str,
+    rows: Vec<Entry>,
+    away: versions::Away,
+    ts:   u64,
+)
+    -> Outcome<Option<(u64, Vec<String>)>>
+{
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let hold = res!(hold_versions(key).await);
+    let held = versions_manifests(key).await;
+    if held.iter().any(|(_, m)| m.away.as_ref().is_some_and(|a| a.run == away.run)) {
+        return Ok(None);
+    }
+    let mut manifest = Manifest::new(cause, ts, turn, "", rows);
+    manifest.away = Some(away);
+    let named: Vec<String> = manifest.files.iter().map(|e| e.path.clone()).collect();
+    let version = match is_chat_keeper(key) {
+        true  => mint_chat_version(key, &held),
+        false => res!(mint_files_version(&hold, key, ts).await),
+    };
+    res!(own::write_file(&manifest_path(key, version), manifest.to_json().as_bytes()).await);
+    // A Diamond's own history line, as any version minted for files alone earns
+    // ([`versions_record_held`]); a chat's manifests are its whole history.
+    if !is_chat_keeper(key) {
+        let rec = LogRecord {
+            id:        generate_session_id(),
+            ts,
+            kind:      "files",
+            agent:     match cause {
+                Cause::Turn => "daimon".to_string(),
+                _           => "user".to_string(),
+            },
+            task:      cause.wire().to_string(),
+            parent:    version as i64 - 1,
+            version,
+            delta_ref: String::new(),
+            note:      String::new(),
+        };
+        res!(append_log(key, &rec).await);
+    }
+    if let Err(e) = prune_held(&hold, key, "carried").await {
+        console_log(&fmt!("Diamond '{}': the version store could not be pruned ({}).", key, e));
+    }
+    Ok(Some((version, named)))
+}
+
 /// What the version store weighs against what it is allowed to weigh.
 ///
 /// The gauge in the History bar.  `bytes` is every body this device holds, named or not, which is
@@ -5852,6 +5989,21 @@ pub async fn versions_body(id: &str, hash: &str) -> Outcome<Option<Vec<u8>>> {
         Ok(b)  => Ok(Some(b)),
         Err(_) => Ok(None),
     }
+}
+
+/// The manifest JSON `version` recorded for `id`, as stored, or `None` where there is none.
+///
+/// One past half a store frame is refused rather than cut: a cut manifest is not JSON.
+pub async fn versions_manifest(id: &str, version: u64) -> Outcome<Option<String>> {
+    let b = match own::read_file(&manifest_path(id, version)).await {
+        Ok(b)  => b,
+        Err(_) => return Ok(None),
+    };
+    if b.len() > crate::store::call::FRAME_META_MAX / 2 {
+        return Err(err!("Version {} of {} has a manifest of {} bytes, too long to send.",
+            version, id, b.len(); TooBig, Data));
+    }
+    Ok(Some(String::from_utf8_lossy(&b).to_string()))
 }
 
 /// Bring the version store back inside its ceilings, and answer with what went: manifests, then

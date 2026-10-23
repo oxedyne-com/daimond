@@ -2756,6 +2756,28 @@ impl DaimondApp {
         Ok(opened.said(version as u64))
     }
 
+    /// Record a turn a runner ran for this device, from its report's `turnRec` (RUN-HIST S3):
+    /// `{version, files}`, or `{}` where it lists no row or was recorded already (by its `run`).
+    ///
+    /// # Arguments
+    /// * `id` - The keeper this device's own turn end keeps the conversation under: the Diamond's
+    ///   id, or `chat:<id>` for a chat with none.  Empty takes the record's own `keeper`.
+    /// * `json` - The `turnRec` object, as the report carried it.
+    pub async fn versions_record_carried(&self, id: String, json: String)
+        -> Result<String, JsValue>
+    {
+        versions_said(ok!(diamond::versions_record_carried(&id, &json).await.map_err(to_js_err)))
+    }
+
+    /// Record what a runner's undo of a carried turn did, from its `undone` answer (RUN-HIST S3):
+    /// `{version, files}`, or `{}` where it changed nothing or was recorded already.  Its version's
+    /// `away` is the undo's own reference, for "Undo this restore".
+    pub async fn versions_record_undone(&self, id: String, json: String)
+        -> Result<String, JsValue>
+    {
+        versions_said(ok!(diamond::versions_record_undone(&id, &json).await.map_err(to_js_err)))
+    }
+
     /// Record the person's answer to the question restore `ticket` put about `paths` (a JSON
     /// array, as the open handed them out): an act at an asked file goes only after his yes, and
     /// only over the bytes he was asked about ([`diamond::restore_answer`]).

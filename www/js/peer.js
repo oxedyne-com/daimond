@@ -82,12 +82,18 @@
 	// journey is a second set of money- and data-safety arguments to get right.
 	var T_COMPILE = 'compile';	// a device -> a runner: lay this document out
 	var T_BUILT   = 'built';	// the runner -> the account: what the layout cost and where it is
+	// A RUNNER TURN IS UNDONE WHERE IT RAN (RUN-HIST, 23 Oct). The asker's History holds the
+	// turn's rows (the report's `turnRec`) but not the files, which are on the runner; "Undo
+	// this turn" asks the runner to put back what the turn changed, and the runner answers
+	// with what it put back, removed and skipped. Same seal, same signature, same post door.
+	var T_UNDO    = 'undo-turn';	// a device -> the runner that ran a turn: undo it
+	var T_UNDONE  = 'undone';	// the runner -> the device that asked: what the undo did
 
 	/// Is `t` a peer envelope tag this layer owns? The collector routes exactly these
-	/// six and hands everything else (a message artefact) to the message path.
+	/// eight and hands everything else (a message artefact) to the message path.
 	function peerType(t) {
 		return t === T_ERRAND || t === T_REPORT || t === T_ASK || t === T_GRANT
-			|| t === T_COMPILE || t === T_BUILT;
+			|| t === T_COMPILE || t === T_BUILT || t === T_UNDO || t === T_UNDONE;
 	}
 
 	// ── Bytes and text ─────────────────────────────────────────
@@ -368,7 +374,7 @@
 	/// NUDGE, never the answer -- the answer is already in the parcel.
 	function makeReport(f) {
 		var o = f || {};
-		return {
+		var rep = {
 			t:       T_REPORT,
 			v:       ENVELOPE_V,
 			eid:     String(o.eid || ''),
@@ -409,7 +415,10 @@
 			// reached the asker's horizon on them by the deadline (HT3; the sender ends it "not run"
 			// with Retry, rulings §1 l.17, and the lens counts it apart). '' otherwise, and from an older runner,
 			// whose hand-back reads as a hand-off that did not finish.
-			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind') ? o.cause : '',
+			// 'refused' when a runner refused the turn before its run (RUN-HIST E: Kimberlite's no model
+			// key, clamp, credits and spawn refusals), which the sender also ends "not run" with Retry.
+			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind'
+				|| o.cause === 'refused') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
 			// final frame carries what it had done, badged (r545 F-C2-1). 0 elsewhere.
 			interrupted: o.interrupted | 0,
@@ -421,6 +430,28 @@
 			// word said too late for the turn runs as the next one. [] from an older runner.
 			heard:   triedList(o.heard),
 			ts:      o.ts || Date.now(),
+		};
+		// THE TURN'S ROWS, carried to the asker's History (RUN-HIST): which files the turn made
+		// or changed on the runner, and the restore reference `{on, run, since}` its Undo uses.
+		// Present only when the runner kept something, so an older asker sees the report it knew.
+		if (o.turnRec && typeof o.turnRec === 'object') rep.turnRec = o.turnRec;
+		return rep;
+	}
+
+	/// Build an undo-turn envelope (not yet sealed): ask the runner `to` to undo its run
+	/// `run`. No `since` travels: the runner reads it from its own record of the run, so a
+	/// page cannot aim a restore at any trash turn it likes.
+	function makeUndo(f) {
+		var o = f || {};
+		return {
+			t:      T_UNDO,
+			v:      ENVELOPE_V,
+			uid:    String(o.uid || ''),
+			to:     String(o.to || ''),
+			by:     String(o.by || ''),
+			keeper: String(o.keeper || ''),
+			run:    String(o.run || ''),
+			ts:     o.ts || Date.now(),
 		};
 	}
 
@@ -780,8 +811,14 @@
 		var n = now == null ? Date.now() : now, out = {};
 		if (!env) return out;
 		var secs = function (ms) { return Math.max(30, Math.min(86400, Math.ceil(ms / 1000))); };
-		if (env.t === T_REPORT || env.t === T_BUILT) {
+		if (env.t === T_REPORT || env.t === T_BUILT || env.t === T_UNDONE) {
 			if (env.to) { out['for'] = String(env.to); out.ttl = secs(NOTE_HOLD_MS); }
+		} else if (env.t === T_UNDO) {
+			// Kept for the runner as long as the relay keeps anything: a day, its cap
+			// (gateway/src/schema.rs:3444), short of the runner's 7-day keep. An ask still
+			// unanswered after that goes again when the runner is seen back (versions.js
+			// `undoTurnAgain`).
+			if (env.to) { out['for'] = String(env.to); out.ttl = secs(86400000); }
 		} else if (env.t === T_GRANT) {
 			if (env.to) {
 				var a = _askFrom[String(env.cid || '')];
@@ -897,6 +934,7 @@
 	var _onGrant  = null;	// an attended device's answer, delivered to the awaiting runner
 	var _onCompile = null;	// a compile errand, run on a machine that holds the folder
 	var _onBuilt   = null;	// the runner's account of a compile, collected by the dispatcher
+	var _onUndone  = null;	// a runner's account of an undone turn, for the device that asked
 	function onErrand(fn) { _onErrand = fn; }
 
 	/// How many turns this device is running for chats OTHER than `chatId`, 0 when it is
@@ -939,6 +977,7 @@
 	function onGrant(fn)  { _onGrant = fn; }
 	function onCompile(fn) { _onCompile = fn; }
 	function onBuilt(fn)   { _onBuilt = fn; }
+	function onUndone(fn)  { _onUndone = fn; }
 
 	/// Does this envelope ask the device that collects it to RUN something -- a turn or
 	/// a compile -- rather than note something? The collector folds a note where it
@@ -981,6 +1020,9 @@
 		// so takeRow can HOLD the errand on the relay for a runner that deferred.
 		else if (obj.t === T_COMPILE && _onCompile) result = await _onCompile(obj, row);
 		else if (obj.t === T_BUILT   && _onBuilt)   await _onBuilt(obj, row);
+		else if (obj.t === T_UNDONE  && _onUndone)  await _onUndone(obj, row);
+		// An `undo-turn` is the runner's (kimberlite) to act on; a page leaves it, held for
+		// its addressee as every note for another device is (`noteHeldFor`).
 		return { routed: true, verified: true, result: result };
 	}
 
@@ -1027,6 +1069,9 @@
 			} else if (obj.t === T_BUILT) {
 				tally.builts = (tally.builts | 0) + 1;
 				if (h.onBuilt) await h.onBuilt(obj, row);
+			} else if (obj.t === T_UNDONE) {
+				tally.undones = (tally.undones | 0) + 1;
+				if (h.onUndone) await h.onUndone(obj, row);
 			}
 		}
 		return tally;
@@ -7137,8 +7182,14 @@
 		T_REPORT:   T_REPORT,
 		T_ASK:      T_ASK,
 		T_GRANT:    T_GRANT,
+		T_UNDO:     T_UNDO,
+		T_UNDONE:   T_UNDONE,
 		makeErrand:  makeErrand,
 		makeReport:  makeReport,
+		/// Ask the runner that ran a turn to undo it (RUN-HIST); its answer is an `undone`.
+		makeUndo:    makeUndo,
+		/// Is `t` one of this layer's envelope tags (the collector's routing set)?
+		peerType:    peerType,
 		/// The two remote-consent envelopes: a runner's live question (`makeAsk`, fresh
 		/// `cid` per ask) and an attended device's answer (`makeGrant`, which signs
 		/// `cid`/`turnId`/`verdict` but NOT `tool`/`host`/`detail`, so the runner replays
@@ -7205,6 +7256,8 @@
 		/// that asked for it.
 		onCompile: onCompile,
 		onBuilt:   onBuilt,
+		/// Register the handler for a runner's `undone`: what an undo-turn put back.
+		onUndone:  onUndone,
 		/// Route a batch of collected rows by their sealed type tag (direct-drive).
 		routeRows:   routeRows,
 		/// Fold a peer's answer into a transcript as an append.

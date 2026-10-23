@@ -177,6 +177,7 @@ fn calls() -> Outcome<Vec<StoreCall>> {
         StoreCall::RecordedNames { id: id(), version: 5, after: Some(s("a.md")) },
         StoreCall::VersionsBody { id: id(), hash: HexHash::of(b"abc") },
         StoreCall::VersionsUndoTarget { id: id(), path: s("a.md"), at: None },
+        StoreCall::VersionsManifest { id: id(), version: 7 },
         StoreCall::RouteHere {
             row:        s("a.md"),
             row_folder: Some(s("work")),
@@ -346,6 +347,7 @@ fn replies() -> Outcome<Vec<StoreReply>> {
         StoreReply::RecordedNames(Ok(vec![s("b.md")])),
         StoreReply::VersionsBody(Ok(Some(r(&[4])))),
         StoreReply::VersionsUndoTarget(Ok(Some((5, s("h"), true, Some(s("work")))))),
+        StoreReply::VersionsManifest(Ok(Some(s("{\"v\":2}")))),
         StoreReply::RouteHere(Route::Ask(Unplaced::Unknown)),
         StoreReply::RestoreStore(Some(s("ab12"))),
         StoreReply::RestoreRoute(Act::Ask(Unplaced::Unrecorded)),

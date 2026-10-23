@@ -691,6 +691,59 @@ pub struct Manifest {
 	pub note:      String,		// what the user typed, or the name they gave a save
 	pub files:     Vec<Entry>,
 	pub truncated: usize,		// entries this turn had and this manifest does not
+	pub away:      Option<Away>,	// a turn another device ran, carried here: see [`Away`]
+}
+
+/// Where a version's files are, when they are on another device (RUN-HIST S1): a runner's turn
+/// that wrote files on argonaut, carried back in its report's `turnRec` and recorded on the asker
+/// so the History shows it.  Its rows name the runner's paths, not this device's, so nothing here
+/// that reasons about this device's files reads them ([`Manifest::is_here`]); the Undo goes to the
+/// runner, by `{on, run}`, and the runner looks `since` up itself.
+///
+/// Written last in the manifest, nested, with no key a manifest or an entry reads at its top
+/// level: a build that has never heard of it reads the rows it always read, and only the Undo is
+/// absent.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Away {
+	pub on:      String,	// the runner device's id, where an undo is posted
+	pub on_name: String,	// its name, as the row says it
+	pub run:     String,	// the run the runner settled, `e-<eid>`; an undo's own is `u-<uid>`
+	pub since:   u64,	// the meter's trash key on the runner, 0 where nothing was kept
+	pub until:   u64,	// epoch ms past which the runner keeps no earlier files
+	pub more:    u64,	// rows the runner did not list, still covered by its Undo
+}
+
+impl Away {
+
+	/// The stored form, `{"on","onName","run","since","until","more"}`.
+	pub fn to_json(&self) -> String {
+		fmt!("{{\"on\":\"{}\",\"onName\":\"{}\",\"run\":\"{}\",\"since\":{},\"until\":{},\"more\":{}}}",
+			json_escape(&self.on), json_escape(&self.on_name), json_escape(&self.run),
+			self.since, self.until, self.more)
+	}
+
+	/// Read the object `obj`, or `None` where it names no run: a reference with no run reaches
+	/// nothing on the runner.
+	pub fn from_json(obj: &str) -> Option<Self> {
+		let run = match extract_json_string(obj, "run") {
+			Some(r) if !r.is_empty()	=> r,
+			_				=> return None,
+		};
+		Some(Self {
+			on:      extract_json_string(obj, "on").unwrap_or_default(),
+			on_name: extract_json_string(obj, "onName").unwrap_or_default(),
+			run,
+			since:   extract_json_number(obj, "since").unwrap_or(0),
+			until:   extract_json_number(obj, "until").unwrap_or(0),
+			more:    extract_json_number(obj, "more").unwrap_or(0),
+		})
+	}
+
+	/// Has the runner's keep of the turn's earlier files run out at `now`?  A reference with no
+	/// `until` never had one.
+	pub fn lapsed_at(&self, now: u64) -> bool {
+		self.until > 0 && now >= self.until
+	}
 }
 
 impl Manifest {
@@ -698,7 +751,17 @@ impl Manifest {
 	pub fn new(cause: Cause, ts: u64, turn: &str, note: &str, files: Vec<Entry>) -> Self {
 		let (files, truncated) = truncate(files);
 		Self { v: MANIFEST_V, ts, cause, turn: turn.to_string(), note: note.to_string(),
-			files, truncated }
+			files, truncated, away: None }
+	}
+
+	/// Are this version's files on this device: not a turn another device ran ([`Away`])?
+	///
+	/// Every reader that decides something about this device's files -- what stood at a path,
+	/// what the Diamond made, what a restore or an undo puts back -- reads only these.  A runner's
+	/// path can be this device's path too (`/home/jason/x/out.mp3` on both), and its row says
+	/// nothing about the file here.
+	pub fn is_here(&self) -> bool {
+		self.away.is_none()
 	}
 
 	/// Serialise to the stored JSON.
@@ -711,7 +774,12 @@ impl Manifest {
 		if self.truncated > 0 {
 			out.push_str(&fmt!(",\"truncated\":{}", self.truncated));
 		}
-		out.push_str(&fmt!(",\"files\":[{}]}}", rows.join(",")));
+		out.push_str(&fmt!(",\"files\":[{}]", rows.join(",")));
+		// Last, after every key an older build reads off the top level.
+		if let Some(a) = &self.away {
+			out.push_str(&fmt!(",\"away\":{}", a.to_json()));
+		}
+		out.push('}');
 		out
 	}
 
@@ -744,6 +812,7 @@ impl Manifest {
 			note:      extract_json_string(s, "note").unwrap_or_default(),
 			files,
 			truncated: extract_json_number(s, "truncated").unwrap_or(0) as usize,
+			away:      away_of(s),
 		})
 	}
 
@@ -808,6 +877,20 @@ impl Manifest {
 		}
 		out
 	}
+}
+
+/// A manifest's [`Away`], read after its `files`: the key is the manifest's own, never an entry's,
+/// so it is looked for only past the rows.
+fn away_of(s: &str) -> Option<Away> {
+	let tail = match array_inside(s, "files") {
+		Some(arr) => {
+			let base = s.as_ptr() as usize;
+			let end = arr.as_ptr() as usize - base + arr.len();
+			&s[end..]
+		},
+		None => s,
+	};
+	object_inside(tail, "away").and_then(Away::from_json)
 }
 
 /// A turn's rows in the order [`truncate`] keeps them, where there are more than it keeps: every
@@ -1059,6 +1142,7 @@ fn run_hash(run: &[char]) -> u32 {
 /// * `found` - The hash of the file as the writing turn found it.
 pub fn run_copies(manifests: &[(u64, Manifest)], path: &str, found: &str) -> Vec<String> {
 	let mut rows: Vec<(u64, Cause, &Entry)> = manifests.iter()
+		.filter(|(_, m)| m.is_here())
 		.flat_map(|(n, m)| m.files.iter()
 			.filter(move |e| e.path == path)
 			.map(move |e| (*n, m.cause, e)))
@@ -1124,6 +1208,7 @@ fn turns_made(
 	now:		&str,
 ) -> bool {
 	let mut rows: Vec<(u64, u64, Cause, &Entry)> = manifests.iter()
+		.filter(|(_, m)| m.is_here())
 		.flat_map(|(n, m)| m.files.iter()
 			.filter(move |e| e.path == path && e.folder.as_deref() == folder)
 			.map(move |e| (*n, m.ts, m.cause, e)))
@@ -1989,7 +2074,9 @@ pub fn made_by_diamond_ran(
 			}
 		}
 	};
-	let mut newest: Vec<&(u64, Manifest)> = manifests.iter().collect();
+	// This device's versions alone ([`Manifest::is_here`]): a runner's carried turn made its files
+	// there, and a file of the same path here is not the Diamond's for it.
+	let mut newest: Vec<&(u64, Manifest)> = manifests.iter().filter(|(_, m)| m.is_here()).collect();
 	newest.sort_by(|a, b| b.0.cmp(&a.0));
 	newest.truncate(MADE_WINDOW);
 	// This turn's captures: a tool's is the Diamond's only where it made the file, or where the
@@ -2143,6 +2230,150 @@ pub fn ran_rows(ran: &[(String, String, bool, Option<Author>)]) -> Vec<Change> {
 }
 
 
+
+/// The rows a runner's turn record (`turnRec`, RUN-HIST S1) carries back to the asker: one per file
+/// the runner's command made or changed, in [`ran_rows`]' shape -- the meter's hash and no body
+/// ([`MADE_BY_COMMAND`]), [`Found::Nothing`] where the run created it and [`Found::Unread`] where
+/// it changed one, credited to the agent that ran it with `via` [`VIA_COMMAND`].  A row whose path
+/// is not plainly absolute or whose hash is not one is left out, as the meter's own are; at most
+/// [`MADE_SENT_MAX`].  An author the record does not name is still the runner's agent, so no row
+/// is dropped for want of one.
+///
+/// # Arguments
+/// * `rec` - The `turnRec` object, as the report carried it.
+pub fn carried_rows(rec: &str) -> Vec<Change> {
+	let mut ran: Vec<(String, String, bool, Option<Author>)> = Vec::new();
+	let arr = match array_inside(rec, "files") {
+		Some(a)	=> a,
+		None	=> return Vec::new(),
+	};
+	for obj in objects_in(arr) {
+		if ran.len() >= MADE_SENT_MAX {
+			break;
+		}
+		// The row's own keys, read with its author taken out: an author's keys are not a row's.
+		let own = without(obj, "by");
+		let (path, hash) = match (extract_json_string(&own, "path"), extract_json_string(&own, "hash")) {
+			(Some(p), Some(h))	=> (p, h),
+			_			=> continue,
+		};
+		let plain = path.starts_with('/') && !path.contains('\0')
+			&& path.split('/').skip(1).all(|c| !c.is_empty() && c != "." && c != "..");
+		if !plain || !is_hash(&hash) || path.len() > MADE_PATH_SENT_MAX {
+			continue;
+		}
+		let created = extract_json_bool(&own, "created").unwrap_or(false);
+		let by = object_inside(obj, "by");
+		let author = match by.and_then(Author::from_json) {
+			Some(a)	=> a,
+			None	=> Author {
+				role: by.and_then(|b| extract_json_string(b, "agent"))
+					.filter(|a| !a.is_empty())
+					.unwrap_or_else(|| "daimon".to_string()),
+				..Default::default()
+			},
+		};
+		ran.push((path, hash, created, Some(author)));
+	}
+	ran_rows(&ran)
+}
+
+/// The [`Away`] a runner's turn record names: `{on, onName, run, since, until, more}` off its top
+/// level, its rows taken out first so no row's key is read as the record's.  `None` where it names
+/// no run.
+pub fn carried_away(rec: &str) -> Option<Away> {
+	Away::from_json(&without(rec, "files"))
+}
+
+/// A runner turn record's top level, its rows taken out: where `turnId`, `ts` and `keeper` are read.
+pub fn carried_head(rec: &str) -> String {
+	without(rec, "files")
+}
+
+/// The row one carried change writes: the runner's path and the hash it was left with, no body and
+/// no `was` -- the bytes before are on the runner, in its trash -- marked as the meter's
+/// ([`MADE_BY_COMMAND`]), and `made` where the runner's turn created the file.
+pub fn carried_entry(ch: Change) -> Entry {
+	let made = ch.made();
+	let (hash, gone) = match ch.after {
+		Body::Large(r)	=> (r.hash, false),
+		Body::Gone	=> (String::new(), true),
+		_		=> (String::new(), false),
+	};
+	Entry {
+		path:    ch.path,
+		hash,
+		bytes:   0,
+		was:     None,
+		gone,
+		wiped:   false,
+		mark:    true,
+		skipped: Some(MADE_BY_COMMAND.to_string()),
+		folder:  None,
+		by:      ch.by,
+		door:    false,
+		made:    made && !gone,
+	}
+}
+
+/// What a runner's `undone` answer (RUN-HIST §3.1) records on the asker: the run it undid, the
+/// undo's own restore reference -- whose `run` is `u-<uid>` -- and a row per path it put back or
+/// removed, as [`carried_entry`] writes them (no hash: the runner reported none).  `None` unless
+/// the status is `done` with a reference: `already`, `busy`, `expired` and `error` changed nothing.
+pub fn undone_rows(json: &str) -> Option<(String, Away, Vec<Entry>)> {
+	let head = without(json, "undo");
+	if extract_json_string(&head, "status").as_deref() != Some("done") {
+		return None;
+	}
+	let run = match extract_json_string(&head, "run") {
+		Some(r) if !r.is_empty()	=> r,
+		_				=> return None,
+	};
+	let undo = match object_inside(json, "undo").and_then(Away::from_json) {
+		Some(u)	=> u,
+		None	=> return None,
+	};
+	let mut rows: Vec<Entry> = Vec::new();
+	for (key, gone) in [("restored", false), ("removed", true)] {
+		let list = match array_inside(&head, key) {
+			Some(a)	=> crate::llm::parse_json_string_array(&fmt!("[{}]", a)),
+			None	=> Vec::new(),
+		};
+		for path in list.into_iter() {
+			let plain = path.starts_with('/') && !path.contains('\0')
+				&& path.split('/').skip(1).all(|c| !c.is_empty() && c != "." && c != "..");
+			if !plain || path.len() > MADE_PATH_SENT_MAX || rows.len() >= MADE_SENT_MAX
+				|| rows.iter().any(|e| e.path == path)
+			{
+				continue;
+			}
+			let after = match gone {
+				true  => Body::Gone,
+				false => Body::Unseen,
+			};
+			rows.push(carried_entry(Change { after, ..Change::gone(&path) }));
+		}
+	}
+	Some((run, undo, rows))
+}
+
+/// `json` with the value of `"key":` -- an object or an array -- taken out, string-aware, so the
+/// keys left are read off the level `json` is at.  `json` as it is where the key names neither.
+fn without(json: &str, key: &str) -> String {
+	let inner = match object_inside(json, key) {
+		Some(o)	=> Some(o),
+		None	=> array_inside(json, key),
+	};
+	let inner = match inner {
+		Some(i)	=> i,
+		None	=> return json.to_string(),
+	};
+	let base = json.as_ptr() as usize;
+	let from = inner.as_ptr() as usize - base;
+	let to = from + inner.len();
+	// An array's inside leaves its brackets, which hold nothing once it is empty.
+	fmt!("{}{}", &json[..from], &json[to..])
+}
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Who ran a command                                              │
@@ -2909,7 +3140,8 @@ fn rows_by_path(manifests: &[(u64, Manifest)]) -> BTreeMap<&str, Vec<(u64, &Entr
 	let mut sorted: Vec<&(u64, Manifest)> = manifests.iter().collect();
 	sorted.sort_by_key(|(n, _)| *n);
 	let mut out: BTreeMap<&str, Vec<(u64, &Entry)>> = BTreeMap::new();
-	for (n, m) in sorted.into_iter() {
+	// This device's versions alone: a turn another device ran names its paths, not these.
+	for (n, m) in sorted.into_iter().filter(|(_, m)| m.is_here()) {
 		for e in m.files.iter() {
 			out.entry(e.path.as_str()).or_default().push((*n, e));
 		}
@@ -3391,10 +3623,14 @@ pub fn prune_plan(
 	let page   = page_paths(manifests, home, known);
 
 	// Oldest and cheapest first; the newest manifest and a deletion inside its hold are not
-	// candidates at all.
+	// candidates at all.  A turn another device ran whose keep there has run out goes before any
+	// (RUN-HIST): its Undo is gone, and its rows were only ever a note of what happened there.
 	let mut order: Vec<(u8, u64)> = manifests.iter()
 		.filter(|(n, m)| *n != newest && !m.held_at(now))
-		.map(|(n, m)| (prune_rank_of(m, home, &page), *n))
+		.map(|(n, m)| match m.away.as_ref().is_some_and(|a| a.lapsed_at(now)) {
+			true  => (0, *n),
+			false => (prune_rank_of(m, home, &page).saturating_add(1), *n),
+		})
 		.collect();
 	order.sort();
 
@@ -4296,6 +4532,57 @@ pub fn chain_undo_version(snaps: &[u64], head: u64, moved: bool) -> Option<u64> 
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	/// RUN-HIST S1: a manifest's `away` is written last and read back; one without it writes no key;
+	/// and its rows read the same either way, which is all an older build sees.
+	#[test]
+	fn runhist_away_round_trips_after_the_rows() {
+		let away = Away { on: "dev".into(), on_name: "argonaut".into(), run: "e-1".into(),
+			since: 1, until: 2, more: 3 };
+		let rows = carried_rows(&fmt!("{{\"files\":[{{\"path\":\"/x/a\",\"hash\":\"{}\",\
+			\"created\":true,\"by\":{{\"role\":\"worker\",\"run\":\"w\"}}}}],\"run\":\"e-1\"}}",
+			"a".repeat(64)));
+		assert_eq!(rows.len(), 1);
+		let mut m = Manifest::new(Cause::Turn, 5, "t", "", rows.into_iter().map(carried_entry).collect());
+		let bare = m.to_json();
+		assert!(!bare.contains("away"), "{}", bare);
+		m.away = Some(away.clone());
+		let json = m.to_json();
+		assert!(json.ends_with(&fmt!(",\"away\":{}}}", away.to_json())), "{}", json);
+		let back = match Manifest::from_json(&json) {
+			Ok(b)  => b,
+			Err(e) => panic!("{}", e),
+		};
+		assert_eq!(back, m);
+		assert!(!back.is_here());
+		let old = match Manifest::from_json(&bare) {
+			Ok(b)  => b,
+			Err(e) => panic!("{}", e),
+		};
+		assert_eq!(old.files, back.files, "an older reader's rows");
+		assert_eq!(carried_away("{\"files\":[{\"by\":{\"run\":\"w\"}}],\"run\":\"e-9\"}")
+			.map(|a| a.run), Some("e-9".to_string()), "the record's run, not a row's");
+	}
+
+	/// RUN-HIST §3.3: a carried turn whose keep on the runner has run out is pruned before any other.
+	#[test]
+	fn runhist_a_lapsed_carried_turn_prunes_first() {
+		let row = |p: &str| e(p, p, None);
+		let mut lapsed = Manifest::new(Cause::Turn, TS, "", "", vec![row("/r/c")]);
+		lapsed.away = Some(Away { run: "e-1".into(), until: TS + 1, ..Default::default() });
+		let mut live = lapsed.clone();
+		live.away = Some(Away { run: "e-2".into(), until: LATER + 1, ..Default::default() });
+		let ms = vec![
+			(1, Manifest::new(Cause::Turn, TS, "", "", vec![row("a.md")])),
+			(2, Manifest::new(Cause::Turn, TS, "", "", vec![row("b.md")])),
+			(3, lapsed),
+			(4, live),
+			(5, Manifest::new(Cause::Turn, TS, "", "", vec![row("d.md")])),
+		];
+		let caps = Caps { bytes: u64::MAX, manifests: 4 };
+		let plan = prune_plan(&ms, &[], &[], caps, LATER, HOME, &BTreeSet::new());
+		assert_eq!(plan.manifests, vec![1, 3], "the lapsed carried turn, then the oldest");
+	}
 
 	/// PLF-NF: only the store's own "nothing there" is absent.  A lookup that fails any other way
 	/// (a read blocked, a security refusal, a nameless rejection) is a fault naming the path and

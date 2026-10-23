@@ -71,6 +71,16 @@
    switch) still runs here. Red on 447e30d9a.
    Breaks: backstop | busy | thread | models | onreturn | stepaway.
 
+   RF (RUN-HIST E, qa_ep7_b M1, rulings §1 l.17): a Kimberlite refusal
+   before the run (no model key, the clamp, credits, spawn). RF: this
+   build's runner reports it `undeliverable`, cause `refused`, with why.
+   It must end in the "not run" row with Retry (U1-U4) naming the
+   runner's why, the footer never
+   'failed' (no [Run here] past the switch), the placeholder gone.
+   RF-err: a genuine failure mid-run (`error`, lease settled) stays
+   terminal: no row, nothing run here. Red on 460ba71b9.
+   Breaks: refwhy. (No older runner exists: none is paired before this
+   release, and old clients are refused, never shimmed.)
    KR (rig s14suhtr killrunner, review_suhtr HIGH-1, rulings §1 l.9,
    l.18): the person's choice is what the switch drew AT THE PRESS, on
    the real renderSeatSwitch over the real peer.js seatSwitch and
@@ -106,6 +116,7 @@ const BREAKS = {
 	models:   ["if (cause === 'models') { await endHandOffNotRun(chat, m,", "if (cause === 'models') { await recoverOneLocally(chat, m,"],
 	onreturn: ['else await endHandOffNotRun(jobs[k].chat, jobs[k].m,', 'else await recoverOneLocally(jobs[k].chat, jobs[k].m,'],
 	stepaway: ['if (m.stepAway) { await recoverOneLocally(chat, m); return; }', ''],
+	refwhy:   ["'the runner refused it before the run' + refWhy", "'the runner refused it before the run'"],
 	// The sticky store killrunner found: the runner last drawn pressed, kept until Here is pressed.
 	sticky:   [["if (shown === undefined) { try { shown = seatDrawnRunner(chat); }",
 			"if (shown === undefined) { try { shown = (seatDrawnRunner(chat), _seatSticky[String(chat.id || '')]); }"],
@@ -137,7 +148,7 @@ function lift(name) {
 const NAMES = ['runDispatchFallback', 'electProvider', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
 	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
-	'renderSeatSwitch', 'seatDrawnRunner'];
+	'renderSeatSwitch', 'seatDrawnRunner', 'dispatchedTurnSettled', 'handoffLeaseSettled'];
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──
 const PW = { addEventListener() {}, dispatchEvent() { return true; } };
@@ -179,6 +190,7 @@ function world(fault) {
 		REASON_DISPATCHED: 'dispatched', DISPATCH_FRESH_MS: 90000, MAX_PARKS: 2,
 		turnInWindow: () => true, isAskAnswer: () => false,
 		recoverDecision: RP.recoverDecision, settledLease: RP.settledLease, dispatchState: RP.dispatchState,
+		settlingReport: RP.settlingReport,
 		runErrand: () => {},
 		sealFittingErrand: async (c, o, plan) => ({ body: { envelope: 'sealed' }, plan, seedDropped: false }),
 		withdrawOnLoss: RP.withdrawOnLoss, triedAfterHandBack: RP.triedAfterHandBack, standDownUndecided: RP.standDownUndecided,
@@ -226,6 +238,8 @@ function world(fault) {
 		runTurn: (c, txt) => { W.ran.push('run:' + txt); },
 		// The retry door, recorded where it hands on to the switch.
 		retryRouted: (c, text, nmid, lost) => { W.routed.push({ text, nmid, lost: !!lost }); return true; },
+		// A Diamond's retry is admitted only where its Diamond is here and idle (RF-D).
+		steerDiamondOf: (c) => (c && c.diamondId ? { id: c.diamondId } : null), diamondBusy: () => false,
 		loadMsgTombs: () => ({}), msgTombstone: () => {}, sessionCut: () => {}, ChatStore: { compact: () => {} },
 		leaseClockNow: () => Date.now(),
 		// The backstop's world: one chat, a lease the test sets, a hand-back held or not.
@@ -603,6 +617,50 @@ async function main() {
 			check('RT-SA a step-away hand-off nobody took is run here on return', W.ran.join() === 'recover:t1'
 				&& !chat.messages.some((m) => !!m.notRun), JSON.stringify(W.ran));
 		}
+	}
+	// ── RF: a Kimberlite refusal before the run (RUN-HIST E) ──
+	const KEYWHY = 'argonaut has no model key for this turn: qa';
+	for (const [id, status, cause, lease] of [
+		['RF', 'undeliverable', 'refused', { mode: 'released', settled: 0, cut: 'refused' }],
+		['RF-err', 'error', '', { mode: 'released', settled: 1, cut: '' }],
+		['RF-D', 'undeliverable', 'refused', { mode: 'released', settled: 0, cut: 'refused' }]]) {
+		console.log(id + ': a runner report ' + status + (cause ? ' cause ' + cause : '') + ', the lease ' + JSON.stringify(lease));
+		const W = world('none');
+		const chat = sentChat('f1');
+		// RF-D: the same refusal for a Diamond's turn, which the one writer tags `notrun`.
+		if (id === 'RF-D') chat.diamondId = 'd1';
+		W.env.chats = [chat];
+		W.env.LEASE = Object.assign({ holder: 'argonaut1', ts: Date.now(), expiry: 0 }, lease);
+		// The report as the runner posts it, collected here (`onReport`), and the decision read from
+		// the real report store (`dispatchedTurnSettled`), not a stub.
+		const report = { t: 'report', eid: 'e-f1', turnId: 'f1', chatId: 'c1', status, cause, why: KEYWHY,
+			by: 'argonaut1', to: 'phone1' };
+		W.env.peerReports = { f1: report };
+		if (W.f.dispatchedTurnSettled) W.env.dispatchedTurnFinished = (c, tid) => W.f.dispatchedTurnSettled({ turnId: tid, chatId: c.id });
+		const foot = RP.uiState(chat.messages[1], W.env.LEASE, report, 'phone1', Date.now());
+		if (status === 'undeliverable') {
+			W.f.noteHandBack(report);
+			W.env._handBackCause.f1 = cause;
+			W.env._handBack.f1 = 'c1';
+		}
+		await W.f.runDispatchFallback('c1', 'f1');	// the hand-back's decision, or the backstop's
+		await settle();
+		if (id === 'RF-err') {
+			const n = chat.messages.filter((m) => !!m.interrupted && (!!m.notRun || m.why === 'notrun')).length;
+			check('RF-err a failure mid-run stays terminal: footer failed, no row, nothing run here',
+				foot === 'failed' && n === 0 && W.ran.length === 0, 'foot=' + foot + ' notrun=' + n + ' ran=' + JSON.stringify(W.ran));
+			continue;
+		}
+		check(id + ' the footer is never failed (no [Run here] past the switch)', foot !== 'failed', foot);
+		const row = chat.messages.find((m) => !!m.interrupted && (!!m.notRun || m.why === 'notrun'));
+		check(id + ' the row keeps the refusal and the runner\'s words', !!row && !!row.notRun
+			&& /refused it before the run/.test(row.notRun.why) && row.notRun.why.indexOf(KEYWHY) >= 0,
+			JSON.stringify(row ? row.notRun : null));
+		if (id === 'RF-D') check('RF-D a Diamond\'s refused turn is tagged notrun', !!row && row.why === 'notrun',
+			row ? row.why : 'no row');
+		verdict(id, W, chat, 'f1', PROMPT);	// presses Retry, last
+		check(id + ' the lease is settled and the placeholder goes', W.settled.join() === 'f1:done,f1:released' && W.dropped === 'f1',
+			JSON.stringify({ settled: W.settled, dropped: W.dropped }));
 	}
 	{
 		console.log('P1: a person\'s pause at the door is said as before');

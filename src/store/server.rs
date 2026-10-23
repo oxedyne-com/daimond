@@ -1117,7 +1117,8 @@ fn named(call: &StoreCall) -> Named<'_> {
         | C::RefuseChange { id, .. } | C::OpenDeleteRoom { id, .. } | C::OpenDeleteAnswer { id, .. }
         | C::OpenDeleteRelease { id, .. } | C::OpenWindow { id, .. }
         | C::VersionsRecord { id, .. } | C::RecordedNames { id, .. } | C::VersionsBody { id, .. }
-        | C::VersionsUndoTarget { id, .. } | C::HoldVersions { id } | C::IsSteering { id }
+        | C::VersionsUndoTarget { id, .. } | C::VersionsManifest { id, .. } | C::HoldVersions { id }
+        | C::IsSteering { id }
         | C::Steering { id } | C::DrainDirty { id } | C::VersionsRecordDirty { id, .. }
         | C::TurnWants { id } | C::TurnWantsPage { id, .. } | C::TurnStanding { id, .. }
         | C::TurnStands { id, .. } | C::TurnWiped { id, .. } | C::DrainTurn { id, .. }
@@ -2177,6 +2178,8 @@ async fn serve_wait_late(st: &Shared, run: &str, bs: &Bodies, call: StoreCall,
             .map(|b| b.map(|b| st.borrow_mut().name_out(run, &id, bs, b)))),
         C::VersionsUndoTarget { id, path, at } =>
             R::VersionsUndoTarget(diamond::versions_undo_target(&id, &path, at).await),
+        C::VersionsManifest { id, version } =>
+            R::VersionsManifest(diamond::versions_manifest(&id, version).await),
         C::RestoreKeep { ticket, path, deleting, .. } if diamond::restore_store(ticket).is_none() =>
             R::RestoreKeep(diamond::restore_keep(ticket, &path, None, deleting).await),
         C::RestoreKeep { ticket, path, now, deleting } => R::RestoreKeep(match opt_body(bs, &now) {

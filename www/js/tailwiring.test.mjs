@@ -486,6 +486,7 @@ async function main() {
 				_fallbackInFlight:           Object.create(null),
 				_handBack:                   Object.create(null),
 				_handBackCause:              Object.create(null),
+				peerReports:                 Object.create(null),
 				diag:                        () => {},
 				recoverOneLocally:           async (chat, m, o) => { localSpy.push(o); },
 				endHandOffNotRun:            async (chat, m, why) => { endSpy.push(why); },

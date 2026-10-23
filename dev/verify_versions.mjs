@@ -486,7 +486,7 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 		'runTurn', 'ChatStore', 'window', 'DaimondJournal', 'DaimondPeer', 'DaimondLease', 'newMid',
 		'selfDeviceId', 'chatInput', 'syncSendMode', 'diag', 'maybeAutoDispatch', 'askAgain', 'runRetryHere'];
 	const spies = () => {
-		const calls = { runTurn: [], msgTombstone: [], compact: [] };
+		const calls = { runTurn: [], askAgain: [], msgTombstone: [], compact: [] };
 		const stubs = {
 			loadMsgTombs: () => ({}), msgTombstone: (m) => calls.msgTombstone.push(m),
 			touchChat: () => {}, persistChats: () => {}, renderHistory: () => {},
@@ -498,7 +498,10 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 			syncSendMode: () => {},		// the composer's Send/Stop face; no button here
 			diag: () => {},
 			maybeAutoDispatch: async () => false,	// the election keeps a retry here
-			askAgain: () => true, runRetryHere: () => true,	// a daimon's / a lost run's retry: not this chat
+			// Every retry the election keeps here is asked again through `askAgain` (SUHT-R), a
+			// chat's included: recorded, so the check sees what is sent, never a pass-through.
+			askAgain: (chat, text) => { calls.askAgain.push({ text }); return true; },
+			runRetryHere: () => true,	// a lost run's retry: not this chat
 		};
 		return { stubs, calls };
 	};
@@ -521,8 +524,8 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 		const chat = fresh();
 		if (retry) { try { await retry(chat, 'T1', 'What is the capital of France?'); } catch (e) { note('retryTurn threw: ' + e.message); } }
 		check('Retry dispatches the SAME prompt again',
-			!!retry && calls.runTurn.length === 1 && calls.runTurn[0].text === 'What is the capital of France?',
-			JSON.stringify(calls.runTurn));
+			!!retry && calls.askAgain.length === 1 && calls.askAgain[0].text === 'What is the capital of France?',
+			JSON.stringify(calls.askAgain));
 		check('and the old reply is TOMBSTONED — replaced, not kept beside a second answer (D7)',
 			!!retry && calls.msgTombstone.some((m) => m.includes('a1') && m.includes('u1')),
 			JSON.stringify(calls.msgTombstone));
@@ -541,8 +544,8 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 			!!edit && stubs.chatInput.value === 'What is the capital of France?' && stubs.chatInput.focused === true,
 			JSON.stringify(stubs.chatInput));
 		check('and runs NOTHING and tombstones NOTHING until Send',
-			!!edit && calls.runTurn.length === 0 && calls.msgTombstone.length === 0,
-			`runTurn ${calls.runTurn.length}, tombstone ${calls.msgTombstone.length}`);
+			!!edit && calls.runTurn.length + calls.askAgain.length === 0 && calls.msgTombstone.length === 0,
+			`runTurn ${calls.runTurn.length}, askAgain ${calls.askAgain.length}, tombstone ${calls.msgTombstone.length}`);
 		check('and remembers which turn Send replaces', !!edit && chat._editing === 'T1', String(chat._editing));
 	}
 	{
@@ -550,7 +553,8 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 		const retry = RT ? build(RT, 'retryTurn', stubs) : null;
 		const chat = fresh(); chat._generating = true;
 		if (retry) { try { retry(chat, 'T1', 'x'); } catch (e) { /* counted below */ } }
-		check('a chat mid-generation is not retried on top of itself', !!retry && calls.runTurn.length === 0);
+		check('a chat mid-generation is not retried on top of itself',
+			!!retry && calls.runTurn.length + calls.askAgain.length === 0);
 	}
 	// The peer guard, read off the source: the tile is built where `ctile` is and hidden
 	// on `peer-held` by the same test `continueTurn` makes.

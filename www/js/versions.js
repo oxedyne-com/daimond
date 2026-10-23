@@ -177,6 +177,9 @@
 					note: '', files: [], truncated: 0, delta_ref: '', crystal: false };
 			}
 			row.cause = m.cause || '';
+			// A TURN THAT RAN ON A RUNNER (RUN-HIST): its files are there, not here, and
+			// `away` is where and how long its Undo can reach them. null on every other row.
+			row.away = (m.away && typeof m.away === 'object') ? m.away : null;
 			row.files = m.files || [];
 			row.truncated = m.truncated || 0;
 			if (!row.note && m.note) row.note = m.note;
@@ -1071,7 +1074,156 @@
 		return { text: out.join('\n'), conflicts: conflicts };
 	}
 
+	// ── A runner turn's rows, and its Undo (RUN-HIST, 23 Oct) ──────────
+	//
+	// A turn the asker handed to a runner made its files THERE. The report carries the
+	// turn's rows (`turnRec`), recorded here as a version whose manifest has `away`, so
+	// History shows the turn on every device. Its Undo is the runner's to do: the page
+	// posts `undo-turn` and keeps a mark, which survives a reload, until the runner's
+	// `undone` answers it, or the runner's copies expire (`until`).
+
+	var UNDO_KEY = 'daimond.undoTurn.v1';	// run -> { uid, run, on, onName, keeper, asked, until, result? }
+	var UNDO_MAX = 200;			// ≤ 1 per carried row, and MANIFESTS_MAX is 200
+	// The relay keeps a row a day at most (gateway/src/schema.rs:3444 POST_TTL_MAX_SECS, clamped at
+	// gateway/src/handlers/post.rs:512), short of the runner's 7-day keep: an ask older than that
+	// is asked again when the runner is seen back (`undoTurnAgain`, on every presence change).
+	var RELAY_KEEP_MS = 24 * 3600 * 1000;
+	var _carried = [];			// runs recorded this page, so a doubled report records once
+
+	function storeGet() {
+		var m = null;
+		try { m = window.DaimondStore ? DaimondStore.get(UNDO_KEY, null) : JSON.parse(localStorage.getItem(UNDO_KEY) || 'null'); }
+		catch (e) { m = null; }
+		return (m && typeof m === 'object') ? m : {};
+	}
+	function storePut(m) {
+		var runs = Object.keys(m);
+		if (runs.length > UNDO_MAX) {
+			runs.sort(function (a, b) { return (m[a].asked || 0) - (m[b].asked || 0); });
+			runs.slice(0, runs.length - UNDO_MAX).forEach(function (r) { delete m[r]; });
+		}
+		try {
+			if (window.DaimondStore) DaimondStore.put(UNDO_KEY, m);
+			else localStorage.setItem(UNDO_KEY, JSON.stringify(m));
+		} catch (e) { /* the mark is lost with the page; the runner still answers */ }
+	}
+
+	/// Record a settling report's turn rows as one version of the keeper. Once per run
+	/// on this page (the engine is idempotent by run as well). Answers whether it recorded.
+	async function recordCarried(rec) {
+		if (!rec || typeof rec !== 'object' || !rec.keeper || !rec.run) return false;
+		var run = String(rec.run);
+		if (_carried.indexOf(run) >= 0) return false;
+		var a = app();
+		if (!a || typeof a.versions_record_carried !== 'function') return false;
+		_carried.push(run);
+		if (_carried.length > UNDO_MAX) _carried.shift();
+		try { await a.versions_record_carried(String(rec.keeper), JSON.stringify(rec)); }
+		catch (e) { _carried.splice(_carried.indexOf(run), 1); return false; }
+		return true;
+	}
+
+	/// The mark kept for `run`, or null.
+	function undoMark(run) { return storeGet()[String(run || '')] || null; }
+
+	/// Ask the runner that ran `away.run` to undo it. `deps`: `{ by, post(env) -> ok }`,
+	/// where `post` seals and posts the envelope. Answers the mark kept, or null when
+	/// the ask did not go (nothing is marked, so the row offers the button again).
+	async function undoTurn(keeper, away, deps) {
+		if (!away || !away.on || !away.run || !deps || !deps.post || !window.DaimondPeer) return null;
+		var m = storeGet(), run = String(away.run), was = m[run];
+		var mark = {
+			uid: (was && was.uid) || (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)),
+			run: run, on: String(away.on), onName: String(away.onName || ''),
+			keeper: String(keeper || ''), asked: Date.now(), until: +away.until || 0,
+		};
+		var env = DaimondPeer.makeUndo({ uid: mark.uid, to: mark.on, by: deps.by || '', keeper: mark.keeper, run: run });
+		var ok = false;
+		try { ok = !!(await deps.post(env)); } catch (e) { ok = false; }
+		if (!ok) return null;
+		m = storeGet(); m[run] = mark; storePut(m);
+		return mark;
+	}
+
+	/// Ask again, of a runner seen back (`online(id)`), every ask of it still unanswered
+	/// and older than the relay keeps a row, so the undo waits for the runner however long
+	/// it is away, up to its own `until`. Answers how many were asked again.
+	async function undoTurnAgain(deps, online) {
+		var m = storeGet(), now = Date.now(), n = 0;
+		var runs = Object.keys(m);
+		for (var i = 0; i < runs.length; i++) {
+			var k = m[runs[i]];
+			if (!k || k.result || !(now - (k.asked || 0) > RELAY_KEEP_MS)) continue;
+			if (k.until && now > k.until) continue;
+			if (!online || !online(k.on)) continue;
+			if (await undoTurn(k.keeper, { on: k.on, onName: k.onName, run: k.run, until: k.until }, deps)) n++;
+		}
+		return n;
+	}
+
+	/// A runner's `undone` reached this device. The mark takes the result, and a done
+	/// undo is recorded as a version of its own (`versions_record_undone`), whose `away`
+	/// is the undo's reference, so History offers "Undo this restore" over the same route.
+	/// Answers `{ mark, recorded }`; `mark` null when this device asked nothing for it.
+	async function undoneArrived(env) {
+		if (!env || env.t !== 'undone' || !env.run) return { mark: null, recorded: false };
+		// THE UNDO'S OWN ENTRY is recorded under the keeper the runner names, on whichever
+		// device takes the answer: it needs no mark here.
+		var recorded = false, a = app();
+		if (env.status === 'done' && env.undo && env.keeper && a && typeof a.versions_record_undone === 'function') {
+			try { await a.versions_record_undone(String(env.keeper), JSON.stringify(env)); recorded = true; }
+			catch (e) { recorded = false; }
+		}
+		// The mark is the row's state only.
+		var m = storeGet(), k = m[String(env.run)];
+		if (!k || (env.uid && k.uid && String(env.uid) !== String(k.uid))) return { mark: null, recorded: recorded };
+		// The runner keeps its answer a week and says `already` to any later ask, even one
+		// made after its first `undone` was taken: the result this row already shows stands.
+		if (k.result && k.result.status === 'done' && env.status !== 'done') return { mark: k, recorded: recorded };
+		k.result = {
+			status: String(env.status || 'error'),
+			restored: Array.isArray(env.restored) ? env.restored.map(String) : [],
+			removed: Array.isArray(env.removed) ? env.removed.map(String) : [],
+			skipped: Array.isArray(env.skipped) ? env.skipped.map(function (x) {
+				return { path: String((x && x.path) || x || ''), why: String((x && x.why) || '') };
+			}) : [],
+			why: env.why ? String(env.why) : '',
+			at: Date.now(),
+		};
+		m[String(env.run)] = k; storePut(m);
+		return { mark: k, recorded: recorded };
+	}
+
+	/// What a row with `away` shows, as one state (never a silent no-op). `probe`:
+	/// `{ online(id) -> true|false, paired(id) -> true|false|null }` (null: not known).
+	/// Answers `{ k, mark }`, `k` one of offer, asked, offline, past, unpaired, done,
+	/// already, busy, expired, error, or '' when the row has no Undo (nothing was kept).
+	function undoState(away, now, probe) {
+		if (!away || !away.on || !away.run || !(+away.since > 0)) return { k: '', mark: null };
+		var n = now == null ? Date.now() : now, p = probe || {};
+		var k = undoMark(away.run);
+		if (k && k.result) {
+			var st = k.result.status;
+			return { k: (st === 'done' || st === 'already' || st === 'busy' || st === 'expired') ? st : 'error', mark: k };
+		}
+		if (+away.until > 0 && n > +away.until) {
+			if (k) { var m = storeGet(); delete m[String(away.run)]; storePut(m); }
+			return { k: 'past', mark: null };
+		}
+		var paired = p.paired ? p.paired(String(away.on)) : null;
+		if (paired === false) return { k: 'unpaired', mark: k };
+		if (!k) return { k: 'offer', mark: null };
+		var online = p.online ? p.online(String(away.on)) : false;
+		return { k: online ? 'asked' : 'offline', mark: k };
+	}
+
 	window.DaimondVersions = {
+		recordCarried: recordCarried,
+		undoMark:      undoMark,
+		undoTurn:      undoTurn,
+		undoTurnAgain: undoTurnAgain,
+		undoneArrived: undoneArrived,
+		undoState:     undoState,
 		merge3:      merge3,
 		ready:       ready,
 		dirty:       dirty,

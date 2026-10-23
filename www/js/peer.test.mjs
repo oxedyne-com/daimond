@@ -440,6 +440,35 @@ async function main() {
 		!!sawReport && sawReport.status === 'done' && sawReport.turnId === 'turn-1'
 		&& sawReport.parcelVersion === 2);
 
+	// ── RUN-HIST N-a: the turn's rows ride the report; undo-turn and undone are peer tags ──
+	console.log('\nRUN-HIST — turnRec rides the report; undo-turn and undone route as peer envelopes');
+	{
+		const P = phone.DaimondPeer;
+		check('N-a: undo-turn and undone are peer tags', typeof P.peerType === 'function'
+			&& P.peerType('undo-turn') === true && P.peerType('undone') === true && P.peerType('post') === false);
+		const rec = { v: 1, keeper: 'd1', turnId: 'turn-9', run: 'e-9', on: 'ARGO', onName: 'argonaut',
+			since: 1761200000000, until: 1761804800000, ts: 1761200012345, more: 0,
+			files: [{ path: '/home/j/out.mp3', hash: 'ab', created: true, by: { agent: 'a', via: 'command' } }] };
+		const rb = await P.sealForSelf(P.makeReport({ eid: 'e9', turnId: 'turn-9', chatId: 'c', status: 'done', turnRec: rec }));
+		const opened = await P.openEnvelope(rb.envelope);
+		check('N-a: a report carries turnRec through the seal and the signature',
+			!!opened.turnRec && opened.turnRec.run === 'e-9' && opened.turnRec.files[0].created === true);
+		check('N-a: a report without one carries no turnRec field',
+			!('turnRec' in P.makeReport({ eid: 'e', turnId: 't', status: 'done' })));
+		const u = P.makeUndo ? P.makeUndo({ uid: 'u1', to: 'ARGO', by: 'PHONE', keeper: 'd1', run: 'e-9' }) : null;
+		check('N-a: makeUndo is the undo-turn shape, no since',
+			!!u && u.t === 'undo-turn' && u.to === 'ARGO' && u.run === 'e-9' && u.uid === 'u1' && !('since' in u));
+		const ub = u ? await P.sealForSelf(u) : {};
+		check('N-a: an undo-turn is addressed to its runner on the relay', ub['for'] === 'ARGO' && ub.ttl > 0);
+		const done = { t: 'undone', v: 1, uid: 'u1', to: 'PHONE', run: 'e-9', status: 'done',
+			restored: ['/a'], skipped: [], removed: ['/home/j/out.mp3'], ts: Date.now() };
+		const db = await P.sealForSelf(done);
+		let sawUndone = null;
+		const tl = await P.routeRows([{ envelope: db.envelope }], { onUndone: async (x) => { sawUndone = x; } });
+		check('N-a: an undone routes to onUndone', !!sawUndone && sawUndone.uid === 'u1' && tl.undones === 1);
+		check('N-a: and is held for the asker', db['for'] === 'PHONE');
+	}
+
 	// The phone can of course also open its OWN errand (its self-slot); it just
 	// must not act on its own dispatch. Proven here so the same-account property
 	// is symmetric: both devices of the account open it, nobody else does.

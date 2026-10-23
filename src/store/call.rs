@@ -479,6 +479,10 @@ store_calls! {
     } -> Outcome<Vec<String>>;
     wait Meta/Meta VersionsBody "versions_body" { id: String, hash: HexHash }
         -> Outcome<Option<BodyRef>>;
+    /// The manifest JSON `version` recorded for `id`, as stored; `None` where there is none
+    /// (RUN-HIST K2: the runner's report carries the turn's rows from it).
+    wait Meta/Meta VersionsManifest "versions_manifest" { id: String, version: u64 }
+        -> Outcome<Option<String>>;
     wait Meta/Meta VersionsUndoTarget "versions_undo_target" {
         id: String, path: String, at: Option<u64>,
     } -> Outcome<Option<(u64, String, bool, Option<String>)>>;
@@ -891,6 +895,7 @@ impl StoreReply {
                     .chain(w.wipe.iter().map(|(p, _, _)| p)))
             },
             R::StoreFileList(Ok(v)) => paths(n, "name", v.iter().map(|(name, _, _, _)| name)),
+            R::VersionsManifest(Ok(Some(m))) => upto(n, "manifest", m.len(), FRAME_META_MAX / 2),
             R::BodyGet(Ok(b)) => upto(n, "chunk", b.len(), BODY_CHUNK),
             R::JournalRead(Ok(Some(c))) => upto(n, "chunk", c.chunk.len(), BODY_CHUNK),
             R::JournalList(Ok(v)) => {

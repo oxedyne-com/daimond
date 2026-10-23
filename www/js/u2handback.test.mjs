@@ -55,6 +55,8 @@ function world(over) {
 		dispatchedTurnFinished: () => false,
 		selfDeviceId: () => 'PHONE',
 		recoverOneLocally: async (c, mm) => { log.push(['runHere', mm.iturn]); },
+		// The runner reports this page holds (RUN-HIST E reads a refusal's why from it).
+		peerReports: Object.create(null),
 		diag: () => {},
 		Date, JSON, String, Object, Array, Promise,
 	};

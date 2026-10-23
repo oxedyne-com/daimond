@@ -617,6 +617,128 @@ async fn made2_a_command_made_file_is_kept_by_the_record() {
     closed();
 }
 
+/// A runner turn record (`turnRec`, RUN-HIST §3.1) of two files on argonaut, `out.mp3` created and
+/// `old.txt` changed.  Its rows come first and an author names a `run` of its own, so a reader
+/// that took the record's keys off its rows would read the wrong run.
+fn turn_rec(run: &str, keeper: &str) -> String {
+    let (a, b) = ("a".repeat(64), "b".repeat(64));
+    fmt!("{{\"v\":1,\"files\":[\
+        {{\"path\":\"/home/jason/x/out.mp3\",\"hash\":\"{}\",\"created\":true,\
+          \"by\":{{\"agent\":\"w1\",\"via\":\"command\",\"run\":\"not-the-run\"}}}},\
+        {{\"path\":\"/home/jason/x/old.txt\",\"hash\":\"{}\",\"created\":false,\
+          \"by\":{{\"role\":\"worker\",\"run\":\"w2\"}}}}],\
+        \"keeper\":\"{}\",\"turnId\":\"t1\",\"run\":\"{}\",\"on\":\"dev-argo\",\
+        \"onName\":\"argonaut\",\"since\":1000,\"until\":2000,\"ts\":1500,\"more\":0}}",
+        a, b, keeper, run)
+}
+
+fn s(v: &str) -> String {
+    v.to_string()
+}
+
+/// The versions of `id` a runner's turn was carried into.
+async fn carried(id: &str) -> Vec<(u64, versions::Manifest)> {
+    diamond::versions_manifests(id).await.into_iter().filter(|(_, m)| m.away.is_some()).collect()
+}
+
+/// **RUN-HIST S-a: a runner's turn is recorded on the asker, once**, as one `turn` version of the
+/// command rows with its `away`; a second report of the same run writes nothing; and nothing that
+/// decides about this device's files reads its rows.  The undo's answer records its own `restore`
+/// version, whose `away` is the undo's reference.
+async fn runhist_a_runner_turn_is_recorded_once_with_its_away() {
+    fresh();
+    let id = "rh1";
+    env("p", id).scope(async {
+        diamond_at(id).await;
+        let rec = turn_rec("e-1", id);
+        let got = ok("carried", diamond::versions_record_carried(id, &rec).await);
+        let (v, files) = match got {
+            Some(g) => g,
+            None    => panic!("the carried turn recorded nothing"),
+        };
+        assert_eq!(files, vec![s("/home/jason/x/out.mp3"), s("/home/jason/x/old.txt")]);
+        let held = carried(id).await;
+        assert_eq!(held.len(), 1, "one carried version: {:?}", held);
+        let (n, m) = &held[0];
+        assert_eq!(*n, v);
+        assert_eq!(m.cause, Cause::Turn);
+        assert_eq!(m.turn, "t1");
+        assert_eq!(m.ts, 1500);
+        let away = match &m.away {
+            Some(a) => a.clone(),
+            None    => panic!("no away"),
+        };
+        assert_eq!(away, versions::Away { on: s("dev-argo"), on_name: s("argonaut"), run: s("e-1"),
+            since: 1000, until: 2000, more: 0 });
+        assert_eq!(m.files.len(), 2);
+        for e in m.files.iter() {
+            assert_eq!(e.skipped.as_deref(), Some(versions::MADE_BY_COMMAND), "{:?}", e);
+            assert!(e.was.is_none() && e.mark, "{:?}", e);
+            assert_eq!(e.by.as_ref().map(|a| a.via.as_str()), Some(versions::VIA_COMMAND), "{:?}", e);
+        }
+        assert!(m.files[0].made && !m.files[1].made, "created vs changed: {:?}", m.files);
+        assert_eq!(m.files[0].by.as_ref().map(|a| a.role.as_str()), Some("w1"), "the agent named");
+        // Again, as a reposted report: nothing.
+        assert_eq!(ok("again", diamond::versions_record_carried(id, &rec).await), None);
+        assert_eq!(carried(id).await.len(), 1, "still one");
+        // The History's list carries `away`.
+        let list = ok("list", diamond::versions_list(id).await);
+        assert!(list.contains("\"away\":{\"on\":\"dev-argo\",\"onName\":\"argonaut\",\"run\":\"e-1\""),
+            "{}", list);
+        // Nothing about this device's files reads a carried row.
+        assert!(diamond::made_files(id).await.is_empty(), "made_files: a runner's file is not ours here");
+        let all = diamond::versions_manifests(id).await;
+        assert!(versions::state_at(&all, v, |_| None, |_| true).is_empty(), "state_at reads no carried row");
+        assert!(versions::path_at(&all, "/home/jason/x/old.txt", v, None).is_none());
+        // The undo's answer.
+        let undone = "{\"t\":\"undone\",\"v\":1,\"uid\":\"9\",\"to\":\"me\",\"run\":\"e-1\",\
+            \"status\":\"done\",\"restored\":[\"/home/jason/x/old.txt\"],\
+            \"skipped\":[{\"path\":\"/home/jason/x/kept\",\"why\":\"changed since\"}],\
+            \"removed\":[\"/home/jason/x/out.mp3\"],\
+            \"undo\":{\"on\":\"dev-argo\",\"run\":\"u-9\",\"since\":3000,\"until\":4000}}";
+        let busy = undone.replace("\"done\"", "\"busy\"");
+        assert_eq!(ok("busy", diamond::versions_record_undone(id, &busy).await), None, "busy changed nothing");
+        assert!(ok("undone", diamond::versions_record_undone(id, undone).await).is_some());
+        assert_eq!(ok("undone again", diamond::versions_record_undone(id, undone).await), None);
+        let held = carried(id).await;
+        assert_eq!(held.len(), 2, "{:?}", held);
+        let m = &held[1].1;
+        assert_eq!(m.cause, Cause::Restore);
+        assert_eq!(m.turn, "t1", "the turn it undid");
+        assert_eq!(m.away, Some(versions::Away { on: s("dev-argo"), on_name: s("argonaut"),
+            run: s("u-9"), since: 3000, until: 4000, more: 0 }));
+        let rows: Vec<(String, bool)> = m.files.iter().map(|e| (e.path.clone(), e.gone)).collect();
+        assert_eq!(rows, vec![(s("/home/jason/x/old.txt"), false), (s("/home/jason/x/out.mp3"), true)]);
+    }).await;
+    closed();
+}
+
+/// **RUN-HIST lead point (c): for a chat with no Diamond, the carried turn lands in the store the
+/// asker's own turn end keeps the chat in**, `chat:<id>` as `keeper_of_dir` reads it off the chat's
+/// scratch (`DaimondApp`'s chat scope, `end_keeper_turn`) -- so the History, which lists that
+/// store, shows it beside the chat's own turns.  A bare chat id the record names as `chat:<id>`
+/// goes there too, and never to `diamonds/<id>`.
+async fn runhist_a_chats_carried_turn_lands_where_its_own_turns_do() {
+    fresh();
+    let chat = "c7";
+    let key = crate::tools::keeper_of_dir(&crate::tools::chat_scratch(chat));
+    assert_eq!(key, "chat:c7");
+    env("p", &key).scope(async {
+        // The chat's own turn end, as `end_keeper_turn` records it: under `ctx.keeper()`.
+        let own = versions::ran_rows(&[(s("/m/own.o"), "c".repeat(64), true, Some(by("w0")))]);
+        assert!(ok("own turn", diamond::versions_record(&key, Cause::Turn, "", "", own).await).is_some());
+        // The page passes the keeper it keeps the chat under, or the bare chat id.
+        assert!(ok("by key", diamond::versions_record_carried(&key, &turn_rec("e-2", &key)).await).is_some());
+        assert!(ok("bare", diamond::versions_record_carried(chat, &turn_rec("e-3", &key)).await).is_some());
+        let list = ok("list", diamond::versions_list(&key).await);
+        for want in ["/m/own.o", "\"run\":\"e-2\"", "\"run\":\"e-3\""] {
+            assert!(list.contains(want), "{} not in the chat's History: {}", want, list);
+        }
+        assert!(diamond::versions_manifests(chat).await.is_empty(), "nothing under diamonds/{}", chat);
+    }).await;
+    closed();
+}
+
 // ── (e) pend and unpend ──────────────────────────────────────────────────────────────────────
 
 /// Every note in `id`'s pending directory, as text.
@@ -1247,4 +1369,28 @@ fn state_split_lands_by_section() {
     assert!(l.touched.iter().all(|r| r.contains('\t') && !r.contains('\n')), "{:?}", l.touched);
     assert!(!crate::tools::standing_refused(crate::tools::STATE_FILE, 99_999, 0));
     assert!(!crate::tools::standing_archive(crate::tools::STATE_FILE, "d").is_empty());
+}
+
+#[tokio::test]
+async fn runhist_a_runner_turn_is_recorded_once_with_its_away_mem() {
+    over(Over::Mem);
+    runhist_a_runner_turn_is_recorded_once_with_its_away().await
+}
+
+#[tokio::test]
+async fn runhist_a_runner_turn_is_recorded_once_with_its_away_ozone() {
+    over(Over::Ozone);
+    runhist_a_runner_turn_is_recorded_once_with_its_away().await
+}
+
+#[tokio::test]
+async fn runhist_a_chats_carried_turn_lands_where_its_own_turns_do_mem() {
+    over(Over::Mem);
+    runhist_a_chats_carried_turn_lands_where_its_own_turns_do().await
+}
+
+#[tokio::test]
+async fn runhist_a_chats_carried_turn_lands_where_its_own_turns_do_ozone() {
+    over(Over::Ozone);
+    runhist_a_chats_carried_turn_lands_where_its_own_turns_do().await
 }
