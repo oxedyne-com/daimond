@@ -1197,7 +1197,7 @@
 	'models.row_paid_help': 'Dépense votre solde Daimond ; le navigateur appelle {provider} avec une clé créée pour vous.',
 	'models.row_own_help': 'Facturé à votre propre compte {provider} ; ne touche jamais votre solde Daimond.',
 	'models.sealed': 'scellée',
-	'models.key_set': 'clé enregistrée',
+	'models.key_set': 'Clé enregistrée',
 	'models.no_key': 'pas de clé',
 	'models.connecting': 'connexion…',
 	'models.no_credits': 'pas de crédits',

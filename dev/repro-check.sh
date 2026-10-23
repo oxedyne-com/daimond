@@ -106,6 +106,23 @@ DEV=$(pwd -P)
 MIRROR=${MIRROR:-$DEV/../daimond-oss}
 WORK=${WORK:-$HOME/.cache/daimond-repro-check}
 
+# THE OUTSIDER'S ENVIRONMENT, not the deployer's. Unsetting one named variable
+# (below) was trap 14's whole defence, and on 24 Oct 2026 it lost: a dk run launched
+# from an rc agent put rc's cargo shim first on PATH, the shim sat UNDER this script
+# (inside wasm-pack's cargo call) and exported __CARGO_DEFAULT_LIB_METADATA=rc-pool
+# again, and a bundle that reproduces bit-for-bit was called unreproducible
+# (notes/daimond_runner_20261016/diag_repro.md). So every cargo this runs, the
+# clone's build-wasm.sh and the hand's build, runs under `env -i`: HOME, a PATH of
+# the rustup toolchain's bin and the system directories and nothing else (never a
+# wrapper directory), its own cargo home, a target directory under $WORK named
+# explicitly, and a plain locale. No variable and no wrapper of the deployer's
+# reaches it, whatever its name. And if `cargo` in that environment is anything but
+# the toolchain's, the check refuses rather than trusting it.
+TOOLCHAIN_BIN=$(cd "${REPRO_TOOLCHAIN_BIN:-${CARGO_HOME:-$HOME/.cargo}/bin}" 2>/dev/null && pwd -P) || TOOLCHAIN_BIN=
+SYSTEM_PATH=${REPRO_SYSTEM_PATH:-/usr/local/bin:/usr/bin:/bin}
+outsider() { env -i HOME="$HOME" PATH="$TOOLCHAIN_BIN:$SYSTEM_PATH" LANG=C.UTF-8 TERM=dumb RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" CARGO_HOME="$CARGO_HOME" CARGO_TARGET_DIR="$OUTSIDER_TARGET" "$@"; }
+cargo_is_toolchain_or_die() { local c; c=$(outsider bash -c 'command -v cargo' 2>/dev/null || true); if [ -z "$TOOLCHAIN_BIN" ] || [ -z "$c" ] || [ "$(cd "$(dirname "$c")" && pwd -P)" != "$TOOLCHAIN_BIN" ]; then echo "FAILED — REFUSED: the outsider's cargo is not the toolchain's."; echo "   toolchain bin:  ${TOOLCHAIN_BIN:-<none: ${REPRO_TOOLCHAIN_BIN:-${CARGO_HOME:-$HOME/.cargo}/bin} does not exist>}"; echo "   cargo resolves: ${c:-<nothing>}  (PATH $TOOLCHAIN_BIN:$SYSTEM_PATH)"; echo "   A build by some other cargo proves nothing about what a stranger gets."; exit 1; fi; echo "   outsider's cargo: $c (env -i; target $OUTSIDER_TARGET)"; }
+
 # Never under /tmp: it is a tmpfs, so a cargo target directory there is held in
 # RAM and charged to whoever wrote it.
 rm -rf "$WORK"
@@ -179,8 +196,10 @@ if [ "$STATIC_ONLY" = 1 ]; then
 	cp -a "$DEV/www/pkg/." www/pkg/
 else
 	echo "── building as an outsider would"
-	rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
-	bash dev/build-wasm.sh >"$WORK/build.log" 2>&1 || {
+	OUTSIDER_TARGET="$WORK/target"
+	cargo_is_toolchain_or_die
+	outsider rustup target add wasm32-unknown-unknown >/dev/null 2>&1 || true
+	outsider bash dev/build-wasm.sh >"$WORK/build.log" 2>&1 || {
 		echo "FAILED — the public mirror does not build. Last lines:"
 		tail -20 "$WORK/build.log"
 		exit 1
@@ -215,13 +234,14 @@ echo "── the machine hand: does the published source build"
 # `--manifest-path`, never `-p`: the hand is its own cargo workspace. And a
 # target directory of its own under $WORK, because /tmp is a tmpfs and a cargo
 # target there is held in RAM.
-export CARGO_TARGET_DIR="$WORK/hand-target"
-if ! cargo build --release --locked --manifest-path hand/Cargo.toml >"$WORK/hand-build.log" 2>&1; then
+OUTSIDER_TARGET="$WORK/hand-target"
+cargo_is_toolchain_or_die
+if ! outsider cargo build --release --locked --manifest-path hand/Cargo.toml >"$WORK/hand-build.log" 2>&1; then
 	echo "FAILED — the published hand does not build. Last lines:"
 	tail -20 "$WORK/hand-build.log"
 	exit 1
 fi
-BIN="$CARGO_TARGET_DIR/release/daimond-hand"
+BIN="$OUTSIDER_TARGET/release/daimond-hand"
 echo "   built $(du -h "$BIN" | cut -f1) at $BIN"
 echo
 echo "   Not claimed: that this binary is byte-identical to anyone else's. It is not"

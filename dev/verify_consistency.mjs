@@ -38,6 +38,15 @@ const PROF  = process.env.CONS_PROFILE || `${OUT}/profile`;
 // go red on 'steer tile note line'. It proves the head check still sees a real shift now that a scroller's own scroll is taken out (VMEASURE).
 const BREAK = process.argv.includes('--break');
 if (BREAK) process.argv.splice(process.argv.indexOf('--break'), 1);
+// CONS-CRASH (23 Oct, specs/daimond_consistency_rate_crash_diag_20261023.md). `--break=rate`, anywhere on the line: the last rated answer is
+// folded before each `rateSurfaces`, so its rate row is `display:none`, and the run must end in a counted `<cfg>/rate_tags` finding, a report
+// and byrole.json with bad>0, never a TimeoutError. CONS_OLD restores the code before the fix, piece by piece, for the failing-first checks:
+// `profile` (the seed keeps the slot's profile), `stopped` (no check that "Stopped survey" reached the rail), `need` (a missing control
+// throws), `guard` (a throw in a surface group ends the run), or `1` for all four.
+const BREAK_RATE = process.argv.includes('--break=rate');
+if (BREAK_RATE) process.argv.splice(process.argv.indexOf('--break=rate'), 1);
+const OLD = new Set((process.env.CONS_OLD || '').split(',').filter(Boolean));
+const old = (k) => OLD.has('1') || OLD.has(k);
 // CONS_VONLY: a varlen pass takes only the slots whose name matches this pattern (the locale surfaces are skipped), for a quick reading of one.
 const VONLY = process.env.CONS_VONLY ? new RegExp(process.env.CONS_VONLY) : null;
 const MODE  = process.argv[2] || 'all';
@@ -513,6 +522,7 @@ async function mendFace(name) {
 async function overlay(name, opener) {
 	await quiet();
 	const ok = typeof opener === 'function' ? await opener() : await click(opener);
+	if (ok === COUNTED) return false;	// the opener's `tap` has counted the missing control already
 	if (!ok || ok.err) { log('no opener', name); CAP.missing.push(`${CFG}/${name}`); return false; }
 	await wait(600);
 	const ov = await topOverlay();
@@ -520,21 +530,66 @@ async function overlay(name, opener) {
 	return ov;
 }
 
+// CONS-CRASH fix 3 (rc ruling, 23 Oct): a control that is not there is a COUNTED FINDING, never a crash. One absent control used to throw
+// a Playwright TimeoutError out of rateSurfaces to the top level, so desk, phone, WebKit, the report and byrole.json were all lost.
+// `need` waits up to `ms` for `loc` to be visible; on a timeout it counts `<cfg>/<surface> (tile <tile>: .<control> not visible: <why>)`,
+// where `why` is read off `raw` (the same control without the visible filter): the first ancestor that hides it, or "absent". It answers
+// false, and the caller skips what depends on the control. `tap` is `need` and then the click. CONS_OLD=need clicks as before.
+const COUNTED = Symbol('counted');
+const HIDDEN_BY = (el) => {
+	const sig = (e) => e.tagName.toLowerCase() + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).slice(0, 3).join('.') : '');
+	for (let a = el; a && a !== document.documentElement; a = a.parentElement) {
+		const s = getComputedStyle(a);
+		if (s.display === 'none') return `${sig(a)} display:none`;
+		if (s.visibility === 'hidden') return `${sig(a)} visibility:hidden`;
+		if (a.hidden) return `${sig(a)} [hidden]`;
+	}
+	const r = el.getBoundingClientRect(); return `${Math.round(r.width)}x${Math.round(r.height)} box, no hidden ancestor`;
+};
+function missed(surface, tile, control, why) {
+	const m = `${CFG}/${surface} (tile ${tile}: .${control} not visible: ${why})`;
+	log('MISSING', m); CAP.missing.push(m); return false;
+}
+async function need(loc, raw, surface, tile, control, ms = 5000) {
+	if (old('need')) return true;
+	try { await loc.waitFor({ state: 'visible', timeout: ms }); return true; } catch (e) {}
+	const why = await raw.evaluate(HIDDEN_BY, null, { timeout: 1000 }).catch(() => 'absent');
+	return missed(surface, tile, control, why);
+}
+async function tap(loc, raw, surface, tile, control) {
+	if (old('need')) { await loc.click(); return true; }
+	if (!(await need(loc, raw, surface, tile, control))) return false;
+	try { await loc.click({ timeout: 5000 }); return true; }
+	catch (e) { return missed(surface, tile, control, 'the click failed: ' + e.message.split('\n')[0]); }
+}
+// A surface group (`rateSurfaces`, `fileSurfaces`, a whole look's pass, ...): anything else it throws is counted as one finding naming the
+// group, and the run goes on to the next group, the report and byrole.json. CONS_OLD=guard lets it end the run, as before.
+async function group(name, f) {
+	if (old('guard')) return f();
+	try { return await f(); }
+	catch (e) { const m = `${CFG}/${name} (the group threw: ${String(e && e.message || e).split('\n')[0]})`; log('MISSING', m); CAP.missing.push(m); await quiet().catch(() => {}); return undefined; }
+}
+
 /// U2's own surfaces on the main chat: the chip row under a down tap on the last answer (taken back and committed afterwards,
 /// so the chat is as seeded), then the popup on the first answer, collapsed and with Details open. `pre` is '' or 'p_'.
 async function rateSurfaces(pre) {
 	const pick = (first) => ev((first) => { const t = [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant[data-mid]')].filter((e) => e.querySelector('.ctile-rate')); const x = first ? t[0] : t[t.length - 1]; return x ? x.dataset.mid : ''; }, first);
 	const vis = (mid, cls) => page.locator(`#chat-output .ctile[data-mid="${mid}"] .${cls} >> visible=true`).first();
+	const raw = (mid, cls) => page.locator(`#chat-output .ctile[data-mid="${mid}"] .${cls}`).first();
+	const press = (mid, cls, surface) => tap(vis(mid, cls), raw(mid, cls), pre + surface, mid, cls);
 	const last = await pick(false), first = await pick(true);
 	const into = (mid) => ev((m) => { const t = document.querySelector(`#chat-output .ctile[data-mid="${m}"]`); if (t) t.scrollIntoView({ block: 'center' }); }, mid);
 	if (!last || !first) { CAP.missing.push(`${CFG}/${pre}rate_tags`, `${CFG}/${pre}dlg_rate`); return; }
 	await into(last); await wait(300);
-	await vis(last, 'ctile-rate-down').click(); await wait(400);
-	await grab(pre + 'rate_tags', '#chat-output');
-	await vis(last, 'ctile-rate-down').click(); await wait(300);
-	await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
+	if (BREAK_RATE) await ev((m) => { const t = document.querySelector(`#chat-output .ctile[data-mid="${m}"]`); if (t) t.classList.add('collapsed'); }, last);
+	if (await press(last, 'ctile-rate-down', 'rate_tags')) {
+		await wait(400);
+		await grab(pre + 'rate_tags', '#chat-output');
+		if (await press(last, 'ctile-rate-down', 'rate_tags_takeback')) await wait(300);
+		await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
+	}
 	await into(first); await wait(300);
-	const ov = await overlay(pre + 'dlg_rate', async () => { await vis(first, 'ctile-rate-more').click(); return true; });
+	const ov = await overlay(pre + 'dlg_rate', async () => (await press(first, 'ctile-rate-more', 'dlg_rate')) || COUNTED);
 	if (ov) {
 		await ev(() => { const d = document.querySelector('.rate-card details'); if (d) d.open = true; }); await wait(400);
 		await grab(pre + 'dlg_rate_details', await topOverlay());
@@ -581,6 +636,7 @@ async function fileSurfaces(pre, wk) {
 	const tile = () => page.locator('#chat-output .turn-files').last();
 	const row = (name) => tile().locator('.turn-file-row', { hasText: name });
 	const vis = (name, cls) => row(name).locator(`.${cls} >> visible=true`).first();
+	const press = (name, cls, surface) => tap(vis(name, cls), row(name).locator(`.${cls}`).first(), pre + surface, name, cls);
 	const into = () => ev(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (t) t.scrollIntoView({ block: 'center' }); });
 	const names = ['chat_files_row', 'file_rate_tags', 'dlg_rate_file', 'dlg_rate_file_details', 'rating_tile_file'].map((n) => pre + n);
 	if (!(await ev(() => document.querySelectorAll('#chat-output .turn-files').length))) {
@@ -591,12 +647,14 @@ async function fileSurfaces(pre, wk) {
 	await unfold('#chat-output .turn-files'); await into(); await wait(300);
 	await grab(pre + 'chat_files_row', '#chat-output');
 	if (!pre) { await row('o.md').hover().catch(() => {}); await wait(300); await grab('chat_files_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
-	await vis('o.md', 'ctile-rate-down').click(); await wait(400);
-	await grab(pre + 'file_rate_tags', '#chat-output');
-	await vis('o.md', 'ctile-rate-down').click(); await wait(300);
-	await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
+	if (await press('o.md', 'ctile-rate-down', 'file_rate_tags')) {
+		await wait(400);
+		await grab(pre + 'file_rate_tags', '#chat-output');
+		if (await press('o.md', 'ctile-rate-down', 'file_rate_tags_takeback')) await wait(300);
+		await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
+	}
 	await into(); await wait(300);
-	const ov = await overlay(pre + 'dlg_rate_file', async () => { await vis('n.md', 'ctile-rate-more').click(); return true; });
+	const ov = await overlay(pre + 'dlg_rate_file', async () => (await press('n.md', 'ctile-rate-more', 'dlg_rate_file')) || COUNTED);
 	if (ov) {
 		await ev(() => { const d = document.querySelector('.rate-card details'); if (d) d.open = true; }); await wait(400);
 		await grab(pre + 'dlg_rate_file_details', await topOverlay());
@@ -830,15 +888,24 @@ async function deskSurfaces() {
 	for (const f of [0.3, 0.6, 1]) { await ev((f) => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = o.scrollHeight * f; }, f); await wait(250); await grab('transcript_' + f, '#chat-output'); }
 	await ev(() => { const b = document.getElementById('expand-all-btn'); if (b) b.click(); });
 	// r541 QA B F4: the stopped chat, scrolled to its foot, so the left-edge check below sees a stop line and its Continue.
-	await ev(() => { const t = [...document.querySelectorAll('#session-list .chat-box')].find((b) => /Stopped survey/.test(b.textContent));
-		const l = t && t.querySelector('.tile-label'); if (l) l.click(); else if (t) t.click(); });
-	await wait(900); await ev(() => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = o.scrollHeight; }); await wait(300);
-	await grab('transcript_stopped', '#chat-output');
+	// CONS-CRASH fix 2: a stopped chat that is not in the rail is a counted finding, never a capture of whatever chat is open. Its switch and
+	// back is also what re-drew the main chat out of the fold the second Expand-all press left, so without it the fold is reset here, by a
+	// switch to another chat and back, rather than leaving every tile folded for the surfaces after it.
+	const hitStopped = await ev(() => { const t = [...document.querySelectorAll('#session-list .chat-box')].find((b) => /Stopped survey/.test(b.textContent));
+		const l = t && t.querySelector('.tile-label'); if (l) l.click(); else if (t) t.click(); return !!t; });
+	if (hitStopped === true || old('stopped')) {
+		await wait(900); await ev(() => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = o.scrollHeight; }); await wait(300);
+		await grab('transcript_stopped', '#chat-output');
+	} else {
+		const m = `${CFG}/transcript_stopped (no "Stopped survey" chat in the rail: cons-stopped is not drawn)`; log('MISSING', m); CAP.missing.push(m);
+		await ev(() => { const t = [...document.querySelectorAll('#session-list .chat-box')].find((b) => !/joinery|function/i.test(b.textContent));
+			const l = t && t.querySelector('.tile-label'); if (l) l.click(); else if (t) t.click(); }); await wait(900);
+	}
 	await mainChat();
 	const tiles = page.locator('#chat-output .ctile.chat-msg-assistant');
 	if (await tiles.count()) { await tiles.last().hover().catch(() => {}); await wait(300); await grab('tile_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
-	await rateSurfaces('');
-	await fileSurfaces('', false);
+	await group('rate_surfaces', () => rateSurfaces(''));
+	await group('file_surfaces', () => fileSurfaces('', false));
 	await page.fill('#chat-input', 'A draft that is long enough to wrap onto a second line of the composer, so its height and its buttons show how they sit together.').catch(() => {});
 	await wait(300); await grab('composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
 	// Rail sections, each unfolded, and a filter chip on.
@@ -915,8 +982,8 @@ async function deskSurfaces() {
 		await wait(200);
 		await grab('panel_' + id, `#panel-${id}`);
 	}
-	await ratingSurfaces('');
-	await changeSurfaces('');
+	await group('rating_surfaces', () => ratingSurfaces(''));
+	await group('change_surfaces', () => changeSurfaces(''));
 	// The file viewer and editor.
 	await panels(['rail', 'ai', 'work']);
 	for (const [name, re] of [['viewer_text', '^\\s*notes\\.md'], ['viewer_image', 'plan\\.svg'], ['viewer_csv', 'budget\\.csv'], ['viewer_long', 'a-very-long']]) {
@@ -935,13 +1002,13 @@ async function deskSurfaces() {
 	await ev(() => { const t = [...document.querySelectorAll('.diamond-box')].find((e) => /Kitchen/.test(e.getAttribute('aria-label') || e.textContent)); if (t) (t.querySelector('.tile-label') || t).click(); });
 	await wait(1200);
 	await click('#dview-crystal'); await wait(1600); await grab('diamond_crystal');
-	await mendFace('diamond_crystal_mend');
+	await group('diamond_crystal_mend', () => mendFace('diamond_crystal_mend'));
 	for (const re of ['^\\W*history', 'tags', '^\\W*edit\\b']) {
 		await overlay('crystal_' + re.replace(/\W+/g, ''), async () => { await click('#dview-crystal'); await wait(900); return clickText('.crystal-bar button', re); });
 	}
 	await quiet(); await click('#dview-crystal'); await wait(900);
 	await click('#dview-chat'); await wait(800); await grab('diamond_chat');
-	if (!(await cappOfferFace(''))) CAP.missing.push(`${CFG}/diamond_capp_offer`);
+	if ((await group('diamond_capp_offer', () => cappOfferFace(''))) === false) CAP.missing.push(`${CFG}/diamond_capp_offer`);
 	// The Diamond whose turn changed files, by its own name: which Kitchen Diamond the `/Kitchen/` pick above opened depends on the rail filter that
 	// `rail_filtered` left on (a look that leaves "not research" hides this one), so the filter is cleared and the Diamond picked by name.
 	await ev(() => { const b = document.querySelector('#panel-rail .tag-clear-all'); if (b && b.getClientRects().length) b.click(); }); await wait(500);
@@ -973,8 +1040,8 @@ async function phoneSurfaces(wk) {
 	await grab('p_chat');
 	await ev(() => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = 0; }); await wait(300);
 	await grab('p_chat_top', '#chat-output');
-	await rateSurfaces('p_');
-	await fileSurfaces('p_', wk);
+	await group('p_rate_surfaces', () => rateSurfaces('p_'));
+	await group('p_file_surfaces', () => fileSurfaces('p_', wk));
 	await page.fill('#chat-input', 'A draft long enough to wrap onto a second line of the composer on a phone.').catch(() => {});
 	await wait(300); await grab('p_composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
 	await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(900);
@@ -1020,9 +1087,9 @@ async function phoneSurfaces(wk) {
 	else if (wk && !WKSTORE) CAP.notCovered.push({ label: 'webkit file viewer', reason: 'WebKit has no file store, so notes.md never reaches the device (CRF2)', surface: `${CFG}/p_viewer_text` });
 	else CAP.missing.push(`${CFG}/p_viewer_text`);
 	await quiet();
-	await carrySurfaces(wk);
-	await ratingSurfaces('p_', wk);
-	await changeSurfaces('p_');
+	await group('p_carry_surfaces', () => carrySurfaces(wk));
+	await group('p_rating_surfaces', () => ratingSurfaces('p_', wk));
+	await group('p_change_surfaces', () => changeSurfaces('p_'));
 }
 
 // The surfaces the 5.2.9 carry needs (G1, rule 4: every instance). Each starts from a known place, the main chat on the chat panel with
@@ -1181,6 +1248,15 @@ const ROUTE_UNDO = () => {
 
 async function seed() {
 	if (process.env.DAIMOND_MOCK_SCRIPT) fs.writeFileSync(process.env.DAIMOND_MOCK_SCRIPT, JSON.stringify(SCRIPT));
+	// CONS-CRASH fix 1: the verifier owns its world. A slot's profile reused across seeds kept the app's own state from older runs: three days
+	// after the first seed, `cons-stopped` sat in the auto-expiry trash, the raw re-put below did not lift it, and the run crashed (23 Oct).
+	// So every seed starts from an empty profile, Chromium's and the paired WebKit device's (still one per slot, so slots never share).
+	// CONS_OLD=profile keeps the old profile.
+	if (!old('profile')) for (const d of [PROF, PROF + '-webkit']) {
+		const r = path.resolve(d);
+		if (r.split(path.sep).filter(Boolean).length < 4 || r === os.homedir()) { log(`seed: refusing to remove the profile ${r} (too shallow a path)`); process.exit(3); }
+		fs.rmSync(r, { recursive: true, force: true });
+	}
 	const s = await open({ name: 'alex', profile: PROF });
 	page = s.page;
 	await page.setViewportSize({ width: 1440, height: 900 });
@@ -1405,6 +1481,11 @@ async function seed() {
 	await page.reload(); await wait(1500);
 	const tagCount = await ev(() => document.querySelectorAll('#panel-rail .session-box-tags .tag-chip').length);
 	if (tagCount < 10) { log(`seed: tags did not land (${tagCount} chips, want >= 10)`); await s.close().catch(() => {}); process.exit(3); }
+	// CONS-CRASH fix 2 (I10, as for the tags): the stopped chat is put raw into IndexedDB, behind the app, so check the rail drew it.
+	if (!old('stopped')) {
+		const st = await page.waitForFunction(() => [...document.querySelectorAll('#session-list .chat-box')].some((b) => /Stopped survey/.test(b.textContent)), null, { timeout: 10000 }).then(() => true, () => false);
+		if (!st) { log('seed: the stopped chat "Stopped survey" (cons-stopped) did not reach the rail; the app holds it hidden (in its trash?)'); await s.close().catch(() => {}); process.exit(3); }
+	}
 	log('seeded');
 	await s.close();
 }
@@ -1524,7 +1605,7 @@ async function desk() {
 	page = s.page;
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await wait(1000); await view('max');
-	for (const th of LOOKS) { CFG = `desk-${th}`; await wear(th); await deskSurfaces(); await sendClear(false); }
+	for (const th of LOOKS) { CFG = `desk-${th}`; await wear(th); await group('desk_surfaces', deskSurfaces); await group('send_clear', () => sendClear(false)); }
 	await layoutExtras().catch((e) => log('layout extras', e.message));
 	saveCap('desk');
 	await s.close();
@@ -1624,7 +1705,7 @@ async function phone(wk) {
 		process.exit(4);
 	}
 	await view('max');
-	for (const th of LOOKS) { CFG = `${wk ? 'webkit' : 'phone'}-${th}`; await wear(th); await phoneSurfaces(wk); if (!wk) await sendClear(true); }
+	for (const th of LOOKS) { CFG = `${wk ? 'webkit' : 'phone'}-${th}`; await wear(th); await group('phone_surfaces', () => phoneSurfaces(wk)); if (!wk) await group('send_clear', () => sendClear(true)); }
 	saveCap(wk ? 'webkit' : 'phone');
 	await s.close();
 	if (lead) await lead.close().catch(() => {});
@@ -1657,7 +1738,11 @@ const ROLES = [
 	['dialog-action',   'title',    (it) => it.ctrl && (has(it, 'push-save') || it.id === 'push-save' || it.id === 'beta-open') || it.ctrl && within(it, /dlg-actions|modal-actions|tile-dlg-actions|dlg-foot|compose-foot/)],
 	// G5: a toggle that opens a section reads as a disclosure, not a toggle
 	// (ahead of toggle-option below, whose `-toggle\b` would otherwise claim it).
-	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-prov-head') || has(it, 'models-route-head'))],
+	// MODELS-EYE (his pick, var_va_rest_end_desk): a provider is a plain row that opens on a click -- body size, primary ink, name on the
+	// text edge, no caret, shut or open -- so it is not a 12px muted fold head. Its own role, compared with its own instances; the name is
+	// the provider's own (OpenRouter, Fireworks AI), so its casing is not judged.
+	['provider-row',    'none',     (it) => it.ctrl && has(it, 'models-prov-head')],
+	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-route-head'))],
 	['toggle-option',   'sentence', (it) => it.ctrl && (has(it, 'dview-btn') || within(it, /\.seg\b|\.size-row|-toggle\b|\.files-scope|\.imp-chips|\.net-row|\.tile-dlg-seg|\.files-mode\b/) && !has(it, 'files-mode-btn') || has(it, 'grid-opt'))],
 	// The walk-back pair is the composer's wherever it sits: in the bar on a computer, in the composer row on a phone (D-20261014-08).
 	['composer-button', 'none',     (it) => it.ctrl && ((within(it, /chat-input-bar|msheet-ask/) || /#chat-(jump|end)\b/.test(it.sig)) && !/^(input|textarea)$/.test(it.tag))],
@@ -1831,6 +1916,8 @@ const ALLOW = [
 	{ role: 'inline-link', m: /^a\.(brand|mb-hit)\b/, p: ['col'], why: 'the wordmark and the About picture’s hotspots keep the brand colour -- they are not text links' },
 	{ role: 'text-button', m: /\.attach-add\.grants\b/, p: ['col'], why: 'a "+" that widens a fence takes the accent, like every granting control (daimond.js)' },
 	{ role: 'text-button', m: /\.attach-add(\.grants)?\.icon\b/, p: ['rad'], why: 'the bare + is round, the glyph form of the worded chips (skin-daylight.css "same 27px box as the worded chips, but round")' },
+	// MODELS-EYE round 3 (his pick, var_va_rest_end_desk): "+ Add Provider" is drawn at the provider names' size, 14 px, not the role's 12 px; its box, ink and padding stay the role's.
+	{ role: 'text-button', m: /#models-add\b/, p: ['fs'], why: 'his pick draws + Add Provider at the provider names\' size (var_va_rest_end_desk, MODELS-EYE)' },
 	{ role: 'composer-button', m: /#chat-send\b/, p: ['icon'], why: 'the filled send disc carries a 16px arrow for optical balance' },
 	{ role: '*', m: /\.ghost\b/, p: ['col'], why: 'a ghost (unavailable) option is drawn muted' },
 	{ role: 'tile-prose', m: /^(strong|b)\b/, p: ['col'], why: 'bold in a reply may take the ink colour' },
@@ -2035,13 +2122,17 @@ function report() {
 	const COMPOSER_PART = (it) => /#composer-row\b|#seat-switch\b|#seat-here\b|#seat-runner\b|#effort-(step|dn|val|up)\b/.test(it.sig);
 	// A Status exception row (D-20261015-15, js/needs.js) leads its sentence with the state dot, a span of its own, so the sentence's box
 	// starts after the dot; the row is placed by the Status block, which the calm line shares, not by the panel's text edge (16 Oct, WebKit).
+	// "+ Add Provider" (MODELS-EYE) sits where his pick draws it (var_va_rest_end_desk): the "+" 16 px in from the section's text edge,
+	// so its word lands 2-3 px past the Except names' column (mockup: names +24, "Add" +27). It is placed by the mockup's figure, not by
+	// the panel's text edge or the names, so it is not compared to either; the probe that holds it at +16 is the eye check's.
+	const ADD_PROV = (it) => /#models-add\b/.test(it.sig);
 	const NEED_ROW = (it) => /\bastat-val\b/.test(it.sig) && /^div\.astat-row\.astat-need\b/.test((it.anc || [])[0] || '');
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
 	const textBySurf = new Map(); for (const o of items) { if (!o.view || o.tx == null || o.tcy == null) continue; if (!textBySurf.has(o.surface)) textBySurf.set(o.surface, []); textBySurf.get(o.surface).push(o); }
 	const leftMate = (it) => (textBySurf.get(it.surface) || []).some((o) => o !== it && o.panel === it.panel && Math.abs(o.tcy - it.tcy) <= 4 && o.r[0] < it.r[0] && o.r[0] + o.r[2] <= it.r[0] + 2);
 	const byPanel = new Map(); for (const it of items) { if (!it.view || it.tx == null || it.lines !== 1) continue; if (!/panel-title|section-head|list-row|meta|disclosure|body-text|create-button|text-button/.test(it.roleName)) continue;
-		if (RIGHTALIGN(it) || COMPOSER_PART(it) || NEED_ROW(it)) continue;
+		if (RIGHTALIGN(it) || COMPOSER_PART(it) || NEED_ROW(it) || ADD_PROV(it)) continue;
 		// A text edge is the left edge of a row's FIRST text. An item with another text-bearing item wholly to its left on the same line (a button
 		// after a note, a unit after a field) is placed by that neighbour, not by the panel (5.2.9: `.ar-card-btn` after "No card saved.").
 		if (leftMate(it)) continue;

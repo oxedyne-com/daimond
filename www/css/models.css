@@ -1,37 +1,29 @@
 /* models.css — the providers, and the models behind them. */
 
-.models-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.models-list { display: flex; flex-direction: column; gap: var(--mv-list-gap); margin: var(--mv-top) 0 10px; }
 
 .models-empty {
 	padding: 12px; border: 1px solid transparent; border-radius: 8px;
 	color: var(--text-secondary); font-size: var(--fs-xs); text-align: center;
 }
 
-.models-prov { border: 1px solid transparent; border-radius: 8px; overflow: hidden; }
+/* No side border: a transparent one put the name 1 px past the text edge (MODELS-EYE). */
+.models-prov { border: 1px solid transparent; border-width: 1px 0; border-radius: 8px; overflow: hidden; }
 
-/* Same reason as the model rows below: the name is built to wrap in the rail
-   (see .models-prov-name, which breaks between whole facts), and a disclosure
-   caret centred against two or three lines of it points at the middle of the
-   name rather than at the line it opens. */
+/* A provider is a plain row, as his pick draws it (var_va_rest_end_desk, MODELS-EYE): the name at
+   the body size in the primary ink on the section's text edge, the balance set right, no caret.
+   It still opens on a click (D-20261018-09 U5a); `aria-expanded` says so to a reader, and no fold
+   glyph is drawn because his pick draws none, shut or open (var_va_detail_end_desk). It is no
+   longer one of the skin's 12 px muted fold heads (skin-daylight.css, disclosures). The name is
+   built to wrap in the rail (.models-prov-name breaks between whole facts), so the row is set to
+   its first line, not centred against two or three. */
 .settings-section .models-prov-head {
-	display: flex; align-items: flex-start; gap: 8px; width: 100%;
-	cursor: pointer; text-align: left;
+	display: flex; align-items: flex-start; gap: 8px; width: 100%; box-sizing: border-box;
+	min-height: 32px; padding: 7px 0; line-height: 18px;
+	cursor: pointer; text-align: left; font-family: var(--font); font-size: var(--fs-base); font-weight: var(--w-text);
 	background: transparent; border: 0; color: var(--text-primary);
 }
 .settings-section .models-prov-head:hover { background: var(--bg-hover); }
-/* R10 (D-20260929-03 r526 residual): the disclosure group's own muted, not
-   its own -- the caret is the first thing inside `.models-prov-head` with
-   real text, so its colour is what the row is measured by. */
-/* The caret sits in the same 8 px glyph column as an exception row's kind glyph, at the panel's
-   edge, so the provider's name starts on the section's text edge with the rows' names (x 50 at
-   1440, verify_consistency text-edge): the shared disclosure padding (skin-daylight) puts the
-   caret 4 px in, and a 10 px caret took the name 7 px past the edge. */
-.models-caret     { width: 7px; margin-left: -4px; color: var(--text-muted); }
-/* Drawn by the row's state, not typed (r569 gate, typed-glyph). */
-.models-caret::before { content: '\25B8'; }
-.models-prov-head[aria-expanded="true"] .models-caret::before { content: '\25BE'; }
-/* A disclosure's label at the disclosure weight: the bold name passed only while the typed caret
-   was the text the row was measured by (r569 gate, fw 600 against 375/400). */
 .models-prov-name { flex: 1; }
 .models-prov-key  { font-size: var(--fs-2xs); color: var(--text-secondary); }
 .models-prov-count{ font-size: var(--fs-2xs); color: var(--text-secondary); min-width: 68px; text-align: right; }
@@ -71,8 +63,18 @@
 }
 .settings-section .models-refetch:disabled { opacity: .5; cursor: default; }
 .settings-section .models-remove { align-self: flex-start; margin-top: 4px; }
-/* A text button, not the bordered pair above it (D-20260929-03 §4). */
-.settings-section .models-add    { width: 100%; cursor: pointer; }
+/* A text button, not the bordered pair above it (D-20260929-03 §4). Set left, not centred, its
+   label 16 px in from the text edge as his pick draws it (var_va_rest_end_desk, MODELS-EYE): the
+   mockup's figure, less the text-button role's own 10 px padding and 1 px border (skin-daylight.css), so the role
+   keeps its box and only the button's place moves. */
+.settings-section .models-add    { width: auto; align-self: flex-start; margin-left: calc(16px - 10px - 1px); cursor: pointer; }
+/* His pick sets its label at the names' size (var_va_rest_end_desk: the same cap height as "Fireworks AI"), in the
+   secondary ink the text-button role already gives it; only the size moves off the role's 12 px (verify_consistency ALLOW). */
+:root[data-skin="daylight"] .settings-section .models-add { font-size: var(--dl-sm); }
+/* The message line under the list takes no room while it has nothing to say, so the button sits the list's own
+   10 px margin below the last row, as his pick draws it (MODELS-EYE: row and button abut there). A message, when one
+   comes, gets its line back. */
+#models-note:empty { margin-top: 0; min-height: 0; }
 
 /* How old the model list is, under the button that asks for it again. A caveat on
    the list above rather than a second heading, so it takes the chip size and the
@@ -87,11 +89,35 @@
 /* The top half (D-20261018-09 U3a): Everyone uses, Except, Jobs. Rows carry no fill, only
    the panel's tokens, so they read alike in every palette and skin; a head is the display face.
    The confirm is the one raised surface, because it is the one thing waiting on an answer. */
-.models-everyone, .models-except, .models-jobs { padding: 6px 0 10px; }
-.models-head {
-	font-family: var(--font-display); font-size: var(--fs-sm); color: var(--text-primary);
-	margin: 4px 0 8px;
+/* The view's lengths by role, from his pick (var_va_rest_desk/phone, MODELS-EYE round 4), so each
+   is said once and every section, row and field takes it from here. */
+#admin-models {
+	--mv-inset: 8px;		/* the view's own inset inside Admin's text edge (.mmv's padding) */
+	--mv-list-gap: 6px;		/* between the list's blocks */
+	--mv-sec-gap: 16px;		/* a section's last line to the next head */
+	--mv-head-gap: 6px;		/* a head to its first line */
+	--mv-row: 40px;			/* an Except or Jobs row (.mmv-exr, .mmv-job) */
+	--mv-job-lab: 76px;		/* the Jobs label column (.mmv-job) */
+	--mv-job-gap: 8px;		/* label column to field */
+	--mv-top: 8px;			/* the title bar to the first head, which takes no section gap of its own: his 50 px title to head */
+	--mv-sub-lift: 6px;		/* an Except row's second line hangs this far into the row, under its name, and the row keeps its pitch */
 }
+/* The phone's drawer has its own title bar (sized for the close's 44 px thumb floor) and the view
+   starts closer under it, so the list stands further down there to keep his 53 px title to first head; and the phone's 17 px name keeps its own gap to the
+   second line (D-20261023-05 item 11, ledger 7 ~22:4x). */
+@media (max-width: 600px) { #admin-models { --mv-row: 44px; --mv-top: 22px; --mv-sub-lift: 0px; } }
+/* His pick sets the whole view in from Admin's edge, so the heads, fields and rows take the
+   inset on both sides, the field as far in from the right as the heads are from the left. */
+#admin-models > .settings-section { margin-inline: var(--mv-inset); }
+/* A section carries no padding of its own: its head owns the space above it (the list's gap
+   plus the rest of the section gap) and below it, the same before every head. */
+.models-everyone, .models-except, .models-jobs { padding: 0; }
+.models-head {
+	font-family: var(--font-display); font-size: var(--fs-sm); color: var(--text-secondary);
+	font-weight: var(--w-title, 600);
+	margin: calc(var(--mv-sec-gap) - var(--mv-list-gap)) 0 var(--mv-head-gap);
+}
+.models-list > :first-child > .models-head:first-child { margin-top: 0; }
 .models-sub { font-size: var(--fs-2xs); line-height: 1.45; color: var(--text-secondary); }
 .models-turn, .models-not-here { margin-top: 6px; }
 .models-ask {
@@ -100,19 +126,26 @@
 }
 .models-ask-btns, .models-done { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
 .models-done { font-size: var(--fs-xs); color: var(--text-secondary); }
-.models-exc { padding: 6px 0; }
+/* One column for every Except row (his pick, var_va_rest_desk/phone): the kind glyph's 8 px box
+   4 px in from the text edge and the name 24 px in. The second line hangs under the name, so its
+   indent is the name's, worked from the same three lengths rather than typed again (MODELS-EYE). */
+.models-exc {
+	padding: 0;
+	--exc-glyph-in: 4px; --exc-glyph: 8px; --exc-gap: 12px;
+	--exc-name-in: calc(var(--exc-glyph-in) + var(--exc-glyph) + var(--exc-gap));
+}
 /* The kind glyph hangs in the gutter, so a row's name and its "Through" line sit on the panel's
    text edge with every other line of the section (verify_consistency text-edge). */
 /* The name is whole on the left and the model is text sized to itself, set right with its chevron,
    on the same line (var_va_rest_phone). A pair too long for one line puts the model on the next,
    still set right, rather than cutting either: the name is only cut when it alone is wider than
    the row. */
-.models-exc-top { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-height: 32px; }
+.models-exc-top { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--exc-gap); min-height: var(--mv-row); }
 /* The kind glyph sits inside the row, before the name, on every size, as his pick draws it
    (var_va_rest_desk, eye F3); it no longer hangs in the gutter. */
 /* One width for both glyphs: ◆ and ▪ are not the same width, so a chat row's name sat 4 px left
    of a Diamond row's (verify_consistency text-edge, "Stopped survey" at x 46 against x 50). */
-.models-exc-top::before { flex: 0 0 8px; width: 8px; text-align: center; color: var(--text-muted); font-size: var(--fs-2xs); }
+.models-exc-top::before { flex: 0 0 var(--exc-glyph); width: var(--exc-glyph); margin-left: var(--exc-glyph-in); text-align: center; color: var(--text-muted); font-size: var(--fs-2xs); }
 .models-exc[data-kind="diamond"] .models-exc-top::before { content: '◆'; }
 .models-exc[data-kind="chat"] .models-exc-top::before { content: '▪'; }
 .models-exc-name {
@@ -120,12 +153,17 @@
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 	font-size: var(--fs-base); color: var(--text-primary);
 }
-.models-exc-sub { overflow-wrap: anywhere; }
+.models-exc-sub { overflow-wrap: anywhere; padding-left: var(--exc-name-in); margin-top: calc(-1 * var(--mv-sub-lift)); padding-bottom: var(--mv-sub-lift); }
+/* One label column for all the Jobs rows (his pick, .mmv-job): 76 px, or the widest label where
+   one is wider (the phone's larger label, a longer language), so a label is never cut and every
+   field still starts on one line. */
+.models-jobs { display: grid; grid-template-columns: minmax(var(--mv-job-lab), max-content) minmax(0, 1fr); column-gap: var(--mv-job-gap); }
+.models-jobs > * { grid-column: 1 / -1; }
 .models-job {
-	display: flex; align-items: center; gap: 10px; min-height: 36px;
+	display: grid; grid-template-columns: subgrid; align-items: center; min-height: var(--mv-row);
 	font-size: var(--fs-2xs); color: var(--text-secondary);
 }
-.models-job-lab { flex: 0 0 34%; }
+.models-job-lab { white-space: nowrap; }
 /* Move Them Too keeps the panel's filled button; Keep Theirs and Undo are the quiet answer. */
 .settings-section .models-ask button, .settings-section .models-done button { padding: 7px 14px; font-size: var(--fs-xs); }
 .settings-section .models-ask button.models-keep,
@@ -133,11 +171,12 @@
 .settings-section .models-ask button.models-keep:hover,
 .settings-section .models-done button.models-undo:hover { background: var(--bg-hover); }
 @media (max-width: 600px) {
-	.models-exc-top, .models-job { min-height: 44px; }
 	/* The phone's fields are 16px or more (mobile.css, no iOS zoom), so a row's name takes the
 	   same size as its model, and its kind glyph sits inside the text edge, not in a gutter the
 	   phone does not have (D-20261023-05 audit item 11, var_va_rest_phone). */
 	.models-exc-name { font-size: var(--fs-xl); }
+	/* A provider row is the Except rows' size and tap height on the phone too. */
+	.settings-section .models-prov-head { min-height: 44px; padding: 12px 0; line-height: 20px; font-size: var(--fs-xl); }
 	.models-job-lab { font-size: var(--fs-sm); }	/* eye F7: the label is not 11 px under a 16 px value */
 	.settings-section .models-ask button, .settings-section .models-done button { min-height: 44px; }
 }

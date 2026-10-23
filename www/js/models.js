@@ -3161,8 +3161,9 @@
 	function keyLabel(p) {
 		// [glyph role, words]: the glyph is drawn by its `.lead-*` role, never typed (app.css).
 		if (!p.minted) {
-			// A key that is set says nothing: the field's "Paste a new key to replace this one"
-			// already says it (D-20261018-09 §6 took "key set" out).
+			// A key that is set says nothing here: the field's "Paste a new key to replace this one"
+			// already says it. D-20261018-09 §6 took "key set" out of the row; his pick
+			// (var_va_rest_end_desk, MODELS-EYE) puts it back in the head's balance spot (renderProviders).
 			return p.sealed ? ['lead-lock', t('models.sealed')]
 				: p.hasKey ? ['', ''] : ['lead-warn', t('models.no_key')];
 		}
@@ -3820,7 +3821,8 @@
 	}
 
 	/// The figure a provider's head shows: what is left, in the currency it is held in
-	/// ("US$18.40 left", "A$12.60 left"), or '' when nothing knows. An own key's figure is
+	/// ("US$18.40 left", "A$12.60 left"), or '' when nothing knows. An own key with no figure
+	/// says "Key set" in the same spot instead (renderProviders). An own key's figure is
 	/// `p.credit`, the binding number (the smaller of the key's cap and the account's credit);
 	/// the credits row's is the gateway's, in the account's currency.
 	function headBalance(p) {
@@ -3848,19 +3850,23 @@
 
 			var head = document.createElement('button');
 			head.className = 'models-prov-head';
-			head.setAttribute('aria-expanded', open[p.id] ? 'true' : 'false');	// draws the caret
+			// Opens on a click and says so to a reader; no caret, as his pick draws none (MODELS-EYE).
+			head.setAttribute('aria-expanded', open[p.id] ? 'true' : 'false');
 			var bal = headBalance(p);
+			// A key with no figure yet still answers in the balance's spot, in its face: "Key set", as
+			// his pick draws it (var_va_rest_end_desk, MODELS-EYE). A sealed key keeps its word in the body.
+			var keySet = !bal && !p.minted && p.hasKey && !p.sealed;
 			head.innerHTML =
-				  '<span class="models-caret" aria-hidden="true"></span>'
-				+ '<span class="models-prov-name">' + esc(p.name) + '</span>'
-				+ (bal ? '<span class="models-bal">' + DaimondI18n.pricesHtml(bal, esc) + '</span>' : '');
+				  '<span class="models-prov-name">' + esc(p.name) + '</span>'
+				+ (bal ? '<span class="models-bal">' + DaimondI18n.pricesHtml(bal, esc) + '</span>'
+					: keySet ? '<span class="models-bal">' + esc(t('models.key_set')) + '</span>' : '');
 			head.title = p.paid
 				? t('models.row_paid_help', { provider: p.via || t('models.the_provider') })
 				: t('models.row_own_help', { provider: p.name });
 			head.addEventListener('click', function () { open[p.id] = !open[p.id]; render(); });
 			// How old the figure is rides the hover, and the stale colour the figure itself.
 			var balEl = head.querySelector('.models-bal');
-			if (balEl) paintBal(balEl, p.id, p.credit);
+			if (balEl && bal) paintBal(balEl, p.id, p.credit);
 			row.appendChild(head);
 
 			if (open[p.id]) {

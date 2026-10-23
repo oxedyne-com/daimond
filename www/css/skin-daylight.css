@@ -1038,13 +1038,13 @@
 
 /* One disclosure head (D-20260929-03, remaining.md cluster 4), replacing the
    partial §10 rule: every fold trigger -- rail Built-in, the release notes'
-   sealed builds, a tag filter toggle, a model provider, routing or memory head, a
+   sealed builds, a tag filter toggle, a model routing or memory head (a provider is a plain row, MODELS-EYE), a
    dialog's advanced section, a diamond's links and artefacts, a file tree's
    rest and system rows -- is 12px, --w-text, --text-muted, one line height
    and one hit box. The per-class blocks below keep only what this rule does
    not set: colour on hover, the fold triangle, focus rings. */
 :root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .rel-about > summary, .tagf-toggle, .arte-strip,
-	.models-prov-head, .models-route-head, .models-routing-disc > summary, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
+	.models-route-head, .models-routing-disc > summary, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
 	.sys-head, .cap-more, .capp-conflicts > summary) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 19px;
 	padding: 4px 8px 4px 4px; min-height: 27px; box-sizing: border-box; background: transparent; border-color: transparent;
@@ -1415,7 +1415,7 @@
 		.imp-chip) { min-width: 44px; }
 	/* Disclosures: */
 	:root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .tagf-toggle, .arte-strip,
-		.models-prov-head, .models-route-head, .models-routing-disc > summary, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
+		.models-route-head, .models-routing-disc > summary, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
 		.sys-head, .cap-more, .capp-conflicts > summary) { min-height: 44px; }
 	:root[data-skin="daylight"] .crystal-act.mem-raw-btn { height: auto; min-height: 44px; }
 	/* A Pending tile's headline is a 44px row. */

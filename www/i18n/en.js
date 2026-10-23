@@ -730,7 +730,7 @@
 	'models.row_own_help':         'Billed to your own {provider} account; never touches your Daimond balance.',
 	// What a row says about its key. The symbol in front is added by the code.
 	'models.sealed':               'sealed',
-	'models.key_set':              'key set',
+	'models.key_set':              'Key set',
 	'models.no_key':               'no key',
 	'models.connecting':           'connecting…',
 	'models.no_credits':           'no credits',

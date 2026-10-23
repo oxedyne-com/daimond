@@ -3856,7 +3856,7 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .models-prov .models-prov-name { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 7px; }
 .models-nm  { white-space: nowrap; }
 /* A balance is a fact about the row, not a status, so it rides on the name. */
-.models-bal { font-family: var(--font-mono); font-weight: 400; font-size: var(--fs-2xs); color: var(--text-primary); white-space: nowrap; }
+.models-bal { font-family: var(--font-mono); font-weight: 400; font-size: var(--fs-2xs); color: var(--text-secondary); white-space: nowrap; }	/* his pick's .mmv-fig ink (MODELS-EYE round 4) */
 /* Whose machine actually runs it. Subdued, and never the headline: the user
    bought Daimond credits, not an OpenRouter account -- but they are still owed
    the name of the company their words are sent to. */

@@ -1192,7 +1192,7 @@
 	'models.row_paid_help': 'Gasta seu saldo Daimond; o navegador chama {provider} com uma chave própria.',
 	'models.row_own_help': 'Cobrado na sua própria conta {provider}; nunca toca seu saldo Daimond.',
 	'models.sealed': 'selada',
-	'models.key_set': 'chave definida',
+	'models.key_set': 'Chave definida',
 	'models.no_key': 'sem chave',
 	'models.connecting': 'conectando…',
 	'models.no_credits': 'sem créditos',

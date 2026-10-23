@@ -1193,7 +1193,7 @@
 	'models.row_paid_help': 'Gasta tu saldo de Daimond; el navegador llama a {provider} con una clave propia.',
 	'models.row_own_help': 'Se factura a tu propia cuenta de {provider}; nunca toca tu saldo de Daimond.',
 	'models.sealed': 'sellada',
-	'models.key_set': 'clave puesta',
+	'models.key_set': 'Clave puesta',
 	'models.no_key': 'sin clave',
 	'models.connecting': 'conectando…',
 	'models.no_credits': 'sin créditos',

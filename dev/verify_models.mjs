@@ -1200,7 +1200,9 @@ const heads = await p.evaluate(() => {
 	const banned = [t('models.key_set'), t('models.no_key'), t('models.count.other', { n: 2 })];
 	document.querySelectorAll('.models-prov-head').forEach(h => {
 		const extra = [...h.children].filter(c => !/^(models-caret|models-prov-name|models-bal)$/.test(c.className));
-		const txt = h.textContent;
+		// The balance spot may say "Key set" for a key with no figure (his pick, var_va_rest_end_desk,
+		// MODELS-EYE); outside it the key state and the count stay banned.
+		const txt = [...h.children].filter(c => c.className !== 'models-bal').map(c => c.textContent).join(' ');
 		if (extra.length || banned.some(b => b && txt.includes(b))) bad.push(txt.replace(/\s+/g, ' ').trim());
 	});
 	return { n: document.querySelectorAll('.models-prov-head').length, bad };
