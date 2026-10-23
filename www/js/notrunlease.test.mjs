@@ -19,6 +19,9 @@
      D1-D6  daimond.js (lifted): the asker's runner, tile state, footer and Stop, in every
             frame of `endHandOffNotRun`, and on the other device
      W1-W2  daimond.js (lifted): the withdraw route (`runDispatchFallback` notRun), the same
+     L1-L7  I9-LOWS (rc review, 2026-10-22): an ending lease that expired unsettled reads
+            failed (LOW-1); this device's own live run lease does not outrank its own end
+            (LOW-2, peer.js and daimond.js); words cannot be said into an ending lease (LOW-4)
 
    Run: node www/js/notrunlease.test.mjs
    ============================================================ */
@@ -219,6 +222,63 @@ try {
 	const bad = frames.filter((f) => f.ranHere || f.runner === PHONE || RUNNER[f.st] || f.held);
 	check('W2   and no frame names the asker as the runner or holds it for Stop', frames.length >= 3 && !bad.length, J(frames));
 } catch (e) { check('W the withdraw route lifts from daimond.js', false, String(e && e.stack || e)); }
+
+// ── L: I9-LOWS ──
+{
+	// LOW-1: the asker's tab died between the ending take and its settle. The claim drains
+	// at its deadline; past it the end never finished, so the tile reads failed, [Run here].
+	const ph = loadPeer(), door = makeDoor();
+	await ph.DaimondLease.take(TID, { holder: PHONE, ts: NOW, intent: 'end' }, door, clock);
+	const rec = ph.DaimondLease.record(TID);
+	const late = Number(rec.expiry) + 1;
+	const s1 = ph.DaimondPeer.uiState(turn(), rec, null, PHONE, late, null, false);
+	check('L1 an ending lease past its deadline, unsettled, reads failed, not ending', s1 === 'failed', J([s1, rec]));
+	const s2 = ph.DaimondPeer.uiState(turn(), rec, null, PHONE, NOW, null, false);
+	check('L2   while it is live it still reads ending', s2 === 'ending', s2);
+	await ph.DaimondPeer.settleLease('turn', TID, PHONE, 'done', door, clock);
+	await ph.DaimondPeer.settleLease('turn', TID, PHONE, 'released', door, clock);
+	const rs = ph.DaimondLease.record(TID);
+	const s3 = ph.DaimondPeer.uiState(turn(), rs, null, PHONE, Number(rs.expiry || 0) + 3600000, null, false);
+	check('L3   and settled, it reads ending however late', s3 === 'ending', J([s3, rs]));
+}
+{
+	// LOW-2 in peer.js: this device's own live run claim (a reload left it) and its own end.
+	const ph = loadPeer(), door = makeDoor();
+	await ph.DaimondLease.take(TID, { holder: PHONE, ts: NOW }, door, clock);
+	const own = ph.DaimondLease.record(TID);
+	const s1 = ph.DaimondPeer.uiState(turn(), own, null, PHONE, NOW, null, 'end');
+	check('L4 ending it here over its own live run claim reads ending, not claimed', s1 === 'ending', J([s1, own]));
+	const dk = loadPeer(), d2 = makeDoor();
+	await dk.DaimondLease.take(TID, { holder: DESK, ts: NOW }, d2, clock);
+	const s2 = ph.DaimondPeer.uiState(turn(), dk.DaimondLease.record(TID), null, PHONE, NOW, null, 'end');
+	check('L5   a foreign live run still says the rest', s2 === 'claimed', s2);
+}
+try {
+	// LOW-2 in daimond.js: `turnRunnerId` names only a foreign holder while this device ends it.
+	const phW = loadPeer(), door = makeDoor();
+	await phW.DaimondLease.take(TID, { holder: PHONE, ts: NOW }, door, clock);
+	const m = turn();
+	const chat = { id: 'c-l2', messages: [{ role: 'user', content: 'go', iturn: TID }, m] };
+	const frames = [];
+	let A = null;
+	const look = (where) => frames.push({ where, runner: A.turnRunnerId(TID), st: A.peerUiStateFor(m) });
+	A = device(phW, PHONE, { syncCas: () => door,
+		stub: { answerUnhanded: (ch, tid) => { look('before the row'); ch.messages.push({ role: 'assistant', why: 'notrun', iturn: tid }); } } });
+	const realTake = phW.DaimondLease.take;
+	phW.DaimondLease.take = async (tid, o, cas, now) => { look('before the take'); const r = await realTake(tid, o, cas, now); look('after the take'); return r; };
+	await A.endHandOffNotRun(chat, m, 'refused');
+	phW.DaimondLease.take = realTake;
+	const bad = frames.filter((f) => f.runner === PHONE || RUNNER[f.st]);
+	check('L6 over its own live run claim, no frame of its end names the asker as the runner',
+		frames.length >= 3 && !bad.length, J(bad.length ? bad : frames));
+} catch (e) { check('L6 the ending frames lift from daimond.js', false, String(e && e.stack || e)); }
+{
+	// LOW-4: a turn held only to end it can hear nothing.
+	const ph = loadPeer(), door = makeDoor();
+	await ph.DaimondLease.take(TID, { holder: PHONE, ts: NOW, intent: 'end' }, door, clock);
+	const r = await ph.DaimondLease.say(TID, { id: 's1', text: 'and also' }, door, clock);
+	check('L7 words said into an ending lease are refused: not running', !!r && !r.ok && r.why === 'not_running', J(r));
+}
 
 console.log('\n' + (checks - failures) + ' of ' + checks + ' checks pass');
 process.exit(failures ? 1 : 0);

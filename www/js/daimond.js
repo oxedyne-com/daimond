@@ -30747,9 +30747,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var id = String(tid || '');
 		if (!id) return '';
 		try {
-			// A lease held only to end the turn names nobody (`DaimondPeer.endingLease`).
+			// A lease held only to end the turn names nobody (`DaimondPeer.endingLease`). While
+			// this device ends it, only a foreign holder is a runner: its own run claim left
+			// live (a reload) is not, as no run of the turn is under way here (I9-LOWS LOW-2).
 			var h = (window.DaimondLease && DaimondLease.holder) ? DaimondLease.holder(id) : null;
-			if (h) return String(h);
+			if (h && !(_localEnding[id] && String(h) === String(selfDeviceId() || ''))) return String(h);
 		} catch (e) { /* no lease view: only this tab's own run is known */ }
 		return (_localRecovering[id] && !_localEnding[id]) ? String(selfDeviceId() || '') : '';
 	}

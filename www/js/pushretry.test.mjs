@@ -30,6 +30,8 @@
         mailbox keeps moving; once it stops, the owed parcel lands.
      D. A pull on another trigger lands first: the owed parcel goes
         on the next push.
+     E. A and B at pins 0 and 0.9999: it lands within 6 s of the
+        release (red at pin 0 on 4c94152fd, a count-bound read window).
 
    A-D fail on the sync.js before the fix, where nothing retries:
      SYNC_JS=<d3283a04's sync.js> node www/js/pushretry.test.mjs
@@ -39,15 +41,17 @@
    wire's ladder to UNSENT_WIRE_MAX_MS, not the conflict's 8 s, and a
    device the browser knows is offline sends nothing until `online`.
 
-     W. owed, then every content pull fails for an hour: about twenty
-        GETs, not 450, and the gap grows to 300 s +-50%.
+     W. owed, then every content pull fails for an hour: about thirty
+        GETs, not 450 (since SYNC-READ-TIME, 2026-10-23, the first
+        minute reads at the 4 s cadence), and the gap grows to 300 s +-50%.
      O. owed and offline: no request at all, and `online` starts it.
 
    R, S (CASE 1, 2026-09-25): owed work whose read failed waits on a read.
 
      R. the runner's answer is refused and its pull fails for 15 s while it keeps
         pushing: no POST until a read lands, and it lands within the read cadence
-        (4 s x1.5) of the release, not the wire's 9-17 s.
+        (4 s x1.5) of the release, not the wire's 9-17 s. At pins 0.9999
+        and 0 (red at pin 0 on 4c94152fd).
      S. a pull on another trigger lands between two retries: sent at once.
 
    S5, S6 (R3 sync QA, 2026-09-24): work is owed from the moment a push
@@ -79,7 +83,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { webcrypto } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -183,10 +187,9 @@ function makeTab() {
 		applySync: async () => ({}),
 	};
 	win.DaimondCloud = {
-		sha256: async (s) => {
-			const d = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-			return Array.from(new Uint8Array(d)).map((b) => ('0' + b.toString(16)).slice(-2)).join('');
-		},
+		// On the event loop, not WebCrypto's threadpool, so `quiet()` sees the page's every
+		// await settle: the same hex as `subtle.digest`, and no real-clock window to lose.
+		sha256: async (s) => createHash('sha256').update(s).digest('hex'),
 	};
 
 	// A virtual `Date` alongside the virtual timers (F-S5-5 / R): `holdUntil` is
@@ -276,6 +279,7 @@ async function runnerBehindThePhone() {
 
 console.log('\nA. the pull cannot land: the refused push is owed, and a retry sends no parcel\n');
 const a = await runnerBehindThePhone();
+pinJitter(a.tab, 0.5);		// the ladder's, not the dice's: PIN 0 and 0.9999 are stated in E
 {
 	const { tab, S } = a;
 	check('A0. the runner is set up: one push landed, then the phone moved the mailbox on',
@@ -302,8 +306,9 @@ console.log('\nB. the pull lands: the owed parcel is committed with no further c
 	const { tab, S } = a;
 	tab.withhold = false;
 	// Longer than the widest step the ladder can have reached. A's twenty seconds of
-	// failed pulls climb the WIRE's ladder (S2), whose fifth step is 16 s and sixth
-	// 32 s, so the retry already armed is due within 32 s x 1.5 of A's end.
+	// failed reads are inside the read window (OUTAGE_READ_MS, SYNC-READ-TIME), where no
+	// step passes UNSENT_READ_MAX_MS, so the retry already armed is due within 4 s of A's
+	// end at this pin, and within 6 s at any.
 	await advance(tab, 60000);
 	check('B1. THE RUNNER\'S ANSWER LANDS, with nothing changed since the refusal',
 		landed(tab) === 2 && holds(tab, 'runner answer'),
@@ -364,6 +369,28 @@ async function owed() {
 	return { tab, S };
 }
 
+console.log('\nE. A and B stated at the dice\'s two ends: the read waits are bounded by time\n');
+for (const pin of [0, 0.9999]) {
+	// At PIN 0 the shortest waits spend tries fastest; a count bound ran out in 13.5 s and
+	// left the next read on the wire's 128 s rung. Bounded by time, A's twenty seconds are
+	// inside the window at every pin, and the read after the release comes within
+	// UNSENT_READ_MAX_MS x 1.5.
+	const { tab, S } = await runnerBehindThePhone();
+	pinJitter(tab, pin);
+	tab.parcel = { v: 3, chats: [], note: 'runner answer' };
+	tab.withhold = true;
+	await S.push();
+	await quiet(tab);
+	await advance(tab, 20000);
+	tab.withhold = false;
+	const tRel = tab.vnow;
+	await advance(tab, 6000);
+	const landedAt = landed(tab) === 2 ? tab.postAt[tab.postAt.length - 1] - tRel : -1;
+	check('E1 pin ' + pin + '. the owed parcel lands within 6 s of the release',
+		holds(tab, 'runner answer') && landedAt >= 0 && landedAt <= 6000,
+		'landed ' + (landedAt / 1000) + ' s after the release; ' + JSON.stringify(tab.posts.slice(-2)));
+}
+
 console.log('\nW. owed, then every content pull fails on the wire for an hour (S2)\n');
 {
 	const { tab, S } = await owed();
@@ -372,7 +399,9 @@ console.log('\nW. owed, then every content pull fails on the wire for an hour (S
 	await advance(tab, 3600000);
 	const at = tab.getAt.slice(g0);
 	const gp = gaps(at);
-	check('W1. an hour of failed pulls costs about twenty GETs, not one every 8 s', at.length <= 20,
+	// The read window's fifteen at mid jitter (OUTAGE_READ_MS / UNSENT_READ_MAX_MS), then
+	// the wire's ladder from the rung the tries reached, to its ceiling: about thirty.
+	check('W1. an hour of failed pulls costs about thirty GETs, not one every 8 s', at.length <= 30,
 		at.length + ' GETs in 60 min (450 at the old 8 s ceiling)');
 	check('W2. the gap grows to the wire\'s ceiling, 300 s', gp.length > 0 && gp[gp.length - 1] === 300000,
 		'last gaps ' + gp.slice(-3).map((g) => g / 1000 + 's').join(', '));
@@ -587,26 +616,28 @@ console.log('\nM. owed, then the pulls land but will not merge until the re-pull
 }
 
 console.log('\nR. CASE 1: owed on a read that fails for 15 s, while the runner keeps pushing\n');
-{
+for (const pin of [0.9999, 0]) {
 	// The runner's answer, refused behind the phone's push, with the content pull failing:
-	// verify_handoff_slowparcel CASE 1. Every wait at its longest (x1.5), the worst case.
+	// verify_handoff_slowparcel CASE 1. The read cadence is bounded by time, so 0.9999 is
+	// the longest wait inside the window, the worst case for landing after the release;
+	// PIN 0 is the worst case for a count bound, which this once was, and is stated too.
 	const { tab, S } = await owed();
-	pinJitter(tab, 0.9999);
+	pinJitter(tab, pin);
 	const p0 = tab.posts.length, g0 = tab.gets;
 	// The runner's flush and the store's own saves keep asking for pushes meanwhile.
 	for (let i = 0; i < 6; i++) { await S.push(); await advance(tab, 300); }
-	check('R1. no parcel is sent over a base a 409 proved stale: those pushes read instead',
+	check('R1 pin ' + pin + '. no parcel is sent over a base a 409 proved stale: those pushes read instead',
 		tab.posts.length === p0 && tab.gets > g0, (tab.posts.length - p0) + ' POST(s), ' + (tab.gets - g0) + ' GET(s)');
 	await advance(tab, 15000 - 1800);
 	const gRel = tab.gets, tRel = tab.vnow;
 	tab.withhold = false;			// the pull is let through, 15 s in
 	await advance(tab, 8000);
 	const landedAt = landed(tab) === 2 ? tab.postAt[tab.postAt.length - 1] - tRel : -1;
-	check('R2. the owed parcel lands within the read cadence of the release, not a wire backoff',
+	check('R2 pin ' + pin + '. the owed parcel lands within the read cadence of the release, not a wire backoff',
 		holds(tab, 'runner answer') && landedAt >= 0 && landedAt <= 6000,
 		'landed ' + (landedAt / 1000) + ' s after the release; ' + (tab.gets - g0) + ' GETs, '
 		+ (tab.posts.length - p0) + ' POST(s) in all');
-	check('R3. and it took one POST once the read landed', tab.posts.length - p0 === 1, JSON.stringify(tab.posts.slice(p0)));
+	check('R3 pin ' + pin + '. and it took one POST once the read landed', tab.posts.length - p0 === 1, JSON.stringify(tab.posts.slice(p0)));
 }
 
 console.log('\nS. owed on a failed read: a pull on another trigger sends it at once, not after the debounce\n');

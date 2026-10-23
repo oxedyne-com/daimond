@@ -117,8 +117,8 @@
 	var UNSENT_RETRY_MAX_MS  = 60000;	// Its backoff never grows past this after a conflict, and has no try limit (was 8 s: D110).
 	var UNSENT_RETRY_TRIES   = 2;	// An owed retry's conflict tries: the one it sends, and one rebased on the pull that answers it.
 	var UNSENT_WIRE_MAX_MS   = 300000;	// Nor past this after any other failure. See armUnsent.
-	var UNSENT_READ_MAX_MS   = 4000;	// Owed work waiting on a read is read at least this often (EXPEDITE_PULL_MS)...
-	var UNSENT_READ_TRIES    = 8;		// ...for its first this-many tries, then on the wire's ladder. See armUnsent.
+	var UNSENT_READ_MAX_MS   = 4000;	// Owed work waiting on a read, and a lost wake channel, ask at least this often (EXPEDITE_PULL_MS)...
+	var OUTAGE_READ_MS       = 60000;	// ...for this long after the first failure, then on their own ladders. See armUnsent.
 	var RETRY_AFTER_MAX_MS   = 3600000;	// A gateway's Retry-After past this is read as this.
 	var FLUSH_MAX_ROUNDS     = 6;	// Bound flush()'s push-and-confirm loop.
 	var FLUSH_RETRY_MS       = 300;	// Wait between flush() rounds while a push is in flight elsewhere.
@@ -417,6 +417,7 @@
 	var unsentDue         = 0;	// when the armed retry fires, so a Retry-After can move it
 	var unsentFailVersion = 0;	// the mailbox version when an owed push last failed
 	var unsentTries       = 0;
+	var readSince         = 0;	// When owed work's first read failed, or 0. See armUnsent.
 	var failKind          = '';	// 'conflict', 'merge', 'read', or anything else: which ladder the retry climbs. See armUnsent.
 	// OWED WORK THAT WAITS ON A READ (CASE 1, 2026-09-25). A 409 says this device's base is
 	// stale, and when the pull that would rebase it fails, every push until a pull lands is
@@ -549,6 +550,7 @@
 	var wakeFails   = 0;		// Sockets that closed without ever opening.
 	var wakeWorked  = false;	// A socket has opened at least once on this page.
 	var wakeBackoff = WAKE_RETRY_MIN_MS;
+	var wakeLostAt  = 0;		// When the channel was lost, or 0. See wakeWait.
 	var wakePolling = false;	// A park loop is running.
 	var wakeProbing = false;	// The one-shot park that decides the transport is out.
 	var wakeGen     = 0;		// Bumped on teardown, so an in-flight loop stands down.
@@ -1223,13 +1225,22 @@
 	/// re-pull gave up on: the long ceiling, from the first wait.
 	///
 	/// 'READ' IS THE MAILBOX THAT COULD NOT BE READ (CASE 1, 2026-09-25). A failed read
-	/// costs a GET and no parcel, and the work cannot move until one lands, so its first
-	/// `UNSENT_READ_TRIES` are at most `UNSENT_READ_MAX_MS` apart: the expedite cadence a
-	/// hand-off's sender already pulls at, for the half-minute a hand-off's answer is
-	/// awaited. Then the wire's ladder, so an hour of failed reads still costs about twenty
-	/// GETs. It was the wire's ladder from the first failure, and a runner whose pull was
+	/// costs a GET and no parcel, and the work cannot move until one lands, so for
+	/// `OUTAGE_READ_MS` from the first read that failed (`readSince`) its tries are at most
+	/// `UNSENT_READ_MAX_MS` apart: the expedite cadence a hand-off's sender already pulls
+	/// at. Then the wire's ladder, so an hour of failed reads costs about thirty GETs: at
+	/// most fifteen in the window at mid jitter, and the climb to the wire's ceiling after
+	/// it. It was the wire's ladder from the first failure, and a runner whose pull was
 	/// withheld 15 s had climbed to a 9-17 s wait by the time it could read: its answer
 	/// came home at +33 s against CASE 1's 40 s.
+	///
+	/// THE WINDOW IS TIME, NOT TRIES (SYNC-READ-TIME, 2026-10-23). It was the first eight
+	/// tries, which span 13.5-40.5 s by the jitter, so after a 30 s gateway restart most
+	/// devices with owed work had reached the 128-384 s rung before the gateway was back.
+	/// A deploy's outage is measured at 2-11 s (79 restarts, Sep-Oct 2026); the window is
+	/// five times the longest. So after an outage of up to a minute, owed work reads
+	/// within 6 s (`UNSENT_READ_MAX_MS` x 1.5) of the gateway's return, whatever the dice.
+	/// `paid()` and a link coming back (`onOnline`) start the window afresh.
 	///
 	/// THE CEILING IS WHAT FAILED LAST. A retry armed on the wire's ceiling (a partition, a
 	/// link down) and then beaten by a conflict on another trigger was left where it was:
@@ -1243,8 +1254,9 @@
 		if (!unsent) return;
 		var now   = Date.now();
 		var floor = Math.max(0, holdUntil - now);
+		if (failKind === 'read' && !readSince) readSince = now;
 		var cap   = (failKind === 'conflict') ? UNSENT_RETRY_MAX_MS
-			: (failKind === 'read' && unsentTries < UNSENT_READ_TRIES) ? UNSENT_READ_MAX_MS
+			: (failKind === 'read' && now - readSince < OUTAGE_READ_MS) ? UNSENT_READ_MAX_MS
 			: UNSENT_WIRE_MAX_MS;
 		var wait  = 0;
 		// Armed beyond the longest jittered wait this kind's ceiling allows.
@@ -1290,6 +1302,7 @@
 		if (unsent && unsentTries) diag('push retry settled', 'after ' + unsentTries + ' tries');
 		unsent      = false;
 		unsentTries = 0;
+		readSince   = 0;
 		failKind    = '';
 		readOwed    = false;
 		if (unsentTimer) { clearTimeout(unsentTimer); unsentTimer = null; }
@@ -1306,8 +1319,10 @@
 	/// The link is back. A retry that stood down while there was no link (`retryUnsent`)
 	/// re-arms at its own due time; one already armed is left alone. A link that flaps
 	/// while the upload keeps failing must not restart the ladder at its 1 s bottom on
-	/// every flap -- only `paid()` resets it.
+	/// every flap -- only `paid()` resets it. The read window does start afresh: a link
+	/// that was down is a new outage, and the gateway is read promptly when it answers.
 	function onOnline() {
+		readSince = 0;
 		if (!unsent || unsentTimer) return;
 		var wait = Math.max(UNSENT_RETRY_MIN_MS, unsentDue - Date.now());
 		unsentDue = Date.now() + wait;
@@ -4243,6 +4258,7 @@
 				return;
 			}
 			wakeBackoff = WAKE_RETRY_MIN_MS;
+			wakeLostAt  = 0;
 			wakeMode    = 'ws';
 			wakeSocket();
 		} finally {
@@ -4281,6 +4297,7 @@
 			wakeFails   = 0;
 			wakeWorked  = true;
 			wakeBackoff = WAKE_RETRY_MIN_MS;
+			wakeLostAt  = 0;
 			log('wake channel open (ws)');
 			// Frames stored while there was no socket were tapped to nobody: read once.
 			if (Object.keys(progWatch).length) progressTap();
@@ -4347,6 +4364,7 @@
 	/// The next failure waits the first rung again. At most one attempt per pull answered.
 	function wakeGatewayBack() {
 		wakeBackoff = WAKE_RETRY_MIN_MS;
+		wakeLostAt  = 0;
 		if (!wakeTimer || wakeSock) return;
 		clearTimeout(wakeTimer);
 		wakeTimer = null;
@@ -4356,10 +4374,24 @@
 	/// Come back to the socket after a pause that grows, with jitter on it.
 	function wakeRetry() {
 		if (wakeTimer || !wakeWanted()) return;
-		var wait = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff);
+		var wait = wakeWait();
+		wakeTimer = setTimeout(function () { wakeTimer = null; wakeStart(); }, wait);
+	}
+
+	/// The next jittered wait of a lost channel, growing. THE SAME WINDOW AS OWED WORK'S
+	/// READS (SYNC-READ-TIME, 2026-10-23): for `OUTAGE_READ_MS` since the channel was lost
+	/// (`wakeLostAt`) no wait passes `UNSENT_READ_MAX_MS`, then the ladder climbs on to
+	/// `WAKE_RETRY_MAX_MS`. The park loop is a device's only reader while it parks, and at
+	/// 30 s jittered to 45 s it heard a gateway back from a 30 s restart up to 45 s late,
+	/// with or without owed work. One helper for the socket's retry and both park-loop
+	/// sleeps, which were three copies of the ladder.
+	function wakeWait() {
+		var now = Date.now();
+		if (!wakeLostAt) wakeLostAt = now;
+		var cap  = (now - wakeLostAt < OUTAGE_READ_MS) ? UNSENT_READ_MAX_MS : WAKE_RETRY_MAX_MS;
+		var wait = Math.min(cap, wakeBackoff);
 		wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
-		var jittered = wait * (0.5 + Math.random());
-		wakeTimer = setTimeout(function () { wakeTimer = null; wakeStart(); }, jittered);
+		return wait * (0.5 + Math.random());
 	}
 
 	/// Park a request at the gateway naming the version this device holds, and
@@ -4410,8 +4442,7 @@
 						if (prog && Object.keys(progWatch).length) progressTap();
 						continue;
 					}
-					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
-					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
+					await wakeSleep(wakeWait());
 					parkFresh = true;		// the next park is a reconnect
 					continue;
 				}
@@ -4445,8 +4476,7 @@
 					// only a renewal that failed comes back refused -- at which point
 					// `wakeWanted()` is false and the loop below ends rather than
 					// parking against a door that is shut.
-					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
-					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
+					await wakeSleep(wakeWait());
 					parkFresh = true;		// the next park is a reconnect
 					continue;
 				}
@@ -4484,6 +4514,7 @@
 					break;
 				}
 				wakeBackoff = WAKE_RETRY_MIN_MS;
+				wakeLostAt  = 0;
 				// The news itself was acted on above, before the generation was
 				// consulted, because it is true of the account either way.
 				// However fast that answered, the next one is not immediate.
@@ -5317,6 +5348,7 @@
 			wakeFails   = 0;
 			wakeWorked  = false;
 			wakeBackoff = WAKE_RETRY_MIN_MS;
+			wakeLostAt  = 0;
 			if (wakeMode !== 'off') wakeStart();
 			return wakeMode;
 		},

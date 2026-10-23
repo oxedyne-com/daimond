@@ -1679,8 +1679,14 @@
 		var n = now == null ? Date.now() : now;
 		// ENDED, NOT RUN (SUHT-I9). Before any report: a runner's hand-back report is what
 		// sends a turn here to be ended, and read first it drew "<asker> is picking this up".
-		// Its own end before the claim lands reads so too, unless a live run's lease says otherwise.
-		if (endingLease(lease) || (localRun === 'end' && !liveLease(lease, n))) return 'ending';
+		// Its own end before the claim lands reads so too, unless ANOTHER device's live lease
+		// says otherwise: its own run claim left live (a reload) is not a run, as the work
+		// claim (`claimTurnHere`) holds no run of the turn here while it ends it (I9-LOWS LOW-2).
+		// An ending lease reads so only while the end is in force, live or settled: one past
+		// its deadline unsettled is an end that never finished, so it falls through to
+		// failed and [Run here], as the updater's `leaseFree` already reads it (LOW-1).
+		if (endingLease(lease) && (liveLease(lease, n) || settledLease(lease))) return 'ending';
+		if (localRun === 'end' && !(liveLease(lease, n) && String(lease.holder) !== String(selfId))) return 'ending';
 		// A report settles it either way, and outlives the lease.
 		if (report && report.t === 'report') {
 			if (report.status === 'done')   return 'done';
@@ -4628,7 +4634,9 @@
 			if (snap.unread) return { ok: false, why: 'unread' };
 			var now = leaseNow(nowFn);
 			var cur = snap.leases[tid];
-			if (!cur || isMark(cur) || !liveLease(cur, now) || (cur.mode !== 'claimed' && cur.mode !== 'running')) {
+			// A turn held only to end it can hear nothing (I9-LOWS LOW-4).
+			if (!cur || isMark(cur) || !liveLease(cur, now) || endingLease(cur)
+				|| (cur.mode !== 'claimed' && cur.mode !== 'running')) {
 				leaseWrite(mergeLeases(_leases, snap.leases, now));
 				return { ok: false, why: 'not_running' };
 			}
