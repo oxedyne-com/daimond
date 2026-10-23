@@ -33341,7 +33341,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// it was asked; only a hand-off that declines runs it here, through `runSteer`.
 		// EVERY RETRY IS ROUTED (UNBLOCK-1 QFOLLOW). The tile's Retry and an edit's resend ran
 		// here, whatever the switch said; the switch decides where a retry runs, as at Send.
-		return retryRouted(chat, text, nmid, lost, ropts && ropts.onStart);
+		return retryRouted(chat, text, nmid, lost, ropts && ropts.onStart, ropts ? ropts.drawn : undefined);
 	}
 
 	/// A retry ASKED AGAIN WHERE IT WAS ASKED: the turn goes the way a send goes, so a phone
@@ -33368,8 +33368,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// ONE PATH FOR EVERY RETRY (rulings l.16; SUHT-R F2), a chat's and a daimon's alike. A lost
 	/// turn's Retry run here is fenced (`runRetryHere`) whatever runs it; a daimon declined by the
 	/// hand-off steers here (`askAgain`), under the retry's own id, as its send does.
-	async function retryRouted(chat, text, nmid, lost, onStart) {
-		if (await maybeAutoDispatch(chat, text, '', nmid)) return true;
+	/// `drawn` is the runner the switch drew at the press, where the press waited before it got
+	/// here (an edit's resend); undefined reads the switch now, as the tile's Retry does.
+	async function retryRouted(chat, text, nmid, lost, onStart, drawn) {
+		if (await maybeAutoDispatch(chat, text, '', nmid, undefined, drawn)) return true;
 		if (lost) return runRetryHere(chat, text, nmid);
 		// An edit's resend holds its press until the turn is under way, as a send does.
 		return askAgain(chat, text, { person: true, mid: nmid, onStart: onStart });
@@ -41178,6 +41180,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!text) return;
 		// The conversation this press is for, whichever is on screen by the time it goes.
 		var target = current;
+		// `drawn`: the runner the switch drew at this press (`seatDrawnRunner`), taken before the
+		// wait below, where a send in flight can outlast the runner and redraw the switch Here
+		// (rulings l.19; review_suhtr_delta D2).
+		var drawn = target ? seatDrawnRunner(target) : '';
 		if (target && target._sending) {
 			// The composer's own second press does nothing: its control reads "Sending…".
 			if (!own) return;
@@ -41190,9 +41196,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// before `conciseText` dresses it, or nothing when another door brought the words.
 		// `handed` is set once the release is passed to a turn that has yet to start, which
 		// releases it itself.
-		// `drawn`: the runner the switch drew at this press, before any wait (`seatDrawnRunner`).
 		var press = { words: own ? '' : text, release: holdSend(target), handed: false,
-			drawn: target ? seatDrawnRunner(target) : '' };
+			drawn: drawn };
 		try { await sendPressed(target, text, press); }
 		finally { if (!press.handed) press.release(); }
 	}
@@ -41341,7 +41346,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (replacing && current !== chat) return;
 		if (replacing) {
 			chat._editing = null;
-			var went = retryTurn(chat, replacing, text, { onStart: press.release });
+			// The switch as it was drawn at the press, not after the load and the hold's read above
+			// (rulings l.19; review_suhtr_delta D1).
+			var went = retryTurn(chat, replacing, text, { onStart: press.release, drawn: press.drawn });
 			if (!went) return;
 			giveUpSent(chat, words);
 			// A turn asked again holds the press until it is under way or ends, as a new turn

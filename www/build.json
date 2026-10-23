@@ -1,1 +1,1 @@
-{"build":"ff352f9b1f7d","note":"After a long gateway outage every device catches up within seconds, and a turn ended here never reads as run."}
+{"build":"fe96d8d903dd","note":"Editing a message and resending it, or sending while a send is in flight, now runs where the switch showed at the press."}

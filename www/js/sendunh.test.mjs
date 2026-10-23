@@ -89,6 +89,12 @@
    each run Here. KRd: drawn at the press, a presence event during the
    read, declined: "not run". Red on cb1befee3 (KRa-c).
    Break: sticky (the runner kept until Here is pressed).
+
+   KRe/KRf (review_suhtr_delta D1, D2; rulings §1 l.19): the snapshot reaches the
+   send through every wait of the press, on the real sendUserMessage and
+   sendPressed: an edit's resend across the transcript load (KRe), and a press
+   queued behind a send in flight (KRf). Red on df6fda35a.
+   Breaks: editdrawn | waitdrawn.
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -116,6 +122,8 @@ const BREAKS = {
 	models:   ["if (cause === 'models') { await endHandOffNotRun(chat, m,", "if (cause === 'models') { await recoverOneLocally(chat, m,"],
 	onreturn: ['else await endHandOffNotRun(jobs[k].chat, jobs[k].m,', 'else await recoverOneLocally(jobs[k].chat, jobs[k].m,'],
 	stepaway: ['if (m.stepAway) { await recoverOneLocally(chat, m); return; }', ''],
+	editdrawn: ['retryTurn(chat, replacing, text, { onStart: press.release, drawn: press.drawn })', 'retryTurn(chat, replacing, text, { onStart: press.release })'],
+	waitdrawn: ['drawn: drawn };', "drawn: target ? seatDrawnRunner(target) : '' };"],
 	refwhy:   ["'the runner refused it before the run' + refWhy", "'the runner refused it before the run'"],
 	// The sticky store killrunner found: the runner last drawn pressed, kept until Here is pressed.
 	sticky:   [["if (shown === undefined) { try { shown = seatDrawnRunner(chat); }",
@@ -176,7 +184,7 @@ function el(tag) {
 function buttons(e, out = []) { if (e.tag === 'button') out.push(e); e.children.forEach((c) => buttons(c, out)); return out; }
 
 // fault: 'unable' | 'transport' | 'build' | 'throw' | 'paused'
-function world(fault) {
+function world(fault, extra) {
 	const W = { ran: [], retried: [], routed: [], posted: 0, holds: 0, diags: [], settled: [], taken: [], lost: 0, logged: 0 };
 	const peer = {
 		autoDispatchDecision: () => ({ dispatch: true, peer: { deviceId: 'argonaut1' }, reason: 'nominee' }),
@@ -254,7 +262,7 @@ function world(fault) {
 		current: null,
 	};
 	env.window = env;
-	const have = NAMES.map((n) => [n, lift(n)]).filter((x) => x[1]);
+	const have = NAMES.concat(extra || []).map((n) => [n, lift(n)]).filter((x) => x[1]);
 	W.have = have.map((x) => x[0]);
 	const body = have.map((x) => x[1]).join('\n') + '\nreturn {' + have.map((x) => x[0] + ': ' + x[0]).join(', ') + '};';
 	const scope = new Proxy(env, {
@@ -367,8 +375,8 @@ async function main() {
 		verdict('D-' + fault, W, chat, 'd1', PROMPT);
 	}
 	// ── F1: the send-time read, under a deriving gateway ──
-	function readWorld(lands, shown, here) {
-		const W = world('none');
+	function readWorld(lands, shown, here, extra) {
+		const W = world('none', extra);
 		const e = W.env;
 		e.setTimeout = (fn, ms) => setTimeout(fn, ms === 2000 ? 0 : ms);	// the 2 s cap, at once
 		e.DaimondSync = { push: () => {}, presenceDerived: () => true,
@@ -423,8 +431,8 @@ async function main() {
 	// over a presence map the arm sets, and the REAL autoDispatchDecision decides. KRa/KRb: the runner drawn,
 	// then gone and redrawn plain Here; Send, then Retry, each run Here. KRc: the same, the read missed.
 	// KRd: drawn at the press, a presence event during the read redraws Here, declined: "not run" (F5).
-	function drawnWorld() {
-		const W = readWorld({}, false, false);
+	function drawnWorld(extra) {
+		const W = readWorld({}, false, false, extra);
 		const e = W.env;
 		const node = () => ({ hidden: false, textContent: '', title: '', dataset: {}, attrs: {},
 			setAttribute(k, v) { this.attrs[k] = v; } });
@@ -501,6 +509,71 @@ async function main() {
 		check('KRd the row names the declined runner', /runner argonaut was pressed and the election declined it/.test(
 			(chat.messages.find((m) => m.notRun) || { notRun: {} }).notRun.why || ''), rowsOf(chat));
 		verdict('KRd', W, chat, 'k2', PROMPT);
+	}
+	// ── KRe/KRf (review_suhtr_delta D1, D2; rulings §1 l.19): the press's snapshot reaches the send
+	// through every wait the press makes. The REAL sendUserMessage → sendPressed → (edit) retryTurn →
+	// retryRouted → maybeAutoDispatch, under the REAL switch. KRe: an edit's resend, the transcript
+	// loaded after the press, a presence event in that load redraws Here. KRf: a second door's press
+	// waits behind a send in flight, the runner gone in that wait. Each: drawn at the press, so the
+	// read that finds it gone ends "not run", never Here. Red on df6fda35a.
+	// Breaks: editdrawn (the edit drops the snapshot), waitdrawn (taken after the wait).
+	const SEND = ['sendUserMessage', 'sendPressed', 'holdSend', 'retryRouted', 'askAgain'];
+	function pressWorld() {
+		const W = drawnWorld(SEND);
+		const e = W.env;
+		Object.assign(e, { chatInput: { value: '' }, syncSendMode: () => {}, confirmHold: async () => {},
+			cfgReady: () => true, newChat: () => {}, startChat: () => {}, conciseText: (c, x) => x,
+			recoveringHere: () => false, sayIntoHere: () => false, enqueueMessage: (c, x) => { W.ran.push('queued:' + x); },
+			steerDiamondOf: () => null, diamondBusy: () => false, peerUiStateFor: () => '', answerAgain: () => { W.ran.push('answerAgain'); },
+			retryRouted: undefined });
+		e.DaimondModels = Object.assign({}, e.DaimondModels, { resolve: () => ({}) });
+		e.DaimondPeer.isAskAnswer = () => false;
+		return W;
+	}
+	const notRunRow = (chat) => chat.messages.find((m) => !!m.notRun) || null;
+	{
+		console.log('KRe: an edit resent, the runner drawn at the press, gone during the transcript load');
+		const W = pressWorld();
+		const chat = { id: 'c1', holds: [], _loaded: false, _editing: 'e0', messages: [
+			{ role: 'user', content: 'the old words', mid: 'e0', iturn: 'e0' },
+			{ role: 'assistant', content: 'an answer', mid: 'e0a', iturn: 'e0' }] };
+		W.env.current = chat;
+		check('KRe sendUserMessage, sendPressed, retryRouted lifted', SEND.every((n) => W.have.indexOf(n) >= 0), W.have.join());
+		W.redraw(W.BEATING);
+		const drew = W.drawsRunner();
+		W.env.loadChatMessages = async () => { W.redraw({}); };
+		W.env.chatInput.value = PROMPT;
+		try { await W.f.sendUserMessage(); } catch (e) { W.ran.push('threw ' + e); }
+		await settle();
+		check('KRe the switch drew the runner at the press and Here after the load', drew && W.drawsHere());
+		check('KRe the old turn is retracted', !chat.messages.some((m) => m.iturn === 'e0'), JSON.stringify(chat.messages.map((m) => m.mid)));
+		check('KRe not run here: the pressed runner is gone', W.ran.length === 0, JSON.stringify(W.ran));
+		const row = notRunRow(chat);
+		check('KRe one "not run" row names the declined runner', !!row && chat.messages.filter((m) => !!m.notRun).length === 1
+			&& /runner argonaut was pressed and the election declined it/.test(row.notRun.why || ''), rowsOf(chat));
+	}
+	{
+		console.log('KRf: a press waits behind a send in flight; the runner drawn at the press, gone in the wait');
+		const W = pressWorld();
+		const chat = { id: 'c1', holds: [], messages: [] };
+		W.env.current = chat;
+		W.redraw(W.BEATING);
+		const drew = W.drawsRunner();
+		const release = W.f.holdSend(chat);
+		const sent = W.f.sendUserMessage(PROMPT);
+		await settle();
+		W.redraw({});
+		const waited = W.ran.length === 0 && !chat.messages.length;
+		release();
+		try { await sent; } catch (e) { W.ran.push('threw ' + e); }
+		await settle();
+		check('KRf the press waited, and the switch drew Here after the wait', drew && waited && W.drawsHere());
+		check('KRf not run here: the pressed runner is gone', W.ran.length === 0, JSON.stringify(W.ran));
+		check('KRf one "not run" row names the declined runner', /runner argonaut was pressed and the election declined it/.test(
+			(notRunRow(chat) || { notRun: {} }).notRun.why || ''), rowsOf(chat));
+		const row = notRunRow(chat);
+		check('KRf the row is durable and drawn interrupted', !!row && row.interrupted === true && row._touched > 0
+			&& chat.messages.filter((m) => !!m.notRun).length === 1, rowsOf(chat));
 	}
 	{
 		console.log('F1-here: the read did not land, no runner pressed');

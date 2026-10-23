@@ -22,7 +22,11 @@
 /* R10 (D-20260929-03 r526 residual): the disclosure group's own muted, not
    its own -- the caret is the first thing inside `.models-prov-head` with
    real text, so its colour is what the row is measured by. */
-.models-caret     { width: 10px; color: var(--text-muted); }
+/* The caret sits in the same 8 px glyph column as an exception row's kind glyph, at the panel's
+   edge, so the provider's name starts on the section's text edge with the rows' names (x 50 at
+   1440, verify_consistency text-edge): the shared disclosure padding (skin-daylight) puts the
+   caret 4 px in, and a 10 px caret took the name 7 px past the edge. */
+.models-caret     { width: 7px; margin-left: -4px; color: var(--text-muted); }
 /* Drawn by the row's state, not typed (r569 gate, typed-glyph). */
 .models-caret::before { content: '\25B8'; }
 .models-prov-head[aria-expanded="true"] .models-caret::before { content: '\25BE'; }
@@ -106,7 +110,9 @@
 .models-exc-top { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-height: 32px; }
 /* The kind glyph sits inside the row, before the name, on every size, as his pick draws it
    (var_va_rest_desk, eye F3); it no longer hangs in the gutter. */
-.models-exc-top::before { flex: 0 0 auto; color: var(--text-muted); font-size: var(--fs-2xs); }
+/* One width for both glyphs: ◆ and ▪ are not the same width, so a chat row's name sat 4 px left
+   of a Diamond row's (verify_consistency text-edge, "Stopped survey" at x 46 against x 50). */
+.models-exc-top::before { flex: 0 0 8px; width: 8px; text-align: center; color: var(--text-muted); font-size: var(--fs-2xs); }
 .models-exc[data-kind="diamond"] .models-exc-top::before { content: '◆'; }
 .models-exc[data-kind="chat"] .models-exc-top::before { content: '▪'; }
 .models-exc-name {
