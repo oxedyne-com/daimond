@@ -52,6 +52,7 @@
 //! deferred; the main-thread async path here is sufficient for the
 //! first browser vertical.
 
+pub mod actor;
 pub mod app;
 pub mod ask;
 pub mod cloud;
@@ -59,6 +60,8 @@ pub mod deletes;
 pub mod doc;
 pub mod entry;
 pub mod hand;
+pub mod host;
+pub mod llm_fetch;
 pub mod diamond;
 pub mod mail;
 pub mod mailtls;
@@ -66,6 +69,7 @@ pub mod marks;
 pub mod ocr;
 pub mod office;
 pub mod opfs;
+pub mod store_opfs;
 pub mod pending;
 pub mod transcript;
 pub mod pty;
@@ -142,6 +146,14 @@ pub(crate) fn refusal(e: &JsValue) -> String {
 /// thenable and wraps a plain value, and a native `Promise` passes through as itself.
 pub(crate) fn settle_js<T: Into<JsValue>>(v: T) -> JsFuture {
     JsFuture::from(js_sys::Promise::resolve(&v.into()))
+}
+
+/// [`crate::engine::worker::deadline::held_by_person`] with each beat written to the page's
+/// console, where a run's log is read (`dev/verify_deletekeep.mjs`, U3a LV2).  The engine names
+/// no host, so the console is named here (GATE H3).
+pub(crate) async fn held_by_person<F: std::future::Future>(what: &str, wait: F) -> F::Output {
+    crate::engine::worker::deadline::held_by_person(what,
+        |line: &str| web_sys::console::log_1(&JsValue::from_str(line)), wait).await
 }
 
 /// Await what a `catch` import returned: a throw is the rejection, a value is settled as by

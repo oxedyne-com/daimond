@@ -701,6 +701,69 @@
 		return { ok: true };
 	}
 
+	// ── Approve a runner (R2d1) ────────────────────────────────
+	//
+	// A computer of his has joined as a PENDING runner with its Ed25519 device key
+	// (gateway runner_pair.rs). Approving it hands it the account: exactly what
+	// this passkey opens -- the identity bundle and its passphrase -- sealed in
+	// the wasm (S1, `seal_runner_bundle`) to that runner's key alone, and bound
+	// to its device id so a bundle lifted from one approval is refused by any
+	// other runner's keeper (R2d2).
+	//
+	// NO ASSERTION, NO APPROVAL. The PRF secret comes only from a user-verified
+	// assertion of the enrolled credential; without it nothing is opened, nothing
+	// is sealed and nothing is posted. The approval carries the sealed bytes and
+	// the hash handle of the credential that asserted (R2d2 pins it), never the
+	// plaintext, which lives only inside this call.
+
+	/// Approve pending runner `device`, whose device key is `pubkeyB64url`.
+	/// Resolves `{ ok:true }` or `{ ok:false, error }`.
+	async function approveRunner(device, pubkeyB64url) {
+		var r = record();
+		if (!r) return { ok: false, error: t('pending.runnerpair.no_passkey') };
+		var edPk;
+		try { edPk = b64urlDec(String(pubkeyB64url || '')); } catch (e) { edPk = null; }
+		if (!edPk || edPk.length !== 32 || !device) return { ok: false, error: t('pending.runnerpair.failed') };
+		if (!window.DaimondSeal || typeof DaimondSeal.sealRunnerBundle !== 'function') {
+			return { ok: false, error: t('pending.runnerpair.failed') };
+		}
+		var credId = b64urlDec(r.cred);
+		var salt   = (r.v === 1 && r.salt) ? b64dec(r.salt) : await prfSalt();
+		var got = await assertPrf(credId, salt);
+		if (!got || !got.prf) return { ok: false, error: t('passkey.err_runner_no_assertion') };
+		var opened = await openIdentity(got.prf, salt, r.blob);
+		if (!opened || !opened.pass) return { ok: false, error: t('passkey.err_wrong_identity') };
+		var bundle = opened.bundle || (window.DaimondIdentity && DaimondIdentity.exportBundle()) || null;
+		if (!bundle) return { ok: false, error: t('pending.runnerpair.failed') };
+		// The pins (R2d2) travel INSIDE the seal, so neither the gateway nor the runner's
+		// parent can name others: the passkey that asserted, and this approving device with
+		// the key it signs with (the account key). The keeper records them on first sight.
+		var handle = await handleFor(got.credId || credId);
+		var approver = (window.DaimondIdentity && typeof DaimondIdentity.deviceId === 'function')
+			? String(DaimondIdentity.deviceId() || '') : '';
+		var plain = utf8(JSON.stringify({ v: 1, kind: 'kimberlite-bundle', device: String(device),
+			bundle: bundle, pass: opened.pass,
+			pins: { passkeys: [handle], approver: { device: approver, key: String(bundle.pub || '') } } }));
+		opened.pass = null;
+		var sealed;
+		try { sealed = await DaimondSeal.sealRunnerBundle(edPk, plain); }
+		catch (e) { sealed = null; }
+		finally { plain.fill(0); }
+		if (!sealed) return { ok: false, error: t('pending.runnerpair.failed') };
+		try {
+			var resp = await DaimondGateway.gwFetch('/api/runner/pair/approve', {
+				method: 'POST',
+				headers: apiHeaders({ 'content-type': 'application/json' }),
+				credentials: 'same-origin',
+				body: JSON.stringify({ device: String(device), bundle: b64urlEnc(sealed), passkey: handle }),
+			});
+			if (!resp || !resp.ok) return { ok: false, error: t('pending.runnerpair.failed') };
+		} catch (e) {
+			return { ok: false, error: t('pending.runnerpair.failed') };
+		}
+		return { ok: true };
+	}
+
 	// ── Remove ─────────────────────────────────────────────────
 
 	/// Forget the enrolled passkey for this account: the local sealed blob AND the
@@ -743,6 +806,7 @@
 		adoptWithPasskey:   adoptWithPasskey,
 		canAdopt:           canAdopt,
 		reseal:             reseal,
+		approveRunner:      approveRunner,
 		remove:             remove,
 	};
 })();

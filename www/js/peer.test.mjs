@@ -692,6 +692,19 @@ async function main() {
 		&& opened9.deadline === T0 + phone.DaimondPeer.DISPATCH_DEADLINE_MS
 		&& opened9.dispatchedBy === 'devPHONE');
 
+	// THE FENCE RIDES THE ERRAND (R3c2): the absolute roots the Hand gets for the page,
+	// right after `scope`, so a runner holds the turn to them and works none out itself.
+	const fenceF = { rw: ['/home/u/work/diamonds/d1'], ro: ['/home/u/work/ref'], deny: ['/home/u/work/.daimond'], net: false };
+	const planF = phone.DaimondPeer.buildDispatch(dchat, {
+		turnId: 'turn-9', prompt: 'do the thing', scope: dchat.holds, fence: fenceF, dispatchedBy: 'devPHONE', now: T0 });
+	const errF = planF.errand(0), keysF = Object.keys(errF);
+	const openedF = await laptop.DaimondPeer.openEnvelope((await phone.DaimondPeer.sealForSelf(errF)).envelope);
+	check('FN1: buildDispatch carries the fence right after scope, and it survives seal and open',
+		keysF.indexOf('fence') === keysF.indexOf('scope') + 1 && planF.fields.fence === fenceF
+		&& JSON.stringify(openedF.fence) === JSON.stringify(fenceF), JSON.stringify(openedF.fence));
+	check('FN2: an errand built with no fence carries null, which a runner refuses',
+		phone.DaimondPeer.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p' }).fence === null);
+
 	// THE EFFORT A TURN RUNS WITH rides the errand (D-20261014-08), so a handed-off turn
 	// thinks as hard as the person asked when they sent it. '' is the model's own default.
 	const planE = phone.DaimondPeer.buildDispatch(dchat, {
@@ -1732,6 +1745,11 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 		check('workers: only known states with an id survive, named by id when unnamed',
 			JSON.stringify(odd) === JSON.stringify([{ id: 'b', name: 'b', status: 'queued' }, { id: 'c', name: 'c', status: 'error' }]),
 			JSON.stringify(odd));
+		// U3a END: a worker that went quiet ends `timed_out`; the other device must still see it
+		// (before END it showed as `capped`, so dropping the new word was a regression).
+		const quiet = P.frameWorkers([{ id: 't', name: 'slow', status: 'timed_out' }]);
+		check('workers: a timed-out worker is kept, not dropped as an unknown state',
+			JSON.stringify(quiet) === JSON.stringify([{ id: 't', name: 'slow', status: 'timed_out' }]), JSON.stringify(quiet));
 		check('workers: bounded per frame', P.frameWorkers(Array.from({ length: 99 }, (_, i) => ({ id: 'w' + i, status: 'done' }))).length === 32);
 	}
 

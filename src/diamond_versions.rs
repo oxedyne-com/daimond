@@ -34,11 +34,12 @@
 //! parse, the resolver, the prune order and the sweep are tested against the manifests they will
 //! actually meet.
 
-use crate::llm::{extract_json_bool, extract_json_number, extract_json_string,
-	extract_json_string_array, json_escape};
+use crate::llm::{extract_json_bool, extract_json_number, extract_json_objects,
+	extract_json_string, extract_json_string_array, json_escape};
 use crate::rating::Author;
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_jdat::{FromDat, ToDat};
 use oxedyne_fe2o3_hash::sha256;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -92,6 +93,13 @@ pub const MANIFESTS_MAX: usize = 200;
 /// A larger file is recorded as `skipped` -- the row still says it changed, and Restore is
 /// refused rather than silently absent.
 pub const VERSION_FILE_MAX: usize = 512 * 1024;
+
+/// The most one kept copy may weigh, in bytes: `None`, no cap, until the owner decides (spec
+/// §16.3a, d1_plan §9.10).  Set, an act whose copy would pass it is refused at [`claim_room`],
+/// before it lands, as a delete of a file too large to keep is refused, so History never shows a
+/// row whose bytes it could not put back.  An `after` is never bound by it, since none over
+/// [`VERSION_FILE_MAX`] is kept, and a body kept under an earlier setting stays readable.
+pub const BODY_KEEP_MAX: Option<u64> = None;
 
 /// The most entries one manifest carries, and the most copies one turn keeps ([`claim_room`]).
 ///
@@ -178,7 +186,7 @@ pub fn set_open_deletes_ask(n: Option<usize>) {
 }
 
 /// What a turn's next delete from the user's open folder may do, as [`OpenTally::room`] answers.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum OpenDelete {
 	Go(bool),			// under the limit, or let go on: true where this call counted the path
 	Ask(usize, u64),	// at the limit, having deleted this many: ask, and answer this question
@@ -500,7 +508,7 @@ pub fn rebase_plan(mine: &[(u64, String)], theirs: &[(u64, String)], top: u64) -
 ///
 /// It decides two things and they are not the same: what the History row says, and what
 /// [`prune_plan`] is willing to throw away first.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Cause {
 	Turn,		// a daimon turn wrote files
 	User,		// the user's own doors wrote files, drained at the next turn's start
@@ -1105,6 +1113,16 @@ pub fn made_by_turns(
 	folder:		Option<&str>,
 	now:		&str,
 ) -> bool {
+	turns_made(&manifests.iter().collect::<Vec<_>>(), path, folder, now)
+}
+
+/// [`made_by_turns`] over the manifests named, such as the newest window of them.
+fn turns_made(
+	manifests:	&[&(u64, Manifest)],
+	path:		&str,
+	folder:		Option<&str>,
+	now:		&str,
+) -> bool {
 	let mut rows: Vec<(u64, u64, Cause, &Entry)> = manifests.iter()
 		.flat_map(|(n, m)| m.files.iter()
 			.filter(move |e| e.path == path && e.folder.as_deref() == folder)
@@ -1166,16 +1184,122 @@ pub fn made_by_turns(
 // so the rules are tested natively.
 
 /// What a path holds now, as the caller found it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Body {
 	Held(Vec<u8>),		// the bytes, read whole
 	TooLarge(u64),		// it is there, it is this long, and it was not read
 	Unseen,			// it changed and the app never saw what it became
 	Gone,			// there is nothing at the path
+	Large(BodyRef),		// read whole by the run's child, known here by hash and length only
+	Stored(BodyRef),	// read whole and put down in the Diamond's body store: see `Prior`
+}
+
+/// Bytes a turn's ledger holds of a file: in hand, or put down in the Diamond's body store and
+/// known there by hash and length (D1mem fix B).  **A ledger holds no file's bytes past the act
+/// that captured them**: the record names the stored body, so a turn that edited a 20 MB file
+/// costs its ledger a hash, and a second name for the same bytes is one body.  Every rule asks of
+/// a `Stored` one what it asks of the `Held` bytes it names, by hash.
+#[derive(Clone, Debug, Eq, PartialEq, ToDat, FromDat)]
+pub enum Prior {
+	Held(Vec<u8>),		// the bytes, in hand
+	Stored(BodyRef),	// in the Diamond's body store, by hash and length
+}
+
+impl Prior {
+
+	/// The hash of the bytes.
+	pub fn hash(&self) -> String {
+		match self {
+			Self::Held(b)	=> hash_of(b),
+			Self::Stored(r)	=> r.hash.clone(),
+		}
+	}
+
+	/// Their length.
+	pub fn len(&self) -> u64 {
+		match self {
+			Self::Held(b)	=> b.len() as u64,
+			Self::Stored(r)	=> r.len,
+		}
+	}
+
+	/// Are there none?
+	pub fn is_empty(&self) -> bool { self.len() == 0 }
+
+	/// The bytes by reference.
+	pub fn by_ref(&self) -> BodyRef {
+		match self {
+			Self::Held(b)	=> BodyRef::of(b),
+			Self::Stored(r)	=> r.clone(),
+		}
+	}
+
+	/// Are these `bytes`?
+	pub fn names(&self, bytes: &[u8]) -> bool {
+		match self {
+			Self::Held(b)	=> b.as_slice() == bytes,
+			Self::Stored(r)	=> r.names(bytes),
+		}
+	}
+
+	/// The bytes in hand, where they are.
+	pub fn held(&self) -> Option<&[u8]> {
+		match self {
+			Self::Held(b)	=> Some(b),
+			Self::Stored(_)	=> None,
+		}
+	}
+}
+
+impl From<Vec<u8>> for Prior {
+	fn from(b: Vec<u8>) -> Self { Self::Held(b) }
+}
+
+/// Bytes known by their hash and length, never carried (spec §16.3a): the store's form of an
+/// `after` the child never uploads, [`Body::Large`].  **Every rule asks of it what it asks of the
+/// `Held` bytes it names**, so a turn recorded with either gives the same rows; the tab never
+/// makes one.
+// Its `Dat` form is the wire's, which holds every hash to [`is_hash`] (`store::call::HexHash`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BodyRef {
+	pub hash: String,	// [`hash_of`] the bytes
+	pub len:  u64,		// their length
+}
+
+impl BodyRef {
+
+	/// `bytes` by reference.
+	pub fn of(bytes: &[u8]) -> Self { Self { hash: hash_of(bytes), len: bytes.len() as u64 } }
+
+	/// Is this a reference to `bytes`?
+	pub fn names(&self, bytes: &[u8]) -> bool {
+		self.len == bytes.len() as u64 && self.hash == hash_of(bytes)
+	}
+}
+
+/// Does a file at `path`, `len` bytes long and hashing to `hash` where it was read whole, stand as
+/// a `Large` `after` left it?  **The tab's own rule (d1_plan §9.11 O1), asked of the tab's one
+/// copy of it, [`stands_as_left`]**: this only builds the `now` the tab's re-read would find.  A
+/// workspace path is read capped, so a file over the ceiling is `TooLarge` and stands on its
+/// length alone, and one at or under it is read whole and judged by its bytes, or by its length
+/// where no hash was given; a machine path is read whole, so it stands on its bytes, by hash.
+/// `None` where a machine file was not read whole, so it cannot be told.  The one rule the
+/// child's stand-or-stage choice and its wipe check ask (D1r2).
+pub fn large_stands(path: &str, left: &BodyRef, len: u64, hash: Option<&str>) -> Option<bool> {
+	let capped = !path.starts_with('/');
+	let now = match hash {
+		Some(h) if !capped || len as usize <= VERSION_FILE_MAX =>
+			Body::Large(BodyRef { hash: h.to_string(), len }),
+		// What a capped read of a workspace path tells without the bytes: their length.
+		_ if capped => Body::TooLarge(len),
+		_ => return None,
+	};
+	Some(stands_as_left(&Body::Large(left.clone()), &now))
 }
 
 /// What an act found at the path it changed, which [`capture_into`] compares with what the turn's
 /// capture says it left there.
+// Its `Dat` form is the wire's, which holds every hash to [`is_hash`] (`store::call::HexHash`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Found {
 	Nothing,		// no file stood there
@@ -1197,10 +1321,10 @@ impl Found {
 /// Where the bytes a move left at a path came from: what a write over them is measured against,
 /// and what a destruction of them keeps.  The path itself keeps its own `before`, which is what a
 /// restore of it puts back.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Carried {
 	Made,			// this turn made them, wherever it did
-	Kept(Vec<u8>),		// the file as the turns found it where the move took it from
+	Kept(Prior),		// the file as the turns found it where the move took it from
 	Unread,			// the move could not read them: they are measured as they stand
 }
 
@@ -1209,11 +1333,11 @@ pub enum Carried {
 /// `before` is filled in only where the caller CAPTURED the prior bytes itself: a file tool, the
 /// moment before its act.  Everywhere else it is `None` and `crate::wasm::diamond::versions_record`
 /// answers "what stood there" from the history instead, which costs no read at all.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub struct Change {
 	pub path:    String,		// workspace-relative, or absolute where `mark`
 	pub after:   Body,
-	pub before:  Option<Vec<u8>>,	// the prior bytes, where the caller captured them
+	pub before:  Option<Prior>,	// the prior bytes, where the caller captured them
 	pub found:   Found,		// what the act found at `path`, which the merge compares
 	pub carried: Option<Carried>,	// where a move brought `after` from
 	pub mark:    bool,		// a file on this computer, under a folder the user marked in
@@ -1247,12 +1371,21 @@ impl Change {
 	/// (`capture_into` replaces a run another hand broke).  A walk's or a ledger's re-read found
 	/// nothing it can vouch for ([`Found::Unread`]), a refused read knows nothing, and bytes a move
 	/// carried keep their own history -- made only where the turn made them at the source.
+	///
+	/// A command's row ([`ran_rows`]) says so where the hand's write meter reported the file
+	/// `created`: the run found nothing there, which the row keeps as [`Found::Nothing`].  One it
+	/// reported `changed` found bytes that stood, and is made only through the run of rows before it.
 	pub fn made(&self) -> bool {
-		matches!(self.after, Body::Held(_))
-			&& self.before.is_none()
+		let tool = matches!(self.after, Body::Held(_))
 			&& self.refused.is_none()
 			&& matches!(self.found, Found::Nothing | Found::Hash(_))
-			&& matches!(self.carried, None | Some(Carried::Made))
+			&& matches!(self.carried, None | Some(Carried::Made));
+		let command = matches!(self.after, Body::Large(_))
+			&& self.refused.as_deref() == Some(MADE_BY_COMMAND)
+			&& self.found == Found::Nothing
+			&& self.carried.is_none()
+			&& self.by.as_ref().is_some_and(|a| a.via == VIA_COMMAND);
+		self.before.is_none() && (tool || command)
 	}
 }
 
@@ -1265,16 +1398,29 @@ pub fn left_there(after: &Body, found: &Found) -> Option<bool> {
 		(Body::Held(_), Found::Nothing)			=> Some(false),
 		(Body::Gone, Found::Nothing)			=> Some(true),
 		(Body::Gone, Found::Hash(_))			=> Some(false),
+		(Body::Large(r), Found::Hash(h))		=> Some(r.hash == *h),
+		(Body::Large(_), Found::Nothing)		=> Some(false),
+		(Body::Stored(r), Found::Hash(h))		=> Some(r.hash == *h),
+		(Body::Stored(_), Found::Nothing)		=> Some(false),
 		(Body::TooLarge(_), _) | (Body::Unseen, _)	=> None,
 	}
 }
 
 /// The file at a path as THIS turn found it, from its captures: what [`run_copies`] starts from.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum TurnFound {
 	Made,			// the turn made what stands there, so nothing of anyone else's is in it
 	Carried(Vec<u8>),	// a move brought it here, and this is the file as the turns found it there
 	Was(Vec<u8>),		// what the turn found at this path: where its run of turns' changes begins
+}
+
+/// [`TurnFound`] as a turn's ledger says it, before any bytes are read: what [`this_turn_found`]
+/// answers, whose `Stored` copies the caller reads from the body store where it needs the bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TurnSaid {
+	Made,			// as `TurnFound::Made`
+	Carried(Prior),		// as `TurnFound::Carried`
+	Was(Prior),		// as `TurnFound::Was`
 }
 
 /// What the file at `path` was when this turn came to it, as the turn's own captures `held` say
@@ -1289,25 +1435,26 @@ pub enum TurnFound {
 /// * `held` - The turn's captures, `(the path the model wrote, the capture)`.
 /// * `path` - As the captures name it: normalised, or absolute for a machine file.
 /// * `now` - The bytes at `path` as the act found them.
-pub fn this_turn_found(held: &[(String, Change)], path: &str, now: &[u8]) -> TurnFound {
+pub fn this_turn_found(held: &[(String, Change)], path: &str, now: &[u8]) -> TurnSaid {
 	let h = match held.iter().find(|(_, h)| h.path == path) {
 		Some((_, h))	=> h,
-		None		=> return TurnFound::Was(now.to_vec()),
+		None		=> return TurnSaid::Was(Prior::Held(now.to_vec())),
 	};
 	// `left_there`'s rule, on the bytes themselves rather than on two hashes of them.
 	let theirs = match &h.after {
-		Body::Held(b)	=> Some(b.as_slice() == now),
-		Body::Gone	=> Some(false),
-		_		=> None,
+		Body::Held(b)				=> Some(b.as_slice() == now),
+		Body::Large(r) | Body::Stored(r)	=> Some(r.names(now)),
+		Body::Gone				=> Some(false),
+		Body::TooLarge(_) | Body::Unseen	=> None,
 	};
 	match (theirs, &h.carried, &h.before) {
-		(Some(true), Some(Carried::Made), _)		=> TurnFound::Made,
-		(Some(true), None, None)			=> TurnFound::Made,
-		(Some(true), None, Some(first))			=> TurnFound::Was(first.clone()),
+		(Some(true), Some(Carried::Made), _)		=> TurnSaid::Made,
+		(Some(true), None, None)			=> TurnSaid::Made,
+		(Some(true), None, Some(first))			=> TurnSaid::Was(first.clone()),
 		(Some(true), Some(Carried::Kept(k)), _)
-			| (None, Some(Carried::Kept(k)), _)	=> TurnFound::Carried(k.clone()),
-		(None, None, Some(first))			=> TurnFound::Was(first.clone()),
-		_						=> TurnFound::Was(now.to_vec()),
+			| (None, Some(Carried::Kept(k)), _)	=> TurnSaid::Carried(k.clone()),
+		(None, None, Some(first))			=> TurnSaid::Was(first.clone()),
+		_						=> TurnSaid::Was(Prior::Held(now.to_vec())),
 	}
 }
 
@@ -1393,12 +1540,26 @@ pub fn capture_into(held: &mut Vec<(String, Change)>, raw: &str, change: Change)
 /// it.
 pub fn stands_as_left(after: &Body, now: &Body) -> bool {
 	match (after, now) {
+		// A `Stored` body as the `Held` bytes it names, which is as a `Large` one stands.
+		(Body::Stored(a), _)			=> stands_as_left(&Body::Large(a.clone()), now),
+		(_, Body::Stored(b))			=> stands_as_left(after, &Body::Large(b.clone())),
 		(Body::Held(a), Body::Held(b))		=> a == b,
 		(Body::Held(a), Body::TooLarge(n))	=> a.len() as u64 == *n,
 		(Body::Held(_), Body::Gone)		=> false,
+		// A `Large` after as the `Held` bytes it names (O1): by hash where the bytes were read,
+		// by length against `TooLarge`, as the tab's capped re-read of a workspace path.
+		(Body::Large(a), Body::Large(b))	=> a == b,
+		(Body::Large(a), Body::Held(b))
+			| (Body::Held(b), Body::Large(a))	=> a.names(b),
+		(Body::Large(a), Body::TooLarge(n))	=> a.len == *n,
+		(Body::Large(_), Body::Gone)		=> false,
+		(Body::Large(_), Body::Unseen)		=> true,
 		(Body::Gone, Body::Gone)		=> true,
 		(Body::Gone, Body::Held(_))
-			| (Body::Gone, Body::TooLarge(_))	=> false,
+			| (Body::Gone, Body::TooLarge(_))
+			| (Body::Gone, Body::Large(_))	=> false,
+		(Body::TooLarge(_), Body::Large(_))
+			| (Body::Unseen, Body::Large(_))	=> true,
 		_					=> true,
 	}
 }
@@ -1464,7 +1625,7 @@ fn restarted(path: &str, now: &[u8], mark: bool, folder: Option<String>) -> Chan
 	Change {
 		path:    path.to_string(),
 		after:   Body::Held(now.to_vec()),
-		before:  Some(now.to_vec()),
+		before:  Some(Prior::Held(now.to_vec())),
 		found:   Found::of(Some(now)),
 		carried: None,
 		mark,
@@ -1477,10 +1638,11 @@ fn restarted(path: &str, now: &[u8], mark: bool, folder: Option<String>) -> Chan
 }
 
 /// Why a turn may not keep one more copy, as [`claim_room`] answers it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Short {
 	Count,		// the turn keeps as many copies as one manifest holds rows
 	Bytes(u64),	// the turn holds a destruction, and its copies would pass the room left: the room
+	Kept(u64, u64),	// the act's one copy would pass [`BODY_KEEP_MAX`]: its length, and the cap
 }
 
 /// An act a turn has been allowed and has not yet captured.
@@ -1532,26 +1694,116 @@ pub fn claim_room(
 )
 	-> Result<bool, Short>
 {
+	claim_room_under(held, reserved, path, found, copy, destroying, room, BODY_KEEP_MAX)
+}
+
+/// What the other runs keeping into the same store hold and have in flight, which the 64 cap and
+/// the bytes bound count with the asking run's own (the tab counts a daimon and its workers
+/// together), though each run's turn end takes only its own.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Others {
+	pub kept:	usize,	// the copies they keep, held or reserved
+	pub destroys:	bool,	// does any of them hold or reserve a destruction?
+	pub bytes:	u64,	// what their copies weigh
+}
+
+impl Others {
+	/// Add one other run's ledger: what it holds and what it has reserved.
+	pub fn add(&mut self, held: &[(String, Change)], reserved: &[Reserved]) {
+		self.kept = self.kept
+			+ held.iter().filter(|(_, h)| h.before.is_some()).count()
+			+ reserved.iter().filter(|r| r.copy.is_some()).count();
+		self.destroys = self.destroys
+			|| held.iter().any(|(_, h)| matches!(h.after, Body::Gone) || h.wiped)
+			|| reserved.iter().any(|r| r.destroying);
+		self.bytes = held.iter()
+			.map(|(_, h)| h.before.as_ref().map(Prior::len).unwrap_or(0))
+			.chain(reserved.iter().map(|r| r.copy.unwrap_or(0)))
+			.fold(self.bytes, |a, b| a.saturating_add(b));
+	}
+}
+
+/// [`claim_room`] for one run among several keeping into the store: `held` and `reserved` are the
+/// run's own, so whether `path` is known and the reservation are its own, and `others` is added
+/// to the copies counted and the bytes weighed.
+#[allow(clippy::too_many_arguments)]
+pub fn claim_room_among(
+	held:       &[(String, Change)],
+	reserved:   &mut Vec<Reserved>,
+	others:     Others,
+	path:       &str,
+	found:      &Found,
+	copy:       Option<u64>,
+	destroying: bool,
+	room:       u64,
+)
+	-> Result<bool, Short>
+{
+	claim_room_core(held, reserved, path, found, copy, destroying, room, BODY_KEEP_MAX, others)
+}
+
+/// [`claim_room`] under the per-copy cap `keep_max` ([`BODY_KEEP_MAX`]): a copy this act would
+/// keep that passes it is refused before anything is reserved, and `None` changes nothing.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn claim_room_under(
+	held:       &[(String, Change)],
+	reserved:   &mut Vec<Reserved>,
+	path:       &str,
+	found:      &Found,
+	copy:       Option<u64>,
+	destroying: bool,
+	room:       u64,
+	keep_max:   Option<u64>,
+)
+	-> Result<bool, Short>
+{
+	claim_room_core(held, reserved, path, found, copy, destroying, room, keep_max,
+		Others::default())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn claim_room_core(
+	held:       &[(String, Change)],
+	reserved:   &mut Vec<Reserved>,
+	path:       &str,
+	found:      &Found,
+	copy:       Option<u64>,
+	destroying: bool,
+	room:       u64,
+	keep_max:   Option<u64>,
+	others:     Others,
+)
+	-> Result<bool, Short>
+{
 	let ends = |h: &Change| h.path == path && run_broken(h, found);
 	let at = reserved.iter().position(|r| r.path == path);
 	let known = at.is_some() || held.iter().any(|(_, h)| h.path == path && !ends(h));
 	if let Some(bytes) = copy {
 		if !known {
+			// A path already held keeps its first copy, so only a new one is weighed.
+			if let Some(max) = keep_max {
+				if bytes > max {
+					return Err(Short::Kept(bytes, max));
+				}
+			}
 			let kept = held.iter().filter(|(_, h)| h.before.is_some() && !ends(h)).count()
-				+ reserved.iter().filter(|r| r.copy.is_some()).count();
+				+ reserved.iter().filter(|r| r.copy.is_some()).count()
+				+ others.kept;
 			if kept >= TURN_FILES_MAX {
 				return Err(Short::Count);
 			}
 		}
 		let destroys = destroying
 			|| held.iter().any(|(_, h)| matches!(h.after, Body::Gone) || h.wiped)
-			|| reserved.iter().any(|r| r.destroying);
+			|| reserved.iter().any(|r| r.destroying)
+			|| others.destroys;
 		if destroys {
 			// A run the act ends still counts here: its version is held as long as this one.
 			let total = held.iter()
-				.map(|(_, h)| h.before.as_ref().map(|b| b.len() as u64).unwrap_or(0))
+				.map(|(_, h)| h.before.as_ref().map(Prior::len).unwrap_or(0))
 				.chain(reserved.iter().map(|r| r.copy.unwrap_or(0)))
-				.fold(if known { 0u64 } else { bytes }, |a, b| a.saturating_add(b));
+				.fold(if known { 0u64 } else { bytes }, |a, b| a.saturating_add(b))
+				.saturating_add(others.bytes);
 			if total > room {
 				return Err(Short::Bytes(room));
 			}
@@ -1596,10 +1848,10 @@ pub fn moved(from: (&str, bool), to: (&str, bool), what: Moving) -> (Change, Cha
 		Moving::Read(bytes, first) => {
 			let found = Found::of(Some(&bytes));
 			let carried = match &first {
-				Some(k)	=> Carried::Kept(k.clone()),
+				Some(k)	=> Carried::Kept(Prior::Held(k.clone())),
 				None	=> Carried::Made,
 			};
-			(Body::Held(bytes), first, found, carried, None)
+			(Body::Held(bytes), first.map(Prior::Held), found, carried, None)
 		},
 		Moving::Unread(body, why) => (body, None, Found::Unread, Carried::Unread, Some(why)),
 	};
@@ -1645,6 +1897,251 @@ pub fn held_under(held: &[(String, Change)], from: &str) -> Vec<(String, String,
 			.map(|rest| (h.path.clone(), rest.to_string(), raw.clone())))
 		.collect()
 }
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ What the Diamond made, for the hand's write meter              │
+// └───────────────────────────────────────────────────────────────┘
+
+// The hand lets a command change a file that was there before the run only where the page's
+// `made` names it with the sha256 of the bytes on disk (write_meter_plan.md invariants 1 and 9,
+// QA-B3).  What the Diamond made is read from its own record and nowhere else: the History's
+// manifests of past turns and this turn's captures, each row written by a file tool at its act.
+// Nothing a model says reaches it, so a path the record never wrote is named by no `made`.
+
+/// How many of the newest manifests are read for [`made_by_diamond`]: the record's recent window.
+/// A file the Diamond last wrote further back is not named, so a command finds it the user's
+/// and is refused, which is the safe side.
+pub const MADE_WINDOW: usize = 64;
+
+/// The most files [`made_by_diamond`] names, newest first.  Under the hand's own bounds
+/// (`MADE_FILES_MAX` 4096 a root) and small enough for the exec frame: at most
+/// `MADE_SENT_MAX` × (`MADE_PATH_SENT_MAX` + 64) bytes, about 270 KiB, of a 1 MB frame.
+pub const MADE_SENT_MAX: usize = 256;
+
+/// The longest path [`made_by_diamond`] names, in bytes; a longer one is left out (the user's).
+pub const MADE_PATH_SENT_MAX: usize = 1024;
+
+/// Is this a row the Diamond's own file tool wrote?  An agent's act (`by`), not one a command or
+/// helper window was credited with (`via`), and not a person's door.
+fn tool_wrote(by: &Option<Author>, door: bool) -> bool {
+	!door && by.as_ref().is_some_and(|a| a.via.is_empty())
+}
+
+/// Is this a row a command of the Diamond's made (MADE-2): the hand's write meter reported the
+/// file created or changed by the run, with the sha256 it left, and the turn record kept it under
+/// the agent that ran the command (`via` [`VIA_COMMAND`]) with no body ([`MADE_BY_COMMAND`]).
+/// A window's credit for the same agent is `via` command too, but its bytes were read by a walk
+/// and not reported by the meter, so it is not one: only the meter knows the run made the file.
+fn command_made(by: &Option<Author>, door: bool, skipped: &Option<String>) -> bool {
+	!door && skipped.as_deref() == Some(MADE_BY_COMMAND)
+		&& by.as_ref().is_some_and(|a| a.via == VIA_COMMAND)
+}
+
+/// The files on this computer the Diamond's file tools last wrote, each with the sha256 of the
+/// bytes they left, newest first: what the exec request's `made` names.  [`made_by_diamond_ran`]
+/// with no file a command made this turn.
+pub fn made_by_diamond(manifests: &[(u64, Manifest)], held: &[(String, Change)])
+	-> Vec<(String, String)>
+{
+	made_by_diamond_ran(manifests, held, &[])
+}
+
+/// The files on this computer the Diamond made, each with the sha256 of the bytes it left,
+/// newest first: what the exec request's `made` names.  Made by its file tools (MADE-1), or by a
+/// command its agent ran, as the hand's write meter reported it (MADE-2).
+///
+/// The NEWEST row of a path decides it, this turn's capture before any manifest: a row by a
+/// person's door, a restore or a walk, or one saying the file is gone, makes it the user's
+/// however often the Diamond wrote it before.  A file he changed with no row (his editor
+/// between turns) keeps the Diamond's hash here, and the hand finds the bytes differ and refuses.
+///
+/// # Arguments
+/// * `manifests` - The Diamond's manifests; the newest [`MADE_WINDOW`] by version are read.
+/// * `held` - This turn's captures, not yet in any manifest.
+/// A row, a file tool's or a command's, is the Diamond's on the ONE fact UNBLOCK-26 records, [`Entry::made`]: the run of
+/// turns' rows that left its bytes begins at a row whose act made the file ([`made_by_turns`], over
+/// the same window).  So a file a command created is the Diamond's, and so is one a later command
+/// changed after the Diamond made it; a file of his that a command changed stays his.  This turn's
+/// commands are read the same way: a file one created is the Diamond's, and one it changed is only
+/// where the record already says the Diamond made it.  A file tool's change of his file, after his
+/// yes, stays his (PORTG-AF): his yes covered that one shown change, never the file, so a command
+/// may not change it after unasked.  This turn's tool captures count only where the capture made
+/// the file ([`Change::made`]) or the bytes it first found were the Diamond's on the record.
+///
+/// * `ran` - What this turn's commands made, as the meter reported it ([`RanMade`]), oldest first:
+///   each path, the hash it was left with, and whether the run created it.
+pub fn made_by_diamond_ran(
+	manifests:	&[(u64, Manifest)],
+	held:		&[(String, Change)],
+	ran:		&[(String, String, bool)],
+)
+	-> Vec<(String, String)>
+{
+	let mut decided: BTreeSet<String> = BTreeSet::new();
+	let mut out: Vec<(String, String)> = Vec::new();
+	let mut take = |path: &str, hash: Option<String>, out: &mut Vec<(String, String)>| {
+		if !path.starts_with('/') || !decided.insert(path.to_string()) {
+			return;
+		}
+		if let Some(h) = hash {
+			if out.len() < MADE_SENT_MAX && path.len() <= MADE_PATH_SENT_MAX && is_hash(&h) {
+				out.push((path.to_string(), h));
+			}
+		}
+	};
+	let mut newest: Vec<&(u64, Manifest)> = manifests.iter().collect();
+	newest.sort_by(|a, b| b.0.cmp(&a.0));
+	newest.truncate(MADE_WINDOW);
+	// This turn's captures: a tool's is the Diamond's only where it made the file, or where the
+	// bytes it first found were already the Diamond's on the record.  His yes to a shown change
+	// covers that change, never the file (PORTG-AF).
+	for (_, c) in held.iter().rev() {
+		let made = tool_wrote(&c.by, c.door)
+			&& (c.made() || c.before.as_ref().is_some_and(|b|
+				turns_made(&newest, &c.path, c.folder.as_deref(), &b.hash())));
+		let hash = match (&c.after, made) {
+			(Body::Held(b), true)	=> Some(hash_of(b)),
+			(Body::Large(r), true)	=> Some(r.hash.clone()),
+			_			=> None,
+		};
+		take(&c.path, hash, &mut out);
+	}
+	// What the record says, newest row of each path first, before this turn's commands use it.
+	let mut recorded: Vec<(&str, Option<String>)> = Vec::new();
+	let mut seen: BTreeSet<&str> = BTreeSet::new();
+	for (_, m) in newest.iter() {
+		for e in m.files.iter().rev() {
+			if !seen.insert(e.path.as_str()) {
+				continue;
+			}
+			// One fact for tool and command rows alike: U1's, over the same window.
+			let made = (tool_wrote(&e.by, e.door) || command_made(&e.by, e.door, &e.skipped))
+				&& turns_made(&newest, &e.path, e.folder.as_deref(), &e.hash);
+			let his = m.cause == Cause::Turn && !e.gone && made;
+			recorded.push((e.path.as_str(), if his { Some(e.hash.clone()) } else { None }));
+		}
+	}
+	for (path, hash, created) in ran.iter().rev() {
+		let ours = *created || recorded.iter().any(|(p, h)| *p == path.as_str() && h.is_some());
+		take(path, if ours { Some(hash.clone()) } else { None }, &mut out);
+	}
+	for (path, hash) in recorded.into_iter() {
+		take(path, hash, &mut out);
+	}
+	out
+}
+
+/// Why a row a command made keeps no body: the meter reported its hash, and the bytes were
+/// never read.  It also marks the row as the meter's ([`made_by_diamond_ran`]).
+pub const MADE_BY_COMMAND: &str = "command";
+
+/// What one run's meter reported its command made, read off the hand's run JSON: each file
+/// `created` or `changed`, the run's own and its leftovers' (`metered_late`), as an absolute path
+/// with the sha256 it left; and whether any list was capped (`created_capped`), past which the
+/// meter named nothing.  At most [`MADE_SENT_MAX`] files, the first reported: the rest are not
+/// named, and the result says it is capped.  A path that is not plainly absolute, or whose hash is
+/// not one, is left out.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RanMade {
+	pub files:  Vec<(String, String, bool)>,	// path, the sha256 it left, and whether the run created it
+	pub capped: bool,
+}
+
+impl RanMade {
+
+	/// What the run JSON `res` reports made.
+	pub fn of(res: &str) -> Self {
+		let mut out = Self::default();
+		let mut lists: Vec<String> = vec![res.to_string()];
+		if let Some(late) = extract_json_objects(res, "metered_late") {
+			lists.extend(late);
+		}
+		for (i, obj) in lists.iter().enumerate() {
+			// The run's own lists are read off its top level, before `metered_late`.
+			let own = match i {
+				0 => match obj.find("\"metered_late\":") {
+					Some(at) => &obj[..at],
+					None	 => obj.as_str(),
+				},
+				_ => obj.as_str(),
+			};
+			if extract_json_bool(own, "created_capped").unwrap_or(false) {
+				out.capped = true;
+			}
+			for (key, created) in [("created", true), ("changed", false)] {
+				for w in extract_json_objects(own, key).unwrap_or_default() {
+					out.add(&w, created);
+				}
+			}
+		}
+		out
+	}
+
+	/// One meter entry `{"root","path","sha256"}`, where it is whole; `created` where the run found
+	/// nothing there.  A path the run created and then changed again is still one it created.
+	fn add(&mut self, w: &str, created: bool) {
+		let (root, rel, sha) = match (extract_json_string(w, "root"),
+			extract_json_string(w, "path"), extract_json_string(w, "sha256"))
+		{
+			(Some(r), Some(p), Some(h)) => (r, p, h),
+			_			    => return,
+		};
+		let path = match rel.starts_with('/') {
+			true  => rel,
+			false => fmt!("{}/{}", root.trim_end_matches('/'), rel),
+		};
+		let plain = path.starts_with('/') && !path.contains('\0')
+			&& path.split('/').skip(1).all(|c| !c.is_empty() && c != "." && c != "..");
+		if !plain || !is_hash(&sha) || path.len() > MADE_PATH_SENT_MAX {
+			return;
+		}
+		if let Some(f) = self.files.iter_mut().find(|(p, _, _)| *p == path) {
+			f.1 = sha;
+			f.2 = f.2 || created;
+			return;
+		}
+		if self.files.len() >= MADE_SENT_MAX {
+			self.capped = true;
+			return;
+		}
+		self.files.push((path, sha, created));
+	}
+}
+
+/// The rows a turn record keeps for what its commands made (MADE-2): one each, cause the turn's,
+/// credited to the agent that ran the command (`via` [`VIA_COMMAND`]), with the meter's hash and
+/// no body ([`MADE_BY_COMMAND`]), so the History shows it and a Restore leaves it alone.  None
+/// where no agent is named: a command nobody ran made nothing of the Diamond's.
+///
+/// A file the run created keeps that as the row's [`Found::Nothing`], so the record writes it
+/// [`Entry::made`] ([`Change::made`]); one it changed found bytes nobody read, [`Found::Unread`].
+///
+/// # Arguments
+/// * `ran` - Each file a command made, with its hash, whether the run created it, and who ran the
+///   command, oldest first.
+pub fn ran_rows(ran: &[(String, String, bool, Option<Author>)]) -> Vec<Change> {
+	let mut out: Vec<Change> = Vec::new();
+	for (path, hash, created, by) in ran.iter().rev() {
+		let by = match by {
+			Some(a) => Author { via: VIA_COMMAND.to_string(), ..a.clone() },
+			None	=> continue,
+		};
+		if out.iter().any(|c| c.path == *path) {
+			continue;
+		}
+		out.push(Change {
+			after:   Body::Large(BodyRef { hash: hash.clone(), len: 0 }),
+			mark:    true,
+			refused: Some(MADE_BY_COMMAND.to_string()),
+			found:   if *created { Found::Nothing } else { Found::Unread },
+			by:      Some(by),
+			..Change::gone(path)
+		});
+	}
+	out.reverse();
+	out
+}
+
 
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -1912,6 +2409,15 @@ impl Windows {
 		}
 		out
 	}
+
+	/// What [`Windows::take`] would answer, leaving every window and the snapshot where they are.
+	pub fn peek(&self) -> Vec<Window> {
+		let mut out = self.done.clone();
+		for o in self.open.values() {
+			out.push(Window { by: o.by.clone(), from: o.from, to: u64::MAX, shifted: None });
+		}
+		out
+	}
 }
 
 
@@ -1922,8 +2428,13 @@ impl Windows {
 /// The note a generating tool leaves once its output has landed at `path`: which tool, and the
 /// hash of exactly the bytes it wrote.  Read back by [`output_note_says`].
 pub fn output_note(tool: &str, path: &str, bytes: &[u8]) -> String {
+	output_note_by_hash(tool, path, &hash_of(bytes))
+}
+
+/// [`output_note`] by the bytes' `hash`, for a caller holding them by reference ([`BodyRef`]).
+pub fn output_note_by_hash(tool: &str, path: &str, hash: &str) -> String {
 	fmt!("{{\"tool\":\"{}\",\"path\":\"{}\",\"hash\":\"{}\"}}",
-		json_escape(tool), json_escape(path), hash_of(bytes))
+		json_escape(tool), json_escape(path), json_escape(hash))
 }
 
 /// Does `note` say that `tool` itself left exactly `bytes` at `path`?
@@ -1942,9 +2453,14 @@ pub fn output_note(tool: &str, path: &str, bytes: &[u8]) -> String {
 /// * `note` - The note as stored; anything that does not parse says no.
 /// * `bytes` - What stands at `path` now.
 pub fn output_note_says(note: &str, tool: &str, path: &str, bytes: &[u8]) -> bool {
+	output_note_says_hash(note, tool, path, &hash_of(bytes))
+}
+
+/// [`output_note_says`] of the bytes whose hash is `hash`.
+pub fn output_note_says_hash(note: &str, tool: &str, path: &str, hash: &str) -> bool {
 	extract_json_string(note, "tool").as_deref() == Some(tool)
 		&& extract_json_string(note, "path").as_deref() == Some(path)
-		&& extract_json_string(note, "hash").map(|h| h == hash_of(bytes)).unwrap_or(false)
+		&& extract_json_string(note, "hash").map(|h| h == hash).unwrap_or(false)
 }
 
 
@@ -1984,14 +2500,14 @@ pub fn needs_folder(path: &str) -> bool {
 }
 
 /// Why a restore cannot tell whether a row's file is the one its path reaches now.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Unplaced {
 	Unrecorded,	// written before rows recorded their folder
 	Unknown,	// written in a folder this device does not know, or in one opened unnamed
 }
 
 /// What a restore's act may do at the place its path reaches now.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Route {
 	Go,		// the row's own file: put it back
 	Left,		// another place's file of the same name: leave it as it stands
@@ -2054,6 +2570,7 @@ pub fn route(
 /// questions can stay open for minutes, and the door wrote with no look at what was there by
 /// then: a file that matched at the open, and was changed by the person's editor, a daimon's turn,
 /// another tab or another restore while a question was open, was written over unasked.
+// Its `Dat` form is the wire's, which holds every hash to [`is_hash`] (`store::call::HexHash`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Seen {
 	Absent,		// nothing stood there
@@ -2069,6 +2586,76 @@ impl Seen {
 			Some(b)	=> Self::Bytes(hash_of(b)),
 			None	=> Self::Absent,
 		}
+	}
+}
+
+/// What a failed lookup of one name in a folder means (PLF-NF).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Lookup {
+	/// The store's own "nothing there": `NotFoundError`.
+	Absent,
+	/// Something stands at the name, but of the other kind -- a folder where a file was asked
+	/// for, or the reverse: `TypeMismatchError`.
+	OtherKind,
+}
+
+/// Read a failed lookup (`getFileHandle`, `getDirectoryHandle`) by its exception `name`.
+///
+/// **Absent only on `NotFoundError`.**  Every other failure -- a read blocked by another handle,
+/// a security refusal, a rejection with no name at all -- is a fault naming the `path` and the
+/// `phase`, because an existence probe or a bound write's compare that took it for "absent"
+/// would write a new file over one that stands (PORT-LF re-QA, limit 1).
+pub fn lookup_failed(name: Option<&str>, path: &str, phase: &str) -> Outcome<Lookup> {
+	match name {
+		Some("NotFoundError")       => Ok(Lookup::Absent),
+		Some("TypeMismatchError")   => Ok(Lookup::OtherKind),
+		other                       => Err(err!(
+			"OPFS: the lookup of '{}' failed ({}) at the {}, so whether it stands is not known, \
+			and it is not taken for absent.", path, other.unwrap_or("no error name"), phase;
+			IO, File, Read)),
+	}
+}
+
+/// What a conditional write does with the writable it opened, once its bytes are staged and its
+/// re-check is in (OPFS-LOCK, 2026-10-17): only a write that passed is closed, and every other
+/// end -- a refusal, a failed write, a failed re-check -- aborts it.
+///
+/// **A failed write returned with its writable still open**, and an exclusive writable left open
+/// holds the file against every other writer until the engine collects it.  So the ends are
+/// decided here, in one place, and `opfs::write_file_if` acts on the answer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StagedEnd {
+	Close,		// the re-check passed: commit the staged bytes
+	Abort,		// anything else: the staged bytes are dropped and the file let go
+}
+
+impl StagedEnd {
+
+	/// The end for what staging came to: `Ok(None)` passed, `Ok(Some(found))` refused.
+	pub fn of<T>(staged: &Outcome<Option<T>>) -> Self {
+		match staged {
+			Ok(None)		=> Self::Close,
+			Ok(Some(_)) | Err(_)	=> Self::Abort,
+		}
+	}
+}
+
+/// What staging came to, carried through `pre` (held-lock settle P1): the end to take and the
+/// answer.  `pre` runs only where the re-check passed ([`StagedEnd::Close`]), so a refused or a
+/// failed stage never runs it, and a `pre` that fails turns the end to [`StagedEnd::Abort`] with
+/// its error, so nothing lands.  OPFS's held write calls it after `stage` and before `close`.
+pub async fn staged_then<T, P, F>(staged: Outcome<Option<T>>, pre: P)
+	-> (StagedEnd, Outcome<Option<T>>)
+where
+	P: FnOnce() -> F,
+	F: std::future::Future<Output = Outcome<()>>,
+{
+	match StagedEnd::of(&staged) {
+		StagedEnd::Abort => (StagedEnd::Abort, staged),
+		StagedEnd::Close => match pre().await {
+			Ok(())	=> (StagedEnd::Close, staged),
+			Err(e)	=> (StagedEnd::Abort, Err(e)),
+		},
 	}
 }
 
@@ -2102,7 +2689,7 @@ pub fn bound(seen: &Seen, now: Option<&[u8]>, puts: Option<&[u8]>) -> Bound {
 }
 
 /// What a restore's act at one of the person's files may do ([`act`]).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Act {
 	Go,		// put the row back
 	Same,		// it already holds those bytes: done, nothing written
@@ -3710,6 +4297,89 @@ pub fn chain_undo_version(snaps: &[u64], head: u64, moved: bool) -> Option<u64> 
 mod tests {
 	use super::*;
 
+	/// PLF-NF: only the store's own "nothing there" is absent.  A lookup that fails any other way
+	/// (a read blocked, a security refusal, a nameless rejection) is a fault naming the path and
+	/// the phase, so a bound write or an existence probe never takes it for a new file.
+	#[test]
+	fn plfnf_a_failed_lookup_is_absent_only_on_not_found() {
+		assert!(matches!(lookup_failed(Some("NotFoundError"), "d/DECISIONS.md", "compare"),
+			Ok(Lookup::Absent)));
+		assert!(matches!(lookup_failed(Some("TypeMismatchError"), "d/DECISIONS.md", "compare"),
+			Ok(Lookup::OtherKind)));
+		for name in [Some("NotReadableError"), Some("InvalidStateError"), Some("SecurityError"),
+			Some("NoModificationAllowedError"), Some(""), None]
+		{
+			match lookup_failed(name, "d/DECISIONS.md", "compare before a bound write") {
+				Ok(l)  => panic!("{:?} was read as {:?}, not a fault", name, l),
+				Err(e) => {
+					let m = fmt!("{}", e);
+					assert!(m.contains("d/DECISIONS.md"), "no path in: {}", m);
+					assert!(m.contains("compare before a bound write"), "no phase in: {}", m);
+				},
+			}
+		}
+	}
+
+	/// Every end of a conditional write but a passed re-check aborts its writable (OPFS-LOCK):
+	/// the failed write that once returned with the writable open is an `Err`, and aborts.
+	#[test]
+	fn a_staged_write_is_closed_only_when_it_passed() {
+		let passed: Outcome<Option<Seen>> = Ok(None);
+		let refused: Outcome<Option<Seen>> = Ok(Some(Seen::Absent));
+		let failed: Outcome<Option<Seen>> = Err(err!("OPFS: write 'a' failed."; IO, File, Write));
+		assert_eq!(StagedEnd::of(&passed), StagedEnd::Close);
+		assert_eq!(StagedEnd::of(&refused), StagedEnd::Abort);
+		assert_eq!(StagedEnd::of(&failed), StagedEnd::Abort);
+	}
+
+	/// HL1 (d): OPFS's held write runs `pre` only past `stage`'s re-check.  A re-check refusal (a
+	/// writer outside the lock) or a failed stage aborts with `pre` never run; a passed stage runs
+	/// it once and closes; a `pre` that fails aborts with its error, so nothing lands.
+	#[tokio::test]
+	async fn hl1_d_a_recheck_refusal_after_stage_never_runs_pre() {
+		use std::cell::Cell;
+		let ran = Cell::new(0u8);
+		let r = &ran;
+		let refused: Outcome<Option<Seen>> = Ok(Some(Seen::of(Some(b"a writer outside the lock"))));
+		let (end, got) = staged_then(refused, move || async move { r.set(r.get() + 1); Ok(()) }).await;
+		assert_eq!(end, StagedEnd::Abort);
+		assert_eq!(got.expect("refused"), Some(Seen::of(Some(b"a writer outside the lock"))));
+		assert_eq!(ran.get(), 0, "a re-check refusal ran pre");
+		let failed: Outcome<Option<Seen>> = Err(err!("OPFS: write 'a' failed."; IO, File, Write));
+		let (end, got) = staged_then(failed, move || async move { r.set(r.get() + 1); Ok(()) }).await;
+		assert_eq!(end, StagedEnd::Abort);
+		assert!(got.is_err());
+		assert_eq!(ran.get(), 0, "a failed stage ran pre");
+		let passed: Outcome<Option<Seen>> = Ok(None);
+		let (end, got) = staged_then(passed, move || async move { r.set(r.get() + 1); Ok(()) }).await;
+		assert_eq!(end, StagedEnd::Close);
+		assert_eq!(got.expect("passed"), None);
+		assert_eq!(ran.get(), 1);
+		let passed: Outcome<Option<Seen>> = Ok(None);
+		let (end, got) = staged_then(passed,
+			|| async { Err(err!("the archive would not append."; IO, File, Write)) }).await;
+		assert_eq!(end, StagedEnd::Abort, "a failed pre must abort the writable");
+		assert!(got.is_err());
+	}
+
+	/// HL1 (d), the wiring: in OPFS's held write the first compare's refusal returns before
+	/// `stage`, and `pre` is reached only through `staged_then`, after `stage` and before `close`.
+	#[test]
+	fn hl1_d_opfs_runs_pre_after_the_recheck_and_before_close() {
+		const OPFS: &str = include_str!("wasm/opfs.rs");
+		let at = OPFS.find("async fn write_file_then_held").expect("the held write");
+		let body = &OPFS[at..];
+		let body = &body[..body.find("\n}\n").expect("its end")];
+		let first = body.find("return Ok(Some(found));").expect("the first compare's refusal");
+		let staged = body.find("stage(&writable").expect("stage");
+		let then = body.find("staged_then(staged, pre)").expect("pre through staged_then");
+		let close = body.find("writable.close()").expect("close");
+		assert!(first < staged && staged < then && then < close,
+			"order: compare {} < stage {} < pre {} < close {}", first, staged, then, close);
+		assert_eq!(body.matches("pre)").count(), 1, "pre is used once, through staged_then");
+		assert!(!body.contains("pre()"), "pre is never called directly");
+	}
+
 	/// The shipped Log Life page: the real file the history is full of, so the diff is measured
 	/// against real markup rather than a fixture shaped to flatter it.
 	const PAGE: &str = include_str!("../www/capps/lifelog/crystal.html");
@@ -4108,7 +4778,7 @@ Garden: order two bags of bark for a bed.
 	#[test]
 	fn test_only_a_capture_that_found_nothing_made_the_file_00() {
 		let cap = |before: Option<&str>, found: Found| Change {
-			before: before.map(|b| b.as_bytes().to_vec()), found, ..Change::of("vault/p.md", b"B".to_vec())
+			before: before.map(|b| Prior::Held(b.as_bytes().to_vec())), found, ..Change::of("vault/p.md", b"B".to_vec())
 		};
 		assert!(cap(None, Found::Nothing).made(), "a first act that found nothing");
 		assert!(cap(None, Found::of(Some(b"B"))).made(), "folded over its own later act");
@@ -4116,7 +4786,7 @@ Garden: order two bags of bark for a bed.
 		assert!(!cap(Some("his"), Found::of(Some(b"his"))).made(), "a capture of bytes that stood");
 		assert!(!Change { refused: Some("denied".to_string()), ..cap(None, Found::Unread) }.made(),
 			"a capture the hand refused");
-		assert!(!Change { carried: Some(Carried::Kept(b"his".to_vec())), ..cap(None, Found::Nothing) }
+		assert!(!Change { carried: Some(Carried::Kept(Prior::Held(b"his".to_vec()))), ..cap(None, Found::Nothing) }
 			.made(), "a move of his file");
 		assert!(Change { carried: Some(Carried::Made), ..cap(None, Found::Nothing) }.made(),
 			"a move of a file the turn made");
@@ -5388,6 +6058,16 @@ Garden: order two bags of bark for a bed.
 
 	const USERS: &str = "The user's own notes, which no turn wrote.\n";
 
+	/// [`this_turn_found`] with the bytes it names, of a ledger that holds every body in hand.
+	fn turn_found(held: &[(String, Change)], path: &str, now: &[u8]) -> TurnFound {
+		match this_turn_found(held, path, now) {
+			TurnSaid::Made				=> TurnFound::Made,
+			TurnSaid::Carried(Prior::Held(k))	=> TurnFound::Carried(k),
+			TurnSaid::Was(Prior::Held(w))		=> TurnFound::Was(w),
+			other					=> panic!("a test ledger named a stored body: {:?}", other),
+		}
+	}
+
 	/// The turn's capture of `path`, where it holds one.
 	fn entry<'a>(held: &'a [(String, Change)], path: &str) -> Option<&'a Change> {
 		held.iter().find(|(_, h)| h.path == path).map(|(_, h)| h)
@@ -5396,7 +6076,7 @@ Garden: order two bags of bark for a bed.
 	/// What a wipe over `path` holding `now` is measured against: `measured_against`, with no
 	/// history held.
 	fn against(held: &[(String, Change)], path: &str, now: &[u8]) -> Vec<u8> {
-		match this_turn_found(held, path, now) {
+		match turn_found(held, path, now) {
 			TurnFound::Made		=> Vec::new(),
 			TurnFound::Carried(k)	=> k,
 			TurnFound::Was(w)	=> w,
@@ -5415,14 +6095,14 @@ Garden: order two bags of bark for a bed.
 		};
 		let before = if wiped { copy } else { found.map(|b| b.to_vec()) };
 		capture_into(held, path, Change { path: path.to_string(), after: Body::Held(after.to_vec()),
-			before, found: Found::of(found), carried: None, mark: true, refused: None, wiped,
+			before: before.map(Prior::Held), found: Found::of(found), carried: None, mark: true, refused: None, wiped,
 			folder: None, by: None, door: false });
 		wiped
 	}
 
 	/// A turn's move of `from`, holding `bytes`, to `to`: both ends captured.
 	fn moving(held: &mut Vec<(String, Change)>, from: &str, to: &str, bytes: &[u8]) {
-		let first = match this_turn_found(held, from, bytes) {
+		let first = match turn_found(held, from, bytes) {
 			TurnFound::Made		=> None,
 			TurnFound::Carried(k)	=> Some(k),
 			TurnFound::Was(w)	=> Some(w),
@@ -5442,12 +6122,12 @@ Garden: order two bags of bark for a bed.
 		let mut held: Vec<(String, Change)> = Vec::new();
 		assert!(!wrote(&mut held, "vault/q/b.md", None, b"x"), "a new file was a wipe");
 		// The control: the turn's own bytes, still there.
-		assert_eq!(TurnFound::Made, this_turn_found(&held, "vault/q/b.md", b"x"));
+		assert_eq!(TurnFound::Made, turn_found(&held, "vault/q/b.md", b"x"));
 		assert!(!wipes(&against(&held, "vault/q/b.md", b"x"), b""),
 			"emptying the turn's own file was a wipe");
 		// The user's bytes where the turn's were: measured as they stand, and emptying them wipes.
 		assert_eq!(TurnFound::Was(USERS.as_bytes().to_vec()),
-			this_turn_found(&held, "vault/q/b.md", USERS.as_bytes()),
+			turn_found(&held, "vault/q/b.md", USERS.as_bytes()),
 			"a user's file on a path the turn made was taken for the turn's own");
 		assert!(wipes(&against(&held, "vault/q/b.md", USERS.as_bytes()), b""),
 			"emptying the user's file there was not a wipe");
@@ -5455,11 +6135,11 @@ Garden: order two bags of bark for a bed.
 		capture_into(&mut held, "vault/q/b.md", Change {
 			found: Found::of(Some(b"x")), ..Change::gone("vault/q/b.md") });
 		assert_eq!(TurnFound::Was(USERS.as_bytes().to_vec()),
-			this_turn_found(&held, "vault/q/b.md", USERS.as_bytes()));
+			turn_found(&held, "vault/q/b.md", USERS.as_bytes()));
 		// An edit on the machine the app never read back is trusted for a first copy, never for
 		// "made here".
 		let unseen = vec![("n.md".to_string(), Change { after: Body::Unseen, ..Change::gone("n.md") })];
-		assert_eq!(TurnFound::Was(b"now".to_vec()), this_turn_found(&unseen, "n.md", b"now"));
+		assert_eq!(TurnFound::Was(b"now".to_vec()), turn_found(&unseen, "n.md", b"now"));
 	}
 
 	/// **A write over bytes the turn did not leave starts the run again** (Q5-1, brief test 1b).
@@ -5475,7 +6155,7 @@ Garden: order two bags of bark for a bed.
 			"emptying the user's file was not a wipe");
 		match entry(&held, "vault/q/b.md") {
 			Some(b)	=> {
-				assert_eq!(Some(USERS.as_bytes().to_vec()), b.before,
+				assert_eq!(Some(Prior::Held(USERS.as_bytes().to_vec())), b.before,
 					"the row keeps the turn's \"made here\", not the user's bytes");
 				assert!(b.wiped);
 			},
@@ -5492,21 +6172,21 @@ Garden: order two bags of bark for a bed.
 		let edit = "The user's report, as it was before the turn began, edited.\n";
 		wrote(&mut edited, "vault/r.md", Some(orig.as_bytes()), edit.as_bytes());
 		if let Some((_, h)) = edited.iter_mut().find(|(_, h)| h.path == "vault/r.md") {
-			h.carried = Some(Carried::Kept(b"stale".to_vec()));
+			h.carried = Some(Carried::Kept(crate::diamond_versions::Prior::Held(b"stale".to_vec())));
 		}
 		assert_eq!(TurnFound::Was(USERS.as_bytes().to_vec()),
-			this_turn_found(&edited, "vault/r.md", USERS.as_bytes()),
+			turn_found(&edited, "vault/r.md", USERS.as_bytes()),
 			"bytes the turn did not leave were measured as the turn's");
 		match seal_broken(&mut edited, "vault/r.md", USERS.as_bytes()) {
 			Some((_, run))	=> assert_eq!(
-				(Some(orig.as_bytes().to_vec()), Some(Carried::Kept(b"stale".to_vec()))),
+				(Some(Prior::Held(orig.as_bytes().to_vec())), Some(Carried::Kept(crate::diamond_versions::Prior::Held(b"stale".to_vec())))),
 				(run.before, run.carried), "the run sealed was not the turn's"),
 			None		=> panic!("the run the user's bytes ended was not sealed"),
 		}
 		wrote(&mut edited, "vault/r.md", Some(USERS.as_bytes()), b"new");
 		match entry(&edited, "vault/r.md") {
 			Some(r)	=> {
-				assert_eq!(Some(USERS.as_bytes().to_vec()), r.before,
+				assert_eq!(Some(Prior::Held(USERS.as_bytes().to_vec())), r.before,
 					"the path did not start again from the bytes the write found");
 				assert_eq!(None, r.carried, "a history of bytes no longer there was kept");
 			},
@@ -5536,15 +6216,15 @@ Garden: order two bags of bark for a bed.
 			Some(s)	=> s,
 			None	=> panic!("the user's save did not end the turn's run"),
 		};
-		assert_eq!(("vault/e.md", Some(first.as_bytes().to_vec()), Body::Held(edit.as_bytes().to_vec())),
+		assert_eq!(("vault/e.md", Some(Prior::Held(first.as_bytes().to_vec())), Body::Held(edit.as_bytes().to_vec())),
 			(raw.as_str(), run.before.clone(), run.after.clone()), "the sealed run is not the turn's edit");
 		// The path begins again at the user's save, and the write back is a wipe of it.
 		assert_eq!(TurnFound::Was(later.as_bytes().to_vec()),
-			this_turn_found(&held, "vault/e.md", later.as_bytes()));
+			turn_found(&held, "vault/e.md", later.as_bytes()));
 		assert!(wrote(&mut held, "vault/e.md", Some(later.as_bytes()), first.as_bytes()),
 			"writing the first text back over the user's save was not a wipe");
 		match entry(&held, "vault/e.md") {
-			Some(e)	=> assert_eq!((Some(later.as_bytes().to_vec()), true), (e.before.clone(), e.wiped),
+			Some(e)	=> assert_eq!((Some(Prior::Held(later.as_bytes().to_vec())), true), (e.before.clone(), e.wiped),
 				"the row does not keep the user's save as the copy the wipe promised"),
 			None	=> panic!("the write was not captured"),
 		}
@@ -5558,15 +6238,15 @@ Garden: order two bags of bark for a bed.
 		let b0 = "The user's b.md, which the turn deleted.\n";
 		let cp = "What a hand's cp put there afterwards, which is not the turn's.\n";
 		let mut del: Vec<(String, Change)> = Vec::new();
-		capture_into(&mut del, "vault/b.md", Change { before: Some(b0.as_bytes().to_vec()),
+		capture_into(&mut del, "vault/b.md", Change { before: Some(crate::diamond_versions::Prior::Held(b0.as_bytes().to_vec())),
 			found: Found::of(Some(b0.as_bytes())), mark: true, ..Change::gone("vault/b.md") });
 		match seal_broken(&mut del, "vault/b.md", cp.as_bytes()) {
-			Some((_, run))	=> assert_eq!((Body::Gone, Some(b0.as_bytes().to_vec())),
+			Some((_, run))	=> assert_eq!((Body::Gone, Some(Prior::Held(b0.as_bytes().to_vec()))),
 				(run.after, run.before), "the delete's copy was not sealed with its run"),
 			None		=> panic!("bytes on a path the turn deleted did not end its run"),
 		}
 		assert!(wrote(&mut del, "vault/b.md", Some(cp.as_bytes()), b""));
-		assert_eq!(Some(Some(cp.as_bytes().to_vec())), entry(&del, "vault/b.md").map(|b| b.before.clone()));
+		assert_eq!(Some(Some(Prior::Held(cp.as_bytes().to_vec()))), entry(&del, "vault/b.md").map(|b| b.before.clone()));
 	}
 
 	/// **A run whose version could not be written goes back as it was** -- unless the path has moved
@@ -5717,26 +6397,26 @@ Garden: order two bags of bark for a bed.
 			},
 			None	=> panic!("the destination of the first move was not captured"),
 		}
-		assert_eq!(TurnFound::Made, this_turn_found(&held, "vault/q/c.md", b"x"));
+		assert_eq!(TurnFound::Made, turn_found(&held, "vault/q/c.md", b"x"));
 		// victim.md: gone, and what a restore puts back is the user's file.
 		match entry(&held, "vault/q/victim.md") {
-			Some(v)	=> assert_eq!((Body::Gone, Some(USERS.as_bytes().to_vec())),
+			Some(v)	=> assert_eq!((Body::Gone, Some(Prior::Held(USERS.as_bytes().to_vec()))),
 				(v.after.clone(), v.before.clone())),
 			None	=> panic!("the source of the second move was not captured"),
 		}
 		// b.md: the user's bytes, carried, on a path that held nothing when the turn came.
 		match entry(&held, "vault/q/b.md") {
 			Some(b)	=> assert_eq!(
-				(None, Body::Held(USERS.as_bytes().to_vec()), Some(Carried::Kept(USERS.as_bytes().to_vec()))),
+				(None, Body::Held(USERS.as_bytes().to_vec()), Some(Carried::Kept(crate::diamond_versions::Prior::Held(USERS.as_bytes().to_vec())))),
 				(b.before.clone(), b.after.clone(), b.carried.clone())),
 			None	=> panic!("the destination of the second move was not captured"),
 		}
 		assert_eq!(TurnFound::Carried(USERS.as_bytes().to_vec()),
-			this_turn_found(&held, "vault/q/b.md", USERS.as_bytes()));
+			turn_found(&held, "vault/q/b.md", USERS.as_bytes()));
 		// The last call: a wipe, and the user's copy is still the one victim.md keeps.
 		assert!(wrote(&mut held, "vault/q/b.md", Some(USERS.as_bytes()), b""),
 			"emptying the user's file after it was moved was not a wipe");
-		assert_eq!(Some(Some(USERS.as_bytes().to_vec())),
+		assert_eq!(Some(Some(Prior::Held(USERS.as_bytes().to_vec()))),
 			entry(&held, "vault/q/victim.md").map(|v| v.before.clone()));
 		assert_eq!(Some(true), entry(&held, "vault/q/b.md").map(|b| b.wiped));
 		assert_eq!(3, held.len());
@@ -5749,16 +6429,16 @@ Garden: order two bags of bark for a bed.
 	fn test_a_move_onto_a_path_the_turn_emptied_keeps_that_paths_first_00() {
 		let mut held: Vec<(String, Change)> = Vec::new();
 		let theirs_b = "The user's b.md, which the turn deleted.\n";
-		capture_into(&mut held, "vault/b.md", Change { before: Some(theirs_b.as_bytes().to_vec()),
+		capture_into(&mut held, "vault/b.md", Change { before: Some(crate::diamond_versions::Prior::Held(theirs_b.as_bytes().to_vec())),
 			found: Found::of(Some(theirs_b.as_bytes())), mark: true, ..Change::gone("vault/b.md") });
 		moving(&mut held, "vault/a.md", "vault/b.md", USERS.as_bytes());
 		assert!(wrote(&mut held, "vault/b.md", Some(USERS.as_bytes()), b""));
 		match entry(&held, "vault/b.md") {
-			Some(b)	=> assert_eq!((Some(theirs_b.as_bytes().to_vec()), true),
+			Some(b)	=> assert_eq!((Some(Prior::Held(theirs_b.as_bytes().to_vec())), true),
 				(b.before.clone(), b.wiped), "the deleted b.md's copy was taken for a.md's"),
 			None	=> panic!("b.md was not captured"),
 		}
-		assert_eq!(Some(Some(USERS.as_bytes().to_vec())),
+		assert_eq!(Some(Some(Prior::Held(USERS.as_bytes().to_vec()))),
 			entry(&held, "vault/a.md").map(|a| a.before.clone()));
 	}
 
@@ -5772,7 +6452,7 @@ Garden: order two bags of bark for a bed.
 			Moving::Unread(Body::TooLarge(1 << 30), "size".to_string()));
 		capture_into(&mut held, "vault/big.bin", src);
 		capture_into(&mut held, "vault/moved.bin", dst);
-		assert_eq!(TurnFound::Was(b"now".to_vec()), this_turn_found(&held, "vault/moved.bin", b"now"));
+		assert_eq!(TurnFound::Was(b"now".to_vec()), turn_found(&held, "vault/moved.bin", b"now"));
 		assert_eq!(Some(Some("size".to_string())),
 			entry(&held, "vault/moved.bin").map(|m| m.refused.clone()));
 		wrote(&mut held, "vault/d/one.md", None, b"1");
@@ -5798,12 +6478,12 @@ Garden: order two bags of bark for a bed.
 		let mut held: Vec<(String, Change)> = Vec::new();
 		assert!(!wrote(&mut held, "vault/p.md", Some(p0.as_bytes()), p1.as_bytes()));
 		assert!(!wrote(&mut held, "vault/p.md", Some(p1.as_bytes()), p2.as_bytes()));
-		assert_eq!(Some(Some(p0.as_bytes().to_vec())),
+		assert_eq!(Some(Some(Prior::Held(p0.as_bytes().to_vec()))),
 			entry(&held, "vault/p.md").map(|p| p.before.clone()));
 		// A delete keeping the file as earlier turns found it: older than this turn's first.
-		capture_into(&mut held, "vault/p.md", Change { before: Some(b"R, before earlier trims".to_vec()),
+		capture_into(&mut held, "vault/p.md", Change { before: Some(crate::diamond_versions::Prior::Held(b"R, before earlier trims".to_vec())),
 			found: Found::of(Some(p2.as_bytes())), mark: true, ..Change::gone("vault/p.md") });
-		assert_eq!(Some(Some(b"R, before earlier trims".to_vec())),
+		assert_eq!(Some(Some(Prior::Held(b"R, before earlier trims".to_vec()))),
 			entry(&held, "vault/p.md").map(|p| p.before.clone()));
 	}
 
@@ -5816,13 +6496,13 @@ Garden: order two bags of bark for a bed.
 		let who = |role: &str| Some(Author { role: role.to_string(), m: fmt!("{}-model", role),
 			..Default::default() });
 		let mut held: Vec<(String, Change)> = Vec::new();
-		capture_into(&mut held, "notes/a.md", Change { before: Some(b"old\n".to_vec()),
+		capture_into(&mut held, "notes/a.md", Change { before: Some(crate::diamond_versions::Prior::Held(b"old\n".to_vec())),
 			found: Found::of(Some(b"old\n")), by: who("daimon"),
 			..Change::of("notes/a.md", b"daimon's\n".to_vec()) });
-		capture_into(&mut held, "notes/a.md", Change { before: Some(b"daimon's\n".to_vec()),
+		capture_into(&mut held, "notes/a.md", Change { before: Some(crate::diamond_versions::Prior::Held(b"daimon's\n".to_vec())),
 			found: Found::of(Some(b"daimon's\n")), by: who("worker"),
 			..Change::of("notes/a.md", b"worker's\n".to_vec()) });
-		assert_eq!(Some((Some(b"old\n".to_vec()), who("worker"))),
+		assert_eq!(Some((Some(Prior::Held(b"old\n".to_vec())), who("worker"))),
 			entry(&held, "notes/a.md").map(|c| (c.before.clone(), c.by.clone())));
 		// The user's editor saves over it: the turn's run is sealed with its author, and the run
 		// begun again at the user's bytes names nobody.
@@ -5869,7 +6549,7 @@ Garden: order two bags of bark for a bed.
 		t.answer(q, true);
 		assert_eq!(OpenDelete::Go(true), t.room(&own, 0));
 		wrote(&mut held, "vault/q/b2.md", None, b"x");
-		capture_into(&mut held, "vault/q/b2.md", Change { before: Some(b"x".to_vec()),
+		capture_into(&mut held, "vault/q/b2.md", Change { before: Some(crate::diamond_versions::Prior::Held(b"x".to_vec())),
 			found: Found::of(Some(b"x")), mark: true, ..Change::gone("vault/q/b2.md") });
 		moving(&mut held, "vault/q/victim2.md", "vault/q/b2.md", USERS.as_bytes());
 		let theirs = open_file_key("vault/q/b2.md", &against(&held, "vault/q/b2.md", USERS.as_bytes()));
@@ -6918,6 +7598,239 @@ mod qa_d26a {
 		assert!(disk.iter().any(|(d, _)| *d == fresh), "a body in flight was taken blind");
 		assert!(!disk.iter().any(|(d, _)| *d == old), "an orphan of long ago was kept");
 	}
+
+	// ── D1b: `Body::Large` ──────────────────────────────────────────────────
+
+	/// Every rule asks of a `Large` after what it asks of the `Held` bytes it names: `left_there`,
+	/// `stands_as_left` and `this_turn_found` answer alike for each.
+	#[test]
+	fn large_answers_as_the_held_bytes_it_names() {
+		let a = vec![7u8; VERSION_FILE_MAX + 10];
+		let b = vec![8u8; VERSION_FILE_MAX + 10];
+		let held = Body::Held(a.clone());
+		let large = Body::Large(BodyRef::of(&a));
+		for found in [Found::of(Some(&a)), Found::of(Some(&b)), Found::Nothing, Found::Unread] {
+			assert_eq!(left_there(&held, &found), left_there(&large, &found), "{:?}", found);
+		}
+		let n = a.len() as u64;
+		for now in [Body::Held(a.clone()), Body::Held(b.clone()), Body::TooLarge(n),
+			Body::TooLarge(n + 1), Body::Gone, Body::Unseen, Body::Large(BodyRef::of(&a)),
+			Body::Large(BodyRef::of(&b))]
+		{
+			assert_eq!(stands_as_left(&held, &now), stands_as_left(&large, &now), "{:?}",
+				std::mem::discriminant(&now));
+		}
+		for (carried, before) in [(None, None), (None, Some(b"first".to_vec())),
+			(Some(Carried::Made), None), (Some(Carried::Kept(crate::diamond_versions::Prior::Held(b"k".to_vec()))), None)]
+		{
+			let cap = |after: Body| vec![("raw".to_string(), Change { after,
+				carried: carried.clone(), before: (before.clone()).map(crate::diamond_versions::Prior::Held), ..Change::gone("p") })];
+			for now in [&a, &b] {
+				assert_eq!(this_turn_found(&cap(held.clone()), "p", now),
+					this_turn_found(&cap(large.clone()), "p", now));
+			}
+		}
+	}
+
+	/// O1: a workspace file past the ceiling stands on its length, a machine file on its bytes,
+	/// and the rule agrees with `stands_as_left` against what the tab's re-read answers.
+	#[test]
+	fn large_stands_is_the_tabs_rule() {
+		let a = vec![1u8; VERSION_FILE_MAX + 1];
+		let edited = vec![2u8; VERSION_FILE_MAX + 1];
+		let r = BodyRef::of(&a);
+		let n = a.len() as u64;
+		let other = hash_of(&edited);
+		// Red under a hash rule: a same-length outside edit would be "moved".
+		assert_eq!(large_stands("notes/a.md", &r, n, Some(&other)), Some(true));
+		assert_eq!(large_stands("notes/a.md", &r, n, None), Some(true));
+		assert_eq!(large_stands("notes/a.md", &r, n + 1, None), Some(false));
+		assert_eq!(stands_as_left(&Body::Large(r.clone()), &Body::TooLarge(n)), true);
+		assert_eq!(large_stands("/m/a.md", &r, n, Some(&other)), Some(false));
+		assert_eq!(large_stands("/m/a.md", &r, n, Some(&r.hash)), Some(true));
+		assert_eq!(large_stands("/m/a.md", &r, n, None), None);
+		// Red while the rule had a copy of its own: a workspace file at or under the ceiling is
+		// read whole by the tab, which answers definitely; a `Large` is past the ceiling, so no.
+		let small = VERSION_FILE_MAX as u64;
+		assert_eq!(large_stands("notes/a.md", &r, small, None), Some(false));
+		assert_eq!(large_stands("notes/a.md", &r, small, None),
+			Some(stands_as_left(&Body::Large(r.clone()), &Body::Held(vec![1u8; VERSION_FILE_MAX]))));
+		assert_eq!(stands_as_left(&Body::Large(r.clone()), &Body::Held(edited)), false);
+	}
+
+	/// `BODY_KEEP_MAX`: set, an act whose copy would pass it is refused before anything is
+	/// reserved; `None` changes nothing; and it is `None` until the owner decides.
+	#[test]
+	fn body_keep_max_refuses_before_it_lands() {
+		assert_eq!(BODY_KEEP_MAX, None);
+		let found = Found::Nothing;
+		let mut reserved = Vec::new();
+		assert_eq!(claim_room_under(&[], &mut reserved, "notes/x.md", &found, Some(11), false,
+			u64::MAX, Some(10)), Err(Short::Kept(11, 10)));
+		assert!(reserved.is_empty(), "a refused act reserved a copy");
+		assert_eq!(claim_room_under(&[], &mut reserved, "notes/x.md", &found, Some(10), false,
+			u64::MAX, Some(10)), Ok(true));
+		// A path already held keeps its first copy, so nothing more is weighed.
+		assert_eq!(claim_room_under(&[], &mut reserved, "notes/x.md", &found, Some(99), false,
+			u64::MAX, Some(10)), Ok(false));
+		// An act keeping no copy is bound by nothing.
+		assert_eq!(claim_room_under(&[], &mut reserved, "notes/y.md", &found, None, true,
+			u64::MAX, Some(10)), Ok(true));
+		for (copy, destroying) in [(Some(1u64 << 40), false), (Some(1 << 40), true), (None, true)] {
+			let (mut a, mut b) = (Vec::new(), Vec::new());
+			assert_eq!(claim_room_under(&[], &mut a, "z", &found, copy, destroying, 1 << 20, None),
+				claim_room(&[], &mut b, "z", &found, copy, destroying, 1 << 20));
+			assert_eq!(a, b);
+		}
+	}
+
+	/// No answer of the store's port carries a `Body` to the tools (spec §16.3a): no return type
+	/// of `HostStore` names one, beyond the one answer made of `Change`s, which carries only what
+	/// the tab's own reads made -- `dirty_changes`, which goes in R7a (`versions_record_dirty`,
+	/// with D1k2's `VersionsRecordDirty`); D1p2 took `drain_turn` and `drain_windows` into the
+	/// slot -- and nothing outside the store and this module makes `Large`.
+	#[test]
+	fn no_port_answer_carries_a_body() {
+		let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+		let port = match std::fs::read_to_string(root.join("engine/host/store.rs")) {
+			Ok(t)	=> t,
+			Err(e)	=> panic!("reading the port: {}", e),
+		};
+		let start = match port.find("pub trait HostStore") {
+			Some(i)	=> i,
+			None	=> panic!("no HostStore"),
+		};
+		let end = port[start..].find("\n}\n").map(|e| start + e).unwrap_or(port.len());
+		let mut changes = Vec::new();
+		for sig in port[start..end].split("fn ").skip(1) {
+			let sig = &sig[..sig.find(|c| c == ';' || c == '{').unwrap_or(sig.len())];
+			let name: String = sig.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+			let answer = match sig.find("->") {
+				Some(i)	=> &sig[i..],
+				None	=> continue,
+			};
+			assert!(!answer.contains("Body"), "{} answers a Body", name);
+			if answer.contains("Change") {
+				changes.push(name);
+			}
+		}
+		changes.sort();
+		assert_eq!(changes, vec!["dirty_changes"]);
+		let mut stack = vec![root.clone()];
+		while let Some(dir) = stack.pop() {
+			let entries = match std::fs::read_dir(&dir) {
+				Ok(e)	=> e,
+				Err(e)	=> panic!("{:?}: {}", dir, e),
+			};
+			for entry in entries.flatten() {
+				let path = entry.path();
+				if path.is_dir() {
+					stack.push(path);
+					continue;
+				}
+				let rel = path.strip_prefix(&root).map(|p| p.to_string_lossy().to_string())
+					.unwrap_or_default();
+				if !rel.ends_with(".rs") || rel == "diamond_versions.rs" || rel.starts_with("store/") {
+					continue;
+				}
+				let text = std::fs::read_to_string(&path).unwrap_or_default();
+				assert!(!text.contains("Body::Large"), "{} makes or reads a Large body", rel);
+			}
+		}
+	}
+}
+#[cfg(test)]
+mod made1 {
+	use super::*;
+
+	fn daimon() -> Option<Author> {
+		Some(Author { role: "daimon".to_string(), m: "m".to_string(), ..Default::default() })
+	}
+
+	/// A row a file tool wrote at `path`, the Diamond's act.
+	/// A file the Diamond's file tool created ([`Entry::made`]), so the record says it is its own.
+	fn wrote(path: &str, body: &[u8]) -> Entry {
+		let mut e = Entry::changed(path, body, None);
+		e.mark = true;
+		e.by = daimon();
+		e.made = true;
+		e
+	}
+
+	fn man(cause: Cause, files: Vec<Entry>) -> Manifest {
+		Manifest::new(cause, 1, "t", "", files)
+	}
+
+	/// **MADE-1: a file the Diamond's file tool wrote in an earlier turn is named, with the
+	/// sha256 of what it left.**
+	#[test]
+	fn test_made1_a_file_tool_write_is_named_with_its_hash() {
+		let mut own = wrote("/m/own.typ", b"own");
+		own.made = true;
+		let got = made_by_diamond(&[(1, man(Cause::Turn, vec![own]))], &[]);
+		assert_eq!(got, vec![("/m/own.typ".to_string(), hash_of(b"own"))]);
+	}
+
+	/// **A newer row that is not the Diamond's file tool makes the file his**: his door, a
+	/// command's credit, a restore, a row with no author, or the file gone.
+	#[test]
+	fn test_made1_a_newer_row_not_the_tools_makes_it_his() {
+		let first = (1, man(Cause::Turn, vec![wrote("/m/a", b"1"), wrote("/m/b", b"1"),
+			wrote("/m/c", b"1"), wrote("/m/d", b"1"), wrote("/m/e", b"1")]));
+		let mut door = Entry::changed("/m/a", b"his", Some(hash_of(b"1")));
+		door.door = true;
+		let mut cmd = wrote("/m/b", b"2");
+		cmd.by = Some(Author { role: "daimon".to_string(), m: "m".to_string(),
+			via: VIA_COMMAND.to_string(), ..Default::default() });
+		let mut gone = wrote("/m/d", b"");
+		gone.gone = true;
+		let later = vec![
+			(2, man(Cause::User, vec![door])),
+			(3, man(Cause::Turn, vec![cmd, Entry::changed("/m/c", b"2", None), gone])),
+			(4, man(Cause::Restore, vec![wrote("/m/e", b"0")])),
+		];
+		let mut all = vec![first];
+		all.extend(later);
+		assert!(made_by_diamond(&all, &[]).is_empty(), "{:?}", made_by_diamond(&all, &[]));
+	}
+
+	/// **A forged name grants nothing**: a path the record never wrote, a relative one, and a
+	/// hash that is not one are not named.
+	#[test]
+	fn test_made1_what_the_record_never_wrote_is_not_named() {
+		let mut bad = wrote("/m/bad", b"x");
+		bad.hash = "../../etc".to_string();
+		let got = made_by_diamond(&[(1, man(Cause::Turn, vec![wrote("rel.md", b"x"), bad]))], &[]);
+		assert!(got.is_empty(), "{:?}", got);
+		assert!(!made_by_diamond(&[], &[]).iter().any(|(p, _)| p == "/m/his.typ"));
+	}
+
+	/// **This turn's capture decides before any manifest**, and an older write past the window
+	/// is not named.
+	#[test]
+	fn test_made1_this_turn_first_and_the_window_bounds() {
+		let held = vec![
+			("own.typ".to_string(), Change { by: daimon(), mark: true,
+				before: Some(Prior::Held(b"old".to_vec())), ..Change::of("/m/own.typ", b"new".to_vec()) }),
+			("x".to_string(), Change { by: daimon(), mark: true, ..Change::gone("/m/x") }),
+		];
+		let ms = vec![(1, man(Cause::Turn, vec![wrote("/m/own.typ", b"old"), wrote("/m/x", b"x")]))];
+		assert_eq!(made_by_diamond(&ms, &held), vec![("/m/own.typ".to_string(), hash_of(b"new"))]);
+
+		let mut ms: Vec<(u64, Manifest)> = vec![(1, man(Cause::Turn, vec![wrote("/m/far", b"f")]))];
+		for v in 0..MADE_WINDOW as u64 {
+			ms.push((v + 2, man(Cause::Turn, vec![wrote(&fmt!("/m/n{}", v), b"n")])));
+		}
+		let got = made_by_diamond(&ms, &[]);
+		assert_eq!(got.len(), MADE_WINDOW);
+		assert!(!got.iter().any(|(p, _)| p == "/m/far"));
+
+		// A manifest holds at most `TURN_FILES_MAX` rows, so the cap is met across several.
+		let many: Vec<(u64, Manifest)> = (0..MADE_SENT_MAX / TURN_FILES_MAX + 1).map(|v| (v as u64 + 1,
+			man(Cause::Turn, (0..TURN_FILES_MAX).map(|i| wrote(&fmt!("/m/{}/f{}", v, i), b"z")).collect())))
+			.collect();
+		assert_eq!(made_by_diamond(&many, &[]).len(), MADE_SENT_MAX);
+	}
 }
 
 #[cfg(test)]
@@ -6961,5 +7874,181 @@ mod ublk26_change_refusals {
 		assert!(!r.refused("Biography/letter.md"));
 		assert!(!r.refused("Bio/other.md"));
 		assert!(!ChangeRefusals::default().refused("Bio/letter.md"));
+	}
+}
+
+#[cfg(test)]
+mod made2 {
+	use super::*;
+
+	fn daimon() -> Option<Author> {
+		Some(Author { role: "daimon".to_string(), m: "m".to_string(), ..Default::default() })
+	}
+
+	/// The row a turn's record writes for `c`, one of [`ran_rows`]: as `versions_record_held`
+	/// writes a `Large` after with a reason, `was` what the record last held, and `made` read off
+	/// the capture.
+	fn row_was(c: Change, was: Option<String>) -> Entry {
+		let made = c.made();
+		let (hash, bytes) = match c.after {
+			Body::Large(r)	=> (r.hash, r.len),
+			_		=> (String::new(), 0),
+		};
+		Entry { path: c.path, hash, bytes, was, gone: false, wiped: false, mark: c.mark,
+			skipped: c.refused, folder: None, by: c.by, door: c.door, made }
+	}
+
+	fn row(c: Change) -> Entry { row_was(c, None) }
+
+	/// One command row of `path`, left at `hash`, `created` or changed by the run.
+	fn ran(path: &str, hash: String, created: bool, was: Option<String>) -> Entry {
+		let rows = ran_rows(&[(path.to_string(), hash, created, daimon())]);
+		match rows.into_iter().next() {
+			Some(c) => row_was(c, was),
+			None	=> Entry::changed(path, b"", None),
+		}
+	}
+
+	/// **A file a run's command created in turn n is the Diamond's in turn n+1, on both readers**,
+	/// and stays so when a later command changes it; the record's row says `made`.
+	#[test]
+	fn test_made3_a_command_created_file_is_the_diamonds_next_turn() {
+		let a = ran("/m/out/a.o", h('a'), true, None);
+		assert!(a.made, "a created file's row is made");
+		let t1 = (1, Manifest::new(Cause::Turn, 1, "t", "", vec![a]));
+		assert!(made_by_turns(&[t1.clone()], "/m/out/a.o", None, &h('a')), "U1: made");
+		assert_eq!(made_by_diamond(&[t1.clone()], &[]), vec![(fmt!("/m/out/a.o"), h('a'))]);
+
+		let b = ran("/m/out/a.o", h('b'), false, Some(h('a')));
+		assert!(!b.made, "a changed file's row is not made");
+		let t2 = (2, Manifest::new(Cause::Turn, 2, "t", "", vec![b]));
+		let ms = vec![t1, t2];
+		assert!(made_by_turns(&ms, "/m/out/a.o", None, &h('b')), "U1: made, then changed");
+		assert_eq!(made_by_diamond(&ms, &[]), vec![(fmt!("/m/out/a.o"), h('b'))]);
+		assert_eq!(made_by_diamond_ran(&ms, &[], &[(fmt!("/m/out/a.o"), h('c'), false)]),
+			vec![(fmt!("/m/out/a.o"), h('c'))], "changed again this turn");
+	}
+
+	/// **A file he made is not the Diamond's, though a command changed it**: not in the next turn,
+	/// on either reader, and not in this one.
+	#[test]
+	fn test_made3_a_file_he_made_is_not_the_diamonds() {
+		let mut his = Entry::changed("/m/his.typ", b"his", None);
+		his.door = true;
+		his.mark = true;
+		let t1 = (1, Manifest::new(Cause::User, 1, "t", "", vec![his]));
+		let c = ran("/m/his.typ", h('b'), false, Some(hash_of(b"his")));
+		let t2 = (2, Manifest::new(Cause::Turn, 2, "t", "", vec![c]));
+		let ms = vec![t1, t2];
+		assert!(!made_by_turns(&ms, "/m/his.typ", None, &h('b')), "U1: his");
+		assert!(made_by_diamond(&ms, &[]).is_empty(), "{:?}", made_by_diamond(&ms, &[]));
+		// A row with no `was`, the store never having held his file, vouches for nothing either.
+		let lone = vec![(2, Manifest::new(Cause::Turn, 2, "t", "",
+			vec![ran("/m/his.typ", h('b'), false, None)]))];
+		assert!(made_by_diamond(&lone, &[]).is_empty(), "a lone changed row");
+		// This turn: a command's change of his file is his, its new file the Diamond's.
+		let got = made_by_diamond_ran(&ms[..1], &[],
+			&[(fmt!("/m/his.typ"), h('c'), false), (fmt!("/m/new.o"), h('d'), true)]);
+		assert_eq!(got, vec![(fmt!("/m/new.o"), h('d'))]);
+	}
+
+	fn h(c: char) -> String { c.to_string().repeat(64) }
+
+	/// **The run JSON's `created`, `changed` and leftovers' lists are what the command made**, as
+	/// absolute paths; a path that climbs, or a hash that is not one, is not.
+	#[test]
+	fn test_made2_the_run_json_names_what_the_command_made() {
+		let res = fmt!(concat!(r#"{{"exit":0,"stdout":"\"created\":[]","created":["#,
+			r#"{{"root":"/w","path":"out/a.o","sha256":"{a}"}},"#,
+			r#"{{"root":"/w","path":"../his.typ","sha256":"{a}"}},"#,
+			r#"{{"root":"/w","path":"bad","sha256":"xyz"}}],"#,
+			r#""changed":[{{"root":"/w/","path":"own.o","sha256":"{b}","was":"{a}"}}],"#,
+			r#""created_capped":false,"metered_late":[{{"run":"c0","created":["#,
+			r#"{{"root":"/w","path":"late.o","sha256":"{c}"}}],"changed":[],"#,
+			r#""created_capped":true,"final":true}}]}}"#), a = h('a'), b = h('b'), c = h('c'));
+		let got = RanMade::of(&res);
+		assert_eq!(got.files, vec![(fmt!("/w/out/a.o"), h('a'), true), (fmt!("/w/own.o"), h('b'), false),
+			(fmt!("/w/late.o"), h('c'), true)]);
+		assert!(got.capped, "a leftover's capped list is said");
+		assert_eq!(RanMade::of(r#"{"exit":0}"#), RanMade::default());
+	}
+
+	/// **What a command made is named next turn, from the record's row**; a later row of his door
+	/// makes it his; a window's `via:command` credit, which the meter never reported, is not
+	/// named; and nothing an unnamed agent ran is a row.
+	#[test]
+	fn test_made2_a_command_row_is_named_and_only_that() {
+		let rows = ran_rows(&[(fmt!("/m/out/a.o"), h('a'), true, daimon()),
+			(fmt!("/m/out/b.o"), h('b'), true, daimon()), (fmt!("/m/out/x.o"), h('c'), true, None)]);
+		assert_eq!(rows.len(), 2, "{:?}", rows);
+		let mut window = Entry::changed("/m/his.typ", b"his", None);
+		window.mark = true;
+		window.by = Some(Author { role: "daimon".to_string(), m: "m".to_string(),
+			via: VIA_COMMAND.to_string(), ..Default::default() });
+		let mut files: Vec<Entry> = rows.into_iter().map(row).collect();
+		files.push(window);
+		let t1 = (1, Manifest::new(Cause::Turn, 1, "t", "", files));
+		let got = made_by_diamond(&[t1.clone()], &[]);
+		assert_eq!(got, vec![(fmt!("/m/out/b.o"), h('b')), (fmt!("/m/out/a.o"), h('a'))]);
+
+		let mut door = Entry::changed("/m/out/a.o", b"his", Some(h('a')));
+		door.door = true;
+		let t2 = (2, Manifest::new(Cause::User, 2, "t", "", vec![door]));
+		assert_eq!(made_by_diamond(&[t1, t2], &[]), vec![(fmt!("/m/out/b.o"), h('b'))]);
+	}
+
+	/// **This turn's commands count before the record**, under the same newest-first rule and
+	/// cap, and a capped report keeps what it named and says so.
+	#[test]
+	fn test_made2_this_turn_and_the_cap() {
+		let ran = vec![(fmt!("/m/out/a.o"), h('a'), true)];
+		assert_eq!(made_by_diamond_ran(&[], &[], &ran), vec![(fmt!("/m/out/a.o"), h('a'))]);
+		let mut many = String::from(r#"{"created":["#);
+		for i in 0..MADE_SENT_MAX + 3 {
+			if i > 0 { many.push(','); }
+			many.push_str(&fmt!(r#"{{"root":"/w","path":"f{}","sha256":"{}"}}"#, i, h('d')));
+		}
+		many.push_str(r#"],"created_capped":false}"#);
+		let got = RanMade::of(&many);
+		assert_eq!(got.files.len(), MADE_SENT_MAX);
+		assert!(got.capped, "over the cap is said");
+		assert!(!got.files.iter().any(|(p, _, _)| p == &fmt!("/w/f{}", MADE_SENT_MAX)));
+	}
+}
+
+#[cfg(test)]
+mod qa_portg_a {
+	use super::*;
+
+	fn daimon() -> Option<Author> {
+		Some(Author { role: "daimon".to_string(), m: "m".to_string(), ..Default::default() })
+	}
+
+	/// QA-A F1: his file, changed once by the Diamond's file tool (after his Apply), is still his
+	/// for U1, and must not be named in the command meter's `made` either.
+	#[test]
+	fn qa_a_his_file_a_tool_edited_is_not_made_for_commands() {
+		let mut his = Entry::changed("/m/his.typ", b"his", None);
+		his.door = true;
+		his.mark = true;
+		let t1 = (1, Manifest::new(Cause::User, 1, "t", "", vec![his]));
+		let mut edit = Entry::changed("/m/his.typ", b"his+", Some(hash_of(b"his")));
+		edit.mark = true;
+		edit.by = daimon();
+		let t2 = (2, Manifest::new(Cause::Turn, 2, "t", "", vec![edit]));
+		let ms = vec![t1, t2];
+		assert!(!made_by_turns(&ms, "/m/his.typ", None, &hash_of(b"his+")), "U1 says his");
+		let got = made_by_diamond(&ms, &[]);
+		assert!(got.is_empty(), "the meter's made names his file: {:?}", got);
+	}
+
+	/// QA-A F1, this turn: a tool's capture over his file grants it to a command in the same turn.
+	#[test]
+	fn qa_a_this_turns_tool_edit_of_his_file_is_not_made() {
+		let held = vec![("his.typ".to_string(), Change { by: daimon(), mark: true,
+			before: Some(Prior::Held(b"his".to_vec())),
+			..Change::of("/m/his.typ", b"his+".to_vec()) })];
+		let got = made_by_diamond(&[], &held);
+		assert!(got.is_empty(), "the meter's made names his file: {:?}", got);
 	}
 }

@@ -10,7 +10,7 @@
 //                    -- cargo lives under ~/.cargo -- so a granted Rust toolkit
 //                    made every command fail, while `prompts::machine_note` had
 //                    already told the daimon that cargo was on its PATH.
-//   `hand/src/exec.rs` `vet_roots` allowed EVERY toolchain folder, to every
+//   `kimberlite/src/exec.rs` `vet_roots` allowed EVERY toolchain folder, to every
 //                    fence, at either level, whether or not any toolkit had been
 //                    granted. ~/.local/bin is first on PATH and is a READ grant
 //                    in the app's own table; the clamp accepted it as writable.
@@ -57,8 +57,8 @@ const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
 const SRC	= path.join(ROOT, 'ext');
 const EXTID	= 'mpliijponglmmffjnonahhignkpkhmij';
-const INSTALL	= path.join(ROOT, 'hand/install/install.sh');
-const HAND	= path.join(ROOT, 'hand/target/release/daimond-hand');
+const INSTALL	= path.join(ROOT, 'kimberlite/install/install.sh');
+const HAND	= path.join(ROOT, 'kimberlite/target/release/kimberlite');
 
 const KEEP	= process.argv.slice(2).includes('--keep');
 
@@ -109,7 +109,7 @@ fs.writeFileSync(path.join(GRANT, 'inside.txt'), 'a file inside the grant\n');
 
 // `CARGO_TARGET_DIR` is REMOVED from the build's environment, and it is not a
 // tidying: an agent working in this tree usually has one set, cargo would then
-// write the new binary there, and `hand/target/release/daimond-hand` — the path
+// write the new binary there, and `kimberlite/target/release/kimberlite` — the path
 // the installer registers and this test runs — would be whatever was built last
 // week. Measured: with one inherited, this file passed its relay checks and
 // wrote a real shim into ~/.local/bin, because the binary under test was the one
@@ -125,7 +125,7 @@ delete buildEnv.CARGO_TARGET_DIR;
 // guard nobody has watched work is the thing this file exists to be rid of. The
 // same hatch, for the same reason, as `PTYEDGE_NO_BUILD` in verify_ptyedge.mjs.
 const built = process.env.DAIMOND_NO_BUILD ? { status: 0, stderr: '' }
-	: spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+	: spawnSync('cargo', ['build', '--release', '--manifest-path', 'kimberlite/Cargo.toml'],
 		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 check('the hand builds from source', built.status === 0 && fs.existsSync(HAND),
 	(built.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 3).join(' | '));
@@ -135,17 +135,17 @@ if (built.status !== 0) { console.log('\n0 ok, 1 failed'); process.exit(1); }
 // this test is measuring a binary somebody else's build left behind.
 //
 // That comparison was against four hand-picked files — exec.rs, main.rs,
-// wire.rs, codec.rs — which left out `hand/src/journal.rs`, `fence.rs`,
+// wire.rs, codec.rs — which left out `kimberlite/src/journal.rs`, `fence.rs`,
 // `seccomp.rs` and `pty.rs`, and every fe2o3 crate under all of them. A clamp
 // moved in `fence.rs` would not have registered at all. Cargo already writes
 // down what it linked, so the list is not picked: `daimond-hand.d` names every
 // source that went into the binary, and one of them being newer is the refusal.
-// The same oracle as `shipping_hand` in `hand/src/exec.rs` and
+// The same oracle as `shipping_hand` in `kimberlite/src/exec.rs` and
 // `dev/verify_ptyedge.mjs`.
 refuse(whyStaleBinary(HAND, {
 	subject: 'The toolchain clamp',
 	what:    'hand',
-	rebuild: 'cargo build --release --manifest-path hand/Cargo.toml',
+	rebuild: 'cargo build --release --manifest-path kimberlite/Cargo.toml',
 }));
 
 // The relay's half of the clamp is composed in the wasm — `toolkit_bounds`, and

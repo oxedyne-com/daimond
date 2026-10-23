@@ -63,14 +63,14 @@ test('B3: every page call says whether the row opens a turn', () => {
 	prose.forEach((c) => assert.match(c, /m\.role === 'user' && !m\.interject\)$/, c.slice(0, 160)));
 });
 
-test('B3: the engine takes opens, and the prose restore leaves an interjection unmarked', () => {
+// What the engine does with `opens` is pinned by behaviour in Rust
+// (protocol.rs `of_row_opening_marks_only_a_row_a_turn_was_run_on`), not by its spelling here.
+test('B3: the engine takes opens, and the prose restore reads the interjection', () => {
 	assert.match(APP, /pub fn append_message\(&self, role: String, content: String, pre: Option<String>,\s+mid: Option<String>, opens: bool\)/);
 	const a = APP.indexOf('pub fn append_message(');
 	const body = APP.slice(a, APP.indexOf('\n    }\n', a));
-	assert.match(body, /\.opening_if\(opens\)/);
 	assert.doesNotMatch(body, /\.opening\(\)/);
 	const r = APP.indexOf('    pub fn restore(\n');
 	const rest = APP.slice(r, APP.indexOf('\n    }\n', r));
-	assert.match(rest, /\.opening_if\(!interject\)/);
 	assert.match(rest, /"interject"/);
 });

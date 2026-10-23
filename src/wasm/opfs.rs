@@ -615,6 +615,63 @@ async fn open_parent(
     Ok((dir, leaf))
 }
 
+/// A failed lookup read by its exception's name (PLF-NF): absent only on `NotFoundError`, the
+/// other kind on `TypeMismatchError`, and every other failure an error naming `path` and `phase`.
+fn lookup_failed(e: &JsValue, path: &str, phase: &str)
+    -> Outcome<crate::diamond_versions::Lookup>
+{
+    crate::diamond_versions::lookup_failed(crate::wasm::js_prop(e, "name").as_deref(), path, phase)
+}
+
+/// [`open_parent`] for a probe: `None` where a parent folder is absent, or a file stands in its
+/// place, so the path cannot stand; any other failed lookup is an error, never "absent".
+async fn open_parent_probe(
+    root:       &FileSystemDirectoryHandle,
+    components: Vec<String>,
+    path:       &str,
+    phase:      &str,
+)
+    -> Outcome<Option<(FileSystemDirectoryHandle, String)>>
+{
+    let mut dir = root.clone();
+    let last = components.len() - 1;
+    let mut leaf = String::new();
+    for (i, want) in components.into_iter().enumerate() {
+        let name = disk_name(&dir, &want).await;
+        if i == last {
+            leaf = name;
+            break;
+        }
+        let next_val = match crate::wasm::settle_js(dir.get_directory_handle(&name)).await {
+            Ok(v)   => v,
+            Err(e)  => {
+                res!(lookup_failed(&e, path, phase));
+                return Ok(None);
+            },
+        };
+        dir = res!(next_val.dyn_into()
+            .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File)));
+    }
+    Ok(Some((dir, leaf)))
+}
+
+/// The file handle at `leaf` in `dir` for a bound write's or delete's compare: `None` only where
+/// nothing is there, or a folder stands there (no file to compare; a write then fails at its
+/// create).  Any other failed lookup is an error, so it is never taken for a new file.
+async fn compare_handle(dir: &FileSystemDirectoryHandle, leaf: &str, path: &str, phase: &str)
+    -> Outcome<Option<FileSystemFileHandle>>
+{
+    match crate::wasm::settle_js(dir.get_file_handle(leaf)).await {
+        Ok(v)   => Ok(Some(res!(v.dyn_into::<FileSystemFileHandle>()
+            .map_err(|_| err!("OPFS: the handle for '{}' at the {} was not a file handle.",
+                path, phase; IO, File, Read))))),
+        Err(e)  => {
+            res!(lookup_failed(&e, path, phase));
+            Ok(None)
+        },
+    }
+}
+
 /// Write `content` to `path` under `root`, creating parent directories
 /// and the file as needed, replacing any existing contents.
 pub(in crate::wasm) async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<()> {
@@ -640,17 +697,70 @@ async fn committed(file: &FileSystemFileHandle, leaf: &str) -> Outcome<Vec<u8>> 
 /// [`write_file`], landing only where what stands at `path` is still `expect`: `None` once
 /// written, or what stands there instead, with nothing written (hist-safe F1, 2026-10-12).
 ///
-/// **The comparison is the last thing before the commit.**  A writable's bytes are staged and land
-/// at `close`, so the committed file is read after the staging and the stream is closed straight
-/// after the comparison, or aborted.  Neither OPFS nor the File System Access API offers a
-/// compare-and-swap, and an editor writing an opened folder from outside the page can still land
-/// in the gap between this read and the `close`, but that gap is the commit itself rather than the
-/// round trip from the restore's read.  `expect` of `None` is the plain write.
+/// **The whole write holds the file's lock, from the first check to the `close`** (OPFS-LOCK,
+/// 2026-10-17).  A writable's bytes are staged privately and land at `close`, so the re-check
+/// could only see a rival that had already closed: two writers with overlapping writables both
+/// passed, 194-200 races of 200, and a sync, upload or Doc Save write closing between this re-check
+/// and this close was overwritten and kept in no version row.  Every writer in the origin -- this
+/// one, [`write_file`] through it, and every page writer through `www/js/filelock.js` -- now holds
+/// `daimond-file:<root>:<path>` ([`crate::fsname::file_lock_name`]) across its open-to-close, so
+/// the check and the commit are one step against all of them.  The lock is a leaf: a restore holds
+/// its version lock first and this one inside it, and nothing holding this one asks for another.
+///
+/// A conditional write also opens its writable `exclusive` where the browser has the mode
+/// (Chromium), which shuts out even a writer that forgot the lock; Firefox ignores the mode, and
+/// the lock is the guarantee there.  An editor writing an opened folder from outside the page is
+/// beyond any browser lock and can still land between the re-check and the `close`.  `expect` of
+/// `None` is the plain write.
 pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: &[u8],
     expect: Option<&crate::diamond_versions::Seen>)
     -> Outcome<Option<crate::diamond_versions::Seen>>
 {
-    use crate::diamond_versions::Seen;
+    write_file_then(root, path, content, expect, || async { Ok(()) }).await
+}
+
+/// [`write_file_if`], with `pre` run under the file's lock once both compares have passed and
+/// before the bytes land (held-lock settle P1): `hold_file`, the first compare, `stage` and its
+/// re-check, then **`pre`**, then the `close`, the lock let go and the change announced.  A
+/// refusal at either compare (a re-check refusal is a writer outside the lock) never runs `pre`;
+/// a `pre` that fails aborts the writable, so nothing is written.
+pub(in crate::wasm) async fn write_file_then<P, F>(root: FileRoot, path: &str, content: &[u8],
+    expect: Option<&crate::diamond_versions::Seen>, pre: P)
+    -> Outcome<Option<crate::diamond_versions::Seen>>
+where
+    P: FnOnce() -> F,
+    F: std::future::Future<Output = Outcome<()>>,
+{
+    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, path), path).await);
+    let landed = res!(write_file_then_held(root, path, content, expect, pre).await);
+    drop(held);
+    if landed.is_none() {
+        announce_change(path);
+    }
+    Ok(landed)
+}
+
+/// Whether `path`, spelled against `root`, is stored in the opened folder rather than this
+/// account's browser storage: the root half of its write lock's name.
+fn in_folder(root: FileRoot, path: &str) -> bool {
+    matches!(storage_of(root, path), Storage::Folder(_))
+}
+
+/// How many times a conditional write asks again for an exclusive writable the browser refused
+/// because another writable of the file is open, and how long it waits between, in ms.  Under the
+/// file lock only a writer outside it (a folder move's copy, another program) can hold one.
+const EXCLUSIVE_TRIES: u32 = 5;
+const EXCLUSIVE_NAP_MS: u64 = 40;
+
+/// [`write_file_then`], with the file's lock held.
+async fn write_file_then_held<P, F>(root: FileRoot, path: &str, content: &[u8],
+    expect: Option<&crate::diamond_versions::Seen>, pre: P)
+    -> Outcome<Option<crate::diamond_versions::Seen>>
+where
+    P: FnOnce() -> F,
+    F: std::future::Future<Output = Outcome<()>>,
+{
+    use crate::diamond_versions::{Seen, StagedEnd, staged_then};
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(descend(&handle, components).await);
@@ -662,14 +772,17 @@ pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: 
             return Err(err!("OPFS: a write of '{}' was bound to bytes that could not be read, so \
                 there is nothing to compare.", path; IO, File, Write, Invalid));
         }
-        let had: Option<FileSystemFileHandle> = match crate::wasm::settle_js(dir.get_file_handle(&leaf))
-            .await
-        {
-            Ok(v)  => v.dyn_into().ok(),
-            Err(_) => None,
-        };
+        // Absent only on `NotFoundError` (PLF-NF): a lookup failing any other way refuses the
+        // write rather than letting it pass as a new file over one that stands.
+        let had = res!(compare_handle(&dir, &leaf, path, "compare before a bound write").await);
+        // A read that fails here is a refusal, not an error: a rival's commit invalidates the
+        // snapshot (`NotReadableError`, `NotFoundError`), and what stands there is then not what
+        // the write was bound to as far as anyone can tell.
         let found = match &had {
-            Some(f) => Seen::of(Some(&res!(committed(f, &leaf).await))),
+            Some(f) => match committed(f, &leaf).await {
+                Ok(b)  => Seen::of(Some(&b)),
+                Err(_) => Seen::Unread,
+            },
             None    => Seen::Absent,
         };
         if &found != want {
@@ -685,11 +798,89 @@ pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: 
     let file: FileSystemFileHandle = res!(file_val.dyn_into()
         .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File)));
 
-    let writable_val = res!(crate::wasm::settle_js(file.create_writable()).await
-        .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
+    let writable = res!(open_writable(&file, &leaf, expect.is_some()).await);
+
+    // EVERY END FROM HERE IS DECIDED IN ONE PLACE: only a passed re-check closes, and every other
+    // end aborts.  The failed write used to return with the writable open, which an exclusive
+    // writable turns into a file no one can write until the engine collects it.
+    // `pre` runs only past `stage`'s re-check, and before the `close` (P1).
+    let staged = stage(&writable, &file, &leaf, content, expect).await;
+    let (end, staged) = staged_then(staged, pre).await;
+    match end {
+        StagedEnd::Abort => {
+            let _ = crate::wasm::settle_js(writable.abort()).await;
+            staged
+        },
+        // `close` is inherited from `WritableStream` and flushes the file.
+        StagedEnd::Close => {
+            res!(crate::wasm::settle_js(writable.close()).await
+                .map_err(|e| err!("OPFS: close '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
+            Ok(None)
+        },
+    }
+}
+
+/// Open a writable of `file`: `exclusive` where `exclusive` and the browser has the mode, asked
+/// again a few times where another writable of the file is open ([`EXCLUSIVE_TRIES`]).
+async fn open_writable(file: &FileSystemFileHandle, leaf: &str, exclusive: bool)
+    -> Outcome<FileSystemWritableFileStream>
+{
+    let mut tries = 0;
+    let writable_val = loop {
+        let asked = match exclusive {
+            true  => exclusive_writable(file),
+            false => Ok(file.create_writable()),
+        };
+        let promise = res!(asked
+            .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
+        match crate::wasm::settle_js(promise).await {
+            Ok(v)  => break v,
+            Err(e) => {
+                tries += 1;
+                let busy = js_sys::Reflect::get(&e, &JsValue::from_str("name")).ok()
+                    .and_then(|n| n.as_string())
+                    .map_or(false, |n| n == "NoModificationAllowedError");
+                if !busy || tries >= EXCLUSIVE_TRIES {
+                    return Err(err!("OPFS: create writable for '{}' failed: {}.", leaf, js_err(&e);
+                        IO, File, Write));
+                }
+                crate::llm::sleep_ms(EXCLUSIVE_NAP_MS).await;
+            },
+        }
+    };
     let writable: FileSystemWritableFileStream = res!(writable_val.dyn_into()
         .map_err(|_| err!("OPFS: writable for '{}' had the wrong type.", leaf; IO, File, Write)));
+    Ok(writable)
+}
 
+/// `file.createWritable({ mode: "exclusive" })`, through `Reflect` because the binding has no
+/// `mode`.  A browser without the mode ignores the member and opens the usual siloed writable.
+fn exclusive_writable(file: &FileSystemFileHandle) -> Result<js_sys::Promise, JsValue> {
+    let opts = js_sys::Object::new();
+    if let Err(e) = js_sys::Reflect::set(&opts, &JsValue::from_str("mode"), &JsValue::from_str("exclusive")) {
+        return Err(e);
+    }
+    let make = match js_sys::Reflect::get(file.as_ref(), &JsValue::from_str("createWritable")) {
+        Ok(f)  => match f.dyn_into::<js_sys::Function>() {
+            Ok(f)  => f,
+            Err(v) => return Err(v),
+        },
+        Err(e) => return Err(e),
+    };
+    match make.call1(file.as_ref(), &opts) {
+        Ok(made) => made.dyn_into::<js_sys::Promise>(),
+        Err(e)   => Err(e),
+    }
+}
+
+/// Stage `content` in `writable` and re-check what is committed against `expect`: `None` where
+/// the write may close, or what stands there instead.  Never closes or aborts: its caller does,
+/// by [`crate::diamond_versions::StagedEnd`].
+async fn stage(writable: &FileSystemWritableFileStream, file: &FileSystemFileHandle, leaf: &str,
+    content: &[u8], expect: Option<&crate::diamond_versions::Seen>)
+    -> Outcome<Option<crate::diamond_versions::Seen>>
+{
+    use crate::diamond_versions::Seen;
     // COPIED INTO A JS-OWNED BUFFER FIRST, AND THIS IS NOT AN OPTIMISATION.
     //
     // `write_with_u8_array(&[u8])` hands JavaScript a `Uint8Array` VIEW over wasm
@@ -721,27 +912,15 @@ pub(in crate::wasm) async fn write_file_if(root: FileRoot, path: &str, content: 
     // to.  Where nothing stood, the handle's own creation left an empty file, so only bytes
     // that are not empty say someone else wrote there.
     if let Some(want) = expect {
-        let now = match committed(&file, &leaf).await {
-            Ok(b)  => b,
-            Err(e) => {
-                let _ = crate::wasm::settle_js(writable.abort()).await;
-                return Err(e);
-            },
-        };
+        let now = res!(committed(file, leaf).await);
         let found = match (want, now.is_empty()) {
             (Seen::Absent, true) => Seen::Absent,
             _                    => Seen::of(Some(&now)),
         };
         if &found != want {
-            let _ = crate::wasm::settle_js(writable.abort()).await;
             return Ok(Some(found));
         }
     }
-
-    // `close` is inherited from `WritableStream` and flushes the file.
-    res!(crate::wasm::settle_js(writable.close()).await
-        .map_err(|e| err!("OPFS: close '{}' failed: {}.", leaf, js_err(&e); IO, File, Write)));
-    announce_change(path);
     Ok(None)
 }
 
@@ -824,15 +1003,31 @@ pub(in crate::wasm) async fn create_dir(root: FileRoot, path: &str) -> Outcome<(
 /// wherever `from` lives and written to wherever `to` lives.  What it is not is a way to move a
 /// Diamond out of the store and have it still be a Diamond -- the store is where the rail reads,
 /// so such a move REMOVES it, exactly as asked.
+///
+/// **EVERY FILE IS MOVED UNDER ITS OWN WRITE LOCKS** (OPFS-LOCK check2, D3): its copy is created
+/// and closed holding the destination's lock, and only where nothing stands there; its source is
+/// removed holding the source's lock, and only where it is still what was copied.  A write that
+/// lands on the source after the copy read it (a restore, a sync merge, a daimon's write) used to
+/// be removed with it; now the move stops there and that file stays where it was, written.  One
+/// lock at a time, so each stays a leaf.
 pub(in crate::wasm) async fn move_entry(root: FileRoot, from: &str, to: &str) -> Outcome<()> {
+    use crate::diamond_versions::Seen;
     if res!(exists(root, to).await) {
         return Err(err!("'{}' already exists.", to; Invalid, Input));
     }
     let is_dir = res!(is_directory(root, from).await);
     if !is_dir {
         let bytes = res!(read_file(root, from).await);
-        res!(write_file(root, to, &bytes).await);
-        return delete_entry(root, from, false).await;
+        if res!(write_file_if(root, to, &bytes, Some(&Seen::Absent)).await).is_some() {
+            return Err(err!("'{}' already exists.", to; Invalid, Input));
+        }
+        let was = Seen::of(Some(&bytes));
+        if res!(delete_file_if(root, from, &was).await).is_none() {
+            return Ok(());
+        }
+        // Changed under the move: the source stays, written, and the copy of what it was goes.
+        let _ = delete_file_if(root, to, &was).await;
+        return Err(moved_changed(from));
     }
     // BY THE NAMES ON DISK, BELOW THE FOLDER THE MODEL NAMED.  The contents are never passed
     // through the workspace spelling: [`read_entries`] decodes `a%3Ab` and `a:b` to one name, so a
@@ -841,43 +1036,133 @@ pub(in crate::wasm) async fn move_entry(root: FileRoot, from: &str, to: &str) ->
     // And a name with `:` or `*` in it came out at the destination under its `%XX` form -- a
     // rename on the user's disk nobody asked for.  Each entry is copied and removed under exactly
     // the name it is stored as, so the destination holds what the source held, spelled as it was.
+    // Only the LOCKS go by the workspace spelling (decoded), because that is how every writer
+    // names them.
     let src = res!(descend_dir(&res!(resolve_root(root, from).await), from).await);
     res!(create_dir(root, to).await);
     let dst = res!(descend_dir(&res!(resolve_root(root, to).await), to).await);
-    let copied = res!(copy_tree(&src, &dst).await);
+    let copied = res!(copy_tree(root, &src, &dst, to).await);
     // THE SOURCE GOES ONLY AS FAR AS THE COPY CAME.  This ended in one recursive `removeEntry`,
     // which removes whatever is under `from` -- including anything the listing did not show and
     // so the copy never took.  Each copied file is removed by its stored name, then each folder
     // deepest first and NON-recursively, so a folder still holding something uncopied refuses to
     // go and the move fails with the source intact rather than succeeding with a loss.
-    for (dir, name, is_dir) in copied.iter() {
-        if !*is_dir {
-            res!(remove_stored(dir, name).await);
+    for c in copied.iter() {
+        if let Some(stamp) = c.stamp {
+            res!(remove_copied(root, from, c, stamp).await);
         }
     }
-    for (dir, name, is_dir) in copied.iter().rev() {
-        if *is_dir {
-            res!(remove_stored(dir, name).await);
+    for c in copied.iter().rev() {
+        if c.stamp.is_none() {
+            res!(remove_stored(&c.dir, &c.name).await);
         }
     }
     announce_change(to);
     delete_entry(root, from, false).await
 }
 
-/// Copy everything under `src` into `dst`, each entry under the name it is stored as, and answer
-/// with what was copied as `(its folder in the source, its stored name, is it a folder)`, a folder
-/// before anything inside it.
+/// The refusal of a move whose source changed while it was copied.
+fn moved_changed(path: &str) -> Error<ErrTag> {
+    err!("'{}' was written to while it was being moved, so it was kept where it is, with what was \
+        written, and the move stopped there.", path; Invalid, Input, Write)
+}
+
+/// One entry a folder move copied.
+struct Copied {
+    dir:    FileSystemDirectoryHandle,  // its folder in the source
+    into:   FileSystemDirectoryHandle,  // its folder at the destination, holding the copy
+    name:   String,                     // its stored name there
+    rel:    String,                     // its path below the moved folder, as the workspace spells it
+    stamp:  Option<(f64, f64)>,         // a file's size and modification time as copied; `None`: a folder
+}
+
+/// The largest file whose bytes [`remove_copied`] compares as well as its size and modification
+/// time: the text and settings files where a same-length rewrite happens, never a large file
+/// pulled into wasm memory.
+const COMPARE_BYTES_MAX: f64 = 1024.0 * 1024.0;
+
+/// Remove a copied file from the source, holding its write lock, and only where it is still the
+/// file that was copied: its size and modification time unchanged.  A rival write closes under
+/// the same lock, so it either landed before this look, and is seen, or waits until after the
+/// removal, and writes a new file.
+///
+/// **A file of at most [`COMPARE_BYTES_MAX`] is compared byte for byte as well.**  On a disk whose
+/// timestamps tick once a second or two (FAT32, exFAT, HFS+, some network shares), a same-length
+/// rewrite landing between the copy and this look keeps the old size and time, and the stamp alone
+/// removed it, losing the rewrite.  The bytes now in the source are compared with the copy at the
+/// destination, not with the `File` the copy read: that snapshot is checked by the same size and
+/// time, so on such a disk it would read the rewrite too.  Any failure to read either counts as a
+/// change, and the source stays.
+async fn remove_copied(root: FileRoot, from: &str, c: &Copied, stamp: (f64, f64)) -> Outcome<()> {
+    let path = fmt!("{}/{}", from.trim_end_matches('/'), c.rel);
+    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, &path), &path).await);
+    let now: Option<File> = match crate::wasm::settle_js(c.dir.get_file_handle(&c.name)).await {
+        Ok(v)  => match v.dyn_into::<FileSystemFileHandle>() {
+            Ok(fh) => match crate::wasm::settle_js(fh.get_file()).await {
+                Ok(f)  => f.dyn_into::<File>().ok(),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        },
+        Err(_) => None,
+    };
+    let same = match &now {
+        Some(f) => f.size() == stamp.0 && f.last_modified() == stamp.1,
+        None    => false,
+    };
+    let same = same && (stamp.0 > COMPARE_BYTES_MAX || same_bytes(c).await);
+    if !same {
+        drop(held);
+        return Err(moved_changed(&path));
+    }
+    let gone = remove_stored(&c.dir, &c.name).await;
+    drop(held);
+    gone
+}
+
+/// Whether the source file `c` names holds the same bytes as its copy at the destination; `false`
+/// where either cannot be read.
+async fn same_bytes(c: &Copied) -> bool {
+    let read = |dir: FileSystemDirectoryHandle| async move {
+        let fh_val = crate::wasm::settle_js(dir.get_file_handle(&c.name)).await.ok()?;
+        let fh: FileSystemFileHandle = fh_val.dyn_into().ok()?;
+        committed(&fh, &c.name).await.ok()
+    };
+    match (read(c.dir.clone()).await, read(c.into.clone()).await) {
+        (Some(now), Some(copy)) => now == copy,
+        _                       => false,
+    }
+}
+
+/// Copy everything under `src` into `dst` (the folder `to`), each entry under
+/// the name it is stored as, and answer with what was copied, a folder before anything inside it.
+///
+/// Each file is created and closed holding `to`'s lock for it ([`crate::wasm::store_opfs::hold_file`]),
+/// one at a time, and only where nothing stands there yet: the folder is new, so a file in it is a
+/// rival's (a restore of a deleted path, say), and is never written over.
 ///
 /// A file's bytes go across as the browser's own `File`, never through wasm memory, so a large
 /// file costs no copy here.  Recursion is spelled out with an explicit stack: an `async fn` cannot
 /// recurse without boxing its future.
-async fn copy_tree(src: &FileSystemDirectoryHandle, dst: &FileSystemDirectoryHandle)
-    -> Outcome<Vec<(FileSystemDirectoryHandle, String, bool)>>
+async fn copy_tree(root: FileRoot, src: &FileSystemDirectoryHandle,
+    dst: &FileSystemDirectoryHandle, to: &str)
+    -> Outcome<Vec<Copied>>
 {
     let mut copied = Vec::new();
-    let mut todo = vec![(src.clone(), dst.clone())];
-    while let Some((from, into)) = todo.pop() {
-        for (name, handle, is_dir) in res!(stored_entries(&from).await) {
+    let mut todo = vec![(src.clone(), dst.clone(), String::new())];
+    while let Some((here, into, rel)) = todo.pop() {
+        for (name, handle, is_dir) in res!(stored_entries(&here).await) {
+            // NOT ANOTHER WRITER'S SWAP FILE.  Chromium lists an open writable's private bytes as
+            // `<name>.crswap` beside the file; copied, it lands as a stray file at the destination,
+            // and its removal from the source is refused, failing the move.  It is the browser's,
+            // and goes when that writable ends.
+            if !is_dir && name.ends_with(".crswap") {
+                continue;
+            }
+            let below = match rel.is_empty() {
+                true  => fsname::decode(&name),
+                false => fmt!("{}/{}", rel, fsname::decode(&name)),
+            };
             if is_dir {
                 let opts = FileSystemGetDirectoryOptions::new();
                 opts.set_create(true);
@@ -889,8 +1174,9 @@ async fn copy_tree(src: &FileSystemDirectoryHandle, dst: &FileSystemDirectoryHan
                     .map_err(|_| err!("OPFS: '{}' was not a directory.", name; IO, File)));
                 let sub: FileSystemDirectoryHandle = res!(handle.dyn_into()
                     .map_err(|_| err!("OPFS: '{}' was not a directory.", name; IO, File)));
-                copied.push((from.clone(), name, true));
-                todo.push((sub, made));
+                copied.push(Copied { dir: here.clone(), into: into.clone(), name, rel: below.clone(),
+                    stamp: None });
+                todo.push((sub, made, below));
             } else {
                 let fh: FileSystemFileHandle = res!(handle.dyn_into()
                     .map_err(|_| err!("OPFS: '{}' was not a file.", name; IO, File, Read)));
@@ -899,34 +1185,54 @@ async fn copy_tree(src: &FileSystemDirectoryHandle, dst: &FileSystemDirectoryHan
                         IO, File, Read)));
                 let file: File = res!(file_val.dyn_into()
                     .map_err(|_| err!("OPFS: '{}' did not read as a file.", name; IO, File, Read)));
-                let opts = FileSystemGetFileOptions::new();
-                opts.set_create(true);
-                let out_val = res!(crate::wasm::settle_js(
-                        into.get_file_handle_with_options(&name, &opts)).await
-                    .map_err(|e| err!("OPFS: create file '{}' failed: {}.", name, js_err(&e);
-                        IO, File, Write)));
-                let out: FileSystemFileHandle = res!(out_val.dyn_into()
-                    .map_err(|_| err!("OPFS: '{}' was not a file.", name; IO, File, Write)));
-                let w_val = res!(crate::wasm::settle_js(out.create_writable()).await
-                    .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", name,
-                        js_err(&e); IO, File, Write)));
-                let w: FileSystemWritableFileStream = res!(w_val.dyn_into()
-                    .map_err(|_| err!("OPFS: writable for '{}' had the wrong type.", name;
-                        IO, File, Write)));
-                let put = res!(w.write_with_blob(&file)
-                    .map_err(|e| err!("OPFS: queue write for '{}' failed: {}.", name, js_err(&e);
-                        IO, File, Write)));
-                res!(crate::wasm::settle_js(put).await
-                    .map_err(|e| err!("OPFS: write '{}' failed: {}.", name, js_err(&e);
-                        IO, File, Write)));
-                res!(crate::wasm::settle_js(w.close()).await
-                    .map_err(|e| err!("OPFS: close '{}' failed: {}.", name, js_err(&e);
-                        IO, File, Write)));
-                copied.push((from.clone(), name, false));
+                let at = fmt!("{}/{}", to.trim_end_matches('/'), below);
+                let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, &at), &at).await);
+                let put = copy_file_held(&into, &name, &file, &at).await;
+                drop(held);
+                res!(put);
+                copied.push(Copied { dir: here.clone(), into: into.clone(), name, rel: below,
+                    stamp: Some((file.size(), file.last_modified())) });
             }
         }
     }
     Ok(copied)
+}
+
+/// Write `file` as `name` in `into`, with `at`'s lock held: only where nothing stands there, and
+/// aborted, never closed, on any failure.
+async fn copy_file_held(into: &FileSystemDirectoryHandle, name: &str, file: &File, at: &str)
+    -> Outcome<()>
+{
+    if crate::wasm::settle_js(into.get_file_handle(name)).await.is_ok() {
+        return Err(err!("'{}' was written while the move was making it, so the move stopped there \
+            and kept both.", at; Invalid, Input, Write));
+    }
+    let opts = FileSystemGetFileOptions::new();
+    opts.set_create(true);
+    let out_val = res!(crate::wasm::settle_js(
+            into.get_file_handle_with_options(name, &opts)).await
+        .map_err(|e| err!("OPFS: create file '{}' failed: {}.", name, js_err(&e);
+            IO, File, Write)));
+    let out: FileSystemFileHandle = res!(out_val.dyn_into()
+        .map_err(|_| err!("OPFS: '{}' was not a file.", name; IO, File, Write)));
+    let w_val = res!(crate::wasm::settle_js(out.create_writable()).await
+        .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", name,
+            js_err(&e); IO, File, Write)));
+    let w: FileSystemWritableFileStream = res!(w_val.dyn_into()
+        .map_err(|_| err!("OPFS: writable for '{}' had the wrong type.", name;
+            IO, File, Write)));
+    let wrote = match w.write_with_blob(file) {
+        Ok(put) => crate::wasm::settle_js(put).await.map(|_| ()),
+        Err(e)  => Err(e),
+    };
+    if let Err(e) = wrote {
+        let _ = crate::wasm::settle_js(w.abort()).await;
+        return Err(err!("OPFS: write '{}' failed: {}.", name, js_err(&e); IO, File, Write));
+    }
+    res!(crate::wasm::settle_js(w.close()).await
+        .map_err(|e| err!("OPFS: close '{}' failed: {}.", name, js_err(&e);
+            IO, File, Write)));
+    Ok(())
 }
 
 /// Remove one entry of `dir` by the name it is stored under, never recursively.
@@ -1300,6 +1606,15 @@ pub async fn list_dir_names(root: FileRoot, path: &str) -> Outcome<Vec<(String, 
 /// and there is no option to make it otherwise.  `Tool::FileDelete` refuses a folder in words
 /// before it gets this far; this is the floor under that sentence.
 pub(in crate::wasm) async fn delete_file(root: FileRoot, path: &str) -> Outcome<()> {
+    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, path), path).await);
+    let gone = delete_file_held(root, path).await;
+    drop(held);
+    gone
+}
+
+/// [`delete_file`], with the file's lock held (OPFS-LOCK check2, D6): a removal between a
+/// restore's re-check and its close undid the restore, or failed it.
+async fn delete_file_held(root: FileRoot, path: &str) -> Outcome<()> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
@@ -1322,6 +1637,16 @@ pub(in crate::wasm) async fn delete_file(root: FileRoot, path: &str) -> Outcome<
 /// deletion the user confirmed in the Files panel; a model's `file_delete` goes through
 /// [`delete_file`], which cannot remove a folder.
 pub(in crate::wasm) async fn delete_entry(root: FileRoot, path: &str, recursive: bool) -> Outcome<()> {
+    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, path), path).await);
+    let gone = delete_entry_held(root, path, recursive).await;
+    drop(held);
+    gone
+}
+
+/// [`delete_entry`], holding the write lock of `path` (OPFS-LOCK check2, D6), as every writer of a
+/// file does.  A folder's own name is a lock no writer takes, so for a folder it costs one lock
+/// round trip and guards nothing.
+async fn delete_entry_held(root: FileRoot, path: &str, recursive: bool) -> Outcome<()> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
@@ -1339,8 +1664,21 @@ pub(in crate::wasm) async fn delete_entry(root: FileRoot, path: &str, recursive:
 /// `None` once removed (or where nothing stood and nothing was expected), or what stands there
 /// instead, with nothing removed (hist-safe H6, 2026-10-12).  The committed bytes are read
 /// immediately before the removal, as [`write_file_if`] does before its commit.
+///
+/// Held under the file's write lock, as [`write_file_if`] is, so a write cannot close between the
+/// read and the removal.
 pub(in crate::wasm) async fn delete_file_if(root: FileRoot, path: &str,
     expect: &crate::diamond_versions::Seen)
+    -> Outcome<Option<crate::diamond_versions::Seen>>
+{
+    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, path), path).await);
+    let gone = delete_file_if_held(root, path, expect).await;
+    drop(held);
+    gone
+}
+
+/// [`delete_file_if`], with the file's lock held.
+async fn delete_file_if_held(root: FileRoot, path: &str, expect: &crate::diamond_versions::Seen)
     -> Outcome<Option<crate::diamond_versions::Seen>>
 {
     use crate::diamond_versions::Seen;
@@ -1350,17 +1688,15 @@ pub(in crate::wasm) async fn delete_file_if(root: FileRoot, path: &str,
     }
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
-    let (dir, leaf) = match open_parent(&handle, components).await {
-        Ok(v)  => v,
-        Err(_) => return Ok(match expect {
+    const PHASE: &str = "compare before a bound delete";
+    let (dir, leaf) = match res!(open_parent_probe(&handle, components, path, PHASE).await) {
+        Some(v) => v,
+        None    => return Ok(match expect {
             Seen::Absent => None,
             _            => Some(Seen::Absent),
         }),
     };
-    let had: Option<FileSystemFileHandle> = match crate::wasm::settle_js(dir.get_file_handle(&leaf)).await {
-        Ok(v)  => v.dyn_into().ok(),
-        Err(_) => None,
-    };
+    let had = res!(compare_handle(&dir, &leaf, path, PHASE).await);
     let found = match &had {
         Some(f) => Seen::of(Some(&res!(committed(f, &leaf).await))),
         None    => Seen::Absent,
@@ -1383,17 +1719,28 @@ pub(in crate::wasm) async fn delete_file_if(root: FileRoot, path: &str,
 pub async fn exists(root: FileRoot, path: &str) -> Outcome<bool> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
-    let (dir, leaf) = match open_parent(&handle, components).await {
-        Ok(v)  => v,
-        Err(_) => return Ok(false),
+    use crate::diamond_versions::Lookup;
+    // Absent only on `NotFoundError` (PLF-NF): every other failed lookup is an error naming the
+    // path, so a caller that writes on "absent" never writes over a file that stands.
+    const PHASE: &str = "existence probe";
+    let (dir, leaf) = match res!(open_parent_probe(&handle, components, path, PHASE).await) {
+        Some(v) => v,
+        None    => return Ok(false),
     };
-    if crate::wasm::settle_js(dir.get_file_handle(&leaf)).await.is_ok() {
-        return Ok(true);
+    match crate::wasm::settle_js(dir.get_file_handle(&leaf)).await {
+        Ok(_)   => return Ok(true),
+        Err(e)  => if let Lookup::Absent = res!(lookup_failed(&e, path, PHASE)) {
+            return Ok(false);
+        },
     }
-    if crate::wasm::settle_js(dir.get_directory_handle(&leaf)).await.is_ok() {
-        return Ok(true);
+    // A folder stands at the name (`TypeMismatchError` on the file lookup).
+    match crate::wasm::settle_js(dir.get_directory_handle(&leaf)).await {
+        Ok(_)   => Ok(true),
+        Err(e)  => Ok(match res!(lookup_failed(&e, path, PHASE)) {
+            Lookup::Absent      => false,   // removed between the two lookups
+            Lookup::OtherKind   => true,    // a file now stands there
+        }),
     }
-    Ok(false)
 }
 
 
@@ -1412,13 +1759,18 @@ pub async fn write_licensed(root: FileRoot, lic: &Licence, content: &[u8]) -> Ou
     write_file(root, lic.path(), content).await
 }
 
-/// [`write_licensed`], only over the bytes a restore's act was bound to: `None` once written, or
-/// what stands there instead, with nothing written ([`write_file_if`]).
-pub async fn write_licensed_if(root: FileRoot, lic: &Licence, content: &[u8],
-    expect: &crate::diamond_versions::Seen)
+/// [`write_licensed`], only over the bytes the act was bound to (`expect`; `None` compares
+/// nothing), with `pre` under the file's lock between the compares and the bytes landing:
+/// `None` once written, or what stands there instead, with nothing written and `pre` not run
+/// ([`write_file_then`]).  WasmFs's `write_licensed_if` is this with a no-op `pre`.
+pub async fn write_licensed_then<P, F>(root: FileRoot, lic: &Licence, content: &[u8],
+    expect: Option<&crate::diamond_versions::Seen>, pre: P)
     -> Outcome<Option<crate::diamond_versions::Seen>>
+where
+    P: FnOnce() -> F,
+    F: std::future::Future<Output = Outcome<()>>,
 {
-    write_file_if(root, lic.path(), content, Some(expect)).await
+    write_file_then(root, lic.path(), content, expect, pre).await
 }
 
 /// [`delete_file`], for a tool: one regular file, the one `lic` names.

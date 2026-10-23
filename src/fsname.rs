@@ -215,6 +215,40 @@ pub fn encode_path(path: &str) -> String {
     path.split('/').map(encode).collect::<Vec<_>>().join("/")
 }
 
+/// The Web Lock every writer of one file holds from before it opens the file until after it
+/// closes it: `daimond-file:<root>:<path>`, `root` being `folder` for the real folder the user has
+/// open and `sandbox` for this account's browser storage (OPFS-LOCK, 2026-10-17).
+///
+/// **A writable's bytes are private until it closes**, so a restore's compare-and-swap could only
+/// see a rival that had already closed: two restores both "won", and a sync or upload write
+/// closing in the gap was overwritten and kept in no version row.  Under this lock the check and
+/// the close are one step against every writer in the origin.
+///
+/// THE SAME RULE AS `www/js/filelock.js` `name`, and `filelock.test.mjs` holds the two to the same
+/// table: empty and `.` components dropped, `..` taken back (never past the root), lower case,
+/// joined by `/`.  Two names for one file would be no lock; one name for two files (a case pair on
+/// a disk that keeps case) is only a short wait.
+///
+/// **`..` is taken back here because this side's walk takes it back** (`opfs::split_components`),
+/// so the name is the file written.  The page's walks DROP `..` instead, so the page refuses a path
+/// with `..` at the lock, before anything opens (OPFS-LOCK check2, D5): no path is ever locked
+/// under one name and written under another.
+pub fn file_lock_name(folder: bool, path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for c in path.split('/') {
+        match c {
+            "" | "."    => {},
+            ".."        => { out.pop(); },
+            _           => out.push(c),
+        }
+    }
+    let root = match folder {
+        true  => "folder",
+        false => "sandbox",
+    };
+    fmt!("daimond-file:{}:{}", root, out.join("/").to_lowercase())
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -412,5 +446,22 @@ mod tests {
         assert_eq!(encode("a%25b"), "a%2525b");
         // Lower case is not an escape, because the encoder never writes one.
         assert_eq!(encode("a%3ab"), "a%3ab");
+    }
+
+    /// The lock name agrees with `www/js/filelock.js` over this same table
+    /// (`filelock.test.mjs`): a path the page writes and the wasm restores is one lock.
+    #[test]
+    fn file_lock_name_matches_the_page() {
+        let table = [
+            (false, "notes/a.txt",          "daimond-file:sandbox:notes/a.txt"),
+            (true,  "notes/a.txt",          "daimond-file:folder:notes/a.txt"),
+            (false, "/notes//./A.TXT",      "daimond-file:sandbox:notes/a.txt"),
+            (false, "x/../notes/a.txt",     "daimond-file:sandbox:notes/a.txt"),
+            (false, "../../a.txt",          "daimond-file:sandbox:a.txt"),
+            (false, "m/70074.3.daimond:2,S", "daimond-file:sandbox:m/70074.3.daimond:2,s"),
+        ];
+        for (folder, path, want) in table {
+            assert_eq!(file_lock_name(folder, path), want, "{}", path);
+        }
     }
 }

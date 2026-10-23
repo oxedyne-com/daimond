@@ -15,13 +15,13 @@ win.DaimondCore = { tombs: () => Object.assign({}, tombMap), tombstone: (k, id, 
 loadScript(source('stamp.js')); globalThis.DaimondStamp = win.DaimondStamp;
 loadScript(source('models.js'));
 const M = win.DaimondModels;
-const L = lift(source('daimond.js'), ['readJson', 'canRemint', 'setFoldPick', 'applyFoldSettings', 'summarisingPick'], ['CFG_KEY']);
+const L = lift(source('daimond.js'), ['readJson', 'canRemint', 'setFoldPick', 'everyDiamondClient', 'applyFoldSettings', 'summarisingPick'], ['CFG_KEY']);
 if (L.missing.length) console.log('  lacks: ' + L.missing.join(', '));
 const folds = [];
 const cfg = { foldProvider: '', foldModel: '' };
 const chat = { id: 'c1', provider: '', model: '', app: { set_fold_model: (m) => folds.push(m) }, _appPair: { provider: 'openrouter', model: 'or/default' } };
-const page = new Function('window', 'localStorage', 'DaimondModels', 'cfg', 'chats', '_diamondApps', '_diamondAppProvider', 'Prompts',
-	L.body + '\nreturn { canRemint, setFoldPick, summarisingPick };')(win, localStorage, M, cfg, [chat], {}, new Map(), null);
+const page = new Function('window', 'localStorage', 'DaimondModels', 'cfg', 'chats', '_diamondApps', '_daimonApps', '_diamondAppProvider', 'Prompts',
+	L.body + '\nreturn { canRemint, setFoldPick, summarisingPick };')(win, localStorage, M, cfg, [chat], {}, new Map(), new Map(), null);
 async function main() {
 	M.init({});
 	// The page's reader, as boot binds it (daimond.js `bindPicks`): the Summarising pick is cfg's.

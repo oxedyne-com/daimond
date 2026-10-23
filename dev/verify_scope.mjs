@@ -91,8 +91,8 @@ import { guardRan } from './verdict.mjs';
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
 const SRC	= path.join(ROOT, 'ext');
-const INSTALL	= path.join(ROOT, 'hand/install/install.sh');
-const HAND	= path.join(ROOT, 'hand/target/release/daimond-hand');
+const INSTALL	= path.join(ROOT, 'kimberlite/install/install.sh');
+const HAND	= path.join(ROOT, 'kimberlite/target/release/kimberlite');
 
 const KEEP	= process.argv.slice(2).includes('--keep');
 /// Which directory under `www/` the page imports the engine from.
@@ -152,7 +152,7 @@ delete buildEnv.CARGO_TARGET_DIR;
 // backdated, so with the build in the way the guard can never be watched
 // refusing. Same hatch as `PTYEDGE_NO_BUILD` in verify_ptyedge.mjs.
 const built = process.env.DAIMOND_NO_BUILD ? { status: 0, stderr: '' }
-	: spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+	: spawnSync('cargo', ['build', '--release', '--manifest-path', 'kimberlite/Cargo.toml'],
 		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 check('the hand builds from source', built.status === 0 && fs.existsSync(HAND),
 	(built.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 3).join(' | '));
@@ -164,7 +164,7 @@ if (built.status !== 0) { console.log('\n0 ok, 1 failed'); process.exit(1); }
 refuse(whyStaleBinary(HAND, {
 	subject: 'The fence this file measures',
 	what:    'hand',
-	rebuild: 'cargo build --release --manifest-path hand/Cargo.toml',
+	rebuild: 'cargo build --release --manifest-path kimberlite/Cargo.toml',
 }));
 
 // ── The engine's half ───────────────────────────────────────────────
@@ -291,7 +291,7 @@ try {
 	// that design; specs/daimond_scope_base_reds_diag_20261011.md).
 	//
 	// The relay refuses to say where the hand's grant is for a page whose workspace
-	// is not that folder (`hand/REVIEW.md` §1.14). This browser's workspace is the
+	// is not that folder (`kimberlite/REVIEW.md` §1.14). This browser's workspace is the
 	// OPFS sandbox — no automated one can be anything else, because a real folder
 	// needs a native dialog — so `status` is stood in for here with what the real
 	// hand actually reported a moment ago. The COMPOSER is the real one, and the

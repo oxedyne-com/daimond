@@ -70,21 +70,21 @@
 // have no break, and it is worth saying which rather than leaving a reader to
 // count. Checks 21b and 21c -- what a folder with no verifiers is told, and what
 // the handshake says about where the tree comes from -- are constants in
-// `hand/src/verify.rs` and `hand/src/main.rs` in the same way check 11 is.
+// `kimberlite/src/verify.rs` and `kimberlite/src/main.rs` in the same way check 11 is.
 // Check 11 -- that the report says it ran outside the command fence -- is a
-// constant in `hand/src/verify.rs` and nothing out here can reach it. Check 1b --
+// constant in `kimberlite/src/verify.rs` and nothing out here can reach it. Check 1b --
 // that `ext/hand.js` and the hand agree on the protocol version -- reads both
 // shipped numbers, and damaging either of them is damaging the tree rather than
 // this file. Check 1a --
 // that the binary being driven is this source and not an older build -- has been
-// demonstrated by hand (`DAIMOND_HAND_BIN=hand/target/release/daimond-hand` turns
+// demonstrated by hand (`DAIMOND_HAND_BIN=kimberlite/target/release/kimberlite` turns
 // eighteen checks red against a binary from three days before the verb existed)
 // and is deliberately NOT a break mode: a break that aborts the run leaves every
 // later check missing rather than failing, which is the shape of instrument this
 // whole file exists to warn about.
 //
 // The hand binary: `DAIMOND_HAND_BIN` if set, else the first of
-// `hand/target/{release,debug}` or this slot's cache that is NEWER than `hand/src`,
+// `kimberlite/target/{release,debug}` or this slot's cache that is NEWER than `kimberlite/src`,
 // else built. A stale binary is refused rather than driven -- see `newestSource`.
 import fs from 'node:fs';
 import net from 'node:net';
@@ -305,7 +305,7 @@ if (BREAK === 'slander') fs.appendFileSync(path.join(DEV, 'verify_fixclean.mjs')
 
 /// When the newest of the hand's own sources was last changed.
 ///
-/// **The staleness guard, and it is not decoration.** `hand/target/release/daimond-hand`
+/// **The staleness guard, and it is not decoration.** `kimberlite/target/release/kimberlite`
 /// on this machine was three days older than the verb, and a stale binary answers
 /// `verify` with "there is no request called verify" — which every check below would
 /// have read as a refusal and half of them would have PASSED on. A test that measures
@@ -324,8 +324,8 @@ function newestSource() {
 			else if (/\.(rs|toml)$/.test(n)) newest = Math.max(newest, st.mtimeMs);
 		}
 	};
-	look(path.join(ROOT, 'hand/src'));
-	try { newest = Math.max(newest, fs.statSync(path.join(ROOT, 'hand/Cargo.toml')).mtimeMs); }
+	look(path.join(ROOT, 'kimberlite/src'));
+	try { newest = Math.max(newest, fs.statSync(path.join(ROOT, 'kimberlite/Cargo.toml')).mtimeMs); }
 	catch (e) { /* no manifest, and the build below will say so */ }
 	return newest;
 }
@@ -343,23 +343,23 @@ function handBinary() {
 	const src    = newestSource();
 	const target = process.env.DAIMOND_HAND_TARGET_DIR
 		|| path.join(os.homedir(), '.cache/cargo-targets', process.env.RC_SLOT || 'solo', 'daimond-hand');
-	// What `hand/install/README.md` names and what verify_handreal.mjs builds, reused
+	// What `kimberlite/install/README.md` names and what verify_handreal.mjs builds, reused
 	// where it is already there AND newer than the source.
 	const seen = [];
 	for (const c of [
-		path.join(ROOT, 'hand/target/release/daimond-hand'),
-		path.join(ROOT, 'hand/target/debug/daimond-hand'),
-		path.join(target, 'debug', 'daimond-hand'),
+		path.join(ROOT, 'kimberlite/target/release/kimberlite'),
+		path.join(ROOT, 'kimberlite/target/debug/kimberlite'),
+		path.join(target, 'debug', 'kimberlite'),
 	]) {
 		let st;
 		try { st = fs.statSync(c); } catch (e) { continue; }
-		if (st.mtimeMs >= src) return { bin: c, fresh: true, why: 'newer than hand/src' };
-		seen.push(`${c} is ${Math.round((src - st.mtimeMs) / 1000)}s older than hand/src`);
+		if (st.mtimeMs >= src) return { bin: c, fresh: true, why: 'newer than kimberlite/src' };
+		seen.push(`${c} is ${Math.round((src - st.mtimeMs) / 1000)}s older than kimberlite/src`);
 	}
 	note('the hand binaries here are older than its source; building into ' + target);
-	const r = spawnSync('cargo', ['build', '--manifest-path', path.join(ROOT, 'hand/Cargo.toml')],
+	const r = spawnSync('cargo', ['build', '--manifest-path', path.join(ROOT, 'kimberlite/Cargo.toml')],
 		{ cwd: ROOT, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: target } });
-	const built = path.join(target, 'debug', 'daimond-hand');
+	const built = path.join(target, 'debug', 'kimberlite');
 	if (r.status !== 0 || !fs.existsSync(built)) {
 		return { bin: null, fresh: false, why: seen.join('; ') || 'the hand did not build' };
 	}
@@ -452,7 +452,7 @@ function talk(messages, ms = 60000, later = [], grant = GRANT) {
 
 /// The protocol version the PAGE announces, read out of the page's own relay.
 ///
-/// Written down here as `1` until 2026-08-25, when `hand/src/lib.rs` went to 2 and
+/// Written down here as `1` until 2026-08-25, when `kimberlite/src/lib.rs` went to 2 and
 /// `ext/hand.js` went with it. Every exchange below then met `proto_refusal` and
 /// twenty-three checks went red at once, none of them about anything this file
 /// measures. A constant restated in a third place is a third place to forget.

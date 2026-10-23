@@ -28,6 +28,21 @@ if (BREAK && !BREAKS.includes(BREAK)) {
 }
 
 const ok = [], bad = [];
+// Waits on the relay, not the clock: polls the mock log until it holds at least `min`
+// requests and has stopped growing for `settle` ms, or `max` ms pass (then the checks
+// below say what arrived). A loaded fleet makes fixed waits flake; this does not.
+const settleWire = async (min, settle = 2500, max = 30000) => {
+	const t0 = Date.now();
+	let n = -1, since = Date.now();
+	while (Date.now() - t0 < max) {
+		const m = mockLog().length;
+		if (m !== n) { n = m; since = Date.now(); }
+		else if (n >= min && Date.now() - since >= settle) return n;
+		await page.waitForTimeout(250);
+	}
+	return n;
+};
+
 const check = (name, pass, detail) => {
 	(pass ? ok : bad).push(name);
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
@@ -114,10 +129,10 @@ await page.fill('#chat-input',
 	'@tools spawn_agent {"name":"alpha","task":"say ALPHAFOUND"} '
 	+ ';; spawn_agent {"name":"beta","task":"say BETAFOUND"}');
 await page.keyboard.press('Enter');
-await page.waitForTimeout(2000);
 
-// Let both workers run to a terminal state, then let the gather round go out.
-await page.waitForTimeout(9000);
+// Let both workers run to a terminal state, then let the gather round go out:
+// the dispatch, a request from each worker and the gather round.
+await settleWire(4, 3000);
 await shot(s, 'gather-1-dispatched');
 
 const runs = await page.evaluate(() =>
@@ -235,7 +250,7 @@ check('the declined fan-out started no worker, so nothing was spent on it',
 clearMockLog();
 await page.fill('#chat-input', 'carry on');
 await page.keyboard.press('Enter');
-await page.waitForTimeout(6000);
+await settleWire(1);
 const wire3 = mockLog();
 const told = (needle) => wire3.some((m) =>
 	JSON.stringify(m.messages || []).includes(needle));
@@ -271,7 +286,7 @@ clearMockLog();
 await page.fill('#chat-input',
 	'@tools spawn_agent {"name":"epsilon","task":"say EPSILONFOUND"}');
 await page.keyboard.press('Enter');
-await page.waitForTimeout(11000);
+await settleWire(2, 3000);
 const wire4 = mockLog();
 check('the worker ran, so there is a report for the daimon to be denied',
 	wire4.some((m) => {
@@ -294,7 +309,7 @@ check('and no round followed it, which is what the depth cap is for',
 clearMockLog();
 await page.fill('#chat-input', 'what did it find');
 await page.keyboard.press('Enter');
-await page.waitForTimeout(6000);
+await settleWire(1);
 const wire5 = mockLog();
 // `### epsilon` AND NOT MERELY `EPSILONFOUND`. The token the worker was asked to say
 // is in the daimon's own `spawn_agent` arguments, which are in its history from the

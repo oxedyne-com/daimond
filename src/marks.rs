@@ -21,12 +21,22 @@ use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_file::relpath::RelPath;
 use oxedyne_fe2o3_jdat::Dat;
 use oxedyne_fe2o3_jdat::map::DaticleMap;
+use oxedyne_fe2o3_jdat::{FromDat, ToDat};
 
 use std::collections::BTreeMap;
 
 
 /// Where every Diamond keeps its record, per account (accounts.js prefixes it), never synced.
 pub const KEY: &str = "daimond-marks-here";
+
+/// Why a write, a delete or a worker's start is refused when this device's record cannot be read
+/// (lead ruling, 2026-10-12): FAIL CLOSED.  Locked, unreadable, missing or damaged are all the same
+/// answer -- never "nothing is pressed, so carry on", which a cold tab reading an unloaded store
+/// would give.
+pub const UNREAD: &str = "This device's record of the folders marked here could not be read -- \
+	the account is locked, or this browser's storage could not be read, or the record is missing \
+	or damaged -- so Daimond will not write or delete anything until it can. Unlock the account \
+	and try again. Nothing was done.";
 
 /// Is a share counted here only where it was pressed on this device as well?  Owner decision
 /// O2; see `SHARE_NEEDS_PRESS_HERE` in markshere.js.
@@ -162,7 +172,7 @@ fn under(path: &str, dir: &str) -> bool {
 
 /// Store paths, which follow no folder (`is_store_path` in tools.rs, `isStorePath`).
 pub fn is_store_path(path: &str) -> bool {
-	["diamonds", "mail", "chats", "system/agents", "system/guide", "system/usage"]
+	["diamonds", "mail", "chats", "system/agents", "system/guide", "system/usage", "system/journal"]
 		.iter().any(|d| under(path, d))
 }
 
@@ -297,6 +307,21 @@ impl DiamondId {
 	pub fn dir(&self) -> String { fmt!("diamonds/{}", self.0) }
 }
 
+// By hand, so a decoded id passes the same check as one parsed: a peer cannot name `diamonds/`
+// or climb out of it with an id that never was one.
+impl oxedyne_fe2o3_jdat::conv::ToDat for DiamondId {
+	fn to_dat(&self) -> Outcome<Dat> {
+		Ok(Dat::Str(self.0.clone()))
+	}
+}
+
+impl oxedyne_fe2o3_jdat::conv::FromDat for DiamondId {
+	fn from_dat(dat: Dat) -> Outcome<Self> {
+		let id: String = res!(oxedyne_fe2o3_jdat::conv::FromDat::from_dat(dat));
+		Self::parse(&id)
+	}
+}
+
 impl std::fmt::Display for DiamondId {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{}", self.0)
@@ -304,7 +329,7 @@ impl std::fmt::Display for DiamondId {
 }
 
 /// Whose marks a turn's writes are held to, re-read at every call ([`crate::tools::ToolContext::live`]).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, ToDat, FromDat)]
 pub enum Live {
 	Diamond(DiamondId, Vec<String>),	// the Diamond, and its granted toolkit names
 	Chat(String, Vec<Hold>),		// the chat, and its holdings as the page gave them
@@ -437,7 +462,7 @@ pub fn read_record(raw: &str) -> Option<Record> {
 /// Where the trash is kept, per account (`trash.js`).
 pub const TRASH_KEY: &str = "daimond-trash";
 
-fn num(d: Option<&Dat>) -> f64 {
+pub(crate) fn num(d: Option<&Dat>) -> f64 {
 	match d {
 		Some(Dat::U8(n))   => *n as f64,
 		Some(Dat::U16(n))  => *n as f64,
@@ -542,7 +567,7 @@ pub fn waiting(rec: &Record, owner: &str, row: &Row, root: &str) -> bool {
 }
 
 /// A chat holding as the page keeps it: its ref and path, the workspace mark, and Read.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, ToDat, FromDat)]
 pub struct Hold {
 	pub r:    String,
 	pub path: String,
@@ -600,7 +625,7 @@ pub fn chat_waiting(rec: &Record, chat: &str, a: &Hold, root: &str) -> bool {
 
 /// What a Diamond reaches here: the three lists `diamond_bounds` takes beside its own
 /// directory, and the marks waiting for a press.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, ToDat, FromDat)]
 pub struct Reach {
 	pub attached:    Vec<String>,
 	pub read_only:   Vec<String>,
@@ -621,6 +646,16 @@ impl Reach {
 		let mut v = self.attached.clone();
 		v.extend(self.nested.iter().cloned());
 		v
+	}
+
+	/// A chat's reach: its workspace marks in force, and those waiting for a press.  A chat has
+	/// no read-only grant and no nested mark of its own (`wasm::marks::chat_reach`).
+	pub fn of_chat(ws: Vec<String>, wait: Vec<String>) -> Self {
+		Self {
+			attached:    ws,
+			unconfirmed: wait,
+			..Default::default()
+		}
 	}
 }
 

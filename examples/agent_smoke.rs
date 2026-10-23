@@ -51,7 +51,8 @@ async fn run() -> Outcome<()> {
         unconfirmed: Vec::new(),
         // The rest as the native handler sets them (`handler.rs`): no turn tag, no live
         // marks read per call, no restore this call acts for, no author.
-        turn: String::new(), live: None, by_model: false, restoring: 0, by: None };
+        turn: String::new(), live: None, by_model: false, restoring: 0, by: None,
+        host: Default::default() };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 
     let mut session = Session::new("smoke".to_string(), "Smoke".to_string(),
@@ -143,14 +144,17 @@ async fn run() -> Outcome<()> {
             // that hid it would read a leaked call as an ordinary answer.
             // `reasoned` counts rounds re-sent because a reply reasoned and answered nothing.
             // `why` is `blocked` beside a failed turn, and `said` the sentence it ended on.
+            // `touched` lists the files the turn's completed writes landed on.
             AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed,
-                reasoned, why, said } =>
+                reasoned, why, said, touched } =>
                 println!("\n[ended] {}{} — {} tool(s) offered, {} round(s), {} call(s), \
-                    {} refused, {} failed, {} malformed, {} reasoned{}{}",
+                    {} refused, {} failed, {} malformed, {} reasoned{}{}{}",
                     how, if why.is_empty() { String::new() } else { format!(" ({})", why) },
                     offered, rounds, calls, refused, failed, malformed, reasoned,
                     if missing.is_empty() { String::new() }
                     else { format!(", missing: {}", missing.join(" ")) },
+                    if touched.is_empty() { String::new() }
+                    else { format!(", touched: {}", touched.join(" ")) },
                     if said.is_empty() { String::new() } else { format!(": {}", said) }),
         }
     };

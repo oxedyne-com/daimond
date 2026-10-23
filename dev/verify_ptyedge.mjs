@@ -12,7 +12,7 @@
 // ── What it runs against ────────────────────────────────────────────
 //
 // The REAL extension (the dev build, which is the shipped one plus the
-// loopback origins) and the REAL `hand/target/release/daimond-hand`, registered
+// loopback origins) and the REAL `kimberlite/target/release/kimberlite`, registered
 // as this profile's native messaging host and told which folder it was granted.
 // So a session opened here goes page → hand.js → the extension's vetting → the
 // hand → a pseudo-terminal on this machine, with nothing mocked anywhere along
@@ -21,7 +21,7 @@
 //
 // ── One thing is stood in for, and it is named ──────────────────────
 //
-// `hand/REVIEW.md` §1.14: the relay refuses to pair where the folder the page
+// `kimberlite/REVIEW.md` §1.14: the relay refuses to pair where the folder the page
 // has open cannot be shown to be the folder the hand was granted. This page has
 // no folder — and no automated page can have one, because a real folder arrives
 // only through `showDirectoryPicker()`, a native dialog no harness can answer —
@@ -91,7 +91,7 @@ const CHROME = process.env.DAIMOND_CHROME
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
 const WWW	= path.join(ROOT, 'www');
-const HAND	= path.join(ROOT, 'hand/target/release/daimond-hand');
+const HAND	= path.join(ROOT, 'kimberlite/target/release/kimberlite');
 // Not /tmp -- it is a tmpfs and what is written there is RAM charged to this
 // machine's agent fleet. See the SCRATCH note in harness.mjs.
 const SCRATCH	= process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
@@ -184,14 +184,14 @@ fs.writeFileSync(path.join(GRANT, '.daimond/secret.txt'), 'out of bounds\n');
 // │ The hand under test is built here, now, from this tree          │
 // └───────────────────────────────────────────────────────────────┘
 //
-// This file used to take whatever was lying in `hand/target/release` and, where
+// This file used to take whatever was lying in `kimberlite/target/release` and, where
 // there was nothing, print a line and leave. Neither half is safe. Nothing in
 // the test suite builds that binary, and nor did this file, so a release binary
 // from last week would drive the pty edge and report it green against code that
 // no longer exists — a verifier that cannot say which code it measured must not
 // report success. `verify_kitfence.mjs` records having measured exactly that:
 // with a `CARGO_TARGET_DIR` inherited, its checks passed against a binary from
-// before the clamp existed. `hand/src/exec.rs`'s `shipping_hand` refuses for the
+// before the clamp existed. `kimberlite/src/exec.rs`'s `shipping_hand` refuses for the
 // same reason on the debug side.
 //
 // So: build first, and then require the artefact to be newer than every source
@@ -202,13 +202,13 @@ fs.writeFileSync(path.join(GRANT, '.daimond/secret.txt'), 'out of bounds\n');
 // built last.
 
 /// What to run by hand when this refuses.
-const REBUILD = 'cargo build --release --manifest-path hand/Cargo.toml';
+const REBUILD = 'cargo build --release --manifest-path kimberlite/Cargo.toml';
 
 /// The prerequisites named on one line of a cargo dep-info file.
 ///
 /// Make's escaping, which is what the format is: a backslash makes the character
 /// after it ordinary, so a path containing a space survives being split on
-/// whitespace. The same reading as `dep_sources` in `hand/src/exec.rs`.
+/// whitespace. The same reading as `dep_sources` in `kimberlite/src/exec.rs`.
 function depSources(list) {
 	const out = [];
 	let cur = '', esc = false;
@@ -284,7 +284,7 @@ delete buildEnv.CARGO_TARGET_DIR;
 // code it did not test — it can only make it refuse. It is here so that the
 // guard can be shown to refuse, which is the only way to know it works.
 if (!process.env.PTYEDGE_NO_BUILD) {
-	const built = spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+	const built = spawnSync('cargo', ['build', '--release', '--manifest-path', 'kimberlite/Cargo.toml'],
 		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 	if (built.status !== 0) {
 		console.error(`The hand did not build, so there is nothing here to verify the pty `
@@ -808,7 +808,7 @@ async function reload() {
 		if (window.DaimondHand && DaimondHand._setWaitsForTest) DaimondHand._setWaitsForTest({ hello: 20000, grace: 20000 });
 		// ── The folder verdict, stood in for ────────────────────────
 		//
-		// `hand/REVIEW.md` §1.14 is armed: the relay refuses to pair where the
+		// `kimberlite/REVIEW.md` §1.14 is armed: the relay refuses to pair where the
 		// folder the page has open cannot be shown to be the folder the hand was
 		// granted. This page has no folder at all — it is three script tags, and
 		// even the app cannot get one without `showDirectoryPicker()`, a native
@@ -1199,7 +1199,7 @@ let probeSeq = 0;
 /// A FRESH ID EVERY TIME, and the session ended before the id is let go.  This
 /// took a fixed `probe-1`, and §4 runs it TWICE -- once against broken code and
 /// once against whole -- so the second attempt asked for a terminal whose id was
-/// still held by the first.  `hand/src/pty.rs:437` refuses a duplicate id, and
+/// still held by the first.  `kimberlite/src/pty.rs:437` refuses a duplicate id, and
 /// rightly; what came back was that refusal rather than an answer about
 /// dispatch, and the proof read it as the whole code failing.  Two halves of one
 /// proof have to be two independent trials, which means neither may leave
@@ -1400,7 +1400,7 @@ if (opened.id) {
 
 	// ── What a fenced terminal cannot reach, and what that costs ────
 	//
-	// `hand/src/pty.rs`'s own header says why this module exists: `sudo`, `ssh`,
+	// `kimberlite/src/pty.rs`'s own header says why this module exists: `sudo`, `ssh`,
 	// `vim`, `git commit` and a REPL, none of which works down a pipe. `ssh` is
 	// one of the five, and it is on the far side of the compartment -- and
 	// NOTHING said so. "The terminal works" was true of the pty and false of the
@@ -1415,7 +1415,7 @@ if (opened.id) {
 	//	~/.ssh		denied by every fence -- `Toolkit::Git` in src/tools.rs
 	//			names it and says the private keys are what is being
 	//			kept from a command.
-	//	AF_UNIX		refused unconditionally by `hand/src/seccomp.rs`, which
+	//	AF_UNIX		refused unconditionally by `kimberlite/src/seccomp.rs`, which
 	//			closes `REVIEW.md` §1.3 -- the session bus started a
 	//			process outside the fence. tmux and ssh-agent are both
 	//			on that socket, so both go with it.
@@ -1460,8 +1460,8 @@ if (opened.id) {
 				t: 'exec', id, argv: ['/bin/sh', '-c', 'touch ' + ran], cwd: root,
 				env: [], stdin: null, timeout_ms: 5000, capture: 'both', toolkits: ['remote'],
 				fence: { rw: [root], deny: [], net: false, ro: [
-					home + '/.config/oxedyne/daimond-hand/bin',
-					home + '/.config/oxedyne/daimond-hand/ssh'] },
+					home + '/.config/oxedyne/kimberlite/bin',
+					home + '/.config/oxedyne/kimberlite/ssh'] },
 			});
 		} catch (e) { sent = 'send rejected: ' + ((e && e.message) || e); }
 		await new Promise((r) => setTimeout(r, 2500));

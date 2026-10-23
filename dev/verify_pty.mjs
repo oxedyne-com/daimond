@@ -11,8 +11,8 @@
 // ── What it runs against ────────────────────────────────────────────
 //
 // `dev/mock_pty_host.py`, spawned as a real process, speaking Chrome's native
-// messaging framing and the pty half of `hand/src/wire.rs`. It is a copy of
-// `hand/install/mock_host.py` with the terminal messages added, because that
+// messaging framing and the pty half of `kimberlite/src/wire.rs`. It is a copy of
+// `kimberlite/install/mock_host.py` with the terminal messages added, because that
 // file belongs to whoever is teaching the hand about terminals; when the real
 // one speaks pty, this copy should go and the constant below point at it.
 //

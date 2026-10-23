@@ -292,6 +292,11 @@
 			effort:  String(o.effort || ''),
 			model:   o.model || null,		// { provider, model, url } -- models.js:127-129
 			scope:   o.scope || null,		// the workspace fence -- scopeChatTo, daimond.js:17553
+			// THE FENCE, AS ABSOLUTE ROOTS (R3c2): the engine's `fence_spec` over this page's bounds,
+			// `{ rw, ro, deny, net }`, exactly as the Hand gets it here (`command_fence_json`). A
+			// runner holds the turn to these and never works roots out itself; null where this page
+			// has no hand to resolve against, and a runner refuses an errand without one.
+			fence:   o.fence || null,
 			pause:   o.pause || null,		// pause-tree snapshot at dispatch -- §1.1
 			parcelVersion: o.parcelVersion | 0,	// the freshness anchor -- §1.3
 			deadline:      +o.deadline || 0,	// epoch-ms after which no peer starts (NOT |0: ms overflows 32 bits)
@@ -1164,6 +1169,9 @@
 			if (note) sm.pre = note;
 			// An app-made record keeps its mark, so a runner's copy of it is the same record.
 			if (mm.role === 'user' && mm.app === true) sm.app = true;
+			// An interjection was said into a turn, never run as one, so the runner's engine
+			// leaves it unmarked as the tab's does (B3, EP-6 F6L).
+			if (mm.role === 'user' && mm.interject) sm.interject = true;
 			// A landed partial travels as one, so the runner's copy carries the same badge.
 			if (mm.interrupted) { sm.interrupted = 1; if (mm.iturn) sm.iturn = String(mm.iturn); }
 			keep.unshift(sm);
@@ -1473,6 +1481,7 @@
 		// `steer_crystal` rather than the chat engine. Taken from the caller, or the chat.
 		var diamondId = String(o.diamondId || c.diamondId || '');
 		var scope    = o.scope || null;			// the workspace fence -- scopeChatTo, daimond.js:17553
+		var fence    = o.fence || null;			// the absolute roots the Hand gets (R3c2), or null
 		var pause    = o.pause || null;			// pause-tree snapshot pinned to dispatch -- §1.1
 		var deadline = leaseMs(o.deadline) || (now + DISPATCH_DEADLINE_MS);
 		var by       = String(o.dispatchedBy || '');
@@ -1530,7 +1539,7 @@
 				return makeErrand({
 					eid: eid, turnId: turnId, chatId: chatId, diamondId: diamondId,
 					prompt: prompt, pre: pre, effort: effort, model: model,
-					scope: scope, pause: pause, parcelVersion: parcelVersion,
+					scope: scope, fence: fence, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
 					gone: gone, to: to, behind: behind, through: through, ids: ids,
@@ -1540,7 +1549,7 @@
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
 			fields: {
 				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt, pre: pre, effort: effort,
-				model: model, scope: scope,
+				model: model, scope: scope, fence: fence,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
 				seed: seed, thread: thread, tried: tried, gone: gone, to: to, behind: behind, through: through, ids: ids,
 			},
@@ -2371,6 +2380,17 @@
 			// sent: such a peer is busy by its count, as before.
 			var rbc = chatIds(rec.busy_chats != null ? rec.busy_chats : rec.busyChats);
 			if (rbc) recOut.busyChats = rbc;
+			// A paired native runner's row, from its signed beat (R2f): the Devices list
+			// sends its Remove to the runner's own door, not the sync roster's.
+			// Its engine id (R5a) rides with it, absent when it has none, so it is not offered.
+			if (rec.kind === 'runner') {
+				recOut.kind = 'runner';
+				if (typeof rec.engine === 'string' && rec.engine) recOut.engine = rec.engine;
+				// ELECT: its own signed word that it runs the errand's model set, kept only
+				// on a runner's row and only when it said so, so `honoursModelSet` never reads
+				// a guess. A tab states the same fact on its roster line, not here.
+				if (rec.modelset === true) recOut.modelset = true;
+			}
 			// THE DERIVED TRUTH (HT1, design 2.1-2.2): whether the device holds a door
 			// (`listening`), when the gateway last heard a door event (`heard_at`, its
 			// clock, skew-adjusted), how many parks it holds (`doors`), and whether any
@@ -2872,14 +2892,40 @@
 		return !req || (!!rec && rec[req] === true);
 	}
 
+	// THIS PAGE'S ENGINE ID (R5a, X12): the sha-256, in hex, of the wasm it runs. '' until
+	// daimond.js has hashed it, and then no native runner is offered.
+	var _engineId = '';
+	function setEngineId(h) { _engineId = String(h || ''); }
+
+	/// May this record take a turn from this page's engine? A paired native runner
+	/// (`kind: 'runner'`) only when its engine id, stamped at its release build and carried
+	/// in its signed beat, equals the page's: the same id or not at all, no shim (design
+	/// §6.1/§12). A tab's record runs the engine it loaded and is not judged here.
+	/// `o.engineId`, when given, stands for the page's id.
+	///
+	/// A native runner serves DAIMOND CREDITS ONLY (lead ruling, R3c4c): it answers on its
+	/// one credits key and never maps a chat's own key onto it, so it is offered only when
+	/// `o.provider`, the provider the chat's turn runs on (the page passes the pair in force,
+	/// daimond.js electProvider, so a chat following a credits default counts), is `credits`. Absent is not offered: an election
+	/// that cannot say what the chat runs on does not hand it to a machine that can only
+	/// refuse it.
+	function recEngineOk(rec, o) {
+		if (!rec || rec.kind !== 'runner') return true;
+		if (String((o && o.provider) || '') !== 'credits') return false;
+		var mine = (o && o.engineId != null) ? String(o.engineId) : _engineId;
+		return !!mine && String(rec.engine || '') === mine;
+	}
+
 	/// May the election seat this peer at all: REACHABLE (rulings §1, design 2.5) -- not
 	/// a phone, meeting the caller's requirement (`require`: `hand`, or `folder` for a chat
-	/// whose folder is rooted on the asker, F4c), stated and listening (`recGenuine`, the
+	/// whose folder is rooted on the asker, F4c), able to run this page's engine and the
+	/// chat's provider (`recEngineOk`, a native runner only), stated and listening (`recGenuine`, the
 	/// gateway's `listening` where it derives it, else the beat within `w`). Busy is asked
 	/// apart (`busyHere`), so a busy peer is named in `passed`. The one test every seat
 	/// reader calls: the election's four passes and the seat line's runner-silent.
 	function reachable(rec, o, n, w) {
-		return !!rec && !recMobileView(rec) && meetsRequire(rec, o && o.require) && recGenuine(rec, n, w);
+		return !!rec && !recMobileView(rec) && meetsRequire(rec, o && o.require) && recEngineOk(rec, o)
+			&& recGenuine(rec, n, w);
 	}
 
 	/// Answers `{ target, reason }` where `target` is `{ deviceId, name, lastSeen, build,
@@ -3050,6 +3096,9 @@
 			queueOn:                o.queueOn,
 			// The chat being seated, read against each peer's `busyChats`.
 			chatId:                 o.chatId != null ? o.chatId : c.id,
+			// What the chat runs on, as the page resolved it (the stored pick only when the
+			// caller gave none): a native runner is offered a credits chat only (recEngineOk).
+			provider:               o.provider != null ? o.provider : c.provider,
 			// A chat whose folder is rooted on this device runs only where a folder is
 			// rooted too (F4c, UNBLOCK-32): a runner without one would reach none of it, and
 			// a switch that offers a runner which then cannot do the turn is a fault (§1).
@@ -6046,7 +6095,7 @@
 				// to the model twice (seeded history + the re-sent turn). `turnId` names the
 				// existing user message (mid === turnId) the runner anchors to.
 				var turnP = (async function () {
-					return d.runTurn(ctx, e.prompt, { onProgress: nudge, promptInTranscript: true, turnId: turnId,
+					return d.runTurn(ctx, e.prompt, { onProgress: nudge, promptInTranscript: true, turnId: turnId, until: deadAt,
 						pre: (typeof e.pre === 'string') ? e.pre : '',
 						effort: (typeof e.effort === 'string') ? e.effort : undefined,
 						model: e.model || null });		// the model the asker resolved (C3)
@@ -6718,7 +6767,7 @@
 
 	// The run states a frame's `workers` may name (daimond.js `Workers`).
 	var WORKER_STATES = ['queued', 'running', 'paused', 'done', 'error', 'stopped',
-		'interrupted', 'capped', 'spend_cap', 'blocked'];
+		'interrupted', 'capped', 'spend_cap', 'blocked', 'timed_out'];
 	var FRAME_WORKERS_MAX = 32;		// workers read off one frame
 
 	/// The workers a runner's frame names, `[{ id, name, status }]`, read field by field:
@@ -7234,6 +7283,9 @@
 		/// whether running here is something the user must act on.
 		seatPlan:      seatPlan,
 		seatSwitch:    seatSwitch,
+		/// This page's engine id (R5a): a native runner is offered only on the same one.
+		setEngineId:   setEngineId,
+		recEngineOk:   recEngineOk,
 		/// WHERE ANY TASK RUNS -- the placement. A turn goes through `seatPlan` verbatim;
 		/// a compile moves only for a file this device does not hold or a heap it cannot
 		/// afford; a `run` moves only to a device that holds the machine hand. Pure, so

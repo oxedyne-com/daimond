@@ -445,6 +445,8 @@ budget_floor() {
 		verify_optimiser)                 echo 900 ;;
 		verify_scope|verify_kitfence)     echo 600 ;;
 		verify_reversible)                echo 420 ;;
+		# Arm `long` alone is 937 s (e0242010, 17 Oct); `silent` and `stall` are seconds each.
+		verify_workerlong)                case ",${WL_ONLY:-silent,stall}," in *,long,*) echo 1500 ;; *) echo 180 ;; esac ;;
 		verify_sweep_mobile)              echo 900 ;;
 		verify_sweep_desktop)             echo 900 ;;
 		verify_handreal)                  echo 900 ;;
@@ -562,6 +564,10 @@ budget_floor() {
 		# waits come to about 420 s before two browser launches; 1200 until a measured
 		# run replaces it in dev/budgets.tsv.
 		verify_pausehandoff)              echo 1200 ;;
+		# U3a INT-C: the `long` arm is a 61-round paced worker of about 15.3 min (920 s) gathered
+		# twice at 600 s, then `silent` and `stall` at under 10 s each. Unlisted, it drew the 180 s
+		# default and was cut at 121 s as exit 124 (U2int phase 1, 17 Oct). 1800 until measured.
+		verify_workerlong)                echo 1800 ;;
 		# Up to three devices and two chats, each turn given 130 s to reach the model and
 		# 30 s for its answer, then an 8 s settle and a ledger pull (r545, FA).
 		verify_handoff_mixrace)           echo 480 ;;
@@ -658,7 +664,7 @@ hand_bin_default() {
 	if [ -n "${DAIMOND_HAND_BIN:-}" ]; then
 		echo "$DAIMOND_HAND_BIN"
 	else
-		echo "$HOME/.cache/cargo-targets/${RC_SLOT:-solo}/daimond-hand/debug/daimond-hand"
+		echo "$HOME/.cache/cargo-targets/${RC_SLOT:-solo}/daimond-hand/debug/kimberlite"
 	fi
 }
 
@@ -675,13 +681,20 @@ free_port_for_handmeterless() {
 
 # Env-var assignments to run a verifier under, beyond its CLI args (`args_for`) -- empty
 # for every name but the two above, which need a binary named and, for the page-driven
-# one, a server port of its own.
+# one, a server port of its own, and verify_workerlong, whose default run leaves out an arm.
 hand_env_for() {                # name -> "VAR=val VAR=val", or nothing
 	case "$1" in
 		verify_handmeterless)
 			echo "HD_NEW_BIN=$(hand_bin_default) DAIMOND_PORT=$(free_port_for_handmeterless)" ;;
 		verify_handdelete)
 			echo "HD_BRANCH_BIN=$(hand_bin_default)" ;;
+		# ARM `long` IS NAMED OR NIGHTLY ONLY (lead ruling, U3a INT-C, 17 Oct 2026). It drives a
+		# real 15-minute worker to `done`, and a default run cannot carry seventeen minutes for
+		# one file. The `silent` and `stall` arms (a stream that goes quiet ends timed_out, in
+		# seconds) stay in every run. Ask for the long arm by setting WL_ONLY yourself:
+		#   WL_ONLY=long,silent,stall bash dev/run_all.sh verify_workerlong
+		verify_workerlong)
+			echo "WL_ONLY=${WL_ONLY:-silent,stall}" ;;
 		*)
 			echo "" ;;
 	esac
@@ -1230,7 +1243,7 @@ if [ $# -eq 0 ]; then
 	# ELEVEN OF THEM FAILED, every one for a single reason and none of it about the
 	# fence. The launcher tests exec the SHIPPING binary, and `cargo test` never
 	# builds it -- this crate has no integration test, so cargo has no reason to --
-	# so `shipping_hand` in hand/src/exec.rs refuses rather than skipping, on the
+	# so `shipping_hand` in kimberlite/src/exec.rs refuses rather than skipping, on the
 	# rule that a fence test which cannot say which code it measured must not report
 	# success. `verify_handreal` does not supply it either: that builds `--release`
 	# with `CARGO_TARGET_DIR` deleted from the environment on purpose, and these
@@ -1245,8 +1258,8 @@ if [ $# -eq 0 ]; then
 	# build is 4. The dearest part is fe2o3, which the hand takes four crates of.
 	# 1.1 GB of artefacts, which is why `hand/` needs a target directory of its own
 	# rather than sharing one with the root workspace.
-	static_one handbin      cargo build --manifest-path hand/Cargo.toml
-	static_one rust_hand    node dev/testcount.mjs hand
+	static_one handbin      cargo build --manifest-path kimberlite/Cargo.toml
+	static_one rust_hand    node dev/testcount.mjs runner
 fi
 
 # ── Phase 1: the gateway port clear ─────────────────────────────────────

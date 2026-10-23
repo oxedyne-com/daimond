@@ -469,6 +469,7 @@ pub async fn handle_chat_websocket<
                                 by_model:    false,
                                 restoring:   0,
                                 by:          None,
+                                host:        Default::default(),
                             };
                             ToolRegistry::new(Tool::defaults(), ctx)
                         }

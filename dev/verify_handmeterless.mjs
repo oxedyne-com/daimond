@@ -45,7 +45,7 @@
 //    wire's own framing (a 4-byte native-endian length and UTF-8 JSON). Nothing is rewritten in
 //    either direction. The extension's own checks only ever refuse MORE, so leaving them out
 //    cannot make a write possible that the page and the hand refuse.
-//  * `DaimondHand.status`, AFTER the real one has been asked. `hand/REVIEW.md` §1.14 refuses a
+//  * `DaimondHand.status`, AFTER the real one has been asked. `kimberlite/REVIEW.md` §1.14 refuses a
 //    command unless the page's folder is shown to be the hand's grant, and a page holds a real
 //    folder only through a native dialog no harness can answer -- see `settled` in
 //    www/js/hand.js and `dev/verify_scope.mjs`. So the real status is asked first (which opens
@@ -258,8 +258,8 @@ async function drive(label, bin, meters) {
 			check(`${label}: naming the machine and the update, word for word`,
 				!!notice
 					&& txt.includes(host || 'this computer')
-					&& txt.includes('cargo build --release --manifest-path hand/Cargo.toml')
-					&& txt.includes('hand/install/install.sh') && /reload this page with nothing running/.test(txt),
+					&& txt.includes('cargo build --release --manifest-path kimberlite/Cargo.toml')
+					&& txt.includes('kimberlite/install/install.sh') && /reload this page with nothing running/.test(txt),
 				JSON.stringify(txt).slice(-240));
 			// The tick and the `✕` both just take a notice tile down (see `Pending`'s header in
 			// www/js/daimond.js) — dropping it is what a person acting on it does either way.
@@ -482,7 +482,7 @@ refuse(whyStaleWasm(path.join(ROOT, 'www/pkg/oxedyne_daimond_bg.wasm'), path.joi
 refuse(whyStaleBinary(NEW_BIN, {
 	subject: 'The metering hand',
 	what:    'hand',
-	rebuild: 'cargo build --release --manifest-path hand/Cargo.toml',
+	rebuild: 'cargo build --release --manifest-path kimberlite/Cargo.toml',
 }));
 check('the metering hand is there', fs.existsSync(NEW_BIN), NEW_BIN);
 for (const b of OLD_BINS) check(`the old hand ${b} is there`, fs.existsSync(b), b);

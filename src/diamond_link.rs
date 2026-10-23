@@ -14,9 +14,17 @@
 //! is tested -- the parse in particular, because a link written by a hand or by
 //! an older build must still open.
 
-use crate::llm::{extract_json_bool, extract_json_number, extract_json_string, json_escape};
+use crate::{
+	llm::{extract_json_bool, extract_json_number, extract_json_string, json_escape},
+	store::call::{cut, links_changed, HexHash, CUT_MARK, LINK_PAGE, PATH_WIRE_MAX, WORD_WIRE_MAX},
+};
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_jdat::{
+	string::json_edit::JsonObjectText,
+	FromDat,
+	ToDat,
+};
 
 
 /// The most characters a relation may carry; the excess is truncated.
@@ -38,7 +46,7 @@ pub const KNOWN_KINDS: [&str; 4] = ["diamond", "file", "url", "chat"];
 
 
 /// One end of a link: a kind and the thing it names, spelled `kind:rest`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub struct Node {
 	/// The kind, lowercased. // e.g. `diamond`
 	pub kind: String,
@@ -92,7 +100,7 @@ impl Node {
 /// nothing here implies that anything flows along it.  A reader that wants
 /// what points AT something scans for it in `to`; that is what makes the
 /// links two-way without a second copy of each one.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ToDat, FromDat)]
 pub struct Link {
 	/// Stable link id, so a link can be named to delete it.
 	pub id:   String,
@@ -138,12 +146,43 @@ impl Link {
 	/// read as flagged with the note empty.**  That is how the flag was written from 2026-09-14
 	/// until the re-check of 2026-09-23 (R3) moved it out of the note, which a model writes; the
 	/// user's own flags keep working, and a model's note saying the same word is only a note.
+	///
+	/// **The row's own top-level members, decoded** (d1k45 check, defect 3): a row that is one
+	/// JSON object is read through [`JsonObjectText`], the reader the writers edit it with, so a
+	/// member of the same name nested deeper is not taken for it and every escape reads as JSON
+	/// reads it.  A row the strict reader refuses still reads, by the forgiving extractor.
 	pub fn from_json(s: &str) -> Option<Self> {
-		let from = res_opt(extract_json_string(s, "from"))?;
-		let to   = res_opt(extract_json_string(s, "to"))?;
-		let mut note = extract_json_string(s, "note").unwrap_or_default();
-		let by = extract_json_string(s, "by").unwrap_or_default();
-		let share = match extract_json_bool(s, "share") {
+		match JsonObjectText::new(s) {
+			Ok(o) => Self::from_fields(
+				|k| o.get_str(k),
+				|k| match o.get(k) {
+					Some("true") | Some("\"true\"")	=> Some(true),
+					Some("false") | Some("\"false\"")	=> Some(false),
+					_					=> None,
+				},
+				|k| o.get(k).and_then(|v| v.parse::<u64>().ok()),
+			),
+			Err(_) => Self::from_fields(
+				|k| extract_json_string(s, k),
+				|k| extract_json_bool(s, k),
+				|k| extract_json_number(s, k),
+			),
+		}
+	}
+
+	// One reading of a row's fields, whichever reader finds them.
+	fn from_fields(
+		string:	impl Fn(&str) -> Option<String>,
+		boolean: impl Fn(&str) -> Option<bool>,
+		number:	impl Fn(&str) -> Option<u64>,
+	)
+		-> Option<Self>
+	{
+		let from = res_opt(string("from"))?;
+		let to   = res_opt(string("to"))?;
+		let mut note = string("note").unwrap_or_default();
+		let by = string("by").unwrap_or_default();
+		let share = match boolean("share") {
 			Some(on) => on,
 			None if by == "user" && note == LEGACY_SHARE_NOTE => {
 				note.clear();
@@ -152,11 +191,11 @@ impl Link {
 			None => false,
 		};
 		Some(Self {
-			id:   extract_json_string(s, "id").unwrap_or_default(),
-			ts:   extract_json_number(s, "ts").unwrap_or(0),
+			id:   string("id").unwrap_or_default(),
+			ts:   number("ts").unwrap_or(0),
 			from: Node::parse(&from)?,
 			to:   Node::parse(&to)?,
-			rel:  normalise_rel(&extract_json_string(s, "rel").unwrap_or_default()),
+			rel:  normalise_rel(&string("rel").unwrap_or_default()),
 			note,
 			by,
 			share,
@@ -187,6 +226,83 @@ impl Link {
 			None
 		}
 	}
+}
+
+/// One entry of a [`LinksPage`]: a link, or the refusal of one whose field is over what the wire
+/// carries, naming it, so one bad row never hides the links after it.
+#[derive(Clone, Debug, ToDat, FromDat)]
+pub enum PageLink {
+	Link(Link),
+	Refused { id: String, why: String },
+}
+
+/// One page of a links sidecar (D1k3 ruling 1, lead ruling on the cursor).
+///
+/// The cursor is the position of a row: `next` is the row the following page starts at, `None`
+/// once the file is read to its end.  `stamp` is the hash of the whole file the page was read
+/// from; a page asked under another stamp is refused with [`links_changed`], and the walk starts
+/// again from row 0.  So blank or repeated ids neither loop nor skip.
+#[derive(Clone, Debug, ToDat, FromDat)]
+pub struct LinksPage {
+	pub stamp:	HexHash,
+	pub links:	Vec<PageLink>,
+	pub next:	Option<u64>,
+}
+
+/// Why `l` cannot cross the wire whole, if it cannot.  The note needs no check: the page's copy
+/// of it is capped to [`MAX_NOTE_LEN`] characters in [`links_page`], under the wire's text ceiling.
+fn too_long(l: &Link) -> Option<String> {
+	for (field, v) in [("from", &l.from.rest), ("to", &l.to.rest)] {
+		if v.len() > PATH_WIRE_MAX {
+			return Some(fmt!("its {} end is {} bytes, over the {} a path may be",
+				field, v.len(), PATH_WIRE_MAX));
+		}
+	}
+	for (field, v) in [
+		("id", &l.id), ("rel", &l.rel), ("by", &l.by),
+		("from kind", &l.from.kind), ("to kind", &l.to.kind),
+	] {
+		if v.len() > WORD_WIRE_MAX {
+			return Some(fmt!("its {} is {} bytes, over the {} a word may be",
+				field, v.len(), WORD_WIRE_MAX));
+		}
+	}
+	None
+}
+
+/// The page of the sidecar `text` that starts at row `at`: at most [`LINK_PAGE`] entries.
+///
+/// A row is a non-blank line.  A row that is not a link is passed over, as [`parse_links`]
+/// does; a link over the wire's bounds is answered as [`PageLink::Refused`].  `stamp` is the one
+/// the walk's first page answered, and `None` only on that first page, at row 0.
+pub fn links_page(text: &str, at: u64, stamp: Option<&HexHash>) -> Outcome<LinksPage> {
+	let now = HexHash::of(text.as_bytes());
+	match stamp {
+		Some(s) if *s == now	=> (),
+		None if at == 0		=> (),
+		_			=> return Err(links_changed()),
+	}
+	let mut links = Vec::new();
+	let mut next = None;
+	let rows = text.lines().map(|l| l.trim()).filter(|l| !l.is_empty());
+	for (i, row) in rows.enumerate().skip(at as usize) {
+		if links.len() == LINK_PAGE {
+			next = Some(i as u64);
+			break;
+		}
+		if let Some(mut l) = Link::from_json(row) {
+			// The cap is on the page's copy only: the parse stays lossless, so a writer that reads
+			// the row never cuts it on disk (d1k3 check, section 1).
+			if l.note.chars().count() > MAX_NOTE_LEN {
+				l.note = l.note.chars().take(MAX_NOTE_LEN).collect();
+			}
+			links.push(match too_long(&l) {
+				None		=> PageLink::Link(l),
+				Some(why)	=> PageLink::Refused { id: cut(&l.id, WORD_WIRE_MAX, CUT_MARK), why },
+			});
+		}
+	}
+	Ok(LinksPage { stamp: now, links, next })
 }
 
 /// `Option` in the shape the `?` above needs, without introducing `?` on a
@@ -317,7 +433,7 @@ pub fn share_link_in(links: &mut [Link], id: &str, on: bool) -> Outcome<bool> {
 }
 
 /// What a model's removal of one link from a sidecar comes to; see [`model_unlink`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, ToDat, FromDat)]
 pub enum Unlink {
 	Missing,			// no link has that id, and a blank id names none
 	Users,				// a row the id names is the user's, so nothing goes
@@ -351,66 +467,22 @@ pub fn model_unlink(links: &[Link], id: &str) -> Unlink {
 	}
 	Unlink::Removed(links.iter().filter(|l| l.id != id).cloned().collect())
 }
-
-/// Take the link `id` out of `links` for the USER: the sidecar without it, or `None` when no row
-/// has that id.
-///
-/// **A blank id is refused.**  A hand-written row carries a blank id, so matching one took every
-/// such row in the sidecar at once (D1k4/5 second check, defect 1).  A row with no id is named by
-/// what it says instead; see [`remove_bare_in`].
-///
-/// # Arguments
-/// * `links` - The owner's sidecar, as read.
-/// * `id` - The link the user named.
-pub fn remove_in(links: &[Link], id: &str) -> Outcome<Option<Vec<Link>>> {
-	if id.trim().is_empty() {
-		return Err(err!(
-			"A blank link id names no link: a hand-written link has none, so it is removed by \
-			its ends and relation instead."; Invalid, Input));
-	}
-	let kept: Vec<Link> = links.iter().filter(|l| l.id != id).cloned().collect();
-	if kept.len() == links.len() {
-		return Ok(None);
-	}
-	Ok(Some(kept))
-}
-
-/// Take out the ONE row with no id that runs `from` to `to` as `rel`; see [`remove_in`].
-///
-/// A row with an id is never matched here: it has a name, and is removed by it.  None matching,
-/// or more than one, is refused rather than guessed at -- two identical hand-written rows cannot
-/// be told apart by anything the caller could send.
-///
-/// # Arguments
-/// * `links` - The owner's sidecar, as read.
-/// * `from` - The row's `from` end, as a reference.
-/// * `to` - The row's `to` end, as a reference.
-/// * `rel` - The row's relation, as stored.
-pub fn remove_bare_in(links: &[Link], from: &str, to: &str, rel: &str) -> Outcome<Vec<Link>> {
-	let hit = |l: &Link| l.id.trim().is_empty()
-		&& l.from.to_ref() == from && l.to.to_ref() == to && l.rel == rel;
-	match links.iter().filter(|l| hit(l)).count() {
-		1 => Ok(links.iter().filter(|l| !hit(l)).cloned().collect()),
-		// These reach the user as they are, so they are short and name no reference.
-		0 => Err(err!("No such hand-written link."; Missing, Input)),
-		_ => Err(err!("Identical hand-written links: remove one in the sidecar."; Invalid, Input)),
-	}
-}
-
 /// Parse a whole sidecar, skipping blank and unreadable lines.
 ///
 /// A line that will not parse is dropped rather than failing the read: a
 /// sidecar is hand-editable by design, and one fat-fingered line must not make
 /// every other link in the file disappear.
 pub fn parse_links(text: &str) -> Vec<Link> {
-	text.lines()
-		.map(|l| l.trim())
-		.filter(|l| !l.is_empty())
-		.filter_map(Link::from_json)
-		.collect()
+	link_rows(text).into_iter().map(|(_, l)| l).collect()
 }
 
-/// Serialise links back to sidecar text, one per line.
+/// Serialise links back to sidecar text, one per line: fixtures only.
+///
+/// **Test-only, so no writer can put a parsed list back on disk** (d1k3 check, section 1).  A
+/// parsed list has lost every unreadable line and every field `Link` does not know, and a page
+/// walk's list ([`crate::store::call::Unlinked::rebuild`]) has also lost refused rows and
+/// the tail of long notes.  Every writer goes through [`edit_rows`] instead.
+#[cfg(test)]
 pub fn write_links(links: &[Link]) -> String {
 	let mut s = String::new();
 	for l in links {
@@ -425,10 +497,46 @@ pub fn write_links(links: &[Link]) -> String {
 /// A sidecar written before the rename names its ends `facet:<id>` -- what a
 /// Diamond was called when the link substrate shipped.  An unknown kind is kept
 /// rather than refused, so those links survive, but they survive pointing at a
-/// kind nothing resolves any more.  The substitution is on the quoted prefix,
-/// so a note that merely mentions the word is left alone.
+/// kind nothing resolves any more.
+///
+/// **Row by row, the ends alone** (d1k45 check, defect 2): only a top-level `from` or `to` whose
+/// value starts `facet:` is changed, through [`edit_rows`], and every other byte -- a note that
+/// says the word, an unknown member, a line that is not a link -- is copied as written.  A row
+/// the raw editor cannot read is left as it stands.  Nothing to repair is the same text back.
 pub fn fix_legacy_kinds(text: &str) -> String {
-	text.replace("\"facet:", "\"diamond:")
+	let mut moved = false;
+	let out = edit_rows(text, |_, raw, _| match legacy_row(raw) {
+		Some(t)	=> { moved = true; Row::Text(t) },
+		None	=> Row::Keep,
+	}, &[]);
+	match out {
+		Ok(t) if moved	=> t,
+		_		=> text.to_string(),
+	}
+}
+
+/// The row `raw` with each top-level end named `facet:<id>` renamed `diamond:<id>`, or nothing
+/// when it names none or cannot be edited in place.
+fn legacy_row(raw: &str) -> Option<String> {
+	let mut row = match JsonObjectText::new(raw) {
+		Ok(r)	=> r,
+		Err(_)	=> return None,
+	};
+	let mut moved = false;
+	for key in ["from", "to"] {
+		let rest = match row.get_str(key) {
+			Some(v) => match v.strip_prefix("facet:") {
+				Some(r)	=> r.to_string(),
+				None	=> continue,
+			},
+			None => continue,
+		};
+		if row.set(key, &fmt!("\"diamond:{}\"", json_escape(&rest))).is_err() {
+			return None;
+		}
+		moved = true;
+	}
+	if moved { Some(row.into_string()) } else { None }
 }
 
 /// What identifies a link when two copies of one sidecar are reconciled.
@@ -463,11 +571,22 @@ fn identity(l: &Link) -> String {
 /// what stamps the Diamond; a union that wrote unconditionally would stamp each
 /// side fresher than the other for ever.
 pub fn union_links(mine: &[Link], theirs: &[Link]) -> Option<Vec<Link>> {
+	let take = union_take(mine, theirs);
+	if take.is_empty() {
+		return None;
+	}
+	let mut out = mine.to_vec();
+	out.extend(take.iter().filter_map(|&i| theirs.get(i).cloned()));
+	Some(out)
+}
+
+/// The positions in `theirs` of the links [`union_links`] takes, in order.
+fn union_take(mine: &[Link], theirs: &[Link]) -> Vec<usize> {
 	// A linear scan, because a sidecar holds a handful of links and a set for a
 	// dozen short strings costs more to read than it saves.
 	let mut keys: Vec<String> = mine.iter().map(identity).collect();
-	let mut out = mine.to_vec();
-	for l in theirs {
+	let mut take = Vec::new();
+	for (i, l) in theirs.iter().enumerate() {
 		let key = identity(l);
 		// What is taken includes what was just added, so a sidecar carrying the
 		// same link twice does not land it twice.
@@ -475,13 +594,230 @@ pub fn union_links(mine: &[Link], theirs: &[Link]) -> Option<Vec<Link>> {
 			continue;
 		}
 		keys.push(key);
-		out.push(l.clone());
+		take.push(i);
 	}
-	if out.len() == mine.len() {
-		None
-	} else {
-		Some(out)
+	take
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The writers' edits: row by row over the raw sidecar            │
+// └───────────────────────────────────────────────────────────────┘
+//
+// **A writer changes the row it was asked to change, and no other byte** (d1k3 check,
+// section 1).  The sidecar is hand-editable and written by other builds and other devices, so a
+// row can hold a field [`Link`] does not know, a `rel` spelling it folds, or no link at all.
+// Rebuilding the file from parsed rows dropped or rewrote all of those on every add, edit,
+// share, remove and union.  So the parsed `Link` only decides WHICH row moves; every other line
+// is copied as it stands, and a changed row is edited in its own raw JSON, the changed fields
+// alone.
+
+/// What [`edit_rows`] does with one row that reads as a link.
+pub enum Row {
+	Keep,
+	Drop,
+	Put(Link),	// the row as it should now read; only the fields that differ are rewritten
+	Text(String),	// the row's new text, made by the caller from its raw text
+}
+
+/// The one editor every link writer goes through.
+///
+/// `each` is asked of every row that reads as a link, with its index in [`parse_links`] order and
+/// its raw text, trimmed;
+/// a blank or unreadable line is copied unasked.  `add` lines are appended, after a line ending
+/// if the text lacks a final one.
+///
+/// **A row to change that the raw editor cannot bring to its new reading is refused**, by its id
+/// and line, and nothing is written: writing it whole from the parsed `Link` would drop the
+/// fields `Link` does not know.
+pub fn edit_rows(
+	text:		&str,
+	mut each:	impl FnMut(usize, &str, &Link) -> Row,
+	add:		&[String],
+)
+	-> Outcome<String>
+{
+	let mut out = String::with_capacity(text.len());
+	let mut n = 0;
+	for (line, piece) in text.split_inclusive('\n').enumerate() {
+		let body = piece.trim();
+		let l = match if body.is_empty() { None } else { Link::from_json(body) } {
+			Some(l) => l,
+			None => {
+				out.push_str(piece);
+				continue;
+			},
+		};
+		let i = n;
+		n += 1;
+		let row = match each(i, body, &l) {
+			Row::Keep	=> { out.push_str(piece); continue; },
+			Row::Drop	=> continue,
+			Row::Text(t)	=> t,
+			Row::Put(new)	=> match rewrite_row(body, &new) {
+				Ok(r)	=> r,
+				Err(e)	=> return Err(err!(e,
+					"The link '{}' on line {} of the sidecar was not changed: its row cannot be \
+					edited in place, and writing it whole would drop the fields this build does \
+					not know.", l.id, line + 1;
+				Invalid, Input)),
+			},
+		};
+		let start = piece.len() - piece.trim_start().len();
+		out.push_str(&piece[..start]);
+		out.push_str(&row);
+		out.push_str(&piece[start + body.len()..]);
 	}
+	if !add.is_empty() && !out.is_empty() && !out.ends_with('\n') {
+		out.push('\n');
+	}
+	for line in add {
+		out.push_str(line);
+		out.push('\n');
+	}
+	Ok(out)
+}
+
+/// Every row that reads as a link, with its raw text, in [`parse_links`] order.
+fn link_rows(text: &str) -> Vec<(&str, Link)> {
+	text.lines()
+		.map(|l| l.trim())
+		.filter(|l| !l.is_empty())
+		.filter_map(|r| Link::from_json(r).map(|l| (r, l)))
+		.collect()
+}
+
+/// Whether two links read the same in every field.
+fn same(a: &Link, b: &Link) -> bool {
+	a.id == b.id && a.ts == b.ts && a.from == b.from && a.to == b.to
+		&& a.rel == b.rel && a.note == b.note && a.by == b.by && a.share == b.share
+}
+
+/// Write back only the rows `edited` (the file's links, as [`parse_links`] read them, after an
+/// edit) changed.
+fn put_changed(text: &str, edited: &[Link]) -> Outcome<String> {
+	edit_rows(text, |i, _, l| match edited.get(i) {
+		Some(e) if !same(l, e)	=> Row::Put(e.clone()),
+		_			=> Row::Keep,
+	}, &[])
+}
+
+/// The row `raw` with the fields in which it reads differently from `new` rewritten, and every
+/// other member, known or not, as it was.
+///
+/// Read back after each round, because a field can depend on another: a user's row whose note is
+/// the legacy `share` word reads as flagged until it is given a `share` of its own, and then its
+/// note reads.  A row the raw edit cannot bring to `new` is refused: one that is not a JSON object
+/// `Link` nonetheless reads, or one that differs where no writer edits.
+fn rewrite_row(raw: &str, new: &Link) -> Outcome<String> {
+	let mut row = res!(JsonObjectText::new(raw));
+	for round in 0..4 {
+		let now = match Link::from_json(row.as_str()) {
+			Some(l) => l,
+			None	=> return Err(err!("The edited row no longer reads as a link."; Invalid, Input)),
+		};
+		if same(&now, new) {
+			return Ok(row.into_string());
+		}
+		let mut sets: Vec<(&str, Option<String>)> = Vec::new();
+		if now.rel != new.rel {
+			sets.push(("rel", Some(fmt!("\"{}\"", json_escape(&new.rel)))));
+		}
+		if now.note != new.note {
+			sets.push(("note", Some(fmt!("\"{}\"", json_escape(&new.note)))));
+		}
+		if now.share != new.share {
+			// Off is the field's absence, as `to_json` writes it, unless absence still reads on.
+			sets.push(("share", match (new.share, round) {
+				(true, _)	=> Some(fmt!("true")),
+				(false, 0)	=> None,
+				(false, _)	=> Some(fmt!("false")),
+			}));
+		}
+		if sets.is_empty() {
+			return Err(err!("The row differs from its edit where no writer edits."; Invalid, Input));
+		}
+		for (key, val) in sets {
+			match val {
+				Some(v)	=> res!(row.set(key, &v)),
+				None	=> { res!(row.remove(key)); },
+			}
+		}
+	}
+	Err(err!("The row did not settle to its edit."; Invalid, Input))
+}
+
+/// The sidecar `text` with `link` appended.
+pub fn sidecar_add(text: &str, link: &Link) -> Outcome<String> {
+	edit_rows(text, |_, _, _| Row::Keep, &[link.to_json()])
+}
+
+/// The sidecar after [`update_link_in`], or nothing when nothing moved.
+pub fn sidecar_update(text: &str, id: &str, rel: &str, note: &str) -> Outcome<Option<String>> {
+	let mut links = parse_links(text);
+	Ok(if update_link_in(&mut links, id, rel, note) { Some(res!(put_changed(text, &links))) } else { None })
+}
+
+/// The sidecar after [`share_link_in`], or nothing when nothing moved.
+pub fn sidecar_share(text: &str, id: &str, on: bool) -> Outcome<Option<String>> {
+	let mut links = parse_links(text);
+	Ok(if res!(share_link_in(&mut links, id, on)) { Some(res!(put_changed(text, &links))) } else { None })
+}
+
+/// The sidecar without every row whose id is `id`, or nothing when none had it.
+///
+/// **A blank id is refused** (d1k45 check, defect 1): every hand-written row carries one, so it
+/// named them all at once.  Such a row goes by what it says instead, through
+/// [`sidecar_remove_bare`].
+pub fn sidecar_remove(text: &str, id: &str) -> Outcome<Option<String>> {
+	if id.trim().is_empty() {
+		return Err(err!(
+			"A blank link id names no link: a hand-written link has none, so it is removed by \
+			its ends and relation instead."; Invalid, Input));
+	}
+	let mut gone = false;
+	let out = res!(edit_rows(text, |_, _, l| if l.id == id { gone = true; Row::Drop } else { Row::Keep }, &[]));
+	Ok(if gone { Some(out) } else { None })
+}
+
+/// The sidecar without the one hand-written row, a row with no id, that runs `from` to `to` (both
+/// references) as `rel`; every other byte as it was.  Refused when no such row, or more than one,
+/// says it: nothing else tells two of them apart.
+pub fn sidecar_remove_bare(text: &str, from: &str, to: &str, rel: &str) -> Outcome<String> {
+	let (from, to) = match (Node::parse(from), Node::parse(to)) {
+		(Some(f), Some(t))	=> (f, t),
+		_			=> return Err(err!("No such hand-written link."; Missing, Input)),
+	};
+	let rel = normalise_rel(rel);
+	let hit = |l: &Link| l.id.trim().is_empty() && l.from == from && l.to == to && l.rel == rel;
+	match parse_links(text).iter().filter(|l| hit(l)).count() {
+		1 => edit_rows(text, |_, _, l| if hit(l) { Row::Drop } else { Row::Keep }, &[]),
+		0 => Err(err!("No such hand-written link."; Missing, Input)),
+		_ => Err(err!("Identical hand-written links: remove one in the sidecar."; Invalid, Input)),
+	}
+}
+
+/// [`model_unlink`] over the sidecar, and the text to write when it removed.
+pub fn sidecar_model_remove(text: &str, id: &str) -> Outcome<(Unlink, Option<String>)> {
+	let out = model_unlink(&parse_links(text), id);
+	let new = match &out {
+		Unlink::Removed(_)	=> res!(sidecar_remove(text, id)),
+		_			=> None,
+	};
+	Ok((out, new))
+}
+
+/// The sidecar `mine` with the rows of `theirs` it does not hold appended as they were written,
+/// or nothing when it holds them all ([`union_links`]).
+pub fn sidecar_union(mine: &str, theirs: &str) -> Outcome<Option<String>> {
+	let rows = link_rows(theirs);
+	let links: Vec<Link> = rows.iter().map(|(_, l)| l.clone()).collect();
+	let take = union_take(&parse_links(mine), &links);
+	if take.is_empty() {
+		return Ok(None);
+	}
+	let add: Vec<String> = take.iter().filter_map(|&i| rows.get(i).map(|(r, _)| r.to_string())).collect();
+	Ok(Some(res!(edit_rows(mine, |_, _, _| Row::Keep, &add))))
 }
 
 
@@ -902,78 +1238,17 @@ mod tests {
 		assert_eq!("revised here", mine[0].note);
 	}
 
-	// ── The user's remove: a blank id names no row ──────────────────
-
-	fn bare(from: &str, to: &str, rel: &str) -> Link {
-		let mut l = link(from, to, rel);
-		l.id = fmt!("");
-		l
-	}
-
-	fn two_bare_one_named() -> Vec<Link> {
-		let mut k1 = link("diamond:a", "diamond:c", "cites");
-		k1.id = fmt!("k1");
-		vec![
-			bare("diamond:a", "diamond:b", "informs"),
-			bare("diamond:b", "diamond:c", "informs"),
-			k1,
-		]
-	}
-
-	#[test]
-	fn test_a_blank_id_removes_nothing() {
-		// Every hand-written row carries a blank id, so matching one took them all.
-		let links = two_bare_one_named();
-		assert!(remove_in(&links, "").is_err());
-		assert!(remove_in(&links, "  ").is_err());
-	}
-
-	#[test]
-	fn test_an_id_removes_only_its_row() {
-		let links = two_bare_one_named();
-		let kept = remove_in(&links, "k1").expect("an id is asked").expect("k1 is there");
-		assert_eq!(2, kept.len());
-		assert!(kept.iter().all(|l| l.id.is_empty()));
-		assert!(remove_in(&links, "k9").expect("an id is asked").is_none());
-	}
-
-	#[test]
-	fn test_a_bare_row_goes_by_its_content() {
-		let links = two_bare_one_named();
-		let kept = remove_bare_in(&links, "diamond:a", "diamond:b", "informs")
-			.expect("exactly one row matches");
-		assert_eq!(2, kept.len());
-		assert_eq!("diamond:b", kept[0].from.to_ref());
-		assert_eq!("k1", kept[1].id);
-		// The rows left are the bytes they were.
-		assert_eq!(write_links(&links[1..]), write_links(&kept));
-	}
-
-	#[test]
-	fn test_a_bare_remove_refuses_none_or_several() {
-		let links = two_bare_one_named();
-		// No such row; and the id row's content does not count, since it has an id.
-		assert!(remove_bare_in(&links, "diamond:a", "diamond:b", "cites").is_err());
-		assert!(remove_bare_in(&links, "diamond:a", "diamond:c", "cites").is_err());
-		let twins = vec![
-			bare("diamond:a", "diamond:b", "informs"),
-			bare("diamond:a", "diamond:b", "informs"),
-		];
-		assert!(remove_bare_in(&twins, "diamond:a", "diamond:b", "informs").is_err());
-	}
+	// ── The user's remove: a bare refusal is short ──────────────────
 
 	/// The refusals reach the user as they are (`graph.write_failed`), so they say it in a few
 	/// words and carry no `diamond:<hex>` reference.
 	#[test]
 	fn test_a_bare_refusal_is_short_and_names_no_ref() {
-		let links = two_bare_one_named();
-		let twins = vec![
-			bare("diamond:a", "diamond:b", "informs"),
-			bare("diamond:a", "diamond:b", "informs"),
-		];
+		let text = two_bare_one_named();
+		let twins = fmt!("{}\n{}\n", BARE_AB, BARE_AB);
 		for e in [
-			remove_bare_in(&links, "diamond:a", "diamond:c", "cites").unwrap_err(),
-			remove_bare_in(&twins, "diamond:a", "diamond:b", "informs").unwrap_err(),
+			sidecar_remove_bare(&text, "diamond:a", "diamond:c", "cites").unwrap_err(),
+			sidecar_remove_bare(&twins, "diamond:a", "diamond:b", "informs").unwrap_err(),
 		] {
 			let s = fmt!("{}", e);
 			assert!(!s.contains("diamond:"), "names a ref: {}", s);
@@ -1016,6 +1291,150 @@ mod tests {
 	fn test_an_empty_sidecar_is_no_links_rather_than_a_failure() {
 		assert!(parse_links("").is_empty());
 		assert!(parse_links("\n\n  \n").is_empty());
+	}
+
+	// ── A write touches only the row it was asked to (d1k3 check, section 1) ──
+
+	fn long_note_sidecar() -> (String, String) {
+		let mut a = link("diamond:a", "diamond:b", "informs");
+		a.id = fmt!("keep");
+		a.note = "n".repeat(3_000);
+		let mut b = link("diamond:a", "diamond:c", "informs");
+		b.id = fmt!("go");
+		b.by = fmt!("agent:x");
+		let keep = a.to_json();
+		(fmt!("{}\n{}\n", keep, b.to_json()), keep)
+	}
+
+	#[test]
+	fn test_an_untouched_long_note_is_byte_identical_after_another_row_goes() {
+		// Red with the cap in `from_json`: the remove wrote the untouched row back cut to 2,000.
+		let (text, keep) = long_note_sidecar();
+		let left = match model_unlink(&parse_links(&text), "go") {
+			Unlink::Removed(left) => left,
+			other => panic!("not removed: {:?}", other),
+		};
+		assert_eq!(write_links(&left), fmt!("{}\n", keep));
+	}
+
+	// Rows `Link` would rewrite: a field it does not know, a rel spelling it folds, a line it
+	// cannot read, a share flag, a note with escapes, and a row by the user to share.
+	const ODD: &str = "{\"id\":\"u1\",\"ts\":5,\"from\":\"diamond:a\",\"to\":\"file:/x\",\"rel\":\"holds\",\"note\":\"\",\"by\":\"user\",\"later\":{\"k\":[1,\"}\"]}}";
+	const MIXED: &str = "{\"id\":\"m1\", \"from\":\"diamond:a\", \"to\":\"diamond:q\", \"rel\":\"  Super   SEDES \", \"by\":\"agent:x\"}";
+	const BAD: &str = "  this line is not JSON at all  ";
+
+	fn odd_sidecar() -> String {
+		fmt!("{}\n{}\n\n{}\n{}\n", ODD, BAD, MIXED,
+			fmt!("{}", link("diamond:a", "diamond:z", "informs").to_json()).replace("\"l1\"", "\"g1\"").replace("\"user\"", "\"agent:x\""))
+	}
+
+	fn has_line(text: &str, line: &str) -> bool {
+		text.split('\n').any(|l| l == line)
+	}
+
+	#[test]
+	fn test_an_unreadable_line_survives_an_add() {
+		let text = odd_sidecar();
+		let mut l = link("diamond:a", "diamond:new", "informs");
+		l.id = fmt!("n1");
+		let out = sidecar_add(&text, &l).expect("added");
+		assert!(has_line(&out, BAD), "{}", out);
+		assert!(out.starts_with(&text), "every earlier byte kept: {}", out);
+		assert!(has_line(&out, &l.to_json()));
+	}
+
+	#[test]
+	fn test_an_unknown_field_survives_a_share_toggle() {
+		let text = odd_sidecar();
+		let out = sidecar_share(&text, "u1", true).expect("a mark").expect("moved");
+		let row = out.lines().next().expect("a row");
+		assert!(row.contains("\"later\":{\"k\":[1,\"}\"]}"), "{}", row);
+		let l = Link::from_json(row).expect("a link");
+		assert!(l.share);
+		assert_eq!(out.replacen(row, ODD, 1), text, "only the shared row moved");
+		let back = sidecar_share(&out, "u1", false).expect("a mark").expect("moved");
+		assert!(!parse_links(&back)[0].share);
+		assert!(back.lines().next().expect("a row").contains("\"later\""));
+	}
+
+	#[test]
+	fn test_a_mixed_case_rel_in_another_row_survives_a_remove() {
+		let text = odd_sidecar();
+		let out = sidecar_remove(&text, "g1").expect("read").expect("removed");
+		assert_eq!(out, fmt!("{}\n{}\n\n{}\n", ODD, BAD, MIXED));
+		let (u, out) = sidecar_model_remove(&text, "g1").expect("read");
+		assert!(matches!(u, Unlink::Removed(ref k) if k.len() == 2), "{:?}", u);
+		assert_eq!(out.expect("removed"), fmt!("{}\n{}\n\n{}\n", ODD, BAD, MIXED));
+	}
+
+	#[test]
+	fn test_an_update_rewrites_only_the_changed_field_of_its_own_row() {
+		let text = odd_sidecar();
+		let out = sidecar_update(&text, "m1", "super Sedes", "now said").expect("read").expect("moved");
+		let row = out.lines().nth(3).expect("the row");
+		assert!(row.contains("\"rel\":\"  Super   SEDES \""), "rel untouched as it reads the same: {}", row);
+		assert_eq!(Link::from_json(row).expect("a link").note, "now said");
+		assert!(has_line(&out, BAD) && has_line(&out, ODD));
+		assert!(sidecar_update(&out, "m1", "Super sedes", "now said").expect("read").is_none(), "nothing moved");
+	}
+
+	#[test]
+	fn test_a_union_keeps_both_sides_unknown_fields() {
+		let mine = odd_sidecar();
+		let theirs = fmt!("{}\nnot a link either\n{}\n",
+			"{\"id\":\"t1\",\"from\":\"diamond:a\",\"to\":\"diamond:t\",\"Rel\":1,\"rel\":\"Cites\",\"theirs\":true}",
+			ODD.replace("later", "other"));
+		let out = sidecar_union(&mine, &theirs).expect("read").expect("something new");
+		assert!(out.starts_with(&mine), "{}", out);
+		assert_eq!(&out[mine.len()..],
+			"{\"id\":\"t1\",\"from\":\"diamond:a\",\"to\":\"diamond:t\",\"Rel\":1,\"rel\":\"Cites\",\"theirs\":true}\n",
+			"their new row lands as they wrote it, and the id held here is not taken twice");
+		assert!(sidecar_union(&out, &theirs).expect("read").is_none(), "it settles");
+	}
+
+	#[test]
+	fn test_a_legacy_share_note_turned_off_reads_off_and_with_no_note() {
+		let row = "{\"id\":\"s1\",\"from\":\"diamond:a\",\"to\":\"file:/b\",\"rel\":\"holds\",\"note\":\"share\",\"by\":\"user\",\"x\":2}";
+		let out = sidecar_share(&fmt!("{}\n", row), "s1", false).expect("a mark").expect("moved");
+		let l = Link::from_json(out.trim()).expect("a link");
+		assert!(!l.share && l.note.is_empty(), "{}", out);
+		assert!(out.contains("\"x\":2"), "{}", out);
+	}
+
+	#[test]
+	fn test_a_file_with_no_final_newline_gains_one_before_an_add() {
+		let mut l = link("diamond:a", "diamond:new", "informs");
+		l.id = fmt!("n1");
+		let out = sidecar_add(BAD, &l).expect("added");
+		assert_eq!(out, fmt!("{}\n{}\n", BAD, l.to_json()));
+		let crlf = fmt!("{}\r\n", MIXED);
+		assert_eq!(sidecar_add(&crlf, &l).expect("added"), fmt!("{}{}\n", crlf, l.to_json()), "CRLF kept");
+	}
+
+	#[test]
+	fn test_a_row_the_editor_cannot_read_is_refused_by_id_and_line() {
+		// `Link` reads this row; it is not one JSON object (the trailing comma), so it cannot be
+		// edited in place, and written whole it would lose `x`.
+		let loose = "{\"id\":\"w1\",\"from\":\"diamond:a\",\"to\":\"diamond:c\",\"rel\":\"cites\",\"x\":1,}";
+		let text = fmt!("{}\n{}\n", ODD, loose);
+		let e = match sidecar_update(&text, "w1", "cites", "new") {
+			Err(e)	=> e.to_string(),
+			Ok(out)	=> panic!("answered {:?}", out),
+		};
+		assert!(e.contains("'w1'") && e.contains("line 2"), "{}", e);
+		assert!(sidecar_remove(&text, "w1").expect("a remove edits no row").is_some());
+		assert!(sidecar_update(&text, "u1", "holds", "said").expect("another row edits").is_some());
+	}
+
+	#[test]
+	fn test_the_page_alone_carries_the_note_cap() {
+		let (text, _) = long_note_sidecar();
+		let page = links_page(&text, 0, None).expect("a page");
+		match &page.links[0] {
+			PageLink::Link(l) => assert_eq!(l.note.chars().count(), MAX_NOTE_LEN),
+			other => panic!("not a link: {:?}", other),
+		}
+		assert_eq!(parse_links(&text)[0].note.chars().count(), 3_000);
 	}
 
 	#[test]
@@ -1106,5 +1525,82 @@ mod tests {
 		let there = vec![with_id("west", "diamond:c"), with_id("west", "diamond:c")];
 		let out = union_links(&[], &there).expect("this side held none");
 		assert_eq!("west", ids(&out));
+	}
+
+	// ── d1k45 check: a blank id, the legacy repair, top-level reads ───
+
+	const BARE_AB: &str = "{\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"rel\":\"informs\"}";
+	const BARE_BC: &str = "{\"from\":\"diamond:b\",\"to\":\"diamond:c\",\"rel\":\"informs\", \"x\":1}";
+	const NAMED_K1: &str = "{\"id\":\"k1\",\"from\":\"diamond:a\",\"to\":\"diamond:c\",\"rel\":\"cites\"}";
+
+	fn two_bare_one_named() -> String {
+		fmt!("{}\n{}\n{}\n{}\n", BARE_AB, BAD, BARE_BC, NAMED_K1)
+	}
+
+	#[test]
+	fn test_a_blank_id_removes_nothing() {
+		let text = two_bare_one_named();
+		assert!(sidecar_remove(&text, "").is_err(), "a blank id names every hand-written row");
+		assert!(sidecar_remove(&text, "  ").is_err());
+		assert!(matches!(sidecar_model_remove(&text, ""), Ok((Unlink::Missing, None))));
+		let out = sidecar_remove(&text, "k1").expect("an id is asked").expect("k1 is there");
+		assert_eq!(out, fmt!("{}\n{}\n{}\n", BARE_AB, BAD, BARE_BC));
+	}
+
+	#[test]
+	fn test_a_bare_row_goes_by_its_content_alone() {
+		let text = two_bare_one_named();
+		let out = sidecar_remove_bare(&text, "diamond:a", "diamond:b", "Informs").expect("one row says it");
+		assert_eq!(out, fmt!("{}\n{}\n{}\n", BAD, BARE_BC, NAMED_K1), "every other byte kept");
+		// None, or a named row only, is no hand-written row to remove.
+		assert!(sidecar_remove_bare(&text, "diamond:a", "diamond:b", "cites").is_err());
+		assert!(sidecar_remove_bare(&text, "diamond:a", "diamond:c", "cites").is_err());
+		// Two that say the same: which one is not known, so neither goes.
+		let twins = fmt!("{}\n{}\n", BARE_AB, BARE_AB);
+		assert!(sidecar_remove_bare(&twins, "diamond:a", "diamond:b", "informs").is_err());
+	}
+
+	#[test]
+	fn test_the_legacy_repair_moves_only_the_ends_of_its_rows() {
+		let text = concat!(
+			"{\"id\":\"f1\", \"from\":\"facet:a\",\"to\":\"facet:b\",\"note\":\"facet: the colour\",\"later\":\"\\\"facet:z\"}\r\n",
+			"not json \"facet:x\n",
+			"{\"id\":\"f2\",\"from\":\"diamond:a\",\"to\":\"file:/x\",\"note\":\"\\\"facet:y\"}",
+		);
+		let out = fix_legacy_kinds(text);
+		assert_eq!(out, concat!(
+			"{\"id\":\"f1\", \"from\":\"diamond:a\",\"to\":\"diamond:b\",\"note\":\"facet: the colour\",\"later\":\"\\\"facet:z\"}\r\n",
+			"not json \"facet:x\n",
+			"{\"id\":\"f2\",\"from\":\"diamond:a\",\"to\":\"file:/x\",\"note\":\"\\\"facet:y\"}",
+		));
+		// Nothing to repair is the same text back.
+		let clean = fmt!("{}\n{}\n", BAD, NAMED_K1);
+		assert_eq!(fix_legacy_kinds(&clean), clean);
+	}
+
+	#[test]
+	fn test_a_link_reads_its_own_top_level_members_decoded() {
+		// A nested `note` ahead of the row's own is not the row's note.
+		let row = "{\"id\":\"n1\",\"meta\":{\"note\":\"deep\",\"id\":\"x\"},\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"note\":\"top\"}";
+		let l = Link::from_json(row).expect("a link");
+		assert_eq!(("n1", "top"), (l.id.as_str(), l.note.as_str()));
+		// Escapes read as JSON reads them.
+		let row = "{\"id\":\"n2\",\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"note\":\"a\\u000bb\\u00e9\\ud83d\\ude00\"}";
+		assert_eq!("a\u{0b}b\u{e9}\u{1f600}", Link::from_json(row).expect("a link").note);
+		// A row the strict reader refuses still reads, as before.
+		let loose = "{\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"note\":\"n\",}";
+		assert_eq!("n", Link::from_json(loose).expect("a loose row still reads").note);
+	}
+
+	#[test]
+	fn test_an_edit_settles_on_a_nested_note_and_a_control_character() {
+		let text = fmt!("{}\n{}\n",
+			"{\"id\":\"c1\",\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"note\":\"old\"}",
+			"{\"id\":\"c2\",\"meta\":{\"note\":\"deep\"},\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"note\":\"old\"}");
+		let out = sidecar_update(&text, "c1", "", "a\u{0b}b").expect("it settles").expect("moved");
+		assert_eq!("a\u{0b}b", parse_links(&out)[0].note);
+		let out = sidecar_update(&out, "c2", "", "new").expect("it settles").expect("moved");
+		assert!(out.contains("\"meta\":{\"note\":\"deep\"}"), "{}", out);
+		assert_eq!("new", parse_links(&out)[1].note);
 	}
 }

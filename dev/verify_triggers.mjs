@@ -429,7 +429,8 @@ try {
 	// The user's placement rule, measured rather than eyeballed: name first, then
 	// the light, then the cog. It used to be light, name, cog — so a rail of
 	// Diamonds with and without one had two different left edges for its labels.
-	check(!!(opt && /^session-box-name,pptw,tile-cog/.test(opt.order)),
+	// The avatar button (S1M avatars) leads the header by design, ahead of the name.
+	check(!!(opt && /^(av-btn,)?session-box-name,pptw,tile-cog/.test(opt.order)),
 		'and it sits to the RIGHT of the name, hard against the cog',
 		opt && opt.order);
 

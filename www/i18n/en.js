@@ -1394,6 +1394,25 @@
 	'pending.steer.empty': 'Write a line.',
 	'pending.steer.refused': 'This line cannot be used: {why}',
 	'pending.steer.gone': 'That proposal no longer applies.',
+	'pending.runner.headline': 'Kimberlite update waiting',
+	'pending.runner.detail': 'A new Kimberlite build ({commit}) is waiting for your approval.',
+	'pending.runner.built': 'Commit {commit}, built {when}',
+	'pending.runner.approve': 'Approve',
+	'pending.runner.qr': 'Scan to approve on your phone',
+	'pending.runner.alarm': 'Kimberlite: an approval nobody asked for',
+	'pending.runner.alarm_detail': 'Kimberlite refused an approval for a release it never requested. Someone may have tampered with the relay or the page. {note}',
+	'pending.runnerpair.headline': '{name} wants to run Kimberlite',
+	'pending.runnerpair.unnamed': 'A computer',
+	'pending.runnerpair.detail': 'Approve with your passkey to give it the account\'s keys, sealed so only that computer can open them.',
+	'pending.runnerpair.joined': 'Asked to join {when}',
+	'pending.runnerpair.key': 'Key {fp}. Approve only if `kimberlite pair` printed the same key.',
+	'pending.runnerpair.approve': 'Approve with passkey',
+	'pending.runnerpair.refuse': 'Refuse',
+	'pending.runnerpair.approved': '{name} now runs Kimberlite.',
+	'pending.runnerpair.failed': 'Kimberlite was not approved.',
+	'pending.runnerpair.no_passkey': 'Approving Kimberlite needs a passkey on this device. Add one in Settings, then approve.',
+	'pending.runnerpair.refuse_failed': 'Kimberlite could not be refused just now.',
+	'passkey.err_runner_no_assertion': 'Your passkey did not answer, so nothing was sent and Kimberlite is still waiting.',
 	'pending.steer.failed': 'That could not be saved.',
 	'pending.steer.no_model': 'No key on this device for {to}.',
 	'pending.steer.why_long': 'it is over 200 bytes',
@@ -1424,6 +1443,16 @@
 	'pending.consent.type_head':  'An agent wants to send text to {host}',
 	'pending.consent.reach_head': 'An agent wants to reach {host}',
 	'pending.consent.search_head': 'An agent wants to search the web',
+	// A runner's change over one of his files (ASKCH): the file, the act and the lines changed.
+	'pending.change.head':        'An agent wants to {what}',
+	'pending.change.what_change': 'change "{path}"',
+	'pending.change.what_delete': 'delete "{path}"',
+	'pending.change.what_move':   'move "{path}" to "{to}"',
+	'pending.change.body':        'An agent running on another of your devices wants to {what}. Saying yes makes exactly this change and nothing after it; the file\'s History keeps what it replaces.',
+	'pending.change.counts':      '{add} lines added, {del} removed:',
+	'pending.change.skip':        '  … {n} unchanged lines',
+	'pending.change.more':        '…and {n} more changed lines not shown.',
+	'pending.change.binary':      'This file is not text, so no lines can be shown.',
 	'pending.consent.why':        'It asked while this page was not in front of you, so the question is waiting here instead of on a dialog nobody would have seen.',
 	'pending.consent.agent':      'The agent is {name}. Its task: {task}',
 	'pending.consent.waiting':    'The agent is still waiting for this answer.',
@@ -1453,7 +1482,7 @@
 	// Built by concatenation at daimond.js's `tOr('agents.status_' + run.status,
 	// run.status)`, so a status with no key here reaches the screen as the raw
 	// internal word -- which is what it used to do for all seven.
-	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap blocked waiting
+	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap blocked waiting timed_out
 	'agents.status_queued':      'queued',
 	'agents.status_running':     'running',
 	'agents.status_waiting': 'waiting',
@@ -1477,6 +1506,7 @@
 	'agents.status_interrupted': 'cut off',
 	'agents.status_capped':      'capped',
 	'agents.status_spend_cap':   'spend capped',
+	'agents.status_timed_out':   'timed out',
 	'agents.status_blocked':     'not done',
 
 	'agents.search':         'Search agents',
@@ -2508,6 +2538,7 @@
 	'turn.consent_act_click':  'act on {host}',
 	'turn.consent_act_search': 'search the web',
 	'turn.consent_act_reach':  'reach {host}',
+	'turn.consent_act_change': 'change one of your files',
 	// ── A blocker on a handed-off turn (owner ruling 2026-09-12) ──
 	// What stopped the runner, shown on EVERY device with the runner's own
 	// controls. The first three are answerable anywhere; the last three are
@@ -2864,6 +2895,8 @@
 	'link.drop_help':      'Remove this link',
 	'link.drop_confirm':   'Remove the \u201c{rel}\u201d link with \u201c{name}\u201d? Both diamonds stay; only the link goes.',
 	'link.drop_failed':    'Could not remove the link',
+	'link.share_failed':    'Could not change sharing',
+	'link.union_failed':    'Links not synced:',
 	'link.gone':           'That diamond is not there any more',
 	'link.gone_body':      '“{ref}” is linked from this diamond, but no diamond of that id can be read now; it may have been deleted.',
 	'link.gone_name':      '(deleted diamond)',

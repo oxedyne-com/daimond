@@ -32,7 +32,7 @@ pub mod diamond_delta;
 pub mod diamond_link;
 pub mod diamond_meta;
 /// Which of a Diamond's files are page logs: the paths a crystal page has appended to, recorded so
-/// the import can join them line by line.  Target-agnostic; the OPFS edge is [`wasm::diamond`].
+/// the import can join them line by line.  Target-agnostic; the store's edge is [`store::diamond`].
 pub mod diamond_pagelog;
 /// What an import does with this device's own history before it lays another device's copy of a
 /// Diamond over it: which versions are this device's alone, and the files that refile each one
@@ -47,6 +47,8 @@ pub mod diamond_rebase;
 /// browser alone, so what decides -- what a manifest says, what a path held at a version, and
 /// what a prune is willing to throw away -- is tested natively instead.
 pub mod diamond_versions;
+/// The runtime pieces a turn runs on: the race a Stop wins, and the per-session actor.
+pub mod engine;
 /// How one path component is spelled on a filesystem that will not take it as it stands.
 ///
 /// Target-agnostic on purpose: the rules are a browser's, but the codec is a pure string
@@ -86,7 +88,7 @@ pub mod session;
 /// be read by nothing.
 pub mod skills;
 /// `STATE.md` as keyed sections, rendered and retired by the engine rather than refused
-/// (UNBLOCK-18).  Pure; the store's half is `wasm::diamond::standing_retired`.
+/// (UNBLOCK-18).  Pure; the store's half is `store::diamond::standing_retired`.
 pub mod state_md;
 /// The three standing files read and seeded through one store, proved without a browser.
 pub mod standing;
@@ -96,6 +98,9 @@ pub mod standing;
 /// Target-agnostic, so the cap and the lint are held by native unit tests, and the page asks
 /// the wasm for the same verdict the engine acts on.
 pub mod steering;
+/// The Diamond store: its backend (primitives, locks, environment) and the codec its calls and
+/// replies travel in across a process boundary.
+pub mod store;
 pub mod syntax;
 pub mod tools;
 pub mod turn_state;

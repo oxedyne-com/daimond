@@ -121,5 +121,25 @@ check(workerEndStatus('failed', '') === 'error', 'a plain failure is still error
 	check(/'agents\.status_blocked':/.test(EN), 'the tile has a word for blocked');
 }
 
+// A WORKER THAT MADE NO PROGRESS (U3a END, UNBLOCK-16 F1/F3). The engine's liveness bound ends
+// the turn `TimedOut`, which travels like `Blocked`: wire `failed`, why `timed_out`. The page no
+// longer races `run_turn` against a wall clock, so `capped` means only the round cap; a timed-out
+// worker is its own status, terminal for gather, and its heading never says "round cap".
+check(workerEndStatus('failed', 'timed_out') === 'timed_out', 'a timed-out worker is timed_out, not error',
+	workerEndStatus('failed', 'timed_out'));
+{
+	const r = { status: 'timed_out', ended: { how: 'failed', why: 'timed_out', rounds: 3 }, costUsd: 0.03 };
+	const note = workerEndingNote(r);
+	check(/timed out/.test(note), 'a timed-out worker\'s heading says "timed out"', note);
+	check(!/round cap/.test(note), 'a timed-out worker\'s heading never says "round cap"', note);
+	check(/after 3 rounds/.test(note) && /continue with resume/.test(note),
+		'a timed-out worker names its rounds and is offered a resume', note);
+	const term = grabFn('isTerminal: function (');
+	check(/'timed_out'/.test(term), 'a timed-out worker is terminal for gather');
+	const EN = fs.readFileSync(path.join(HERE, '..', 'www', 'i18n', 'en.js'), 'utf8');
+	check(/'agents\.status_timed_out':/.test(EN), 'the tile has a word for timed_out');
+	check(!/runTurnCapped|WORKER_WALL_CLOCK_MS/.test(SRC), 'no wall-clock race is left in the page');
+}
+
 console.log(`\nworker status: ${ran - bad} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

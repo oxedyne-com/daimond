@@ -47,7 +47,7 @@ await p.evaluate(async ({ folder, mock }) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
 		const seen = [];
 		try {
-			await eng.steer_crystal(id, text, '[]', '[]', '[]', [],
+			await eng.steer_crystal(id, text, '[]', [],
 				(ev) => { if (ev.type === 'tool_result') seen.push(String(ev.content || '')); });
 		} catch (e) { seen.push('THREW: ' + String(e && e.message || e)); }
 		return seen;

@@ -152,8 +152,21 @@ impl Workspace {
     /// 2026-10-12 the native read and write asked only [`resolve`](Self::resolve), and both went
     /// through `lnk -> /outside` (CAPTURE-FENCE QA B F4).  The answer is the lexical path, which
     /// is what the callers quote back; like `resolve_real` it is a check, and the act follows it.
+    /// Where the path really is comes from [`real_followed`](Self::real_followed).
     pub fn resolve_followed(&self, rel: &str) -> Outcome<Option<PathBuf>> {
         let lex = res!(self.resolve(rel));
+        Ok(res!(self.real_followed(rel)).map(|_| lex))
+    }
+
+    /// Where `rel` REALLY is with every link on the way followed, the leaf too, or `None` where a
+    /// link carries it outside the root.
+    ///
+    /// The deepest existing folder is canonicalised and the missing names below it appended (as
+    /// [`resolve_real`](Self::resolve_real) does), then a link at the leaf, dangling or not, is
+    /// followed hop by hop.  So the answer is the place an act that follows links would reach,
+    /// however many folders are not made yet, and the fence judges THAT (U3a QC1 L2, 17 Oct 2026:
+    /// the fence had judged the spelling where two folders were missing or the leaf dangled).
+    pub fn real_followed(&self, rel: &str) -> Outcome<Option<PathBuf>> {
         let mut real = match res!(self.resolve_real(rel)) {
             Some(r) => r,
             None    => return Ok(None),
@@ -164,10 +177,10 @@ impl Workspace {
         for _ in 0..40 {
             match std::fs::symlink_metadata(&real) {
                 Ok(m) if m.file_type().is_symlink() => {},
-                _                                    => return Ok(Some(lex)),
+                _                                    => return Ok(Some(real)),
             }
             if let Ok(t) = std::fs::canonicalize(&real) {
-                return Ok(if t.starts_with(&root) { Some(lex) } else { None });
+                return Ok(if t.starts_with(&root) { Some(t) } else { None });
             }
             // Dangling: where it points must be inside, its folder proved on disk.
             let to = res!(std::fs::read_link(&real)

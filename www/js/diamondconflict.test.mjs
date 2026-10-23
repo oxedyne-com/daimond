@@ -140,6 +140,8 @@ const liftedDia = [
 	'\tfunction seenAncestor(list, anc) {', '\tfunction diamondMergePlan(w, l, a) {',
 	'\tfunction recordDiamondCopies(recvCh, was, seenAdd, only) {', '\tfunction patchDiamondRecord(read, write, changes) {',
 	'\tfunction dropDiamondRecords(ids) {', '\tfunction fileHash(s) {', '\tasync function removeLinkHere(link) {',
+	'\tasync function mergeConflictLinks(app, owner, plan) {', '\tasync function unionLinksSaid(app, owner, there) {',
+	'\tfunction storeRefusal(e) {', '\tfunction dropRefused(e) {',
 ].map((m) => lift(SRC, m)).join('\n');
 
 // ── A fake wasm app modelling the import contract ─────────────────
@@ -295,6 +297,9 @@ function build(harness) {
 		'function signalLinksChanged() {}\n' +
 		'async function unionDiamondTags() { return false; }\n' +
 		'async function unionDiamondLinks() { return false; }\n' +
+		// The said refusal of the conflict's link merge (conflictlinks.test.mjs asserts it).
+		'var unionRefused = {}, unionFaultSaid = {};\n' +
+		'function toast() {}\nfunction t(k) { return k; }\nfunction friendlyError(e) { return String(e); }\nfunction noticeDialog() {}\n' +
 		'async function diamondData(r) { if (ctx.onFetch) await ctx.onFetch(r); return r.data != null ? r.data : null; }\n' +
 		'var ChatStore = { putTombs: async function () {} };\n' +
 		// This device's record of the marks pressed on it (R2): settled from the copy

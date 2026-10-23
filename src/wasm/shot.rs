@@ -32,6 +32,7 @@ use oxedyne_fe2o3_text::base64;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
+pub use crate::engine::host::types::ui::{Look, Looked, Shot};
 
 
 #[wasm_bindgen]
@@ -69,22 +70,6 @@ fn shooter() -> Outcome<Shooter> {
             worker that can render the page another way."; System, Missing));
     }
     Ok(obj.unchecked_into::<Shooter>())
-}
-
-/// One photograph of the current view: the PNG bytes and the pixel size drawn.
-pub struct Shot {
-    pub png:   Vec<u8>,
-    pub w:     u32,
-    pub h:     u32,
-    // The text table of a Diamond page's measurement (`in:"crystal"`), else empty; `png` is
-    // then empty too when the page measured but could not be drawn, and the table says why.
-    pub table: String,
-    // The load proof's verdict (`pass` or `FAIL: ...`) when the request asked for one, else empty,
-    // and the debug nodes the page showed.
-    pub proof: String,
-    pub debug: u32,
-    // The page's console and the channel's messages, capped and scrubbed by the driver (K3).
-    pub trace: String,
 }
 
 /// Photograph the view named by `req` and hand back the decoded PNG.
@@ -131,22 +116,6 @@ pub async fn capture(req: &str) -> Outcome<Shot> {
     let w = extract_json_number(&json, "w").unwrap_or(0) as u32;
     let h = extract_json_number(&json, "h").unwrap_or(0) as u32;
     Ok(Shot { png, w, h, table, proof, debug, trace })
-}
-
-/// What the Diamond's images model made of one picture, and what that cost.
-pub struct Look {
-    pub text:   String,
-    pub model:  String,
-    pub tokens: u64,
-    pub usd:    f64,    // nought when the provider reported no cost
-    pub by:     LookBy, // the Diamond's choice, or which rule chose the account's default
-}
-
-/// The outcome of asking the images model to look.
-pub enum Looked {
-    Seen(Look),
-    NoModel,            // none is set for this Diamond nor any seeing model priced on the account
-    Failed(String),
 }
 
 /// Ask the images model of Diamond `id` about a PNG, in the words of `prompt`.

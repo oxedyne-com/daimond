@@ -116,7 +116,7 @@ fn open_record(k: &Keys, r: &DaticleMap) -> Outcome<(usize, usize)> {
 					}
 					Ok(_) => return Err(err!("{}: opened for a key it was not sealed to.", name; Invalid)),
 					Err(e) if !to.contains(&pk) => {
-						if !fmt!("{}", e).contains("seal:not_for_you:") {
+						if crate::seal::Refusal::of_message(&fmt!("{}", e)) != Some("not_for_you") {
 							return Err(err!("{}: refused for the wrong reason: {}", name, e; Invalid));
 						}
 						refused += 1;
@@ -131,8 +131,17 @@ fn open_record(k: &Keys, r: &DaticleMap) -> Outcome<(usize, usize)> {
 			for sk in &sks {
 				let pk = hex(&res!(AgreementScheme::x25519_public_of(sk)));
 				if to.contains(&pk) {
-					if post::open(&bad, sk).is_ok() {
-						return Err(err!("{}: opened with a flipped body byte.", name; Invalid));
+					// Typed, not merely refused: TAKEROW keeps a `damaged` row as `bad:` and
+					// retries an untyped one forever (QA r570sqa1 finding 3).
+					match post::open(&bad, sk) {
+						Ok(_) => return Err(err!("{}: opened with a flipped body byte.", name; Invalid)),
+						Err(e) => {
+							let code = crate::seal::Refusal::of_message(&fmt!("{}", e));
+							if code != Some("damaged") {
+								return Err(err!("{}: a flipped body byte refused as {:?}, not \"damaged\": {}",
+									name, code, e; Invalid));
+							}
+						}
 					}
 					refused += 1;
 					break;
@@ -227,11 +236,18 @@ fn seal_opens_every_js_vector() -> Outcome<()> {
 #[test]
 fn seal_opens_every_wasm_vector() -> Outcome<()> {
 	let k = res!(js_keys());
+	// The file is committed (dev/seal_compat.mjs check writes it): missing is a failure, not a
+	// skip, and so is a short one (QA r570sqa1 finding 3).
+	const WASM_RECORDS: usize = 13;
 	match res!(open_file("wasm_vectors.json", &k)) {
-		Some((n, o, f))	=> println!("seal: {} wasm records, {} opens and {} refusals checked", n, o, f),
-		None			=> println!("seal: no wasm_vectors.json yet (dev/seal_compat.mjs check writes it)"),
+		Some((n, o, f)) if n == WASM_RECORDS => {
+			println!("seal: {} wasm records, {} opens and {} refusals checked", n, o, f);
+			Ok(())
+		}
+		Some((n, _, _))	=> Err(err!("wasm_vectors.json has {} records, not {}.", n, WASM_RECORDS; Invalid)),
+		None			=> Err(err!("src/seal/testdata/wasm_vectors.json is missing: \
+			run `OLD=<a2bd55bf www/js> node dev/seal_compat.mjs check`."; Missing)),
 	}
-	Ok(())
 }
 
 fn jstr(s: &str) -> String {
@@ -347,5 +363,51 @@ fn seal_refusals_carry_their_codes() -> Outcome<()> {
 		Ok(_)	=> return Err(err!("sealed to a small-order key"; Invalid)),
 		Err(e)	=> assert_eq!(Refusal::of_message(&fmt!("{}", e)), Some("bad_key")),
 	}
+	Ok(())
+}
+
+/// QA r570sqa1: every refusal a person can hit on OPEN carries its code through the message the
+/// wasm types (`Refusal::of_message`, src/wasm/seal.rs `to_js_err`) -- a flipped body byte is
+/// `damaged`, a wrong key `not_for_you`, a damaged DPY2 errand `not_for_you`, an untagged body
+/// `not_sealed` -- or post.js cannot tell a record that will never open from a passing failure.
+#[test]
+fn qa_open_refusals_are_typed() -> Outcome<()> {
+	use crate::seal::Refusal;
+	let k = res!(js_keys());
+	let own_pub = res!(AgreementScheme::x25519_public_of(&k.seal_sk));
+	let mut to = [0u8; KEY_LEN];
+	to.copy_from_slice(&own_pub);
+	let sealed = res!(post::seal(&[to], b"qa body"));
+	let code = |r: Outcome<post::Opened>| -> Option<&'static str> {
+		match r { Ok(_) => Some("OPENED"), Err(e) => Refusal::of_message(&fmt!("{}", e)) }
+	};
+	// Body tag flipped: our slot opens, the body does not.
+	let mut bad = sealed.clone();
+	let last = bad.len() - 1;
+	bad[last] ^= 1;
+	assert_eq!(code(post::open(&bad, &k.seal_sk)), Some("damaged"), "flipped body byte");
+	// A slot byte flipped: no slot opens for us.
+	let mut bad = sealed.clone();
+	bad[post::HEAD_FIXED + 13] ^= 1;
+	assert_eq!(code(post::open(&bad, &k.seal_sk)), Some("not_for_you"), "flipped slot byte");
+	// A key it was not sealed to.
+	let other = [0x42u8; KEY_LEN];
+	assert_eq!(code(post::open(&sealed, &other)), Some("not_for_you"), "wrong key");
+	// Retagged scheme.
+	let mut bad = sealed.clone();
+	bad[3] = b'2';
+	assert_eq!(code(post::open(&bad, &k.seal_sk)), Some("not_sealed"), "retagged");
+	// The peer codec.
+	let env = res!(peer::seal(&k.key, b"{\"qa\":1}"));
+	let pcode = |r: Outcome<Vec<u8>>| -> Option<&'static str> {
+		match r { Ok(_) => Some("OPENED"), Err(e) => Refusal::of_message(&fmt!("{}", e)) }
+	};
+	let mut bad = env.clone();
+	let last = bad.len() - 1;
+	bad[last] ^= 1;
+	assert_eq!(pcode(peer::open(&k.key, &bad, None)), Some("not_for_you"), "flipped DPY2");
+	assert_eq!(pcode(peer::open(&[7u8; KEY_LEN], &env, None)), Some("not_for_you"), "DPY2 wrong key");
+	assert_eq!(pcode(peer::open(&k.key, b"XXXXabcdefabcdefabcdefabcdefabcdef", None)),
+		Some("not_sealed"), "untagged peer body");
 	Ok(())
 }

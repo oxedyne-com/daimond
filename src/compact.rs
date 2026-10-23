@@ -54,6 +54,7 @@ use crate::tools::{CallOutcome, Tool, call_outcome};
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::Dat;
+use oxedyne_fe2o3_jdat::{FromDat, ToDat};
 use oxedyne_fe2o3_jdat::bdat::DecodeLimits;
 use oxedyne_fe2o3_jdat::string::dec::DecoderConfig;
 use oxedyne_fe2o3_jdat::usr::{UsrKind, UsrKindCode, UsrKindId};
@@ -235,6 +236,27 @@ pub const ORPHAN_GRACE_ROUNDS: usize = 5;
 /// runner's own fan-out drain (10 min).  A ceiling and not a target -- a gather answers the moment
 /// its workers are terminal, so the wait only bites while one is genuinely still running.
 pub const GATHER_TIMEOUT_S: u64 = 600;
+
+/// Milliseconds a turn may go without its model stream saying anything before it is taken as
+/// stalled: `N` of the liveness rule (U3a, UNBLOCK-16; [`crate::engine::worker::Liveness`]).
+///
+/// **PROGRESS, NOT A WALL CLOCK.**  This replaces the page's 540 s ceiling on a whole worker turn,
+/// which stopped a worker that was working as readily as one that was not.  Only the model stream
+/// beats it -- any line, keep-alives included -- and a tool call is bounded by its own ceiling
+/// instead (below).  Settable per app (`Agent::set_liveness_ms`); re-set from measured gaps by
+/// U3a-N.  Nothing expires on it yet: the turn races it from LV2 on.
+pub const LIVENESS_MS: u64 = 120_000;
+
+/// Milliseconds a tool call with no ceiling of its own may run before the turn drops it (U3a LV2).
+///
+/// Ten minutes: the longest a tool the page knows of waits without one (`gather`'s own
+/// [`GATHER_TIMEOUT_S`]).  A tool with a ceiling (`run`'s timeout, `verify`'s budget) is held to
+/// that plus [`TOOL_CEILING_MARGIN_MS`], and a person's wait beats its own deadline.
+pub const TOOL_CEILING_DEFAULT_MS: u64 = 600_000;
+
+/// Milliseconds past a tool's own ceiling before the turn drops it: room for the tool to end
+/// itself and say why, so the backstop only meets a tool that did not.
+pub const TOOL_CEILING_MARGIN_MS: u64 = 60_000;
 
 /// Fraction of the budget kept verbatim at the end of the conversation.
 ///
@@ -1292,7 +1314,7 @@ pub fn render_for_fold(msgs: &[ChatMessage], cap: u64) -> String {
 ///
 /// The fold notice is already markdown, and the model reads its own markdown back better than it
 /// reads JSON in prose.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, ToDat, FromDat)]
 pub struct FoldNotes {
 	pub task:      String,
 	pub next:      String,
@@ -4199,6 +4221,7 @@ mod tests {
 			by_model:    false,
 			restoring:   0,
 			by:          None,
+			host:        Default::default(),
 		}
 	}
 

@@ -115,12 +115,17 @@ const { priorSessionRun } = f();
 		startSrc.indexOf('if (run._priorSession && run._priorSession.length'),
 		startSrc.indexOf("} else if (run.resume) {") + "} else if (run.resume) {".length);
 	// eslint-disable-next-line no-new-func
-	new Function('run', branch + '\n}')(run);
+	// The branch defines `seedSession`, the one restore every app of the run gets (qr1 #2).
+	new Function('run', branch + '\n}\nseedSession();')(run);
 	check(calls.length === 1 && calls[0][0] === 'restore_session', 'a matched session calls restore_session, not restore',
 		JSON.stringify(calls));
 	check(calls[0][1] === run._priorSession, 'the exported session travels through unchanged');
-	check(calls[0][2] === 500 && calls[0][3] === 200 && calls[0][4] === 100 && calls[0][5] === 0.02,
-		'the matched run\'s prior spend travels with it', JSON.stringify(calls[0]));
+	// At zero on every counter (U3a QA2 #3): the prior run was billed when it ran, and an app's
+	// counters are billed whole, so restored at the prior totals they were billed again. The
+	// prior spend travels on `run.prior*`, for the tile and the `finally`'s totals.
+	check(calls[0][2] === 0 && calls[0][3] === 0 && calls[0][4] === 0 && calls[0][5] === 0
+		&& run.priorPrompt === 500 && run.priorCost === 0.02,
+		'the matched run\'s session restores at zero, its prior spend kept on run.prior*', JSON.stringify(calls[0]));
 }
 
 console.log(`\nworker continuation: ${ran - bad} passed, ${bad} failed`);

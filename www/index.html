@@ -2012,6 +2012,9 @@
      paths those are, so the rule lives in one file. Before daimond.js, which closes
      over both call sites. -->
 <script src="js/ignore.js"></script>
+<!-- One Web Lock per file around every OPFS write, before cloud.js and daimond.js, which
+     open every writable through it; the wasm takes the same lock (OPFS-LOCK). -->
+<script src="js/filelock.js"></script>
 <!-- A roomy per-account key-value store on IndexedDB, before cloud.js, which backs
      the cloud index on it so the index leaves the ~5 MiB localStorage box. -->
 <script src="js/durable.js"></script>

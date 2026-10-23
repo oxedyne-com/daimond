@@ -215,7 +215,7 @@ for (const why of ['lease_cap', 'user']) {
 {
 	const body = (n) => { const d = extractAll(src, n); return d.length ? d[0].text : ''; };
 	check('L-R1: runTurn tags every round', /runnerRoundTagged\(chat\.id, opts\.turnId, chat\._turnTag, Workers\.gatherDepth\[chat\.id\]/.test(body('runTurn')));
-	check('L-R1: runSteer tags every round', /runnerRoundTagged\(rec\.id, detached && detached\.turnId, steerTurn, depth\)/.test(body('runSteer')));
+	check('L-R1: runSteer tags every round', /runnerRoundTagged\(rec\.id, detached && detached\.turnId, steerTurn, depth\)/.test(body('runSteerHeld')));
 }
 
 if (failures) { console.log(failures + ' FAILURE(S)'); process.exitCode = 1; }

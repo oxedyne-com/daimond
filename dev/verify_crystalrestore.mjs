@@ -56,7 +56,7 @@ await p.evaluate(async ({ folder, mock }) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
 		const seen = [], restored = [], unproven = [];
 		try {
-			await eng.steer_crystal(id, '@tool ' + tool + ' ' + JSON.stringify(args), '[]', '[]', '[]', [],
+			await eng.steer_crystal(id, '@tool ' + tool + ' ' + JSON.stringify(args), '[]', [],
 				(ev) => {
 					if (ev.type === 'tool_result') seen.push(String(ev.content || ''));
 					if (ev.type === 'crystal_restored') restored.push({ failing: ev.failing, restored: ev.restored });

@@ -79,7 +79,7 @@ function hisShape() {
 
 // ── One device, in its own realm ────────────────────────────────────────────
 const PAGE = ['readJson', 'diamondModels', 'setDiamondModel', 'blankDiamondModel', 'mergeDiamondModel',
-	'adoptDiamondModel', 'modelPicksOf', 'diamondPicks', 'chatPicks', 'summarisingPick', 'setFoldPick',
+	'adoptDiamondModel', 'modelPicksOf', 'diamondPicks', 'chatPicks', 'summarisingPick', 'setFoldPick', 'everyDiamondClient',
 	'chatDisplayName', 'everyoneTargets', 'clearPick', 'setPick', 'settlePicks',
 	'diamondEffort', 'diamondModel', 'setDiamondEffort',
 	'withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
@@ -128,7 +128,7 @@ async function device(o) {
 	const diamonds = Object.keys(o.models || {}).map((id) => ({ id, name: NAMES[id] || id }));
 	const L = lift(source('daimond.js'), PAGE, PAGE_VARS);
 	const env = {
-		DaimondModels: M, Notes: undefined, cfg, CFG_KEY: CKEY, chats, diamonds, _diamondApps: {},
+		DaimondModels: M, Notes: undefined, cfg, CFG_KEY: CKEY, chats, diamonds, _diamondApps: {}, _daimonApps: new Map(),
 		_diamondAppProvider: new Map(), applyFoldSettings: () => {}, persisted: 0,
 		persistChats: () => { env.persisted++; localStorage.setItem('chats', JSON.stringify(chats)); },
 		tOr: (k, d) => d, chatOpening: () => '', diag: () => {},

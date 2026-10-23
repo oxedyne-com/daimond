@@ -70,7 +70,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { open, shot, scratch, errors, signInAs, steerDiamond, storedChats, pressRowMark, workMenu } from './harness.mjs';
+import { open, shot, scratch, errors, signInAs, steerDiamond, storedChats, pressRowMark, workMenu, answerChanges } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -478,12 +478,13 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 	const RT = grabFn('function retryTurn(');			// lane B: contract §9
 	const ER = grabFn('function editResend(');		// lane B: contract §9
 	const TM = grabFn('function turnMessagesOf(')	// the finder retryTurn asks for its turn's messages
-		+ '\n' + grabFn('function tailAfter(') + '\n' + grabFn('function sessionCut(');	// and the session cut (1e)
+		+ '\n' + grabFn('function tailAfter(') + '\n' + grabFn('function sessionCut(')	// and the session cut (1e)
+		+ '\n' + 'async ' + grabFn('function retryRouted(');	// every Retry goes through the election (7530c060f), as www/js/peer.test.mjs does
 	check('daimond.js defines retryTurn(chat, iturn, text)', !!RT, RT ? '' : 'not found');
 	check('and editResend(chat, iturn, text)', !!ER, ER ? '' : 'not found');
 	const names = ['loadMsgTombs', 'msgTombstone', 'touchChat', 'persistChats', 'renderHistory',
 		'runTurn', 'ChatStore', 'window', 'DaimondJournal', 'DaimondPeer', 'DaimondLease', 'newMid',
-		'selfDeviceId', 'chatInput', 'syncSendMode', 'diag'];
+		'selfDeviceId', 'chatInput', 'syncSendMode', 'diag', 'maybeAutoDispatch', 'askAgain', 'runRetryHere'];
 	const spies = () => {
 		const calls = { runTurn: [], msgTombstone: [], compact: [] };
 		const stubs = {
@@ -496,6 +497,8 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 			chatInput: { value: '', focus() { this.focused = true; } },
 			syncSendMode: () => {},		// the composer's Send/Stop face; no button here
 			diag: () => {},
+			maybeAutoDispatch: async () => false,	// the election keeps a retry here
+			askAgain: () => true, runRetryHere: () => true,	// a daimon's / a lost run's retry: not this chat
 		};
 		return { stubs, calls };
 	};
@@ -516,7 +519,7 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 		const { stubs, calls } = spies();
 		const retry = RT ? build(RT, 'retryTurn', stubs) : null;
 		const chat = fresh();
-		if (retry) { try { retry(chat, 'T1', 'What is the capital of France?'); } catch (e) { note('retryTurn threw: ' + e.message); } }
+		if (retry) { try { await retry(chat, 'T1', 'What is the capital of France?'); } catch (e) { note('retryTurn threw: ' + e.message); } }
 		check('Retry dispatches the SAME prompt again',
 			!!retry && calls.runTurn.length === 1 && calls.runTurn[0].text === 'What is the capital of France?',
 			JSON.stringify(calls.runTurn));
@@ -739,7 +742,8 @@ try {
 	try { saidCrystal = JSON.parse(whole.out).crystal; } catch (e) { /* not JSON */ }
 	const crystalAfter = await readStore(page, `${D}/crystal.json`);
 	check('the engine puts the crystal back with the files, in the one restore version',
-		whole.ok && saidCrystal === true && crystalAfter !== crystalNow,
+		// The engine SAYS it (restored / same / untouched, be907bc70 hist-safe U3), and the bytes are V1's own.
+		whole.ok && saidCrystal === 'restored' && crystalAfter === crystalAtV1,
 		JSON.stringify({ saidCrystal, after: String(crystalAfter).slice(0, 60), atV1: String(crystalAtV1).slice(0, 60) }));
 
 	// ── 6. Restore creates a version ────────────────────────────────
@@ -875,6 +879,9 @@ try {
 	check('the folder could be marked into the diamond through its ◈', await clip());
 	await page.waitForTimeout(1000);
 	await selectDiamond(page, 'Ledger Life');
+	// live/site.txt is a file he wrote, so the daimon's overwrite asks first (UNBLOCK-26, r573): answered
+	// Apply, as verify_askchange / verify_history_restore do, or the turn waits ten minutes.
+	await answerChanges(page, 'apply');
 	await steer(s, '@tool file_write {"path":"live/site.txt","content":"v2 by the daimon"}', 30000, true);
 	const m11 = newest(await manifests(page, id));
 	const e11 = entry(m11, 'live/site.txt');

@@ -270,11 +270,14 @@ async function openAstatModel() {
 // ── The row, on screen ────────────────────────────────────────────────
 await openAstatModel();
 await page.waitForTimeout(600);
-const head = await page.$eval('.models-prov.paid .models-prov-head', e => ({
-	name: e.querySelector('.models-nm').textContent.trim(),
-	bal:  (e.querySelector('.models-bal') || {}).textContent || '',
-	via:  (e.querySelector('.models-via') || {}).textContent || '',
-	count:(e.querySelector('.models-prov-count') || {}).textContent || '',
+// Since U5a (040155a4e, D-20261018-09) the head holds the name and the balance and nothing
+// else: "via" and the models sit in the opened row, and the head no longer counts them.
+await expandCredits();
+const head = await page.$eval('.models-prov.paid', e => ({
+	name: e.querySelector('.models-prov-head .models-prov-name').textContent.trim(),
+	bal:  (e.querySelector('.models-prov-head .models-bal') || {}).textContent || '',
+	via:  (e.querySelector('.models-prov-body .models-via') || {}).textContent || '',
+	count: String(e.querySelectorAll('.models-prov-body .models-model').length),
 	all:  e.textContent,
 }));
 check('the row is named for what the user BOUGHT, not for the vendor', head.name === 'Daimond credits', JSON.stringify(head.name));
@@ -283,12 +286,13 @@ check('the balance is inline on the row', head.bal === '$8.40 left', JSON.string
 check('the host is named anyway — honesty about whose machine it lands on', head.via === 'via OpenRouter', JSON.stringify(head.via));
 check('...read from the gateway\'s URL, so it is whoever was actually minted against',
 	head.all.includes('OpenRouter') && stored.url.includes('openrouter.ai'));
-check('the row counts its models', head.count.trim() === `${CATALOGUE.length} models`, head.count);
+check('the opened row lists its models', head.count === String(CATALOGUE.length), head.count);
 
 // "via" must be secondary, not a second headline: smaller and dimmer than the name it sits beside.
-const rank = await page.$eval('.models-prov.paid .models-prov-head', (e) => {
+const rank = await page.$eval('.models-prov.paid', (e) => {
 	const px = (el) => parseFloat(getComputedStyle(el).fontSize);
-	const nm = e.querySelector('.models-nm'), via = e.querySelector('.models-via'), bal = e.querySelector('.models-bal');
+	const nm = e.querySelector('.models-prov-head .models-prov-name'), via = e.querySelector('.models-prov-body .models-via'),
+		bal = e.querySelector('.models-prov-head .models-bal');
 	// Each of the three must sit whole on one line: a break through any of them is the bug.
 	const lines = (el) => el.getClientRects().length;
 	return {
@@ -332,7 +336,7 @@ for (const theme of ['light', 'lollypop']) {
 	await page.waitForTimeout(500);
 	const t = await page.$$eval('.models-prov .models-prov-head', els => els.map(e => getComputedStyle(e).backgroundColor));
 	check(`the paid row is still told apart in the ${theme} theme`, new Set(t).size === 2, JSON.stringify(t));
-	const c = await page.$eval('.models-prov.paid .models-nm', e => ({
+	const c = await page.$eval('.models-prov.paid .models-prov-head .models-prov-name', e => ({
 		fg: getComputedStyle(e).color,
 		bg: getComputedStyle(e.closest('.models-prov-head')).backgroundColor,
 	}));
@@ -381,9 +385,13 @@ check('...on different providers, so the key sent with it differs',
 check('...and the two are distinguishable by their text alone',
 	twins.length === 2 && twins[0].text !== twins[1].text, JSON.stringify(twins.map(t => t.text)));
 check('the credits twin says "credits"', twins.some(t => t.provider === 'credits' && t.text.includes('· credits')));
-check('the BYOK twin says "your key" — the pair is marked on BOTH sides',
-	twins.some(t => t.provider !== 'credits' && t.text.includes('· your key')),
-	JSON.stringify(twins.map(t => t.text)));
+// Since MODELS-TIDY (f3aa86fe8) a row is the model's name; only the paid row adds '· credits', and the
+// BYOK twin's provider lives in its group and data-provider. So pick the twin by provider (as d7b304921
+// did for verify_models_view) and require it unmarked, under its own provider's group.
+const byokTwin = twins.find(t => t.provider && t.provider !== 'credits');
+check('the BYOK twin is found by its provider, sits in its provider group, and carries no credits mark',
+	!!byokTwin && byokTwin.paid !== '1' && byokTwin.group === 'Custom provider' && !byokTwin.text.includes('·'),
+	JSON.stringify(twins.map(t => [t.provider, t.group, t.text])));
 
 // A BYOK model NOT served by the credits row stays unmarked: the mark means something.
 const lone = opts.find(o => o.value === 'mock/thinker');
@@ -479,7 +487,7 @@ await openAstatModel();
 await page.waitForTimeout(600);
 await expandCredits();
 const dry = await page.$eval('.models-prov.paid', e => ({
-	key: (e.querySelector('.models-prov-key') || {}).textContent || '',
+	key: (e.querySelector('.models-key-state') || {}).textContent || '',
 	bal: (e.querySelector('.models-bal') || {}).textContent || '',
 	why: (e.querySelector('.models-why') || {}).textContent || '',
 }));
@@ -687,7 +695,12 @@ check('and adds no row: a BYOK-only user sees no credits row they never asked fo
 
 // A balance of nothing is still a balance: $0.00 is what the account holds, and saying so is the
 // difference between "you have none" and "we cannot tell you".
-const zero = await b.page.evaluate(() => {
+// Read once the session stands: under gw: the real gateway 401s every route this file does not
+// stub (it never saw the stubbed session), so reauth() runs in a loop and clears `authed` while
+// it asks. The row is drawn and read in the same tick as the authed state it is drawn from.
+const zero = await b.page.evaluate(async () => {
+	for (let i = 0; i < 100 && !((window.DaimondGateway.state() || {}).authed); i++)
+		await new Promise(r => setTimeout(r, 100));
 	window.DaimondAdmin.status();
 	const n = document.getElementById('astat-account');
 	return n ? n.textContent : 'MISSING';

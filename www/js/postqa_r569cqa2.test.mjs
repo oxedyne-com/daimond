@@ -41,7 +41,7 @@ function topFn(src, name) {
 // the spend gate refused or was told no) still pass none, so a mail turn that dispatched and
 // whose agents never started writes a `note_log` row into the Email chat.
 test('CQA2-1: a pending-only turn whose agents never start posts nothing in its chat', () => {
-	const body = topFn(APP, 'runSteer');
+	const body = topFn(APP, 'runSteerHeld');	// U3a: runSteer holds the client, runSteerHeld is the turn
 	assert.ok(body.length > 1000, 'runSteer not found');
 	const calls = body.match(/Workers\.tellDaimon\([^;]*?\);/gs) || [];
 	assert.ok(calls.length >= 3, 'the not-started notices were not found: ' + calls.length);
@@ -114,7 +114,7 @@ test('MAIL-FU3: the Diamond walk retires the r569 mail failure on mail-only Diam
 // FIRE MAIL-FU3: a mail turn whose agents never started is owed an ending that is not `answered`:
 // each not-started notice is followed by the ending it owes the turn (`followVerdicts`).
 test('MAIL-FU3: each not-started arm of runSteer owes the turn a stopped or failed ending', () => {
-	const body = topFn(APP, 'runSteer');
+	const body = topFn(APP, 'runSteerHeld');	// U3a: runSteer holds the client, runSteerHeld is the turn
 	const arms = body.match(/Workers\.tellDaimon\([^;]*?\);\s*owe\('(stopped|failed)'\);/gs) || [];
 	assert.equal(arms.length, 3, 'not-started arms owing an ending: ' + arms.length);
 	assert.match(body, /owe\('stopped'\);[\s\S]*?\} else \{[\s\S]*?Dispatched/, 'the spend gate arm owes stopped');

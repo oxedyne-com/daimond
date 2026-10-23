@@ -339,7 +339,7 @@ impl Handle {
 /// when the run may be gone from memory, so the entry has to carry everything a rating copies.
 /// `role` is a string rather than an enum so a role a newer build adds survives a round trip
 /// through this one.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, ToDat, FromDat)]
 pub struct Author {
 	pub role: String,	// chat, daimon, worker, reducer, compactor or vision
 	pub m:    String,	// the model as sent, in the provider's own spelling

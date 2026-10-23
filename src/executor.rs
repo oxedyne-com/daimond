@@ -47,8 +47,10 @@ impl Executor {
 
     /// Run `command` via `sh -c` in `cwd`, capturing stdout/stderr.
     ///
-    /// On timeout the child is killed (via `kill_on_drop`) and a
-    /// `timed_out` result is returned rather than an error.  On wasm32
+    /// On Unix the child leads its own process group, and on timeout or when this future is
+    /// dropped (a Stop) the whole group is killed, so a backgrounded grandchild does not
+    /// outlive the tool.  Elsewhere only the direct child is killed (via `kill_on_drop`).  A
+    /// timeout returns a `timed_out` result rather than an error.  On wasm32
     /// there is no local process backend, so this escalates.
     pub async fn run(&self, command: &str, cwd: &Path) -> Outcome<CommandOutput> {
         match self {
@@ -62,9 +64,19 @@ impl Executor {
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
                     .kill_on_drop(true);
+                #[cfg(unix)]
+                cmd.process_group(0);
                 let child = res!(cmd.spawn()
                     .map_err(|e| err!(e, "Executor: failed to spawn command."; IO, Init)));
-                match tokio::time::timeout(*timeout, child.wait_with_output()).await {
+                #[cfg(target_os = "linux")]
+                let mut group = GroupKill { pgid: child.id() };
+                let result = tokio::time::timeout(*timeout, child.wait_with_output()).await;
+                #[cfg(target_os = "linux")]
+                if let Ok(Ok(_)) = result {
+                    // A clean finish: leave alone anything the command deliberately detached.
+                    group.pgid = None;
+                }
+                match result {
                     Ok(Ok(out)) => Ok(CommandOutput {
                         stdout:    String::from_utf8_lossy(&out.stdout).to_string(),
                         stderr:    String::from_utf8_lossy(&out.stderr).to_string(),
@@ -94,6 +106,25 @@ impl Executor {
     }
 }
 
+/// Kills a child's whole process group when dropped, unless disarmed by clearing `pgid`.
+///
+/// The group id is the leader's pid (`process_group(0)`).  It cannot be reused while any member
+/// of the group, the leader's zombie included, still exists, so the signal reaches only the
+/// command's own processes.  The signal is `fe2o3_sys::signal::to_group`, `killpg` over `nix`.
+#[cfg(target_os = "linux")]
+struct GroupKill {
+    pgid: Option<u32>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for GroupKill {
+    fn drop(&mut self) {
+        if let Some(pgid) = self.pgid {
+            // The group may already be gone, all of it having ended; there is nothing to report.
+            let _ = oxedyne_fe2o3_sys::signal::to_group(pgid, oxedyne_fe2o3_sys::signal::Signal::Kill);
+        }
+    }
+}
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Tests                                                          │
@@ -117,6 +148,39 @@ mod tests {
         let ex = Executor::local_default();
         let out = ex.run("exit 3", Path::new("/tmp")).await.expect("run");
         assert_eq!(out.exit_code, 3);
+    }
+
+    /// Dropping an in-flight `run` must kill the whole process group, not only the direct `sh`
+    /// child: a backgrounded grandchild (a build, a server, a `sleep`) must not survive a Stop.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_drop_kills_process_group() {
+        let dir = std::env::temp_dir().join(fmt!("daimond_exec_pg_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let pidfile = dir.join("bg.pid");
+        let _ = std::fs::remove_file(&pidfile);
+        let ex = Executor::local_default();
+        let cmd = fmt!("sleep 30 & echo $! > {}; sleep 30", pidfile.display());
+        // The outer timeout drops the `run` future mid-flight, as a Stop does.
+        let dropped = tokio::time::timeout(Duration::from_millis(500), ex.run(&cmd, &dir)).await;
+        assert!(dropped.is_err(), "the command should still have been running");
+        let pid: u32 = std::fs::read_to_string(&pidfile).expect("pidfile")
+            .trim().parse().expect("pid");
+        let alive = |pid: u32| match std::fs::read_to_string(fmt!("/proc/{}/stat", pid)) {
+            // A zombie (state `Z`) is dead and only awaiting its reaper.
+            Ok(stat) => !stat.rsplit(") ").next().map_or(false, |r| r.starts_with('Z')),
+            Err(_) => false,
+        };
+        let mut gone = false;
+        for _ in 0..20 {
+            if !alive(pid) { gone = true; break; }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        if !gone {
+            let _ = oxedyne_fe2o3_sys::signal::to_process(pid, oxedyne_fe2o3_sys::signal::Signal::Kill);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(gone, "backgrounded grandchild {} survived the dropped run", pid);
     }
 
     #[tokio::test]

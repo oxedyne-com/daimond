@@ -39,13 +39,13 @@
 // ── WHY NOT UNDER ~/.cache/daimond ───────────────────────────────────
 //
 // The task that wrote this file named `~/.cache/daimond/$RC_SLOT/handdelete` as the
-// fixture root. That path cannot be used: `meter_marks` (`hand/src/exec.rs:2166`)
+// fixture root. That path cannot be used: `meter_marks` (`kimberlite/src/exec.rs:2166`)
 // drops any `rw` root that starts with `~/.cache/daimond`, because that is
 // `TOOLKIT_ROOTS`' `node` cache tail (`exec.rs:3063`) and the meter is never
 // attached to a toolkit cache — `metered = ... && !marks.is_empty()` (`exec.rs:569`)
 // goes false for every case in this file if the fixture lives there, so `rm -rf`
 // would run unmetered on BOTH binaries and every one of (a)-(c) would read as a
-// false pass. `hand/tests/delete_fence.rs` hit the same wall and moved its
+// false pass. `kimberlite/tests/delete_fence.rs` hit the same wall and moved its
 // fixtures to `~/.cache/daimond-hand-delete-fence` — a SIBLING of `~/.cache/daimond`,
 // not a child of it. This file does the same, scoped to the slot AND the run so no
 // two runs collide: `~/.cache/daimond-handdelete/$RC_SLOT/run-<run>`. Slot-scoped alone
@@ -64,7 +64,7 @@
 //
 //	flock ~/.cache/cargo-targets/$RC_SLOT/.build.lock ~/usr/code/bash/rc-build 4G -- bash -c \
 //	  'CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=~/.cache/cargo-targets/$RC_SLOT/lane-hand \
-//	   cargo build --release --manifest-path hand/Cargo.toml'
+//	   cargo build --release --manifest-path kimberlite/Cargo.toml'
 //
 // and, for the base comparison, the same command with `../lane-bc-base` as the
 // working directory and `lane-bc-base` as the target dir. Both are RELEASE builds of
@@ -144,8 +144,8 @@ function newestSource(root) {
 			else if (/\.(rs|toml)$/.test(n)) newest = Math.max(newest, st.mtimeMs);
 		}
 	};
-	look(path.join(root, 'hand/src'));
-	try { newest = Math.max(newest, fs.statSync(path.join(root, 'hand/Cargo.toml')).mtimeMs); }
+	look(path.join(root, 'kimberlite/src'));
+	try { newest = Math.max(newest, fs.statSync(path.join(root, 'kimberlite/Cargo.toml')).mtimeMs); }
 	catch (e) { /* no manifest */ }
 	return newest;
 }
@@ -157,18 +157,18 @@ function newestSource(root) {
 function handBinary(root, targetName) {
 	const src = newestSource(root);
 	const target = path.join(os.homedir(), '.cache/cargo-targets', SLOT, targetName);
-	const rel = path.join(target, 'release/daimond-hand');
+	const rel = path.join(target, 'release/kimberlite');
 	let st;
 	try { st = fs.statSync(rel); } catch (e) { st = null; }
-	if (st && st.mtimeMs >= src) return { bin: rel, why: 'newer than hand/src' };
+	if (st && st.mtimeMs >= src) return { bin: rel, why: 'newer than kimberlite/src' };
 	if (NO_BUILD) return { bin: st ? rel : null, why: st
-		? `${Math.round((src - st.mtimeMs) / 1000)}s older than hand/src, but --no-build was passed`
+		? `${Math.round((src - st.mtimeMs) / 1000)}s older than kimberlite/src, but --no-build was passed`
 		: 'not built, and --no-build was passed' };
 	note(`building ${targetName} with rc-build (this can take a while)`);
 	const lock = path.join(os.homedir(), '.cache/cargo-targets', SLOT, '.build.lock');
 	const r = spawnSync('bash', ['-lc',
 		`flock ${lock} ~/usr/code/bash/rc-build 4G -- bash -c ` +
-		`'CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=${target} cargo build --release --manifest-path hand/Cargo.toml'`],
+		`'CARGO_BUILD_JOBS=4 CARGO_TARGET_DIR=${target} cargo build --release --manifest-path kimberlite/Cargo.toml'`],
 		{ cwd: root, stdio: 'inherit' });
 	if (r.status !== 0 || !fs.existsSync(rel)) return { bin: null, why: 'the hand did not build' };
 	return { bin: rel, why: 'built here' };
@@ -248,7 +248,7 @@ const PLANTED = 100;	// more than the 64-file budget
 const UNDER = 5;		// well under it
 
 /// A mark with `n` files spread over three subdirectories, mirroring the shape
-/// `hand/tests/delete_fence.rs` plants.
+/// `kimberlite/tests/delete_fence.rs` plants.
 function plant(mark, n) {
 	fs.mkdirSync(mark, { recursive: true });
 	for (let i = 0; i < n; i++) {
@@ -372,7 +372,7 @@ function fences(exBin, hello, marks = []) {
 
 /// The turn's start, a safe margin after whatever the caller just planted.
 ///
-/// `hand/tests/delete_fence.rs`'s own `turn()` sleeps 5 ms before reading the
+/// `kimberlite/tests/delete_fence.rs`'s own `turn()` sleeps 5 ms before reading the
 /// clock, for the same reason: a file's `statx` birth time and `since_ms` taken
 /// in the same millisecond can round either way, and the meter's step 5
 /// (`meter.rs`) reads a file born AT OR AFTER `since_ms` as "born this turn" and
@@ -472,7 +472,7 @@ async function openHand(label, bin, expectFence, root, extra = {}) {
 			// kernel's own last unlinks were observed, on this machine, to still be
 			// landing for a short window after that signal — reading `filesUnder`
 			// with no pause here undercounted survivors by as much as 20 of the
-			// PLANTED 100 files, non-deterministically. `hand/tests/delete_fence.rs`
+			// PLANTED 100 files, non-deterministically. `kimberlite/tests/delete_fence.rs`
 			// never meets this: it calls `Runner::spawn` and `release` in-process, on
 			// the same executor, which is naturally slower to observe `Ended` than a
 			// real OS pipe is here.
@@ -580,7 +580,7 @@ async function driveSide(label, bin, expectFence) {
 				JSON.stringify(r.held));
 			check(`${label}: answering "stop" leaves at least ${PLANTED - 64} files behind`,
 				left >= PLANTED - 64, `${left} left of ${PLANTED}`);
-			// The stricter half `hand/tests/delete_fence.rs` calls "a file went
+			// The stricter half `kimberlite/tests/delete_fence.rs` calls "a file went
 			// uncounted": every planted file is either still there or was one of the
 			// 64 the meter counted (and so is in the trash) — never neither.
 			check(`${label}: and nothing vanished uncounted`,
@@ -618,7 +618,7 @@ async function driveSide(label, bin, expectFence) {
 	// The CONTENTS are targeted (`src`, `docs`, `sub`), never the mark itself: `rm -rf
 	// <mark>` always exits nonzero on the branch, root immunity refusing the final
 	// `rmdir` of the mark's own entry regardless of how few files were inside it —
-	// `hand/tests/delete_fence.rs`'s own harness never asserts `exit == 0` on a
+	// `kimberlite/tests/delete_fence.rs`'s own harness never asserts `exit == 0` on a
 	// mark-targeted removal for exactly this reason.
 	{
 		const mark = path.join(grant, 'under');

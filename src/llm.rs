@@ -16,8 +16,11 @@
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_core::rand::Rand;
+use oxedyne_fe2o3_core::channels::{watch, WatchReceiver, WatchSender};
 use oxedyne_fe2o3_jdat::prelude::*;
 
+use crate::engine::race::{self as racing, Won};
+use crate::engine::worker::Liveness;
 use crate::protocol::{ChatMessage, ContentPart, Dropped, HostPin, ImagePart, MessageContent, ToolCall};
 
 // Native transport imports — the hand-rolled TLS client lives behind
@@ -267,7 +270,7 @@ fn attempt_wait(idle: u64, stall_tries: u32, elapsed: u64) -> (u64, u64) {
 /// `stream_idle_ms`.  A non-streaming provider generates the entire answer before it sends a
 /// byte, so a slow fold must not be cut at the streaming ceiling: its first-byte bound is this
 /// multiple of the idle figure -- 5 x 60 s = 300 s by default.
-const REPLY_WAIT_FACTOR: u64 = 5;
+pub(crate) const REPLY_WAIT_FACTOR: u64 = 5;
 
 /// How hard an OpenAI-dialect model is asked to reason: OpenRouter's `reasoning.effort`.
 ///
@@ -443,7 +446,7 @@ pub enum Delta<'a> {
 }
 
 // What the transport hands the stream's sink.
-enum Wire<'a> {
+pub(crate) enum Wire<'a> {
     Data(&'a str),      // one `data:` payload
     Silence(u64),       // seconds without real data; a notice is due
 }
@@ -453,7 +456,7 @@ enum Wire<'a> {
 const ONE_BODY_CAP: usize = 8 << 20;
 
 /// What one line of a streamed reply is to the reader; see [`SseLines`].
-enum SseLine<'l> {
+pub(crate) enum SseLine<'l> {
     Data(&'l str),  // one `data:` payload
     Done,           // `data: [DONE]`
     Skip,           // an SSE field line, a comment, a blank, or kept for a one-body reply
@@ -466,7 +469,7 @@ enum SseLine<'l> {
 /// reply was dropped whole: nothing on screen, nothing stored, an empty assistant turn.  So a
 /// reply is read as one body when its `Content-Type` is not an event stream, or when it never
 /// yields a `data:` line, and [`LlmClient::deliver_body`] hands it on.
-struct SseLines {
+pub(crate) struct SseLines {
     sse:  bool,     // the reply is labelled an event stream, or not labelled
     seen: bool,     // a `data:` line has arrived
     body: String,   // what was not SSE, while no data has arrived
@@ -474,7 +477,7 @@ struct SseLines {
 
 impl SseLines {
 
-    fn new(ctype: Option<&str>) -> Self {
+    pub(crate) fn new(ctype: Option<&str>) -> Self {
         let sse = match ctype {
             Some(t) => t.to_ascii_lowercase().contains("event-stream"),
             None    => true,
@@ -482,7 +485,12 @@ impl SseLines {
         Self { sse, seen: false, body: String::new() }
     }
 
-    fn sort<'l>(&mut self, line: &'l str) -> SseLine<'l> {
+    /// Is the reply labelled a stream (or not labelled)?  If not, it is one whole body.
+    pub(crate) fn is_stream(&self) -> bool {
+        self.sse
+    }
+
+    pub(crate) fn sort<'l>(&mut self, line: &'l str) -> SseLine<'l> {
         if self.sse {
             let line = line.trim();
             if let Some(rest) = line.strip_prefix("data:") {
@@ -512,7 +520,7 @@ impl SseLines {
     }
 
     /// The reply as one body, when it was one.
-    fn body(&self) -> Option<&str> {
+    pub(crate) fn body(&self) -> Option<&str> {
         let b = self.body.trim();
         if !self.sse || (!self.seen && !b.is_empty()) { Some(b) } else { None }
     }
@@ -530,6 +538,136 @@ fn openai_completion(body: &str) -> bool {
 // │ Halt: one turn's stop                                          │
 // └───────────────────────────────────────────────────────────────┘
 
+/// How many stopped turn tags a [`StopSet`] keeps: enough for every turn a page can have
+/// running, and bounded so a long-lived conversation's set does not grow.
+pub const STOP_TAGS_KEPT: usize = 32;
+
+/// What the conversation's stop cell holds: how many times every turn was stopped, the tags of
+/// turns stopped before they began, newest last, and the stops that reached a turn already
+/// running.  Written copy-on-write by the handle (`abort`, `abort_turn`) and read by every
+/// [`Halt`] made with [`Halt::watching`].
+///
+/// **A STOP OF A RUNNING TURN IS NOT REMEMBERED BY ITS TAG** (D1 of the U1d check).  It is an edge,
+/// like `all`: a strike numbered past every turn's [`StopMark`] at the time, which only a turn
+/// whose mark it passes obeys.  So a later turn that reuses the tag -- a hand-off rerun under the
+/// same turn id -- starts clear.  Only a stop that reached no running turn is kept by tag, for the
+/// turn to obey as it begins (the early rule).
+///
+/// **NOR IS A STOP THAT CAME TOO LATE, OR ONE ALREADY OBEYED** (D1b of the U1d check).  `ended`
+/// holds the tags of the last [`STOP_TAGS_KEPT`] turns to end, and a stop of one of them that
+/// reaches no running turn is refused rather than kept: it is a second Stop press, or the runner's
+/// late abort, of a turn already over.  And a turn ending takes its own tag out of `tags`, so an
+/// early stop it obeyed does not stop the next turn under the tag too.  Sending a turn takes its
+/// tag back out of `ended`, so a stop of that turn before it begins is kept again.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StopSet {
+    pub all:    u64,
+    pub tags:   std::collections::VecDeque<String>,
+    pub struck: u64,
+    pub hits:   std::collections::VecDeque<(String, u64)>,
+    pub ended:  std::collections::VecDeque<String>,
+}
+
+/// Where the stop cell stood when a turn was sent or its halt made: what it obeys is only what
+/// moves past this.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StopMark {
+    pub all:    u64,
+    pub struck: u64,
+}
+
+impl StopSet {
+
+    /// This set with every turn stopped.
+    pub fn all_stopped(&self) -> Self {
+        let mut next = self.clone();
+        next.all = next.all.wrapping_add(1);
+        next
+    }
+
+    /// This set with the turn tagged `tag` stopped before it began, the oldest tag let go past
+    /// [`STOP_TAGS_KEPT`].  An empty tag names no turn and changes nothing.
+    pub fn tag_stopped(&self, tag: &str) -> Self {
+        let mut next = self.clone();
+        if tag.is_empty() || next.holds(tag) {
+            return next;
+        }
+        next.tags.push_back(tag.to_string());
+        while next.tags.len() > STOP_TAGS_KEPT {
+            next.tags.pop_front();
+        }
+        next
+    }
+
+    /// This set with the RUNNING turn tagged `tag` stopped: a strike that turn obeys, and that a
+    /// turn sent after it under the same tag does not.  An empty tag changes nothing.
+    pub fn tag_struck(&self, tag: &str) -> Self {
+        let mut next = self.clone();
+        if tag.is_empty() {
+            return next;
+        }
+        next.struck = next.struck.wrapping_add(1);
+        next.hits.push_back((tag.to_string(), next.struck));
+        while next.hits.len() > STOP_TAGS_KEPT {
+            next.hits.pop_front();
+        }
+        next
+    }
+
+    /// This set with a turn tagged `tag` just sent: a stop of the tag from here on is for it, so
+    /// the tag is no longer one whose turn has ended.
+    pub fn tag_sent(&self, tag: &str) -> Self {
+        let mut next = self.clone();
+        next.ended.retain(|t| t != tag);
+        next
+    }
+
+    /// This set with the turn tagged `tag` ended: an early stop of it is used up, and a stop that
+    /// arrives after, while no turn of the tag runs, is refused (see [`StopSet::stop_unrun`]).
+    /// The oldest ended tag is let go past [`STOP_TAGS_KEPT`].  An empty tag changes nothing.
+    pub fn tag_ended(&self, tag: &str) -> Self {
+        let mut next = self.clone();
+        if tag.is_empty() {
+            return next;
+        }
+        next.tags.retain(|t| t != tag);
+        next.ended.retain(|t| t != tag);
+        next.ended.push_back(tag.to_string());
+        while next.ended.len() > STOP_TAGS_KEPT {
+            next.ended.pop_front();
+        }
+        next
+    }
+
+    /// This set with a stop of `tag` that reached no running turn: kept for the turn to obey as
+    /// it begins, unless a turn of the tag lately ended, when it is a late stop and stops nothing.
+    pub fn stop_unrun(&self, tag: &str) -> Self {
+        if self.ended_lately(tag) {
+            return self.clone();
+        }
+        self.tag_stopped(tag)
+    }
+
+    /// Has a turn tagged `tag` ended, with none sent under it since?
+    pub fn ended_lately(&self, tag: &str) -> bool { self.ended.iter().any(|t| t == tag) }
+
+    /// Has the turn tagged `tag` been stopped before it began?
+    pub fn holds(&self, tag: &str) -> bool { self.tags.iter().any(|t| t == tag) }
+
+    /// Where the cell stands now, for a turn being sent.
+    pub fn mark(&self) -> StopMark { StopMark { all: self.all, struck: self.struck } }
+
+    /// Is the turn tagged `tag`, sent at `mark`, stopped?  By an `abort` after its mark, by a stop
+    /// of its tag before it began, or by a strike of its tag after its mark.  An empty tag hears
+    /// only `abort`.
+    pub fn stops(&self, tag: &str, mark: StopMark) -> bool {
+        self.all != mark.all
+            || (!tag.is_empty()
+                && (self.holds(tag)
+                    || self.hits.iter().any(|(t, n)| t == tag && n.wrapping_sub(mark.struck) as i64 > 0)))
+    }
+}
+
 /// One turn's stop, which a Stop or a pause sets and the turn obeys at its next seam.
 ///
 /// **STICKY, AND THE TURN'S OWN.**  The client used to hold one abort slot, the controller of
@@ -543,56 +681,147 @@ fn openai_completion(body: &str) -> bool {
 ///
 /// The controller of the request in flight is held here too and fired with the flag, so a turn
 /// that is mid-stream stops at once rather than at the end of its round.
-#[derive(Clone, Debug, Default)]
+///
+/// **IT ALSO HEARS THE HANDLE'S STOP CELL.**  A halt made with [`watching`](Self::watching) holds
+/// its turn's tag and a reader of the conversation's [`StopSet`].  It reads as set once the
+/// cell's `all` has moved past where it stood when the halt was made, or once the cell names its
+/// tag.  A tag stopped before its turn began is already there, so that turn fires at once.  No
+/// actor relays it: [`fired`](Self::fired) awaits the cell itself, and the stream reader and each
+/// tool call race that, so a Stop lands while the loop is deep inside a turn.
+#[derive(Clone)]
 pub struct Halt(std::rc::Rc<HaltInner>);
 
-#[derive(Debug, Default)]
 struct HaltInner {
-    set:  std::cell::Cell<bool>,
-    wait: std::cell::RefCell<Vec<std::task::Waker>>,                // who awaits `fired`
+    set:    std::cell::Cell<bool>,
+    rung:   WatchSender<()>,                                        // wakes `fired` on `fire`
+    stop:   Option<Watched>,
     #[cfg(target_arch = "wasm32")]
-    ctrl: std::cell::RefCell<Option<web_sys::AbortController>>,    // the request in flight
+    ctrl:   std::cell::RefCell<Option<web_sys::AbortController>>,   // the request in flight
+}
+
+/// The conversation's stop cell, as one turn reads it.
+struct Watched {
+    tag:    String,
+    rx:     WatchReceiver<StopSet>,
+    base:   std::cell::Cell<StopMark>,  // the cell when the halt was made or last re-armed
+}
+
+impl Watched {
+
+    /// Does the cell say this turn is stopped?  A cell that cannot be read reads as stopped: a
+    /// Stop that fails open would leave a turn no one can end.
+    fn stopped(&self) -> bool {
+        match self.rx.borrow() {
+            Ok(s)   => s.stops(&self.tag, self.base.get()),
+            Err(_)  => true,
+        }
+    }
+}
+
+impl std::fmt::Debug for Halt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Halt")
+            .field("set", &self.0.set.get())
+            .field("tag", &self.0.stop.as_ref().map(|w| w.tag.as_str()))
+            .finish()
+    }
+}
+
+impl Default for Halt {
+    fn default() -> Self { Self::new() }
 }
 
 impl Halt {
 
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self { Self::make(None) }
+
+    /// A turn's halt that also obeys the conversation's stop cell: `abort` (every turn) and
+    /// `abort_turn(tag)` (this one).  An empty `tag` hears only `abort`.
+    pub fn watching(tag: &str, rx: WatchReceiver<StopSet>) -> Self {
+        let base = match rx.borrow() {
+            Ok(s)   => s.mark(),
+            Err(_)  => StopMark::default(),
+        };
+        Self::make(Some(Watched { tag: tag.to_string(), rx, base: std::cell::Cell::new(base) }))
+    }
+
+    fn make(stop: Option<Watched>) -> Self {
+        let (rung, _) = watch(());
+        Self(std::rc::Rc::new(HaltInner {
+            set: std::cell::Cell::new(false),
+            rung,
+            stop,
+            #[cfg(target_arch = "wasm32")]
+            ctrl: std::cell::RefCell::new(None),
+        }))
+    }
 
     /// Stop the turn: the flag, which every later request and seam reads, and then the request
     /// in flight.
     pub fn fire(&self) {
         self.0.set.set(true);
+        // Fails only on a poisoned lock, which one thread cannot leave; the flag above is set.
+        let _ = self.0.rung.send(());
         self.tear_down();
-        let woken = std::mem::take(&mut *self.0.wait.borrow_mut());
-        for w in woken {
-            w.wake();
+    }
+
+    /// Has this turn been stopped, by [`fire`](Self::fire) or by the stop cell?
+    pub fn is_set(&self) -> bool {
+        if self.0.set.get() {
+            return true;
+        }
+        match &self.0.stop {
+            Some(w) if w.stopped() => {
+                self.0.set.set(true);
+                true
+            },
+            _ => false,
         }
     }
 
-    /// Ready once the turn is stopped: what a wait that would not otherwise see a Stop -- a tool
-    /// call in flight -- is raced against, so a Stop ends it at once and not when it returns.
-    pub fn fired(&self) -> impl std::future::Future<Output = ()> + '_ {
-        std::future::poll_fn(move |cx| {
+    /// Resolves once this turn is stopped, and tears the request in flight down as it does.
+    /// What the stream reader and each tool call race: the loser is dropped where it stands.
+    pub async fn fired(&self) {
+        let mut own = self.0.rung.subscribe();
+        let mut cell = self.0.stop.as_ref().map(|w| w.rx.clone());
+        loop {
+            // Both readers are taken BEFORE this check, so a stop that lands after it moves a
+            // version they have not seen and the wait below returns at once.
             if self.is_set() {
-                return std::task::Poll::Ready(());
+                self.tear_down();
+                return;
             }
-            let mut wait = self.0.wait.borrow_mut();
-            if !wait.iter().any(|w| w.will_wake(cx.waker())) {
-                wait.push(cx.waker().clone());
+            let closed = match cell.as_mut() {
+                Some(rx) => match racing::race(own.changed(), rx.changed()).await {
+                    Won::Second(Err(_)) => true,
+                    _                   => false,
+                },
+                None => {
+                    // The sender is this halt's own, so it outlives the wait.
+                    let _ = own.changed().await;
+                    false
+                },
+            };
+            if closed {
+                // The handle has gone; its last word stands, and only `fire` is left to hear.
+                cell = None;
             }
-            std::task::Poll::Pending
-        })
+        }
     }
-
-    /// Has this turn been stopped?
-    pub fn is_set(&self) -> bool { self.0.set.get() }
 
     /// Clear a stop, for the turn about to start on a client that ran the one before it.
     ///
     /// Only the owner of a client that runs one turn at a time calls this -- a chat's own agent,
-    /// at the top of its turn -- and only before anything of the new turn has gone out.
+    /// at the top of its turn -- and only before anything of the new turn has gone out.  A stop
+    /// of every turn that came before, and a strike of a running one, is forgotten; a stop of this
+    /// halt's own tag before it began is not.
     pub fn rearm(&self) {
         self.0.set.set(false);
+        if let Some(w) = &self.0.stop {
+            if let Ok(s) = w.rx.borrow() {
+                w.base.set(s.mark());
+            }
+        }
         #[cfg(target_arch = "wasm32")]
         {
             *self.0.ctrl.borrow_mut() = None;
@@ -605,7 +834,7 @@ impl Halt {
     /// Cancel the request in flight WITHOUT stopping the turn: what a stalled stream's watchdog
     /// does to a `fetch` it has stopped reading.  A stall is not a Stop, and the turn decides
     /// what to do about one.
-    fn tear_down(&self) {
+    pub(crate) fn tear_down(&self) {
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(ctrl) = self.0.ctrl.borrow().as_ref() {
@@ -616,7 +845,7 @@ impl Halt {
 
     /// Hold the controller of the request about to go out, so [`fire`](Self::fire) reaches it.
     #[cfg(target_arch = "wasm32")]
-    fn arm(&self, ctrl: web_sys::AbortController) {
+    pub(crate) fn arm(&self, ctrl: web_sys::AbortController) {
         *self.0.ctrl.borrow_mut() = Some(ctrl);
     }
 }
@@ -631,7 +860,7 @@ impl Halt {
 /// request with `stream: true`, and parses the SSE response
 /// incrementally — calling `on_token` for each chunk as it arrives,
 /// saying whether it is the answer or the model's working ([`Delta`]).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LlmClient {
     pub host:       String,
     pub port:       u16,
@@ -670,7 +899,7 @@ pub struct LlmClient {
     /// `src/compact.rs`, which `Agent::set_stream_idle_ms` pushes down into this.  An
     /// `Rc<Cell<…>>` for the reason `tune` is one: shared across clones, so a sub-agent
     /// built from a cloned client carries the same figure.
-    stream_idle_ms: std::rc::Rc<std::cell::Cell<u64>>,
+    pub(crate) stream_idle_ms: std::rc::Rc<std::cell::Cell<u64>>,
     /// Which upstream provider OpenRouter should route this model's calls to, from a
     /// setting on the model's own row (`www/js/models.js`); see
     /// [`set_provider_routing`](Self::set_provider_routing).  `Rc<RefCell<…>>` for the
@@ -694,7 +923,11 @@ pub struct LlmClient {
     pub tls_config: Arc<ClientConfig>,
     // This turn's stop (see [`Halt`]): shared by a clone made inside the turn, such as the
     // fold's compactor, and replaced by `with_halt` for a clone that runs a turn of its own.
-    halt:           Halt,
+    pub(crate) halt: Halt,
+    // The turn's last-progress clock, beaten by every line the stream hears (U3a LV1): the
+    // agent's, given here by `Agent::new`, and shared by every clone, `with_halt`'s included.
+    // None for a client no agent holds.
+    pub(crate) liveness: Option<Liveness>,
     /// Wasm transport URL scheme selector: `true` builds `https://…`,
     /// `false` builds `http://…`.  Defaults to `https` (all real
     /// providers are TLS-only); an `http` client targets a local mock
@@ -702,6 +935,27 @@ pub struct LlmClient {
     /// treats the origin as a secure context.
     #[cfg(target_arch = "wasm32")]
     pub secure: bool,
+    /// The native transport's plain `http` form, for a local mock over `127.0.0.1` only (RKEY-b):
+    /// set by [`LlmClient::from_url`] alone, which refuses `http` to any other host, and checked
+    /// again where the connection is opened.  Private, so no caller can set it around that check.
+    #[cfg(not(target_arch = "wasm32"))]
+    plain: bool,
+}
+
+/// Written by hand so that a client printed into a log, an error or a panic names its endpoint
+/// and model and never its key (RKEY-c rider (a): a runner's run child holds one).
+impl std::fmt::Debug for LlmClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmClient")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("path", &self.path)
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .field("dialect", &self.dialect)
+            .field("api_key", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 /// The `usage` block a provider reports for a call.
@@ -1065,7 +1319,7 @@ const RETRY_AFTER_JITTER_MS: u64 = 250;
 /// and short enough that a provider answering an oversized request with an echo of it
 /// cannot put the whole thing in a user's message pane.  Both transports use it, so the
 /// browser and the native path say the same thing about the same failure.
-const ERR_BODY_BYTES: usize = 300;
+pub(crate) const ERR_BODY_BYTES: usize = 300;
 
 /// `s` cut to at most `n` bytes, never through the middle of a character.
 ///
@@ -1076,7 +1330,7 @@ const ERR_BODY_BYTES: usize = 300;
 /// # Arguments
 /// * `s` - The text to cut.
 /// * `n` - The most bytes the result may occupy.
-fn clip_bytes(s: &str, n: usize) -> &str {
+pub(crate) fn clip_bytes(s: &str, n: usize) -> &str {
     let mut cut = s.len().min(n);
     while cut > 0 && !s.is_char_boundary(cut) {
         cut -= 1;
@@ -1167,7 +1421,7 @@ impl RetryPolicy {
 ///
 /// Retryability is decided where the status code is still in hand, rather than
 /// by reading it back out of an error message later.
-struct TransportErr {
+pub(crate) struct TransportErr {
     retryable: bool,            // is another attempt worth making?
     after_ms:  Option<u64>,     // what the provider asked us to wait, if it said
     status:    u16,             // the HTTP status that refused the request, else 0
@@ -1181,13 +1435,13 @@ struct TransportErr {
 impl TransportErr {
 
     /// A failure worth another attempt: a 429, a 5xx, or a broken connection.
-    fn transient(reason: String, err: Error<ErrTag>) -> Self {
+    pub(crate) fn transient(reason: String, err: Error<ErrTag>) -> Self {
         Self { retryable: true, after_ms: None, status: 0, reason, err }
     }
 
     /// A failure that will fail again the same way: a malformed request, a bad
     /// key, an unknown model.
-    fn fatal(reason: String, err: Error<ErrTag>) -> Self {
+    pub(crate) fn fatal(reason: String, err: Error<ErrTag>) -> Self {
         Self { retryable: false, after_ms: None, status: 0, reason, err }
     }
 
@@ -1201,7 +1455,7 @@ impl TransportErr {
     /// exactly as before.  This is the single site that decision is made (per transport), so
     /// the several timeout arms (header wait, body wait, browser first byte) cannot drift apart
     /// into per-caller overrides.
-    fn classify(reason: String, err: Error<ErrTag>) -> Self {
+    pub(crate) fn classify(reason: String, err: Error<ErrTag>) -> Self {
         if err.tags().contains(&ErrTag::Timeout) {
             Self::fatal(reason, err)
         } else {
@@ -1210,13 +1464,13 @@ impl TransportErr {
     }
 
     /// Attach the provider's requested delay.
-    fn after(mut self, after_ms: Option<u64>) -> Self {
+    pub(crate) fn after(mut self, after_ms: Option<u64>) -> Self {
         self.after_ms = after_ms;
         self
     }
 
     /// Say which HTTP status the failure was, so a caller can tell a refusal from a broken line.
-    fn at(mut self, status: u16) -> Self {
+    pub(crate) fn at(mut self, status: u16) -> Self {
         self.status = status;
         self
     }
@@ -1236,12 +1490,13 @@ impl TransportErr {
     /// Daimond rather than of Safari.  It is first because the reader -- person or
     /// regex -- should meet the plain sentence before the framing.
     ///
-    /// WHAT THE ERROR IS TRAVELS IN ITS TAGS, ON THE OUTER ERROR.  `tags()` reads no further than
-    /// the error it is asked, so a stall wrapped here without saying so would arrive as a plain
-    /// network failure, and a refusal's status would be left as digits in prose for the caller to
-    /// guess at.  The agent's overflow test once did guess, and a stall that took 400 seconds
-    /// read as a 400 (r541 QA N2).  So a timeout keeps `Timeout`; a refusal for SIZE
-    /// ([`too_big`](Self::too_big)) leaves `TooBig`, so the fold that answers it, and the picture
+    /// WHAT THE ERROR IS TRAVELS IN ITS TAGS, ON THE OUTER ERROR.  `tags()` now gathers the tags
+    /// of the whole chain, outermost first, but the outer error is still where the kind is said:
+    /// a stall wrapped here under plain network tags would read first as a network failure, and a
+    /// refusal's status would be left as digits in prose for the caller to guess at.  The agent's
+    /// overflow test once did guess, and a stall that took 400 seconds read as a 400 (r541 QA N2).
+    /// So a timeout keeps `Timeout`; a refusal for SIZE ([`too_big`](Self::too_big)) leaves
+    /// `TooBig`, so the fold that answers it, and the picture
     /// rule that must not, read the tag rather than the provider's prose a second time; and a
     /// bare 400 or 422 -- the status a refused picture gets too -- leaves `Size`, which says only
     /// that size MAY be why: [`compact::looks_like_overflow`](crate::agent::compact::looks_like_overflow)
@@ -1319,25 +1574,25 @@ pub(crate) fn says_picture_too_large(err: &str) -> bool {
 /// never needs to know it happened; a stall is the provider's, and the turn should read
 /// honestly as `stalled` rather than as an ordinary clean end.  See `DEFAULT_STREAM_IDLE_MS`.
 #[derive(Clone, Copy, Debug, Default)]
-struct StreamOutcome {
-    /// The browser fired the abort signal (wasm only; always `false` on native).
-    aborted: bool,
+pub(crate) struct StreamOutcome {
+    /// The turn was stopped while the request was in flight: the browser fired the abort
+    /// signal, or (natively) the read lost its race against the turn's halt.
+    pub(crate) aborted: bool,
     /// No byte arrived for `stream_idle_ms`, and the connection was given up on.
-    stalled: bool,
+    pub(crate) stalled: bool,
     /// The body bytes read; see [`StreamWatch::ended`].
-    bytes:    u64,
+    pub(crate) bytes:    u64,
     /// Milliseconds from the request to the first body byte, or the whole wait if none came.
-    first_ms: u64,
+    pub(crate) first_ms: u64,
     /// The longest quiet after the first byte, the quiet before the end included.
-    gap_ms:   u64,
+    pub(crate) gap_ms:   u64,
 }
 
 impl StreamOutcome {
     /// The turn was stopped while the request was in flight.
-    #[cfg(target_arch = "wasm32")]
-    const ABORTED: Self = Self { aborted: true, stalled: false, bytes: 0, first_ms: 0, gap_ms: 0 };
+    pub(crate) const ABORTED: Self = Self { aborted: true, stalled: false, bytes: 0, first_ms: 0, gap_ms: 0 };
     /// The stream went quiet past its limit and was given up on.
-    const STALLED: Self = Self { aborted: false, stalled: true, bytes: 0, first_ms: 0, gap_ms: 0 };
+    pub(crate) const STALLED: Self = Self { aborted: false, stalled: true, bytes: 0, first_ms: 0, gap_ms: 0 };
 }
 
 /// Whether an HTTP status is worth another attempt.
@@ -1410,53 +1665,9 @@ pub(crate) async fn sleep_ms(ms: u64) {
     let _ = crate::wasm::settle_js(promise).await;
 }
 
-/// Whichever of two same-shaped futures becomes ready first; the other is dropped.
-///
-/// Hand-rolled rather than `tokio::select!` or a `futures` crate helper: `tokio` is not in
-/// this target's dependency graph (the wasm build has no TCP sockets or TLS stack, so
-/// nothing before this needed its executor), and pulling one in for a macro would be a
-/// second async runtime contending with `wasm-bindgen-futures` for the same microtask
-/// queue. A boxed, pinned trait object on each side is what lets the two callers of this
-/// (one `JsFuture`, one `sleep_ms`) share a Future poll loop despite being different
-/// concrete types.
-#[cfg(target_arch = "wasm32")]
-async fn race<T>(
-    mut a: std::pin::Pin<Box<dyn std::future::Future<Output = T>>>,
-    mut b: std::pin::Pin<Box<dyn std::future::Future<Output = T>>>,
-)
-    -> T
-{
-    std::future::poll_fn(move |cx| {
-        if let std::task::Poll::Ready(v) = a.as_mut().poll(cx) { return std::task::Poll::Ready(v); }
-        if let std::task::Poll::Ready(v) = b.as_mut().poll(cx) { return std::task::Poll::Ready(v); }
-        std::task::Poll::Pending
-    }).await
-}
-/// The pending read if it finishes within `ms`, else `None` -- and the read is left pending.
-///
-/// `race` takes both futures by value and drops the loser, which is right for a one-shot wait
-/// and wrong for a read that has to survive the watch's ticks.
-#[cfg(target_arch = "wasm32")]
-async fn read_or_nap<T>(
-    read: &mut std::pin::Pin<Box<dyn std::future::Future<Output = T>>>,
-    ms:   u64,
-)
-    -> Option<T>
-{
-    // A trait object, so `poll` needs no `Future` import (this crate is edition 2021).
-    let mut nap: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> = Box::pin(sleep_ms(ms));
-    std::future::poll_fn(move |cx| {
-        if let std::task::Poll::Ready(v) = read.as_mut().poll(cx) {
-            return std::task::Poll::Ready(Some(v));
-        }
-        if nap.as_mut().poll(cx).is_ready() { return std::task::Poll::Ready(None); }
-        std::task::Poll::Pending
-    }).await
-}
-
 /// Milliseconds on a clock that only moves forward.
 #[cfg(not(target_arch = "wasm32"))]
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
 }
@@ -1467,7 +1678,7 @@ fn now_ms() -> u64 {
 /// lands.  A step back would stop the watch from ever expiring until the clock caught up, and
 /// a step forward would expire a live round at once.
 #[cfg(target_arch = "wasm32")]
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     use wasm_bindgen::JsCast;
     let perf = match web_sys::window() {
         Some(win) => win.performance(),
@@ -1482,7 +1693,7 @@ fn now_ms() -> u64 {
 
 /// What the stream's sink makes of one `data:` chunk, for the watch.
 #[derive(Clone, Copy, Debug, Default)]
-struct Pulse {
+pub(crate) struct Pulse {
     grew:     bool,     // the accumulator grew: real data
     thinking: bool,     // the model is reasoning and has not begun its answer
 }
@@ -1505,8 +1716,8 @@ struct Pulse {
 ///   Anthropic block with the text omitted, or reasoning in bursts minutes apart) is working
 ///   behind its pings.  That wider limit holds only while some byte keeps arriving: a
 ///   connection gone wholly silent is cut at `idle_ms`, as it always was.
-#[derive(Clone, Copy, Debug)]
-struct StreamWatch {
+#[derive(Clone, Debug)]
+pub(crate) struct StreamWatch {
     idle_ms:   u64,     // the limit once something has arrived
     first_ms:  u64,     // the limit before any chunk has
     wide_ms:   u64,     // the limit for a model that is working without saying so
@@ -1522,11 +1733,12 @@ struct StreamWatch {
     first_at:  Option<u64>, // clock at the first line
     gap_max:   u64,     // the longest quiet between lines after the first
     bytes:     u64,     // body bytes read
+    liveness:  Option<Liveness>, // the turn's last-progress clock, beaten by every line
 }
 
 impl StreamWatch {
 
-    fn new(now: u64, idle_ms: u64, first_ms: u64) -> Self {
+    pub(crate) fn new(now: u64, idle_ms: u64, first_ms: u64) -> Self {
         Self {
             idle_ms,
             first_ms,
@@ -1543,24 +1755,33 @@ impl StreamWatch {
             first_at:  None,
             gap_max:   0,
             bytes:     0,
+            liveness:  None,
         }
     }
 
+    // The turn's last-progress clock, beaten by every line this stream hears: see
+    // [`Liveness`].  None, for a stream no turn is racing (a fold's summary, a test).
+    pub(crate) fn beating(mut self, liveness: Option<Liveness>) -> Self {
+        self.liveness = liveness;
+        self
+    }
+
     // When the request went out, if before the watch began: the first byte is timed from it.
-    fn asked(mut self, asked: u64) -> Self {
+    pub(crate) fn asked(mut self, asked: u64) -> Self {
         self.asked = asked.min(self.asked);
         self
     }
 
     // Bounds the quiet before real data, whatever the ceilings: see [`attempt_wait`].
-    fn capped(mut self, quiet_cap: u64) -> Self {
+    pub(crate) fn capped(mut self, quiet_cap: u64) -> Self {
         self.quiet_cap = quiet_cap;
         self
     }
 
     // A line of any kind arrived, a keep-alive comment included.  Also the round's timing
     // facts: the first byte, and the longest quiet since it.
-    fn heard(&mut self, now: u64) {
+    pub(crate) fn heard(&mut self, now: u64) {
+        if let Some(live) = &self.liveness { live.beat(now); }
         if self.first_at.is_none() {
             self.first_at = Some(now);
         } else {
@@ -1570,13 +1791,13 @@ impl StreamWatch {
     }
 
     // `bytes` more of the body were read.
-    fn took(&mut self, bytes: u64) {
+    pub(crate) fn took(&mut self, bytes: u64) {
         self.bytes = self.bytes.saturating_add(bytes);
     }
 
     // The stream ended at `now` with `how`: the timing facts joined to it.  The quiet from the
     // last byte to the end counts as a gap, because it is the quiet a liveness limit would cut.
-    fn ended(&self, now: u64, how: StreamOutcome) -> StreamOutcome {
+    pub(crate) fn ended(&self, now: u64, how: StreamOutcome) -> StreamOutcome {
         let (first_ms, gap_ms) = match self.first_at {
             None        => (now.saturating_sub(self.asked), 0),
             Some(first) => (first.saturating_sub(self.asked),
@@ -1586,7 +1807,8 @@ impl StreamWatch {
     }
 
     // A `data:` chunk arrived, and the sink has read it.
-    fn data(&mut self, now: u64, pulse: Pulse) {
+    pub(crate) fn data(&mut self, now: u64, pulse: Pulse) {
+        if let Some(live) = &self.liveness { live.beat(now); }
         self.accepted = true;
         self.thinking = pulse.thinking;
         if pulse.grew { self.progress(now); }
@@ -1620,19 +1842,19 @@ impl StreamWatch {
     }
 
     // Has the quiet outlasted its limit?
-    fn expired(&self, now: u64) -> bool {
+    pub(crate) fn expired(&self, now: u64) -> bool {
         now.saturating_sub(self.last_real) >= self.limit() || now >= self.dead_at()
     }
 
     // The seconds of quiet, if a notice is due now; arms the next one.
-    fn tick(&mut self, now: u64) -> Option<u64> {
+    pub(crate) fn tick(&mut self, now: u64) -> Option<u64> {
         if now.saturating_sub(self.last_wait) < self.wait_ms { return None; }
         self.last_wait = now;
         Some(now.saturating_sub(self.last_real) / 1000)
     }
 
     // Milliseconds to the next thing that needs doing: a notice or the end of the wait.
-    fn next_in(&self, now: u64) -> u64 {
+    pub(crate) fn next_in(&self, now: u64) -> u64 {
         let to_end  = self.last_real.saturating_add(self.limit()).min(self.dead_at()).saturating_sub(now);
         let to_tick = self.last_wait.saturating_add(self.wait_ms).saturating_sub(now);
         to_end.min(to_tick).max(1)
@@ -1672,8 +1894,68 @@ impl LlmClient {
             pin:        std::cell::RefCell::new(None),
             tls_config,
             halt:       Halt::new(),
+            liveness:   None,
+            plain:      false,
         }
     }
+
+    /// A native client for the chat endpoint at `url` (RKEY-b): `https://host[:port]/path`, or
+    /// `http://127.0.0.1:port/path` for a local mock and for nothing else.  A base without
+    /// `/chat/completions` (the gateway's `https://openrouter.ai/api/v1`) has it added.
+    ///
+    /// The key is never in an error this makes: a refusal names the URL, never the key.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn from_url(
+        url:        &str,
+        api_key:    &str,
+        model:      &str,
+        max_tokens: u32,
+        tls_config: Arc<ClientConfig>,
+    ) -> Outcome<Self> {
+        let (plain, rest) = if let Some(r) = url.strip_prefix("https://") {
+            (false, r)
+        } else if let Some(r) = url.strip_prefix("http://") {
+            (true, r)
+        } else {
+            return Err(err!("A model URL begins https:// (or http://127.0.0.1 for a local mock), \
+                not {:?}.", url; Invalid, Input, Security));
+        };
+        let (auth, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None    => (rest, "/"),
+        };
+        let (host, port) = match auth.rsplit_once(':') {
+            Some((h, p)) => match p.parse::<u16>() {
+                Ok(n) if n > 0  => (h, n),
+                _               => return Err(err!("The model URL's port {:?} is not a port.", p;
+                    Invalid, Input)),
+            },
+            None => (auth, if plain { 80 } else { 443 }),
+        };
+        if host.is_empty() || host.contains(|c: char| c == '@' || c == '?' || c == '#' || c == '[') {
+            return Err(err!("The model URL {:?} has no plain host.", url; Invalid, Input));
+        }
+        if path.contains(|c: char| c == '?' || c == '#' || c.is_whitespace()) {
+            return Err(err!("The model URL {:?} carries a query, fragment or space.", url; Invalid, Input));
+        }
+        if plain && host != "127.0.0.1" {
+            return Err(err!("The model URL {:?} is plain http to somewhere other than 127.0.0.1, \
+                so it is refused.", url; Invalid, Input, Security));
+        }
+        let path = path.trim_end_matches('/');
+        let path = if path.ends_with("/chat/completions") || path.ends_with("/messages") {
+            path.to_string()
+        } else {
+            fmt!("{}/chat/completions", path)
+        };
+        let mut c = Self::new(host, port, &path, api_key, model, max_tokens, tls_config);
+        c.plain = plain;
+        Ok(c)
+    }
+
+    /// Whether this client speaks plain `http` (a loopback mock only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn is_plain(&self) -> bool { self.plain }
 
     /// Construct a client for the wasm transport (browser `fetch`).
     ///
@@ -1727,6 +2009,7 @@ impl LlmClient {
             pin:        std::cell::RefCell::new(None),
             secure,
             halt:       Halt::new(),
+            liveness:   None,
         }
     }
 
@@ -2446,7 +2729,7 @@ impl LlmClient {
     /// **The one place an app note is joined to the person's words** (see
     /// [`crate::protocol::join_notes`]), because every request in this client, whichever dialect
     /// carries it, is built here.  Neither builder below reads a message's `pre`.
-    fn build_body(&self, messages: &[ChatMessage], tools: Option<&str>, stream: bool) -> String {
+    pub(crate) fn build_body(&self, messages: &[ChatMessage], tools: Option<&str>, stream: bool) -> String {
         self.build_body_ignoring(messages, tools, stream, &[])
     }
 
@@ -2897,7 +3180,7 @@ impl LlmClient {
     ///
     /// # Arguments
     /// * `browser` - Whether the request is being made from a browser.
-    fn auth_headers(&self, browser: bool) -> Vec<(&'static str, String)> {
+    pub(crate) fn auth_headers(&self, browser: bool) -> Vec<(&'static str, String)> {
         let mut out = vec![("Content-Type", "application/json".to_string())];
         match self.dialect {
             Dialect::OpenAi => {
@@ -3118,7 +3401,7 @@ impl LlmClient {
         body:    &str,
         wait_ms: u64,
     )
-        -> Result<(tokio_rustls::client::TlsStream<tokio::net::TcpStream>, bool, Option<String>), TransportErr>
+        -> Result<(Conn, bool, Option<String>), TransportErr>
     {
         use tokio_rustls::TlsConnector;
         use tokio::net::TcpStream;
@@ -3143,19 +3426,30 @@ impl LlmClient {
                 "LLM: TCP connect to {}:{} failed.", self.host, self.port;
                 IO, Network, Init))),
         };
-        let server_name = match tokio_rustls::rustls::pki_types::ServerName::try_from(self.host.clone()) {
-            Ok(n) => n,
-            // A name that will not parse will not parse next time either.
-            Err(e) => return Err(TransportErr::fatal(fmt!("invalid server name '{}'", self.host), err!(e,
-                "LLM: invalid server name '{}'.", self.host;
-                IO, Network, Invalid, Input))),
-        };
-        let connector = TlsConnector::from(self.tls_config.clone());
-        let mut stream = match connector.connect(server_name, tcp).await {
-            Ok(s) => s,
-            Err(e) => return Err(TransportErr::transient(fmt!("TLS handshake with {} failed", self.host), err!(e,
-                "LLM: TLS handshake to {} failed.", self.host;
-                IO, Network, Init))),
+        let mut stream = if self.plain {
+            // Checked again here, so plain http can reach nothing but this machine's loopback
+            // whatever made the client.
+            if self.host != "127.0.0.1" {
+                return Err(TransportErr::fatal(fmt!("plain http to {} refused", self.host), err!(
+                    "LLM: plain http is for 127.0.0.1 only, not {}.", self.host;
+                    IO, Network, Security, Invalid)));
+            }
+            Conn::Plain(tcp)
+        } else {
+            let server_name = match tokio_rustls::rustls::pki_types::ServerName::try_from(self.host.clone()) {
+                Ok(n) => n,
+                // A name that will not parse will not parse next time either.
+                Err(e) => return Err(TransportErr::fatal(fmt!("invalid server name '{}'", self.host), err!(e,
+                    "LLM: invalid server name '{}'.", self.host;
+                    IO, Network, Invalid, Input))),
+            };
+            let connector = TlsConnector::from(self.tls_config.clone());
+            match connector.connect(server_name, tcp).await {
+                Ok(s) => Conn::Tls(Box::new(s)),
+                Err(e) => return Err(TransportErr::transient(fmt!("TLS handshake with {} failed", self.host), err!(e,
+                    "LLM: TLS handshake to {} failed.", self.host;
+                    IO, Network, Init))),
+            }
         };
 
         let mut req = Vec::with_capacity(request.as_bytes().len() + body_bytes.len());
@@ -3295,13 +3589,24 @@ impl LlmClient {
         // `open` is the plain idle ceiling; the watch below covers the body.
         let idle_ms = self.stream_idle_ms.get();
         let asked   = now_ms();
-        let (stream, is_chunked, ctype) = match self.open(body, idle_ms).await {
+        // The wait for the reply is held outside the liveness race (U3a LV2); see `ReplyHold`.
+        let mut held = crate::engine::worker::liveness::ReplyHold::new(self.liveness.clone(),
+            asked.saturating_add(idle_ms.saturating_mul(REPLY_WAIT_FACTOR)));
+        // A Stop while the provider has yet to answer ends the round there, with nothing in it.
+        let opened = match racing::race(self.open(body, idle_ms), self.halt.fired()).await {
+            Won::First(opened)  => opened,
+            Won::Second(())     => return Ok(StreamOutcome::ABORTED),
+        };
+        let (stream, is_chunked, ctype) = match opened {
             Ok(v)  => v,
             Err(e) => return Err(e),
         };
         let mut reader = LineReader::new(stream, is_chunked);
-        let mut watch  = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap).asked(asked);
+        let mut watch  = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap).asked(asked)
+            .beating(self.liveness.clone());
         let mut lines  = SseLines::new(ctype.as_deref());
+        // A stream has answered with its headers; a whole body has not until it is all here.
+        if lines.is_stream() { held.release(now_ms()); }
         let mut counted: u64 = 0;   // the reader's byte count already given to the watch
         loop {
             // THE IDLE WATCHDOG. Proposal 15, 2026-09-15: OpenRouter's own export showed a
@@ -3327,8 +3632,15 @@ impl LlmClient {
                     on_data(Wire::Silence(secs));
                 }
                 let nap = std::time::Duration::from_millis(watch.next_in(now_ms()));
-                if let Ok(read) = tokio::time::timeout(nap, &mut next).await {
-                    break read;
+                // A STOP LANDS IN THE SILENCE, not after it: the read is raced against the
+                // turn's halt, so a provider that has gone quiet cannot hold a Stop to the
+                // watchdog's ceiling.  What `on_data` already delivered is the round's partial,
+                // kept as a Stop mid-stream keeps it.
+                match racing::race(tokio::time::timeout(nap, &mut next), self.halt.fired()).await {
+                    Won::First(Ok(read))    => break read,
+                    Won::First(Err(_))      => {},
+                    Won::Second(())         =>
+                        return Ok(watch.ended(now_ms(), StreamOutcome::ABORTED)),
                 }
             };
             // The read is done with the reader, so its count can be read: the line just read.
@@ -3353,6 +3665,7 @@ impl LlmClient {
             }
         }
         let end = now_ms();
+        held.release(end);
         match lines.body() {
             // The headers said 200, or `open` would have refused the reply.
             Some(b) => self.deliver_body(200, b, on_data).map(|o| watch.ended(end, o)),
@@ -3361,418 +3674,6 @@ impl LlmClient {
     }
 }
 
-
-// ┌───────────────────────────────────────────────────────────────┐
-// │ Wasm transport — browser `fetch` + `ReadableStream`            │
-// └───────────────────────────────────────────────────────────────┘
-//
-// The wasm build has no TCP sockets or TLS stack; the browser owns
-// both.  These methods mirror the native transport's private contract
-// (`do_request_full` / `stream_sse`) using `fetch`, so the
-// `chat_stream` / `chat_stream_tools` / `chat_once` API above is
-// target-agnostic.
-
-#[cfg(target_arch = "wasm32")]
-impl LlmClient {
-
-    /// The absolute request URL for the browser transport.
-    ///
-    /// The scheme follows [`secure`](Self::secure); the port is elided
-    /// only when it is the scheme's default (443 for `https`, 80 for
-    /// `http`), so a mock on a custom port is addressed explicitly.
-    fn wasm_url(&self) -> String {
-        let (scheme, default_port) = if self.secure { ("https", 443u16) } else { ("http", 80u16) };
-        if self.port == default_port {
-            fmt!("{}://{}{}", scheme, self.host, self.path)
-        } else {
-            fmt!("{}://{}:{}{}", scheme, self.host, self.port, self.path)
-        }
-    }
-
-    /// Issue a lightweight transport probe and return the raw HTTP
-    /// status the provider replies with.
-    ///
-    /// Unlike [`wasm_fetch`](Self::wasm_fetch), a non-2xx status is *not*
-    /// treated as an error — the status number is the whole point.  A
-    /// `401` from a real provider with a dummy key proves the full
-    /// `fetch` + CORS + transport path end-to-end without a valid key.
-    pub async fn probe_status(&self) -> Outcome<u16> {
-        let messages = [crate::protocol::ChatMessage::user("ping")];
-        let body = self.build_body(&messages, None, false);
-        let resp = res!(self.wasm_fetch_raw(&body, self.stream_idle_ms.get()).await);
-        Ok(resp.status())
-    }
-
-    /// POST `body` via `fetch`, retrying a transient failure with bounded
-    /// backoff, and await the `Response`.
-    ///
-    /// Nothing has reached the caller at this point, so a dropped `fetch`, a 429
-    /// or a 5xx is simply tried again; every other non-2xx is this request being
-    /// wrong and is returned as-is.  `waited` is the shared backoff budget; see
-    /// the native [`open`](LlmClient::open).
-    ///
-    /// A refusal carries the provider's OWN WORDS, as the native transport has always
-    /// done.  Without them the browser could say no more than
-    /// `LLM: HTTP error: 400 Bad Request.`, which tells the user nothing they can act on
-    /// and tells [`compact::looks_like_overflow`](crate::agent::compact::looks_like_overflow)
-    /// nothing at all -- so a request refused for being too long and one refused for
-    /// being wrong had to be told apart by size alone.  Both dialects are covered,
-    /// because it is the raw body that is carried and neither is parsed.
-    async fn wasm_fetch(&self, body: &str, wait_ms: u64) -> Result<web_sys::Response, TransportErr> {
-        let resp = match self.wasm_fetch_raw(body, wait_ms).await {
-            Ok(r) => r,
-            // The first-byte watchdog fired: the provider accepted the connection and then
-            // never answered.  Checked BEFORE `halted` -- abort-first would read
-            // this as a user cancel and mislabel a stall as a Stop -- and the tear-down is
-            // fired HERE (as the stream idle watchdog does) so a dropped future does not
-            // leave the `fetch` running.  TERMINAL, not transient: a stall is not fixed by
-            // retrying it, so `classify` ends the round rather than re-entering the ladder.
-            Err(e) if e.tags().contains(&ErrTag::Timeout) => {
-                self.halt.tear_down();
-                return Err(TransportErr::classify(
-                    "no response from the provider".to_string(), e));
-            }
-            // A rejected `fetch` is a network or CORS failure; an armed abort is
-            // the caller cancelling, and must not be retried.
-            Err(e) => return Err(if self.halted() {
-                TransportErr::fatal("the turn was cancelled".to_string(), e)
-            } else {
-                TransportErr::transient("could not reach the provider".to_string(), e)
-            }),
-        };
-        if !resp.ok() {
-            let status = resp.status();
-            let status_text = resp.status_text();
-            // Read BEFORE the body: consuming the stream cannot then cost the retry its
-            // requested delay, and a `Retry-After` is the one thing on a 429 worth more
-            // than the message.
-            let after = if status_retryable(status) {
-                resp.headers().get("retry-after").ok().flatten()
-                    .and_then(|v| parse_retry_after(&v))
-            } else {
-                None
-            };
-            let detail = self.body_detail(&resp, wait_ms).await;
-            let err = err!(
-                "LLM: HTTP error: {} {} | {}", status, status_text, detail;
-                IO, Network, Wire, Read);
-            let reason = fmt!("the provider returned HTTP {}", status);
-            return Err(if status_retryable(status) {
-                TransportErr::transient(reason, err).after(after)
-            } else {
-                TransportErr::fatal(reason, err)
-            }.at(status));
-        }
-        Ok(resp)
-    }
-
-    /// The first [`ERR_BODY_BYTES`] of a refusal's body, or nothing when it cannot be read.
-    ///
-    /// Consumes the response, which is why it is called only on the failing path.  A body
-    /// that will not resolve -- an abort landing between the headers and the text, a
-    /// provider that sent none -- yields an empty string rather than turning a refusal
-    /// with a known status into a failure of a different kind.
-    ///
-    /// # Arguments
-    /// * `resp` - The non-2xx response, whose body is read to exhaustion.
-    async fn body_detail(&self, resp: &web_sys::Response, wait_ms: u64) -> String {
-        use wasm_bindgen::JsValue;
-
-        let text = match resp.text() {
-            // Race the body against the same idle ceiling: a refusal whose body will not
-            // resolve resolves to nothing rather than hanging the error path itself.
-            Ok(p) => {
-                enum Raced { Done(Result<JsValue, JsValue>), Idle }
-                let raced = race(
-                    Box::pin(async move { Raced::Done(crate::wasm::settle_js(p).await) }),
-                    Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
-                ).await;
-                match raced {
-                    Raced::Done(Ok(v)) => v.as_string().unwrap_or_default(),
-                    Raced::Idle | Raced::Done(Err(_)) => String::new(),
-                }
-            }
-            Err(_) => String::new(),
-        };
-        clip_bytes(&text, ERR_BODY_BYTES).to_string()
-    }
-
-    /// POST `body` via `fetch` and await the `Response` without checking
-    /// the status, mapping any JS error into an `Outcome`.  TLS trust is
-    /// the browser's.  Callers that need a 2xx guarantee go through
-    /// [`wasm_fetch`](Self::wasm_fetch).
-    async fn wasm_fetch_raw(&self, body: &str, wait_ms: u64) -> Outcome<web_sys::Response> {
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen::JsValue;
-        use web_sys::{Headers, Request, RequestInit, RequestMode, Response};
-
-        let headers = res!(Headers::new()
-            .map_err(|e| err!("LLM: create headers failed: {}.", js_str(&e); IO, Network, Init)));
-        // `true`: this is the browser transport, so an Anthropic endpoint also
-        // gets the header that makes its edge answer a cross-origin request.
-        for (name, value) in self.auth_headers(true) {
-            res!(headers.append(name, &value)
-                .map_err(|e| err!("LLM: set header {} failed: {}.", name, js_str(&e);
-                    IO, Network, Init)));
-        }
-
-        let opts = RequestInit::new();
-        opts.set_method("POST");
-        opts.set_mode(RequestMode::Cors);
-        opts.set_headers(&headers);
-        opts.set_body(&JsValue::from_str(body));
-
-        // Install a fresh abort controller for this request and wire its
-        // signal in, so `abort` can cancel the in-flight fetch/stream.  A
-        // controller that fails to construct simply leaves the request
-        // uncancellable rather than failing the turn.
-        if let Ok(ctrl) = web_sys::AbortController::new() {
-            opts.set_signal(Some(&ctrl.signal()));
-            self.halt.arm(ctrl);
-        }
-
-        let url = self.wasm_url();
-        let request = res!(Request::new_with_str_and_init(&url, &opts)
-            .map_err(|e| err!("LLM: build request failed: {}.", js_str(&e); IO, Network, Init)));
-
-        // `fetch` lives on the window in a document context and on the
-        // global scope in a worker; support both.
-        let promise = if let Some(win) = web_sys::window() {
-            win.fetch_with_request(&request)
-        } else {
-            let scope = res!(js_sys::global()
-                .dyn_into::<web_sys::WorkerGlobalScope>()
-                .map_err(|_| err!(
-                    "LLM: no window or worker scope for fetch."; IO, Network, Init)));
-            scope.fetch_with_request(&request)
-        };
-
-        // Bound the wait for the response the same way `stream_sse` bounds the wait for a
-        // stream chunk: race the `fetch` against `sleep_ms`, so a provider that accepts the
-        // connection and then never answers ends the attempt instead of hanging.  No
-        // `self.abort()` here -- that is the caller's to fire once it has classified the
-        // timeout (see `wasm_fetch`), so this layer stays a plain "did it arrive?".
-        enum Raced { Done(Result<JsValue, JsValue>), Idle }
-        let raced = race(
-            Box::pin(async move { Raced::Done(crate::wasm::settle_js(promise).await) }),
-            Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
-        ).await;
-        let resp_val = match raced {
-            Raced::Idle         => return Err(err!(
-                "LLM: no response within {} ms.", wait_ms; IO, Network, Timeout)),
-            Raced::Done(Ok(v))  => v,
-            Raced::Done(Err(e)) => return Err(err!(
-                "LLM: fetch failed: {}.", js_str(&e); IO, Network, Wire)),
-        };
-        let resp: Response = res!(resp_val.dyn_into()
-            .map_err(|_| err!("LLM: fetch did not return a Response."; IO, Network, Wire)));
-        Ok(resp)
-    }
-
-    /// Non-streaming request — await the full response body as text.
-    async fn do_request_full(&self, body: &str) -> Result<String, TransportErr> {
-        use wasm_bindgen::JsValue;
-
-        // The whole reply arrives in one body here (`chat_once` -> the fold summary), and a
-        // non-streaming provider generates the answer before sending a byte, so this path gets
-        // the wider first-byte ceiling; see `REPLY_WAIT_FACTOR`.
-        let wait_ms = self.stream_idle_ms.get().saturating_mul(REPLY_WAIT_FACTOR);
-        let resp = match self.wasm_fetch(body, wait_ms).await {
-            Ok(r)  => r,
-            Err(e) => return Err(e),
-        };
-        let text_promise = match resp.text() {
-            Ok(p)  => p,
-            Err(e) => return Err(TransportErr::transient("the reply was cut short".to_string(), err!(
-                "LLM: read response text failed: {}.", js_str(&e); IO, Network, Wire, Read))),
-        };
-        // Bound the body wait as well: headers can arrive before a slow generation finishes,
-        // so a body that never resolves must end the attempt rather than hang it.
-        enum Raced { Done(Result<JsValue, JsValue>), Idle }
-        let raced = race(
-            Box::pin(async move { Raced::Done(crate::wasm::settle_js(text_promise).await) }),
-            Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
-        ).await;
-        let text_val = match raced {
-            Raced::Idle => {
-                // The body never resolved.  Read the abort flag BEFORE tearing the fetch down
-                // (which itself fires the signal): if a Stop or a pause already
-                // landed, this is a cancel; otherwise it is a first-byte-class stall.  Either
-                // way TERMINAL -- `classify` on the timeout tag, and an abort is never
-                // retryable -- so the body wait no longer re-enters the ladder (was the hole
-                // that retried an abort landing between the headers and the text).
-                let cancelled = self.halted();
-                self.halt.tear_down();
-                return Err(if cancelled {
-                    TransportErr::fatal("the turn was cancelled".to_string(), err!(
-                        "LLM: aborted awaiting the response body."; IO, Network))
-                } else {
-                    TransportErr::classify("the reply was cut short".to_string(), err!(
-                        "LLM: no response body within {} ms.", wait_ms; IO, Network, Timeout))
-                });
-            }
-            Raced::Done(Ok(v))  => v,
-            Raced::Done(Err(e)) => return Err(TransportErr::transient("the reply was cut short".to_string(), err!(
-                "LLM: await response text failed: {}.", js_str(&e); IO, Network, Wire, Read))),
-        };
-        Ok(text_val.as_string().unwrap_or_default())
-    }
-
-    /// Streaming request — read the SSE body incrementally from the
-    /// response's `ReadableStream`, handing `on_data` each `data:`
-    /// payload as it arrives, stopping at `[DONE]`.  `on_data` answers with a [`Pulse`]; see the
-    /// native `stream_sse` and [`StreamWatch`].
-    ///
-    /// Returns whether the browser fired the abort signal.  When the
-    /// initial `fetch` or a stream read rejects, an armed abort is
-    /// distinguished from a genuine transport failure: an abort resolves
-    /// to `Ok(true)` (the caller keeps whatever streamed and ends the
-    /// turn cleanly), any other rejection is a real error.
-    async fn stream_sse(
-        &self,
-        body:       &str,
-        first_ms:   u64,
-        quiet_cap:  u64,
-        on_data:    &mut impl FnMut(Wire<'_>) -> Pulse,
-    ) -> Result<StreamOutcome, TransportErr>
-    {
-        use wasm_bindgen::JsValue;
-        use web_sys::{ReadableStream, ReadableStreamDefaultReader};
-
-        // Headers arrive before the first token on a streaming request, so the first-byte
-        // wait is the plain idle ceiling; the watch below covers the rest.
-        let idle_ms = self.stream_idle_ms.get();
-        let asked   = now_ms();
-        let resp = match self.wasm_fetch(body, idle_ms).await {
-            Ok(r) => r,
-            Err(e) => {
-                if self.halted() {
-                    return Ok(StreamOutcome::ABORTED);
-                }
-                return Err(e);
-            }
-        };
-        let stream: ReadableStream = match resp.body() {
-            Some(s) => s,
-            None => return Err(TransportErr::transient("the reply carried no stream".to_string(), err!(
-                "LLM: response has no body stream."; IO, Network, Wire, Read))),
-        };
-        let reader = match ReadableStreamDefaultReader::new(&stream) {
-            Ok(r)  => r,
-            Err(e) => return Err(TransportErr::fatal("the stream could not be read".to_string(), err!(
-                "LLM: acquire stream reader failed: {}.", js_str(&e); IO, Network, Wire, Read))),
-        };
-
-        // Accumulate raw bytes and extract complete SSE lines as they
-        // arrive, mirroring the native `LineReader` line discipline.
-        let mut buf: Vec<u8> = Vec::with_capacity(8192);
-
-        let mut watch = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap).asked(asked);
-        let status = resp.status();
-        let ctype = resp.headers().get("content-type").ok().flatten();
-        let mut lines = SseLines::new(ctype.as_deref());
-        // ONE READ, kept across the watch's ticks: a read future dropped when a tick fired
-        // would take the chunk it was about to deliver with it.
-        let mut pending: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Result<JsValue, JsValue>>>>>
-            = None;
-
-        loop {
-            // THE IDLE WATCHDOG, raced against the read rather than wrapped around it, so a
-            // chunk of real data re-arms the timeout for the next one; see the same note on
-            // the native `stream_sse`. `sleep_ms` is the browser `setTimeout` this client
-            // already uses for retry backoff, so no new timer mechanism is added. Hand-rolled
-            // (`read_or_nap`) rather than `tokio::select!`: `tokio` is not in this target's
-            // dependency graph at all -- the wasm build has no TCP sockets or TLS stack, and
-            // pulling in tokio's executor for one macro would be a second async runtime
-            // fighting `wasm-bindgen-futures` for the same microtask queue.
-            let now = now_ms();
-            if watch.expired(now) {
-                // Tear the `fetch` down, as a Stop would, but leave the turn's halt alone: a
-                // stall is not a Stop.  Nothing else tears down a `fetch` this client has
-                // stopped reading from, and a dropped `JsFuture` does not reach the
-                // connection at all.
-                self.halt.tear_down();
-                return Ok(watch.ended(now, StreamOutcome::STALLED));
-            }
-            if let Some(secs) = watch.tick(now) {
-                on_data(Wire::Silence(secs));
-            }
-            // A cloned HANDLE, not a second reader: `ReadableStreamDefaultReader` is a thin
-            // wasm-bindgen wrapper around one JS object, so cloning it is what lets the read
-            // future OWN a reference to it while `reader` itself is still there to read from
-            // on the next loop iteration.
-            let read = pending.get_or_insert_with(|| {
-                let handle = reader.clone();
-                Box::pin(async move { crate::wasm::settle_js(handle.read()).await })
-            });
-            let raced = read_or_nap(read, watch.next_in(now_ms())).await;
-            let result = match raced {
-                // A tick: nothing arrived yet, and the read is still pending.
-                None => continue,
-                Some(Ok(r)) => { pending = None; r }
-                Some(Err(e)) => {
-                    if self.halted() {
-                        return Ok(watch.ended(now_ms(), StreamOutcome::ABORTED));
-                    }
-                    // A stream that broke mid-flight; whether it is safe to try
-                    // again is the caller's judgement, not this layer's.
-                    return Err(TransportErr::transient("the stream broke".to_string(), err!(
-                        "LLM: read stream chunk failed: {}.", js_str(&e);
-                        IO, Network, Wire, Read)));
-                }
-            };
-            let done = match js_sys::Reflect::get(&result, &JsValue::from_str("done")) {
-                Ok(v)  => v.as_bool().unwrap_or(true),
-                Err(e) => return Err(TransportErr::fatal("the stream was malformed".to_string(), err!(
-                    "LLM: read 'done' failed: {}.", js_str(&e); IO, Network, Wire, Read))),
-            };
-            if done {
-                break;
-            }
-            let value = match js_sys::Reflect::get(&result, &JsValue::from_str("value")) {
-                Ok(v)  => v,
-                Err(e) => return Err(TransportErr::fatal("the stream was malformed".to_string(), err!(
-                    "LLM: read 'value' failed: {}.", js_str(&e); IO, Network, Wire, Read))),
-            };
-            let chunk = js_sys::Uint8Array::new(&value).to_vec();
-            buf.extend_from_slice(&chunk);
-            watch.heard(now_ms());
-            watch.took(chunk.len() as u64);
-
-            // Drain complete lines (terminated by `\n`) from the buffer.
-            loop {
-                let nl = match buf.iter().position(|&b| b == b'\n') {
-                    Some(p) => p,
-                    None    => break,
-                };
-                let line_bytes: Vec<u8> = buf.drain(..=nl).collect();
-                let line = String::from_utf8_lossy(&line_bytes[..line_bytes.len() - 1]);
-                match lines.sort(&line) {
-                    SseLine::Skip       => continue,
-                    SseLine::Done       => return Ok(watch.ended(now_ms(), StreamOutcome::default())),
-                    SseLine::Data(data) => {
-                        let pulse = on_data(Wire::Data(data));
-                        watch.data(now_ms(), pulse);
-                    }
-                }
-            }
-        }
-
-        // A last line with no newline after it: a one-body reply usually ends so.
-        if !buf.is_empty() {
-            let line = String::from_utf8_lossy(&buf).to_string();
-            match lines.sort(&line) {
-                SseLine::Data(data) => { on_data(Wire::Data(data)); }
-                SseLine::Done | SseLine::Skip => {}
-            }
-        }
-        let end = now_ms();
-        match lines.body() {
-            Some(b) => self.deliver_body(status, b, on_data).map(|o| watch.ended(end, o)),
-            None    => Ok(watch.ended(end, StreamOutcome::default())),
-        }
-    }
-}
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Stopping a turn                                                │
@@ -3789,7 +3690,7 @@ impl LlmClient {
     /// body, an Anthropic dialect that never answers this way -- is a provider error naming the
     /// provider, the status and what came, never an empty turn.  Not retried: the same request
     /// gets the same answer.
-    fn deliver_body(
+    pub(crate) fn deliver_body(
         &self,
         status:  u16,
         body:    &str,
@@ -3836,11 +3737,6 @@ impl LlmClient {
     }
 }
 
-/// Render a JS error value as a human-readable string for error tags.
-#[cfg(target_arch = "wasm32")]
-fn js_str(v: &wasm_bindgen::JsValue) -> String {
-    v.as_string().unwrap_or_else(|| fmt!("{:?}", v))
-}
 
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -3856,6 +3752,57 @@ fn js_str(v: &wasm_bindgen::JsValue) -> String {
 /// continuous stream of lines.
 ///
 /// A line is terminated by `\n` (with or without a preceding `\r`).
+#[cfg(not(target_arch = "wasm32"))]
+/// The native transport's connection: TLS, or plain TCP to a loopback mock (see
+/// [`LlmClient::from_url`]).  Both halves are `Unpin`, so each poll is a plain delegation.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) enum Conn {
+    Tls(Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>),
+    Plain(tokio::net::TcpStream),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl tokio::io::AsyncRead for Conn {
+    fn poll_read(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>) -> std::task::Poll<std::io::Result<()>>
+    {
+        match self.get_mut() {
+            Self::Tls(s)    => std::pin::Pin::new(s.as_mut()).poll_read(cx, buf),
+            Self::Plain(s)  => std::pin::Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl tokio::io::AsyncWrite for Conn {
+    fn poll_write(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8])
+        -> std::task::Poll<std::io::Result<usize>>
+    {
+        match self.get_mut() {
+            Self::Tls(s)    => std::pin::Pin::new(s.as_mut()).poll_write(cx, buf),
+            Self::Plain(s)  => std::pin::Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>)
+        -> std::task::Poll<std::io::Result<()>>
+    {
+        match self.get_mut() {
+            Self::Tls(s)    => std::pin::Pin::new(s.as_mut()).poll_flush(cx),
+            Self::Plain(s)  => std::pin::Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>)
+        -> std::task::Poll<std::io::Result<()>>
+    {
+        match self.get_mut() {
+            Self::Tls(s)    => std::pin::Pin::new(s.as_mut()).poll_shutdown(cx),
+            Self::Plain(s)  => std::pin::Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct LineReader<S: tokio::io::AsyncRead + Unpin> {
     stream:     S,
@@ -7364,6 +7311,71 @@ pub mod tests {
         }
     }
 
+    /// RKEY-b (4): the native client's plain `http` form reaches 127.0.0.1 and nothing else; an
+    /// https URL keeps TLS, and a gateway base gains its `/chat/completions`.
+    #[test]
+    fn test_rkeyb_from_url_refuses_http_off_loopback() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(
+            ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoVerify))
+                .with_no_client_auth()
+        );
+        let mut refused = Vec::new();
+        for url in ["http://example.com/v1", "http://localhost:9099/v1", "http://10.0.0.1/v1",
+            "ftp://127.0.0.1/v1", "http://127.0.0.1@example.com/v1"]
+        {
+            if LlmClient::from_url(url, "sk-secret", "m", 64, tls.clone()).is_ok() { refused.push(url); }
+        }
+        let mock = LlmClient::from_url("http://127.0.0.1:9099/v1/chat/completions", "sk-secret", "m", 64,
+            tls.clone());
+        let real = LlmClient::from_url("https://openrouter.ai/api/v1", "sk-secret", "m", 64, tls.clone());
+        let err = match LlmClient::from_url("http://example.com/v1", "sk-secret", "m", 64, tls.clone()) {
+            Err(e)  => e.to_string(),
+            Ok(_)   => String::new(),
+        };
+        println!("RKEY-b url: off-loopback http accepted {:?}; mock ok {}; real ok {}; key in refusal {} -> {}",
+            refused, mock.is_ok(), real.is_ok(), err.contains("sk-secret"),
+            if refused.is_empty() && mock.is_ok() && real.is_ok() && !err.contains("sk-secret") { "PASS" }
+            else { "FAIL" });
+        assert!(refused.is_empty(), "plain http off loopback was accepted: {:?}", refused);
+        assert!(!err.contains("sk-secret"), "a refusal carried the key");
+        let mock = match mock { Ok(c) => c, Err(e) => panic!("{}", e) };
+        assert!(mock.is_plain());
+        assert_eq!((mock.host.as_str(), mock.port, mock.path.as_str()), ("127.0.0.1", 9099, "/v1/chat/completions"));
+        let real = match real { Ok(c) => c, Err(e) => panic!("{}", e) };
+        assert!(!real.is_plain());
+        assert_eq!((real.host.as_str(), real.port, real.path.as_str()),
+            ("openrouter.ai", 443, "/api/v1/chat/completions"));
+    }
+
+    /// RKEY-c rider (a): a client's `Debug` names its endpoint and model and never its key, so a
+    /// client printed into a log, an error or a panic carries no key (the runner's child holds one).
+    #[test]
+    fn test_rkeyc_debug_holds_no_key() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(
+            ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoVerify))
+                .with_no_client_auth()
+        );
+        let key = "sk-or-v1-debugsecret";
+        let c = match LlmClient::from_url("https://openrouter.ai/api/v1", key, "m/x", 64, tls) {
+            Ok(c)   => c,
+            Err(e)  => panic!("{}", e),
+        };
+        let d = fmt!("{:?}", c);
+        let held = d.contains(key) || d.contains("debugsecret");
+        println!("RKEY-c debug: key in Debug {}, host named {} -> {}", held, d.contains("openrouter.ai"),
+            if !held && d.contains("openrouter.ai") { "PASS" } else { "FAIL" });
+        assert!(!held, "LlmClient's Debug printed its key: {}", d);
+        assert!(d.contains("openrouter.ai") && d.contains("m/x"), "Debug lost the endpoint or model: {}", d);
+    }
+
     #[test]
     fn test_build_request_body() {
         use rustls::crypto::ring;
@@ -9020,6 +9032,12 @@ pub mod tests {
             chunks:   Vec<String>,
             every_ms: u64,
         },
+        /// Say nothing for `after_ms`, then answer a streaming request with one whole
+        /// `application/json` body -- a provider that does not stream and is slow to write.
+        Late {
+            after_ms: u64,
+            body:     String,
+        },
     }
 
     impl Reply {
@@ -9463,6 +9481,13 @@ pub mod tests {
                     tokio::time::sleep(std::time::Duration::from_millis(*every_ms)).await;
                 }
                 let _ = tls.write_all(b"0\r\n\r\n").await;
+                let _ = tls.flush().await;
+            }
+            Reply::Late { after_ms, body } => {
+                tokio::time::sleep(std::time::Duration::from_millis(*after_ms)).await;
+                let out = fmt!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                    Content-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                let _ = tls.write_all(out.as_bytes()).await;
                 let _ = tls.flush().await;
             }
             Reply::Hang { idle_ms } => {
@@ -10005,6 +10030,212 @@ pub mod tests {
         assert!(got.is_ok(), "a stopped round ends cleanly, not as an error");
         assert_eq!(connections(&seen), 1, "a stopped round was sent again");
         assert_eq!(stalls, 0, "a stopped round announced a stall retry");
+    }
+
+    /// A Stop pressed while the stream is silent lands within a second, rather than when the
+    /// idle watchdog or the provider gives up: the read is raced against the turn's halt.  The
+    /// round keeps what it had already said, and nothing is sent again.
+    #[tokio::test]
+    async fn stop_lands_within_1s_while_stream_idle() {
+        let (port, seen) = start_stub(vec![Reply::Stall {
+            chunks:  vec!["data: {\"choices\":[{\"delta\":{\"content\":\"Half an\"}}]}\n\n"
+                .to_string()],
+            idle_ms: 30_000,
+        }]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(60_000);
+        let halt = client.halt();
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let heard = std::cell::Cell::new(false);
+        let fired_at = std::cell::Cell::new(None::<std::time::Instant>);
+        let mut tokens = Vec::new();
+        let mut sink = |d: Delta<'_>| {
+            if let Delta::Text(t) = d {
+                heard.set(true);
+                tokens.push(t.to_string());
+            }
+        };
+        let read = client.chat_stream_tools(&msgs, None, &mut sink);
+        let press = async {
+            while !heard.get() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2_000)).await;
+            fired_at.set(Some(std::time::Instant::now()));
+            halt.fire();
+        };
+        let (got, ()) = match tokio::time::timeout(std::time::Duration::from_secs(20),
+            async { tokio::join!(read, press) }).await
+        {
+            Ok(v)  => v,
+            Err(_) => panic!("the read ran on past the Stop until the test's own cap"),
+        };
+        let landed = fired_at.get().map(|t| t.elapsed()).unwrap_or_default();
+        let resp = match got {
+            Ok(r)  => r,
+            Err(e) => panic!("a stopped round is a clean stop, not an error: {}", e),
+        };
+        assert!(landed < std::time::Duration::from_secs(1),
+            "the Stop waited {:?} on a silent stream", landed);
+        assert!(resp.aborted, "the stopped round did not say it was stopped");
+        assert_eq!(resp.content, "Half an", "the round's partial was not kept");
+        assert_eq!(connections(&seen), 1, "a stopped round was sent again");
+    }
+
+    /// A tag stopped before its turn began is in the cell when the turn's halt is made, so the
+    /// turn fires at once (the early rule); a tag not named stays clear, and an `abort` that
+    /// came before a halt existed does not stop it, while one after it does.
+    #[tokio::test]
+    async fn stop_before_begin_fires_at_creation() {
+        let (tx, rx) = watch(StopSet::default());
+        let early = StopSet::default().tag_stopped("t9");
+        if let Err(e) = tx.send(early.clone()) { panic!("send: {}", e); }
+        let h = Halt::watching("t9", rx.clone());
+        assert!(h.is_set(), "a tag stopped before its turn began did not fire at creation");
+        let quick = std::time::Duration::from_millis(100);
+        assert!(tokio::time::timeout(quick, h.fired()).await.is_ok(),
+            "fired() waited on a halt already stopped");
+        let other = Halt::watching("t10", rx.clone());
+        assert!(!other.is_set(), "a stop of one tag reached another");
+        if let Err(e) = tx.send(early.all_stopped()) { panic!("send: {}", e); }
+        let later = Halt::watching("t11", rx.clone());
+        assert!(other.is_set(), "abort did not reach a turn already running");
+        assert!(!later.is_set(), "an abort made before a turn began stopped it");
+        later.rearm();
+        assert!(!later.is_set());
+        // A halt that hears only `abort`.
+        let blank = Halt::watching("", rx.clone());
+        assert!(!blank.is_set());
+    }
+
+    /// A stop that reached a running turn (`tag_struck`) stops that turn and stays set for it,
+    /// and a later turn reusing the tag runs (D1 of the U1d check); a turn of another tag is
+    /// not reached.
+    #[test]
+    fn struck_tag_stops_its_turn_and_not_a_later_reuse() {
+        let (tx, rx) = watch(StopSet::default());
+        let first = Halt::watching("REUSE", rx.clone());
+        let beside = Halt::watching("OTHER", rx.clone());
+        assert!(!first.is_set());
+        let next = match tx.borrow() { Ok(s) => s.tag_struck("REUSE"), Err(e) => panic!("borrow: {}", e) };
+        if let Err(e) = tx.send(next) { panic!("send: {}", e); }
+        assert!(first.is_set(), "a strike did not reach the running turn of its tag");
+        assert!(!beside.is_set(), "a strike of one tag reached another");
+        let again = Halt::watching("REUSE", rx.clone());
+        assert!(!again.is_set(), "a turn reusing a struck tag was stopped at once");
+        assert!(first.is_set(), "the struck turn's halt did not stay set");
+        // The same through a mark taken at send, as the conversation's own turn takes one.
+        let mark = match rx.borrow() { Ok(s) => s.mark(), Err(e) => panic!("borrow: {}", e) };
+        let s = match rx.borrow() { Ok(s) => s.clone(), Err(e) => panic!("borrow: {}", e) };
+        assert!(!s.stops("REUSE", mark));
+        assert!(s.tag_struck("REUSE").stops("REUSE", mark));
+        assert!(!s.tag_struck("").stops("", mark), "an empty tag was struck");
+        assert!(!s.holds("REUSE"), "a strike was remembered by tag");
+    }
+
+    /// D1b of the U1d check: an early stop obeyed is used up when its turn ends, so a second turn
+    /// under the tag runs; a stop after a turn ended stops nothing later; and a turn sent under an
+    /// ended tag can still be stopped before it begins.
+    #[test]
+    fn ended_tag_refuses_a_late_stop_and_uses_up_an_early_one() {
+        let (tx, rx) = watch(StopSet::default());
+        let put = |f: &dyn Fn(&StopSet) -> StopSet| {
+            let next = match tx.borrow() { Ok(s) => f(&s), Err(e) => panic!("borrow: {}", e) };
+            if let Err(e) = tx.send(next) { panic!("send: {}", e); }
+        };
+        // Early, obeyed, then reused.
+        put(&|s| s.stop_unrun("E"));
+        put(&|s| s.tag_sent("E"));
+        let first = Halt::watching("E", rx.clone());
+        assert!(first.is_set(), "an early stop did not stop its turn");
+        put(&|s| s.tag_ended("E"));
+        put(&|s| s.tag_sent("E"));
+        let second = Halt::watching("E", rx.clone());
+        assert!(!second.is_set(), "an early stop already obeyed stopped the next turn under its tag");
+        put(&|s| s.tag_ended("E"));
+        // Ended, then a late stop, then reused.
+        put(&|s| s.tag_sent("L"));
+        let ran = Halt::watching("L", rx.clone());
+        put(&|s| s.tag_ended("L"));
+        put(&|s| s.stop_unrun("L"));
+        assert!(!ran.is_set());
+        put(&|s| s.tag_sent("L"));
+        let rerun = Halt::watching("L", rx.clone());
+        assert!(!rerun.is_set(), "a late stop of an ended turn stopped the rerun under its tag");
+        // Sent under an ended tag, then stopped before it begins: kept.
+        put(&|s| s.stop_unrun("L"));
+        assert!(rerun.is_set(), "a stop of a turn sent under a lately ended tag was refused");
+        // The ring is bounded and an empty tag changes nothing.
+        let mut s = StopSet::default();
+        for i in 0..(STOP_TAGS_KEPT + 5) {
+            s = s.tag_ended(&fmt!("x{}", i)).tag_ended(&fmt!("x{}", i));
+        }
+        assert_eq!(s.ended.len(), STOP_TAGS_KEPT);
+        assert!(!s.ended_lately("x0") && s.ended_lately(&fmt!("x{}", STOP_TAGS_KEPT + 4)));
+        assert!(s.stop_unrun("x0").holds("x0"), "a tag let go of the ring was refused");
+        assert_eq!(s.tag_ended(""), s, "an empty tag ended a turn");
+    }
+
+    /// The cell keeps the newest `STOP_TAGS_KEPT` tags, once each.
+    #[test]
+    fn stop_set_keeps_the_newest_tags_once_each() {
+        let mut s = StopSet::default();
+        for i in 0..(STOP_TAGS_KEPT + 5) {
+            s = s.tag_stopped(&fmt!("t{}", i)).tag_stopped(&fmt!("t{}", i));
+        }
+        assert_eq!(s.tags.len(), STOP_TAGS_KEPT);
+        assert!(!s.holds("t0") && s.holds(&fmt!("t{}", STOP_TAGS_KEPT + 4)));
+        assert_eq!(s.tag_stopped(""), s, "an empty tag named a turn");
+        assert_eq!(s.all_stopped().all, s.all + 1);
+    }
+
+    /// A Stop sent through the cell -- `abort_turn(tag)` -- reaches a silent stream within a
+    /// second, with no actor between them, and leaves a turn of another tag running.
+    #[tokio::test]
+    async fn stop_cell_lands_within_1s_while_stream_idle() {
+        let (port, seen) = start_stub(vec![Reply::Stall {
+            chunks:  vec!["data: {\"choices\":[{\"delta\":{\"content\":\"Half an\"}}]}\n\n"
+                .to_string()],
+            idle_ms: 30_000,
+        }]).await;
+        let (tx, rx) = watch(StopSet::default());
+        let client = stub_client(port).with_halt(Halt::watching("t1", rx.clone()));
+        client.set_stream_idle_ms(60_000);
+        let beside = Halt::watching("t2", rx);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let heard = std::cell::Cell::new(false);
+        let fired_at = std::cell::Cell::new(None::<std::time::Instant>);
+        let mut sink = |d: Delta<'_>| if let Delta::Text(_) = d { heard.set(true); };
+        let read = client.chat_stream_tools(&msgs, None, &mut sink);
+        let press = async {
+            while !heard.get() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            fired_at.set(Some(std::time::Instant::now()));
+            let next = match tx.borrow() {
+                Ok(s)   => s.tag_stopped("t1"),
+                Err(e)  => panic!("borrow: {}", e),
+            };
+            if let Err(e) = tx.send(next) { panic!("send: {}", e); }
+        };
+        let (got, ()) = match tokio::time::timeout(std::time::Duration::from_secs(20),
+            async { tokio::join!(read, press) }).await
+        {
+            Ok(v)  => v,
+            Err(_) => panic!("the read ran on past the cell's Stop until the test's own cap"),
+        };
+        let landed = fired_at.get().map(|t| t.elapsed()).unwrap_or_default();
+        let resp = match got {
+            Ok(r)  => r,
+            Err(e) => panic!("a stopped round is a clean stop, not an error: {}", e),
+        };
+        assert!(landed < std::time::Duration::from_secs(1),
+            "the cell's Stop waited {:?} on a silent stream", landed);
+        assert!(resp.aborted && client.halted());
+        assert_eq!(resp.content, "Half an", "the round's partial was not kept");
+        assert!(!beside.is_set(), "abort_turn(t1) stopped the turn tagged t2");
+        assert_eq!(connections(&seen), 1);
     }
 
     /// The retry leaves the stalled provider out of OpenRouter's routing, on top of whatever
@@ -11062,7 +11293,7 @@ pub mod tests {
         w.data(1_000, Pulse { grew: false, thinking: false });
         assert_eq!(w.limit(), 5_000);
         assert!(!w.expired(2_499) && w.expired(2_500), "a wholly silent socket was held wide");
-        let mut live = w;
+        let mut live = w.clone();
         live.heard(2_400);
         live.heard(3_800);
         assert!(!live.expired(4_999) && live.expired(5_000), "keep-alives did not hold the wide limit");

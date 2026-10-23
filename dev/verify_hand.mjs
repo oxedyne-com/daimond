@@ -5,7 +5,7 @@
 // The relay's whole job is the part a correct hand never exercises: output that
 // arrives in order and stays attributable, a gap that is announced rather than
 // hidden, and the several ways a native messaging host can vanish. So this runs
-// against hand/install/mock_host.py, which speaks the real framing and the real
+// against kimberlite/install/mock_host.py, which speaks the real framing and the real
 // messages and can be told to misbehave on purpose.
 //
 // It launches a real Chrome with the real unpacked extension, writes the host
@@ -47,7 +47,7 @@ const ROOT	= path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// t
 const EXT	= `${ROOT}/ext`;
 // The SHIPPED manifest names one origin and it is not this test server. The dev
 // origins live in the generated build alone, so that the release artefact cannot
-// carry them -- see dev/extdev.mjs, and hand/REVIEW.md §1.6 for what they cost.
+// carry them -- see dev/extdev.mjs, and kimberlite/REVIEW.md §1.6 for what they cost.
 const { extDev } = await import(pathToFileURL(`${ROOT}/dev/extdev.mjs`).href);
 const INSTALL	= `${ROOT}/hand/install`;
 // Not /tmp -- see the SCRATCH note in harness.mjs.
@@ -56,7 +56,7 @@ const SCRATCH	= process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/d
 // of this file at once would each be told what to do by the other, which is not
 // a hypothetical: it happened, and it looked like the relay dropping chunks. So
 // each run gets its own copy of the mock and its own pair of files. The copy is
-// made on every launch, so a change to hand/install/mock_host.py is picked up.
+// made on every launch, so a change to kimberlite/install/mock_host.py is picked up.
 // The extension's reload grace, read from the file rather than repeated here: a
 // wait that disagreed with the hold would pass or fail for a reason that is not
 // the property. See ext/hand.js, "The reload grace".
@@ -495,7 +495,9 @@ try {
 			!!asked && asked.host === APP2, JSON.stringify(asked && asked.host));
 		const told = await until(other, 'error', 6000);
 		check('declining it refuses that origin, in the sentence the daimon reads',
-			told.some((m) => m.t === 'error' && /declined/i.test(m.message || '')),
+			// ext/hand.js DECLINED_SENTENCE: "refused permission ... will not ask again".
+			told.some((m) => m.t === 'error' && /refused permission to run commands/i.test(m.message || '')
+				&& /will not ask again/.test(m.message || '')),
 			JSON.stringify(told.filter((m) => m.t === 'error')).slice(0, 160));
 		check('and the first origin still holds its own grant',
 			await sw.evaluate((o) => globalThis.DaimondHand.granted(o), APP)
@@ -522,7 +524,7 @@ try {
 
 	// ── The wording is the machine's, not the product's ─────────────
 	//
-	// Release gate 1 in hand/README.md: the consent window's wording must be
+	// Release gate 1 in kimberlite/README.md: the consent window's wording must be
 	// chosen from `caps` rather than hard-coded, so it can only claim what that
 	// machine actually enforces. A fenceless machine gets different, honest
 	// words, and the difference is in the sentence a user would act on.
@@ -688,10 +690,14 @@ try {
 	await page.evaluate(() => window.__open());
 	await page.evaluate(() => window.__exec('r3', ['dump']));
 	all = await until(page, 'ended');
-	const capErr = all.find((m) => m.t === 'error' && /1 MB|disconnected/i.test(m.message || ''));
-	check('an oversized message is reported, not swallowed', !!capErr, JSON.stringify(capErr));
-	check('the report names the 1 MB limit as a cause',
-		!!capErr && /1 MB/.test(capErr.message), (capErr || {}).message);
+	// ext/hand.js GONE_UNSAID: a dropped frame and a crash are one sentence for a PERSON now,
+	// which no longer offers the 1 MB cap as a cause nobody at the keyboard can tell from a
+	// crash; it says the hand stopped and the one thing worth doing (reload).
+	const capErr = all.find((m) => m.t === 'error' && /stopped without saying why/i.test(m.message || ''));
+	check('an oversized message is reported, not swallowed', !!capErr,
+		JSON.stringify(all.filter((m) => m.t === 'error')).slice(0, 300));
+	check('the report says what to do: reload the page',
+		!!capErr && /Reload the page/.test(capErr.message), (capErr || {}).message);
 	check('the run is closed out so the page is not left waiting',
 		all.some((m) => m.t === 'ended' && m.id === 'r3' && m.exit === -1),
 		JSON.stringify(all.filter((m) => m.t === 'ended')));
@@ -704,7 +710,7 @@ try {
 	await page.evaluate(() => window.__exec('r4', ['boom']));
 	all = await until(page, 'ended');
 	check('a crash mid-command is reported',
-		all.some((m) => m.t === 'error' && /disconnected/i.test(m.message || '')),
+		all.some((m) => m.t === 'error' && /stopped without saying why/i.test(m.message || '')),
 		JSON.stringify(all.filter((m) => m.t === 'error')));
 	check('and its run is closed out too',
 		all.some((m) => m.t === 'ended' && m.id === 'r4' && m.killed === true));

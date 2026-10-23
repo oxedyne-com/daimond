@@ -80,7 +80,7 @@ try {
 	// handover, not a synced setting — from then on each device is its own.
 	const LOOK = {
 		'daimond-theme':    'light',
-		'daimond-skin':     'warm',
+		'daimond-skin':     'daylight',	// Daylight is the only look (8a3c6fa02, D-20260929-02): a saved 'warm' reads as daylight
 		'daimond-locale':   'de',
 		'daimond-currency': 'eur',
 		'daimond-fs-scale': '1.15',
@@ -177,7 +177,7 @@ try {
 			layout:   localStorage.getItem('daimond-layout'),
 		}));
 		check('the redeem wrote the parent’s theme, skin, language and currency',
-			stored.theme === 'light' && stored.skin === 'warm'
+			stored.theme === 'light' && stored.skin === 'daylight'
 				&& stored.locale === 'de' && stored.currency === 'eur',
 			JSON.stringify(stored).slice(0, 160));
 		check('and the reading size and the whole panel layout',
@@ -196,7 +196,7 @@ try {
 			scale: getComputedStyle(document.documentElement).getPropertyValue('--fs-scale').trim(),
 		}));
 		check('the child paints as the parent did: theme, skin, language, reading size',
-			painted.theme === 'light' && painted.skin === 'warm'
+			painted.theme === 'light' && painted.skin === 'daylight'
 				&& painted.lang === 'de' && painted.scale === '1.15',
 			JSON.stringify(painted));
 

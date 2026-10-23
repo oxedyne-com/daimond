@@ -31,7 +31,7 @@ function check(name, cond, detail) {
 }
 
 const FNS = ['readJson', 'diamondModels', 'setDiamondModel', 'blankDiamondModel', 'mergeDiamondModel',
-	'adoptDiamondModel', 'diamondModel', 'migrateInherit', 'unmigrateInherit', 'setFoldPick',
+	'adoptDiamondModel', 'diamondModel', 'migrateInherit', 'unmigrateInherit', 'setFoldPick', 'everyDiamondClient',
 	'withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
 	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit', 'mergeFold',
 	'mergeChatRecords', 'touchChatMeta', 'touchChatModel', 'noteModelInForce', 'bootInherit', 'inheritGate'];
@@ -99,7 +99,7 @@ function device(src, stampSrc, o) {
 	const env = {
 		window: win, localStorage: localStorage, Date: DateStub, DaimondStamp: win.DaimondStamp,
 		DaimondModels: win.DaimondModels, Notes: undefined, cfg: cfg, CFG_KEY: CKEY, chats: chats,
-		chatsUp: o.chatsUp !== false, diamonds: o.diamonds, _diamondApps: {}, _diamondAppProvider: new Map(),
+		chatsUp: o.chatsUp !== false, diamonds: o.diamonds, _diamondApps: {}, _daimonApps: new Map(), _diamondAppProvider: new Map(),
 		applyFoldSettings: () => {}, persistChats: () => { env.persisted++; }, persisted: 0,
 		diag: () => {}, tel: () => {}, t: (k) => k,
 		slimMessages: (m) => m || [],

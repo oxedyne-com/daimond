@@ -1,0 +1,13 @@
+# name op method dt status query  (relay_v1 golden exchanges, replayed in order; see README.md)
+01_release_put main POST 0 200 -
+02_release_get_open main GET 10 200 nonce=cmVsZWFzZS1ub25jZS0wMQ
+03_release_refresh main POST 300 200 -
+04_release_answer answer POST 310 200 -
+05_release_get_answered main GET 320 200 nonce=cmVsZWFzZS1ub25jZS0wMQ
+06_release_second_answer answer POST 321 409 -
+07_release_alarm alarm POST 330 200 -
+08_enrol_put main POST 400 200 -
+09_install_list main GET 410 200 install=IiIiIiIiIiIiIiIiIiIiIg
+10_enrol_answer answer POST 420 200 -
+11_enrol_get_answered main GET 430 200 nonce=ZW5yb2wtbm9uY2UtLTAwMg
+12_unknown_nonce main GET 440 404 nonce=dW5rbm93bi1ub25jZTAwMw

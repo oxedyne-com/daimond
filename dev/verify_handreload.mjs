@@ -18,7 +18,7 @@
 // ── The property, which is not the one I set out to check ───────────
 //
 // I wrote this file expecting to find the record lost and the leak orphaned:
-// `Runner.left` (hand/src/exec.rs:417) is an `Arc<Mutex<HashMap<..>>>` — memory in
+// `Runner.left` (kimberlite/src/exec.rs:417) is an `Arc<Mutex<HashMap<..>>>` — memory in
 // the hand process and nowhere else — and `ext/hand.js`'s `stop()` (ext/hand.js:556)
 // sends `bye` and disconnects the native host when the page goes. Both true, and
 // the conclusion drawn from them was wrong. MEASURED (2026-08-24, first run of this
@@ -134,8 +134,8 @@ const CHROME = process.env.DAIMOND_CHROME
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
 const WWW	= path.join(ROOT, 'www');
-const INSTALL	= path.join(ROOT, 'hand/install/install.sh');
-const HAND	= path.join(ROOT, 'hand/target/release/daimond-hand');
+const INSTALL	= path.join(ROOT, 'kimberlite/install/install.sh');
+const HAND	= path.join(ROOT, 'kimberlite/target/release/kimberlite');
 const EXTID	= 'mpliijponglmmffjnonahhignkpkhmij';
 // Not /tmp -- it is a tmpfs, and what is written there is RAM charged to this
 // machine's agent fleet. See the SCRATCH note in harness.mjs.
@@ -341,7 +341,7 @@ if (BREAK && BREAKS[BREAK].file === 'www') note(`break '${BREAK}' applied to the
 const buildEnv = { ...process.env };
 delete buildEnv.CARGO_TARGET_DIR;
 if (!process.env.DAIMOND_NO_BUILD) {
-	const r = spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+	const r = spawnSync('cargo', ['build', '--release', '--manifest-path', 'kimberlite/Cargo.toml'],
 		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 	if (r.status !== 0) {
 		console.log((r.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 5).join('\n'));

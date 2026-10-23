@@ -181,6 +181,9 @@
 	/// `meter:deletes` of `hand/src/main.rs`, read by `deletes_metered` in
 	/// src/tools.rs.
 	var METER_CAP = 'meter:deletes';
+	/// The runner install id, from `/etc/kimberlite/trust.jdat`, when this machine runs a
+	/// Daimond runner (KS-p4). The page asks the relay whether an update waits on the person.
+	var RUNNER_CAP = 'runner-install:';
 
 	/// Whether the person has been told this machine's hand is older than the
 	/// deletion meter. Once per page: it is a fact about the machine, and the
@@ -1677,6 +1680,8 @@
 		},
 		setExtId: function (id) { state.extId = id || ''; },
 		adopt: adopt,
+		/// The runner install id the hand reported in its hello, or ''.
+		runnerInstall: function () { return capValue(state.caps, RUNNER_CAP); },
 		forget: forget,
 		close: close,
 		status: status,

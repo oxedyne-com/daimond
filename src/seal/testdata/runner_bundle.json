@@ -1,0 +1,9 @@
+{
+  "about": "R2d1 runner bundle vector: src/seal/runner.rs writes it (R2D_REGEN=1); www/js/runnerapprove.test.mjs seals over the wasm with ed_pk and opens with ed_seed; the gateway test reads bundle.",
+  "ed_seed":"408e6785f298ad379174a54ef9f816af134c3c584acab70a1411fd2d776565a9",
+  "ed_pk":"ea74eb76f6c4f109df26fbe09f540cf9183c6a3f1f04487419d722f0c9e57c74",
+  "x_pk":"3ed5d4a40f55e4c676e222d72a872c70263577d4f285faaa989157e744df0b78",
+  "sentinel":"R2D-PLAINTEXT-SENTINEL-7f3a9c",
+  "plain":"{'v':1,'kind':'kimberlite-bundle','device':'rvector','pass':'R2D-PLAINTEXT-SENTINEL-7f3a9c'}",
+  "bundle":"44505331403ff1e0d613a1bceac67b96721691f533a2fe5dd05d023476beb98b132fe32c0154c03490b050184eaa9c688f2fe7eb0f9395b396f620c3e07646c0d9b5a18c393a1ded278fd22cc98fcad0e0e5a57fc0cf6b00672d1b197848199f95e4191f38ddfce2b4ca7f5d85c4c0e245b8d1c9bc723d4d9fe1b55ab6128b774754ee8e5dcd0cfb495d07778f313e6aef3f6fafeb0da91a33575d1027bbcf3590816c6889ac79e5323ab29fde1103ddb440690d1189cb3dfb452bc6e4bd9571c73bcd2c767a56c8bb1685348b29602d8e754443649c1c75f9"
+}

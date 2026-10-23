@@ -15,7 +15,7 @@
 //      account's chunk index names a workspace path (the merge's `refreshPaths` asks whether this
 //      device holds it, which is the call that reaches OPFS).
 //   P  the device under test (`--phone`):
-//        webkit          Playwright's WebKit, which has no OPFS at all;
+//        webkit          Playwright's WebKit, its OPFS taken away (it once had none; now it has);
 //        chromium-absent Chromium with `getDirectory` taken away (OPFS disabled);
 //        chromium-throw  Chromium whose `getDirectory` rejects, as a private window or an evicted
 //                        store does;
@@ -131,7 +131,12 @@ async function launch(d) {
 	}
 	// OPFS taken away, or made to refuse, before any script of the app runs. The prototype, so the
 	// wasm's own binding (web_sys calls `StorageManager.prototype.getDirectory`) meets it too.
-	if (d.opfs === 'absent') {
+	//
+	// WEBKIT TOO, now. The rehearsal's WebKit had no `getDirectory`, so `--phone webkit` meant "an
+	// engine without OPFS" by itself; the WebKit Playwright ships here now has one, and the run read
+	// `P's OPFS: works` and then failed every SAYS check for a device that could hold files (U2V,
+	// 2026-10-16). So it is taken away on WebKit as on Chromium, and the mode keeps its meaning.
+	if (d.opfs === 'absent' || d.opfs === 'engine') {
 		await d.ctx.addInitScript(() => { try { delete StorageManager.prototype.getDirectory; } catch (e) { /* none */ } });
 	} else if (d.opfs === 'quota') {
 		// The store opens, and every write into it is refused as a full disk refuses it --

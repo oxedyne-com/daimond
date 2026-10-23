@@ -137,6 +137,8 @@ function harness(rounds, after) {
 		dsEvent:        (kind, row) => events.push({ kind, row }),
 		recordSpend:    (model, p, c, ca, cost) => spends.push({ p, c, ca, cost }),
 		friendlyError:  (e) => String(e && e.message || e),
+		// The page's one list of endings a worker can be carried on from (`stop` reads it).
+		RESUMABLE_ENDINGS: ['paused', 'interrupted', 'capped', 'spend_cap', 'timed_out'],
 	};
 	const scope = new Proxy(S, {
 		has: () => true,
@@ -159,6 +161,8 @@ function harness(rounds, after) {
 		render() {}, touch() {}, nodeOf() { return 'node'; }, persist() {}, pump() {},
 		settleAwaits() { this.settled++; }, gather() { this.gathered++; },
 		giveSlot() {}, takeSlot() { return 1; }, unseeable() {},
+		// The run lock (U3a QRFIX2 F3) guards `load` across tabs; no lock manager here.
+		holdRunLock() {}, freeRunLock() {}, persistNow() {},
 	};
 	W.start = mk('start: async function (run) {');
 	W.stop  = mk('stop: function (run) {');

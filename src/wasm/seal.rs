@@ -5,7 +5,9 @@
 //!   the ephemeral secret and body key live for the one call.
 //! - [`seal_post_epk`] checks a `DPS1` header and answers the ephemeral key, which identity.js
 //!   agrees with under its non-extractable sealing key; [`seal_post_open`] takes those 32 bytes
-//!   and opens the record.
+//!   and opens the record; [`seal_post_open_body`] opens it with the content key alone (the
+//!   operator console's report check).
+//! - [`seal_runner_bundle`] seals the account's keys to one runner's Ed25519 device key (R2d1).
 //! - [`seal_scheme`], [`seal_peer_frame`] and [`seal_peer_aad`] are the peer envelope's codec; the
 //!   one AES-GCM under the account key stays identity.js's `wrapBytesAad`.
 //!
@@ -70,6 +72,13 @@ pub fn seal_post_open(bytes: &[u8], shared: &[u8], own_pub: &[u8]) -> Result<Vec
 	Ok(out)
 }
 
+/// Open a `DPS1` record's body with its content key (32 bytes), answering the plaintext: the
+/// operator console's report check, so it reads the record with this seal and not a copy.
+#[wasm_bindgen]
+pub fn seal_post_open_body(bytes: &[u8], ck: &[u8]) -> Result<Vec<u8>, JsValue> {
+	post::open_body(bytes, ck).map_err(to_js_err)
+}
+
 /// The scheme a peer body's tag names: `"DPY2"`, `"DPY1"`, `"DPS1"`, or `""` for none.
 #[wasm_bindgen]
 pub fn seal_scheme(bytes: &[u8]) -> String {
@@ -89,4 +98,12 @@ pub fn seal_peer_frame(body: &[u8]) -> Vec<u8> {
 #[wasm_bindgen]
 pub fn seal_peer_aad() -> String {
 	String::from_utf8_lossy(peer::AAD).into_owned()
+}
+
+/// Seal `plain` to a runner's Ed25519 device key (32 bytes): a one-slot `DPS1` to the key's
+/// X25519 form ([`runner`](crate::seal::runner), R2d1).  The tab seals the account's keys this
+/// way when he approves a runner with his passkey; only that runner's keeper opens it.
+#[wasm_bindgen]
+pub fn seal_runner_bundle(ed_pk: &[u8], plain: &[u8]) -> Result<Vec<u8>, JsValue> {
+	crate::seal::runner::seal(ed_pk, plain).map_err(to_js_err)
 }

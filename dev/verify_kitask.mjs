@@ -28,7 +28,7 @@
 // Needs a world for the mock provider (`eval "$(bash dev/world.sh N --env)"`).
 //
 //	node dev/verify_kitask.mjs
-import { open } from './harness.mjs';
+import { open, markHere, standInFolders } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -38,7 +38,10 @@ const check = (name, pass, detail) => {
 };
 
 const MOCK = process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions';
-const s = await open({ name: 'kitask', signIn: false, connect: false });
+// SIGNED IN, since HIST-SAFE U2 (58fbaeca): the engine reads this device's record of the marks
+// itself, and refuses every act while the account is locked ("the record of the folders marked
+// here could not be read"), which is what a run with `signIn: false` hit.
+const s = await open({ name: 'kitask', connect: false });
 const p = s.page;
 await p.waitForTimeout(1500);
 
@@ -66,6 +69,17 @@ const ids = await p.evaluate(async () => {
 	return { yes: a, no: b, wrap: c, unsaved: d };
 });
 
+// THE FOLDER A COMMAND RUNS IN. The page no longer hands the engine a Diamond's attached list
+// (HIST-SAFE U2): `code` is a machine folder opened in the panel and marked into each Diamond
+// here, as a person does, so the engine's own read of the marks puts it in the bounds.
+const F = await standInFolders(s, { tag: 'kitask', which: ['a'], dirs: ['code'] });
+const picked = await F.pick('a');
+const ref = await p.evaluate(() => DaimondAttach.ref('dir', 'code'));
+const pressed = [];
+for (const id of Object.values(ids)) pressed.push((await markHere(s, id, ref)).confirmed);
+check('0. the folder code is open and marked into each Diamond here',
+	picked.landed && pressed.every(Boolean), JSON.stringify({ picked, pressed }));
+
 // One daimon turn, started and left running so the card can be answered from here.
 const start = (id, argv = ['cargo', '--version']) => p.evaluate(async (a) => {
 	window.__sent = [];
@@ -75,7 +89,8 @@ const start = (id, argv = ['cargo', '--version']) => p.evaluate(async (a) => {
 	const app = new window.__mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
 	window.__turn = app.steer_crystal(a.id,
 		'@tool run ' + JSON.stringify({ argv: a.argv, cwd: 'code' }),
-		JSON.stringify(['code']), '[]', kits, [],
+		// (id, instruction, toolkits, prior, on_event): the marks are the engine's to read.
+		kits, [],
 		(ev) => { if (ev.type === 'tool_result') window.__seen.push(String(ev.content || '')); })
 		.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
 	return kits;
@@ -181,6 +196,7 @@ await p.evaluate(async (ids) => {
 		try { await DaimondCore.diamondApp().delete_diamond(id); } catch (e) { /* left */ }
 	}
 }, ids);
+await F.tidy();
 await s.close();
 guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);

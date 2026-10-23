@@ -130,6 +130,8 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 	// A daimon's turn: the mock answers `@tool` / `@tools` with those calls.
 	const turnEv = async (id, marks, text) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
+		// `dev/verify_livequiet.mjs` (U3a LV2 (c)) runs its turns at a short liveness limit.
+		if (window.__livenessMs && eng.set_liveness_ms) eng.set_liveness_ms(window.__livenessMs);
 		const seen = [];
 		try {
 			await press(id, marks);
@@ -144,6 +146,8 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 	// A Diamond's worker: its changes wait for the daimon's turn end.
 	const worker = async (id, marks, text) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
+		// `dev/verify_livequiet.mjs` (U3a LV2 (c)) runs its turns at a short liveness limit.
+		if (window.__livenessMs && eng.set_liveness_ms) eng.set_liveness_ms(window.__livenessMs);
 		const seen = [];
 		try {
 			await press(id, marks);
@@ -703,6 +707,50 @@ if (want('F8')) {
 //
 // The gateway's answer is stood in by `window.DaimondWeb.fetch`, which is exactly what
 // `src/wasm/web.rs` `fetch_raw` awaits; in production it is whatever the fetched URL serves.
+// ── U3a LV2 (c), run by `dev/verify_livequiet.mjs` as DK_ONLY=LQC, and only when named ──
+//
+// A PERSON'S WAIT IS NOT A SILENT TOOL.  With liveness at 3 s, a turn whose delete is held at the
+// open-deletes question for 9 s and then answered yes goes on and finishes its deletes; the wait
+// beats its call's deadline, and the beat is in the console.  Red when the tool race is pointed
+// at the liveness limit and the beat is taken away: the call is cut and the deletes stop.
+if (want('LQC') && want.names.includes('LQC')) {
+	const logs = [];
+	p.on('console', (m) => logs.push(m.text()));
+	await p.evaluate(async () => {
+		window.__livenessMs = 3000;
+		try { localStorage.setItem('daimond-autonomous-posture', '1'); } catch (e) { /* private mode */ }
+		__k.app.set_open_deletes_ask(3);
+		for (const n of ['a0', 'a1', 'a2', 'a3', 'a4']) await __k.mod.write_file('vault/lq/' + n + '.md', 'lq ' + n);
+	});
+	const HELD = '.modal.dlg[data-ask="delete-held"]';
+	const t0 = Date.now();
+	await p.evaluate((id) => {
+		window.__lq = __k.turnEv(id, ['vault'], '@tools ' + ['a0', 'a1', 'a2', 'a3', 'a4']
+			.map((n) => 'file_delete ' + JSON.stringify({ path: 'vault/lq/' + n + '.md' })).join(' ;; '));
+	}, id);
+	const asked = await p.waitForSelector(HELD, { timeout: 45000 }).then(() => Date.now(), () => 0);
+	if (asked) {
+		await p.waitForTimeout(9000);
+		await p.waitForSelector(HELD + ' .dlg-ok:not([disabled])', { timeout: 5000 }).catch(() => {});
+		await p.click(HELD + ' .dlg-ok').catch(() => {});
+	}
+	const said = await p.evaluate(async () =>
+		(await window.__lq).filter((e) => e.name === 'file_delete').map((e) => e.content));
+	const gone = await p.evaluate(async () => {
+		const out = [];
+		for (const n of ['a0', 'a1', 'a2', 'a3', 'a4']) out.push((await __k.read('vault/lq/' + n + '.md')) === null);
+		return out;
+	});
+	check('LQC. with liveness at 3 s, a delete held 9 s at the person\'s question, then answered yes, goes on',
+		!!asked && said.filter((x) => /^Deleted /.test(x)).length === 5 && gone.every(Boolean)
+			&& !said.some((x) => /within its own limit/.test(x)),
+		JSON.stringify({ asked: asked ? asked - t0 : null, said: said.map((x) => x.slice(0, 60)), gone }));
+	check('LQC. and the person\'s wait beat its call, in the console',
+		logs.some((l) => /\[daimond\] person-wait beat: ask_to_go_on/.test(l)),
+		logs.filter((l) => /person-wait/.test(l)).slice(0, 2).join(' | ') || 'no beat line');
+	await p.evaluate(() => { window.__livenessMs = 0; });
+}
+
 if (want('F9')) {
 	const f9 = await p.evaluate(async () => {
 		const { mod, app, read, turn } = __k;

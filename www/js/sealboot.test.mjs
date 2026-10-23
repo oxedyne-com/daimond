@@ -172,9 +172,11 @@ async function main() {
 	console.log('D5: a tampered body is refused in the page\'s own words');
 	{
 		const bad = new Uint8Array(sealed); bad[bad.length - 1] ^= 1;
-		let m6 = '', code = null;
-		try { await P.unseal(bad); } catch (e) { m6 = e.message; code = e.code; }
+		let m6 = '', ref6 = null;
+		try { await P.unseal(bad); } catch (e) { m6 = e.message; ref6 = e.refusal; }
 		check('the refusal is post.err_damaged, not the Rust sentence', /changed after it was sealed/.test(m6) && !/seal:/.test(m6), m6);
+		check('the refusal is typed "damaged" (TAKEROW keeps it as bad:, never retries it)', ref6 === 'damaged',
+			JSON.stringify(ref6));
 	}
 
 	console.log(checks + ' checks, ' + failures + ' failed');

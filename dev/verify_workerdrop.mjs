@@ -62,18 +62,17 @@ const BREAK = (() => {
 
 const BREAKS = {
 	// The tile before the fix: an interrupted run is offered nothing. Since f6c730f0 the
-	// same condition also offers a capped or spend-capped run its Continue, over two lines;
-	// the break takes out only `interrupted`, the case this file is about.
+	// same condition also offers a capped or spend-capped run its Continue, and since U3a END
+	// it reads the one `RESUMABLE_ENDINGS` list; the break takes out only `interrupted`, at
+	// the tile alone, the case this file is about.
 	notile: [
-		"\t\t\t} else if (run.status === 'paused' || run.status === 'interrupted'\n"
-			+ "\t\t\t\t|| run.status === 'capped' || run.status === 'spend_cap') {\n",
-		"\t\t\t} else if (run.status === 'paused'\n"
-			+ "\t\t\t\t|| run.status === 'capped' || run.status === 'spend_cap') {\n",
+		"\t\t\t} else if (RESUMABLE_ENDINGS.indexOf(run.status) >= 0) {\n",
+		"\t\t\t} else if (run.status !== 'interrupted' && RESUMABLE_ENDINGS.indexOf(run.status) >= 0) {\n",
 	],
 	// The plausible over-correction: continue everything, including a run with no text
 	// to continue from.
 	norestart: [
-		"\t\t\trun.resume = !!(run.text && run.text.trim());\n",
+		"\t\t\trun.resume = !!workerProse(run).trim();\n",
 		"\t\t\trun.resume = true;\n",
 	],
 };

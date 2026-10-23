@@ -647,26 +647,35 @@ mod tests {
 	fn the_archive_is_written_first_and_side_files_only_once_accepted() {
 		let at = |src: &str, what: &str| src.find(what)
 			.unwrap_or_else(|| panic!("not found: {}", what));
-		let dia = include_str!("wasm/diamond.rs");
+		// On r1 the store is `store/diamond.rs` and the settle is `standing_settle` (PORT-L), so
+		// the order is read there (PORT-PL-A); the file tools' order is PORT-L's own test.
+		let dia = include_str!("store/diamond.rs");
 		let fold = &dia[at(dia, "pub async fn fold_apply(")..];
 		assert!(at(fold, "archive_append(FileRoot::Opfs, &archive, lines)")
 			< at(fold, "for (leaf, text) in land.files.iter()"), "F5: the fold archives first");
-		let settle = &dia[at(dia, "pub(crate) async fn settle(")..];
-		assert!(at(settle, "archive_append(") < at(settle, "self.decisions")
-			&& at(settle, "self.decisions") < at(settle, "self.touched"), "F6: archive first");
-		let landed = &dia[at(dia, "async fn state_landed(")..at(dia, "async fn archive_append(")];
+		// HL2: one phase per call, `Archive` the archives alone, `Record` DECISIONS then touched.
+		let settle = &dia[at(dia, "pub async fn standing_settle(")..];
+		let settle = &settle[..at(settle, "\n}\n")];
+		assert!(at(settle, "SettlePhase::Archive    => {") < at(settle, "archive_append(")
+			&& at(settle, "archive_append(") < at(settle, "SettlePhase::Record     => {")
+			&& at(settle, "SettlePhase::Record     => {") < at(settle, "decisions_settle(")
+			&& at(settle, "decisions_settle(") < at(settle, "touched_settle("), "F6: archive first");
+		let landed = &dia[at(dia, "async fn state_landed(")..at(dia, "pub fn state_split(")];
 		assert!(!landed.contains("write_file") && !landed.contains("archive_append("),
-			"F6: the STATE landing only reads; its side files wait for `settle`");
+			"F6: the STATE landing only reads; its side files wait for `standing_settle`");
+		// HL3: both page doors hand the landing to the one door, which archives as the held
+		// write's pre step, under the target's lock, and records once the bytes have landed.
 		let tools = include_str!("tools.rs");
-		let write = &tools[at(tools, "async fn file_write_page(")..];
-		let write = &write[..at(write, "\n    /// ")];
-		assert!(at(write, "before_overwrite(") < at(write, "landed.settle(ctx.root)")
-			&& at(write, "landed.settle(ctx.root)") < at(write, "restore_store_write("),
-			"F6: file_write settles once accepted, before the file is written");
 		let edit = &tools[at(tools, "standing_retired(ctx.root, &path, updated)")..];
-		assert!(at(edit, "before_overwrite(") < at(edit, "landed.settle(ctx.root)")
-			&& at(edit, "landed.settle(ctx.root)") < at(edit, "write_licensed("),
-			"F6: file_edit settles once accepted, before the file is written");
+		assert!(at(edit, "before_overwrite(") < at(edit, "Some(&landed)"),
+			"F6: file_edit settles once accepted");
+		let write = &tools[at(tools, "async fn file_write_page<")..];
+		assert!(at(write, "before_overwrite(") < at(write, "Some(&landed)"),
+			"F6: file_write settles once accepted");
+		let door = &tools[at(tools, "pub async fn landed_store_write<")..];
+		assert!(at(door, ".write_licensed_then(") < at(door, "SettlePhase::Archive)).await")
+			&& at(door, "SettlePhase::Archive)).await") < at(door, "SettlePhase::Record)"),
+			"HL3: archive under the lock, then the bytes, then the record");
 	}
 
 	#[test]

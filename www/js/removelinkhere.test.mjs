@@ -69,3 +69,14 @@ test('a refused hand-written removal keeps the entry and says so', async () => {
 	await assert.rejects(() => f({ ...ROW, id: '  ' }), /refused/);
 	assert.ok(!calls.some((c) => c[0] === 'drop'), 'the mark stays in force');
 });
+
+test('a refused removal by id keeps the entry too: the entry goes only once the store accepts', async () => {
+	const { calls, f } = rig(true);
+	await assert.rejects(() => f({ ...ROW, id: 'k1' }), /refused/);
+	assert.ok(!calls.some((c) => c[0] === 'drop'), 'the mark stays in force');
+	const ok = rig(false);
+	await ok.f({ ...ROW, id: 'k1' });
+	const i = ok.calls.findIndex((c) => c[0] === 'remove_link');
+	const d = ok.calls.findIndex((c) => c[0] === 'drop');
+	assert.ok(d > i, 'entry dropped after the store accepted');
+});

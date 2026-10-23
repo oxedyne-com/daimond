@@ -398,7 +398,9 @@ try {
 			};
 		});
 		check(armed.has, 'and one WITH an action grows one', JSON.stringify(armed));
-		check(/^session-box-name,pptw,tile-cog/.test(armed.order),
+		// The avatar button (S1M avatars) leads the header by design; the rule is about
+		// the name, the light and the cog, so anchor on the name with the avatar allowed.
+		check(/^(av-btn,)?session-box-name,pptw,tile-cog/.test(armed.order),
 			'to the right of the name, hard against the cog', armed.order);
 		// And no chat tile has one at all — the user's ruling, and the same rule:
 		// a chat spends when you type in it and at no other time.

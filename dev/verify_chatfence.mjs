@@ -97,7 +97,7 @@ try {
 				window.__hand.files = window.__hand.files || [];
 				window.__hand.files.push(spec);
 				// A READ ANSWERS AS THE HAND DOES FOR A FILE IT HAS NOT GOT (`fs_said` in
-				// hand/src/exec.rs), which is what a write door's copy-first read meets on a new
+				// kimberlite/src/exec.rs), which is what a write door's copy-first read meets on a new
 				// file. An empty "ok" is no read the engine can parse, and since 2026-09-23 a
 				// write whose file could not be kept is refused, never made (audit finding 5).
 				if (spec.op === 'read') {

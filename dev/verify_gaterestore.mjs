@@ -112,8 +112,17 @@ await a.page.evaluate(async ([p, body]) => {
 	await mod.write_file(p, body);
 }, [WS_PATH, MARKER]);
 
+// OPENED, NOT TOGGLED. The name row is the one door into Settings AND back out of them since
+// D-20261009-11, and it sits inside `#admin`, so a click on an open drawer closes it -- and
+// `open()`'s `connectMock` leaves the drawer open on the provider form it saved. Clicking it blind
+// shut Settings and then waited fifteen seconds for a download from a hidden button (U2V, 16 Oct).
+// That drawer shows the provider form, not the home list Export is on, so it is shut first.
+if (await a.page.evaluate(() => !!document.querySelector('#admin.admin-open'))) {
+	await a.page.click('#user-row');
+	await a.page.waitForSelector('#admin:not(.admin-open)', { timeout: 5000 });
+}
 await a.page.click('#user-row');
-await a.page.waitForTimeout(400);
+await a.page.waitForSelector('button.admin-item:has-text("Export a backup")', { state: 'visible', timeout: 10000 });
 const dl = a.page.waitForEvent('download', { timeout: 15000 });
 await a.page.click('button.admin-item:has-text("Export a backup")');
 const file = scratch('gaterestore-backup.json');

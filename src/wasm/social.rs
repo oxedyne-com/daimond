@@ -33,6 +33,7 @@ use oxedyne_fe2o3_core::prelude::*;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
+pub use crate::engine::host::types::ui::Composed;
 
 
 #[wasm_bindgen]
@@ -55,24 +56,6 @@ extern "C" {
     fn commit(this: &Panel, token: &str) -> Result<JsValue, JsValue>;
 }
 
-
-/// What came back from asking the panel what one act would publish.
-///
-/// A refusal is an ANSWER and not an error.  Every reason a compose can fail -- no voice on the
-/// forge, a proposal number that is not there, an act this build does not have -- is something
-/// the model can act on and must be told in its own language, so it comes back as a sentence to
-/// hand over rather than as an `Err` the dispatcher would dress in a failure line.
-#[derive(Clone, Debug)]
-pub enum Composed {
-    // Ready to put to the user.  `token` is opaque on this side on purpose: Rust must not be
-    // able to assemble one, or the binding between what was seen and what is sent is a
-    // convention rather than a mechanism.
-    Draft {
-        shown: String,	// exactly what the user is shown
-        token: String,	// the panel's handle on the payload those characters describe
-    },
-    Refused(String),	// nothing was composed, and this is what the model reads instead
-}
 
 /// Reach the driver object on `window`, or refuse in the model's language.
 fn panel() -> Outcome<Panel> {
@@ -117,7 +100,9 @@ pub async fn read(req: &str) -> Outcome<String> {
 /// * `req` - The request [`crate::tools::social_send_step`] composed.
 pub async fn compose(req: &str) -> Outcome<Composed> {
     let p = res!(panel());
-    let json = res!(text(p.compose(req)).await);
+    // The panel puts the draft to a person: the wait beats the call's deadline (U3a LV2).
+    let json = res!(crate::wasm::held_by_person("social compose",
+        text(p.compose(req))).await);
     if let Some(no) = extract_json_string(&json, "refusal") {
         if !no.trim().is_empty() {
             return Ok(Composed::Refused(no));
@@ -147,5 +132,5 @@ pub async fn compose(req: &str) -> Outcome<Composed> {
 /// * `token` - The handle the panel minted for that draft, and no other.
 pub async fn commit(token: &str) -> Outcome<String> {
     let p = res!(panel());
-    text(p.commit(token)).await
+    crate::wasm::held_by_person("social commit", text(p.commit(token))).await
 }

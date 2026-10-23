@@ -404,50 +404,66 @@ check('the crumb names the folder the agent is back in',
 	backChips.active.includes(FOLDER), backChips.all);
 
 // The guard. Coming back is a ROOT SWAP, and a root swap while an agent is mid-turn leaves it
-// reading and writing somewhere else entirely. `openFolder` and `switchToOpfs` have always
-// refused; the reconnect path had no guard at all, and routing the chip through it is exactly
-// what would have made that gap reachable by an ordinary click.
+// reading and writing somewhere else entirely. Since UNBLOCK-15 (5ab2d5e0, D-20261015-18) the
+// guard holds back only the turns WORKING IN THIS FOLDER, by name, behind a confirm, and never
+// in red; an agent busy anywhere else is no reason to refuse. It used to refuse on any
+// `DaimondCore.busy()`, with a red sentence in the mode row, and this check used to stub that.
+// Both halves are driven here, through `rootSwitchBlocked` (daimond.js), which every entry to a
+// swap goes through, including the head ⋯'s reconnect path.
+//
+// (i) Busy, but not here: the change goes ahead. The old guard refused this.
 await workMenu(p, 'head', 'browser');
 await p.waitForTimeout(700);
 await p.evaluate(() => { window.__busyWas = DaimondCore.busy; DaimondCore.busy = function () { return true; }; });
 await zero();
 await workMenu(p, 'head', 'machine');
-await p.waitForTimeout(700);
-const blocked = { mode: await mode(), msg: await msg() };
-// THE PROPERTY. Two halves, and the first is the one that matters: with an
-// agent mid-turn the root DID NOT MOVE (`rootSwitchBlocked`, daimond.js, is
-// what every entry to a swap goes through, including the chip's reconnect
-// path). An agent resolves every path against one root, so a swap under it
-// writes the user's work into a folder nobody told it about. The guard returns
-// before the picker is ever raised, so nothing about the root is touched.
-//
-// The second half is that the person is told WHY it refused, which means the
-// message has to blame the running agent -- name it, hold the change off on
-// account of it, and say what is being held off. `/agent/` alone would pass for
-// "an agent did something, carry on"; dropping the message clause entirely
-// would pass for a silent refusal, which is what this used to be and is how it
-// reads as a broken chip.
-//
-// This was `/agent is working/`, which the copy stopped saying in those words
-// while saying the same thing: "Wait for the agent to finish before changing
-// where it works."
-const refusalBlamesTheAgent = (m) => ({
-	// The agent is named as the reason...
-	agent: /\bagent\b/i.test(m),
-	// ...the change is held off rather than reported as done...
-	held:  /\b(wait|not|never|cannot|can[’']t|won[’']t|refus\w*|block\w*|busy|until|while|before|first|try again)\b/i.test(m),
-	// ...and what is held off is where the agent works.
-	root:  /\b(where it works|where the agent works|workspace|folder|root|mov(e|ing)|chang(e|ing)|switch(ing)?)\b/i.test(m),
-	// ...and it is not a success notice wearing a warning's clothes.
-	notDone: !/\b(is now|now in|now at|switched to|moved to|changed to|has changed|done)\b/i.test(m),
-});
-const why = refusalBlamesTheAgent(blocked.msg);
-check('a root swap is refused while an agent is working, and blames the agent for the refusal',
-	blocked.mode === 'opfs' && why.agent && why.held && why.root && why.notDone,
-	`mode: ${blocked.mode} · "${blocked.msg}"`
-		+ (Object.values(why).every(Boolean) ? '' : ' · ' + Object.entries(why)
-			.filter(([, v]) => !v).map(([k]) => 'no ' + k).join(', ')));
+await p.waitForTimeout(900);
+const elsewhere = { mode: await mode(), dialog: await p.evaluate(() => !!document.querySelector('.dlg-card')) };
 await p.evaluate(() => { DaimondCore.busy = window.__busyWas; });
+check('an agent busy outside this folder does not hold the change: the agent goes back to the folder',
+	elsewhere.mode === 'folder' && !elsewhere.dialog && (await picks()) === 0,
+	`mode: ${elsewhere.mode} · asked: ${elsewhere.dialog} · pickers: ${await picks()}`);
+
+// (ii) A turn working here: a running worker whose Diamond's reach cannot be read, which the
+// guard counts as here (fail closed: unread is not proven elsewhere). The change waits on a
+// confirm that names the work, and declining it leaves the root where it was, in no red.
+await workMenu(p, 'head', 'browser');
+await p.waitForTimeout(700);
+await p.evaluate(() => {
+	window.__fsaRun = { id: 'fsa-hold', status: 'running', diamondId: 'not a diamond id', chatId: '' };
+	window.DaimondWorkers.runs.push(window.__fsaRun);
+});
+await zero();
+await workMenu(p, 'head', 'machine');
+let asked = null;
+for (let i = 0; i < 40 && !asked; i++) {
+	await p.waitForTimeout(150);
+	asked = await p.evaluate(() => {
+		const c = document.querySelector('.dlg-card');
+		const m = c && c.querySelector('.dlg-msg');
+		return m ? { text: c.textContent.replace(/\s+/g, ' ').trim(), msg: m.textContent.trim(),
+			ok: (c.querySelector('.dlg-ok') || {}).textContent || '' } : null;
+	});
+}
+const want = await p.evaluate(() => ({
+	head:  DaimondI18n.t('files.switch_busy', { names: '\u0000' }).split('\u0000')[0],
+	title: DaimondI18n.t('files.switch_busy_title'),
+	ok:    DaimondI18n.t('files.stop_and_change'),
+}));
+await p.evaluate(() => { const b = document.querySelector('.dlg-card .dlg-cancel'); if (b) b.click(); });
+await p.waitForTimeout(700);
+const blocked = { mode: await mode(), msg: await msg(),
+	red: await p.evaluate(() => !!document.querySelector('#panel-work .files-mode-msg.err')) };
+await p.evaluate(() => {
+	const r = window.DaimondWorkers.runs, i = r.indexOf(window.__fsaRun);
+	if (i >= 0) r.splice(i, 1);
+});
+check('a turn working in this folder holds the change behind a confirm that names it',
+	!!asked && asked.msg.startsWith(want.head) && asked.text.includes(want.title) && asked.ok.trim() === want.ok,
+	asked ? `"${asked.msg}" · ok: ${asked.ok}` : 'no confirm was raised');
+check('and declining it leaves the root where it was, with no picker and nothing in red',
+	blocked.mode === 'opfs' && (await picks()) === 0 && !blocked.red,
+	`mode: ${blocked.mode} · pickers: ${await picks()} · "${blocked.msg}"`);
 
 // And the way out. Remembering the folder across a switch removes the only thing that used to
 // make Daimond forget it, so there has to be a deliberate way to say so.

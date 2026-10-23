@@ -56,8 +56,8 @@ pub fn build_syntax()
         name:   fmt!("session_new"),
         help:   Some(fmt!("Create a new chat session.")),
         vals:   vec![
-            (Kind::Str, fmt!("Session name (optional)")),
-            (Kind::Str, fmt!("Model (optional)")),
+            (Kind::Str, fmt!("Session name (optional)")).into(),
+            (Kind::Str, fmt!("Model (optional)")).into(),
         ],
         cat:    fmt!("Daimond"),
         ..Default::default()
@@ -81,7 +81,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("session_switch"),
         help:   Some(fmt!("Switch to a session by ID.")),
-        vals:   vec![(Kind::Str, fmt!("Session ID"))],
+        vals:   vec![(Kind::Str, fmt!("Session ID")).into()],
         cat:    fmt!("Daimond"),
         ..Default::default()
     });
@@ -93,7 +93,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("session_close"),
         help:   Some(fmt!("Delete a session by ID.")),
-        vals:   vec![(Kind::Str, fmt!("Session ID"))],
+        vals:   vec![(Kind::Str, fmt!("Session ID")).into()],
         cat:    fmt!("Daimond"),
         ..Default::default()
     });
@@ -106,8 +106,8 @@ pub fn build_syntax()
         name:   fmt!("session_rename"),
         help:   Some(fmt!("Rename a session.")),
         vals:   vec![
-            (Kind::Str, fmt!("Session ID")),
-            (Kind::Str, fmt!("New name")),
+            (Kind::Str, fmt!("Session ID")).into(),
+            (Kind::Str, fmt!("New name")).into(),
         ],
         cat:    fmt!("Daimond"),
         ..Default::default()
@@ -120,7 +120,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("chat"),
         help:   Some(fmt!("Send a message to the current session's agent.")),
-        vals:   vec![(Kind::Str, fmt!("Message content"))],
+        vals:   vec![(Kind::Str, fmt!("Message content")).into()],
         cat:    fmt!("Daimond"),
         ..Default::default()
     });
@@ -132,7 +132,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("fs_list"),
         help:   Some(fmt!("List a workspace directory.")),
-        vals:   vec![(Kind::Str, fmt!("Directory path"))],
+        vals:   vec![(Kind::Str, fmt!("Directory path")).into()],
         cat:    fmt!("Daimond"),
         ..Default::default()
     });
@@ -141,7 +141,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("fs_read"),
         help:   Some(fmt!("Read a workspace text file.")),
-        vals:   vec![(Kind::Str, fmt!("File path"))],
+        vals:   vec![(Kind::Str, fmt!("File path")).into()],
         cat:    fmt!("Daimond"),
         ..Default::default()
     });
@@ -150,7 +150,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("fs_delete"),
         help:   Some(fmt!("Delete a workspace file.")),
-        vals:   vec![(Kind::Str, fmt!("File path"))],
+        vals:   vec![(Kind::Str, fmt!("File path")).into()],
         cat:    fmt!("Daimond"),
         ..Default::default()
     });
@@ -160,8 +160,8 @@ pub fn build_syntax()
         name:   fmt!("fs_write"),
         help:   Some(fmt!("Create or overwrite a workspace file.")),
         vals:   vec![
-            (Kind::Str, fmt!("File path")),
-            (Kind::Str, fmt!("Content")),
+            (Kind::Str, fmt!("File path")).into(),
+            (Kind::Str, fmt!("Content")).into(),
         ],
         cat:    fmt!("Daimond"),
         ..Default::default()
@@ -178,7 +178,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("data"),
         help:   Some(fmt!("Data payload (JSON or structured).")),
-        vals:   vec![(Kind::Unknown, fmt!("Data"))],
+        vals:   vec![(Kind::Unknown, fmt!("Data")).into()],
         cat:    fmt!("Response"),
         ..Default::default()
     });
@@ -190,7 +190,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("text"),
         help:   Some(fmt!("Streamed text token from the LLM.")),
-        vals:   vec![(Kind::Str, fmt!("Text content"))],
+        vals:   vec![(Kind::Str, fmt!("Text content")).into()],
         cat:    fmt!("Response"),
         ..Default::default()
     });
@@ -203,8 +203,8 @@ pub fn build_syntax()
         name:   fmt!("tool_call"),
         help:   Some(fmt!("The agent is invoking a tool.")),
         vals:   vec![
-            (Kind::Str, fmt!("Tool name")),
-            (Kind::Str, fmt!("JSON arguments")),
+            (Kind::Str, fmt!("Tool name")).into(),
+            (Kind::Str, fmt!("JSON arguments")).into(),
         ],
         cat:    fmt!("Response"),
         ..Default::default()
@@ -218,8 +218,8 @@ pub fn build_syntax()
         name:   fmt!("tool_result"),
         help:   Some(fmt!("A tool returned its result.")),
         vals:   vec![
-            (Kind::Str, fmt!("Tool name")),
-            (Kind::Str, fmt!("Result text")),
+            (Kind::Str, fmt!("Tool name")).into(),
+            (Kind::Str, fmt!("Result text")).into(),
         ],
         cat:    fmt!("Response"),
         ..Default::default()
@@ -232,7 +232,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("fs_tree"),
         help:   Some(fmt!("Workspace directory listing (JSON).")),
-        vals:   vec![(Kind::Str, fmt!("JSON entries"))],
+        vals:   vec![(Kind::Str, fmt!("JSON entries")).into()],
         cat:    fmt!("Response"),
         ..Default::default()
     });
@@ -245,8 +245,8 @@ pub fn build_syntax()
         name:   fmt!("fs_content"),
         help:   Some(fmt!("Workspace file contents.")),
         vals:   vec![
-            (Kind::Str, fmt!("File path")),
-            (Kind::Str, fmt!("Content")),
+            (Kind::Str, fmt!("File path")).into(),
+            (Kind::Str, fmt!("Content")).into(),
         ],
         cat:    fmt!("Response"),
         ..Default::default()
@@ -260,9 +260,9 @@ pub fn build_syntax()
         name:   fmt!("compacted"),
         help:   Some(fmt!("The conversation was folded to fit the context window.")),
         vals:   vec![
-            (Kind::U64, fmt!("Messages folded")),
-            (Kind::U64, fmt!("Messages kept")),
-            (Kind::Str, fmt!("What the fold did")),
+            (Kind::U64, fmt!("Messages folded")).into(),
+            (Kind::U64, fmt!("Messages kept")).into(),
+            (Kind::Str, fmt!("What the fold did")).into(),
         ],
         cat:    fmt!("Response"),
         ..Default::default()
@@ -290,7 +290,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("interjected"),
         help:   Some(fmt!("What the user said mid-turn, now in the conversation.")),
-        vals:   vec![(Kind::Str, fmt!("What was said"))],
+        vals:   vec![(Kind::Str, fmt!("What was said")).into()],
         cat:    fmt!("Response"),
         ..Default::default()
     });
@@ -313,7 +313,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("info"),
         help:   Some(fmt!("Informational message.")),
-        vals:   vec![(Kind::Str, fmt!("Information message"))],
+        vals:   vec![(Kind::Str, fmt!("Information message")).into()],
         cat:    fmt!("Response"),
         ..Default::default()
     });
@@ -325,7 +325,7 @@ pub fn build_syntax()
     let cmd = Cmd::from(CmdConfig {
         name:   fmt!("error"),
         help:   Some(fmt!("Error message.")),
-        vals:   vec![(Kind::Str, fmt!("Error message"))],
+        vals:   vec![(Kind::Str, fmt!("Error message")).into()],
         cat:    fmt!("Response"),
         ..Default::default()
     });

@@ -38,7 +38,7 @@
 //       as `typst watch` runs (`reference_typst_compile_memory`, measured 2026-08-07).
 //
 // WHAT IS NOT PROVED HERE, and it is the whole of what Publish does on a real machine.
-// Nothing in this world runs typst, Ghostscript or pikepdf: `hand/install/mock_host.py`
+// Nothing in this world runs typst, Ghostscript or pikepdf: `kimberlite/install/mock_host.py`
 // invents output on a schedule and executes nothing, and this world has no hand paired
 // at all. So Publish is asserted as far as it is this app's: the command it composes,
 // the cap in it, the folder it would run in, and that a refusal is shown as a refusal

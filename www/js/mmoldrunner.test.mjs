@@ -14,7 +14,11 @@
          on this device's set;
      O2  a runner with it is offered, and the door hands it the errand;
      O3  Retry (the parked re-run) and a say into a running turn obey
-         the same rule; a refused re-run is "not run", with Retry.
+         the same rule; a refused re-run is "not run", with Retry;
+     O4  a paired native runner has no roster line: its own signed
+         presence row (`kind:'runner'`, `modelset:true`) says it, so it
+         is offered and the door hands it the errand;
+     O5  the same runner's row without `modelset` is refused at both.
 
    Lifts the REAL functions out of daimond.js and runs them with the
    REAL peer.js election. Red proof: git stash; node this file.
@@ -54,10 +58,12 @@ const win = { addEventListener() {}, dispatchEvent() { return true; } };
 const P = win.DaimondPeer;
 
 const NAMES = ['honoursModelSet', 'turnPresence', 'seatSwitchFor', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'reRunParked', 'sayToRunner'];
-function world(rosterLine) {
+function world(rosterLine, presRec, provider) {
 	const now = Date.now();
-	const W = { built: [], ran: [], said: [], roster: { argonaut1: Object.assign({ name: 'argonaut' }, rosterLine) } };
-	const presence = { argonaut1: { name: 'argonaut', lastSeen: now, servicedAt: now, runner: true, mobile: false, build: '' } };
+	const W = { built: [], ran: [], said: [],
+		roster: rosterLine ? { argonaut1: Object.assign({ name: 'argonaut' }, rosterLine) } : {} };
+	const presence = { argonaut1: Object.assign({ name: 'argonaut', lastSeen: now, servicedAt: now, runner: true,
+		mobile: false, build: '' }, presRec || {}) };
 	const env = {
 		window: null, diag: () => {}, Date: Date, String: String, Object: Object, Array: Array, JSON: JSON, Math: Math,
 		Promise: Promise, setTimeout: setTimeout,
@@ -66,8 +72,8 @@ function world(rosterLine) {
 		annotatePresence: (p) => p,
 		presenceWithLeaseBusy: (p) => p,
 		chatRunningOn: () => '',
-		seatOpts: () => ({ selfId: 'phone1', nominatedId: 'argonaut1', isPhone: true, runnerOnly: true,
-			freshWindowMs: P.DISPATCH_FRESH_MS }),
+		seatOpts: () => Object.assign({ selfId: 'phone1', nominatedId: 'argonaut1', isPhone: true, runnerOnly: true,
+			freshWindowMs: P.DISPATCH_FRESH_MS }, provider ? { provider: provider } : {}),
 		turnHold: () => null,
 		DaimondPeer: Object.assign({}, P, {
 			buildDispatch: () => { W.built.push(1); throw new Error('posted'); },
@@ -81,7 +87,7 @@ function world(rosterLine) {
 		_peerStopping: {}, _progressView: {}, _saidThere: {},
 		commitRatings: () => {}, ratingPre: () => '', newMid: () => 'm1', peerSyncShim: () => ({}),
 		giveUpSent: () => {}, pushUserRecord: () => {}, appendInterjected: () => {}, syncSendMode: () => {},
-		current: null, storedPre: () => '', storedEffort: () => null, turnEffortOf: () => null, errandModelOf: () => ({}),
+		current: null, storedPre: () => '', storedEffort: () => null, turnEffortOf: () => null, errandModelOf: () => ({}), errandFence: async () => null,
 		autonomousPosture: () => false, msgTombsOwed: () => [], selfDeviceIdOf: () => 'phone1',
 		touchMsg: (m) => m, touchChat: () => {}, persistChats: () => {}, ownsChat: () => false, renderHistory: () => {},
 	};
@@ -126,6 +132,37 @@ async function main() {
 		const said = W.f.sayToRunner ? await W.f.sayToRunner(chat, { iturn: 't3' }, 'and this', 'and this') : null;
 		check(able ? 'words said into its running turn reach it' : 'words are not said into its running turn: they go as the next turn',
 			able ? (said === true && W.said.length === 1) : (said === false && W.said.length === 0), 'said=' + said + ' sent=' + W.said.length);
+	}
+	// A paired native runner: no roster line, only its signed presence row (E-PORT ELECT).
+	const E = 'ab'.repeat(32);
+	P.setEngineId(E);
+	for (const [label, rec, able] of [
+		['O4 a native runner whose signed presence row says modelset', { kind: 'runner', engine: E, modelset: true }, true],
+		['O5 the same native runner, its row without modelset', { kind: 'runner', engine: E }, false]]) {
+		console.log(label);
+		const W = world(null, rec, 'credits');
+		const sw = W.f.seatSwitchFor(Object.assign({}, chat, { provider: 'credits' }));
+		check(able ? 'the switch offers it the turn' : 'the switch does not offer it: Here',
+			able ? !!(sw && sw.runner && sw.runner.deviceId === 'argonaut1') : !!sw && !sw.runner && sw.choice === 'here', JSON.stringify(sw));
+		let r = null;
+		try { r = await W.f.dispatchToPeer(chat, 't1', 'hi', [], { runTo: 'argonaut1' }); } catch (e) { r = { threw: String(e) }; }
+		check(able ? 'the door hands it the errand' : 'the door posts nothing and says the turn runs here',
+			able ? (W.built.length === 1 && !(r && r.unable)) : (W.built.length === 0 && !!r && r.unable === true), JSON.stringify(r));
+	}
+	P.setEngineId('');
+	// The REAL ingest keeps a runner's signed `modelset` and never a tab's.
+	console.log('O6 presence ingest keeps modelset from a runner\'s row only');
+	{
+		const now = Date.now();
+		win.DaimondPresence.ingest({
+			rn:  { name: 'argonaut', last_seen: now, runner: true, kind: 'runner', engine: E, modelset: true },
+			rn2: { name: 'argonaut2', last_seen: now, runner: true, kind: 'runner', engine: E },
+			tab: { name: 'laptop', last_seen: now, modelset: true },
+		}, now);
+		const snap = win.DaimondPresence.snapshot() || {};
+		check('a runner\'s signed modelset is kept', !!snap.rn && snap.rn.modelset === true, JSON.stringify(snap.rn));
+		check('a runner that did not say it has none', !!snap.rn2 && snap.rn2.modelset === undefined, JSON.stringify(snap.rn2));
+		check('a tab\'s row never carries it', !!snap.tab && snap.tab.modelset === undefined, JSON.stringify(snap.tab));
 	}
 	console.log((failures ? 'FAIL' : 'PASS') + ' — ' + (checks - failures) + '/' + checks + ' checks');
 	process.exit(failures ? 1 : 0);

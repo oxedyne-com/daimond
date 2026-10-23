@@ -653,6 +653,32 @@ impl ChatMessage {
         }
     }
 
+    /// The message a transcript row is, as the page seeds a conversation from it: a person's
+    /// words with the app's note `pre` and the row's id `mid`, or an assistant's prose; any other
+    /// role is `None` (the system prompt is prepended per request, never stored, and a tool row
+    /// carries no call id to pair).  The one reading of a row, shared by the tab
+    /// (`DaimondApp::append_message`, `DaimondApp::restore`) and a runner's child seeding an
+    /// errand's thread, so both send the model the same history.  A transcript's user rows are
+    /// what turns were run on, so each is marked as opening one (r578d; see
+    /// [`ChatMessage::opening`]); [`ChatMessage::of_row_opening`] says otherwise for a row the
+    /// page knows no turn was run on.
+    pub fn of_row(role: &str, content: String, pre: String, mid: String) -> Option<Self> {
+        Self::of_row_opening(role, content, pre, mid, true)
+    }
+
+    /// [`ChatMessage::of_row`], a user row opening a turn only where `opens`: false for an
+    /// interjection or the app's own note (QA r578d-B B3), which would otherwise put
+    /// `compact::prior_end`'s boundary on it.
+    pub fn of_row_opening(role: &str, content: String, pre: String, mid: String, opens: bool)
+        -> Option<Self>
+    {
+        match role {
+            "user"      => Some(Self::user_noted(content, pre).marked(mid).opening_if(opens)),
+            "assistant" => Some(Self::assistant(content)),
+            _           => None,
+        }
+    }
+
     /// [`ChatMessage::opening`] where `opens`, else the message unchanged: for a row the page
     /// rebuilds, which says itself whether a turn was run on it (QA r578d-B B3).
     pub fn opening_if(self, opens: bool) -> Self {
@@ -1502,6 +1528,7 @@ pub enum AgentEvent {
         reasoned:  usize,       // rounds re-sent because a reply reasoned and answered nothing
         why:       String,      // `blocked` beside `failed`, else empty; see `TurnEnd::why`
         said:      String,      // the plain sentence a blocked turn ends on, else empty
+        touched:   Vec<String>, // paths completed calls left, at most 40 then "+k more"
     },
     /// A tool call arrived as TEXT, in the model's own native call syntax, with no JSON
     /// `tool_calls` beside it.
@@ -1540,7 +1567,7 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("thinking"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned, why, said } => {
+            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned, why, said, touched } => {
                 m.insert(dat!("type"),      dat!("ended"));
                 m.insert(dat!("how"),       dat!(how.clone()));
                 m.insert(dat!("offered"),   Dat::U64(*offered as u64));
@@ -1552,6 +1579,8 @@ impl AgentEvent {
                 m.insert(dat!("reasoned"),  Dat::U64(*reasoned as u64));
                 m.insert(dat!("missing"),
                     Dat::List(missing.iter().map(|p| dat!(p.clone())).collect()));
+                m.insert(dat!("touched"),
+                    Dat::List(touched.iter().map(|p| dat!(p.clone())).collect()));
                 if !why.is_empty() {
                     m.insert(dat!("why"),   dat!(why.clone()));
                     m.insert(dat!("said"),  dat!(said.clone()));
@@ -2480,6 +2509,27 @@ mod content_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── A row's opening mark (QA r578d-B B3, EP-6 F6L) ──
+
+    /// The page rebuilds an interjection or the app's own note with `opens` false, and a turn
+    /// the person ran with true; `of_row` is a row a turn was run on.  The mark is what
+    /// `compact::prior_end` counts turns by, so it is pinned here by behaviour, not spelling.
+    #[test]
+    fn of_row_opening_marks_only_a_row_a_turn_was_run_on() {
+        let row = |role: &str, opens: bool| ChatMessage::of_row_opening(role,
+            "words".to_string(), String::new(), "m1".to_string(), opens);
+        let note = row("user", false);
+        assert!(note.is_some(), "a user row is a message");
+        assert_eq!(note.map(|m| m.opens_turn()), Some(false),
+            "an interjection or app note never opens a turn");
+        assert_eq!(row("user", true).map(|m| m.opens_turn()), Some(true), "a user row does");
+        assert_eq!(ChatMessage::of_row("user", "words".to_string(), String::new(),
+            String::new()).map(|m| m.opens_turn()), Some(true), "of_row opens");
+        assert_eq!(row("assistant", true).map(|m| m.opens_turn()), Some(false),
+            "only a user message opens");
+        assert!(row("tool", true).is_none(), "a tool row is not seeded");
+    }
 
     // ── A held session ──
 

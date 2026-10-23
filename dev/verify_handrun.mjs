@@ -14,7 +14,7 @@
 // question is not "did something appear" but "did the output and the exit code
 // reach the model".
 //
-// It runs against `hand/install/mock_host.py`, not the Rust binary. The host's
+// It runs against `kimberlite/install/mock_host.py`, not the Rust binary. The host's
 // message loop is being written; more to the point, the failures worth testing —
 // a hand that says something meaningless for ever, a hand that says nothing at
 // all for a minute, a hand that dies mid-command — are things a correct hand
@@ -25,7 +25,7 @@
 // here says the pipeline carries a command's output and status faithfully from
 // the host to the model. It does NOT say that `cargo test` ran, or that the
 // fence held: nothing in this file executes a process, and the fence is the
-// hand's to enforce and `hand/REVIEW.md`'s to argue about.
+// hand's to enforce and `kimberlite/REVIEW.md`'s to argue about.
 //
 // ── A CHAT HAS A WORKSPACE, and a command runs where the user marked ─
 //
@@ -89,10 +89,10 @@ const WWW	= path.join(ROOT, 'www');
 // loads the development build instead: the shipped manifest names one origin,
 // `daimond.oxedyne.com`, and a page on localhost cannot reach it at all. The
 // loopback origins live in the generated tree and never in the file a release
-// is carved from — see extdev.mjs, and `hand/REVIEW.md` §1.6 for why.
+// is carved from — see extdev.mjs, and `kimberlite/REVIEW.md` §1.6 for why.
 const SRC	= path.join(ROOT, 'ext');
 const EXTID	= 'mpliijponglmmffjnonahhignkpkhmij';
-const INSTALL	= path.join(ROOT, 'hand/install');
+const INSTALL	= path.join(ROOT, 'kimberlite/install');
 const MOCK	= path.join(INSTALL, 'mock_host.py');
 const CFG	= path.join(INSTALL, 'mock_cfg.json');
 // Everything the mock host was sent and everything it sent back, in its own
@@ -113,6 +113,9 @@ const GRANT	= scratch('handroot');
 // A name in only one of the two is a name for nothing.
 const MARKED	= 'marked';
 const MARKED_ABS = path.join(GRANT, MARKED);
+
+// Set by `dev/verify_livequiet.mjs`: liveness 3 s on the chat, and its arm (b) below.
+const LIVE = process.env.HR_LIVE === '1';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -227,7 +230,7 @@ function register(cfg) {
 	}, null, '\t') + '\n');
 	fs.writeFileSync(CFG, JSON.stringify(Object.assign({
 		// What a CURRENT Linux hand reports, plus the granted folder: it fences,
-		// and it meters what a command removes (`hand/src/main.rs` says
+		// and it meters what a command removes (`kimberlite/src/main.rs` says
 		// `meter:deletes` on Linux). The folder arrives as a CAPABILITY because
 		// `wire.rs` has no field for it and the wire is fixed; see ROOT_CAP in
 		// www/js/hand.js.
@@ -388,7 +391,7 @@ async function allowHand(ms = 20000) {
 // ── The turn's network question ─────────────────────────────────────
 //
 // A chat that has read a command's output is TAINTED from that moment, so the
-// engine asks before the NEXT command may reach the network (`hand/REVIEW.md`
+// engine asks before the NEXT command may reach the network (`kimberlite/REVIEW.md`
 // §1.13, `Tool::run`'s `NetStep::Ask`) and holds the turn on a modal until
 // somebody answers. Nothing in this file answered it. So from the second
 // command on, every turn stopped on that dialog until `chat`'s own 60-second
@@ -468,6 +471,8 @@ try {
 	// decides where its commands may run. Opened before anything is asked of it,
 	// because the folder is marked into THIS chat and a second one would have an
 	// empty workspace of its own.
+	// U3a LV2 (b): the chat's agent is built with liveness 3 s, as `dev/verify_livequiet.mjs` asks.
+	if (LIVE) await page.evaluate(() => { window.__livenessMs = 3000; });
 	await newChat(s);
 	await sleep(400);
 	const focus = await page.evaluate(() => window.DaimondAttach.focus());
@@ -503,8 +508,15 @@ try {
 
 	// The belt the model was actually offered, taken from what the provider was
 	// sent rather than from a list in the page.
-	const belt = (mockLog()[0] || {}).tools || [];
-	check('`run` is in the toolbelt the model is offered', belt.includes('run'), belt.join(' '));
+	// WITHHELD HERE, ON PURPOSE (708a13b6): `ToolRegistry::offered` drops run, runs, verify and
+	// serve where no folder on this computer is reachable, and `prompts::NO_MACHINE_NOTE` tells
+	// the model so in one sentence. The belt carrying `run` is asked in half two, once marked.
+	const first = mockLog()[0] || {};
+	const belt = first.tools || [];
+	const sys = String(((first.messages || []).find((m) => m.role === 'system') || {}).content || '');
+	check('with nowhere to run, `run` is withheld from the toolbelt and the briefing says why',
+		belt.length > 0 && !belt.includes('run') && /run, runs,\s+verify and serve are not on your belt/.test(sys),
+		belt.join(' ').slice(0, 200));
 
 	let r = toolResult();
 	check('WITH NOTHING MARKED IN, a command is refused rather than run',
@@ -516,7 +528,8 @@ try {
 		// one that matters: naming the right control is no use while the wrong one
 		// is still named beside it.
 		/\+ in the Workspace group/.test(r) && !/paperclip/.test(r)
-			&& /mark it into this chat's workspace/.test(r), r.slice(0, 400));
+		// "add", never "mark in", in the model-facing text since f0886e30 (D-20261006-25).
+			&& /add it to this chat's workspace/.test(r), r.slice(0, 400));
 	// The refusal a chat gets and the refusal a Diamond gets are different
 	// sentences on purpose (`ToolContext::is_chat_scoped`), and a model handed the
 	// wrong one is sent to a panel that is not where a chat's workspace is changed.
@@ -575,6 +588,9 @@ try {
 	// ── Half two: a command runs, and its output reaches the model ──
 	clearMockLog();
 	await chat(s, '@tool run {"argv":["cargo","test"],"timeout_ms":20000}', { timeout: 60000 });
+	const belt2 = (mockLog()[0] || {}).tools || [];
+	check('`run` is in the toolbelt the model is offered, once a folder here is marked in',
+		belt2.includes('run'), belt2.join(' ').slice(0, 200));
 	r = toolResult();
 	check('the command\'s output reached the model',
 		/line 1 of cargo test/.test(r) && /line 3 of cargo test/.test(r), r.slice(0, 200));
@@ -717,6 +733,24 @@ try {
 	r = toolResult();
 	check('a command that says nothing for longer than the grace still finishes',
 		/line 1 of cargo test/.test(r) && /\[exit code: 0\]/.test(r), r.slice(0, 200));
+
+	// ── U3a LV2 (b), run by `dev/verify_livequiet.mjs` with HR_LIVE=1 ──
+	//
+	// A tool is held to its OWN ceiling and never to the turn's liveness: with liveness at 3 s,
+	// a command that is quiet for 9 s inside its own 10 s limit ends ok.  Red when the tool race
+	// is pointed at the liveness limit: the call is cut at 3 s and fails.
+	if (LIVE) {
+		await relink();
+		register({ chunks: 2, quiet_ms: 9000 });
+		clearMockLog();
+		const lt0 = Date.now();
+		await chat(s, '@tool run {"argv":["sleep","9"],"timeout_ms":10000}', { timeout: 90000 });
+		const ltook = Date.now() - lt0;
+		r = toolResult();
+		check('LQ(b). with liveness at 3 s, a run quiet for 9 s inside its own 10 s limit ends ok',
+			/line 1 of sleep 9/.test(r) && /\[exit code: 0\]/.test(r) && ltook >= 8500,
+			`${ltook} ms; ` + r.slice(0, 200));
+	}
 
 	// ── §4.2 Noise is not proof of life ─────────────────────────────
 	//
@@ -869,7 +903,7 @@ try {
 	await relink();
 	register({ chunks: 5, delay_ms: 1500 });
 	// The same shape `Tool::run` composes — the extension vets the fence now
-	// (`hand/REVIEW.md` §1.5), and rightly refuses one that names no root.
+	// (`kimberlite/REVIEW.md` §1.5), and rightly refuses one that names no root.
 	await page.evaluate((grant) => {
 		window.__handrun = window.DaimondHand.run(JSON.stringify({
 			t: 'exec', id: 'r-reload', argv: ['sleep'], cwd: grant, env: [], stdin: null,

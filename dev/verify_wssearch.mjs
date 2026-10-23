@@ -22,7 +22,7 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { open } from './harness.mjs';
+import { open, WORK_MENU } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -96,7 +96,10 @@ try {
 	}, id);
 	await page.evaluate(() => DaimondPanels.show('work'));
 	await wait(600);
-	await page.evaluate(() => { const r = document.querySelector('#panel-work [data-act="refresh"]'); if (r) r.click(); });
+	// Refresh is an item of the head ⋯ since Workspace r2 P4 (dfae7c7f), not a head button, and
+	// without it the files just written are not in the tree to be walked into.
+	const refreshed = await page.evaluate(WORK_MENU, ['head', 'refresh']);
+	check(refreshed, 'the head ⋯ has Refresh', String(refreshed));
 	await wait(900);
 	// The tree shows ANOTHER folder: the search is not "from here down".
 	await page.evaluate(() => {
@@ -105,7 +108,9 @@ try {
 	});
 	await wait(900);
 	const crumb = await page.evaluate(() => document.querySelector('#panel-work .files-path').textContent);
-	check(/notes/.test(crumb), 'the tree is in notes/ before the search', crumb);
+	// The crumb's root is the open store's own name ("Browser", or the folder's) since P4, then
+	// the folders below it, then + New.
+	check(/›\s*notes\b/.test(crumb), 'the tree is in notes/ before the search', crumb);
 
 	// 1
 	const ph = await page.getAttribute(BOX, 'placeholder');

@@ -187,7 +187,8 @@ console.log('\nFAIL: a failed mid-run turn lands its partial answer\n');
 	check('a turn whose answer already landed gets no second row of that mid',
 		done.messages.filter((m) => m.mid === 'd9').length === 1, J(done.messages));
 	check('and keeps the session it stored', done.session === good, J(done.session));
-	const n = extractFn(DJS, 'runSteer');
+	// `runSteer` holds the client and settles it; its body, with the catch and the turn, is `runSteerHeld` (U3a).
+	const n = extractFn(DJS, 'runSteerHeld');
 	const at = n.indexOf('} catch (e) {\n\t\t\t// A failure BEFORE the turn');
 	check('runSteer\'s catch lands it', at > 0 && n.slice(at, at + 1500).indexOf('landFailedTurn(') > 0);
 	check('runSteer starts the turn from daimonPrior, with the prompt\'s mid and the device',

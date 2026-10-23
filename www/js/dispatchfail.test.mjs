@@ -163,6 +163,7 @@ async function refusedPost(mode) {
 		diag: () => {}, dsEvent: () => {}, turnHold: () => null, selfDeviceId: () => PHONE,
 		storedPre: () => '', storedEffort: () => null, turnEffortOf: () => null, autonomousPosture: () => null,
 		msgTombsOwed: () => [], loadChatMessages: async () => {}, honoursModelSet: () => true,
+		errandFence: async () => null,		// the page's fence (R3c2) is peer.test's FN1/FN2, not this test's
 		markTurnDispatched: (ch, mark) => { ch.messages.push({ role: 'assistant', content: '', why: 'dispatched', iturn: mark.iturn, toDevice: DESK, toName: 'argonaut' }); },
 		seatNoteOnPrompt: () => true, seatNameOf: (id, nm) => nm || id,
 		touchMsg: () => {}, touchChat: () => {}, persistChats: () => { rec.persisted++; }, ownsChat: () => false, renderHistory: () => {},

@@ -2,7 +2,7 @@
 // verify_wsident.mjs — the hand's folder and the page's folder are the SAME
 // folder, or nothing runs.
 //
-// `hand/REVIEW.md` §1.14. The hand is told once, in `<root>/.daimond/workspace.id`,
+// `kimberlite/REVIEW.md` §1.14. The hand is told once, in `<root>/.daimond/workspace.id`,
 // which folder it may work in. The app separately has a folder open, chosen by
 // the user in the Workspace panel. Until this check was armed, nothing compared
 // them: a daimon could read and edit `~/projects/alpha` through the browser and
@@ -272,7 +272,7 @@ async function listen(at) {
 // ── The engine under test has to be this tree's ─────────────────────
 //
 // This file asked only whether `www/pkg` EXISTED. That is the fail-open that
-// `hand/src/exec.rs`'s `shipping_hand` and `dev/verify_ptyedge.mjs` were both
+// `kimberlite/src/exec.rs`'s `shipping_hand` and `dev/verify_ptyedge.mjs` were both
 // written to close: the whole subject here is the ENGINE's own refusal, reached
 // through the real `pty_request` in the bundle, so a bundle built before that
 // refusal existed would have this file report, in detail and in green, on a

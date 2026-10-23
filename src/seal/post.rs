@@ -164,15 +164,31 @@ pub fn open_shared(bytes: &[u8], shared: &[u8], own_pub: &[u8]) -> Outcome<Opene
 		None	=> return Err(Refusal::NotForYou.err(
 			"This message was not sealed to any key this device holds.")),
 	};
-	let plain = match EncryptionScheme::aes_256_gcm_open(
-		&ck[..], &bytes[end..end + IV_LEN], &bytes[..end], &bytes[end + IV_LEN..])
+	let plain = res!(body(bytes, end, &ck[..]));
+	Ok(Opened { plain, ck })
+}
+
+/// Open a `DPS1` record's body with its content key `ck`, the key a recipient hands over when it
+/// reports a message (the operator console checks a report this way, through the wasm).  The head
+/// is the body's associated data, so a slot lifted from another record does not open this one.
+pub fn open_body(bytes: &[u8], ck: &[u8]) -> Outcome<Vec<u8>> {
+	let end = res!(head_end(bytes));
+	if ck.len() != KEY_LEN {
+		return Err(Refusal::BadKey.err("A message's key is 32 bytes."));
+	}
+	body(bytes, end, ck)
+}
+
+/// The body under `ck`, the head (`bytes[..end]`) its associated data.  Both opens come here.
+fn body(bytes: &[u8], end: usize, ck: &[u8]) -> Outcome<Vec<u8>> {
+	match EncryptionScheme::aes_256_gcm_open(
+		ck, &bytes[end..end + IV_LEN], &bytes[..end], &bytes[end + IV_LEN..])
 	{
-		Ok(p)	=> p,
-		Err(e)	=> return Err(err!(e,
+		Ok(p)	=> Ok(p),
+		Err(e)	=> Err(err!(e,
 			"seal:damaged: The message's body did not open: it was changed, or put together \
 			from two."; Invalid, Input)),
-	};
-	Ok(Opened { plain, ck })
+	}
 }
 
 /// Open with the sealing secret itself (the native runner, which holds it).
@@ -186,4 +202,43 @@ pub fn open(bytes: &[u8], sk: &[u8]) -> Outcome<Opened> {
 			Invalid, Input)),
 	});
 	open_shared(bytes, &shared[..], &own_pub)
+}
+
+#[cfg(test)]
+mod open_body_tests {
+	use super::*;
+
+	fn refusal(o: Outcome<Vec<u8>>) -> Option<&'static str> {
+		match o {
+			Ok(_)	=> None,
+			Err(e)	=> Refusal::of_message(&fmt!("{}", e)),
+		}
+	}
+
+	/// The content key a recipient's open answers opens the body alone, and nothing else does.
+	#[test]
+	fn open_body_with_the_content_key() -> Outcome<()> {
+		let mut sk = [0u8; KEY_LEN];
+		os_random(&mut sk);
+		let pk = res!(AgreementScheme::x25519_public_of(&sk));
+		let mut to = [0u8; KEY_LEN];
+		to.copy_from_slice(&pk[..]);
+		let sealed = res!(seal(&[to], b"a reported message"));
+		let o = res!(open(&sealed, &sk));
+		assert_eq!(res!(open_body(&sealed, &o.ck[..])), b"a reported message".to_vec());
+
+		let mut bad = sealed.clone();
+		let last = bad.len() - 1;
+		bad[last] ^= 1;
+		assert_eq!(refusal(open_body(&bad, &o.ck[..])), Some("damaged"));
+		let mut wrong = o.ck.clone();
+		wrong[0] ^= 0x80;
+		assert_eq!(refusal(open_body(&sealed, &wrong[..])), Some("damaged"));
+		assert_eq!(refusal(open_body(&sealed, &o.ck[..31])), Some("bad_key"));
+		assert_eq!(refusal(open_body(&sealed[..40], &o.ck[..])), Some("short"));
+		let mut tag = sealed.clone();
+		tag[0] ^= 1;
+		assert_eq!(refusal(open_body(&tag, &o.ck[..])), Some("not_sealed"));
+		Ok(())
+	}
 }

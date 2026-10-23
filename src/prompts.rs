@@ -43,6 +43,7 @@ use crate::tools::{
 };
 
 use oxedyne_fe2o3_core::prelude::*;
+use crate::engine::host::{Host, exec::HostExec};
 
 // ┌───────────────────────────────────────────────────────────────────────────┐
 // │ NOTES COMPOSED ON THE MODEL                                               │
@@ -1535,9 +1536,8 @@ fn covers(grant: &str, path: &str) -> bool {
 /// # Arguments
 /// * `ctx` - The turn, which carries the bounds, whether it is at risk, whether anybody is
 ///   watching it, and what the user has already said about its network.
-#[cfg(target_arch = "wasm32")]
-pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> (String, bool) {
-	let st = match crate::wasm::hand::status().await {
+pub async fn machine_briefing<H: Host>(ctx: &crate::tools::ToolContext<H>) -> (String, bool) {
+	let st = match ctx.host().exec().status().await {
 		Ok(s)  => s,
 		Err(_) => return (NO_MACHINE_NOTE.to_string(), false),
 	};
@@ -1565,8 +1565,8 @@ pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> (String, bool)
 /// Only a Diamond's own, supervised turn can ([`ToolContext::can_ask_kits`]); a chat or a lone
 /// worker is told what [`machine_note`] says and nothing more, because a promise of a question
 /// nobody will be shown is a promise the next command breaks.
-pub fn turn_machine_note(
-	ctx:	&crate::tools::ToolContext,
+pub fn turn_machine_note<H: Host>(
+	ctx:	&crate::tools::ToolContext<H>,
 	m:		&Machine,
 	step:	NetStep,
 	mode:	Mode,

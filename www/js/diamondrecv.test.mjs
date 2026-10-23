@@ -100,7 +100,7 @@ function device(name, skew) {
 	const w = makeWindow({ now: T });
 	const store = {};
 	const settled = {};
-	const drops = [], raw = [];					// entries dropped; rows taken off without theirs
+	const drops = [], taken = [];				// entries dropped; rows the store took off
 	const bump = (id) => { store[id].touched = Math.max(tick() + (skew || 0), store[id].touched + 1); };
 	const app = {
 		list_diamonds: async () => JSON.stringify(Object.keys(store).map((id) => ({
@@ -126,9 +126,9 @@ function device(name, skew) {
 		},
 		remove_link: async (id, lid) => {
 			const cur = rowsOf(store[id].links), kept = cur.filter((l) => JSON.parse(l).id !== lid);
-			// The one door (P5): this device's entry for the row goes first.
+			// The one door (P5): this device's entry for the row goes with it, once the store took it.
 			const gone = MH.parseSidecar(cur.filter((l) => JSON.parse(l).id === lid).join('\n'))[0];
-			if (gone && !drops.includes(id + ' ' + lid + ' ' + gone.to)) raw.push(id + ' ' + lid);
+			if (gone) taken.push([id + ' ' + lid, id + ' ' + lid + ' ' + gone.to]);
 			if (kept.length === cur.length) return false;
 			store[id].links = kept.join('\n'); bump(id); return true;
 		},
@@ -165,7 +165,9 @@ function device(name, skew) {
 	const f = sliceDaimond(w, ['applyDiamonds', 'entryLineage', 'recordDiamondCopies', 'readDiamondRecv', 'readDiamondSeen',
 		'syncForkPoint', 'commitDiamondBaseline', 'readDiamondBase', 'diamondAncOf', 'recvOf'], stubs).fns;
 	const dev = {
-		name, store, w, f, settled, drops, raw,
+		name, store, w, f, settled, drops,
+		// Rows taken off whose entry did not follow.
+		get raw() { return taken.filter((t) => !drops.includes(t[1])).map((t) => t[0]); },
 		create(id, memory) {
 			store[id] = { touched: tick() + (skew || 0), name: id, tags: ['common'], kits: [], links: '', memory, versions: [] };
 		},

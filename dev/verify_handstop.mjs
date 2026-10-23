@@ -73,8 +73,8 @@ const CHROME = process.env.DAIMOND_CHROME
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
 const WWW	= path.join(ROOT, 'www');
-const INSTALL	= path.join(ROOT, 'hand/install/install.sh');
-const HAND	= path.join(ROOT, 'hand/target/release/daimond-hand');
+const INSTALL	= path.join(ROOT, 'kimberlite/install/install.sh');
+const HAND	= path.join(ROOT, 'kimberlite/target/release/kimberlite');
 const EXTID	= 'mpliijponglmmffjnonahhignkpkhmij';
 // Not /tmp -- it is a tmpfs, and what is written there is RAM charged to this
 // machine's agent fleet. See the SCRATCH note in harness.mjs.
@@ -219,7 +219,7 @@ if (BREAK && BREAKS[BREAK].file === 'www') note(`break '${BREAK}' applied to the
 const buildEnv = { ...process.env };
 delete buildEnv.CARGO_TARGET_DIR;
 if (!process.env.DAIMOND_NO_BUILD) {
-	const r = spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+	const r = spawnSync('cargo', ['build', '--release', '--manifest-path', 'kimberlite/Cargo.toml'],
 		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 	if (r.status !== 0) {
 		console.log((r.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 5).join('\n'));
@@ -283,7 +283,7 @@ const status = JSON.parse((await statusP) || '{}');
 check('the real hand answered and named the folder it was granted',
 	status && status.transport === 'machine' && status.root === GRANT,
 	JSON.stringify(status).slice(0, 300));
-// `paired` is FALSE here and that is correct, not a fault: `hand/REVIEW.md` §1.14
+// `paired` is FALSE here and that is correct, not a fault: `kimberlite/REVIEW.md` §1.14
 // refuses a command where the page cannot prove that the folder it has open is
 // the folder the hand was granted, and a stub page holds no folder at all. It is
 // asserted rather than worked around, because everything below happens IN SPITE

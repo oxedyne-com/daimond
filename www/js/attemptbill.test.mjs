@@ -152,10 +152,10 @@ console.log('worker: a 402 mid-turn, re-minted, run again; the `finally` bills l
 		const run = { model: 'm', provider: 'openrouter', diamondId: 'd1', prov: { rid: 'rid-1' }, app: null };
 		const meters = [{ facts: () => ({ tc: 3, ro: 'w' }) }, { facts: () => ({ tc: 5, ro: 'w' }) }];
 		const env = { wmeter: null };
-		const Wk = new Function('run', 'recordSpend', 'appSpend', 'env',
+		const Wk = new Function('run', 'recordSpend', 'appSpend', 'env', 'self',
 			src.replace(/\bwmeter\b/g, 'env.wmeter')
 			+ '\nreturn { bill: billAttempt, spent: typeof wspent === "undefined" ? null : wspent };')
-			(run, D.recordSpend, D.appSpend, env);
+			(run, D.recordSpend, D.appSpend, env, { persistNow() {} });
 		const W = Wk.bill;
 		run.app = fakeApp(); env.wmeter = meters[0];
 		run.app.spend(5000, 300, 0, 0.03);
@@ -182,7 +182,7 @@ console.log('worker: a 402 mid-turn, re-minted, run again; the `finally` bills l
 console.log("daimond.js: where each attempt is billed");
 {
 	const a = DAIMOND.indexOf('var wmeter = null;');
-	const fin = DAIMOND.indexOf('} finally {', DAIMOND.indexOf('await run.app.run_turn(firstAsk(run), sink);', a));
+	const fin = DAIMOND.indexOf('} finally {', DAIMOND.indexOf('await run.app.run_turn(nudge, sink);', a));
 	const blk = DAIMOND.slice(a, fin);
 	const rm = blk.indexOf('DaimondModels.remintSlot(');
 	const bill = blk.indexOf('billAttempt();', rm);

@@ -9,10 +9,14 @@ use oxedyne_fe2o3_core::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::engine::race::{race, Won};
+use crate::engine::worker::Liveness;
 use crate::llm::{Delta, LlmClient};
 use crate::prompts::Role;
 use crate::protocol::{AgentEvent, ChatMessage, MessageContent, Session};
 use crate::tools::ToolRegistry;
+use crate::engine::host::{DefaultHost, Host};
+use crate::engine::host::{clock::HostClock, store::HostStore};
 
 /// Folding a conversation that has outgrown the model's context window.
 ///
@@ -37,6 +41,21 @@ use crate::agent::compact::{Gauge, Limits};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio_rustls::rustls::ClientConfig;
+
+/// The seam between two rounds of a turn, asked at the head of each before anything of it is
+/// spent.  The session actor publishes its snapshot here and offers the newest registry its
+/// controls hold, so a turn adopts a scope change at its next round (`crate::engine::actor`).
+pub trait Boundary<H: Host = DefaultHost> {
+    /// A newer registry to run the rest of the turn under, if there is one.
+    fn round(&mut self, session: &Session) -> Option<Rc<ToolRegistry<H>>>;
+}
+
+/// The boundary of a turn with nothing to adopt.
+pub struct Fixed;
+
+impl<H: Host> Boundary<H> for Fixed {
+    fn round(&mut self, _session: &Session) -> Option<Rc<ToolRegistry<H>>> { None }
+}
 
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -93,6 +112,22 @@ fn keep_post(session: &mut Session, sent: &ChatMessage) {
 /// A fresh, empty interjection queue.
 pub fn new_interjections() -> Interjections {
     Rc::new(RefCell::new(Vec::new()))
+}
+
+/// Queue what the user said, `text` with its note `pre`, on `q`; blank words queue nothing.
+/// Returns how many are now waiting.  See [`Agent::interject_noted`].
+pub fn say_into(q: &Interjections, text: &str, pre: &str) -> usize {
+    let mut q = q.borrow_mut();
+    let t = text.trim();
+    if !t.is_empty() {
+        q.push(Said { text: t.to_string(), pre: pre.to_string() });
+    }
+    q.len()
+}
+
+/// Take the words of everything waiting on `q`, leaving it empty.
+pub fn take_said(q: &Interjections) -> Vec<String> {
+    std::mem::take(&mut *q.borrow_mut()).into_iter().map(|s| s.text).collect()
 }
 
 
@@ -202,6 +237,11 @@ pub struct Agent {
     /// Diamond.
     diamond:             Rc<RefCell<String>>,
     pending_only:        Cell<bool>,                     // reports on Pending, see `set_pending_only`
+    /// The turn's last-progress clock (U3a LV1, UNBLOCK-16): beaten by every line the model
+    /// stream hears, through the same clock handed to `llm`, and nothing else.  Its limit is
+    /// [`compact::LIVENESS_MS`] until [`Agent::set_liveness_ms`] says otherwise.  Shared on clone,
+    /// as `llm`'s copy of it is.  Nothing expires on it yet: the turn races it from LV2 on.
+    pub liveness:        Liveness,
     /// What this turn's standing context holds, block by block: the crystal, the three files,
     /// what is attached, the machine, the date, the tree.  Never composed into the system
     /// message, which must not change between two turns of one conversation (r578): each block
@@ -326,6 +366,9 @@ pub enum TurnEnd {
 	// not `Answered`, which is the 2026-10-08 defect: a turn that restored its starting state
 	// was booked as a reply that worked.
 	Blocked,
+	// The model stream said nothing for the liveness limit, twice in one round: the stall retry
+	// was spent (U3a LV2).  A tool never ends a turn this way; it fails on its own ceiling.
+	TimedOut,
 }
 
 impl TurnEnd {
@@ -350,6 +393,7 @@ impl TurnEnd {
 			// so `Blocked` travels as the word every page knows to be a failure, and names
 			// itself in `why`.
 			Self::Blocked	=> "failed",
+			Self::TimedOut	=> "failed",
 		}
 	}
 
@@ -357,6 +401,7 @@ impl TurnEnd {
 	pub fn why(&self) -> &'static str {
 		match self {
 			Self::Blocked	=> "blocked",
+			Self::TimedOut	=> "timed_out",
 			_			=> "",
 		}
 	}
@@ -387,6 +432,10 @@ pub struct TurnEnding {
 	// `Answered` after one of these is not the same as a turn that never needed telling.
 	pub reasoned:	usize,
 	pub said:		String,			// the sentence a `Blocked` turn ends on, else empty
+	// Paths the turn's completed write calls left on the store, in first-touch order, at most
+	// `TOUCHED_CAP` and then one "+k more".  A worker that ends anything but `done` reports
+	// them, so the conductor learns what the work left even when no verdict came (U3a REP).
+	pub touched:	Vec<String>,
 }
 
 impl TurnEnding {
@@ -453,6 +502,8 @@ fn pending_report_nudge() -> String {
 fn pending_reasoned_nudge() -> String {
 	fmt!("You reasoned but called no tool; end now with {}.", PENDING_ENDS)
 }
+/// The most paths an ending lists as touched before the rest become one "+k more".
+pub const TOUCHED_CAP: usize = 40;
 
 /// One dispatched tool call, as the audit sees it.
 #[derive(Clone, Debug)]
@@ -534,6 +585,28 @@ impl Claims {
 		self.calls.iter().any(|c| c.alerted)
 	}
 
+	/// The paths this turn's completed calls left on the store, each once, in the order they
+	/// were first left; past [`TOUCHED_CAP`] the rest are one "+k more".
+	///
+	/// Unlike [`Claims::standing`] a later delete does not take a path back out: the question
+	/// here is what the work touched, for a report, not what should be on the store now.
+	fn touched(&self) -> Vec<String> {
+		let mut seen: Vec<String> = Vec::new();
+		for call in &self.calls {
+			for (path, claim) in &call.paths {
+				if *claim == crate::tools::PathClaim::Left && !seen.contains(path) {
+					seen.push(path.clone());
+				}
+			}
+		}
+		if seen.len() > TOUCHED_CAP {
+			let more = seen.len() - TOUCHED_CAP;
+			seen.truncate(TOUCHED_CAP);
+			seen.push(fmt!("+{} more", more));
+		}
+		seen
+	}
+
 	fn tally(&self, want: crate::tools::CallOutcome) -> usize {
 		self.calls.iter().filter(|c| c.outcome == want).count()
 	}
@@ -571,7 +644,10 @@ impl Claims {
 
 impl Agent {
 
-    pub fn new(llm: LlmClient, system_prompt: &str) -> Self {
+    pub fn new(mut llm: LlmClient, system_prompt: &str) -> Self {
+        // Beaten at nought: nothing races it before a turn does, and a turn beats it as it starts.
+        let liveness = Liveness::new(compact::LIVENESS_MS, 0);
+        llm.liveness = Some(liveness.clone());
         Self {
             llm,
             system_prompt: system_prompt.to_string(),
@@ -592,12 +668,25 @@ impl Agent {
             pending_only:    Cell::new(false),
             ending:          Rc::new(RefCell::new(None)),
             diamond:         Rc::new(RefCell::new(String::new())),
+            liveness,
             blocks:          Rc::new(RefCell::new(crate::prompts::TurnBlocks::default())),
             turn_pre:        RefCell::new(String::new()),
             fork:            RefCell::new(None),
             fork_same:       Cell::new(false),
             fork_fresh:      Cell::new(false),
         }
+    }
+
+    /// Set the liveness limit `N`, in milliseconds: how long a turn may go without its model
+    /// stream saying anything.  Nought is taken as one millisecond, never as "no limit".  Tests
+    /// set 300 ms natively; the page sets a worker's from `window.__livenessMs` (U3a END).
+    pub fn set_liveness_ms(&self, ms: u64) {
+        self.liveness.set_limit_ms(ms);
+    }
+
+    /// The liveness limit `N` in force, in milliseconds.
+    pub fn liveness_ms(&self) -> u64 {
+        self.liveness.limit_ms()
     }
 
     /// Start this worker as a copy of its parent's latest request (r578c).
@@ -607,16 +696,20 @@ impl Agent {
     /// round is the parent's request plus one message and reuses its cache.  On another model
     /// the copy is still whole, but the tools array is this agent's own -- a family's tool names
     /// and a model's thinking signatures do not carry -- and there is no cache to reuse.
-    pub fn adopt_fork(&self, f: std::sync::Arc<crate::fork::Fork>, session: &mut Session) {
-        session.messages = f.messages.clone();
+    ///
+    /// Answers the conversation the worker's session is to hold, which the caller writes as it
+    /// writes any (the tab through its actor); the parent's host pin is the session's at the
+    /// copy's first turn, in [`Agent::run_turn`].
+    pub fn adopt_fork(&self, f: std::sync::Arc<crate::fork::Fork>) -> Vec<ChatMessage> {
+        let messages = f.messages.clone();
         let same = f.model == self.llm.model;
         if same {
-            session.pin = f.pin.clone();
             self.llm.carry_import(&f.carry);
         }
         self.fork_same.set(same);
         self.fork_fresh.set(true);
         *self.fork.borrow_mut() = Some(f);
+        messages
     }
 
     /// How the last turn on this agent ended.
@@ -652,6 +745,7 @@ impl Agent {
             reasoned: ending.reasoned,
             why:     ending.how.why().to_string(),
             said:    ending.said.clone(),
+            touched: ending.touched.clone(),
         });
         *self.ending.borrow_mut() = Some(ending);
     }
@@ -671,12 +765,12 @@ impl Agent {
     /// * `rounds` - Requests the turn sent.
     /// * `claims` - The turn's tool log; empty on the pure-chat path.
     /// * `registry` - The tools this turn held, which is also what answers for the store.
-    async fn audit(
+    async fn audit<H: Host>(
         &self,
         how:        TurnEnd,
         rounds:     usize,
         claims:     &Claims,
-        registry:   Option<&ToolRegistry>,
+        registry:   Option<&ToolRegistry<H>>,
     )
         -> TurnEnding
     {
@@ -701,6 +795,7 @@ impl Agent {
             malformed: claims.malformed,
             reasoned: claims.reasoned,
             said:    String::new(),
+            touched: claims.touched(),
         }
     }
 
@@ -1121,10 +1216,12 @@ impl Agent {
     /// than a spinner that ends with the meter where it was.
     ///
     /// # Arguments
+    /// * `host` - The host the Diamond's notes are filed through.
     /// * `session` - The durable conversation, folded in place.
     /// * `on_event` - Where the fold is announced, exactly as an automatic one is.
-    pub async fn fold_by_hand(
+    pub async fn fold_by_hand<H: Host>(
         &self,
+        host:     &H,
         session:  &mut Session,
         on_event: &mut impl FnMut(AgentEvent),
     )
@@ -1140,7 +1237,7 @@ impl Agent {
         // that answer next, so the newest turn keeps its results and everything older is retired.
         let keep = self.limits.borrow().retire_keep_turns;
         self.prior_end.set(compact::prior_end(&session.messages, keep));
-        self.fold_if_needed(session, &mut working, 0, Fold::ByHand, on_event).await.changed()
+        self.fold_if_needed(host, session, &mut working, 0, Fold::ByHand, on_event).await.changed()
     }
 
     /// Set what the model folding this agent's conversations is told.
@@ -1256,13 +1353,7 @@ impl Agent {
     /// * `text` - What the user said.
     /// * `pre` - The note for it, empty for none.
     pub fn interject_noted(&self, text: &str, pre: &str) -> usize {
-        let t = text.trim();
-        if t.is_empty() {
-            return self.interject.borrow().len();
-        }
-        let mut q = self.interject.borrow_mut();
-        q.push(Said { text: t.to_string(), pre: pre.to_string() });
-        q.len()
+        say_into(&self.interject, text, pre)
     }
 
     /// Take `said` as this agent's interjection queue, in place of the empty one it was built with.
@@ -1318,6 +1409,21 @@ impl Agent {
         std::mem::take(&mut *q)
     }
 
+    /// Hand back the words of everything waiting, leaving the queue empty: what the page takes
+    /// back at a turn's end, when no seam was left to carry them.
+    pub fn take_interjected(&self) -> Vec<String> {
+        self.take_interjections().into_iter().map(|s| s.text).collect()
+    }
+
+    /// Take one waiting message back out by position, oldest first; `None` past the end.
+    pub fn drop_interjected(&self, index: usize) -> Option<String> {
+        let mut q = self.interject.borrow_mut();
+        if index >= q.len() {
+            return None;
+        }
+        Some(q.remove(index).text)
+    }
+
     /// Run a single agent turn.
     ///
     /// 1. Append the user message to the session.
@@ -1337,7 +1443,7 @@ impl Agent {
     ///
     /// # Arguments
     /// * `registry` - The tools this turn holds, which decide the middle sentence.
-    pub fn system_parts(&self, registry: &ToolRegistry) -> (String, String, String) {
+    pub fn system_parts<H: Host>(&self, registry: &ToolRegistry<H>) -> (String, String, String) {
         let tools = if registry.is_empty() {
             String::new()
         } else {
@@ -1386,11 +1492,11 @@ impl Agent {
     }
 
 
-    pub async fn run_turn(
+    pub async fn run_turn<H: Host>(
         &self,
         session:    &mut Session,
         user_msg:   String,
-        registry:   &ToolRegistry,
+        registry:   &ToolRegistry<H>,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
         self.run_turn_noted(session, user_msg, String::new(), String::new(), registry, on_event).await
@@ -1407,13 +1513,28 @@ impl Agent {
     /// * `pre` - The app's note for this message, empty for none.
     /// * `mid` - The transcript row the message was said as, empty for none; see
     ///   [`ChatMessage::marked`].
-    pub async fn run_turn_noted(
+    pub async fn run_turn_noted<H: Host>(
         &self,
         session:    &mut Session,
         user_msg:   String,
         pre:        String,
         mid:        String,
-        registry:   &ToolRegistry,
+        registry:   &ToolRegistry<H>,
+        on_event:   &mut impl FnMut(AgentEvent),
+    ) -> Outcome<()> {
+        self.run_turn_bounded(session, user_msg, pre, mid, registry, &mut Fixed, on_event).await
+    }
+
+    /// [`run_turn_noted`](Self::run_turn_noted) under a [`Boundary`], which is asked at the head
+    /// of every round for a newer registry to run the rest of the turn under.
+    pub async fn run_turn_bounded<H: Host>(
+        &self,
+        session:    &mut Session,
+        user_msg:   String,
+        pre:        String,
+        mid:        String,
+        registry:   &ToolRegistry<H>,
+        boundary:   &mut impl Boundary<H>,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
         // THE TURN'S BYTE LEDGER STARTS HERE, and here is the only place it does. Every turn in
@@ -1505,8 +1626,14 @@ impl Agent {
         self.prior_end.set(compact::prior_end(&session.messages, keep));
         // A FRESH COPY IS NOT RETIRED AGAIN: it is the parent's request as sent, already retired
         // at the parent's own boundary, and moving that boundary would change its bytes.
+        // AND IT GOES TO THE PARENT'S HOST on the parent's own model, whose cache it reuses.
         if self.fork_fresh.replace(false) {
             self.prior_end.set(0);
+            if self.fork_same.get() {
+                if let Some(f) = self.fork.borrow().as_ref() {
+                    session.pin = f.pin.clone();
+                }
+            }
         }
         let mut prior = session.messages.clone();
         // Under a switch, so the measure can be turned off and its worth measured rather than
@@ -1545,9 +1672,9 @@ impl Agent {
         // dead host for the next turn to ask first.  Both paths, with tools or without.
         self.llm.set_pin(session.pin.clone());
         let out = if registry.is_empty() {
-            self.run_streaming(session, working, on_event).await
+            self.run_streaming(registry.ctx.host(), session, working, on_event).await
         } else {
-            self.run_tool_loop(session, working, registry, on_event).await
+            self.run_tool_loop(session, working, registry, boundary, on_event).await
         };
         session.pin = self.llm.pin();
         out
@@ -1559,26 +1686,30 @@ impl Agent {
     /// being too long -- the second is the net under the first.  Without it a chat whose
     /// window nobody published dies once and then dies on every turn after, because the
     /// same oversized history is sent again.
-    async fn run_streaming(
+    async fn run_streaming<H: Host>(
         &self,
+        host:       &H,
         session:    &mut Session,
         mut working: Vec<ChatMessage>,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
         let mut refolded = false;
         let mut rounds = 0usize;
+        let mut expiries = 0u32; // liveness expiries of this turn's one round
         loop {
             // A STOPPED TURN SENDS NOTHING, the fold's request included; see `Halt`.
             if self.llm.halted() {
-                return self.stop_halted(rounds, &Claims::default(), None, on_event).await;
+                return self.stop_halted(rounds, &Claims::default(), None::<&ToolRegistry<H>>, on_event).await;
             }
-            self.fold_if_needed(session, &mut working, 0, Fold::IfNeeded, on_event).await;
+            self.fold_if_needed(host, session, &mut working, 0, Fold::IfNeeded, on_event).await;
             let sent = compact::conversation_bytes(&working);
             let mut full = String::new();
             rounds += 1;
-            let result = self.llm.chat_stream(
+            // Has this attempt handed the caller anything?  Then it is not asked again.
+            let said = std::cell::Cell::new(false);
+            let result = match self.live_call(self.llm.chat_stream(
                 &working,
-                &mut |d| match d {
+                &mut |d| { said_any(&said, &d); match d {
                     Delta::Text(token) => {
                         full.push_str(token);
                         on_event(AgentEvent::Text(token.to_string()));
@@ -1592,8 +1723,11 @@ impl Agent {
                     // A pre-first-token retry: a caption, never part of `full`. No tool
                     // name to give (this is a plain request retry), so the name is empty
                     // and the UI reads "trying that again".
-                    Delta::Roading { attempt, of, wait_ms } =>
-                        on_event(AgentEvent::Roading { name: String::new(), attempt, of, wait_ms }),
+                    // A request retry's wait is the client's own pause, not a silent model.
+                    Delta::Roading { attempt, of, wait_ms } => {
+                        self.liveness.beat(crate::llm::now_ms().saturating_add(wait_ms));
+                        on_event(AgentEvent::Roading { name: String::new(), attempt, of, wait_ms })
+                    }
                     // The provider has taken the round and said nothing; a caption, never `full`.
                     Delta::Waiting { provider, secs } =>
                         on_event(AgentEvent::Wait {
@@ -1602,8 +1736,21 @@ impl Agent {
                         on_event(AgentEvent::Stall {
                             model: self.llm.model.clone(), provider: provider.to_string(),
                             secs, retried: retrying }),
-                },
-            ).await;
+                }},
+            )).await {
+                Some(r) => r,
+                // NO PROGRESS FOR THE LIVENESS LIMIT (U3a LV2): once is the round's stall retry,
+                // twice ends the turn `TimedOut`.  A Stop that landed meanwhile is a Stop.
+                None if self.llm.halted() =>
+                    return self.stop_halted(rounds, &Claims::default(), None::<&ToolRegistry<H>>, on_event).await,
+                None => {
+                    if self.stalled_live(&mut expiries, said.get(), on_event) {
+                        rounds -= 1;
+                        continue;
+                    }
+                    return self.end_timed_out(rounds, &Claims::default(), None::<&ToolRegistry<H>>, on_event).await;
+                }
+            };
             match result {
                 Ok(resp) => {
                     // The host this round leaves the conversation pinned to (r578b F5).
@@ -1655,7 +1802,7 @@ impl Agent {
                     let how = if resp.aborted { TurnEnd::Stopped }
                         else if silent        { TurnEnd::Silent }
                         else                  { TurnEnd::Answered };
-                    let ending = self.audit(how, rounds, &Claims::default(), None).await;
+                    let ending = self.audit(how, rounds, &Claims::default(), None::<&ToolRegistry<H>>).await;
                     self.ended(ending, on_event);
                     on_event(AgentEvent::Done);
                     return Ok(());
@@ -1663,13 +1810,13 @@ impl Agent {
                 Err(e) => {
                     if !refolded && self.overflowed(&e, sent) {
                         refolded = true;
-                        if self.fold_if_needed(session, &mut working, 0, Fold::Refused, on_event).await
+                        if self.fold_if_needed(host, session, &mut working, 0, Fold::Refused, on_event).await
                             .changed() {
                             continue;
                         }
                     }
                     on_event(AgentEvent::Error(e.to_string()));
-                    let ending = self.audit(TurnEnd::Failed, rounds, &Claims::default(), None).await;
+                    let ending = self.audit(TurnEnd::Failed, rounds, &Claims::default(), None::<&ToolRegistry<H>>).await;
                     self.ended(ending, on_event);
                     return Err(e);
                 }
@@ -1709,9 +1856,9 @@ impl Agent {
     /// # Arguments
     /// * `name` - The tool's wire name, as the model spelled it.
     /// * `args` - The raw argument object.
-    async fn over_the_road(
+    async fn over_the_road<H: Host>(
         &self,
-        registry: &ToolRegistry,
+        registry: &ToolRegistry<H>,
         name:     &str,
         args:     &str,
         on_event: &mut impl FnMut(AgentEvent),
@@ -1753,9 +1900,8 @@ impl Agent {
                     // that only sleeps spends all eight attempts into a dead page and reports
                     // failure the moment the user comes back. Charged to the same budget, so
                     // being backgrounded cannot extend a turn without bound.
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        waited += crate::wasm::await_restored(waited).await;
+                    if H::HOSTED {
+                        waited += registry.ctx.host().clock().await_restored(waited).await;
                     }
                 }
             }
@@ -1826,9 +1972,9 @@ impl Agent {
     ///
     /// # Arguments
     /// * `truncated` - Whether the reply these calls were parsed out of hit the output limit.
-    async fn one_call(
+    async fn one_call<H: Host>(
         &self,
-        registry:  &ToolRegistry,
+        registry:  &ToolRegistry<H>,
         tc:        &crate::protocol::ToolCall,
         truncated: bool,
         on_event:  &mut impl FnMut(AgentEvent),
@@ -1857,7 +2003,18 @@ impl Agent {
         if tc.name == HANGS {
             return std::future::pending().await;
         }
-        self.over_the_road(registry, &tc.name, &tc.arguments, on_event).await
+        // EACH CALL IS HELD TO ITS OWN CEILING, never to the turn's liveness (U3a LV2): `run`
+        // its timeout, `verify` its budget, `gather` its wait, the rest the default, all plus a
+        // margin.  A call past it is dropped as a Stop drops it, and fails; the turn goes on.
+        let ceiling = crate::engine::worker::deadline::ceiling_of(
+            &tc.name, &tc.arguments, registry.ctx.gather_timeout_s());
+        match crate::engine::worker::deadline::within_ceiling(ceiling,
+            self.over_the_road(registry, &tc.name, &tc.arguments, on_event)).await
+        {
+            Ok(out)     => out,
+            Err(secs)   => Ok(MessageContent::text(crate::tools::error_line(
+                &tool_ceiling_note(secs)))),
+        }
     }
 
     /// A tool result as the model running this turn may be shown it: whole when the model is
@@ -1866,9 +2023,9 @@ impl Agent {
     ///
     /// Only a model that has REFUSED pictures is announced as one that would not look; an unproven
     /// model has refused nothing, and the chat would record "would not look" of it untruly.
-    async fn shown(
+    async fn shown<H: Host>(
         &self,
-        registry:   &ToolRegistry,
+        registry:   &ToolRegistry<H>,
         result:     MessageContent,
         on_event:   &mut impl FnMut(AgentEvent),
     )
@@ -1893,9 +2050,9 @@ impl Agent {
     /// gets a `Vec` of its own and the round drains them in the model's order.  A method rather
     /// than a closure at the call site because the borrow of the sink has to outlive the future,
     /// which a closure built inside a `map` cannot arrange.
-    async fn call_buffered(
+    async fn call_buffered<H: Host>(
         &self,
-        registry:  &ToolRegistry,
+        registry:  &ToolRegistry<H>,
         tc:        &crate::protocol::ToolCall,
         truncated: bool,
         sink:      &mut Vec<AgentEvent>,
@@ -1904,6 +2061,35 @@ impl Agent {
     {
         let mut into = |e: AgentEvent| sink.push(e);
         self.one_call(registry, tc, truncated, &mut into).await
+    }
+
+    /// Answer every call of a group a Stop cut off mid-run, as a failure that says so: the
+    /// first call was announced before the group ran, and each after it is announced here, so
+    /// the page's events still alternate call, result.
+    fn answer_stopped(
+        &self,
+        session:    &mut Session,
+        working:    &mut Vec<ChatMessage>,
+        group:      &[crate::protocol::ToolCall],
+        on_event:   &mut impl FnMut(AgentEvent),
+    ) {
+        for (n, tc) in group.iter().enumerate() {
+            if n > 0 {
+                on_event(Self::announce(tc));
+            }
+            // A command is answered as told to stop (r578e D1), any other call as stopped.
+            let text = stopped_call(&tc.name).to_string();
+            on_event(AgentEvent::ToolResult {
+                name:       tc.name.clone(),
+                result:     text.clone(),
+                outcome:    crate::tools::CallOutcome::Failed,
+                paused:     String::new(),
+                class:      String::new(),
+            });
+            let reply = ChatMessage::tool(tc.id.clone(), MessageContent::text(text.clone()));
+            working.push(reply.clone());
+            session.messages.push(reply);
+        }
     }
 
     /// Leave a round whose tool call died on the road, with nothing false left behind.
@@ -1940,15 +2126,81 @@ impl Agent {
         *working = crate::protocol::pair_up(work);
     }
 
+    /// Race one model call against the turn's liveness clock, beaten at the call's start and by
+    /// every line its stream delivers; `None` when the clock ran out first and the call was
+    /// dropped.  Stop still wins: the stream reader races the halt itself, and the call is
+    /// polled first here.
+    async fn live_call<F: std::future::Future>(&self, call: F) -> Option<F::Output> {
+        let live = self.liveness.clone();
+        live.beat(crate::llm::now_ms());
+        let out = async move {
+            loop {
+                let (now, due) = (crate::llm::now_ms(), live.due_at());
+                if now >= due { return; }
+                // Never past one limit at a nap: a reply hold released early brings `due` in.
+                crate::llm::sleep_ms((due - now).min(live.limit_ms())).await;
+            }
+        };
+        match race(call, out).await {
+            Won::First(v)   => Some(v),
+            Won::Second(()) => None,
+        }
+    }
+
+    /// A model call ran out its liveness limit: the first time in a round is the round's stall
+    /// retry and is said as one; the second is not retried.  Does the round ask again?
+    ///
+    /// ONE RULE FOR BOTH RETRIES.  The stream's own stall retry asks again only a round that
+    /// produced nothing (`acc.size() == 0` in `stream_turn`); a round that had begun keeps what it
+    /// said.  So here: an attempt that has already handed the caller text or reasoning (`said`)
+    /// is not asked again, or the page would show that text twice; it ends the turn.
+    fn stalled_live(&self, expiries: &mut u32, said: bool, on_event: &mut impl FnMut(AgentEvent))
+        -> bool
+    {
+        *expiries += 1;
+        let again = *expiries == 1 && !said;
+        on_event(AgentEvent::Stall {
+            model:    self.llm.model.clone(),
+            provider: String::new(),
+            secs:     self.liveness.limit_ms() / 1_000,
+            retried:  again,
+        });
+        again
+    }
+
+    /// End a turn whose model stream made no progress for the liveness limit: twice in a round,
+    /// or once after it had already said something (which is never asked again, so the sentence
+    /// does not claim a second ask).
+    async fn end_timed_out<H: Host>(
+        &self,
+        rounds:     usize,
+        claims:     &Claims,
+        registry:   Option<&ToolRegistry<H>>,
+        on_event:   &mut impl FnMut(AgentEvent),
+    )
+        -> Outcome<()>
+    {
+        let secs = self.liveness.limit_ms() as f64 / 1_000.0;
+        on_event(AgentEvent::Error(fmt!(
+            "The model made no progress for {:.1} s, so the turn ended there.", secs)));
+        // THE ROUND THAT WENT QUIET IS NOT ONE OF THE ROUNDS (U3a REP): it was sent and never
+        // answered, so the ending counts the rounds the model did answer.  A worker that worked
+        // three rounds and then went silent "timed out after 3 rounds", never 4.
+        let ending = self.audit(TurnEnd::TimedOut, rounds.saturating_sub(1), claims, registry).await;
+        self.ended(ending, on_event);
+        on_event(AgentEvent::Done);
+        Ok(())
+    }
+
     /// End a turn its halt has stopped, at a seam: nothing more is sent and nothing is said.
     ///
     /// The ending is `Stopped`, the one a Stop that lands mid-stream gives, so the page hands
     /// the turn back the same way whichever moment the Stop or the pause landed in.
-    async fn stop_halted(
+    async fn stop_halted<H: Host>(
         &self,
         rounds:     usize,
         claims:     &Claims,
-        registry:   Option<&ToolRegistry>,
+        registry:   Option<&ToolRegistry<H>>,
         on_event:   &mut impl FnMut(AgentEvent),
     )
         -> Outcome<()>
@@ -1959,18 +2211,23 @@ impl Agent {
         Ok(())
     }
 
-    async fn run_tool_loop(
+    async fn run_tool_loop<H: Host>(
         &self,
         session:    &mut Session,
         mut working: Vec<ChatMessage>,
-        registry:   &ToolRegistry,
+        first:      &ToolRegistry<H>,
+        boundary:   &mut impl Boundary<H>,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
-        let tools_json = self.tools_json(registry);
+        // A worker on its parent's model sends its parent's tools array, byte for byte (r578c).
+        let mut tools_json = self.tools_json(first);
         // The tool schema rides on every request and is not in the conversation, so it is
         // counted separately -- a budget blind to it is short by however many tools are
         // registered, which for the browser set is several thousand tokens.
-        let schema = tools_json.as_ref().map(|s| s.len() as u64).unwrap_or(0);
+        let mut schema = tools_json.as_ref().map(|s| s.len() as u64).unwrap_or(0);
+        // THE REGISTRY A ROUND RUNS UNDER, once the boundary has offered a newer one: a scope or
+        // a roster changed mid-turn waits for the next round and is never refused.
+        let mut adopted: Option<Rc<ToolRegistry<H>>> = None;
         let max_rounds = self.limits.borrow().max_rounds;
         // THE TURN'S TOOL LOG, and the only thing the audit reads. It carries an outcome and a
         // set of argument-named paths per call, and no prose at all -- so no reader of it can
@@ -2049,6 +2306,30 @@ impl Agent {
             crate::turn_state::TurnState::new(&ask, self.limits.borrow().no_progress_rounds)
         };
         loop {
+            if let Some(next) = boundary.round(session) {
+                // THE PROMPT NAMES THE ROSTER THE ROUND IS OFFERED: a sentence left naming the old
+                // one promises a tool the model lacks, or hides one it has. One cache miss per
+                // change, and only the tools sentence is rewritten.
+                let was = match &adopted {
+                    Some(r) => self.system_parts(r).1,
+                    None    => self.system_parts(first).1,
+                };
+                let (_, now, brief) = self.system_parts(&next);
+                if was != now {
+                    if let Some(ChatMessage::System { content: MessageContent::Text(sys) })
+                        = working.first_mut()
+                    {
+                        *sys = retell_tools(sys, &was, &now, &brief);
+                    }
+                }
+                tools_json = next.definitions_json();
+                schema = tools_json.as_ref().map(|s| s.len() as u64).unwrap_or(0);
+                adopted = Some(next);
+            }
+            let registry: &ToolRegistry<H> = match &adopted {
+                Some(r) => r,
+                None    => first,
+            };
             self.llm.set_pin(session.pin.clone());          // this conversation's host (r578 U3)
             // A STOPPED TURN GOES NO FURTHER, asked before anything of the next round -- the
             // cap's fold, the proactive fold, the request -- can spend.  The seam below asks it
@@ -2074,7 +2355,7 @@ impl Agent {
             // Fold before the request rather than after the refusal. Checked every round,
             // because a single turn of fifty file reads can outgrow the window on its own,
             // without any earlier turn being large at all.
-            if self.fold_if_needed(session, &mut working, schema, Fold::IfNeeded, on_event).await
+            if self.fold_if_needed(registry.ctx.host(), session, &mut working, schema, Fold::IfNeeded, on_event).await
                 == Refit::Folded {
                 round_at.clear();
             }
@@ -2101,17 +2382,22 @@ impl Agent {
             // change it and it changes it exactly once, so sampling either side of the round is
             // the whole of the learned signal -- no counter and no flag of our own.
             let could_see = self.llm.can_take_images();
+            let mut expiries = 0u32; // this round's liveness expiries
             let mut resp = loop {
-                match self.llm.chat_stream_tools(
+                // Has this attempt handed the caller anything?  Then it is not asked again.
+                let said = std::cell::Cell::new(false);
+                let got = self.live_call(self.llm.chat_stream_tools(
                     &working,
                     tools_json.as_deref(),
-                    &mut |d| match d {
+                    &mut |d| { said_any(&said, &d); match d {
                         Delta::Text(token)  => on_event(AgentEvent::Text(token.to_string())),
                         Delta::Reasoning(t) => on_event(AgentEvent::Thinking(t.to_string())),
                         // A pre-first-token retry, shown as a caption and never written
                         // to the transcript — see the note in the streaming loop above.
-                        Delta::Roading { attempt, of, wait_ms } =>
-                            on_event(AgentEvent::Roading { name: String::new(), attempt, of, wait_ms }),
+                        Delta::Roading { attempt, of, wait_ms } => {
+                            self.liveness.beat(crate::llm::now_ms().saturating_add(wait_ms));
+                            on_event(AgentEvent::Roading { name: String::new(), attempt, of, wait_ms })
+                        }
                         // A silent provider, as in the streaming loop above.
                         Delta::Waiting { provider, secs } =>
                             on_event(AgentEvent::Wait {
@@ -2120,8 +2406,19 @@ impl Agent {
                             on_event(AgentEvent::Stall {
                                 model: self.llm.model.clone(), provider: provider.to_string(),
                                 secs, retried: retrying }),
-                    },
-                ).await {
+                    }},
+                )).await;
+                // NO PROGRESS FOR THE LIVENESS LIMIT (U3a LV2), as in the streaming loop.
+                let got = match got {
+                    Some(g) => g,
+                    None if self.llm.halted() =>
+                        return self.stop_halted(rounds, &claims, Some(registry), on_event).await,
+                    None => {
+                        if self.stalled_live(&mut expiries, said.get(), on_event) { continue; }
+                        return self.end_timed_out(rounds, &claims, Some(registry), on_event).await;
+                    }
+                };
+                match got {
                     Ok(r) => break r,
                     Err(e) => {
                         // The net under the proactive fold: a window nobody published, or
@@ -2129,7 +2426,7 @@ impl Agent {
                         // that looks like the prompt being too long.
                         if !refolded && self.overflowed(&e, sent + schema) {
                             refolded = true;
-                            if self.fold_if_needed(session, &mut working, schema, Fold::Refused,
+                            if self.fold_if_needed(registry.ctx.host(), session, &mut working, schema, Fold::Refused,
                                 on_event).await.changed() {
                                 sent = compact::conversation_bytes(&working);
                                 continue;
@@ -2393,7 +2690,23 @@ impl Agent {
                 // the model gets the round; a second ending over it is `Blocked`, and the
                 // refusal's own words are what the user reads.
                 let mut said = String::new();
-                if let Some(u) = setbacks.unmended() {
+                // A refusal of a side action, its kind of work done in an earlier round, that nothing
+                // mended: the turn is done, and says what was refused (`Setbacks`).
+                let mut side = String::new();
+                let all_side = setbacks.unmended().is_some() && setbacks.blocking().is_none()
+                    && refusal_nudged;
+                // A refusal another route went round is said too, never dropped (SETBACKS2).
+                let mut said_side: Vec<&Unmended> = setbacks.routed().iter().collect();
+                if all_side {
+                    said_side.extend(setbacks.side());
+                }
+                for u in said_side {
+                    match &u.named {
+                        Some(p) => side.push_str(&fmt!("\n\nRefused: {} {}: {}", u.tool, p, u.head)),
+                        None    => side.push_str(&fmt!("\n\nRefused: {}: {}", u.tool, u.head)),
+                    }
+                }
+                if let Some(u) = setbacks.unmended().filter(|_| !all_side) {
                     if !refusal_nudged {
                         refusal_nudged = true;
                         let nudge = refusal_nudge(&u.tool, &u.head);
@@ -2407,6 +2720,7 @@ impl Agent {
                         session.messages.push(ChatMessage::user(nudge));
                         continue;
                     }
+                    let u = setbacks.blocking().unwrap_or(u);
                     how = TurnEnd::Blocked;
                     said = fmt!("Not done: {} was refused and I could not mend it. {}",
                         u.tool, u.head);
@@ -2432,6 +2746,10 @@ impl Agent {
                     }
                     how = TurnEnd::Blocked;
                     said = proof.said().unwrap_or_default();
+                }
+                if how != TurnEnd::Blocked && !side.is_empty() {
+                    on_event(AgentEvent::Text(side.clone()));
+                    resp.content.push_str(&side);
                 }
                 // THE SEAM, and only here. A run of prose with a tool call after it is
                 // working rather than an answer -- `demoteToWorking` in the page draws it as
@@ -2489,6 +2807,8 @@ impl Agent {
             // same reason.  WHAT MAY RUN TOGETHER, AND WHY SO LITTLE MAY, IS `batch`'s RULE --
             // read it there rather than inferring it from here.  Everything this loop does with
             // a result it does in the model's own order, whatever ran together underneath.
+            // One response's calls are one round of setbacks (`FAILS_STOP`).
+            setbacks.next_round();
             let names: Vec<&str> = resp.tool_calls.iter().map(|t| t.name.as_str()).collect();
             // SETTLED BEFORE ANYTHING RUNS, and ahead of `held`: a duplicate or a call past the
             // cap never reaches a tool, `with_folds`, the setbacks, the claims or the page, so a
@@ -2567,13 +2887,8 @@ impl Agent {
                 let closed: Vec<bool> = group.iter().map(|tc| state.refuses(&tc.name)).collect();
                 let shut = state.refusal();
                 let truncated = resp.truncated;
-                // RACED AGAINST THE TURN'S STOP (QA r578c A2).  A halt was read only between
-                // calls, so a call that never returned -- a page bridge that wedged, a question
-                // nobody answers -- held Stop and pause off for good, and with them the bill, the
-                // report and the gather the page runs when a turn ends.  Claude Code's Esc
-                // interrupts a running tool; so does this.
                 let halt = self.llm.halt();
-                let run = async { if group.len() == 1 {
+                let work = async { if group.len() == 1 {
                     if pre[0] {
                         // Answered in the record loop below, once the original's outcome is known.
                         vec![Ok(MessageContent::text(String::new()))]
@@ -2605,29 +2920,16 @@ impl Agent {
                         .collect();
                     batch::all_of(futs).await
                 } };
-                let outs: Vec<Outcome<MessageContent>> = match batch::unless(run, halt.fired()).await {
-                    Some(outs) => outs,
-                    None       => {
-                        // Every call of the group is answered as stopped, in the model's order and
-                        // with the events alternating as ever; what the group's calls wrote to
-                        // their sinks before the Stop is dropped with them.  The calls after the
-                        // group are paired off, and the turn ends at this seam.
-                        for (n, tc) in group.iter().enumerate() {
-                            if n > 0 {
-                                on_event(Self::announce(tc));
-                            }
-                            let text = stopped_call(&tc.name).to_string();
-                            on_event(AgentEvent::ToolResult {
-                                name:    tc.name.clone(),
-                                result:  text.clone(),
-                                outcome: crate::tools::CallOutcome::Failed,
-                                paused:  String::new(),
-                                class:   String::new(),
-                            });
-                            let reply = ChatMessage::tool(tc.id.clone(), MessageContent::text(text));
-                            working.push(reply.clone());
-                            session.messages.push(reply);
-                        }
+                // A STOP LANDS WHILE A TOOL RUNS, not when it finishes: the group is raced against
+                // the turn's halt and dropped where it stands.  A dropped command's child goes
+                // with it and a JS promise's late answer is discarded; what a call had already
+                // done stays done, and its reply says so.  Every call of the group is answered, so
+                // the conversation stays whole, and the turn ends at the seam as a Stop between
+                // groups ends it.
+                let outs: Vec<Outcome<MessageContent>> = match race(work, halt.fired()).await {
+                    Won::First(outs)    => outs,
+                    Won::Second(())     => {
+                        self.answer_stopped(session, &mut working, group, on_event);
                         self.abandon_round(session, &mut working);
                         return self.stop_halted(rounds, &claims, Some(registry), on_event).await;
                     },
@@ -3003,11 +3305,11 @@ impl Agent {
     ///
     /// # Arguments
     /// * `opening_cost` - The session's bill before this turn opened, so the figure is the TURN's.
-    fn over_the_spend_cap(
+    fn over_the_spend_cap<H: Host>(
         &self,
         session:      &Session,
         opening_cost: f64,
-        registry:     &ToolRegistry,
+        registry:     &ToolRegistry<H>,
     )
         -> Option<(f64, f64)>
     {
@@ -3029,14 +3331,14 @@ impl Agent {
     /// Its own ending rather than [`TurnEnd::Capped`]: a user whose turn stopped on money and was
     /// told it had run out of rounds would raise the round limit, which is the one remedy that
     /// cannot work.
-    async fn stop_on_spend(
+    async fn stop_on_spend<H: Host>(
         &self,
         session:    &mut Session,
         spent:      f64,
         cap:        f64,
         rounds:     usize,
         claims:     &Claims,
-        registry:   &ToolRegistry,
+        registry:   &ToolRegistry<H>,
         on_event:   &mut impl FnMut(AgentEvent),
     ) {
         let msg = fmt!("Stopped after spending US${:.2} of this turn's US${:.2} ceiling.",
@@ -3058,7 +3360,7 @@ impl Agent {
     /// # Arguments
     /// * `decide` - Whether to offer the Decision at all; a sentence that is itself the question
     ///   stands alone, so the user is asked one thing and not two.
-    async fn end_blocked(
+    async fn end_blocked<H: Host>(
         &self,
         session:    &mut Session,
         working:    &mut Vec<ChatMessage>,
@@ -3066,7 +3368,7 @@ impl Agent {
         decide:     bool,
         rounds:     usize,
         claims:     &Claims,
-        registry:   &ToolRegistry,
+        registry:   &ToolRegistry<H>,
         on_event:   &mut impl FnMut(AgentEvent),
     ) {
         let ask = crate::tools::Tool::Ask;
@@ -3124,13 +3426,13 @@ impl Agent {
     /// # Arguments
     /// * `rounds` - The whole turn's count, legs included.
     /// * `grace` - The ceiling it met; see [`compact::ORPHAN_GRACE_ROUNDS`].
-    async fn stop_on_orphan(
+    async fn stop_on_orphan<H: Host>(
         &self,
         session:    &mut Session,
         rounds:     usize,
         grace:      usize,
         claims:     &Claims,
-        registry:   &ToolRegistry,
+        registry:   &ToolRegistry<H>,
         on_event:   &mut impl FnMut(AgentEvent),
     ) {
         let msg = fmt!("Stopped after {} rounds: the turn that dispatched this worker ended, \
@@ -3170,13 +3472,13 @@ impl Agent {
     /// # Arguments
     /// * `rounds` - The whole turn's count, legs included, not this leg's.
     /// * `continuations` - How many legs the turn has already taken; raised when it takes another.
-    async fn at_the_cap(
+    async fn at_the_cap<H: Host>(
         &self,
         session:        &mut Session,
         working:        &mut Vec<ChatMessage>,
         round_at:       &mut Vec<usize>,
         schema:         u64,
-        registry:       &ToolRegistry,
+        registry:       &ToolRegistry<H>,
         claims:         &Claims,
         rounds:         usize,
         max_rounds:     usize,
@@ -3186,7 +3488,7 @@ impl Agent {
     )
         -> Option<Outcome<()>>
     {
-        self.fold_if_needed(session, working, schema, Fold::Capped, on_event).await;
+        self.fold_if_needed(registry.ctx.host(), session, working, schema, Fold::Capped, on_event).await;
         // THE FOLD MOVED EVERY INDEX IN `round_at`, which the next leg reads to decide what is old
         // enough to retire.  Cleared for the reason the in-loop fold clears it: a stale mark
         // retires the NEWEST messages, which is the worst thing it could do.
@@ -3379,7 +3681,7 @@ impl Agent {
 
     /// The tools array a request carries.  A worker on its parent's model sends its parent's,
     /// byte for byte (r578c).
-    fn tools_json(&self, registry: &ToolRegistry) -> Option<String> {
+    fn tools_json<H: Host>(&self, registry: &ToolRegistry<H>) -> Option<String> {
         match (self.fork.borrow().as_ref(), self.fork_same.get()) {
             (Some(f), true) => f.tools.clone(),
             _               => registry.definitions_json(),
@@ -3388,7 +3690,7 @@ impl Agent {
 
     /// Bytes of the tools array riding beside the conversation: nothing where the turn runs
     /// without tools, which is `run_streaming`'s request.
-    fn schema_bytes(&self, registry: &ToolRegistry) -> u64 {
+    fn schema_bytes<H: Host>(&self, registry: &ToolRegistry<H>) -> u64 {
         match registry.is_empty() {
             true  => 0,
             false => self.tools_json(registry).map(|s| s.len() as u64).unwrap_or(0),
@@ -3462,13 +3764,15 @@ impl Agent {
     /// provider refuses it, the turn dies, and the next turn sends the same thing.
     ///
     /// # Arguments
+    /// * `host` - The host the fold files its notes through.
     /// * `session` - The durable conversation, folded in place.
     /// * `working` - This turn's message list, rebuilt from the session when anything moved.
     /// * `schema` - Bytes of tool definitions riding alongside the conversation.
     /// * `why` - What brought the fold about; see [`Fold`].
     /// * `on_event` - Where the user is told, since a silent fold is the one people hate.
-    async fn fold_if_needed(
+    async fn fold_if_needed<H: Host>(
         &self,
+        host:       &H,
         session:    &mut Session,
         working:    &mut Vec<ChatMessage>,
         schema:     u64,
@@ -3545,7 +3849,7 @@ impl Agent {
             // leave the note exactly as long as it always was.  A chat has no Diamond and
             // files nothing.  See `dev/CRYSTAL_CONTRACT.md` §13.
             let filed = match &parsed {
-                Some(n) => self.file_notes(n).await,
+                Some(n) => self.file_notes(host, n).await,
                 None    => None,
             };
             let summary = match (filed, parsed, &raw) {
@@ -3733,24 +4037,21 @@ impl Agent {
     /// with nothing sent; so a Diamond whose store is unwritable gets the long notice and the
     /// fold it needed, and the console says why.
     ///
+    /// Off the browser (a host that is not `HOSTED`) there are no Diamonds and nothing to file
+    /// into: a Diamond is browser storage -- `diamonds/<id>/` is OPFS and nothing else -- so the
+    /// native build has no store to write to rather than a store it declines to write to.
+    ///
     /// # Arguments
     /// * `notes` - The parsed notes, already reconciled against the ledger.
-    #[cfg(target_arch = "wasm32")]
-    async fn file_notes(&self, notes: &compact::FoldNotes) -> Option<compact::FoldNotes> {
+    async fn file_notes<H: Host>(&self, host: &H, notes: &compact::FoldNotes) -> Option<compact::FoldNotes> {
+        if !H::HOSTED {
+            return None;
+        }
         let id = self.diamond();
         if id.trim().is_empty() {
             return None;
         }
-        crate::wasm::diamond::absorb_fold_notes(&id, notes).await
-    }
-
-    /// The same, off the browser, where there are no Diamonds and nothing to file into.
-    ///
-    /// A Diamond is browser storage -- `diamonds/<id>/` is OPFS and nothing else -- so the
-    /// native build has no store to write to rather than a store it declines to write to.
-    #[cfg(not(target_arch = "wasm32"))]
-    async fn file_notes(&self, _notes: &compact::FoldNotes) -> Option<compact::FoldNotes> {
-        None
+        host.store().absorb_fold_notes(&id, notes).await
     }
 
     /// Ask a model to summarise the part of the conversation being folded.
@@ -3947,8 +4248,24 @@ pub fn json_object_is_whole(s: &str) -> bool {
 /// How many failures the same way, of the same call, before that call is not sent again.
 const SAME_WAY_HOLDS: usize = 2;
 
-/// How many failures in a row on the same target, with nothing landing on it between them,
-/// before the turn stops and asks.
+/// Note in `said` that a delta the caller sees -- text or reasoning -- has gone out.
+fn said_any(said: &std::cell::Cell<bool>, d: &Delta<'_>) {
+    if matches!(d, Delta::Text(_) | Delta::Reasoning(_)) { said.set(true); }
+}
+
+/// What a call cut at its own ceiling reads as: a failure, said plainly.
+fn tool_ceiling_note(secs: u64) -> String {
+    fmt!("did not finish within its own limit of {} s, so it was cut there. Anything it had \
+        already written stays written: check before doing it again, or ask for a longer limit \
+        where the tool takes one.", secs)
+}
+
+/// How many model ROUNDS in a row with a failure on the same target, with nothing landing on it
+/// between them, before the turn stops and asks.
+///
+/// Rounds, not calls (UNBLOCK-16 SETBACKS, w114): one response that sent three searches of one
+/// folder was stopped on its own three refusals before the model had read a single one of them.
+/// A response's calls are one decision, so they count once.
 ///
 /// The 2026-10-08 Ontheism turn checked its page eleven times, each failing differently, and
 /// nothing in the loop could tell that from progress.  A call on the target that completes is
@@ -3962,14 +4279,17 @@ struct Fail {
 	call:	u64,	// the tool and its whole arguments, normalised
 	sig:	u64,	// the tool and its error, numbers masked
 	head:	String,	// the error's first line, for the sentence a held call is answered with
+	round:	usize,	// the model round that sent it
 }
 
 /// A refusal the turn has not yet mended.
 #[derive(Clone, Debug)]
 struct Unmended {
-	place:	Option<u64>,	// the path it named; none for a call with no place
+	place:	Option<u64>,	// the path it named, normalised; none for a call with no place
+	named:	Option<String>,	// that place as the user will read it
 	tool:	String,
 	head:	String,			// the refusal's first line, as the user will read it
+	round:	usize,			// the model round that sent it
 }
 
 /// What the turn has seen go wrong, and what that now requires.
@@ -3985,10 +4305,33 @@ struct Unmended {
 /// the target alone, two different misses on a file held every later edit of it, so the usual
 /// recovery -- re-read the file and send the right `old_string` -- was refused as "this exact
 /// call".  A different call is always sent; the target only counts towards `FAILS_STOP`.
+///
+/// **A refusal is mended by the same place done by its own kind of work, or by another route of
+/// the same kind**
+/// (UNBLOCK-16 SETBACKS, lead ruling on diagnosis fix 3).  The nudge tells the model to "take
+/// another route", and w137 did -- it moved its work to its Diamond's own folder -- yet ended
+/// `blocked`, as did w127, which read the path it had first written with a `..`.  So the place
+/// is compared normalised, and a done call of the same [`call_kind`] in a LATER round mends it
+/// too -- a later round, because only then has the model read the refusal and chosen the route.
+/// A refusal of a side action -- one whose kind of work completed in an EARLIER round, like
+/// w141's tidy-up delete after its writes -- that nothing mends ends the turn done, with the
+/// refusal said.  Work refused beside work landing in the same response, or work that never
+/// landed at all, is still `Blocked` (T3, 2026-10-09).
+///
+/// **A route never erases the refusal** (UNBLOCK-16 SETBACKS2, lead ruling 1): it moves it to
+/// `routed`, so the turn ends done AND says "Refused: X".  Only the same place done erases it, and
+/// only by the refused call's own tool or a producing one of its kind: a read of a refused write
+/// erases nothing (U3a QA2 #2).
+/// **Only work that makes something counts** as the route or as earlier work (ruling 2): a
+/// listing, a close, a folder made or a file deleted produces nothing ([`call_produces`]), so
+/// `runs` after a refused `run` is no route, and `dir_create` is no earlier work.
 #[derive(Clone, Debug, Default)]
 struct Setbacks {
 	fails:	Vec<Fail>,
 	open:	Vec<Unmended>,
+	routed:	Vec<Unmended>,				// refusals the turn went round, said at its end
+	done:	Vec<(&'static str, usize)>,	// each kind of call that completed, and its first round
+	round:	usize,						// the model round now being recorded
 }
 
 /// What a recorded result now calls for.
@@ -3999,6 +4342,11 @@ struct Verdict {
 }
 
 impl Setbacks {
+
+	/// Begin recording the calls of the next model response.
+	fn next_round(&mut self) {
+		self.round += 1;
+	}
 
 	/// The error this exact call already failed with twice the same way, if it did, in which
 	/// case it is held back rather than sent.
@@ -4027,30 +4375,63 @@ impl Setbacks {
 	{
 		let place = call_place(args);
 		let target = call_target(name, args);
+		let kind = call_kind(name);
+		let round = self.round;
 		if outcome == crate::tools::CallOutcome::Done {
 			// Progress on the target: what failed on it before no longer counts.
 			self.fails.retain(|f| f.target != target);
-			// Mended: the same place written by any tool, or a placeless tool that now worked.
-			self.open.retain(|u| match (u.place, place.as_deref()) {
-				(Some(p), Some(q))	=> p != call_fingerprint("", q),
-				(None, _)			=> u.tool != name,
-				(Some(_), None)		=> true,
-			});
+			// Mended: the same place, normalised, done by the refused call's own kind of work --
+			// the same tool, or one of that kind producing something.  A read of a refused write
+			// mends nothing, nor a write a refused read (U3a QA2 #2).  Gone round: another route
+			// of the same kind, producing something, in a later round -- kept, to be said.
+			let produces = !kind.is_empty() && call_produces(name);
+			let here = |u: &Unmended| call_kind(&u.tool) == kind
+				&& (u.tool == name || produces)
+				&& match (u.place, place.as_deref()) {
+					(Some(p), Some(q))	=> p == call_fingerprint("", q),
+					_					=> false,
+				};
+			self.routed.retain(|u| !here(u));
+			let mut open = Vec::with_capacity(self.open.len());
+			for u in self.open.drain(..) {
+				if here(&u) {
+					continue;
+				}
+				if produces && call_kind(&u.tool) == kind && u.round < round {
+					self.routed.push(u);
+				} else {
+					open.push(u);
+				}
+			}
+			self.open = open;
+			if produces && !self.done.iter().any(|(k, _)| *k == kind) {
+				self.done.push((kind, round));
+			}
 			return Verdict::default();
 		}
 		let call = call_key(name, args);
 		let head = first_line(text);
 		let sig = call_fingerprint(name, &masked(&head));
-		self.fails.push(Fail { target, call, sig, head: head.clone() });
+		self.fails.push(Fail { target, call, sig, head: head.clone(), round: self.round });
 		if outcome == crate::tools::CallOutcome::Refused && !paused {
 			self.open.push(Unmended {
 				place: place.as_deref().map(|q| call_fingerprint("", q)),
+				named: place.clone(),
 				tool:  name.to_string(),
 				head:  head.clone(),
+				round,
 			});
 		}
 		let same = self.fails.iter().filter(|f| f.call == call && f.sig == sig).count();
-		let all = self.fails.iter().filter(|f| f.target == target).count();
+		// Distinct rounds, in order: the fails are pushed as the rounds go.
+		let mut all = 0;
+		let mut last = None;
+		for f in self.fails.iter().filter(|f| f.target == target) {
+			if last != Some(f.round) {
+				all += 1;
+				last = Some(f.round);
+			}
+		}
 		let mut v = Verdict::default();
 		if same == SAME_WAY_HOLDS {
 			v.warn = Some(fmt!("This exact call has failed twice the same way: change approach, \
@@ -4068,6 +4449,68 @@ impl Setbacks {
 	/// The first refusal still standing, as the user should read it.
 	fn unmended(&self) -> Option<&Unmended> {
 		self.open.first()
+	}
+
+	/// The first refusal still standing that is not of a side action: the one that makes the
+	/// turn `Blocked`.
+	fn blocking(&self) -> Option<&Unmended> {
+		self.open.iter().find(|u| !self.is_side(u))
+	}
+
+	/// The refusals still standing of side actions: each is said in the turn's last words, and
+	/// none makes it `Blocked`.
+	fn side(&self) -> Vec<&Unmended> {
+		self.open.iter().filter(|u| self.is_side(u)).collect()
+	}
+
+	/// The refusals another route went round: none makes the turn `Blocked`, and each is said
+	/// in its last words (UNBLOCK-16 SETBACKS2, lead ruling 1).
+	fn routed(&self) -> &[Unmended] {
+		&self.routed
+	}
+
+	/// Whether a refusal is of a side action: work of its kind completed in an earlier round.
+	fn is_side(&self, u: &Unmended) -> bool {
+		let kind = call_kind(&u.tool);
+		self.done.iter().any(|(k, r)| !kind.is_empty() && *k == kind && *r < u.round)
+	}
+}
+
+/// Whether a tool's success produces something -- content read, written, run or fetched -- and
+/// so counts as another route round a refusal, or as earlier work beside which one is a side
+/// action (UNBLOCK-16 SETBACKS2, lead ruling 2).  A listing (`file_list`, `file_glob`,
+/// `link_list`, `mail_list`, `runs`, `recall`), a close (`web_close`) and a change that makes
+/// nothing (`dir_create`, `file_delete`, `link_remove`) do not.
+fn call_produces(name: &str) -> bool {
+	use crate::tools::Tool as T;
+	!matches!(T::from_name(name), Some(
+		T::FileList | T::FileGlob | T::LinkList | T::MailList | T::Runs | T::Recall
+		| T::WebClose | T::DirCreate | T::FileDelete | T::LinkRemove))
+}
+
+/// The kind of work a tool does -- read, write, run or web -- for deciding that a later success
+/// is another route to what a refusal stopped.  A tool of no one kind is its own kind.
+fn call_kind(name: &str) -> &'static str {
+	use crate::tools::Tool as T;
+	let tool = match T::from_name(name) {
+		Some(t)	=> t,
+		None	=> return "",
+	};
+	match tool {
+		T::FileRead | T::FileList | T::FileSearch | T::FileGlob | T::Outline | T::FileShow
+		| T::SheetRead | T::CrystalRead | T::Recall | T::LinkList | T::MailList
+		| T::MailSearch | T::MailRead | T::SocialRead
+			=> "read",
+		T::FileWrite | T::FileEdit | T::FileDelete | T::FileRevert | T::FileMove | T::DirCreate
+		| T::ArtefactAdd | T::DocEdit | T::SheetWrite | T::LinkAdd | T::LinkRemove
+		| T::MailDraft
+			=> "write",
+		T::Run | T::Shell | T::Runs | T::Verify | T::Serve | T::TypstCompile
+			=> "run",
+		T::FileFetch | T::WebOpen | T::WebClose | T::WebFetch | T::WebSearch | T::WebSnapshot
+		| T::WebRead | T::WebClick | T::WebType | T::WebScroll
+			=> "web",
+		other	=> other.name(),
 	}
 }
 
@@ -4096,11 +4539,21 @@ fn call_key(name: &str, args: &str) -> u64 {
 	call_fingerprint(name, &out)
 }
 
-/// What a call acts on: its path, URL, destination or Diamond, whichever it names first.
+/// What a call acts on: its path, URL, destination or Diamond, whichever it names first.  A path
+/// is normalised, so `a/b/../c` and `a/c` are one place (UNBLOCK-16 SETBACKS, w127) -- but only
+/// one whose `..` stays inside: `../x.md` keeps its raw form, so reading `x.md` does not mend a
+/// refused climb out (SETBACKS2, lead ruling 3).
 fn call_place(args: &str) -> Option<String> {
 	["path", "url", "to", "id"].iter()
-		.filter_map(|k| crate::llm::extract_json_string(args, k))
-		.find(|v| !v.trim().is_empty())
+		.filter_map(|k| crate::llm::extract_json_string(args, k)
+			.filter(|v| !v.trim().is_empty())
+			.map(|v| match *k {
+				"path" | "to" if v.split(|c| c == '/' || c == '\\').any(|s| s == "..")
+								=> crate::tools::dotdot_fold(&v).unwrap_or(v),
+				"path" | "to"	=> crate::tools::normalise(&v),
+				_				=> v,
+			}))
+		.next()
 }
 
 /// A call's target: the tool and its place, or the tool and its whole arguments where it names
@@ -4501,6 +4954,26 @@ pub fn build_tls_client_config() -> Outcome<Arc<ClientConfig>> {
 // │ Tests                                                          │
 // └───────────────────────────────────────────────────────────────┘
 
+/// The system prompt with its tools sentence `was` replaced by `now`.
+///
+/// The sentence is a paragraph of its own between the role prompt and the `brief`, so one that
+/// goes is taken out with the blank line in front of it, and one that arrives goes in front of
+/// the brief.
+fn retell_tools(sys: &str, was: &str, now: &str, brief: &str) -> String {
+    match (was.is_empty(), now.is_empty()) {
+        (false, false) => sys.replacen(was, now, 1),
+        (false, true)  => sys.replacen(&fmt!("\n\n{}", was), "", 1),
+        (true, false)  => {
+            let tail = fmt!("\n\n{}", brief);
+            match !brief.is_empty() && sys.ends_with(&tail) {
+                true  => fmt!("{}\n\n{}{}", &sys[..sys.len() - tail.len()], now, tail),
+                false => fmt!("{}\n\n{}", sys, now),
+            }
+        }
+        (true, true)   => sys.to_string(),
+    }
+}
+
 /// The name of a test tool whose call never returns (`Agent::one_call`).
 #[cfg(test)]
 const HANGS: &str = "test_hangs";
@@ -4872,7 +5345,7 @@ mod tests {
             Some(f) => f,
             None    => panic!("the issued copy is not filed under {}", id),
         };
-        w.adopt_fork(f, &mut ws);
+        ws.messages = w.adopt_fork(f);
         let hand = crate::prompts::worker_handoff("", "count the files");
         let ran = w.run_turn(&mut ws, hand, &wreg, &mut |_| {}).await;
         assert!(ran.is_ok(), "{:?}", ran.err());
@@ -5548,6 +6021,144 @@ mod tests {
         assert_eq!(0, crate::llm::tests::connections(&seen));
     }
 
+    // ── Liveness: the model stream is raced, a tool never is (U3a LV2) ──
+
+    /// One streamed chunk of answer text.
+    fn said_chunk(text: &str) -> String {
+        fmt!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n", text)
+    }
+
+    /// Run one tool-loop turn against `script` with liveness `N` = 300 ms, timing it.
+    async fn live_turn(script: Vec<crate::llm::tests::Reply>, idle_ms: Option<u64>)
+        -> (Agent, Vec<AgentEvent>, u128)
+    {
+        let (a, events, ms, _) = live_turn_seen(script, idle_ms).await;
+        (a, events, ms)
+    }
+
+    /// `live_turn`, also giving how many requests reached the provider.
+    async fn live_turn_seen(script: Vec<crate::llm::tests::Reply>, idle_ms: Option<u64>)
+        -> (Agent, Vec<AgentEvent>, u128, usize)
+    {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(script).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_liveness_ms(300);
+        if let Some(ms) = idle_ms { a.set_stream_idle_ms(ms); }
+        let mut session = Session::new(fmt!("s1"), fmt!("live"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let t0 = std::time::Instant::now();
+        let _ = a.run_turn(&mut session, fmt!("go"), &registry, &mut |ev| events.push(ev)).await;
+        let ms = t0.elapsed().as_millis();
+        (a, events, ms, crate::llm::tests::connections(&seen))
+    }
+
+    /// U3a REP: an ending lists what completed writes left, each once, kept past a delete,
+    /// and past the cap as one "+k more"; a refused write lists nothing.
+    #[test]
+    fn touched_lists_completed_writes_capped() {
+        use crate::tools::CallOutcome;
+        let mut c = Claims::default();
+        c.record("file_write", r#"{"path":"a.md","content":"x"}"#, CallOutcome::Done, None);
+        c.record("file_write", r#"{"path":"a.md","content":"y"}"#, CallOutcome::Done, None);
+        c.record("file_write", r#"{"path":"no.md","content":"x"}"#, CallOutcome::Refused, None);
+        c.record("file_write", r#"{"path":"b.md","content":"x"}"#, CallOutcome::Done, None);
+        let t = c.touched();
+        assert_eq!(2, t.len(), "{:?}", t);
+        assert!(t[0].ends_with("a.md") && t[1].ends_with("b.md"), "{:?}", t);
+        for i in 0..(TOUCHED_CAP + 3) {
+            c.record("file_write", &fmt!(r#"{{"path":"f{}.md","content":"x"}}"#, i), CallOutcome::Done, None);
+        }
+        let t = c.touched();
+        assert_eq!(TOUCHED_CAP + 1, t.len());
+        assert_eq!("+5 more", t[TOUCHED_CAP]);
+    }
+
+    fn ended_as(events: &[AgentEvent]) -> (String, String) {
+        events.iter().rev().find_map(|e| match e {
+            AgentEvent::Ended { how, why, .. } => Some((how.clone(), why.clone())),
+            _ => None,
+        }).unwrap_or_default()
+    }
+
+    /// Headers, then silence: the first N is the round's stall retry, the second ends the
+    /// turn `TimedOut`, wire `failed`, why `timed_out`, between 2N and 3N in.
+    #[tokio::test]
+    async fn silent_stream_times_out_after_one_retry() {
+        let silent = || crate::llm::tests::Reply::Stall { chunks: Vec::new(), idle_ms: 5_000 };
+        let (a, events, ms) = live_turn(vec![silent(), silent()], None).await;
+        assert_eq!(Some(TurnEnd::TimedOut), a.ending().map(|e| e.how), "{:?}", events);
+        assert_eq!(("failed".to_string(), "timed_out".to_string()), ended_as(&events));
+        assert!((600..900).contains(&ms), "timed out after {} ms, not in [600, 900)", ms);
+        // U3a REP: the round that went quiet never answered, so it is not one of the rounds.
+        assert_eq!(Some(0), a.ending().map(|e| e.rounds), "{:?}", events);
+        let retried = events.iter().filter(|e| matches!(e,
+            AgentEvent::Stall { retried: true, .. })).count();
+        assert_eq!(1, retried, "one stall retry was due: {:?}", events);
+        assert!(matches!(events.last(), Some(AgentEvent::Done)));
+    }
+
+    /// Text, then silence: the attempt has said something, so it is not asked again -- the
+    /// stall retry's own rule -- and the text is shown once; the turn ends `TimedOut` at N.
+    #[tokio::test]
+    async fn streamed_text_then_silence_is_not_asked_again() {
+        let begun = || crate::llm::tests::Reply::Stall {
+            chunks: vec![said_chunk("Working")], idle_ms: 5_000 };
+        let (a, events, ms, asked) = live_turn_seen(vec![begun(), begun()], None).await;
+        assert_eq!(Some(TurnEnd::TimedOut), a.ending().map(|e| e.how), "{:?}", events);
+        assert_eq!(1, asked, "an attempt that had said something was sent again");
+        let shown = events.iter().filter(|e| matches!(e,
+            AgentEvent::Text(t) if t.contains("Working"))).count();
+        assert_eq!(1, shown, "the streamed text was shown {} times: {:?}", shown, events);
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::Stall { retried: true, .. })),
+            "a begun attempt was retried: {:?}", events);
+        assert!((300..600).contains(&ms), "timed out after {} ms, not in [300, 600)", ms);
+    }
+
+    /// A provider that answers a stream request with one whole body, after 700 ms (> 2N): the
+    /// wait for a reply is not silence, so it is held to its own ceiling and the turn answers.
+    #[tokio::test]
+    async fn slow_whole_reply_is_not_timed_out() {
+        let late = || crate::llm::tests::Reply::Late { after_ms: 700, body:
+            "{\"id\":\"gen-1\",\"choices\":[{\"index\":0,\"message\":\
+             {\"role\":\"assistant\",\"content\":\"Hello world\"},\"finish_reason\":\"stop\"}],\
+             \"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3}}".to_string() };
+        let (a, events, _ms, asked) = live_turn_seen(vec![late(), late()], None).await;
+        assert_ne!("timed_out", ended_as(&events).1, "{:?}", events);
+        assert_eq!(Some(TurnEnd::Answered), a.ending().map(|e| e.how), "{:?}", events);
+        assert_eq!(1, asked, "the slow reply was asked for again");
+    }
+
+    /// A byte every 150 ms for 1.2 s is a model that is slow and alive: never cut at N.
+    #[tokio::test]
+    async fn trickling_stream_is_alive() {
+        let mut chunks: Vec<String> = (0..8).map(|i| said_chunk(&fmt!("w{} ", i))).collect();
+        chunks.push("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":8}}\n\n"
+            .to_string());
+        chunks.push("data: [DONE]\n\n".to_string());
+        let (a, events, ms) = live_turn(vec![crate::llm::tests::Reply::Trickle {
+            chunks, every_ms: 150 }], None).await;
+        assert_eq!(Some(TurnEnd::Answered), a.ending().map(|e| e.how), "{:?}", events);
+        assert!(ms >= 900, "the trickle took {} ms, so it never outlived 3N", ms);
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::Stall { .. })),
+            "a live trickle was stalled: {:?}", events);
+    }
+
+    /// Keep-alives alone are progress to liveness, so the stream's own limits decide: its
+    /// first-data wait (600 ms here), retried once at five times the idle ceiling, ends the turn
+    /// `Failed` with its own reason, long past N and never `TimedOut`.
+    #[tokio::test]
+    async fn keepalive_only_stream_is_alive_until_quiet_cap() {
+        let held = || crate::llm::tests::Reply::KeepAlive {
+            first: None, every_ms: 100, total_ms: 10_000 };
+        let (a, events, ms) = live_turn(vec![held(), held()], Some(400)).await;
+        assert_eq!(Some(TurnEnd::Failed), a.ending().map(|e| e.how), "{:?}", events);
+        assert_ne!("timed_out", ended_as(&events).1);
+        assert!(ms >= 2_400, "the stream's own limits ended it after {} ms, too soon", ms);
+    }
+
     /// Run one turn against `reply`, firing the turn's halt `after_ms` into it.
     async fn stopped_turn(registry: &crate::tools::ToolRegistry, reply: crate::llm::tests::Reply,
         after_ms: u64) -> (Agent, Session)
@@ -5556,7 +6167,6 @@ mod tests {
         let mut llm = crate::llm::tests::stub_client(port);
         llm.retry.max_attempts = 1;
         let a = Agent::new(llm, "You are Daimond.");
-        a.set_stream_idle_ms(1_000);
         let halt = a.llm.halt();
         let mut session = Session::new(fmt!("s1"), fmt!("stop"), fmt!("model"));
         let mut quiet = |_: AgentEvent| {};
@@ -5585,7 +6195,8 @@ mod tests {
     #[tokio::test]
     async fn test_a_stop_before_the_first_byte_stores_no_empty_reply_00() {
         for registry in [no_tools(), one_tool()] {
-            let quiet = crate::llm::tests::Reply::Stall { chunks: Vec::new(), idle_ms: 4_000 };
+            let quiet = crate::llm::tests::Reply::KeepAlive {
+                first: None, every_ms: 100, total_ms: 3_000 };
             let (_a, session) = stopped_turn(&registry, quiet, 300).await;
             assert_eq!(Vec::<(String, usize)>::new(), said(&session),
                 "a stop before any reply stored one (tools: {})", !registry.is_empty());
@@ -5596,13 +6207,67 @@ mod tests {
     #[tokio::test]
     async fn test_a_stop_mid_answer_keeps_the_partial_reply_00() {
         for registry in [no_tools(), one_tool()] {
-            let chunks = vec![
+            let mut chunks = vec![
                 "data: {\"choices\":[{\"delta\":{\"content\":\"Half an ans\"}}]}\n\n".to_string()];
-            let slow = crate::llm::tests::Reply::Stall { chunks, idle_ms: 4_000 };
+            for _ in 0..30 { chunks.push(": tick\n\n".to_string()); }
+            let slow = crate::llm::tests::Reply::Trickle { chunks, every_ms: 100 };
             let (_a, session) = stopped_turn(&registry, slow, 500).await;
             assert_eq!(vec![(fmt!("Half an ans"), 0)], said(&session),
                 "the partial reply was lost (tools: {})", !registry.is_empty());
         }
+    }
+
+    /// A Stop that lands while a slow tool runs ends the turn within a second, not when the tool
+    /// finishes: the call is raced against the turn's halt and dropped (its child killed with it),
+    /// the call is still answered so the conversation stays whole, and no request follows.
+    #[tokio::test]
+    async fn stop_lands_within_1s_during_slow_tool() {
+        let mut registry = no_tools();
+        registry.tools = vec![crate::tools::Tool::Shell];
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("shell", r#"{"command":"sleep 30"}"#)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let halt = a.llm.halt();
+        let mut session = Session::new(fmt!("s1"), fmt!("stop"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let called = std::cell::Cell::new(false);
+        let fired_at = std::cell::Cell::new(None::<std::time::Instant>);
+        let mut sink = |ev: AgentEvent| {
+            if matches!(ev, AgentEvent::ToolCall { .. }) { called.set(true); }
+            events.push(ev);
+        };
+        let turn = a.run_turn(&mut session, fmt!("go"), &registry, &mut sink);
+        let press = async {
+            while !called.get() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+            fired_at.set(Some(std::time::Instant::now()));
+            halt.fire();
+        };
+        let (ran, ()) = match tokio::time::timeout(std::time::Duration::from_secs(20),
+            async { tokio::join!(turn, press) }).await
+        {
+            Ok(v)  => v,
+            Err(_) => panic!("the turn ran on past the Stop until the test's own cap"),
+        };
+        let landed = fired_at.get().map(|t| t.elapsed()).unwrap_or_default();
+        assert!(ran.is_ok(), "a stopped turn is a clean stop: {:?}", ran.err());
+        assert!(landed < std::time::Duration::from_secs(1),
+            "the Stop waited {:?} for the tool", landed);
+        assert_eq!(Some(TurnEnd::Stopped), a.ending().map(|e| e.how));
+        assert_eq!(1, crate::llm::tests::connections(&seen),
+            "a request went out after the Stop landed mid-tool");
+        let asked = session.messages.iter().filter(|m| matches!(m,
+            ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty())).count();
+        let answered = session.messages.iter().filter(|m| matches!(m, ChatMessage::Tool { .. }))
+            .count();
+        assert_eq!((1, 1), (asked, answered), "the stopped call was left unanswered");
+        assert!(matches!(events.last(), Some(AgentEvent::Done)));
     }
 
     #[tokio::test]
@@ -5618,7 +6283,7 @@ mod tests {
         }
         let mut seen = Vec::new();
         let mut sink = |ev: AgentEvent| seen.push(ev);
-        let _ = a.fold_by_hand(&mut s, &mut sink).await;
+        let _ = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut s, &mut sink).await;
         assert_eq!(a.limits().window, 32_768,
             "the user's own fold was read as a provider refusal");
     }
@@ -5634,7 +6299,7 @@ mod tests {
         let mut s = Session::new("s".into(), "u".into(), "m".into());
         s.messages.push(ChatMessage::user("hello"));
         let mut sink = |_ev: AgentEvent| {};
-        let moved = a.fold_by_hand(&mut s, &mut sink).await;
+        let moved = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut s, &mut sink).await;
         assert!(!moved, "a two-message conversation reported a fold");
         assert_eq!(s.messages.len(), 1, "the one message was folded away");
     }
@@ -6515,6 +7180,7 @@ mod tests {
             by_model:    false,
             restoring:   0,
             by:          None,
+            host:        Default::default(),
         })
     }
 
@@ -6889,7 +7555,11 @@ mod tests {
                 // `why` and reads it as absent.
                 let wire = fmt!("{:?}", e);
                 out.1 = between(&wire, "why: \"", "\"");
-                out.2 = between(&wire, "said: \"", "\" }");
+                // `said` is followed by `touched` since U3a REP, and closed the struct before it.
+                out.2 = between(&wire, "said: \"", "\", touched: ");
+                if out.2.is_empty() {
+                    out.2 = between(&wire, "said: \"", "\" }");
+                }
             }
         }
         out
@@ -6959,17 +7629,25 @@ mod tests {
         let mut s = Setbacks::default();
         let args = r#"{"path":"diamonds/d1/crystal.html","in":"crystal"}"#;
         let failed = crate::tools::CallOutcome::Failed;
+        // Each in its own round: one response's calls count once (UNBLOCK-16 SETBACKS).
+        s.next_round();
         assert_eq!(Verdict::default(), s.record("capture", args, "Error: blank at 390", failed, false));
+        s.next_round();
         assert!(s.record("capture", args, "Error: JSON shown", failed, false).stop.is_none());
+        s.next_round();
         let v = s.record("capture", args, "Error: no title", failed, false);
         assert!(v.stop.as_deref().map_or(false, |t| t.contains("failed 3 times")),
             "three failed checks on one page did not stop: {:?}", v);
         // Something completing on the page between them means they are not in a row.
         let done = crate::tools::CallOutcome::Done;
         let mut s = Setbacks::default();
+        s.next_round();
         s.record("capture", args, "Error: blank at 390", failed, false);
+        s.next_round();
         s.record("capture", args, "Error: JSON shown", failed, false);
+        s.next_round();
         s.record("capture", args, "Captured", done, false);
+        s.next_round();
         assert!(s.record("capture", args, "Error: no title", failed, false).stop.is_none(),
             "a failure after progress was counted with the ones before it");
     }
@@ -7033,6 +7711,313 @@ mod tests {
         // A pause the user set is their decision, not a fault to mend.
         s.record("run", r#"{"argv":["x"]}"#, "Refused: paused", refused, true);
         assert!(s.unmended().is_none());
+    }
+
+    /// Three calls refused on one target in ONE response are one round, and do not stop the turn
+    /// (UNBLOCK-16 SETBACKS, w114).
+    #[test]
+    fn test_setbacks_one_round_of_refusals_does_not_stop_00() {
+        let refused = crate::tools::CallOutcome::Refused;
+        let mut s = Setbacks::default();
+        for q in ["a", "b", "c"] {
+            let args = fmt!(r#"{{"path":".daimond/starters","query":"{}"}}"#, q);
+            let v = s.record("file_search", &args, "Refused: not yours", refused, false);
+            assert!(v.stop.is_none(), "one response's three refusals stopped the turn: {:?}", v);
+        }
+    }
+
+    /// A refusal of `a/b/../c.json` is mended by `a/c.json` done, the same place normalised, by a
+    /// tool of its own kind (UNBLOCK-16 SETBACKS, w127); one of another kind mends nothing (U3a
+    /// QA2 #2).
+    #[test]
+    fn test_setbacks_mend_on_the_normalised_place_00() {
+        let mut s = Setbacks::default();
+        s.record("file_read", r#"{"path":"a/b/../c.json"}"#, "Refused: uses '..'",
+            crate::tools::CallOutcome::Refused, false);
+        assert!(s.unmended().is_some());
+        s.record("file_write", r#"{"path":"a/c.json","content":"x"}"#, "Wrote",
+            crate::tools::CallOutcome::Done, false);
+        assert!(s.unmended().is_some(), "a write mended a refused read");
+        s.record("file_read", r#"{"path":"a/c.json"}"#, "ok",
+            crate::tools::CallOutcome::Done, false);
+        assert!(s.unmended().is_none(), "the same place, normalised, did not mend the refusal");
+    }
+
+    /// A refused read is mended by a later read done elsewhere: another route of the same kind
+    /// (UNBLOCK-16 SETBACKS, lead ruling, w137).  A read does not mend a refused write.
+    #[test]
+    fn test_setbacks_mend_by_another_route_of_the_same_kind_00() {
+        let refused = crate::tools::CallOutcome::Refused;
+        let done = crate::tools::CallOutcome::Done;
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("file_read", r#"{"path":".daimond/x"}"#, "Refused: not yours", refused, false);
+        s.record("file_read", r#"{"path":"diamonds/d1/y"}"#, "ok", done, false);
+        assert!(s.unmended().is_some(), "a read in the same response, before the refusal was \
+            read, counted as a route taken around it");
+        s.next_round();
+        s.record("file_read", r#"{"path":"diamonds/d1/x"}"#, "ok", done, false);
+        assert!(s.unmended().is_none(), "a read done elsewhere did not mend a refused read");
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("dir_create", r#"{"path":"chats/c1/work"}"#, "Refused: not yours", refused, false);
+        s.next_round();
+        s.record("file_read", r#"{"path":"diamonds/d1/x"}"#, "ok", done, false);
+        assert!(s.unmended().is_some(), "a read mended a refused write");
+        s.record("file_write", r#"{"path":"diamonds/d1/work/a.md","content":"x"}"#, "ok", done, false);
+        assert!(s.unmended().is_none(), "the work moved elsewhere did not mend the refused write");
+    }
+
+    /// An unmended refusal whose kind of work completed is a side action and does not block;
+    /// one whose kind never completed does (UNBLOCK-16 SETBACKS, w141).
+    #[test]
+    fn test_setbacks_side_refusal_does_not_block_and_lone_work_does_00() {
+        let refused = crate::tools::CallOutcome::Refused;
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("file_write", r#"{"path":"w/out.pdf.typ","content":"x"}"#, "Wrote",
+            crate::tools::CallOutcome::Done, false);
+        s.record("file_write", r#"{"path":"w/b.md","content":"x"}"#, "Refused: not yours",
+            refused, false);
+        assert!(s.blocking().is_some(), "a write refused beside one landing, in one response, \
+            read as a side action");
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("file_write", r#"{"path":"w/out.pdf.typ","content":"x"}"#, "Wrote",
+            crate::tools::CallOutcome::Done, false);
+        s.next_round();
+        s.record("file_delete", r#"{"path":"w/out.pdf"}"#, "Refused: history", refused, false);
+        assert!(s.unmended().is_some() && s.blocking().is_none() && s.side().len() == 1,
+            "a refused tidy-up after finished work blocked: {:?}", s);
+        let mut s = Setbacks::default();
+        s.record("file_write", r#"{"path":"w/out.md","content":"x"}"#, "Refused: not yours",
+            refused, false);
+        assert!(s.blocking().is_some() && s.side().is_empty(), "work that only failed did not block");
+    }
+
+    /// SETBACKS2 case B (UNBLOCK-16, lead ruling 2): a listing of runs is no route round a
+    /// refused run.
+    #[test]
+    fn test_setbacks2_b_a_runs_listing_does_not_mend_a_refused_run_00() {
+        let refused = crate::tools::CallOutcome::Refused;
+        let done = crate::tools::CallOutcome::Done;
+        // B: a refused run, then `runs` listing done.
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("run", r#"{"argv":["make"]}"#, "Refused: not allowed", refused, false);
+        s.next_round();
+        s.record("runs", "{}", "no runs", done, false);
+        assert!(s.blocking().is_some(), "a listing of runs mended a refused run: {:?}", s);
+    }
+
+    /// SETBACKS2 case C (lead ruling 2): closing the browser is no route round a refused fetch.
+    #[test]
+    fn test_setbacks2_c_a_web_close_does_not_mend_a_refused_fetch_00() {
+        let refused = crate::tools::CallOutcome::Refused;
+        let done = crate::tools::CallOutcome::Done;
+        // C: a refused fetch, then `web_close` done.
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("web_fetch", r#"{"url":"http://x"}"#, "Refused: blocked host", refused, false);
+        s.next_round();
+        s.record("web_close", "{}", "closed", done, false);
+        assert!(s.blocking().is_some(), "closing the browser mended a refused fetch: {:?}", s);
+    }
+
+    /// SETBACKS2 case D (lead ruling 2): a folder made is no earlier work, so the refused write
+    /// after it blocks; a real write before it makes the refusal a side action.
+    #[test]
+    fn test_setbacks2_d_a_folder_made_is_not_earlier_work_00() {
+        let refused = crate::tools::CallOutcome::Refused;
+        let done = crate::tools::CallOutcome::Done;
+        // D: a folder made, then the deliverable write refused: no side action.
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("dir_create", r#"{"path":"w"}"#, "Made w", done, false);
+        s.next_round();
+        s.record("file_write", r#"{"path":"w/final.md","content":"x"}"#, "Refused: not yours",
+            refused, false);
+        assert!(s.blocking().is_some() && s.side().is_empty(),
+            "a folder made counted as earlier work: {:?}", s);
+        // ... but a real write before it does make the refusal a side action.
+        s.record("file_write", r#"{"path":"w/a.md","content":"x"}"#, "Wrote", done, false);
+        s.next_round();
+        s.record("file_write", r#"{"path":"w/b.md","content":"x"}"#, "Refused: not yours",
+            refused, false);
+        assert!(s.side().len() == 1, "a refusal after real work is not a side action: {:?}", s);
+    }
+
+    /// SETBACKS2 case E (lead ruling 3): a refused climb `../x.md` keeps its raw place, so an
+    /// inside read of `x.md` does not mend it.
+    #[test]
+    fn test_setbacks2_e_an_inside_read_does_not_mend_a_refused_climb_00() {
+        let refused = crate::tools::CallOutcome::Refused;
+        let done = crate::tools::CallOutcome::Done;
+        // E: a refused climb `../x.md` is not mended by `x.md` read inside.
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("file_read", r#"{"path":"../x.md"}"#, "Refused: uses '..'", refused, false);
+        s.record("file_read", r#"{"path":"x.md"}"#, "ok", done, false);
+        assert!(s.unmended().is_some(), "an inside read mended a refused climb out: {:?}", s);
+        assert_eq!(Some("../x.md".to_string()), call_place(r#"{"path":"../x.md"}"#));
+        assert_eq!(Some("a/c.json".to_string()), call_place(r#"{"path":"a/b/../c.json"}"#));
+    }
+
+    /// A refused write is not mended by a later read of the same place (U3a QA2 #2): only a
+    /// success of the refused call's own kind, producing something, mends it.  The usual "let me
+    /// look at it" read after a refused write left the turn done with no "Refused:" line, and a
+    /// routed refusal lost its line the same way.  A write never mends a refused read either.
+    #[test]
+    fn qa2_refused_write_not_mended_by_reading_it() {
+        let refused = crate::tools::CallOutcome::Refused;
+        let done = crate::tools::CallOutcome::Done;
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("file_write", r#"{"path":"notes/report.md","content":"x"}"#, "Refused: fence",
+            refused, false);
+        s.next_round();
+        s.record("file_read", r#"{"path":"notes/report.md"}"#, "ok", done, false);
+        assert!(s.unmended().is_some(), "the refused write vanished: {:?}", s);
+        s.record("file_write", r#"{"path":"notes/report.md","content":"y"}"#, "Wrote", done, false);
+        assert!(s.unmended().is_none() && s.routed().is_empty(),
+            "the same place written did not mend the refused write: {:?}", s);
+        // Routed round, then the refused place read: the "Refused:" line stays.
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("file_write", r#"{"path":"notes/report.md","content":"x"}"#, "Refused: fence",
+            refused, false);
+        s.next_round();
+        s.record("file_write", r#"{"path":"diamonds/d1/report.md","content":"x"}"#, "Wrote", done,
+            false);
+        assert_eq!(1, s.routed().len(), "{:?}", s);
+        s.record("file_read", r#"{"path":"notes/report.md"}"#, "ok", done, false);
+        assert_eq!(1, s.routed().len(), "the routed refused write vanished: {:?}", s);
+        // A write does not mend a refused read of the same place.
+        let mut s = Setbacks::default();
+        s.next_round();
+        s.record("file_read", r#"{"path":"notes/secret.md"}"#, "Refused: fence", refused, false);
+        s.record("file_write", r#"{"path":"notes/secret.md","content":"x"}"#, "Wrote", done, false);
+        assert!(s.unmended().is_some(), "a write mended a refused read: {:?}", s);
+    }
+
+    /// Several tool calls in one stub reply.
+    fn calls_reply(calls: &[(&str, &str)]) -> crate::llm::tests::Reply {
+        let mut chunks = Vec::new();
+        for (i, (name, args)) in calls.iter().enumerate() {
+            chunks.push(fmt!("data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":{},\
+                \"id\":\"c{}\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\
+                \"arguments\":\"{}\"}}}}]}}}}]}}\n\n", i, i, name, crate::llm::json_escape(args)));
+        }
+        chunks.push("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+            .to_string());
+        chunks.push("data: [DONE]\n\n".to_string());
+        crate::llm::tests::Reply::Sse { chunks, reset_after: None }
+    }
+
+    /// Run one turn against `replies` with `tools`, `notes/a.md` seeded, and return its events.
+    async fn setbacks_turn(replies: Vec<crate::llm::tests::Reply>, tools: Vec<crate::tools::Tool>)
+        -> Vec<AgentEvent>
+    {
+        let (port, _seen) = crate::llm::tests::start_stub(replies).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut registry = no_tools();
+        registry.tools = tools;
+        let file = registry.ctx.workspace.root().join("notes/a.md");
+        if let Some(dir) = file.parent() {
+            if let Err(e) = std::fs::create_dir_all(dir) {
+                panic!("the fixture directory: {}", e);
+            }
+        }
+        if let Err(e) = std::fs::write(&file, "alpha\n") {
+            panic!("the fixture file: {}", e);
+        }
+        let mut session = Session::new(fmt!("s1"), fmt!("setbacks"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("do it"), &registry,
+            &mut |ev| events.push(ev)).await;
+        events
+    }
+
+    /// w114 as a stub: one response with three refused searches of one folder, then a read that
+    /// is done, then an answer.  The turn is `Answered`.
+    #[tokio::test]
+    async fn test_setbacks_three_refused_searches_in_one_response_then_read_answers_00() {
+        use crate::tools::Tool;
+        let events = setbacks_turn(vec![
+            calls_reply(&[
+                ("file_search", r#"{"path":"/etc","query":"a"}"#),
+                ("file_search", r#"{"path":"/etc","query":"b"}"#),
+                ("file_search", r#"{"path":"/etc","query":"c"}"#),
+            ]),
+            call_reply("file_read", r#"{"path":"notes/a.md"}"#),
+            plain_answer(), plain_answer(),
+        ], vec![Tool::FileSearch, Tool::FileRead]).await;
+        let refused = tool_results(&events).into_iter()
+            .filter(|r| r.1 == crate::tools::CallOutcome::Refused).count();
+        assert_eq!(3, refused, "the three searches were not all refused");
+        let (how, why, said) = ended_of(&events);
+        assert_eq!(("answered", ""), (how.as_str(), why.as_str()),
+            "the turn did not answer: {} / {}: {}", how, why, said);
+    }
+
+    /// The control: the same target refused in three successive rounds still stops the turn.
+    #[tokio::test]
+    async fn test_setbacks_one_target_refused_in_three_rounds_stops_00() {
+        use crate::tools::Tool;
+        let events = setbacks_turn(vec![
+            call_reply("file_search", r#"{"path":"/etc","query":"a"}"#),
+            call_reply("file_search", r#"{"path":"/etc","query":"b"}"#),
+            call_reply("file_search", r#"{"path":"/etc","query":"c"}"#),
+            call_reply("file_read", r#"{"path":"notes/a.md"}"#),
+            plain_answer(), plain_answer(),
+        ], vec![Tool::FileSearch, Tool::FileRead]).await;
+        let (how, why, said) = ended_of(&events);
+        assert_eq!(("failed", "blocked"), (how.as_str(), why.as_str()),
+            "three rounds failing on one target did not stop: {}", said);
+        assert!(said.contains("3 times in a row"), "the stop does not say why: {}", said);
+    }
+
+    /// w141 as a stub: the work is written, then a tidy-up delete is refused and nothing mends
+    /// it.  The turn ends done, and its last words say what was refused.
+    #[tokio::test]
+    async fn test_setbacks_side_refusal_after_finished_work_ends_done_00() {
+        use crate::tools::Tool;
+        let events = setbacks_turn(vec![
+            call_reply("file_write", r#"{"path":"notes/out.md","content":"done"}"#),
+            call_reply("file_delete", r#"{"path":"/etc/passwd"}"#),
+            plain_answer(), plain_answer(), plain_answer(),
+        ], vec![Tool::FileWrite, Tool::FileDelete]).await;
+        let (how, why, said) = ended_of(&events);
+        assert_eq!(("answered", ""), (how.as_str(), why.as_str()),
+            "finished work with a side refusal did not end done: {} / {}: {}", how, why, said);
+        let text: String = events.iter().filter_map(|e| match e {
+            AgentEvent::Text(t) => Some(t.as_str()),
+            _                   => None,
+        }).collect();
+        assert!(text.contains("Refused: file_delete"), "the refusal is not said: {}", text);
+    }
+
+    /// SETBACKS2 case A (UNBLOCK-16, lead ruling 1): the deliverable refused, then another write
+    /// done a round later.  The turn ends done, but says what was refused rather than erasing it.
+    #[tokio::test]
+    async fn test_setbacks2_a_route_round_a_refusal_still_says_it_00() {
+        use crate::tools::Tool;
+        let events = setbacks_turn(vec![
+            call_reply("file_write", r#"{"path":"/reports/final.md","content":"report"}"#),
+            call_reply("file_write", r#"{"path":"notes/scratch.md","content":"report"}"#),
+            plain_answer(), plain_answer(), plain_answer(),
+        ], vec![Tool::FileWrite]).await;
+        let (how, why, said) = ended_of(&events);
+        assert_eq!(("answered", ""), (how.as_str(), why.as_str()),
+            "the route taken did not end done: {} / {}: {}", how, why, said);
+        let text: String = events.iter().filter_map(|e| match e {
+            AgentEvent::Text(t) => Some(t.as_str()),
+            _                   => None,
+        }).collect();
+        assert!(text.contains("Refused: file_write") && text.contains("reports/final.md"),
+            "the refusal gone round is not said: {}", text);
     }
 
     /// A refusal still standing when the model ends gets one must-fix nudge, then `Blocked`,
@@ -7708,6 +8693,7 @@ mod tests {
             by_model:    false,
             restoring:   0,
             by:          None,
+            host:        Default::default(),
         });
         r.tools = vec![crate::tools::Tool::FileRead, crate::tools::Tool::FileWrite];
         r
@@ -10352,7 +11338,7 @@ mod tests {
                 session.messages.push(ChatMessage::user(fmt!("go on {} {}", pass, i)));
             }
             let mut working = session.messages.clone();
-            a.fold_if_needed(&mut session, &mut working, 0, Fold::Refused,
+            a.fold_if_needed(&crate::engine::host::DefaultHost::default(), &mut session, &mut working, 0, Fold::Refused,
                 &mut |ev| events.push(ev)).await;
             assert!(compact::is_fold_notice(&session.messages[0]),
                 "pass {}: the list does not open with a fold notice", pass);
@@ -10421,7 +11407,7 @@ mod tests {
             "the fixture has to be one the ordinary cut declines, or this proves nothing");
         let mut working = session.messages.clone();
         let mut events: Vec<AgentEvent> = Vec::new();
-        a.fold_if_needed(&mut session, &mut working, 0, Fold::Capped,
+        a.fold_if_needed(&crate::engine::host::DefaultHost::default(), &mut session, &mut working, 0, Fold::Capped,
             &mut |ev| events.push(ev)).await;
 
         let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
@@ -11051,6 +12037,70 @@ fn test_agent_message_building() {
             {:?}", hits);
         assert_eq!(Some(TurnEnd::Answered), a.ending().as_ref().map(|e| e.how),
             "the read-only turn did not end answered ({:?})", dir);
+    }
+
+    // ── The round boundary an actor adopts its controls at ──────────────
+
+    /// The tools sentence comes and goes as a paragraph of its own, in front of the brief (D3).
+    #[test]
+    fn test_retell_tools_keeps_the_prompt_in_its_paragraphs() {
+        assert_eq!("R\n\nT2\n\nB", retell_tools("R\n\nT1\n\nB", "T1", "T2", "B"));
+        assert_eq!("R\n\nB", retell_tools("R\n\nT1\n\nB", "T1", "", "B"));
+        assert_eq!("R\n\nT2\n\nB", retell_tools("R\n\nB", "", "T2", "B"));
+        assert_eq!("R\n\nT2", retell_tools("R", "", "T2", ""));
+    }
+
+    /// A registry offered at the head of round two is the one round two's request carries, and
+    /// round one never sees it: a scope change waits for the round and is never refused (U1b).
+    #[tokio::test]
+    async fn test_a_boundary_swaps_the_registry_at_the_next_round_and_no_earlier() {
+        struct Swap { heads: usize, next: Option<std::rc::Rc<ToolRegistry>> }
+        impl Boundary for Swap {
+            fn round(&mut self, _session: &Session) -> Option<std::rc::Rc<ToolRegistry>> {
+                self.heads += 1;
+                if self.heads == 2 { self.next.take() } else { None }
+            }
+        }
+        let first = one_tool();
+        // The same workspace, so round two can read what round one wrote, and only `file_read`.
+        let mut second = first.clone();
+        second.tools = vec![crate::tools::Tool::FileRead];
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+            tool_round(&[("file_read", r#"{"path":"a.txt"}"#)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("swap"), fmt!("model"));
+        let mut edge = Swap { heads: 0, next: Some(std::rc::Rc::new(second)) };
+        let ran = a.run_turn_bounded(&mut session, fmt!("go"), String::new(), String::new(),
+            &first, &mut edge, &mut |_| {}).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        assert_eq!(3, edge.heads, "the boundary is asked once at the head of every round");
+        let bodies = match seen.lock() {
+            Ok(s)  => s.bodies.clone(),
+            Err(e) => panic!("{}", e),
+        };
+        assert_eq!(3, bodies.len());
+        assert!(!bodies[0].contains("\"file_read\""), "round one ran under the next registry");
+        assert!(bodies[1].contains("\"file_read\""), "round two did not adopt the next registry");
+        assert!(bodies[2].contains("\"file_read\""), "round three fell back to the first registry");
+        // And the system prompt names the tools the round is offered (D3): a roster that changed
+        // mid-turn is told to the model, at the price of one cache miss.
+        assert!(bodies[0].contains("workspace: file_write."), "round one's prompt: {}", bodies[0]);
+        assert!(bodies[1].contains("workspace: file_read."),
+            "round two's prompt still names the old roster: {}", bodies[1]);
+        assert!(!bodies[1].contains("workspace: file_write."), "round two kept the old sentence");
+        // And the call ran under it, not merely the schema: the first registry has no `file_read`.
+        let results: Vec<String> = session.messages.iter().filter_map(|m| match m {
+            ChatMessage::Tool { content, .. } => Some(content.as_text().into_owned()),
+            _ => None,
+        }).collect();
+        assert_eq!(2, results.len());
+        assert_eq!(crate::tools::CallOutcome::Done, crate::tools::call_outcome(&results[1]),
+            "round two's call did not run under the adopted registry: {}", results[1]);
     }
 }
 

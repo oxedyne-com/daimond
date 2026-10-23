@@ -1,0 +1,10216 @@
+//! Diamond / crystal / fold substrate — the durable core of Daimond in the
+//! browser.
+//!
+//! A **Diamond** is a durable container for a pursuit.  Its reduced state is
+//! the **crystal**, which is two files -- `crystal.json`, the memory, and
+//! `crystal.html`, the page that renders it; a **fold** re-reduces a delta into
+//! the memory; the **log** is per-Diamond and append-only.  This module owns the
+//! OPFS layout and the pure store operations; the `#[wasm_bindgen]`
+//! surface that drives the crystal and reducer agents lives on
+//! [`DaimondApp`](crate::wasm::app::DaimondApp) in [`crate::wasm::app`].
+//!
+//! OPFS layout, per Diamond id:
+//!
+//! ```text
+//! diamonds/<id>/crystal.json              the memory (agent writes, user may edit)
+//! diamonds/<id>/crystal.html              the page that renders it
+//! diamonds/<id>/versions/NNNN.json        a data KEYFRAME (0-padded): the memory in full
+//! diamonds/<id>/versions/NNNN.jpatch      a data DELTA: the splices from the version before it
+//! diamonds/<id>/versions/NNNN.html        a page KEYFRAME, ONLY where the page changed
+//! diamonds/<id>/versions/NNNN.hpatch      a page DELTA against the last version that changed it
+//! diamonds/<id>/versions/NNNN.md          pre-migration history: read-only, never written again
+//! diamonds/<id>/.daimond/meta.json        { name, crystal_version, updated, touched, tags }
+//! diamonds/<id>/.daimond/log              append-only, one JSON record per line
+//! diamonds/<id>/.daimond/deltas/NNNN.md   the raw delta a fold consumed, referenced by delta_ref
+//! ```
+//!
+//! One version counter, shared by both files.  A page snapshot exists only at the versions where
+//! the page actually changed, so the page as at version N is the highest `M <= N` that has one --
+//! see [`read_version_page`].
+//!
+//! **Every version stores a keyframe or a patch, and nothing is ever pruned.**  A full copy at
+//! every version cost 101,834 bytes per page edit of the shipped Log Life capp, against a
+//! per-Diamond share of 4 MiB; a hundred edits of it now cost 628 KiB rather than 10.1 MB.  When
+//! a keyframe is due, what a patch may be recorded against, and which files rebuild version N are
+//! [`crate::diamond_delta`]'s, which is portable and is tested against that page.  This module is
+//! the OPFS edge over it: it reads the directory, reads the chain, and refuses to let a version
+//! stand until the file it just wrote has been read back and shown to rebuild it.
+//!
+//! Each log record is a single-line JSON object:
+//! `{ id, ts, kind, agent, task, parent_crystal_version, crystal_version,
+//!    delta_ref, note }` with `kind` one of `create`, `edit`, `fold`.
+//!
+//! The store is app-local for now (a candidate for extraction into
+//! `fe2o3_data` once its shape settles, per the v1 plan's D22); it is not
+//! extracted here.  Whole-file read-modify-write backs the append (the
+//! synchronous single-writer OPFS path is deferred); single-user,
+//! single-Diamond-at-a-time makes that sufficient for this stage.
+
+use crate::diamond_link::{
+	Link,
+	Node,
+	Unlink,
+	fix_legacy_kinds,
+	normalise_note,
+	normalise_rel,
+	parse_links,
+	sidecar_add,
+	sidecar_model_remove,
+	sidecar_remove,
+	sidecar_remove_bare,
+	sidecar_share,
+	sidecar_union,
+	sidecar_update,
+};
+use crate::diamond_delta::{
+	self,
+	Snap,
+	DATA_KEYFRAME_EXT,
+	DATA_PATCH_EXT,
+	PAGE_KEYFRAME_EXT,
+	PAGE_PATCH_EXT,
+};
+use crate::diamond_rebase::{self, Side};
+use crate::diamond_versions::{self as versions, At, Cause, Entry, Manifest};
+use crate::diamond_meta::{Meta, normalise_tags};
+use crate::diamond_pagelog::{self as pagelog, ImportOutcome, LocalLog, LocalLogs, PAGELOGS_REL};
+use crate::llm::{extract_json_bool, extract_json_string, json_escape};
+use crate::protocol::generate_session_id;
+use crate::store::{own, LockHow, Locked};
+use crate::tools::FileRoot;
+pub use crate::engine::host::types::store::{Landed, SettlePhase};
+
+use oxedyne_fe2o3_core::prelude::*;
+use crate::store::own::{console_log, now_ms};
+use oxedyne_fe2o3_ore::diff;
+
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Path helpers                                                   │
+// └───────────────────────────────────────────────────────────────┘
+
+/// Daimond's own directory inside a Diamond: the metadata, the log, the deltas.
+const STORE_DIR: &str = ".daimond";
+
+/// What that directory was called before the Red -> Daimond rename, and still is in
+/// every workspace made before it.  See [`migrate`].
+const LEGACY_STORE_DIR: &str = ".red";
+
+/// The Diamond root directory.
+const ROOT_DIR: &str = "diamonds";
+
+/// What the root has been called before, oldest first.
+///
+/// The noun has moved twice: `foci` -> `facets` -> `diamonds`. A workspace is
+/// migrated straight to the current root from whichever it holds, rather than
+/// hop by hop, because a user who has not opened Daimond since before the first
+/// rename would otherwise need two passes and there is no reason to make them
+/// take one at a time. Order matters only for the message it lets us give.
+const LEGACY_ROOT_DIRS: [&str; 2] = ["foci", "facets"];
+
+/// What a Diamond's content file was called before the brief -> crystal rename.
+const LEGACY_CRYSTAL_FILE: &str = "brief.md";
+
+/// The Diamond directory, `diamonds/<id>`.
+pub fn diamond_dir(id: &str) -> String {
+    fmt!("diamonds/{}", id)
+}
+
+/// The crystal's memory, `diamonds/<id>/crystal.json`.
+fn crystal_data_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}", id, crate::tools::CRYSTAL_DATA_FILE)
+}
+
+/// The crystal's page, `diamonds/<id>/crystal.html`.
+fn crystal_page_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}", id, crate::tools::CRYSTAL_PAGE_FILE)
+}
+
+/// The crystal as it was before the migration, `diamonds/<id>/crystal.md`.
+///
+/// Read only, and only as the last thing tried: it is what a Diamond holds until [`list`] has
+/// converted it, and what one holds for ever if the conversion could not be written.
+fn crystal_legacy_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}", id, crate::tools::CRYSTAL_FILE_LEGACY)
+}
+
+/// One of the three markdown files beside the crystal, `diamonds/<id>/<leaf>`.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `leaf` - One of [`crate::tools::STANDING_FILES`].
+fn standing_path(id: &str, leaf: &str) -> String {
+    crate::tools::standing_path(leaf, id)
+}
+
+/// The append-only log, `diamonds/<id>/.daimond/log`.
+fn log_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}/log", id, STORE_DIR)
+}
+
+/// The metadata file, `diamonds/<id>/.daimond/meta.json`.
+fn meta_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}/meta.json", id, STORE_DIR)
+}
+
+/// The directory a Diamond's snapshots live in, `diamonds/<id>/versions` -- or, for a chat's
+/// key (`chat:<id>`), the chat's own store, `chats/<id>/versions`, which holds file manifests and
+/// bodies and nothing else.  See [`crate::tools::keeper_home`].
+fn versions_dir(id: &str) -> String {
+    fmt!("{}/versions", crate::tools::keeper_home(id))
+}
+
+/// Is this key a chat's store rather than a Diamond's?
+fn is_chat_keeper(id: &str) -> bool {
+    id.starts_with(crate::tools::CHAT_KEEPER)
+}
+
+/// A data snapshot, `diamonds/<id>/versions/NNNN.json`.  Written at every version.
+fn version_data_path(id: &str, version: u64) -> String {
+    fmt!("{}/{:04}.json", versions_dir(id), version)
+}
+
+/// One version's snapshot of one file, whichever of the two it is.
+fn snapshot_path(id: &str, version: u64, ext: &str) -> String {
+    fmt!("{}/{:04}{}", versions_dir(id), version, ext)
+}
+
+/// A snapshot from before the crystal became data, `diamonds/<id>/versions/NNNN.md`.
+///
+/// READ-ONLY, for ever.  Nothing writes one again; the history view renders what is there as the
+/// markdown it is, and a version from before the migration has one of these and neither of the
+/// other two.
+fn version_legacy_path(id: &str, version: u64) -> String {
+    fmt!("{}/{:04}.md", versions_dir(id), version)
+}
+
+/// A stored raw delta, `diamonds/<id>/.daimond/deltas/NNNN.md`, keyed by the
+/// crystal version the fold produced.
+fn delta_path(id: &str, version: u64) -> String {
+    fmt!("diamonds/{}/{}/deltas/{:04}.md", id, STORE_DIR, version)
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Migration                                                      │
+// └───────────────────────────────────────────────────────────────┘
+
+/// Is there an EARLIER Diamond root whose entries have NOT been taken over?
+///
+/// After [`migrate_root`]'s merge, this is true only of a genuine id collision -- an id
+/// present in both roots, which is the one case the merge leaves alone.  It used to answer
+/// the much larger question "is there an old root that will now never be found", which the
+/// merge has made unaskable.
+pub async fn legacy_root_waiting() -> Outcome<bool> {
+    for legacy in LEGACY_ROOT_DIRS.iter() {
+        let entries = match own::list_dir(legacy).await {
+            Ok(e)  => e,
+            Err(_) => continue,         // no such root here
+        };
+        if entries.iter().any(|(_, is_dir, _)| *is_dir) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Bring the Diamond root forward from `foci/` or `facets/` to `diamonds/`, so a workspace
+/// made before the Focus -> Diamond rename opens with every pursuit intact.
+///
+/// This runs before [`list`] reads the root, and before the per-Diamond [`migrate`], because
+/// everything below depends on the new root existing.  Without it a user's Foci would simply
+/// not be found: `list_dir("diamonds")` would fail, the rail would come up empty, and every
+/// crystal, version and fold record would read as though it had never existed.
+///
+/// Idempotent, and it never clobbers.  A workspace already migrated has nothing to move.  A
+/// workspace holding BOTH roots has the entries that do not collide moved across, and the
+/// ones that do left exactly where they are.
+///
+/// THE MERGE REPLACES A REFUSAL.  Until 2026-08-07 a workspace that arrived holding both
+/// roots was left alone entirely, which sounds cautious and is not: the old root is a
+/// directory nothing reads, so those Diamonds were invisible for ever -- and the state was
+/// reachable by an ordinary sequence of events, since creating a single Diamond makes
+/// `diamonds/` exist and a backup, a sync from an older device or a folder adopted afterwards
+/// can each bring an older root along later.  Moving an entry whose id is not already in
+/// `diamonds/` overwrites nothing, so it is strictly safer than leaving it unreachable.  A
+/// genuine id collision is the one case where merging really could lose work, and it is the
+/// one case this does not attempt.
+///
+/// Returns whether anything moved.
+async fn migrate_root() -> Outcome<bool> {
+    let mut moved = false;
+    // Newest legacy root first, so a workspace somehow holding both is taken from
+    // the one nearer to current and the older one merges around what it left.
+    for legacy in LEGACY_ROOT_DIRS.iter().rev() {
+        if !res!(own::exists(legacy).await) {
+            continue;
+        }
+        if res!(migrate_one_root(legacy).await) {
+            moved = true;
+        }
+    }
+    Ok(moved)
+}
+
+/// Take `legacy` over into `diamonds/`, whole if it can and entry by entry if it cannot.
+async fn migrate_one_root(legacy: &str) -> Outcome<bool> {
+    own::trail("migrate_one_root", legacy);
+    // Nothing to merge into: the whole directory in one move.  Cheaper, and it
+    // carries anything a `list_dir` walk would not report.
+    if !res!(own::exists(ROOT_DIR).await) {
+        res!(own::move_entry(legacy, ROOT_DIR).await);
+        let ids = match own::list_dir(ROOT_DIR).await {
+            Ok(e)  => e.into_iter().filter(|(_, d, _)| *d).map(|(n, _, _)| n).collect(),
+            Err(_) => Vec::new(),       // moved, but nothing to walk
+        };
+        res!(rewrite_delta_refs(legacy, &ids).await);
+        return Ok(true);
+    }
+
+    // Both roots. Move what does not collide; leave what does.
+    let entries = match own::list_dir(legacy).await {
+        Ok(e)  => e,
+        Err(_) => return Ok(false),
+    };
+    let mut ids: Vec<String> = Vec::new();
+    let mut collisions = 0usize;
+    for (name, is_dir, _size) in entries {
+        if !is_dir {
+            continue;
+        }
+        let to = fmt!("{}/{}", ROOT_DIR, name);
+        if res!(own::exists(&to).await) {
+            // The same id in both roots.  Which copy is the user's current work is
+            // not answerable from here, and overwriting the one they can see with
+            // one they cannot is the loss this whole function exists to avoid.
+            collisions += 1;
+            console_log(&fmt!(
+                "A Diamond '{}' is in both '{}' and '{}'; the older copy is left where it is.",
+                name, legacy, ROOT_DIR,
+            ));
+            continue;
+        }
+        let from = fmt!("{}/{}", legacy, name);
+        res!(own::move_entry(&from, &to).await);
+        ids.push(name);
+    }
+    if ids.is_empty() && collisions > 0 {
+        return Ok(false);
+    }
+    res!(rewrite_delta_refs(legacy, &ids).await);
+    // An emptied legacy root is deleted, so the next boot has nothing to walk and
+    // `legacy_root_waiting` stops reporting a root that holds nothing.  One that
+    // still holds a collision stays, because it still holds the user's work.
+    if collisions == 0 {
+        if let Err(e) = own::delete_entry(legacy, true).await {
+            console_log(&fmt!("The emptied '{}' root could not be removed: {}.", legacy, e));
+        }
+    }
+    Ok(!ids.is_empty())
+}
+
+/// Point every moved Diamond's log at its deltas under the new root.
+///
+/// A log record's `delta_ref` holds a *path* written when the fold was applied, so every
+/// historical record still names `legacy/<id>/`; left alone, "view this delta" would fail on
+/// every fold the user has.
+async fn rewrite_delta_refs(legacy: &str, ids: &[String]) -> Outcome<()> {
+    for id in ids {
+        // The log is wherever this Diamond's store currently is, and a workspace
+        // old enough to predate the Red -> Daimond rename may still be on
+        // `.red/` -- [`migrate`] has not run yet, and cannot, because it
+        // addresses the new root this function is only now creating. So both are
+        // tried: looking only at `.daimond/` would skip exactly the oldest
+        // workspaces, leaving their `delta_ref` paths pointing at a root that no
+        // longer exists, which no later migration would match either.
+        for store in [STORE_DIR, LEGACY_STORE_DIR] {
+            let log = fmt!("{}/{}/{}/log", ROOT_DIR, id, store);
+            if !res!(own::exists(&log).await) {
+                continue;
+            }
+            let bytes = res!(own::read_file(&log).await);
+            let text  = String::from_utf8_lossy(&bytes).to_string();
+            let fixed = text.replace(
+                &fmt!("{}/{}/", legacy, id),
+                &fmt!("{}/{}/", ROOT_DIR, id),
+            );
+            if fixed != text {
+                res!(own::write_file(&log, fixed.as_bytes()).await);
+            }
+        }
+    }
+    Ok(())
+}
+
+
+/// Rename a Diamond's content file from `brief.md` to `crystal.md`.
+///
+/// The file holds the whole of what a Diamond knows, so this is the single most
+/// destructive thing in the migration to get wrong: a Diamond whose crystal is not
+/// found reads as an empty one, and an agent handed an empty crystal will happily
+/// write a new one over the top of work it never saw.
+///
+/// Idempotent, and it never clobbers: a Diamond already migrated has no
+/// `brief.md`, and one holding both files is left alone rather than merged.
+async fn migrate_crystal_file(id: &str) -> Outcome<bool> {
+    let old = fmt!("{}/{}/{}", ROOT_DIR, id, LEGACY_CRYSTAL_FILE);
+    let new = crystal_legacy_path(id);
+    if !res!(own::exists(&old).await) {
+        return Ok(false);
+    }
+    if res!(own::exists(&new).await) {
+        return Ok(false);
+    }
+    res!(own::move_entry(&old, &new).await);
+    Ok(true)
+}
+
+
+/// Convert a Diamond's crystal from markdown to data: `crystal.md` -> `crystal.json`.
+///
+/// Runs where [`migrate_crystal_file`] runs, on the same trigger, and carries the same two
+/// properties for the same reason.  **Idempotent**: a Diamond already converted has a
+/// `crystal.json`, and the second check below is what sees it -- the markdown is kept, so the
+/// absence of the OLD file is not what makes this safe to re-run.  **It never clobbers**: a
+/// Diamond holding both files is left exactly as it is rather than merged, because which of the
+/// two is the user's current work is not answerable from here, and overwriting the one they can
+/// see is the loss this whole function exists to avoid.
+///
+/// The conversion is [`crate::tools::crystal_from_markdown`], which enforces losslessness rather
+/// than promising it: a shape it cannot render back byte for byte goes into one section verbatim.
+/// It is still the most destructive thing in the migration to get wrong -- a Diamond whose crystal
+/// is not found reads as an empty one, and an agent handed an empty crystal will write a new one
+/// over the top of work it never saw.
+///
+/// **THE MARKDOWN IS KEPT.**  An earlier draft of this deleted `crystal.md` once the data was
+/// written and read back, to save a migrated Diamond carrying two live crystals in every sync
+/// parcel.  That trade is the wrong way round, and the asymmetry is the reason:
+///
+/// * The cost of keeping it is small and measured.  A real workspace was thirteen Diamonds in
+///   15,786 bytes; doubling a crystal doubles a very small number.
+/// * The cost of deleting it is unbounded.  The self-check proves the BYTES round-trip and cannot
+///   prove the STRUCTURE is right -- a `##` inside a fenced code block rejoins to the same bytes
+///   whether or not the fence was honoured -- so a conversion can be wrong in a way nothing here
+///   detects.  Deleting on that would destroy the only correct copy, on every device, at the
+///   moment of the release that introduced the bug.
+/// * And it would not stay local.  [`import_diamond`] deletes a Diamond's directory before
+///   rewriting it, so a bad conversion propagates back over a good copy on the next sync.  That is
+///   the shape this project has already lost a user's tags to.
+///
+/// A later release removes the markdown, once the conversion has run against real workspaces
+/// without complaint.  Nothing reads it while `crystal.json` is there; it is ballast, and ballast
+/// is cheap.
+///
+/// The data snapshot is written here too, at the version the Diamond already stands at, so
+/// `versions/NNNN.json` exists from the migration instant rather than from the next edit.  It is
+/// written only where there is not one already, on the same never-clobber rule as everything else
+/// in this function, and a Diamond whose metadata will not parse simply does not get one -- a
+/// backfill is a convenience and must not be able to fail a migration.
+///
+/// # Arguments
+/// * `id` - The Diamond whose crystal is to be converted.
+async fn migrate_crystal_data(id: &str) -> Outcome<bool> {
+    let old = crystal_legacy_path(id);
+    let new = crystal_data_path(id);
+    if !res!(own::exists(&old).await) {
+        return Ok(false);       // converted already, or a Diamond newer than markdown
+    }
+    if res!(own::exists(&new).await) {
+        return Ok(false);       // both present: not ours to reconcile, and not ours to destroy
+    }
+    let bytes = res!(own::read_file(&old).await);
+    let md    = String::from_utf8_lossy(&bytes).to_string();
+    let json  = crate::tools::crystal_from_markdown(&md).to_json();
+    res!(own::write_file(&new, json.as_bytes()).await);
+
+    // The backfill. Best-effort throughout: the conversion has already succeeded by this point,
+    // and a Diamond that is converted but unsnapshotted is in a state `read_crystal_data` handles
+    // -- it falls through to the markdown history -- while a migration that reported failure
+    // would be re-run for ever over a file that is already there.
+    if let Ok(meta) = read_meta(id).await {
+        let at = version_data_path(id, meta.version);
+        match own::exists(&at).await {
+            Ok(false) => {
+                if let Err(e) = own::write_file(&at, json.as_bytes()).await {
+                    console_log(&fmt!(
+                        "Diamond '{}' was converted, but version {} could not be snapshotted as \
+                         data: {}. Its markdown snapshot still stands.", id, meta.version, e));
+                }
+            }
+            _ => {},        // already there, or unreadable: either way, not ours to overwrite
+        }
+    }
+    Ok(true)
+}
+
+
+/// Move a Diamond's store from `.red/` to `.daimond/`, so a workspace made before the
+/// rename opens with its history intact.
+///
+/// Without this a renamed Daimond simply would not find the old directory: [`read_meta`]
+/// would fail, [`list`] would skip the Diamond, and a real pursuit -- its crystal versions, its
+/// whole fold history -- would read as though it had never existed.  The crystal itself
+/// (`crystal.json` and `crystal.html`) and its snapshots sit *outside* the store directory and are
+/// untouched either way; what moves here is the metadata, the log and the retained deltas.
+///
+/// The log's `delta_ref` field holds a *path*, written when the fold was applied, so the
+/// records are rewritten as the directory moves -- otherwise every historical delta would
+/// still point into `.red/` and "view this delta" would fail on exactly the folds the user
+/// has had longest.
+///
+/// Idempotent, and it never clobbers: a Diamond already migrated has no `.red/` to move, and
+/// one that somehow holds both directories is left entirely alone rather than merged.
+/// Returns whether anything moved.
+///
+/// # Arguments
+/// * `id` - The Diamond whose store is to be migrated.
+async fn migrate(id: &str) -> Outcome<bool> {
+    let old = fmt!("diamonds/{}/{}", id, LEGACY_STORE_DIR);
+    let new = fmt!("diamonds/{}/{}", id, STORE_DIR);
+    if !res!(own::exists(&old).await) {
+        return Ok(false);       // nothing to move: a new Diamond, or one already migrated
+    }
+    if res!(own::exists(&new).await) {
+        return Ok(false);       // both present: not ours to reconcile, and not ours to destroy
+    }
+    res!(own::move_entry(&old, &new).await);
+
+    // The log points at the deltas by path, and the deltas have just moved.
+    let log = log_path(id);
+    if res!(own::exists(&log).await) {
+        let bytes = res!(own::read_file(&log).await);
+        let text  = String::from_utf8_lossy(&bytes).to_string();
+        let fixed = text.replace(
+            &fmt!("diamonds/{}/{}/deltas/", id, LEGACY_STORE_DIR),
+            &fmt!("diamonds/{}/{}/deltas/", id, STORE_DIR),
+        );
+        if fixed != text {
+            res!(own::write_file(&log, fixed.as_bytes()).await);
+        }
+    }
+    Ok(true)
+}
+
+
+/// Read the crystal's memory as it stood at `version`.
+///
+/// Every fold and every hand-edit snapshots the crystal, but nothing has ever
+/// read one back, so an accepted fold that mangled the crystal could not be
+/// undone.  This is what makes the history recoverable rather than merely
+/// recorded.
+///
+/// A version from before the migration has a `.md` and no `.json`, and it is returned as the
+/// markdown it is: the caller renders what it is given rather than being told which it got, which
+/// is what "the history view renders that as it always did" costs.
+pub async fn read_version(id: &str, version: u64) -> Outcome<String> {
+    let snaps = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await;
+    if snaps.iter().any(|(n, _)| *n == version) {
+        // A version that HAS a snapshot and cannot be rebuilt from it is a fault to report.
+        // Reaching for the pre-migration file of the same number here would answer a question
+        // about a version that no longer exists with one from a Diamond that no longer does.
+        let chain = res!(diamond_delta::plan_at(&snaps, version));
+        let bytes = res!(follow(id, &chain, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await);
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
+    }
+    let bytes = res!(own::read_file(&version_legacy_path(id, version)).await);
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// Read the PAGE as it stood at `version`, by walking back to the last one that changed it.
+///
+/// **This walk is the whole cost of not copying the page into every snapshot.**  A
+/// `versions/NNNN.html` is written only where the page actually moved, so most versions have
+/// none, and asking for the page at one of those is not asking for nothing -- it is asking for
+/// whatever page was on screen at the time, which is the last one written at or before it.  Read
+/// naively, every version between two page edits would report a Diamond with no page at all, and
+/// the history view would show the built-in fallback for stretches where the user was looking at
+/// their own page the whole time.
+///
+/// An empty string means no page was ever stored at or before that version, which is what every
+/// pre-migration version says.  Nothing here invents a default: the shipped page is a JS const,
+/// and this stores bytes.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `version` - The version to read the page as at.
+pub async fn read_version_page(id: &str, version: u64) -> Outcome<String> {
+    // One directory walk rather than a read per version stepping backwards.  A Diamond at version
+    // 300 whose page never changed would otherwise cost 300 failed OPFS reads to answer "none",
+    // on the device least able to afford them.
+    let snaps = snapshot_chain(id, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await;
+    Ok(res!(page_at(id, version, &snaps).await).unwrap_or_default())
+}
+
+/// The page as at the newest version at or before `version`, or `None` where none was ever
+/// stored at or before it.
+///
+/// The difference from [`read_version_page`] is the difference between "the page was empty" and
+/// "there was no page", which the caller that is about to RECORD a version has to be able to
+/// tell: a version recorded against a parent that does not exist is exactly the fault the whole
+/// chain is built to refuse.
+async fn page_at(id: &str, version: u64, snaps: &[(u64, Snap)])
+    -> Outcome<Option<String>>
+{
+    let chain = match res!(diamond_delta::plan_upto(snaps, version)) {
+        Some((_, c)) => c,
+        None         => return Ok(None),
+    };
+    let bytes = res!(follow(id, &chain, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await);
+    Ok(Some(String::from_utf8_lossy(&bytes).to_string()))
+}
+
+/// Every snapshot a Diamond holds for one file, with what each one is.
+///
+/// One directory walk answers both extensions, because a reader needs them together: whether a
+/// version is a full copy or splices over the one before it decides what has to be read next.
+/// A version that holds both -- which is what a patch abandoned by a failed verification would
+/// leave, if the delete after it did not land -- is taken as the full copy.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `kf_ext` - The extension a full copy carries, including its dot.
+/// * `patch_ext` - The extension splices carry, including its dot.
+async fn snapshot_chain(id: &str, kf_ext: &str, patch_ext: &str) -> Vec<(u64, Snap)> {
+    classify(&version_entries(id).await, kf_ext, patch_ext)
+}
+
+/// The `versions/` listing, once, for a caller that is going to classify it twice.
+///
+/// A missing directory is no snapshots and not a failure: a Diamond older than they are, or
+/// one that has been emptied.
+async fn version_entries(id: &str) -> Vec<(String, bool, u64)> {
+    match own::list_dir(&versions_dir(id)).await {
+        Ok(e)  => e,
+        Err(_) => Vec::new(),
+    }
+}
+
+/// The names of the files in a `versions/` listing, its directories left out.
+fn file_names(entries: &[(String, bool, u64)]) -> impl Iterator<Item = &str> {
+    entries.iter().filter(|(_, is_dir, _)| !*is_dir).map(|(name, _, _)| name.as_str())
+}
+
+/// One listing read as one file's snapshots.  See [`snapshot_chain`] for the rules.
+fn classify(entries: &[(String, bool, u64)], kf_ext: &str, patch_ext: &str) -> Vec<(u64, Snap)> {
+    let mut out: Vec<(u64, Snap)> = Vec::new();
+    for (name, is_dir, _size) in entries {
+        if *is_dir {
+            continue;
+        }
+        let found = match name.strip_suffix(kf_ext).and_then(|s| s.parse::<u64>().ok()) {
+            Some(n) => Some((n, Snap::Keyframe)),
+            None    => name.strip_suffix(patch_ext)
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|n| (n, Snap::Patch)),
+        };
+        let (n, kind) = match found {
+            Some(f) => f,
+            None    => continue,        // somebody else's file, passed over rather than guessed at
+        };
+        match out.iter_mut().find(|(m, _)| *m == n) {
+            Some(seen) => if kind == Snap::Keyframe {
+                seen.1 = Snap::Keyframe;
+            },
+            None => out.push((n, kind)),
+        }
+    }
+    out
+}
+
+/// Read one version's chain off the disk and rebuild the file from it.
+///
+/// `chain` is what [`crate::diamond_delta::plan_at`] or
+/// [`crate::diamond_delta::plan_upto`] gave: the keyframe first, then every patch over it in
+/// order.  A missing file is an error and not a shorter chain -- a rebuild that stopped early
+/// would return an older version wearing this one's number.
+async fn follow(id: &str, chain: &[u64], kf_ext: &str, patch_ext: &str)
+    -> Outcome<Vec<u8>>
+{
+    let head = match chain.first() {
+        Some(n) => *n,
+        None    => return Err(err!(
+            "Diamond '{}' asked for a version with no chain to rebuild it from.", id;
+        Bug, Missing)),
+    };
+    let kf = res!(own::read_file(&snapshot_path(id, head, kf_ext)).await);
+    let mut patches: Vec<Vec<u8>> = Vec::with_capacity(chain.len().saturating_sub(1));
+    for n in &chain[1..] {
+        patches.push(res!(
+            own::read_file(&snapshot_path(id, *n, patch_ext)).await));
+    }
+    diamond_delta::materialise(kf, &patches)
+}
+
+/// Every version a Diamond holds a snapshot for with the given extension, unordered.
+///
+/// For the pre-migration `.md` snapshots, which have no chain: nothing writes one again, so a
+/// version either has one or does not.  [`snapshot_chain`] is what the two live files use.
+///
+/// A name that does not parse is somebody else's file and is passed over rather than guessed at.
+/// A missing `versions/` directory is no snapshots, not a failure: a Diamond older than they are,
+/// or one that has been emptied.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `ext` - The extension including its dot.
+async fn snapshot_versions(id: &str, ext: &str) -> Vec<u64> {
+    let entries = match own::list_dir(&versions_dir(id)).await {
+        Ok(e)  => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<u64> = Vec::new();
+    for (name, is_dir, _size) in entries {
+        if is_dir {
+            continue;
+        }
+        if let Some(n) = name.strip_suffix(ext).and_then(|s| s.parse::<u64>().ok()) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Metadata                                                       │
+// └───────────────────────────────────────────────────────────────┘
+
+/// Read a Diamond's metadata.
+/// The most a `meta.json` may be worth reading.
+///
+/// It holds a name, a version, two stamps, at most eight tags of at most
+/// twenty-four characters, and a short list of toolkit names. A kilobyte is a
+/// generous one; sixty-four is beyond argument. Anything past this is damage.
+const META_MAX: u32 = 65_536;
+
+/// A Diamond's name, read back off its own crystal.
+///
+/// The last resort for a Diamond whose `meta.json` lost its name. A crystal carries a `title` by
+/// construction — the default Diamonds are written that way, the migration lifts it out of the
+/// opening `# ` heading, and every fold is asked to keep it — so it is the one place the name
+/// survives outside the metadata. [`read_crystal_data`] already falls back through the version
+/// snapshots and through a legacy markdown crystal, so this reaches even a Diamond whose crystal
+/// file has gone.
+///
+/// The `# ` scan stays as the second try, for a Diamond holding markdown that no conversion has
+/// reached — this runs inside [`list`], which is also where the conversion runs, and the order of
+/// two repairs over one file is not a thing to depend on.
+///
+/// Returns `None` rather than a guess when there is neither to read: an
+/// invented name would be worse than an empty one, because the user could not
+/// tell it from the name they chose.
+async fn name_from_crystal(id: &str) -> Option<String> {
+    let text = read_crystal_data(id).await.ok()?;
+    if let Some(title) = extract_json_string(&text, "title") {
+        let name: String = title.trim().chars().take(80).collect();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    for line in text.lines().take(20) {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("# ") {
+            let name: String = rest.trim().chars().take(80).collect();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+/// Read a Diamond's metadata, WITHOUT trusting the file's size.
+///
+/// THIS IS THE iPHONE LOOP. Two of one user's fifteen Diamonds had a `meta.json`
+/// of roughly 117 MB and 702 MB, and this function read them whole — twice over,
+/// because `from_utf8_lossy().to_string()` copies again. The device's own trail
+/// caught it in the act:
+///
+///     list entry 19fb11892cdc heap 1M
+///     HEAP GREW  read_meta +234M -> 235M
+///     …
+///     HEAP GREW  read_meta +1404M -> 1639M
+///     boot                                  <- the tab is gone
+///
+/// Wasm linear memory never shrinks, so 1.6 GB stood for the life of the tab and
+/// iOS took it away — on every boot, which is the whole of the login loop that
+/// ran for five sessions and produced seven wrong diagnoses.
+///
+/// So the size is asked BEFORE the bytes are, and only the front of an oversized
+/// file is read. That is a graceful degradation rather than a refusal: `to_json`
+/// writes `name`, `crystal_version`, `updated` and `touched` FIRST, so a 64 KB
+/// prefix still recovers everything that orders the rail and drives the merge.
+/// What is lost is tags — which is the right thing to lose, because the tags
+/// array is the only unbounded field in the file and therefore the prime
+/// suspect for what made it enormous.
+///
+/// A Diamond whose metadata is damaged must still LIST and still OPEN. Dropping
+/// it would be answering a bug the user can report with one they can only mourn.
+async fn read_meta(id: &str) -> Outcome<Meta> {
+    let (bytes, total) = res!(own::read_file_capped(&meta_path(id), META_MAX).await);
+    if total > META_MAX as f64 {
+        // Loud, and in the durable trail: this is data damage, the user cannot
+        // see it, and the next write is about to heal it silently.
+        own::trail("META HUGE",
+            &fmt!("{} is {}KB — read the first {}KB only", id,
+                (total / 1024.0) as u64, META_MAX / 1024));
+        console_log(&fmt!(
+            "Diamond '{}' has a metadata file of {} bytes, which cannot be right. Only the first \
+             {} were read; its tags are dropped and will be rewritten on the next change.",
+            id, total as u64, META_MAX));
+    }
+    let s = String::from_utf8_lossy(&bytes);
+    if total > META_MAX as f64 {
+        // THE SHAPE OF THE DAMAGE, BEFORE THE REPAIR ERASES IT.
+        //
+        // The repair below is about to rewrite this file, and once it has, the
+        // only record of what went wrong is gone. What is still not known is how
+        // a metadata file reached 702 MB: forty million short tags, or one
+        // enormous one, or a `name` that grew, are three different bugs with
+        // three different fixes.
+        //
+        // COUNTS AND LENGTHS ONLY, never the text of a tag. A tag is something
+        // the user typed, and `breadcrumb.js` promises the trail holds nothing
+        // that could not be read aloud in a bug report. The shape answers the
+        // question and the content is not needed for it.
+        let prefix = &s[..s.len().min(META_MAX as usize)];
+        let quotes = prefix.matches('"').count();
+        let commas = prefix.matches(',').count();
+        let tags_at = prefix.find("\"tags\":").map(|i| i as i64).unwrap_or(-1);
+        let name_len = extract_json_string(prefix, "name").map(|n| n.len()).unwrap_or(0);
+        own::trail("META SHAPE",
+            &fmt!("{} name={}B tags@{} quotes={} commas={} in first {}KB",
+                id, name_len, tags_at, quotes, commas, META_MAX / 1024));
+    }
+    let meta = Meta::from_json(&s);
+    if total > META_MAX as f64 {
+        // AND PUT IT RIGHT, HERE, rather than waiting for something else to
+        // write. A read that merely tolerates the damage leaves 702 MB on disk
+        // for ever, and the file's SIZE has consequences of its own: the sync
+        // budget is estimated from bytes on disk (`export_size`), so an
+        // unrepaired Diamond is one the account can never send again. The user
+        // saw exactly that — the loop stopped and a notice said fifteen Diamonds
+        // would not fit.
+        //
+        // Safe because `to_json` writes the name, the version and both stamps
+        // FIRST, so the 64 KB prefix carried all of them; what is dropped is the
+        // tags array, which is the damage. Best-effort: a repair that cannot be
+        // written must not stop the Diamond being listed.
+        // AND NEVER OVER A NAME IT COULD NOT READ. If the prefix did not yield a
+        // name, the parse did not find what it expected and the file is not the
+        // shape assumed here. Keeping 702 MB on disk is a bad outcome; replacing
+        // a Diamond's name with nothing is a worse one, and it is not reversible.
+        // The oversized file stays, `read_meta` keeps coping with it, and the
+        // trail says the repair declined.
+        if meta.name.trim().is_empty() {
+            own::trail("META NOT HEALED", &fmt!("{} — no name parsed, file left alone", id));
+        } else {
+            match write_meta(id, &meta).await {
+                Ok(())  => own::trail("META HEALED", id),
+                Err(e)  => console_log(&fmt!("Diamond '{}' could not have its metadata repaired: {}", id, e)),
+            }
+        }
+    }
+    Ok(meta)
+}
+
+/// Write a Diamond's metadata.
+async fn write_meta(id: &str, meta: &Meta) -> Outcome<()> {
+    own::write_file(&meta_path(id), meta.to_json().as_bytes()).await
+}
+
+/// Stamp a Diamond as changed, without saying it was worked on.
+///
+/// Every mutation of anything inside `diamonds/<id>/` moves `touched`, because
+/// `touched` is what decides whose copy the other device takes.  A change that
+/// moved nothing would simply not travel: the merge would find the two copies
+/// equally fresh and keep its own, which is how tagging used to be invisible
+/// across devices -- and worse, how a later stamped edit on the other device
+/// came to look strictly fresher and replace the tagged copy wholesale.
+///
+/// `updated` is left alone here, deliberately.  It means *worked on* and orders
+/// the rail; the callers that mean that (see [`rename`], [`snapshot`]) move it
+/// themselves.
+pub async fn touch(id: &str) -> Outcome<()> {
+    let mut meta = res!(read_meta(id).await);
+    meta.bump_touched(now_ms() as u64);
+    write_meta(id, &meta).await
+}
+
+// ── PORT-PL-A: page write (PLB) ──
+
+/// Write a crystal page's file and stamp its Diamond as one act: both, or neither.
+///
+/// **A page write that is down but not stamped is a write the next sync throws away.**  `touched`
+/// decides whose copy the other device takes, so a log line laid down on a phone that then failed
+/// to stamp left the phone the stale side, and the desktop's copy replaced it with the line gone.
+/// The page's door used to write and then stamp as two calls, and swallow a failed stamp; so here
+/// a stamp that fails puts the file back as it was and the save is refused, and the page can say
+/// so.  The JS holds the Diamond's lock across this call, so an import cannot land between the
+/// write and the stamp either.
+///
+/// An append also records the path in [`PAGELOGS_REL`], once: a page log is a path a page has
+/// appended to, and the import needs the list to join such files rather than replace them.
+///
+/// # Arguments
+/// * `full_path` - `diamonds/<id>/<rel>`.
+/// * `append` - Add `text` after what the file holds (on a line of its own) rather than replace it.
+pub async fn page_write(id: &str, full_path: &str, text: &str, append: bool) -> Outcome<()> {
+    let home = fmt!("{}/", diamond_dir(id));
+    let rel = match full_path.strip_prefix(home.as_str()) {
+        Some(r) if !r.is_empty() && !r.split('/').any(|p| p == "..") => r,
+        _ => return Err(err!("A page write to '{}' is not a path in Diamond '{}'.",
+            full_path, id; Invalid, Input)),
+    };
+    // What the file held, read BEFORE anything is written: it is what a failure puts back, so a
+    // read that fails is a save that fails, with nothing written.
+    let had = res!(read_if_any(full_path).await);
+    let mut body: Vec<u8> = Vec::new();
+    if append {
+        if let Some(b) = &had {
+            body.extend_from_slice(b);
+            if !b.is_empty() && b.last() != Some(&b'\n') {
+                body.push(b'\n');
+            }
+        }
+    }
+    body.extend_from_slice(text.as_bytes());
+    res!(own::write_file(full_path, &body).await);
+
+    let rec_path = fmt!("{}{}", home, PAGELOGS_REL);
+    let mut rec_had: Option<Option<Vec<u8>>> = None; // the record's bytes before, once it is written
+    let done = record_and_stamp(id, rel, &rec_path, append, &mut rec_had).await;
+    let e = match done {
+        Ok(())  => return Ok(()),
+        Err(e)  => e,
+    };
+    let mut undo = Vec::new();
+    if let Err(e2) = restore(full_path, &had).await {
+        undo.push(fmt!("the page's file could not be put back ({})", e2));
+    }
+    if let Some(prev) = &rec_had {
+        if let Err(e2) = restore(&rec_path, prev).await {
+            undo.push(fmt!("the page-log record could not be put back ({})", e2));
+        }
+    }
+    if undo.is_empty() {
+        Err(err!("The page's write was put back because the Diamond could not be stamped: {}", e;
+            IO, File, Write))
+    } else {
+        Err(err!("The page's write could not be stamped ({}), and {}.", e, undo.join(", and ");
+            IO, File, Write))
+    }
+}
+
+/// The half of [`page_write`] after the page's own bytes are down: record the path (an append
+/// only, and only a path [`pagelog::is_recordable`] passes), then stamp.  `rec_had` is set to the
+/// record's bytes before, once the record has been written, so a failure can put it back.
+async fn record_and_stamp(
+    id:         &str,
+    rel:        &str,
+    rec_path:   &str,
+    append:     bool,
+    rec_had:    &mut Option<Option<Vec<u8>>>,
+)
+    -> Outcome<()>
+{
+    if append && pagelog::is_recordable(rel) {
+        let prev = res!(read_if_any(rec_path).await);
+        let text = match &prev {
+            Some(b) => String::from_utf8_lossy(b).to_string(),
+            None    => String::new(),
+        };
+        if let Some(next) = pagelog::with_path(&text, rel) {
+            *rec_had = Some(prev);
+            res!(own::write_file(rec_path, next.as_bytes()).await);
+        }
+    }
+    touch(id).await
+}
+
+/// A file's bytes, or `None` when it does not exist.  Any other failure to read is an error.
+async fn read_if_any(path: &str) -> Outcome<Option<Vec<u8>>> {
+    if !res!(own::exists(path).await) {
+        return Ok(None);
+    }
+    Ok(Some(res!(own::read_file(path).await)))
+}
+
+/// Put a file back as it was: its bytes, or gone if it did not exist.
+async fn restore(path: &str, prev: &Option<Vec<u8>>) -> Outcome<()> {
+    match prev {
+        Some(b) => own::write_file(path, b).await,
+        None    => own::delete_file(path).await,
+    }
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Log records                                                    │
+// └───────────────────────────────────────────────────────────────┘
+
+/// One append-only log record.  `parent` uses `-1` for "no parent"
+/// (the `create` record), matching the JSON the surface returns.
+struct LogRecord {
+    id:        String,
+    ts:        u64,
+    kind:      &'static str,
+    agent:     String,
+    task:      String,
+    parent:    i64,
+    version:   u64,
+    delta_ref: String,
+    note:      String,
+}
+
+impl LogRecord {
+
+    /// Serialise to a compact single-line JSON object.
+    fn to_json(&self) -> String {
+        fmt!(
+            "{{\"id\":\"{}\",\"ts\":{},\"kind\":\"{}\",\"agent\":\"{}\",\
+              \"task\":\"{}\",\"parent_crystal_version\":{},\
+              \"crystal_version\":{},\"delta_ref\":\"{}\",\"note\":\"{}\"}}",
+            json_escape(&self.id), self.ts, self.kind, json_escape(&self.agent),
+            json_escape(&self.task), self.parent, self.version,
+            json_escape(&self.delta_ref), json_escape(&self.note),
+        )
+    }
+}
+
+/// Append a record to a Diamond's log.
+///
+/// OPFS exposes whole-file writes only, so the append is read-modify-write
+/// (single-user, single-Diamond makes that safe for this stage; the
+/// synchronous single-writer WAL is deferred).
+async fn append_log(id: &str, rec: &LogRecord) -> Outcome<()> {
+    let path = log_path(id);
+    let mut buf = match own::exists(&path).await {
+        Ok(true) => {
+            let bytes = res!(own::read_file(&path).await);
+            String::from_utf8_lossy(&bytes).to_string()
+        }
+        _ => String::new(),
+    };
+    buf.push_str(&rec.to_json());
+    buf.push('\n');
+    own::write_file(&path, buf.as_bytes()).await
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Diamond operations                                               │
+// └───────────────────────────────────────────────────────────────┘
+
+/// Create a Diamond: its directory, an empty `crystal.json`, version `0000`, a
+/// `meta.json`, and a `create` log record.  Returns the new Diamond id.
+///
+/// No page.  A new Diamond renders on the shipped default until something writes one, and the
+/// default is a JS const that this side never sees; writing an empty `crystal.html` here would
+/// only put a file on disk that means the same as no file.
+pub async fn create(name: &str) -> Outcome<String> {
+    create_at(name, &generate_session_id()).await
+}
+
+/// Create a Diamond AT A KNOWN ID, or answer with the id if one is already there.
+///
+/// **This exists because a random id and a per-device flag cannot agree across a sync.** The two
+/// default Diamonds are seeded by every device separately -- the "already seeded" fact lives in
+/// `localStorage`, which does not travel -- and each minted its own random id, so two devices
+/// produced two Optimisers and two Helps, and the merge kept all four. The name check in
+/// `seedDefaultDiamonds` never saw it, because it reads the local list and the other device's
+/// copy has not arrived yet.
+///
+/// Seeding at a fixed id makes the two devices create the SAME object, so the merge has one thing
+/// to keep rather than two things to add. No flag, no coordination, no ordering.
+///
+/// It is idempotent by construction: a second call finds the meta already written and returns
+/// without touching the crystal, so a device that seeds twice cannot flatten what the first pass
+/// or the user has since put there.
+///
+/// # Arguments
+/// * `name` - The Diamond's name.
+/// * `id` - The id to create it at. Hex, in the shape [`generate_session_id`] produces.
+pub async fn create_at(name: &str, id: &str) -> Outcome<String> {
+    // ALREADY THERE IS A SUCCESS, and it must not rewrite anything: this is the path a second
+    // device takes, and by then the Diamond may hold a crystal somebody has worked on.
+    if read_meta(id).await.is_ok() {
+        return Ok(id.to_string());
+    }
+    create_fresh(name, id).await
+}
+
+async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
+    let id = id.to_string();
+    let now = now_ms() as u64;
+
+    // Empty crystal plus its version-0 snapshot.
+    res!(own::write_file(&crystal_data_path(&id), b"").await);
+    res!(own::write_file(&version_data_path(&id, 0), b"").await);
+    // AND THE THREE FILES BESIDE IT, from the shipped templates -- the way `prompts/<role>.md`
+    // is seeded from `default_prompt`, and for the same reason: a model imitates a shape it is
+    // shown and invents one it is not.  An empty Diamond whose REQUIREMENTS.md does not exist is
+    // a Diamond whose first turn has nowhere to put what the user just asked for.
+    for leaf in crate::tools::STANDING_FILES {
+        res!(own::write_file(&standing_path(&id, leaf),
+            crate::tools::standing_template(leaf).as_bytes()).await);
+    }
+
+    let meta = Meta {
+        name:    name.to_string(),
+        version: 0,
+        updated: now,
+        touched: now,
+        tags:    Vec::new(),
+        // Off by default, which is the whole shape of a grant: nobody has said yes yet.
+        kits:    Vec::new(),
+        // A person's Diamond until the page marks it a built-in (`mark_built_in`).
+        builtin: String::new(),
+        named:   false,
+        // The app's K until someone sets this Diamond's own (UNBLOCK-27 R4).
+        no_progress: 0,
+        extra:   Vec::new(),
+    };
+    res!(write_meta(&id, &meta).await);
+
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "create",
+        agent:     "user".to_string(),
+        task:      "create diamond".to_string(),
+        parent:    -1,
+        version:   0,
+        delta_ref: String::new(),
+        note:      name.to_string(),
+    };
+    res!(append_log(&id, &rec).await);
+    Ok(id)
+}
+
+/// Rename a Diamond, updating `meta.json`'s name and both its stamps.
+pub async fn rename(id: &str, name: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let mut meta = res!(read_meta(id).await);
+    meta.name = name.to_string();
+    meta.updated = now;
+    meta.bump_touched(now);
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
+/// Give a built-in its current name, once, and record that it was given (R568-FU F2).
+///
+/// As [`rename`], and the record travels with the marker, so neither this device nor another
+/// renames it again: a built-in he renamed back to its old default name stays as he left it.
+pub async fn name_built_in(id: &str, name: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let mut meta = res!(read_meta(id).await);
+    meta.name = name.to_string();
+    meta.named = true;
+    meta.updated = now;
+    meta.bump_touched(now);
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
+/// Mark a Diamond as the built-in seeded at `fixed_id` (NAMES N1).
+///
+/// The marker is content and has to travel, so `touched` moves; `updated` does not, because
+/// marking is not working on it and must not reorder the rail.  A marker that is not a fixed-id
+/// shape is refused rather than stored, and setting the one already there writes nothing.
+pub async fn mark_built_in(id: &str, fixed_id: &str) -> Outcome<()> {
+    let mark = crate::diamond_meta::normalise_builtin(fixed_id);
+    if mark.is_empty() {
+        return Err(err!("'{}' is not a built-in Diamond's id.", fixed_id; Invalid, Input));
+    }
+    let mut meta = res!(read_meta(id).await);
+    if meta.builtin == mark {
+        return Ok(());
+    }
+    meta.builtin = mark;
+    meta.bump_touched(now_ms() as u64);
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
+/// Set a Diamond's tags, replacing whatever it held, and stamp it updated.
+///
+/// The tags are normalised here rather than taken on trust, so the store stays
+/// clean whatever the caller sends (see
+/// [`normalise_tags`](crate::diamond_meta::normalise_tags)).
+///
+/// Nothing is appended to the log, because the log is the crystal's audit trail
+/// and a tag is not crystal state.  Tagging leaves the version alone.
+///
+/// It leaves `updated` alone too, which is deliberate.  The rail is ordered by
+/// `updated`, meaning most recently worked on; filing is not working on it, so
+/// tagging must not reorder the rail.  Otherwise tidying a few Diamonds in one
+/// sitting would shuffle them all to the top and lose the order that was the
+/// point of the sort.  This is why it differs from `rename`, which does stamp.
+///
+/// It does move `touched`, because the tags are content and content has to
+/// travel.  While there was one stamp this could not be had both ways: leaving
+/// it alone meant the tags never reached the other device AND that the other
+/// device's untagged copy became strictly fresher the moment anything there was
+/// renamed or edited, at which point the merge replaced the tagged copy with it
+/// and the tags were gone.  A user lost real tags that way.
+pub async fn set_tags(id: &str, tags: &[String]) -> Outcome<()> {
+    let mut meta = res!(read_meta(id).await);
+    meta.tags = normalise_tags(tags);
+    meta.bump_touched(now_ms() as u64);
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
+/// Set which toolchains this Diamond is granted, replacing whatever it held.
+///
+/// Stamped and normalised exactly as [`set_tags`] is, and for the same two reasons: filing a
+/// permission is not working on the Diamond, so the rail must not reorder; and the grant is content
+/// that has to reach the user's other devices, so `touched` moves.
+///
+/// The names are normalised here rather than taken on trust (see
+/// [`normalise_kits`](crate::diamond_meta::normalise_kits)) -- and unlike a tag, a name this build
+/// does not know is dropped, because what is stored here decides what a command may reach outside
+/// the workspace and a grant nobody can act on is not a grant.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `kits` - The toolkit names the user granted, as `Toolkit::name` spells them.
+pub async fn set_toolkits(id: &str, kits: &[String]) -> Outcome<()> {
+    let mut meta = res!(read_meta(id).await);
+    meta.kits = crate::diamond_meta::normalise_kits(kits);
+    meta.bump_touched(now_ms() as u64);
+    res!(write_meta(id, &meta).await);
+    Ok(())
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Activity record and the no-progress K (PORT-PL-B)              │
+// └───────────────────────────────────────────────────────────────┘
+
+/// This Diamond's own K for the no-progress rule (UNBLOCK-27 R4), or 0 where it has none or its
+/// record cannot be read, so the app's figure stands.
+pub async fn no_progress_rounds(id: &str) -> usize {
+    match read_meta(id).await {
+        Ok(m)  => m.no_progress,
+        Err(_) => 0,
+    }
+}
+
+/// Every activity file of the Diamond `id`, as `(rel, text)` under its directory, for the
+/// prompt and `recall` (UNBLOCK-11). None where it has no record yet; an unreadable file is left
+/// out, which a reader may do and a pull may not ([`activity_read`]).
+pub async fn activity_read_all(id: &str) -> Vec<(String, String)> {
+    activity_read(id).await.0
+}
+
+/// Every activity file of the Diamond `id` as `(rel, text)`, and beside them the files that could
+/// not be read (the directory itself where it exists and cannot be listed), so that a pull holds
+/// back rather than writing over what it could not see (item 24).
+pub async fn activity_read(id: &str) -> (Vec<(String, String)>, Vec<String>) {
+    let dir = fmt!("{}/{}", diamond_dir(id), crate::activity::ACTIVITY_DIR);
+    let mut unreadable: Vec<String> = Vec::new();
+    let entries = match own::list_dir(&dir).await {
+        Ok(e)  => e,
+        Err(_) => {
+            if !matches!(own::exists(&dir).await, Ok(false)) {
+                unreadable.push(crate::activity::ACTIVITY_DIR.to_string());
+            }
+            return (Vec::new(), unreadable);
+        }
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (name, is_dir, _) in entries {
+        let rel = fmt!("{}/{}", crate::activity::ACTIVITY_DIR, name);
+        if is_dir || !crate::activity::is_activity_rel(&rel) {
+            continue;
+        }
+        match own::read_file(&fmt!("{}/{}", dir, name)).await {
+            Ok(b)  => out.push((rel, String::from_utf8_lossy(&b).into_owned())),
+            Err(_) => unreadable.push(rel),
+        }
+    }
+    out.sort();
+    (out, unreadable)
+}
+
+/// Append one ended turn to THIS device's activity file of the Diamond `id`, shed for `now`.
+/// Each device writes only its own file, so no second writer can lose a line of it.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `turn` - The turn that ended ([`crate::activity::ended`]); its `dev` names the file.
+/// * `now` - The time, ms since the epoch.
+///
+/// Under the version hold (C2 r2 F5): `import_diamond_pack` holds it across its read and join of
+/// the activity files, so a pull landing between this read and write cannot drop the turn's line,
+/// nor this write lay an old copy over the pull's join. Not re-entrant: the caller holds no hold.
+///
+/// **The line and the stamp are one act (item 24)**, as [`page_write`]'s are: a turn that changed
+/// no file moves nothing else, and an unstamped line is one the next sync does not carry. A stamp
+/// that fails puts the file back. A file that exists and cannot be read is an error, not an empty
+/// record to write one line over.
+pub async fn activity_append(id: &str, turn: crate::activity::Turn, now: i64) -> Outcome<()> {
+    let _hold = res!(hold_versions(id).await);
+    let path = fmt!("{}/{}", diamond_dir(id), crate::activity::file_rel(&turn.dev));
+    let had = res!(read_if_any(&path).await);
+    let old = match &had {
+        Some(b) => String::from_utf8_lossy(b).into_owned(),
+        None    => String::new(),
+    };
+    let text = crate::activity::append(&old, turn, now);
+    res!(own::write_file(&path, text.as_bytes()).await);
+    let e = match touch(id).await {
+        Ok(())  => return Ok(()),
+        Err(e)  => e,
+    };
+    match restore(&path, &had).await {
+        Ok(())  => Err(err!("The activity line was put back because Diamond '{}' could not be \
+            stamped: {}", id, e; IO, File, Write)),
+        Err(e2) => Err(err!("The activity line of Diamond '{}' could not be stamped ({}), and \
+            the file could not be put back ({}).", id, e, e2; IO, File, Write)),
+    }
+}
+
+/// Delete a Diamond: remove its whole directory (crystal, versions, log, meta).
+pub async fn delete(id: &str) -> Outcome<()> {
+    own::delete_entry(&diamond_dir(id), true).await
+}
+
+/// List every Diamond, returning a JSON array of
+/// `{ id, name, crystal_version, updated, touched, tags }` ordered by
+/// most-recently updated first.
+///
+/// Both stamps travel in the row because they answer different questions: the
+/// order below is `updated` (worked on), while the cross-device merge compares
+/// `touched` (changed at all).
+///
+/// This is the one door every Diamond passes through before it can be opened, so it is where
+/// a workspace made before the rename is migrated (see [`migrate`]).  A Diamond that fails to
+/// migrate is left in the list rather than dropped from it: the metadata read below decides
+/// that, and a Diamond the user can see and cannot open is a bug they can report, while one
+/// that has silently vanished is a bug they can only mourn.
+pub async fn list() -> Outcome<String> {
+    // INSTRUMENTED, because this is the call that hangs on one iPhone and a hang
+    // has nothing to report: no error, no panic, just a `Promise` that never
+    // settles. Four diagnoses were made from reading this file and all four were
+    // wrong. The lines below are what the device says about itself.
+    own::trail("list_diamonds", "start");
+
+    // Before the root is read, because before the rename the root itself was elsewhere.
+    own::trail("list", "migrate_root");
+    if let Err(e) = migrate_root().await {
+        console_log(&fmt!("The diamonds/ root could not be migrated from an earlier one: {}", e));
+    }
+    // A missing `diamonds/` root simply means no Diamonds yet.
+    let entries = match own::list_dir(ROOT_DIR).await {
+        Ok(e)  => e,
+        Err(_) => { own::trail("list", "no diamonds/ root"); return Ok("[]".to_string()); },
+    };
+    own::trail("list", &fmt!("{} entries", entries.len()));
+    let mut rows: Vec<(String, Meta)> = Vec::new();
+    for (name, is_dir, _size) in entries {
+        if !is_dir {
+            continue;
+        }
+        // THE HEAP, PER CALL, AND THIS IS WHY.
+        //
+        // The phone's trail settled that wasm linear memory reaches 1639 MB
+        // inside this loop and that the tab is killed a second later. It reaches
+        // 235 MB across the first three entries and 1639 MB across the next four,
+        // and it does so with the sync engine switched off — so the walk itself is
+        // the whole of it. What the trail could NOT say is which of the three
+        // calls below allocates, because they were one line together.
+        //
+        // Growth only, and only when it crosses a megabyte, so an ordinary walk
+        // writes one row per entry rather than four. Six diagnoses of this bug
+        // were made by reading source and all six were wrong; this is the line
+        // that makes a seventh unnecessary.
+        let mut was = own::heap_mb();
+        own::trail("list entry", &fmt!("{} heap {}M", name, was));
+        let grew = |phase: &str, was: &mut u32| {
+            let now = own::heap_mb();
+            if now > *was {
+                own::trail("HEAP GREW", &fmt!("{} +{}M -> {}M", phase, now - *was, now));
+                *was = now;
+            }
+        };
+        // Before the metadata is read, because before the rename it was somewhere else.
+        if let Err(e) = migrate(&name).await {
+            console_log(&fmt!("Diamond '{}' could not be migrated to .daimond/: {}", name, e));
+        }
+        grew("migrate", &mut was);
+        // And before the crystal is read, because it was called brief.md.
+        if let Err(e) = migrate_crystal_file(&name).await {
+            console_log(&fmt!("Diamond '{}' could not have its crystal renamed: {}", name, e));
+        }
+        grew("migrate_crystal", &mut was);
+        // And then, on the same trigger and for the same reason, because it was markdown.
+        if let Err(e) = migrate_crystal_data(&name).await {
+            console_log(&fmt!("Diamond '{}' could not have its crystal converted: {}", name, e));
+        }
+        grew("migrate_crystal_data", &mut was);
+        let mut meta = match read_meta(&name).await {
+            Ok(m)  => m,
+            Err(_) => continue, // not a Diamond dir / no metadata
+        };
+        grew("read_meta", &mut was);
+        // A NAMELESS DIAMOND GETS ITS NAME BACK OFF ITS OWN CRYSTAL.
+        //
+        // This exists because a repair of mine destroyed fifteen of them. An
+        // earlier build rebuilt every imported `meta.json` and wrote whatever it
+        // parsed, so one sync left a user with fifteen tiles carrying nothing but
+        // a cog. The guards in `import_diamond` and `read_meta` stop it happening
+        // again; this is what puts right the accounts it already happened to.
+        //
+        // The crystal opens `# <name>` — `seedDefaultDiamonds` writes it that way
+        // and so does every fold — so the heading is the name, recoverable from
+        // the one file a Diamond certainly has. Written back, so it costs one
+        // read per damaged Diamond once and nothing ever again.
+        if meta.name.trim().is_empty() {
+            if let Some(from_crystal) = name_from_crystal(&name).await {
+                own::trail("NAME RECOVERED", &name);
+                meta.name = from_crystal;
+                if let Err(e) = write_meta(&name, &meta).await {
+                    console_log(&fmt!("Diamond '{}' could not keep its recovered name: {}", name, e));
+                }
+            }
+        }
+        rows.push((name, meta));
+    }
+    // Most-recently updated first.
+    rows.sort_by(|a, b| b.1.updated.cmp(&a.1.updated));
+    let items: Vec<String> = rows.iter().map(|(id, m)| {
+        fmt!(
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\
+              \"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\"toolkits\":{}}}",
+            json_escape(id), json_escape(&m.name), m.version, m.updated,
+            m.touched, json_escape(&m.builtin), m.named, m.tags_json(), m.kits_json(),
+        )
+    }).collect();
+    Ok(fmt!("[{}]", items.join(",")))
+}
+
+/// Read a Diamond's current crystal data, as the JSON text it is stored as.
+///
+/// A Diamond that LISTS must OPEN.  [`list`] admits one on its metadata alone -- deliberately, so
+/// that a broken Diamond is a bug the user can report rather than one they can only mourn -- and
+/// this used to be a bare read, so a Diamond whose crystal was missing threw `NotFoundError`
+/// at the panel and could not be opened at all.  Four live paths arrive at that state, an
+/// interrupted import among them.
+///
+/// So the version snapshots are used for what they have always been: the store's own redundancy.
+/// Four things are tried, in this order, and the order is the whole point:
+///
+/// 1. `crystal.json`, which is where it should be.
+/// 2. The newest `versions/NNNN.json`, the store's own copy of the same bytes.
+/// 3. A legacy markdown crystal -- `crystal.md`, then the newest `versions/NNNN.md` -- converted
+///    on the way out.  This reaches a Diamond that has never been through [`list`], one whose
+///    conversion could not be written, and -- because [`migrate_crystal_data`] deliberately keeps
+///    the markdown rather than deleting it -- any migrated Diamond that later loses its data file.
+/// 4. Empty, with a console line saying so.
+///
+/// **The last of those is the most destructive failure in this whole change**, which is why there
+/// are three things before it: a Diamond whose crystal is not found reads as an empty one, and an
+/// agent handed an empty crystal will happily write a new one over the top of work it never saw.
+///
+/// This lenient reader is the PANEL's: a Diamond that lists must open.  A caller that judges the
+/// crystal rather than shows it -- the daimon's `capture` -- reads through
+/// [`read_crystal_data_strict`], where "nothing anywhere" is an error and not an empty page.
+pub async fn read_crystal_data(id: &str) -> Outcome<String> {
+    match res!(find_crystal_data(id).await) {
+        Some(text) => Ok(text),
+        None       => {
+            console_log(&fmt!(
+                "Diamond '{}' has no crystal and no version to fall back on; it opens empty.", id));
+            Ok(String::new())
+        },
+    }
+}
+
+/// [`read_crystal_data`] for a caller that must not mistake "nothing anywhere" for a crystal.
+///
+/// The same four-step search, but where the lenient reader ends on an empty string this one is an
+/// error naming the absence.  The probe that draws the crystal used to take that empty string for
+/// a crystal whose every key was missing, and drew the empty card for a Diamond that had no
+/// crystal to draw.
+pub async fn read_crystal_data_strict(id: &str) -> Outcome<String> {
+    match res!(find_crystal_data(id).await) {
+        Some(text) => Ok(text),
+        None       => Err(err!(
+            "this Diamond has no crystal.json and no version of one"; Missing, Data)),
+    }
+}
+
+// `None` where there is nothing anywhere to read.
+//
+// Every text here can be drawn with Edit and saved back, so none is decoded lossily: bytes that
+// are not UTF-8 are an error naming the file and the byte, and the page shows its "could not be
+// read" state (r544 QA C, F-C1).  So is an EMPTY crystal.json beside a version that holds a
+// crystal -- read as empty, its Save wrote `{}` over the work the version still carries.
+async fn find_crystal_data(id: &str) -> Outcome<Option<String>> {
+    let path = crystal_data_path(id);
+    if let Ok(bytes) = own::read_file(&path).await {
+        let text = res!(crate::tools::utf8_text(&bytes, &path));
+        if crate::tools::crystal_text_is_blank(&text) {
+            if let Ok(Some((n, json))) = newest_data_version(id).await {
+                if !crate::tools::crystal_text_is_blank(&json) {
+                    return Err(err!(
+                        "{} is empty, but version {} holds a crystal, so the empty file is not \
+                        read as one: put the version back from History.", path, n;
+                        Invalid, Data, Missing));
+                }
+            }
+        }
+        return Ok(Some(text));
+    }
+    if let Some((n, json)) = res!(newest_data_version(id).await) {
+        console_log(&fmt!(
+            "Diamond '{}' has no crystal.json; read version {} instead.", id, n));
+        return Ok(Some(json));
+    }
+    // The markdown a migration has not reached, or could not finish.  Converted rather than
+    // returned as it stands, because every caller above this now reads data.
+    if let Ok(bytes) = own::read_file(&crystal_legacy_path(id)).await {
+        console_log(&fmt!(
+            "Diamond '{}' still has a markdown crystal; it is read as data without being \
+             converted on disk.", id));
+        let md = res!(crate::tools::utf8_text(&bytes, &crystal_legacy_path(id)));
+        return Ok(Some(crate::tools::crystal_from_markdown(&md).to_json()));
+    }
+    if let Some((n, md)) = res!(newest_legacy_version(id).await) {
+        console_log(&fmt!(
+            "Diamond '{}' has no crystal at all; markdown version {} is read as data instead.",
+            id, n));
+        return Ok(Some(crate::tools::crystal_from_markdown(&md).to_json()));
+    }
+    Ok(None)
+}
+
+
+/// The page's store for the three files: the Diamond store, read through [`read_if_any`] and
+/// written through [`own::write_file_if`] (r578f, QA-A1 F2).
+struct OwnStanding;
+
+impl crate::standing::StandingStore for OwnStanding {
+    async fn read_bound(&self, path: &str) -> Outcome<Option<Vec<u8>>> {
+        read_if_any(path).await
+    }
+    async fn write_if(&self, path: &str, bytes: &[u8], expect: Option<&versions::Seen>)
+        -> Outcome<Option<versions::Seen>>
+    {
+        own::write_file_if(path, bytes, expect).await
+    }
+}
+
+/// The three files beside the crystal, as they sit on disk.
+///
+/// Empty strings where a Diamond has not been given them yet, which
+/// [`crate::tools::Standing::prompt_text`] renders as nothing at all rather than as three empty
+/// headings.  **A file that will not read is an error and never an empty file**
+/// ([`crate::standing::read_standing_in`]; QA-A1 F2, r578f): OPFS
+/// answers `NotReadableError` while a save commits, and the callers that write the files back --
+/// a turn's seeding, a fold's landing -- would land the template or a rewrite of nothing over the
+/// person's record.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+pub async fn read_standing(id: &str) -> Outcome<crate::tools::Standing> {
+    crate::standing::read_standing_in(&OwnStanding, id).await
+}
+
+/// What the three cost in the system message per round, in bytes.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+pub async fn standing_hot_bytes(id: &str) -> Outcome<usize> {
+    Ok(res!(read_standing(id).await).hot_bytes())
+}
+
+/// The crystal a write's hot part is measured against when the one on disk will not parse: the
+/// newest version that does, or empty where there is none or `old` parses.
+///
+/// Asked by every door on the hot ceiling -- the file tools, [`snapshot_held`] and the fold
+/// ([`crate::agent::compact::fold_landing`]) -- so a mend is measured the same way whoever
+/// writes it ([`crate::tools::crystal_hot_refusal`]).  The
+/// walk is paid only for a broken crystal, which is the one write that needs it.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `old` - The crystal on disk now.
+pub async fn crystal_hot_last_good(id: &str, old: &str) -> String {
+    if crate::tools::crystal_json_fault(old).is_none() {
+        return String::new();
+    }
+    match newest_data_version_where(id, |t| crate::tools::crystal_json_fault(t).is_none()).await {
+        Ok(Some((_, json))) => json,
+        _                   => String::new(),
+    }
+}
+
+/// The three files, created from the shipped templates where this Diamond has none.
+///
+/// **THE WHOLE MIGRATION, AND THERE IS NO SHIM BEHIND IT.**  A Diamond created before
+/// 2026-09-15 has no `REQUIREMENTS.md`, and the plan's rule is that it gets one lazily on its
+/// next turn rather than by a pass over the store: a Diamond nobody opens needs nothing, and a
+/// migration that walked every Diamond at boot would be a write to every Diamond in the sync
+/// parcel for the sake of the ones being worked on.
+///
+/// In the same step, `open[]` leaves the crystal.  It was the schema's list of outstanding
+/// threads and is now [`crate::tools::REQUIREMENTS_FILE`]'s job (`dev/CRYSTAL_CONTRACT.md` §12),
+/// so each entry is written once under `## Unfiled` and the key is deleted.  **Written through
+/// `opfs` rather than through [`snapshot`]**, deliberately: this is a format migration and not
+/// an edit anybody made, so it mints no version, logs no record and changes no stamp -- exactly
+/// as [`migrate_crystal_data`] does with the markdown it converts.
+///
+/// Idempotent.  A second call finds three files and a crystal with no `open` and writes nothing.
+/// A crystal that will not parse is left exactly as it is: the daimon that has to mend it is the
+/// one turn that must see it unchanged.  **A file that will not read fails the call and nothing
+/// is written** (QA-A1 F2, r578f): the template used to land over a `STATE.md` that failed one
+/// read while a save committed.  The logic is [`crate::standing::ensure_standing_in`].
+///
+/// **Only an absent file is seeded, and only while it is still absent**: the seed is a
+/// write bound to `Seen::Absent`, so a save landing between the read and the seed is kept and read
+/// back.  The filing is bound to the `REQUIREMENTS.md` it was made from, and the crystal loses
+/// `open[]` only after that write has landed, so an entry is never in neither place.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+pub async fn ensure_standing(id: &str) -> Outcome<crate::tools::Standing> {
+    let (files, notes) = res!(crate::standing::ensure_standing_in(&OwnStanding, id).await);
+    for note in notes {
+        console_log(&fmt!("Diamond '{}': {}", id, note));
+    }
+    Ok(files)
+}
+
+/// A write to one of the three files, with what does not fit moved to its archive.
+///
+/// **THE APP'S ARITHMETIC AND NEVER A MODEL'S**, which is the whole reason the caps can be
+/// small enough to be worth having: finished items leave `REQUIREMENTS.md` oldest first and
+/// decision lines older than the last twenty leave `DECISIONS.md` oldest first, into
+/// `.daimond/done.md` and `.daimond/decisions-archive.md` where `recall` and `file_read`
+/// still reach them.  Nothing is deleted and nothing is summarised.
+///
+/// Any other path, and a write already under its ceiling, comes back exactly as it went in
+/// with nothing said -- so this is on the path of every `file_write` and costs one length
+/// comparison there.
+///
+/// **Two doors come through here**: a daimon's `file_write` and `file_edit`, and the context
+/// fold's own absorb ([`absorb_fold_notes`]).  It takes the ROOT rather than the whole tool
+/// context, because the fold has no tool context and a second copy of this arithmetic beside it
+/// is how a fold and a hand edit come to retire differently.
+///
+/// **Here, in the store, and not beside the file tools** (2026-09-23): the archive is the Diamond's
+/// own record, under `.daimond/`, which the write fence refuses every tool -- so the write into it
+/// is the store's, made through the store's own door, and only ever to the archive that the
+/// standing file being written names.  A file tool reaches this having passed the fence for the
+/// standing file itself.
+///
+/// # Arguments
+/// * `root` - Where the Diamond's store is; `FileRoot::Opfs` for every caller so far.
+/// * `path` - The workspace-relative path being written.
+/// * `text` - What the write would leave on disk.
+pub(crate) async fn standing_retired(
+    root: FileRoot,
+    path: &str,
+    text: String,
+)
+    -> Outcome<Landed>
+{
+    // Only reads (UNBLOCK-18 F6): what it moves waits in the answer for [`standing_settle`].
+    // `root` is where a landing that reads (C4's STATE.md, section by section) reads from.
+    if crate::tools::standing_leaf(path) == Some(crate::tools::STATE_FILE) {
+        return state_landed(root, path, text).await;
+    }
+    let landed = match standing_split(path, text) {
+        Retire::Keep(text)  => Landed::kept(text),
+        Retire::Move(r)     => Landed::moved(path, r),
+    };
+    let _ = root;
+    Ok(landed)
+}
+
+// ── PORT-PL-A: STATE.md by section (C4 STATE, UNBLOCK-18) ──
+
+/// A write to `STATE.md` as it lands: by section, never refused (UNBLOCK-18).
+///
+/// Reads what stands there and when each section was last touched, and lands the write through
+/// [`state_split`].  Only reads: what it moves waits in the answer for [`standing_settle`].
+///
+/// **An unreadable file is an Err, never an empty one** (I-HL4): a STATE.md that stands but will
+/// not read, landed as if empty, would have every section written over and archived nowhere.
+/// Both files are read through [`read_bound`], absent alone reading as empty, and the landing's
+/// `from` is what was read of STATE.md.
+async fn state_landed(root: FileRoot, path: &str, text: String) -> Outcome<Landed> {
+    let id = crate::tools::diamond_of_path(path);
+    let (old, seen) = res!(read_bound(root, path).await);
+    let (touched, _) = res!(read_bound(root, &touched_path(&id)).await);
+    let mut out = state_split(&old, text, &touched, now_ms() as u64, &today());
+    out.from = Some(seen);
+    Ok(out)
+}
+
+/// [`state_landed`]'s arithmetic, with no read and no write: [`crate::state_md::land`] over what
+/// stood and the touched record, as a [`Landed`] whose archive is `STATE.md`'s (the decisions
+/// archive), whose `noted` are the dated DECISIONS lines, and whose `touched` rows are
+/// `<ms>\t<key>` (the record's own format, [`crate::state_md::touched_parse`]), each replacing its
+/// key's row, with `\t<key>` (no stamp) taking out the row of a key the file no longer holds.
+/// Its `at` is `now`, which a removal row is compared with when it settles; its `from` is left
+/// for the reader to fill.
+pub fn state_split(old: &str, text: String, touched: &str, now: u64, today: &str) -> Landed {
+    let before = crate::state_md::touched_parse(touched);
+    let land = crate::state_md::land(old, &text, &before, now, today);
+    let mut out = Landed { said: land.said(), noted: land.noted.clone(), ..Landed::default() };
+    if !land.archived.is_empty() {
+        out.archive.push((crate::tools::STATE_FILE.to_string(), land.archived.clone()));
+    }
+    for (key, ms) in land.touched.iter() {
+        if before.get(key) != Some(ms) {
+            out.touched.push(fmt!("{}\t{}", ms, key));
+        }
+    }
+    for key in before.keys() {
+        if !key.is_empty() && !land.touched.contains_key(key) {
+            out.touched.push(fmt!("\t{}", key));
+        }
+    }
+    out.kept = land.kept;
+    out.at = now;
+    out
+}
+
+impl Landed {
+    /// A standing file's write over its ceiling, as [`standing_split`] cut it: `retired` waits
+    /// for [`standing_settle`] to go to the file's own archive.
+    pub fn moved(path: &str, r: Retired) -> Self {
+        let leaf = crate::tools::standing_leaf(path).unwrap_or_default();
+        Self {
+            kept:       r.kept,
+            said:       r.said,
+            archive:    vec![(leaf.to_string(), r.retired)],
+            ..Self::default()
+        }
+    }
+}
+
+/// The touched record beside `STATE.md`, `diamonds/<id>/.daimond/state-touched.tsv`: when each of
+/// its sections was last touched (UNBLOCK-18).
+pub const TOUCHED_LEAF: &str = crate::state_md::TOUCHED_LEAF;
+
+/// The touched record of the Diamond `id`.
+pub fn touched_path(id: &str) -> String {
+    fmt!("{}/{}/{}{}", crate::tools::STORE_ROOT, id, crate::tools::DAIMOND_DIR, TOUCHED_LEAF)
+}
+
+/// PORT-LF's refusals of a landing, pure (held-lock settle P2): `path` is a standing file, each
+/// archive entry is its own file's (a `STATE.md` landing alone also names `DECISIONS.md`'s), the
+/// noted lines and touched rows are a `STATE.md` landing's only, and each is one line.  Run by
+/// the door on the whole landing before the lock, and by the store on each phase it is sent.
+///
+/// # Arguments
+/// * `path` - The standing file being written.
+/// * `landed` - What [`standing_retired`] answered for it, or the part of it a phase was sent.
+pub fn settle_check(path: &str, landed: &Landed) -> Outcome<()> {
+    let _ = res!(settle_archives(path, landed));
+    Ok(())
+}
+
+/// [`settle_check`], answering the side files its `Archive` phase writes under the target's
+/// lock, which the door refuses a target to be one of (held-lock settle P3, step 2).
+pub fn settle_sides(path: &str, landed: &Landed) -> Outcome<Vec<String>> {
+    let archives = res!(settle_archives(path, landed));
+    Ok(archives.into_iter().map(|(a, _)| a).collect())
+}
+
+/// [`settle_check`], answering the archive path each entry appends to, in order.
+fn settle_archives<'a>(path: &str, landed: &'a Landed) -> Outcome<Vec<(String, &'a str)>> {
+    let mut archives: Vec<(String, &str)> = Vec::new();
+    if landed.settles_nothing() {
+        return Ok(archives);
+    }
+    let leaf = match crate::tools::standing_leaf(path) {
+        Some(l) => l,
+        None    => return Err(err!(
+            "'{}' is not a standing file, so its landing has nothing to settle.", path;
+            Invalid, Input)),
+    };
+    let id = crate::tools::diamond_of_path(path);
+    for (of, text) in landed.archive.iter() {
+        // A landing appends only to its own file's archive; a STATE.md landing also retires
+        // DECISIONS.md, so it alone names a second (PORT-L QA A3/B2).
+        let own_leaf = of.as_str() == leaf
+            || (leaf == crate::tools::STATE_FILE && of.as_str() == crate::tools::DECISIONS_FILE);
+        let archive = crate::tools::standing_archive(of, &id);
+        if !own_leaf || crate::tools::standing_leaf(&standing_path(&id, of)).is_none()
+            || archive.is_empty()
+        {
+            return Err(err!("'{}' has no archive for the landing of '{}' to append to.", of, path;
+                Invalid, Input));
+        }
+        archives.push((archive, text.as_str()));
+    }
+    if (!landed.noted.is_empty() || !landed.touched.is_empty())
+        && leaf != crate::tools::STATE_FILE
+    {
+        return Err(err!("Only a {} landing writes {} or its touched record, not '{}'.",
+            crate::tools::STATE_FILE, crate::tools::DECISIONS_FILE, path; Invalid, Input));
+    }
+    for row in landed.noted.iter().chain(landed.touched.iter()) {
+        if row.trim().is_empty() || row.contains('\n') || row.contains('\r') {
+            return Err(err!("A {} landing's line must be one line, not {:?}.", path, row;
+                Invalid, Input));
+        }
+    }
+    Ok(archives)
+}
+
+/// Write one phase of the side files of a standing file's accepted landing (held-lock settle P2,
+/// UNBLOCK-18 F6).  `Archive` appends the archives and nothing else, and is called under the
+/// target's lock before the target is written; `Record` appends the noted lines to
+/// `DECISIONS.md` and then sets the touched rows, once the target has landed.  Nothing in the
+/// phase settles nothing.
+///
+/// **Every path is the store's to derive**, from the standing file `path` alone: an archive
+/// entry names the standing leaf whose archive it goes to, and `DECISIONS.md` and the touched
+/// record are only ever a `STATE.md` landing's, beside it.  Anything else, and any part that is
+/// not the phase's own (an `Archive` carrying noted lines or touched rows, a `Record` carrying
+/// an archive), is refused before anything is written.
+///
+/// # Arguments
+/// * `root` - Where the Diamond's store is; `FileRoot::Opfs` for every caller so far.
+/// * `path` - The standing file being written.
+/// * `landed` - The phase's part of what [`standing_retired`] answered ([`Landed::part`]).
+/// * `phase` - Which side files to write.
+pub async fn standing_settle(root: FileRoot, path: &str, landed: &Landed, phase: SettlePhase)
+    -> Outcome<()>
+{
+    let archives = res!(settle_archives(path, landed));
+    let theirs = match phase {
+        SettlePhase::Archive    => !landed.noted.is_empty() || !landed.touched.is_empty(),
+        SettlePhase::Record     => !landed.archive.is_empty(),
+    };
+    if theirs {
+        return Err(err!("The {:?} settle of '{}' carries another phase's side files, so nothing \
+            was written.", phase, path; Invalid, Input));
+    }
+    if landed.settles_nothing() {
+        return Ok(());
+    }
+    let id = crate::tools::diamond_of_path(path);
+    match phase {
+        SettlePhase::Archive    => {
+            let under = fmt!("{}/{}/{}", crate::tools::STORE_ROOT, id, crate::tools::DAIMOND_DIR);
+            for (archive, text) in archives.iter() {
+                // P4 depends on it: the archive phase writes only under `<id>/.daimond/`.
+                debug_assert!(archive.starts_with(&under), "an archive outside {}: {}", under,
+                    archive);
+                res!(archive_append(root, archive, text).await);
+            }
+        },
+        SettlePhase::Record     => {
+            if !landed.noted.is_empty() {
+                res!(decisions_settle(root, &id, &landed.noted).await);
+            }
+            if !landed.touched.is_empty() {
+                res!(touched_settle(root, &id, &landed.touched, landed.at).await);
+            }
+        },
+    }
+    Ok(())
+}
+
+/// How many times a settle's bound write is tried before it gives up: a write between its read
+/// and its write refuses it, and it reads again.
+pub(crate) const SETTLE_TRIES: usize = 4;
+
+/// The text of a side file and the [`versions::Seen`] its bound write compares with.  An absent
+/// file is empty.
+///
+/// **A failed read is not an absence** (PORT-L QA A1, as `before_bytes`): a file that stands but
+/// would not read is refused, never taken for empty and written over with only the new lines.
+/// Nor is a file that is not UTF-8 rewritten.
+pub(crate) async fn read_bound(root: FileRoot, path: &str) -> Outcome<(String, versions::Seen)> {
+    let bytes = match own::user_read_file(root, path).await {
+        Ok(b)   => b,
+        Err(e)  => return match own::user_exists(root, path).await {
+            Ok(false)   => Ok((String::new(), versions::Seen::Absent)),
+            Ok(true)    => Err(err!(e,
+                "'{}' stands but would not read, so nothing was added to it.", path;
+                IO, File, Read)),
+            Err(e2)     => Err(err!(e2,
+                "'{}' would not read and could not be found absent ({}), so nothing was added \
+                to it.", path, e; IO, File, Read)),
+        },
+    };
+    let seen = versions::Seen::of(Some(&bytes));
+    match String::from_utf8(bytes) {
+        Ok(t)   => Ok((t, seen)),
+        Err(e)  => Err(err!(e, "'{}' is not UTF-8, so nothing was added to it.", path;
+            Decode, Input)),
+    }
+}
+
+/// Write `text` to `path` only if it still holds what was `seen`: `Ok(true)` written, `Ok(false)`
+/// changed since the read, so the caller reads again.  The compare and the write are made under
+/// the file's own lock by the store's `write_file_if`.
+async fn write_bound(root: FileRoot, path: &str, text: &str, seen: &versions::Seen)
+    -> Outcome<bool>
+{
+    Ok(res!(own::user_write_file_if(root, path, text.as_bytes(), Some(seen)).await).is_none())
+}
+
+/// The refusal of a side file that kept changing under its settle.
+fn settle_busy(path: &str) -> Error<ErrTag> {
+    err!("'{}' changed under each of {} tries to add to it, so it was left as it stands.",
+        path, SETTLE_TRIES; IO, File, Write)
+}
+
+/// Append retired lines to a standing file's archive, bound to the archive as it was read, so an
+/// append between the read and the write (a fold, another tab) is read again, never written over.
+async fn archive_append(root: FileRoot, archive: &str, retired: &str) -> Outcome<()> {
+    for _ in 0..SETTLE_TRIES {
+        let (mut all, seen) = res!(read_bound(root, archive).await);
+        if !all.is_empty() && !all.ends_with('\n') {
+            all.push('\n');
+        }
+        all.push_str(retired);
+        if res!(write_bound(root, archive, &all, &seen).await) {
+            return Ok(());
+        }
+    }
+    Err(settle_busy(archive))
+}
+
+/// Append a STATE.md landing's dated lines to `DECISIONS.md` as it stands now, retiring what is
+/// then over its ceiling to the archive first, and write it bound to that read (PORT-L QA B1).
+/// A save between the read and the write is read again: at worst a retired line is archived
+/// twice, and nothing is lost.
+async fn decisions_settle(root: FileRoot, id: &str, noted: &[String]) -> Outcome<()> {
+    let leaf = crate::tools::DECISIONS_FILE;
+    let path = standing_path(id, leaf);
+    for _ in 0..SETTLE_TRIES {
+        let (mut text, seen) = res!(read_bound(root, &path).await);
+        if seen == versions::Seen::Absent {
+            text = crate::tools::standing_template(leaf).to_string();
+        }
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        for line in noted {
+            text.push_str(line);
+            text.push('\n');
+        }
+        let out = crate::tools::standing_retire(leaf, &text);
+        if !out.retired.is_empty() {
+            res!(archive_append(root, &crate::tools::standing_archive(leaf, id), &out.retired)
+                .await);
+            text = out.kept;
+        }
+        if res!(write_bound(root, &path, &text, &seen).await) {
+            return Ok(());
+        }
+    }
+    Err(settle_busy(&path))
+}
+
+/// Set a STATE.md landing's rows in the touched record as it stands now, bound to that read.
+///
+/// **The newer stamp wins, never the later writer** (review 8): `Record` runs after the unlock,
+/// so two landings can record out of order.  A row `<ms>\t<key>` replaces its key's row only if
+/// it is not older than it, or is added; a removal `\t<key>` takes out only a row stamped no
+/// later than `at`, the landing's own time, so a section touched since stays recorded.
+async fn touched_settle(root: FileRoot, id: &str, rows: &[String], at: u64) -> Outcome<()> {
+    let path = touched_path(id);
+    for _ in 0..SETTLE_TRIES {
+        let (text, seen) = res!(read_bound(root, &path).await);
+        let mut lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+        touched_merge(&mut lines, rows, at);
+        let mut out = lines.join("\n");
+        out.push('\n');
+        if res!(write_bound(root, &path, &out, &seen).await) {
+            return Ok(());
+        }
+    }
+    Err(settle_busy(&path))
+}
+
+/// [`touched_settle`]'s arithmetic over the record's `lines`, pure.  A row's stamp that will not
+/// parse is taken as the oldest, so a well-formed row always replaces it.
+pub(crate) fn touched_merge(lines: &mut Vec<String>, rows: &[String], at: u64) {
+    // `<ms>\t<key>`, the record's own format ([`crate::state_md::touched_parse`]); a row with no
+    // stamp takes its key's row out (PORT-PL-A).
+    let key = |row: &str| row.splitn(2, '\t').nth(1).unwrap_or_default().to_string();
+    let stamp = |row: &str| row.split('\t').next().unwrap_or_default().parse::<u64>()
+        .unwrap_or(0);
+    for row in rows {
+        let k = key(row);
+        let gone = row.starts_with('\t');
+        match lines.iter().position(|l| key(l) == k) {
+            Some(i) if gone => if stamp(&lines[i]) <= at {
+                lines.remove(i);
+            },
+            Some(i)         => if stamp(row) >= stamp(&lines[i]) {
+                lines[i] = row.clone();
+            },
+            None if gone    => (),
+            None            => lines.push(row.clone()),
+        }
+    }
+}
+
+/// What a write to `path` of `text` keeps, and what it moves to the standing file's archive.
+pub enum Retire {
+    /// Not a standing file, or under its ceiling: written exactly as it came.
+    Keep(String),
+    /// Over its ceiling: `retired` goes to the archive first, then `kept` is written.
+    Move(Retired),
+}
+
+/// A standing file's write over its ceiling: what stays, what moves, and the line said of it.
+pub struct Retired {
+    pub kept:       String,
+    pub retired:    String,
+    pub said:       String,
+}
+
+/// [`standing_retired`]'s arithmetic, with no write: the part a run's child does itself, so that
+/// only the archive append crosses to the store (§16.3a 4).  Pure, and the one copy of the rule.
+pub fn standing_split(path: &str, text: String) -> Retire {
+    let leaf = match crate::tools::standing_leaf(path) {
+        Some(l) => l,
+        None    => return Retire::Keep(text),
+    };
+    let cap = crate::tools::standing_cap(leaf);
+    let out = crate::tools::standing_retire(leaf, &text);
+    if out.retired.is_empty() {
+        return Retire::Keep(text);
+    }
+    let archive = crate::tools::standing_archive(leaf, &crate::tools::diamond_of_path(path));
+    let moved = out.retired.lines().count();
+    let said = fmt!(
+        "\n{} was over its {}-byte ceiling, so the {} oldest finished {} moved to {}, where \
+        recall still searches them and file_read still opens them. Nothing was deleted.",
+        leaf, cap, moved, if moved == 1 { "line" } else { "lines" }, archive);
+    Retire::Move(Retired { kept: out.kept, retired: out.retired, said })
+}
+
+/// File a context fold's notes into this Diamond's three markdown files.
+///
+/// **THE FOLD IS WHERE A CONVERSATION'S MEMORY IS REWRITTEN WITH NO WAY BACK.**  Everything
+/// before the cut becomes one note, that note is re-summarised at the next fold, and what was in
+/// it decays a generation at a time -- so the decisions and the open threads a fold names are
+/// written into files that are not in the conversation at all and ride in the prompt on every
+/// round instead.  `dev/CRYSTAL_CONTRACT.md` §13 is the account; [`crate::tools::absorb_notes`]
+/// is the arithmetic, which is pure and proved without a browser.
+///
+/// `Some(left)` when the files are really on disk, carrying whatever a ceiling refused so the
+/// notice can keep it; `None` when nothing could be written, and then the notice is exactly what
+/// it was before any of this existed.  A fold must not be refused for a file it could not write:
+/// the conversation no longer fits, and a turn that dies at that point sends nothing at all.
+///
+/// The two archives are read and handed in with the files, because the dedupe has to see them:
+/// a task ticked and retired into `.daimond/done.md` last month must not come back under
+/// `## Unfiled` as new work.  Retirement then runs through the same
+/// [`standing_retired`] a `file_write` comes through, so a fold and a hand
+/// edit meet one arithmetic and one archive.
+///
+/// # Arguments
+/// * `id` - The Diamond being steered.
+/// * `notes` - The fold's parsed notes, already reconciled against the turn's ledger.
+pub async fn absorb_fold_notes(id: &str, notes: &crate::agent::compact::FoldNotes)
+    -> Option<crate::agent::compact::FoldNotes>
+{
+    absorb_fold_notes_guarded(id, notes, || true).await
+}
+
+/// [`absorb_fold_notes`] with a commit guard (QA1 F5): `commit` is asked under each file's lock,
+/// just before that file's ARCHIVE and write, and a `false` files nothing more, so a fold whose
+/// caller the store has answered Busy lands nothing after.  The store's door passes its
+/// [`Answered::commit`](crate::store::server), so once the fold has begun to file, its caller is
+/// answered with what it filed.
+pub async fn absorb_fold_notes_guarded<G>(id: &str, notes: &crate::agent::compact::FoldNotes,
+    commit: G)
+    -> Option<crate::agent::compact::FoldNotes>
+where
+    G: Fn() -> bool,
+{
+    // HL6 (held-lock settle P2, review 3): each file is written bound to the fold's own read of
+    // it, through the held write, with its ARCHIVE the write's pre step and its RECORD after.  A
+    // save between the read and the write refuses it, and the fold reads and absorbs again on
+    // top of the save, so a save is never written over.
+    'tries: for _ in 0..SETTLE_TRIES {
+        // Bound reads (I-HL4): a file that stands but will not read is not taken for empty and
+        // written over; the fold then files nothing.
+        let mut read = Vec::new();
+        for leaf in [crate::tools::REQUIREMENTS_FILE, crate::tools::DECISIONS_FILE,
+            crate::tools::STATE_FILE]
+        {
+            match read_bound(FileRoot::Opfs, &standing_path(id, leaf)).await {
+                Ok(r)   => read.push(r),
+                Err(e)  => {
+                    console_log(&fmt!("Diamond '{}': the fold's notes were not filed, since {} \
+                        would not read ({}).", id, leaf, e));
+                    return None;
+                },
+            }
+        }
+        let (requirements, decisions, state) = match (read.pop(), read.pop(), read.pop()) {
+            (Some(st), Some(de), Some(re))  => (re, de, st),
+            _                               => return None,
+        };
+        let files = crate::tools::Standing {
+            requirements:   requirements.0,
+            decisions:      decisions.0,
+            state:          state.0,
+        };
+        // What the archives already hold, as one corpus: the two are compared line by line
+        // under different keys, so which file a line came from makes no difference to the answer.
+        let mut retired = String::new();
+        for leaf in crate::tools::STANDING_FILES {
+            // `STATE.md` retires into the decisions archive, which the line before has read.
+            let path = crate::tools::standing_archive(leaf, id);
+            if path.is_empty() || leaf == crate::tools::STATE_FILE {
+                continue;
+            }
+            // Bound as the three are (QA2, A1 F4): an archive that will not read is not taken
+            // for an empty one, which would file again what it already holds.  No fold.
+            match read_bound(FileRoot::Opfs, &path).await {
+                Ok((t, _))  => {
+                    retired.push_str(&t);
+                    retired.push('\n');
+                },
+                Err(e)      => {
+                    console_log(&fmt!("Diamond '{}': the fold's notes were not filed, since {} \
+                        would not read ({}).", id, path, e));
+                    return None;
+                },
+            }
+        }
+        let out = crate::tools::absorb_notes(&files, &retired, notes, &today());
+        let want = [
+            (crate::tools::REQUIREMENTS_FILE, &files.requirements, &out.files.requirements,
+                &requirements.1),
+            (crate::tools::DECISIONS_FILE,    &files.decisions,    &out.files.decisions,
+                &decisions.1),
+            (crate::tools::STATE_FILE,        &files.state,        &out.files.state,
+                &state.1),
+        ];
+        for (leaf, was, now, seen) in want {
+            if was == now {
+                continue;
+            }
+            let path = standing_path(id, leaf);
+            // Retired by the app's own arithmetic before it is written, exactly as a daimon's
+            // own write is, so the file a fold leaves is under its ceiling with everything that
+            // came off it in the archive rather than gone.  One that cannot be retired is
+            // written whole, still bound to the fold's read.
+            let landed = match standing_retired(FileRoot::Opfs, &path, now.clone()).await {
+                Ok(l)   => l,
+                Err(e)  => {
+                    console_log(&fmt!("Diamond '{}': {} could not be retired ({}).", id, leaf, e));
+                    Landed::kept(now.clone())
+                },
+            };
+            // A STATE.md landing read the file again: computed from other bytes than the
+            // fold's, it is a refusal, and the fold reads again.
+            if let Some(from) = &landed.from {
+                if from != seen {
+                    continue 'tries;
+                }
+            }
+            let archive = landed.part(SettlePhase::Archive);
+            // The commit guard under the lock (QA1 F5); a test's red: off("fold_guard").
+            let pre = || {
+                let go = commit() || off("fold_guard");
+                let (path, archive) = (&path, &archive);
+                async move {
+                    match go {
+                        true    => standing_settle(FileRoot::Opfs, path, archive,
+                            SettlePhase::Archive).await,
+                        false   => Err(err!("The store answered busy before the fold's notes \
+                            were filed into '{}', so they were not.", path; Lock, Timeout)),
+                    }
+                }
+            };
+            fold_race(&path).await;
+            match own::write_file_then(&path, landed.kept.as_bytes(), Some(seen), pre).await {
+                Ok(None)    => (),
+                Ok(Some(_)) => continue 'tries,
+                Err(e)      => {
+                    console_log(&fmt!(
+                        "Diamond '{}': the fold's notes could not be filed into {} ({}).",
+                        id, leaf, e));
+                    return None;
+                },
+            }
+            // The file has landed: a record that fails loses a note or a stamp, never text.
+            if let Err(e) = standing_settle(FileRoot::Opfs, &path,
+                &landed.part(SettlePhase::Record), SettlePhase::Record).await
+            {
+                console_log(&fmt!("Diamond '{}': {} was filed, but its record was not ({}).",
+                    id, leaf, e));
+            }
+        }
+        // A fold with nothing to file still FILED: the notes are in the files, because they
+        // were already there.  Answering `None` here would make an identical second fold write a
+        // longer notice than the first, which is exactly the order-dependence the absorb exists
+        // to rule out.
+        return Some(out.left);
+    }
+    console_log(&fmt!("Diamond '{}': the fold's notes met a save on each of {} tries, so they \
+        were not filed.", id, SETTLE_TRIES));
+    None
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's saves (HL6), each `(path, text)` written to its path just before the fold's next
+    /// write of that path: a save landing between the fold's read and its write.
+    pub(crate) static FOLD_SAVES: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Make the test's next save of `path`, if [`FOLD_SAVES`] has one queued for it.
+#[cfg(test)]
+async fn fold_race(path: &str) {
+    let next = FOLD_SAVES.with(|s| {
+        let mut s = s.borrow_mut();
+        match s.first() {
+            Some((p, _)) if p == path   => Some(s.remove(0).1),
+            _                           => None,
+        }
+    });
+    if let Some(text) = next {
+        let _ = own::write_file(path, text.as_bytes()).await;
+    }
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+async fn fold_race(_: &str) {}
+
+/// Today, as `YYYY-MM-DD`, on the clock of the person whose record this is.
+///
+/// Local rather than UTC: the dates in `DECISIONS.md` are read by a person against their own
+/// diary, and a ruling made on a Monday evening in Perth is not a Sunday one.
+pub(crate) fn today() -> String {
+    own::today()
+}
+
+/// Read a Diamond's current page, or empty when it has none.
+///
+/// Empty is an ordinary answer and not a failure: a Diamond created before pages existed has no
+/// `crystal.html`, and one whose page was reset has whatever the caller supplies instead.  **Rust
+/// never sees the default page** -- it is a JS const, so the protocol and the page that speaks it
+/// live in one file -- so this reports the absence and the caller fills it.
+///
+/// The snapshots back it up exactly as they back the data up, through the walk in
+/// [`read_version_page`], so a page lost from its own file is recovered from the last version
+/// that changed it.
+pub async fn read_crystal_page(id: &str) -> Outcome<String> {
+    match find_crystal_page(id).await {
+        Ok(page) => Ok(page),
+        Err(e)   => {
+            console_log(&fmt!("Diamond '{}': {}. It opens on the built-in page.", id, e.plain()));
+            Ok(String::new())
+        },
+    }
+}
+
+/// [`read_crystal_page`] for a caller that must not mistake a failed read for "no page".
+///
+/// An unreadable page comes back as an error here.  The lenient reader answers empty, the
+/// renderer fills an empty page with the SHIPPED one, and a probe that read through it drew the
+/// built-in page for a Diamond whose own page it had failed to read.  `Ok("")` from this reader
+/// still means what it always did: the Diamond has no page of its own.
+pub async fn read_crystal_page_strict(id: &str) -> Outcome<String> {
+    find_crystal_page(id).await
+}
+
+async fn find_crystal_page(id: &str) -> Outcome<String> {
+    if let Ok(bytes) = own::read_file(&crystal_page_path(id)).await {
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
+    }
+    // Unreadable metadata means no page we can vouch for.  The panel opens on the built-in view
+    // regardless ([`read_crystal_page`]), but a caller judging the page must be told.
+    let at = match read_meta(id).await {
+        Ok(m)  => m.version,
+        Err(e) => return Err(err!(e, "the Diamond's metadata could not be read, so its page \
+            cannot be found"; IO, File, Read)),
+    };
+    // A chain that cannot be walked.  The next write mends it: a version whose parent could not
+    // be read is recorded as a full copy, so the Diamond heals rather than staying unopenable --
+    // see [`write_snapshot`].
+    match read_version_page(id, at).await {
+        Ok(page) => Ok(page),
+        Err(e)   => Err(err!(e, "the page file is gone and the snapshots at version {} could \
+            not be rebuilt", at; IO, File, Read)),
+    }
+}
+
+/// The page a Diamond has on disk right now, with no fallback of any kind.
+///
+/// [`read_crystal_page`] reaches for a snapshot when the file is not there, which is right for a
+/// reader and wrong for [`snapshot`]: a recovered page is not a page the user changed, and
+/// treating it as one would write a fresh page snapshot at a version where nothing moved.
+///
+/// Empty where there is no page; **a page that will not read is an error** (r578f sweep): read as
+/// empty, it was recorded as the version's page, and an undo to that version blanked the page.
+async fn page_on_disk(id: &str) -> Outcome<String> {
+    Ok(res!(read_if_any(&crystal_page_path(id)).await)
+        .map(|b| String::from_utf8_lossy(&b).to_string())
+        .unwrap_or_default())
+}
+
+/// The newest pre-migration snapshot a Diamond holds, `versions/NNNN.md`, with its text.
+///
+/// The numbering is zero-padded and monotonic, so the highest that PARSES is the newest.
+async fn newest_legacy_version(id: &str) -> Outcome<Option<(u64, String)>> {
+    let n = match snapshot_versions(id, ".md").await.into_iter().max() {
+        Some(n) => n,
+        None    => return Ok(None),
+    };
+    let path = fmt!("{}/{:04}.md", versions_dir(id), n);
+    let bytes = res!(own::read_file(&path).await);
+    Ok(Some((n, res!(crate::tools::utf8_text(&bytes, &path)))))
+}
+
+/// The newest data version a Diamond can actually REBUILD, with its text.
+///
+/// Descending rather than the highest alone, because this is the store's own redundancy and is
+/// reached only when `crystal.json` is already gone.  A Diamond whose newest chain is broken is
+/// precisely the case the fallback exists for, and stopping at it would hand an agent an empty
+/// crystal to write over work it never saw.
+async fn newest_data_version(id: &str) -> Outcome<Option<(u64, String)>> {
+    newest_data_version_where(id, |_| true).await
+}
+
+/// The newest data version a Diamond can rebuild whose text `keep` accepts, with its text.
+///
+/// The walk [`newest_data_version`] makes, asked a question on the way down.
+async fn newest_data_version_where<F: Fn(&str) -> bool>(id: &str, keep: F)
+    -> Outcome<Option<(u64, String)>>
+{
+    let snaps = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await;
+    let ns: Vec<u64> = snaps.iter().map(|(n, _)| *n).collect();
+    // The version the Diamond is at first, and only then anything filed above it: after an import
+    // that is this device's own history, kept above the copy that became the Diamond.
+    let live = match read_meta(id).await {
+        Ok(m)  => m.version,
+        Err(_) => u64::MAX,
+    };
+    for n in diamond_delta::live_first(ns, live).into_iter() {
+        let chain = match diamond_delta::plan_at(&snaps, n) {
+            Ok(c)  => c,
+            Err(_) => continue,
+        };
+        // A version whose bytes are not UTF-8 is passed over like one whose chain will not
+        // rebuild: decoded lossily it would be drawn, and saved, as the crystal.
+        if let Ok(bytes) = follow(id, &chain, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await {
+            match crate::tools::utf8_text(&bytes, &fmt!("{} version {}", crystal_data_path(id), n)) {
+                Ok(json) if keep(&json) => return Ok(Some((n, json))),
+                Ok(_)    => (),
+                Err(e)   => console_log(&fmt!("Diamond '{}': {}", id, e)),
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Write one version's snapshot of one file, and prove it before the version is allowed to stand.
+///
+/// **This is what makes it impossible to record a delta that cannot be reconstructed.**  Three
+/// gates, in this order, and the last is the only one that has seen the disk:
+///
+/// 1. [`crate::diamond_delta::record`] returns a patch only from
+///    [`oxedyne_fe2o3_ore::diff::make_patch`], which decodes and applies what it has just encoded
+///    and refuses to hand back anything whose reconstruction is not the bytes it was given.
+/// 2. The patch is written, then READ BACK OFF THE DISK and applied to the parent in hand.  The
+///    version stands only if THAT gives the bytes it was told to record, so a short write, a
+///    truncated file or a storage layer that returned success without storing anything is caught
+///    here rather than by the person who wanted the version back.
+/// 3. A full copy is read back and compared as well, which is the base case the whole chain rests
+///    on: every version is a keyframe plus patches each proved against the one under it, so if
+///    the base holds and each step holds, the version holds.
+///
+/// Every failure ends in the same place -- the full copy the store wrote before this existed --
+/// so the cost of any fault in the diff, the encoding, the decoding or the write is space, and
+/// never history.  A full copy that will not read back is the one thing there is no fallback
+/// from, and it is an error rather than a silently missing version.
+///
+/// # Arguments
+/// * `parent` - The file as at the snapshot before this one, or `None` where there is none or it
+///   could not be rebuilt.  `None` forces the full copy.
+/// * `want` - The file as this version holds it.
+/// * `snaps` - Every snapshot this file already has, which is what says whether a keyframe is due.
+async fn write_snapshot(
+    id:        &str,
+    version:   u64,
+    parent:    Option<&str>,
+    want:      &str,
+    snaps:     &[(u64, Snap)],
+    kf_ext:    &str,
+    patch_ext: &str,
+)
+    -> Outcome<Snap>
+{
+    let rec = diamond_delta::record(parent.map(|p| p.as_bytes()), want.as_bytes(), snaps);
+    if let diamond_delta::Recorded::Patch(p) = &rec {
+        let at = snapshot_path(id, version, patch_ext);
+        res!(own::write_file(&at, p).await);
+        let proved = match (own::read_file(&at).await, parent) {
+            (Ok(back), Some(par)) => match diff::apply_patch(par.as_bytes(), &back) {
+                Ok(got) => got == want.as_bytes(),
+                Err(_)  => false,
+            },
+            _ => false,
+        };
+        if proved {
+            return Ok(Snap::Patch);
+        }
+        // Taken away before the full copy is written, so no version is ever left holding two
+        // snapshots for a reader to choose between.
+        let _ = own::delete_entry(&at, false).await;
+        console_log(&fmt!(
+            "Diamond '{}' version {}: the '{}' just written does not read back as the version it \
+             records, so a full copy is written instead.", id, version, patch_ext));
+    }
+    let kf_at = snapshot_path(id, version, kf_ext);
+    res!(own::write_file(&kf_at, want.as_bytes()).await);
+    let back = res!(own::read_file(&kf_at).await);
+    if back != want.as_bytes() {
+        return Err(err!(
+            "Diamond '{}' version {}: '{}' reads back as {} bytes and not the {} it was given, \
+             so the version is not recorded.", id, version, kf_at, back.len(), want.len();
+        Invalid, Data, Mismatch));
+    }
+    Ok(Snap::Keyframe)
+}
+
+/// The memory as at `version`, or `None` with a console line where it cannot be rebuilt.
+///
+/// A parent that cannot be read is not a reason to refuse the write in front of the user.  It is
+/// a reason to record this version as a full copy, which is both the safe answer and the one that
+/// mends the Diamond: the version after it has a keyframe to build on again.
+async fn parent_data(id: &str, version: u64, snaps: &[(u64, Snap)]) -> Option<String> {
+    let chain = match diamond_delta::plan_at(snaps, version) {
+        Ok(c)  => c,
+        Err(_) => return None,      // no snapshot at all, which is an ordinary new Diamond
+    };
+    match follow(id, &chain, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await {
+        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).to_string()),
+        Err(e)    => {
+            console_log(&fmt!(
+                "Diamond '{}': the memory at version {} could not be rebuilt ({}), so the next \
+                 version records a full copy of it.", id, version, e));
+            None
+        },
+    }
+}
+
+/// Snapshot a new crystal version and return its number.
+///
+/// **The two files are snapshotted on different rules, and that asymmetry is the design.**  The
+/// data is written at every version, so the history is complete without a walk.  The page is
+/// written only where its bytes differ from the page as at the PARENT version -- not from the
+/// file on disk, which the daimon may already have overwritten during the turn being recorded.
+/// Most edits do not touch the page, and snapshotting it at every version would multiply the one
+/// file in a Diamond that nothing folds and nothing reduces.
+///
+/// **Each half is written as splices where that is smaller, and the delta costs no read.**  Both
+/// parents are read here anyway: the data's because a version is recorded against it, the page's
+/// because the boolean deciding whether the page moved at all is a comparison with it.  This is
+/// the funnel every write comes through -- `write_crystal_data`, `write_crystal_page`,
+/// `write_crystal_both`, `record_steer`, `record_model_change` and the fold -- so putting the
+/// delta log here reaches all of them and reaches nothing twice.
+///
+/// The other door on the two ceilings.  `Tool::FileWrite` and `Tool::FileEdit` catch a daimon
+/// growing either file past its cap; this catches a hand edit and a fold, which reach the files
+/// through the store instead and would otherwise walk straight past the rule.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `data` - The crystal data this version holds.
+/// * `page` - The page this version holds, or `None` for whatever is on disk -- which is what a
+///   turn that edited the page through the file tools leaves behind.
+/// * `now` - The stamp both `updated` and `touched` take.
+async fn snapshot(id: &str, data: &str, page: Option<&str>, now: u64) -> Outcome<u64> {
+    let hold = res!(hold_versions(id).await);
+    snapshot_held(&hold, id, data, page, now).await
+}
+
+/// [`snapshot`], by a caller already holding the Diamond's version store ([`VersionHold`]).
+async fn snapshot_held(
+    _hold:  &VersionHold,
+    id:     &str,
+    data:   &str,
+    page:   Option<&str>,
+    now:    u64,
+)
+    -> Outcome<u64>
+{
+    // The TEXT rather than its length, because the hot ceiling has to split each side before it
+    // can measure it -- and this is the door a HAND EDIT and a FOLD come through, which is
+    // exactly where a reducer that dropped every `hot` flag would land.
+    let old = own::read_file(&crystal_data_path(id)).await
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    if crate::tools::crystal_write_refused(data.len(), old.len()) {
+        return Err(err!("{}", crate::tools::crystal_cap_message(data.len()); Invalid, Input, Size));
+    }
+    let last_good = crystal_hot_last_good(id, &old).await;
+    if let Some(msg) = crate::tools::crystal_hot_refusal(
+        data, &old, &last_good, res!(standing_hot_bytes(id).await))
+    {
+        return Err(err!("{}", msg; Invalid, Input, Size));
+    }
+    let disk = res!(page_on_disk(id).await);
+    let want: &str = page.unwrap_or(disk.as_str());
+    if crate::tools::crystal_page_write_refused(want.len(), disk.len()) {
+        return Err(err!("{}", crate::tools::crystal_page_cap_message(want.len());
+            Invalid, Input, Size));
+    }
+
+    let mut meta = res!(read_meta(id).await);
+
+    // Each half's parent: what the new version is recorded against, and -- for the page -- the
+    // answer to whether it moved at all.  A parent that cannot be rebuilt is `None` rather than a
+    // failure, which records this version as a full copy and mends the Diamond on the spot.
+    // One directory walk read twice, because the two files live in the same directory and the
+    // walk is the expensive half.  What this adds over what the boolean already cost is the read
+    // of the memory's chain, which the boolean never needed.
+    let entries = version_entries(id).await;
+    // Past every number on disk as well as the counter: the turn's manifest is written at this
+    // number, and one another device's counter left above this one must not be written over.
+    // No other mint of this Diamond runs meanwhile, in this tab or another ([`VersionHold`]).
+    let next = versions::next_version(meta.version, file_names(&entries));
+    // A snapshot filed between the version the Diamond is at and `next` -- this device's own
+    // history kept above another device's copy by an import, or a version whose metadata never
+    // landed -- is what a reader would take `next`'s patch against, so `next` is written in full
+    // instead ([`diamond_delta::stands_between`]).  For the page that holds even where it did not
+    // change, or the reader would find the snapshot above the counter in its place.
+    let data_snaps = classify(&entries, DATA_KEYFRAME_EXT, DATA_PATCH_EXT);
+    let parent_data = if diamond_delta::stands_between(&data_snaps, meta.version, next) {
+        None
+    } else {
+        parent_data(id, meta.version, &data_snaps).await
+    };
+    let page_snaps = classify(&entries, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT);
+    let page_shadowed = diamond_delta::stands_between(&page_snaps, meta.version, next);
+    let parent_page = if page_shadowed {
+        None
+    } else {
+        match page_at(id, meta.version, &page_snaps).await {
+            Ok(p)  => p,
+            Err(e) => {
+                console_log(&fmt!(
+                    "Diamond '{}': the page at version {} could not be rebuilt ({}), so version {} \
+                     records a full copy of it.", id, meta.version, e, next));
+                None
+            },
+        }
+    };
+    // Against the parent version rather than against the file, so a page the daimon wrote itself
+    // during the turn is still recognised as a change and still gets its snapshot.
+    let changed = page_shadowed || want != parent_page.clone().unwrap_or_default();
+
+    res!(own::write_file(&crystal_data_path(id), data.as_bytes()).await);
+    res!(write_snapshot(id, next, parent_data.as_deref(), data, &data_snaps,
+        DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await);
+    if want != disk {
+        res!(own::write_file(&crystal_page_path(id), want.as_bytes()).await);
+    }
+    if changed {
+        res!(write_snapshot(id, next, parent_page.as_deref(), want, &page_snaps,
+            PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await);
+    }
+
+    meta.version = next;
+    meta.updated = now;
+    meta.bump_touched(now);    // a new crystal is both work and a change
+    res!(write_meta(id, &meta).await);
+    Ok(next)
+}
+
+/// The count of hot-part refusals since the crystal last landed, `diamonds/<id>/.daimond/hot_refusals`.
+///
+/// On disk rather than in the turn, because the daimon that sends an over-budget crystal again
+/// is as often the next turn as the same one.
+fn hot_refusals_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}/hot_refusals", id, STORE_DIR)
+}
+
+/// How many times this Diamond's crystal has been refused on its hot part since one landed.
+pub async fn hot_refusals(id: &str) -> u32 {
+    match own::read_file(&hot_refusals_path(id)).await {
+        Ok(b)  => String::from_utf8_lossy(&b).trim().parse().unwrap_or(0),
+        Err(_) => 0,
+    }
+}
+
+/// Set the count [`hot_refusals`] reads.
+pub async fn set_hot_refusals(id: &str, n: u32) -> Outcome<()> {
+    own::write_file(&hot_refusals_path(id), fmt!("{}", n).as_bytes()).await
+}
+
+/// Apply a user hand-edit to the crystal's data: snapshot a new version and log an
+/// `edit` record.
+///
+/// The page is left exactly as it is, so an edit to the memory does not cost a page snapshot.
+pub async fn write_crystal_data(id: &str, json: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let parent = res!(read_meta(id).await).version;
+    let version = res!(snapshot(id, json, None, now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "edit",
+        agent:     "user".to_string(),
+        task:      "edit crystal".to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: String::new(),
+        note:      String::new(),
+    };
+    append_log(id, &rec).await
+}
+
+/// Replace a Diamond's page: snapshot a new version and log an `edit` record.
+///
+/// A version of its own, sharing the one counter with the data, because a page IS the Diamond as
+/// the user meets it: a page edit that could not be undone would be the one change in a Diamond
+/// with no way back.  The data is carried through unchanged and still snapshotted, which is what
+/// keeps `versions/NNNN.json` complete for every N.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `html` - The page, self-contained; empty resets it to nothing and lets the caller's default
+///   stand.
+pub async fn write_crystal_page(id: &str, html: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let parent = res!(read_meta(id).await).version;
+    let data = res!(read_crystal_data(id).await);
+    let version = res!(snapshot(id, &data, Some(html), now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "edit",
+        agent:     "user".to_string(),
+        task:      "edit crystal page".to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: String::new(),
+        note:      String::new(),
+    };
+    append_log(id, &rec).await
+}
+
+/// Write both halves of a crystal as ONE version: one version number, one snapshot pair, one log
+/// record.
+///
+/// For a restore and for a backup import, which set the data and the page together and are one
+/// action as far as the person doing them is concerned.  Doing it as
+/// [`write_crystal_data`] followed by [`write_crystal_page`] works and writes two versions, so the
+/// history shows two rows for one click -- and neither row is wrong, which is what makes it worth
+/// fixing rather than tolerating.  The log is the record of a Diamond's discontinuities, and a
+/// reader counting them would count one restore as two.
+///
+/// The page still obeys the rule the other paths obey, because [`snapshot`] owns it: a page whose
+/// bytes match the parent version's writes no `.html` at all, so restoring a version whose page
+/// never differed costs nothing extra.
+///
+/// **`html` is taken literally, empty included.**  Restoring a version from before pages existed
+/// means passing an empty page, and that is what the Diamond looked like -- so the page goes back
+/// to none and the caller's default renders.  A caller that would rather keep the page it has
+/// should pass the page it has; this does not guess which was meant.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `json` - The crystal data to put at the head.
+/// * `html` - The page to put at the head; empty leaves the Diamond with no page of its own.
+pub async fn write_crystal_both(id: &str, json: &str, html: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let parent = res!(read_meta(id).await).version;
+    let version = res!(snapshot(id, json, Some(html), now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "edit",
+        agent:     "user".to_string(),
+        task:      "edit crystal and page".to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: String::new(),
+        note:      String::new(),
+    };
+    append_log(id, &rec).await
+}
+
+/// Record that this Diamond's daimon changed model, in the crystal's own history.
+///
+/// A Diamond's primary model may be changed at any time, and because the daimon is
+/// meant to be persistent the change ends one daimon and starts another.  That is a
+/// discontinuity in the Diamond, so it is written where the Diamond's other
+/// discontinuities are written rather than left as a silent flip of a browser setting.
+///
+/// The crystal is snapshotted UNCHANGED.  There is nothing to edit -- the crystal is
+/// what the old daimon left and what the new one inherits -- and the version exists so
+/// that "what did this Diamond look like when it was still on the old model" is a
+/// question with an answer.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `note` - What changed, in the user's own language, for the history row to show.
+pub async fn record_model_change(id: &str, note: &str) -> Outcome<()> {
+    let now = now_ms() as u64;
+    let meta = res!(read_meta(id).await);
+    let parent = meta.version;
+    let crystal = res!(read_crystal_data(id).await);
+    let version = res!(snapshot(id, &crystal, None, now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "model",
+        agent:     "user".to_string(),
+        task:      "change model".to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: String::new(),
+        note:      note.to_string(),
+    };
+    append_log(id, &rec).await
+}
+
+/// Record a crystal change made by the crystal agent (a steer that edited `crystal.json`, or
+/// `crystal.html`, or one of the three standing files, or several at once): snapshot a version
+/// and log an `edit` record whose task is the instruction.  Called by [`crate::wasm::app`]
+/// after the agent turn, only when SOMETHING actually changed -- the crystal, the page, or
+/// `REQUIREMENTS.md`, `DECISIONS.md` or `STATE.md`.
+///
+/// The page is not an argument, because the turn has already written it: [`snapshot`] takes
+/// whatever is on disk and compares it with the parent version, which is how a turn that changed
+/// only the page still earns a page snapshot.  The three standing files are likewise not
+/// arguments and not part of the snapshot -- they are written straight to disk by the daimon's
+/// own `file_write`/`file_edit` calls as the turn runs -- but [`snapshot`] mints the next version
+/// number unconditionally (`next = meta.version + 1`, every call), so a turn that touched only
+/// `REQUIREMENTS.md` and left the crystal byte-for-byte the same still earns a version and a log
+/// line, which is the whole point of calling this even when `json == ` what was there before.
+///
+/// Answers with the version it minted, so the turn-end check in `steer_inner` can stamp
+/// `kind:"task"` records against the same number.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `json` - `crystal.json`, exactly as the turn left it.
+/// * `instruction` - What the user typed, kept as the record's own account of why.
+/// * `hold` - The Diamond's version store, held by the caller until the turn's files are recorded
+///   against the number minted here ([`versions_record_held`]), so nothing mints between them.
+pub async fn record_steer(hold: &VersionHold, id: &str, json: &str, instruction: &str)
+    -> Outcome<u64>
+{
+    let now = now_ms() as u64;
+    let parent = res!(read_meta(id).await).version;
+    let version = res!(snapshot_held(hold, id, json, None, now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "edit",
+        agent:     "crystal-agent".to_string(),
+        task:      instruction.to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: String::new(),
+        note:      String::new(),
+    };
+    res!(append_log(id, &rec).await);
+    Ok(version)
+}
+
+/// Log one task tick from this turn: `REQUIREMENTS.md` moved a task from `- [ ]` to `- [x]`.
+///
+/// One record per task, because a turn may verify and tick several at once and each is its own
+/// claim -- collapsing them into one line would make `.daimond/log` say less than the file
+/// itself does.  `note` carries what backs the claim, exactly as
+/// [`crate::agent::compact::reconcile`] treats a fold's claimed edits: `Some("an edit")` or
+/// `Some("a worker report")` when the turn's ledger shows one, `None` when it shows neither --
+/// which is the never-forget file's own warning flagged where a reader of the log can see it,
+/// rather than trusted silently because the daimon said so.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `version` - The version [`record_steer`] minted for this same turn.
+/// * `parent` - The version before this turn -- `version - 1`, since [`snapshot`] always
+///   advances by exactly one.
+/// * `task_id` - The task's own id, e.g. `"T12"`.
+/// * `backed` - What the turn's ledger shows behind the tick, or `None` when it shows nothing.
+pub async fn record_task_tick(
+    id:      &str,
+    version: u64,
+    parent:  i64,
+    task_id: &str,
+    backed:  Option<&str>,
+)
+    -> Outcome<()>
+{
+    let note = match backed {
+        Some(w) => w.to_string(),
+        None    => {
+            console_log(&fmt!(
+                "Diamond '{}': {} was ticked in REQUIREMENTS.md with no edit and no worker \
+                 report in this turn's ledger -- flagged in the log rather than trusted.",
+                id, task_id));
+            "UNVERIFIED: no edit or worker report this turn".to_string()
+        },
+    };
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now_ms() as u64,
+        kind:      "task",
+        agent:     "crystal-agent".to_string(),
+        task:      task_id.to_string(),
+        parent,
+        version,
+        delta_ref: String::new(),
+        note,
+    };
+    append_log(id, &rec).await
+}
+
+/// Apply a fold, ALL OR NOTHING: the three files and the crystal under one version, or nothing.
+///
+/// D-20261010-01: the files used to be written first and the crystal after, each through its
+/// own door, so a crystal refused against the files' NEW weight left them rewritten with no
+/// version, no log row and no undo.  Now every ceiling is asked of the whole fold first
+/// ([`crate::agent::compact::fold_landing`]), under the version hold, and a refusal writes nothing.
+/// A write that fails after the files have landed puts them back before the error is returned.
+///
+/// The raw delta is kept under `.daimond/deltas/` and a `fold` record names it.  Answers the
+/// version the fold minted, which its Undo undoes, the headings it moved to cold to make room,
+/// empty where it moved none, and the paths recorded as rows of that version -- the ones the
+/// version undo can put back, empty where the fold rewrote none or the record failed.
+pub async fn fold_apply(
+    id:    &str,
+    want:  &crate::agent::compact::FoldProposal,
+    delta: &str,
+    note:  &str,
+)
+    -> Outcome<(u64, Vec<String>, Vec<String>)>
+{
+    let now = now_ms() as u64;
+    let hold = res!(hold_versions(id).await);
+    // Read as empty, a crystal that would not read let the landing's loss checks pass anything.
+    let old = res!(read_if_any(&crystal_data_path(id)).await)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    let files = res!(read_standing(id).await);
+    let last_good = crystal_hot_last_good(id, &old).await;
+    let land = match crate::agent::compact::fold_landing(id, &old, &last_good, &files, want,
+        &own::today())
+    {
+        Ok(l)    => l,
+        Err(why) => return Err(err!(
+            "{} Nothing was written: the crystal and its files are as they were.", why;
+            Invalid, Input, Size)),
+    };
+    let parent = res!(read_meta(id).await).version;
+    // What the files retire goes to the archive FIRST (UNBLOCK-18 F5): a failure after the files
+    // are written would otherwise leave STATE.md without its retired sections and a DECISIONS
+    // line naming an archive entry that is not there.  A refused fold below leaves a duplicate
+    // in an append-only archive, which costs bytes and never content.
+    for (leaf, lines) in land.retired.iter() {
+        let archive = crate::tools::standing_archive(leaf, id);
+        res!(archive_append(FileRoot::Opfs, &archive, lines).await);
+    }
+    let mut written: Vec<&'static str> = Vec::new();
+    let mut fault: Option<Error<ErrTag>> = None;
+    for (leaf, text) in land.files.iter() {
+        match own::write_file(&standing_path(id, leaf), text.as_bytes()).await {
+            Ok(()) => written.push(leaf),
+            Err(e) => { fault = Some(e); break; },
+        }
+    }
+    let version = match fault {
+        Some(e) => Err(e),
+        None    => snapshot_held(&hold, id, &land.crystal, None, now).await,
+    };
+    let version = match version {
+        Ok(v)  => v,
+        Err(e) => {
+            // Put back what landed, so a refused fold leaves the Diamond as it found it.
+            for leaf in written {
+                let was = match leaf {
+                    crate::tools::REQUIREMENTS_FILE => &files.requirements,
+                    crate::tools::DECISIONS_FILE    => &files.decisions,
+                    _                               => &files.state,
+                };
+                if let Err(r) = own::write_file(&standing_path(id, leaf),
+                    was.as_bytes()).await
+                {
+                    console_log(&fmt!("Diamond '{}': {} could not be put back after a failed \
+                        fold: {}", id, leaf, r));
+                }
+            }
+            return Err(e);
+        },
+    };
+    // THE FILES UNDER THE SAME NUMBER (D-20261010-01 item 6). The crystal's chain holds the
+    // crystal; the three files are rows of the file store, each with what it replaced, so the
+    // version undo ([`Plan::Undo`]) of this one version puts the whole fold back.  Recorded under
+    // the hold the version was minted in, so nothing mints between them.
+    let changes: Vec<Change> = land.files.iter().map(|(leaf, text)| {
+        let was = match *leaf {
+            crate::tools::REQUIREMENTS_FILE => &files.requirements,
+            crate::tools::DECISIONS_FILE    => &files.decisions,
+            _                               => &files.state,
+        };
+        Change {
+            before: Some(Prior::Held(was.as_bytes().to_vec())),
+            ..Change::of(&standing_path(id, leaf), text.as_bytes().to_vec())
+        }
+    }).collect();
+    let paths: Vec<String> = changes.iter().map(|c| c.path.clone()).collect();
+    let recorded = match versions_record_held(&hold, id, Some(version), Cause::Fold, "", note,
+        changes).await
+    {
+        Ok(_)   => paths,
+        Err(e)  => {
+            console_log(&fmt!("Diamond '{}': the files of fold version {} could not be \
+                recorded, so its Undo puts back the crystal alone: {}", id, version, e));
+            Vec::new()
+        },
+    };
+    drop(hold);
+
+    // Retain the raw delta, referenced by the log record.
+    let dref = delta_path(id, version);
+    res!(own::write_file(&dref, delta.as_bytes()).await);
+
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "fold",
+        agent:     "reducer".to_string(),
+        task:      "fold delta".to_string(),
+        parent:    parent as i64,
+        version:   version,
+        delta_ref: dref,
+        note:      note.to_string(),
+    };
+    res!(append_log(id, &rec).await);
+    Ok((version, land.moved, recorded))
+}
+
+/// Read a Diamond's log as a JSON array of records (each stored line is
+/// already a JSON object).
+pub async fn log_read(id: &str) -> Outcome<String> {
+    let path = log_path(id);
+    let bytes = match own::exists(&path).await {
+        Ok(true) => res!(own::read_file(&path).await),
+        _        => return Ok("[]".to_string()),
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    Ok(fmt!("[{}]", lines.join(",")))
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ File versions                                                  │
+// └───────────────────────────────────────────────────────────────┘
+
+// A turn's captures and the rules that fold them are portable, so a native test reaches them:
+// they live in `crate::diamond_versions`, and are named here where the callers always found them.
+pub use crate::diamond_versions::{Body, Change, Found, Prior, Short, TurnFound, TurnSaid};
+pub use crate::store::standing::{by_source, store_standing, CtxReads, Staged, Standing, StandingSource,
+    TabReads, Wants};
+
+/// The most files one walk of a Diamond's own directory hashes.
+///
+/// A bound rather than a budget: the walk serves Save a version and the turn that ran a command,
+/// both of which are about a Diamond's own small files, and a capp with a data directory of ten
+/// thousand entries must not turn a button press into a minute of hashing on a phone.
+const WALK_FILES_MAX: usize = 500;
+
+thread_local! {
+    /// Paths the user's own doors have changed since the last version, per Diamond.
+    ///
+    /// **This is what makes "the state before the turn began" true without walking every turn.**
+    /// The Files panel, a capp's Save and a landed Diamond each name the path they wrote; the
+    /// next turn's start drains the set and records them as one `user` version.  Held in memory
+    /// rather than on disk on purpose: a mark that did not survive a reload would describe a
+    /// change the next turn cannot attribute anyway, and the change itself is still on disk for
+    /// the next Save a version to find.
+    ///
+    /// Each path carries the bytes it held before the first of those doors wrote it, where the
+    /// door marked it first ([`mark_dirty_before`]): the row's `was`, so a file the store had never
+    /// seen is recorded as changed, never as created.
+    ///
+    /// Keyed by the path AND the folder it was marked in ([`folder_of`]): a folder opened or
+    /// closed before the set is recorded leaves the path naming another folder's file (HR).
+    static DIRTY: std::cell::RefCell<
+        std::collections::BTreeMap<String, std::collections::BTreeMap<(String, Option<String>),
+            Option<Vec<u8>>>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// What the file tools captured mid-turn, per Diamond, waiting for the turn to end.
+    ///
+    /// A machine file's prior bytes exist for one instant -- between the hand's read and the
+    /// daimon's write, inside one fence -- and there is no turn-end walk that could go back for
+    /// them.  So they are taken then and held here, and the turn-end hook records them in the
+    /// same manifest as everything else the turn wrote.
+    ///
+    /// Each is held under BOTH names: the path the model wrote, which is what the turn's ledger
+    /// will say, and the absolute path on the machine, which is what the manifest shows and what
+    /// a restore writes to.  Without the first, the turn-end sweep would read the same file a
+    /// second time under its workspace spelling and record it twice -- or, with no folder open,
+    /// fail to read it and record the file the daimon had just written as deleted.
+    static CAPTURED: std::cell::RefCell<
+        std::collections::BTreeMap<String, Vec<(String, Change)>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The bodies each run's turn put down NEWLY before its record (D1mem fix B: a whole upload at
+    /// its `Done`, a ledger's body slimmed), keyed as [`CAPTURED`].  Its record takes back those
+    /// no version names ([`take_back_unnamed`]): a file rewritten N times in one turn leaves one
+    /// body, not N.  A body found there already is never one of them.
+    static PUT_DOWN: std::cell::RefCell<
+        std::collections::BTreeMap<String, std::collections::BTreeSet<String>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The stored bodies of each run's turn while its drain has them in hand (D1mem fix B), keyed
+    /// as [`CAPTURED`]: out of the ledger and not yet in the slot, so [`ledger_stored`] no longer
+    /// names them, while a seal the drain records takes back what the turn put down.
+    static DRAINING: std::cell::RefCell<
+        std::collections::BTreeMap<String, std::collections::BTreeSet<String>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The changes a turn has been allowed and not yet captured, per store: its acts in flight.
+    ///
+    /// **Taken in the same synchronous step as the check that allows them** (see
+    /// [`captured_room`]).  The count used to be read from `CAPTURED` alone, which a change
+    /// joins only after its act has awaited the disk, so a daimon and its workers -- every agent
+    /// keeping into one store -- could each pass the check at 63 and all go ahead (audit of
+    /// 2026-09-23, finding 4).  A reservation counts from the moment it is granted, and goes when
+    /// the change is captured or its act fails ([`release`]).  A note of this page's whose path
+    /// is neither here nor captured is one a failed record left behind.
+    static RESERVED: std::cell::RefCell<
+        std::collections::BTreeMap<String, Vec<versions::Reserved>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// What the versions inside their destruction hold weigh, per store, and when that was
+    /// measured: the part of the ceiling a turn holding a destruction may not fill.  See
+    /// [`keep_room`].
+    static RETAINED: std::cell::RefCell<std::collections::BTreeMap<String, (u64, u64)>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The last version number handed out per chat store, so two turns ending at once do not
+    /// both take the next one.  See [`mint_chat_version`].
+    static CHAT_MINTED: std::cell::RefCell<std::collections::BTreeMap<String, u64>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The Diamonds whose version store a mint of this page holds, where the browser has no
+    /// lock manager to hold it across tabs.  See [`VersionHold`].
+    static MINTING: std::cell::RefCell<std::collections::BTreeSet<String>> =
+        std::cell::RefCell::new(std::collections::BTreeSet::new());
+
+    /// A turn's deletes from the folder the user opened on this computer, per store, and what the
+    /// person said when it reached the limit.  Drained with `CAPTURED`, at the turn's end, so the
+    /// count is the turn's.  Keyed as `CAPTURED` is ([`turn_key`]): natively each run's turn has
+    /// its own count, question, stop and "go on", and no other run's turn end touches them
+    /// (D1v2c, reversing D1v1c's tally shared by the store).  See [`open_delete_room`].
+    static OPEN_DELETES: std::cell::RefCell<std::collections::BTreeMap<String, versions::OpenTally>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The next turn's tally number, so an answer given to one turn is never read by the next.
+    static OPEN_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+
+    /// The runs a turn has sealed as versions of their own, per store: what
+    /// [`versions::TURN_SEALS_MAX`] bounds.  Drained with `CAPTURED`, at the turn's end, and keyed
+    /// as it is ([`turn_key`]).
+    static SEALED: std::cell::RefCell<std::collections::BTreeMap<String, usize>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The changes to the user's files the person declined this turn, per store (UNBLOCK-26 U3):
+    /// a daimon's and every worker keeping into it.  Drained with `CAPTURED`, at the turn's end,
+    /// and keyed as it is ([`turn_key`]).  See [`versions::ChangeRefusals`].
+    static CHANGES_REFUSED: std::cell::RefCell<std::collections::BTreeMap<String, versions::ChangeRefusals>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The stores whose running turn has run a command or a worker, whose writes no capture sees:
+    /// its turn end cannot tell them from another tab's ([`drain_turn`]).  Ended with the captures.
+    /// Keyed as `CAPTURED` is ([`turn_key`]): natively one run's flag is never another's to end.
+    static OPAQUE: std::cell::RefCell<std::collections::BTreeSet<String>> =
+        std::cell::RefCell::new(std::collections::BTreeSet::new());
+
+    /// The windows around the calls whose file effects no capture records, per store, from the
+    /// call that opens one to the turn end that takes it ([`drain_windows`]).  See
+    /// [`open_window`] for why a store looks at its files before and after such a call.
+    static WINDOWS: std::cell::RefCell<std::collections::BTreeMap<String, versions::Windows>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// What each run's turn's commands made, as the hand's write meter reported it (MADE-2): each
+    /// file with the sha256 it left, whether the run created it, and the agent that ran the
+    /// command, oldest first, at most
+    /// [`versions::MADE_SENT_MAX`].  Keyed as [`CAPTURED`] is ([`turn_key`]); drained into the
+    /// turn's record with the windows ([`drain_windows_by`]).
+    static RAN: std::cell::RefCell<std::collections::BTreeMap<String,
+        Vec<(String, String, bool, Option<crate::rating::Author>)>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The restores this page has open, by ticket, from [`versions_restore_open`] to
+    /// [`versions_restore_close`].
+    static RESTORES: std::cell::RefCell<std::collections::BTreeMap<u64, Restoring>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The next restore's ticket.  Never 0, which is "no restore" on a tool call.
+    static RESTORE_NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+
+    /// The steers running on this page, per Diamond, from their start to the drain of their
+    /// captures.  See [`steering`].
+    static STEERING: std::cell::RefCell<std::collections::BTreeMap<String, usize>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+/// Is `path` a file of the person's in `id`'s store, rather than the keeper's own working state?
+///
+/// **Decided by the path, never by a row's flag**, with the rule a turn's captures record by
+/// ([`crate::tools::stored_is_mark`]): anything outside the keeper's home, a file on the machine
+/// included.  Until 2026-09-25 (B1 of the release 5.1 fix's QA) a file the person saved through
+/// the Doc or Files panel was recorded from the dirty set as the Diamond's own, and a
+/// whole-version Restore deleted it straight off their open folder, unasked.  Stores written
+/// before then still hold such rows, which is why a restore asks this of the path and not of the
+/// row.
+pub fn theirs(id: &str, path: &str) -> bool {
+    crate::tools::stored_is_mark(id, path)
+}
+
+/// Which folder `path` is in now, as a version row records it ([`versions::needs_folder`]): the id
+/// of the folder open on this computer ([`own::folder_id`]), else the browser's own storage.
+/// `None` for a path no folder holds: absolute on the machine, or one of the store's own.
+///
+/// A workspace-relative path is read and written through [`FileRoot::Workspace`], which is the open
+/// folder where there is one and browser storage where there is not, and a row of one is recorded
+/// from there alone: a turn's act on the machine through a hand records the absolute path.
+pub fn folder_of(path: &str) -> Option<String> {
+    if !versions::needs_folder(path) {
+        return None;
+    }
+    Some(own::folder_id().unwrap_or_else(|| versions::BROWSER_FOLDER.to_string()))
+}
+
+/// [`versions::route`] for an act that reaches `landed` now: into the folder it reaches, and
+/// asking this device whether it knows the folder the row was written in ([`own::folder_known`]).
+pub fn route_here(row: &str, row_folder: Option<&str>, landed: &str, overwrites: bool)
+    -> versions::Route
+{
+    let known = row_folder.map(own::folder_known).unwrap_or(false);
+    versions::route(row, row_folder, landed, folder_of(landed).as_deref(), known, overwrites)
+}
+
+/// A steer running on a Diamond, counted until this is dropped: at its turn end's drain, or when
+/// the steer's future ends without one.
+pub struct Steering {
+    id: String,
+}
+
+impl Drop for Steering {
+    fn drop(&mut self) {
+        STEERING.with(|s| {
+            if let Ok(mut all) = s.try_borrow_mut() {
+                let gone = match all.get_mut(&self.id) {
+                    Some(n) => { *n = n.saturating_sub(1); *n == 0 },
+                    None    => false,
+                };
+                if gone {
+                    all.remove(&self.id);
+                }
+            }
+        });
+    }
+}
+
+/// Count a steer as running on `id` until the answer is dropped.  Taken before the steer's first
+/// await, so a thread's turn end that waited on the store and then finds a steer running leaves
+/// the store's turn to that steer's turn end ([`is_steering`]).
+pub fn steering(id: &str) -> Steering {
+    STEERING.with(|s| { *s.borrow_mut().entry(id.to_string()).or_insert(0) += 1; });
+    Steering { id: id.to_string() }
+}
+
+/// Is a steer running on `id` whose turn end has not yet drained the captures?
+pub fn is_steering(id: &str) -> bool {
+    STEERING.with(|s| s.borrow().get(id).copied().unwrap_or(0) > 0)
+}
+
+/// Would an act finding `now` at `path` seal a run of this turn's, where the turn has sealed as
+/// many as it may ([`versions::TURN_SEALS_MAX`])?  Asked with no await before the [`seal_run`] it
+/// guards, so agents sharing the store cannot all pass at the bound together.
+pub fn seals_spent(id: &str, path: &str, now: &[u8]) -> bool {
+    let due = CAPTURED.with(|c| c.borrow().get(&turn_key(id))
+        .map(|held| versions::seal_due(held, path, now))
+        .unwrap_or(false));
+    due && SEALED.with(|s| s.borrow().get(&turn_key(id)).copied().unwrap_or(0))
+        >= versions::TURN_SEALS_MAX
+}
+
+/// May a turn keeping into `id`'s store delete `file` from the folder the user opened on this
+/// computer without asking?  See [`versions::OpenTally::room`].
+///
+/// Checked and counted in one synchronous step, as [`captured_room`] is, so agents sharing the
+/// store cannot all pass at the limit together.
+///
+/// # Arguments
+/// * `id` - The keeper whose turn this is.
+/// * `file` - The file, as [`versions::open_file_key`] names it.
+pub fn open_delete_room(id: &str, file: &str) -> versions::OpenDelete {
+    let limit = versions::open_deletes_ask();
+    OPEN_DELETES.with(|o| {
+        o.borrow_mut()
+            .entry(turn_key(id))
+            .or_insert_with(|| versions::OpenTally::new(
+                OPEN_EPOCH.with(|e| { let n = e.get(); e.set(n + 1); n })))
+            .room(file, limit)
+    })
+}
+
+/// Record what the person said to a question a turn keeping into `id`'s store asked.  An answer
+/// to a turn that has since ended is dropped: the next turn's count is its own.
+///
+/// # Arguments
+/// * `ticket` - The question, as [`versions::OpenDelete::Ask`] carried it: the turn's, or one
+///   file's where the person asks before every one.
+/// * `allow` - True to let the turn, or that file, go on; false to stop the turn.
+pub fn open_delete_answer(id: &str, ticket: u64, allow: bool) {
+    OPEN_DELETES.with(|o| {
+        if let Some(t) = o.borrow_mut().get_mut(&turn_key(id)) {
+            t.answer(ticket, allow);
+        }
+    });
+}
+
+/// Give back the count [`open_delete_room`] took for `file`, whose delete did not happen.
+pub fn open_delete_release(id: &str, file: &str) {
+    OPEN_DELETES.with(|o| {
+        if let Some(t) = o.borrow_mut().get_mut(&turn_key(id)) {
+            t.release(file);
+        }
+    });
+}
+
+/// Note that one of the user's own doors changed `path` in this Diamond, after its write: what
+/// it held before is answered from the history at the record.
+pub fn mark_dirty(id: &str, path: &str) {
+    if path.trim().is_empty() {
+        return;
+    }
+    note_act(id);
+    let key = (path.to_string(), folder_of(path));
+    DIRTY.with(|d| {
+        d.borrow_mut().entry(id.to_string()).or_default().entry(key).or_insert(None);
+    });
+}
+
+/// Note that one of the user's own doors is ABOUT TO write `path` in this Diamond, and keep what it
+/// holds now as the row's `was`.
+///
+/// **A file the store had never seen was recorded as created** (release 5.1's restore follow-ups,
+/// 2026-09-25).  The Doc panel's save marked the path, and the dirty set's record had no `was` for
+/// it but the history's, which had none: so a Restore to before the edit took the file to have
+/// been absent, and asked the person to delete it as "older than your file".  The panel marks
+/// before it writes, so the bytes are read here, first, and the Restore puts them back.
+///
+/// The first mark since the last record wins, as a turn's first copy does: the row goes from the
+/// file before the first write to the file after the last.  Nothing past the size a version
+/// keeps is read, and a file that is not there carries nothing, which is a creation.
+pub async fn mark_dirty_before(id: &str, path: &str) {
+    if path.trim().is_empty() {
+        return;
+    }
+    if let Err(e) = door_open("mark_dirty_before", id) {
+        console_log(&fmt!("Diamond '{}': '{}' was not marked ({}).", id, path, e));
+        return;
+    }
+    note_act(id);
+    let key = (path.to_string(), folder_of(path));
+    let marked = DIRTY.with(|d| d.borrow().get(id).map(|m| m.contains_key(&key)).unwrap_or(false));
+    if marked {
+        return;
+    }
+    let was = if versionable(id, path) {
+        let ceiling = versions::VERSION_FILE_MAX as u32;
+        match own::user_read_file_capped(FileRoot::Workspace, path, ceiling).await {
+            Ok((b, total)) if total as usize <= versions::VERSION_FILE_MAX => Some(b),
+            // Not read is not absent: marked as absent, a Restore would ask to delete the file
+            // as one the store never saw.  So nothing is marked (spec §16.2).
+            Err(e) if unreadable(&e) => {
+                console_log(&fmt!("Diamond '{}': '{}' was not marked ({}).", id, path, e));
+                return;
+            },
+            _                                                               => None,
+        }
+    } else {
+        None
+    };
+    DIRTY.with(|d| {
+        d.borrow_mut().entry(id.to_string()).or_default().entry(key).or_insert(was);
+    });
+}
+
+/// Note that a turn keeping into `id`'s store has run a command or a worker ([`OPAQUE`]).
+pub fn ran_opaque(id: &str) {
+    OPAQUE.with(|o| { o.borrow_mut().insert(turn_key(id)); });
+}
+
+/// Note that something outside every window may have changed `id`'s files: a file tool's capture,
+/// a person's own door.  A snapshot taken before it is not reused after it ([`versions::Windows`]).
+pub fn note_act(id: &str) {
+    WINDOWS.with(|w| {
+        if let Some(store) = w.borrow_mut().get_mut(id) {
+            store.act();
+        }
+    });
+}
+
+/// A window open around one call, until it is closed by [`close_window`] or its future is
+/// dropped, which closes it as lost.  Its id is its place in its store's [`versions::Windows`].
+pub struct Around {
+    key:    String,
+    id:     u64,
+    closed: bool,
+}
+
+impl Drop for Around {
+    fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
+        WINDOWS.with(|w| {
+            if let Ok(mut all) = w.try_borrow_mut() {
+                if let Some(store) = all.get_mut(&self.key) {
+                    store.lost(self.id);
+                }
+            }
+        });
+    }
+}
+
+/// Where a store's calls are looked at: a Diamond's own directory, or a chat's working folder
+/// (`chats/<id>/work`).  A command's effect in a marked machine folder is not walked, which was
+/// so before and is a stated limit.
+fn walk_root(id: &str) -> String {
+    match id.strip_prefix(crate::tools::CHAT_KEEPER) {
+        Some(chat) => fmt!("{}/{}/{}", crate::tools::CHAT_ROOT, chat, crate::tools::CHAT_WORK_DIR),
+        None       => diamond_dir(id),
+    }
+}
+
+/// What a walk saw of one file: its length and last-written time where the backend keeps one,
+/// else the hash of its bytes, which is the only way left to tell it moved.
+async fn stamp_of(path: &str, size: u64, when: Option<f64>) -> versions::Stamp {
+    if let Some(ms) = when {
+        return versions::Stamp::Seen(size, Some(ms as u64));
+    }
+    let ceiling = versions::VERSION_FILE_MAX as u32;
+    match own::read_file_capped(path, ceiling).await {
+        Ok((body, total)) if total as usize <= versions::VERSION_FILE_MAX =>
+            versions::Stamp::Hashed(versions::hash_of(&body)),
+        _ => versions::Stamp::Seen(size, None),
+    }
+}
+
+/// The scope a window looks at, as it stands: each file the store versions, with its stamp.
+/// Nothing is read where the listing already says when the file was last written, which is what
+/// keeps a walk at 85 to 99 ms of the 500-file bound where hashing every file cost 234 to 265.
+async fn walk_stamps(id: &str) -> versions::Snap {
+    let root = walk_root(id);
+    let mut snap = versions::Snap::new();
+    for (path, size, when) in walk_listing(id, &root).await.into_iter() {
+        let stamp = stamp_of(&path, size, when).await;
+        snap.insert(path, stamp);
+    }
+    snap
+}
+
+/// The stamp of one path now, or `None` where there is no file.
+pub(crate) async fn stamp_now(path: &str) -> Option<versions::Stamp> {
+    match own::stamp(path).await {
+        Ok(Some((ms, size))) => {
+            let when = if ms.is_finite() && ms > 0.0 { Some(ms) } else { None };
+            Some(stamp_of(path, size as u64, when).await)
+        },
+        _ => None,
+    }
+}
+
+/// Open a window around a call whose file effects no capture records: a command, a verifier, a
+/// download.  Such a call names no path, so the only account of what it changed is a look at the
+/// store's files before it and after, credited to `by`, the agent whose context ran it.
+///
+/// Where the last window of the same author closed with nothing since to change the files, its
+/// closing walk serves as this one's opening walk, so N calls cost N+1 walks.
+///
+/// # Arguments
+/// * `id` - The store the calling context keeps into: a Diamond's id, or `chat:<id>`.
+pub async fn open_window(id: &str, by: Option<crate::rating::Author>) -> Around {
+    let (wid, walk) = WINDOWS.with(|w| w.borrow_mut().entry(id.to_string()).or_default().begin(by));
+    // Held before the first await, so a call whose future is dropped in the walk is closed as lost.
+    let around = Around { key: id.to_string(), id: wid, closed: false };
+    if walk {
+        let snap = walk_stamps(id).await;
+        WINDOWS.with(|w| {
+            if let Some(store) = w.borrow_mut().get_mut(id) {
+                store.began(wid, snap);
+            }
+        });
+    }
+    around
+}
+
+/// Close a window: look at the files again, and keep what moved against the author who ran the
+/// call.  Taken at the turn end by [`drain_windows`].
+pub async fn close_window(mut around: Around) {
+    let key = around.key.clone();
+    WINDOWS.with(|w| {
+        if let Some(store) = w.borrow_mut().get_mut(&key) {
+            store.finish(around.id);
+        }
+    });
+    let snap = walk_stamps(&key).await;
+    WINDOWS.with(|w| {
+        if let Some(store) = w.borrow_mut().get_mut(&key) {
+            store.ended(around.id, snap);
+        }
+    });
+    around.closed = true;
+}
+
+/// A closed window on `id` that saw `path` move, for a test that needs a window over the person's
+/// files, which a native walk of the store's own directory never sees.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn test_window(id: &str, by: Option<crate::rating::Author>, path: &str) {
+    WINDOWS.with(|w| {
+        let mut all = w.borrow_mut();
+        let store = all.entry(id.to_string()).or_default();
+        let (wid, _) = store.begin(by);
+        store.began(wid, versions::Snap::new());
+        store.finish(wid);
+        let mut after = versions::Snap::new();
+        after.insert(path.to_string(), versions::Stamp::Seen(1, Some(1)));
+        store.ended(wid, after);
+    });
+}
+
+/// `id`'s windows as the turn end would take them, leaving them: an open one ends at `u64::MAX`.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn test_windows(id: &str) -> Vec<versions::Window> {
+    WINDOWS.with(|w| w.borrow().get(id).map(|store| store.peek()).unwrap_or_default())
+}
+
+/// What this turn's windows found changed in `id`'s files, as changes ready to record, and each
+/// credited to the one agent that can have made it ([`versions::attribute`]) or to nobody.
+///
+/// **Only what a window saw.**  A file that changed outside every window -- a sync arrival, the
+/// person's own edit, a file `ensure_standing` seeded before the turn began -- is not the turn's
+/// and is not here.  A path whose file is no longer as the last window left it has been changed
+/// by something since, and is recorded with no author.
+///
+/// # Arguments
+/// * `held` - What the file tools captured this turn.  A captured path is not read again here:
+///   its change is already among the turn's, under the author of the act that made it.
+pub async fn drain_windows(id: &str, held: &[(String, Change)]) -> Vec<Change> {
+    drain_windows_by(id, held, &TabReads).await
+}
+
+/// [`drain_windows`], reading the person's files through `src` ([`StandingSource::changes`]).
+pub async fn drain_windows_by<S: StandingSource>(id: &str, held: &[(String, Change)], src: &S)
+    -> Vec<Change>
+{
+    // WHAT THIS TURN'S COMMANDS MADE, as the meter reported it (MADE-2): rows of the turn, under
+    // the agent that ran each command.  A command's window never walks a machine folder, so no
+    // window row names the same file.
+    let ran = versions::ran_rows(&drain_ran(id));
+    let mut changes = drain_windows_only(id, held, src).await;
+    changes.extend(ran);
+    changes
+}
+
+/// What this turn's commands made, as [`ran_made`] kept it, leaving none.
+fn drain_ran(id: &str) -> Vec<(String, String, bool, Option<crate::rating::Author>)> {
+    RAN.with(|r| r.borrow_mut().remove(&turn_key(id)).unwrap_or_default())
+}
+
+/// Keep what one command made in this turn, as the hand's write meter reported it (MADE-2): the
+/// files it created or changed, with the sha256 each was left with and whether it created it,
+/// under `by`, the agent that ran it.  A later run's report of a path replaces an earlier one's.  At most [`versions::MADE_SENT_MAX`] a turn, the first kept: past that nothing more is
+/// kept, and a later `rm` of such a file is refused as the user's.  Said once where it is.
+pub fn ran_made(id: &str, by: Option<crate::rating::Author>, files: Vec<(String, String, bool)>,
+    capped: bool)
+{
+    let mut full = false;
+    RAN.with(|r| {
+        let mut all = r.borrow_mut();
+        let turn = all.entry(turn_key(id)).or_default();
+        for (path, hash, created) in files.into_iter() {
+            turn.retain(|(p, _, _, _)| *p != path);
+            if turn.len() >= versions::MADE_SENT_MAX {
+                full = true;
+                continue;
+            }
+            turn.push((path, hash, created, by.clone()));
+        }
+    });
+    if full || capped {
+        console_log(&fmt!("Diamond '{}': a command made more files than the record keeps ({} a \
+            turn, or the meter's own report was capped); those past it are not the Diamond's, so a \
+            later command is refused them as the user's.", id, versions::MADE_SENT_MAX));
+    }
+}
+
+/// [`drain_windows_by`]'s windows alone.
+async fn drain_windows_only<S: StandingSource>(id: &str, held: &[(String, Change)], src: &S)
+    -> Vec<Change>
+{
+    let windows = WINDOWS.with(|w| match w.borrow_mut().get_mut(id) {
+        Some(store) => store.take(),
+        None        => Vec::new(),
+    });
+    if windows.is_empty() {
+        return Vec::new();
+    }
+    let owners: Vec<(String, Option<crate::rating::Author>)> = held.iter()
+        .map(|(_, ch)| (ch.path.clone(), ch.by.clone()))
+        .collect();
+    let credits = versions::attribute(&windows, &owners);
+    let paths: Vec<String> = credits.iter()
+        .filter(|c| !owners.iter().any(|(p, _)| *p == c.path))
+        .map(|c| c.path.clone())
+        .collect();
+    let mut changes = changes_by(id, &paths, src).await;
+    for ch in changes.iter_mut() {
+        let credit = match credits.iter().find(|c| c.path == ch.path) {
+            Some(c) => c,
+            None    => continue,
+        };
+        // Credited only where the file stands as the last window to move it left it.  The
+        // person's path is stamped through the source: natively the store cannot stamp it, and
+        // `None` there would lose the credit (D1s2b rider).
+        let now = if by_source(&ch.path) { src.stamp(&ch.path).await } else { stamp_now(&ch.path).await };
+        ch.by = if now == credit.left { credit.by.clone() } else { None };
+    }
+    changes
+}
+
+/// One path a person's door marked ([`DIRTY`]): the folder it was marked in, and what it held
+/// before the first door wrote it where that door kept it.
+#[derive(Clone, Debug)]
+pub struct Marked {
+    path:   String,
+    folder: Option<String>,
+    was:    Option<Vec<u8>>,
+}
+
+#[cfg(test)]
+impl Marked {
+    pub(crate) fn path(&self) -> &str { &self.path }
+    pub(crate) fn was(&self) -> Option<&[u8]> { self.was.as_deref() }
+}
+
+/// Take the dirty set for this Diamond, leaving it empty.
+pub fn drain_dirty(id: &str) -> Vec<Marked> {
+    DIRTY.with(|d| match d.borrow_mut().remove(id) {
+        Some(set) => set.into_iter()
+            .map(|((path, folder), was)| Marked { path, folder, was })
+            .collect(),
+        None      => Vec::new(),
+    })
+}
+
+/// Put back a dirty set whose record could not be written, keeping any mark made since.
+pub fn undrain_dirty(id: &str, dirty: Vec<Marked>) {
+    DIRTY.with(|d| {
+        let mut all = d.borrow_mut();
+        let set = all.entry(id.to_string()).or_default();
+        for m in dirty.into_iter() {
+            set.entry((m.path, m.folder)).or_insert(m.was);
+        }
+    });
+}
+
+/// Why a row has no bytes of what its file became: it was changed in a folder that was not open
+/// when the change was recorded, so what stands at its path now is another folder's file (HR).
+/// The page words it as such ("Saved in another folder"), never as a file too large to keep.
+pub const IN_ANOTHER_FOLDER: &str = "folder";
+
+/// What the dirty set `dirty` names, read as it stands, each row's `was` the bytes its door kept
+/// before it wrote ([`mark_dirty_before`]), else the history's.
+///
+/// **A path marked in another folder than the one open now is not read there** (HR, 2026-09-25):
+/// what stands there is another folder's file of the same name.  **A path marked in browser
+/// storage is read from browser storage**, which is there whatever folder is open (HX4 of HR's QA,
+/// 2026-09-25): until then a Doc panel save recorded after a folder opened kept no bytes, and its
+/// Restore called it too large to keep.  A path marked in a folder that is closed now keeps no
+/// bytes: its row says the file changed, in that folder, and keeps what its door kept, which that
+/// folder's Undo puts back.
+pub async fn dirty_changes(id: &str, dirty: Vec<Marked>) -> Vec<Change> {
+    if let Err(e) = door_open("dirty_changes", id) {
+        console_log(&fmt!("Diamond '{}': the marked files were not read ({}).", id, e));
+        undrain_dirty(id, dirty);
+        return Vec::new();
+    }
+    let (here, away): (Vec<Marked>, Vec<Marked>) = dirty.into_iter()
+        .partition(|m| m.folder == folder_of(&m.path));
+    let (browser, away): (Vec<Marked>, Vec<Marked>) = away.into_iter()
+        .partition(|m| m.folder.as_deref() == Some(versions::BROWSER_FOLDER));
+    let mut out: Vec<Change> = Vec::new();
+    for (marks, root) in [(here, FileRoot::Workspace), (browser, FileRoot::Opfs)] {
+        let paths: Vec<String> = marks.iter().map(|m| m.path.clone()).collect();
+        let mut was: std::collections::BTreeMap<String, (Option<String>, Option<Vec<u8>>)> =
+            marks.into_iter().map(|m| (m.path, (m.folder, m.was))).collect();
+        for ch in versions_changes_in(id, &paths, root).await.into_iter() {
+            let (folder, before) = was.remove(&ch.path).unwrap_or((None, None));
+            out.push(Change {
+                before: before.map(Prior::Held).or(ch.before.clone()),
+                folder: folder.or(ch.folder.clone()),
+                door:   true,
+                ..ch
+            });
+        }
+    }
+    for m in away.into_iter() {
+        out.push(Change {
+            after:   Body::Unseen,
+            before:  m.was.map(Prior::Held),
+            mark:    theirs(id, &m.path),
+            refused: Some(IN_ANOTHER_FOLDER.to_string()),
+            folder:  m.folder,
+            door:    true,
+            ..Change::gone(&m.path)
+        });
+    }
+    out
+}
+
+/// Hold what a file tool captured about a file it has just changed, for the turn-end hook to
+/// record.  The rules that fold it into what the turn already holds are
+/// [`versions::capture_into`]'s.
+///
+/// # Arguments
+/// * `raw` - The path as the model wrote it, which is what the turn's ledger will name.
+/// * `change` - The capture, whose own `path` is absolute on the machine.
+pub fn capture(id: &str, raw: &str, change: Change) {
+    note_act(id);
+    release(id, &change.path);
+    // THE FOLDER THE ACT WAS IN, taken at the act (HR): the turn's end records it later.
+    let change = Change { folder: change.folder.clone().or_else(|| folder_of(&change.path)), ..change };
+    CAPTURED.with(|c| {
+        let mut all = c.borrow_mut();
+        versions::capture_into(all.entry(turn_key(id)).or_default(), raw, change);
+    });
+}
+
+/// Record as a version of its own the run of this turn's changes to `path` that bytes from outside
+/// the turn have ended, and start the path's run again from `now` ([`versions::seal_broken`]).
+/// Asked BEFORE the act that found `now`, and before its copy is noted, so both the run's first
+/// copy and the act's are in a row, and the act's note is the only one for the path.  Nothing is
+/// done where the run goes on.
+///
+/// Recorded as file_revert records one mid-turn: its own version, the turn's by cause.  Where that
+/// cannot be written the run is put back and the answer is the error, and the caller refuses the
+/// act rather than drop either copy.
+///
+/// # Arguments
+/// * `path` - As the capture names it: normalised, or absolute for a machine file.
+/// * `now` - The bytes at `path` as the act found them.
+pub async fn seal_run(id: &str, path: &str, now: &[u8]) -> Outcome<()> {
+    let sealed = CAPTURED.with(|c| match c.borrow_mut().get_mut(&turn_key(id)) {
+        Some(held) => versions::seal_broken(held, path, now),
+        None       => None,
+    });
+    let (raw, run) = match sealed {
+        Some(s) => s,
+        None    => return Ok(()),
+    };
+    // Counted as it is taken, with no await between, so the bound holds across agents.
+    SEALED.with(|s| { *s.borrow_mut().entry(turn_key(id)).or_insert(0) += 1; });
+    match versions_record(id, Cause::Turn, "", "", vec![run.clone()]).await {
+        Ok(_)  => {
+            // The run's copy is named by that version's row, so its note goes; the act notes its
+            // own next.
+            unpend(id, path).await;
+            // The run begun again holds `now` in hand: put it down and name it (D1mem fix B).
+            slim_turn(id).await;
+            Ok(())
+        },
+        Err(e) => {
+            CAPTURED.with(|c| {
+                if let Some(held) = c.borrow_mut().get_mut(&turn_key(id)) {
+                    versions::unseal(held, (raw, run), now);
+                }
+            });
+            SEALED.with(|s| {
+                if let Some(n) = s.borrow_mut().get_mut(&turn_key(id)) {
+                    *n = n.saturating_sub(1);
+                }
+            });
+            Err(e)
+        },
+    }
+}
+
+/// What a turn's write over `path`, a file of the user's, is measured against by
+/// [`versions::wipes`]: the file as the turns found it ([`turns_found`]), or nothing where this
+/// turn made the bytes that stand there -- nothing of anyone else's is in them.
+///
+/// # Arguments
+/// * `path` - As the capture names it: normalised, or absolute for a machine file.
+/// * `now` - The bytes at `path` as the write found them.
+pub async fn measured_against(id: &str, path: &str, now: &[u8]) -> Vec<u8> {
+    turns_found(id, path, now).await.unwrap_or_default()
+}
+
+/// What this turn's captures say of the file at `path`, holding `now`
+/// ([`versions::this_turn_found`]).  Asked of the captures alone, with no await.
+pub fn this_turn_said(id: &str, path: &str, now: &[u8]) -> TurnSaid {
+    CAPTURED.with(|c| match c.borrow().get(&turn_key(id)) {
+        Some(held) => versions::this_turn_found(held, path, now),
+        None       => TurnSaid::Was(Prior::Held(now.to_vec())),
+    })
+}
+
+/// [`this_turn_said`] with its bytes: a stored copy the ledger names is read from the store
+/// (D1mem fix B).  One the store has lost is answered as the bytes found, as a capture-less turn's.
+pub async fn this_turn_found(id: &str, path: &str, now: &[u8]) -> TurnFound {
+    match this_turn_said(id, path, now) {
+        TurnSaid::Made          => TurnFound::Made,
+        TurnSaid::Carried(k)    => match prior_bytes(id, k).await {
+            Some(k) => TurnFound::Carried(k),
+            None    => TurnFound::Was(now.to_vec()),
+        },
+        TurnSaid::Was(w)        => TurnFound::Was(prior_bytes(id, w).await
+            .unwrap_or_else(|| now.to_vec())),
+    }
+}
+
+/// The bytes `p` names: in hand, or read from `id`'s body store, `None` where they will not read.
+pub async fn prior_bytes(id: &str, p: Prior) -> Option<Vec<u8>> {
+    match p {
+        Prior::Held(b)      => Some(b),
+        Prior::Stored(r)    => match versions_body(id, &r.hash).await {
+            Ok(Some(b)) if r.names(&b) => Some(b),
+            _                          => None,
+        },
+    }
+}
+
+/// Each file this turn holds under the folder `from` ([`versions::held_under`]).
+pub fn held_under(id: &str, from: &str) -> Vec<(String, String, String)> {
+    CAPTURED.with(|c| match c.borrow().get(&turn_key(id)) {
+        Some(held) => versions::held_under(held, from),
+        None       => Vec::new(),
+    })
+}
+
+/// The file as the turns found it: what a wipe of `path`, a file of the user's, is measured
+/// against, and what a destruction of it -- a wipe or a delete -- keeps.  `None` where this turn
+/// made the bytes that stand there.
+///
+/// That is the oldest copy on this device of the unbroken run of turns' changes that led to the
+/// file as THIS turn found it ([`versions::run_copies`]) -- and the file as this turn found it is
+/// what its first write here replaced, where it has written here already and the bytes are still
+/// the ones it left, else `now` ([`versions::this_turn_found`]).  Bytes a move brought here are
+/// the file as the turns found it where the move took them from, worked out there.
+///
+/// **A delete keeps it as a wipe does** (R4's follow-on, 2026-09-23).  Two trims that each left
+/// over half of a file, and then a delete, held only what the delete found -- the trimmed file --
+/// while the whole of it sat in ordinary rows a prune may take.  A destruction by either verb now
+/// keeps the file as the turns found it.
+///
+/// **Read from the store at every such act, never from a copy of it**: the row the last turn
+/// wrote is the one a run of trims most needs, and a cache a minute old would not have it.
+///
+/// # Arguments
+/// * `path` - As the capture names it: normalised, or absolute for a machine file.
+/// * `now` - The bytes at `path` as the act found them.
+pub async fn turns_found(id: &str, path: &str, now: &[u8]) -> Option<Vec<u8>> {
+    let found = match this_turn_found(id, path, now).await {
+        TurnFound::Made       => return None,
+        TurnFound::Carried(k) => return Some(k),
+        TurnFound::Was(w)     => w,
+    };
+    let held = versions_manifests(id).await;
+    let copies = versions::run_copies(&held, path, &versions::hash_of(&found));
+    for hash in copies.iter().rev() {
+        if let Ok(Some(body)) = versions_body(id, hash).await {
+            return Some(body);
+        }
+    }
+    Some(found)
+}
+
+/// Is the file at `path` the user's rather than this Diamond's own (UNBLOCK-26)?  Not the user's
+/// only where this turn made the bytes that stand there, or the file as this turn found it was
+/// made by the Diamond's earlier turns and touched by nothing since ([`versions::made_by_turns`]).
+/// Bytes a move carried from a file of the user's are his; when unsure, the file is his.
+///
+/// **Read from the store at every such act, never from a copy of it**, as [`turns_found`] is.
+///
+/// # Arguments
+/// * `path` - As the capture names it: normalised, or absolute for a machine file.
+/// * `now` - The bytes at `path` as the act found them.
+pub async fn authored_by_user(id: &str, path: &str, now: &[u8]) -> bool {
+    let found = match this_turn_found(id, path, now).await {
+        TurnFound::Made       => return false,
+        TurnFound::Carried(_) => return true,
+        TurnFound::Was(w)     => w,
+    };
+    let held = versions_manifests(id).await;
+    !versions::made_by_turns(&held, path, folder_of(path).as_deref(), &versions::hash_of(&found))
+}
+
+/// May a turn keeping into `id`'s store replace or remove `path` and still keep what it owes
+/// ([`versions::claim_room`], which says what the two bounds are and why they count copies)?
+///
+/// Counted from `CAPTURED`, which the turn end drains, so the count is the turn's and needs nothing
+/// else to hold it.  **An answer of yes is a reservation**, taken with no await between the asking
+/// and the taking (see `RESERVED`): it answers `Ok(true)` where it reserved `path`, which the
+/// caller gives back with [`release`] if its act fails, and `Ok(false)` where the path was already
+/// held or reserved.
+///
+/// # Arguments
+/// * `path` - The path as the capture names it: normalised, or absolute for a machine file.
+/// * `found` - What the act found at `path`.
+/// * `copy` - The length of the copy the act keeps, or `None` where it keeps none.
+/// * `destroying` - Is this change a delete, or a write that leaves less than half of the file?
+/// * `room` - The ceiling less what held destructions weigh, from [`keep_room`].
+pub fn captured_room(id: &str, path: &str, found: &Found, copy: Option<u64>, destroying: bool,
+    room: u64)
+    -> Result<bool, Short>
+{
+    let key = turn_key(id);
+    CAPTURED.with(|c| RESERVED.with(|r| {
+        let all = c.borrow();
+        let mut res = r.borrow_mut();
+        // THE CAP IS THE STORE'S (D1x1 (1)): every other run keeping into `id` counts, as the tab
+        // counts a daimon and its workers together; what is known and reserved stays this run's.
+        let mut others = versions::Others::default();
+        for (k, held) in all.iter().filter(|(k, _)| **k != key && key_is_of(k, id)) {
+            others.add(held, res.get(k).map(Vec::as_slice).unwrap_or(&[]));
+        }
+        for (k, list) in res.iter() {
+            if *k != key && key_is_of(k, id) && !all.contains_key(k) {
+                others.add(&[], list);
+            }
+        }
+        let held: &[(String, Change)] = match all.get(&key) {
+            Some(h) => h.as_slice(),
+            None    => &[],
+        };
+        let reserved = res.entry(key).or_default();
+        versions::claim_room_among(held, reserved, others, path, found, copy, destroying, room)
+    }))
+}
+
+/// The key of the calling run's ledger in `id`'s store, in `CAPTURED` and `RESERVED`: natively
+/// one per run, its page and the store; in the tab the store alone, the page being the run.
+#[cfg(not(target_arch = "wasm32"))]
+fn turn_key(id: &str) -> String { turn_key_of(&own::this_page(), id) }
+#[cfg(target_arch = "wasm32")]
+fn turn_key(id: &str) -> String { id.to_string() }
+
+/// The ledger key of the run `page` in `id`'s store (see [`turn_key`]).
+#[cfg(not(target_arch = "wasm32"))]
+fn turn_key_of(page: &str, id: &str) -> String { fmt!("{}\u{1f}{}", page, id) }
+#[cfg(target_arch = "wasm32")]
+fn turn_key_of(_page: &str, id: &str) -> String { id.to_string() }
+
+/// Is the ledger key `key` one of `id`'s store, whichever run it is?
+#[cfg(not(target_arch = "wasm32"))]
+fn key_is_of(key: &str, id: &str) -> bool {
+    matches!(key.rsplit_once('\u{1f}'), Some((_, of)) if of == id)
+}
+#[cfg(target_arch = "wasm32")]
+fn key_is_of(key: &str, id: &str) -> bool { key == id }
+
+/// The page whose ledger `key` is: natively its first part; in the tab this page, the only one.
+#[cfg(not(target_arch = "wasm32"))]
+fn page_of_key(key: &str) -> String {
+    match key.rsplit_once('\u{1f}') {
+        Some((page, _)) => page.to_string(),
+        None            => own::this_page(),
+    }
+}
+#[cfg(target_arch = "wasm32")]
+fn page_of_key(_key: &str) -> String { own::this_page() }
+
+/// Forget every ledger the run `page` left, in every store: its captures and its reservations.
+/// The run is gone, so its acts in flight are not, and the notes they left are adopted by the
+/// next turn end once the page is marked dead.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn forget_page(page: &str) {
+    let of = |key: &String| matches!(key.rsplit_once('\u{1f}'), Some((p, _)) if p == page);
+    CAPTURED.with(|c| c.borrow_mut().retain(|k, _| !of(k)));
+    RAN.with(|r| r.borrow_mut().retain(|k, _| !of(k)));
+    RESERVED.with(|r| r.borrow_mut().retain(|k, _| !of(k)));
+    OPAQUE.with(|o| o.borrow_mut().retain(|k| !of(k)));
+    OPEN_DELETES.with(|o| o.borrow_mut().retain(|k, _| !of(k)));
+    SEALED.with(|s| s.borrow_mut().retain(|k, _| !of(k)));
+    PUT_DOWN.with(|p| p.borrow_mut().retain(|k, _| !of(k)));
+}
+
+/// Give back what [`captured_room`] reserved for `path`: its change was captured, or its act
+/// failed.
+pub fn release(id: &str, path: &str) {
+    RESERVED.with(|r| {
+        if let Some(list) = r.borrow_mut().get_mut(&turn_key(id)) {
+            list.retain(|r| r.path != path);
+        }
+    });
+}
+
+/// Is `path` reserved in `id`'s store by the run `page`, an act of its in flight?
+fn reserved_by(page: &str, id: &str, path: &str) -> bool {
+    RESERVED.with(|r| r.borrow().get(&turn_key_of(page, id))
+        .map(|list| list.iter().any(|r| r.path == path))
+        .unwrap_or(false))
+}
+
+/// The room a turn holding a destruction may fill in `id`'s store: the ceiling, less what the
+/// versions inside their destruction hold weigh.
+///
+/// Measured off the store and kept for a minute, because a turn asks it at every change and the
+/// store changes only when a version is recorded or pruned -- which forget it.
+pub async fn keep_room(id: &str) -> u64 {
+    let now = now_ms() as u64;
+    let cached = RETAINED.with(|r| r.borrow().get(id).copied());
+    let retained = match cached {
+        Some((bytes, at)) if now.saturating_sub(at) < 60_000 => bytes,
+        _ => {
+            let held   = versions_manifests(id).await;
+            let bodies = versions_bodies(id).await;
+            let bytes  = versions::retained_bytes(&held, &bodies, now);
+            RETAINED.with(|r| { r.borrow_mut().insert(id.to_string(), (bytes, now)); });
+            bytes
+        },
+    };
+    versions::versions_bytes_cap().saturating_sub(retained)
+}
+
+/// Forget what [`keep_room`] measured of `id`'s store, which has just changed.
+fn forget_room(id: &str) {
+    RETAINED.with(|r| { r.borrow_mut().remove(id); });
+}
+
+/// Take what the file tools captured for this Diamond, leaving nothing.
+///
+/// Each entry is `(the path the model wrote, the capture)`, and the note on `CAPTURED` says why
+/// both names travel.  Drained at the END of a turn and not at the start, so a turn that died with files
+/// already written still records them -- which is the one outcome with no way back.
+/// The `before` this run's turn in `id` keeps for one of its captures, by its hash: a `wipe`
+/// entry's, which the store serves to the child for its wipe test (spec §16.3a 2 (b)).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn turn_before(id: &str, hash: &str) -> Option<Prior> {
+    CAPTURED.with(|c| c.borrow().get(&turn_key(id)).and_then(|v| v.iter()
+        .filter_map(|(_, ch)| ch.before.as_ref())
+        .find(|b| b.hash() == hash)
+        .cloned()))
+}
+
+/// Put down each body the calling run's ledger of `id` holds in hand, and name it there by hash
+/// (D1mem fix B): a ledger holds no file's bytes past the act that captured them.  One body at a
+/// time, under a claim, each replaced only where the ledger still holds those bytes.  Best
+/// effort: a body that cannot be put down stays in hand, which the record writes as before.
+pub async fn slim_turn(id: &str) {
+    let key = turn_key(id);
+    let mut done: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    loop {
+        // The next held body, copied out alone.
+        let next = CAPTURED.with(|c| c.borrow().get(&key).and_then(|v| v.iter()
+            .flat_map(|(_, ch)| ledger_held(ch))
+            .map(|b| (versions::hash_of(b), b))
+            .find(|(h, _)| !done.contains(h))
+            .map(|(h, b)| (h, b.to_vec()))));
+        let (hash, bytes) = match next {
+            Some(n) => n,
+            None    => return,
+        };
+        done.insert(hash.clone());
+        let mut w = match Writing::claim(id, &[hash.clone()]).await {
+            Ok(w)   => w,
+            Err(_)  => continue,
+        };
+        let put = w.put_new(id, &hash, &bytes).await;
+        if let Ok(true) = put {
+            put_down_by_turn(id, &hash);
+        }
+        if put.is_ok() {
+            let r = versions::BodyRef { hash: hash.clone(), len: bytes.len() as u64 };
+            CAPTURED.with(|c| {
+                if let Some(v) = c.borrow_mut().get_mut(&key) {
+                    for (_, ch) in v.iter_mut() {
+                        ledger_store(ch, &r);
+                    }
+                }
+            });
+        }
+        drop(bytes);
+        w.done(id).await;
+    }
+}
+
+/// The bytes a ledger's change holds in hand: its after, its before and what a move carried.
+fn ledger_held(ch: &Change) -> Vec<&[u8]> {
+    let mut v: Vec<&[u8]> = Vec::new();
+    if let Body::Held(b) = &ch.after {
+        if !b.is_empty() { v.push(b); }
+    }
+    if let Some(Prior::Held(b)) = &ch.before {
+        if !b.is_empty() { v.push(b); }
+    }
+    if let Some(versions::Carried::Kept(Prior::Held(b))) = &ch.carried {
+        if !b.is_empty() { v.push(b); }
+    }
+    v
+}
+
+/// Name by `r` every copy of its bytes `ch` holds in hand.
+fn ledger_store(ch: &mut Change, r: &versions::BodyRef) {
+    if matches!(&ch.after, Body::Held(b) if r.names(b)) {
+        ch.after = Body::Stored(r.clone());
+    }
+    if matches!(&ch.before, Some(Prior::Held(b)) if r.names(b)) {
+        ch.before = Some(Prior::Stored(r.clone()));
+    }
+    if matches!(&ch.carried, Some(versions::Carried::Kept(Prior::Held(b))) if r.names(b)) {
+        ch.carried = Some(versions::Carried::Kept(Prior::Stored(r.clone())));
+    }
+}
+
+/// Every body the ledgers of `id`'s store name as stored: in flight until their turn records them,
+/// so no sweep takes one (D1mem fix B).
+fn ledger_stored(id: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    CAPTURED.with(|c| {
+        for (_, v) in c.borrow().iter().filter(|(k, _)| key_is_of(k, id)) {
+            for (_, ch) in v.iter() {
+                change_stored(ch, &mut out);
+            }
+        }
+    });
+    // And those a drain has in hand, out of the ledger but not yet recorded.
+    DRAINING.with(|d| {
+        for (_, hs) in d.borrow().iter().filter(|(k, _)| key_is_of(k, id)) {
+            out.extend(hs.iter().cloned());
+        }
+    });
+    out
+}
+
+/// Add to `out` every body `ch` names as stored: its after, its before and what a move carried.
+fn change_stored(ch: &Change, out: &mut std::collections::BTreeSet<String>) {
+    if let Body::Stored(r) = &ch.after {
+        out.insert(r.hash.clone());
+    }
+    if let Some(Prior::Stored(r)) = &ch.before {
+        out.insert(r.hash.clone());
+    }
+    if let Some(versions::Carried::Kept(Prior::Stored(r))) = &ch.carried {
+        out.insert(r.hash.clone());
+    }
+}
+
+/// Note that the calling run's turn put the body `hash` of `id` down newly (D1mem fix B).
+fn put_down_by_turn(id: &str, hash: &str) {
+    PUT_DOWN.with(|p| { p.borrow_mut().entry(turn_key(id)).or_default().insert(hash.to_string()); });
+}
+
+/// TAKE BACK what the calling run's turn put down newly and no version names, once its record is
+/// written (D1mem fix B, lead ruling of 2026-10-18): a file rewritten N times in a turn leaves the
+/// one body its row names, not N kept for ever.  Only a body this turn WROTE is a candidate, so a
+/// body found there already, an earlier version's, is never one.  A candidate a manifest row keeps, a
+/// mid-turn note names, or a write in flight in any tab claims (a ledger's stored bodies, an
+/// upload staged, another tab's claim) stays.  Where the claims cannot be read nothing goes.
+async fn take_back_unnamed(id: &str) {
+    let mine: Vec<String> = PUT_DOWN.with(|p| p.borrow_mut().remove(&turn_key(id)))
+        .map(|set| set.into_iter().collect())
+        .unwrap_or_default();
+    take_back(id, mine).await;
+}
+
+/// [`take_back_unnamed`] of the bodies `hashes` alone: those a REFUSED call named, as uploads the
+/// calling run's turn put down for it (D1mem fix B), so a refusal leaves no body behind, as it left
+/// none before uploads were put down at their `Done`.  The safeguards are the record's.
+pub async fn take_back_refused(id: &str, hashes: &[String]) {
+    let mine: Vec<String> = PUT_DOWN.with(|p| {
+        let mut all = p.borrow_mut();
+        match all.get_mut(&turn_key(id)) {
+            Some(set) => hashes.iter().filter(|h| set.remove(*h)).cloned().collect(),
+            None      => Vec::new(),
+        }
+    });
+    take_back(id, mine).await;
+}
+
+/// Delete each of `mine` no manifest row keeps, no mid-turn note names and no write in flight
+/// claims ([`take_back_unnamed`]).
+async fn take_back(id: &str, mine: Vec<String>) {
+    if mine.is_empty() {
+        return;
+    }
+    // Named by a row that keeps its body, or as a row's first copy: a skipped row keeps none.
+    let mut named: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (_, m) in versions_manifests(id).await.iter() {
+        for e in m.files.iter() {
+            if e.skipped.is_none() && !e.hash.is_empty() {
+                named.insert(e.hash.clone());
+            }
+            if let Some(w) = &e.was {
+                named.insert(w.clone());
+            }
+        }
+    }
+    let free: Vec<String> = mine.into_iter().filter(|h| !named.contains(h)).collect();
+    if free.is_empty() {
+        return;
+    }
+    let _turn = claims_turn(id).await;
+    let cs = match claims_load(id).await {
+        Ok(cs)  => cs,
+        Err(e)  => {
+            console_log(&fmt!("Diamond '{}': {} unnamed body file(s) the turn put down stay, since \
+                the version claims could not be read ({}).", id, free.len(), e));
+            return;
+        },
+    };
+    let mut keep = versions::InFlight::of(writing(id), Some(&cs), now_ms() as u64).claimed;
+    keep.extend(pending_notes(id).await.into_iter().map(|n| n.was));
+    let mut held: Vec<String> = Vec::new();
+    for hash in free.iter() {
+        if keep.contains(hash) || writing(id).1.contains(hash) {
+            held.push(hash.clone());
+            continue;
+        }
+        if let Err(e) = own::delete_entry(&body_path(id, hash), false).await {
+            console_log(&fmt!("Diamond '{}': the unnamed body {} the turn put down could not be \
+                taken back ({}).", id, hash, e));
+        }
+    }
+    // One still in flight stays the turn's to take back once nothing holds it: a seal recorded
+    // mid-drain leaves the drained ledger's bodies to the turn's own record.
+    for hash in held.iter() {
+        put_down_by_turn(id, hash);
+    }
+}
+
+fn drain_captured(id: &str) -> Vec<(String, Change)> {
+    end_turn_counts(id);
+    CAPTURED.with(|c| c.borrow_mut().remove(&turn_key(id)).unwrap_or_default())
+}
+
+/// End the counts that belong to the calling run's turn keeping into `id`'s store: its
+/// open-folder deletes, with the person's answer, and its seals.  **Only its own** ([`turn_key`]):
+/// natively another run's count, a stop or a "go on" the person gave it included, stands until
+/// that run's own turn ends (D1v2c).
+///
+/// **They end with the turn whether or not its record could be written** (F4, 2026-09-25).  A turn
+/// end refused because another act held the store past the wait used to leave both standing, so
+/// the next turn began on the old count -- its first seal refused as the seventeenth, against the
+/// refusal's own promise that the next turn starts a fresh one.  The captures and notes are NOT
+/// ended here: they stay for the next turn end to adopt.
+pub fn end_turn_counts(id: &str) {
+    OPEN_DELETES.with(|o| { o.borrow_mut().remove(&turn_key(id)); });
+    SEALED.with(|s| { s.borrow_mut().remove(&turn_key(id)); });
+    CHANGES_REFUSED.with(|c| { c.borrow_mut().remove(&turn_key(id)); });
+}
+
+/// Did the person decline, this turn, a change a turn keeping into `id`'s store wants to make at
+/// `path` ([`versions::ChangeRefusals::refused`])?
+pub fn change_refused(id: &str, path: &str) -> bool {
+    CHANGES_REFUSED.with(|c| c.borrow().get(&turn_key(id)).map(|r| r.refused(path)).unwrap_or(false))
+}
+
+/// Record that the person declined a change at `path`, for the rest of the turn.
+pub fn refuse_change(id: &str, path: &str) {
+    CHANGES_REFUSED.with(|c| c.borrow_mut().entry(turn_key(id)).or_default().refuse(path));
+}
+
+// ── The copy on disk before the act ──────────────────────────────────────
+//
+// A turn's copy of what it deletes or replaces was held in wasm memory until the turn ended
+// (audit of 2026-09-23, finding 3): a reload, a closed tab, a wasm OOM or a phone killing the
+// page mid-turn lost every file deleted so far, with no copy anywhere, and a worker outliving its
+// daimon's turn held its captures for hours.  So the bytes go into the store's bodies, with a note
+// naming them, BEFORE the act, and the turn end adopts the notes: a note its own turn captured is
+// settled once the manifest is written, and one nothing captured -- left by an earlier life of the
+// page, or by a record that failed -- becomes a row of that turn's manifest.  The prune keeps
+// every body a note names.
+
+/// The folder under a store's `versions/` that holds the notes of copies taken mid-turn.
+///
+/// Device-local: [`diamond_files`] does not carry it, since a note is about an act of this page.
+const PENDING_DIR: &str = "pending";
+
+/// `<store>/versions/pending`.
+fn pending_dir(id: &str) -> String {
+    fmt!("{}/{}", versions_dir(id), PENDING_DIR)
+}
+
+/// The note for `path` taken by this page: one per path, so the first copy of a path stands.
+fn pending_path(id: &str, path: &str) -> String {
+    pending_path_of(&own::this_page(), id, path)
+}
+
+/// The note for `path` taken by the page `page` (see [`pending_path`]).
+fn pending_path_of(page: &str, id: &str, path: &str) -> String {
+    let tag = versions::hash_of(path.as_bytes());
+    fmt!("{}/{}-{}.json", pending_dir(id), page, &tag[..16])
+}
+
+/// A copy noted mid-turn, or by a restore's act, as its note says.
+struct Pending {
+    name:     String,       // the note's file name
+    page:     String,       // the page life that took it
+    path:     String,       // as the capture names it
+    was:      String,       // the body's hash
+    mark:     bool,
+    restore:  Option<u64>,  // the restore whose act took it; `None` for a turn's
+    folder:   Option<String>,   // the folder the act was in ([`folder_of`]); `None` where none holds it
+}
+
+/// A note's `"folder"` field, where [`folder_of`] names one for `path` now: empty otherwise.
+fn folder_field(path: &str) -> String {
+    match folder_of(path) {
+        Some(f) => fmt!(r#","folder":"{}""#, json_escape(&f)),
+        None    => String::new(),
+    }
+}
+
+/// Every note in `id`'s store.  A note that will not parse is passed over, never an error.
+async fn pending_notes(id: &str) -> Vec<Pending> {
+    let dir = pending_dir(id);
+    let entries = match own::list_dir(&dir).await {
+        Ok(e)  => e,
+        Err(_) => return Vec::new(),        // no notes, which is every store at rest
+    };
+    let mut out = Vec::new();
+    for (name, is_dir, _) in entries {
+        if is_dir || !name.ends_with(".json") {
+            continue;
+        }
+        let bytes = match own::read_file(&fmt!("{}/{}", dir, name)).await {
+            Ok(b)  => b,
+            Err(_) => continue,
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        let (page, path, was) = match (extract_json_string(&text, "page"),
+            extract_json_string(&text, "path"), extract_json_string(&text, "was"))
+        {
+            (Some(a), Some(b), Some(c)) if versions::is_hash(&c) => (a, b, c),
+            _                                                    => continue,
+        };
+        out.push(Pending {
+            name,
+            page,
+            path,
+            was,
+            mark:     extract_json_bool(&text, "mark").unwrap_or(false),
+            restore:  crate::llm::extract_json_number(&text, "restore"),
+            folder:   extract_json_string(&text, "folder").filter(|f| !f.is_empty()),
+        });
+    }
+    out
+}
+
+/// Put the bytes `path` held before this turn's act into `id`'s store, with a note naming them,
+/// BEFORE the act -- and answer whether this call wrote the note.
+///
+/// A path this page has already noted keeps its first note: the first `before` is the state the
+/// row goes back to.  The body goes first, so a failure half way leaves a body nothing names,
+/// which the sweep collects, rather than a note naming bytes that are not there.
+///
+/// **Except that a destruction's copy replaces an edit's note** (R4's follow-on, 2026-09-23), as
+/// its capture replaces the edit's ([`capture`]).  A turn that edits a file and then wipes it, or
+/// deletes it, holds the file as the turns found it; the note still named what the edit found, so
+/// a page that died before the turn ended left the next turn end to adopt the edit's bytes and not
+/// the copy the live path records.  A note so replaced answers `false`: it was this turn's
+/// already, and an act that then fails must not withdraw the edit's record with it.
+///
+/// # Arguments
+/// * `path` - As the capture will name it: normalised, or absolute for a machine file.
+/// * `before` - The bytes it held.
+/// * `deleting` - Is the act a destruction: a delete, or a write that wipes the file?
+/// * `mark` - Is the path outside the keeper's home, so a restore goes back through the fence?
+pub async fn pend(id: &str, path: &str, before: &[u8], deleting: bool, mark: bool)
+    -> Outcome<bool>
+{
+    // NO NOTE FOR NO RUN: natively a note is stamped with its run's page, and one outside any run
+    // would be every run's to adopt.
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::store::run::current(|e| e.page.is_empty()).unwrap_or(true) {
+        return Err(err!("a note on {} with no run to stamp it is refused", path; Invalid, Input));
+    }
+    let note = pending_path(id, path);
+    let mut replaced = false;
+    if res!(own::exists(&note).await) {
+        if !deleting || noted_destruction(&note).await {
+            return Ok(false);
+        }
+        replaced = true;
+    }
+    let hash = versions::hash_of(before);
+    // Outside the version hold: claimed for every tab's sweep until the note names the body.
+    let mut w = res!(Writing::claim(id, &[hash.clone()]).await);
+    let page = own::this_page();
+    let text = fmt!(r#"{{"page":"{}","path":"{}","was":"{}","deleting":{},"mark":{}{},"ts":{}}}"#,
+        json_escape(&page), json_escape(path), hash, deleting, mark, folder_field(path),
+        now_ms() as u64);
+    let wrote = match w.put(id, &hash, before).await {
+        Ok(())  => own::write_file(&note, text.as_bytes()).await,
+        Err(e)  => Err(e),
+    };
+    w.done(id).await;
+    res!(wrote);
+    Ok(!replaced)
+}
+
+/// Was the note at `note` taken for a destruction?  A note that will not read is taken to have
+/// been, so it is left as it stands.
+async fn noted_destruction(note: &str) -> bool {
+    match own::read_file(note).await {
+        Ok(b)  => extract_json_bool(&String::from_utf8_lossy(&b), "deleting") != Some(false),
+        Err(_) => true,
+    }
+}
+
+/// Withdraw the note [`pend`] wrote for an act that did not happen.  Best effort: a note left
+/// behind is adopted at the next turn end, where the path reads as it stands and a row that did
+/// not change is not written.
+pub async fn unpend(id: &str, path: &str) {
+    let _ = own::delete_entry(&pending_path(id, path), false).await;
+}
+
+/// Take what this turn changed in `id`'s store: what the file tools captured, and a change for
+/// every noted copy nothing captured -- and the notes to [`settle`] once the manifest is written.
+///
+/// A note of this page's whose act is still in flight (a worker mid-call) is left for the turn
+/// end that captures it.  Every other uncaptured note is adopted: its `before` is the noted body,
+/// and its `after` is the path as it stands now -- gone, or its bytes, which a record then drops
+/// as unchanged where the act never ran.
+///
+/// **A note another life of the page left, on a path this life captured, is a broken run, and is
+/// recorded as a version of its own here** (R2-2 of the Q5-1 fix's QA, 2026-09-24).  The earlier
+/// life changed the file and died before its turn ended; this life changed it again, and its
+/// capture begins at what the earlier life left.  The note is the older copy -- the file as the
+/// turns found it -- and it was settled with nothing recording it, so the original was in no row.
+/// Recorded as [`seal_run`] records a run the user's editor ended: its own version, the turn's by
+/// cause, from the noted copy to what this life found, under the caller's hold and before the
+/// turn's own record, so both copies have rows.  A note whose version could not be written is
+/// left on disk, still pinning its body, for the next turn end to adopt.
+///
+/// **And a capture whose file no longer holds what the turn left is sealed, not recorded over**
+/// (release 5.1's restore follow-ups, 2026-09-25).  A write from outside the turn after its last
+/// act -- a Restore in another tab, which cannot end this page's run as a Restore here does
+/// ([`end_run`]), or the person's own editor -- would otherwise be buried under the turn's row:
+/// the History naming the turn's bytes over what is on disk, and the turn's Undo putting its first
+/// bytes back over them.  So each of this page's captures is read again here, under the hold.  One
+/// that no longer stands as the turn left it ([`versions::stands_as_left`]) is recorded as a
+/// version of its own, the turn's by cause, as a run the person's editor ended mid-turn is
+/// ([`seal_run`]); what stands now is recorded after it, as the person's; and it leaves the
+/// turn's own version.  Where the store's newest row already says what stands -- another tab's
+/// restore recorded it -- and every byte of the run is named by some row, nothing more is recorded.  Its path is answered in the third list, so the turn end does not record
+/// it again from its ledger.  Where either version cannot be written, the capture is recorded with
+/// the turn as it always was -- and so is every capture of a turn that ran a command or a worker
+/// ([`ran_opaque`]), whose own writes no capture sees and so cannot be told from anyone else's.
+///
+/// # Arguments
+/// * `ctx` - The turn's own tool context: what a machine file is read again through.
+pub async fn drain_turn<H: crate::engine::host::Host>(hold: &VersionHold, id: &str,
+    ctx: &crate::tools::ToolContext<H>)
+    -> (Vec<(String, Change)>, Vec<String>, Vec<String>)
+{
+    drain_turn_by(hold, id, &CtxReads(ctx)).await
+}
+
+/// [`drain_turn`], reading the person's files through `src` (spec §16.3 1): a capture read again
+/// ([`StandingSource::standing`]) and an adopted note's path ([`StandingSource::workspace_capped`]).
+/// A Diamond's own files are read from the backend ([`by_source`]).
+///
+/// **The ledger's stored bodies stay protected while the drain has them** (D1mem fix B): a seal
+/// it records ([`versions_record_held`]) takes back what the turn put down, and a body the
+/// drained ledger names but no row yet does would otherwise go before the turn's own record.
+pub async fn drain_turn_by<S: StandingSource>(hold: &VersionHold, id: &str, src: &S)
+    -> (Vec<(String, Change)>, Vec<String>, Vec<String>)
+{
+    let key = turn_key(id);
+    let mut in_hand = std::collections::BTreeSet::new();
+    CAPTURED.with(|c| {
+        if let Some(v) = c.borrow().get(&key) {
+            for (_, ch) in v.iter() {
+                change_stored(ch, &mut in_hand);
+            }
+        }
+    });
+    DRAINING.with(|d| { d.borrow_mut().insert(key.clone(), in_hand); });
+    let out = drain_turn_held(hold, id, src).await;
+    DRAINING.with(|d| { d.borrow_mut().remove(&key); });
+    out
+}
+
+/// Does some version of the Diamond `id` already hold the bytes hashed `hash` at `path` (in
+/// `folder`, where named), as what stood before a row or what it left?
+async fn held_as_version(id: &str, path: &str, folder: Option<&str>, hash: &str) -> bool {
+    versions_manifests(id).await.iter().any(|(_, m)| m.files.iter().any(|e| e.path == path
+        && (folder.is_none() || e.folder.as_deref() == folder)
+        && (e.hash == hash || e.was.as_deref() == Some(hash))))
+}
+
+/// [`drain_turn_by`] once the drained ledger's stored bodies are noted as in hand.
+async fn drain_turn_held<S: StandingSource>(hold: &VersionHold, id: &str, src: &S)
+    -> (Vec<(String, Change)>, Vec<String>, Vec<String>)
+{
+    let mut captured = drain_captured(id);
+    // A turn that ran a command or a worker may have changed its own files where no capture saw,
+    // so it records them as it always did.
+    let opaque = OPAQUE.with(|o| o.borrow_mut().remove(&turn_key(id)));
+    let own = if opaque { 0 } else { captured.len() };
+    let notes = pending_notes(id).await;
+    let mut settle_list: Vec<String> = Vec::new();
+    let mut broken: Vec<(String, Change)> = Vec::new();    // (the note, the run it began)
+    // A LIVE PAGE'S NOTE IS ITS OWN ([`own::page_is_live`]): in the tab only this page is live;
+    // natively, so is every run still running on the store.
+    let this = own::this_page();
+    for note in notes.into_iter() {
+        // ANOTHER LIVE RUN'S NOTE IS ITS OWN, whatever it is: its own turn end settles it.  Never
+        // in the tab, where only this page is live.
+        if note.page != this && own::page_is_live(&note.page) {
+            continue;
+        }
+        // A RESTORE'S COPY IS ITS OWN RECORD'S while the restore is open on this page: its close
+        // records it under the restore.  One whose restore is gone -- a page that died between the
+        // act and the close, or a close that could not write -- is adopted here as any other
+        // life's note is, so the copy is a row whoever records it.
+        let restoring = note.restore.is_some();
+        if let Some(t) = note.restore {
+            if restore_holds_note(t) || (own::page_is_live(&note.page) && restore_is_open(t)) {
+                continue;
+            }
+            // Another tab's restore, still open while it holds its lock (U3): its close records it.
+            // A close settles its notes before it lets the lock go, so a note that is gone by the
+            // time the lock reads free was the close's, and is not adopted either.
+            if !own::page_is_live(&note.page) {
+                if own::lock_held(&restore_lock_name(&note.page, t)).await == Some(true) {
+                    continue;
+                }
+                let at = fmt!("{}/{}", pending_dir(id), note.name);
+                if !own::exists(&at).await.unwrap_or(false) {
+                    continue;
+                }
+            }
+        }
+        // The same file is the same path in the same folder: another folder's note on the path is
+        // a file of its own, adopted below (HR).
+        if let Some((_, ch)) = captured.iter().find(|(_, ch)| ch.path == note.path
+            && (note.folder.is_none() || ch.folder == note.folder))
+        {
+            // THIS LIFE'S NOTE THAT ITS CAPTURE DOES NOT BEGIN AT is an act whose answer was not
+            // known (QA1-C): its hold kept the note ([`crate::tools`]' `let_go`), the act landed
+            // after all, and a later act on the path captured from what it left.  The note is the
+            // older copy, in no row, so it is recorded as an earlier life's broken run is.  A
+            // capture that begins at the note's copy is the ordinary case, and settles it.
+            let unnamed = match &ch.before {
+                Some(Prior::Held(b))   => versions::hash_of(b) != note.was,
+                Some(Prior::Stored(r)) => r.hash != note.was,
+                None                   => true,
+            };
+            // ITS COPY IS A ROW ONCE, never twice (QA1-D, lead ruling): bytes some version of the
+            // path already holds, before or after, add none; only a copy held nowhere does.
+            // A test's red: off("unnamed_once").
+            let earlier = !own::page_is_live(&note.page) || restoring;
+            if !earlier && unnamed && !off("unnamed_once")
+                && held_as_version(id, &note.path, note.folder.as_deref(), &note.was).await
+            {
+                settle_list.push(note.name);
+                continue;
+            }
+            if earlier || unnamed {
+                // What this life found at the path is where the earlier life's run ended.
+                let ended = match &ch.before {
+                    Some(Prior::Held(b))   => Body::Held(b.clone()),
+                    Some(Prior::Stored(r)) => Body::Stored(r.clone()),
+                    None                   => Body::Gone,
+                };
+                match own::read_file(&body_path(id, &note.was)).await {
+                    Ok(before) => broken.push((note.name, Change {
+                        path:    note.path,
+                        after:   ended,
+                        before:  Some(Prior::Held(before)),
+                        found:   Found::Unread,
+                        carried: None,
+                        mark:    note.mark,
+                        refused: None,
+                        wiped:   false,
+                        folder:  note.folder,
+                        by:      None,  // an earlier life of the page made it, and did not say who
+                        door:    false,
+                    })),
+                    // The body is gone, so the note names nothing to restore.
+                    Err(_) => settle_list.push(note.name),
+                }
+                continue;
+            }
+            settle_list.push(note.name);
+            continue;
+        }
+        let live = own::page_is_live(&note.page) && !restoring
+            && reserved_by(&note.page, id, &note.path);
+        if live {
+            continue;
+        }
+        let before = match own::read_file(&body_path(id, &note.was)).await {
+            Ok(b)  => b,
+            Err(_) => {
+                // The body is gone, so the note names nothing to restore; it is only clutter.
+                settle_list.push(note.name);
+                continue;
+            },
+        };
+        // A NOTE TAKEN IN ANOTHER FOLDER is not read in this one (HR): what stands at its path now
+        // is another folder's file, and the row keeps what stood before in its own.
+        let away = note.folder.is_some() && note.folder != folder_of(&note.path);
+        let after = if note.path.starts_with('/') || away {
+            // A machine file, which only the hand can read: the row keeps what stood before.
+            Body::Unseen
+        } else {
+            capped_by(&note.path, src).await
+        };
+        // Whether its act wiped the file is worked out again at the record, from the note's bytes
+        // and the file's, since the page that knew is gone.
+        captured.push((note.path.clone(), Change {
+            path:    note.path,
+            after,
+            before:  Some(Prior::Held(before)),
+            found:   Found::Unread,
+            carried: None,
+            mark:    note.mark,
+            refused: if away { Some(IN_ANOTHER_FOLDER.to_string()) } else { None },
+            wiped:   false,
+            folder:  note.folder,
+            by:      None,          // an earlier life of the page made it, and did not say who
+            door:    false,
+        }));
+        settle_list.push(note.name);
+    }
+    if !broken.is_empty() {
+        let (names, runs): (Vec<String>, Vec<Change>) = broken.into_iter().unzip();
+        match versions_record_held(hold, id, None, Cause::Turn, "", "", runs).await {
+            Ok(_)  => settle_list.extend(names),
+            Err(e) => console_log(&fmt!("Diamond '{}': the copies an earlier life of this page \
+                took could not be recorded ({}); their notes stay for the next turn end.", id, e)),
+        }
+    }
+    // THE TURN'S BYTES, READ AGAIN: this page's captures only, since an adopted note's `after` is
+    // the path as it stands already.  Nothing is read where the capture's own bytes were not.
+    let mut kept: Vec<(String, Change)> = Vec::new();
+    let mut moved: Vec<((String, Change), Body)> = Vec::new();
+    for (i, (raw, ch)) in captured.into_iter().enumerate() {
+        // A `Large` after is read again as a `Held` one is, and stands by the tab's rule (O1).
+        let now = match (&ch.after, i < own) {
+            (Body::Held(_), true) | (Body::Large(_), true) | (Body::Stored(_), true)
+                | (Body::Gone, true) => standing_by(&ch.path, &ch.after, src).await,
+            (Body::Held(_), false) | (Body::Large(_), false) | (Body::Stored(_), false)
+                | (Body::Gone, false)
+                | (Body::TooLarge(_), _) | (Body::Unseen, _) => None,
+        };
+        match now {
+            Some(now) if !versions::stands_as_left(&ch.after, &now) => moved.push(((raw, ch), now)),
+            _ => {
+                // THE WIPE OF A LARGE AFTER IS THE CHILD'S TO TELL (spec §16.3a 2 (b)): the store
+                // never holds its bytes, so the child's staged `turn_wiped` answer joins what the
+                // capture said, which the record then reads as it reads a `Held` after's re-check.
+                // With no answer the capture's own `wiped` stands.
+                let mut ch = ch;
+                if let Body::Large(_) = ch.after {
+                    if (ch.mark || theirs(id, &ch.path)) && by_source(&ch.path) {
+                        if let Some(w) = src.wiped(&ch.path, &ch.after).await {
+                            ch.wiped = ch.wiped || w;
+                        }
+                    }
+                }
+                kept.push((raw, ch))
+            },
+        }
+    }
+    let mut left: Vec<String> = Vec::new();
+    let mut runs: Vec<(String, Change)> = Vec::new();
+    let mut nows: Vec<Change> = Vec::new();
+    if !moved.is_empty() {
+        // WHAT A RESTORE IN ANOTHER TAB ALREADY RECORDED STANDS ALONE (release 5.1 QA round 3, TW).
+        // Its row says what is on disk, and its `was` is the turn's bytes, so where the store's
+        // newest row for the path already says what stands, and every byte of the turn's run is
+        // named by some row, nothing more is recorded.  A second row would repeat the restore's
+        // under the person's name.
+        let held = versions_manifests(id).await;
+        let index = versions::index_placed(&held);
+        let mut named: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (_, m) in held.iter() {
+            for e in m.files.iter() {
+                if !e.hash.is_empty() {
+                    named.insert(e.hash.clone());
+                }
+                if let Some(w) = &e.was {
+                    named.insert(w.clone());
+                }
+            }
+        }
+        let recorded = |p: &str| held.iter().any(|(_, m)| m.files.iter().any(|e| e.path == p));
+        for ((raw, ch), now) in moved.into_iter() {
+            // In the folder the turn's act was in (HX3): another folder's row says nothing here.
+            let said = versions::indexed_was(&index, &ch.path, ch.folder.as_deref());
+            let told = match &now {
+                Body::Held(b)                    => said == Some(versions::hash_of(b)),
+                Body::Large(r) | Body::Stored(r) => said.as_deref() == Some(r.hash.as_str()),
+                Body::Gone                       => said.is_none() && recorded(&ch.path),
+                Body::TooLarge(_) | Body::Unseen => false,
+            };
+            let in_rows = |h: Option<String>| match h {
+                Some(h) => named.contains(&h),
+                None    => true,
+            };
+            // A run's bytes are named by hash, so a `Large` after is checked as its `Held` one.
+            let after = match &ch.after {
+                Body::Held(b)                                  => Some(versions::hash_of(b)),
+                Body::Large(r) | Body::Stored(r)               => Some(r.hash.clone()),
+                Body::Gone | Body::TooLarge(_) | Body::Unseen  => None,
+            };
+            if told && in_rows(after) && in_rows(ch.before.as_ref().map(Prior::hash)) {
+                left.push(raw);
+                continue;
+            }
+            nows.push(Change {
+                path:    ch.path.clone(),
+                after:   now,
+                before:  None,     // the sealed run's bytes, from the history
+                found:   Found::Unread,
+                carried: None,
+                mark:    ch.mark,
+                refused: None,
+                wiped:   false,
+                folder:  ch.folder.clone(),
+                by:      None,      // written from outside the turn, by nobody it can name
+                door:    false,
+            });
+            runs.push((raw, ch));
+        }
+    }
+    if !runs.is_empty() {
+        let sealed: Vec<Change> = runs.iter().map(|(_, ch)| ch.clone()).collect();
+        match versions_record_held(hold, id, None, Cause::Turn, "", "", sealed).await {
+            Ok(_)  => {
+                if let Err(e) = versions_record_held(hold, id, None, Cause::User, "", "", nows).await {
+                    console_log(&fmt!("Diamond '{}': what stands at the files changed after this \
+                        turn's last act could not be recorded ({}); the turn's own bytes are.",
+                        id, e));
+                }
+                left.extend(runs.into_iter().map(|(raw, _)| raw));
+            },
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}': the files changed after this turn's last act \
+                    could not be sealed ({}), so they are recorded with the turn.", id, e));
+                kept.extend(runs);
+            },
+        }
+    }
+    (kept, settle_list, left)
+}
+
+/// What stands at a capture's path: the person's through `src`, a Diamond's own from the backend.
+async fn standing_by<S: StandingSource>(path: &str, after: &Body, src: &S) -> Option<Body> {
+    if by_source(path) { src.standing(path, after).await } else { store_standing(path).await }
+}
+
+/// An adopted note's path as it stands, read as [`standing_by`] reads.
+async fn capped_by<S: StandingSource>(path: &str, src: &S) -> Body {
+    if by_source(path) { src.workspace_capped(path).await } else { TabReads.workspace_capped(path).await }
+}
+
+/// [`versions_changes`] of `paths`, in their order: the person's through `src`, a Diamond's own
+/// from the backend.
+pub(crate) async fn changes_by<S: StandingSource>(id: &str, paths: &[String], src: &S) -> Vec<Change> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < paths.len() {
+        let theirs = by_source(&paths[i]);
+        let mut j = i + 1;
+        while j < paths.len() && by_source(&paths[j]) == theirs {
+            j += 1;
+        }
+        let run = &paths[i..j];
+        out.extend(if theirs { src.changes(id, run).await } else { versions_changes(id, run).await });
+        i = j;
+    }
+    out
+}
+
+/// What this turn's end will ask of the person's files, for a child to read before it ends the
+/// turn (spec §16.3 2 (a)).  **A peek: nothing is drained**, so two calls answer alike and the
+/// turn end that follows sees what it would have.  Worked out as [`drain_turn_by`] and
+/// [`drain_windows_by`] work it out, and never short: a note listed that the turn end does not
+/// adopt costs a read, while one left out would be recorded unseen.
+pub async fn turn_wants(id: &str) -> Wants {
+    let captured: Vec<(String, Change)> = CAPTURED.with(|c| c.borrow().get(&turn_key(id)).cloned()
+        .unwrap_or_default());
+    let opaque = OPAQUE.with(|o| o.borrow().contains(&turn_key(id)));
+    let mut wants = Wants::default();
+    if !opaque {
+        for (_, ch) in captured.iter() {
+            // A `Large` after is listed as the `Held` bytes it names would be, by their hash;
+            // `large` gives the child what it left there for O1's rule (`large_stands`).
+            let (seen, left) = match &ch.after {
+                Body::Held(b)  => (versions::Seen::of(Some(b)), Some(versions::BodyRef::of(b))),
+                Body::Large(r) | Body::Stored(r) =>
+                    (versions::Seen::Bytes(r.hash.clone()), Some(r.clone())),
+                Body::Gone     => (versions::Seen::of(None), None),
+                Body::TooLarge(_) | Body::Unseen => continue,
+            };
+            if !by_source(&ch.path) || wants.own.iter().any(|(p, s)| *p == ch.path && *s == seen) {
+                continue;
+            }
+            if let Some(left) = left.filter(|r| r.len as usize > versions::VERSION_FILE_MAX) {
+                wants.large.push((ch.path.clone(), left));
+            }
+            // A marked `Large` after with a first copy: the child runs the wipe test the record
+            // runs on `Held` bytes, against `before`, and sends `turn_wiped`.
+            if let (Body::Large(_), Some(before)) = (&ch.after, &ch.before) {
+                if ch.mark || theirs(id, &ch.path) {
+                    wants.wipe.push((ch.path.clone(), seen.clone(), before.by_ref()));
+                }
+            }
+            wants.own.push((ch.path.clone(), seen));
+        }
+    }
+    for note in pending_notes(id).await.into_iter() {
+        if captured.iter().any(|(_, ch)| ch.path == note.path
+            && (note.folder.is_none() || ch.folder == note.folder))
+        {
+            continue;
+        }
+        let live = own::page_is_live(&note.page);
+        match note.restore {
+            Some(t) if restore_holds_note(t) || (live && restore_is_open(t)) => continue,
+            None if live && reserved_by(&note.page, id, &note.path) => continue,
+            _ => (),
+        }
+        let away = note.folder.is_some() && note.folder != folder_of(&note.path);
+        if note.path.starts_with('/') || away || !by_source(&note.path)
+            || wants.notes.contains(&note.path)
+        {
+            continue;
+        }
+        wants.notes.push(note.path);
+    }
+    let windows = WINDOWS.with(|w| match w.borrow().get(id) {
+        Some(store) => store.peek(),
+        None        => Vec::new(),
+    });
+    if !windows.is_empty() {
+        let owners: Vec<(String, Option<crate::rating::Author>)> = captured.iter()
+            .map(|(_, ch)| (ch.path.clone(), ch.by.clone()))
+            .collect();
+        // Not filtered by the captures: `drain_windows_by` passes over only the captures the
+        // turn end kept, and one a later window moved is not kept, so its path is read there.
+        // An extra read costs one read; a missing one loses the bytes as unseen.
+        for c in versions::attribute(&windows, &owners).into_iter() {
+            if !by_source(&c.path) || !versionable(id, &c.path) || wants.windows.contains(&c.path) {
+                continue;
+            }
+            wants.windows.push(c.path);
+        }
+    }
+    wants
+}
+
+/// Remove the notes a turn end has recorded.  Best effort: a note left behind names a body the
+/// manifest already names, and is adopted as an unchanged path at the next turn end.
+pub async fn settle(id: &str, names: &[String]) {
+    let dir = pending_dir(id);
+    for name in names.iter() {
+        let _ = own::delete_entry(&fmt!("{}/{}", dir, name), false).await;
+    }
+}
+
+// ── A generated output, made again ───────────────────────────────────────
+//
+// `typst_compile` and `capture` write their outputs over their own last ones without a copy, and
+// over anything else with the copy every write keeps.  Which is which is decided by provenance: a
+// note of the bytes the tool last wrote at the path ([`versions::output_note_says`]), kept in the
+// store because no tool's licence reaches it.
+
+/// The folder under a store's `versions/` holding the notes of what a generating tool last wrote.
+///
+/// Device-local, as [`PENDING_DIR`] is, and for a sharper reason: a note is what lets an output
+/// be written over with no copy, so one carried in from another device's copy of the Diamond
+/// would be another device vouching for bytes on this one.
+const OUTPUTS_DIR: &str = "outputs";
+
+/// Is `rel`, a path inside a Diamond, this device's own and never carried in either direction:
+/// the notes of copies taken mid-turn ([`PENDING_DIR`]) and of generated outputs
+/// ([`OUTPUTS_DIR`])?  An export leaves them out, and an import lays none down, so a pack from
+/// anywhere cannot plant one.
+pub(crate) fn device_local(rel: &str) -> bool {
+    // The claims of writes in flight are this device's tabs' (D-26 HISTFIX2 b5).
+    if rel == fmt!("{}/{}", VERSIONS_SUBDIR, versions::CLAIMS_FILE) {
+        return true;
+    }
+    [PENDING_DIR, OUTPUTS_DIR].iter().any(|d| {
+        let dir = fmt!("{}/{}", VERSIONS_SUBDIR, d);
+        rel == dir || rel.starts_with(&fmt!("{}/", dir))
+    })
+}
+
+/// The note for `path`: one per path, so a tool's latest output is the one it stands for.
+fn output_note_path(id: &str, path: &str) -> String {
+    let tag = versions::hash_of(path.as_bytes());
+    fmt!("{}/{}/{}.json", versions_dir(id), OUTPUTS_DIR, &tag[..32])
+}
+
+/// Did `tool` itself leave exactly `bytes` at `path`, in a turn keeping into `id`'s store on this
+/// device?  No note, or one that will not read, says no -- and the output is then kept as any
+/// other write's is, which is the safe side to fail on.
+///
+/// # Arguments
+/// * `path` - Normalised, as the capture names it.
+/// * `bytes` - What stands at `path` now.
+pub async fn output_is_own(id: &str, tool: &str, path: &str, bytes: &[u8]) -> bool {
+    output_is_own_by_hash(id, tool, path, &versions::hash_of(bytes)).await
+}
+
+/// [`output_is_own`] of the bytes whose hash is `hash`, for a caller holding them by reference.
+pub async fn output_is_own_by_hash(id: &str, tool: &str, path: &str, hash: &str) -> bool {
+    match own::read_file(&output_note_path(id, path)).await {
+        Ok(b)  => versions::output_note_says_hash(&String::from_utf8_lossy(&b), tool, path, hash),
+        Err(_) => false,
+    }
+}
+
+/// Note that `tool` has just written `bytes` at `path`.  Best effort: a note that was not written
+/// only means the next output there is kept as a user's file would be.
+///
+/// # Arguments
+/// * `path` - Normalised, as the capture names it.
+pub async fn note_output(id: &str, tool: &str, path: &str, bytes: &[u8]) {
+    note_output_by_hash(id, tool, path, &versions::hash_of(bytes)).await
+}
+
+/// [`note_output`] of the bytes whose hash is `hash` (spec §16.3a: an output by reference).
+pub async fn note_output_by_hash(id: &str, tool: &str, path: &str, hash: &str) {
+    let note = versions::output_note_by_hash(tool, path, hash);
+    if let Err(e) = own::write_file(&output_note_path(id, path), note.as_bytes())
+        .await
+    {
+        console_log(&fmt!("Diamond '{}': the note of what {} wrote at '{}' was not kept ({}), so \
+            the next output there will be kept as a user's file is.", id, tool, path, e));
+    }
+}
+
+/// The files the Diamond's file tools last wrote, with the sha256 of what they left, newest first:
+/// its manifests' recent window, this turn's captures ([`versions::made_by_diamond`], MADE-1) and
+/// what this turn's commands made ([`ran_made`], MADE-2).
+pub async fn made_files(id: &str) -> Vec<(String, String)> {
+    let manifests = versions_manifests(id).await;
+    let ran: Vec<(String, String, bool)> = RAN.with(|r| r.borrow().get(&turn_key(id))
+        .map(|v| v.iter().filter(|(_, _, _, by)| by.is_some())
+            .map(|(p, h, c, _)| (p.clone(), h.clone(), *c)).collect())
+        .unwrap_or_default());
+    CAPTURED.with(|c| match c.borrow().get(&turn_key(id)) {
+        Some(held) => versions::made_by_diamond_ran(&manifests, held, &ran),
+        None       => versions::made_by_diamond_ran(&manifests, &[], &ran),
+    })
+}
+
+/// A manifest's path, `diamonds/<id>/versions/NNNN.files.json`.
+fn manifest_path(id: &str, version: u64) -> String {
+    fmt!("{}/{}", versions_dir(id), versions::manifest_name(version))
+}
+
+/// A body's path, `diamonds/<id>/versions/b/<sha256hex>`. Public so the wasm app can
+/// hand the store path to the JS viewer, which reads the bytes through `store_read_bytes`
+/// -- a binary changed file is then shown through the viewer door, not lossily as text.
+pub fn body_path(id: &str, hash: &str) -> String {
+    fmt!("{}/{}", versions_dir(id), versions::body_name(hash))
+}
+
+// ── Writes in flight ──────────────────────────────────────────────────────
+
+thread_local! {
+    /// The writes now between their bodies and the manifest or note that names them, by token:
+    /// the Diamond, when the write began, and the bodies it relies on.
+    static WRITING: std::cell::RefCell<
+        std::collections::BTreeMap<u64, (String, u64, std::collections::BTreeSet<String>)>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+    static WRITING_NEXT: std::cell::Cell<u64> = std::cell::Cell::new(0);
+}
+
+/// A write that puts bodies down before it names them, in flight until dropped, so that a sweep
+/// never takes them in between (D-26 HISTFIX2 fix 3b).  Held to the end of the write, including
+/// a write that fails: what it left unnamed then is the next sweep's.
+///
+/// **Two kinds** (b5, rc-b ruling).  A write under the version hold from its first body to its
+/// name ([`Writing::begin`]) is never met by another tab's sweep, which takes the same hold; this
+/// page's registry keeps its own prune off it.  A write outside the hold ([`Writing::claim`]:
+/// a copy noted mid-turn, a restore's) also claims its bodies in [`versions::CLAIMS_FILE`] for
+/// every tab's sweep to read, on a lease it renews while it runs, and clears the claim once the
+/// name is written ([`Writing::done`]).  A claim its tab never cleared lapses with the lease.
+struct Writing {
+    token: u64,
+    claim: Option<versions::Claim>,     // as last written to the claims file
+}
+
+impl Writing {
+    fn begin(id: &str) -> Self {
+        let token = WRITING_NEXT.with(|n| { let t = n.get(); n.set(t + 1); t });
+        WRITING.with(|w| { w.borrow_mut().insert(token,
+            (id.to_string(), now_ms() as u64, std::collections::BTreeSet::new())); });
+        Writing { token, claim: None }
+    }
+
+    /// Begin a write outside the version hold of the bodies `hashes`, claimed in the claims file
+    /// before any is put down.
+    async fn claim(id: &str, hashes: &[String]) -> Outcome<Self> {
+        Self::claim_in(id, hashes, None).await
+    }
+
+    /// [`Writing::claim`], its claims file written under `held` where the caller holds the
+    /// version store already (never asked for again, so never waited on), else under a hold of
+    /// its own.
+    async fn claim_in(id: &str, hashes: &[String], held: Option<&VersionHold>) -> Outcome<Self> {
+        let mut w = Self::begin(id);
+        let c = versions::Claim::new(&own::this_page(), w.token, hashes.to_vec(),
+            now_ms() as u64);
+        res!(claims_edit_in(id, held, |cs| cs.push(c.clone())).await);
+        w.claim = Some(c);
+        Ok(w)
+    }
+
+    /// Put `bytes` down as the body `hash`, where it is not there already, and claim it either way.
+    /// A body the turn put down for an upload is this write's now, as the direct store would have
+    /// written it (a mid-turn note's copy, a restore's), so its record does not take it back.
+    async fn put(&mut self, id: &str, hash: &str, bytes: &[u8]) -> Outcome<()> {
+        res!(self.put_new(id, hash, bytes).await);
+        PUT_DOWN.with(|p| {
+            if let Some(set) = p.borrow_mut().get_mut(&turn_key(id)) {
+                set.remove(hash);
+            }
+        });
+        Ok(())
+    }
+
+    /// [`Writing::put`], answering whether it wrote the body: `false` where it was there already.
+    async fn put_new(&mut self, id: &str, hash: &str, bytes: &[u8]) -> Outcome<bool> {
+        // Claimed before it is looked for: a body found there is as much this write's as one written.
+        WRITING.with(|w| {
+            if let Some((_, _, hs)) = w.borrow_mut().get_mut(&self.token) {
+                hs.insert(hash.to_string());
+            }
+        });
+        let now = now_ms() as u64;
+        let renew = match &self.claim {
+            Some(c) => !c.bodies.iter().any(|h| h == hash)
+                || now >= c.until.saturating_sub(versions::CLAIM_LEASE_MS / 2),
+            None    => false,
+        };
+        if renew {
+            if let Some(mut c) = self.claim.take() {
+                if !c.bodies.iter().any(|h| h == hash) {
+                    c.bodies.push(hash.to_string());
+                }
+                c.until = now.saturating_add(versions::CLAIM_LEASE_MS);
+                let (tab, token) = (c.tab.clone(), c.token);
+                let row = c.clone();
+                res!(claims_edit(id, move |cs| {
+                    cs.retain(|x| !x.is(&tab, token));
+                    cs.push(row);
+                }).await);
+                self.claim = Some(c);
+            }
+        }
+        let to = body_path(id, hash);
+        if res!(own::exists(&to).await) {
+            return Ok(false);
+        }
+        res!(own::write_file(&to, bytes).await);
+        Ok(true)
+    }
+
+    /// Claim the body `r` a ledger names as put down already (D1mem fix B), and find it there.
+    /// One of no bytes is put down where it is not; any other that is not there is an error:
+    /// the store lost what the turn captured, and the record must not name it.
+    async fn keep(&mut self, id: &str, r: &versions::BodyRef) -> Outcome<()> {
+        if r.len == 0 {
+            return self.put(id, &r.hash, &[]).await;
+        }
+        WRITING.with(|w| {
+            if let Some((_, _, hs)) = w.borrow_mut().get_mut(&self.token) {
+                hs.insert(r.hash.clone());
+            }
+        });
+        if res!(own::exists(&body_path(id, &r.hash)).await) {
+            return Ok(());
+        }
+        Err(err!("Diamond '{}': the body {} ({} bytes) the turn captured is not in the store.",
+            id, r.hash, r.len; Missing, Data))
+    }
+
+    /// Put `bytes` down as the body `hash` under the claim taken already, with no renewal: an
+    /// upload's claim is fresh, and is given back when the body is named.  Whether it wrote the
+    /// body: `false` where it was there already.
+    async fn put_down(&self, id: &str, hash: &str, bytes: &[u8]) -> Outcome<bool> {
+        WRITING.with(|w| {
+            if let Some((_, _, hs)) = w.borrow_mut().get_mut(&self.token) {
+                hs.insert(hash.to_string());
+            }
+        });
+        let to = body_path(id, hash);
+        if res!(own::exists(&to).await) {
+            return Ok(false);
+        }
+        res!(own::write_file(&to, bytes).await);
+        Ok(true)
+    }
+
+    /// The name is written: clear the claim.  Best effort, since a claim left behind lapses with
+    /// its lease.
+    async fn done(self, id: &str) { self.done_in(id, None).await }
+
+    /// [`Writing::done`], under `held` where the caller holds the version store already.
+    async fn done_in(mut self, id: &str, held: Option<&VersionHold>) {
+        if let Some(c) = self.claim.take() {
+            let (tab, token) = (c.tab.clone(), c.token);
+            if let Err(e) = claims_edit_in(id, held, move |cs| cs.retain(|x| !x.is(&tab, token)))
+                .await
+            {
+                console_log(&fmt!("Diamond '{}': a version claim could not be cleared, so it \
+                    lapses with its lease ({}).", id, e));
+            }
+        }
+    }
+}
+
+/// An upload's claim on its body (D1v3, spec §16.3a 3): the [`Writing`] claim `pend` takes,
+/// held from the upload's first chunk until the call that names the body ends, or the run is
+/// dropped, so no tab's sweep takes a body the store answered `Held` for in between.
+pub struct BodyClaim(Writing);
+
+impl BodyClaim {
+
+    /// Claim the body `hash` of `id` for every tab's sweep.
+    pub async fn take(id: &str, hash: &str) -> Outcome<Self> {
+        Self::take_in(id, hash, None).await
+    }
+
+    /// [`BodyClaim::take`] by a caller already holding `id`'s version store as `held` (an upload
+    /// in the run's own turn end, D1r1d): the claims file is written through that hold, never
+    /// asked for again, so the claim is as durable as one taken outside a hold.
+    pub async fn under_hold(id: &str, hash: &str, held: &VersionHold) -> Outcome<Self> {
+        Self::take_in(id, hash, Some(held)).await
+    }
+
+    async fn take_in(id: &str, hash: &str, held: Option<&VersionHold>) -> Outcome<Self> {
+        #[cfg(test)]
+        if held.is_some() && UNFILED_UNDER_HOLD.load(std::sync::atomic::Ordering::SeqCst) {
+            let w = Writing::begin(id);     // the registry alone: the shape D1r1d refused
+            WRITING.with(|m| {
+                if let Some((_, _, hs)) = m.borrow_mut().get_mut(&w.token) {
+                    hs.insert(hash.to_string());
+                }
+            });
+            return Ok(Self(w));
+        }
+        let w = res!(Writing::claim_in(id, &[hash.to_string()], held).await);
+        WRITING.with(|m| {
+            if let Some((_, _, hs)) = m.borrow_mut().get_mut(&w.token) {
+                hs.insert(hash.to_string());
+            }
+        });
+        Ok(Self(w))
+    }
+
+    /// Put the whole upload down as the body `hash` of `id`, under this claim (D1mem fix B): from
+    /// its `Done` on it is in the body store, so a second name for it is answered `Held` and the
+    /// turn's ledger names it by hash.
+    pub async fn put(&self, id: &str, hash: &str, bytes: &[u8]) -> Outcome<()> {
+        if res!(self.0.put_down(id, hash, bytes).await) {
+            put_down_by_turn(id, hash);
+        }
+        Ok(())
+    }
+
+    /// The upload is named or given up: clear the claim (best effort; it lapses with its lease).
+    pub async fn done(self, id: &str) { self.0.done(id).await }
+
+    /// [`BodyClaim::done`] by a caller holding `id`'s version store as `held`.
+    pub async fn done_under(self, id: &str, held: &VersionHold) {
+        self.0.done_in(id, Some(held)).await
+    }
+}
+
+/// A test's switch: a claim under the caller's hold is kept in this page's registry alone, not
+/// the claims file, to show the durability test's red (D1r1d).
+#[cfg(test)]
+pub(crate) static UNFILED_UNDER_HOLD: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// The claims on `id`'s bodies in its claims file, for the store server's tests (D1v3).
+#[cfg(test)]
+pub async fn test_claims(id: &str) -> usize {
+    claims_load(id).await.map(|c| c.len()).unwrap_or(usize::MAX)
+}
+
+/// The bytes every run's turn ledger of `id` holds in memory now, for the tests (D1mem fix B).
+#[cfg(test)]
+pub fn test_ledger_bytes(id: &str) -> usize {
+    CAPTURED.with(|c| c.borrow().iter().filter(|(k, _)| key_is_of(k, id))
+        .flat_map(|(_, v)| v.iter())
+        .map(|(_, ch)| ledger_held(ch).iter().map(|b| b.len()).sum::<usize>())
+        .sum())
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        WRITING.with(|w| { w.borrow_mut().remove(&self.token); });
+    }
+}
+
+fn claims_path(id: &str) -> String {
+    fmt!("{}/{}", versions_dir(id), versions::CLAIMS_FILE)
+}
+
+/// Every tab's claims on this store; none where there is no file yet.  Refused where the file is
+/// there and will not read.
+async fn claims_load(id: &str) -> Outcome<Vec<versions::Claim>> {
+    let path = claims_path(id);
+    if !res!(own::exists(&path).await) {
+        return Ok(Vec::new());
+    }
+    let bytes = res!(own::read_file(&path).await);
+    versions::claims_read(&String::from_utf8_lossy(&bytes))
+}
+
+/// The named console note a sweep or a claim leaves where the claims file will not read.
+fn claims_unreadable_note(id: &str, what: &str, e: &Error<ErrTag>) {
+    own::console_warn(&fmt!(
+        "VERSIONS_CLAIMS_UNREADABLE Diamond '{}': {} ({}).", id, what, e));
+}
+
+/// Change the claims file under the version hold every tab takes.  A file that will not read is
+/// replaced by what `edit` makes of none: the claims in it were unreadable to every sweep anyway,
+/// which fell back to the grace window for them.
+async fn claims_edit<F: FnOnce(&mut Vec<versions::Claim>)>(id: &str, edit: F) -> Outcome<()> {
+    claims_edit_in(id, None, edit).await
+}
+
+/// [`claims_edit`] under `held` where the caller holds the version store already (the hold is
+/// not re-entrant, so it is never asked for twice), else under a hold of its own.
+///
+/// Each edit is a read and a write with awaits between, so the edits of one Diamond take turns
+/// ([`claims_turn`], taken after the version hold, never before): a run's release and its next
+/// claim, both under the run's own hold, would otherwise each read the file before the other
+/// wrote it, and one would be lost (D1r1 check D-Q2a).
+async fn claims_edit_in<F: FnOnce(&mut Vec<versions::Claim>)>(id: &str,
+    held: Option<&VersionHold>, edit: F) -> Outcome<()>
+{
+    let _own = match held {
+        Some(_) => None,
+        None    => Some(res!(hold_versions(id).await)),
+    };
+    let _turn = claims_turn(id).await;
+    let mut cs = match claims_load(id).await {
+        Ok(cs) => cs,
+        Err(e) => {
+            claims_unreadable_note(id, "the claims file is replaced", &e);
+            Vec::new()
+        },
+    };
+    edit(&mut cs);
+    res!(own::write_file(&claims_path(id), versions::claims_json(&cs).as_bytes())
+        .await);
+    Ok(())
+}
+
+thread_local! {
+    /// The Diamonds whose claims file is being edited, each with the edits waiting their turn.
+    static CLAIMS_EDITING: std::cell::RefCell<
+        std::collections::BTreeMap<String, Vec<std::task::Waker>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's switch, on its own thread: claims edits do not take turns, to show the
+    /// interleaving test's red (D1r1e).
+    pub(crate) static CLAIMS_UNTURNED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// One edit's turn at a Diamond's claims file; the next waiting edit is woken when it drops.
+struct ClaimsTurn {
+    id: Option<String>,
+}
+
+impl Drop for ClaimsTurn {
+    fn drop(&mut self) {
+        if let Some(id) = self.id.take() {
+            let waiting = CLAIMS_EDITING.with(|c| match c.try_borrow_mut() {
+                Ok(mut all) => all.remove(&id).unwrap_or_default(),
+                Err(_)      => Vec::new(),
+            });
+            for w in waiting {
+                w.wake();
+            }
+        }
+    }
+}
+
+/// Wait for this page's turn at `id`'s claims file: an async lock per Diamond, never across a
+/// page, where the version hold already keeps other tabs out.
+async fn claims_turn(id: &str) -> ClaimsTurn {
+    #[cfg(test)]
+    if CLAIMS_UNTURNED.with(|u| u.get()) {
+        return ClaimsTurn { id: None };
+    }
+    std::future::poll_fn(|cx| CLAIMS_EDITING.with(|c| {
+        let mut all = c.borrow_mut();
+        match all.get_mut(id) {
+            Some(waiting) => {
+                waiting.push(cx.waker().clone());
+                std::task::Poll::Pending
+            },
+            None => {
+                all.insert(id.to_string(), Vec::new());
+                std::task::Poll::Ready(ClaimsTurn { id: Some(id.to_string()) })
+            },
+        }
+    })).await
+}
+
+/// What a sweep holding the version hold knows of the writes in flight: this page's, and every
+/// tab's claims.  The lapsed claims are cleared here; claims that will not read leave the sweep to
+/// the grace window ([`versions::SWEEP_GRACE_MS`]), with a named note.
+async fn in_flight(id: &str, now: u64) -> versions::InFlight {
+    let _turn = claims_turn(id).await;      // its lapsed claims are an edit of the file too
+    match claims_load(id).await {
+        Ok(cs) => {
+            let f = versions::InFlight::of(writing(id), Some(&cs), now);
+            if !f.expired.is_empty() {
+                let kept = versions::InFlight::kept(&cs, now);
+                if let Err(e) = own::write_file(&claims_path(id),
+                    versions::claims_json(&kept).as_bytes()).await
+                {
+                    console_log(&fmt!("Diamond '{}': {} lapsed version claim(s) could not be \
+                        cleared ({}).", id, f.expired.len(), e));
+                }
+            }
+            f
+        },
+        Err(e) => {
+            claims_unreadable_note(id, "the sweep falls back to the grace window", &e);
+            versions::InFlight::of(writing(id), None, now)
+        },
+    }
+}
+
+/// When the oldest write of `id` in flight in this page began, and every body those writes claim.
+fn writing(id: &str) -> (Option<u64>, std::collections::BTreeSet<String>) {
+    WRITING.with(|w| {
+        let mut oldest: Option<u64> = None;
+        let mut claimed = std::collections::BTreeSet::new();
+        for (_, at, hs) in w.borrow().values().filter(|(d, _, _)| d == id) {
+            oldest = Some(oldest.map_or(*at, |o: u64| o.min(*at)));
+            claimed.extend(hs.iter().cloned());
+        }
+        // A turn's ledger names its bodies by hash until it records them (D1mem fix B).
+        claimed.extend(ledger_stored(id));
+        (oldest, claimed)
+    })
+}
+
+/// Every manifest this Diamond holds, by version, oldest first.
+///
+/// **Never an error.**  A manifest that will not parse is one row of history, and refusing the
+/// whole store for it would take the other hundred and ninety-nine with it -- including, on the
+/// turn that met it, the ability to record anything new.  The bad one is named on the console and
+/// passed over, which is also what a manifest from a NEWER build looks like from here.
+pub async fn versions_manifests(id: &str) -> Vec<(u64, Manifest)> {
+    let home = crate::tools::keeper_home(id);
+    let mut out: Vec<(u64, Manifest)> = Vec::new();
+    for (name, is_dir, _size) in version_entries(id).await {
+        if is_dir {
+            continue;
+        }
+        let n = match versions::manifest_version(&name) {
+            Some(n) => n,
+            None    => continue,        // the crystal's own snapshots, and anything else
+        };
+        let at = fmt!("{}/{}", versions_dir(id), name);
+        let bytes = match own::read_file(&at).await {
+            Ok(b)  => b,
+            Err(_) => continue,
+        };
+        match Manifest::from_json(&String::from_utf8_lossy(&bytes)) {
+            // Whose a file is, by its path: a row an older build left unmarked is the user's
+            // file all the same, for the restore's fence as for the prune.
+            Ok(mut m) => {
+                m.settle_marks(&home);
+                out.push((n, m));
+            },
+            Err(e) => console_log(&fmt!(
+                "Diamond '{}': the version manifest '{}' could not be read ({}), so that row of \
+                 the history is passed over.", id, name, e)),
+        }
+    }
+    out.sort_by_key(|(n, _)| *n);
+    out
+}
+
+/// Every body on disk by hash and size, with when each was last written, in epoch ms, where the
+/// store keeps it.
+async fn versions_bodies_stamped(id: &str)
+    -> (Vec<(String, u64)>, std::collections::BTreeMap<String, u64>)
+{
+    let dir = fmt!("{}/{}", versions_dir(id), versions::BODY_DIR);
+    let mut sizes = Vec::new();
+    let mut stamps = std::collections::BTreeMap::new();
+    if let Ok(e) = own::list_dir_stamped(&dir).await {
+        for (name, is_dir, size, when) in e.into_iter() {
+            if is_dir || !versions::is_hash(&name) {
+                continue;
+            }
+            if let Some(ms) = when {
+                stamps.insert(name.clone(), ms as u64);
+            }
+            sizes.push((name, size));
+        }
+    }
+    (sizes, stamps)
+}
+
+/// Every body on disk, by hash and size.
+async fn versions_bodies(id: &str) -> Vec<(String, u64)> {
+    let dir = fmt!("{}/{}", versions_dir(id), versions::BODY_DIR);
+    match own::list_dir(&dir).await {
+        Ok(e)  => e.into_iter()
+            .filter(|(name, is_dir, _)| !*is_dir && versions::is_hash(name))
+            .map(|(name, _, size)| (name, size))
+            .collect(),
+        Err(_) => Vec::new(),           // no bodies yet, which is every Diamond until the first
+    }
+}
+
+/// Mint a version number for a change to FILES alone, leaving the crystal exactly as it is.
+///
+/// **Through the crystal's own chain rather than beside it**, which is the whole point.  The
+/// counter is shared, so a files version occupies a number; a number with no `versions/NNNN.json`
+/// under it is a number [`read_version`] cannot answer and, worse, one that
+/// [`parent_data`] cannot rebuild -- so the NEXT crystal edit would record a full copy of a page
+/// that had not changed.  One empty patch costs a few bytes and keeps the chain whole.
+///
+/// [`snapshot`] is deliberately not used: it is a write door and applies the crystal's ceilings,
+/// and a Diamond whose crystal is already over one would be unable to record a file version at
+/// all -- refused for growing a file it is writing back byte for byte.
+async fn mint_files_version(_hold: &VersionHold, id: &str, now: u64) -> Outcome<u64> {
+    let mut meta = res!(read_meta(id).await);
+    let entries = version_entries(id).await;
+    // Past every number on disk ([`versions::next_version`]).  A worker's seal or revert racing
+    // the daimon's own mint read the same store across its awaits and took the same number (Q5-1
+    // open item 5, R2-1); the caller's hold is what keeps any other mint out until this one's
+    // manifest is written.
+    let next = versions::next_version(meta.version, file_names(&entries));
+    let snaps = classify(&entries, DATA_KEYFRAME_EXT, DATA_PATCH_EXT);
+    // THE CRYSTAL AS AT THE VERSION THE DIAMOND IS AT, never as it stands on disk (Q5-1 open
+    // item 4).  A version minted mid-turn -- a seal, a revert -- is a version of FILES, and a
+    // crystal edit the turn has made so far belongs to the turn's own version at its end; read
+    // from disk, it was booked to this one.  So this writes an empty patch.  Only a parent that
+    // cannot be rebuilt falls back to the disk, which is then the best copy there is.
+    let held = parent_data(id, meta.version, &snaps).await;
+    let data = match &held {
+        Some(d) => d.clone(),
+        None    => res!(read_crystal_data(id).await),
+    };
+    // In full where a snapshot stands between the version the Diamond is at and this one: see
+    // [`snapshot`].
+    let parent = if diamond_delta::stands_between(&snaps, meta.version, next) {
+        None
+    } else {
+        held
+    };
+    res!(write_snapshot(id, next, parent.as_deref(), &data, &snaps,
+        DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await);
+    // No page is written for files alone -- unless a page snapshot stands above the version the
+    // Diamond is at, which a reader would otherwise take as this version's page.  The page as at
+    // that version, too, for the reason the data is.
+    let page_snaps = classify(&entries, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT);
+    if diamond_delta::stands_between(&page_snaps, meta.version, next) {
+        let page = match page_at(id, meta.version, &page_snaps).await {
+            Ok(Some(p)) => p,
+            _           => res!(page_on_disk(id).await),
+        };
+        res!(write_snapshot(id, next, None, &page, &page_snaps,
+            PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await);
+    }
+    meta.version = next;
+    meta.updated = now;
+    meta.bump_touched(now);     // files changed, so the Diamond both moved and travels
+    res!(write_meta(id, &meta).await);
+    Ok(next)
+}
+
+// ── One mint at a time, in every tab ───────────────────────────────────────
+
+/// A Diamond's version store, held by one mint from reading its counter to writing its manifest
+/// and pruning, across every tab of this origin (R2-1).
+///
+/// **Two mints at once took one number.**  Each read `meta.version` and the directory across
+/// awaits; the second manifest was written over the first, and the prune after it deleted the copy
+/// the first had named -- 3 of 3 runs with two agents of one Diamond, and 3 of 4 originals with
+/// four.  A number reserved in this page does not hold it: a second tab of the same Diamond reads
+/// the same store, and a crystal patch is proved against the parent the mint read, so two mints
+/// that each reserved a number would still write the upper patch against a base the chain does
+/// not hold.  So the whole of a mint is one critical section, held with `navigator.locks` under
+/// `daimond-version-<id>`, and every door that mints or prunes takes it: [`snapshot`] (and so
+/// every crystal write), [`record_steer`] with the turn's files after it, [`versions_record`] and
+/// [`versions_prune`].  Where the browser has no lock manager, this page's mints still run one at
+/// a time ([`MintTurn`]).
+///
+/// The lock goes when this is dropped -- a future the page dropped included -- and with the page.
+pub struct VersionHold {
+    _release: Option<own::Held>,           // the web lock's; `None` where there is none
+    _local:   Option<MintTurn>,            // this page's gate, where there is no web lock
+}
+
+/// The web lock a Diamond's version store is held under, before its id.
+const VERSION_LOCK: &str = "daimond-version-";
+
+/// How long an act waits for a Diamond's version store before it is refused, in ms.
+///
+/// **A mint that never settles held the store in every tab until its page closed** (open item 2 of
+/// the engine unit, 2026-09-25): every seal, revert, save and turn end of that Diamond, in every
+/// tab, waited on it for ever and said nothing.  So the wait is bounded, and past it the act is
+/// refused in words.  The lock is never broken: whatever holds it keeps it, and a refused act has
+/// changed nothing.  A minute is far past any mint's own work -- a turn end writing its 64 copies
+/// takes seconds -- and short enough that a person is told while they are still looking.
+pub const VERSION_WAIT_MS: u64 = 60_000;
+
+/// The sentence an act gets when the version store stayed held past [`VERSION_WAIT_MS`], naming
+/// the Diamond as `named`.
+fn version_wait_refusal(named: &str) -> Error<ErrTag> {
+    err!(
+        "Diamond '{}': Daimond's version store for it has been busy with another change for over \
+         {} seconds, so nothing was changed or recorded. Try again in a moment; if it stays busy, \
+         close the other tabs of Daimond, or reload this one.", named, VERSION_WAIT_MS / 1000;
+        Lock, Timeout)
+}
+
+/// Wait for this Diamond's version store, and hold it.  Not re-entrant: a caller holding it
+/// passes it on (`*_held`) and never asks again.
+///
+/// Refused in words where the store stays held past [`VERSION_WAIT_MS`], or where the lock
+/// manager refuses the request: falling back to this page's own gate while another tab might
+/// hold the lock would break it without a word.
+pub async fn hold_versions(id: &str) -> Outcome<VersionHold> {
+    match own::lock(&fmt!("{}{}", VERSION_LOCK, id), LockHow::Timeout(VERSION_WAIT_MS)).await {
+        Locked::Held(release) => Ok(VersionHold { _release: Some(release), _local: None }),
+        Locked::NoManager     => match mint_turn(id, VERSION_WAIT_MS).await {
+            Some(turn) => Ok(VersionHold { _release: None, _local: Some(turn) }),
+            None       => Err(version_wait_refusal(&diamond_named(id).await)),
+        },
+        Locked::TimedOut | Locked::Busy => Err(version_wait_refusal(&diamond_named(id).await)),
+        Locked::Refused(why)  => Err(err!(
+            "Diamond '{}': the browser would not lock Daimond's version store for it ({}), so \
+             nothing was changed or recorded.", diamond_named(id).await, why; Lock)),
+    }
+}
+
+/// This page's turn at a Diamond's version store, where there is no web lock
+/// ([`VersionHold`]); given up when dropped.
+struct MintTurn {
+    id: String,
+}
+
+impl Drop for MintTurn {
+    fn drop(&mut self) {
+        MINTING.with(|m| {
+            if let Ok(mut held) = m.try_borrow_mut() {
+                held.remove(&self.id);
+            }
+        });
+    }
+}
+
+/// How long a mint waits before asking again for a Diamond another mint holds, in ms.
+const MINT_WAIT_MS: u64 = 5;
+
+/// Wait for this page's turn at the Diamond's version store, and hold it; `None` where another
+/// mint of this page still holds it after `wait_ms`.
+async fn mint_turn(id: &str, wait_ms: u64) -> Option<MintTurn> {
+    let by = now_ms() as u64 + wait_ms;
+    loop {
+        let got = MINTING.with(|m| m.borrow_mut().insert(id.to_string()));
+        if got {
+            return Some(MintTurn { id: id.to_string() });
+        }
+        if now_ms() as u64 >= by {
+            return None;
+        }
+        crate::llm::sleep_ms(MINT_WAIT_MS).await;
+    }
+}
+
+/// Mint the next version number of a chat's store, where there is no crystal chain to mint it.
+///
+/// One past the newest manifest, and past any number this page has already handed out for the
+/// same chat: a chat and one of its workers can each end a turn at once, and both would read the
+/// same newest manifest across the await between the listing and the write.  The reservation is
+/// taken with no await between the reading and the setting, so the second is always one higher.
+fn mint_chat_version(id: &str, held: &[(u64, Manifest)]) -> u64 {
+    let top = held.iter().map(|(n, _)| *n).max().unwrap_or(0);
+    CHAT_MINTED.with(|m| {
+        let mut all = m.borrow_mut();
+        let last = all.entry(id.to_string()).or_insert(0);
+        let next = top.max(*last) + 1;
+        *last = next;
+        next
+    })
+}
+
+/// Record what changed, as one version, and answer with the version it was recorded at.
+///
+/// **`Ok(None)` is an ordinary answer and not a failure.**  A version that lists nothing says
+/// nothing, costs a row in the history and costs the sync a restamped parcel, so a turn that
+/// wrote a file back byte for byte earns no version at all -- which is how [`record_steer`] has
+/// always worked, and is decision D2 of the launch plan.  The test is on BYTES and never on the
+/// fact that a door was used.
+///
+/// # Arguments
+/// * `at` - The version to record against, for a caller that has just minted one -- the turn end,
+///   which called [`record_steer`] a moment before.  `None` mints one (see
+///   [`mint_files_version`]) and writes the log line for it.
+/// * `turn` - The user message id of the turn this belongs to, or empty.
+/// * `note` - What the user typed, or the name they gave a save.
+pub async fn versions_record(
+    id:      &str,
+    cause:   Cause,
+    turn:    &str,
+    note:    &str,
+    changes: Vec<Change>,
+)
+    -> Outcome<Option<(u64, Vec<String>)>>
+{
+    if changes.is_empty() {
+        return Ok(None);
+    }
+    let hold = res!(hold_versions(id).await);
+    versions_record_held(&hold, id, None, cause, turn, note, changes).await
+}
+
+/// [`versions_record`], by a caller already holding the Diamond's version store
+/// ([`VersionHold`]) -- the turn end, whose `at` its own [`record_steer`] minted under the same
+/// hold, so nothing mints between the crystal's version and the files recorded against it.
+pub async fn versions_record_held(
+    hold:    &VersionHold,
+    id:      &str,
+    at:      Option<u64>,
+    cause:   Cause,
+    turn:    &str,
+    note:    &str,
+    changes: Vec<Change>,
+)
+    -> Outcome<Option<(u64, Vec<String>)>>
+{
+    if changes.is_empty() {
+        return Ok(None);
+    }
+    let held  = versions_manifests(id).await;
+    let index = versions::index_placed(&held);
+    // Each row, and whether its `was` is a copy this record keeps: what the cut ranks first.
+    let mut entries: Vec<(Entry, bool)> = Vec::new();
+    // The bodies to put down, or a ledger's stored ones to find there (D1mem fix B).
+    let mut bodies: Vec<(String, Prior)> = Vec::new();
+    let mut seen: std::collections::BTreeSet<(String, Option<String>)> =
+        std::collections::BTreeSet::new();
+    for ch in changes.into_iter() {
+        // THE FOLDER IT WAS WRITTEN IN (HR, 2026-09-25): the one its act was in where the act
+        // said, else the one open now, which is where a change read at the record was read from.
+        // A relative path is one file only together with its folder, and a restore puts the row
+        // back into that folder and no other ([`versions::route`]).
+        let folder = match versions::needs_folder(&ch.path) {
+            true  => ch.folder.clone().or_else(|| folder_of(&ch.path)),
+            false => None,
+        };
+        // ONE ROW PER FILE.  A turn's ledger and the walk that follows an opaque tool both name
+        // the same file, and two rows for one change would double the entry, double the `was` and
+        // make the restore of one of them a no-op against the other.
+        if !seen.insert((ch.path.clone(), folder.clone())) {
+            continue;
+        }
+        // THE PERSON'S FILE BY ITS PATH, whatever the caller said ([`theirs`]): the dirty set of
+        // the Doc and Files panels recorded a person's file as the Diamond's own until B1 of the
+        // release 5.1 fix's QA, and a whole-version Restore then deleted it off their folder.
+        let mut ch = Change { mark: ch.mark || theirs(id, &ch.path), ..ch };
+        // WHETHER IT WAS WIPED: a write in the turn said so, or the turn's net change says so --
+        // what stood first against what stands last, which is also how a file emptied in two
+        // steps, or by a page that died before its turn ended, is still seen for what it was.
+        // Only a file of the user's: the Diamond's own files are its working state.
+        // A `Large` after's re-check is the child's staged `turn_wiped`, which the turn end
+        // joined to the capture's own `wiped` ([`drain_turn_by`]); with none, the capture's stands.
+        // A ledger's stored bodies are read for it from the store, one change at a time.
+        let wiped = ch.mark && (ch.wiped || recorded_wiped(id, &ch).await);
+        // WHETHER A TURN'S OWN ACT MADE IT (UNBLOCK-26 U1): read off the capture now, since the
+        // fold and the record that follow keep no trace of what the first act found.
+        let made = cause == Cause::Turn && ch.made();
+        // What stood there: the bytes the caller captured, else what the store last recorded.
+        // Moved, not copied (fix E): the change is done with them.
+        let kept = ch.before.is_some();
+        let was = match ch.before.take() {
+            Some(b) => {
+                let h = b.hash();
+                bodies.push((h.clone(), b));
+                Some(h)
+            },
+            None => versions::indexed_was(&index, &ch.path, folder.as_deref()),
+        };
+        match ch.after {
+            Body::Gone => {
+                // A path that was never held and is still not there is not a deletion.
+                if was.is_none() {
+                    continue;
+                }
+                entries.push((Entry {
+                    path:    ch.path,
+                    hash:    String::new(),
+                    bytes:   0,
+                    was,
+                    gone:    true,
+                    wiped:   false,
+                    mark:    ch.mark,
+                    skipped: ch.refused,
+                    folder,
+                    by:      ch.by,
+                    door:    ch.door,
+                    made:    false,
+                }, kept));
+            },
+            Body::TooLarge(size) => {
+                entries.push((Entry {
+                    path:    ch.path,
+                    hash:    String::new(),
+                    bytes:   size,
+                    was,
+                    gone:    false,
+                    wiped,
+                    mark:    ch.mark,
+                    skipped: Some("size".to_string()),
+                    folder,
+                    by:      ch.by,
+                    door:    ch.door,
+                    made:    false,
+                }, kept));
+            },
+            // A ROW WITH NO BODY IS STILL A ROW. A file the daimon changed and the app could not
+            // read back is a file the user has to be told about: leaving it out would make the
+            // History say the turn changed less than it did, which is the one thing a record of
+            // changes must not do.
+            Body::Unseen => {
+                entries.push((Entry {
+                    path:    ch.path,
+                    hash:    String::new(),
+                    bytes:   0,
+                    was,
+                    gone:    false,
+                    wiped,
+                    mark:    ch.mark,
+                    skipped: Some(ch.refused.unwrap_or_else(|| "unreadable".to_string())),
+                    folder,
+                    by:      ch.by,
+                    door:    ch.door,
+                    made:    false,
+                }, kept));
+            },
+            Body::Held(body) => {
+                let hash = versions::hash_of(&body);
+                if was.as_deref() == Some(hash.as_str()) && ch.refused.is_none() {
+                    continue;           // the door was used and the bytes did not move
+                }
+                let skipped = match ch.refused {
+                    Some(w)                                         => Some(w),
+                    None if body.len() > versions::VERSION_FILE_MAX => Some("size".to_string()),
+                    None                                            => None,
+                };
+                let bytes = body.len() as u64;
+                if skipped.is_none() {
+                    bodies.push((hash.clone(), Prior::Held(body)));
+                }
+                entries.push((Entry { path: ch.path, hash, bytes, was, gone: false, wiped,
+                    mark: ch.mark, skipped, folder, by: ch.by, door: ch.door, made }, kept));
+            },
+            // A `HELD` AFTER PUT DOWN ALREADY (D1mem fix B): its row is the `Held` one's, and its
+            // body is found in the store rather than written.
+            Body::Stored(r) => {
+                if was.as_deref() == Some(r.hash.as_str()) && ch.refused.is_none() {
+                    continue;
+                }
+                let skipped = match ch.refused {
+                    Some(w)                                          => Some(w),
+                    None if r.len as usize > versions::VERSION_FILE_MAX => Some("size".to_string()),
+                    None                                             => None,
+                };
+                let (hash, bytes) = (r.hash.clone(), r.len);
+                if skipped.is_none() {
+                    bodies.push((hash.clone(), Prior::Stored(r)));
+                }
+                entries.push((Entry { path: ch.path, hash, bytes, was, gone: false, wiped,
+                    mark: ch.mark, skipped, folder, by: ch.by, door: ch.door, made }, kept));
+            },
+            // THE ROW A `HELD` AFTER OVER THE CEILING WRITES: its hash and length, no body, and the
+            // same skip where the door was used and the bytes did not move.  A `Large` after is
+            // never under the ceiling (the child uploads those), and its bytes are not here.  One
+            // that is anyway is not "too large", which would say a copy could not be kept for a
+            // false reason: its row is the one an act whose bytes were not read writes.
+            Body::Large(r) => {
+                if was.as_deref() == Some(r.hash.as_str()) && ch.refused.is_none() {
+                    continue;
+                }
+                let why = match r.len as usize > versions::VERSION_FILE_MAX {
+                    true  => "size",
+                    false => "unreadable",
+                };
+                let skipped = Some(ch.refused.unwrap_or_else(|| why.to_string()));
+                entries.push((Entry { path: ch.path, hash: r.hash, bytes: r.len, was, gone: false,
+                    wiped, mark: ch.mark, skipped, folder, by: ch.by, door: ch.door, made }, kept));
+            },
+        }
+    }
+    if entries.is_empty() {
+        take_back_unnamed(id).await;
+        return Ok(None);
+    }
+    // PAST THE ROWS ONE VERSION KEEPS, a made file's rows go, and the rows holding copies go on
+    // into further versions of their own (R2-3): no copy is ever cut.
+    let (groups, cut) = versions::split_rows(entries);
+    let ts = now_ms() as u64;
+    let manifests: Vec<Manifest> = groups.into_iter().enumerate().map(|(i, rows)| {
+        let mut m = Manifest::new(cause, ts, turn, note, rows);
+        m.truncated = if i == 0 { cut } else { 0 };
+        m
+    }).collect();
+    // What the manifests ACTUALLY hold, after the cut, so the daimon is never told about a file
+    // whose row was not written.
+    let named: Vec<String> = manifests.iter()
+        .flat_map(|m| m.files.iter().map(|e| e.path.clone()))
+        .collect();
+
+    // THE BODIES BEFORE THE MANIFEST, so a failure half way through leaves bytes nothing names --
+    // which the next sweep collects -- rather than a manifest naming bytes that are not there,
+    // which reads to the user as history their own device has lost.
+    let mut w = Writing::begin(id);     // under the hold until the manifests name the bodies
+    for (hash, body) in bodies.into_iter() {
+        // Content-addressed, so the third write of content already held writes nothing at all.
+        match body {
+            Prior::Held(b)      => res!(w.put(id, &hash, &b).await),
+            Prior::Stored(r)    => res!(w.keep(id, &r).await),
+        }
+    }
+
+    let mut first: Option<u64> = None;
+    for (i, manifest) in manifests.iter().enumerate() {
+        // The first at the number the caller minted, where it minted one; every further version at
+        // a number of its own, after it.
+        let given = if i == 0 { at } else { None };
+        let minted = given.is_none();
+        let version = match given {
+            Some(v) => v,
+            None if is_chat_keeper(id) => mint_chat_version(id, &held),
+            None    => res!(mint_files_version(hold, id, manifest.ts).await),
+        };
+        res!(own::write_file(&manifest_path(id, version),
+            manifest.to_json().as_bytes()).await);
+        if first.is_none() {
+            first = Some(version);
+        }
+
+        // A version minted for files alone earns its own line in the one history the user reads.
+        // A version the crystal minted already has one, and a second would show the same turn
+        // twice.  A chat has no log: its manifests are the whole of its history.
+        if minted && !is_chat_keeper(id) {
+            let rec = LogRecord {
+                id:        generate_session_id(),
+                ts:        manifest.ts,
+                kind:      "files",
+                agent:     match cause {
+                    Cause::Turn => "daimon".to_string(),
+                    Cause::Fold => "reducer".to_string(),
+                    _           => "user".to_string(),
+                },
+                task:      cause.wire().to_string(),
+                parent:    version as i64 - 1,
+                version,
+                delta_ref: String::new(),
+                note:      note.to_string(),
+            };
+            res!(append_log(id, &rec).await);
+        }
+    }
+    let version = res!(first.ok_or_else(|| err!(
+        "Diamond '{}': a record of {} file(s) wrote no version.", id, named.len(); Bug)));
+    drop(w);                            // named now, so no longer in flight
+    // The record is written: what the turn put down that no version names goes (D1mem fix B).
+    take_back_unnamed(id).await;
+    // Best effort: a store over its ceiling is a store that still works, and a prune that failed
+    // must not lose the version it was called after.
+    if let Err(e) = prune_held(hold, id, "record").await {
+        console_log(&fmt!("Diamond '{}': the version store could not be pruned ({}).", id, e));
+    }
+    Ok(Some((version, named)))
+}
+
+/// Did the change `ch` of a file of the user's wipe it: does what it leaves keep less than half of
+/// what stood before ([`crate::tools::wiped`])?  A ledger's stored bodies are read from the store
+/// for the test and dropped after it (D1mem fix B); one that will not read is not counted a wipe,
+/// and the record then fails on the body it cannot find.
+async fn recorded_wiped(id: &str, ch: &Change) -> bool {
+    let before = match &ch.before {
+        Some(b) => b,
+        None    => return false,
+    };
+    let after = match &ch.after {
+        Body::Held(a)   => std::borrow::Cow::Borrowed(a.as_slice()),
+        Body::Stored(r) => match versions_body(id, &r.hash).await {
+            Ok(Some(a)) if r.names(&a) => std::borrow::Cow::Owned(a),
+            _                          => return false,
+        },
+        Body::Large(_) | Body::Gone | Body::TooLarge(_) | Body::Unseen => return false,
+    };
+    let before = match before {
+        Prior::Held(b)      => std::borrow::Cow::Borrowed(b.as_slice()),
+        Prior::Stored(r)    => match versions_body(id, &r.hash).await {
+            Ok(Some(b)) if r.names(&b) => std::borrow::Cow::Owned(b),
+            _                          => return false,
+        },
+    };
+    crate::tools::wiped(&ch.path, &before, &after)
+}
+
+/// The manifests as the history reads them, newest first, each carrying its version number.
+pub async fn versions_list(id: &str) -> Outcome<String> {
+    let held = versions_manifests(id).await;
+    let mut rows: Vec<String> = Vec::with_capacity(held.len());
+    for (n, m) in held.iter().rev() {
+        let body = m.to_json();
+        let inner = match body.strip_prefix('{') {
+            Some(s) => s,
+            None    => body.as_str(),
+        };
+        rows.push(fmt!("{{\"version\":{},{}", n, inner));
+    }
+    Ok(fmt!("[{}]", rows.join(",")))
+}
+
+/// What the version store weighs against what it is allowed to weigh.
+///
+/// The gauge in the History bar.  `bytes` is every body this device holds, named or not, which is
+/// what the prune holds to the cap ([`versions::disk_bytes`]).
+pub async fn versions_gauge(id: &str) -> Outcome<String> {
+    let held   = versions_manifests(id).await;
+    let bodies = versions_bodies(id).await;
+    // A prune in flight, or one cut short, shows only what is already gone.
+    let present: std::collections::BTreeSet<u64> = held.iter().map(|(n, _)| *n).collect();
+    let (recs, _) = versions::prune_settle(prune_log(id).await, &present);
+    let recs = versions::prune_shown(recs, &held);
+    let pruned: Vec<String> = recs.iter().map(|r| r.to_json()).collect();
+    Ok(fmt!(
+        "{{\"bytes\":{},\"cap\":{},\"manifests\":{},\"manifests_cap\":{},\"file_max\":{},\
+        \"pruned\":[{}]}}",
+        versions::disk_bytes(&bodies), versions::versions_bytes_cap(),
+        held.len(), versions::MANIFESTS_MAX, versions::VERSION_FILE_MAX, pruned.join(",")))
+}
+
+/// The refusal of a `hash` that is not a body's name, the remote port's too (D1r1e).
+pub fn not_a_body(hash: &str) -> Error<ErrTag> {
+    err!("'{}' is not the name of a stored version body.", hash; Invalid, Input, Path)
+}
+
+/// One body's bytes, or `None` where this device has not got it.
+///
+/// `None` is the "Not on this device" row and not an error: a manifest may name a body a device
+/// on an older build never packed, or one pruned there before the manifest naming it was pruned
+/// here.  There is no fetch by hash -- a body is not chunk-addressed, and chunk addresses are
+/// hashes of CIPHERTEXT -- and the next whole pull from the device that has it brings it, since a
+/// Diamond travels whole.
+pub async fn versions_body(id: &str, hash: &str) -> Outcome<Option<Vec<u8>>> {
+    if !versions::is_hash(hash) {
+        return Err(not_a_body(hash));
+    }
+    match own::read_file(&body_path(id, hash)).await {
+        Ok(b)  => Ok(Some(b)),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Bring the version store back inside its ceilings, and answer with what went: manifests, then
+/// bodies.
+///
+/// The order and the sweep are [`crate::diamond_versions::prune_plan`]'s; this is the edge that
+/// deletes what it named.
+pub async fn versions_prune(id: &str) -> Outcome<(usize, usize)> {
+    let hold = res!(hold_versions(id).await);
+    prune_held(&hold, id, "record").await
+}
+
+/// The prune records this Diamond keeps, oldest first ([`versions::PRUNE_LOG`]).
+async fn prune_log(id: &str) -> Vec<versions::PruneRecord> {
+    match own::read_file(&prune_log_path(id)).await {
+        Ok(b)  => versions::prune_log_read(&String::from_utf8_lossy(&b)),
+        Err(_) => Vec::new(),           // never pruned, which is most Diamonds
+    }
+}
+
+fn prune_log_path(id: &str) -> String {
+    fmt!("{}/{}", versions_dir(id), versions::PRUNE_LOG)
+}
+
+/// The paths this Diamond's store knows hold page data ([`versions::PAGES_LOG`]); none where it
+/// has never been written.
+async fn pages_known(id: &str) -> std::collections::BTreeSet<String> {
+    match own::read_file(&pages_log_path(id)).await {
+        Ok(b)  => versions::pages_read(&String::from_utf8_lossy(&b)),
+        Err(_) => std::collections::BTreeSet::new(),
+    }
+}
+
+fn pages_log_path(id: &str) -> String {
+    fmt!("{}/{}", versions_dir(id), versions::PAGES_LOG)
+}
+
+/// [`versions_prune`], by a caller holding the version store: a prune beside a record deleted the
+/// bodies that record had written and not yet named (R2-1).
+///
+/// Every prune that removes anything leaves a record ([`versions::PruneRecord`]) in
+/// [`versions::PRUNE_LOG`]: the History draws a row from it, so versions never simply vanish.
+///
+/// # Arguments
+/// * `on` - What the prune ran after: `"record"` or `"arrival"`.
+async fn prune_held(_hold: &VersionHold, id: &str, on: &str) -> Outcome<(usize, usize)> {
+    forget_room(id);
+    // KEEP-ALL until KEEP-RULE: a prune after a record could take a file's only older copy, a held deleted copy, or a restore's target.
+    return Ok((0, 0));
+    let held   = versions_manifests(id).await;
+    let (bodies, stamps) = versions_bodies_stamped(id).await;
+    let now    = now_ms() as u64;
+    // A BODY NO VERSION NAMES MAY BE ONE BEING WRITTEN NOW (fix 3b, b5): the bodies go down before
+    // the manifest or note naming them, so a sweep takes none a write in flight in any tab claims,
+    // and none written since the oldest such write began.  Those stay on disk, so the plan weighs
+    // them against the cap, as it does a copy noted mid-turn, named by no manifest until its turn
+    // ends.
+    let flight = in_flight(id, now).await;
+    let mut pinned: Vec<String> = pending_notes(id).await.into_iter().map(|n| n.was).collect();
+    pinned.extend(versions::staying(&held, &bodies, &stamps, &flight, now));
+    let cutoff = versions::sweep_cutoff(now, &flight);
+    let known  = pages_known(id).await;
+    let plan   = versions::prune_plan(&held, &bodies, &pinned, versions::Caps::default(), now,
+        &crate::tools::keeper_home(id), &known);
+    // WHOSE A PATH IS OUTLASTS THE EVIDENCE FOR IT (D-26 review A F2): the page data the plan ranked
+    // by is kept BEFORE the prune takes any manifest that shows it.  Where it cannot be kept,
+    // nothing is deleted: the next prune would rank the person's data as the daimon's notes.
+    if !plan.pages.is_subset(&known) {
+        let all: std::collections::BTreeSet<String> = known.union(&plan.pages).cloned().collect();
+        res!(own::write_file(&pages_log_path(id),
+            versions::pages_json(&all).as_bytes()).await);
+    }
+    // A prune cut short left its intent: it now names only what is gone (D-26 A F7).
+    let present: std::collections::BTreeSet<u64> = held.iter().map(|(n, _)| *n).collect();
+    let (recs, moved) = versions::prune_settle(prune_log(id).await, &present);
+    let prev = versions::prune_log_json(recs);
+    if plan.is_empty() {
+        if moved {
+            res!(own::write_file(&prune_log_path(id), prev.as_bytes()).await);
+        }
+        return Ok((0, 0));
+    }
+    // TWO PHASES (D-26 A F4, F7).  The intent is durable BEFORE anything is deleted, and where it
+    // cannot be written no version is deleted: a prune with no record is a History that hides a
+    // loss.  Only bodies no manifest names may go then -- they lose no version, and on a full
+    // quota they are the room the record needs -- and the record is tried once more.
+    let intent = versions::PruneRecord::of(&plan, &held, &bodies, now, versions::PRUNE_INTENT);
+    let logged = versions::prune_log_push(&prev, &intent);
+    if let Err(e) = own::write_file(&prune_log_path(id), logged.as_bytes()).await {
+        let orphans = versions::sweepable(&held, &plan.bodies, &stamps, cutoff, &flight.claimed);
+        let mut swept = 0usize;
+        for hash in orphans.iter() {
+            if writing(id).1.contains(hash) {
+                continue;               // claimed in this page since the sweep was chosen
+            }
+            if own::delete_entry(&body_path(id, hash), false).await.is_ok() {
+                swept += 1;
+            }
+        }
+        if let Err(e2) = own::write_file(&prune_log_path(id), logged.as_bytes()).await {
+            return Err(err!(
+                "Diamond '{}': the prune record could not be written ({}; again after sweeping {} \
+                 unnamed body file(s): {}), so no version was pruned.", id, e, swept, e2;
+                IO, File, Write));
+        }
+    }
+    let mut removed: Vec<u64> = Vec::new();
+    for n in plan.manifests.iter() {
+        match own::delete_entry(&manifest_path(id, *n), false).await {
+            Ok(())  => removed.push(*n),
+            Err(e)  => console_log(&fmt!(
+                "Diamond '{}': version manifest {} could not be pruned ({}).", id, n, e)),
+        }
+    }
+    // A manifest whose delete failed still stands, so the bodies it names stay with it.
+    let left: Vec<(u64, Manifest)> = held.iter()
+        .filter(|(n, _)| !removed.contains(n))
+        .cloned()
+        .collect();
+    let sweep = versions::sweepable(&left, &plan.bodies, &stamps, cutoff, &flight.claimed);
+    let mut swept: Vec<String> = Vec::new();
+    for hash in sweep.iter() {
+        if writing(id).1.contains(hash) {
+            continue;                   // claimed in this page since the sweep was chosen
+        }
+        match own::delete_entry(&body_path(id, hash), false).await {
+            Ok(())  => swept.push(hash.clone()),
+            Err(e)  => console_log(&fmt!(
+                "Diamond '{}': version body {} could not be swept ({}).", id, hash, e)),
+        }
+    }
+    // The final record names only what was actually removed.  Where it cannot be written the
+    // intent stands, and the next prune settles it against what is gone.
+    let fin = versions::PruneRecord::of_removed(&removed, &swept, &held, &bodies, now, on);
+    if let Err(e) = own::write_file(&prune_log_path(id),
+        versions::prune_log_finish(&logged, now, &fin).as_bytes()).await
+    {
+        console_log(&fmt!("Diamond '{}': the final prune record could not be written ({}).", id, e));
+    }
+    console_log(&fmt!("Diamond '{}': pruned {} version(s) and {} body file(s), {} bytes, on {}: {}",
+        id, fin.versions.len(), fin.bodies, fin.bytes, on, fin.to_json()));
+    Ok((removed.len(), swept.len()))
+}
+
+/// Read these paths as they stand, for a caller that is about to record them.
+///
+/// The paths are taken as they were given -- they are what a turn's ledger, the dirty set or a
+/// restore named, and that is what the manifest must say.  A path that is not there comes back as
+/// a deletion rather than being dropped, which is what makes a deleted file a row.
+///
+/// Nothing over the per-file ceiling is READ: the length comes off the file handle, which costs
+/// no bytes, so the one case the ceiling exists for is also the one case that costs nothing.
+///
+/// # Arguments
+/// * `id` - The Diamond, for the paths of its own that are not versioned at all.
+pub async fn versions_changes(id: &str, paths: &[String]) -> Vec<Change> {
+    versions_changes_in(id, paths, FileRoot::Workspace).await
+}
+
+/// [`versions_changes`], read under `root`.
+async fn versions_changes_in(id: &str, paths: &[String], root: FileRoot) -> Vec<Change> {
+    let ceiling = versions::VERSION_FILE_MAX as u32;
+    let mut out: Vec<Change> = Vec::new();
+    for path in paths.iter() {
+        if !versionable(id, path) {
+            continue;
+        }
+        // The person's file by its path ([`theirs`]), as a turn's capture of it would say.
+        let mark = theirs(id, path);
+        match own::user_read_file_capped(root, path, ceiling).await {
+            Ok((body, total)) if total as usize <= versions::VERSION_FILE_MAX =>
+                out.push(Change { mark, ..Change::of(path, body) }),
+            Ok((_, total)) => out.push(Change {
+                after: Body::TooLarge(total as u64),
+                mark,
+                ..Change::gone(path)
+            }),
+            // Not read, which is not the same as not there: a refusal, a deadline or an I/O
+            // error leaves what stands unknown, and it is recorded unseen (`Seen::Unread`), never
+            // as a deletion (spec §16.2).  Only the native seam answers so.
+            Err(e) if unreadable(&e) && !off("unread_gone") => out.push(Change {
+                after: Body::Unseen,
+                mark,
+                ..Change::gone(path)
+            }),
+            Err(_) => out.push(Change { mark, ..Change::gone(path) }),
+        }
+    }
+    out
+}
+
+/// Whether `e` is the native seam's [`Unreadable`](crate::store::call::Unreadable): a path that
+/// could not be read for any reason but its absence.  Never on wasm, whose seam does not produce
+/// one, so the tab records as it always has.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn unreadable(e: &Error<ErrTag>) -> bool { crate::store::call::is_unreadable(e) }
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn unreadable(_e: &Error<ErrTag>) -> bool { false }
+
+/// The entry guard (spec §16.4): natively the restore family, [`versions_walk`],
+/// [`mark_dirty_before`] and [`dirty_changes`] go on only inside a door errand on `id`
+/// ([`crate::store::door::guard`]).  The tab's own door is its page, so on wasm it always admits.
+#[cfg(not(target_arch = "wasm32"))]
+fn door_open(call: &str, id: &str) -> Outcome<()> {
+    if off("door_guard") {
+        return Ok(());
+    }
+    crate::store::door::guard(call, id)
+}
+
+// ── A test's switches (D1x2a): each rule turned off on this thread, to show its test's red ──
+
+#[cfg(test)]
+thread_local! {
+    static OFF: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Turn `rule` off on this thread, or every rule back on with `None`: `door_guard`, the entry
+/// guard; `own_only`, a close's keeping to the Diamond's own files; `unread_gone`, an unread path
+/// recorded unseen; `deadline`, the door's deadline on a read over its link.
+#[cfg(test)]
+pub(crate) fn switch_off(rule: Option<&'static str>) {
+    OFF.with(|o| match rule {
+        Some(r) => o.borrow_mut().push(r),
+        None    => o.borrow_mut().clear(),
+    })
+}
+
+/// Is `rule` switched off on this thread ([`switch_off`])?
+#[cfg(test)]
+pub(crate) fn off(rule: &str) -> bool { OFF.with(|o| o.borrow().contains(&rule)) }
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(crate) fn off(_: &str) -> bool { false }
+#[cfg(target_arch = "wasm32")]
+fn door_open(_call: &str, _id: &str) -> Outcome<()> { Ok(()) }
+
+/// `path` as a change ready to record, standing as `body`, marked as [`versions_changes`] marks it.
+pub(crate) fn change_of(id: &str, path: &str, body: Body) -> Change {
+    let mark = theirs(id, path);
+    match body {
+        Body::Held(b) => Change { mark, ..Change::of(path, b) },
+        Body::Gone    => Change { mark, ..Change::gone(path) },
+        after @ (Body::Large(_) | Body::Stored(_) | Body::TooLarge(_) | Body::Unseen) =>
+            Change { after, mark, ..Change::gone(path) },
+    }
+}
+
+/// Every file in the Diamond's own directory that the store versions, as it stands.
+///
+/// For Save a version, and for a Diamond that has just landed.  A turn's commands are looked at
+/// per call instead ([`open_window`]), because a walk at the turn's end cannot say whose call a
+/// change was.  Bounded at [`WALK_FILES_MAX`] entries, so a capp with a large data directory
+/// cannot turn a button press into a minute of hashing on the device least able to afford it.
+///
+/// **A file History holds that the listing no longer has is read too** (D-20261009-29 item 4), so
+/// a deletion by a door that marked nothing -- a capp's own delete, a sync arrival -- is recorded
+/// as a deletion rather than never.  Read, not presumed gone: a file the bounded listing merely
+/// did not reach reads as it stands and records nothing new.
+pub async fn versions_walk(id: &str) -> Vec<Change> {
+    if let Err(e) = door_open("versions_walk", id) {
+        console_log(&fmt!("Diamond '{}': the files were not walked ({}).", id, e));
+        return Vec::new();
+    }
+    let mut found: Vec<String> = walk_listing(id, &diamond_dir(id)).await.into_iter()
+        .map(|(path, _, _)| path)
+        .collect();
+    let own = fmt!("{}/", diamond_dir(id));
+    let listed: std::collections::BTreeSet<String> = found.iter().cloned().collect();
+    let held = versions_manifests(id).await;
+    let mut lost: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for ((path, folder), (_, hash)) in versions::index_placed(&held).into_iter() {
+        if folder.is_none() && hash.is_some() && path.starts_with(&own) && !listed.contains(&path) {
+            lost.insert(path);
+        }
+    }
+    found.extend(lost.into_iter());
+    versions_changes(id, &found).await
+}
+
+/// The files under `root` that the store versions, each with its length and when it was last
+/// written where the listing knows, at most [`WALK_FILES_MAX`] of them: what [`versions_walk`]
+/// reads and what a window looks at ([`walk_stamps`]), so the two cannot disagree about scope.
+async fn walk_listing(id: &str, root: &str) -> Vec<(String, u64, Option<f64>)> {
+    let mut found: Vec<(String, u64, Option<f64>)> = Vec::new();
+    let mut todo: Vec<String> = vec![String::new()];
+    while let Some(rel) = todo.pop() {
+        if found.len() >= WALK_FILES_MAX {
+            break;
+        }
+        let dir = if rel.is_empty() { root.to_string() } else { fmt!("{}/{}", root, rel) };
+        let entries = match own::list_dir_stamped(&dir).await {
+            Ok(e)  => e,
+            Err(_) => continue,         // a directory that has gone holds nothing
+        };
+        for (name, is_dir, size, when) in entries {
+            let child = if rel.is_empty() { name.clone() } else { fmt!("{}/{}", rel, name) };
+            let whole = fmt!("{}/{}", root, child);
+            if !versionable(id, &whole) {
+                continue;
+            }
+            if is_dir {
+                todo.push(child);
+            } else if found.len() < WALK_FILES_MAX {
+                found.push((whole, size, when));
+            }
+        }
+    }
+    found
+}
+
+/// Does the version store keep this path?
+///
+/// `versions/` is the store itself and `.daimond/` is the Diamond's own record -- the log, the
+/// metadata, the retained deltas; `recent.json` is a ring of the last writes, a record of acts
+/// too.  Versioning any of them would version the act of versioning.  The crystal's two files
+/// keep the chain they have had since they existed, and a files manifest and a crystal snapshot
+/// at one number are two halves of one History row rather than two rows.
+///
+/// Asked of THIS Diamond's own paths only: a file a turn wrote elsewhere in the workspace is
+/// versioned whatever it is called, so a user's own folder named `versions` is not caught by a
+/// rule about Daimond's.
+pub fn versionable(id: &str, path: &str) -> bool {
+    if !is_safe_rel(path) {
+        return false;       // an absolute machine path, or one with a `..` in it
+    }
+    let own = crate::tools::keeper_home(id);
+    for guard in [
+        versions_dir(id),
+        fmt!("{}/{}", own, STORE_DIR),
+        fmt!("{}/{}", own, LEGACY_STORE_DIR),
+    ] {
+        if path == guard || path.starts_with(&fmt!("{}/", guard)) {
+            return false;
+        }
+    }
+    // The recent-writes ring (www/js/recent.js `ringPath`) is a record of acts, written after
+    // each one with no mark: versioned, every restore's walk filed it as a row of the person's.
+    path != crystal_data_path(id) && path != crystal_page_path(id) && path != recent_ring_path(id)
+}
+
+/// The ring of the files a Diamond's daimon last wrote, `diamonds/<id>/recent.json`.
+fn recent_ring_path(id: &str) -> String {
+    fmt!("diamonds/{}/recent.json", id)
+}
+
+/// What one path held as at `at`, for a caller that is about to write it back: the version, the
+/// body's hash, and whether the file is on this computer.
+///
+/// `at` of `None` means "before the change that is being undone": the version of the newest entry
+/// naming the path, and the content that stood under it.  A path whose newest entry carries no
+/// `was` answers `None` -- there is nothing to go back to, and an older version is not an answer
+/// to a question about a state the user never saw.
+///
+/// Answered with the folder the row was written in ([`versions::needs_folder`]), which decides
+/// where it may go back ([`versions::route`]).
+pub async fn versions_undo_target(id: &str, path: &str, at: Option<u64>)
+    -> Outcome<Option<(u64, String, bool, Option<String>)>>
+{
+    let held = versions_manifests(id).await;
+    // By the path, as a restore routes it ([`theirs`]), and never by a row's flag alone.
+    let mark = theirs(id, path) || held.iter().rev()
+        .flat_map(|(_, m)| m.files.iter())
+        .find(|e| e.path == path)
+        .map(|e| e.mark)
+        .unwrap_or(false);
+    // In the folder the path reaches now (HX3), by the rows that answer there (HQ1): its own,
+    // those from before folders and those of a folder this device cannot name; never another
+    // place's this device can name.
+    let here = folder_of(path);
+    match at {
+        Some(n) => Ok(versions::path_here(&held, path, n, here.as_deref(), own::folder_known)
+            .and_then(|s| s.hash().map(|h| (n, h.to_string(), mark, s.folder().map(String::from))))),
+        None    => Ok(versions::undo_target(&held, path, here.as_deref(), own::folder_known)
+            .map(|(n, h, f)| (n, h, mark, f))),
+    }
+}
+
+pub use crate::engine::host::types::store::CrystalHalf;
+
+/// Which half of THIS Diamond's crystal `path` is, if either ([`versionable`] leaves both out).
+pub fn crystal_half(id: &str, path: &str) -> Option<CrystalHalf> {
+    if path == crystal_data_path(id) {
+        Some(CrystalHalf::Data)
+    } else if path == crystal_page_path(id) {
+        Some(CrystalHalf::Page)
+    } else {
+        None
+    }
+}
+
+/// One half as it stood at `version`, `None` where its chain holds nothing at or before it.
+async fn half_at(id: &str, half: CrystalHalf, version: u64, snaps: &[(u64, Snap)])
+    -> Outcome<Option<String>>
+{
+    match half {
+        CrystalHalf::Page => page_at(id, version, snaps).await,
+        // The memory is snapshotted at every version, so a version with none is one never minted.
+        CrystalHalf::Data => if snaps.iter().any(|(n, _)| *n == version) {
+            Ok(Some(res!(read_version(id, version).await)))
+        } else {
+            Ok(None)
+        },
+    }
+}
+
+/// What a `file_revert` of one crystal half writes back: the version and the text.
+///
+/// The half is not in the files store ([`versionable`]), so [`versions_undo_target`] never finds
+/// it; its history is the crystal chain.  `at` of `Some(n)` is the half as at `n`.  `None` is
+/// "undo that": a file the turn wrote since the last snapshot goes back to the version the Diamond
+/// is at, and one standing as recorded goes back past the last version that changed it
+/// ([`versions::chain_undo_version`]), stepping further while an older version holds the same
+/// text, so a revert is never a write of what is already there.  A page with nothing recorded is
+/// the empty page, which shows the shipped one; memory with nothing recorded is `None`.
+pub async fn crystal_undo_target(id: &str, half: CrystalHalf, at: Option<u64>)
+    -> Outcome<Option<(u64, String)>>
+{
+    let (kf, patch, path) = match half {
+        CrystalHalf::Page => (PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT, crystal_page_path(id)),
+        CrystalHalf::Data => (DATA_KEYFRAME_EXT, DATA_PATCH_EXT, crystal_data_path(id)),
+    };
+    let snaps = snapshot_chain(id, kf, patch).await;
+    let empty = |t: Option<String>| match half {
+        CrystalHalf::Page => Some(t.unwrap_or_default()),
+        CrystalHalf::Data => t,
+    };
+    if let Some(n) = at {
+        return Ok(empty(res!(half_at(id, half, n, &snaps).await)).map(|t| (n, t)));
+    }
+    let head = res!(read_meta(id).await).version;
+    // QA2 (A2 LOW 1): read as the side files are.  A head that stands but will not read is an
+    // error, never an empty head that would make the put-back a no-op or step one version too far.
+    let (disk, _) = res!(read_bound(FileRoot::Opfs, &path).await);
+    let numbers: Vec<u64> = snaps.iter().map(|(n, _)| *n).collect();
+    let recorded = empty(res!(half_at(id, half, head, &snaps).await));
+    let moved = recorded.as_deref() != Some(disk.as_str());
+    let mut want = versions::chain_undo_version(&numbers, head, moved);
+    // Bounded: a memory unchanged across many versions is stepped over, not walked for ever.
+    for _ in 0..64 {
+        let n = match want {
+            Some(n) => n,
+            None    => return Ok(None),
+        };
+        let text = match empty(res!(half_at(id, half, n, &snaps).await)) {
+            Some(t) => t,
+            None    => return Ok(None),
+        };
+        if text != disk {
+            return Ok(Some((n, text)));
+        }
+        want = versions::chain_undo_version(&numbers, n, false);
+    }
+    Ok(None)
+}
+
+// ── A restore, from its opening to its record ────────────────────────────
+//
+// **A restore never destroys bytes that exist only on the person's disk** (release 5.1's F5 and
+// its fix's QA, B1 and R1-R6, 2026-09-25).  A restore has two halves.  The Diamond's own files are
+// written here, by the engine.  The person's files -- in the folder they opened, or on the machine
+// behind the hand -- are handed to the page, which writes or deletes them through the Diamond's
+// fenced door, and deletes only on the person's yes.  That door kept nothing until 2026-09-25: a
+// Restore wrote old bytes over whatever the person had saved since, with no copy.  The first fix
+// copied a file BEFORE the question and deleted it after, so a save made while the question was
+// open went unkept, and it copied only the files it would delete.
+//
+// So a restore is now opened ([`versions_restore_open`]), which hands out the person's files under
+// a ticket and writes none of them; a file it would take away is recorded as it stands when the
+// person is asked about it.  Each act of the door under that ticket keeps what it replaces or
+// removes AT THE ACT, once the fence has passed: the copy goes into the store with a note, as a
+// turn's does ([`restore_keep`]).  Closing it ([`versions_restore_close`]) writes the Diamond's own
+// files and records everything that landed as the restore's one `restore` version.  A door act
+// with no restore open is refused (hist-safe QA A F1, 2026-10-12): it was a restore of its own, with
+// no question and no claim.  An act the fence refuses keeps nothing and records nothing.
+
+/// What a restore puts back.
+#[derive(Clone, Debug)]
+pub enum Plan {
+    At(u64, Option<String>, Option<String>),    // every path, or one (and the folder of the row chosen), as at a version
+    Undo(u64, Vec<String>),                     // what a version replaced, at the paths named, or all it changed
+}
+
+impl Plan {
+
+    pub fn version(&self) -> u64 {
+        match self {
+            Self::At(n, _, _) | Self::Undo(n, _) => *n,
+        }
+    }
+
+    /// The note the restore's own version carries: `restore v3`, or `undo v5`.
+    fn note(&self) -> String {
+        match self {
+            Self::At(n, _, _) => fmt!("restore v{}", n),
+            Self::Undo(n, _)  => fmt!("undo v{}", n),
+        }
+    }
+}
+
+/// A restore from [`versions_restore_open`] to [`versions_restore_close`].
+struct Restoring {
+    id:     String,                             // the store
+    plan:   Plan,                               // what the engine puts back
+    routes: Routes,                             // the person's files handed out, and whose rows they are
+    done:   Vec<Change>,                        // what each act on the person's files kept and left
+    notes:  Vec<String>,                        // the notes of the copies those acts took
+    named:  Option<std::collections::BTreeSet<String>>, // the own files the open put to the person
+    own:    Routes,                             // the Diamond's own files, as the open saw them
+    hold:   Option<std::rc::Rc<VersionHold>>,   // the store, from the restore's first write to its end
+    _lock:  RestoreLock,                        // held while open, so another tab leaves its notes
+    _claim: RestoreClaim,                       // the Diamond's one restore
+}
+
+/// The person's files a restore handed out, by the spelling each was handed out under
+/// (normalised): the path as its row names it, and the folder the row was written in.
+///
+/// **The path's identity from the row to the act and back, kept in one place** (HR, 2026-09-25).
+/// The open decides the spelling the fenced door is asked for ([`versions_restore_open`]); the act
+/// asks this which row it is putting back and where that row was written ([`restore_route`]), and
+/// is refused where the spelling now reaches another file; and what landed is recorded under the
+/// place the act reached ([`restore_landed`]).
+type Routes = std::collections::BTreeMap<String, Handed>;
+
+/// One of the person's files a restore handed out: whose row it is, and what stood there when the
+/// person decided on it.
+#[derive(Clone, Debug)]
+struct Handed {
+    path:   String,                             // the path as its row names it
+    folder: Option<String>,                     // the folder the row was written in
+    seen:   versions::Seen,                     // at the open, or at the page's look
+    looks:  bool,                               // the open could not read it: the page looks, once
+    asked:  Option<versions::Seen>,             // when an act was last refused and put to them
+    yes:    Option<versions::Seen>,             // what he last said yes to ([`restore_answer`])
+    ask:    Option<(String, Option<String>)>,   // the target and quiet hashes, where the plan asks
+}
+
+impl Handed {
+
+    /// Is the person asked before the row goes back over what was seen there?
+    fn over(&self) -> bool {
+        match &self.ask {
+            Some((target, quiet)) => versions::asks_over(&self.seen, target, quiet.as_deref()),
+            None                  => false,
+        }
+    }
+}
+
+pub use crate::diamond_versions::Act;
+
+/// The one restore of a Diamond this page holds open, given back when dropped: across tabs by a
+/// web lock taken only where it is free, and within the page by [`CLAIMED`].
+///
+/// **One restore per Diamond** (hist-safe R3, 2026-10-12).  Each restore held a lock of its own
+/// ticket only, so a second tab, or an Undo pressed while a restore's question was open, ran a
+/// second restore over the same files beside it, and the first one's questions went stale.  The
+/// per-ticket lock stays: [`drain_turn`] reads it to leave an open restore's notes alone.
+struct RestoreClaim {
+    id:       String,
+    _release: Option<own::Held>,                // given back after `CLAIMED` lets go of `id`
+}
+
+impl Drop for RestoreClaim {
+    fn drop(&mut self) {
+        CLAIMED.with(|c| { c.borrow_mut().remove(&self.id); });
+    }
+}
+
+thread_local! {
+    static CLAIMED: std::cell::RefCell<std::collections::BTreeSet<String>> =
+        std::cell::RefCell::new(std::collections::BTreeSet::new());
+}
+
+/// Claim `id`'s one open restore, or refuse where a restore of it is open in this tab or another.
+/// Where the browser has no lock manager, or it refuses, the claim is this page's alone.
+async fn claim_restore(id: &str) -> Outcome<RestoreClaim> {
+    let busy = || err!("A restore of this Diamond is waiting for your answer. Answer it first; \
+        nothing was changed."; Lock, Conflict);
+    // Taken before the await, so a second open on this page meets it at once.
+    if !CLAIMED.with(|c| c.borrow_mut().insert(id.to_string())) {
+        return Err(busy());
+    }
+    let mut claim = RestoreClaim { id: id.to_string(), _release: None };
+    match own::lock(&fmt!("daimond-restore-of-{}", id), LockHow::IfAvailable).await {
+        Locked::Held(release) => claim._release = Some(release),
+        Locked::Busy          => return Err(busy()),
+        _                     => {},
+    }
+    Ok(claim)
+}
+
+/// The web lock an open restore holds, given back when the restore is dropped: at its close, after
+/// its notes are settled, or with the page.
+///
+/// **A turn end in another tab adopted an open restore's copy** (U3 of the release 5.1 fix's QA,
+/// round 2, 2026-09-25): a note is the restore's own record only while the restore is open, and
+/// another tab could not tell open from abandoned, so it recorded the copy as a `turn` row and the
+/// close recorded it again as `restore`.  The lock is what another tab can see: a note whose
+/// restore still holds it is left for the close ([`drain_turn`]), and one whose page has gone,
+/// taking the lock with it, is adopted.
+struct RestoreLock {
+    _held: Option<own::Held>,                   // given back when dropped
+}
+
+/// How long a restore waits for its own lock, in ms: nothing else takes it, so only a lock manager
+/// that is not answering waits at all.
+const RESTORE_LOCK_WAIT_MS: u64 = 5_000;
+
+/// The web lock the restore `ticket` of the page life `page` holds while it is open.
+fn restore_lock_name(page: &str, ticket: u64) -> String {
+    fmt!("daimond-restore-{}-{}", page, ticket)
+}
+
+/// What a restore's opening hands the caller: its ticket, and the person's files for its door.
+pub struct Opened {
+    pub ticket:  u64,
+    pub machine: Vec<String>,                   // one JSON object a file
+    pub own:     Vec<String>,                   // the Diamond's own files it would delete: {path, v, ts}
+}
+
+impl Opened {
+
+    /// `{version, ticket, machine, own}`.
+    pub fn said(&self, at: u64) -> String {
+        fmt!("{{\"version\":{},\"ticket\":{},\"machine\":[{}],\"own\":[{}]}}", at, self.ticket,
+            self.machine.join(","), self.own.join(","))
+    }
+}
+
+/// What a restore's close did: what landed, what could not be put back, and the version recording
+/// it.
+pub struct Closed {
+    pub at:       u64,
+    pub recorded: Option<u64>,
+    pub restored: Vec<String>,                  // as the store names them: absolute for a machine file
+    pub missing:  Vec<String>,
+    pub refused:  Vec<String>,                  // one JSON object a file
+    pub wrote:    Vec<String>,                  // the engine's own writes, which the read cache forgets
+    pub crystal:  Crystal,                      // what became of the crystal and page
+    pub changed:  Vec<String>,                  // own files changed since he decided: put to him, restore still open
+}
+
+/// What a restore's close did with the crystal and its page, said by the engine so no caller
+/// infers it (hist-safe U3, QA B B1, 2026-10-12).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Crystal {
+    Restored,                                   // put back in the same version as the files
+    Same,                                       // today's already matches the version's
+    Untouched,                                  // not the restore's to put back: one path, or an undo of files
+}
+
+impl Crystal {
+    pub fn said(&self) -> &'static str {
+        match self {
+            Self::Restored  => "restored",
+            Self::Same      => "same",
+            Self::Untouched => "untouched",
+        }
+    }
+}
+
+impl Closed {
+
+    /// `{version, recorded, restored, missing, refused}`, with `machine` where the caller acts on
+    /// the person's files itself.
+    pub fn said(&self, machine: Option<&[String]>) -> String {
+        let quote = |v: &[String]| -> String {
+            let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
+            items.join(",")
+        };
+        fmt!("{{\"version\":{},\"recorded\":{},\"crystal\":\"{}\",\"restored\":[{}],\"missing\":[{}],\"refused\":[{}],\"changed\":[{}]{}}}",
+            self.at, match self.recorded { Some(v) => v as i64, None => -1 }, self.crystal.said(),
+            quote(&self.restored), quote(&self.missing), self.refused.join(","), quote(&self.changed),
+            match machine {
+                Some(m) => fmt!(",\"machine\":[{}]", m.join(",")),
+                None    => String::new(),
+            })
+    }
+}
+
+/// Open a restore of `id`'s store, holding its lock ([`RestoreLock`]), and answer its ticket.
+///
+/// The lock's name is new, so nothing waits for it.  Where the browser has no lock manager, or
+/// will not grant it, the restore is open without one, as every restore was before.
+async fn restore_begin(id: &str, plan: Plan, routes: Routes, own: Routes,
+    named: Option<std::collections::BTreeSet<String>>, claim: RestoreClaim) -> u64
+{
+    let ticket = RESTORE_NEXT.with(|n| { let t = n.get(); n.set(t + 1); t });
+    // Registered before the await, so the ticket is open from the moment it is handed out.
+    RESTORES.with(|r| {
+        r.borrow_mut().insert(ticket, Restoring {
+            id:     id.to_string(),
+            plan,
+            routes,
+            done:   Vec::new(),
+            notes:  Vec::new(),
+            named,
+            own,
+            hold:   None,
+            _lock:  RestoreLock { _held: None },
+            _claim: claim,
+        });
+    });
+    let page = own::this_page();
+    let lock = match own::lock(&restore_lock_name(&page, ticket),
+        LockHow::Timeout(RESTORE_LOCK_WAIT_MS)).await
+    {
+        Locked::Held(release) => Some(release),
+        _                     => None,
+    };
+    let orphan = RESTORES.with(|r| match r.borrow_mut().get_mut(&ticket) {
+        Some(x) => { x._lock = RestoreLock { _held: lock }; None },
+        None    => Some(RestoreLock { _held: lock }),     // closed while the lock was asked for
+    });
+    drop(orphan);
+    ticket
+}
+
+/// Is `ticket` a restore still open on this page?
+fn restore_is_open(ticket: u64) -> bool {
+    RESTORES.with(|r| r.borrow().contains_key(&ticket))
+}
+
+/// Is a restore note of `ticket` held back by its restore alone, whatever its page's liveness?
+/// Natively: `RESTORES` is the one store thread's truth and a ticket is never reused, while the
+/// note is stamped with the door run's page and the lock with the parent's (d1v1 check D2), so a
+/// dropped door run's note is still its open restore's.  Never in the tab, where another tab's
+/// ticket may carry this page's number and its lock is what says.
+fn restore_holds_note(ticket: u64) -> bool {
+    cfg!(not(target_arch = "wasm32")) && restore_is_open(ticket)
+}
+
+/// Open a restore of `id` with nothing handed out, for the tests of the notes its acts leave.
+#[cfg(test)]
+pub(crate) async fn test_restore_open(id: &str) -> u64 {
+    restore_begin(id, Plan::At(1, None, None), Routes::new(), Routes::new(), None,
+        RestoreClaim { id: id.to_string(), _release: None }).await
+}
+
+/// Let the version hold of the open restore `ticket` go, so another turn end may hold the store.
+#[cfg(test)]
+pub(crate) fn test_restore_unhold(ticket: u64) {
+    RESTORES.with(|r| if let Some(x) = r.borrow_mut().get_mut(&ticket) { x.hold = None; });
+}
+
+/// End the restore `ticket` with nothing recorded.
+#[cfg(test)]
+pub(crate) fn test_restore_end(ticket: u64) {
+    let gone = RESTORES.with(|r| r.borrow_mut().remove(&ticket));
+    drop(gone);
+}
+
+/// The store the open restore `ticket` puts back, or `None` where it is not open.
+pub fn restore_store(ticket: u64) -> Option<String> {
+    RESTORES.with(|r| r.borrow().get(&ticket).map(|x| x.id.clone()))
+}
+
+/// Did the open restore `ticket` hand out `spelled` (normalised, as [`restore_route`] keys it)?
+pub fn restore_handed(ticket: u64, spelled: &str) -> bool {
+    let key = crate::tools::normalise(spelled);
+    RESTORES.with(|r| r.borrow().get(&ticket).map(|x| x.routes.contains_key(&key)).unwrap_or(false))
+}
+
+/// May the act of the open restore `ticket` at `spelled`, which reaches `landed` now, put back the
+/// row it was handed out for ([`versions::route`]), over what stands there now?  An act at a
+/// spelling the open did not hand out is [`Act::Unasked`] ([`versions::act`]).
+///
+/// **Bound to the bytes the person decided on** (hist-safe R2, 2026-10-12): those seen at the open
+/// (or the page's look), or those he said yes to ([`restore_answer`]).  Anything else there is
+/// [`Act::Changed`], and what stands there is what he is asked about next, his last yes undone.
+/// Bytes already equal to the act's are [`Act::Same`], and nothing is written.
+///
+/// # Arguments
+/// * `spelled` - The path the act was asked for, as the open handed it out.
+/// * `landed` - Where it reaches now: normalised, or absolute through the hand.
+/// * `now` - What stands there as the act found it, or `None` where nothing does.
+/// * `puts` - The bytes the act puts there, or `None` for a delete.
+pub fn restore_route(
+    ticket:  u64,
+    spelled: &str,
+    landed:  &str,
+    now:     Option<&[u8]>,
+    puts:    Option<&[u8]>,
+)
+    -> Act
+{
+    let key = crate::tools::normalise(spelled);
+    let handed = RESTORES.with(|r| r.borrow().get(&ticket).and_then(|x| x.routes.get(&key).cloned()));
+    let row = handed.as_ref().map(|h|
+        if h.path.starts_with('/') { h.path.clone() } else { crate::tools::normalise(&h.path) });
+    let out = versions::act(
+        match (&handed, &row) {
+            (Some(h), Some(row)) => Some(versions::Handout {
+                row,
+                folder: h.folder.as_deref(),
+                known:  h.folder.as_deref().map(own::folder_known).unwrap_or(false),
+                seen:   &h.seen,
+                must:   h.over(),
+                asked:  h.asked.as_ref(),
+                yes:    h.yes.as_ref(),
+            }),
+            _                    => None,
+        },
+        landed, folder_of(landed).as_deref(), now, puts);
+    // What stands there is what the person is asked about next, and nothing he said before
+    // answers it.
+    if let Act::Changed | Act::Ask(_) = out {
+        RESTORES.with(|r| {
+            if let Some(h) = r.borrow_mut().get_mut(&ticket).and_then(|x| x.routes.get_mut(&key)) {
+                h.asked = Some(versions::Seen::of(now));
+                h.yes = None;
+            }
+        });
+    }
+    out
+}
+
+/// The page's look at one of the person's files the open could not read -- one on the machine,
+/// reached through the hand -- before it asks anything: what stands there `now` becomes what the
+/// restore's act is bound to, and the answer is whether the person is asked before it goes over it.
+/// `None` where `spelled` is no file the open restore `ticket` handed out to be looked at.
+///
+/// **Once, and only at a file the open could not read** (hist-safe QA A F3, 2026-10-12).  A look
+/// rebound any file at any time, so one taken while his question was open moved what his yes was
+/// given to, and it went over his later edit unasked.
+pub fn restore_look(ticket: u64, spelled: &str, now: versions::Seen) -> Option<bool> {
+    let key = crate::tools::normalise(spelled);
+    RESTORES.with(|r| {
+        let mut all = r.borrow_mut();
+        match all.get_mut(&ticket).and_then(|x| x.routes.get_mut(&key)) {
+            Some(h) if h.looks => {
+                h.looks = false;
+                h.seen = now;
+                Some(h.over())
+            },
+            _                  => None,
+        }
+    })
+}
+
+/// Record the person's answer to the question the open restore `ticket` put about `paths`, as
+/// they were handed out: a yes binds to the bytes he was asked about -- those an act's refusal
+/// last found there, or else those the open saw -- and a no takes back any yes before it.
+///
+/// **His answer is the engine's** (hist-safe QA A F2, 2026-10-12): it was the page's to remember,
+/// and an act on the open ticket went over his flagged edit before he answered.  An act at an
+/// asked file goes only with a yes recorded here ([`versions::act`]).
+pub fn restore_answer(ticket: u64, paths: &[String], yes: bool) -> Outcome<()> {
+    RESTORES.with(|r| {
+        let mut all = r.borrow_mut();
+        let x = match all.get_mut(&ticket) {
+            Some(x) => x,
+            None    => return Err(err!(
+                "The restore {} has ended, so there is no question to answer. Nothing was changed.",
+                ticket; Missing, Data)),
+        };
+        // Every path checked before any is recorded, so an answer lands whole or not at all.  The
+        // Diamond's own files are answered by the same rule as the person's (hist-safe U3 F2).
+        for p in paths.iter() {
+            let key = crate::tools::normalise(p);
+            if !x.routes.contains_key(&key) && !x.own.contains_key(&key) {
+                return Err(err!("'{}' is no file restore {} asked about, so its answer was not \
+                    recorded. Nothing was changed.", p, ticket; Missing, Data));
+            }
+        }
+        for p in paths.iter() {
+            let key = crate::tools::normalise(p);
+            let h = match x.routes.get_mut(&key) {
+                Some(h) => Some(h),
+                None    => x.own.get_mut(&key),
+            };
+            if let Some(h) = h {
+                h.yes = if yes { Some(h.asked.clone().unwrap_or_else(|| h.seen.clone())) } else { None };
+            }
+        }
+        Ok(())
+    })
+}
+
+/// What the machine hand found at `spelled` when it refused a restore's write as changed since the
+/// door read it (hist-safe F1, 2026-10-12): the person is asked about exactly that next, as
+/// [`restore_route`] records a change it finds itself, and nothing he said before answers it.
+pub fn restore_asked(ticket: u64, spelled: &str, now: versions::Seen) {
+    let key = crate::tools::normalise(spelled);
+    RESTORES.with(|r| {
+        if let Some(h) = r.borrow_mut().get_mut(&ticket).and_then(|x| x.routes.get_mut(&key)) {
+            h.asked = Some(now);
+            h.yes = None;
+        }
+    });
+}
+
+/// Keep what a restore's act is about to replace or remove at `path`: the act's hold, taken once
+/// the fence has passed and immediately before the act.
+///
+/// A turn still running with a capture of `path` has its run ended first, as its own version (see
+/// [`end_run`]).  Then the bytes the act found, `now`, go into the store with a note naming them,
+/// on disk BEFORE the act -- so a page that dies between the act and the close leaves the note for
+/// the next turn end to adopt.  An error is the act's refusal: nothing may change.
+///
+/// # Arguments
+/// * `path` - As the store names it: normalised, or absolute for a machine file.
+/// * `now` - What stands at `path` as the act found it, or `None` where nothing does.
+/// * `deleting` - Is the act a delete?
+/// What [`restore_keep`] answers for `path` where no restore holds its ticket; the remote port
+/// answers the same where its store's binding says so (D1r1d).
+pub fn restore_ended(path: &str) -> Error<ErrTag> {
+    err!("The restore that '{}' belonged to has ended, so nothing was changed.", path;
+        Missing, Data)
+}
+
+pub async fn restore_keep(ticket: u64, path: &str, now: Option<&[u8]>, deleting: bool)
+    -> Outcome<()>
+{
+    let id = match restore_store(ticket) {
+        Some(id) => id,
+        None     => return Err(restore_ended(path)),
+    };
+    let hold = res!(restore_held(ticket).await);
+    res!(end_run(Some(&*hold), &id, path).await);
+    let before = match now {
+        Some(b) => b,
+        None    => return Ok(()),           // nothing stands there, so nothing is lost
+    };
+    let tag = versions::hash_of(path.as_bytes());
+    let page = own::this_page();
+    let name = fmt!("{}-r{}-{}.json", page, ticket, &tag[..16]);
+    let note = fmt!("{}/{}", pending_dir(&id), name);
+    let hash = versions::hash_of(before);
+    // The body first, as `pend` writes it: a failure half way leaves a body nothing names.
+    // UNDER THE RESTORE'S HOLD, so no tab's sweep can meet it (hist-safe U3, M9b, 2026-10-12): it
+    // was claimed as a write outside the hold, and the claim asked for the store the restore
+    // already holds, so every act on his files waited on its own restore and was refused.
+    let mut w = Writing::begin(&id);
+    let text = fmt!(
+        r#"{{"page":"{}","path":"{}","was":"{}","deleting":{},"mark":{}{},"restore":{},"ts":{}}}"#,
+        json_escape(&page), json_escape(path), hash, deleting, theirs(&id, path),
+        folder_field(path), ticket, now_ms() as u64);
+    let wrote = match w.put(&id, &hash, before).await {
+        Ok(())  => own::write_file(&note, text.as_bytes()).await,
+        Err(e)  => Err(e),
+    };
+    w.done(&id).await;
+    res!(wrote);
+    RESTORES.with(|r| {
+        if let Some(x) = r.borrow_mut().get_mut(&ticket) {
+            x.notes.push(name);
+        }
+    });
+    Ok(())
+}
+
+/// Give back what [`restore_keep`] noted for an act that did not happen.  Best effort: a note left
+/// behind is adopted at a turn end, where the path reads as it stands and an unchanged row is not
+/// written.
+pub async fn restore_let_go(ticket: u64, path: &str) {
+    let id = match restore_store(ticket) {
+        Some(id) => id,
+        None     => return,
+    };
+    let tag = versions::hash_of(path.as_bytes());
+    let page = own::this_page();
+    let name = fmt!("{}-r{}-{}.json", page, ticket, &tag[..16]);
+    let _ = own::delete_entry(&fmt!("{}/{}", pending_dir(&id), name), false).await;
+    RESTORES.with(|r| {
+        if let Some(x) = r.borrow_mut().get_mut(&ticket) {
+            x.notes.retain(|n| *n != name);
+        }
+    });
+}
+
+/// Hold what a restore's act left at its path, with the copy it kept, for the restore's record.
+pub fn restore_landed(ticket: u64, change: Change) {
+    RESTORES.with(|r| {
+        if let Some(x) = r.borrow_mut().get_mut(&ticket) {
+            x.done.push(change);
+        }
+    });
+}
+
+/// End a running turn's run on `path`, which a restore is about to change from outside the turn:
+/// the run so far becomes a version of its own, and the path's capture goes.
+///
+/// **So the History's newest row says what is on disk** (R5 of the release 5.1 fix's QA).  A
+/// Diamond's thread turn is not a steer, so nothing stopped a Restore while one ran; the turn's end
+/// then recorded its captures AFTER the restore's rows, and the History said a file held the
+/// turn's text, or was deleted, while the disk held what the restore put back.  A restore is bytes
+/// from outside the turn, and those end a turn's run as the person's own editor does
+/// ([`seal_run`]): what the turn did is a row now, before the restore's, and its next act on the
+/// path begins a run of its own from what the restore left.  Not the turn's seal to count.
+///
+/// # Arguments
+/// * `hold` - The store's hold, where the caller holds it already.
+/// * `path` - As the capture names it: normalised, or absolute for a machine file.
+async fn end_run(hold: Option<&VersionHold>, id: &str, path: &str) -> Outcome<()> {
+    // The caller's own run first, then any run on the store: a restore ends whichever holds it.
+    let mine = turn_key(id);
+    let run = CAPTURED.with(|c| {
+        let mut all = c.borrow_mut();
+        let keys: Vec<String> = std::iter::once(mine.clone())
+            .chain(all.keys().filter(|k| **k != mine && key_is_of(k, id)).cloned())
+            .collect();
+        for key in keys {
+            if let Some(held) = all.get_mut(&key) {
+                if let Some(at) = held.iter().position(|(_, h)| h.path == path) {
+                    return Some((key, held.remove(at)));
+                }
+            }
+        }
+        None
+    });
+    let (key, (raw, run)) = match run {
+        Some(r) => r,
+        None    => return Ok(()),
+    };
+    let recorded = match hold {
+        Some(h) => versions_record_held(h, id, None, Cause::Turn, "", "", vec![run.clone()]).await,
+        None    => versions_record(id, Cause::Turn, "", "", vec![run.clone()]).await,
+    };
+    match recorded {
+        Ok(_)  => {
+            // The run's copy is named by that version's row, so its note goes: THE NOTE OF THE RUN
+            // WHOSE CAPTURE THIS WAS (d1v1 check D1), not the caller's, or that run's turn end
+            // adopts its note as a second row of the same copy.
+            let page = page_of_key(&key);
+            let _ = own::delete_entry(&pending_path_of(&page, id, path), false).await;
+            Ok(())
+        },
+        Err(e) => {
+            // Put back for the turn end, and the act that asked is refused.
+            CAPTURED.with(|c| {
+                c.borrow_mut().entry(key).or_default().push((raw, run));
+            });
+            Err(e)
+        },
+    }
+}
+
+/// Is `path` the Diamond's capp delivery record, `capp.json` at its root?
+///
+/// **A restore of the whole Diamond never moves it** (D-20261009-29 item 7): the record says which
+/// template version was delivered, and an older one put back made the next mount deliver the
+/// template again over the person's files, unrecorded.  Only a restore of that one path moves it.
+fn is_delivery_record(id: &str, path: &str) -> bool {
+    path == "capp.json" || path == fmt!("diamonds/{}/capp.json", id)
+}
+
+/// What every path a restore of `id` puts back: for a restore to a version, what one path or
+/// every path the history names held then; for an undo, what the version replaced
+/// ([`versions::undo_of`]).
+///
+/// Each path is resolved in the folder `here` says it reaches, asking this device which folders
+/// it knows ([`versions::state_at`], [`own::folder_known`]), and a row the person chose by the
+/// folder it was written in.
+fn restore_plan<F>(id: &str, held: &[(u64, Manifest)], plan: &Plan, here: F)
+    -> Outcome<Vec<(String, At)>>
+    where F: Fn(&str) -> Option<String>
+{
+    match plan {
+        Plan::At(at, Some(p), chose) => {
+            let prefer = chose.clone().filter(|f| !f.is_empty()).or_else(|| here(p));
+            match versions::path_at(held, p, *at, prefer.as_deref()) {
+                Some(s) => Ok(vec![(p.to_string(), s)]),
+                None    => Err(err!(
+                    "Diamond '{}' has no record of '{}' at version {}, so there is nothing to put \
+                    back.", id, p, at; Missing, Data)),
+            }
+        },
+        Plan::At(at, None, _) => Ok(versions::state_at(held, *at, here, own::folder_known)
+            .into_iter().filter(|(p, _)| !is_delivery_record(id, p)).collect()),
+        Plan::Undo(of, paths) => {
+            let want: Vec<(String, At)> = versions::undo_of(held, *of, paths, here)
+                .into_iter().filter(|(p, _)| !is_delivery_record(id, p)).collect();
+            if want.is_empty() {
+                return Err(err!(
+                    "Diamond '{}' has no record of what version {} changed, so there is nothing \
+                    to undo.", id, of; Missing, Data));
+            }
+            Ok(want)
+        },
+    }
+}
+
+/// Open a restore of the Diamond's files to how they stood at `at`: the person's files, for the
+/// caller's fenced door, and the ticket its acts and [`versions_restore_close`] carry.  **No file
+/// is written here**, and every act keeps its own copy as it goes.
+///
+/// **Which files are the person's is asked of the path** ([`theirs`]).  A file that did not exist
+/// at `at` is handed out as `gone`, and `kept` says what it holds now is recorded here, first --
+/// it is in the open folder and under the size ceiling -- so the page may put it to the person.
+/// One with no such copy, a machine file or one past the ceiling, is left.  One that is not there
+/// now is not handed out at all.
+///
+/// **A machine file is handed out as the door spells it** (R6 of the release 5.1 fix's QA): under
+/// the folder the hand was granted, relative to it, which the fenced door routes to the hand.  The
+/// store names it by its absolute path, as the turn's capture recorded it, and the door's record of
+/// the act does too, so the identity is one from the row to the act and back.  The absolute path
+/// was handed out until 2026-09-25, and the door refuses every absolute path, so no restore or undo
+/// could put a machine file back.  Handed out as recorded where the door would not reach the
+/// machine with the relative spelling: no hand, another root, or a folder open in the browser,
+/// which would take that path instead.
+///
+/// **An undo is a restore too** ([`Plan::Undo`]): what the version replaced, each path to its own
+/// row's `was`, opened, acted on and closed as one, and recorded as one version.  A path the
+/// version made is `gone`, as a file made after a restore's version is.
+///
+/// # Arguments
+/// * `plan` - A version, and one path or `None` for every path the history names -- which
+///   includes REMOVING a file that did not exist at it; or the version to undo.
+pub async fn versions_restore_open(id: &str, plan: Plan) -> Outcome<Opened> {
+    res!(door_open("versions_restore_open", id));
+    // A VERSION THE HISTORY DOES NOT HOLD IS REFUSED BEFORE ANYTHING IS CLAIMED (hist-safe QA A F6,
+    // 2026-10-12): a restore to version 99999 opened, claimed, and put back the Diamond's own files
+    // as the latest state, answering as a real restore.  By the store's names alone, no reads: a
+    // files row, or the crystal's own snapshot (the crystal panel restores by its numbers), and an
+    // undo of a restore that put back only the crystal, which has neither, is still a version.
+    let at = plan.version();
+    // A version kept before the crystal became data is one too, by its `NNNN.md` (hist-safe U3,
+    // QA B B2): counting only the other two refused every restore of one as "no version".
+    let snap = fmt!("{:04}.json", at);
+    let legacy = fmt!("{:04}.md", at);
+    let listed = version_entries(id).await.into_iter()
+        .any(|(name, is_dir, _)| !is_dir
+            && (versions::manifest_version(&name) == Some(at) || name == snap || name == legacy));
+    let known = listed || match &plan {
+        Plan::Undo(of, _) => restored_crystal(id, *of).await,
+        _                 => false,
+    };
+    if !known {
+        return Err(err!("Diamond '{}' has no version {} in its history, so there is nothing to \
+            restore. Nothing was changed.", diamond_named(id).await, at; Missing, Data));
+    }
+    // ONE RESTORE OF A DIAMOND AT A TIME, across tabs (hist-safe R3), claimed before anything is
+    // read or recorded, and given back with the restore or on any refusal below.
+    let claim = res!(claim_restore(id).await);
+    // THE PERSON'S OWN SAVES SINCE THE LAST RECORD ARE RECORDED FIRST (release 5.1 QA round 3,
+    // DP4): a Restore straight after a Doc panel save found no row for it, so it put nothing back
+    // and the save stayed.  As the next steer would record them, under the store's hold.
+    //
+    // AND EVERY BYTE OF THE DIAMOND'S OWN FILES THAT HISTORY DOES NOT HOLD (D-20261009-29 item 5):
+    // a mark lives in this page's memory, so a reload, a sync arrival or a door that never marked
+    // left bytes no row held, and the restore ran over them.  The walk records byte changes only.
+    let dirty = drain_dirty(id);
+    let back = dirty.clone();
+    let mut changes = dirty_changes(id, dirty).await;
+    changes.extend(versions_walk(id).await);
+    if !changes.is_empty() {
+        let hold = match hold_versions(id).await {
+            Ok(h)  => h,
+            Err(e) => { undrain_dirty(id, back); return Err(e); },
+        };
+        if let Err(e) = versions_record_held(&hold, id, None, Cause::User, "", "", changes).await {
+            undrain_dirty(id, back);
+            return Err(e);
+        }
+    }
+    let held = versions_manifests(id).await;
+    // AN UNDO OF A RESTORE THAT PUT BACK ONLY THE CRYSTAL has no file to put back, and is still an
+    // undo: the close puts the crystal back ([`restore_crystal`]).
+    let crystal_only = match &plan {
+        Plan::Undo(of, _) => restored_crystal(id, *of).await,
+        _                 => false,
+    };
+    let named = match restore_plan(id, &held, &plan, |_| None) {
+        Ok(n)                  => n,
+        Err(_) if crystal_only => Vec::new(),
+        Err(e)                 => return Err(e),
+    };
+    let here = |p: &str| -> bool { is_safe_rel(p) };
+    // WHERE EACH OF THE PERSON'S FILES WOULD LAND NOW, and whether that is where its row was
+    // written (HR, 2026-09-25).  A machine file is handed out relative to the hand's granted root,
+    // the spelling the fenced door routes to the hand (R6); a relative path reaches the machine too
+    // where a hand holds its mark and no folder is open, which a relative row was never written on.
+    let root = if named.iter().any(|(p, _)| theirs(id, p) && (!here(p) || versions::needs_folder(p))) {
+        own::machine_door_root().await
+    } else {
+        None
+    };
+    let door = |p: &str| -> String {
+        match &root {
+            Some(r) => match p.strip_prefix(&fmt!("{}/", r)) {
+                Some(rel) if is_safe_rel(rel) => rel.to_string(),
+                _                             => p.to_string(),
+            },
+            None => p.to_string(),
+        }
+    };
+    let lands = |spelled: &str| -> String {
+        match &root {
+            Some(r) if !spelled.starts_with('/') && versions::needs_folder(spelled) =>
+                fmt!("{}/{}", r, spelled),
+            _ => spelled.to_string(),
+        }
+    };
+    // EACH PATH'S ROW IN THE FOLDER IT REACHES NOW (HX3, HQ1): every row but another place's this
+    // device can name answers for it -- the open folder's own, those from before folders, and those
+    // of a folder this device cannot name, which the act then asks about -- and another place's
+    // only where no other row does, which the act leaves and says.
+    let want = match restore_plan(id, &held, &plan, |p| folder_of(&lands(&door(p)))) {
+        Ok(w)                  => w,
+        Err(_) if crystal_only => Vec::new(),
+        Err(e)                 => return Err(e),
+    };
+    // THE DIAMOND'S OWN FILES THE RESTORE WOULD DELETE ARE PUT TO THE PERSON (D-20261009-29
+    // item 2): files made after the version -- a capp's logs among them -- went with no question.
+    // Each is named with the version that holds its bytes now and when that was, so the question
+    // says where to find it; the close leaves them where the person keeps them.
+    let asks = !matches!(&plan, Plan::At(_, Some(_), _));     // a one-file press asks nothing
+    let own_gone: Vec<String> = want.iter()
+        .filter(|(p, s)| asks && is_safe_rel(p) && !theirs(id, p) && !is_delivery_record(id, p)
+            && matches!(s, At::Gone { .. }))
+        .map(|(p, _)| p.clone())
+        .collect();
+    let mut own: Vec<String> = Vec::new();
+    let mut named: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for ch in versions_changes(id, &own_gone).await.into_iter() {
+        if matches!(ch.after, Body::Gone) {
+            continue;                   // not there now: nothing to delete
+        }
+        named.insert(ch.path.clone());
+        let last = held.iter()
+            .filter(|(_, m)| m.files.iter().any(|e| e.path == ch.path && !e.gone))
+            .max_by_key(|(v, _)| *v);
+        let (v, ts) = match last {
+            Some((v, m)) => (*v as i64, m.ts),
+            None         => (-1, 0),
+        };
+        own.push(fmt!("{{\"path\":\"{}\",\"v\":{},\"ts\":{}}}", json_escape(&ch.path), v, ts));
+    }
+    // A ROW FROM ANOTHER FOLDER IS LEFT: its path reaches a different file of the same name now.
+    // Put to nobody, deleted by nobody, and said.  The act checks again ([`restore_route`]), since
+    // a folder can be opened or closed between this and it.
+    let placed = |p: &str, state: &At| -> bool {
+        let row = if p.starts_with('/') { p.to_string() } else { crate::tools::normalise(p) };
+        route_here(&row, state.folder(), &lands(&door(p)), false) != versions::Route::Left
+    };
+    // WHAT STANDS AT EACH OF THE PERSON'S FILES NOW, read once (hist-safe, 2026-10-12): what the
+    // restore's act is bound to ([`restore_route`]), and what the questions are asked about.  One
+    // the open cannot read -- on the machine, through the hand -- the page looks at before it asks
+    // anything ([`restore_look`]); until then it is `Unread`, which no act goes over unasked.
+    // Which of the files a restore would take away are there now, and which of them the door can
+    // keep a copy of: read by length alone, so the ceiling costs nothing to ask.
+    let machine_now = |p: &str| lands(&door(p)).starts_with('/');
+    let look: Vec<String> = want.iter()
+        .filter(|(p, s)| here(p) && theirs(id, p) && placed(p, s))
+        .map(|(p, _)| p.clone())
+        .collect();
+    let mut seen:    std::collections::BTreeMap<String, versions::Seen> =
+        std::collections::BTreeMap::new();
+    let mut present: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut kept:    std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut firsts:  Vec<Change> = Vec::new();
+    for ch in versions_changes(id, &look).await.into_iter() {
+        if !machine_now(&ch.path) {
+            // `versions_changes` never makes `Large`; were one met, the store holds no bytes of
+            // it to bind a write to, so it is as `TooLarge`.
+            seen.insert(ch.path.clone(), match &ch.after {
+                Body::Held(b) => versions::Seen::of(Some(b)),
+                Body::Gone    => versions::Seen::Absent,
+                Body::Large(_) | Body::Stored(_) | Body::TooLarge(_) | Body::Unseen => versions::Seen::Unread,
+            });
+        }
+        if !want.iter().any(|(p, s)| *p == ch.path && matches!(s, At::Gone { .. })) {
+            continue;                   // put back, not taken away
+        }
+        match ch.after {
+            Body::Held(_) => { present.insert(ch.path.clone()); firsts.push(ch); },
+            Body::Gone    => {},
+            Body::Large(_) | Body::Stored(_) | Body::TooLarge(_) | Body::Unseen => { present.insert(ch.path); },
+        }
+    }
+    // A FILE OF THE PERSON'S THAT THE RESTORE WOULD TAKE AWAY IS KEPT AS IT STANDS WHEN THEY ARE
+    // ASKED ABOUT IT, as a `restore` version of its own: the file the question names.  Its delete
+    // keeps it again at the act, which is what keeps a save made while the question is open.  A
+    // turn's run on the path is ended first, so its rows come before this one.
+    if !firsts.is_empty() {
+        let hold = res!(hold_versions(id).await);
+        let mut now: Vec<Change> = Vec::new();
+        for ch in firsts.into_iter() {
+            if end_run(Some(&hold), id, &ch.path).await.is_ok() {
+                kept.insert(ch.path.clone());
+                now.push(ch);
+            }
+        }
+        res!(versions_record_held(&hold, id, None, Cause::Restore, "",
+            &fmt!("before {}", plan.note()), now).await);
+    }
+    // A FILE OF THE PERSON'S THAT THE RESTORE WOULD WRITE OVER WITH OTHER BYTES IS FLAGGED `over`
+    // (D-20261009-29 item 6), so the page asks before its door writes.  One this device cannot read
+    // whole is asked about too.  A one-file Restore is the person's own press on that file, and
+    // asks nothing; its act is still bound to what stood there when it was pressed.
+    //
+    // **An undo asks too** (hist-safe R1, 2026-10-12): "Restore before", "Undo this restore" and a
+    // turn's Undo wrote over the person's edit since the version unasked.  It is quiet only where
+    // the file still holds what the undone version left there ([`versions::undo_left`]).
+    let left: std::collections::BTreeMap<String, Option<String>> = match &plan {
+        Plan::Undo(of, paths) => versions::undo_left(&held, *of, paths,
+            |p| folder_of(&lands(&door(p)))).into_iter().collect(),
+        _                     => std::collections::BTreeMap::new(),
+    };
+    let mut machine: Vec<String> = Vec::new();
+    let mut routes: Routes = Routes::new();
+    for (p, state) in want.iter() {
+        if !theirs(id, p) {
+            continue;                   // the Diamond's own: written at the close
+        }
+        let spelled = door(p);
+        if !placed(p, state) {
+            machine.push(fmt!("{{\"path\":\"{}\",\"left\":true{}}}", json_escape(&spelled),
+                match state {
+                    At::Gone { .. } => ",\"gone\":true",
+                    _               => "",
+                }));
+            continue;
+        }
+        let handed = Handed {
+            path:   p.clone(),
+            folder: state.folder().map(String::from),
+            seen:   seen.get(p).cloned().unwrap_or(versions::Seen::Unread),
+            looks:  machine_now(p),
+            asked:  None,
+            yes:    None,
+            ask:    match state.hash() {
+                Some(t) if asks => Some((t.to_string(), left.get(p).cloned().flatten())),
+                _               => None,
+            },
+        };
+        // The page looks at a file the open could not read before it asks anything.
+        let looks = handed.looks;
+        machine.push(match state {
+            At::Held { hash, bytes, skipped, .. } => fmt!(
+                "{{\"path\":\"{}\",\"hash\":\"{}\",\"bytes\":{}{}{}}}",
+                json_escape(&spelled), json_escape(hash), bytes, match skipped {
+                    Some(w) => fmt!(",\"skipped\":\"{}\"", json_escape(w)),
+                    None    => String::new(),
+                }, if looks { ",\"look\":true" } else if handed.over() { ",\"over\":true" } else { "" }),
+            At::Gone { .. } => {
+                if here(p) && !present.contains(p) {
+                    continue;           // not there then, not there now: nothing to do
+                }
+                fmt!("{{\"path\":\"{}\",\"gone\":true,\"kept\":{}}}",
+                    json_escape(&spelled), kept.contains(p))
+            },
+        });
+        routes.insert(crate::tools::normalise(&spelled), handed);
+    }
+    // WHAT STANDS AT EACH OF THE DIAMOND'S OWN FILES NOW (hist-safe U3 F2, 2026-10-12): what the
+    // close's write or delete there is bound to, by the rule the person's files are.  The close read
+    // them only as it wrote, so a second tab's save made while a question was open was deleted, or
+    // written over, unasked.
+    let mine: Vec<String> = want.iter()
+        .filter(|(p, _)| is_safe_rel(p) && !theirs(id, p))
+        .map(|(p, _)| p.clone())
+        .collect();
+    let mut own_seen: Routes = Routes::new();
+    for ch in versions_changes(id, &mine).await.into_iter() {
+        let seen = match &ch.after {
+            Body::Held(b) => versions::Seen::of(Some(b)),
+            Body::Gone    => versions::Seen::Absent,
+            Body::Large(_) | Body::Stored(_) | Body::TooLarge(_) | Body::Unseen => versions::Seen::Unread,
+        };
+        own_seen.insert(crate::tools::normalise(&ch.path), Handed {
+            path:   ch.path.clone(),
+            folder: None,
+            seen,
+            looks:  false,
+            asked:  None,
+            yes:    None,
+            ask:    None,
+        });
+    }
+    // THE CRYSTAL AND ITS PAGE ARE THE DIAMOND'S OWN FILES TOO (hist-safe U3, QA A Q2,
+    // 2026-10-12): another tab's crystal written while a question was open was replaced by the
+    // version's unasked.  What stands at each now is what the close's crystal is bound to.
+    for path in [crystal_data_path(id), crystal_page_path(id)] {
+        let seen = match own::read_file(&path).await {
+            Ok(b)  => versions::Seen::of(Some(&b)),
+            Err(_) => match own::exists(&path).await {
+                Ok(false) => versions::Seen::Absent,
+                _         => versions::Seen::Unread,
+            },
+        };
+        own_seen.insert(crate::tools::normalise(&path), Handed {
+            path,
+            folder: None,
+            seen,
+            looks:  false,
+            asked:  None,
+            yes:    None,
+            ask:    None,
+        });
+    }
+    // Only what the question named may go at the close (D-26 B F4); a one-file press asked nothing
+    // and its own path is the person's pick.
+    let ticket = restore_begin(id, plan, routes, own_seen, if asks { Some(named) } else { None },
+        claim).await;
+    Ok(Opened { ticket, machine, own })
+}
+
+/// Close the restore `ticket`: put the Diamond's own files back, and record what landed -- those,
+/// and every act of the door on the person's files, each with the copy it kept -- as the
+/// restore's one `restore` version.
+///
+/// **Never destructive.**  Each row's `was` is what stood there when the restore reached it, read
+/// at its act, so the state a restore replaced is one row up and the restore is itself undoable.
+/// A restore that changed nothing writes nothing.
+///
+/// Under the store's hold from the first read of the Diamond's own files to the record, so nothing
+/// mints between them.  Where the store stays held past the wait, the Diamond's own files are left
+/// and the error is the answer; the copies the door's acts took stay noted, and the next turn end
+/// adopts them.
+///
+/// **Nothing was asked, so nothing newer is taken** (lead ruling on D-20261009-29, 10 Oct): of the
+/// Diamond's own files the version did not have, only those the undone step itself created are
+/// removed -- undoing a creation removes it, and in an undo every such path is one -- and every
+/// other is kept.  The asking door is [`versions_restore_close_keeping`].
+pub async fn versions_restore_close(id: &str, ticket: u64) -> Outcome<Closed> {
+    let undo = RESTORES.with(|r| matches!(
+        r.borrow().get(&ticket).map(|x| &x.plan),
+        Some(Plan::Undo(..))));
+    versions_restore_close_keeping(id, ticket, !undo).await
+}
+
+/// [`versions_restore_close`], leaving the Diamond's own files the version did not have where
+/// `keep_new`: the person's answer to the open's `own` question (D-20261009-29 item 2).
+pub async fn versions_restore_close_keeping(id: &str, ticket: u64, keep_new: bool) -> Outcome<Closed> {
+    res!(door_open("versions_restore_close_keeping", id));
+    let open = |r: &std::cell::RefCell<std::collections::BTreeMap<u64, Restoring>>| {
+        matches!(r.borrow().get(&ticket), Some(x) if x.id == id)
+    };
+    if !RESTORES.with(open) {
+        return Err(restore_not_open(id, ticket).await);
+    }
+    // THE STORE IS HELD BEFORE THE RESTORE IS TAKEN OFF THE BOOK (hist-safe U3, QA B B1,
+    // 2026-10-12): it was taken first, so a store another tab held past the wait ended the restore
+    // half done -- the door's acts on his files landed, the Diamond's own files and crystal never
+    // came -- and nothing could finish it.  Refused now, it stays open, to close again or end.
+    // Where an act on his files wrote, the restore holds it already ([`restore_held`]).
+    let had = RESTORES.with(|r| r.borrow().get(&ticket).map(|x| x.hold.is_some()).unwrap_or(false));
+    let hold = res!(restore_held(ticket).await);
+    let mut r = match RESTORES.with(|r| {
+        let mut all = r.borrow_mut();
+        match all.get(&ticket) {
+            Some(x) if x.id == id => all.remove(&ticket),
+            _                     => None,
+        }
+    }) {
+        Some(r) => r,
+        None    => return Err(restore_not_open(id, ticket).await),  // closed or ended while waiting
+    };
+    let mut changes:  Vec<Change> = Vec::new();
+    let mut restored: Vec<String> = Vec::new();
+    let mut missing:  Vec<String> = Vec::new();
+    let mut refused:  Vec<String> = Vec::new();
+    let mut wrote:    Vec<String> = Vec::new();
+    let held = versions_manifests(id).await;
+    let want = match restore_plan(id, &held, &r.plan, folder_of) {
+        Ok(w)  => w,
+        Err(_) => Vec::new(),       // its record was pruned since it opened: nothing to put back
+    };
+    let mine: Vec<String> = want.iter()
+        .filter(|(p, _)| is_safe_rel(p) && (off("own_only") || !theirs(id, p)))
+        .map(|(p, _)| p.clone())
+        .collect();
+    // WHAT IS THERE NOW, read before a byte is written: the `was` of each row, which is what
+    // "today's state is kept" means.
+    // Each write and delete below lands only over these bytes (hist-safe H6, 2026-10-12): a
+    // save between this read and the act is left standing, and the file is reported changed.
+    let mut today: std::collections::BTreeMap<String, (Option<Vec<u8>>, versions::Seen)> =
+        std::collections::BTreeMap::new();
+    for ch in versions_changes(id, &mine).await.into_iter() {
+        let now = match ch.after {
+            Body::Held(b) => { let s = versions::Seen::of(Some(&b)); (Some(b), s) },
+            Body::Gone    => (None, versions::Seen::Absent),
+            // Past the ceiling, or held by reference only: no body to keep.
+            Body::Large(_) | Body::Stored(_) | Body::TooLarge(_) | Body::Unseen => (None, versions::Seen::Unread),
+        };
+        today.insert(ch.path, now);
+    }
+    // EACH ACT WEIGHED BEFORE ANY IS TAKEN, and bound to the bytes he decided on (hist-safe U3 F2,
+    // 2026-10-12): those the open saw, or those he said yes to since.  The close compared only with
+    // what it read as it wrote, so a second tab's save made while his question was open was deleted
+    // under a "Delete them" given about other bytes, or written over unasked.  A file changed since
+    // is put to him by name before anything of it goes, as the person's own files are
+    // ([`versions::bound`], [`restore_answer`]); one he chose to keep is left as it stands.
+    let mut acts:    Vec<(String, Option<Vec<u8>>, Option<Vec<u8>>, versions::Seen)> = Vec::new();
+    let mut changed: Vec<String> = Vec::new();
+    for (p, state) in want.iter() {
+        if !mine.contains(p) {
+            continue;
+        }
+        let (before, seen) = match today.get(p) {
+            Some(t) => t.clone(),
+            None    => (None, versions::Seen::Unread),
+        };
+        let body = match state {
+            At::Gone { .. } => {
+                if before.is_none() || keep_new {
+                    continue;       // not there then, not there now: nothing to do
+                }
+                // A FILE THE OPEN NEVER PUT TO THE PERSON IS KEPT (D-26 B F4): one that arrived
+                // while the question was open -- a sync, a turn, a page save -- was never
+                // part of the answer, so the answer cannot delete it.
+                if r.named.as_ref().map_or(false, |n| !n.contains(p)) {
+                    continue;
+                }
+                None
+            },
+            At::Held { skipped: Some(why), .. } => {
+                refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p),
+                    json_escape(why)));
+                continue;
+            },
+            At::Held { hash, .. } => match versions_body(id, hash).await {
+                Ok(Some(b)) => Some(b),
+                Ok(None)    => { missing.push(p.clone()); continue; },
+                Err(e)      => return Err(restore_reopen(ticket, r, had, e)),   // nothing written yet
+            },
+        };
+        // A FILE THAT COULD NOT BE READ WHOLE IS LEFT: there is no copy of it to keep, and
+        // nothing to bind the write to.
+        if let versions::Seen::Unread = seen {
+            refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p),
+                json_escape("it could not be read whole, so it was left as it stands")));
+            continue;
+        }
+        let key = crate::tools::normalise(p);
+        let decided = match r.own.get(&key) {
+            Some(h) if h.asked.is_some() && h.yes.is_none() => {
+                refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p),
+                    json_escape("it changed while the restore was open, so it was left as it stands")));
+                continue;
+            },
+            Some(h) => h.yes.clone().unwrap_or_else(|| h.seen.clone()),
+            None    => versions::Seen::Unread,
+        };
+        match versions::bound(&decided, before.as_deref(), body.as_deref()) {
+            versions::Bound::Same    => continue,
+            versions::Bound::Changed => { changed.push(p.clone()); continue; },
+            versions::Bound::Go      => {},
+        }
+        acts.push((p.clone(), before, body, seen));
+    }
+    // THE CRYSTAL AND ITS PAGE BY THE SAME RULE (hist-safe U3, QA A Q2, 2026-10-12): each is bound
+    // to what stood there at the open, or to his yes since; changed, it is put to him with the
+    // files, and kept where he keeps it -- the crystal is then not the restore's to put back.
+    let put = match restore_crystal(id, &r.plan).await {
+        Ok(x)  => x,
+        Err(e) => return Err(restore_reopen(ticket, r, had, e)),
+    };
+    let mut keep_crystal = false;
+    if let Some(Some((data, page))) = &put {
+        let puts = [
+            (crystal_data_path(id), Some(data.as_bytes())),
+            (crystal_page_path(id), if page.trim().is_empty() { None } else { Some(page.as_bytes()) }),
+        ];
+        for (path, body) in puts.iter() {
+            let body = match body {
+                Some(b) => *b,
+                None    => continue,        // no page in the version: today's is left
+            };
+            let decided = match r.own.get(&crate::tools::normalise(path)) {
+                Some(h) if h.asked.is_some() && h.yes.is_none() => { keep_crystal = true; continue; },
+                Some(h) => h.yes.clone().unwrap_or_else(|| h.seen.clone()),
+                None    => versions::Seen::Unread,
+            };
+            // A FILE THAT WILL NOT READ IS NOT ABSENT (r578f sweep): read as absent, a crystal
+            // that was absent at the open was written over unasked.  It is put to him instead.
+            let now = match read_if_any(path).await {
+                Ok(n)  => n,
+                Err(_) => {
+                    today.insert(path.clone(), (None, versions::Seen::Unread));
+                    changed.push(path.clone());
+                    continue;
+                },
+            };
+            if versions::bound(&decided, now.as_deref(), Some(body)) == versions::Bound::Changed {
+                let seen = versions::Seen::of(now.as_deref());
+                today.insert(path.clone(), (now, seen));
+                changed.push(path.clone());
+            }
+        }
+    }
+    // ASKED BEFORE ANY OF THEM GOES: the restore stays open, nothing of its own files written, and
+    // what stands at each changed file now is what his next answer is bound to.
+    if !changed.is_empty() {
+        for p in changed.iter() {
+            if let Some(h) = r.own.get_mut(&crate::tools::normalise(p)) {
+                h.asked = Some(today.get(p).map(|t| t.1.clone()).unwrap_or(versions::Seen::Unread));
+                h.yes = None;
+            }
+        }
+        // Nothing written yet: the store is let go while he answers, unless an act already wrote.
+        drop(hold);
+        if !had {
+            r.hold = None;
+        }
+        let at = r.plan.version();
+        RESTORES.with(|x| { x.borrow_mut().insert(ticket, r); });
+        return Ok(Closed {
+            at,
+            recorded: None,
+            restored: Vec::new(),
+            missing,
+            refused:  Vec::new(),
+            wrote:    Vec::new(),
+            crystal:  Crystal::Untouched,
+            changed,
+        });
+    }
+    // THE CRYSTAL AND ITS PAGE IN THE SAME VERSION AS THE FILES (D-20261009-29 item 1): the page
+    // wrote the crystal after the files came back, so one Restore made two rows and no single
+    // row's Undo put the Diamond back.  Minted under the hold the files are recorded under, and
+    // BEFORE any of them is written (hist-safe U3, QA B B1): a crystal that cannot be written
+    // leaves the restore open and nothing of it applied, where it was said to the page as "not
+    // the engine's", and the page wrote the crystal itself over files it had not seen.
+    let note = r.plan.note();
+    let mut at: Option<u64> = None;
+    let crystal = match put {
+        _ if keep_crystal => Crystal::Untouched,
+        None       => Crystal::Untouched,
+        Some(None) => Crystal::Same,
+        Some(Some((data, page))) => {
+            let now = now_ms() as u64;
+            let parent = match read_meta(id).await {
+                Ok(m)  => m.version as i64,
+                Err(_) => -1,
+            };
+            let shown = if page.trim().is_empty() { None } else { Some(page.as_str()) };
+            let version = match snapshot_held(&hold, id, &data, shown, now).await {
+                Ok(v)  => v,
+                Err(e) => return Err(restore_reopen(ticket, r, had, e)),
+            };
+            let rec = LogRecord {
+                id:        generate_session_id(),
+                ts:        now,
+                kind:      "restore",
+                agent:     "user".to_string(),
+                task:      "restore crystal and files".to_string(),
+                parent,
+                version,
+                delta_ref: String::new(),
+                note:      note.clone(),
+            };
+            if append_log(id, &rec).await.is_ok() {
+                at = Some(version);
+            }
+            Crystal::Restored
+        },
+    };
+    for (p, before, body, seen) in acts.into_iter() {
+        if let Err(e) = end_run(Some(&*hold), id, &p).await {
+            refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(&p),
+                json_escape(&e.plain())));
+            continue;
+        }
+        let landed = match &body {
+            // A file made AFTER `at` is removed, which is the half of "put it back" a per-path
+            // restore never needs and a whole-version one cannot do without.
+            None    => res!(own::user_delete_file_if(FileRoot::Workspace, &p, &seen).await),
+            Some(b) => res!(own::user_write_file_if(FileRoot::Workspace, &p, b, Some(&seen)).await),
+        };
+        if landed.is_some() {
+            refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(&p),
+                json_escape("it changed while the restore was open, so it was left as it stands")));
+            continue;
+        }
+        restored.push(p.clone());
+        wrote.push(p.clone());
+        match body {
+            None    => changes.push(Change { before: before.map(Prior::Held), ..Change::gone(&p) }),
+            Some(b) => changes.push(Change { before: before.map(Prior::Held), ..Change::of(&p, b) }),
+        }
+    }
+    // WHAT THE DOOR'S ACTS ON THE PERSON'S FILES LANDED, each with the copy it kept at the act.
+    for ch in r.done.into_iter() {
+        restored.push(ch.path.clone());
+        changes.push(ch);
+    }
+    let recorded = versions_record_held(&hold, id, at, Cause::Restore, "", &note, changes).await;
+    drop(hold);
+    let recorded = res!(recorded);
+    settle(id, &r.notes).await;
+    Ok(Closed {
+        at:       r.plan.version(),
+        recorded: recorded.map(|(v, _)| v).or(at),
+        crystal,
+        restored,
+        missing,
+        refused,
+        wrote,
+        changed:  Vec::new(),
+    })
+}
+
+/// The crystal and page a restore puts back with the files: for the whole of version `v`, as at
+/// `v`; for the undo of a restore that put a crystal back, as at the version before it.  `None`
+/// where the crystal is not the restore's to put back -- a one-path restore, an undo of anything
+/// else, a version that kept files and no crystal -- and `Some(None)` where it is, and today's
+/// already matches.  A version that holds a crystal and cannot be read is refused, never taken
+/// for one that has none.
+///
+/// **A version kept before the crystal became data is the engine's too** (hist-safe U3, QA B B2,
+/// 2026-10-12): its `NNNN.md` is converted as the migration converts a crystal
+/// ([`migrate_crystal_data`]) and put back in the restore's own version.  The page did it, apart,
+/// after the files, and only where the engine answered "not mine" -- which a refused close
+/// answered too.
+async fn restore_crystal(id: &str, plan: &Plan) -> Outcome<Option<Option<(String, String)>>> {
+    let snaps = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await;
+    let at = match plan {
+        Plan::At(v, None, _) => *v,
+        Plan::Undo(r, _) => {
+            if !restored_crystal(id, *r).await {
+                return Ok(None);
+            }
+            match snaps.iter().map(|(n, _)| *n).filter(|n| n < r).max() {
+                Some(n) => n,
+                None    => return Ok(None),
+            }
+        },
+        Plan::At(_, Some(_), _) => return Ok(None),
+    };
+    let data = if snaps.iter().any(|(n, _)| *n == at) {
+        res!(read_version(id, at).await)
+    } else if res!(own::exists(&version_legacy_path(id, at)).await) {
+        let md = res!(read_version(id, at).await);
+        crate::tools::crystal_from_markdown(&md).to_json()
+    } else {
+        return Ok(None);
+    };
+    let page = read_version_page(id, at).await.unwrap_or_default();
+    let today = read_crystal_data(id).await.unwrap_or_default();
+    if data == today && (page.trim().is_empty() || page == res!(page_on_disk(id).await)) {
+        return Ok(Some(None));
+    }
+    Ok(Some(Some((data, page))))
+}
+
+/// Put the restore `ticket` back on the book, open, and answer `e`: a close that could not take
+/// the crystal has written nothing of the Diamond's, so it can be closed again or ended.  The
+/// store stays held where an act on his files wrote before the close (`had`), and goes otherwise.
+fn restore_reopen(ticket: u64, mut r: Restoring, had: bool, e: Error<ErrTag>) -> Error<ErrTag> {
+    if !had {
+        r.hold = None;
+    }
+    RESTORES.with(|x| { x.borrow_mut().insert(ticket, r); });
+    e
+}
+
+/// The version store of the open restore `ticket`, held from the restore's first write -- of his
+/// files, the Diamond's own or the crystal -- to its close or end, and taken here where it is not
+/// held yet.
+///
+/// **No restore is applied in part** (hist-safe U3, lead ruling 2026-10-12): the store was taken
+/// at the close, after the door's acts had written his files, so a store another tab held past
+/// the wait left his files restored and the Diamond's own files and crystal not, and "Leave it"
+/// left that half.  Held before the first write, a busy store refuses before anything is
+/// written, and nothing else mints between the first act and the record.  Every act of the
+/// restore and its close pass this hold on, so none asks for the store again.
+pub async fn restore_held(ticket: u64) -> Outcome<std::rc::Rc<VersionHold>> {
+    let (id, had) = match RESTORES.with(|r| r.borrow().get(&ticket).map(|x| (x.id.clone(), x.hold.clone()))) {
+        Some(x) => x,
+        None    => return Err(err!(
+            "Restore {} is not open on this page, so nothing was changed.", ticket; Missing, Data)),
+    };
+    if let Some(h) = had {
+        return Ok(h);
+    }
+    let hold = std::rc::Rc::new(res!(hold_versions(&id).await));
+    // Another call of this restore may have taken it while this one waited; the first one stands.
+    RESTORES.with(|r| match r.borrow_mut().get_mut(&ticket) {
+        Some(x) => match &x.hold {
+            Some(h) => Ok(h.clone()),
+            None    => { x.hold = Some(hold.clone()); Ok(hold) },
+        },
+        None => Err(err!("Restore {} ended while it waited for the version store, so nothing was \
+            changed.", ticket; Missing, Data)),
+    })
+}
+
+/// The version store an open restore of `id` holds on this thread, where one holds it: for a
+/// call made inside that restore, such as a door child's body upload with its act, which must not
+/// ask for the store again -- the hold is not re-entrant, and the ask would wait out
+/// [`VERSION_WAIT_MS`] on the restore and fail (D1x2a).
+pub fn restore_hold_of(id: &str) -> Option<std::rc::Rc<VersionHold>> {
+    RESTORES.with(|r| r.borrow().values().find(|x| x.id == id).and_then(|x| x.hold.clone()))
+}
+
+/// Take the version store for the open restore `ticket` of `id` before its first write
+/// ([`restore_held`]): the page asks once the person has decided, so a busy store is put to him
+/// before anything is written.
+pub async fn versions_restore_hold(id: &str, ticket: u64) -> Outcome<()> {
+    res!(door_open("versions_restore_hold", id));
+    if restore_store(ticket).as_deref() != Some(id) {
+        return Err(restore_not_open(id, ticket).await);
+    }
+    res!(restore_held(ticket).await);
+    Ok(())
+}
+
+/// The refusal of a close or an end of a restore that is not open on this page.
+async fn restore_not_open(id: &str, ticket: u64) -> Error<ErrTag> {
+    err!("Diamond '{}' has no restore {} open on this page, so there is nothing to finish.",
+        diamond_named(id).await, ticket; Missing, Data)
+}
+
+/// End the restore `ticket` without closing it, where its close was refused and the person chose
+/// to leave it: nothing of the Diamond's own files or crystal is written, and the copies its acts
+/// on his files kept stay noted, for the next turn end to adopt.
+pub async fn versions_restore_end(id: &str, ticket: u64) -> Outcome<()> {
+    res!(door_open("versions_restore_end", id));
+    let gone = RESTORES.with(|r| {
+        let mut all = r.borrow_mut();
+        match all.get(&ticket) {
+            Some(x) if x.id == id => all.remove(&ticket),
+            _                     => None,
+        }
+    });
+    match gone {
+        Some(_) => Ok(()),
+        None    => Err(err!("Diamond '{}' has no restore {} open on this page, so there is nothing \
+            to end.", diamond_named(id).await, ticket; Missing, Data)),
+    }
+}
+
+/// The Diamond as the person knows it, by its name; its id where it has none or none can be read.
+/// A sentence he is shown names the Diamond this way (hist-safe U3, QA B B3).
+async fn diamond_named(id: &str) -> String {
+    match read_meta(id).await {
+        Ok(m) if !m.name.trim().is_empty() => m.name,
+        _                                   => id.to_string(),
+    }
+}
+
+/// Did version `v` of `id` put a crystal back ([`restore_crystal`]): is its log line a `restore`?
+async fn restored_crystal(id: &str, v: u64) -> bool {
+    let bytes = match own::read_file(&log_path(id)).await {
+        Ok(b)  => b,
+        Err(_) => return false,
+    };
+    let tail = fmt!("\"crystal_version\":{},", v);
+    String::from_utf8_lossy(&bytes).lines()
+        .any(|l| l.contains("\"kind\":\"restore\"") && l.contains(&tail))
+}
+
+/// A restore of the Diamond's own files with nothing asked of the person: opened and closed in one
+/// call, so they are back and recorded.  The Diamond's own files the version did not have are kept
+/// ([`versions_restore_close`]).
+///
+/// **The person's files are not touched** (hist-safe QA A F1, 2026-10-12).  It handed them back
+/// under `machine` for the caller to write through the fenced door with no restore open, and such
+/// an act went with no question and no claim.  A restore that reaches them is
+/// [`versions_restore_open`]'s, whose ticket each act carries.
+pub async fn versions_restore(id: &str, at: u64, path: Option<&str>)
+    -> Outcome<(String, Vec<String>)>
+{
+    let opened = res!(versions_restore_open(id, Plan::At(at, path.map(|p| p.to_string()), None)).await);
+    let mut closed = res!(versions_restore_close(id, opened.ticket).await);
+    // NOBODY TO ASK, SO A FILE CHANGED SINCE THE OPEN IS KEPT (hist-safe U3 F2): each is answered
+    // no and left as it stands.  A path answered no is never put again, so this ends.
+    while !closed.changed.is_empty() {
+        res!(restore_answer(opened.ticket, &closed.changed, false));
+        closed = res!(versions_restore_close(id, opened.ticket).await);
+    }
+    Ok((closed.said(None), closed.wrote))
+}
+
+
+/// Record every file in the Diamond's own directory as one version, because the user asked for
+/// one.
+///
+/// The dirty set is drained into it rather than left standing: the paths the user's own doors
+/// touched are part of what they are saving, and leaving them marked would record them a second
+/// time at the next turn's start under a different cause.
+///
+/// # Arguments
+/// * `note` - What the user called this version, or empty.
+pub async fn versions_save(id: &str, note: &str) -> Outcome<Option<(u64, Vec<String>)>> {
+    // THE DIRTY SET IS RECORDED, not dropped (release 5.1 QA round 3, DP): a file of the person's
+    // saved through the Doc panel is outside the Diamond's own directory, so the walk never sees
+    // it, and dropping the set lost the bytes that save replaced.  First, so its `was` is the row's.
+    let dirty = drain_dirty(id);
+    let back = dirty.clone();
+    let mut changes = dirty_changes(id, dirty).await;
+    changes.extend(versions_walk(id).await);
+    let recorded = versions_record(id, Cause::Save, "", note, changes).await;
+    if recorded.is_err() {
+        undrain_dirty(id, back);
+    }
+    recorded
+}
+
+/// Record the paths the person's doors marked since the last record, now, as their own version
+/// (cause `user`): what a page's `save` wrote, recorded shortly after it rather than at a turn that
+/// may never come (D-20261009-29 item 5).  Nothing marked, or nothing whose bytes changed, records
+/// nothing.
+pub async fn versions_record_dirty(id: &str) -> Outcome<Option<(u64, Vec<String>)>> {
+    let dirty = drain_dirty(id);
+    if dirty.is_empty() {
+        return Ok(None);
+    }
+    let back = dirty.clone();
+    let changes = dirty_changes(id, dirty).await;
+    let recorded = versions_record(id, Cause::User, "", "", changes).await;
+    if recorded.is_err() {
+        undrain_dirty(id, back);
+    }
+    recorded
+}
+
+/// Record what a Diamond arrived holding, so a share that later goes wrong has somewhere to go
+/// back to.
+///
+/// After the files are written and not before: the version IS what landed.  The dirty set is
+/// dropped rather than recorded, because what a landed Diamond holds is not the user's own edit
+/// and attributing it to them would put their name on somebody else's work.
+pub async fn versions_landed(id: &str) -> Outcome<Option<(u64, Vec<String>)>> {
+    let _ = drain_dirty(id);
+    let changes = versions_walk(id).await;
+    versions_record(id, Cause::Share, "", "", changes).await
+}
+
+/// One change, shown as the lines that differ.
+///
+/// The rows come from [`crate::diamond_versions::line_diff`], which is also what the daimon's
+/// own `file_revert` answer is drawn from, so the page and the model are shown the same
+/// comparison.
+///
+/// # Arguments
+/// * `was` - The hash of the content before, or empty for a file that did not exist.
+/// * `now` - The hash of the content after, or empty for one that was deleted.
+pub async fn versions_diff(id: &str, was: &str, now: &str) -> Outcome<String> {
+    let side = |b: Option<Vec<u8>>, hash: &str| -> Outcome<String> {
+        match b {
+            None if hash.is_empty() => Ok(String::new()),
+            None                    => Err(err!(
+                "The stored content '{}' is not on this device, so the two versions cannot be \
+                compared here.", hash; Missing, Data)),
+            // Refused rather than made lossy: a picture rendered as replacement characters
+            // would be shown as a diff of nonsense, which reads as the file being ruined.
+            Some(bytes) => match std::str::from_utf8(&bytes) {
+                Ok(t)  => Ok(t.to_string()),
+                Err(_) => Err(err!(
+                    "One side of this comparison is not text, so it cannot be shown as lines.";
+                    Invalid, Data)),
+            },
+        }
+    };
+    let before = res!(side(match was.is_empty() {
+        true  => None,
+        false => res!(versions_body(id, was).await),
+    }, was));
+    let after = res!(side(match now.is_empty() {
+        true  => None,
+        false => res!(versions_body(id, now).await),
+    }, now));
+    let rows = res!(versions::line_diff(&before, &after));
+    let (add, del) = versions::diff_counts(&rows);
+    let out: Vec<String> = rows.iter().map(|r| {
+        let (k, t) = match r {
+            versions::Row::Same(t) => (" ", t),
+            versions::Row::Del(t)  => ("-", t),
+            versions::Row::Add(t)  => ("+", t),
+        };
+        fmt!("{{\"k\":\"{}\",\"t\":\"{}\"}}", k, json_escape(t))
+    }).collect();
+    Ok(fmt!("{{\"add\":{},\"del\":{},\"rows\":[{}]}}", add, del, out.join(",")))
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Links                                                          │
+// └───────────────────────────────────────────────────────────────┘
+
+/// A Diamond's link sidecar, `diamonds/<id>/.daimond/links.jsonl`.
+///
+/// It sits beside the log rather than inside `crystal.json` for two reasons.  A
+/// fold rewrites the crystal wholesale -- the reducer is asked for the new crystal
+/// and returns the whole of it -- so anything structural kept in there is
+/// at a model's mercy on every fold.  And the crystal is handed to the conductor
+/// and to every worker it dispatches, so a growing list of links would be paid
+/// for in tokens on every turn, by agents that have the file tools anyway.
+fn links_path(id: &str) -> String {
+    fmt!("{}/{}/{}/links.jsonl", ROOT_DIR, id, STORE_DIR)
+}
+
+/// Read one Diamond's links.  A missing sidecar is no links, not a failure.
+///
+/// A sidecar that is not UTF-8 is read with the bad bytes replaced, for display; no writer edits
+/// it ([`read_links_text`]).
+pub async fn read_links(id: &str) -> Outcome<Vec<Link>> {
+    Ok(parse_links(&res!(links_text(id, false).await)))
+}
+
+/// One page of `owner`'s links from the non-blank line `at`, under the sidecar's `stamp`
+/// (D1k3b): a pure read of the sidecar text, [`crate::diamond_link::links_page`].
+pub async fn links_page(owner: &str, at: u64, stamp: Option<&crate::store::call::HexHash>)
+    -> Outcome<crate::diamond_link::LinksPage>
+{
+    crate::diamond_link::links_page(&res!(read_links_text(owner).await), at, stamp)
+}
+
+/// One Diamond's sidecar as stored text, the legacy kinds fixed; empty when there is none.
+///
+/// What every link writer edits: the parsed rows only decide which row changes, and every
+/// other line is written back as it was read (`diamond_link::edit_rows`).  **A sidecar that is
+/// not UTF-8 is refused**, naming the file, since writing it back would replace the bytes that
+/// are not.
+async fn read_links_text(id: &str) -> Outcome<String> {
+    links_text(id, true).await
+}
+
+/// The sidecar's text for [`read_links_text`] when `to_write`, else for [`read_links`].
+async fn links_text(id: &str, to_write: bool) -> Outcome<String> {
+    let path = links_path(id);
+    if !res!(own::exists(&path).await) {
+        return Ok(String::new());
+    }
+    let bytes = res!(own::read_file(&path).await);
+    let text = match String::from_utf8(bytes) {
+        Ok(t) => t,
+        Err(e) if to_write => return Err(err!(
+            "The link sidecar '{}' is not UTF-8 from byte {}, so no link was written to it: \
+            writing it back would replace the bytes that are not.",
+            path, e.utf8_error().valid_up_to();
+        Invalid, Input, UTF8)),
+        // Read for display only, so nothing here writes it back.
+        Err(e) => return Ok(fix_legacy_kinds(&String::from_utf8_lossy(e.as_bytes()))),
+    };
+
+    // A sidecar written before the rename names its ends `facet:<id>` -- what a
+    // Diamond was called when the link substrate shipped. The
+    // substrate keeps an unknown kind rather than refusing it, so those links
+    // would survive -- but they would survive pointing at a kind nothing
+    // resolves any more, which is a link that renders as a dead end rather than
+    // as the Diamond it means. Rewriting on read is enough: the file is
+    // rewritten whenever a link is added or removed, and until then the
+    // in-memory view is already correct.
+    let fixed = fix_legacy_kinds(&text);
+    if fixed != text {
+        res!(own::write_file(&path, fixed.as_bytes()).await);
+    }
+    Ok(fixed)
+}
+
+/// Write one Diamond's sidecar text, replacing the file.
+async fn write_links_for(id: &str, text: &str) -> Outcome<()> {
+    own::write_file(&links_path(id), text.as_bytes()).await
+}
+
+/// Assert a link from one node to another, and return its id.
+///
+/// The record is stored once, on the Diamond named by `from` when that end is a
+/// Diamond, and otherwise on `owner`.  It is never written twice: a link is found
+/// from either end by [`links_touching`], which is what makes the graph two-way
+/// without a second copy to keep consistent.
+///
+/// # Arguments
+/// * `owner` - The Diamond whose sidecar holds the record.
+/// * `from`  - The end the link is asserted from, as `kind:rest`.
+/// * `to`    - The end it points at, as `kind:rest`.
+/// * `rel`   - What kind of relation it is; may be empty.
+/// * `note`  - A free sentence about it; may be empty.
+/// * `by`    - Who asserted it: `user`, or `agent:<name>`.
+pub async fn add_link(
+    owner: &str,
+    from:  &str,
+    to:    &str,
+    rel:   &str,
+    note:  &str,
+    by:    &str,
+)
+    -> Outcome<String>
+{
+    add_link_with(owner, from, to, rel, note, by, false).await
+}
+
+/// [`add_link`], and flagged to be shared as it is written: the page's door for a mark the user
+/// confirms on this device, which carries the flag it had, in one write.
+///
+/// **No tool reaches this with `share` on** (re-check of 2026-09-23, R3): `link_add` goes through
+/// [`add_link`], and the flag is refused here on anything but the user's own mark.
+///
+/// # Arguments
+/// * `share` - Whether the new link is flagged to be copied to the devices that cannot open it.
+pub async fn add_link_with(
+    owner: &str,
+    from:  &str,
+    to:    &str,
+    rel:   &str,
+    note:  &str,
+    by:    &str,
+    share: bool,
+)
+    -> Outcome<String>
+{
+    let from_node = match Node::parse(from) {
+        Some(n) => n,
+        None    => return Err(err!("'{}' is not a kind:rest reference.", from; Invalid, Input)),
+    };
+    let to_node = match Node::parse(to) {
+        Some(n) => n,
+        None    => return Err(err!("'{}' is not a kind:rest reference.", to; Invalid, Input)),
+    };
+    // A link from a thing to itself says nothing, and would draw a loop on
+    // every view that ever renders this.
+    if from_node == to_node {
+        return Err(err!("A link joins two different things."; Invalid, Input));
+    }
+    let link = Link {
+        id:    generate_session_id(),
+        ts:    now_ms() as u64,
+        from:  from_node,
+        to:    to_node,
+        rel:   normalise_rel(rel),
+        note:  normalise_note(note),
+        by:    if by.trim().is_empty() { fmt!("user") } else { by.trim().to_string() },
+        share,
+    };
+    // The copy grant stands only on the user's own mark.
+    if link.share && !link.is_users_mark() {
+        return Err(err!(
+            "A link '{}' by '{}' cannot be flagged to be shared: only a folder or file the user \
+            marked in may be copied to other devices.", link.rel, link.by; Invalid, Input));
+    }
+    let id = link.id.clone();
+    let text = res!(read_links_text(owner).await);
+    res!(write_links_for(owner, &res!(sidecar_add(&text, &link))).await);
+    // The sidecar rides inside the owner's directory, so a link is part of what
+    // that Diamond IS, and the merge carries the directory whole.  Without the
+    // stamp the new link would not travel, and the other device's copy would
+    // eventually come back over it carrying the links it had instead.
+    touch_after_link(owner).await;
+    Ok(id)
+}
+
+/// Whether a Diamond is actually here, judged by the one file every Diamond has.
+///
+/// Written for the link tools, and needed because they let something OTHER than the page
+/// choose the owner.  Every earlier caller of [`add_link`] passed an id it had just read off
+/// the rail; a model passes a string it wrote, and a mistyped one would have a sidecar
+/// written for it -- which creates the directory, and [`all_links`] walks directories rather
+/// than the rail, so the graph would gain links belonging to a Diamond nothing lists.  That
+/// is the same hazard [`union_links_from`] guards against, arriving from the other side.
+pub async fn diamond_exists(id: &str) -> bool {
+    if id.trim().is_empty() {
+        return false;
+    }
+    own::exists(&meta_path(id)).await.unwrap_or(false)
+}
+
+/// Revise the relation and note of a link already in a Diamond's sidecar.
+/// Returns whether anything moved.
+///
+/// The store had `add_link` and `remove_link` and nothing between them, so every
+/// surface that let a person correct a relation did it by deleting the record and
+/// asserting a fresh one -- a new id and a new `ts`.  That loses the one fact
+/// nothing else holds: when the two things were FIRST said to be related.  A
+/// relation is a judgement about a joining that already existed, and refining the
+/// judgement is not a new joining.  [`update_link_in`](crate::diamond_link::update_link_in) therefore edits the record
+/// in place and this writes it back.
+///
+/// The ends are not revisable: a link between two OTHER things is a new claim and
+/// costs a new record, which [`add_link`] already makes.
+///
+/// Nothing is written when nothing moved, and that is load-bearing rather than an
+/// optimisation.  A write stamps the Diamond, the merge reads that stamp, and a
+/// no-op that stamped would make this device the fresher copy for having done
+/// nothing -- carrying its whole directory over a real edit made elsewhere.
+///
+/// **A revision does not travel by [`union_links_from`].**  The union keys on the
+/// id and keeps the copy already held, precisely so a link is never merged field
+/// by field; what carries a revision is the stamp, and the wholesale merge that
+/// reads it -- exactly as for [`remove_link`].
+///
+/// # Arguments
+/// * `owner`   - The Diamond whose sidecar holds the record.
+/// * `link_id` - The link to revise.
+/// * `rel`     - The relation it should now carry; may be empty.
+/// * `note`    - The note it should now carry; may be empty.
+pub async fn update_link(owner: &str, link_id: &str, rel: &str, note: &str) -> Outcome<bool> {
+    let text = res!(read_links_text(owner).await);
+    let new = match res!(sidecar_update(&text, link_id, rel, note)) {
+        Some(t) => t,
+        None    => return Ok(false),
+    };
+    res!(write_links_for(owner, &new).await);
+    touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
+    Ok(true)
+}
+
+/// Turn a mark's share flag on or off.  True when anything moved.
+///
+/// The page's door and no tool's: the user's own ⇄ on an attachment.  Refused on any link that is
+/// not the user's mark ([`share_link_in`](crate::diamond_link::share_link_in)), and nothing is written or stamped when nothing moved,
+/// for the reason [`update_link`] gives.
+///
+/// # Arguments
+/// * `owner`   - The Diamond whose sidecar holds the mark.
+/// * `link_id` - The mark.
+/// * `on`      - True to share it with the devices that cannot open it, false to stop.
+pub async fn set_link_share(owner: &str, link_id: &str, on: bool) -> Outcome<bool> {
+    let text = res!(read_links_text(owner).await);
+    let new = match res!(sidecar_share(&text, link_id, on)) {
+        Some(t) => t,
+        None    => return Ok(false),
+    };
+    res!(write_links_for(owner, &new).await);
+    touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
+    Ok(true)
+}
+
+/// Remove a link a MODEL's tool named, and never a row the user drew
+/// ([`crate::diamond_link::model_unlink`]).  Asked and written from one read of the sidecar, so
+/// nothing is removed that was not asked about.
+pub async fn remove_link_by_model(owner: &str, link_id: &str) -> Outcome<Unlink> {
+    let text = res!(read_links_text(owner).await);
+    let (out, new) = res!(sidecar_model_remove(&text, link_id));
+    if let Some(new) = new {
+        res!(write_links_for(owner, &new).await);
+        touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
+    }
+    Ok(out)
+}
+
+/// Remove a link from a Diamond's sidecar.  Returns whether one went.
+///
+/// This device's press of the row goes in the same act, before the row does: a press left
+/// standing would put the row back in force, with no press, the moment a sync merge returned it
+/// (QA B F4, 2026-10-12).  A press that cannot be dropped refuses the removal.
+///
+/// A blank id is refused ([`crate::diamond_link::sidecar_remove`]): it would name every hand-written
+/// row at once.  Those go by [`remove_bare_link`].
+pub async fn remove_link(owner: &str, link_id: &str) -> Outcome<bool> {
+    let text = res!(read_links_text(owner).await);
+    let new = match res!(sidecar_remove(&text, link_id)) {
+        Some(t) => t,
+        None    => return Ok(false),
+    };
+    res!(own::forget_press(owner, link_id));
+    res!(write_links_for(owner, &new).await);
+    touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
+    Ok(true)
+}
+
+/// Remove the one hand-written (id-less) row of a Diamond's sidecar that runs `from` to `to` as
+/// `rel`, refused when none or several do ([`crate::diamond_link::sidecar_remove_bare`]).  No
+/// press is dropped: a press is keyed by an id, and this row has none.
+pub async fn remove_bare_link(owner: &str, from: &str, to: &str, rel: &str) -> Outcome<bool> {
+    let text = res!(read_links_text(owner).await);
+    let new = res!(sidecar_remove_bare(&text, from, to, rel));
+    res!(write_links_for(owner, &new).await);
+    touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
+    Ok(true)
+}
+
+/// Take into a Diamond's sidecar every link another device's copy of it holds
+/// and this one does not.  True when something was written.
+///
+/// The merge carries a Diamond wholesale on the freshest copy, and refuses to
+/// choose when the two are equally fresh.  Equally fresh with different links is
+/// exactly the state a build that stamped nothing when a link changed used to
+/// leave behind, and no wholesale choice can repair it: whichever copy is
+/// picked, the other's links go.  A union can, because links are a set of
+/// records with ids, and taking both copies' records is not a judgement about
+/// either -- the same reasoning that lets tags be unioned (see
+/// [`set_tags`]).
+///
+/// It settles.  Writing stamps the Diamond, so this side becomes the fresher one
+/// and the union travels back to be taken wholesale; an import lays the stamps
+/// down verbatim, so nothing bounces back again; and once the two sidecars agree
+/// [`union_links`](crate::diamond_link::union_links) adds nothing, nothing is written and no stamp moves.
+///
+/// It cannot resurrect a deletion.  [`remove_link`] stamps the Diamond, so the
+/// copy that lost the link is the fresher one and is taken wholesale, and this
+/// is reached only where neither copy is fresher.  What it can repair is
+/// therefore only the divergence the missing stamp left behind, which is what it
+/// is for.
+///
+/// # Arguments
+/// * `owner`   - The Diamond whose sidecar is being reconciled.
+/// * `sidecar` - The other device's copy of it, as stored text.
+pub async fn union_links_from(owner: &str, sidecar: &str) -> Outcome<bool> {
+    // Another device's file, so the same fixup a read applies: a link arriving
+    // under the old kind is the same link, and writing it down unrepaired would
+    // put a dead end in a file this device had already cleaned.
+    let theirs = fix_legacy_kinds(sidecar);
+    if parse_links(&theirs).is_empty() {
+        return Ok(false);
+    }
+    // A Diamond that is not here is not one to write a sidecar for.  Writing
+    // would create the directory, and [`all_links`] walks directories rather
+    // than the rail, so the graph would gain links belonging to a Diamond
+    // nothing lists -- and the stamp afterwards would fail anyway, there being
+    // no metadata to move.
+    if !res!(own::exists(&meta_path(owner)).await) {
+        return Ok(false);
+    }
+    // Their new rows land as they wrote them, and none of ours is rewritten.
+    let mine = res!(read_links_text(owner).await);
+    let merged = match res!(sidecar_union(&mine, &theirs)) {
+        Some(m) => m,
+        None    => return Ok(false),        // they agree: write nothing, stamp nothing
+    };
+    res!(write_links_for(owner, &merged).await);
+    touch_after_link(owner).await;
+    Ok(true)
+}
+
+// ── PORT-PL-A: decisions-archive union (C4 STATE F4) ──
+
+/// Take into a Diamond's decisions archive every entry the losing device's copy held and this
+/// one does not (UNBLOCK-18 F4).  True when something was written, which is also when the
+/// Diamond was stamped, so the union travels back and the other device takes it one-sided.
+///
+/// A two-sided import replaces `.daimond/` whole, and the archive is not a versioned file, so
+/// without this the sections `STATE.md` retired on the loser would leave the one file `recall`
+/// and `file_read` reach.  The join is [`crate::state_md::archive_union`]; until the carrier
+/// (C11) makes the archive a Log kind.
+///
+/// # Arguments
+/// * `owner` - The Diamond just imported.
+/// * `there` - The loser's `.daimond/decisions-archive.md`, read off its export before the import.
+pub async fn union_archive_from(owner: &str, there: &str) -> Outcome<bool> {
+    if there.trim().is_empty() || !res!(own::exists(&meta_path(owner)).await) {
+        return Ok(false);
+    }
+    let path = crate::tools::standing_archive(crate::tools::STATE_FILE, owner);
+    let mine = res!(read_if_any(&path).await)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    let add = crate::state_md::archive_union(&mine, there);
+    if add.is_empty() {
+        return Ok(false);                   // it holds everything the loser's did
+    }
+    res!(archive_append(FileRoot::Opfs, &path, &add).await);
+    if let Err(e) = touch(owner).await {
+        console_log(&fmt!("Diamond '{}' could not be stamped after its archive was joined: {}",
+            owner, e));
+    }
+    Ok(true)
+}
+
+/// Stamp the owner of a sidecar that has just changed, best effort.
+///
+/// Best effort because the link is already written: a Diamond whose `meta.json`
+/// cannot be read is one whose link should still exist here, and failing the
+/// call after the fact would tell the caller nothing happened when something
+/// did.  What is lost is that the link may not travel until the Diamond is
+/// changed again, which is the same position it was in before this existed.
+async fn touch_after_link(owner: &str) {
+    if let Err(e) = touch(owner).await {
+        console_log(&fmt!("Diamond '{}' could not be stamped after a link changed: {}", owner, e));
+    }
+}
+
+/// Every link touching `node`, from whichever Diamond's sidecar holds it.
+///
+/// This is the read that makes the links two-way.  A record is stored once, in
+/// one direction, so what points AT something is found by scanning rather than
+/// by keeping a mirrored copy -- there is no second copy to fall out of step,
+/// and a link hand-written into either end's sidecar counts just the same.
+///
+/// The scan walks every Diamond, which is the same walk [`list`] already does on
+/// each load of the rail.
+pub async fn links_touching(node_ref: &str) -> Outcome<Vec<(String, Link)>> {
+    let node = match Node::parse(node_ref) {
+        Some(n) => n,
+        None    => return Err(err!("'{}' is not a kind:rest reference.", node_ref; Invalid, Input)),
+    };
+    let mut out: Vec<(String, Link)> = Vec::new();
+    let entries = match own::list_dir(ROOT_DIR).await {
+        Ok(e)  => e,
+        Err(_) => return Ok(out),
+    };
+    for (id, is_dir, _size) in entries {
+        if !is_dir {
+            continue;
+        }
+        // One unreadable sidecar must not hide every other Diamond's links.
+        let links = match read_links(&id).await {
+            Ok(l)  => l,
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}' has an unreadable link sidecar: {}", id, e));
+                continue;
+            }
+        };
+        for l in links {
+            if l.touches(&node) {
+                out.push((id.clone(), l));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Every link in the store, as the JSON array the surface returns.
+///
+/// One walk of `diamonds/` answers the whole graph, where asking node by node
+/// would walk the store once per Diamond and read every sidecar as many times
+/// over.  The walk is [`links_touching`]'s, with the node test dropped.
+///
+/// Each entry carries the Diamond whose sidecar holds the record, exactly as
+/// [`links_json`] does, so a caller can delete a link without searching for it.
+/// There is no `other` field: no one end was asked about, so neither end is the
+/// other one.
+pub async fn all_links() -> Outcome<String> { all_links_among(None).await }
+
+/// [`all_links`] of the Diamonds in `only` alone, where it names any: what a run granted those
+/// Diamonds may read of the links.
+pub async fn all_links_among(only: Option<&std::collections::BTreeSet<String>>)
+    -> Outcome<String>
+{
+    let entries = match own::list_dir(ROOT_DIR).await {
+        Ok(e)  => e,
+        Err(_) => return Ok("[]".to_string()),
+    };
+    let mut items: Vec<String> = Vec::new();
+    for (id, is_dir, _size) in entries {
+        if !is_dir || only.is_some_and(|o| !o.contains(&id)) {
+            continue;
+        }
+        // One unreadable sidecar must not hide every other Diamond's links.
+        let links = match read_links(&id).await {
+            Ok(l)  => l,
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}' has an unreadable link sidecar: {}", id, e));
+                continue;
+            }
+        };
+        for l in links {
+            items.push(fmt!(
+                "{{\"owner\":\"{}\",\"id\":\"{}\",\"ts\":{},\"from\":\"{}\",\"to\":\"{}\",\
+                  \"rel\":\"{}\",\"note\":\"{}\",\"by\":\"{}\",\"share\":{}}}",
+                json_escape(&id), json_escape(&l.id), l.ts,
+                json_escape(&l.from.to_ref()), json_escape(&l.to.to_ref()),
+                json_escape(&l.rel), json_escape(&l.note), json_escape(&l.by), l.share,
+            ));
+        }
+    }
+    Ok(fmt!("[{}]", items.join(",")))
+}
+
+/// Every link touching `node`, as the JSON array the surface returns.
+///
+/// Each entry carries the Diamond whose sidecar holds the record, so a caller can
+/// delete it without searching for it again, and `other` -- the end that is not
+/// the one asked about -- so a view has what it draws without re-deriving the
+/// direction.
+pub async fn links_json(node_ref: &str) -> Outcome<String> { links_json_among(node_ref, None).await }
+
+/// [`links_json`] of the links the Diamonds in `only` hold, where it names any.
+pub async fn links_json_among(node_ref: &str, only: Option<&std::collections::BTreeSet<String>>)
+    -> Outcome<String>
+{
+    let node = match Node::parse(node_ref) {
+        Some(n) => n,
+        None    => return Err(err!("'{}' is not a kind:rest reference.", node_ref; Invalid, Input)),
+    };
+    let found = res!(links_touching(node_ref).await);
+    let items: Vec<String> = found.iter()
+        .filter(|(owner, _)| only.is_none_or(|o| o.contains(owner)))
+        .map(|(owner, l)| {
+        fmt!(
+            "{{\"owner\":\"{}\",\"id\":\"{}\",\"ts\":{},\"from\":\"{}\",\"to\":\"{}\",\
+              \"rel\":\"{}\",\"note\":\"{}\",\"by\":\"{}\",\"share\":{},\"other\":\"{}\"}}",
+            json_escape(owner), json_escape(&l.id), l.ts,
+            json_escape(&l.from.to_ref()), json_escape(&l.to.to_ref()),
+            json_escape(&l.rel), json_escape(&l.note), json_escape(&l.by), l.share,
+            json_escape(&l.other(&node).map(|n| n.to_ref()).unwrap_or_default()),
+        )
+    }).collect();
+    Ok(fmt!("[{}]", items.join(",")))
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Whole-directory export / import                                │
+// └───────────────────────────────────────────────────────────────┘
+
+/// Whether a path from an export addresses something inside the Diamond.
+///
+/// The paths in an export were written by another device, so they are checked
+/// rather than trusted: a `..` component would climb out of `diamonds/<id>/`
+/// and land the file in some other Diamond, or beside them all.
+pub(crate) fn is_safe_rel(rel: &str) -> bool {
+    if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
+        return false;
+    }
+    rel.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
+/// Export a whole Diamond as JSON:
+/// `{"id":..,"touched":..,"files":{"<path>":"<content>",..}}`, each path
+/// relative to `diamonds/<id>/`.
+///
+/// Filesystem-level on purpose rather than field by field.  Everything a
+/// Diamond *is* lives under its directory -- the crystal, every version
+/// snapshot, the metadata, the log, the retained deltas, the link sidecar -- so
+/// a per-Diamond file added later travels with it and nothing carrying a
+/// Diamond about has to learn the new file's name.
+///
+/// NOT ALL OF THEM ARE TEXT ANY MORE.  A version's `.jpatch` and `.hpatch` carry two
+/// checksums in their header, so most are not valid UTF-8; they travel base64 in the pack's
+/// `binary` map, and [`crate::protocol::pack_diamond`] decides which map a file goes in by
+/// asking the bytes rather than the name.  Both routes are lossless and
+/// `diamond_delta::tests::test_a_patch_survives_the_pack_a_sync_carries_it_in` holds them to it.
+///
+/// The paths come out sorted, so two exports of an unchanged Diamond are the
+/// same bytes and a caller comparing states sees no change where there is none.
+///
+/// `touched` -- when anything under the directory last changed -- is repeated at
+/// the top level, so a carrier can tell two copies apart without opening a file
+/// inside the pack.  It is a copy of what `.daimond/meta.json` says, not a
+/// second source of truth: an import lays the file down verbatim and the file
+/// wins from then on.
+/// What [`export_diamond`] would weigh, WITHOUT building it.
+///
+/// The sync builds a parcel under a byte budget, and it used to find out whether
+/// a Diamond fitted by exporting it and measuring the result -- so every Diamond
+/// was materialised in full, and the ones over budget were thrown away after the
+/// fact. The budget capped what was SENT and not what was HELD.
+///
+/// On this machine that is invisible. On a phone with fifteen Diamonds carrying
+/// un-pruned version history it is the whole store in memory at once, which is
+/// what an iPhone's tab is killed for. `list_dir` already reports each entry's
+/// size, so the answer costs a directory walk and not one byte of content.
+///
+/// EVERY FILE WAS WEIGHED AS THOUGH IT TRAVELLED BASE64, four bytes for three, and most of a
+/// Diamond does not: valid UTF-8 goes into the pack as itself, and what JSON escaping adds to a
+/// page is a few per cent.  Measured, that over-estimate cost real syncs -- thirteen Diamonds at
+/// the page ceiling with five edits each were admitted five where the pack itself admits seven, so
+/// two were refused a parcel they would have fitted and the user was told they had been left
+/// behind.  [`crate::protocol::packed_weight`] weighs each file by what its kind actually costs,
+/// and keeps the heavy figure for JSON, for the log and for anything unrecognised.
+///
+/// It is an estimate rather than a bound, and the direction it has to be right about is a
+/// REFUSAL: a Diamond this says will not fit is never built, so that answer has to hold, while one
+/// it lets through is weighed again exactly against the pack that travels.
+pub async fn export_size(id: &str) -> Outcome<u64> {
+    let root = diamond_dir(id);
+    if !res!(own::exists(&root).await) {
+        return Ok(0);
+    }
+    let mut total: u64 = 0;
+    let mut todo: Vec<String> = vec![String::new()];
+    while let Some(rel) = todo.pop() {
+        let dir = if rel.is_empty() { root.clone() } else { fmt!("{}/{}", root, rel) };
+        let entries = match own::list_dir(&dir).await {
+            Ok(e)  => e,
+            Err(_) => continue,
+        };
+        for (name, is_dir, size) in entries {
+            let child = if rel.is_empty() { name.clone() } else { fmt!("{}/{}", rel, name) };
+            if is_dir {
+                todo.push(child);
+            } else {
+                // The path travels in the envelope too, and a Diamond with many version files
+                // carries a lot of path, so `packed_weight` counts it and the entry's own
+                // punctuation as well as the content.
+                total = total.saturating_add(
+                    crate::protocol::packed_weight(&child, size));
+            }
+        }
+    }
+    Ok(total)
+}
+
+pub async fn export_diamond(id: &str) -> Outcome<String> {
+    let files = res!(diamond_files(id).await);
+    // A Diamond with no readable metadata still exports; it simply carries no
+    // stamp, and a carrier falls back to whatever the pack itself says.
+    let touched = read_meta(id).await.map(|m| m.touched).unwrap_or(0);
+    Ok(crate::protocol::pack_diamond(id, touched, &files))
+}
+
+/// Every file under `diamonds/<id>/`, by its path relative to it.
+///
+/// Bytes, not text.  What each file IS, is decided by [`crate::protocol::pack_diamond`], which is
+/// the one place that knows the pack's shape and the one place a test can reach.
+async fn diamond_files(id: &str) -> Outcome<Vec<(String, Vec<u8>)>> {
+    let root = diamond_dir(id);
+    if !res!(own::exists(&root).await) {
+        return Err(err!("There is no Diamond '{}' to export.", id; Missing, Data));
+    }
+    // Recursion is spelled out with an explicit stack: an `async fn` cannot
+    // recurse without boxing its future (as the OPFS module's `copy_tree` does the same).
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut todo: Vec<String> = vec![String::new()];
+    while let Some(rel) = todo.pop() {
+        let dir = if rel.is_empty() { root.clone() } else { fmt!("{}/{}", root, rel) };
+        let entries = match own::list_dir(&dir).await {
+            Ok(e)  => e,
+            Err(_) => continue,     // a directory that has gone carries nothing
+        };
+        for (name, is_dir, _size) in entries {
+            let child = if rel.is_empty() { name.clone() } else { fmt!("{}/{}", rel, name) };
+            if is_dir {
+                // The notes of copies taken mid-turn are this page's, not the Diamond's: another
+                // device adopting one would record an act it never saw.
+                if device_local(&child) {
+                    continue;
+                }
+                todo.push(child);
+                continue;
+            }
+            // One unreadable file must not lose the whole Diamond.
+            let bytes = match own::read_file(&fmt!("{}/{}", root, child)).await {
+                Ok(b)  => b,
+                Err(e) => {
+                    console_log(&fmt!("Diamond '{}' has an unreadable file '{}': {}", id, child, e));
+                    continue;
+                }
+            };
+            files.push((child, bytes));
+        }
+    }
+    Ok(files)
+}
+
+/// Export a Diamond's SHAPE as a template anybody can open: the page it renders through, its
+/// automation, and whatever a capp keeps beside itself -- and none of what has been recorded in it.
+///
+/// The line is drawn by [`crate::protocol::template_carries`], which is where the reasoning for
+/// each path is written and where it is tested.  Unsealed, deliberately: a share is sealed to one
+/// named recipient's key and so cannot reach anybody without an account, which is the whole reason
+/// this second door exists.
+///
+/// # Arguments
+/// * `id` - The Diamond to take the shape of.
+/// * `with_conversation` - Carry everything instead, which is the door back to a complete copy.
+///   It is still a template, so it still opens as a NEW Diamond.
+pub async fn export_template(id: &str, with_conversation: bool) -> Outcome<String> {
+    let files = res!(diamond_files(id).await);
+    let kept  = crate::protocol::template_files(&files, with_conversation);
+    // The name has to come out of the metadata here, because the metadata itself does not travel:
+    // a template carries the name at the top of the pack and nothing else from `.daimond/`.  A
+    // Diamond whose name cannot be read is refused rather than sent nameless -- what would arrive
+    // is a tile with nothing on it but a cog, and the person opening it would have no way to know
+    // what they had been given.
+    let meta = res!(read_meta(id).await);
+    let name = meta.name.trim().to_string();
+    if name.is_empty() {
+        return Err(err!(
+            "Diamond '{}' has no name, so a template made from it would arrive with nothing to \
+            call it. Name the Diamond and export it again.", id; Missing, Data));
+    }
+    Ok(crate::protocol::pack_template(id, meta.touched, &name, &kept))
+}
+
+/// The leaf directory the version store lives in, `versions`.
+const VERSIONS_SUBDIR: &str = "versions";
+
+/// The highest version number this device holds for a Diamond, across the crystal
+/// counter and every file in `versions/`.  Zero for a Diamond with no store yet.
+async fn local_version_max(id: &str) -> u64 {
+    let mut max = read_meta(id).await.map(|m| m.version).unwrap_or(0);
+    if let Ok(entries) = own::list_dir(&versions_dir(id)).await {
+        for (name, is_dir, _size) in entries {
+            if is_dir {
+                continue;
+            }
+            if let Some(n) = versions::version_prefix(&name) {
+                if n > max {
+                    max = n;
+                }
+            }
+        }
+    }
+    max
+}
+
+/// A walked file as [`keep_local_before_import`] keeps it: its bytes, where they are here and a
+/// version holds them whole.  A `Large` is kept as the `Held` bytes it names would be past the
+/// ceiling: not at all, since no bytes are here to keep.
+pub(crate) fn import_source(ch: Change) -> Option<(String, Vec<u8>)> {
+    match ch.after {
+        Body::Held(body) if body.len() <= versions::VERSION_FILE_MAX => Some((ch.path, body)),
+        Body::Held(_) | Body::Large(_) | Body::Stored(_) | Body::TooLarge(_) | Body::Unseen | Body::Gone => None,
+    }
+}
+
+/// Keep the local copy of a Diamond as a recoverable version BEFORE a two-sided
+/// sync import replaces it wholesale (S-SYNC #4), and answer the version number it
+/// was kept at.
+///
+/// The loser's crystal, its page and the files the store versions are written as
+/// ONE `restore` manifest -- bodies content-addressed, so a snapshot of files that
+/// already have a version costs only what differs.  The note names it so the
+/// History reads "kept before sync".
+///
+/// **The number is chosen above every version either side holds** (`incoming` is the
+/// export about to land), so neither the remote manifests written straight after nor
+/// the next local crystal edit can overwrite it: the next edit mints past every number
+/// on disk ([`versions::next_version`]).  No data KEYFRAME is written at that number,
+/// and the counter is left where the import sets it, at the remote's live version, so
+/// the version the Diamond is at is still the one its crystal is.
+///
+/// The loser's tags and links live in `.daimond/`, which the store does not version;
+/// they are preserved by the union the caller (`applyDiamonds`) runs after the import.
+async fn keep_local_before_import(_hold: &VersionHold, id: &str, incoming: &[(String, Vec<u8>)])
+    -> Outcome<Option<u64>>
+{
+    let local_max  = local_version_max(id).await;
+    let remote_max = incoming.iter()
+        .filter_map(|(rel, _)| rel.strip_prefix(&fmt!("{}/", VERSIONS_SUBDIR)))
+        .filter_map(versions::version_prefix)
+        .max()
+        .unwrap_or(0);
+    let at = local_max.max(remote_max) + 1;
+
+    // The loser's state: its crystal and page, read from OPFS where they always live,
+    // and the files the store versions, walked the same way Save a version walks them.
+    let mut sources: Vec<(String, Vec<u8>)> = Vec::new();
+    for p in [crystal_data_path(id), crystal_page_path(id)] {
+        if let Ok(body) = own::read_file(&p).await {
+            if body.len() <= versions::VERSION_FILE_MAX {
+                sources.push((p, body));
+            }
+        }
+    }
+    for ch in versions_walk(id).await {
+        if let Some(source) = import_source(ch) {
+            sources.push(source);
+        }
+    }
+    if sources.is_empty() {
+        return Ok(None);        // nothing local to keep -- a fresh adopt is not a conflict
+    }
+
+    let sources = sources.into_iter().map(|(p, b)| (p, b, None)).collect();
+    res!(write_version_held(_hold, id, at, Cause::Restore,
+        "kept before sync — a local edit the merge replaced", sources).await);
+    Ok(Some(at))
+}
+
+// ── PORT-PL-A: page-log join and heal (PLC, PLE) ──
+
+/// Write one version at `at` holding `sources`, each `(path, body, was)` by its workspace path,
+/// for a caller holding the store.  A body over [`versions::VERSION_FILE_MAX`] is a `skipped` row,
+/// as the store keeps any file that size.
+///
+/// THE BODIES BEFORE THE MANIFEST, so a failure half way leaves bytes nothing names rather than a
+/// manifest naming bytes that are not there -- the discipline [`versions_record`] states.
+async fn write_version_held(
+    _hold:      &VersionHold,
+    id:         &str,
+    at:         u64,
+    cause:      Cause,
+    note:       &str,
+    sources:    Vec<(String, Vec<u8>, Option<String>)>,
+)
+    -> Outcome<()>
+{
+    let mut entries: Vec<Entry> = Vec::new();
+    let mut w = Writing::begin(id);     // under the hold until the manifest names the bodies
+    for (path, body, was) in sources.into_iter() {
+        let mut entry = Entry::changed(&path, &body, was);
+        if body.len() > versions::VERSION_FILE_MAX {
+            entry.skipped = Some("size".to_string());
+        } else {
+            res!(w.put(id, &entry.hash, &body).await);
+        }
+        entries.push(entry);
+    }
+    let manifest = Manifest::new(cause, now_ms() as u64, "", note, entries);
+    res!(own::write_file(&manifest_path(id, at),
+        manifest.to_json().as_bytes()).await);
+    Ok(())
+}
+
+/// This device's page-log record, and every log it or the arriving copy's record names, each
+/// read whole or found absent, unreadable or over [`pagelog::PAGELOG_JOIN_MAX`].  The size is
+/// asked first, so a log too big to join is never read into memory.
+async fn local_logs(id: &str, arriving: &[(String, Vec<u8>)]) -> LocalLogs {
+    let dir = diamond_dir(id);
+    let record = read_log(&fmt!("{}/{}", dir, PAGELOGS_REL)).await;
+    let mut files: Vec<(String, LocalLog)> = Vec::new();
+    {
+        let mine: &[u8] = match &record {
+            LocalLog::Body(b) => b,
+            _                 => &[],
+        };
+        for rel in pagelog::recorded_paths(arriving, mine) {
+            let log = read_log(&fmt!("{}/{}", dir, rel)).await;
+            files.push((rel, log));
+        }
+    }
+    LocalLogs { record, files }
+}
+
+async fn read_log(path: &str) -> LocalLog {
+    match own::exists(path).await {
+        Ok(false) => return LocalLog::Absent,
+        Ok(true)  => (),
+        Err(_)    => return LocalLog::Unreadable,
+    }
+    match own::read_file_capped(path, pagelog::PAGELOG_JOIN_MAX as u32).await {
+        Ok((_, total)) if total > pagelog::PAGELOG_JOIN_MAX as f64 => LocalLog::TooBig,
+        Ok((bytes, _))  => LocalLog::Body(bytes),
+        Err(_)          => LocalLog::Unreadable,
+    }
+}
+
+/// Mint the one version a page-log join wrote (#12), above every number on disk, for a caller
+/// holding the store: the joined logs, each with this device's copy as what stood before it.
+async fn mint_join_version(hold: &VersionHold, id: &str, logs: Vec<(String, Vec<u8>, Option<String>)>)
+    -> Outcome<u64>
+{
+    mint_log_version(hold, id, Cause::Share, "rows from both devices kept", logs).await
+}
+
+/// Mint one version of page logs written, above every number on disk, for a caller holding the
+/// store: each log by its path inside the Diamond, with the hash of what stood before it.
+async fn mint_log_version(
+    hold:   &VersionHold,
+    id:     &str,
+    cause:  Cause,
+    note:   &str,
+    logs:   Vec<(String, Vec<u8>, Option<String>)>,
+)
+    -> Outcome<u64>
+{
+    let at = local_version_max(id).await + 1;
+    let dir = diamond_dir(id);
+    let sources = logs.into_iter().map(|(rel, b, was)| (fmt!("{}/{}", dir, rel), b, was)).collect();
+    res!(write_version_held(hold, id, at, cause, note, sources).await);
+    Ok(at)
+}
+
+/// This device's heal mark, `diamonds/<id>/versions/heal/pagelogs`.  See [`pagelog::HEAL_DIR`].
+fn heal_mark_path(id: &str) -> String {
+    fmt!("{}/{}/{}", versions_dir(id), pagelog::HEAL_DIR, pagelog::HEAL_MARK_FILE)
+}
+
+/// Every "kept before sync" manifest this Diamond holds, each by the hash of its bytes, oldest
+/// first.  A manifest that will not read is passed over, as [`versions_manifests`] passes it.
+async fn kept_manifests(id: &str) -> Vec<(String, Manifest)> {
+    let mut out: Vec<(u64, String, Manifest)> = Vec::new();
+    for (name, is_dir, _size) in version_entries(id).await {
+        if is_dir {
+            continue;
+        }
+        let n = match versions::manifest_version(&name) {
+            Some(n) => n,
+            None    => continue,
+        };
+        let bytes = match own::read_file(&fmt!("{}/{}", versions_dir(id), name)).await {
+            Ok(b)  => b,
+            Err(_) => continue,
+        };
+        if let Ok(m) = Manifest::from_json(&String::from_utf8_lossy(&bytes)) {
+            if pagelog::is_kept_before_sync(&m) {
+                out.push((n, versions::hash_of(&bytes), m));
+            }
+        }
+    }
+    out.sort_by_key(|(n, _, _)| *n);
+    out.into_iter().map(|(_, h, m)| (h, m)).collect()
+}
+
+/// Put back the page-log rows an earlier sync's replace dropped, from this Diamond's "kept before
+/// sync" versions (PL4), and answer what was put back.
+///
+/// Only rows are added, never one taken out: see [`pagelog::heal_plan`].  The logs are written
+/// first, then the one version that records them, then the mark, so a heal cut short is read
+/// again whole next time and adds nothing twice.  A heal with nothing to put back writes nothing,
+/// the mark included unless it has moved.  The Diamond is not stamped here: the caller stamps it
+/// when `rows` > 0, so the rows travel.  A caller holding the Diamond's lock calls this, so no
+/// page append can land between the read of a log and its write.
+pub async fn heal_pagelogs(id: &str) -> Outcome<pagelog::HealCounts> {
+    if !res!(own::exists(&meta_path(id)).await) {
+        return Ok(pagelog::HealCounts::default());
+    }
+    let hold = res!(hold_versions(id).await);
+    let live = local_logs(id, &[]).await;
+    let kept = kept_manifests(id).await;
+    let mark = match own::read_file(&heal_mark_path(id)).await {
+        Ok(b)  => pagelog::HealMark::read(&String::from_utf8_lossy(&b)),
+        Err(_) => pagelog::HealMark::default(),
+    };
+    let record: &[u8] = match &live.record {
+        LocalLog::Body(b) => b,
+        _                 => &[],
+    };
+    let mut bodies: Vec<(String, Vec<u8>)> = Vec::new();
+    for h in pagelog::heal_wants(&kept, &diamond_dir(id), record, &mark) {
+        if let Ok(b) = own::read_file(&body_path(id, &h)).await {
+            if versions::hash_of(&b) == h {
+                bodies.push((h, b));
+            }
+        }
+    }
+    let plan = pagelog::heal_plan(&kept, &diamond_dir(id), &live, &mark, &bodies);
+    let counts = pagelog::HealCounts::of(&plan);
+    let dir = diamond_dir(id);
+    for l in &plan.logs {
+        res!(own::write_file(&fmt!("{}/{}", dir, l.rel), &l.bytes).await);
+    }
+    if !plan.logs.is_empty() {
+        let wrote = plan.logs.iter()
+            .map(|l| (l.rel.clone(), l.bytes.clone(), Some(versions::hash_of(&l.was))))
+            .collect();
+        if let Err(e) = mint_log_version(&hold, id, Cause::Restore, pagelog::HEAL_NOTE, wrote).await {
+            console_log(&fmt!("Diamond '{}': the page-log rows were put back, but their version \
+                could not be written ({}).", id, e));
+        }
+    }
+    if plan.mark != mark {
+        res!(own::write_file(&heal_mark_path(id), plan.mark.to_text().as_bytes()).await);
+    }
+    drop(hold);
+    Ok(counts)
+}
+
+/// File every version of this device's that the copy arriving does not hold above both histories,
+/// before the import lays that copy's `versions/` over this one's, and answer how many were
+/// refiled.  What moves where is [`diamond_rebase::refile_plan`]'s to say; this is the edge that
+/// carries it out, and it adds to `writes` what the import then lays down besides: this device's
+/// log records under their new numbers, and the fold deltas they name.
+///
+/// **All or nothing.**  Every new file is written and read back before any old one is removed; a
+/// write that fails takes away what was written, and a removal that fails puts back what was
+/// removed.  Either way the import is refused and this device's store is as it was, because what
+/// is at stake is the only copy of this device's history.
+///
+/// # Arguments
+/// * `writes` - The import's files, each by its path inside the Diamond.
+async fn refile_own_versions(_hold: &VersionHold, id: &str, writes: &mut Vec<(String, Vec<u8>)>)
+    -> Outcome<usize>
+{
+    let vdir = versions_dir(id);
+    let mut files: std::collections::BTreeMap<String, Vec<u8>> = std::collections::BTreeMap::new();
+    let mut lost: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for name in file_names(&version_entries(id).await) {
+        if versions::version_prefix(name).is_none() {
+            continue;
+        }
+        match own::read_file(&fmt!("{}/{}", vdir, name)).await {
+            Ok(b)  => { files.insert(name.to_string(), b); },
+            Err(_) => { lost.insert(name.to_string()); },
+        }
+    }
+    if files.is_empty() && lost.is_empty() {
+        return Ok(0);
+    }
+    let log = match own::read_file(&log_path(id)).await {
+        Ok(b)  => String::from_utf8_lossy(&b).into_owned(),
+        Err(_) => String::new(),
+    };
+    let prefix  = fmt!("{}/", VERSIONS_SUBDIR);
+    let log_rel = fmt!("{}/log", STORE_DIR);
+    let theirs: std::collections::BTreeMap<String, Vec<u8>> = writes.iter()
+        .filter_map(|(rel, b)| rel.strip_prefix(&prefix)
+            .filter(|name| !name.contains('/'))
+            .map(|name| (name.to_string(), b.clone())))
+        .collect();
+    let their_log = writes.iter()
+        .find(|(rel, _)| *rel == log_rel)
+        .map(|(_, b)| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default();
+    let remote_counter = writes.iter()
+        .find(|(rel, _)| *rel == fmt!("{}/meta.json", STORE_DIR))
+        .map(|(_, b)| Meta::from_json(&String::from_utf8_lossy(b)).version)
+        .unwrap_or(0);
+    let remote_max = theirs.keys().filter_map(|n| versions::version_prefix(n)).max().unwrap_or(0);
+    let top = local_version_max(id).await.max(remote_max).max(remote_counter);
+    // The fold deltas this device retains, by the version each was retained for.
+    let held: std::collections::BTreeSet<u64> = match own::list_dir(&fmt!("{}/{}/deltas", diamond_dir(id), STORE_DIR)).await
+    {
+        Ok(e)  => e.into_iter()
+            .filter(|(_, is_dir, _)| !*is_dir)
+            .filter_map(|(name, _, _)| name.strip_suffix(".md").and_then(|s| s.parse::<u64>().ok()))
+            .collect(),
+        Err(_) => std::collections::BTreeSet::new(),
+    };
+    let none = std::collections::BTreeSet::new();
+    let plan = diamond_rebase::refile_plan(
+        &Side { files: &files, lost: &lost, log: &log },
+        &Side { files: &theirs, lost: &none, log: &their_log },
+        top, &held, |n| delta_path(id, n));
+    if plan.is_empty() && plan.log.is_empty() {
+        return Ok(0);
+    }
+    // Who each version is before it moves, for the row that says it moved.
+    let before = if plan.moves.is_empty() { Vec::new() } else { versions_manifests(id).await };
+    // Read before anything is written, so a delta that cannot be read refuses the import with
+    // nothing to undo.
+    let mut carried: Vec<(String, Vec<u8>)> = Vec::with_capacity(plan.deltas.len());
+    for (from, to) in plan.deltas.iter() {
+        let bytes = res!(own::read_file(&delta_path(id, *from)).await
+            .map_err(|e| err!(e,
+                "Diamond '{}': the fold delta of version {} could not be read to keep it as \
+                 version {}, so the copy from the other device was not taken.", id, from, to;
+                IO, File, Read)));
+        carried.push((fmt!("{}/deltas/{:04}.md", STORE_DIR, to), bytes));
+    }
+
+    // THE NEW FILES FIRST, each read back, on numbers nothing holds.
+    let mut written: Vec<String> = Vec::new();
+    for (name, bytes) in plan.writes.iter() {
+        let path = fmt!("{}/{}", vdir, name);
+        let free = !own::exists(&path).await.unwrap_or(true);
+        let landed = free && match own::write_file(&path, bytes).await {
+            Ok(()) => {
+                written.push(path.clone());
+                match own::read_file(&path).await {
+                    Ok(back) => back == *bytes,
+                    Err(_)   => false,
+                }
+            },
+            Err(_) => {
+                written.push(path.clone());     // a failed write may still have made the file
+                false
+            },
+        };
+        if !landed {
+            undo_refile(id, &written, &[], &files).await;
+            return Err(err!(
+                "Diamond '{}': this device's history could not be refiled at '{}' ({}), so the \
+                 copy from the other device was not taken and nothing here was changed.", id, name,
+                if free { "the write did not read back" } else { "a file already stands there" };
+                IO, File, Write));
+        }
+    }
+    // THEN THE OLD ONES GO, so no snapshot of this device's stands among the import's.
+    let mut removed: Vec<String> = Vec::new();
+    for name in plan.drops.iter() {
+        if let Err(e) = own::delete_entry(&fmt!("{}/{}", vdir, name), false).await {
+            undo_refile(id, &written, &removed, &files).await;
+            return Err(err!(e,
+                "Diamond '{}': '{}' could not be removed after this device's history was refiled, \
+                 so the copy from the other device was not taken and what was moved was put back.",
+                id, name; IO, File, Write));
+        }
+        removed.push(name.clone());
+    }
+
+    // The log records and the fold deltas go down with the import's own.
+    if !plan.log.is_empty() {
+        let mut merged = their_log;
+        if !merged.is_empty() && !merged.ends_with('\n') {
+            merged.push('\n');
+        }
+        for line in plan.log.iter() {
+            merged.push_str(line);
+            merged.push('\n');
+        }
+        match writes.iter_mut().find(|(rel, _)| *rel == log_rel) {
+            Some((_, b)) => *b = merged.into_bytes(),
+            None         => writes.push((log_rel, merged.into_bytes())),
+        }
+    }
+    writes.extend(carried);
+    // A RENUMBERING IS SAID, NOT LEFT TO READ AS A PRUNE (D-26 B F2): one row naming each version
+    // moved and its new number, and every prune record moved with what it names, in this device's
+    // log, which the import joins and never replaces.
+    if !plan.moves.is_empty() {
+        let row = versions::PruneRecord::renumbered(&plan.moves, &before, now_ms() as u64);
+        // A LOG THAT WILL NOT READ IS NOT WRITTEN OVER (r578f sweep): read as empty, every prune
+        // record this device held was replaced by the renumbering row.
+        // The refile has landed by now, so a log that will not read is said and left, as one that
+        // will not write is.
+        match read_if_any(&prune_log_path(id)).await {
+            Ok(b)  => {
+                let mine = b.map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+                if let Err(e) = own::write_file(&prune_log_path(id),
+                    versions::prune_log_refiled(&mine, &plan.moves, &row).as_bytes()).await
+                {
+                    console_log(&fmt!("Diamond '{}': the row saying {} version(s) were renumbered \
+                        could not be written ({}).", id, plan.moves.len(), e));
+                }
+            },
+            Err(e) => console_log(&fmt!("Diamond '{}': the prune log could not be read ({}), so \
+                the row saying {} version(s) were renumbered was not written.",
+                id, e, plan.moves.len())),
+        }
+        console_log(&fmt!(
+            "Diamond '{}': {} version(s) this device recorded since the copy arriving parted from \
+             it were refiled above both histories ({:?}).", id, plan.moves.len(), plan.moves));
+    }
+    Ok(plan.moves.len())
+}
+
+/// Put a refused refile back: the removed files rewritten from the bytes read before, and only
+/// then the new ones taken away -- and not at all if a removed one could not be put back, since
+/// then the new ones are the only copy of it.
+async fn undo_refile(
+    id:      &str,
+    written: &[String],
+    removed: &[String],
+    held:    &std::collections::BTreeMap<String, Vec<u8>>,
+) {
+    let vdir = versions_dir(id);
+    let mut whole = true;
+    for name in removed.iter() {
+        // A file that could not be read before cannot be put back, and was unreadable anyway.
+        let bytes = match held.get(name) {
+            Some(b) => b,
+            None    => continue,
+        };
+        if own::write_file(&fmt!("{}/{}", vdir, name), bytes).await.is_err() {
+            whole = false;
+        }
+    }
+    if !whole {
+        console_log(&fmt!(
+            "Diamond '{}': a refused import could not put back every file it had moved, so the \
+             refiled copies are kept and this device's history is held twice.", id));
+        return;
+    }
+    for path in written.iter() {
+        if let Err(e) = own::delete_entry(path, false).await {
+            console_log(&fmt!(
+                "Diamond '{}': '{}', written by a refused import, could not be removed ({}).",
+                id, path, e));
+        }
+    }
+}
+
+/// Refile this device's manifests that an import would write over, before it does, and answer how
+/// many were refiled.  What moves where is [`versions::rebase_plan`]'s to say; this is the edge
+/// that carries it out.
+///
+/// **Before anything else in the import**, so the copy kept before a sync is numbered above the
+/// refiled manifests, and so a failure part way leaves a manifest held twice -- the copies are
+/// written before any file goes -- rather than not at all.  A second import then keeps one of the
+/// two, since the plan keeps a record this device holds twice once.
+///
+/// # Arguments
+/// * `incoming` - The import's files, each by its path inside the Diamond.
+async fn rebase_before_import(_hold: &VersionHold, id: &str, incoming: &[(String, Vec<u8>)])
+    -> Outcome<usize>
+{
+    let theirs: Vec<(u64, String)> = incoming.iter()
+        .filter_map(|(rel, body)| rel.strip_prefix(&fmt!("{}/", VERSIONS_SUBDIR))
+            .and_then(versions::manifest_version)
+            .map(|n| (n, versions::hash_of(body))))
+        .collect();
+    let mut mine: Vec<(u64, String)> = Vec::new();
+    let mut bodies: std::collections::BTreeMap<u64, Vec<u8>> = std::collections::BTreeMap::new();
+    for name in file_names(&version_entries(id).await) {
+        let n = match versions::manifest_version(name) {
+            Some(n) => n,
+            None    => continue,
+        };
+        // A manifest that cannot be read here cannot be refiled either, and the import writing
+        // over it loses nothing this device could have shown.
+        let bytes = match own::read_file(&manifest_path(id, n)).await {
+            Ok(b)  => b,
+            Err(_) => continue,
+        };
+        mine.push((n, versions::hash_of(&bytes)));
+        bodies.insert(n, bytes);
+    }
+    if mine.is_empty() {
+        return Ok(0);
+    }
+    // Above both counters and every number either side holds, so a refiled manifest lands on a
+    // number nothing names and no later version is minted onto.
+    let remote_counter = incoming.iter()
+        .find(|(rel, _)| *rel == fmt!("{}/meta.json", STORE_DIR))
+        .map(|(_, b)| Meta::from_json(&String::from_utf8_lossy(b)).version)
+        .unwrap_or(0);
+    let remote_max = incoming.iter()
+        .filter_map(|(rel, _)| rel.strip_prefix(&fmt!("{}/", VERSIONS_SUBDIR)))
+        .filter_map(versions::version_prefix)
+        .max()
+        .unwrap_or(0);
+    let top = local_version_max(id).await.max(remote_max).max(remote_counter);
+    let plan = versions::rebase_plan(&mine, &theirs, top);
+    for (from, to) in plan.moves.iter() {
+        if let Some(bytes) = bodies.get(from) {
+            res!(own::write_file(&manifest_path(id, *to), bytes).await);
+        }
+    }
+    // Best effort: a drop that fails leaves a record held twice, which the next import tidies.
+    for n in plan.drops.iter() {
+        if let Err(e) = own::delete_entry(&manifest_path(id, *n), false).await {
+            console_log(&fmt!("Diamond '{}': version manifest {} is now held twice; it could not \
+                be removed ({}).", id, n, e));
+        }
+    }
+    if !plan.moves.is_empty() {
+        console_log(&fmt!(
+            "Diamond '{}': {} version manifest(s) this device recorded were refiled above the \
+             copy arriving, which had used the same numbers ({:?}).", id, plan.moves.len(),
+            plan.moves));
+    }
+    Ok(plan.moves.len())
+}
+
+/// Delete everything a Diamond holds EXCEPT what [`diamond_rebase::on_replace`] keeps: its
+/// version store, so the file history -- and any conflict snapshot just kept -- survives a
+/// wholesale replace (S-SYNC #4), and its activity record, which is joined in place (item 24).
+/// The export's own `versions/` files are written over what is kept, unioning by content address.
+async fn delete_except_kept(dir: &str) -> Outcome<()> {
+    let mut subs: Vec<String> = vec![String::new()];
+    while let Some(sub) = subs.pop() {
+        let at = if sub.is_empty() { dir.to_string() } else { fmt!("{}/{}", dir, sub) };
+        let entries = match own::list_dir(&at).await {
+            Ok(e)  => e,
+            Err(_) => continue,
+        };
+        for (name, is_dir, _size) in entries {
+            let rel = if sub.is_empty() { name.clone() } else { fmt!("{}/{}", sub, name) };
+            match diamond_rebase::on_replace(&rel) {
+                diamond_rebase::OnReplace::Keep                 => (),
+                diamond_rebase::OnReplace::Descend if is_dir    => subs.push(rel),
+                _ => res!(own::delete_entry(&fmt!("{}/{}", dir, rel), is_dir).await),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A Diamond pack as the page's JSON parser read it: the export's `id`, its `name` where it
+/// carries one at the top, and the files it carries (the tab reads them in `wasm::diamond`, text and
+/// base64 alike, each path checked against the Diamond it is landing in).
+pub struct Pack {
+    pub id:    Option<String>,
+    pub name:  Option<String>,
+    pub files: Outcome<Vec<(String, Vec<u8>)>>,
+}
+
+/// Recreate a Diamond from an [`export_diamond`] JSON, REPLACING whatever this
+/// device held under that id.
+///
+/// Wholesale, so that "the freshest copy wins" means something predictable: what
+/// arrives *is* the Diamond, rather than being merged into what was here.  Two
+/// devices that edited the same Diamond between syncs therefore lose the older
+/// side entirely, links included, which is the accepted cost of carrying a
+/// directory rather than reconciling one.
+///
+/// Every file is laid down exactly as it arrived, `meta.json` and its two stamps
+/// included.  Re-stamping on arrival would be wrong twice over: an import is not
+/// the user working on this device, so the rail would reorder itself on a pull;
+/// and a copy that stamped itself fresh on landing would be handed straight back
+/// as the newer one, so the two devices would take turns overwriting each other
+/// for ever.
+///
+/// The read and the parse both happen before anything is deleted, so a malformed
+/// export cannot leave the user with neither copy.  The window between the delete
+/// and the last write remains: a failure inside it leaves the Diamond gone from
+/// this device, and the next pull brings it back.
+///
+/// **`versions/` travels, and that is the whole of what keeps file history across a pull.**  The
+/// file manifests and their bodies are ordinary files under the Diamond's directory, so
+/// [`export_diamond`] packs them and this lays them down with everything else -- which is
+/// decision D3 of the launch plan, and it is a decision about THIS function.  The bodies are
+/// bytes, so the ones that are not valid UTF-8 travel in the pack's `binary` map
+/// ([`crate::protocol::pack_diamond`]) and arrive byte for byte.
+///
+/// **`versions/` is PRESERVED, not deleted (S-SYNC #4).**  The wholesale replace once deleted the
+/// whole directory, `versions/` included, so a two-sided edit -- the phone changed the memory,
+/// backgrounded before its push, and pulled the desktop's copy on resume -- was gone with no
+/// conflict copy and nothing in the trail.  Now everything but `versions/` is deleted and the
+/// export's own `versions/` written over what is kept (union by content address), so the file
+/// history is never lost to a pull.  On a one-sided sync the result is identical to the old delete:
+/// the winner's chain is a superset of the loser's, so writing it over yields the winner's store.
+/// Where the two sides minted the same numbers, this device's manifests are refiled above the
+/// export's first ([`rebase_before_import`]), so the union is by record and not only by body.
+///
+/// **`keep_conflict` keeps the loser.**  When the caller has found that this device ALSO moved the
+/// Diamond since the copy both sides last agreed on, the local state is kept as a recoverable
+/// `restore` version FIRST ([`keep_local_before_import`]), so the losing edit becomes a version the
+/// user can restore rather than a silent loss.  A one-sided pull passes `false` and behaves exactly
+/// as before, bar the preserved `versions/`.
+///
+/// `json` is the export as it came; `pack` is what the page's parser read in it.
+pub async fn import_diamond_pack(json: &str, pack: Pack, keep_conflict: bool)
+    -> Outcome<ImportOutcome>
+{
+    let id = match pack.id {
+        Some(i) => i,
+        None    => return Err(err!("A Diamond export carries no id."; Invalid, Input)),
+    };
+    // The id becomes a path component, so it is checked rather than trusted.
+    if !is_safe_rel(&id) || id.contains('/') {
+        return Err(err!("'{}' is not a Diamond id.", id; Invalid, Input, Path));
+    }
+    // A TEMPLATE MAY NOT COME THROUGH THIS DOOR. Everything below deletes the directory the pack
+    // names, and a template names where it CAME FROM -- so the owner opening his own Log Life
+    // template on this path would destroy the Log Life he made it from. `import_template` mints an
+    // id instead. A kind this build has never heard of still lands as it always did; only the one
+    // that is known to mean something else is refused.
+    if crate::protocol::PackKind::of(json) == crate::protocol::PackKind::Template {
+        return Err(err!(
+            "That is a Diamond template, not a Diamond export. It says it came from '{}', which is \
+            a note about where it was made and not a place to write it; open it as a template and \
+            it becomes a new Diamond.", id; Invalid, Input));
+    }
+    let mut writes = res!(pack.files);
+    // An export with nothing in it would otherwise delete the Diamond it claims
+    // to be, which is a deletion nobody asked for.
+    if writes.is_empty() {
+        return Err(err!("The export of Diamond '{}' holds no files.", id; Invalid, Input));
+    }
+
+    // The metadata goes LAST, whatever order it arrived in.  `list` admits a Diamond on its
+    // metadata alone, so an import that fails half way with the metadata already down leaves a
+    // Diamond that lists, opens, and throws on a crystal that never arrived.  Written last, the
+    // same failure leaves it invisible, and the next pull brings the whole of it back.  The order
+    // used to be the export's own, which sorts paths -- and `.daimond/meta.json` sorts BEFORE
+    // `crystal.json`, so the bad case was the ordinary one.
+    let meta_rel = fmt!("{}/meta.json", STORE_DIR);
+    writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
+
+    let dir = diamond_dir(&id);
+    // THE VERSION STORE IS HELD FOR THE WHOLE IMPORT (the engine unit's open item 3).  The refile,
+    // the copy kept before a sync and the store laid down below each read the counter and the
+    // manifests and write them back across awaits, as a mint does; a seal or a turn end of another
+    // tab minting between them took a number the import then wrote over, or refiled a manifest
+    // from under it.  Dropped when the import returns, whichever way.
+    let hold = res!(hold_versions(&id).await);
+    let existed = res!(own::exists(&dir).await);
+    // THE PAGE LOGS ARE JOINED, NOT REPLACED (r547 page-log guard, PLC).  Where both devices moved,
+    // each kept rows the other lacks in the files a page appends to, and the replace below kept
+    // only one side's.  Each log `.daimond/pagelogs` names on either side is joined row by row;
+    // nothing else is (R2).  Read and planned FIRST, before anything is refiled or written: a log
+    // this device cannot read whole, or one over the cap, holds the whole import back for the
+    // round with nothing written (R3), since the replace it would fall back to is the loss this
+    // exists to prevent.
+    let logs = if existed && keep_conflict {
+        match pagelog::join_plan(&writes, &local_logs(&id, &writes).await) {
+            pagelog::Plan::Join(j)     => Some(j),
+            pagelog::Plan::Held(paths) => {
+                own::trail("PAGELOG HELD", &fmt!("{} {}", id, paths.join(", ")));
+                drop(hold);
+                return Ok(ImportOutcome::Held(paths));
+            }
+        }
+    } else {
+        None
+    };
+    // THIS DEVICE'S ACTIVITY RECORD, joined in place (UNBLOCK-11, item 24). Each device's file has
+    // one writer, and lines it wrote since its last push are in no export yet. Planned here, with
+    // the page logs and before anything is written: a file this device cannot read holds the
+    // import back, since laying the copy over it would lose its lines.
+    let mut arriving_activity: Vec<(String, String)> = Vec::new();
+    writes.retain(|(rel, body)| {
+        let act = crate::activity::is_activity_rel(rel);
+        if act {
+            arriving_activity.push((rel.clone(), String::from_utf8_lossy(body).into_owned()));
+        }
+        !act
+    });
+    let (local_activity, unreadable) = if existed {
+        activity_read(&id).await
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let now = now_ms() as i64;
+    let act = match crate::activity::join_plan(&local_activity, &unreadable, &arriving_activity, now) {
+        crate::activity::Plan::Join(j)     => j,
+        crate::activity::Plan::Held(paths) => {
+            own::trail("ACTIVITY HELD", &fmt!("{} {}", id, paths.join(", ")));
+            drop(hold);
+            return Ok(ImportOutcome::Held(paths));
+        }
+    };
+    // NO VERSION OF THIS DEVICE'S IS WRITTEN OVER OR READ THROUGH THE OTHER'S (2026-09-23, bc4).
+    // Two devices that each record between syncs mint the same numbers, and the writes below lay
+    // the other's `versions/` over this one's by name: a local keyframe and an incoming patch
+    // stood at one number and the local one was read, and this device's snapshots above the
+    // incoming counter stood in the chains read after it. Every version of this device's the
+    // copy does not hold is refiled whole above both histories first, and its log records and
+    // fold deltas are added to the writes. Refused rather than proceeding, since what it guards
+    // is this device's own history.
+    //
+    // NO MANIFEST OF THIS DEVICE'S IS WRITTEN OVER (re-check of 2026-09-23, R5). Two devices
+    // that each recorded a turn between syncs minted the same numbers, and the writes below
+    // replaced this device's manifest with the other's by name: a deletion's row, and then its
+    // copy, went with no word. Refused rather than proceeding, since what it guards is the one
+    // record of files the user was told could be put back.  After the refile above, what is left
+    // for it is the manifests a version the copy carries leaves held twice.
+    if existed {
+        res!(refile_own_versions(&hold, &id, &mut writes).await);
+        writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
+        res!(rebase_before_import(&hold, &id, &writes).await);
+    }
+    // Keep the local edit a two-sided sync would otherwise destroy, BEFORE anything is
+    // deleted, at a number the writes below and the next edit cannot land on (S-SYNC #4).
+    if existed && keep_conflict {
+        if let Err(e) = keep_local_before_import(&hold, &id, &writes).await {
+            console_log(&fmt!(
+                "Diamond '{}': the pre-sync snapshot could not be written ({}); the import \
+                 proceeds and the local edit rides in the version store's file history instead.",
+                id, e));
+        }
+    }
+    // THIS DEVICE'S BUILT-IN RECORD, read before the delete below takes it (R568-FU F1). An older
+    // build's copy carries no `builtin` key, and laid over this one as it came it unmarked the
+    // built-in here for good. Unreadable is no record: the copy is then written as it came.
+    let local_meta = if existed { read_meta(&id).await.ok() } else { None };
+    // The joined logs over the arriving copies, and the ones only this device held besides, so
+    // the delete below takes nothing the join kept.  The metadata stays last.
+    if let Some(j) = &logs {
+        for (rel, body) in j.import_writes() {
+            match writes.iter_mut().find(|(r, _)| *r == rel) {
+                Some(w) => w.1 = body,
+                None    => writes.push((rel, body)),
+            }
+        }
+        writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
+    }
+    if existed {
+        // PRESERVE `versions/` and the activity record; delete only the rest.  The kept snapshot
+        // and the whole file history live under the one, and the export's own `versions/` is
+        // written over it below; the other is joined in place.
+        res!(delete_except_kept(&dir).await);
+    }
+    for (rel, body) in writes {
+        // THE METADATA IS REBUILT, NOT COPIED. Every other file in an export is
+        // the user's content and travels byte for byte; `meta.json` is a record
+        // this app owns, and writing another device's copy verbatim is how a
+        // damaged one spreads. Two of one user's Diamonds arrived carrying a
+        // metadata file of 117 MB and 702 MB, and reading it killed their phone
+        // (see `read_meta`) — a normaliser existed the whole time and this path
+        // went round it.
+        //
+        // ONLY WHERE THERE IS DAMAGE, AND NEVER OVER A NAME IT COULD NOT READ.
+        //
+        // The first version of this rebuilt EVERY imported `meta.json`, healthy
+        // or not, and it cost the user every Diamond name on their phone in one
+        // sync: fifteen tiles with nothing on them but a cog. A repair that runs
+        // on undamaged input is not a repair, it is a rewrite — and a rewrite
+        // that drops what it failed to parse is data loss dressed as a fix.
+        //
+        // So: a file of a sane size is written through untouched, exactly as
+        // every other file in the export is. An oversized one is rebuilt, and
+        // even then only if the rebuild recovered a name — because a nameless
+        // Meta means the parse did not find what it was looking for, and the
+        // right answer to that is to keep the bytes and let `read_meta` deal with
+        // them, not to overwrite them with blanks.
+        let bytes = if rel == meta_rel && body.len() > META_MAX as usize {
+            let text = String::from_utf8_lossy(&body).to_string();
+            let rebuilt = Meta::from_json(&text);
+            if rebuilt.name.trim().is_empty() {
+                own::trail("META KEPT",
+                    &fmt!("{} is {}KB but its name did not parse — left as it came",
+                        id, body.len() / 1024));
+                body
+            } else {
+                own::trail("META REBUILT",
+                    &fmt!("{} {}KB -> {}B", id, body.len() / 1024, rebuilt.to_json().len()));
+                rebuilt.to_json().into_bytes()
+            }
+        } else if rel == meta_rel {
+            // Not a re-stamp: the arrival is not a change of this device's, and the stamps stay
+            // the copy's own.
+            let text = String::from_utf8_lossy(&body).to_string();
+            match local_meta.as_ref().and_then(|l| crate::diamond_meta::keep_built_in_marker(&text, l)) {
+                Some(kept)  => kept.into_bytes(),
+                None        => body,
+            }
+        } else {
+            body
+        };
+        // THE STORE'S OWN LOGS ARE JOINED, NEVER REPLACED (D-26 review A F2, F5; B F2): what this
+        // device knows of its page data must not go because the other copy did not know it.
+        let bytes = res!(joined_log(&id, &rel, bytes).await);
+        res!(own::write_file(&fmt!("{}/{}", dir, rel), &bytes).await);
+    }
+    for (rel, text) in &act.writes {
+        res!(own::write_file(&fmt!("{}/{}", dir, rel), text.as_bytes()).await);
+    }
+    // THE COUNTER STAYS WHERE THE IMPORT SET IT, at the remote's live version, and is not
+    // advanced past the kept snapshot as it once was. The next edit already mints past every
+    // number on disk; and advancing it made the version the Diamond is at a number whose
+    // crystal, read back, was this device's refiled memory rather than the live one.
+    //
+    // PRUNED ON ARRIVAL, not at the next change: a store that arrives over its ceiling would
+    // otherwise drop its whole backlog on the first edit made here (history_prune_diag, the
+    // Ontheism prune of 10 Oct 2026).  Recorded like any prune, so the History says so.
+    if let Err(e) = prune_held(&hold, &id, "arrival").await {
+        console_log(&fmt!("Diamond '{}': the arrived version store could not be pruned ({}).",
+            id, e));
+    }
+    // ONE VERSION FOR THE JOIN (#12), still under the hold and above both histories, so History
+    // shows where this device's rows came back in.  Best effort, as the kept snapshot is: the
+    // joined logs are already down.
+    let mut counts = match &logs {
+        Some(j) => j.import_counts(),
+        None    => pagelog::Counts::default(),
+    };
+    if let Some(j) = logs {
+        if counts.files > 0 {
+            let kept = j.logs.into_iter()
+                .filter(|l| l.here_adds > 0)
+                .map(|l| (l.rel, l.bytes, l.was.as_deref().map(versions::hash_of)))
+                .collect();
+            if let Err(e) = mint_join_version(&hold, &id, kept).await {
+                console_log(&fmt!("Diamond '{}': the page logs were joined, but their version \
+                    could not be written ({}).", id, e));
+            }
+        }
+    }
+    drop(hold);
+    // The activity lines only this device held stay here, so they stamp it as page rows do.
+    counts.here += act.here;
+    counts.arriving += act.arriving;
+    Ok(ImportOutcome::Joined(counts))
+}
+
+/// Join another device's page logs into this one's in place, where neither copy of the Diamond
+/// is fresher and so neither is imported: the page-log twin of [`union_links_from`] (PLC).
+///
+/// `pack` is that device's [`export_diamond`] as the page's parser read it.  A local log is written
+/// only where the other copy holds rows it lacks (#8), and then one version is minted for what was
+/// written.  The Diamond is not stamped here: the answer's `here` says whether this device holds
+/// rows the other lacks, and the caller stamps on it so the join travels back.  A log over the cap
+/// or unreadable writes nothing at all, and the answer is held.
+///
+/// The activity files are joined here too (item 24), by [`crate::activity::join_plan`] as the
+/// import joins them, and count in `here` and `arriving` the same way; one this device cannot
+/// read holds the join.
+pub async fn union_logs_from_pack(id: &str, pack: Pack) -> Outcome<ImportOutcome> {
+    match pack.id {
+        Some(i) if i == id  => (),
+        Some(i)             => return Err(err!("The export is of Diamond '{}', not '{}'.", i, id;
+            Invalid, Input)),
+        None                => return Err(err!("A Diamond export carries no id."; Invalid, Input)),
+    }
+    // As for a sidecar: a Diamond that is not here is not one to write logs into.
+    if !res!(own::exists(&meta_path(id)).await) {
+        return Ok(ImportOutcome::Joined(pagelog::Counts::default()));
+    }
+    let arriving = res!(pack.files);
+    let hold = res!(hold_versions(id).await);
+    let j = match pagelog::join_plan(&arriving, &local_logs(id, &arriving).await) {
+        pagelog::Plan::Join(j)     => j,
+        pagelog::Plan::Held(paths) => {
+            own::trail("PAGELOG HELD", &fmt!("{} {}", id, paths.join(", ")));
+            return Ok(ImportOutcome::Held(paths));
+        }
+    };
+    let arriving_activity: Vec<(String, String)> = arriving.iter()
+        .filter(|(rel, _)| crate::activity::is_activity_rel(rel))
+        .map(|(rel, body)| (rel.clone(), String::from_utf8_lossy(body).into_owned()))
+        .collect();
+    let (local_activity, unreadable) = activity_read(id).await;
+    let now = now_ms() as i64;
+    let act = match crate::activity::join_plan(&local_activity, &unreadable, &arriving_activity, now) {
+        crate::activity::Plan::Join(a)     => a,
+        crate::activity::Plan::Held(paths) => {
+            own::trail("ACTIVITY HELD", &fmt!("{} {}", id, paths.join(", ")));
+            return Ok(ImportOutcome::Held(paths));
+        }
+    };
+    let dir = diamond_dir(id);
+    for (rel, body) in j.local_writes() {
+        res!(own::write_file(&fmt!("{}/{}", dir, rel), &body).await);
+    }
+    for (rel, text) in &act.writes {
+        res!(own::write_file(&fmt!("{}/{}", dir, rel), text.as_bytes()).await);
+    }
+    let mut counts = j.local_counts();
+    if counts.files > 0 {
+        let wrote = j.logs.into_iter()
+            .filter(|l| l.arriving_adds > 0)
+            .map(|l| (l.rel, l.bytes, l.was.as_deref().map(versions::hash_of)))
+            .collect();
+        if let Err(e) = mint_join_version(&hold, id, wrote).await {
+            console_log(&fmt!("Diamond '{}': the page logs were joined, but their version \
+                could not be written ({}).", id, e));
+        }
+    }
+    drop(hold);
+    counts.here += act.here;
+    counts.arriving += act.arriving;
+    Ok(ImportOutcome::Joined(counts))
+}
+
+/// What to write at `rel` of the Diamond `id` for an arriving `body`: the arriving bytes, except
+/// for the version store's own logs, which are joined with this device's.
+async fn joined_log(id: &str, rel: &str, body: Vec<u8>) -> Outcome<Vec<u8>> {
+    if rel == fmt!("versions/{}", versions::PAGES_LOG) {
+        let mut all = pages_known(id).await;
+        all.extend(versions::pages_read(&String::from_utf8_lossy(&body)));
+        return Ok(versions::pages_json(&all).into_bytes());
+    }
+    if rel == fmt!("versions/{}", versions::PRUNE_LOG) {
+        // Bound (QA2): this device's prune log joined from empty would be written over.
+        let (mine, _) = res!(read_bound(FileRoot::Opfs, &prune_log_path(id)).await);
+        return Ok(versions::prune_log_merge(&mine, &String::from_utf8_lossy(&body)).into_bytes());
+    }
+    Ok(body)
+}
+
+/// Open a template as a NEW Diamond, answering its id.
+///
+/// **Nothing that is already here is written over, whatever the pack says.**  [`import_diamond`]
+/// takes the id from the pack and deletes that directory before rewriting it, which is right for a
+/// sync and catastrophic for a template: the id in a template is where it was MADE, so the person
+/// most likely to open a Log Life template is the one whose Log Life would be destroyed by it.  The
+/// id is minted here instead ([`crate::protocol::fresh_id`]) and checked against the store a second
+/// time before a byte is written.
+///
+/// A plain Diamond export opens here too, and makes a copy rather than a replacement.  That is a
+/// door worth leaving open -- duplicating a Diamond is a thing people want and this path cannot
+/// destroy anything -- and it costs nothing, since a pack that names no name has one in the
+/// `.daimond/meta.json` it carries.
+///
+/// `pack` is what the page's parser read in the template.
+pub async fn import_template_pack(pack: Pack) -> Outcome<String> {
+    // Provenance only. It is never a path here, so it is not checked as one; it is used to
+    // readdress the two files that name the Diamond they were written in.
+    let old_id = pack.id.unwrap_or_default();
+    let mut writes = res!(pack.files);
+    if writes.is_empty() {
+        return Err(err!("A Diamond template holds no files, so there is nothing to open.";
+            Invalid, Input));
+    }
+
+    // The name, from the top of the pack where a template carries it, or out of the metadata where
+    // a whole-Diamond export carries it instead.
+    let mut name = pack.name.unwrap_or_default();
+    if name.trim().is_empty() {
+        let meta_rel = fmt!("{}/meta.json", STORE_DIR);
+        if let Some((_, body)) = writes.iter().find(|(rel, _)| *rel == meta_rel) {
+            name = Meta::from_json(&String::from_utf8_lossy(body)).name;
+        }
+    }
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(err!("A Diamond template carries nothing to call the Diamond it opens as.";
+            Missing, Input));
+    }
+
+    // Every id the store holds, so the mint has something to avoid. A root that cannot be listed is
+    // a store with no Diamonds in it yet, which is the ordinary state on a device's first run.
+    let taken: Vec<String> = match own::list_dir(ROOT_DIR).await {
+        Ok(entries) => entries.into_iter()
+            .filter(|(_, is_dir, _)| *is_dir)
+            .map(|(name, _, _)| name)
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    let new_id = res!(crate::protocol::fresh_id(&taken));
+    // ASKED OF THE STORE, not of the listing. The listing is a moment old and the mint is a clock;
+    // this is the check that has to be true, and it costs one lookup.
+    if res!(own::exists(&diamond_dir(&new_id)).await) {
+        return Err(err!(
+            "A template was to open as Diamond '{}' and there is already one there, so nothing was \
+            written.", new_id; Conflict, Data));
+    }
+
+    // The skeleton first, by the same function that makes any other Diamond: an empty crystal, its
+    // version-0 snapshot, the metadata and a `create` record. A template that carries any of those
+    // then lands on top of them.
+    res!(create_fresh(&name, &new_id).await);
+
+    // The metadata goes LAST, for the reason `import_diamond` gives: `list` admits a Diamond on its
+    // metadata alone, so a half-written one that already has metadata lists, opens and throws.
+    let meta_rel = fmt!("{}/meta.json", STORE_DIR);
+    let carries_crystal = writes.iter().any(|(rel, _)| rel == crate::tools::CRYSTAL_DATA_FILE);
+    writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
+    for (rel, body) in writes {
+        let bytes = crate::protocol::retarget(&rel, body, &old_id, &new_id);
+        res!(own::write_file(&fmt!("{}/{}", diamond_dir(&new_id), rel), &bytes).await);
+    }
+
+    // A CRYSTAL WITH SOMETHING IN IT, because a page without one never appears. `renderCrystal`
+    // draws its "nothing here yet" line INSTEAD OF MOUNTING THE PAGE when the crystal is empty, so
+    // a Diamond furnished with a capp and an empty crystal is one whose capp is invisible -- which
+    // is what happened the first time a template that shipped no `crystal.json` was delivered.
+    // The title is the name, which is already at the top of the pack: this seeds nothing the
+    // template did not already say about itself.
+    if !carries_crystal {
+        let seed = crate::tools::CrystalData {
+            title: name.clone(),
+            ..Default::default()
+        }.to_json();
+        res!(own::write_file(&crystal_data_path(&new_id), seed.as_bytes()).await);
+        res!(own::write_file(&version_data_path(&new_id, 0), seed.as_bytes())
+            .await);
+    }
+
+    // AND THE METADATA IS PUT RIGHT, whichever way it arrived.
+    //
+    // The grants are the reason. `kits` decides what a COMMAND may touch outside the workspace, and
+    // a template is opened by somebody who has never met the person who made it: a grant that
+    // travelled would be a permission nobody on this device gave. A toolkit is off by default and
+    // it stays off, so what the template wanted is a question for whoever opens it, not a fact it
+    // brings with it. The tags go for a smaller reason -- they are the sender's filing, not the
+    // Diamond's shape -- and both stamps say now, because a copy that has just landed here was not
+    // worked on last year.
+    let mut meta = res!(read_meta(&new_id).await);
+    let now = now_ms() as u64;
+    meta.name    = name;
+    meta.tags    = Vec::new();
+    meta.kits    = Vec::new();
+    meta.updated = now;
+    meta.touched = now;
+    res!(write_meta(&new_id, &meta).await);
+
+    // A PLAIN EXPORT CARRIES ITS VERSION STORE, so a copy opened here can arrive over this
+    // device's ceilings exactly as a synced one can: brought inside them now and recorded, by the
+    // same prune `import_diamond` runs, rather than dropping its backlog on the first edit.
+    let hold = res!(hold_versions(&new_id).await);
+    if let Err(e) = prune_held(&hold, &new_id, "arrival").await {
+        console_log(&fmt!("Diamond '{}': the copied version store could not be pruned ({}).",
+            new_id, e));
+    }
+
+    Ok(new_id)
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Bringing home what an earlier build left in a folder           │
+// └───────────────────────────────────────────────────────────────┘
+
+/// The most one adoption run copies out of the folder in total.
+///
+/// A ceiling exists because the folder is the user's own project and nothing says what an earlier
+/// build put under `diamonds/` there.  Copying is into OPFS, which the browser may evict wholesale
+/// when it fills, so an unbounded copy could cost the user their whole store to save a directory
+/// they can still see on disk.
+const ADOPT_TOTAL_MAX: u64 = 64 * 1024 * 1024;
+
+/// The largest single file one adoption run copies out of the folder.
+const ADOPT_FILE_MAX: u64 = 8 * 1024 * 1024;
+
+/// What is inserted before a clashing file's extension, so the folder's copy is kept beside the
+/// store's and still opens as the kind of file it is.
+const FROM_MACHINE: &str = ".from-machine";
+
+/// What became of one file the folder was holding.
+enum Took {
+    /// It was not in the store, and now it is.
+    Copied,
+    /// The store already had it, byte for byte, so nothing was written.
+    Same,
+    /// The store had it with DIFFERENT bytes.  The store's copy stands and the folder's was
+    /// written beside it, at the path carried here.
+    Kept(String),
+    /// Too large for the budget, and so left exactly where it is.
+    Skipped,
+}
+
+/// Where a clashing file's folder copy is written: `note.md` -> `note.from-machine.md`.
+///
+/// Before the extension rather than after it, so the kept copy still opens as markdown -- the user
+/// is being asked to compare two files, and one of them arriving as an unopenable
+/// `note.md.from-machine` would make that harder than it needs to be.
+fn beside_path(rel: &str) -> String {
+    let (dir, leaf) = match rel.rfind('/') {
+        Some(i) => (&rel[..i + 1], &rel[i + 1..]),
+        None    => ("", rel),
+    };
+    match leaf.rfind('.') {
+        // A leading dot is the whole name of a dotfile, not an extension.
+        Some(i) if i > 0 => fmt!("{}{}{}{}", dir, &leaf[..i], FROM_MACHINE, &leaf[i..]),
+        _                => fmt!("{}{}{}", dir, leaf, FROM_MACHINE),
+    }
+}
+
+/// Whether a directory under the folder's `diamonds/` is a Diamond at all.
+///
+/// Two ways to be one, and the second is what makes a Diamond the store has never seen adoptable:
+/// the store already holds it under that id, or the folder's copy carries the metadata that makes
+/// a Diamond a Diamond.  Anything else is a directory of the user's that happens to live under
+/// `diamonds/` -- notes, a build output, a folder they made -- and it is left alone.
+///
+/// The test is not "does it look like it might be one".  Materialising a shell of a Diamond out of
+/// a user's own directory would put a row on the rail that opens on a `NotFoundError`, which is
+/// the failure this whole change is trying to stop happening.
+///
+/// # Arguments
+/// * `id` - The directory name under `diamonds/` in the folder.
+async fn is_diamond(id: &str) -> Outcome<bool> {
+    if res!(own::exists(&diamond_dir(id)).await) {
+        return Ok(true);
+    }
+    own::user_exists(FileRoot::Machine, &meta_path(id)).await
+}
+
+/// Take one file out of the folder and into the store, and say what that came to.
+///
+/// The store always wins a clash, per file rather than per Diamond.  The folder's copy is never
+/// dropped and never deleted: it is written beside the store's under [`beside_path`] and named in
+/// the report, because the two differing copies are the user's to reconcile and we cannot know
+/// which they wanted.
+///
+/// Idempotent by comparison rather than by a flag.  A second run finds the store's copy identical
+/// (or the kept copy identical) and writes nothing, which is what lets adoption run on EVERY folder
+/// activation for ever -- there is no moment at which we could prove every folder has been seen, so
+/// there is no moment at which it would be safe to stop looking.
+///
+/// # Arguments
+/// * `rel` - The workspace-relative path, the same on both sides.
+/// * `size` - What the folder says the file weighs, so the budget is checked before it is read.
+/// * `used` - How much this run has copied so far, added to here.
+async fn take_file(rel: &str, size: u64, used: &mut u64) -> Outcome<Took> {
+    if size > ADOPT_FILE_MAX || *used + size > ADOPT_TOTAL_MAX {
+        return Ok(Took::Skipped);
+    }
+    let bytes = res!(own::user_read_file(FileRoot::Machine, rel).await);
+    if !res!(own::exists(rel).await) {
+        res!(own::write_file(rel, &bytes).await);
+        *used += size;
+        return Ok(Took::Copied);
+    }
+    let held = res!(own::read_file(rel).await);
+    if held == bytes {
+        return Ok(Took::Same);
+    }
+    // Kept on an earlier run: the copy beside it already holds exactly these bytes, so this run
+    // has nothing to add and must not make a second copy of the second copy.
+    let beside = beside_path(rel);
+    if res!(own::exists(&beside).await) {
+        let there = res!(own::read_file(&beside).await);
+        if there == bytes {
+            return Ok(Took::Same);
+        }
+    }
+    res!(own::write_file(&beside, &bytes).await);
+    *used += size;
+    Ok(Took::Kept(beside))
+}
+
+/// Every file the folder holds under `root`, workspace-relative, with the size the folder reports
+/// for it.  Sorted, so a run's order does not depend on how the browser iterates.
+///
+/// A directory the folder does not have holds nothing, which is the ordinary case and not a
+/// failure: most folders have neither a `diamonds/` nor a `mail/` in them.
+///
+/// Recursion is spelled out with an explicit stack, as [`export_diamond`] does and for the same
+/// reason: an `async fn` cannot recurse without boxing its future.
+///
+/// # Arguments
+/// * `root` - The workspace-relative directory to walk, on the machine folder.
+async fn folder_files(root: &str) -> Outcome<Vec<(String, u64)>> {
+    let mut out: Vec<(String, u64)> = Vec::new();
+    let mut todo: Vec<String> = vec![root.to_string()];
+    while let Some(dir) = todo.pop() {
+        let entries = match own::user_list_dir(FileRoot::Machine, &dir).await {
+            Ok(e)  => e,
+            Err(_) => continue,     // a directory that has gone holds nothing
+        };
+        for (name, is_dir, size) in entries {
+            let child = fmt!("{}/{}", dir, name);
+            if is_dir {
+                todo.push(child);
+            } else {
+                out.push((child, size));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+/// Bring one Diamond's files home.  True when anything was actually taken.
+///
+/// **The order is the correctness.**  The crystal is copied FIRST and `.daimond/meta.json` LAST,
+/// because [`list`] admits a Diamond on its metadata alone and [`read_crystal_data`] looks for the
+/// crystal where it should be.  Metadata written first, and a run interrupted between the two,
+/// leaves a Diamond that lists, opens, and throws -- visible and broken.  Metadata written last
+/// leaves a half-adopted Diamond *invisible*, and the next activation completes it.  Nothing is
+/// ever deleted from the folder, so an interruption costs nothing at all.
+///
+/// For the same reason the metadata is not written when the crystal is not in the store
+/// afterwards: a Diamond whose crystal was too large for the budget, or unreadable, stays out of
+/// the rail rather than joining it broken.
+///
+/// "The crystal" is either name.  A folder left by a build older than the conversion holds
+/// `crystal.md` and no `crystal.json`, and refusing to adopt it because the data file is absent
+/// would leave the user's Diamond in a directory nothing reads -- [`list`] converts it once it is
+/// home.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `used` - The run's byte accumulator.
+/// * `kept` - Collects the paths where a clashing folder copy was kept.
+/// * `skipped` - Collects the paths this run did not take.
+async fn adopt_one(
+    id:      &str,
+    used:    &mut u64,
+    kept:    &mut Vec<String>,
+    skipped: &mut Vec<String>,
+)
+    -> Outcome<bool>
+{
+    let files   = res!(folder_files(&diamond_dir(id)).await);
+    let meta    = meta_path(id);
+    // Both live names and the one they replaced, in the order they matter: the memory, then the
+    // page, then whatever markdown a Diamond has not been converted from yet.
+    let crystals = [crystal_data_path(id), crystal_page_path(id), crystal_legacy_path(id)];
+    let mut ordered: Vec<(String, u64)> = Vec::new();
+    for c in crystals.iter() {
+        if let Some(f) = files.iter().find(|(p, _)| p == c) {
+            ordered.push(f.clone());
+        }
+    }
+    for f in &files {
+        if crystals.contains(&f.0) || f.0 == meta {
+            continue;
+        }
+        ordered.push(f.clone());
+    }
+    let mut took_any = false;
+    for (rel, size) in &ordered {
+        // One unreadable file must not lose the rest of the Diamond, nor the rest of the run.
+        match take_file(rel, *size, used).await {
+            Ok(Took::Copied)     => took_any = true,
+            Ok(Took::Kept(path)) => { kept.push(path); took_any = true; },
+            Ok(Took::Same)       => {},
+            Ok(Took::Skipped)    => skipped.push(rel.clone()),
+            Err(e) => {
+                console_log(&fmt!("'{}' could not be brought home from the folder: {}", rel, e));
+                skipped.push(rel.clone());
+            }
+        }
+    }
+    // Last, and only over a crystal that is there to be read -- in either of the two forms a
+    // Diamond's memory can arrive in.
+    if let Some((rel, size)) = files.iter().find(|(p, _)| *p == meta) {
+        let data   = res!(own::exists(&crystal_data_path(id)).await);
+        let legacy = res!(own::exists(&crystal_legacy_path(id)).await);
+        if !data && !legacy {
+            skipped.push(rel.clone());
+            return Ok(took_any);
+        }
+        match take_file(rel, *size, used).await {
+            Ok(Took::Copied)     => took_any = true,
+            Ok(Took::Kept(path)) => { kept.push(path); took_any = true; },
+            Ok(Took::Same)       => {},
+            Ok(Took::Skipped)    => skipped.push(rel.clone()),
+            Err(e) => {
+                console_log(&fmt!("'{}' could not be brought home from the folder: {}", rel, e));
+                skipped.push(rel.clone());
+            }
+        }
+    }
+    Ok(took_any)
+}
+
+/// What became of one mail file the folder was holding.
+enum Brought {
+    /// It was not in the store, and now it is.
+    Copied,
+    /// The store already has a file at that path, so nothing was read, written or compared.
+    Held,
+    /// Too large for what is left of the budget, and so left exactly where it is for a later run.
+    Skipped,
+}
+
+/// Take one mail file out of the folder and into the store.
+///
+/// **A CLASH IS NOT RECONCILED AND NOT COPIED BESIDE**, which is where this parts company with
+/// [`take_file`].  A Maildir name is derived from the message's UID and the mailbox generation
+/// (`maildirName` in `www/js/mail.js`), so a file already at that path IS that message: a second
+/// copy under `.from-machine` would show up as a duplicate message in the panel, hand the agent
+/// the same stranger's words twice, and ride in the sync parcel for ever.  A draft is the same
+/// argument the other way round -- the store's copy is the one the user has been editing, and the
+/// folder's is whatever an older build last wrote.
+///
+/// The store's presence is therefore checked FIRST, before the folder's bytes are read at all, so
+/// the second run over a mailbox of ten thousand messages costs ten thousand lookups and not one
+/// byte of transfer.
+///
+/// Bytes throughout, never text: a message with a JPEG attached is not a string, and a lossy
+/// decode on the way through would corrupt it silently.
+///
+/// # Arguments
+/// * `rel` - The workspace-relative path, the same on both sides.
+/// * `size` - What the folder says the file weighs, so the budget is checked before it is read.
+/// * `used` - How much this run has copied so far, added to here.
+async fn take_message(rel: &str, size: u64, used: &mut u64) -> Outcome<Brought> {
+    if size > ADOPT_FILE_MAX || *used + size > ADOPT_TOTAL_MAX {
+        return Ok(Brought::Skipped);
+    }
+    if res!(own::exists(rel).await) {
+        return Ok(Brought::Held);
+    }
+    let bytes = res!(own::user_read_file(FileRoot::Machine, rel).await);
+    res!(own::write_file(rel, &bytes).await);
+    *used += size;
+    Ok(Brought::Copied)
+}
+
+/// Bring home every message and draft an earlier build left in the open folder.
+///
+/// Until `mail/` became store state (see [`crate::tools::MAIL_ROOT`]) a mailbox followed the
+/// workspace root, so a sync made with a folder open wrote the messages into the user's project.
+/// This copies them into the store, where a mailbox belongs to the account rather than to whatever
+/// folder happened to be open.
+///
+/// **IT COPIES AND IT NEVER DELETES.**  A move would be tidier and it is not available here: a
+/// draft exists on no server and in no gateway, so an interruption or a mistake between the read
+/// and the delete would destroy the only copy of a message an agent prepared for its user to send.
+/// The worst this can leave behind is a second copy of a mailbox in a folder the user can see and
+/// remove themselves.
+///
+/// Three properties, each of which the shape above is what buys:
+///
+/// * **Idempotent.**  A second run finds every file already in the store and writes nothing.  It
+///   is not idempotent by a flag or a stamp -- there is no moment at which every folder could be
+///   proved to have been seen -- but by asking the store, per file, every time.
+/// * **It never clobbers.**  A path the store already holds is left alone on both sides.
+/// * **A partial run costs nothing.**  Nothing is deleted and no file depends on another, so an
+///   interruption leaves both trees readable and the next activation finishes the job -- including
+///   over the budget, which resets each run while the files already home are skipped for free.
+///
+/// Only the mailboxes are taken, never the whole directory, for the reason [`is_mailbox`] gives.
+///
+/// Returns how many files were copied, and the paths this run did not take.
+///
+/// # Arguments
+/// * `used` - The run's byte accumulator, shared with the Diamond adoption above so one activation
+///   has one budget.
+async fn bring_mail_home(used: &mut u64) -> Outcome<(usize, Vec<String>)> {
+    let mut copied = 0usize;
+    let mut left: Vec<String> = Vec::new();
+    // A folder with no `mail/` in it is the ordinary case, and it is not a failure.
+    let entries = match own::user_list_dir(FileRoot::Machine, crate::tools::MAIL_ROOT).await {
+        Ok(e)  => e,
+        Err(_) => return Ok((0, left)),
+    };
+    for (name, is_dir, _size) in entries {
+        if !is_dir || !res!(is_mailbox(&name).await) {
+            continue;
+        }
+        let files = res!(folder_files(&fmt!("{}/{}", crate::tools::MAIL_ROOT, name)).await);
+        for (rel, size) in &files {
+            // One unreadable message must not lose the rest of the mailbox, nor the rest of the
+            // run.
+            match take_message(rel, *size, used).await {
+                Ok(Brought::Copied)  => copied += 1,
+                Ok(Brought::Held)    => {},
+                Ok(Brought::Skipped) => left.push(rel.clone()),
+                Err(e) => {
+                    console_log(&fmt!(
+                        "'{}' could not be brought home from the folder: {}", rel, e));
+                    left.push(rel.clone());
+                }
+            }
+        }
+    }
+    Ok((copied, left))
+}
+
+/// Whether a directory under the folder's `mail/` is one of Daimond's mailboxes.
+///
+/// The mirror of [`is_diamond`], and it earns its place the same way: `mail/` is now one of
+/// Daimond's own roots, but a user may have had a directory of that name in their project for
+/// years -- an archive, a mail module, a year's correspondence -- and copying it wholesale into the
+/// browser's storage would be an app helping itself to somebody's files.
+///
+/// Two ways to be a mailbox, and neither guesses.  The store already holds one under that name, or
+/// the name carries an `@`: a mailbox directory is the account's ADDRESS with the characters a
+/// filesystem refuses replaced (`mailDir` in `www/js/mail.js`), and an address without an `@` is
+/// not an address.
+///
+/// # Arguments
+/// * `name` - The directory name under `mail/` in the folder.
+async fn is_mailbox(name: &str) -> Outcome<bool> {
+    let here = fmt!("{}/{}", crate::tools::MAIL_ROOT, name);
+    if res!(own::exists(&here).await) {
+        return Ok(true);
+    }
+    Ok(name.contains('@'))
+}
+
+/// Bring home every Diamond an earlier build left in the open folder, and report what was done.
+///
+/// A build before this one let Daimond's own store follow the workspace root, so a Diamond worked
+/// on with a folder open wrote `diamonds/<id>/...` into the user's project: outside the sync
+/// parcel, invisible to the panel the moment they switched back, and absent from a backup.  This
+/// copies those files into the store.
+///
+/// Three rules, and each is a thing that could be got dangerously wrong:
+///
+/// * **Nothing is ever deleted from the folder.**  Deleting from a user's own project to tidy up
+///   after our own bug is the more dangerous of the two mistakes available here, and leaving the
+///   copies also makes an interrupted run free to repeat.
+/// * **The store wins a clash, and the folder's copy is kept beside it** (see [`take_file`]).
+/// * **It runs on every activation, for ever**, boot reconnect included, because there is no
+///   moment at which every folder can be proved to have been seen.  So it is silent when it finds
+///   nothing: the caller shows the user nothing at all when `adopted` is empty.
+///
+/// **THE MAILBOX COMES HOME HERE TOO**, on the same trigger and by the same three rules (see
+/// [`bring_mail_home`]).  It is here rather than in [`list`], where the other migrations run,
+/// because this is the only place that is guaranteed a folder is open: everything under `mail/`
+/// has to be read through [`FileRoot::Machine`], which resolves to the folder or to nothing at
+/// all.  A user who has never opened one has no mail in a folder, and this returns before looking.
+///
+/// Returns `{"folder":bool,"adopted":[{"id","name","kept":[..]}],"left":[..],"skipped":[..],
+/// "mail":{"copied":n,"left":[..]}}`.  `folder` is false when none is open, which is not an error
+/// and must not be reported as one.  Mail is reported under its own key rather than folded into
+/// `skipped`, which drives a dialog about Diamonds.
+pub async fn adopt_from_folder() -> Outcome<String> {
+    if !own::folder_open() {
+        return Ok(fmt!(
+            "{{\"folder\":false,\"adopted\":[],\"left\":[],\"skipped\":[],\
+             \"mail\":{{\"copied\":0,\"left\":[]}}}}"));
+    }
+    let mut adopted: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut left:    Vec<String> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    let mut used = 0u64;
+    // A folder with no `diamonds/` in it is the ordinary case, and it is not a failure -- and it
+    // says nothing about whether the folder is holding a mailbox, which is why this is an empty
+    // list to walk rather than an early return.
+    let entries = match own::user_list_dir(FileRoot::Machine, ROOT_DIR).await {
+        Ok(e)  => e,
+        Err(_) => Vec::new(),
+    };
+    for (name, is_dir, _size) in entries {
+        let here = fmt!("{}/{}", ROOT_DIR, name);
+        if !is_dir {
+            left.push(here);
+            continue;
+        }
+        match is_diamond(&name).await {
+            Ok(true)  => {},
+            Ok(false) => { left.push(here); continue; },
+            Err(e) => {
+                console_log(&fmt!("'{}' in the folder could not be examined: {}", here, e));
+                left.push(here);
+                continue;
+            }
+        }
+        let mut kept: Vec<String> = Vec::new();
+        let took = match adopt_one(&name, &mut used, &mut kept, &mut skipped).await {
+            Ok(t) => t,
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}' could not be brought home: {}", name, e));
+                continue;
+            }
+        };
+        if !took {
+            continue;       // already home: say nothing, or every boot would announce itself
+        }
+        // The name the rail will show, read from the store now that the metadata is in it.
+        let label = read_meta(&name).await.map(|m| m.name).unwrap_or_else(|_| name.clone());
+        adopted.push((name, label, kept));
+    }
+    // The mailbox, on the remaining budget. A failure here is reported and does not fail the run:
+    // the Diamonds are already home by this point, and nothing has been deleted from the folder.
+    let (mail_copied, mail_left) = match bring_mail_home(&mut used).await {
+        Ok(v) => v,
+        Err(e) => {
+            console_log(&fmt!("The mailbox in the folder could not be brought home: {}", e));
+            (0usize, Vec::new())
+        }
+    };
+    let rows: Vec<String> = adopted.iter().map(|(id, name, kept)| {
+        let ks: Vec<String> = kept.iter().map(|k| fmt!("\"{}\"", json_escape(k))).collect();
+        fmt!(
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"kept\":[{}]}}",
+            json_escape(id), json_escape(name), ks.join(","),
+        )
+    }).collect();
+    let quote = |v: &[String]| -> String {
+        let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
+        items.join(",")
+    };
+    Ok(fmt!(
+        "{{\"folder\":true,\"adopted\":[{}],\"left\":[{}],\"skipped\":[{}],\
+         \"mail\":{{\"copied\":{},\"left\":[{}]}}}}",
+        rows.join(","), quote(&left), quote(&skipped), mail_copied, quote(&mail_left),
+    ))
+}
+
+// ── The load proof's marks (K1, K2, K3) ─────────────────────────────
+
+/// The last version of the page that passed the load proof, `diamonds/<id>/.daimond/crystal_passed.json`.
+fn passed_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}/crystal_passed.json", id, STORE_DIR)
+}
+
+/// What the person's viewer showed in place of the page, `diamonds/<id>/.daimond/crystal_viewer.jsonl`.
+fn viewer_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}/crystal_viewer.jsonl", id, STORE_DIR)
+}
+
+/// The most viewer fallbacks kept for the daimon's next turn.
+const VIEWER_NOTES_MAX: usize = 8;
+
+/// The newest version this Diamond has recorded, 0 for none.
+pub async fn newest_version(id: &str) -> u64 {
+    version_entries(id).await.iter()
+        .filter(|(_, is_dir, _)| !*is_dir)
+        .filter_map(|(name, _, _)| versions::manifest_version(name))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Mark the page and data as they stand as the last that passed the load proof.
+///
+/// # Arguments
+/// * `version` - The version to name, 0 for the newest recorded.
+pub async fn mark_passed(id: &str, version: u64, page: &str, data: &str, debug: u32)
+    -> Outcome<crate::tools::CrystalPassed>
+{
+    mark_passed_marks(id, version, crate::tools::crystal_page_mark(page),
+        versions::hash_of(data.as_bytes()), debug).await
+}
+
+/// [`mark_passed`] given the two marks, the page's (empty for none of its own) and the data's
+/// sha256: a run's child hashes the page and data itself and sends only these (§9.11 rider).
+pub async fn mark_passed_marks(id: &str, version: u64, page: String, data: String, debug: u32)
+    -> Outcome<crate::tools::CrystalPassed>
+{
+    let version = if version == 0 { newest_version(id).await } else { version };
+    let mark = crate::tools::CrystalPassed { version, at: now_ms() as u64, page, data, debug };
+    res!(own::write_file(&passed_path(id), mark.to_json().as_bytes()).await);
+    Ok(mark)
+}
+
+/// Mark the page and data as stored now as passed, reading them first.  For the JS interface,
+/// which holds no copy of either.
+pub async fn mark_passed_stored(id: &str, version: u64) -> Outcome<crate::tools::CrystalPassed> {
+    let data = res!(read_crystal_data_strict(id).await);
+    let page = read_crystal_page(id).await.unwrap_or_default();
+    mark_passed(id, version, &page, &data, 0).await
+}
+
+/// The last version of the page that passed the load proof, `None` when none is marked.
+pub async fn last_passed(id: &str) -> Option<crate::tools::CrystalPassed> {
+    match own::read_file(&passed_path(id)).await {
+        Ok(b)  => crate::tools::CrystalPassed::from_json(&String::from_utf8_lossy(&b)),
+        Err(_) => None,
+    }
+}
+
+/// Keep a fallback the person's viewer showed, for the daimon's next turn.
+///
+/// # Arguments
+/// * `note` - `{"reason": "timeout" | "partial" | "undrawn", "missed": [keys]}`.
+pub async fn note_viewer(id: &str, reason: &str, missed: &[String]) -> Outcome<()> {
+    // Bound (QA2): notes that stand but will not read are not rewritten with this one alone.
+    let (was, _) = res!(read_bound(FileRoot::Opfs, &viewer_path(id)).await);
+    let mut lines: Vec<String> = was.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
+    let keys: Vec<String> = missed.iter().take(24).map(|k| fmt!("\"{}\"", json_escape(k))).collect();
+    let line = fmt!(r#"{{"reason":"{}","missed":[{}],"at":{}}}"#,
+        json_escape(&reason.chars().take(24).collect::<String>()), keys.join(","), now_ms() as u64);
+    // The same fallback twice in a row is one fact, not two.
+    let same = lines.last().map_or(false, |l| {
+        extract_json_string(l, "reason").as_deref() == Some(reason)
+            && l.contains(&fmt!("\"missed\":[{}]", keys.join(",")))
+    });
+    if !same {
+        lines.push(line);
+    }
+    let over = lines.len().saturating_sub(VIEWER_NOTES_MAX);
+    let body = lines[over..].join("\n");
+    own::write_file(&viewer_path(id), body.as_bytes()).await
+}
+
+/// The viewer's fallbacks since the daimon's last turn, as a note for this one, and gone once
+/// read: a turn is told once.
+pub async fn take_viewer_note(id: &str) -> String {
+    let jsonl = match own::read_file(&viewer_path(id)).await {
+        Ok(b)  => String::from_utf8_lossy(&b).to_string(),
+        Err(_) => return String::new(),
+    };
+    let note = crate::tools::viewer_fallback_note(&jsonl, VIEWER_NOTES_MAX);
+    if let Err(e) = own::delete_file(&viewer_path(id)).await {
+        console_log(&fmt!("Diamond '{}': the viewer's fallback notes could not be cleared: {}", id, e));
+    }
+    note
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod claims_turn_tests {
+    use super::*;
+    use crate::store::{mem::MemBackend, native::{install, NativeBackend}};
+
+    /// Under one version hold, on a backend that yields at each read and write: two claims taken
+    /// at once, then the first released beside a third claim.  The claims on file after each.
+    async fn interleaved() -> (usize, usize) {
+        let _ = install(NativeBackend::Slow(MemBackend::default(),
+            std::time::Duration::ZERO));
+        let held = hold_versions("d").await.expect("the version hold");
+        let (a, b) = tokio::join!(
+            BodyClaim::under_hold("d", "h1", &held),
+            BodyClaim::under_hold("d", "h2", &held));
+        let two = test_claims("d").await;
+        let (a, _b) = (a.expect("the claim of h1"), b.expect("the claim of h2"));
+        let (_, c) = tokio::join!(
+            a.done_under("d", &held),
+            BodyClaim::under_hold("d", "h3", &held));
+        let _c = c.expect("the claim of h3");
+        let after = test_claims("d").await;
+        drop(held);
+        let _ = install(NativeBackend::Closed);
+        (two, after)
+    }
+
+    /// Two claims, then a release beside the next claim, under the run's own hold: every edit is
+    /// on file (D1r1 check D-Q2a).  Red: edits that do not take turns lose one.
+    #[tokio::test]
+    async fn claims_edits_under_one_hold_take_turns() {
+        CLAIMS_UNTURNED.with(|u| u.set(true));
+        let red = interleaved().await;
+        CLAIMS_UNTURNED.with(|u| u.set(false));
+        assert_ne!(red, (2, 2), "the interleaving was not reached");
+        eprintln!("RED claims_turn: with no turns, the claims on file are {:?}, not (2, 2)", red);
+
+        assert_eq!(interleaved().await, (2, 2));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod link_sidecar_tests {
+    use super::*;
+    use crate::store::{mem::MemBackend, native::{install, NativeBackend}};
+
+    const GOOD: &str = "{\"id\":\"g1\",\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"rel\":\"cites\",\"by\":\"agent:x\"}";
+    // `Link::from_json` reads this row, and it is not one JSON object: the trailing comma.
+    const LOOSE: &str = "{\"id\":\"w1\",\"from\":\"diamond:a\",\"to\":\"diamond:c\",\"rel\":\"cites\",\"note\":\"old\",\"by\":\"agent:x\",\"x\":1,}";
+
+    async fn with_sidecar(owner: &str, bytes: &[u8]) {
+        let _ = install(NativeBackend::Mem(MemBackend::default()));
+        own::write_file(&links_path(owner), bytes).await.expect("the sidecar written");
+    }
+
+    async fn sidecar(owner: &str) -> Vec<u8> {
+        own::read_file(&links_path(owner)).await.expect("the sidecar read")
+    }
+
+    /// A row the raw editor cannot read is refused, by its id and line, not written whole.
+    #[tokio::test]
+    async fn test_a_row_the_editor_cannot_read_is_refused_not_rewritten() {
+        let text = fmt!("{}\n{}\n", GOOD, LOOSE);
+        with_sidecar("d1", text.as_bytes()).await;
+        let out = update_link("d1", "w1", "cites", "new").await;
+        let after = sidecar("d1").await;
+        let _ = install(NativeBackend::Closed);
+        let e = match out {
+            Err(e) => e.to_string(),
+            Ok(moved) => panic!("answered {} and wrote {:?}", moved, String::from_utf8_lossy(&after)),
+        };
+        assert!(e.contains("w1") && e.contains("line 2"), "{}", e);
+        assert_eq!(after, text.as_bytes(), "nothing written");
+    }
+
+    /// A sidecar that is not UTF-8 is not written, so its bytes are not replaced; it still reads.
+    #[tokio::test]
+    async fn test_a_sidecar_that_is_not_utf8_is_not_written() {
+        let mut bytes = fmt!("{}\n", GOOD).into_bytes();
+        bytes.extend_from_slice(b"\xff\xfe not text\n");
+        with_sidecar("d2", &bytes).await;
+        let added = add_link("d2", "diamond:a", "diamond:z", "cites", "", "user").await;
+        let after = sidecar("d2").await;
+        let read = read_links("d2").await;
+        let _ = install(NativeBackend::Closed);
+        let e = match added {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("added and wrote {:?}", String::from_utf8_lossy(&after)),
+        };
+        assert!(e.contains("links.jsonl") && e.contains("UTF-8"), "{}", e);
+        assert_eq!(after, bytes, "nothing written");
+        assert_eq!(read.expect("a lossy read for display").len(), 1);
+    }
+}

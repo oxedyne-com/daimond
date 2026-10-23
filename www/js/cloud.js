@@ -827,14 +827,42 @@
 		return await (await fh.getFile()).text();
 	}
 
-	async function writeText(path, content) {
-		var p = parts(path);
-		var dir = await dirFor(path, true);
-		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		var fh = await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]), { create: true });
-		var w = await fh.createWritable();
-		await w.write(new TextEncoder().encode(content));
-		await w.close();
+	/// The per-file write lock (js/filelock.js), or a stand-in that holds nothing where it is
+	/// not loaded. Every OPFS writer below opens its writable through it, so a restore's
+	/// compare-and-swap in the wasm cannot land over a write it never saw (OPFS-LOCK).
+	function fileLock() {
+		return window.DaimondFileLock || {
+			hold: async function (root, path, fn) { return await fn(); },
+			writable: async function (root, path, open) {
+				var w = await open();
+				return {
+					write: function (x) { return w.write(x); },
+					close: function () { return w.close(); },
+					abort: function (why) { return w.abort(why); },
+					discard: async function (remove) {
+						try { await w.abort(); } catch (e) { /* already gone */ }
+						if (remove) return await remove();
+					},
+				};
+			},
+		};
+	}
+
+	/// `seen` as `openWrite`'s, for a caller that judged the file it writes over.
+	async function writeText(path, content, seen) {
+		var w = await openWrite(path, seen);
+		try {
+			await w.write(new TextEncoder().encode(content));
+			// A write that judged the path re-checks it inside the same hold as the close.
+			if (seen && seen.judged) await closeIfUnmoved(w, path, seen);
+			else await w.close();
+		} catch (e) {
+			// A failed or refused write of a new path takes its own empty file away, inside the
+			// same hold (FIRE SYNC-ABORT3 r2 D2).
+			await dropWrite(w, seen ? placeholderRemover(seen, function () { return removeLocalNow(path); },
+				function () { return fileAt(path); }) : null);
+			throw e;
+		}
 	}
 
 	/// The File at a path, or null when it is absent. The handle is how a file is read in
@@ -896,24 +924,35 @@
 
 	/// Is the file a failed write leaves behind still the empty one that write created? Only
 	/// then may it be removed: a file the user saved at that path while the download ran is
-	/// his, though nothing stood there when the download began. A fault reads as "no".
+	/// his, though nothing stood there when the download began. A fault reads as "no". Asked
+	/// only from inside the write's `discard`, so under the file's lock and in the same hold
+	/// as the removal it permits: no write can land between this answer and that removal.
 	async function stillPlaceholder(seen) {
 		if (seen.existed || !seen.made) return false;
 		var now = await stampOf(seen.made.fh);
 		return !!now && now.size === 0 && now.size === seen.made.size && now.at === seen.made.at;
 	}
 
+	/// The cleanup a failed write hands `dropWrite`: remove what is at the path only while it
+	/// is still this write's empty placeholder (`stillPlaceholder`), or null where a file stood
+	/// there before and nothing may be removed.
+	function placeholderRemover(seen, remove, look) {
+		if (seen.existed) return null;
+		return async function () { return (await placeholderLeft(seen, look)) ? await remove() : false; };
+	}
+
 	/// Thrown by `openWrite` when `seen.judged` names a File the path no longer holds: a write
-	/// the caller decided on for bytes that are not there any more.
+	/// landed after the caller judged the bytes and before the lock was granted, and it stands.
 	function judgedMoved(e) { return !!(e && e.judgedMoved); }
 
 	/// The `seen.judged` of a caller that found the path empty and decided to write there: a
-	/// file standing at the path by the time the write opens is one nobody judged, and the
-	/// write refuses (`judgedMoved`) rather than overwrite it (OPFS-LOCK5).
+	/// file standing at the path by the time the lock is granted is one it never judged, and
+	/// the write refuses (`judgedMoved`) rather than overwrite it (OPFS-LOCK5).
 	var JUDGED_ABSENT = Object.freeze({ absent: true });
 
-	/// At the open, under `fh`: record the stamp the write opened over (`seen.open`), and refuse
-	/// where `seen.judged` names bytes the path no longer holds.
+	/// At the open, under the file's lock and `fh`: record the stamp the write opened over
+	/// (`seen.open`), with the bytes of a file of at most `COMPARE_BYTES_MAX`, and refuse where
+	/// `seen.judged` names bytes the path no longer holds.
 	async function judgeAtOpen(fh, path, seen) {
 		if (!seen) return;
 		if (!seen.existed) seen.made = await stampOf(fh);
@@ -924,16 +963,51 @@
 				throw Object.assign(new Error(path + ' changed after it was judged'), { judgedMoved: true });
 			}
 		}
+		if (seen.open && seen.open.size <= COMPARE_BYTES_MAX) seen.open.bytes = await bytesOf(fh);
+		// The same-size save in the same clock tick, between the judgement and the lock: a small
+		// judged File is compared byte for byte with what the path holds now. A File the browser
+		// will no longer read (its file changed under it) is a moved one.
+		if (seen.judged && seen.existed && seen.judged !== JUDGED_ABSENT && seen.open.size <= COMPARE_BYTES_MAX
+			&& typeof seen.judged.arrayBuffer === 'function') {
+			var was = null;
+			try { was = new Uint8Array(await seen.judged.arrayBuffer()); } catch (e) { was = null; }
+			if (!sameBytes(was, seen.open.bytes)) {
+				throw Object.assign(new Error(path + ' changed after it was judged'), { judgedMoved: true });
+			}
+		}
 	}
 
-	/// Has the file under a write moved since the write opened (`seen.open`)? A save made while
-	/// the download streamed: `close()` would put the cloud's bytes over it, so the caller
-	/// aborts instead (FIRE SYNC-ABORT3). Checked immediately before the close, which narrows
-	/// the window to that gap; the file lock closes it. A fault, or no stamp, reads as "moved".
+	/// Two byte arrays alike; a missing one is never alike.
+	function sameBytes(a, b) {
+		if (!a || !b || a.length !== b.length) return false;
+		for (var k = 0; k < a.length; k++) if (a[k] !== b[k]) return false;
+		return true;
+	}
+
+	/// A file of at most this many bytes is compared byte for byte as well as by size and
+	/// modification time before a write closes over it: a disk whose clock is coarse (FAT's two
+	/// seconds, a network share's whole seconds) can take a same-size save in the same tick. The
+	/// figure, and the rule, are the folder move's (`COMPARE_BYTES_MAX`, src/wasm/opfs.rs).
+	var COMPARE_BYTES_MAX = 1024 * 1024;
+
+	/// The bytes of the file behind `fh`, or null on a fault.
+	async function bytesOf(fh) {
+		try { return new Uint8Array(await (await fh.getFile()).arrayBuffer()); }
+		catch (e) { return null; }
+	}
+
+	/// Has the file under a write moved since the write opened (`seen.open`)? A save made
+	/// while the download streamed by a writer that does not take the file's lock (another
+	/// program on the open folder): `close()` would put the cloud's bytes over it, so the caller
+	/// aborts instead (FIRE SYNC-ABORT3). Asked immediately before the close and inside the
+	/// writable's hold, so no locked writer can land between the check and the close. A small
+	/// file is compared byte for byte too. A fault, or no stamp, reads as "moved".
 	async function movedSinceOpen(seen) {
 		if (!seen || !seen.open) return true;
 		var now = await stampOf(seen.open.fh);
-		return !now || now.size !== seen.open.size || now.at !== seen.open.at;
+		if (!now || now.size !== seen.open.size || now.at !== seen.open.at) return true;
+		if (seen.open.size > COMPARE_BYTES_MAX) return false;
+		return !sameBytes(seen.open.bytes, await bytesOf(seen.open.fh));
 	}
 
 	/// After a failed or refused write: is what stands at the path still an empty placeholder
@@ -956,11 +1030,11 @@
 		return !!f && f.size > 0;
 	}
 
-	/// Close `w` only where the file under it has not moved since it opened; otherwise abort.
-	/// Throws `judgedMoved` for the moved case, so callers keep one path for it.
+	/// Close `w` only where the file under it has not moved since it opened. Throws
+	/// `judgedMoved` for the moved case, so callers keep one path for it, and their error path
+	/// discards the writable (and gives the lock back).
 	async function closeIfUnmoved(w, path, seen) {
 		if (await movedSinceOpen(seen)) {
-			await dropWrite(w);
 			throw Object.assign(new Error(path + ' changed while it downloaded'), { judgedMoved: true });
 		}
 		await w.close();
@@ -968,29 +1042,33 @@
 
 	/// Give up a writable WITHOUT committing it. `close()` would write the partial (or empty)
 	/// bytes over whatever the file held; `abort()` discards them and leaves an existing file
-	/// as it was. A stream with no `abort` is simply never closed, which commits nothing.
-	async function dropWrite(w) {
+	/// as it was. `remove`, given only where this write created the file, clears the empty file
+	/// its open left, STILL UNDER THE FILE'S LOCK (`fileLock().writable`'s `discard`): removed
+	/// after the lock went back, a write another tab landed in between went with it.
+	async function dropWrite(w, remove) {
 		if (!w) return;
-		try { if (typeof w.abort === 'function') await w.abort(); } catch (e) { /* already gone */ }
+		try { await w.discard(remove || null); } catch (e) { /* already gone */ }
 	}
 
 	/// Open a writable stream at a path under `root`, creating the folders on the way.
 	/// `seen`, when given, is told whether a file stood there before (`seen.existed`) and,
 	/// when none did, the placeholder this write made (`seen.made`), so a failure removes only
-	/// that placeholder (`stillPlaceholder`).
+	/// that placeholder (`placeholderRemover`). Both are taken inside the file's lock.
 	async function openWriteUnderRoot(root, path, seen) {
 		var p = parts(path);
 		var dir = await dirUnderRoot(root, path, true);
 		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		var name = await diskNameIn(dir, p[p.length - 1]);
-		if (seen) seen.existed = await existedIn(dir, name);
-		var fh = await dir.getFileHandle(name, { create: true });
-		await judgeAtOpen(fh, path, seen);
-		return await fh.createWritable();
+		return await fileLock().writable('folder', path, async function () {
+			var name = await diskNameIn(dir, p[p.length - 1]);
+			if (seen) seen.existed = await existedIn(dir, name);
+			var fh = await dir.getFileHandle(name, { create: true });
+			await judgeAtOpen(fh, path, seen);
+			return await fh.createWritable();
+		});
 	}
 
 	/// Remove a file under `root`. Used to clear a half-written one, never as a
-	/// deletion the user asked for.
+	/// deletion the user asked for, and only from inside its write's lock (`dropWrite`).
 	async function removeUnderRoot(root, path) {
 		var p = parts(path);
 		var dir = await dirUnderRoot(root, path, false);
@@ -1035,6 +1113,8 @@
 			if (judgedMoved(e)) return keptAnswer;
 			return 'Error: could not write ' + to + ' into the open folder: ' + (e && e.message ? e.message : e);
 		}
+		var made = placeholderRemover(seen, function () { return removeUnderRoot(root, to); },
+			function () { return fileUnderRoot(root, to); });
 		if ((m.v | 0) >= 2) {
 			try {
 				okAll = await DaimondChunks.materialiseStream(m, async function (bytes) {
@@ -1042,13 +1122,13 @@
 					written += bytes.length;
 				});
 				if (okAll) await closeIfUnmoved(w, to, seen);
-				else await dropWrite(w);
-			} catch (e) { await dropWrite(w); okAll = false; moved = judgedMoved(e); }
+				else await dropWrite(w, made);
+			} catch (e) { await dropWrite(w, made); okAll = false; moved = judgedMoved(e); }
 		} else {
 			// An older whole-file manifest, from before the streaming pipeline.
 			var content = null;
 			try { content = await DaimondChunks.materialiseV1(m); } catch (e) { content = null; }
-			if (content == null) await dropWrite(w);
+			if (content == null) await dropWrite(w, made);
 			else {
 				try {
 					var bytes = new TextEncoder().encode(content);
@@ -1056,12 +1136,11 @@
 					await closeIfUnmoved(w, to, seen);
 					written = bytes.length;
 					okAll = true;
-				} catch (e) { await dropWrite(w); okAll = false; moved = judgedMoved(e); }
+				} catch (e) { await dropWrite(w, made); okAll = false; moved = judgedMoved(e); }
 			}
 		}
 		if (!okAll) {
 			var lookTo = function () { return fileUnderRoot(root, to); };
-			if (await placeholderLeft(seen, lookTo)) await removeUnderRoot(root, to);
 			if (moved && await bytesStand(seen, lookTo)) return keptAnswer;
 			return 'Error: ' + to + ' could not be written; cloud storage no longer holds all of its parts.';
 		}
@@ -1091,23 +1170,30 @@
 	}
 
 	/// Open a writable stream at a path, so a large file lands on disk piece by
-	/// piece instead of being assembled in memory first. `seen` as `openWriteUnderRoot`.
+	/// piece instead of being assembled in memory first. `seen` as `openWriteUnderRoot`; and
+	/// `seen.judged`, when set, is the File the caller decided to write over: where the path
+	/// now holds another (its size or modification time moved), the open throws
+	/// (`judgedMoved`) under the lock rather than write over a save it never judged. Where it is
+	/// `JUDGED_ABSENT`, any file standing at the path by then is one it never judged.
 	async function openWrite(path, seen) {
 		var p = parts(path);
 		var dir = await dirFor(path, true);
 		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		var name = await diskNameIn(dir, p[p.length - 1]);
-		if (seen) seen.existed = await existedIn(dir, name);
-		var fh = await dir.getFileHandle(name, { create: true });
-		await judgeAtOpen(fh, path, seen);
-		return await fh.createWritable();
+		return await fileLock().writable('sandbox', path, async function () {
+			var name = await diskNameIn(dir, p[p.length - 1]);
+			if (seen) seen.existed = await existedIn(dir, name);
+			var fh = await dir.getFileHandle(name, { create: true });
+			await judgeAtOpen(fh, path, seen);
+			return await fh.createWritable();
+		});
 	}
 
 	/// Write a Blob or File straight to a path. Streams, and carries bytes rather
 	/// than text, so a picture arrives as a picture.
 	async function writeBlob(path, blob) {
 		var w = await openWrite(path);
-		await w.write(blob);
+		try { await w.write(blob); }
+		catch (e) { try { await w.abort(); } catch (e2) { /* already gone */ } throw e; }
 		await w.close();
 	}
 
@@ -1146,20 +1232,25 @@
 		return out;
 	}
 
-	/// Remove this device's copy of `path`; with `judged`, only where it is still that File
-	/// (its size and modification time). A copy that moved since the caller judged it is a
-	/// save, and is kept: the answer is then `null`, told apart from a failed removal
-	/// (`false`); both are falsy, so a caller that ignores the difference keeps the file's
-	/// outcome as "not removed" (FIRE SYNC-ABORT3 r2).
+	/// Remove this device's copy of `path`, under the file's lock, and only where it is still
+	/// the `judged` File the caller decided on (its size and modification time, and its bytes for
+	/// a file of at most `COMPARE_BYTES_MAX`): a write that landed after the judgement -- before
+	/// the lock, or during a long wait such as settleStale's presence query -- is kept, and the
+	/// answer is then `null`, told apart from a failed removal (`false`); both are falsy, so a
+	/// caller that ignores the difference reads "not removed" (FIRE SYNC-ABORT3 r2). Every caller
+	/// judged the bytes before asking (OPFS-LOCK check, D6): unlocked, a removal between a
+	/// restore's re-check and its close undid it.
 	async function removeLocal(path, judged) {
-		return await removeLocalNow(path, judged);
+		return await fileLock().hold('sandbox', path, async function () {
+			return await removeLocalNow(path, judged);
+		});
 	}
 
-	/// [`removeLocal`] for a file this write made. By the name the file is STORED under
-	/// (`diskNameIn`), as `openWrite` made it and `removeUnderRoot` removes it: by the raw name,
-	/// a failed fetch of a new path with a reserved character in it left its empty file behind,
-	/// and evict and settleStale silently kept such a file (FIRE SYNC-ABORT3).
-	/// `judged` as [`removeLocal`], re-checked immediately before the removal.
+	/// [`removeLocal`] with the lock already held, or for a file this write made. By the name
+	/// the file is STORED under (`diskNameIn`), as `openWrite` made it and `removeUnderRoot`
+	/// removes it: by the raw name, a failed fetch of a new path with a reserved character in it
+	/// left its empty file behind, and evict and settleStale silently kept such a file (FIRE
+	/// SYNC-ABORT3). `judged` as [`removeLocal`], re-checked immediately before the removal.
 	async function removeLocalNow(path, judged) {
 		var p = parts(path);
 		var dir = await dirFor(path, false);
@@ -1167,8 +1258,16 @@
 		try {
 			var name = await diskNameIn(dir, p[p.length - 1]);
 			if (judged) {
-				var now = await stampOf(await dir.getFileHandle(name));
+				var fh = await dir.getFileHandle(name);
+				var now = await stampOf(fh);
 				if (!now || now.size !== judged.size || now.at !== judged.lastModified) return null;
+				// A same-size save in the same clock tick (a coarse-clock disk): small files are
+				// compared byte for byte, as a write's close is (`movedSinceOpen`).
+				if (now.size <= COMPARE_BYTES_MAX && typeof judged.arrayBuffer === 'function') {
+					var was = null;
+					try { was = new Uint8Array(await judged.arrayBuffer()); } catch (e2) { was = null; }
+					if (!sameBytes(was, await bytesOf(fh))) return null;
+				}
 			}
 			await dir.removeEntry(name);
 			dropHeld(path, false);
@@ -2154,7 +2253,10 @@
 		// What the write may replace: the File judged stale below, or, for a path not on this
 		// device, nothing at all. A file that appears there, or moves, before the write closes is
 		// not written over; the next sync pass meets it as a local file (OPFS-LOCK5).
-		var here = JUDGED_ABSENT, held;
+		var here = JUDGED_ABSENT, over = false, held;
+		// While the copy here is still the File settleStale judged, the write compares against
+		// THAT File, not one re-read here: a same-size save in the same tick between the two looks
+		// is not this copy (U3a RMW, check B D3).
 		// A store that cannot be read is not a path to download into: said, not fetched over.
 		try { held = await isHeld(path); }
 		catch (e) { return 'Error: could not read ' + path + ' on this device: ' + (e && (e.name || e.message) ? (e.name || e.message) : e); }
@@ -2162,11 +2264,13 @@
 			// NOT IF WHAT IS HERE IS A VERSION THE INDEX HAS MOVED PAST. That copy is not this
 			// file any more, and answering "already on this device" handed the person the older
 			// version of it. One changed here since is theirs, and stands. The stale copy is NOT
-			// removed first: the download writes over it, so success replaces it in one step and
-			// any failure (a missing part, a refused allowance) leaves it as it was.
+			// removed first (FIRE sync-abort r2): the download writes over it, so success replaces
+			// it in one step and any failure (a missing part, a refused allowance) leaves it as it
+			// was. The File judged here goes to the write, which refuses under the lock if the
+			// path holds another by then (`openWrite`'s `seen.judged`).
 			here = await fileAt(path);
 			var st = here ? await localState(path, here, m) : { state: 'absent' };
-			var over = !!(judged && here && here.size === judged.size && here.lastModified === judged.lastModified);
+			over = !!(judged && here && here.size === judged.size && here.lastModified === judged.lastModified);
 			if (!over && (st.state !== 'stale' || !mayDrop(path, m, st.baseVer, st.live))) {
 				touch(path);
 				return 'OK: ' + path + ' is already on this device.';
@@ -2190,30 +2294,30 @@
 		if ((m.v | 0) >= 2) {
 			// Straight to disk, one piece at a time: a file too large to hold is
 			// exactly the file this exists for.
-			var w, seen = { existed: true, judged: here || JUDGED_ABSENT };
+			var w, seen = { existed: true, judged: over ? judged : (here || JUDGED_ABSENT) };
 			try { w = await openWrite(path, seen); }
 			catch (e) {
 				if (judgedMoved(e)) { touch(path); return 'OK: ' + path + ' is already on this device.'; }
 				return 'Error: could not write ' + path + ' to this device: ' + (e && e.message ? e.message : e);
 			}
+			var lookHere = function () { return fileAt(path); };
+			var made = placeholderRemover(seen, function () { return removeLocalNow(path); }, lookHere);
 			var okAll = false, movedHere = false;
 			try {
 				okAll = await DaimondChunks.materialiseStream(m, async function (bytes) {
 					await w.write(bytes);
 					written += bytes.length;
 				});
+				// Never leave a truncated file standing in for a whole one -- and never take
+				// away one that was here before: the aborted write left its bytes as they were.
 				if (okAll) await closeIfUnmoved(w, path, seen);
-				else await dropWrite(w);
+				else await dropWrite(w, made);
 			} catch (e) {
-				await dropWrite(w);
+				await dropWrite(w, made);
 				okAll = false;
 				movedHere = judgedMoved(e);
 			}
 			if (!okAll) {
-				// Never leave a truncated file standing in for a whole one -- and never take
-				// away one that was here before: the aborted write left its bytes as they were.
-				var lookHere = function () { return fileAt(path); };
-				if (await placeholderLeft(seen, lookHere)) await removeLocalNow(path);
 				if (movedHere && await bytesStand(seen, lookHere)) { touch(path); return 'OK: ' + path + ' is already on this device.'; }
 				return 'Error: ' + path + ' could not be fetched; cloud storage no longer holds all of its parts.';
 			}
@@ -2223,15 +2327,14 @@
 			try { content = await DaimondChunks.materialiseV1(m); }
 			catch (e) { return 'Error: could not fetch ' + path + ': ' + (e && e.message ? e.message : e); }
 			if (content == null) return 'Error: ' + path + ' could not be fetched; cloud storage no longer holds all of its parts.';
-			// The parts came down while nothing held the path: bytes here that are not the ones
-			// judged above are a save made meanwhile, and stand.
-			var now = null;
-			try { now = await fileAt(path); } catch (e) { now = null; }
-			var still = here === JUDGED_ABSENT ? !now
-				: !!(now && here && now.size === here.size && now.lastModified === here.lastModified);
-			if (!still) { touch(path); return 'OK: ' + path + ' is already on this device.'; }
-			try { await writeText(path, content); }
-			catch (e) { return 'Error: could not write ' + path + ' to this device: ' + (e && e.message ? e.message : e); }
+			var seen1 = { existed: true, judged: over ? judged : (here || JUDGED_ABSENT) };
+			try { await writeText(path, content, seen1); }
+			catch (e) {
+				if (judgedMoved(e) && await bytesStand(seen1, function () { return fileAt(path); })) {
+					touch(path); return 'OK: ' + path + ' is already on this device.';
+				}
+				return 'Error: could not write ' + path + ' to this device: ' + (e && e.message ? e.message : e);
+			}
 			written = content.length;
 		}
 		touch(path);
@@ -2533,6 +2636,7 @@
 		rename:        rename,
 		fileKey:      fileKey,
 		writeBlob:    writeBlob,
+		fileLock:     fileLock,
 		// What the agent may still pull down unprompted, in bytes.
 		agentAllowance: agentFetchAllowance,
 		// The free/paid split, and the allowance it is drawn against.

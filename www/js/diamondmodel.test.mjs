@@ -207,7 +207,7 @@ async function runnerSteer(model) {
 	const built = [], STOP = new Error('stop');
 	const DaimondModels = { resolve: function (p, m) { return m && p !== 'nokey' ? { provider: p, model: m } : null; },
 		effective: function () { return { provider: GLM.provider, model: GLM.model, from: 'own' }; } };
-	const fns = lifted(['sentModelsOf', 'steerModelsFor', 'steerModelFor', 'steerTurnSet', 'copyTurnSet', 'turnModelsOfDiamond', 'runSteer', 'runSteerDetached'], {
+	const fns = lifted(['sentModelsOf', 'steerModelsFor', 'steerModelFor', 'steerTurnSet', 'copyTurnSet', 'turnModelsOfDiamond', 'runSteer', 'runSteerHeld', 'runSteerDetached'], {
 		window: { DaimondModels: DaimondModels }, DaimondModels: DaimondModels,
 		diamondModel: function () { return { provider: GLM.provider, model: GLM.model }; },
 		// The set's daimon half is the pair `steerModelFor` resolved; the other halves are not asked about.
@@ -218,7 +218,16 @@ async function runnerSteer(model) {
 		currentDiamond: null, centreMode: '',
 		diamondEffort: function () { return ''; },
 		storedEffort: function () { return null; },
-		diamondApp: function (id, pick) { built.push({ provider: pick && pick.provider, model: pick && pick.model }); throw STOP; },
+		// The Diamond's daimon client (U3a: `daimonApp`, claimed for the turn and settled after it).
+		daimonApp: function (id, pick) { built.push({ provider: pick && pick.provider, model: pick && pick.model }); throw STOP; },
+		claimDaimon: function (app) { return app; }, daimonSettled: function () {},
+		// The engine's TurnSpec (U4a, `engine::turn::resolve`, tested there): for an unmarked errand the
+		// turn runs the model this device's record of the Diamond stores.
+		turnSpecFor: function (f, preset, depth, detached, how) {
+			var m = this.diamondModel(f.id);
+			return { preset: '', depth: depth || '', instruction: preset || '', refused: '',
+				model: { provider: m.provider, model: m.model } };
+		},
 	});
 	let err = null;
 	try { await fns.runSteerDetached(F, 'hi', { id: 'chat-lifelog', diamondId: F.id, messages: [] }, { turnId: 't9', model: model }); }

@@ -1833,8 +1833,17 @@ function arithmeticIsInTheCode() {
 		'and it sits immediately above the function that builds the envelope',
 		{ commentAt: at, composeAt: compose });
 	// The numbers the comment claims are the numbers the code has.
-	ok(/var SLOT = IV \+ 32 \+ 16;/.test(src), 'SLOT really is 12 + 32 + 16');
-	ok(/var SLOTS_MAX = 255;/.test(src), 'and SLOTS_MAX really is 255');
+	// The envelope is sealed in the wasm (S1 SEAL, src/seal), so the slot's size lives
+	// there now and not in post.js; the cap is held on both sides of the call.
+	const rsPost = fs.readFileSync(path.join(APP, 'src/seal/post.rs'), 'utf8');
+	const rsMod  = fs.readFileSync(path.join(APP, 'src/seal/mod.rs'), 'utf8');
+	ok(/pub const SLOT_LEN: usize = IV_LEN \+ KEY_LEN \+ TAG_LEN;/.test(rsPost)
+		&& /pub const IV_LEN: usize = 12;/.test(rsMod)
+		&& /pub const KEY_LEN: usize = 32;/.test(rsMod)
+		&& /pub const TAG_LEN: usize = 16;/.test(rsMod),
+		'SLOT really is 12 + 32 + 16, in the wasm seal that builds the envelope');
+	ok(/var SLOTS_MAX = 255;/.test(src) && /pub const SLOTS_MAX: usize = 255;/.test(rsPost),
+		'and SLOTS_MAX really is 255, on both sides');
 }
 
 // ── Run ──────────────────────────────────────────────────────

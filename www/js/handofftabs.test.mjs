@@ -119,7 +119,6 @@ const LIFTED = [
 	extractFn(APP, 'claimTurnHere'),
 	extractFn(APP, 'releaseOwnStaleLeases'),
 	extractFn(APP, 'endRunnerTurn'),		// R3 F3: the self-release ends a journal-held run first (none here: false)
-	'var _engineHeld = new WeakMap();',
 	extractFn(APP, 'ensureApp'),
 	extractFn(APP, 'applySight'),		// T2: ensureApp puts the model list's picture support on the app
 	extractFn(APP, 'applyEffort'),		// U-D #9: and the chat's chosen Effort
@@ -189,7 +188,7 @@ function makeTab(name, locks, w) {
 		noteAppProv() {}, promptPrint: () => '',
 		// UNBLOCK-1: recoverOneLocally redraws the tiles and switch, which nothing here draws.
 		redrawRunner() {},
-		applyRoundLimit() {}, applyFoldSettings() {}, applyProviderRouting() {}, applyCrystalCap() {},
+		applyRoundLimit() {}, applyLiveness() {}, applyFoldSettings() {}, applyProviderRouting() {}, applyCrystalCap() {},
 		DaimondApp: class {
 			restore_session(msgs) { stat.restored = { session: msgs.map((m) => m.content) }; return msgs.length; }
 			restore(hist) { stat.restored = { hist: hist.map((m) => m.content) }; }

@@ -1532,6 +1532,7 @@ fn one_task(
         by_model:    false,
         restoring:   0,
         by:          None,
+        host:        Default::default(),
     };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 

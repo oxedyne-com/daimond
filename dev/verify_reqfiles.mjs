@@ -98,7 +98,7 @@ try {
 	const write = (p, t) => page.evaluate((a) => window.__m.write_file(a.p, a.t), { p, t });
 	const wire  = (id) => page.evaluate(async (i) => {
 		try {
-			const w = JSON.parse(await window.__vf.wire_system(i, '[]', '[]', '[]'));
+			const w = JSON.parse(await window.__vf.wire_system(i, '[]'));
 			return String((w && w.local) || '');
 		} catch (e) { return 'ERR:' + String((e && e.message) || e); }
 	}, id);
@@ -279,7 +279,7 @@ try {
 		const m = await import('/pkg/oxedyne_daimond.js');
 		const app = new m.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
 		const seen = [];
-		await app.steer_crystal(a.id, a.instruction, '[]', '[]', '[]', [],
+		await app.steer_crystal(a.id, a.instruction, '[]', [],
 			(ev) => seen.push({ type: ev.type, name: ev.name || '', content: ev.content || '' }));
 		return seen;
 	}, { id, instruction, mock: MOCKURL });

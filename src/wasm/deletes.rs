@@ -63,7 +63,9 @@ pub async fn ask_to_go_on(keeper: &str, path: &str, count: usize, limit: usize, 
         Ok(v)  => v,
         Err(_) => return false,
     };
-    let answer = match crate::wasm::settle_js(ret).await {
+    // A person is answering: the wait beats the call's own deadline while it is open (U3a LV2).
+    let answer = match crate::wasm::held_by_person("ask_to_go_on",
+        crate::wasm::settle_js(ret)).await {
         Ok(v)  => v,
         Err(_) => return false,
     };

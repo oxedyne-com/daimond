@@ -276,6 +276,17 @@ function faulty(d) {
 	check('(d3) materialiseTo: and no empty file is left', !folder.files.has('full.txt') || folder.files.get('full.txt').length > 0,
 		[...folder.files.entries()].map(([k, v]) => k + '=' + v.length + 'B').join(','));
 }
+{
+	// The same through fetchDown's older whole-file door (writeText), on the lock line (U3a SA3).
+	const opfs = faulty(dir(new Map()));
+	const M_V1 = { v: 1, size: 9, bytes: 9, key: 'k1', v1: 'CLOUD V1!', chunks: [] };
+	const win = tabWin(opfs, { 'v1.txt': M_V1 });
+	win.DaimondChunks.materialiseV1 = async (m) => m.v1;
+	const r = await said(win.DaimondCloud.fetch('v1.txt', false));
+	check('(d3) fetchDown v1: not "already on this device" over its own empty placeholder', !/already on this device/.test(r), r);
+	check('(d3) fetchDown v1: and no empty file is left', !opfs.files.has('v1.txt') || opfs.files.get('v1.txt').length > 0,
+		[...opfs.files.entries()].map(([k, v]) => k + '=' + v.length + 'B').join(','));
+}
 
 console.log('\n(h) a save during a SUCCESSFUL download over an existing file\n');
 {
@@ -359,6 +370,28 @@ console.log('\n(d2) a fetch that throws mid-file over a stale copy\n');
 	const r = await said(win.DaimondCloud.fetch('full.txt', false));
 	check('(d2) is an error', /^Error: full\.txt could not be fetched/.test(r), r);
 	check('(d2) and keeps the copy', dec(opfs.files.get('full.txt') || enc('deleted')) === 'first half second half');
+}
+
+console.log('\n(rmw) fetchDown compares against the File settleStale judged, not one it re-read\n');
+{
+	// U3a RMW (check B D3): settleStale judges a pinned copy stale and hands fetchDown that File.
+	// A save of the same size, in the same tick, lands before fetchDown looks again; the write's
+	// byte compare must be against what settleStale judged, so the save is kept.
+	const opfs = dir(new Map());
+	const win = tabWin(opfs, { 'full.txt': M_FULL });
+	await said(win.DaimondCloud.fetch('full.txt', false));
+	win.DaimondCloud.pin('full.txt', true);
+	const M_NEW = { v: 2, size: 22, bytes: 22, key: 'kn', ver: 'vnew', anc: ['kf'], sn: [], chunks: [{ addr: 'a2', size: 11 }, { addr: 'a1', size: 11 }] };
+	win.DaimondStore.put('daimond-cloud-index', { 'full.txt': M_NEW });
+	const THEIRS = 'their save, 22 bytes!!';
+	// The third look at the path is fetchDown's own `fileAt`, after settleStale judged the file.
+	const g = opfs.getFileHandle; let n = 0;
+	opfs.getFileHandle = function (name, o) { if (name === 'full.txt' && ++n === 3) opfs.files.set('full.txt', enc(THEIRS)); return g.call(this, name, o); };
+	const r = await said(win.DaimondCloud.settleStale('full.txt'));
+	opfs.getFileHandle = g;
+	check('(rmw) a same-size, same-tick save after settleStale judged the copy is kept',
+		dec(opfs.files.get('full.txt') || enc('deleted')) === THEIRS && !/^OK: replaced/.test(r),
+		r + ' / ' + (opfs.files.has('full.txt') ? dec(opfs.files.get('full.txt')) : 'deleted'));
 }
 
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASS'));

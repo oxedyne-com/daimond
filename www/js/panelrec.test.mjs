@@ -209,7 +209,9 @@ test('the turn reaches the Web panel, and a page intent travels to the asker and
 	assert.ok(/fn open\(this: &Driver, url: &str, owner: &str, turn: &str\)/.test(rs), 'the driver is given the turn');
 	assert.ok(/pub async fn open\(url: &str, owner: &str, turn: &str\)/.test(rs));
 	const tools = src('../../src/tools.rs');
-	assert.ok(/web::open\(&url, &owner, &ctx\.turn_tag\(\)\)/.test(tools), 'web_open passes its turn tag');
+	// Through the Host (U3a, GATE H1): the tool hands the turn to the host's web port, which hands it to the driver.
+	assert.ok(/host\(\)\.web\(\)\.open\(&url, &owner, &ctx\.turn_tag\(\)\)/.test(tools), 'web_open passes its turn tag');
+	assert.ok(/web::open\(url, owner, turn\)/.test(src('../../src/wasm/host/web.rs')), 'the wasm host passes the turn on');
 	assert.ok(/askerOf:\s+askerOf/.test(src('viewer.js')), 'the viewer publishes the routing question');
 	const d = src('daimond.js');
 	const ra = d.slice(d.indexOf('function runnerAskerOf'), d.indexOf('function runnerUi'));

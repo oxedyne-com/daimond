@@ -114,7 +114,7 @@ function lift(name) {
 	return SRC.slice(a, SRC.indexOf('\n\t}\n', a) + 3);
 }
 
-const NAMES = ['runDispatchFallback', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
+const NAMES = ['runDispatchFallback', 'electProvider', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
 	'reRunParked', 'markInterrupted', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn'];
 
@@ -196,7 +196,7 @@ function world(fault) {
 		touchChat: () => {}, persistChats: () => {}, renderHistory: () => {},
 		scheduleDispatchFallback: () => {}, PRESUMED_FALLBACK_MS: 5000, electedTried: () => ['argonaut1'],
 		turnEffortOf: () => null, storedPre: () => { if (fault === 'throw') throw new Error('qa: a throw before the mark'); return ''; },
-		storedEffort: () => null, errandModelOf: () => ({}), autonomousPosture: () => false, msgTombsOwed: () => [],
+		storedEffort: () => null, errandModelOf: () => ({}), errandFence: async () => null, autonomousPosture: () => false, msgTombsOwed: () => [],
 		loadChatMessages: async () => {}, friendlyError: (e) => String(e && e.message),
 		seatSwitchFor: () => ({ runner: { deviceId: 'argonaut1' } }),
 		peerReports: {}, placeholderParkCount: () => 0,

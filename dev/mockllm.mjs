@@ -110,6 +110,30 @@
 //   @big <n>                 a reply of n bytes, unpaced -- the only way here to produce
 //                            one long enough for the worker report clip to bite
 //   @slow <ms>               reply after a delay
+//   @stall <ms>              headers and ONE chunk at once, then SILENCE for <ms>, then the
+//                            rest. A stream that has started and gone quiet, which is the
+//                            shape a Stop has to beat without waiting for another byte
+//                            (dev/verify_actor.mjs, arm `stopidle`).
+//   @hush <ms>               headers and the empty role frame, then SILENCE for <ms>, then the
+//                            rest. A stream that has begun and said NOTHING: the shape the
+//                            liveness rule asks once more (`@stall` has said a word, so its
+//                            round is never asked again). U3a INT-C, dev/verify_workerlong.mjs.
+//   @roundsthen <n>/<ms> <then> <name> <json>
+//                            @rounds n/ms, and then, in place of the text reply, <then>:
+//                            `stall <ms>` -- one chunk and SILENCE for <ms>, a worker that
+//                            worked and then went quiet mid-stream, or `text <words>` -- those
+//                            words. The shape a liveness rule must tell from a dead stream:
+//                            rounds that make progress, then one that does not (U3a W0).
+//   @trickle <bytes>/<ms> <total_ms>
+//                            a stream that never goes quiet and never ends early: <bytes>
+//                            bytes of REAL content every <ms>, for <total_ms>, then the rest.
+//                            Real data, not keepalive comments, so a reader that counts
+//                            progress sees progress the whole time (U3a W0).
+//   ... @usage <in> <out> [cost] [cached]
+//                            as a TAIL on any other directive: that reply reports those
+//                            figures. `@slow 2000 @usage 100 50 0.01` is a slow reply with
+//                            a known bill, and on `@rounds` every round reports it. Each
+//                            logged request carries `answered`, the usage it was given.
 //   @look <path>             the model that keeps trying to LOOK. It answers with
 //                            `file_read {"path":…,"as":"image"}` until a tool result
 //                            has come back, and with words afterwards. Unlike every
@@ -356,7 +380,13 @@ const afterTurnNote = (text) => {
 		i = at + close + m[1].length + 4;
 	}
 };
-const afterNote = (text) => afterViewer(afterRating(afterTurnNote(text)));
+// A fork worker's first message is `worker_handoff(role, task)` = the hand-off role, then HANDOFF, then the
+// task (src/prompts.rs). Its directive is the task, so read past the first HANDOFF (armdiag 23 Oct: since r578c
+// made `full` the default, the arms' worker directives were plain text to the mock). www/js/workerfork.test.mjs
+// pins the engine's separator to this literal.
+const HANDOFF = '\n\n## Your task\n\n';
+const afterHandoff = (text) => { const t = String(text || ''); const i = t.indexOf(HANDOFF); return i < 0 ? t : t.slice(i + HANDOFF.length); };
+const afterNote = (text) => afterViewer(afterRating(afterTurnNote(afterHandoff(text))));
 const afterRating = (text) => {
 	const t = String(text || '').trim();
 	if (!t.startsWith('[Daimond:')) return t;
@@ -690,8 +720,33 @@ const leakMode = (messages) => {
 	return '';
 };
 
+// THE `@usage` TAIL, read off the last user message and taken out of the directive's own
+// arguments, so `@rounds 3 file_list {"path":"."} @usage 100 50 0.01` still parses its JSON.
+const USAGE_TAIL = /\s@usage((?:\s+[0-9.]+){1,4})\s*$/;
+const usageOf = (rest) => {
+	const [i, o, cost, cached] = String(rest || '').trim().split(/\s+/).map(Number);
+	const usage = { prompt_tokens: i || 100, completion_tokens: o || 50 };
+	if (isFinite(cost) && cost > 0) usage.cost = cost;
+	if (isFinite(cached) && cached > 0) usage.prompt_tokens_details = { cached_tokens: cached };
+	return usage;
+};
+const usageTail = (messages) => {
+	const d = parseDirective(lastUser(messages));
+	if (d.kind === 'plain' || d.kind === 'usage') return null;
+	const m = USAGE_TAIL.exec(' ' + d.rest);
+	return m ? usageOf(m[1]) : null;
+};
+
 const plan = (messages, tools) => {
+	const p = planOf(messages, tools);
+	const u = usageTail(messages);
+	if (u && p && !p.httpError) p.usage = u;
+	return p;
+};
+
+const planOf = (messages, tools) => {
 	const d      = parseDirective(lastUser(messages));
+	if (d.kind !== 'plain' && d.kind !== 'usage') d.rest = (' ' + d.rest).replace(USAGE_TAIL, '').trim();
 	const rounds = toolRounds(messages);
 
 	// A LEAKED TOOL CALL, before the switch for `@look`'s reason: after the app's nudge
@@ -824,17 +879,10 @@ const plan = (messages, tools) => {
 			return { text: word.repeat(Math.ceil(n / word.length)).slice(0, n) };
 		}
 
-		case 'usage': {
-			const [i, o, cost, cached] = d.rest.split(/\s+/).map(Number);
-			const usage = { prompt_tokens: i || 100, completion_tokens: o || 50 };
-			// Only when asked for. A `cost` of zero means "nobody said", and an
-			// unconditional `cost: 0` would make every @usage turn claim the
-			// provider had reported the call as free.
-			if (isFinite(cost) && cost > 0) usage.cost = cost;
-			// Where a router puts it: nested, not alongside the token counts.
-			if (isFinite(cached) && cached > 0) usage.prompt_tokens_details = { cached_tokens: cached };
-			return { text: 'Counted.', usage };
-		}
+		// A `cost` of zero means "nobody said", so it is sent only when asked for, and a cached
+		// count goes where a router puts it: nested, not alongside the token counts.
+		case 'usage':
+			return { text: 'Counted.', usage: usageOf(d.rest) };
 
 		case 'err':
 			return { httpError: numArg(d.rest, 500, 'err') };
@@ -850,6 +898,50 @@ const plan = (messages, tools) => {
 
 		case 'slow':
 			return { text: 'Eventually.', delayMs: numArg(d.rest, 2000, 'slow') };
+
+		case 'hush':
+			return { text: 'Hushed, and then the rest.', stallMs: numArg(d.rest, 30000, 'hush'), bare: true };
+
+		case 'stall':
+			return { text: 'Stalled, and then the rest.', stallMs: numArg(d.rest, 30000, 'stall') };
+
+		// N ROUNDS OF PROGRESS AND THEN SILENCE (U3a W0). `@rounds` ends in a reply; a liveness
+		// rule needs the turn that works for a while and then stops answering mid-stream, which
+		// is a different event from a turn that never started. The call is parsed off the END
+		// (the last `<name> {…}`), so `text` takes any words before it.
+		case 'roundsthen': {
+			const m = d.rest.match(/^(\S+)\s+(stall|text)\b\s*([\s\S]*)$/);
+			if (!m) throw new DirectiveError(
+				`@roundsthen wants <n>/<ms> stall <ms>|text <words> <name> <json>, got ${JSON.stringify(d.rest)}`);
+			const [, head, then, tail] = m;
+			const slash = head.indexOf('/');
+			const n    = Math.max(1, numArg(slash === -1 ? head : head.slice(0, slash), 3, 'roundsthen'));
+			const pace = slash === -1 ? 0 : Math.max(0, numArg(head.slice(slash + 1), 0, 'roundsthen pace'));
+			const cm   = tail.match(/^([\s\S]*?)\s*([A-Za-z_][\w.]*)\s+(\{[\s\S]*)$/);
+			const say  = (cm ? cm[1] : tail).trim();
+			const call = cm ? `${cm[2]} ${cm[3]}` : 'file_list {"path":"."}';
+			if (rounds >= n) {
+				if (then === 'stall') return { text: 'Stalled, and then the rest.', stallMs: numArg(say, 30000, 'roundsthen stall') };
+				return { text: say || `Called ${rounds} time(s); done.`, delayMs: pace };
+			}
+			const { name, args } = splitCall(call);
+			const cid = nextCallId();
+			const named = JSON.parse(JSON.stringify(args).split('{n}').join(String(rounds)).split('{c}').join(cid));
+			return { calls: [toolCall(cid, name, named)], delayMs: pace };
+		}
+
+		// A SLOW STREAM THAT IS ALIVE THROUGHOUT (U3a W0): <bytes> bytes of content every <ms>
+		// for <total_ms>, then the reply. The opposite of `@stall`: a liveness rule that fires
+		// on this has mistaken slow for dead.
+		case 'trickle': {
+			const parts = d.rest.split(/\s+/);
+			const head  = parts[0] || '';
+			const slash = head.indexOf('/');
+			const bytes = Math.max(1, numArg(slash === -1 ? head : head.slice(0, slash), 1, 'trickle'));
+			const ms    = Math.max(1, numArg(slash === -1 ? '' : head.slice(slash + 1), 1000, 'trickle pace'));
+			const total = Math.max(0, numArg(parts[1] || '', 10000, 'trickle total'));
+			return { text: 'Trickled, and done.', trickle: { bytes, ms, total } };
+		}
 
 		case 'tool': {
 			if (rounds > 0) return { text: 'Tool done.' };
@@ -1059,6 +1151,8 @@ const sendJson = (res, obj, code = 200) => {
 	res.end(body);
 };
 
+const DEFAULT_USAGE = { prompt_tokens: 42, completion_tokens: 17, total_tokens: 59 };
+
 const completion = (model, { text, calls, usage }) => ({
 	id: 'chatcmpl-mock',
 	object: 'chat.completion',
@@ -1075,7 +1169,7 @@ const completion = (model, { text, calls, usage }) => ({
 			: { role: 'assistant', content: text },
 		finish_reason: calls ? 'tool_calls' : 'stop',
 	}],
-	usage: usage || { prompt_tokens: 42, completion_tokens: 17, total_tokens: 59 },
+	usage: usage || DEFAULT_USAGE,
 });
 
 // Stream the same turn as SSE deltas.  Tool calls stream as fragments of their
@@ -1095,6 +1189,33 @@ const stream = async (res, model, p) => {
 	});
 
 	send(frame({ role: 'assistant', content: '' }));
+
+	// ONE CHUNK, THEN NOTHING: the reader has a stream that has begun and has gone quiet. A
+	// client that aborts is seen here as a closed socket, which ends the wait at once.
+	if (p.stallMs) {
+		if (!p.bare) send(frame({ content: 'Stalling ' }));
+		const until = Date.now() + p.stallMs;
+		while (Date.now() < until) {
+			if (res.writableEnded || res.destroyed) return;
+			await sleep(100);
+		}
+	}
+
+	// REAL CONTENT, A LITTLE AT A TIME (`@trickle`): every tick is a content delta, so the
+	// stream is never quiet for longer than the pace. A closed socket ends it at once.
+	if (p.trickle) {
+		const { bytes, ms, total } = p.trickle;
+		const until = Date.now() + total;
+		let k = 0;
+		while (Date.now() < until) {
+			if (res.writableEnded || res.destroyed) return;
+			let piece = '';
+			for (let i = 0; i < bytes; i++) piece += 'abcdefghijklmnopqrstuvwxyz'[(k++) % 26];
+			send(frame({ content: piece }));
+			await sleep(ms);
+		}
+		send(frame({ content: ' ' }));
+	}
 
 	// The working first, word by word, with `content` empty throughout -- which is
 	// exactly what a real provider sends and exactly what used to reach the page as
@@ -1171,7 +1292,7 @@ const stream = async (res, model, p) => {
 	}
 
 	send({ id: 'chatcmpl-mock', object: 'chat.completion.chunk', model, choices: [],
-		usage: p.usage || { prompt_tokens: 42, completion_tokens: 17, total_tokens: 59 } });
+		usage: p.usage || DEFAULT_USAGE });
 	res.write('data: [DONE]\n\n');
 	res.end();
 };
@@ -1181,6 +1302,14 @@ const stream = async (res, model, p) => {
 // carried is already in the log by name.
 const toolSchemas = {};
 let toolsAt = null;
+
+// THE MOCK'S OWN PACING, for a check that times a delayed reply (`@slow`). Each delayed
+// request leaves `{ at, first, asked }` here: when it arrived, when its first byte went
+// out, and the user's last words, newest last and the last 64 kept. A page-clock window
+// round the nominal delay goes red whenever the machine is loaded, because the timer and
+// the hops either side of it stretch; the mock's own clock says what the reply really
+// did, so dev/verify_turnfacts.mjs measures against this and not against `@slow`'s figure.
+const paced = [];
 
 const server = http.createServer((req, res) => {
 	if (req.method === 'OPTIONS') { cors(res); res.writeHead(204); return res.end(); }
@@ -1209,6 +1338,10 @@ const server = http.createServer((req, res) => {
 	// schema set is tens of KB and rides every request), but dev/rig/toolsmoke.mjs needs
 	// each tool's `required` to build a valid call, and reading them off the wire is the
 	// only list that cannot drift from what the bridge actually registers.
+	if (req.method === 'GET' && req.url.startsWith('/__paced')) {
+		return sendJson(res, { paced });
+	}
+
 	if (req.method === 'GET' && req.url.startsWith('/__tools')) {
 		return sendJson(res, { at: toolsAt, tools: Object.values(toolSchemas) });
 	}
@@ -1244,6 +1377,12 @@ const server = http.createServer((req, res) => {
 		// verifier reads it back to say which leg carried one.
 		const images  = imageCount(messages);
 		const refused = images > 0 && isBlindModel(payload.model);
+		// Planned BEFORE it is logged, so the row can say what usage it was answered with; a
+		// directive that cannot be read is still logged first and refused after.
+		let p = null, perr = null;
+		if (!refused) {
+			try { p = plan(messages, payload.tools); } catch (e) { perr = e; }
+		}
 		log({
 			at:        new Date().toISOString(),
 			// WHICH RIG DEVICE ASKED, stamped by its shaper (dev/rig/net/shaper.mjs).
@@ -1266,6 +1405,7 @@ const server = http.createServer((req, res) => {
 			auth:      !!(req.headers.authorization),
 			images,		// picture parts in this request, either dialect
 			...(refused ? { refusedImages: true } : {}),
+			...(p && !p.httpError ? { answered: p.usage || DEFAULT_USAGE } : {}),
 			messages,	// the whole transcript, so a test can assert what was sent
 		});
 
@@ -1291,10 +1431,8 @@ const server = http.createServer((req, res) => {
 		// world.sh keeps in the world's `mock.out`, and as a 400 that fails the turn.
 		// The old behaviour -- substitute the default and carry on -- is what made
 		// `@slow 9000 A-ANSWER` a two-second delay for weeks.
-		let p;
-		try {
-			p = plan(messages, payload.tools);
-		} catch (e) {
+		if (perr) {
+			const e = perr;
 			if (e instanceof DirectiveError) {
 				console.error(`mockllm: REFUSED a directive it could not read -- ${e.message}`);
 				return sendJson(res, { error: {
@@ -1308,7 +1446,14 @@ const server = http.createServer((req, res) => {
 		if (p.httpError) {
 			return sendJson(res, { error: { message: 'mock: as requested' } }, p.httpError);
 		}
-		if (p.delayMs) await sleep(p.delayMs);
+		if (p.delayMs) {
+			const at = Date.now();
+			await sleep(p.delayMs);
+			paced.push({ at, first: Date.now(), asked: String(lastUser(messages) || '').slice(0, 200) });
+			if (paced.length > 64) paced.shift();
+		}
+		// `@trickle` without streaming has nothing to trickle: it answers once its time is up.
+		if (p.trickle && !payload.stream) await sleep(p.trickle.total);
 
 		if (payload.stream) return stream(res, payload.model || 'mock/fast', p);
 		return sendJson(res, completion(payload.model || 'mock/fast', p));

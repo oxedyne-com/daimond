@@ -445,9 +445,29 @@ pub fn install_path(name: &str) -> String {
 ///
 /// The same rule [`command_paths`] applies, kept as one predicate so the resolver and the
 /// installer cannot come to disagree about what a skill may be called.  Bounded in length as
-/// well, because a name is a file name and the page draws it in a menu.
-fn name_ok(name: &str) -> bool {
+/// well, because a name is a file name and the page draws it in a menu, and never one of
+/// [`NOT_SKILLS`], so the index, the installer and the fenced read agree on what is a skill.
+pub(crate) fn name_ok(name: &str) -> bool {
     !name.is_empty() && name.len() <= 48 && name.chars().all(is_ident)
+        && !NOT_SKILLS.iter().any(|n| n.eq_ignore_ascii_case(name))
+}
+
+/// File names a skills folder may hold that are about the folder and not a skill: never offered,
+/// installed, listed as installed or granted to a fenced read (WALK check D1).  A `README.md`
+/// is the one a person actually keeps there; the rest are its usual company.
+const NOT_SKILLS: &[&str] = &["README", "LICENSE", "LICENCE", "CHANGELOG", "CONTRIBUTING",
+    "NOTICE", "SKILL"];
+
+/// Is `file`, a name directly inside the skills directory, a flat skill's declaration -- the
+/// `<name>.md` [`install_path`] writes, for a name [`name_ok`] allows?
+///
+/// # Arguments
+/// * `file` - The entry's own name, with no folder.
+pub(crate) fn is_flat_declaration(file: &str) -> bool {
+    match file.strip_suffix(".md") {
+        Some(stem) => name_ok(stem),
+        None       => false,
+    }
 }
 
 /// What a draft file must carry before it is worth offering to install, or `None` when it is.
@@ -798,6 +818,11 @@ pub fn list_skills(ws: &Workspace)
             let stem = p.file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
+            // A `README.md` is about the folder, and a name no `/name` could reach is no skill:
+            // the index names what the installer could have written, and nothing more.
+            if !name_ok(&stem) {
+                continue;
+            }
             // Skip files we cannot read as UTF-8 text.
             let text = match std::fs::read_to_string(&p) {
                 Ok(t)  => t,

@@ -30,6 +30,7 @@ use oxedyne_fe2o3_text::base64;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
+pub use crate::engine::host::types::net::RawPage;
 
 
 #[wasm_bindgen]
@@ -183,12 +184,6 @@ pub async fn open(url: &str, owner: &str, turn: &str) -> Outcome<String> {
 pub async fn fetch(url: &str) -> Outcome<String> {
     let d = res!(driver());
     settle(d.fetch(url, false)).await
-}
-
-/// The bytes of a raw fetch, and the content type the site sent them under.
-pub struct RawPage {
-    pub bytes:        Vec<u8>,
-    pub content_type: String,
 }
 
 /// Fetch `url` and hand back the RAW bytes, base64-decoded from the gateway's reply.
@@ -562,8 +557,10 @@ async fn egress_ask_raw(turn: &str, tool: &str, url: &str, detail: &str, alone: 
         Err(_) => return None,
     };
     // The contract says a Promise; a value returned outright is read anyway rather than refused
-    // on a technicality, since it is still an answer.  `settle_js` reads both.
-    match crate::wasm::settle_js(ret).await {
+    // on a technicality, since it is still an answer.  `settle_js` reads both.  A person is
+    // answering, so the wait beats the call's own deadline while it is open (U3a LV2).
+    match crate::wasm::held_by_person("a consent ask",
+        crate::wasm::settle_js(ret)).await {
         Ok(v)  => v.as_string(),
         Err(_) => None,
     }

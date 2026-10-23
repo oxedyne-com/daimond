@@ -21,7 +21,8 @@
 //! capped at [`DAY_LINE_CAP`] bytes (a door that compaction never reaches: a turn line is at most
 //! about 1.2 KiB and a day holds what one device can run in a day).
 //!
-//! Pure: the OPFS edge is in [`crate::wasm::diamond`], so this is tested natively.
+//! Pure: the store edge is in [`crate::store::diamond`] (over `HostStore`), so this is tested
+//! natively.
 
 use crate::llm::{extract_json_number, extract_json_string, extract_json_string_array, json_escape};
 
@@ -730,10 +731,10 @@ mod tests {
 		assert!(prompt_from(&[], NOW).is_empty());
 	}
 
-	/// The body of the wasm function `sig` names, read from the source: the OPFS edge cannot run
-	/// natively, so its shape is what these arms check.
+	/// The body of the store function `sig` names, read from the source ([`crate::store::diamond`],
+	/// the store on both hosts): its shape is what these arms check.
 	fn wasm_body(sig: &str) -> &'static str {
-		let src = include_str!("wasm/diamond.rs");
+		let src = include_str!("store/diamond.rs");
 		let at = src.find(sig).unwrap_or(src.len());
 		let body = &src[at..];
 		let end = body.find("\n}\n").unwrap_or(body.len());
@@ -756,7 +757,7 @@ mod tests {
 	fn arm_a_an_activity_append_stamps_the_diamond_under_its_hold() {
 		let body = wasm_body("pub async fn activity_append(");
 		let hold = place(body, "hold_versions(id)");
-		let write = place(body, "opfs::write_file");
+		let write = place(body, "own::write_file");
 		let stamp = place(body, "touch(id)");
 		assert!(hold < write && write < stamp && stamp != usize::MAX,
 			"activity_append writes then stamps, both under the hold: {}", body);
@@ -779,7 +780,7 @@ mod tests {
 		assert_eq!(file_rel("B"), j.writes[0].0);
 		assert_eq!(3, parse(&j.writes[0].1).len(), "{}", j.writes[0].1);
 		// And the import folds those lines into the answer the caller stamps on.
-		let body = wasm_body("pub async fn import_diamond(");
+		let body = wasm_body("pub async fn import_diamond_pack(");
 		assert!(body.contains("activity::join_plan") && body.contains("counts.here += "),
 			"import_diamond folds the activity join into its counts: {}", body);
 	}
@@ -797,7 +798,7 @@ mod tests {
 		// Nothing new either side: nothing written, nothing to stamp.
 		let both = vec![(file_rel("A"), mine), (file_rel("B"), theirs)];
 		assert_eq!(Join::default(), joined(join_plan(&both, &[], &both, NOW)));
-		let body = wasm_body("pub async fn union_logs_from(");
+		let body = wasm_body("pub async fn union_logs_from_pack(");
 		assert!(body.contains("activity::join_plan") && body.contains("counts.here += "),
 			"union_logs_from joins activity files and counts them: {}", body);
 	}
@@ -814,7 +815,7 @@ mod tests {
 		assert_eq!(OnReplace::Delete,	on_replace("crystal.json"));
 		let body = wasm_body("async fn delete_except_kept(");
 		assert!(body.contains("on_replace("), "the replace's delete weighs every path: {}", body);
-		let imp = wasm_body("pub async fn import_diamond(");
+		let imp = wasm_body("pub async fn import_diamond_pack(");
 		assert!(imp.contains("delete_except_kept(") && !imp.contains("delete_except_versions("),
 			"import_diamond deletes through the keep list: {}", imp);
 	}
@@ -826,7 +827,7 @@ mod tests {
 		let arriving = vec![(file_rel("B"), theirs)];
 		assert_eq!(Plan::Held(vec![file_rel("B")]),
 			join_plan(&[], &[file_rel("B")], &arriving, NOW));
-		let body = wasm_body("pub async fn import_diamond(");
+		let body = wasm_body("pub async fn import_diamond_pack(");
 		let plan = place(body, "activity::join_plan");
 		assert!(plan < place(body, "refile_own_versions(") && plan < place(body, "delete_except_kept("),
 			"the activity plan is made before anything is refiled or deleted: {}", body);
@@ -889,11 +890,11 @@ mod tests {
 
 	/// C2 r2 F5: the append's read-modify-write is under the Diamond's version hold, the lock
 	/// `import_diamond` holds across its read, delete and rewrite of the activity files, so a pull
-	/// landing in the middle cannot drop the turn's line. The OPFS edge is wasm, so this reads the
+	/// landing in the middle cannot drop the turn's line. The store edge runs on both hosts, so this reads the
 	/// source: the append takes the hold before it reads.
 	#[test]
 	fn the_append_is_under_the_version_hold() {
-		let src = include_str!("wasm/diamond.rs");
+		let src = include_str!("store/diamond.rs");
 		let at = src.find("pub async fn activity_append(").unwrap_or(src.len());
 		let body = &src[at..];
 		let end = body.find("\n}\n").unwrap_or(body.len());

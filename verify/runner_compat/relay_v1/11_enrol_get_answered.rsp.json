@@ -1,0 +1,1 @@
+{"ok":true,"nonce":"ZW5yb2wtbm9uY2UtLTAwMg","kind":"enrol","install":"IiIiIiIiIiIiIiIiIiIiIg","body":"{\"label\":\"fixture\"}","answered":true,"alarmed":false,"expires_in":570,"answer":"{\"cred_id\":\"BAUG\",\"alg\":-8,\"spki\":\"AAECAwQFBgcICQ\",\"authData\":\"YXV0aC1kYXRh\",\"clientData\":\"Y2xpZW50LWRhdGE\",\"sig\":\"c2lnbmF0dXJl\"}"}

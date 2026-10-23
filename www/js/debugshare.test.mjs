@@ -1753,7 +1753,8 @@ async function main() {
 		// is the turn, and is what a timer steers a Diamond nobody is looking at through.
 		// Read the door and every check below passes on an empty body, which is the
 		// failure this whole section exists to catch.
-		const steer = src.slice(src.indexOf('async function runSteer('));
+		// The body is `runSteerHeld`; `runSteer` is the wrapper that releases its client's claim.
+		const steer = src.slice(src.indexOf('async function runSteerHeld('));
 		const body  = steer.slice(0, steer.indexOf('\n\tasync function ', 1));
 		check('the turn body is the one that runs, not the door', body.length > 10000);
 		for (const kind of ['turn.start', 'round', 'tool', 'ended', 'fold', 'turn.end']) {

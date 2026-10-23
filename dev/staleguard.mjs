@@ -12,9 +12,9 @@
 // by a hardcoded path and taken on trust:
 //
 //   * `exec::tests::the_shipping_launcher_fences_a_real_command` execs
-//     `hand/target/debug/daimond-hand`, which `cargo test` never builds. With
+//     `kimberlite/target/debug/kimberlite`, which `cargo test` never builds. With
 //     that binary MOVED OFF DISK the suite still reported `193 passed`.
-//   * `dev/verify_ptyedge.mjs`, the same shape against `hand/target/release`.
+//   * `dev/verify_ptyedge.mjs`, the same shape against `kimberlite/target/release`.
 //   * `dev/verify_kitfence.mjs` records the live version of it: with a
 //     `CARGO_TARGET_DIR` inherited from the shell, cargo wrote the new binary
 //     somewhere else, the test ran the old one, and a security test passed
@@ -95,7 +95,7 @@ import { sha256, posix, bundleHash } from '../verify/lib.mjs';
 ///
 /// Make's escaping, which is what the format is: a backslash makes the character
 /// after it ordinary, so a path containing a space survives being split on
-/// whitespace. The same reading as `dep_sources` in `hand/src/exec.rs`.
+/// whitespace. The same reading as `dep_sources` in `kimberlite/src/exec.rs`.
 export function depSources(list) {
 	const out = [];
 	let cur = '', esc = false;

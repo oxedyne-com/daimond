@@ -24,6 +24,7 @@ use oxedyne_fe2o3_text::base64;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
+pub use crate::engine::host::types::ui::Read;
 
 
 #[wasm_bindgen]
@@ -55,18 +56,6 @@ extern "C" {
     fn tool_sender(this: &Panel, req: &str) -> Result<JsValue, JsValue>;
 }
 
-
-/// What came back from asking the panel for one message's bytes.
-///
-/// A refusal is an ANSWER and not an error, exactly as it is for the Social panel: no such
-/// mailbox, no such message, nothing synced -- each is something the model can act on and
-/// must read in its own language, so it comes back as a sentence to relay rather than as an
-/// `Err` the dispatcher would dress in a failure line.
-#[derive(Clone, Debug)]
-pub enum Read {
-    Bytes(Vec<u8>),
-    Refused(String),
-}
 
 /// Reach the driver object on `window`, or refuse in the model's language.
 fn panel() -> Outcome<Panel> {

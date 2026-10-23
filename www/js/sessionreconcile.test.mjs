@@ -35,7 +35,7 @@ const J = JSON.stringify;
 
 // ── The engine stand-in and the lifted code ──────────────────────────────
 class Engine {
-	constructor() { this.msgs = []; }
+	constructor() { this.msgs = []; this.busy = false; }
 	restore(hist) {
 		this.msgs = (hist || []).filter((m) => m && m.content && (m.role === 'user' || m.role === 'assistant'))
 			.map((m) => (m.role === 'user' ? { role: 'user', content: m.content, pre: m.pre || '' } : { role: 'assistant', content: m.content }));
@@ -47,8 +47,7 @@ class Engine {
 	}
 	export_session() { return this.msgs.map((x) => Object.assign({}, x)); }
 }
-const heldBy = new WeakMap();
-const stub = { diag(a, b) { if (process.env.DIAG) console.log('diag', a, b); }, dedupeSession: (m) => m, _engineHeld: heldBy };
+const stub = { diag(a, b) { if (process.env.DIAG) console.log('diag', a, b); }, dedupeSession: (m) => m };
 const NAMES = ['seedEngine', 'armEngine', 'reconcileEngine', 'heldRun', 'heldNote', 'tailAfter', 'captureSession'];
 const base = sliceDaimond(makeWindow({}), ['sessionPlan'].concat(NAMES), stub).fns;		// the code as it stands
 const sessionPlan = base.sessionPlan;
@@ -169,9 +168,9 @@ console.log('\nreconcileEngine, one case at a time');
 	c.messages = sortMsgs(c.messages.concat([U('p1', 5, 'peer q'), A('p2', 6, 'peer r')]));
 	c._generating = true; ensure(c);
 	check('a turn is running: the engine is not touched', engineProse(c.app).length === 2, '');
-	c._generating = false; heldBy.set(c.app, [Promise.resolve()]); ensure(c);
-	check('a fold or a wire call holds the engine: it is not touched', engineProse(c.app).length === 2, '');
-	heldBy.delete(c.app); ensure(c);
+	c._generating = false; c.app.busy = true; ensure(c);
+	check('the engine says it is busy (a fold, a turn sent, a steer child): it is not touched', engineProse(c.app).length === 2, '');
+	c.app.busy = false; ensure(c);
 	check('and the next turn start takes it', engineProse(c.app).length === 4, '');
 	const stranger = newChat(); stranger.messages = [U('u1', 1, 'q')];
 	stranger.app = new Engine(); ensure(stranger);

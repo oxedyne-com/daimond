@@ -2,7 +2,8 @@
 //! read at each act and never taken from a caller (HIST-SAFE U2, 2026-10-12).
 
 use crate::marks::{self, DiamondId, Hold, Live, Reach, Record};
-use crate::tools::{self, Bound};
+use crate::engine::worker::brief;
+use crate::tools::Bound;
 use crate::wasm::{diamond, opfs};
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -10,13 +11,9 @@ use oxedyne_fe2o3_core::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
 
 
-/// Why a write or a delete is refused when this device's record cannot be read (lead ruling,
-/// 2026-10-12): FAIL CLOSED.  Locked, unreadable, missing or damaged are all the same answer --
-/// never "nothing is pressed, so carry on", which a cold tab reading an unloaded store would give.
-pub const UNREAD: &str = "This device's record of the folders marked here could not be read -- \
-    the account is locked, or this browser's storage could not be read, or the record is missing \
-    or damaged -- so Daimond will not write or delete anything until it can. Unlock the account \
-    and try again. Nothing was done.";
+/// Why a write or a delete is refused when this device's record cannot be read: one sentence,
+/// shared with the engine's dispatch check.
+pub use crate::marks::UNREAD;
 
 /// Is the identity unlocked?  The record is read only then, as markshere.js reads it: an unlock
 /// reads the wrapped key from this same storage area, which proves the area has loaded.
@@ -110,21 +107,20 @@ pub async fn diamond_reach(id: &DiamondId) -> Outcome<Reach> {
 /// the turn runs stops its writes at the next call rather than at the next turn (QA B F3,
 /// 2026-10-12).  A record that cannot be read is [`UNREAD`]: FAIL CLOSED, in its own sentence.
 pub async fn live_bounds(live: &Live) -> Outcome<Vec<Bound>> {
-    let unread = || err!("{}", UNREAD; Invalid, Input);
-    match live {
-        Live::Diamond(id, kits) => match diamond_reach(id).await {
-            Ok(r)  => {
-                let mut b = tools::diamond_bounds(&id.dir(), &r.places(), &r.read_only);
-                b.extend(tools::toolkit_bounds(kits));
-                Ok(b)
-            },
-            Err(_) => Err(unread()),
-        },
-        Live::Chat(chat, holds) => match chat_reach(chat, holds) {
-            Ok((ws, _)) => Ok(tools::chat_bounds(&tools::chat_scratch(chat), &ws, &[])),
-            Err(_)      => Err(unread()),
-        },
+    match reach(live).await {
+        Ok(r)  => Ok(brief::fence_of(live, &r).0),
+        Err(_) => Err(err!("{}", UNREAD; Invalid, Input)),
     }
+}
+
+/// What `target` reaches on this device now: a Diamond's [`diamond_reach`], a chat's
+/// [`chat_reach`].  Any failure to read is [`UNREAD`], in its own sentence.
+pub async fn reach(target: &Live) -> Outcome<Reach> {
+    let read = match target {
+        Live::Diamond(id, _)    => diamond_reach(id).await,
+        Live::Chat(chat, holds) => chat_reach(chat, holds).map(|(ws, wait)| Reach::of_chat(ws, wait)),
+    };
+    read.map_err(|_| err!("{}", UNREAD; Invalid, Input))
 }
 
 /// Drop this device's press of `owner`'s row `id`, in the act that removes the row (QA B F4).

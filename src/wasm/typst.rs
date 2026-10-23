@@ -150,7 +150,8 @@
 //!   actually holds, so a string of prose beginning with a slash is left alone.
 //!   cetz-plot's `src/lib.typ` is the case that proves this is not optional.
 
-use crate::tools::{FileRoot, ToolContext};
+use crate::engine::host::Host;
+use crate::tools::FileRoot;
 use crate::wasm::{js_str, opfs, refusal};
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -160,6 +161,7 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
+pub use crate::engine::host::types::ui::Reach;
 
 
 #[wasm_bindgen]
@@ -1212,24 +1214,7 @@ async fn packages(srcs: &[Src]) -> Closure {
 
 // ── How far a gather may reach ──────────────────────────────────────────────
 
-/// How far a gather may reach, since it follows paths the call never named.
-///
-/// The tool guard can only check the paths a call NAMES, and a project is a
-/// closure: one path goes in and a hundred files are read.  `file_search` and
-/// `file_glob` have exactly this shape and answer it by re-asking the turn about
-/// every entry they reach, so this re-asks too rather than inventing a second
-/// convention.  Dispatching the model's `typst_compile` at the gatherer without
-/// this would have widened one named read into a walk that could climb out of a
-/// chat's folder by writing `#import "../../elsewhere.typ"` in a source.
-pub enum Reach<'a> {
-    /// Anywhere in the workspace: the page's own Compile button, which is the
-    /// user opening a file they marked in themselves.
-    Workspace,
-    /// Only what this turn may read, and never above its compartment.
-    Turn(&'a ToolContext),
-}
-
-impl<'a> Reach<'a> {
+impl<'a, H: Host> Reach<'a, H> {
 
     /// The deepest directory this gather may not climb above.
     fn floor(&self) -> String {
@@ -1420,7 +1405,7 @@ async fn read_text(root: FileRoot, path: &str) -> Option<String> {
 /// * `reach` - How far this caller may follow the closure.
 /// * `root` - Which filesystem root the workspace path is under.
 /// * `main_rel` - Workspace-relative path of the `.typ` file to compile.
-async fn gather(reach: &Reach<'_>, root: FileRoot, main_rel: &str) -> Outcome<Gathered> {
+async fn gather<H: Host>(reach: &Reach<'_, H>, root: FileRoot, main_rel: &str) -> Outcome<Gathered> {
     let floor = reach.floor();
     let main = match norm(main_rel) {
         Some(m) => m,
@@ -2031,8 +2016,8 @@ pub async fn compile(source: &str) -> Outcome<Vec<u8>> {
 /// * `reach` - How far the closure may be followed, which is the caller's bounds.
 /// * `root` - Which filesystem root the workspace path is under.
 /// * `main_rel` - Workspace-relative path of the `.typ` file to compile.
-pub async fn compile_project(
-    reach:    &Reach<'_>,
+pub async fn compile_project<H: Host>(
+    reach:    &Reach<'_, H>,
     root:     FileRoot,
     main_rel: &str,
 )
@@ -2187,7 +2172,7 @@ impl Want {
 async fn page_gather(path: &str) -> Result<Project, js_sys::Object> {
     // The page's own button is the user acting on a folder they marked in
     // themselves, so it carries the workspace's reach and not a turn's.
-    let reach = Reach::Workspace;
+    let reach: Reach = Reach::Workspace;
     match gather(&reach, FileRoot::Workspace, path).await {
         Ok(Gathered::Ready(p)) => Ok(p),
         Ok(Gathered::Refused { why, remedy }) => {

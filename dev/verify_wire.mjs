@@ -572,8 +572,12 @@ try {
 	// last body the page sent, which after the steer is the steering turn's.
 	const dRaw = await p.evaluate(() => window.__wireRaw || '');
 	const dCompact = dRaw ? JSON.stringify(JSON.parse(dRaw).tools) : '';
-	check(!!dCompact && dRaw.includes(dCompact) && bytes(dCompact) < bytes(compact),
-		'the daimon sent its own, smaller, schema array',
+	// Its OWN array, not the chat's: the daimon holds tools the chat lacks (S1M alertpending
+	// gave it `pending_raise`/`pending_clear`) as the chat holds some it lacks, so its size
+	// against the chat's says nothing; that it is a different array, counted and banded
+	// below, is what matters.
+	check(!!dCompact && dRaw.includes(dCompact) && dCompact !== compact,
+		'the daimon sent its own schema array, not the chat\'s',
 		`${bytes(dCompact)} bytes against the chat's ${bytes(compact)}`);
 	const dSchemaTok = tok(dCompact);
 	check((band(w, 'Tool schemas') || {}).tok === fmtTok(dSchemaTok),

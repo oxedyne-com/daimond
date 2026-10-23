@@ -25,6 +25,9 @@ let src = readFileSync(SRC, 'utf8');
 
 // LIFT the three live lines out of the page (they are one statement in situ).
 const LIFT_ANCHOR = "\t\t\t\tvar _tailText = (run._tail || '').trim();";
+// U3a REP split the assembly by status: the `done` branch is the forge-#16 fallback under test,
+// the other branch (an ending without a verdict) is verify_workerlong's. The lift ends at the
+// line after the if/else, and every miniature run below is `done`.
 const SRC_ANCHOR_END = "\t\t\t\tvar _report = _src.trim();";
 const i = src.indexOf(LIFT_ANCHOR);
 if (i < 0) throw new Error('report assembly drifted: tailText anchor not found');
@@ -32,6 +35,7 @@ const j = src.indexOf(SRC_ANCHOR_END, i);
 if (j < 0) throw new Error('report assembly drifted: report anchor not found');
 
 let LIFTED = src.slice(i, j + SRC_ANCHOR_END.length);
+if (!LIFTED.includes("if (run.status === 'done')")) throw new Error('report assembly drifted: done branch not found');
 if (BREAK === 'wholetext') {
 	// the defect as it shipped: whole-text fallback
 	LIFTED = LIFTED.replace(
@@ -47,6 +51,7 @@ function seg(n) {
 	return s.trim();
 }
 const run = {
+	status: 'done',
 	text: seg(1) + '\n\n' + seg(2) + '\n\n' + seg(3),
 	_tail: '',
 	_segs: [seg(1), seg(2), seg(3)],
@@ -56,7 +61,7 @@ const fn = new Function('run', LIFTED + '\nrun.report = _report;\nreturn run.rep
 const report = fn(run);
 // r578c: the report travels whole -- a 20 kB final answer reaches the parent uncut.
 const big = 'x'.repeat(20 * 1024);
-const whole = fn({ text: '', _tail: big, _segs: [] });
+const whole = fn({ status: 'done', text: '', _tail: big, _segs: [] });
 
 let fails = 0, ran = 0;
 function check(name, cond, detail) {
@@ -75,13 +80,13 @@ check('a 20 kB report reaches the parent whole',
 	whole === big, 'report length ' + whole.length);
 
 // the tail case is unchanged: a run that SPOKE last keeps its tail as before.
-const run2 = { text: seg(1) + '\n\n' + seg(2), _tail: seg(2), _segs: [seg(1), seg(2)] };
+const run2 = { status: 'done', text: seg(1) + '\n\n' + seg(2), _tail: seg(2), _segs: [seg(1), seg(2)] };
 const report2 = fn(run2);
 check('a run that spoke last still reports its spoken tail',
 	report2.startsWith('SEGMENT 2:'), 'report2 head: ' + report2.slice(0, 40));
 
 // a run that never finished a tool call still falls back to run.text.
-const run3 = { text: seg(1), _tail: null, _segs: [] };
+const run3 = { status: 'done', text: seg(1), _tail: null, _segs: [] };
 const report3 = fn(run3);
 check('a run with no completed tool call falls back to run.text',
 	report3.startsWith('SEGMENT 1:'), 'report3 head: ' + report3.slice(0, 40));

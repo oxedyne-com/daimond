@@ -21,12 +21,13 @@
             back; a stranger name lands in `unresolved` so the
             engine can refuse it by name.
 
-     FIX 4  (r578c T) a worker's turn has NO page wall clock: the
-            540s `runTurnCapped` race killed healthy slow workers
-            and cleaned up under a live turn. The engine bounds each
-            round's wait itself; `start` awaits `run_turn` directly.
-            Behaviour is driven in `workertimer.test.mjs`; here the
-            source holds the absence.
+     FIX 4  A hung worker is settled by the engine's liveness bound
+            (`LIVENESS_MS`, twice inside `GATHER_TIMEOUT_S`), which
+            ends the turn `timed_out`; the page awaits `run_turn`
+            with no timer of its own (U3a END).
+            (r578c T) The page reads no engine wall clock either: the
+            540s race killed healthy slow workers and cleaned up
+            under a live turn; `workertimer.test.mjs` drives it.
 
      FIX 5  `dispatch` takes a worker's `provider` from the SAME
             route (`mm`) its `model` already came from, not from the
@@ -244,21 +245,50 @@ function build(name, freeNames, transform) {
 		!SRC.includes('Ask again with a narrower task if the work still matters.'));
 }
 
-// ── FIX 4: no wall clock on a worker's turn (r578c T) ───────────────
+// ── FIX 4: a hung worker is settled by the ENGINE's liveness bound ────
+// U3a END (UNBLOCK-16 F1/F3): the page's own wall-clock race on `run_turn` is gone. It filed
+// a silent worker as `capped` with "no result" and billed before the turn settled; the
+// engine's liveness bound now ends such a turn `TimedOut` (wire `failed`, why `timed_out`),
+// well inside gather's own timeout, so `gather` still gets a real terminal report.
 {
-	const at = SRC.indexOf('start: async function (run) {');
-	const start = SRC.slice(at, SRC.indexOf('\n\t\tstop: function (run) {', at));
+	// `start` is long and holds brace-bearing strings, so it is sliced to the next method at
+	// its indent rather than brace-matched.
+	const at = SRC.indexOf('\t\tstart: async function (run) {');
+	const next = SRC.slice(at + 1).search(/\n\t\t[A-Za-z_]+: (async )?function/);
+	const start = at >= 0 && next > 0 ? SRC.slice(at, at + 1 + next) : '';
+	check('FIX4 Workers.start is found', start.length > 1000, start.length);
+	const calls = start.match(/await run\.app\.run_turn\([^)]*\)/g) || [];
+	check('FIX4 both attempts await run_turn directly, with the worker sink',
+		calls.length === 2 && calls.every((c) => /,\s*sink\)$/.test(c)), calls.join(' | '));
+	check('FIX4 no page timer races the worker\'s turn',
+		!/Promise\.race\(/.test(start), 'Promise.race found in Workers.start');
+	check('FIX4 the worker app gets the liveness limit next to its round limit',
+		/applyRoundLimit\(run\.app\);\s*(\/\/[^\n]*\n\s*)*applyLiveness\(run\.app\);/.test(start));
+	check('FIX4 a timed-out worker is terminal for gather',
+		methodSource('isTerminal').body.includes("'timed_out'"));
+	check('FIX4 the post-run_turn status guard no longer special-cases a page-made `capped`',
+		SRC.includes("if (run.status !== 'stopped' && run.status !== 'paused') {\n\t\t\t\t\trun.status = run.ended"));
+	// r578c T: no wall clock of the page's, and none read from the engine.
 	check('FIX4 no `runTurnCapped` race is left in the page', !SRC.includes('runTurnCapped'));
 	check('FIX4 the page no longer reads an engine wall clock', !SRC.includes('worker_wall_clock_ms'));
 	check('FIX4 `start` sets no timer of its own', !/setTimeout\s*\(/.test(start));
-	check('FIX4 `start` awaits the turn directly',
-		start.includes('await run.app.run_turn('));
-	let compactRs = null;
-	try { compactRs = readFileSync(join(HERE, '..', '..', 'src', 'compact.rs'), 'utf8'); }
-	catch (e) { /* src/ not shipped alongside www/js in every checkout */ }
-	if (compactRs != null) {
-		check('FIX4 the engine constant `WORKER_WALL_CLOCK_MS` is gone',
-			!compactRs.includes('WORKER_WALL_CLOCK_MS'));
+	let rustMs = null, rustS = null, wallGone = null;
+	try {
+		const compactRs = readFileSync(join(HERE, '..', '..', 'src', 'compact.rs'), 'utf8');
+		rustMs = Number((/LIVENESS_MS:\s*u64\s*=\s*([\d_]+)/.exec(compactRs) || [])[1]?.replace(/_/g, ''));
+		rustS = Number((/GATHER_TIMEOUT_S:\s*u64\s*=\s*(\d+)/.exec(compactRs) || [])[1]);
+		wallGone = !compactRs.includes('WORKER_WALL_CLOCK_MS');
+	} catch (e) { /* src/ not shipped alongside www/js in every checkout */ }
+	if (wallGone != null) {
+		check('FIX4 the engine constant `WORKER_WALL_CLOCK_MS` is gone', wallGone);
+	}
+	if (rustS != null) {
+		check('FIX4 the engine\'s liveness constant parses to a number', Number.isFinite(rustMs), rustMs);
+		// Two expiries end the turn at the latest (one stall retry).  The bound keeps a whole
+		// third N of margin past that, so a stalled worker is terminal, and its ending booked,
+		// well before gather gives up on it.
+		check('FIX4 three liveness expiries fit inside gather\'s own timeout',
+			3 * rustMs < rustS * 1000, `3 x ${rustMs}ms vs ${rustS}s`);
 	}
 	check('FIX4 `isTerminal` still treats capped as terminal',
 		methodSource('isTerminal').body.includes("'capped'"));

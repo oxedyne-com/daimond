@@ -1,0 +1,1 @@
+{"ok":false,"error":"'challenge' is required for a release: its manifest's challenge, 32 bytes of base64url."}

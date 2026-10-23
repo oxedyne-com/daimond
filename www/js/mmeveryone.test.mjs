@@ -58,7 +58,7 @@ const chat = (id, name, p, m) => ({ id, name, provider: p || '', model: m || '',
 
 // ── One device: the real models.js and the page's reader over one storage ───
 const PAGE = ['readJson', 'diamondModels', 'setDiamondModel', 'modelPicksOf', 'diamondPicks', 'chatPicks',
-	'summarisingPick', 'setFoldPick', 'touchChatModel', 'chatMatOf', 'chatDisplayName',
+	'summarisingPick', 'setFoldPick', 'everyDiamondClient', 'touchChatModel', 'chatMatOf', 'chatDisplayName',
 	'everyoneTargets', 'clearPick', 'setPick', 'settlePicks'];
 const PAGE_VARS = ['DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF', 'DIAMOND_EFFORT_HALF', '_picksDirty'];
 const MKEY = 'daimond-diamond-models', SKEY = 'daimond-models-v2', CKEY = 'daimond-byok';
@@ -104,7 +104,7 @@ async function device(o) {
 	const L = lift(source('daimond.js'), PAGE, PAGE_VARS);
 	const env = {
 		window: win, localStorage, DaimondStamp, DaimondModels: M, Notes: undefined, cfg, CFG_KEY: CKEY,
-		chats, diamonds, _diamondApps: {}, _diamondAppProvider: new Map(), applyFoldSettings: () => {},
+		chats, diamonds, _diamondApps: {}, _daimonApps: new Map(), _diamondAppProvider: new Map(), applyFoldSettings: () => {},
 		persistChats: () => { env.persisted++; localStorage.setItem('chats', JSON.stringify(chats)); }, persisted: 0,
 		tOr: (k, d) => d, chatOpening: () => '', diag: () => {},
 	};

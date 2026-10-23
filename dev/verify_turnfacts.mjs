@@ -15,7 +15,14 @@
 // the daimon dispatched -- has its own event sink and its own call site, and is checked on its
 // own, with the same three turns:
 //
-//   slow  `@slow 800`: ft lands within ±150 ms of the mock's delay, and nothing else is written.
+//   slow  `@slow 800`: ft is the wait the MOCK really gave, by the mock's own clock, and nothing
+//         else is written. ft can be no less than the mock's arrival-to-first-byte (the send is
+//         before the arrival, the first event after the first byte), and no more than 150 ms past
+//         the first byte, counted from the moment this script pressed Send (a worker, sent inside
+//         the engine after its daimon's spawn_agent came back, from that daimon request's arrival
+//         at the mock). A window round the nominal 800 went red at a load
+//         of 21-26 (ft 990-1029) with nothing wrong: the timer and the hops stretch, and the
+//         mock's clock sees exactly how far.
 //   tool  `@tool file_read` on a path that is not there: tc 1, te 1 (the outcome is `failed`).
 //   long  `@long 6` at 120 ms a chunk, with `window.__daimondStallMs` lowered to 100: sg >= 1.
 //
@@ -37,7 +44,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, connectMock, chat, newChat, shot } from './harness.mjs';
+import { open, signInAs, connectMock, chat, newChat, shot, MOCK, mockLog } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -52,7 +59,7 @@ const check = (name, pass, detail) => {
 const J = (x) => JSON.stringify(x);
 
 const SLOW   = 800;			// the mock's delay before its first word
-const BAND   = 150;			// ft must land within this of SLOW, never widened
+const BAND   = 150;			// ft may run at most this past the mock's first byte, never widened
 const STALL  = 100;			// the lowered stall threshold; `@long` paces 120 ms a chunk
 const BEFORE = 'ed595e3f';		// the tree before MC1
 
@@ -102,6 +109,21 @@ function served() {
 	return out;
 }
 
+// The mock's own pacing rows (dev/mockllm.mjs `/__paced`), and the newest for a slow reply
+// that arrived at or after `since`.
+const SLOP = 10;		// ms: the page's and this script's Date.now are one clock, read at ms grain
+const MOCK_ORIGIN = new URL(MOCK).origin;
+const pacedRows = async () => {
+	try {
+		const r = await fetch(MOCK_ORIGIN + '/__paced');
+		return r.ok ? ((await r.json()).paced || []) : [];
+	} catch (e) { return []; }
+};
+const paceOf = async (since, from) => {
+	const row = (await pacedRows()).filter((x) => x.at >= since - SLOP && /@slow/.test(x.asked)).pop();
+	return row ? { at: row.at, first: row.first, from: from === undefined ? row.at : from } : null;
+};
+
 const ledger = (page) => page.evaluate(() => {
 	try { return JSON.parse(localStorage.getItem('daimond-ledger') || '[]'); } catch (e) { return []; }
 });
@@ -115,14 +137,19 @@ const until = async (page, fn, arg, ms, step = 250) => {
 };
 
 /// The checks every path shares, on its three entries.
-function checkPath(tag, role, slow, tool, long) {
+function checkPath(tag, role, slow, tool, long, pace) {
 	check(`${tag}: each turn reached the ledger`, !!slow && !!tool && !!long,
 		J({ slow: !!slow, tool: !!tool, long: !!long }));
 	const ro = [slow, tool, long].map((e) => e && e.ro);
 	check(`${tag}: ro is ${role} on every entry`, ro.every((r) => r === role), J(ro));
 	const ft = slow && slow.ft;
-	check(`${tag}: ft is the wait for the first word, ${SLOW} ± ${BAND} ms`,
-		typeof ft === 'number' && Math.abs(ft - SLOW) <= BAND, `ft = ${ft}`);
+	// `pace`: the mock's row for this slow reply, `{ at, first }` on its clock, and `from`, the
+	// earliest the send can have been on the same machine's clock.
+	const waited = pace ? pace.first - pace.at : NaN;
+	const ceil   = pace ? pace.first - pace.from + BAND : NaN;
+	check(`${tag}: ft is the wait for the first word, the mock's own ${waited} ms up to ${BAND} ms past its first byte`,
+		typeof ft === 'number' && !!pace && waited >= SLOW && ft >= waited - SLOP && ft <= ceil,
+		`ft = ${ft}, mock waited ${waited}, ceiling ${ceil}`);
 	check(`${tag}: a quiet turn writes no tc, te, sg or im (zero is absent)`,
 		!!slow && !('tc' in slow) && !('te' in slow) && !('sg' in slow) && !('im' in slow),
 		slow ? J(slow) : '(no entry)');
@@ -164,12 +191,14 @@ try {
 	};
 	// A first turn to stand the engine up, so `slow` measures a turn and not a cold start.
 	await chatTurn('@text warm');
+	const cFrom = Date.now();
 	const cSlow = await chatTurn(`@slow ${SLOW} hello`);
+	const cPace = await paceOf(cFrom, cFrom);
 	const cTool = await chatTurn(TOOL);
 	const cLong = await chatTurn('@long 6');
 	console.log('  chat entries:', J([cSlow, cTool, cLong]));
 	// `te` counts the engine's `failed` only, never `refused`, so te 1 is that outcome.
-	checkPath('C', 'c', cSlow, cTool, cLong);
+	checkPath('C', 'c', cSlow, cTool, cLong, cPace);
 
 	// ══ D. A Diamond's daimon, and W. the workers it dispatches ═══════════
 	await page.click('#new-diamond-btn');
@@ -203,11 +232,13 @@ try {
 		|| t.led.filter((e) => !e.ro).pop() || null;
 
 	await daimonTurn('@text warm');
+	const dFrom = Date.now();
 	const dSlow = await daimonTurn(`@slow ${SLOW} hello`);
+	const dPace = await paceOf(dFrom, dFrom);
 	const dTool = await daimonTurn(TOOL);
 	const dLong = await daimonTurn('@long 6');
 	console.log('  daimon entries:', J([daimonOf(dSlow), daimonOf(dTool), daimonOf(dLong)]));
-	checkPath('D', 'd', daimonOf(dSlow), daimonOf(dTool), daimonOf(dLong));
+	checkPath('D', 'd', daimonOf(dSlow), daimonOf(dTool), daimonOf(dLong), dPace);
 	const pt = dSlow.ans ? dSlow.ans.prod[0].t : '';
 	const de = daimonOf(dSlow);
 	check("D: the daimon's entry is keyed on its answer's prod.t",
@@ -220,7 +251,18 @@ try {
 		+ [['wslow', `@slow ${SLOW} hello`], ['wtool', TOOL], ['wlong', '@long 6']]
 			.map(([name, task]) => 'spawn_agent ' + J({ name, task })).join(' ;; ')
 		+ ' ;; gather ' + J({ names: ['wslow', 'wtool', 'wlong'], timeout_s: 60 });
+	const wFrom = Date.now();
 	const w = await daimonTurn(steer, 120000);
+	// A worker is sent inside the engine, once its daimon's `spawn_agent` has come back, so the
+	// earliest its send can be is the arrival at the mock of the daimon request that answered
+	// with the spawn (the last request offering `spawn_agent` before the worker's own). The
+	// engine's hops between the two are real time in ft at a fleet load, and are not the mock's.
+	const wPace = await paceOf(wFrom);
+	if (wPace) {
+		const spawnAt = mockLog().filter((r) => Array.isArray(r.tools) && r.tools.includes('spawn_agent'))
+			.map((r) => Date.parse(r.at)).filter((t) => t >= wFrom - SLOP && t <= wPace.at).pop();
+		wPace.from = spawnAt === undefined ? wPace.at : spawnAt;
+	}
 	const wl = w.led.filter((e) => e.ro === 'w' || (e.tid && /^w-/.test(e.tid)));
 	console.log('  worker entries:', J(wl));
 	// Which entry is which, by the run's own facts: the tool one ran a tool, the long one stalled.
@@ -228,7 +270,7 @@ try {
 	const wLong = wl.find((e) => e !== wTool && e.sg >= 1) || null;
 	const wSlow = wl.find((e) => e !== wTool && e !== wLong) || null;
 	check('W: three workers, three entries', wl.length === 3, `${wl.length} worker entries`);
-	checkPath('W', 'w', wSlow, wTool, wLong);
+	checkPath('W', 'w', wSlow, wTool, wLong, wPace);
 
 	// ══ R. The worker join: an entry under the run id its report's handle names ══
 	// A report the daimon gathers in-turn is folded into its answer and carries no record of

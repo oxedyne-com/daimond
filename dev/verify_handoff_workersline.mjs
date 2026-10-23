@@ -14,6 +14,8 @@
 //   FINAL  — the last worker line A drew before the answer merged has every worker
 //            finished, so the line converges rather than freezing on "running".
 //   HOSTED — the workers ran on B and no copy ran on A.
+//   TIMEDOUT — a worker B's liveness bound ends `timed_out` stays on A's line, drawn with
+//            the timed-out word (U3a END, rulings §1).
 //
 // A's worker line is recorded by a MutationObserver on A's page, so a state shown for
 // a few hundred milliseconds between the gather and the merge is not missed by a poll.
@@ -72,6 +74,13 @@ const runsOn = (pg) => pg.evaluate(() => (window.DaimondWorkers
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) '
 	+ 'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
 
+/// A's routing diagnostics, printed when the turn did not reach B.
+async function dumpDiag(s, what) {
+	const rows = await s.page.evaluate(() => (window.DaimondDiag ? DaimondDiag.rows() : [])
+		.filter((r) => /dispatch|seat|hand|elect|local|errand/i.test(r.tag)).slice(-16)).catch(() => []);
+	for (const r of rows) console.log('  ..    diag ' + what + ': ' + r.tag + ' ' + String(r.data || '').slice(0, 280));
+}
+
 let a, b;
 try {
 	// ── A: the phone that asks ────────────────────────────────────────────
@@ -79,6 +88,7 @@ try {
 	await a.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer
 		&& window.DaimondGateway && DaimondGateway.state().authed,
 		null, { timeout: 20000 }).catch(() => {});
+	await a.page.evaluate(() => window.DaimondDiag && DaimondDiag.set(true));
 	const pro = await makePagePro(a.page, new URL('../gateway', import.meta.url).pathname, GW_URL);
 	check('A holds Pro', pro.pro === true, JSON.stringify(pro));
 	await connectMock(a);
@@ -119,6 +129,27 @@ try {
 	const aSeesB = await a.page.evaluate((self) =>
 		(window.DaimondPresence.awake(self, Date.now()) || []).length, idA);
 	check('A sees B as an awake peer it can hand a turn to', aSeesB >= 1, 'awake peers: ' + aSeesB);
+	// GENUINE, not just beating: the election hands a turn only to a peer whose beat says it
+	// is servicing errands (`recGenuine`). The bare `beatPresence` calls above report
+	// `servicing: false`, so until B's own next beat lands A's election answers `no-runner`
+	// and the turn runs on the phone. Wait for that beat, refreshing A's view, as
+	// `verify_handoff_first` waits for its switch to read the runner.
+	const genuine = async () => {
+		for (let i = 0; i < 60; i++) {
+			await a.page.evaluate(() => window.DaimondSync.refreshPresence
+				&& window.DaimondSync.refreshPresence()).catch(() => {});
+			const g = await a.page.evaluate((id) => {
+				try {
+					const rec = window.DaimondPresence.snapshot()[id];
+					return !!window.DaimondPeer.recGenuine(rec, Date.now(), window.DaimondPeer.DISPATCH_FRESH_MS);
+				} catch (e) { return false; }
+			}, idB).catch(() => false);
+			if (g) return true;
+			await a.page.waitForTimeout(1000);
+		}
+		return false;
+	};
+	check('A sees B as servicing errands, so its election picks B', await genuine());
 
 	// ── The turn: two workers and a gather, dispatched from the phone ─────
 	//
@@ -141,6 +172,13 @@ try {
 				}).join(' ');
 				const seen = window.__hwSeen;
 				if (s && seen[seen.length - 1] !== s) seen.push(s);
+				// The words a person reads on each pill, kept beside it: the tile goes when
+				// the answer merges, so they cannot be read off the page afterwards.
+				const words = [...row.querySelectorAll('.hw')].map((w) => {
+					const n = w.querySelector('.hw-name'), p = w.querySelector('.pill');
+					return (n ? n.textContent : '?') + '=' + (p ? p.textContent : '');
+				});
+				window.__hwWords = (window.__hwWords || []).concat(words).slice(-64);
 			}
 		};
 		new MutationObserver(snap).observe(out, { childList: true, subtree: true, characterData: true, attributes: true });
@@ -177,6 +215,7 @@ try {
 		await a.page.waitForTimeout(250);
 	}
 	check('the workers ran on the RUNNER', ranOnB >= 2, `${ranOnB} run(s) on B`);
+	if (ranOnB < 2) await dumpDiag(a, 'A');
 	const onA = await runsOn(a.page);
 	check('and no copy of them ran on the phone',
 		onA.filter((r) => r.name === 'alpha' || r.name === 'beta').length === 0,
@@ -198,6 +237,52 @@ try {
 	check('FINAL: A\'s last worker line had alpha and beta both finished',
 		/\balpha:ok\b/.test(last) && /\bbeta:ok\b/.test(last), last || 'no worker line at all');
 	console.log('  lines A drew: ' + JSON.stringify(seen));
+
+	// ── TIMEDOUT: a worker the runner's liveness bound ends is still on A's line ──
+	//
+	// The rulings (§1, 13 Sep) on what one device shows about another: A must draw a worker
+	// B ended `timed_out` with the timed-out word, not drop it. `gamma` stalls (mock `@stall`)
+	// past B's liveness limit (`__livenessMs`, read when B builds the worker). `peer.js`
+	// `frameWorkers` drops a state its `WORKER_STATES` does not name, so without
+	// `timed_out` there A keeps gamma's last "running" pill or loses it.
+	console.log('\nTIMEDOUT — B ends a stalled worker on its liveness bound; A still shows it');
+	await b.page.evaluate(() => { window.__livenessMs = 2000; });
+	check('TIMEDOUT: B is still the runner A elects', await genuine());
+	await newChat(a);
+	await a.page.waitForTimeout(300);
+	await a.page.evaluate(() => { window.__hwSeen = []; window.__hwWords = []; });
+	await a.page.fill('#chat-input',
+		'@tools spawn_agent {"name":"delta","task":"@text DELTAFOUND"}'
+		+ ' ;; spawn_agent {"name":"gamma","task":"@stall 600000"}'
+		+ ' ;; gather {"names":["delta","gamma"],"timeout_s":60}');
+	await a.page.click('#chat-send');
+	let gammaOnB = '', cs2 = [];
+	for (let i = 0; i < 240; i++) {
+		let rs = []; try { rs = await runsOn(b.page); } catch (e) { rs = []; }
+		const g = rs.find((r) => r.name === 'gamma');
+		if (g) gammaOnB = g.status;
+		try { cs2 = await servedChats(a); } catch (e) { cs2 = []; }
+		if (carrying(cs2, '### delta') > 0) break;
+		await a.page.waitForTimeout(250);
+	}
+	check('TIMEDOUT: gamma ended timed_out on B', gammaOnB === 'timed_out', gammaOnB || 'gamma never ran on B');
+	check('TIMEDOUT: the gather\'s result reached A', carrying(cs2, '### delta') >= 1);
+	await a.page.waitForTimeout(1500);
+	const seen2 = await a.page.evaluate(() => window.__hwSeen.slice());
+	const last2 = seen2[seen2.length - 1] || '';
+	check('TIMEDOUT: A\'s last worker line still has gamma, drawn timed out',
+		/\bgamma:paused\b/.test(last2) && /\bdelta:ok\b/.test(last2), last2 || 'no worker line at all');
+	const word = await a.page.evaluate(() => {
+		const g = (window.__hwWords || []).filter((x) => x.startsWith('gamma='));
+		return g.length ? g[g.length - 1].slice('gamma='.length) : '';
+	});
+	const want = await a.page.evaluate(() => {
+		try { return window.DaimondI18n ? DaimondI18n.t('agents.status_timed_out') : 'timed out'; }
+		catch (e) { return 'timed out'; }
+	});
+	check('TIMEDOUT: and its pill reads the timed-out word', !!word && word === want,
+		JSON.stringify({ word, want }));
+	console.log('  lines A drew: ' + JSON.stringify(seen2));
 
 	console.log(`\n${ok.length} ok, ${bad.length} failed`);
 	if (bad.length) console.log('  FAILED: ' + bad.join(' | '));

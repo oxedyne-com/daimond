@@ -242,9 +242,10 @@ console.log('\nThe three paths set it, and nothing else does');
 {
 	const sites = calls(SRC, 'pushUserRecord');
 	const gate = (c) => topArgs(c.text)[2];
+	// runSteerHeld is runSteer's body; runSteer itself is the wrapper that releases the claim.
 	const by = {}; sites.forEach((c) => { (by[c.owner] = by[c.owner] || []).push(gate(c)); });
 	// sayToRunner: words said into a turn another device runs join the thread as they are sent (UNBLOCK-27 R7).
-	same('the callers are runTurn, maybeAutoDispatch, runSteer, an interjection landing, words said to a runner and the journal recovery', Object.keys(by).sort(), ['landInterjection', 'maybeAutoDispatch', 'recoverUserRecord', 'runSteer', 'runTurn', 'sayToRunner']);
+	same('the callers are runTurn, maybeAutoDispatch, runSteerHeld, an interjection landing, words said to a runner and the journal recovery', Object.keys(by).sort(), ['landInterjection', 'maybeAutoDispatch', 'recoverUserRecord', 'runSteerHeld', 'runTurn', 'sayToRunner']);
 	same('path 1 (local chat send): gated on the person flag runTurn is given, or on a note a replay hands it', by.runTurn, ["!!opts.person || typeof opts.told === 'string'"]);
 	same('path 5 (an interjection landing) is a person\'s message', by.landInterjection, ['true']);
 	same('the journal recovery restores the mark it was opened with', by.recoverUserRecord, ['meta.app !== true']);
@@ -252,11 +253,11 @@ console.log('\nThe three paths set it, and nothing else does');
 	// Two sites since SEND-UNHANDED part 2 (QA-HT-B F1: a missed presence read with the runner pressed writes the
 	// prompt and its "not run" row); each must carry the same gate, so the set of gates is compared.
 	same('path 3 (the peer-dispatch push): a person\'s send, unless the app wrote it (a Continue\'s nudge)', [...new Set(by.maybeAutoDispatch)], ['!app']);
-	same('path 4 (the Diamond send): gated on how.said, which only a person\'s typing passes', by.runSteer, ['!!(how && how.said)']);
+	same('path 4 (the Diamond send): gated on how.said, which only a person\'s typing passes', by.runSteerHeld, ['!!(how && how.said)']);
 	// J9: the ratings are committed (a pending draft is a rating_log) before the note is composed
 	const idxs = []; { const re = /\bpushUserRecord\(/g; let mm; while ((mm = re.exec(SRC))) if (!/function\s*$/.test(SRC.slice(Math.max(0, mm.index - 16), mm.index))) idxs.push(mm.index); }
 	const committedFirst = idxs.map((i) => { const k = SRC.lastIndexOf('commitRatings(', i); return { owner: ownerAt(SRC, i), ok: k > 0 && ownerAt(SRC, k) === ownerAt(SRC, i) }; });
-	same('every send path commits the ratings before it composes the note (so a pending draft is already a record)', [...new Set(committedFirst.filter((c) => !['landInterjection', 'recoverUserRecord'].includes(c.owner)).map((c) => c.owner + ':' + c.ok))].sort(), ['maybeAutoDispatch:true', 'runSteer:true', 'runTurn:true', 'sayToRunner:true']);
+	same('every send path commits the ratings before it composes the note (so a pending draft is already a record)', [...new Set(committedFirst.filter((c) => !['landInterjection', 'recoverUserRecord'].includes(c.owner)).map((c) => c.owner + ':' + c.ok))].sort(), ['maybeAutoDispatch:true', 'runSteerHeld:true', 'runTurn:true', 'sayToRunner:true']);
 	{ const ij = lift(SRC, 'interjectMessage') || ''; check('and so does the interjection, at the typing step, before it composes', ij.indexOf('commitRatings(') > 0 && ij.indexOf('commitRatings(') < ij.indexOf('ratingPre('), ij.slice(0, 200)); }
 	check('no send path pushes its user record by hand any more',
 		!/chat\.messages\.push\(urec\)/.test(SRC) && !/rec\.messages\.push\(\{ role: 'user', content: instruction/.test(SRC)
@@ -470,10 +471,10 @@ console.log('\nA steer into a running turn is composed when typed, kept with its
 console.log('\nThe turn-starting exports, the journal and the runner carry it');
 {
 	// The tail is appended where the engine is laid in (`seedEngine`) and where a live one is brought up to the chat (`reconcileEngine`).
-	const rt = lift(SRC, 'runTurn') || '', rs = lift(SRC, 'runSteer') || '', ea = (lift(SRC, 'seedEngine') || '') + '\n' + (lift(SRC, 'reconcileEngine') || '');
+	const rt = lift(SRC, 'runTurn') || '', rs = lift(SRC, 'runSteerHeld') || '', ea = (lift(SRC, 'seedEngine') || '') + '\n' + (lift(SRC, 'reconcileEngine') || '');
 	// Raced against the engine's kill since UNBLOCK-7 F2 (`turnKill(app.run_turn(...), chat)`).
 	const runs = rt.match(/app\.run_turn\([^;]*\);/g) || [];
-	check('every run_turn of a chat turn hands the engine the turn\'s note', runs.length === 3 && runs.every((r) => /^app\.run_turn\(text, onEvent, turnPre \|\| undefined, umid \? String\(umid\) : undefined\)(, chat\))?;$/.test(r)), runs);
+	check('every run_turn of a chat turn hands the engine the turn\'s note', runs.length === 3 && runs.every((r) => /^app\.run_turn\(text, onEvent, turnPre \|\| undefined, umid \? String\(umid\) : undefined, !!chat\.diamondId\)(, chat\))?;$/.test(r)), runs);
 	check('the turn\'s note is the one a replay was handed, else the record\'s own', /var turnPre = \(typeof opts\.told === 'string'\) \? opts\.told\s*: /.test(rt) && /reusePrompt \|\| urec/.test(rt));
 	check('a worker and the triage reader take none', !/run_turn\([^)]*pre/i.test(SRC.slice(SRC.indexOf('run.app.run_turn(task, sink)') - 40, SRC.indexOf('run.app.run_turn(task, sink)') + 60)));
 	const open = rt.indexOf('J.turnOpen(');
@@ -486,9 +487,12 @@ console.log('\nThe turn-starting exports, the journal and the runner carry it');
 		check('turnEffortOf reads a Diamond\'s thread from the Diamond, a chat from the chat',
 			teo({ diamondId: 'd1', effort: '' }) === 'high' && teo({ effort: 'low' }) === 'low' && teo({}) === '' && teo(null) === '');
 		check('the detached steer is handed the errand\'s Effort', /effort:\s*\(ropts && ropts\.effort\)/.test(lift(SRC, 'runSteerDetached') || ''));
-		const rsx = lift(SRC, 'runSteer') || '';
-		check('runSteer hands every diamondApp the turn\'s Effort, the errand\'s when handed off',
-			/detached\.effort/.test(rsx) && (rsx.match(/diamondApp\(/g) || []).length === (rsx.match(/diamondApp\([^)]*steerEff\)/g) || []).length
+		// U3a split runSteer into a wrapper that settles the claimed client and runSteerHeld, the
+		// body, whose steer client comes from the pool: `claimDaimon(daimonApp(f.id, null, steerEff))`.
+		const rsx = lift(SRC, 'runSteerHeld') || '';
+		const apps = rsx.match(/\b(?:diamond|daimon)App\(/g) || [];
+		check('runSteer hands every diamondApp/daimonApp the turn\'s Effort, the errand\'s when handed off',
+			/detached\.effort/.test(rsx) && apps.length > 0 && apps.length === (rsx.match(/\b(?:diamond|daimon)App\([^)]*steerEff\)/g) || []).length
 			&& /effort:\s*steerEff/.test(rsx));
 		const da = lift(SRC, 'diamondApp') || '';
 		check('a hand-out with no Effort leaves the shared client\'s as it stands',

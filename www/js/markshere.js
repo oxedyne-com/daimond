@@ -129,20 +129,20 @@
 	/// browser store, and, like its `under`, counts the directory itself as well as
 	/// what is beneath it. Mirrored here, so Help's `dir:[browser]system/guide` row
 	/// is reachable wherever the engine will read it from.
-	var STORE_PATH_RE = /^(?:diamonds|mail|chats|system\/(?:agents|guide|usage))(?:\/|$)/;
+	var STORE_PATH_RE = /^(?:diamonds|mail|chats|system\/(?:agents|guide|usage|journal))(?:\/|$)/;
 	function isStorePath(path) {
 		return STORE_PATH_RE.test(String(path || ''));
 	}
 
 	/// Is this path the app's own state under `system/` (`APP_STATE_DIRS`): the agents'
-	/// transcripts, the guide's mirror or the usage digest?
+	/// transcripts, the guide's mirror, the usage digest or the run journals (U4c)?
 	///
 	/// Each is made on the device from something that never travels -- the run list in
 	/// the tab, the build's own guide, the `local` signal counters -- so none is a
 	/// workspace file, and the sync census, the merge and the fork point all ask this
 	/// (soak R2, 2026-09-25: each device's digest rode the `files` section and none ever
 	/// agreed). The directory itself counts, as the engine's `under` does.
-	var APP_STATE_RE = /^system\/(?:agents|guide|usage)(?:\/|$)/;
+	var APP_STATE_RE = /^system\/(?:agents|guide|usage|journal)(?:\/|$)/;
 	function isAppStatePath(path) {
 		return APP_STATE_RE.test(String(path || ''));
 	}

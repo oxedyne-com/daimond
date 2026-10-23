@@ -265,7 +265,9 @@ kase('the copy is forgotten for a fork worker and not asked about for a brief on
 kase('Workers.start adopts after EVERY build (scope) and opens with firstAsk, the re-mint too', () => {
 	ok(/adoptFork\(run\);\n\t\t\t\};/.test(START), 'scope does not end by adopting the copy');
 	ok(START.indexOf(': firstAsk(run);') > 0, 'the first message is not firstAsk');
-	ok(START.indexOf('await run.app.run_turn(firstAsk(run), sink);') > 0, 'the re-mint does not reopen with firstAsk');
+	// The re-mint re-sends what the first attempt sent (U3a QRFIX2 F2): `nudge`, which is firstAsk(run) for a
+	// fresh dispatch or a continuation, so both sends go out as `nudge`.
+	eq((START.match(/await run\.app\.run_turn\(nudge, sink\);/g) || []).length, 2, 'the re-mint does not reopen with firstAsk');
 	ok(START.indexOf('await run.app.run_turn(run.task, sink);') < 0, 'a path still opens on the bare task');
 	// The brief start is still built: the worker role and crystal as the constructor's system.
 	eq((START.match(/Instructions\.compose\(Prompts\.role\('worker', run\.model\), crystal\)/g) || []).length,
@@ -273,7 +275,7 @@ kase('Workers.start adopts after EVERY build (scope) and opens with firstAsk, th
 });
 
 kase('the copy is forgotten on both endings: closeEarly and the finally block', () => {
-	ok(/var closeEarly = function \(\) \{\n\t\t\t\tforkForget\(run\);/.test(START), 'closeEarly');
+	ok(/var closeEarly = function \(\) \{\n(\t\t\t\tself2\.freeRunLock\(run\);\n)?\t\t\t\tforkForget\(run\);/.test(START), 'closeEarly');
 	ok(/\} finally \{\n\t\t\t\tforkForget\(run\);/.test(START), 'finally');
 });
 
@@ -282,7 +284,7 @@ kase('a queued or paused worker that is Stopped drops its copy (A5)', () => {
 	const body = SRC.slice(at, SRC.indexOf('\n\t\t},', at));
 	const queued = body.slice(body.indexOf("if (run.status === 'queued')"), body.indexOf('return;'));
 	ok(queued.indexOf('forkForget(run);') > 0, 'the queued branch of stop keeps the copy');
-	const held = body.slice(body.indexOf("if (run.status === 'paused'"));
+	const held = body.slice(body.indexOf('if (RESUMABLE_ENDINGS.indexOf(run.status) >= 0)'));
 	ok(held.slice(0, held.indexOf('return;')).indexOf('forkForget(run);') > 0,
 		'the paused branch of stop keeps the copy');
 });
@@ -314,6 +316,12 @@ if (!ENGINE) {
 		ok(/^You are now a worker agent, dispatched from the conversation above/.test(h), h.slice(0, 80));
 		ok(h.endsWith('## Your task\n\ncount the files'), h.slice(-60));
 		ok(ENGINE.worker_handoff('MY ROLE', 't').startsWith('MY ROLE\n\n## Your task'), 'own role');
+		// The arms' mock reads a worker's directive past this separator (dev/mockllm.mjs HANDOFF): a reworded
+		// hand-off must redden here, not as four verify_actor money arms.
+		const lit = /const HANDOFF = '([^']*)';/.exec(readFileSync(join(APP, 'dev', 'mockllm.mjs'), 'utf8'));
+		ok(lit, 'dev/mockllm.mjs declares HANDOFF');
+		const sep = lit[1].replace(/\\n/g, '\n');
+		ok(ENGINE.worker_handoff('', 'T').endsWith(sep + 'T'), JSON.stringify(ENGINE.worker_handoff('', 'T').slice(-40)));
 	});
 	kase('ENGINE: the brief worker\'s default role is the old one, its own context', () => {
 		const d = ENGINE.default_prompt('worker');

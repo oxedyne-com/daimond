@@ -1,0 +1,1 @@
+{"ok":false,"error":"An enrol request carries no 'challenge': each answer's is recomputed from its spki."}

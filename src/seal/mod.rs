@@ -21,6 +21,7 @@
 
 pub mod peer;
 pub mod post;
+pub mod runner;
 pub mod wrap;
 
 #[cfg(test)]

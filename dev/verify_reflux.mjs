@@ -15,7 +15,7 @@
 //
 // ── Why a verifier, and not a command and not another machine ────────
 //
-// `run` is not a door and cannot be made into one.  `hand/src/verify.rs` says why
+// `run` is not a door and cannot be made into one.  `kimberlite/src/verify.rs` says why
 // in its own opening: `listen()` is refused by `crate::seccomp`, a browser needs
 // the display server's unix socket and `seccomp::Unix::Refuse` takes that away.
 // A browser under the command fence is not a thing that is missing a display; it

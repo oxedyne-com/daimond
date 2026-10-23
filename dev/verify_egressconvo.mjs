@@ -134,6 +134,7 @@ const BREAKS = {
 		find: "\t\tif (load.heavy) {",
 		with: "\t\tif (load.heavy && !granted) {",
 	},
+	// (Anchored on `taintDaimon`, where `markRead` puts a daimon's mark since U1e.)
 	// The daimon's mark put on the shared client WITHOUT naming the Diamond, which
 	// is where it landed before the taint was keyed by conversation: on the client's
 	// own key, which is the empty string and belongs to no Diamond at all. Reddens
@@ -144,8 +145,10 @@ const BREAKS = {
 	// `test_one_diamonds_reading_does_not_taint_another_on_a_shared_client`.
 	unnamedmark: {
 		file: 'js/daimond.js',
-		find: "\t\t\t\tif (da && da.set_tainted) { da.set_tainted(current.diamondId); return true; }",
-		with: "\t\t\t\tif (da && da.set_tainted) { da.set_tainted(); return true; }",
+		// Both of its writes: the page's set as well, or the client `daimonApp` builds inside it
+		// takes the named mark back from `_daimonTaint` and the break reddens nothing.
+		find: "\t\t_daimonTaint.add(id);\n\t\tvar da = daimonApp(id);\n\t\tif (da && da.set_tainted) { da.set_tainted(id); return true; }",
+		with: "\t\tvar da = daimonApp(id);\n\t\tif (da && da.set_tainted) { da.set_tainted(); return true; }",
 	},
 	// Our own origin answering in the word that records a standing grant.
 	sameorigin: {
@@ -387,22 +390,24 @@ try {
 			.map(e => ({ id: e.dataset.id, name: (e.textContent || '').trim() }));
 		const read  = rows.find(r => /Reaching/.test(r.name)) || null;
 		const clean = rows.find(r => /Accounts/.test(r.name)) || null;
-		// ONE CLIENT, ASKED ABOUT BOTH. `diamondApp()` is the client for the starred
-		// model, which is the model a Diamond made with no pin runs on -- so this is
-		// the object both Diamonds' daimon turns clone their cache from.
-		const app = window.DaimondCore.diamondApp();
-		const ask = (r) => (r && app && app.is_tainted) ? !!app.is_tainted(r.id) : null;
+		// EACH DIAMOND'S OWN DAIMON CLIENT, asked about its own Diamond. Since U1e a daimon
+		// conversation runs on `daimonApp(id)`, not on the per-model store door
+		// (`diamondApp()`), which no conversation runs on and so never carries a mark.
+		const ask = (r) => {
+			if (!r) return null;
+			const app = window.DaimondCore.daimonApp ? window.DaimondCore.daimonApp(r.id) : null;
+			return (app && app.is_tainted) ? !!app.is_tainted(r.id) : null;
+		};
 		return { read, clean, dirtyMark: ask(read), cleanMark: ask(clean) };
 	});
 	check(!!twoD.read && !!twoD.clean,
 		'a second Diamond exists beside the one that read a page',
 		JSON.stringify([twoD.read, twoD.clean]));
-	// THE PRECONDITION, STATED. This client knowing about the FIRST Diamond's
-	// reading is what proves the two share a cache at all; without it the check
-	// below would be two Diamonds on two clients, which never had the fault and
-	// would pass for no reason.
+	// THE PRECONDITION, STATED. The first Diamond's own client knowing about its
+	// reading, under its name, is what makes the clean one's clean answer mean
+	// anything; a mark filed under nobody (`--break unnamedmark`) reddens it.
 	check(twoD.dirtyMark === true,
-		'and the shared client carries the first Diamond’s reading, or nothing below is about sharing',
+		'and the first Diamond’s daimon client carries its reading, under its own name',
 		`mark=${String(twoD.dirtyMark)}`);
 	check(twoD.cleanMark === false,
 		'A DIAMOND THAT READ NOTHING IS NOT MARKED BY THE ONE THAT DID',

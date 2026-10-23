@@ -115,7 +115,7 @@ Object.assign(process.env, NO_BUS);
 // not name -- an inherited one, `:0` however it is spelled -- is refused.  The
 // declaration is an ENVIRONMENT NAME rather than an argument because there is no
 // import that reaches all thirty-four launchers in this directory, which is the
-// argument this whole file is built on.  `hand/src/verify.rs` sets it for every
+// argument this whole file is built on.  `kimberlite/src/verify.rs` sets it for every
 // verifier it spawns, so a daimon cannot arrive without it.
 //
 // An attended run is untouched.  Nothing sets these names, `unattendedFault`

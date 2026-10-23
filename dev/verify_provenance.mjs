@@ -806,7 +806,7 @@ try {
 	if (on('X')) {
 		// X1 is native-only. file_write, file_edit, file_delete, file_move, doc_edit, sheet_write, web_fetch, typst_compile and
 		// capture_view all capture; Shell, Run, Verify and SpawnAgent are the opaque set, Shell is refused in the browser, and Run
-		// and Verify need a hand whose mock writes no files (hand/install/mock_host.py:198). E1a's cargo tests carry it.
+		// and Verify need a hand whose mock writes no files (kimberlite/install/mock_host.py:198). E1a's cargo tests carry it.
 		console.log('  NOT COVERED  X1: a command window\'s credit (via "command") has no world-testable caller; E1a\'s native tests carry it');
 		const mkDiamond = async (label) => {
 			await b.page.evaluate(() => document.getElementById('new-diamond-btn').click());

@@ -19,7 +19,7 @@
 		{"from": 37, "to": 37, "name": "tune one-world", "owner": "dev/tune/run.mjs"},
 		{"from": 38, "to": 38, "name": "tune real-repository lane", "owner": "dev/tune/run.mjs"},
 		{"from": 39, "to": 39, "name": "tune driver's verifier world", "owner": "dev/tune/run.mjs"},
-		{"from": 40, "to": 49, "less": [ 44 ], "name": "daimon", "owner": "hand/src/verify.rs DAIMON_WORLDS", "why": "the verify verb takes the first free one; 44 is held back by the hand (it was triage's :9143 until K1)"},
+		{"from": 40, "to": 49, "less": [ 44 ], "name": "daimon", "owner": "kimberlite/src/verify.rs DAIMON_WORLDS", "why": "the verify verb takes the first free one; 44 is held back by the hand (it was triage's :9143 until K1)"},
 		{"from": 60, "to": 63, "name": "rig", "owner": "daimond-rig"},
 		{"from": 64, "to": 65, "name": "hotfix", "owner": "daimond-a", "why": "one-fix releases at any hour; never the nightly's"},
 		{"from": 81, "to": 86, "name": "nightly", "owner": "daimond_nightly.sh"},

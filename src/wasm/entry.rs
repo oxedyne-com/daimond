@@ -155,6 +155,16 @@ pub fn grow_on_purpose(mb: u32) -> f64 {
     heap_bytes()
 }
 
+/// The build's liveness limit `N`, in milliseconds: how long a turn may go without its model
+/// stream saying anything ([`LIVENESS_MS`](crate::agent::compact::LIVENESS_MS)).
+///
+/// Read by `Workers.start` in `daimond.js`, whose ceiling on a worker's `run_turn` it is until
+/// U3a END deletes that race and the engine's own liveness bound is the only one.
+#[wasm_bindgen]
+pub fn liveness_ms() -> f64 {
+    crate::agent::compact::LIVENESS_MS as f64
+}
+
 /// The linear memory in whole megabytes, for a trail line.
 ///
 /// Separate from [`heap_bytes`] because the JS side wants bytes and every caller
@@ -615,7 +625,7 @@ pub async fn touch_diamond(id: String) -> Result<(), JsValue> {
 }
 
 /// Write a crystal page's file and stamp its Diamond as one act: both, or the file put back and
-/// an error.  See [`diamond::page_write`]; the page's `save` verb goes through this alone.
+/// an error.  See [`diamond::page_write`]; the page's `save` verb goes through this alone (PLB).
 ///
 /// # Arguments
 /// * `path` - `diamonds/<id>/<rel>`.
@@ -901,6 +911,14 @@ pub fn fork_forget(id: &str) {
 #[wasm_bindgen]
 pub fn steering_refusal(line: &str) -> String {
     crate::steering::refusal(line)
+}
+
+/// A Diamond turn's specification, decided once in the engine (`engine::turn`): the page's send as
+/// JSON in (`chat`, `diamond`, `stored`, `default`, `keyed`, `preset`, `depth`, `typed`, `detached`,
+/// `how`), the `TurnSpec` as JSON out, or `{"error": ...}` for a send that is not one.
+#[wasm_bindgen]
+pub fn turn_spec(json: &str) -> String {
+    crate::engine::turn::spec_json(json)
 }
 
 /// The steering block the engine would compose from `steer`, or empty when no line is admitted.

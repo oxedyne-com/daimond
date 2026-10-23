@@ -192,8 +192,39 @@ const ready = (s) => s.page.waitForFunction(
 		&& DaimondCloud.contentGet && window.DaimondGateway && window.DaimondIdentity),
 	null, { timeout: 20000 });
 
-const push = async (s) => { await s.page.evaluate(() => window.DaimondSync.push()); await s.page.waitForTimeout(500); };
-const pull = async (s) => { await s.page.evaluate(() => window.DaimondSync.pull()); await s.page.waitForTimeout(500); };
+// A ROUND THIS SCRIPT ASKS FOR IS A ROUND THAT RAN. `DaimondSync.push()` may return having
+// sent nothing (not ready or entitled, behind the epoch chain, another round in flight, a
+// live turn), and these helpers used to wait a fixed 500 ms and carry on, so whichever step
+// met an empty round went red and the failing step moved from run to run
+// (s1mf_real_diag.md §3). `flush()` pushes and confirms the parcel is on the server,
+// answering `{ ok, version, why }`: it is asked again until `ok`, for at most 10 s, and a
+// push that never lands fails here, naming the refusal. `pull` is the gated pull, whose
+// answer is the version it read, or -1 when the mailbox could not be reached: asked again
+// until it reads one, for at most 10 s.
+const ROUND_MS = 10000;
+const who = (s) => (s === A ? 'A' : s === B ? 'B' : '?');
+const push = async (s) => {
+	const until = Date.now() + ROUND_MS;
+	let r = null;
+	for (;;) {
+		r = await s.page.evaluate(() => window.DaimondSync.flush()).catch((e) => ({ ok: false, why: 'threw: ' + (e && e.message) }));
+		if (r && r.ok) return r;
+		if (Date.now() >= until) break;
+		await s.page.waitForTimeout(250);
+	}
+	throw new Error(`push(${who(s)}) did not land within ${ROUND_MS / 1000} s: ${(r && r.why) || JSON.stringify(r)}`);
+};
+const pull = async (s) => {
+	const until = Date.now() + ROUND_MS;
+	let v = -1;
+	for (;;) {
+		v = await s.page.evaluate(() => window.DaimondSync.pull()).catch(() => -1);
+		if (typeof v === 'number' && v >= 0) return v;
+		if (Date.now() >= until) break;
+		await s.page.waitForTimeout(250);
+	}
+	throw new Error(`pull(${who(s)}) did not reach the mailbox within ${ROUND_MS / 1000} s: answered ${v}`);
+};
 
 /// Everything a Diamond looks like from outside: its live crystal page, its tags,
 /// its links sidecar, and the full version list.

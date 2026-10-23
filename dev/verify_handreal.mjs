@@ -3,7 +3,7 @@
 //
 // Every other test of the machine hand stops one link short of the join:
 //
-//   `hand/src/*` unit tests   drive the runner in-process, no browser at all.
+//   `kimberlite/src/*` unit tests   drive the runner in-process, no browser at all.
 //   `dev/verify_hand.mjs`     real Chrome + real extension + the MOCK host,
 //                             which speaks the protocol and runs nothing.
 //   `dev/verify_handrun.mjs`  real Chrome + real extension + real app + the
@@ -65,9 +65,9 @@
 //
 // ── What a user must do, and what this test therefore does ──────────
 //
-//  1. `cargo build --release --manifest-path hand/Cargo.toml`  (NOT `-p`: the
+//  1. `cargo build --release --manifest-path kimberlite/Cargo.toml`  (NOT `-p`: the
 //     hand is its own workspace).
-//  2. `hand/install/install.sh` — run here with `--dir`, pointed at this test's
+//  2. `kimberlite/install/install.sh` — run here with `--dir`, pointed at this test's
 //     throwaway profile, so the user's real browser profile is never touched.
 //     The real installer, not a copy of its output.
 //  3. **Name the granted folder.** The hand refuses to serve without one, and
@@ -78,7 +78,7 @@
 //     test asserts `DAIMOND_HAND_ROOT` is UNSET, so the root it reads back can
 //     only have come from the file.
 //  4. Allow the hand in the window that opens on the first command.
-//  5. **Open the folder the hand was granted, in Daimond.** `hand/REVIEW.md`
+//  5. **Open the folder the hand was granted, in Daimond.** `kimberlite/REVIEW.md`
 //     §1.14 refuses a command where the two ends cannot be shown to mean one
 //     folder, and no automated browser can satisfy that — a page holds a real
 //     folder only through a native dialog no harness can answer. The refusal is
@@ -134,8 +134,8 @@ const ROOT	= path.join(HERE, '..');
 const WWW	= path.join(ROOT, 'www');
 const SRC	= path.join(ROOT, 'ext');		// harness swaps in the dev build
 const EXTID	= 'mpliijponglmmffjnonahhignkpkhmij';
-const INSTALL	= path.join(ROOT, 'hand/install/install.sh');
-const HAND	= path.join(ROOT, 'hand/target/release/daimond-hand');
+const INSTALL	= path.join(ROOT, 'kimberlite/install/install.sh');
+const HAND	= path.join(ROOT, 'kimberlite/target/release/kimberlite');
 
 const argv	= process.argv.slice(2);
 const NO_CARGO	= argv.includes('--no-cargo');
@@ -294,8 +294,8 @@ for (const d of [PROFILE, JOURNAL, GRANT, MARKED_ABS, OUTSIDE]) fs.mkdirSync(d, 
 // now has to say it.
 fs.chmodSync(JOURNAL, 0o700);
 
-// The release binary, into `hand/target` — the path `install.sh` looks in by
-// default and the one `hand/install/README.md` names, so what is verified is
+// The release binary, into `kimberlite/target` — the path `install.sh` looks in by
+// default and the one `kimberlite/install/README.md` names, so what is verified is
 // what a reader of that file will have. Three other agents share this tree, so a
 // build that fails because somebody is mid-edit is retried rather than fatal.
 //
@@ -315,14 +315,14 @@ delete buildEnv.CARGO_TARGET_DIR;
 // refusing. Same hatch as `PTYEDGE_NO_BUILD` in verify_ptyedge.mjs.
 let built = process.env.DAIMOND_NO_BUILD ? true : null;
 for (let i = 1; i <= 3 && !built; i++) {
-	const r = spawnSync('cargo', ['build', '--release', '--manifest-path', 'hand/Cargo.toml'],
+	const r = spawnSync('cargo', ['build', '--release', '--manifest-path', 'kimberlite/Cargo.toml'],
 		{ cwd: ROOT, encoding: 'utf8', env: buildEnv });
 	if (r.status === 0) { built = true; break; }
 	console.log((r.stderr || '').split('\n').filter((l) => /^error/.test(l)).slice(0, 5).join('\n'));
 	if (i < 3) { note(`the hand did not build (attempt ${i}); waiting 30 s in case somebody is mid-edit`); await sleep(30000); }
 }
 check('the hand builds from source', !!built && fs.existsSync(HAND),
-	built ? HAND : 'cargo build --release --manifest-path hand/Cargo.toml failed three times');
+	built ? HAND : 'cargo build --release --manifest-path kimberlite/Cargo.toml failed three times');
 if (!built) { console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed'); process.exit(1); }
 
 // A build that exits 0 is not the same claim as an artefact built from this
@@ -332,7 +332,7 @@ if (!built) { console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed'); 
 refuse(whyStaleBinary(HAND, {
 	subject: 'The hand, and therefore every fence below it,',
 	what:    'hand',
-	rebuild: 'cargo build --release --manifest-path hand/Cargo.toml',
+	rebuild: 'cargo build --release --manifest-path kimberlite/Cargo.toml',
 }));
 
 // ── And the app's half of it ────────────────────────────────────────
@@ -489,7 +489,7 @@ async function allowHand(ms = 30000) {
 // ── The turn's network question ─────────────────────────────────────
 //
 // A chat that has read a command's output is TAINTED from that moment, so the
-// engine asks before the NEXT command may reach the network (`hand/REVIEW.md`
+// engine asks before the NEXT command may reach the network (`kimberlite/REVIEW.md`
 // §1.13, `Tool::run`'s `NetStep::Ask`) and holds the turn on a modal until
 // somebody answers. Nothing in this file answered it, so every command after
 // the first stopped on that dialog until `chat`'s own timeout expired, `chat`
@@ -584,7 +584,7 @@ try {
 
 	// ── The hand answers, and says what it can enforce ──────────────
 	//
-	// The FIRST command is not a command that runs. `hand/REVIEW.md` §1.14 is
+	// The FIRST command is not a command that runs. `kimberlite/REVIEW.md` §1.14 is
 	// armed: the hand was granted a folder on this machine, this page's workspace
 	// is the browser's own sandbox, and the two cannot be shown to be the same
 	// folder — so the daimon is handed a refusal instead of output. Asserted here,
@@ -878,7 +878,7 @@ try {
 	await b.close().catch(() => {});
 	for (const p of started) { try { p.kill(); } catch (e) { /* already gone */ } }
 	// Chrome kills the host when the port dies; say so if one is still standing.
-	const stray = spawnSync('pgrep', ['-fa', 'daimond-hand'], { encoding: 'utf8' });
+	const stray = spawnSync('pgrep', ['-fa', 'daimond-(hand|runner)'], { encoding: 'utf8' });
 	if (stray.status === 0 && (stray.stdout || '').trim()) {
 		console.log('  ·    a hand process outlived the browser:\n' + stray.stdout.trim());
 	}

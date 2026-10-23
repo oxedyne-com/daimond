@@ -30,6 +30,9 @@
 //   node dev/verify_workerreport.mjs --break busydrop  # the busy round dropped again
 //   node dev/verify_workerreport.mjs --break emitter   # the empty-batch note back to "ask again"
 //   node dev/verify_workerreport.mjs --break rust      # the agent.rs report nudge removed
+//   node dev/verify_workerreport.mjs --node            # the pure halves only, no browser
+//
+// VARIANT 3 drives a real page (a world must be up: `eval "$(bash dev/world.sh N --up)"`).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -147,9 +150,142 @@ function slice(name) {
 	const preFix = 'if empty_reply && (reasoned_only > 0 || !resp.thinking.trim().is_empty()) {';
 	const rs = (BREAK === 'rust') ? preFix : RUST;
 	check('(1/native) agent.rs nudges an empty final reply that made tool calls to write its report',
-		/empty_reply && !report_nudged && !claims\.calls\.is_empty\(\)/.test(rs)
-		&& /fn report_nudge\(\)/.test(RUST) && /Write your report now/.test(RUST),
+		// `!quiet` (S1M mailquiet): a quiet turn is never nudged to write a report.
+		/empty_reply && !quiet && !report_nudged && !claims\.calls\.is_empty\(\)/.test(rs)
+		&& /fn report_nudge\(\)/.test(RUST) && /You stopped without a reply/.test(RUST),
 		'the report nudge is missing');
+}
+
+// ── VARIANT 3 (browser, U3a REP + BILL, UNBLOCK-16 F3/F4): an ending without a verdict ─
+//
+// A worker that works three rounds (`file_write` each, one path per round) and then goes
+// quiet mid-stream is ended `timed_out` by the engine's liveness bound (`__livenessMs` 3 s).
+// Its gathered report must hold its own last words AND the three files it left, `ended`
+// must say 3 rounds, the bill must be booked once at what the mock reported, the feed must
+// carry no round of the run after its `end` row, its session must be kept, and a
+// `continue:` re-dispatch must pick that session back up. A Stop mid-run books the rounds
+// so far. Skipped under `--break` (pure) and `--node`.
+if (!BREAK && !process.argv.includes('--node')) {
+	const H = await import('./harness.mjs');
+	const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+	const lastUser = (m) => {
+		const ms = m.messages || [];
+		for (let i = ms.length - 1; i >= 0; i--) if (ms[i].role === 'user') return H.contentText(ms[i].content);
+		return '';
+	};
+	const s = await H.open({ name: 'workerreport' });
+	const p = s.page;
+	await p.waitForFunction(() => !!window.DaimondCore && !!window.DaimondWorkers, null, { timeout: 20000 });
+	const runOf = (name) => p.evaluate((n) => {
+		const r = (window.DaimondWorkers.runs || []).find((x) => x.name === n);
+		if (!r) return null;
+		let sess = null;
+		try { sess = r.app && r.app.export_session ? Array.prototype.slice.call(r.app.export_session() || []) : null; } catch (e) { sess = null; }
+		return { id: r.id, status: r.status, report: r.report || '', ended: r.ended || null,
+			cost: r.costUsd || 0, session: !!(r._session && r._session.length), live: sess ? sess.length : -1 };
+	}, name);
+	const waitEnd = async (name, ms) => {
+		const END = ['done', 'error', 'stopped', 'capped', 'spend_cap', 'timed_out', 'blocked'];
+		const t0 = Date.now(); let r = null;
+		while (Date.now() - t0 < ms) { r = await runOf(name); if (r && END.includes(r.status)) return r; await sleep(250); }
+		return r;
+	};
+	const ledgerSince = (t0) => p.evaluate((t) => (window.DaimondLedger.entries() || [])
+		.filter((e) => (e.t || 0) >= t).map((e) => ({ t: e.t, u: e.u || 0, p: e.p || 0 })), t0);
+	const near = (a, b) => Math.abs(a - b) <= 1e-6;
+	const send = async (text) => { await p.fill('#chat-input', text); await p.keyboard.press('Enter'); };
+	// The chat's own scratch folder: the one place a chat's worker may write unasked.
+	const scratchDir = () => p.evaluate(() => window.DaimondAttach.chatScratch(window.DaimondAttach.focus().id));
+
+	// (1) timed_out after 3 written rounds.
+	await H.newChat(s);
+	await p.waitForTimeout(500);
+	await p.evaluate(() => {
+		window.__livenessMs = 3000;
+		window.__ds = [];
+		const prev = window.DEBUG_SHARE || {};
+		const keep = prev.event;
+		window.DEBUG_SHARE = Object.assign(Object.create(prev), { event: (kind, payload) => {
+			window.__ds.push({ kind, payload, t: Date.now() });
+			try { if (keep) keep.call(prev, kind, payload); } catch (e) {}
+		} });
+	});
+	H.clearMockLog();
+	const t0 = await p.evaluate(() => Date.now());
+	const dir = await scratchDir();
+	const TASK = '@roundsthen 3/200 stall 600000 file_write {"path":"' + dir + '/wrep/f{n}.md","content":"WREP {n}"} @usage 100 50 0.01';
+	await send('@tools spawn_agent ' + JSON.stringify({ name: 'wrep', task: TASK })
+		+ ' ;; gather {"names":["wrep"],"timeout_s":40} @usage 1 1 0.001');
+	const r1 = await waitEnd('wrep', 60000);
+	await p.waitForTimeout(3000);			// the gather answers, the chat's next round goes out
+	check('(3/rep) the worker ends timed_out on its liveness bound', !!r1 && r1.status === 'timed_out', r1 && r1.status);
+	const rounds = (r1 && r1.ended && r1.ended.rounds) || 0;
+	check('(3/rep) `ended.rounds` is 3, never 0', rounds === 3, String(rounds));
+	const paths = ['wrep/f0.md', 'wrep/f1.md', 'wrep/f2.md'];
+	const rep = (r1 && r1.report) || '';
+	const hasAll = (t) => paths.every((x) => t.includes(x));
+	check('(3/rep) the report holds the last segment\'s words', /Stalling/.test(rep), JSON.stringify(rep.slice(0, 160)));
+	check('(3/rep) the report names all 3 files touched, on one line', /Files touched: /.test(rep) && hasAll(rep.split('Files touched: ').pop()),
+		JSON.stringify(rep.slice(-200)));
+	// What the conductor actually read back: the gather tool result in its next request.
+	const gathered = H.mockLog().map((m) => (m.messages || []).filter((x) => x.role === 'tool')
+		.map((x) => H.contentText(x.content)).join('\n')).filter((t) => /Files touched|wrep/.test(t)).pop() || '';
+	check('(3/rep) the gathered report reaching the conductor holds the words and all 3 paths',
+		/Stalling/.test(gathered) && hasAll(gathered), JSON.stringify(gathered.slice(0, 240)));
+	// BILL (a): one row for the worker, at the mock's figures for what it delivered.
+	const wire = H.mockLog().filter((m) => lastUser(m).startsWith('@roundsthen 3/200'));
+	const wantW = wire.reduce((x, m) => x + ((m.answered && m.answered.cost) || 0), 0);
+	const rows = await ledgerSince(t0);
+	const wrows = rows.filter((e) => e.u >= 0.005);
+	check('(3/bill a) the timed_out run books recordSpend once', wrows.length === 1, `${wrows.length} row(s) >= 0.005 of ${rows.length}`);
+	check('(3/bill a) at 3 x 0.01 plus the stall attempt\'s reported usage',
+		// A stalled stream never reaches its usage frame, so it reports nothing: 0.03 exactly.
+		wrows.length === 1 && near(wrows[0].u, wire.slice(0, 3).reduce((x, m) => x + ((m.answered && m.answered.cost) || 0), 0))
+			&& near(wrows[0].u, 0.03),
+		`row ${wrows.map((e) => e.u.toFixed(4)).join(',')}; mock ${wantW.toFixed(4)} over ${wire.length} request(s), r1 cost ${r1 && r1.cost}`);
+	// BILL (c): no round of this run in the feed after its `end` row.
+	const feed = await p.evaluate(() => window.__ds || []);
+	const endAt = feed.findIndex((e) => e.kind === 'worker' && e.payload && e.payload.at === 'end' && e.payload.w === (r1 && r1.id));
+	const after = endAt < 0 ? [] : feed.slice(endAt + 1).filter((e) => e.payload && e.payload.w === (r1 && r1.id)
+		&& /^(round|round_meta|stalled)$/.test(e.kind));
+	const endRow = endAt >= 0 ? feed[endAt].payload : {};
+	check('(3/bill c) no lens round of the run after at:\'end\'', endAt >= 0 && after.length === 0, `end row ${endAt}, ${after.length} after`);
+	check('(3/rep) the end row carries r, calls and tc', endRow.r === 3 && endRow.calls === 3 && endRow.tc === 3,
+		JSON.stringify({ r: endRow.r, calls: endRow.calls, tc: endRow.tc, ended: r1 && r1.ended }));
+	// BILL (d): the session is kept, and a `continue:` re-dispatch picks it up.
+	check('(3/bill d) export_session is non-null after timed_out', !!r1 && r1.session && r1.live > 0, r1 && `${r1.session} ${r1.live}`);
+	await p.evaluate(() => { delete window.__livenessMs; });
+	H.clearMockLog();
+	await send('@tools spawn_agent ' + JSON.stringify({ name: 'wrep2', task: 'continue: WREPCONT finish the report' })
+		+ ' ;; gather {"names":["wrep2"],"timeout_s":40} @usage 1 1 0.001');
+	const r2 = await waitEnd('wrep2', 60000);
+	// The worker's own first request: its last user message IS the task (the conductor's
+	// request carries the task only inside its `@tools` line).
+	const cont = H.mockLog().filter((m) => lastUser(m).startsWith('continue: WREPCONT'))[0];
+	const carried = cont ? (cont.messages || []).filter((x) => x.role === 'tool').length : -1;
+	check('(3/bill d) a continue: re-dispatch resumes the timed_out run\'s session', !!r2 && r2.status === 'done' && carried >= 3,
+		`${r2 && r2.status}, ${carried} tool message(s) carried`);
+
+	// (2) BILL (b): Stop mid-run books the rounds so far.
+	await H.newChat(s);
+	await p.waitForTimeout(500);
+	H.clearMockLog();
+	const t1 = await p.evaluate(() => Date.now());
+	const dir2 = await scratchDir();
+	const TASK2 = '@roundsthen 3/200 stall 600000 file_write {"path":"' + dir2 + '/wrep/s{n}.md","content":"S {n}"} @usage 100 50 0.01';
+	await send('@tools spawn_agent ' + JSON.stringify({ name: 'wstop', task: TASK2 }) + ' @usage 1 1 0.001');
+	for (let i = 0; i < 120; i++) {
+		if (H.mockLog().filter((m) => lastUser(m).startsWith('@roundsthen 3/200')).length >= 4) break;
+		await sleep(250);
+	}
+	await p.waitForTimeout(500);
+	await p.evaluate(() => { const r = (window.DaimondWorkers.runs || []).find((x) => x.name === 'wstop'); if (r) window.DaimondWorkers.stop(r); });
+	const r3 = await waitEnd('wstop', 20000);
+	await p.waitForTimeout(1000);
+	const srows = (await ledgerSince(t1)).filter((e) => e.u >= 0.005);
+	check('(3/bill b) Stop mid-run books the rounds so far, once', !!r3 && r3.status === 'stopped' && srows.length === 1 && near(srows[0].u, 0.03),
+		`${r3 && r3.status}, rows ${srows.map((e) => e.u.toFixed(4)).join(',')}`);
+	await s.browser.close().catch(() => {});
 }
 
 if (BREAK) {

@@ -56,6 +56,12 @@
  * raised: the lapse is `expires`, a wall-clock time held IN the synced item, so every device
  * drops it at the same moment rather than each from when it happened to hear of it.
  *
+ * THE RUNNER'S UPDATE IS ONE OF THE PAGE'S OWN (lead ruling L3, KS-P release port). A runner on
+ * this machine that built a new version of itself waits for his passkey on the approve page;
+ * `runnerSettle` in daimond.js raises that request here, under `RUNNER` and the page keys
+ * `runner.<nonce>.<seq>.<commit>` (the tile) and `runner-alarm.<nonce>` (a witness alarm), both
+ * `needs: true`, so it reaches every device he has -- his phone above all. It is the one writer.
+ *
  * A DISMISS IS NOT A CLEAR. The person took it down; the condition may well still hold, and the
  * daimon -- which runs again on its next trigger -- will raise it again. Raised again with the
  * SAME words, it stays down (`raise` answers `dismissed`, and the model is told so): the person
@@ -77,7 +83,11 @@
 	var STATES       = { up: 0, clear: 1, dismissed: 2 };
 	var KEY_RE       = /^[A-Za-z0-9._-]+$/;
 	var QUIET_MS     = 24 * 3600 * 1000;		// a needs:false alert lapses a day after it is raised
-	var PAGE_KEYS    = { 'turn-failed': 1, 'mail-note': 1 };		// the page's own: outside LIVE_MAX, never the model's
+	var PAGE_KEYS    = { 'turn-failed': 1, 'mail-note': 1, 'runner': 1, 'runner-alarm': 1 };	// the page's own: outside LIVE_MAX, never the model's
+	// The runner's own items (daimond.js `runnerSettle`, KS-p4) are held under this name in
+	// place of a Diamond's id: a runner update is the machine's, not any Diamond's. No Diamond id
+	// starts with `@`, so no Diamond's alert can sit under it.
+	var RUNNER       = '@runner';
 
 	function ms(v) { var n = Number(v); return (isFinite(n) && n > 0) ? Math.floor(n) : 0; }
 	function now() { return Date.now(); }
@@ -384,6 +394,7 @@
 		syncSnapshot: syncSnapshot,	// collectSync
 		adoptSync:    adoptSync,	// applySync
 		KEY:     REC_KEY,
+		RUNNER:  RUNNER,	// the runner's items, raised by daimond.js `runnerSettle` only
 	};
 
 	/// The engine's door (src/wasm/pending.rs). `diamond` is the turn's own Diamond, passed by the

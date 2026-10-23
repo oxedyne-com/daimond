@@ -24,7 +24,7 @@ const check = (name, cond, detail) => {
 // The worker's block: from its meter's declaration to its `finally`, which bills the
 // last attempt through `billAttempt` (r543 QA F-A2-2).
 const a = SRC.indexOf('var wmeter');
-const b = SRC.indexOf('} finally {', SRC.indexOf('await run.app.run_turn(firstAsk(run), sink);', a));
+const b = SRC.indexOf('} finally {', SRC.indexOf('await run.app.run_turn(nudge, sink);', a));
 const blk = (a >= 0 && b > a) ? SRC.slice(a, b) : '';
 check("the worker's block is found", !!blk);
 

@@ -446,7 +446,7 @@ if (!PROVE) {
 		await ctx.close();
 	}
 
-	// Release gate 1 of hand/README.md, which dev/verify_hand.mjs reads off the
+	// Release gate 1 of kimberlite/README.md, which dev/verify_hand.mjs reads off the
 	// same three elements: the wording is chosen from `caps`, so it can only
 	// claim what THIS machine enforces. Moving those three behind the disclosure
 	// must not have moved the gate.
