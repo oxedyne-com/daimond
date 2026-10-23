@@ -42895,11 +42895,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// chat must not buy a fresh key to carry on with.
 					try { await DaimondModels.remint(chat._gen, chatSpendNode(chat)); }
 						catch (e2) {
-							// The key could not be replaced, so the balance is gone rather than merely
-							// capped. Say the thing the user can act on: a raw 401 would send them
-							// hunting for a key they never had.
-							throw new Error('Your Daimond credits have run out. Top up in Credits, or '
+							// The key could not be replaced. Say the thing the user can act on: an empty
+							// balance (`noCredits`, the gateway's 402) is the credits text, and any other
+							// refusal -- the floor's 429, a 503 -- is its own reason, never "credits have
+							// run out" said at a user who has credits (WKEY-FRESH, rc L2).
+							if (e2 && e2.noCredits) throw new Error('Your Daimond credits have run out. Top up in Credits, or '
 								+ 'switch this chat to a provider key of your own.');
+							throw new Error(friendlyError(e2));	// REMINT-REFUSAL-END
 						}
 						app = await rebuildAppWithout(chat, umid);
 						// Tagged, and confined, inside `rebuildAppWithout`.
@@ -45482,15 +45484,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					giveWorkerWeb(run);
 				}
 			};
-			// On credits, take a slot and mint its own key before building. A slot the
+			// On credits, take a slot and key it before building. A slot the
 			// account cannot afford (its siblings have reserved the balance) fails here
 			// as "no credits" rather than falling back to a shared key.
 			// A worker spends against the daimon that dispatched it, so that is the
 			// node the mint is told about (`runNode`, above).
+			// ONE ask, sized to the turn (WKEY-FRESH): a fresh ensure at the turn's want,
+			// rotating out whatever a previous worker left on the slot. The old mint-then-
+			// ensure pair had its second ask refused by the gateway's per-slot floor, and the
+			// refusal was swallowed, so every worker ran on the float. A refusal here is
+			// shown on the run, never run on a smaller key.
 			if (onCredits) {
 				run.slot = self.takeSlot();
 				try {
-					await DaimondModels.mintSlot(run.slot, runNode);
+					await DaimondModels.keySlot(run.slot, ensureWantMinor(), runNode);
 				} catch (e) {
 					// A refusal because the Diamond is PAUSED is a hold, not a failure.
 					// The mint throws an error carrying `.paused` precisely so the two
@@ -45764,18 +45771,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			};
 			// Reachable from `lockStop`, so a lock bills this leg before the list is emptied.
 			run._bill = billAttempt;
-			// F1 TURN START (worker) — raise this slot's key to a whole turn's headroom
-			// before the first round, the same as a chat does. The slot was just minted at
-			// the float, so this raises it IN PLACE and the app built around it stands; a
-			// raise needs no rebuild. Only a dead key returns a fresh one, and then the app
-			// is rebuilt around it (build + scope), as the auth-remint catch below does.
-			// Best-effort: a failure runs on the key just minted, exactly as before.
-			if (onCredits && DaimondModels.ensureActive()) {
-				try {
-					var wer = await DaimondModels.ensure(run.slot, ensureWantMinor(), runNode);
-					if (wer && wer.key) { build(); await scope(); if (seedSession) seedSession(); }
-				} catch (ew) { /* best-effort; run on the key just minted */ }
-			}
+			// F1 TURN START (worker): no second ask. The slot was keyed above at the turn's
+			// whole headroom in one fresh ensure (WKEY-FRESH), so a turn over the float is not
+			// refused at the cap; a second ask here, inside the gateway's per-slot floor, was
+			// the 429 that left every worker on the float.
 			// The folders this device knows, as its record stands at the turn's start: a
 			// worker's `file_revert` asks the engine which rows are another folder's (HK1).
 			await Files.reknow();
@@ -45792,11 +45791,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					reminted = true; authFail = false;
 					// This worker owns its slot, so it re-mints ITS OWN key — told which
 					// generation it froze, so a key already replaced by its own retry is
-					// taken rather than bought a second time.
-					try { await DaimondModels.remintSlot(run.slot, run._gen, runNode); }
+					// taken rather than bought a second time — at the turn's want, in one
+					// fresh ask (WKEY-FRESH), never at the float.
+					try { await DaimondModels.remintSlot(run.slot, run._gen, runNode, ensureWantMinor()); }
 					catch (e2) {
-						throw new Error('Your Daimond credits have run out. Top up in Credits, or '
+						// The credits text only for an empty balance (`noCredits`); any other refusal
+						// shows its own reason (WKEY-FRESH, rc L2), as the chat's remint does.
+						if (e2 && e2.noCredits) throw new Error('Your Daimond credits have run out. Top up in Credits, or '
 							+ 'switch to a provider key of your own, then dispatch this agent again.');
+						throw new Error(friendlyError(e2));	// REMINT-REFUSAL-END
 					}
 					// The dying attempt's spend, billed before `build()` replaces its app.
 					billAttempt();

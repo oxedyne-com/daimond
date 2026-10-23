@@ -922,6 +922,10 @@
 		if (opts && opts.ensure) {
 			body.ensure     = true;
 			body.want_minor = Math.max(0, opts.wantMinor | 0);
+			// `fresh`: the caller holds NO key for this slot, so a key left live there is not
+			// its to keep -- the gateway rotates it and mints at the want, in this one ask
+			// (WKEY-FRESH). See `keySlot`.
+			if (opts.fresh) body.fresh = true;
 		}
 		var r = await fetch(MINT_URL, {
 			method:      'POST',
@@ -1141,6 +1145,23 @@
 		return installSlotFromReply(slot, await mintRequest(slot, node));
 	}
 
+	/// Key a worker slot for its turn in ONE ask, returning `{ key, url, gen }` (WKEY-FRESH).
+	///
+	/// A fresh `ensure` sized to `wantMinor`, the turn's headroom: the gateway rotates out any
+	/// key a previous worker left live on the slot and mints one capped at the want. It replaces
+	/// the old pair -- `mintSlot` at the float, then `ensure` to raise it -- whose second ask the
+	/// gateway's per-slot floor (2 s) refused, so every worker ran on a key capped at the float
+	/// and a turn over it was refused at the cap, billed, and re-run on a new key.
+	///
+	/// A refusal THROWS, as `mintRequest` makes it (`.paused`, `.noCredits` intact): the worker
+	/// shows it rather than running on a smaller key. A reply without a key is a refusal too --
+	/// it is what a gateway that does not honour `fresh` answers on a live slot.
+	async function keySlot(slot, wantMinor, node) {
+		var j = await mintRequest(slot, node, { ensure: true, fresh: true, wantMinor: wantMinor });
+		if (!j.key || !j.url) throw new Error(t('models.err_bad_key'));
+		return installSlotFromReply(slot, j);
+	}
+
 	/// Install a mint reply as a worker slot's key, counting its generation up.
 	/// Factored out of `mintSlot` for the same reason `installCreditsFromReply` is: an
 	/// `ensure` on a slot whose key was dead adopts the fresh key the gateway minted.
@@ -1216,7 +1237,11 @@
 
 	/// A fresh key for a slot whose key was refused — unless another mint has
 	/// already replaced it, the same generation guard `remint` uses, per slot.
-	async function remintSlot(slot, gen, node) {
+	///
+	/// Keyed as the turn's first key is (WKEY-FRESH): ONE fresh ensure at `wantMinor`, the
+	/// turn's headroom, never a plain mint at the float -- the retry re-runs the whole task, and
+	/// a float key would cap it at the same $2 the first attempt died on.
+	async function remintSlot(slot, gen, node, wantMinor) {
 		// Before the generation guard, for the reason `remint` checks before its
 		// own: handing back a key somebody else minted is still the paused node
 		// carrying on.
@@ -1224,7 +1249,7 @@
 		if (held(workersNode())) throw pauseError(workersNode());
 		var s = slots[slot];
 		if (s && typeof gen === 'number' && gen < s.gen && s.key) return s;
-		return await mintSlot(slot, node);
+		return await keySlot(slot, wantMinor, node);
 	}
 
 	/// A slot's live `{ key, url, gen }`, or null if it holds none yet.
@@ -4946,6 +4971,7 @@
 		creditsState:   creditsState,
 		// Per-slot worker keys, so parallel workers never share one.
 		mintSlot:       mintSlot,
+		keySlot:        keySlot,
 		remintSlot:     remintSlot,
 		slotConfig:     slotConfig,
 		forgetSlot:     forgetSlot,

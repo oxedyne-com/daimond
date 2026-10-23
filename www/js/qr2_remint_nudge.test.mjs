@@ -20,7 +20,7 @@ const a = D.indexOf(A), z = D.indexOf(Z, a);
 if (a < 0 || z < 0) { console.log('  FAIL could not lift the block'); process.exit(1); }
 const seg = D.slice(a, z);
 const block = new Function('run', 'state', 'DaimondModels', 'billAttempt', 'self', 'build', 'scope', 'seedSession',
-	'turnMeter', 'window', 'RESUME_NUDGE', 'VISION_NUDGE', 'runNode', 'firstAsk',
+	'turnMeter', 'window', 'RESUME_NUDGE', 'VISION_NUDGE', 'runNode', 'firstAsk', 'ensureWantMinor',
 	'var reminted = false, wmeter = null, sink = {}, authFail = false;'
 	+ ' state.fail = function () { authFail = true; };'
 	+ ' return (async function () {\n' + seg + '\n})();');
@@ -32,7 +32,7 @@ async function go(run) {
 	const mkApp = () => ({ async run_turn(msg) { sent.push(msg); if (sent.length === 1) { state.fail(); throw new Error('402'); } } });
 	run.app = mkApp();
 	await block(run, state, { remintSlot: async () => ({}) }, () => {}, { render() {} },
-		() => { built++; run.app = mkApp(); }, async () => {}, () => {}, () => null, {}, 'RESUME', 'VISION', 'node', (r) => r.task);
+		() => { built++; run.app = mkApp(); }, async () => {}, () => {}, () => null, {}, 'RESUME', 'VISION', 'node', (r) => r.task, () => 500);
 	return { sent, built };
 }
 for (const [label, run, want] of [

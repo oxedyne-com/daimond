@@ -247,8 +247,11 @@ async function main() {
 			chatCalls === 2, 'occurrences=' + chatCalls);
 		check('a fresh key from ensure rebuilds the app around it',
 			/if \(er && er\.key\) \{[\s\S]{0,120}?rebuildAppWithout\(chat, umid\)/.test(src));
-		check('the worker raises its own slot before its turn',
-			src.includes('DaimondModels.ensure(run.slot, ensureWantMinor(), runNode)'));
+		// WKEY-FRESH: the worker keys its slot at the turn's want in ONE fresh ask, and does
+		// not ask again at turn start (a second ask inside the floor is the 429 it swallowed).
+		check('the worker keys its own slot at the turn\'s want before its turn',
+			src.includes('DaimondModels.keySlot(run.slot, ensureWantMinor(), runNode)')
+			&& !src.includes('DaimondModels.ensure(run.slot,'));
 		check('the want is the turn spend cap, defaulting to the engine figure',
 			src.includes('cfg.spendCap || DEFAULT_SPEND_CAP'));
 		check('the mid-turn top-up reads the mid-turn-safe live_cost_usd getter',
