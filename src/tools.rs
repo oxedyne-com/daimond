@@ -197,6 +197,11 @@ pub struct TurnState {
     // has a clock worth asking.
     pub removed: u32,
     pub turn_ms: u64,
+    // What the store refused to keep after an act had already happened (LOUD-FAIL, rc-a ruling
+    // B2): one sentence each, naming the keeper, the op and the store's reason, taken by the
+    // turn end ([`crate::engine::turn::end_keeper_turn_said`]) into the asker's transcript.
+    // Reset by `begin_turn`, as the act's turn is.
+    pub unkept: Vec<String>,
     // What was said about a command keeping its network
     //
     // The user's answer, once, about this conversation's commands reaching the network (see
@@ -389,6 +394,20 @@ impl<H: Host> Drop for TurnEnd<H> {
 
 /// A per-agent record of what this agent has read and where it came from.
 pub type ReadCache = Arc<Mutex<TurnState>>;
+
+/// Note what the store refused to keep after an act happened (LOUD-FAIL B2), for the turn end to
+/// say in the asker's transcript.  Said once however often it recurs.
+pub(crate) fn note_unkept(cache: &ReadCache, line: String) {
+    let mut c = lock_cache(cache);
+    if !c.unkept.contains(&line) {
+        c.unkept.push(line);
+    }
+}
+
+/// What [`note_unkept`] held for this turn, taken.
+pub(crate) fn take_unkept(cache: &ReadCache) -> Vec<String> {
+    std::mem::take(&mut lock_cache(cache).unkept)
+}
 
 /// A fresh, empty read cache for a new [`ToolContext`].
 pub fn new_read_cache() -> ReadCache {
@@ -1394,6 +1413,61 @@ pub const CHAT_WORK_DIR: &str = "work";
 /// What a chat's key in the version store starts with: `chat:<id>`, where a Diamond's is its id.
 pub const CHAT_KEEPER: &str = "chat:";
 
+/// What the key of a Diamond this store records turns for but does not hold starts with:
+/// `away:<id>` ([`KeeperKind::Away`]).  A native runner's store is one: it holds no Diamond.
+pub const AWAY_KEEPER: &str = "away:";
+
+/// The folder an away keeper's ledger lives under, `away/<id>`: off `diamonds/`, so a Diamond a
+/// carrier later delivers to the same store never meets the ledger's `versions/`.
+pub const AWAY_ROOT: &str = "away";
+
+/// The three kinds of keeper a version store records for, read off its key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeeperKind {
+    /// A Diamond this store holds (`<id>`): its versions are minted on its own crystal chain.
+    Diamond,
+    /// A chat (`chat:<id>`): manifests only, numbered from its own records.
+    Chat,
+    /// A Diamond whose turns this store records but does not hold (`away:<id>`): manifests only,
+    /// numbered as a chat's, with no Diamond file, crystal or log here.  For turn ownership it is
+    /// a Diamond's.
+    Away,
+}
+
+impl KeeperKind {
+    /// The kind of keeper `key` names.
+    pub fn of(key: &str) -> Self {
+        match key {
+            _ if key.starts_with(CHAT_KEEPER)   => Self::Chat,
+            _ if key.starts_with(AWAY_KEEPER)   => Self::Away,
+            _                                   => Self::Diamond,
+        }
+    }
+
+    /// Whether this kind's versions are minted on a held Diamond's crystal chain.
+    pub fn holds_diamond(self) -> bool {
+        self == Self::Diamond
+    }
+}
+
+/// The Diamond a keeper works for, held here or away; `None` for a chat's.
+pub fn keeper_diamond(key: &str) -> Option<&str> {
+    match KeeperKind::of(key) {
+        KeeperKind::Diamond => Some(key),
+        KeeperKind::Away    => key.strip_prefix(AWAY_KEEPER),
+        KeeperKind::Chat    => None,
+    }
+}
+
+/// The name a keeper goes by off this store: an away keeper as the Diamond it works for, so a
+/// runner's turn row and undo answer name the errand's `diamondId`; any other as itself.
+pub fn keeper_named(key: &str) -> &str {
+    match KeeperKind::of(key) {
+        KeeperKind::Away    => key.strip_prefix(AWAY_KEEPER).unwrap_or(key),
+        _                   => key,
+    }
+}
+
 /// A chat's own working directory, `chats/<id>/work`, minted from its id alone (`chatScratchDir`
 /// in daimond.js).  The engine derives it rather than taking it from the page, which could name
 /// another Diamond's folder as the chat's own (QA B F1, 2026-10-12).
@@ -1439,11 +1513,45 @@ fn glob_hits(glob: &Glob, shown: &str, under: &str, start: &str) -> bool {
     }
 }
 
-/// The folder whose `versions/` holds a keeper's store: `diamonds/<id>`, or `chats/<id>`.
+/// The most bytes a keeper's id may hold, its kind's prefix not counted (UNBLOCK-32 F2, D3-2).
+pub const KEEPER_ID_MAX: usize = 128;
+
+/// Whether `key` is a keeper id that names ONE store: a Diamond id, `chat:` and a chat id, or
+/// `away:` and a Diamond id, each a single non-empty path segment of at most [`KEEPER_ID_MAX`]
+/// bytes with no `/`, `\\`, NUL or `:`, and no leading `.` (so neither `.` nor `..`).  No `:`
+/// (D3-1): a Diamond id of `chat:victim` would otherwise be granted as chat victim's store.  `Err` names the id and why.  A keeper id becomes a path ([`keeper_home`]), and
+/// the store resolves `..` by popping, so an unchecked `chatId` of `../diamonds/victim` reached a
+/// Diamond's store (rc-a ruling F2, UNBLOCK-32).  Checked where a run is given its keeper
+/// (kimberlite's `spawn_spec`) and where the store binds a run's grant, so no run holds a bad one.
+pub fn keeper_id_ok(key: &str) -> Outcome<()> {
+    let (what, id) = match KeeperKind::of(key) {
+        KeeperKind::Chat    => ("chat", &key[CHAT_KEEPER.len()..]),
+        KeeperKind::Away    => ("away Diamond", &key[AWAY_KEEPER.len()..]),
+        KeeperKind::Diamond => ("Diamond", key),
+    };
+    let why = match id {
+        ""                                  => Some("it is empty"),
+        _ if id.starts_with('.')            => Some("it starts with '.'"),
+        _ if id.contains(['/', '\\', '\0']) => Some("it holds a path separator or NUL"),
+        _ if id.contains(':')               => Some("it holds a ':'"),
+        _ if id.len() > KEEPER_ID_MAX       => Some("it is longer than 128 bytes"),
+        _                                   => None,
+    };
+    match why {
+        None    => Ok(()),
+        Some(w) => Err(err!("The {} id {:?} is refused as a keeper: {}, so it is not one store's \
+            name.", what, id, w; Invalid, Input)),
+    }
+}
+
+/// The folder whose `versions/` holds a keeper's store: `diamonds/<id>`, `chats/<id>`, or
+/// `away/<id>` for a Diamond held elsewhere ([`KeeperKind::Away`]).  The
+/// id must have passed [`keeper_id_ok`], which every run's grant does.
 pub fn keeper_home(key: &str) -> String {
-    match key.strip_prefix(CHAT_KEEPER) {
-        Some(chat) => fmt!("{}/{}", CHAT_ROOT, chat),
-        None       => fmt!("{}/{}", STORE_ROOT, key),
+    match KeeperKind::of(key) {
+        KeeperKind::Chat    => fmt!("{}/{}", CHAT_ROOT, &key[CHAT_KEEPER.len()..]),
+        KeeperKind::Away    => fmt!("{}/{}", AWAY_ROOT, &key[AWAY_KEEPER.len()..]),
+        KeeperKind::Diamond => fmt!("{}/{}", STORE_ROOT, key),
     }
 }
 
@@ -7632,6 +7740,120 @@ fn absolute_path_refusal(tool: &Tool, path: &str) -> Option<String> {
         workspace{}. Give the path from the workspace root down, e.g. 'src/main.rs'. Absolute \
         paths belong only in run's 'argv'; run's 'cwd' is workspace-relative, like this one.",
         path, tool.name(), inside))
+}
+
+/// The keys of `tool`'s arguments that name a workspace path, for [`based_args`].
+fn path_keys(tool: &Tool) -> &'static [&'static str] {
+    match tool {
+        Tool::FileRead                                         => &["path", "paths"],
+        Tool::FileMove                                         => &["path", "to"],
+        Tool::WebFetch                                         => &["to"],
+        Tool::TypstCompile                                     => &["path", "out"],
+        Tool::Run | Tool::Verify                               => &["cwd"],
+        Tool::FileWrite | Tool::FileEdit | Tool::FileList | Tool::FileSearch | Tool::Outline
+        | Tool::FileGlob | Tool::FileDelete | Tool::FileRevert | Tool::DirCreate
+        | Tool::ArtefactAdd | Tool::FileFetch | Tool::FileShow | Tool::SheetRead
+        | Tool::DocEdit | Tool::SheetWrite | Tool::Serve | Tool::Ocr => &["path"],
+        _                                                      => &[],
+    }
+}
+
+/// The byte range of `key`'s array value in `args`, brackets included, or `None`.
+fn array_span(args: &str, key: &str) -> Option<(usize, usize)> {
+    let needle = fmt!("\"{}\"", key);
+    let after = match args.find(&needle) {
+        Some(i) => i + needle.len(),
+        None    => return None,
+    };
+    let rest = &args[after..];
+    let colon = match rest.find(|c: char| !c.is_whitespace()) {
+        Some(j) if rest.as_bytes()[j] == b':' => after + j + 1,
+        _                                     => return None,
+    };
+    let tail = &args[colon..];
+    let open = match tail.find(|c: char| !c.is_whitespace()) {
+        Some(k) if tail.as_bytes()[k] == b'[' => colon + k,
+        _                                     => return None,
+    };
+    let bytes = args.as_bytes();
+    let (mut at, mut quoted) = (open + 1, false);
+    while at < bytes.len() {
+        match (bytes[at], quoted) {
+            (b'\\', true) => at += 1,
+            (b'"', _)      => quoted = !quoted,
+            (b']', false)  => return Some((open, at + 1)),
+            _              => {},
+        }
+        at += 1;
+    }
+    None
+}
+
+/// Whether a test has switched the machine folder's root off (`folder_root` named in
+/// `KIMBERLITE_RULE_OFF`, comma-separated), to see its own arm go red: no path is rebased on the
+/// folder and the briefing does not name it.  Never in a release build.
+pub(crate) fn folder_root_off() -> bool {
+    if !cfg!(debug_assertions) {
+        return false;
+    }
+    match std::env::var("KIMBERLITE_RULE_OFF") {
+        Ok(v)   => v.split(',').any(|r| r.trim() == "folder_root"),
+        Err(_)  => false,
+    }
+}
+
+/// Is `key` where `tool` starts when the call names none: `path` for a walk, `cwd` for a command
+/// (F2-FIX H1).
+fn start_key(tool: &Tool, key: &str) -> bool {
+    match tool {
+        Tool::FileList | Tool::FileSearch | Tool::FileGlob  => key == "path",
+        Tool::Run | Tool::Verify                            => key == "cwd",
+        _                                                   => false,
+    }
+}
+
+/// `args` with every path `tool` names rebased on the workspace's base (UNBLOCK-32 F2b), or
+/// `None` where there is no base or nothing changed.
+///
+/// **The root of the folder's fence**: made once, at the door every call passes, before the
+/// guard, so every check after it -- the path convention, the bounds, the licence, the link
+/// proofs -- judges the root-relative path the act reaches ([`Workspace::based`]), never the
+/// path as written.  A walk or a command that names no start starts at the base.
+pub(crate) fn based_args(tool: &Tool, args: &str, ws: &Workspace) -> Option<String> {
+    if ws.base().is_empty() || folder_root_off() {
+        return None;
+    }
+    let mut out = args.to_string();
+    for key in path_keys(tool) {
+        if *key == "paths" {
+            let list = match extract_json_string_array(&out, key) {
+                Some(l) => l,
+                None    => continue,
+            };
+            if let Some((from, to)) = array_span(&out, key) {
+                let items: Vec<String> = list.iter()
+                    .map(|p| fmt!("\"{}\"", json_escape(&ws.based(p)))).collect();
+                out = fmt!("{}[{}]{}", &out[..from], items.join(","), &out[to..]);
+            }
+            continue;
+        }
+        match (extract_json_string(&out, key), crate::profile::string_span(&out, key)) {
+            (Some(p), Some((from, to))) => {
+                out = fmt!("{}\"{}\"{}", &out[..from], json_escape(&ws.based(&p)), &out[to..]);
+            },
+            // A walk that names no start, and a command that names no `cwd` (F2-FIX H1), start
+            // at the base: the briefing says "You start in ~/<folder>", so `run ["rm","-rf",
+            // "build"]` acts there, never on the home, and every check after judges the base.
+            _ => if start_key(tool, key) {
+                if let Some(i) = out.find('{') {
+                    let rest = out[i + 1..].trim_start();
+                    let sep = if rest.starts_with('}') { "" } else { "," };
+                    out = fmt!("{}\"{}\":\"{}\"{}{}", &out[..=i], key, json_escape(ws.base()), sep, &out[i + 1..]);
+                }
+            },
+        }
+    }
+    if out == args { None } else { Some(out) }
 }
 
 /// The refusal for a tool path that is not one canonical relative path, or `None` where it is.
@@ -14457,6 +14679,7 @@ impl<H: Host> ToolContext<H> {
         c.asked = false;
         c.removed = 0;
         c.turn_ms = 0;
+        c.unkept.clear();
         c.probed.remove(&who);
         c.proof.remove(&who);
         // The holds are this TURN's and not the conversation's: another turn of the same
@@ -20106,7 +20329,7 @@ impl Tool {
             Some(o) => o,
             None    => return None,
         };
-        let own = ctx.keeper().filter(|k| !k.starts_with(CHAT_KEEPER));
+        let own = ctx.keeper().and_then(|k| keeper_diamond(&k).map(str::to_string));
         if own.as_deref() == Some(owner.as_str()) {
             return None;
         }
@@ -22975,7 +23198,7 @@ impl Tool {
                                 &mut trusted
                             };
                             let held = res!(machine_lines(block));
-                            if !res!(scan_file(&opts, &disp, &held, &mut stats, out)) {
+                            if !res!(scan_file(&opts, &ctx.workspace.shown(&disp), &held, &mut stats, out)) {
                                 break;
                             }
                         }
@@ -23061,8 +23284,10 @@ impl Tool {
                             stats.refused += 1;
                             continue;
                         }
+                        // The filter is written as the model writes paths, relative to the
+                        // folder base, so it is asked of the path as shown too (F2-FIX M3).
                         if let Some(g) = &opts.glob {
-                            if !g.matches(&disp) {
+                            if !g.matches(&disp) && !g.matches(&ctx.workspace.shown(&disp)) {
                                 stats.filtered += 1;
                                 continue;
                             }
@@ -23095,7 +23320,8 @@ impl Tool {
                             &mut trusted
                         };
                         let mut src = OpfsLines::new();
-                        let mut sc  = LineScanner::new(&opts, &disp);
+                        let shown   = ctx.workspace.shown(&disp);
+                        let mut sc  = LineScanner::new(&opts, &shown);
                         let mut off = head.len() as f64;
                         let mut bytes = head;
                         let mut room = true;
@@ -23234,7 +23460,7 @@ impl Tool {
                                 continue;
                             }
                             hits.push(GlobHit {
-                                path: disp,
+                                path: ctx.workspace.shown(&disp),
                                 // `-` is the platform declining to say, kept as an absence
                                 // rather than turned into 1970.
                                 when: stamp.parse::<u64>().ok(),
@@ -23308,7 +23534,7 @@ impl Tool {
                             // sort on one scale and a build's worth of files written in the same
                             // second keeps whatever order the platform can actually distinguish.
                             hits.push(GlobHit {
-                                path: disp,
+                                path: ctx.workspace.shown(&disp),
                                 when: (*when).map(|ms| (ms as u64).saturating_mul(1_000_000)),
                             });
                         }
@@ -24127,7 +24353,11 @@ impl Tool {
                     Output = Outcome<MessageContent>> + '_>> =
                     Box::pin(Tool::FileGlob.execute(&call, ctx));
                 let listing = res!(fut.await);
+                // A listing names each path as the model writes it back (`shown`), relative to
+                // the folder base; `asked` is already root-relative (`based_args`), so each is
+                // put through `based` -- the inverse -- before it is read (F2-FIX M3).
                 for p in glob_paths(&listing.as_text()) {
+                    let p = ctx.workspace.based(&p);
                     if !want.contains(&p) {
                         want.push(p);
                     }
@@ -26651,6 +26881,9 @@ impl Tool {
             Err(crate::diamond_versions::Short::Bytes(room)) => return Err(turn_room_refusal(raw, room)),
             Err(crate::diamond_versions::Short::Kept(bytes, max)) =>
                 return Err(keep_size_refusal(raw, bytes, max)),
+            // The store refused the before-image's claim: nothing is written (LOUD-FAIL B1).
+            Err(crate::diamond_versions::Short::Store(why)) =>
+                return Err(copy_unwritten_refusal(raw, &why)),
         }
         Ok(held)
     }
@@ -27299,6 +27532,9 @@ impl Tool {
                                     turn_room_refusal(raw, room),
                                 crate::diamond_versions::Short::Kept(bytes, max) =>
                                     keep_size_refusal(raw, bytes, max),
+                                // LOUD-FAIL B1: the store refused the claim; nothing moves.
+                                crate::diamond_versions::Short::Store(why) =>
+                                    copy_unwritten_refusal(raw, &why),
                             });
                         },
                     }
@@ -27780,7 +28016,9 @@ impl Tool {
             if is_pattern(a) {
                 let listing = res!(Self::local_file_glob(&fmt!(
                     r#"{{"pattern":"{}","limit":{}}}"#, json_escape(a), READ_MANY_MAX), ctx));
+                // Folder-relative as listed (`shown`); read root-relative, as `asked` is (M3).
                 for p in glob_paths(&listing) {
+                    let p = ctx.workspace.based(&p);
                     if !want.contains(&p) { want.push(p); }
                 }
             } else if !want.contains(a) {
@@ -28269,8 +28507,10 @@ impl Tool {
                     stats.refused += 1;
                     continue;
                 }
+                // Asked of the path as shown too: the model writes the filter relative to the
+                // folder base (F2-FIX M3).
                 if let Some(g) = &opts.glob {
-                    if !g.matches(&rel) {
+                    if !g.matches(&rel) && !g.matches(&ctx.workspace.shown(&rel)) {
                         stats.filtered += 1;
                         continue;
                     }
@@ -28307,7 +28547,7 @@ impl Tool {
                 stats.files += 1;
                 let out = if is_untrusted_path(&rel) { &mut untrusted } else { &mut trusted };
                 let mut src = ReaderLines::new(reader);
-                if !res!(scan_source(&opts, &rel, &mut src, &mut stats, out)) {
+                if !res!(scan_source(&opts, &ctx.workspace.shown(&rel), &mut src, &mut stats, out)) {
                     break 'walk;
                 }
             }
@@ -28431,7 +28671,8 @@ impl Tool {
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_nanos() as u64);
-                hits.push(GlobHit { path: rel, when });
+                // Written back as the model writes it (UNBLOCK-32 F2b: relative to a folder base).
+                hits.push(GlobHit { path: ctx.workspace.shown(&rel), when });
             }
         }
         budget.unwalked(stack.len());
@@ -28985,8 +29226,18 @@ impl Tool {
         };
         // Which of the files already there the Diamond made, from its own record: the one
         // engine function the tab's hand and the runner both go through (MADE-1).
+        // It is read BEFORE the command starts, so a store that will not say refuses the command,
+        // fail-closed, with the keeper, the op and the store's reason (LOUD-FAIL, rc-a ruling F1):
+        // nothing is spawned, so nothing is made that the History could neither keep nor undo.
+        let mut loud = String::new();
         let made = match ctx.keeper() {
-            Some(dia) => made_json(&dia, &fence.rw, &ctx.host().store().made_files(&dia).await),
+            Some(dia) => match ctx.host().store().made_files(&dia).await {
+                Ok(m)  => made_json(&dia, &fence.rw, &m),
+                Err(e) => return Ok(Exec::Refused(fmt!("Refused: the store refused made_files for \
+                    keeper '{}' ({}), so it cannot say which files here are the Diamond's and \
+                    nothing was run. Tell the user; the command can be tried again once the \
+                    store answers.", dia, e.plain()))),
+            },
             None      => "null".to_string(),
         };
         let spec = bound_to_link(fmt!(
@@ -29010,7 +29261,18 @@ impl Tool {
         if let Some(dia) = ctx.keeper() {
             let ran = crate::diamond_versions::RanMade::of(&res);
             if !ran.files.is_empty() || ran.capped {
-                ctx.host().store().ran_made(&dia, ctx.by.clone(), ran.files, ran.capped).await;
+                // The command has run: a refusal here cannot undo it, so it is said, in this
+                // answer and at the turn end in the asker's transcript (LOUD-FAIL B2).
+                if let Err(e) = ctx.host().store().ran_made(&dia, ctx.by.clone(), ran.files,
+                    ran.capped).await
+                {
+                    let line = fmt!("The store refused ran_made for keeper '{}' ({}): what this \
+                        command made is on the disk, but this turn's record does not hold it.",
+                        dia, e.plain());
+                    ctx.host().store().trail("RUN NOT RECORDED", &line);
+                    note_unkept(&ctx.read_seen, line.clone());
+                    loud.push_str(&fmt!("\n[{}]", line));
+                }
             }
         }
         if let Some(n) = extract_json_number(&res, "counted") {
@@ -29039,6 +29301,7 @@ impl Tool {
                 after = kit_after_note(argv, &late, answer);
             }
         }
+        after.push_str(&loud);
         Ok(Exec::Ran { res, no_net, tainting, read_only, after })
     }
 
@@ -31662,7 +31925,16 @@ impl<H: Host> ToolRegistry<H> {
         // allocates nothing.  Two drifts and no more: an object wrapped in whitespace, and an
         // array written as a quoted string -- both on the bank, both costing a whole round.
         let args = self.family.get().normalise_args(name, args_json);
-        let args_json: &str = args.as_ref();
+        // A run rooted at a machine folder (UNBLOCK-32 F2b): every path the call names, as the
+        // place it reaches, before any door judges it.
+        let based = match Tool::from_name(name) {
+            Some(t) => based_args(&t, args.as_ref(), &ctx.workspace),
+            None    => None,
+        };
+        let args_json: &str = match &based {
+            Some(b) => b.as_str(),
+            None    => args.as_ref(),
+        };
         // ARMED BEFORE THE CALL, so the alarm below can only ever be about this one. An exception
         // an earlier call caught and recovered from is not evidence about this one's folder.
         // The hosted half's alone, as every port reach below is: the native half has no folder
@@ -34759,6 +35031,30 @@ mod tests {
         }
         assert_eq!("diamonds/d1", keeper_home("d1"));
         assert_eq!("chats/c1", keeper_home("chat:c1"));
+        // AWAY-FIX: a Diamond held elsewhere keeps its ledger off `diamonds/`.
+        assert_eq!("away/d1", keeper_home("away:d1"));
+        assert_eq!(KeeperKind::Away, KeeperKind::of("away:d1"));
+        assert_eq!(KeeperKind::Chat, KeeperKind::of("chat:c1"));
+        assert_eq!(KeeperKind::Diamond, KeeperKind::of("d1"));
+        assert_eq!(("d1", "chat:c1", "d1"), (keeper_named("away:d1"), keeper_named("chat:c1"), keeper_named("d1")));
+        assert_eq!((Some("d1"), None, Some("d1")),
+            (keeper_diamond("away:d1"), keeper_diamond("chat:c1"), keeper_diamond("d1")));
+        assert!(stored_is_mark("away:d1", "usr/media/out.mp3"));
+        for good in ["d1", "chat:c1", "chat:chat-a2", "d-x_1", "away:d1", "away:1a1691554b737"] {
+            assert!(keeper_id_ok(good).is_ok(), "{} refused", good);
+        }
+        for bad in ["chat:../diamonds/victim", "chat:x/../other-chat", "../x", "chat:", "", "chat:..",
+            ".", "chat:.hidden", "a\\b", "a\0b", "d/1", "away:", "away:..", "away:../diamonds/victim",
+            "away:x/../y", "away:.hidden", "chat:victim:x", "away:chat:victim", "chat:away:d1", "a:b"]
+        {
+            assert!(keeper_id_ok(bad).is_err(), "{:?} passed", bad);
+        }
+        // D3-2: every id is capped at 128 bytes, its kind's prefix not counted.
+        let (at, over) = ("x".repeat(KEEPER_ID_MAX), "x".repeat(KEEPER_ID_MAX + 1));
+        for pre in ["", "chat:", "away:"] {
+            assert!(keeper_id_ok(&fmt!("{}{}", pre, at)).is_ok(), "{}<128 bytes> refused", pre);
+            assert!(keeper_id_ok(&fmt!("{}{}", pre, over)).is_err(), "{}<129 bytes> passed", pre);
+        }
         // What a restore must send back through the fence: everything outside the keeper's home.
         assert!(!stored_is_mark("chat:c1", "chats/c1/work/a.md"));
         assert!(stored_is_mark("chat:c1", "vault/a.md"));

@@ -216,8 +216,9 @@ impl HostStore for TestStore {
     fn ran_opaque(&self, _: &str) {}
     async fn note_output(&self, _: &str, _: &str, _: &str, _: &[u8]) {}
     async fn output_is_own(&self, _: &str, _: &str, _: &str, _: &[u8]) -> bool { false }
-    async fn made_files(&self, _: &str) -> Vec<(String, String)> { Vec::new() }
-    async fn ran_made(&self, _: &str, _: Option<Author>, _: Vec<(String, String, bool)>, _: bool) {}
+    async fn made_files(&self, _: &str) -> Outcome<Vec<(String, String)>> { Ok(Vec::new()) }
+    async fn ran_made(&self, _: &str, _: Option<Author>, _: Vec<(String, String, bool)>, _: bool)
+        -> Outcome<()> { Ok(()) }
     fn theirs(&self, _: &str, _: &str) -> bool { true }
     fn folder_of(&self, _: &str) -> Option<String> { None }
     // true refuses: claim and move_ends then hold, and the hold refuses (u2_plan §9.2).
@@ -281,7 +282,7 @@ impl HostStore for TestStore {
 
     // Never held: nothing is drained, recorded or settled, and a steer always seems to run.
     async fn hold_versions(&self, _: &str) -> Outcome<()> { refused("hold_versions") }
-    fn is_steering(&self, _: &str) -> bool { true }
+    fn is_steering(&self, _: &str) -> Outcome<bool> { Ok(true) }
     fn steering(&self, _: &str) {}
     fn drain_dirty(&self, _: &str) -> Vec<()> { Vec::new() }
     async fn dirty_changes(&self, _: &str, _: Vec<()>) -> Vec<Change> { Vec::new() }
@@ -469,9 +470,9 @@ pub(crate) mod closed {
             Ok(_)  => panic!("hold_versions answered"),
         }
         // true holds: a turn end that finds a steer running leaves the store's turn to it.
-        assert!(s.is_steering("d"));
+        assert!(matches!(s.is_steering("d"), Ok(true)));
         let _steer = s.steering("d");
-        assert!(s.is_steering("d"));
+        assert!(matches!(s.is_steering("d"), Ok(true)));
         assert!(s.drain_dirty("d").is_empty());
         assert!(s.dirty_changes("d", Vec::new()).await.is_empty());
         let hold = S::Hold::default();

@@ -87,7 +87,7 @@ function world(rosterLine, presRec, provider) {
 		_peerStopping: {}, _progressView: {}, _saidThere: {},
 		commitRatings: () => {}, ratingPre: () => '', newMid: () => 'm1', peerSyncShim: () => ({}),
 		giveUpSent: () => {}, pushUserRecord: () => {}, appendInterjected: () => {}, syncSendMode: () => {},
-		current: null, storedPre: () => '', storedEffort: () => null, turnEffortOf: () => null, errandModelOf: () => ({}), errandFence: async () => null,
+		current: null, storedPre: () => '', storedEffort: () => null, turnEffortOf: () => null, errandModelOf: () => ({}), errandFence: async () => null, errandScope: (c, h) => h,
 		autonomousPosture: () => false, msgTombsOwed: () => [], selfDeviceIdOf: () => 'phone1',
 		touchMsg: (m) => m, touchChat: () => {}, persistChats: () => {}, ownsChat: () => false, renderHistory: () => {},
 	};

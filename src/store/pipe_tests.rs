@@ -1004,3 +1004,125 @@ fn qa1d_a_a_kept_copy_is_a_row_once_never_twice() {
     assert_eq!(qa1d_run(true, true), 2, "red: with unnamed_once off no duplicate row was made");
     eprintln!("RED QA1-D: unnamed_once off, the held bytes got a duplicate row");
 }
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ LOUD-FAIL: a store refusal is said, never swallowed            │
+// └───────────────────────────────────────────────────────────────┘
+
+/// A child's turn context keeping into `x`, a Diamond its run was NOT granted, so the store's
+/// scope refuses every call naming it -- the shape of DIAG-AUTHOR2's live fault.
+fn outside_ctx(pipe: PipeLink, name: &str) -> ToolContext<NativeHost> {
+    let mut ctx = child_ctx(pipe, name);
+    ctx.keeper = s("x");
+    ctx
+}
+
+/// LOUD-FAIL B1 (rc-a ruling): the store refusing the claim on a write's before-image REFUSES
+/// the write, fail-closed, and the model is told the store's reason with the keeper and op --
+/// never a turn cap it did not reach.  Break: remote `loud` off (the old `Short::Count`).
+fn loud_b1_run(red: bool) -> (String, Option<Vec<u8>>) {
+    use crate::tools::Tool;
+    let (srv, pipe, h) = piped(standing());
+    let ctx = outside_ctx(pipe, if red { "loud_b1_red" } else { "loud_b1" });
+    plant(&ctx, "notes/a.md", b"before\n");
+    if red {
+        crate::store::remote::switch_off(Some("loud"));
+    }
+    let _ = child_said(Tool::FileRead, r#"{"path":"notes/a.md"}"#, &ctx);
+    let said = child_said(Tool::FileWrite, r#"{"path":"notes/a.md","content":"after\n"}"#, &ctx);
+    crate::store::remote::switch_off(None);
+    let disk = std::fs::read(ctx.workspace.root().join("notes/a.md")).ok();
+    drop(ctx);
+    ended(h);
+    srv.stop();
+    (said, disk)
+}
+
+#[test]
+fn loud_b1_a_refused_before_image_refuses_the_write_and_says_the_stores_reason() {
+    let (said, disk) = loud_b1_run(false);
+    eprintln!("LOUD B1: {}", said);
+    assert!(said.contains("Refused") && said.contains("captured_room") && said.contains("'x'"),
+        "the refusal names the store's op and the keeper: {}", said);
+    assert_eq!(disk.as_deref(), Some(&b"before\n"[..]), "the write landed: {}", said);
+    let (red, disk) = loud_b1_run(true);
+    assert!(!red.contains("captured_room"), "break: loud off still named the store: {}", red);
+    assert_eq!(disk.as_deref(), Some(&b"before\n"[..]), "break: the write landed: {}", red);
+    eprintln!("BREAK LOUD B1: loud off, refused for a reason that is not the store's: {}", red);
+}
+
+/// LOUD-FAIL B2 (rc-a ruling): after the act, a refused `ran_made` / `made_files` is the store's
+/// reason at the port (never `()` or an empty list), and a refused turn record is ONE visible
+/// sentence from the turn end naming the keeper, each op and the reason, for the asker's
+/// transcript ([`crate::engine::turn::end_keeper_turn_said`]).  Break: remote `loud` off, the
+/// port swallows again and nothing the run's command noted is said.
+fn loud_b2_run(red: bool) -> (Outcome<()>, Outcome<Vec<(String, String)>>, Option<String>) {
+    let (srv, pipe, h) = piped(standing());
+    let ctx = outside_ctx(pipe, if red { "loud_b2_red" } else { "loud_b2" });
+    if red {
+        crate::store::remote::switch_off(Some("loud"));
+    }
+    let store = ctx.host().store();
+    let ran = rt().block_on(store.ran_made("x", None,
+        vec![(s("notes/built.o"), s("00"), true)], false));
+    let made = rt().block_on(store.made_files("x"));
+    // What `run` notes on a refusal (tools.rs), as its exec door would.
+    if let Err(e) = &ran {
+        crate::tools::note_unkept(&ctx.read_seen,
+            fmt!("The store refused ran_made for keeper 'x' ({}).", e.plain()));
+    }
+    let (kept, said) = rt().block_on(crate::engine::turn::end_keeper_turn_said(&ctx, true));
+    crate::store::remote::switch_off(None);
+    assert!(kept.is_none(), "an unbound keeper recorded a version");
+    drop(ctx);
+    ended(h);
+    srv.stop();
+    (ran, made, said)
+}
+
+#[test]
+fn loud_b2_a_refused_record_after_the_act_is_said_with_keeper_op_and_reason() {
+    let (ran, made, said) = loud_b2_run(false);
+    eprintln!("LOUD B2: ran={:?} made={:?} said={:?}", ran.is_err(), made.is_err(), said);
+    assert!(ran.is_err(), "ran_made's refusal was swallowed");
+    assert!(made.is_err(), "made_files' refusal was an empty list");
+    let said = said.unwrap_or_default();
+    // The turn end stops at the refused `is_steering`, and says it too (F2-REL3).
+    assert!(said.contains("ran_made") && said.contains("is_steering") && said.contains("'x'")
+        && said.contains("not granted"),
+        "the turn end names the op refused, the keeper and the store's reason: {}", said);
+    let (ran, made, said) = loud_b2_run(true);
+    assert!(ran.is_ok() && made.is_ok(), "break: loud off still refused at the port");
+    assert!(!said.unwrap_or_default().contains("ran_made"), "break: ran_made still said");
+    eprintln!("BREAK LOUD B2: loud off, ran_made/made_files swallowed and unsaid");
+}
+
+/// LOUD-FAIL, `is_steering` (F2-REL3): a store that refuses the turn end's `is_steering` is said
+/// in the asker's transcript with the keeper, the op and the store's reason, never taken for "a
+/// steer runs", which stopped the turn end before `hold_versions` and recorded nothing silently.
+/// Break: remote `loud` off, the refusal is "steering" again and nothing is said.
+fn loud_steering_run(red: bool) -> Option<String> {
+    let (srv, pipe, h) = piped(standing());
+    let ctx = outside_ctx(pipe, if red { "loud_steer_red" } else { "loud_steer" });
+    if red {
+        crate::store::remote::switch_off(Some("loud"));
+    }
+    let (kept, said) = rt().block_on(crate::engine::turn::end_keeper_turn_said(&ctx, true));
+    crate::store::remote::switch_off(None);
+    assert!(kept.is_none(), "an unbound keeper recorded a version");
+    drop(ctx);
+    ended(h);
+    srv.stop();
+    said
+}
+
+#[test]
+fn loud_is_steering_refused_at_the_turn_end_is_said_with_keeper_op_and_reason() {
+    let said = loud_steering_run(false).unwrap_or_default();
+    eprintln!("LOUD STEER: {}", said);
+    assert!(said.contains("is_steering") && said.contains("'x'") && said.contains("not granted"),
+        "the turn end names is_steering, the keeper and the store's reason: {:?}", said);
+    let red = loud_steering_run(true);
+    assert!(red.is_none(), "break: loud off still said the refusal: {:?}", red);
+    eprintln!("BREAK LOUD STEER: loud off, is_steering refused is 'steering' again, unsaid");
+}

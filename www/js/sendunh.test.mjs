@@ -237,7 +237,7 @@ function world(fault, extra) {
 		touchChat: () => {}, persistChats: () => {}, renderHistory: () => {},
 		scheduleDispatchFallback: () => {}, PRESUMED_FALLBACK_MS: 5000, electedTried: () => ['argonaut1'],
 		turnEffortOf: () => null, storedPre: () => { if (fault === 'throw') throw new Error('qa: a throw before the mark'); return ''; },
-		storedEffort: () => null, errandModelOf: () => ({}), errandFence: async () => null, autonomousPosture: () => false, msgTombsOwed: () => [],
+		storedEffort: () => null, errandModelOf: () => ({}), errandFence: async () => null, errandScope: (c, h) => h, autonomousPosture: () => false, msgTombsOwed: () => [],
 		loadChatMessages: async () => {}, friendlyError: (e) => String(e && e.message),
 		seatSwitchFor: () => ({ runner: { deviceId: 'argonaut1' } }),
 		peerReports: {}, placeholderParkCount: () => 0,

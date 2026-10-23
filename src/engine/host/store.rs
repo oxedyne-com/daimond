@@ -122,12 +122,14 @@ pub trait HostStore {
     async fn output_is_own(&self, id: &str, tool: &str, path: &str, bytes: &[u8]) -> bool;
     /// The files the Diamond's file tools last wrote, each with the sha256 of what they left
     /// ([`crate::diamond_versions::made_by_diamond`]): what an exec request's `made` names.
-    async fn made_files(&self, id: &str) -> Vec<(String, String)>;
+    /// An `Err` is the store's refusal, which the caller says (LOUD-FAIL); it then sends none.
+    async fn made_files(&self, id: &str) -> Outcome<Vec<(String, String)>>;
     /// Keep what one command `by` ran made, as the hand's write meter reported it, for the turn's
     /// record ([`crate::diamond_versions::ran_rows`], MADE-2).  Best effort: a file not kept is
-    /// the user's to the next command, which is the safe side.
+    /// the user's to the next command, which is the safe side; an `Err` is the store's refusal,
+    /// which the turn end says in the asker's transcript (LOUD-FAIL).
     async fn ran_made(&self, id: &str, by: Option<Author>, files: Vec<(String, String, bool)>,
-        capped: bool);
+        capped: bool) -> Outcome<()>;
     fn theirs(&self, id: &str, path: &str) -> bool;
     fn folder_of(&self, path: &str) -> Option<String>;
     fn versionable(&self, id: &str, path: &str) -> bool;
@@ -193,7 +195,9 @@ pub trait HostStore {
     // `Hold`, from `drain_turn` until `versions_record_held` records and settles them: only counts
     // and paths cross.  Dropping the hold frees the slot with its notes unsettled.
     async fn hold_versions(&self, id: &str) -> Outcome<Self::Hold>;
-    fn is_steering(&self, id: &str) -> bool;
+    /// An `Err` is the store refusing the ask: the turn end says it and records nothing
+    /// (LOUD-FAIL), never taking it for "a steer runs".
+    fn is_steering(&self, id: &str) -> Outcome<bool>;
     fn steering(&self, id: &str) -> Self::Steer;
     fn drain_dirty(&self, id: &str) -> Vec<Self::Marked>;
     async fn dirty_changes(&self, id: &str, dirty: Vec<Self::Marked>) -> Vec<Change>;

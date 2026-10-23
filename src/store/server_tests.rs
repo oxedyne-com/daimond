@@ -1902,3 +1902,51 @@ fn qa1_f3_delete_entry_is_the_stores_own_door() {
     assert!(!SERVER.contains("own::delete_entry("), "the store server calls own::delete_entry");
     assert!(!TOOLS.contains("own::delete_entry("), "the tools call own::delete_entry");
 }
+
+/// rc-a ruling F2: a run's grant naming a keeper id that is not one store's name is refused at
+/// the bind, so no run can reach another chat's or a Diamond's store through a crafted `chatId`
+/// (`../diamonds/victim`, `x/../other-chat`).  Break: rule `keeper_id` off, both are bound.
+#[test]
+fn a_grant_naming_a_keeper_id_that_is_a_path_is_refused_at_the_bind() {
+    let srv = server();
+    let probes = ["chat:../diamonds/victim", "chat:x/../other-chat"];
+    for (i, bad) in probes.iter().enumerate() {
+        let got = srv.bind(Tag::Run, env(&fmt!("trav{}", i), &[bad]));
+        assert!(got.is_err(), "the keeper {} was bound", bad);
+    }
+    assert!(srv.bind(Tag::Run, env("good", &["chat:chat-a2", "d"])).is_ok(), "a sound grant refused");
+    assert!(srv.rule_off("keeper_id").is_ok());
+    for (i, bad) in probes.iter().enumerate() {
+        assert!(srv.bind(Tag::Run, env(&fmt!("trav-red{}", i), &[bad])).is_ok(),
+            "break: rule keeper_id off still refused {}", bad);
+    }
+    eprintln!("BREAK KEEPER ID: keeper_id off, both probe ids are bound");
+}
+
+/// D3-1/D3-2 (UNBLOCK-32 F2-FIX): a Diamond errand whose `diamondId` is `chat:victim` is granted
+/// `chat:victim` and its keeper `away:chat:victim`; the bind refuses the whole grant, so no run
+/// holds chat victim's store.  A 129-byte id is refused, a 128-byte one bound.  Break: rule
+/// `keeper_id` off binds every probe.
+#[test]
+fn a_grant_whose_keeper_id_holds_a_colon_or_is_over_128_bytes_is_refused_at_the_bind() {
+    let srv = server();
+    let (at, over) = ("d".repeat(128), "d".repeat(129));
+    let away_over = fmt!("away:{}", over);
+    let probes: Vec<Vec<&str>> = vec![
+        vec!["chat:victim", "away:chat:victim"],
+        vec!["a:b"],
+        vec![over.as_str()],
+        vec![away_over.as_str()],
+        vec!["chat:../diamonds/victim"],
+    ];
+    for (i, bad) in probes.iter().enumerate() {
+        assert!(srv.bind(Tag::Run, env(&fmt!("colon{}", i), bad)).is_err(), "the grant {:?} was bound", bad);
+    }
+    assert!(srv.bind(Tag::Run, env("at128", &[at.as_str(), "chat:chat-a2"])).is_ok(), "a 128-byte id refused");
+    assert!(srv.rule_off("keeper_id").is_ok());
+    for (i, bad) in probes.iter().enumerate() {
+        assert!(srv.bind(Tag::Run, env(&fmt!("colon-red{}", i), bad)).is_ok(),
+            "break: rule keeper_id off still refused {:?}", bad);
+    }
+    eprintln!("BREAK KEEPER ID D3: keeper_id off, every colon and over-long grant is bound");
+}

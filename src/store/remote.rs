@@ -880,7 +880,14 @@ impl<L: StoreLink> HostStore for RemoteStore<L> {
         let call = StoreCall::CapturedRoom {
             id: s(id), path: s(path), found: found.clone(), copy, destroying, room,
         };
-        answer!(self.link.call_blocking(&call), CapturedRoom).unwrap_or(Err(Short::Count))
+        // A store that refuses the claim is the reason the act is refused, said as the store
+        // said it -- never a turn cap the turn did not reach (LOUD-FAIL, rc-a ruling B1).
+        match answer!(self.link.call_blocking(&call), CapturedRoom) {
+            Ok(r)                   => r,
+            Err(_) if off("loud")   => Err(Short::Count),
+            Err(e)                  => Err(Short::Store(fmt!("the store refused captured_room for \
+                keeper '{}': {}", id, e.plain()))),
+        }
     }
     async fn keep_room(&self, id: &str) -> u64 {
         answer!(self.link.call(&StoreCall::KeepRoom { id: s(id) }).await, KeepRoom).unwrap_or(0)
@@ -971,16 +978,27 @@ impl<L: StoreLink> HostStore for RemoteStore<L> {
         };
         answer!(self.link.call(&call).await, OutputIsOwn).unwrap_or(false)
     }
-    /// Nothing where the call fails: no file is then the Diamond's, which is the safe side.
-    async fn made_files(&self, id: &str) -> Vec<(String, String)> {
-        answer!(self.link.call(&StoreCall::MadeFiles { id: s(id) }).await, MadeFiles)
-            .unwrap_or(Vec::new())
+    /// The store's refusal is the caller's to say (LOUD-FAIL): it sends no file as the
+    /// Diamond's, which is the safe side, and says why.
+    async fn made_files(&self, id: &str) -> Outcome<Vec<(String, String)>> {
+        match answer!(self.link.call(&StoreCall::MadeFiles { id: s(id) }).await, MadeFiles) {
+            Ok(m)                   => Ok(m),
+            Err(_) if off("loud")   => Ok(Vec::new()),
+            Err(e)                  => Err(e),
+        }
     }
-    /// Nothing kept where the call fails: those files are then the user's to the next command.
+    /// The store's refusal is the caller's to say (LOUD-FAIL): those files are then the user's to
+    /// the next command, and the turn end says the record lacks them.
     async fn ran_made(&self, id: &str, by: Option<Author>, files: Vec<(String, String, bool)>,
-        capped: bool)
+        capped: bool) -> Outcome<()>
     {
-        let _ = self.link.call(&StoreCall::RanMade { id: s(id), by, files, capped }).await;
+        match answer!(self.link.call(&StoreCall::RanMade { id: s(id), by, files, capped }).await,
+            RanMade)
+        {
+            Ok(())                  => Ok(()),
+            Err(_) if off("loud")   => Ok(()),
+            Err(e)                  => Err(e),
+        }
     }
     fn theirs(&self, id: &str, path: &str) -> bool {
         answer!(self.link.call_blocking(&StoreCall::Theirs { id: s(id), path: s(path) }), Theirs)
@@ -1175,9 +1193,14 @@ impl<L: StoreLink> HostStore for RemoteStore<L> {
             HoldVersions)));
         Ok(Ticket::new(&self.link, Some(h)))
     }
-    fn is_steering(&self, id: &str) -> bool {
-        answer!(self.link.call_blocking(&StoreCall::IsSteering { id: s(id) }), IsSteering)
-            .unwrap_or(true)
+    /// A refusal is the store's reason, for the turn end to say (LOUD-FAIL): never "steering",
+    /// which stopped the turn end before `hold_versions` and recorded nothing, silently.
+    fn is_steering(&self, id: &str) -> Outcome<bool> {
+        match answer!(self.link.call_blocking(&StoreCall::IsSteering { id: s(id) }), IsSteering) {
+            Ok(b)                   => Ok(b),
+            Err(_) if off("loud")   => Ok(true),
+            Err(e)                  => Err(e),
+        }
     }
     fn steering(&self, id: &str) -> Ticket<L> {
         let got = answer!(self.link.call_blocking(&StoreCall::Steering { id: s(id) }), Steering);

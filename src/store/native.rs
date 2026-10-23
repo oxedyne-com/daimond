@@ -466,7 +466,10 @@ impl StoreEnv for NativeBackend {
     }
     fn console_log(msg: &str) { info!("{}", msg); }
     fn console_warn(msg: &str) { warn!("{}", msg); }
-    fn trail(_what: &str, _detail: &str) {}
+    /// To the process's stderr, which is the run's log on a runner: a trail line is a failure
+    /// someone must be able to find (LOUD-FAIL; it was a no-op, so a refused turn record left
+    /// no trace at all).
+    fn trail(what: &str, detail: &str) { eprintln!("TRAIL {}: {}", what, detail); }
     fn heap_mb() -> u32 { 0 }
     /// No device presses are kept natively, so there is none to drop.
     fn forget_press(_owner: &str, _id: &str) -> Outcome<()> { Ok(()) }

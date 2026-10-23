@@ -161,9 +161,11 @@ fn versions_dir(id: &str) -> String {
     fmt!("{}/versions", crate::tools::keeper_home(id))
 }
 
-/// Is this key a chat's store rather than a Diamond's?
-fn is_chat_keeper(id: &str) -> bool {
-    id.starts_with(crate::tools::CHAT_KEEPER)
+/// Does this key's store hold the Diamond it records for, so its versions are minted on the
+/// Diamond's own crystal chain and logged?  Not a chat's, nor an away keeper's
+/// ([`crate::tools::KeeperKind::Away`]), whose manifests are their whole record.
+fn holds_diamond(id: &str) -> bool {
+    crate::tools::KeeperKind::of(id).holds_diamond()
 }
 
 /// A data snapshot, `diamonds/<id>/versions/NNNN.json`.  Written at every version.
@@ -3300,9 +3302,11 @@ impl Drop for Around {
 /// (`chats/<id>/work`).  A command's effect in a marked machine folder is not walked, which was
 /// so before and is a stated limit.
 fn walk_root(id: &str) -> String {
-    match id.strip_prefix(crate::tools::CHAT_KEEPER) {
-        Some(chat) => fmt!("{}/{}/{}", crate::tools::CHAT_ROOT, chat, crate::tools::CHAT_WORK_DIR),
-        None       => diamond_dir(id),
+    use crate::tools::{KeeperKind, CHAT_KEEPER, CHAT_ROOT, CHAT_WORK_DIR};
+    match KeeperKind::of(id) {
+        KeeperKind::Chat    => fmt!("{}/{}/{}", CHAT_ROOT, &id[CHAT_KEEPER.len()..], CHAT_WORK_DIR),
+        KeeperKind::Away    => crate::tools::keeper_home(id),
+        KeeperKind::Diamond => diamond_dir(id),
     }
 }
 
@@ -5464,7 +5468,8 @@ async fn mint_turn(id: &str, wait_ms: u64) -> Option<MintTurn> {
     }
 }
 
-/// Mint the next version number of a chat's store, where there is no crystal chain to mint it.
+/// Mint the next version number of a chat's store, or an away keeper's, where there is no crystal
+/// chain to mint it.
 ///
 /// One past the newest manifest, and past any number this page has already handed out for the
 /// same chat: a chat and one of its workers can each end a turn at once, and both would read the
@@ -5727,7 +5732,7 @@ pub async fn versions_record_held(
         let minted = given.is_none();
         let version = match given {
             Some(v) => v,
-            None if is_chat_keeper(id) => mint_chat_version(id, &held),
+            None if !holds_diamond(id) => mint_chat_version(id, &held),
             None    => res!(mint_files_version(hold, id, manifest.ts).await),
         };
         res!(own::write_file(&manifest_path(id, version),
@@ -5739,7 +5744,7 @@ pub async fn versions_record_held(
         // A version minted for files alone earns its own line in the one history the user reads.
         // A version the crystal minted already has one, and a second would show the same turn
         // twice.  A chat has no log: its manifests are the whole of its history.
-        if minted && !is_chat_keeper(id) {
+        if minted && holds_diamond(id) {
             let rec = LogRecord {
                 id:        generate_session_id(),
                 ts:        manifest.ts,
@@ -5821,7 +5826,9 @@ pub async fn versions_list(id: &str) -> Outcome<String> {
 /// `id` is a chat's bare id the record names as `chat:<id>`: recorded under the bare id it would
 /// land in `diamonds/<id>/versions`, where no History reads it.
 fn carried_keeper(id: &str, head: &str) -> Outcome<String> {
+    // An away keeper is named as the Diamond it works for: this store holds that Diamond.
     let named = extract_json_string(head, "keeper").unwrap_or_default();
+    let named = crate::tools::keeper_named(&named).to_string();
     let id = id.trim();
     let key = match (id.is_empty(), named.strip_prefix(crate::tools::CHAT_KEEPER)) {
         (true, _)                                   => named.clone(),
@@ -5920,14 +5927,14 @@ async fn record_away(
     let mut manifest = Manifest::new(cause, ts, turn, "", rows);
     manifest.away = Some(away);
     let named: Vec<String> = manifest.files.iter().map(|e| e.path.clone()).collect();
-    let version = match is_chat_keeper(key) {
-        true  => mint_chat_version(key, &held),
-        false => res!(mint_files_version(&hold, key, ts).await),
+    let version = match holds_diamond(key) {
+        false => mint_chat_version(key, &held),
+        true  => res!(mint_files_version(&hold, key, ts).await),
     };
     res!(own::write_file(&manifest_path(key, version), manifest.to_json().as_bytes()).await);
     // A Diamond's own history line, as any version minted for files alone earns
     // ([`versions_record_held`]); a chat's manifests are its whole history.
-    if !is_chat_keeper(key) {
+    if holds_diamond(key) {
         let rec = LogRecord {
             id:        generate_session_id(),
             ts,

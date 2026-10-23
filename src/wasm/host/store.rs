@@ -172,13 +172,14 @@ impl HostStore for WasmStore {
     async fn output_is_own(&self, id: &str, tool: &str, path: &str, bytes: &[u8]) -> bool {
         diamond::output_is_own(id, tool, path, bytes).await
     }
-    async fn made_files(&self, id: &str) -> Vec<(String, String)> {
-        diamond::made_files(id).await
+    async fn made_files(&self, id: &str) -> Outcome<Vec<(String, String)>> {
+        Ok(diamond::made_files(id).await)
     }
     async fn ran_made(&self, id: &str, by: Option<Author>, files: Vec<(String, String, bool)>,
-        capped: bool)
+        capped: bool) -> Outcome<()>
     {
-        diamond::ran_made(id, by, files, capped)
+        diamond::ran_made(id, by, files, capped);
+        Ok(())
     }
     fn theirs(&self, id: &str, path: &str) -> bool {
         diamond::theirs(id, path)
@@ -279,8 +280,8 @@ impl HostStore for WasmStore {
     async fn hold_versions(&self, id: &str) -> Outcome<Self::Hold> {
         Ok(SlotHold::new(res!(diamond::hold_versions(id).await), id))
     }
-    fn is_steering(&self, id: &str) -> bool {
-        diamond::is_steering(id)
+    fn is_steering(&self, id: &str) -> Outcome<bool> {
+        Ok(diamond::is_steering(id))
     }
     fn steering(&self, id: &str) -> diamond::Steering {
         diamond::steering(id)

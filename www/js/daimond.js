@@ -27832,6 +27832,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
+	/// THE SCOPE A DISPATCHED TURN CARRIES (UNBLOCK-32 F2b): its holds, and, for a turn whose
+	/// folder is rooted here in a machine folder, that folder's NAME (`usr`, never a path),
+	/// as `{ root, holds }`, so the runner starts the turn in its own folder of that name and reads
+	/// relative paths from it. The plain array otherwise, as before; readers take either
+	/// (`DaimondPeer.scopeHolds`).
+	///
+	/// ONE PREDICATE with the switch (F2-FIX M1): the folder is sent exactly where
+	/// `chatNeedsFolder` makes the turn need one, a plain chat whose workspace holding is opened
+	/// in the folder as much as a Diamond's mark, so a runner seated for the folder starts in it.
+	function errandScope(chat, holds) {
+		try {
+			if (chatNeedsFolder(chat)) {
+				var r = DaimondMarksHere._core.rootOf(rootHere());
+				if (r.kind === 'machine' && r.name) return { root: r.name, holds: holds };
+			}
+		} catch (e) {
+			diag('dispatch scope', 'chat=' + (chat && chat.id) + ' ' + String((e && e.message) || e));
+		}
+		return holds;
+	}
+
 	/// The door itself, called only by `handOffTurn`, the entry: `st.marked` is set the
 	/// moment the turn's placeholder is written, so the entry can tell a refusal before it.
 	async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts, st) {
@@ -27895,7 +27916,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The model the turn runs on, as this device resolved it: the chat's own, or its
 			// Diamond's (C3). The url is resolved by the peer from the provider (models.js).
 			model:  errandModelOf(chat),
-			scope:  scopePaths || (Array.isArray(chat.holds) ? chat.holds : []),
+			scope:  errandScope(chat, scopePaths || (Array.isArray(chat.holds) ? chat.holds : [])),
 			fence:  fence,
 			pause:  pause,
 			dispatchedBy: by,
@@ -28191,7 +28212,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				workerProvider: String(seed.workerProvider || ''),
 				effort:   String(seed.effort || ''),
 				messages: [],
-				holds:    Array.isArray(errand.scope) ? errand.scope.slice() : [],
+				holds:    (window.DaimondPeer && DaimondPeer.scopeHolds) ? DaimondPeer.scopeHolds(errand.scope)
+					: (Array.isArray(errand.scope) ? errand.scope.slice() : []),
 				createdAt: Date.now(),
 				updatedAt: 0,
 				metaAt:    0,

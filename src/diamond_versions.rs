@@ -1723,11 +1723,12 @@ fn restarted(path: &str, now: &[u8], mark: bool, folder: Option<String>) -> Chan
 }
 
 /// Why a turn may not keep one more copy, as [`claim_room`] answers it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ToDat, FromDat)]
+#[derive(Clone, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Short {
 	Count,		// the turn keeps as many copies as one manifest holds rows
 	Bytes(u64),	// the turn holds a destruction, and its copies would pass the room left: the room
 	Kept(u64, u64),	// the act's one copy would pass [`BODY_KEEP_MAX`]: its length, and the cap
+	Store(String),	// the store refused the claim itself: its reason, keeper and op named (LOUD-FAIL)
 }
 
 /// An act a turn has been allowed and has not yet captured.

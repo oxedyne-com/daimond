@@ -28,7 +28,7 @@ use crate::{
     marks::num,
     protocol::ChatMessage,
     tools::{
-        CHAT_KEEPER,
+        KeeperKind,
         ToolContext,
         ToolRegistry,
     },
@@ -435,6 +435,9 @@ pub struct Kept {
 pub struct Driven<T> {
     pub ended:  Ended<T>,
     pub kept:   Option<Kept>,
+    /// What the store refused to keep, as one visible sentence for the asker's transcript, or
+    /// `None` (LOUD-FAIL B2, [`end_keeper_turn_said`]).
+    pub unkept: Option<String>,
 }
 
 /// Drive one turn: `body` raced against its lease, then its keeper's turn ended, once, however
@@ -470,8 +473,8 @@ pub async fn drive<H, T, F>(
         Won::First((out, reg))  => (Ended::Ran(out), reg),
         Won::Second(())         => (Ended::Interrupted, start),
     };
-    let kept = end_keeper_turn(&registry.ctx, own).await;
-    Driven { ended, kept }
+    let (kept, unkept) = end_keeper_turn_said(&registry.ctx, own).await;
+    Driven { ended, kept, unkept }
 }
 
 /// End the store's turn for the keeper `ctx` keeps into: record what the turn kept as one version
@@ -482,17 +485,61 @@ pub async fn drive<H, T, F>(
 /// taken from under it: asked again once the store is held, since a steer can start during the
 /// wait (R4 of the release 5.1 fix's QA, 2026-09-25).
 pub async fn end_keeper_turn<H: Host>(ctx: &ToolContext<H>, own: bool) -> Option<Kept> {
+    end_keeper_turn_said(ctx, own).await.0
+}
+
+/// [`end_keeper_turn`], and what the store refused to keep (LOUD-FAIL, rc-a ruling B2): `None`
+/// where nothing was refused, else one visible sentence naming the keeper, each op refused and
+/// the store's reason, for the asker's transcript.  What the turn did stands on the disk either
+/// way, so this is said and never only trailed: a turn that records nothing must not look fine.
+pub async fn end_keeper_turn_said<H: Host>(ctx: &ToolContext<H>, own: bool)
+    -> (Option<Kept>, Option<String>)
+{
     let key = match ctx.keeper() {
         Some(k) => k,
-        None    => return None,
+        None    => return (None, None),
     };
-    if !own && !key.starts_with(CHAT_KEEPER) {
+    let mut unkept = crate::tools::take_unkept(&ctx.read_seen);
+    let kept = end_keeper_turn_kept(ctx, own, &key, &mut unkept).await;
+    let said = match unkept.is_empty() {
+        true    => None,
+        false   => Some(fmt!("[Not recorded in the History: {} What this turn did stands on the \
+            disk, but the History does not list it and file_revert cannot put back what it \
+            replaced.]", unkept.join(" "))),
+    };
+    (kept, said)
+}
+
+/// One refusal of the turn record: trailed, and said in `unkept` with the keeper, op and reason.
+fn refused<S: crate::engine::host::store::HostStore>(store: &S, key: &str, op: &str,
+    e: &Error<ErrTag>, unkept: &mut Vec<String>)
+{
+    store.trail("TURN NOT RECORDED", &fmt!("{}: {}: {}", key, op, e));
+    unkept.push(fmt!("the store refused {} for keeper '{}' ({}).", op, key, e.plain()));
+}
+
+/// The record itself, each refusal trailed and added to `unkept`.
+async fn end_keeper_turn_kept<H: Host>(ctx: &ToolContext<H>, own: bool, key: &str,
+    unkept: &mut Vec<String>)
+    -> Option<Kept>
+{
+    let key = key.to_string();
+    // An away keeper's turn is a Diamond's for ownership (`KeeperKind::Away`).
+    if !own && KeeperKind::of(&key) != KeeperKind::Chat {
         return None;
     }
     let store = ctx.host().store();
     store.keeper_turn_ended(&key);
-    if store.is_steering(&key) {
-        return None;
+    match store.is_steering(&key) {
+        Ok(true)    => return None,
+        Ok(false)   => (),
+        Err(e)      => {
+            // Refused after the act: said, never taken for a steer (LOUD-FAIL).  The counts end
+            // as for a refused hold (F4).
+            store.end_turn_counts(&key);
+            refused(store, &key, "is_steering", &e, unkept);
+            return None;
+        },
     }
     let hold = match store.hold_versions(&key).await {
         Ok(h)  => h,
@@ -500,26 +547,31 @@ pub async fn end_keeper_turn<H: Host>(ctx: &ToolContext<H>, own: bool) -> Option
             // Left for the next turn end: the captures stay and the notes on disk.  The turn's
             // counts end here all the same (F4).
             store.end_turn_counts(&key);
-            store.trail("TURN NOT RECORDED", &fmt!("{}: {}", key, e));
+            refused(store, &key, "hold_versions", &e, unkept);
             return None;
         },
     };
-    if store.is_steering(&key) {
-        return None;
+    match store.is_steering(&key) {
+        Ok(true)    => return None,
+        Ok(false)   => (),
+        Err(e)      => {
+            refused(store, &key, "is_steering", &e, unkept);
+            return None;
+        },
     }
     if let Err(e) = store.drain_turn(&hold, &key, ctx).await {
-        store.trail("TURN NOT RECORDED", &fmt!("{}: {}", key, e));
+        refused(store, &key, "drain_turn", &e, unkept);
         return None;
     }
     if let Err(e) = store.drain_windows(&hold, &key).await {
-        store.trail("TURN NOT RECORDED", &fmt!("{}: {}", key, e));
+        refused(store, &key, "drain_windows", &e, unkept);
         return None;
     }
     match store.versions_record_held(&hold, &key, None, Cause::Turn, "", "").await {
         Ok(Some((version, files)))  => Some(Kept { keeper: key, version, files }),
         Ok(None)                    => None,
         Err(e)                      => {
-            store.trail("TURN NOT RECORDED", &fmt!("{}: {}", key, e));
+            refused(store, &key, "versions_record_held", &e, unkept);
             None
         },
     }

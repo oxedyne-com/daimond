@@ -351,7 +351,7 @@ fn unquoted_array(args: &str, key: &str) -> Option<String> {
 /// Written here rather than borrowed because `extract_json_string` answers with the DECODED value
 /// and this needs the span the encoded one occupies.  The scan honours `\\` inside the literal, so
 /// a value ending in a backslash is not read as running to the end of the object.
-fn string_span(args: &str, key: &str) -> Option<(usize, usize)> {
+pub(crate) fn string_span(args: &str, key: &str) -> Option<(usize, usize)> {
 	let needle = fmt!("\"{}\"", key);
 	let mut at = 0usize;
 	while let Some(i) = args[at..].find(&needle) {

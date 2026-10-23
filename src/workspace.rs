@@ -24,6 +24,10 @@ use std::path::{Component, Path, PathBuf};
 pub struct Workspace {
     /// Canonical absolute path to the workspace root.
     root: PathBuf,
+    /// The folder, relative to the root, that a path a model writes relative is read from
+    /// (UNBLOCK-32 F2b): a runner's run rooted at a machine folder (`usr`) has the whole home as
+    /// its workspace and that folder as its base.  Empty: the root itself, as before.
+    base: String,
 }
 
 impl Workspace {
@@ -36,7 +40,7 @@ impl Workspace {
         }
         let root = res!(std::fs::canonicalize(&root)
             .map_err(|e| err!(e, "Workspace: canonicalise {:?} failed.", root; IO, File)));
-        Ok(Self { root })
+        Ok(Self { root, base: String::new() })
     }
 
     /// Construct a workspace from an already-trusted root without
@@ -49,12 +53,73 @@ impl Workspace {
     /// Path jailing in [`resolve`](Self::resolve) is purely lexical and
     /// remains sound regardless of the backing store.
     pub fn unchecked(root: PathBuf) -> Self {
-        Self { root }
+        Self { root, base: String::new() }
     }
 
     /// The workspace root path.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// This workspace with `base` (relative to the root, one canonical relative path) as the
+    /// folder a relative path is read from (UNBLOCK-32 F2b).  The jail stays the root.
+    pub fn with_base(mut self, base: &str) -> Self {
+        let b = base.trim_matches('/');
+        self.base = if b == "." { String::new() } else { b.to_string() };
+        self
+    }
+
+    /// The folder a relative path is read from, relative to the root; empty for the root.
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
+    /// `path` as a model wrote it, as the root-relative path every fence judges (UNBLOCK-32 F2b).
+    ///
+    /// **The one translation, made before any check**, so a bound is asked of the place the act
+    /// will reach and never of the spelling: with base `usr`, `code/bash/x` is `usr/code/bash/x`,
+    /// and a read-only row on `usr/code/bash` holds.  A relative path is the base joined to it
+    /// (`""` and `"."` are the base itself); `~` and `~/x` are the root and `x`, and an absolute
+    /// path inside the root is its root-relative tail, so the rest of the home is still reached.
+    /// Anything else -- an absolute path outside, a `..` -- is joined or left as written and
+    /// meets the path convention's refusal unchanged.  With no base it is `path` untouched.
+    pub fn based(&self, path: &str) -> String {
+        if self.base.is_empty() {
+            return path.to_string();
+        }
+        if path == "~" {
+            return String::from(".");
+        }
+        if let Some(rest) = path.strip_prefix("~/") {
+            return if rest.is_empty() { String::from(".") } else { rest.to_string() };
+        }
+        if path.starts_with('/') {
+            return match Path::new(path).strip_prefix(&self.root) {
+                Ok(r) if r.as_os_str().is_empty() => String::from("."),
+                Ok(r)                             => r.to_string_lossy().to_string(),
+                Err(_)                            => path.to_string(),
+            };
+        }
+        if path.is_empty() || path == "." {
+            return self.base.clone();
+        }
+        fmt!("{}/{}", self.base, path)
+    }
+
+    /// A root-relative path as the model should write it back (UNBLOCK-32 F2b), the inverse of
+    /// [`based`](Self::based): beneath the base it is relative to the base, elsewhere `~/`-rooted,
+    /// so a path a listing names is the path that reaches it again.  With no base, `rel`.
+    pub fn shown(&self, rel: &str) -> String {
+        if self.base.is_empty() {
+            return rel.to_string();
+        }
+        if rel == self.base {
+            return String::from(".");
+        }
+        match rel.strip_prefix(self.base.as_str()).and_then(|r| r.strip_prefix('/')) {
+            Some(r) => r.to_string(),
+            None    => if rel.is_empty() || rel == "." { String::from("~") } else { fmt!("~/{}", rel) },
+        }
     }
 
     /// Resolve a workspace-relative path to an absolute path, jailed to
@@ -477,5 +542,28 @@ mod tests {
         let p = ws.resolve("x/y.rs").expect("resolve");
         assert_eq!(ws.display_rel(&p), "x/y.rs");
         assert_eq!(ws.display_rel(ws.root()), ".");
+    }
+
+    /// UNBLOCK-32 F2b: a base reads relative paths from the folder and `~/…` and absolute paths
+    /// inside the root from the root; `shown` is the inverse, so a listed path reaches its file.
+    #[test]
+    fn test_based_and_shown_round_trip() {
+        let ws = Workspace::unchecked(PathBuf::from("/h")).with_base("usr");
+        assert_eq!(ws.based("code/bash/x"), "usr/code/bash/x");
+        assert_eq!(ws.based("."), "usr");
+        assert_eq!(ws.based(""), "usr");
+        assert_eq!(ws.based("~/other/f"), "other/f");
+        assert_eq!(ws.based("~"), ".");
+        assert_eq!(ws.based("/h/other/f"), "other/f");
+        assert_eq!(ws.based("/etc/passwd"), "/etc/passwd", "left for the path convention to refuse");
+        assert_eq!(ws.shown("usr/workspace/a.wav"), "workspace/a.wav");
+        assert_eq!(ws.shown("other/f"), "~/other/f");
+        assert_eq!(ws.shown("usrx/f"), "~/usrx/f");
+        for p in ["workspace/a.wav", "~/other/f"] {
+            assert_eq!(ws.shown(&ws.based(p)), p);
+        }
+        let plain = Workspace::unchecked(PathBuf::from("/h"));
+        assert_eq!(plain.based("code/x"), "code/x", "no base: untouched");
+        assert_eq!(plain.shown("code/x"), "code/x");
     }
 }

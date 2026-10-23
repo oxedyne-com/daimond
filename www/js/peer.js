@@ -372,6 +372,15 @@
 
 	/// Build a report envelope object (not yet sealed). §4.4: the report is the
 	/// NUDGE, never the answer -- the answer is already in the parcel.
+	/// The holds an errand's `scope` carries (UNBLOCK-32 F2b): the array as it always was, or
+	/// the `holds` of a `{ root, holds }` scope, whose `root` names the machine folder the turn
+	/// is rooted in. Anything else holds nothing.
+	function scopeHolds(s) {
+		if (Array.isArray(s)) return s.slice();
+		if (s && typeof s === 'object' && Array.isArray(s.holds)) return s.holds.slice();
+		return [];
+	}
+
 	function makeReport(f) {
 		var o = f || {};
 		var rep = {
@@ -417,8 +426,10 @@
 			// whose hand-back reads as a hand-off that did not finish.
 			// 'refused' when a runner refused the turn before its run (RUN-HIST E: Kimberlite's no model
 			// key, clamp, credits and spawn refusals), which the sender also ends "not run" with Retry.
+			// 'place' when the machine folder the turn is rooted in is not one it can work in
+			// (UNBLOCK-32 F2b): never run in its home instead; the sender ends it "not run" with Retry.
 			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind'
-				|| o.cause === 'refused') ? o.cause : '',
+				|| o.cause === 'refused' || o.cause === 'place') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
 			// final frame carries what it had done, badged (r545 F-C2-1). 0 elsewhere.
 			interrupted: o.interrupted | 0,
@@ -2975,8 +2986,17 @@
 	/// apart (`busyHere`), so a busy peer is named in `passed`. The one test every seat
 	/// reader calls: the election's four passes and the seat line's runner-silent.
 	function reachable(rec, o, n, w) {
-		return !!rec && !recMobileView(rec) && meetsRequire(rec, o && o.require) && recEngineOk(rec, o)
-			&& recGenuine(rec, n, w);
+		return !!rec && !recMobileView(rec) && meetsRequire(rec, o && o.require) && servesTask(rec, o && o.task)
+			&& recEngineOk(rec, o) && recGenuine(rec, n, w);
+	}
+
+	/// Does `rec` serve a task of kind `task` at all (F2-FIX M2)? A capability, not a beat field
+	/// read for another purpose: a paired native runner (Kimberlite, `kind: 'runner'`) serves turns
+	/// and nothing else -- it has no compile server -- so its `folder` (F2a) must never seat it for
+	/// a compile, which it would never take. A tab serves every kind. '' or 'turn' asks nothing.
+	function servesTask(rec, task) {
+		if (!task || task === 'turn') return true;
+		return !(rec && (rec.kind === 'runner' || rec.native === true));
 	}
 
 	/// Answers `{ target, reason }` where `target` is `{ deviceId, name, lastSeen, build,
@@ -3416,7 +3436,8 @@
 	/// while argonaut is asleep. Answers `{ deviceId, name, known }` -- `known` false
 	/// where the roster holds a plausible machine that has simply never said (an older
 	/// build), which is named as a maybe and never struck out.
-	function lastSeenWith(roster, field, selfId) {
+	/// `task`, when given, names only a machine that serves it (`servesTask`).
+	function lastSeenWith(roster, field, selfId, task) {
 		var r = roster || {}, self = String(selfId || '');
 		var sure = null, maybe = null;
 		for (var id in r) {
@@ -3424,6 +3445,7 @@
 			if (id === self) continue;
 			var rec = r[id];
 			if (!rec || rec.mobile === true) continue;		// a phone is never the answer here
+			if (!servesTask(rec, task)) continue;			// nor one that never takes the task
 			var when = leaseMs(rec.lastSeen);
 			if (rec[field] === true) {
 				if (!sure || when > leaseMs(sure.lastSeen)) sure = { id: id, rec: rec, lastSeen: when };
@@ -3485,8 +3507,8 @@
 				deviceId: String(tgt.deviceId || ''), label: String(tgt.name || ''),
 				n: m.n, needMB: m.needMB, roomMB: m.roomMB });
 		}
-		function nobody(field, why, more) {
-			var last = lastSeenWith(o.roster, field, o.selfId);
+		function nobody(field, why, more, task) {
+			var last = lastSeenWith(o.roster, field, o.selfId, task);
 			var m = more || {};
 			return placed('nobody', n, {
 				// NAMED, AND HONESTLY. A machine the roster has seen holding this is named;
@@ -3541,9 +3563,12 @@
 			var more = { n: miss.length, needMB: want, roomMB: room };
 			// A runner that HOLDS THE FOLDER, so the book it lays out is the real one and
 			// the PDF it writes lands beside the source rather than in a replica.
-			var r = handoffTarget(p, withRequire(o, 'folder'), t);
+			// A compile server, too: a native runner holds the folder but compiles nothing (M2).
+			var co = withRequire(o, 'folder');
+			co.task = 'compile';
+			var r = handoffTarget(p, co, t);
 			if (r.target) return onRunner(r, why, more);
-			return nobody('folder', why, more);
+			return nobody('folder', why, more, 'compile');
 		}
 
 		// Every other kind is local until it declares a need.
@@ -7197,6 +7222,7 @@
 		makeUndo:    makeUndo,
 		/// Is `t` one of this layer's envelope tags (the collector's routing set)?
 		peerType:    peerType,
+		scopeHolds:  scopeHolds,
 		/// The two remote-consent envelopes: a runner's live question (`makeAsk`, fresh
 		/// `cid` per ask) and an attended device's answer (`makeGrant`, which signs
 		/// `cid`/`turnId`/`verdict` but NOT `tool`/`host`/`detail`, so the runner replays

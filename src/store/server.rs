@@ -598,6 +598,18 @@ async fn serve(sync: flume::Receiver<Msg>, rx: flume::Receiver<Msg>) {
         };
         match msg {
             Msg::Bind { tag, env, done } => {
+                // A run's grant names whole stores, each by one safe id (rc-a ruling F2): a bad
+                // id would be a path into another chat's or a Diamond's store.
+                let bad = match rule_off(&st, "keeper_id") {
+                    true    => None,
+                    false   => env.diamonds.iter()
+                        .find_map(|id| crate::tools::keeper_id_ok(id).err()),
+                };
+                if let Some(e) = bad {
+                    let _ = done.send(Err(err!(e, "The run '{}' on '{}' is refused.", env.run,
+                        env.page; Invalid, Input)));
+                    continue;
+                }
                 let taken = st.borrow().runs.iter()
                     .find(|(r, t)| **r == env.run || t.env.page == env.page)
                     .map(|(r, t)| (r.clone(), t.env.page.clone()));

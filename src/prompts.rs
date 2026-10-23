@@ -1574,6 +1574,11 @@ pub fn turn_machine_note<H: Host>(
 	-> String
 {
 	let mut s = machine_note(m, &ctx.no_write, step, mode);
+	// A run rooted at a machine folder (UNBLOCK-32 F2b): where a relative path starts.
+	let base = ctx.workspace.base();
+	if !s.is_empty() && !base.is_empty() && !crate::tools::folder_root_off() {
+		s.push_str(&fmt!("\nYou start in ~/{}: relative paths are read from there; ~/ paths from the home.", base));
+	}
 	if !s.is_empty() && ctx.can_ask_kits(mode, m.home.is_some()) {
 		s.push_str(&kit_ask_note(&ctx.no_write));
 	}

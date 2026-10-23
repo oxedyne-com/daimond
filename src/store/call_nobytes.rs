@@ -148,7 +148,7 @@ no_bytes_enum! {
     enum FileAct { Mkdir, Delete, Move(a) }
     enum JournalKey { Round(a), Open }
     enum FileRoot { Workspace, Opfs, Machine }
-    enum Short { Count, Bytes(a), Kept(a, b) }
+    enum Short { Count, Bytes(a), Kept(a, b), Store(a) }
     enum OpenDelete { Go(a), Ask(a, b), Stopped(a) }
     enum Unplaced { Unrecorded, Unknown }
     enum Route { Go, Left, Ask(a) }

@@ -1506,6 +1506,11 @@ impl TransportErr {
             err!(self.err, "{}", self.reason; IO, Network, Wire, Timeout)
         } else if self.too_big() {
             err!(self.err, "{}", self.reason; IO, Network, Wire, TooBig)
+        } else if self.status == 401 {
+            // The provider refused the KEY: a runner's held key is dead (revoked, swept) and
+            // must be forgotten so the next turn mints afresh. 402 (no credit) and 403 (not
+            // allowed) are not dead keys and keep plain network tags.
+            err!(self.err, "{}", self.reason; IO, Network, Wire, Unauthorised)
         } else if matches!(self.status, 400 | 422) {
             err!(self.err, "{}", self.reason; IO, Network, Wire, Size)
         } else {

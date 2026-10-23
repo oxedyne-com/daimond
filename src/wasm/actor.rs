@@ -306,6 +306,11 @@ impl Engine {
         if let Some(kept) = &driven.kept {
             DaimondApp::versions_event(kept, &on_event);
         }
+        // What the store refused to keep, said in the transcript (LOUD-FAIL B2).
+        if let Some(said) = &driven.unkept {
+            let ev = AgentEvent::Text(fmt!("\n\n{}", said));
+            let _ = on_event.call1(&JsValue::NULL, &event_to_js(&ev));
+        }
         match driven.ended {
             Ended::Ran(ran)     => ran,
             Ended::Interrupted  => Err(refuse("This turn's lease ran out, so it was interrupted.")),
