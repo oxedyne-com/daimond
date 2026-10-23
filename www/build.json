@@ -1,1 +1,1 @@
-{"build":"9beee2b46cd3","note":"Devices now know which others are truly listening, so a handed-off turn goes to one that can take it, or stays here."}
+{"build":"850205d42615","note":"Handed-off turns now go only to a device truly listening."}
