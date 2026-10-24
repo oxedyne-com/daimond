@@ -184,6 +184,8 @@
       THE TRANSFORM PLACES IT — never the other way round.
    ============================================================ */
 
+import { watchClock } from './watchclock.js';
+
 const VENDOR   = new URL('../vendor/typst/', import.meta.url);
 const R_GLUE   = new URL('typst_ts_renderer.mjs', VENDOR);
 const R_WASM   = new URL('typst_ts_renderer_bg.wasm', VENDOR);
@@ -224,13 +226,14 @@ const DEBOUNCE_MIN = 400;
 /// The longest, however slow the last rebuild was.
 const DEBOUNCE_MAX = 2000;
 
-/// How often the watched files are asked whether they have changed.
-///
-/// Sixty-three files answered in 13 ms, three runs — so a second between polls is
-/// about one part in eighty of one core, and the loop feels immediate.  The File
-/// System Access API has no change events, so for a real folder this is the only
-/// mechanism there is; a writer that KNOWS it wrote calls `touched` and skips it.
-const POLL_MS = 1000;
+// WHEN THE WATCHED FILES ARE ASKED is `watchclock.js`'s, not a fixed interval here.
+// Every ask is a `getFile()` per file, and Chrome keeps a region per File handed out,
+// so a once-a-second ask grew a quiet visible tab by eleven regions in three minutes
+// (OPFSLEAK, 2026-10-24). Where `FileSystemObserver` exists the folder is observed and
+// only the files it names are read, with one full reading every 5 s as a safety net for
+// writes it may not see; elsewhere the poll backs off, 1 s to 5 s, while
+// nothing changes; a hidden tab does neither. A writer that KNOWS it wrote still calls
+// `touched` and rebuilds at once, without waiting on either.
 
 /// The wasm heap, in MB, above which no further rebuild is started.
 ///
@@ -422,7 +425,7 @@ const S = {
 	was:      '',		// the mode a pause interrupted, so resuming restores it
 	error:    '',		// the compiler's own words, while a build is broken
 	reason:   '',		// why the loop is held or dead
-	cause:    '',		// 'write' or 'poll' or 'user': what asked for the rebuild
+	cause:    '',		// 'write', 'poll', 'observe' or 'user': what asked for the rebuild
 	why:      '',		// and which file it named, for a report from the field
 	digests:  {},		// what each watched file said, the last time it was read
 	blind:    false,	// the rebuild running now could not be confirmed from contents
@@ -453,7 +456,7 @@ const S = {
 };
 
 let timer = null;		// the debounce
-let poller = null;		// the interval that asks the files
+let clock = null;		// when the files are asked (`watchclock.js`), made on first use
 let host = null;		// the live view's root element
 // What to do about a rebuild of pages this device did not lay out. Installed by the
 // app (`placeWith`), because WHERE a task runs is an election over presence and a
@@ -2514,7 +2517,7 @@ function dead(why) {
 	S.mode = 'dead';
 	S.reason = why;
 	if (timer) { clearTimeout(timer); timer = null; }
-	if (poller) { clearInterval(poller); poller = null; }
+	if (clock) clock.stop();
 	S.queued = false;
 	says(tOr('typst.watch.dead', 'The compiler has stopped'), 'dead');
 	showError(tOr('typst.watch.dead_why',
@@ -2781,7 +2784,7 @@ async function build(force) {
 /// back and reported, instead of being worked out again from scratch each time.
 ///
 /// # Arguments
-/// * `cause`  - `'write'` or `'poll'`: how the change was noticed.
+/// * `cause`  - `'write'`, `'poll'` or `'observe'`: how the change was noticed.
 /// * `detail` - The path, and for a poll the two readings that differ.
 function nudge(cause, detail) {
 	if (S.mode !== 'live') return;
@@ -2799,13 +2802,16 @@ function nudge(cause, detail) {
 /// BY PATH, because the list is not stable and the answer has to survive it moving.
 /// `null` when the question could not be asked, which is not the same as "nothing
 /// changed" and must not be recorded as a reading.
-async function stamps() {
-	if (!S.files.length) return null;
+///
+/// `paths` narrows the question to the files an observer named; absent, every one.
+async function stamps(paths) {
+	const list = paths || S.files;
+	if (!list.length) return null;
 	try {
 		const m = await wasm();
-		const got = Array.from(await m.typst_watch_stamps(S.files)).map(String);
+		const got = Array.from(await m.typst_watch_stamps(list)).map(String);
 		const out = {};
-		for (let i = 0; i < S.files.length && i < got.length; i++) out[S.files[i]] = got[i];
+		for (let i = 0; i < list.length && i < got.length; i++) out[list[i]] = got[i];
 		return out;
 	} catch (e) {
 		return null;			// a question that could not be asked is not an answer
@@ -2830,9 +2836,15 @@ async function stamps() {
 // "the reader is looking at something else for a moment" two answers rather than one
 // guess about visibility.
 
-/// Ask the watched files whether they have changed, and nudge if any has.
-async function poll() {
-	if (S.mode === 'dead' || !S.path) return;
+/// Look whether the pages are on screen and, when `files`, ask the watched files
+/// whether they have changed, nudging if any has.
+///
+/// The clock's tick (`watchclock.js`). Resolves to `{ asked, changed }`, `asked` false
+/// when the look stopped short of the files, so the poll's back-off counts only real
+/// readings.
+async function poll(files) {
+	const none = { asked: false, changed: false };
+	if (S.mode === 'dead' || !S.path) return none;
 	// "Gone" and "not there yet" are different, and telling them apart is the whole
 	// of `seen`. The watch is armed by a compile that finished BEFORE the panel was
 	// shown -- `began` is called from Rust, and the page opens the panel a moment
@@ -2864,20 +2876,29 @@ async function poll() {
 	// stamps, and coming back resumes with one rebuild if anything moved. A person
 	// CLOSING the panel still stops it -- `userHide` says so in daimond.js, which is
 	// the only door that knows a hand did it.
-	if (S.seen && !shown) { pause(); return; }
-	if (!shown) return;
+	if (S.seen && !shown) { pause(); return none; }
+	if (!shown) return none;
 	// Back on screen. Resuming is the whole of this tick: it takes its own reading
 	// of the files and rebuilds from it, so the comparison below would be against
 	// stamps it has just replaced.
-	if (S.mode === 'paused') { await resume(); return; }
+	if (S.mode === 'paused') { await resume(); return none; }
 	// Nothing to ask about is not a reason to ask: a watch armed before the gather
 	// returned has no file list yet, and the phone reaches this tick first.
-	if (!S.files.length) return;
+	if (!S.files.length || !files) return none;
+	return { asked: true, changed: await ask(null, 'poll') };
+}
+
+/// Read `paths` (every watched file when `null`), keep the reading, and nudge if any
+/// file says something new. Does any?
+async function ask(paths, cause) {
 	const before = S.stamps;
-	const now = await stamps();
-	if (!now) return;			// the question could not be asked
-	S.stamps = now;
-	if (!before) return;			// nothing to compare a first reading against
+	const now = await stamps(paths);
+	if (!now) return false;			// the question could not be asked
+	// A PART-READING IS MERGED, never kept alone: the next full poll compares against
+	// every file, and one an observer did not name has not moved.
+	if (paths && !before) return false;
+	S.stamps = paths ? Object.assign({}, before, now) : now;
+	if (!before) return false;		// nothing to compare a first reading against
 	// A path in ONE of the two readings is not a change. A file the last compile
 	// brought into the project has never been read before, and one it dropped is no
 	// longer part of the document; either would be reported as a change by a
@@ -2890,9 +2911,68 @@ async function poll() {
 		// question, and the one that decides whether there is anything to lay out.
 		if (await confirmed(p, now[p])) continue;
 		S.blind = (Number(String(now[p]).split(':')[1]) > DIGEST_MAX);
-		nudge('poll', p + ' ' + before[p] + ' \u2192 ' + now[p]);
-		return;
+		nudge(cause, p + ' ' + before[p] + ' \u2192 ' + now[p]);
+		return true;
 	}
+	return false;
+}
+
+/// Watch the project's folder for changes, where the browser can say what changed.
+///
+/// The clock's `observe`: resolves to a disconnect, `false` where this browser has no
+/// `FileSystemObserver` (or refuses it), and `null` where the files share no folder.
+async function observe(onLost) {
+	if (typeof FileSystemObserver !== 'function') return false;
+	try {
+		const m = await wasm();
+		if (typeof m.typst_watch_root !== 'function') return false;
+		const list = S.files.length ? S.files : [S.path];
+		const dir = await m.typst_watch_root(list);
+		if (!dir) return null;
+		const ob = new FileSystemObserver(function (recs) { observed(recs, onLost); });
+		await ob.observe(dir, { recursive: true });
+		return function () { ob.disconnect(); };
+	} catch (e) {
+		return false;
+	}
+}
+
+/// What an observer reported: re-read the watched files it names, and only those.
+///
+/// A record names a path relative to the observed folder, as stored; a folder moved or
+/// removed names every watched file under it. A record the browser could not keep
+/// (`unknown`) is answered with one full reading, and one saying observation broke
+/// (`errored`) sends the clock back to its poll.
+async function observed(recs, onLost) {
+	if (S.mode !== 'live' && S.mode !== 'held') return;	// paused: `resume` reads them all
+	if (!S.files.length) return;
+	let m = null;
+	try { m = await wasm(); } catch (e) { return; }
+	const hit = new Set();
+	let all = false;
+	for (const r of (recs || [])) {
+		if (r.type === 'errored') { onLost(); all = true; continue; }
+		if (r.type === 'unknown') { all = true; continue; }
+		for (const c of [r.relativePathComponents, r.relativePathMovedFrom]) {
+			if (!c) continue;
+			const p = String(m.typst_watch_path(Array.from(c).map(String)));
+			for (const f of S.files) {
+				if (!p || f === p || f.startsWith(p + '/')) hit.add(f);
+			}
+		}
+	}
+	if (all) await ask(null, 'observe');
+	else if (hit.size) await ask(Array.from(hit), 'observe');
+}
+
+/// The clock, made on first use, so the module loads where there is no page.
+function ticking() {
+	if (!clock) clock = watchClock({
+		tick:    poll,
+		observe: observe,
+		hidden:  function () { return !!document.hidden; },
+	});
+	return clock;
 }
 
 /// Whether an element is on screen at all.
@@ -2976,9 +3056,7 @@ function began(path, watch) {
 	build(false).then(function () {
 		if (S.mode !== 'idle' && S.drawn) standIn();
 	});
-	poll();
-	if (poller) clearInterval(poller);
-	poller = setInterval(function () { poll(); }, POLL_MS);
+	ticking().start();
 }
 
 /// Stop watching and put the panel back as it was.
@@ -2988,7 +3066,7 @@ function began(path, watch) {
 /// debounce is cleared, and a build already in flight finds `mode` no longer `live`.
 function stop() {
 	if (timer) { clearTimeout(timer); timer = null; }
-	if (poller) { clearInterval(poller); poller = null; }
+	if (clock) clock.stop();
 	// The two timers the VIEW owns go with them: a band waiting for the scroll to
 	// settle and a scan waiting for the builds to stop are both work for a document
 	// nobody is looking at any more.
@@ -3104,8 +3182,8 @@ async function resume() {
 	const sc = scroller();
 	if (S.at && S.at.page > 0 && sc && sc.scrollTop <= 1) goTo(S.at);
 	// The tick is what noticed the pages had gone, so a pause entered any other way
-	// -- a phone sheet, a panel closed by the app -- can find it already cleared.
-	if (!poller) poller = setInterval(function () { poll(); }, POLL_MS);
+	// -- a phone sheet, a panel closed by the app -- can find it already stopped.
+	if (!ticking().state().on) clock.start();
 	const moved = S.dirty;
 	S.dirty = false;
 	const before = S.stamps;
@@ -3153,6 +3231,9 @@ async function touched(path) {
 	const p = String(path || '');
 	if (!p) return;
 	if (p !== S.path && S.files.indexOf(p) < 0) return;
+	// An edit is the best reason there is to look again soon: the poll's gap goes
+	// back to its quickest. The rebuild below does not wait on it.
+	if (clock) clock.edited();
 	// SAVED WHILE THE PAGES WERE PUT AWAY -- the sheet down, or another guest holding
 	// it, or the phone in someone's pocket. Nothing is laid out for a view nobody can
 	// see, so the write is REMEMBERED and `resume` spends one rebuild on it when the
@@ -3252,7 +3333,7 @@ async function given(manifest, meta) {
 	showError('');
 	says(tOr('typst.watch.given', 'Built on {name}', { name: m.name || m.by || '' }), 'live');
 	standIn();
-	if (!poller) poller = setInterval(function () { poll(); }, POLL_MS);
+	if (!ticking().state().on) clock.start();
 	return true;
 }
 
@@ -3421,6 +3502,12 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 	// could wait for.
 	window.addEventListener('daimond-file-written', function (ev) {
 		touched(ev && ev.detail ? ev.detail.path : '');
+	});
+	// A HIDDEN TAB ASKS ITS FILES NOTHING, on any device: the clock stops its tick and
+	// its observer, and on coming back takes one full reading before it resumes, so an
+	// edit made elsewhere while it was away is still a rebuild.
+	document.addEventListener('visibilitychange', function () {
+		if (clock) clock.visibility();
 	});
 	// ── A BACKGROUNDED PHONE HOLDS NOTHING IT CAN BUILD AGAIN ──────────────
 	//

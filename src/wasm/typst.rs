@@ -2329,9 +2329,10 @@ fn watcher() -> Outcome<Watcher> {
 /// size.  Two answers to "has this changed" is how one caller decides a file is
 /// fresh while another decides it is stale.
 ///
-/// **Polling is the only mechanism there is.**  The File System Access API has no
-/// change events for a real folder, so a watcher on the author's own directory has
-/// to ask.  Asking is cheap: sixty-three files answered in thirteen milliseconds,
+/// **Asked as rarely as the browser allows** (OPFSLEAK, 2026-10-24): each answer is a
+/// `getFile()`, and Chrome keeps a region per File handed out.  Where the page has a
+/// `FileSystemObserver` it observes [`typst_watch_root`] and asks only the files named;
+/// elsewhere it polls, backing off while nothing changes (`www/js/watchclock.js`).  Asking is cheap: sixty-three files answered in thirteen milliseconds,
 /// three runs, measured in `dev/measure_typstbook.mjs`.  The test itself --
 /// `lastModified` WITH `size` -- is the one `www/js/cloud.js` already uses for cloud
 /// sync, deliberately, and [`opfs::stamp`] is the one place either is read.
@@ -2355,6 +2356,31 @@ pub async fn typst_watch_stamps(paths: Vec<String>) -> Vec<String> {
     out
 }
 
+
+/// The folder to observe for changes to `paths`, or `null` where they do not share one.
+///
+/// A `FileSystemObserver` on this folder (recursive) names what changed relative to it, as the
+/// names are stored; [`typst_watch_path`] turns one back into the workspace path the watch holds,
+/// so the watch re-reads that file and no other.  `null` sends the watch back to its poll.
+///
+/// # Arguments
+/// * `paths` - Workspace-relative paths, as the project's `watch` handed them out.
+#[wasm_bindgen]
+pub async fn typst_watch_root(paths: Vec<String>) -> JsValue {
+    match opfs::watch_root(FileRoot::Workspace, &paths).await {
+        Ok(Some(h)) => h.into(),
+        _           => JsValue::NULL,
+    }
+}
+
+/// The workspace path of a file an observer named by its stored components.
+///
+/// # Arguments
+/// * `comps` - The record's `relativePathComponents`, relative to [`typst_watch_root`].
+#[wasm_bindgen]
+pub fn typst_watch_path(comps: Vec<String>) -> String {
+    comps.iter().map(|c| crate::fsname::decode(c)).collect::<Vec<String>>().join("/")
+}
 
 // ── Where these are checked ─────────────────────────────────────────────────
 //

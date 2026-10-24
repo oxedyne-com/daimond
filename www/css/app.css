@@ -3346,6 +3346,7 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .device-nominate { flex: none; align-self: center; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-2xl); line-height: 1; cursor: pointer; opacity: .75; }
 .device-row:hover .device-nominate, .device-nominate:hover, .device-nominate:focus-visible { opacity: 1; color: var(--text-primary); background: var(--bg-hover); }
 .device-nominate.is-nominee { opacity: 1; color: var(--accent); }
+.device-nominate.is-nominee .ic { fill: currentColor; }	/* Outweighs `.ic { fill: none }`; an svg fill attribute would not. */
 /* This device's own row only -- see the JS comment above where it is built. A
    LABELLED toggle (audit 2026-09-15, annoyance 6): text beside the padlock, not
    the padlock alone, so its width is auto rather than the fixed icon-button

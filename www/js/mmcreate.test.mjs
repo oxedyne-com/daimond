@@ -30,7 +30,7 @@ function check(name, cond, detail) {
 const MERGE_FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
 	'chatMetaBeats', 'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit',
 	'mergeFold', 'mergeChatRecords', 'touchChatMeta', 'touchChatModel'];
-const CREATE_FNS = ['storedPick', 'chatPairInForce', 'newChat', 'startChat', 'createDiamond'];
+const CREATE_FNS = ['storedPick', 'chatPairInForce', 'newChat', 'startChat', 'createDiamond', 'diamondPickFromChat'];
 const VARS = ['CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', '_chatModelShedSaid'];
 const NAMES = MERGE_FNS.concat(CREATE_FNS);
 
@@ -237,6 +237,37 @@ console.log('\nC6: records without mat merge as before');
 			check('C6 ' + label + ': slimChat writes no mat', !('mat' in JSON.parse(JSON.stringify(N.slimChat(a)))));
 		}
 	}
+}
+
+
+// ── C7: a chat's worker pair travels, and a Diamond cut from it inherits it ────
+// verify_workermodel asks this of the live app; these are the functions it rests on, so a red
+// there can be told from a red here (WORKERMODEL, 24 Oct).
+console.log('\nC7: the chat\'s worker pair is stored, carried and inherited as picks');
+{
+	const d = device(APP, 'A');
+	const follow = { id: 'c1', messages: [], model: '', provider: '', workerModel: '', workerProvider: '' };
+	const own    = { id: 'c2', messages: [], model: GLM.model, provider: GLM.provider, workerModel: '', workerProvider: '' };
+	const apart  = { id: 'c3', messages: [], model: GLM.model, provider: GLM.provider,
+		workerModel: FW.model, workerProvider: FW.provider };
+	const same   = { id: 'c4', messages: [], model: GLM.model, provider: GLM.provider,
+		workerModel: GLM.model, workerProvider: GLM.provider };
+	const cut = (c) => guarded('C7 diamondPickFromChat runs', d, () => d.diamondPickFromChat(c));
+	const wk  = (x) => x ? { provider: x.workerProvider, model: x.workerModel } : null;
+	check('C7 a following chat cuts a Diamond that follows', JSON.stringify(pair(cut(follow) || {})) === JSON.stringify(BLANK), cut(follow));
+	const o = cut(own);
+	check('C7 a chat on its own model cuts a Diamond on it, workers following it',
+		!!o && o.model === GLM.model && o.provider === GLM.provider && o.workerModel === '' && o.workerProvider === '', o);
+	check('C7 a chat whose workers are set apart cuts a Diamond whose workers are too',
+		JSON.stringify(wk(cut(apart))) === JSON.stringify(FW), cut(apart));
+	check('C7 workers equal to the chat\'s own model are stored as following it',
+		JSON.stringify(wk(cut(same))) === JSON.stringify({ provider: '', model: '' }), cut(same));
+	const slim = guarded('C7 slimChat runs', d, () => d.slimChat(apart));
+	check('C7 the record a chat travels as carries its worker pair',
+		!!slim && slim.workerModel === FW.model && slim.workerProvider === FW.provider, slim);
+	const slimF = guarded('C7 slimChat runs on a following chat', d, () => d.slimChat(follow));
+	check('C7 and a following chat carries the pair as \'\', present, not absent',
+		!!slimF && slimF.workerModel === '' && slimF.workerProvider === '', slimF);
 }
 
 console.log('\n' + (checks - failures) + '/' + checks + ' checks passed' + (process.env.MM_SRC_REV ? ' (source ' + process.env.MM_SRC_REV + ')' : ''));

@@ -182,8 +182,21 @@ const until = async (fn, ms = 20000) => {
 /// dispatching turn quotes the task too. A worker's turn is the one where the
 /// task IS the user message — that distinction is the whole point, since a check
 /// that cannot make it passes against the defect it is meant to catch.
-const isWorkerTurn = (e, task) => (e.messages || []).some(
-	(m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim() === task);
+///
+/// SINCE r578 (the append-only prompt, D-20261019-16, rulings §2 l.341) the turn's
+/// standing context leaves the system message and rides AHEAD of the user
+/// message, as a note opening on `TURN_NOTE_LEAD` (src/prompts.rs) with a blank
+/// line before the message (`join_note`). So a worker's user message is the task,
+/// or that note and then the task as its whole last paragraph. Equality alone
+/// found no worker at all after r578, on either provider, and read a worker that
+/// ran on the right model and key as one that never ran. The daimon's own turn
+/// still cannot match: its message ends in the `spawn_agent` call, not the task.
+const NOTE_LEAD = '[Standing context for this turn.';
+const isWorkerTurn = (e, task) => (e.messages || []).some((m) => {
+	if (m.role !== 'user' || typeof m.content !== 'string') return false;
+	const c = m.content.trim();
+	return c === task || (c.startsWith(NOTE_LEAD) && c.endsWith('\n\n' + task));
+});
 
 /// The WORKER turns the shared mock received for `task` — the ones that should
 /// never exist when the worker model belongs to another provider.
@@ -393,45 +406,96 @@ const tile = await p.evaluate(() => {
 });
 check('a chat that CAN start is started, not left pending on its tile (CHAT-01)',
 	tile.pending === 0 && tile.sels === 0, JSON.stringify(tile));
-const chatWorker = await p.evaluate(async () => {
+// ── The chat's workers: inherited, never copied (U1) ────────────────
+//
+// SINCE D-20261018-09 U1 ("Inherit, never copy", specs/daimond_models_menu_
+// redesign_20261018.md §3; live 19 Oct, build 7c7f734836b7) a new chat stores
+// NO model: '' follows the default, and its workers '' follow the chat. Only a
+// deliberate pick is stored (`storedPick`, 9308a695f U1c; www/js/mmcreate.test.mjs
+// C1-C3). Until 24 Oct this block still asked for the pre-U1 copy -- a chat
+// holding its own model and a worker model seeded from it -- so it read the
+// ruled behaviour as "no worker model", and the persistence, parcel and cut
+// checks below it, which filtered on a non-empty `workerModel`, went red with it.
+//
+// What stays the property this file is about: the pair the chat's workers RUN
+// on is the chat's own, it is what the chat stores and the parcel carries, and a
+// Diamond cut from the chat runs its workers on the same. It is asserted twice:
+// on the chat as made (the default), and after the user gives it a model of its
+// own through the chat's dialog, so "follows" cannot pass for "lost".
+const DEFM = added.defModel;
+const chatNow = () => p.evaluate(async () => {
 	const st = await DaimondCore.chatStore().stored();
-	// The chat just made, not a Diamond's daimon: a daimon's record carries the
-	// Diamond's worker pair and would answer a different question.
+	// The chat just made, not a Diamond's daimon: a daimon's record owns no model.
 	const c = (Array.isArray(st) ? st : []).filter((x) => x && !x.diamondId)[0];
-	return c ? { model: c.model, worker: c.workerModel, prov: c.workerProvider } : null;
+	if (!c) return null;
+	const w = DaimondModels.effective({ kind: 'chat', chat: c }, 'workers');
+	const d = DaimondModels.effective({ kind: 'chat', chat: c }, 'daimon');
+	return { id: c.id, model: c.model, prov: c.provider, worker: c.workerModel, wprov: c.workerProvider,
+		has: 'workerModel' in c && 'workerProvider' in c,
+		runs: w.model, runsOn: w.provider, chatRuns: d.model, chatOn: d.provider };
 });
-check('and it carries a worker model of its own, seeded from its own model',
-	!!chatWorker && !!chatWorker.worker && chatWorker.worker === chatWorker.model,
-	JSON.stringify(chatWorker));
+const made = await chatNow();
+check('and its workers follow it: no copy stored, they run on the chat\'s model (U1)',
+	!!made && made.has && made.model === '' && made.worker === '' && made.wprov === ''
+		&& made.runs === DEFM && made.runsOn === DEF && made.runs === made.chatRuns,
+	JSON.stringify(made));
 await shot(s, 'workermodel-3-tile');
-// ── Persisted, and carried in the parcel ────────────────────────────
-const persisted = await p.evaluate(async () => {
-	const st = await DaimondCore.chatStore().stored();
-	const c  = (Array.isArray(st) ? st : []).filter((x) => x && !x.diamondId && x.workerModel)[0];
-	return c ? { model: c.model, worker: c.workerModel, prov: c.workerProvider } : null;
-});
-// The pair it STARTED ON, not a hand-picked one: see the block above for why
-// there is no longer a hand to pick it with. The property is that the pair is
-// written down at all -- a chat whose worker model lived only in memory would
-// dispatch its next fan-out to whatever the starred default happened to be.
-check('a started chat persists the worker model it was given',
-	!!persisted && persisted.worker === persisted.model && !!persisted.prov,
-	JSON.stringify(persisted));
 
-const parcel = await p.evaluate(async () => {
+// The user gives the chat a model of its own: the chat dialog's model row and
+// its Change button (`mountChatModel`), the only place a chat's model is chosen.
+await p.evaluate(() => {
+	const box = document.querySelector('.session-box.active');
+	const cog = box && box.querySelector('.tile-cog');
+	if (cog) cog.click();
+});
+await p.waitForTimeout(400);
+const picked = await p.evaluate(({ model, provider }) => {
+	const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+		.find((c) => c.getClientRects().length);
+	const sel = card && card.querySelector('.tile-dlg-chat-model select.tile-model');
+	if (!sel) return 'no model row in the chat dialog';
+	const opt = [...sel.querySelectorAll('option')]
+		.find((o) => o.value === model && o.dataset.provider === provider);
+	if (!opt) return 'no such option';
+	opt.selected = true;
+	sel.dispatchEvent(new Event('change', { bubbles: true }));
+	const btn = card.querySelector('.tile-dlg-apply');
+	if (!btn || btn.hidden) return 'no Change button';
+	btn.click();
+	return '';
+}, { model: 'mock/thinker', provider: DEF });
+await p.waitForTimeout(800);
+await p.keyboard.press('Escape');
+await p.waitForTimeout(300);
+
+// ── Persisted, and carried in the parcel ────────────────────────────
+const persisted = await chatNow();
+// A chat whose worker pair lived only in memory would dispatch its next fan-out
+// to whatever the starred default happened to be.
+check('a chat given its own model persists it, and its workers run on it',
+	picked === '' && !!persisted && persisted.model === 'mock/thinker' && persisted.worker === ''
+		&& persisted.runs === 'mock/thinker' && persisted.runsOn === DEF,
+	picked || JSON.stringify(persisted));
+
+const parcel = await p.evaluate(async (id) => {
 	const j = await DaimondCore.collectSync();
-	const chats = (j.chats || []).filter((c) => c.workerModel);
-	const dias  = (j.diamonds || []).filter((d) => d.model && d.model.workerModel);
+	const c = (j.chats || []).find((x) => x && x.id === id);
+	const dias = (j.diamonds || []).filter((d) => d.model && d.model.workerModel);
 	return {
 		bytes:      DaimondSync.forTest.utf8Len(JSON.stringify(j)),
 		room:       DaimondSync.parcelRoom(),
-		chatWorker: chats.length ? chats[0].workerModel : '',
+		chat:       c ? { model: c.model, has: 'workerModel' in c && 'workerProvider' in c,
+			worker: c.workerModel, wprov: c.workerProvider } : null,
 		diaWorker:  dias.length ? dias[0].model.workerModel : '',
 		diaProv:    dias.length ? dias[0].model.workerProvider : '',
 	};
-});
-check('the parcel\'s CHAT section carries the chat\'s worker model',
-	!!parcel.chatWorker, parcel.chatWorker);
+}, persisted && persisted.id);
+// The chat's pair as stored, worker half and all: a device given the model but
+// not the worker fields could not tell "follows the chat" from "not sent".
+check('the parcel\'s CHAT section carries the chat\'s worker pair',
+	!!parcel.chat && parcel.chat.has && parcel.chat.model === persisted.model
+		&& parcel.chat.worker === persisted.worker && parcel.chat.wprov === persisted.wprov,
+	JSON.stringify(parcel.chat));
 check('the parcel\'s DIAMOND section carries the Diamond\'s worker model',
 	parcel.diaWorker === MODEL2 && parcel.diaProv === 'mock2',
 	parcel.diaWorker + ' / ' + parcel.diaProv);
@@ -444,6 +508,8 @@ check('the parcel is still far inside the room the door leaves it',
 await p.fill('#chat-input', '@text something worth keeping');
 await p.click('#chat-send', { force: true });
 await p.waitForTimeout(3000);
+const before = await p.evaluate(() =>
+	Object.keys(JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}')));
 // "Fold all" moved off the row and into the cog (CHAT-15): the cog opens
 // first, then the fold button `mountChatFoldKeep` draws inside it.
 await p.evaluate(() => {
@@ -471,20 +537,24 @@ if (opened) {
 	await clickOk(p);
 	await p.waitForTimeout(2500);
 }
-const cut = await p.evaluate(() => {
+// The Diamond the cut MADE, found as the one record that was not there before,
+// not as the last key: a record rewritten since (the legacy one, by its turn)
+// can sit anywhere in the order.
+const cut = await p.evaluate((before) => {
 	const all = JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}');
-	const ids = Object.keys(all);
-	return all[ids[ids.length - 1]] || null;
-});
-// THE CHAT'S pair, read back rather than named. This asked for `MODEL2` until
-// 2026-09-15, which is the DIAMOND's worker model: the chat seeds its own from
-// its own model (`mock/fast`), as the check three blocks up states, so the
-// expectation named a pair the chat never carried. The check could not say so
-// because it never ran -- `page.click('.dlg-ok')` was pressing a shut dialog's
-// Delete, and the run died on that timeout before reaching here.
+	const id  = Object.keys(all).find((k) => !before.includes(k));
+	if (!id) return null;
+	const w = DaimondModels.effective({ kind: 'diamond', id: id }, 'workers');
+	return { model: all[id].model, worker: all[id].workerModel || '', wprov: all[id].workerProvider || '',
+		runs: w.model, runsOn: w.provider };
+}, before);
+// THE CHAT'S pair, read back rather than named: what the cut stores is the
+// chat's picks through `storedPick` (`diamondPickFromChat`), so its workers run
+// where the chat's ran.
 check('a Diamond cut from a chat inherits that chat\'s worker model',
-	opened && !!cut && !!persisted
-		&& cut.workerModel === persisted.worker && cut.workerProvider === persisted.prov,
+	opened && !!cut && !!persisted && cut.model === persisted.model
+		&& cut.worker === persisted.worker && cut.wprov === persisted.wprov
+		&& cut.runs === persisted.runs && cut.runsOn === persisted.runsOn,
 	JSON.stringify(cut) + ' from chat ' + JSON.stringify(persisted));
 
 console.log('\nconsole errors:', errors(s).slice(0, 4).join(' | ') || '(none)');

@@ -60,6 +60,11 @@
 // writes matter.
 
 use crate::fsname;
+use crate::handle_cache;
+use crate::handle_cache::Base;
+use crate::handle_cache::HandleCache;
+use crate::handle_cache::Lost;
+use crate::handle_cache::Tree;
 use crate::tools::FileRoot;
 use crate::tools::Licence;
 use crate::tools::Storage;
@@ -79,6 +84,7 @@ use web_sys::{
     FileSystemFileHandle,
     FileSystemGetDirectoryOptions,
     FileSystemGetFileOptions,
+    FileSystemHandle,
     FileSystemRemoveOptions,
     FileSystemWritableFileStream,
 };
@@ -137,6 +143,7 @@ thread_local! {
 /// i.e. the origin root).  Set once at boot and again on an account switch.
 pub fn set_account_ns(ns: String) {
     ACCOUNT_NS.with(|c| *c.borrow_mut() = ns);
+    forget_all();
 }
 
 /// Install `handle` as the FSA real-folder root for the file tools /
@@ -158,6 +165,9 @@ pub fn set_override(handle: FileSystemDirectoryHandle, id: &str) {
         one => one.to_string(),
     };
     let n = folder_number(&handle);
+    if FOLDER_NO.with(|c| c.get()) != n {
+        forget_folders();
+    }
     WORKSPACE_OVERRIDE.with(|c| *c.borrow_mut() = Some(handle));
     WORKSPACE_ID.with(|c| *c.borrow_mut() = id);
     FOLDER_NO.with(|c| c.set(n));
@@ -210,6 +220,7 @@ pub fn storage_of(root: FileRoot, path: &str) -> Storage {
 pub fn clear_override() {
     WORKSPACE_OVERRIDE.with(|c| *c.borrow_mut() = None);
     WORKSPACE_ID.with(|c| c.borrow_mut().clear());
+    forget_folders();
 }
 
 /// What a real folder opened with no id of its own is called in a version row ([`set_override`]).
@@ -403,7 +414,7 @@ fn jail_components(rel: &str) -> Outcome<Vec<String>> {
 ///
 /// THE ONE PLACE A WORKSPACE NAME BECOMES A FILESYSTEM NAME.  Every call below that reaches
 /// `getFileHandle`, `getDirectoryHandle` or `removeEntry` takes its name from here or from
-/// [`descend`] / [`descend_dir`] / [`open_parent`], which take theirs from here — because a file
+/// the walk ([`Opfs`]'s `spell`), which takes theirs from here — because a file
 /// written under one spelling and looked for under another is worse than the loud failure this
 /// fixes.  [`read_entries`] closes the loop in the other direction, decoding what it lists.
 ///
@@ -437,11 +448,126 @@ async fn disk_name(dir: &FileSystemDirectoryHandle, name: &str) -> String {
     enc
 }
 
-/// Acquire the OPFS root directory handle for this origin.
+// ── The handles this edge holds ─────────────────────────────────────────────
+//
+// OPFSLEAK, 2026-10-24: every handle is a browser route that keeps a block of a shared pool the
+// tab never gives back, so a path is walked once and its handle handed out again, rather than
+// walked from the root on every call.  The walk, and how a held handle whose entry has gone is
+// found out and replaced without walking the path again, is [`crate::handle_cache`]'s; this edge
+// supplies the browser's half ([`Opfs`]).
+
+/// Folders and files held, at most.  Past the bound a path costs the walk it cost before.
+const DIRS_MAX:  usize = 512;
+const FILES_MAX: usize = 2048;
+
+thread_local! {
+    static ORIGIN: RefCell<Option<FileSystemDirectoryHandle>> = const { RefCell::new(None) };	// the origin's root, which never goes
+    static ROOT:   RefCell<Option<(String, FileSystemDirectoryHandle)>> = const { RefCell::new(None) };	// (account ns, its root)
+    static DIRS:   RefCell<HandleCache<FileSystemDirectoryHandle>> = const { RefCell::new(HandleCache::new(DIRS_MAX)) };
+    static FILES:  RefCell<HandleCache<FileSystemFileHandle>> = const { RefCell::new(HandleCache::new(FILES_MAX)) };
+}
+
+/// Forget every held handle (an account switch).
+fn forget_all() {
+    ROOT.with(|r| *r.borrow_mut() = None);
+    DIRS.with(|c| c.borrow_mut().clear());
+    FILES.with(|c| c.borrow_mut().clear());
+}
+
+/// Forget the handles of every opened folder (one closed or replaced).
+fn forget_folders() {
+    DIRS.with(|c| c.borrow_mut().forget_scopes("f"));
+    FILES.with(|c| c.borrow_mut().forget_scopes("f"));
+}
+
+/// The browser's filesystem, as [`crate::handle_cache`] walks it.
+struct Opfs;
+
+impl Tree for Opfs {
+    type Dir    = FileSystemDirectoryHandle;
+    type File   = FileSystemFileHandle;
+    type Fault  = JsValue;
+
+    fn dirs<R>(&self, f: impl FnOnce(&mut HandleCache<Self::Dir>) -> R) -> R {
+        DIRS.with(|c| f(&mut c.borrow_mut()))
+    }
+
+    fn files<R>(&self, f: impl FnOnce(&mut HandleCache<Self::File>) -> R) -> R {
+        FILES.with(|c| f(&mut c.borrow_mut()))
+    }
+
+    // `TypeMismatchError` is not one: it proves the folder asked is live.
+    fn stale(&self, e: &JsValue) -> bool {
+        matches!(crate::wasm::js_prop(e, "name").as_deref(), Some("NotFoundError") | Some("InvalidStateError"))
+    }
+
+    async fn spell(&self, dir: &FileSystemDirectoryHandle, name: &str) -> String {
+        disk_name(dir, name).await
+    }
+
+    async fn dir_in(&self, dir: &FileSystemDirectoryHandle, name: &str, create: bool)
+        -> Result<FileSystemDirectoryHandle, JsValue>
+    {
+        let asked = match create {
+            true  => {
+                let opts = FileSystemGetDirectoryOptions::new();
+                opts.set_create(true);
+                crate::wasm::settle_js(dir.get_directory_handle_with_options(name, &opts)).await
+            },
+            false => crate::wasm::settle_js(dir.get_directory_handle(name)).await,
+        };
+        match asked {
+            Ok(v)   => v.dyn_into::<FileSystemDirectoryHandle>()
+                .map_err(|_| JsValue::from(js_sys::Error::new("not a directory handle"))),
+            Err(e)  => Err(e),
+        }
+    }
+
+    async fn file_in(&self, dir: &FileSystemDirectoryHandle, name: &str, create: bool)
+        -> Result<FileSystemFileHandle, JsValue>
+    {
+        let asked = match create {
+            true  => {
+                let opts = FileSystemGetFileOptions::new();
+                opts.set_create(true);
+                crate::wasm::settle_js(dir.get_file_handle_with_options(name, &opts)).await
+            },
+            false => crate::wasm::settle_js(dir.get_file_handle(name)).await,
+        };
+        match asked {
+            Ok(v)   => v.dyn_into::<FileSystemFileHandle>()
+                .map_err(|_| JsValue::from(js_sys::Error::new("not a file handle"))),
+            Err(e)  => Err(e),
+        }
+    }
+
+    async fn same(&self, a: &FileSystemDirectoryHandle, b: &FileSystemDirectoryHandle) -> bool {
+        let a: &FileSystemHandle = a.as_ref();
+        crate::wasm::settle_js(a.is_same_entry(b.as_ref())).await
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    // Only a sandbox root is ever held, so only an account's own folder is asked for again.
+    async fn root_again(&self, _scope: &str) -> Result<FileSystemDirectoryHandle, JsValue> {
+        let origin = match opfs_origin().await {
+            Ok(o)   => o,
+            Err(e)  => return Err(JsValue::from(js_sys::Error::new(&e.to_string()))),
+        };
+        let ns = ACCOUNT_NS.with(|c| c.borrow().clone());
+        account_root(&origin, &ns).await
+    }
+}
+
+/// The OPFS root directory handle for this origin, asked for once.
 ///
 /// Runs on the main thread via `window.navigator.storage`; a secure
 /// context (https or localhost) is required, which the browser enforces.
-async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
+async fn opfs_origin() -> Outcome<FileSystemDirectoryHandle> {
+    if let Some(h) = ORIGIN.with(|o| o.borrow().clone()) {
+        return Ok(h);
+    }
     let win = res!(web_sys::window()
         .ok_or_else(|| err!("OPFS: no window (main-thread OPFS requires a document)."; System, Missing)));
     let storage = win.navigator().storage();
@@ -461,14 +587,36 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
         .map_err(|e| err!("OPFS: getDirectory failed: {}.", js_err(&e); IO, File)));
     let dir: FileSystemDirectoryHandle = res!(dir_val.dyn_into()
         .map_err(|_| err!("OPFS: getDirectory did not return a directory handle."; IO, File)));
+    ORIGIN.with(|o| *o.borrow_mut() = Some(dir.clone()));
+    Ok(dir)
+}
 
+/// This account's root (see [`ACCOUNT_NS`]): the held one, else asked for; and whether it was
+/// held.  The primary account's is the origin's own, which never goes, so is never called held.
+async fn opfs_root() -> Outcome<(FileSystemDirectoryHandle, bool)> {
+    let ns = ACCOUNT_NS.with(|c| c.borrow().clone());
     // A non-primary account resolves inside its own subdirectory of the root, so its files -- and
     // Daimond's own `.daimond` state -- are invisible to every other account at this browser. The
     // primary account leaves the namespace empty and uses the root unchanged.
-    let ns = ACCOUNT_NS.with(|c| c.borrow().clone());
     if ns.is_empty() {
-        return Ok(dir);
+        return Ok((res!(opfs_origin().await), false));
     }
+    let held = ROOT.with(|r| r.borrow().as_ref()
+        .filter(|(n, _)| *n == ns)
+        .map(|(_, h)| h.clone()));
+    if let Some(h) = held {
+        return Ok((h, true));
+    }
+    let origin = res!(opfs_origin().await);
+    let sub = res!(account_root(&origin, &ns).await
+        .map_err(|e| err!("OPFS: opening account subdirectory '{}' failed: {}.", ns, js_err(&e); IO, File)));
+    Ok((sub, false))
+}
+
+/// The account folder `ns` in `origin`, made where it is missing, and held.
+async fn account_root(origin: &FileSystemDirectoryHandle, ns: &str)
+    -> Result<FileSystemDirectoryHandle, JsValue>
+{
     // NOT through `disk_name`, and deliberately.  The namespace is `d~` and sixteen hex
     // characters, so the codec is the identity on it either way -- but `cloud.js`'s `opfsRoot`
     // and the account wipe in `daimond.js` reach this same directory by its literal name, and a
@@ -476,10 +624,14 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
     // other three doors cannot see.
     let opts = FileSystemGetDirectoryOptions::new();
     opts.set_create(true);
-    let sub_val = res!(crate::wasm::settle_js(dir.get_directory_handle_with_options(&ns, &opts)).await
-        .map_err(|e| err!("OPFS: opening account subdirectory '{}' failed: {}.", ns, js_err(&e); IO, File)));
-    let sub: FileSystemDirectoryHandle = res!(sub_val.dyn_into()
-        .map_err(|_| err!("OPFS: account subdirectory was not a directory handle."; IO, File)));
+    let sub = match crate::wasm::settle_js(origin.get_directory_handle_with_options(ns, &opts)).await {
+        Ok(v)   => match v.dyn_into::<FileSystemDirectoryHandle>() {
+            Ok(d)   => d,
+            Err(_)  => return Err(JsValue::from(js_sys::Error::new("account subdirectory was not a directory handle"))),
+        },
+        Err(e)  => return Err(e),
+    };
+    ROOT.with(|r| *r.borrow_mut() = Some((ns.to_string(), sub.clone())));
     Ok(sub)
 }
 
@@ -519,12 +671,18 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
 /// # Arguments
 /// * `root` - Which root the caller asked for.
 /// * `path` - The workspace-relative path the call addresses; empty addresses the root itself.
-async fn resolve_root(root: FileRoot, path: &str) -> Outcome<FileSystemDirectoryHandle> {
+async fn resolve_base(root: FileRoot, path: &str) -> Outcome<Base<FileSystemDirectoryHandle>> {
     // Both read in one synchronous step, so the number and the handle are the same folder's.
     let open = WORKSPACE_OVERRIDE.with(|c| c.borrow().clone());
+    let n = FOLDER_NO.with(|c| c.get());
     match (storage_of(root, path), open) {
-        (Storage::Sandbox(_), _)        => opfs_root().await,
-        (Storage::Folder(_), Some(h))   => Ok(h),
+        (Storage::Sandbox(_), _)        => {
+            let (dir, held) = res!(opfs_root().await);
+            let ns = ACCOUNT_NS.with(|c| c.borrow().clone());
+            Ok(Base { dir, scope: fmt!("s{}", ns), held })
+        },
+        // The page's own handle: never one this edge held.
+        (Storage::Folder(_), Some(h))   => Ok(Base { dir: h, scope: fmt!("f{}", n), held: false }),
         (Storage::Folder(_), None)
         | (Storage::Machine(_), _)
         | (Storage::Nowhere, _)         => Err(err!(
@@ -533,86 +691,87 @@ async fn resolve_root(root: FileRoot, path: &str) -> Outcome<FileSystemDirectory
     }
 }
 
-/// Descend into (creating as needed) the directory components of a
-/// jailed path, returning the handle to the directory that will hold the
-/// leaf file plus the leaf name.
-///
-/// The leaf comes back as its ON-DISK name (see [`disk_name`]), so a caller can hand it straight
-/// to the browser without knowing that a spelling question exists.
-async fn descend(
-    root:       &FileSystemDirectoryHandle,
-    components: Vec<String>,
-)
-    -> Outcome<(FileSystemDirectoryHandle, String)>
-{
-    let mut dir = root.clone();
-    let last = components.len() - 1;
-    let mut leaf = String::new();
-    for (i, want) in components.into_iter().enumerate() {
-        let name = disk_name(&dir, &want).await;
-        if i == last {
-            leaf = name;
-            break;
-        }
-        let opts = FileSystemGetDirectoryOptions::new();
-        opts.set_create(true);
-        let next_val = res!(crate::wasm::settle_js(
-                dir.get_directory_handle_with_options(&name, &opts)).await
-            .map_err(|e| err!("OPFS: open/create dir '{}' failed: {}.", name, js_err(&e); IO, File)));
-        dir = res!(next_val.dyn_into()
-            .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File)));
-    }
-    Ok((dir, leaf))
+/// A walk's failed lookup as an error naming `path`.
+fn lost(path: &str, l: Lost<JsValue>) -> Error<ErrTag> {
+    err!("OPFS: open '{}' failed at '{}': {}.", path, l.name, js_err(&l.fault); IO, File)
 }
 
-/// Descend into an *existing* directory path (no creation) beneath `root`,
-/// returning the handle.  An empty path (`""`, `"."`, `"/"`) resolves to
-/// `root` itself.  Errors if any component does not exist or is not a
-/// directory.
-async fn descend_dir(
-    root: &FileSystemDirectoryHandle,
-    path: &str,
-)
-    -> Outcome<FileSystemDirectoryHandle>
-{
-    let components = res!(split_components(path));
-    let mut dir = root.clone();
-    for want in components {
-        let name = disk_name(&dir, &want).await;
-        let next_val = res!(crate::wasm::settle_js(dir.get_directory_handle(&name)).await
-            .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_err(&e); IO, File, Read)));
-        dir = res!(next_val.dyn_into()
-            .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File, Read)));
-    }
-    Ok(dir)
+/// Forget the handles held at `comps` (under `base`) and below it: removed through this edge.
+fn forget_under(base: &Base<FileSystemDirectoryHandle>, comps: &[String]) {
+    handle_cache::forget_under(&Opfs, &base.scope, comps);
 }
 
-/// Descend into the *existing* parent directory of a jailed path (no
-/// creation) beneath `root`, returning the parent handle plus the leaf
-/// name.
-///
-/// The leaf comes back as its ON-DISK name (see [`disk_name`]).
-async fn open_parent(
-    root:       &FileSystemDirectoryHandle,
-    components: Vec<String>,
-)
-    -> Outcome<(FileSystemDirectoryHandle, String)>
+/// Run `op` on the folder holding the leaf of `comps`, through [`handle_cache::ask`].
+async fn in_parent<R, F, Fut>(base: &Base<FileSystemDirectoryHandle>, comps: &[String],
+    dir: &mut FileSystemDirectoryHandle, held: &mut bool, create: bool, op: F)
+    -> Result<R, JsValue>
+where
+    F:      Fn(FileSystemDirectoryHandle) -> Fut,
+    Fut:    std::future::Future<Output = Result<R, JsValue>>,
 {
-    let mut dir = root.clone();
-    let last = components.len() - 1;
-    let mut leaf = String::new();
-    for (i, want) in components.into_iter().enumerate() {
-        let name = disk_name(&dir, &want).await;
-        if i == last {
-            leaf = name;
-            break;
-        }
-        let next_val = res!(crate::wasm::settle_js(dir.get_directory_handle(&name)).await
-            .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", name, js_err(&e); IO, File)));
-        dir = res!(next_val.dyn_into()
-            .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File)));
+    handle_cache::ask(&Opfs, base, &comps[..comps.len().saturating_sub(1)], dir, held, create, op).await
+}
+
+/// The leaf of `comps` asked of its folder as a file (made where `create`), and held.
+async fn leaf_file(base: &Base<FileSystemDirectoryHandle>, comps: &[String],
+    dir: &mut FileSystemDirectoryHandle, held: &mut bool, leaf: &str, create: bool)
+    -> Result<FileSystemFileHandle, JsValue>
+{
+    let got = in_parent(base, comps, dir, held, create, |d| {
+        let leaf = leaf.to_string();
+        async move { Opfs.file_in(&d, &leaf, create).await }
+    }).await;
+    if let Ok(f) = &got {
+        FILES.with(|c| c.borrow_mut().put(handle_cache::key(&base.scope, comps), f.clone()));
     }
-    Ok((dir, leaf))
+    got
+}
+
+/// The leaf of `comps` asked of its folder as a folder (made where `create`), and held.
+async fn leaf_dir(base: &Base<FileSystemDirectoryHandle>, comps: &[String],
+    dir: &mut FileSystemDirectoryHandle, held: &mut bool, leaf: &str, create: bool)
+    -> Result<FileSystemDirectoryHandle, JsValue>
+{
+    let got = in_parent(base, comps, dir, held, create, |d| {
+        let leaf = leaf.to_string();
+        async move { Opfs.dir_in(&d, &leaf, create).await }
+    }).await;
+    if let Ok(d) = &got {
+        DIRS.with(|c| c.borrow_mut().put(handle_cache::key(&base.scope, comps), d.clone()));
+    }
+    got
+}
+
+/// The existing folder at `path` (empty: the root itself), its last step asked of the browser
+/// rather than held, for a move that is about to copy or empty it.
+async fn dir_live(root: FileRoot, path: &str) -> Outcome<FileSystemDirectoryHandle> {
+    let comps = res!(split_components(path));
+    let base = res!(resolve_base(root, path).await);
+    if comps.is_empty() {
+        return Ok(base.dir);
+    }
+    let (mut dir, leaf, mut held) = res!(handle_cache::parent(&Opfs, &base, &comps, false).await
+        .map_err(|l| lost(path, l)));
+    leaf_dir(&base, &comps, &mut dir, &mut held, &leaf, false).await
+        .map_err(|e| err!("OPFS: open dir '{}' failed: {}.", path, js_err(&e); IO, File, Read))
+}
+
+/// The `File` (bytes and stamp) behind a file handle.
+async fn file_js(h: FileSystemFileHandle) -> Result<File, JsValue> {
+    match crate::wasm::settle_js(h.get_file()).await {
+        Ok(v)   => v.dyn_into::<File>()
+            .map_err(|_| JsValue::from(js_sys::Error::new("getFile did not return a file"))),
+        Err(e)  => Err(e),
+    }
+}
+
+/// The `File` at `path`, through the held handle (see [`handle_cache::with_file`]).
+async fn open_file(root: FileRoot, path: &str) -> Outcome<File> {
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
+    handle_cache::with_file(&Opfs, &base, &comps, file_js).await
+        .map_err(|l| err!("OPFS: open '{}' failed at '{}': {}.", path, l.name, js_err(&l.fault);
+            IO, File, Read))
 }
 
 /// A failed lookup read by its exception's name (PLF-NF): absent only on `NotFoundError`, the
@@ -623,52 +782,38 @@ fn lookup_failed(e: &JsValue, path: &str, phase: &str)
     crate::diamond_versions::lookup_failed(crate::wasm::js_prop(e, "name").as_deref(), path, phase)
 }
 
-/// [`open_parent`] for a probe: `None` where a parent folder is absent, or a file stands in its
-/// place, so the path cannot stand; any other failed lookup is an error, never "absent".
-async fn open_parent_probe(
-    root:       &FileSystemDirectoryHandle,
-    components: Vec<String>,
-    path:       &str,
-    phase:      &str,
-)
-    -> Outcome<Option<(FileSystemDirectoryHandle, String)>>
-{
-    let mut dir = root.clone();
-    let last = components.len() - 1;
-    let mut leaf = String::new();
-    for (i, want) in components.into_iter().enumerate() {
-        let name = disk_name(&dir, &want).await;
-        if i == last {
-            leaf = name;
-            break;
-        }
-        let next_val = match crate::wasm::settle_js(dir.get_directory_handle(&name)).await {
-            Ok(v)   => v,
-            Err(e)  => {
-                res!(lookup_failed(&e, path, phase));
-                return Ok(None);
-            },
-        };
-        dir = res!(next_val.dyn_into()
-            .map_err(|_| err!("OPFS: dir handle for '{}' was not a directory.", name; IO, File)));
-    }
-    Ok(Some((dir, leaf)))
+/// What stands at a bound write's or delete's leaf.
+enum Had {
+    Absent,                                                 // nothing, or a folder
+    File(FileSystemFileHandle, Result<Vec<u8>, String>),    // the file, and its committed bytes or why not
 }
 
-/// The file handle at `leaf` in `dir` for a bound write's or delete's compare: `None` only where
-/// nothing is there, or a folder stands there (no file to compare; a write then fails at its
-/// create).  Any other failed lookup is an error, so it is never taken for a new file.
-async fn compare_handle(dir: &FileSystemDirectoryHandle, leaf: &str, path: &str, phase: &str)
-    -> Outcome<Option<FileSystemFileHandle>>
+/// The file at the leaf of `comps` (in `dir`) and its committed bytes, for a bound write's or
+/// delete's compare: through the held handle where there is one, else asked for, absent only on
+/// `NotFoundError` (PLF-NF) or where a folder stands.  Any other failed lookup is an error, so it
+/// is never taken for a new file.
+async fn compare(base: &Base<FileSystemDirectoryHandle>, comps: &[String],
+    dir: &mut FileSystemDirectoryHandle, held: &mut bool, leaf: &str, path: &str, phase: &str)
+    -> Outcome<Had>
 {
-    match crate::wasm::settle_js(dir.get_file_handle(leaf)).await {
-        Ok(v)   => Ok(Some(res!(v.dyn_into::<FileSystemFileHandle>()
-            .map_err(|_| err!("OPFS: the handle for '{}' at the {} was not a file handle.",
-                path, phase; IO, File, Read))))),
+    let k = handle_cache::key(&base.scope, comps);
+    if let Some(f) = FILES.with(|c| c.borrow_mut().get(&k)) {
+        match committed_js(&f).await {
+            Ok(b)                       => return Ok(Had::File(f, Ok(b))),
+            Err(e) if !Opfs.stale(&e)   => return Ok(Had::File(f, Err(js_err(&e)))),
+            Err(_)                      => FILES.with(|c| c.borrow_mut().forget(&k)),
+        }
+    }
+    let f = match leaf_file(base, comps, dir, held, leaf, false).await {
+        Ok(f)   => f,
         Err(e)  => {
             res!(lookup_failed(&e, path, phase));
-            Ok(None)
+            return Ok(Had::Absent);
         },
+    };
+    match committed_js(&f).await {
+        Ok(b)   => Ok(Had::File(f, Ok(b))),
+        Err(e)  => Ok(Had::File(f, Err(js_err(&e)))),
     }
 }
 
@@ -685,13 +830,20 @@ pub(in crate::wasm) async fn write_file(root: FileRoot, path: &str, content: &[u
 /// The bytes of a file handle as they stand committed, which a writable's staged bytes are not
 /// until it closes.
 async fn committed(file: &FileSystemFileHandle, leaf: &str) -> Outcome<Vec<u8>> {
-    let blob_val = res!(crate::wasm::settle_js(file.get_file()).await
-        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    let blob: File = res!(blob_val.dyn_into()
-        .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
-    let buf_val = res!(crate::wasm::settle_js(blob.array_buffer()).await
-        .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    Ok(js_sys::Uint8Array::new(&buf_val).to_vec())
+    committed_js(file).await
+        .map_err(|e| err!("OPFS: read the committed bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read))
+}
+
+/// [`committed`], failing with the browser's own exception, so a caller can read its name.
+async fn committed_js(file: &FileSystemFileHandle) -> Result<Vec<u8>, JsValue> {
+    let blob = match file_js(file.clone()).await {
+        Ok(b)   => b,
+        Err(e)  => return Err(e),
+    };
+    match crate::wasm::settle_js(blob.array_buffer()).await {
+        Ok(buf) => Ok(js_sys::Uint8Array::new(&buf).to_vec()),
+        Err(e)  => Err(e),
+    }
 }
 
 /// [`write_file`], landing only where what stands at `path` is still `expect`: `None` once
@@ -761,44 +913,63 @@ where
     F: std::future::Future<Output = Outcome<()>>,
 {
     use crate::diamond_versions::{Seen, StagedEnd, staged_then};
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let (dir, leaf) = res!(descend(&handle, components).await);
+    if let Some(Seen::Unread) = expect {
+        return Err(err!("OPFS: a write of '{}' was bound to bytes that could not be read, so \
+            there is nothing to compare.", path; IO, File, Write, Invalid));
+    }
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
+    let (mut dir, leaf, mut held) = res!(handle_cache::parent(&Opfs, &base, &comps, true).await
+        .map_err(|l| lost(path, l)));
 
     // Whether a file stood there before this write made one, which the empty file `create`
     // leaves would otherwise hide.
+    let mut found_file = None;
     if let Some(want) = expect {
-        if let Seen::Unread = want {
-            return Err(err!("OPFS: a write of '{}' was bound to bytes that could not be read, so \
-                there is nothing to compare.", path; IO, File, Write, Invalid));
-        }
         // Absent only on `NotFoundError` (PLF-NF): a lookup failing any other way refuses the
         // write rather than letting it pass as a new file over one that stands.
-        let had = res!(compare_handle(&dir, &leaf, path, "compare before a bound write").await);
+        let had = res!(compare(&base, &comps, &mut dir, &mut held, &leaf, path,
+            "compare before a bound write").await);
         // A read that fails here is a refusal, not an error: a rival's commit invalidates the
         // snapshot (`NotReadableError`, `NotFoundError`), and what stands there is then not what
         // the write was bound to as far as anyone can tell.
         let found = match &had {
-            Some(f) => match committed(f, &leaf).await {
-                Ok(b)  => Seen::of(Some(&b)),
-                Err(_) => Seen::Unread,
-            },
-            None    => Seen::Absent,
+            Had::File(_, Ok(b)) => Seen::of(Some(b)),
+            Had::File(_, Err(_))=> Seen::Unread,
+            Had::Absent         => Seen::Absent,
         };
         if &found != want {
             return Ok(Some(found));
         }
+        if let Had::File(f, _) = had {
+            found_file = Some(f);
+        }
     }
 
-    let opts = FileSystemGetFileOptions::new();
-    opts.set_create(true);
-    let file_val = res!(crate::wasm::settle_js(
-            dir.get_file_handle_with_options(&leaf, &opts)).await
-        .map_err(|e| err!("OPFS: open/create file '{}' failed: {}.", leaf, js_err(&e); IO, File)));
-    let file: FileSystemFileHandle = res!(file_val.dyn_into()
-        .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File)));
-
-    let writable = res!(open_writable(&file, &leaf, expect.is_some()).await);
+    // The file the compare found live, else the held one, else asked for and made.  A held one
+    // whose entry has gone is refused at its writable, and asked for again.
+    let k = handle_cache::key(&base.scope, &comps);
+    let (file, file_held) = match found_file {
+        Some(f) => (f, false),
+        None    => match FILES.with(|c| c.borrow_mut().get(&k)) {
+            Some(f) => (f, true),
+            None    => (res!(leaf_file(&base, &comps, &mut dir, &mut held, &leaf, true).await
+                .map_err(|e| err!("OPFS: open/create file '{}' failed: {}.", leaf, js_err(&e); IO, File))), false),
+        },
+    };
+    let (writable, file) = match res!(open_writable(&file, &leaf, expect.is_some(), file_held).await) {
+        Some(w) => (w, file),
+        None    => {
+            FILES.with(|c| c.borrow_mut().forget(&k));
+            let f = res!(leaf_file(&base, &comps, &mut dir, &mut held, &leaf, true).await
+                .map_err(|e| err!("OPFS: open/create file '{}' failed: {}.", leaf, js_err(&e); IO, File)));
+            match res!(open_writable(&f, &leaf, expect.is_some(), false).await) {
+                Some(w) => (w, f),
+                None    => return Err(err!("OPFS: a writable of '{}' on a fresh handle was refused as \
+                    stale.", path; IO, File, Write, Bug)),
+            }
+        },
+    };
 
     // EVERY END FROM HERE IS DECIDED IN ONE PLACE: only a passed re-check closes, and every other
     // end aborts.  The failed write used to return with the writable open, which an exclusive
@@ -821,9 +992,10 @@ where
 }
 
 /// Open a writable of `file`: `exclusive` where `exclusive` and the browser has the mode, asked
-/// again a few times where another writable of the file is open ([`EXCLUSIVE_TRIES`]).
-async fn open_writable(file: &FileSystemFileHandle, leaf: &str, exclusive: bool)
-    -> Outcome<FileSystemWritableFileStream>
+/// again a few times where another writable of the file is open ([`EXCLUSIVE_TRIES`]).  `None`
+/// where `file` is a `held` handle whose entry has gone, to be asked for again.
+async fn open_writable(file: &FileSystemFileHandle, leaf: &str, exclusive: bool, held: bool)
+    -> Outcome<Option<FileSystemWritableFileStream>>
 {
     let mut tries = 0;
     let writable_val = loop {
@@ -836,6 +1008,9 @@ async fn open_writable(file: &FileSystemFileHandle, leaf: &str, exclusive: bool)
         match crate::wasm::settle_js(promise).await {
             Ok(v)  => break v,
             Err(e) => {
+                if held && Opfs.stale(&e) {
+                    return Ok(None);
+                }
                 tries += 1;
                 let busy = js_sys::Reflect::get(&e, &JsValue::from_str("name")).ok()
                     .and_then(|n| n.as_string())
@@ -850,7 +1025,7 @@ async fn open_writable(file: &FileSystemFileHandle, leaf: &str, exclusive: bool)
     };
     let writable: FileSystemWritableFileStream = res!(writable_val.dyn_into()
         .map_err(|_| err!("OPFS: writable for '{}' had the wrong type.", leaf; IO, File, Write)));
-    Ok(writable)
+    Ok(Some(writable))
 }
 
 /// `file.createWritable({ mode: "exclusive" })`, through `Reflect` because the binding has no
@@ -977,18 +1152,13 @@ fn announce_change(path: &str) {
 /// Only an agent could make a directory before this, and only as a side effect
 /// of writing a file into one; the user had no way at all.
 pub(in crate::wasm) async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let mut dir = handle;
-    for want in components {
-        let name = disk_name(&dir, &want).await;
-        let opts = FileSystemGetDirectoryOptions::new();
-        opts.set_create(true);
-        let next = res!(crate::wasm::settle_js(dir.get_directory_handle_with_options(&name, &opts)).await
-            .map_err(|e| err!("OPFS: create dir '{}' failed: {}.", name, js_err(&e); IO, File)));
-        dir = res!(next.dyn_into()
-            .map_err(|_| err!("OPFS: handle for '{}' was not a directory.", name; IO, File)));
-    }
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
+    let (mut dir, leaf, mut held) = res!(handle_cache::parent(&Opfs, &base, &comps, true).await
+        .map_err(|l| lost(path, l)));
+    // The last step is always asked, so a folder removed behind a held handle is made again.
+    res!(leaf_dir(&base, &comps, &mut dir, &mut held, &leaf, true).await
+        .map_err(|e| err!("OPFS: create dir '{}' failed: {}.", leaf, js_err(&e); IO, File)));
     announce_change(path);
     Ok(())
 }
@@ -1038,9 +1208,9 @@ pub(in crate::wasm) async fn move_entry(root: FileRoot, from: &str, to: &str) ->
     // the name it is stored as, so the destination holds what the source held, spelled as it was.
     // Only the LOCKS go by the workspace spelling (decoded), because that is how every writer
     // names them.
-    let src = res!(descend_dir(&res!(resolve_root(root, from).await), from).await);
+    let src = res!(dir_live(root, from).await);
     res!(create_dir(root, to).await);
-    let dst = res!(descend_dir(&res!(resolve_root(root, to).await), to).await);
+    let dst = res!(dir_live(root, to).await);
     let copied = res!(copy_tree(root, &src, &dst, to).await);
     // THE SOURCE GOES ONLY AS FAR AS THE COPY CAME.  This ended in one recursive `removeEntry`,
     // which removes whatever is under `from` -- including anything the listing did not show and
@@ -1244,30 +1414,20 @@ async fn remove_stored(dir: &FileSystemDirectoryHandle, name: &str) -> Outcome<(
 
 /// True when `path` names a directory.
 pub async fn is_directory(root: FileRoot, path: &str) -> Outcome<bool> {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let (dir, leaf) = res!(open_parent(&handle, components).await);
-    Ok(crate::wasm::settle_js(dir.get_directory_handle(&leaf)).await.is_ok())
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
+    let (mut dir, leaf, mut held) = res!(handle_cache::parent(&Opfs, &base, &comps, false).await
+        .map_err(|l| lost(path, l)));
+    Ok(leaf_dir(&base, &comps, &mut dir, &mut held, &leaf, false).await.is_ok())
 }
 
 /// Read the entire contents of `path` under `root` as bytes.  Errors if
 /// any path component (directory or the file itself) does not exist.
 pub async fn read_file(root: FileRoot, path: &str) -> Outcome<Vec<u8>> {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let (dir, leaf) = res!(open_parent(&handle, components).await);
-
-    let file_val = res!(crate::wasm::settle_js(dir.get_file_handle(&leaf)).await
-        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
-        .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
-
+    let leaf = path;
     // `get_file` yields a `File` (a `Blob`); read its bytes via
     // `arrayBuffer`, which returns the whole contents.
-    let blob_val = res!(crate::wasm::settle_js(file_handle.get_file()).await
-        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    let file: File = res!(blob_val.dyn_into()
-        .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
+    let file = res!(open_file(root, path).await);
     let buf_val = res!(crate::wasm::settle_js(file.array_buffer()).await
         .map_err(|e| err!("OPFS: read bytes of '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
     let bytes = js_sys::Uint8Array::new(&buf_val).to_vec();
@@ -1299,18 +1459,8 @@ pub async fn read_file_range(
 )
     -> Outcome<(Vec<u8>, f64)>
 {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let (dir, leaf) = res!(open_parent(&handle, components).await);
-
-    let file_val = res!(crate::wasm::settle_js(dir.get_file_handle(&leaf)).await
-        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
-        .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
-    let blob_val = res!(crate::wasm::settle_js(file_handle.get_file()).await
-        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    let file: File = res!(blob_val.dyn_into()
-        .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
+    let leaf = path;
+    let file = res!(open_file(root, path).await);
 
     let total = file.size();
     let from = if offset < 0.0 { 0.0 } else { offset };
@@ -1347,18 +1497,8 @@ pub async fn read_file_range(
 /// decides what to do about that; what this guarantees is that finding out
 /// cannot cost more than `max`.
 pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(Vec<u8>, f64)> {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let (dir, leaf) = res!(open_parent(&handle, components).await);
-
-    let file_val = res!(crate::wasm::settle_js(dir.get_file_handle(&leaf)).await
-        .map_err(|e| err!("OPFS: open file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    let file_handle: FileSystemFileHandle = res!(file_val.dyn_into()
-        .map_err(|_| err!("OPFS: file handle for '{}' was not a file.", leaf; IO, File, Read)));
-    let blob_val = res!(crate::wasm::settle_js(file_handle.get_file()).await
-        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", leaf, js_err(&e); IO, File, Read)));
-    let file: File = res!(blob_val.dyn_into()
-        .map_err(|_| err!("OPFS: get_file for '{}' returned a non-file.", leaf; IO, File, Read)));
+    let leaf = path;
+    let file = res!(open_file(root, path).await);
 
     let total = file.size();
     // The whole file when it fits, and only the front of it when it does not.
@@ -1396,29 +1536,34 @@ pub async fn read_file_capped(root: FileRoot, path: &str, max: u32) -> Outcome<(
 /// * `root` - Which filesystem root the path is under.
 /// * `path` - The workspace-relative path.
 pub async fn stamp(root: FileRoot, path: &str) -> Outcome<Option<(f64, f64)>> {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let (dir, leaf) = match open_parent(&handle, components).await {
-        Ok(v)  => v,
-        Err(_) => return Ok(None),
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
+    // THE WATCH'S HOT PATH: the held handle is asked, so a poll mints no handle at all.
+    match handle_cache::with_file(&Opfs, &base, &comps, file_js).await {
+        Ok(f)   => Ok(Some((f.last_modified(), f.size()))),
+        Err(_)  => Ok(None),
+    }
+}
+
+/// The folder every one of `paths` resolves under, for a watcher to observe: `None` when they do
+/// not all resolve to the same storage, so no single folder holds them.
+///
+/// The names under it are as stored; [`fsname::decode`] spells one back as the workspace does.
+///
+/// # Arguments
+/// * `root`  - Which filesystem root the paths are under.
+/// * `paths` - Workspace-relative paths; the first decides the folder.
+pub async fn watch_root(root: FileRoot, paths: &[String]) -> Outcome<Option<FileSystemDirectoryHandle>> {
+    let first = match paths.first() {
+        Some(p) => p,
+        None    => return Ok(None),
     };
-    let file_val = match crate::wasm::settle_js(dir.get_file_handle(&leaf)).await {
-        Ok(v)  => v,
-        Err(_) => return Ok(None),
-    };
-    let file_handle: FileSystemFileHandle = match file_val.dyn_into() {
-        Ok(h)  => h,
-        Err(_) => return Ok(None),
-    };
-    let blob_val = match crate::wasm::settle_js(file_handle.get_file()).await {
-        Ok(v)  => v,
-        Err(_) => return Ok(None),
-    };
-    let file: File = match blob_val.dyn_into() {
-        Ok(f)  => f,
-        Err(_) => return Ok(None),
-    };
-    Ok(Some((file.last_modified(), file.size())))
+    let at = storage_of(root, first);
+    if paths.iter().any(|p| storage_of(root, p) != at) {
+        return Ok(None);
+    }
+    let base = res!(resolve_base(root, first).await);
+    Ok(Some(base.dir))
 }
 
 /// When a [`File`] says it was last written, in milliseconds since the epoch, or `None` where the
@@ -1459,10 +1604,9 @@ const LIST_WAVE: usize = 32; // file reads a listing asks for at once
 /// never the extra call it was written up as, and the caller that believed it could not have them
 /// (`file_glob`) was going without for no reason.  It is `None` per ENTRY rather than per listing,
 /// because one listing can span a real folder and the sandbox at once (see [`resolve_root`]).
-async fn read_entries(dir: &FileSystemDirectoryHandle)
+async fn read_entries(stored: Vec<(String, JsValue, bool)>)
     -> Outcome<Vec<(String, bool, u64, Option<f64>)>>
 {
-    let stored = res!(stored_entries(dir).await);
     let mut out: Vec<(String, bool, u64, Option<f64>)> = Vec::with_capacity(stored.len());
     // IN WAVES, NOT ONE AT A TIME (D-20261006-32). Each `getFile()` was awaited before the next
     // was asked for, so a folder of 594 files was 594 round trips end to end -- on a real disk
@@ -1522,13 +1666,25 @@ async fn read_entries(dir: &FileSystemDirectoryHandle)
 async fn stored_entries(dir: &FileSystemDirectoryHandle)
     -> Outcome<Vec<(String, JsValue, bool)>>
 {
+    entries_js(dir).await
+        .map_err(|e| err!("OPFS: listing a directory failed: {}.", js_err(&e); IO, File, Read))
+}
+
+/// [`stored_entries`], failing with the browser's own exception, so a caller can read its name.
+async fn entries_js(dir: &FileSystemDirectoryHandle)
+    -> Result<Vec<(String, JsValue, bool)>, JsValue>
+{
     let iter = dir.entries();
     let mut out: Vec<(String, JsValue, bool)> = Vec::new();
     loop {
-        let promise = res!(iter.next()
-            .map_err(|e| err!("OPFS: directory iterator next() failed: {}.", js_err(&e); IO, File, Read)));
-        let record = res!(crate::wasm::settle_js(promise).await
-            .map_err(|e| err!("OPFS: awaiting directory entry failed: {}.", js_err(&e); IO, File, Read)));
+        let promise = match iter.next() {
+            Ok(p)   => p,
+            Err(e)  => return Err(e),
+        };
+        let record = match crate::wasm::settle_js(promise).await {
+            Ok(r)   => r,
+            Err(e)  => return Err(e),
+        };
 
         // `done` signals iterator exhaustion; treat a missing/unreadable
         // flag as done so a malformed record cannot spin forever.
@@ -1540,8 +1696,10 @@ async fn stored_entries(dir: &FileSystemDirectoryHandle)
             break;
         }
 
-        let value = res!(js_sys::Reflect::get(&record, &JsValue::from_str("value"))
-            .map_err(|e| err!("OPFS: read directory entry value failed: {}.", js_err(&e); IO, File, Read)));
+        let value = match js_sys::Reflect::get(&record, &JsValue::from_str("value")) {
+            Ok(v)   => v,
+            Err(e)  => return Err(e),
+        };
         let pair = js_sys::Array::from(&value);
         let name = pair.get(0).as_string().unwrap_or_default();
         let handle = pair.get(1);
@@ -1555,6 +1713,17 @@ async fn stored_entries(dir: &FileSystemDirectoryHandle)
         out.push((name, handle, is_dir));
     }
     Ok(out)
+}
+
+/// The stored entries of the folder at `path` (see [`stored_entries`]), through the held folder.
+async fn entries_at(root: FileRoot, path: &str) -> Outcome<Vec<(String, JsValue, bool)>> {
+    let comps = res!(split_components(path));
+    let base = res!(resolve_base(root, path).await);
+    let (mut dir, mut held) = res!(handle_cache::folder(&Opfs, &base, &comps, false).await
+        .map_err(|l| lost(path, l)));
+    handle_cache::ask(&Opfs, &base, &comps, &mut dir, &mut held, false,
+        |d| async move { entries_js(&d).await }).await
+        .map_err(|e| err!("OPFS: listing '{}' failed: {}.", path, js_err(&e); IO, File, Read))
 }
 
 /// List the entries of the directory at `path` under `root`, returning
@@ -1580,9 +1749,7 @@ pub async fn list_dir(root: FileRoot, path: &str) -> Outcome<Vec<(String, bool, 
 pub async fn list_dir_stamped(root: FileRoot, path: &str)
     -> Outcome<Vec<(String, bool, u64, Option<f64>)>>
 {
-    let handle = res!(resolve_root(root, path).await);
-    let dir = res!(descend_dir(&handle, path).await);
-    read_entries(&dir).await
+    read_entries(res!(entries_at(root, path).await)).await
 }
 
 /// As [`list_dir`] with neither sizes nor times: `(name, is_dir)` per entry, decoded, unsorted.
@@ -1591,9 +1758,7 @@ pub async fn list_dir_stamped(root: FileRoot, path: &str)
 /// its size and stamp, one browser round trip per file, so the Workspace search over a real folder
 /// of a third of a million entries spent minutes on numbers it never drew (WS-SEARCH, 2026-10-12).
 pub async fn list_dir_names(root: FileRoot, path: &str) -> Outcome<Vec<(String, bool)>> {
-    let handle = res!(resolve_root(root, path).await);
-    let dir = res!(descend_dir(&handle, path).await);
-    Ok(res!(stored_entries(&dir).await)
+    Ok(res!(entries_at(root, path).await)
         .into_iter()
         .map(|(name, _, is_dir)| (fsname::decode(&name), is_dir))
         .collect())
@@ -1615,15 +1780,17 @@ pub(in crate::wasm) async fn delete_file(root: FileRoot, path: &str) -> Outcome<
 /// [`delete_file`], with the file's lock held (OPFS-LOCK check2, D6): a removal between a
 /// restore's re-check and its close undid the restore, or failed it.
 async fn delete_file_held(root: FileRoot, path: &str) -> Outcome<()> {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let (dir, leaf) = res!(open_parent(&handle, components).await);
-    if crate::wasm::settle_js(dir.get_file_handle(&leaf)).await.is_err() {
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
+    let (mut dir, leaf, mut held) = res!(handle_cache::parent(&Opfs, &base, &comps, false).await
+        .map_err(|l| lost(path, l)));
+    if leaf_file(&base, &comps, &mut dir, &mut held, &leaf, false).await.is_err() {
         return Err(err!("OPFS: '{}' is not a file, so it was not removed.", path;
             Invalid, Input, Path));
     }
     res!(crate::wasm::settle_js(dir.remove_entry(&leaf)).await
         .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
+    forget_under(&base, &comps);
     announce_change(path);
     Ok(())
 }
@@ -1647,13 +1814,20 @@ pub(in crate::wasm) async fn delete_entry(root: FileRoot, path: &str, recursive:
 /// file does.  A folder's own name is a lock no writer takes, so for a folder it costs one lock
 /// round trip and guards nothing.
 async fn delete_entry_held(root: FileRoot, path: &str, recursive: bool) -> Outcome<()> {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
-    let (dir, leaf) = res!(open_parent(&handle, components).await);
-    let opts = FileSystemRemoveOptions::new();
-    opts.set_recursive(recursive);
-    res!(crate::wasm::settle_js(dir.remove_entry_with_options(&leaf, &opts)).await
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
+    let (mut dir, leaf, mut held) = res!(handle_cache::parent(&Opfs, &base, &comps, false).await
+        .map_err(|l| lost(path, l)));
+    res!(in_parent(&base, &comps, &mut dir, &mut held, false, |d| {
+        let leaf = leaf.clone();
+        async move {
+            let opts = FileSystemRemoveOptions::new();
+            opts.set_recursive(recursive);
+            crate::wasm::settle_js(d.remove_entry_with_options(&leaf, &opts)).await
+        }
+    }).await
         .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
+    forget_under(&base, &comps);
     // ANNOUNCED ONLY ON SUCCESS, and only here. A removal that failed changed nothing,
     // and a memo dropped for it would be a re-walk bought for no reason.
     announce_change(path);
@@ -1686,55 +1860,78 @@ async fn delete_file_if_held(root: FileRoot, path: &str, expect: &crate::diamond
         return Err(err!("OPFS: a delete of '{}' was bound to bytes that could not be read, so \
             there is nothing to compare.", path; IO, File, Write, Invalid));
     }
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
     const PHASE: &str = "compare before a bound delete";
-    let (dir, leaf) = match res!(open_parent_probe(&handle, components, path, PHASE).await) {
-        Some(v) => v,
-        None    => return Ok(match expect {
-            Seen::Absent => None,
-            _            => Some(Seen::Absent),
-        }),
+    // A folder on the way absent, or a file in its place: the path cannot stand.
+    let (mut dir, leaf, mut held) = match handle_cache::parent(&Opfs, &base, &comps, false).await {
+        Ok(v)   => v,
+        Err(l)  => {
+            res!(lookup_failed(&l.fault, path, PHASE));
+            return Ok(match expect {
+                Seen::Absent => None,
+                _            => Some(Seen::Absent),
+            });
+        },
     };
-    let had = res!(compare_handle(&dir, &leaf, path, PHASE).await);
+    let had = res!(compare(&base, &comps, &mut dir, &mut held, &leaf, path, PHASE).await);
     let found = match &had {
-        Some(f) => Seen::of(Some(&res!(committed(f, &leaf).await))),
-        None    => Seen::Absent,
+        Had::File(_, Ok(b))     => Seen::of(Some(b)),
+        Had::File(_, Err(why))  => return Err(err!("OPFS: reading '{}' for the {} failed: {}.",
+            path, PHASE, why; IO, File, Read)),
+        Had::Absent             => Seen::Absent,
     };
     if &found != expect {
         return Ok(Some(found));
     }
-    if had.is_none() {
+    if let Had::Absent = had {
         return Ok(None);    // nothing there, as expected
     }
-    let opts = FileSystemRemoveOptions::new();
-    opts.set_recursive(false);
-    res!(crate::wasm::settle_js(dir.remove_entry_with_options(&leaf, &opts)).await
+    res!(in_parent(&base, &comps, &mut dir, &mut held, false, |d| {
+        let leaf = leaf.clone();
+        async move {
+            let opts = FileSystemRemoveOptions::new();
+            opts.set_recursive(false);
+            crate::wasm::settle_js(d.remove_entry_with_options(&leaf, &opts)).await
+        }
+    }).await
         .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
+    forget_under(&base, &comps);
     announce_change(path);
     Ok(None)
 }
 
 /// Whether an entry (file or directory) exists at `path` under `root`.
 pub async fn exists(root: FileRoot, path: &str) -> Outcome<bool> {
-    let handle = res!(resolve_root(root, path).await);
-    let components = res!(jail_components(path));
     use crate::diamond_versions::Lookup;
+    let comps = res!(jail_components(path));
+    let base = res!(resolve_base(root, path).await);
     // Absent only on `NotFoundError` (PLF-NF): every other failed lookup is an error naming the
     // path, so a caller that writes on "absent" never writes over a file that stands.
     const PHASE: &str = "existence probe";
-    let (dir, leaf) = match res!(open_parent_probe(&handle, components, path, PHASE).await) {
-        Some(v) => v,
-        None    => return Ok(false),
+    // A held file answers for itself with no new handle; one whose entry has gone is asked again.
+    let k = handle_cache::key(&base.scope, &comps);
+    if let Some(f) = FILES.with(|c| c.borrow_mut().get(&k)) {
+        if file_js(f).await.is_ok() {
+            return Ok(true);
+        }
+        FILES.with(|c| c.borrow_mut().forget(&k));
+    }
+    let (mut dir, leaf, mut held) = match handle_cache::parent(&Opfs, &base, &comps, false).await {
+        Ok(v)   => v,
+        Err(l)  => {
+            res!(lookup_failed(&l.fault, path, PHASE));
+            return Ok(false);
+        },
     };
-    match crate::wasm::settle_js(dir.get_file_handle(&leaf)).await {
+    match leaf_file(&base, &comps, &mut dir, &mut held, &leaf, false).await {
         Ok(_)   => return Ok(true),
         Err(e)  => if let Lookup::Absent = res!(lookup_failed(&e, path, PHASE)) {
             return Ok(false);
         },
     }
     // A folder stands at the name (`TypeMismatchError` on the file lookup).
-    match crate::wasm::settle_js(dir.get_directory_handle(&leaf)).await {
+    match leaf_dir(&base, &comps, &mut dir, &mut held, &leaf, false).await {
         Ok(_)   => Ok(true),
         Err(e)  => Ok(match res!(lookup_failed(&e, path, PHASE)) {
             Lookup::Absent      => false,   // removed between the two lookups

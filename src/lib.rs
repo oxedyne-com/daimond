@@ -56,6 +56,8 @@ pub mod engine;
 /// natively rather than only in a page.  The edge that applies it is [`wasm::opfs`].
 pub mod fork;
 pub mod fsname;
+/// Handles kept by path, so a filesystem edge walks a path once (OPFSLEAK).
+pub mod handle_cache;
 /// The question a turn puts before it changes a file the person made, and what each answer
 /// means.  Target-agnostic; the asking edge is `wasm::deletes::ask_change`.
 pub mod held_change;

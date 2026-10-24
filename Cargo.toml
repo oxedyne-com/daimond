@@ -164,12 +164,15 @@ web-sys = { version = "0.3", features = [
 	"FileSystemFileHandle",
 	"FileSystemGetFileOptions",
 	"FileSystemGetDirectoryOptions",
+	"FileSystemHandle",
 	"FileSystemRemoveOptions",
 	"FileSystemWritableFileStream",
 	"WritableStream",
 	"Blob",
 	"File",
-	# Telling the page the real folder was taken away (see `opfs::notify_folder_lost`).
+	# Telling the page the real folder was taken away (see `opfs::notify_folder_lost`),
+	# and telling it which file was just written (see `opfs::announce_write`) -- the
+	# second needs the init dictionary, because it carries a path.
 	"CustomEvent",
 	"CustomEventInit",
 	"EventTarget",

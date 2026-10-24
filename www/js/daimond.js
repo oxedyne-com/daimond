@@ -24559,8 +24559,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var isNominee = !!(nominee && id === nominee);
 				nom.className = 'device-nominate' + (isNominee ? ' is-nominee' : '');
 				nom.type = 'button';
-				nom.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"' + (isNominee ? ' fill="currentColor"' : '') +
-					'><path d="M12 3l2.6 5.35 5.9.86-4.27 4.16 1.01 5.88L12 16.9l-5.24 2.75 1.01-5.88L3.5 9.21l5.9-.86L12 3z"/></svg>';
+				nom.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">' +
+					'<path d="M12 3l2.6 5.35 5.9.86-4.27 4.16 1.01 5.88L12 16.9l-5.24 2.75 1.01-5.88L3.5 9.21l5.9-.86L12 3z"/></svg>';
 				nom.title = isNominee ? t('devices.unnominate_aria', { name: shown })
 					: t('devices.nominate_aria', { name: shown });
 				nom.setAttribute('aria-label', nom.title);
