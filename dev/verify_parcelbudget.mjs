@@ -2,6 +2,12 @@
 // verify_parcelbudget.mjs — the sync parcel's ceiling is set by the door it has to
 // go through, and the sections spent against it add up to no more than it.
 //
+// SINCE DOORBUDGET (24 Oct 2026) THERE IS NO PARCEL CONSTANT. The inline sections
+// spend the plaintext the door leaves (sync.js `parcelRoom`, the inverse of the wire
+// arithmetic) less every other section as measured, so this file now asks that the
+// door sync.js inverts is Steel's, that no fixed ceiling has crept back into
+// daimond.js, and that the Diamonds' cap can bind beneath the largest room.
+//
 // WHY THIS FILE EXISTS. `SYNC_PARCEL_MAX` was 10 MiB, and the comment above it
 // derived that from the GATEWAY's 16 MiB body cap. Steel terminates TLS in front of
 // the gateway on jarrah and caps a body at 8 MiB, so the client could compose a
@@ -13,12 +19,13 @@
 //
 //   1. THE ARITHMETIC. What travels is base64 of the sealed parcel inside a JSON
 //      envelope, so the body is 4 bytes for every 3 of parcel plus the AES-GCM IV
-//      and tag. `SYNC_PARCEL_MAX` inflated that way must fit under Steel's door.
+//      and tag. sync.js's `WIRE_DOOR_BYTES` must be Steel's door, and daimond.js
+//      must budget from it (`syncDoorRoom`) rather than from a constant of its own.
 //   2. THE SPLIT. `collectSync` hands the Diamonds
-//      `min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - files)`. A Diamonds cap at or above
-//      the parcel can never be the smaller of those two, so it never binds and reads
-//      as a guarantee it does not make.
-//   3. THE AUTHORITY. The comment on the constant must name Steel. This is the one
+//      `min(SYNC_DIAMONDS_MAX, room - files)`. A Diamonds cap at or above the
+//      largest room can never be the smaller of those two, so it never binds and
+//      reads as a guarantee it does not make.
+//   3. THE AUTHORITY. The comment on the door must name Steel. This is the one
 //      check here that is about prose, and it is the one that stops the regression
 //      this file was written for.
 //   4. AND WHAT DID NOT FIT IS NAMED. Not arithmetic at all, and it is here because
@@ -28,12 +35,10 @@
 //
 // How each goes red:
 //
-//   * put `SYNC_PARCEL_MAX` back to `10 * 1024 * 1024` → check 1 goes red and
-//     check 2 goes red with it (10 MiB of parcel is 13.4 MiB of body, and the
-//     Diamonds' 3 MiB is then only a fifth of a parcel it was never measured
-//     against);
-//   * raise `SYNC_DIAMONDS_MAX` to `5 * 1024 * 1024` → check 2 alone goes red;
-//   * delete the word Steel from the comment → check 3 alone goes red.
+//   * put `WIRE_DOOR_BYTES` back to `16 * 1024 * 1024`, or restore a
+//     `var SYNC_PARCEL_MAX` in daimond.js → check 1 goes red;
+//   * raise `SYNC_DIAMONDS_MAX` to `6 * 1024 * 1024` → check 2 alone goes red;
+//   * delete the word Steel from the door's comment → check 3 alone goes red.
 //
 //   node dev/verify_parcelbudget.mjs
 //
@@ -44,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const APP  = fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
+const SYNC = fs.readFileSync(path.join(ROOT, 'www', 'js', 'sync.js'), 'utf8');
 
 // Steel's `http_max_body_bytes`, whose default is 8 MiB in fe2o3_steel/src/srv/cfg.rs
 // and which the deployed config does not set. Restated here because fe2o3 is a
@@ -51,8 +57,8 @@ const APP  = fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8')
 // wherever it is, so the restatement cannot quietly go stale.
 const STEEL_BODY_MAX = 8 * 1024 * 1024;
 // `{"base_version":N,"device":"…","blob":"…","w":"…"}` around the sealed blob, plus
-// room for a long device label. Deliberately generous: it is subtracted from the
-// door, so over-stating it can only make the ceiling safer.
+// room for a long device label. Deliberately generous: an upper bound on what
+// `envBytes` measures, so the room derived from it is the largest the door allows.
 const ENVELOPE       = 512;
 // AES-GCM: a 12-byte IV in front of the ciphertext and a 16-byte tag behind it,
 // both inside what gets base64'd. See `wrap` in www/js/identity.js.
@@ -64,32 +70,35 @@ const check = (what, ok, saw) => {
 	if (!ok) bad++;
 };
 
-/// A `var NAME = a * b * c;` constant, read out of the app source.
-const constOf = (name) => {
-	const m = new RegExp('var\\s+' + name + '\\s*=\\s*([0-9*\\s]+);').exec(APP);
-	if (!m) throw new Error('verify_parcelbudget: ' + name + ' not found in www/js/daimond.js');
+/// A `var NAME = a * b * c;` constant, read out of `src` (the app's daimond.js by default).
+const constOf = (name, src, file) => {
+	const m = new RegExp('var\\s+' + name + '\\s*=\\s*([0-9*\\s]+);').exec(src || APP);
+	if (!m) throw new Error('verify_parcelbudget: ' + name + ' not found in www/js/' + (file || 'daimond.js'));
 	return m[1].split('*').reduce((a, b) => a * Number(b.trim()), 1);
 };
 
-const PARCEL   = constOf('SYNC_PARCEL_MAX');
+const DOOR     = constOf('WIRE_DOOR_BYTES', SYNC, 'sync.js');
 const DIAMONDS = constOf('SYNC_DIAMONDS_MAX');
 const FILES    = constOf('SYNC_FILES_TOTAL_MAX');
 
 // ── 1. The arithmetic ────────────────────────────────────────────────
-const body = Math.ceil((PARCEL + SEAL) / 3) * 4 + ENVELOPE;
-check('a parcel at the ceiling, sealed and base64\'d, fits under Steel\'s 8 MiB door',
-	body <= STEEL_BODY_MAX, body + ' bytes of body from ' + PARCEL + ' of parcel');
+check('the door sync.js inverts is Steel\'s 8 MiB', DOOR === STEEL_BODY_MAX,
+	DOOR + ' against ' + STEEL_BODY_MAX);
+check('and daimond.js holds no parcel ceiling of its own to drift from it',
+	!/var\s+SYNC_PARCEL_MAX\b/.test(APP));
+check('the inline room is the door\'s, less the parcel\'s other sections as measured',
+	/syncRoomLast = Math\.max\(0, syncDoorRoom\(\) - jsonBytes\(JSON\.stringify\(base\)\) - SYNC_DOOR_RESERVE\)/.test(APP)
+		&& /DaimondSync\.parcelRoom\(\)/.test(APP));
+check('and `parcelRoom` inverts the door through the seal, the base64 and the envelope',
+	/function doorPlain\(door, env, overhead\) \{\s*return Math\.floor\(\(door - env\) \/ 4\) \* 3 - 28 - \(overhead \| 0\);/.test(SYNC)
+		&& /doorPlain\(WIRE_DOOR_BYTES, envBytes\(\), envelopeOverheadBytes\(\)\)/.test(SYNC));
 
-// The largest parcel that fits, so the message says what the ceiling could be rather
-// than only that it is not exceeded.
+// The largest parcel that fits, so the message says what the room could ever be.
 const most = Math.floor((STEEL_BODY_MAX - ENVELOPE) / 4) * 3 - SEAL;
-check('the ceiling leaves margin under the arithmetic maximum, for the sections it '
-	+ 'does not bound and for UTF-8',
-	PARCEL < most, PARCEL + ' against a maximum of ' + most);
 
 // ── 2. The split ─────────────────────────────────────────────────────
-check('the Diamonds\' cap can actually bind — it is below the parcel it is spent in',
-	DIAMONDS < PARCEL, DIAMONDS + ' of ' + PARCEL);
+check('the Diamonds\' cap can actually bind — it is below the largest room the door leaves',
+	DIAMONDS < most, DIAMONDS + ' of ' + most);
 
 // ── 2b. And what the parcel could not carry is NAMED ─────────────────
 //
@@ -150,7 +159,7 @@ check('and a HELD file makes the census incomplete, so nothing deletes it by abs
 const pendArm = collectFiles.slice(collectFiles.indexOf('if (offloadConfirmed('),
 	collectFiles.indexOf('out.files[full] = content'));
 check('the offload-pending branch tests the HARD budget before a file rides inline',
-	pendArm.length > 0 && /total \+ content\.length > budget/.test(pendArm),
+	pendArm.length > 0 && /total \+ growth \+ cost > budget/.test(pendArm),
 	pendArm.length + ' chars between the confirm test and the inline assignment');
 
 // ── 2d. AND A CROWDED DIAMONDS BUDGET HOLDS RATHER THAN NAMES ────────
@@ -199,19 +208,17 @@ check('and the sentence is in all eight catalogues, both plural arms', gaps.leng
 // named failure for a silent one. Left as a note because what it should come down TO
 // is the owner's to say: it is a judgement about how much of a parcel a workspace
 // should be able to take from the Diamonds, not an arithmetic fact.
-if (FILES + DIAMONDS > PARCEL) {
+if (FILES + DIAMONDS > most) {
 	console.log('note  the two section budgets are over-subscribed: files ' + FILES
-		+ ' + Diamonds ' + DIAMONDS + ' = ' + (FILES + DIAMONDS) + ' against a parcel of '
-		+ PARCEL + '. Files are spent first and are not clamped against the parcel, so a '
-		+ 'workspace that fills them leaves the Diamonds nothing. The skip is now named to '
-		+ 'the user, so the files budget may come down: ' + (PARCEL - DIAMONDS)
-		+ ' bytes would leave the Diamonds their whole share.');
+		+ ' + Diamonds ' + DIAMONDS + ' = ' + (FILES + DIAMONDS) + ' against the largest room of '
+		+ most + '. The files are clamped to the room less the Diamonds\' reference reserve, '
+		+ 'so a workspace that fills them leaves the Diamonds only their references.');
 }
 
 // ── 3. The authority ─────────────────────────────────────────────────
-const at  = APP.indexOf('var SYNC_PARCEL_MAX');
-const why = APP.slice(Math.max(0, at - 3000), at);
-check('the comment on the parcel ceiling names Steel, the door actually in force',
+const at  = SYNC.indexOf('var WIRE_DOOR_BYTES');
+const why = at < 0 ? '' : SYNC.slice(Math.max(0, at - 3000), at);
+check('the comment on the door names Steel, the door actually in force',
 	/Steel/.test(why));
 check('and names `http_max_body_bytes`, so the reader can go and read the default',
 	/http_max_body_bytes/.test(why));

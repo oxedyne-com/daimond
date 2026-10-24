@@ -1337,8 +1337,8 @@
 	// `ck`, see the note where a row is stored) -- which roughly doubles it. The whole
 	// record rides the sync parcel as one section (sync.js `state.post`), and on a
 	// heavy social account those numerous small rows are the section that 413s the
-	// parcel once the chats have been budgeted (the parcel ceiling and its reasoning
-	// live in daimond.js `SYNC_PARCEL_MAX`).
+	// parcel once the chats have been budgeted (the door and its reasoning live in
+	// sync.js `WIRE_DOOR_BYTES`, the inline budget in daimond.js `SYNC_DOOR_RESERVE`).
 	//
 	// So the messages get the treatment the chat transcripts got: a byte budget, the
 	// freshest kept inline, the tail's HEAVY HALF (`body`/`art`/`env`/`ck`/`refs`)

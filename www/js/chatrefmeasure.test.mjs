@@ -127,8 +127,8 @@ console.log('1. a merged small chat with no figure');
 	check('no inline entry names a reference', first.every((e) => !e.messagesRef));
 	const o = specs[0], so = ser(o.msgs);
 	const fix = w.writes.find((f) => f.id === 'o6kv1');
-	check('the figures written back are the serial\'s length and fileHash, beside the seed held',
-		!!fix && fix.bytes === so.length && fix.fp === w.fileHash(so) && fix.seed === w.fileHash(so),
+	check('the figures written back are the serial\'s UTF-8 length and fileHash, beside the seed held',
+		!!fix && fix.bytes === Buffer.byteLength(so, 'utf8') && fix.fp === w.fileHash(so) && fix.seed === w.fileHash(so),
 		JSON.stringify(fix));
 	check('2. the mirror now holds the figures', w.mirror.every((m) => typeof m.bytes === 'number' && m.fp),
 		JSON.stringify(w.mirror.map((m) => [m.id, m.bytes])));
@@ -235,6 +235,32 @@ console.log('7b. a load that throws while measuring (a stub the reader cannot be
 	let first = null, threw = '';
 	try { first = await w.collect(); } catch (e) { threw = String((e && e.message) || e); }
 	check('a throw leaves the chat a reference and the collect through', !!first && !threw && !!ONE(first, 'x').messagesRef && !!ONE(first, 'y').messages, threw || (first ? w.form(first) : ''));
+}
+
+// ── 8. the unit is the door's: JSON-escaped UTF-8 ──────────────────────────
+// A transcript in Japanese is three bytes a character on the wire and one UTF-16 unit in
+// `String.length`, so measured by length it read as a third of what the door weighs and
+// rode inline past the budget (diag_doorpush.md). It is ranked, and written back, in UTF-8.
+console.log('8. a non-ASCII transcript is measured in the bytes the door weighs');
+{
+	const jp = Array.from({ length: 2 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', mid: 'jp-m' + i, ts: 1000 + i,
+		content: '日本語の長い会話です。'.repeat(200) }));
+	const sj = ser(jp), u16 = sj.length, u8 = Buffer.byteLength(sj, 'utf8');
+	const specs = [
+		{ id: 'jp', at: 9, msgs: jp, known: false },
+		{ id: 'en', at: 5, msgs: msgs('en', 2, 300), known: false },
+	];
+	const w = world(specs);
+	const cap = Math.floor((u16 + u8) / 2);			// fits by length, not by the door
+	const first = await w.collect(cap);
+	check('8. the length fits the cap and the UTF-8 does not', u16 < cap && u8 > cap, u16 + ' / ' + u8 + ' / ' + cap);
+	check('8. so the transcript leaves as a reference, and the ASCII one stays inline', w.form(first) === 'en:I jp:R', w.form(first));
+	const fix = w.writes.find((f) => f.id === 'jp');
+	check('8. and the figure written back is its UTF-8 length', !!fix && fix.bytes === u8, JSON.stringify(fix && fix.bytes) + ' vs ' + u8);
+	w.reset();
+	const second = await w.collect(cap);
+	check('8. the next collect ranks it from that figure the same way, loading nothing', w.form(second) === 'en:I jp:R' && w.stats().loads === 0,
+		w.form(second) + ' loads ' + w.stats().loads);
 }
 
 // ── 9. a failed read in the streaming pass ──────────────────────────────────

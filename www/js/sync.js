@@ -150,9 +150,9 @@
 	// WHAT IS MEASURED AGAINST IT IS NOT THE PARCEL. The body is a JSON envelope
 	// carrying base64 of the SEALED parcel: four bytes for every three of
 	// ciphertext, and the ciphertext is the UTF-8 of the parcel plus a 12-byte IV
-	// and a 16-byte GCM tag. `wireBytes` does that arithmetic; daimond.js
-	// `SYNC_PARCEL_MAX` is the budget derived FROM it, which is a different number
-	// and in different units (UTF-16 code units, counted with String.length).
+	// and a 16-byte GCM tag. `wireBytes` does that arithmetic and `doorPlain` is
+	// its inverse; `parcelRoom` hands daimond.js the plaintext the door leaves, which
+	// is what the inline sections are budgeted from (DOORBUDGET, 24 Oct 2026).
 	var WIRE_DOOR_BYTES   = 8 * 1024 * 1024;
 	// ── The pull budget and the resume ─────────────────────────
 	// A GET iOS suspended on a backgrounded tab never rejects until the socket
@@ -299,6 +299,7 @@
 	var K_VERSION = 'daimond-sync-version';
 	var K_MERGED_AT = 'daimond-sync-merged-at';	// storage location -> the version merged or pushed there
 	var MERGED_AT_MAX = 8;						// locations remembered; a forgotten one merges once more
+	var K_BESIDE  = 'daimond-sync-beside';	// UTF-8 bytes of the sections collectParcel last hung on the parcel.
 	var K_LAST    = 'daimond-sync-last';		// When a sync last succeeded, for the chip.
 	// The digest of the parcel this device last got into the mailbox, so the FIRST
 	// push of a new page can tell that it has nothing to say. Same `daimond-`
@@ -1653,15 +1654,17 @@
 
 	// ── What the parcel will weigh on the wire ─────────────────
 	//
-	// Every budget in daimond.js is counted in `String.length` -- UTF-16 code units
-	// -- and the wire carries UTF-8 base64 of ciphertext. So a parcel that is
-	// comfortably inside SYNC_PARCEL_MAX can still be over the front door, and the
+	// Every budget in daimond.js was counted in `String.length` -- UTF-16 code units
+	// -- and the wire carries UTF-8 base64 of ciphertext. So a parcel that was
+	// comfortably inside its fixed ceiling could still be over the front door, and the
 	// only evidence anybody had of that was a 413 (or a reset) after the bytes had
 	// been encrypted and sent. One account's phone measured 6,065,784 UTF-16 units
 	// and ~8.09 MB of body: 300 KB under the door, with four sections spending
 	// against budgets that sum to more than the door allows. These three functions
-	// are so that the number is known BEFORE the push, said in one line, and
-	// refused here rather than at the far end.
+	// are so that the number is known BEFORE the push, said in one line (since
+	// DOORBUDGET the inline sections are counted in UTF-8 and budgeted from
+	// `parcelRoom`, so the door is what they spend), and refused here rather than
+	// at the far end.
 
 	/// The UTF-8 byte length of a string, WITHOUT encoding it.
 	///
@@ -1708,9 +1711,34 @@
 		// buffer at once, so the overhead is added to the RAW bytes before the 4/3, to
 		// match `wrapEnvelope` exactly. Zero at epoch 0: byte-identical to before.
 		var b64 = 4 * Math.ceil((sealed + envelopeOverheadBytes()) / 3);
-		var env = utf8Len(JSON.stringify(
+		return envBytes() + b64;
+	}
+
+	/// The push body's JSON envelope with an empty blob: what travels beside the base64.
+	function envBytes() {
+		return utf8Len(JSON.stringify(
 			{ base_version: serverVersion, device: deviceLabel(), blob: '', w: WAKE_ID }));
-		return env + b64;
+	}
+
+	/// The largest parcel, in UTF-8 bytes, whose push body fits a `door` of that many
+	/// bytes: the exact inverse of `wireBytes`, which is `env + 4 * ceil((p + 28 + ov) / 3)`.
+	function doorPlain(door, env, overhead) {
+		return Math.floor((door - env) / 4) * 3 - 28 - (overhead | 0);
+	}
+
+	/// What sync.js hung on the last parcel beside the core's sections (`collectParcel`),
+	/// in UTF-8 JSON bytes. Kept across a reload, so the first parcel of a sitting is
+	/// budgeted against the last sitting's figure rather than against nothing.
+	var besideSync = (function () {
+		try { return Math.max(0, parseInt(localStorage.getItem(K_BESIDE) || '0', 10) || 0); }
+		catch (e) { return 0; }
+	})();
+
+	/// The plaintext the front door leaves for the core parcel (`DaimondCore.collectSync`):
+	/// the door inverted through the seal, the base64 and the envelope, less what sync.js
+	/// adds beside it. daimond.js budgets its inline sections from this.
+	function parcelRoom() {
+		return Math.max(0, doorPlain(WIRE_DOOR_BYTES, envBytes(), envelopeOverheadBytes()) - besideSync);
 	}
 
 	/// The RAW bytes the rekey envelope adds around the sealed parcel at epoch >= 1:
@@ -1813,6 +1841,11 @@
 
 	async function collectParcel() {
 		var state = await DaimondCore.collectSync();
+		// The core's own sections, and its index's weight, before anything is added here.
+		var core = { keys: {}, chunked: 0 };
+		Object.keys(state).forEach(function (k) { core.keys[k] = 1; });
+		try { core.chunked = state.chunked ? utf8Len(JSON.stringify(state.chunked)) : 0; }
+		catch (e) { core.chunked = 0; }
 		try { if (window.DaimondPause) state.pause = DaimondPause.snapshot(); }
 		catch (e) { log('pause snapshot failed', e); }
 		// THE LEASE IS NOT IN THE PARCEL any more. Which device runs a turn is a fact
@@ -1920,7 +1953,29 @@
 		Object.keys(carried).forEach(function (k) {
 			if (!knownSection[k] && !Object.prototype.hasOwnProperty.call(state, k)) state[k] = carried[k];
 		});
+		noteBeside(state, core);
 		return state;
+	}
+
+	/// Weigh what `collectParcel` hung on the core's parcel, `"key":value,` each, for
+	/// `parcelRoom`. The core's `chunked` is weighed by the core, but the re-read after
+	/// the post offload can be heavier, so the growth counts here.
+	function noteBeside(state, core) {
+		var n = 0;
+		Object.keys(state).forEach(function (k) {
+			var v = state[k];
+			if (v === undefined) return;
+			if (k === 'chunked') {
+				var g = utf8Len(JSON.stringify(v)) - (core.chunked | 0);
+				if (g > 0) n += g;
+				return;
+			}
+			if (Object.prototype.hasOwnProperty.call(core.keys, k)) return;
+			n += utf8Len(JSON.stringify(k)) + utf8Len(JSON.stringify(v)) + 2;
+		});
+		if (n === besideSync) return;
+		besideSync = n;
+		try { localStorage.setItem(K_BESIDE, String(n)); } catch (e) { /* the next parcel measures again */ }
 	}
 
 	/// The sections a parcel holds, for HEAL (see `sentKeys`): present and not null.
@@ -2665,7 +2720,10 @@
 					+ ' ' + Math.round(WIRE_DOOR_BYTES / 1024) + 'K allowed —', sizesLine(sizes));
 				diag('push size', Math.round(wire / 1024) + 'K ' + sizesLine(sizes));
 
-				// OVER THE FRONT DOOR: refuse it HERE. Sending it cannot work, and
+				// OVER THE FRONT DOOR: refuse it HERE. AN ASSERTION, NOT A ROUTE: the core
+				// budgets its inline sections from `parcelRoom`, so a parcel reaching this
+				// line means an estimate was wrong, and `budget` (the room the door left)
+				// beside the section sizes says which one. Sending it cannot work, and
 				// the two ways it fails -- a 413, or a reset from a door that answered
 				// and closed mid-body -- are a wasted encryption of the whole parcel
 				// and, in the reset case, an error that names nothing. Nothing is
@@ -2676,8 +2734,10 @@
 					tooLarge   = true;
 					lastPushed = cmp;			// don't spin on the same oversize state
 					restStatus();
+					var budget = parcelRoom();
 					log('parcel over the front door (' + Math.round(wire / 1024) + 'K >'
-						+ ' ' + Math.round(WIRE_DOOR_BYTES / 1024) + 'K) — refused here, not sent');
+						+ ' ' + Math.round(WIRE_DOOR_BYTES / 1024) + 'K, room ' + Math.round(budget / 1024)
+						+ 'K) — refused here, not sent');
 					// TRAINING WHEELS — the debug feed's `sync`, commit half, in the
 					// same shape the chunk-commit refusals use, so one filter finds
 					// every round that did not land. Lifts out in one grep of
@@ -2685,7 +2745,7 @@
 					try {
 						if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
 							var ev = { dir: 'push', commit: 'refused', why: 'too-large',
-								wire: wire, door: WIRE_DOOR_BYTES, at: serverVersion | 0 };
+								wire: wire, door: WIRE_DOOR_BYTES, budget: budget, at: serverVersion | 0 };
 							Object.keys(sizes).forEach(function (k) { ev[k] = sizes[k]; });
 							DEBUG_SHARE.event('sync', ev);
 						}
@@ -5319,9 +5379,15 @@
 			compareKey:  compareKey,
 			utf8Len:     utf8Len,
 			wireBytes:   wireBytes,
+			doorPlain:   doorPlain,
 			parcelSizes: parcelSizes,
 			door:        WIRE_DOOR_BYTES,
 		},
+		/// The plaintext the front door leaves for `DaimondCore.collectSync`'s parcel, in
+		/// UTF-8 bytes: the door less the envelope and what sync.js hangs beside it.
+		parcelRoom: parcelRoom,
+		/// The UTF-8 scan the door is weighed with.
+		utf8Len:    utf8Len,
 		/// Exactly what a push would send, and exactly what a pull would merge.
 		///
 		/// A verifier comparing `DaimondCore.collectSync()` is comparing the core

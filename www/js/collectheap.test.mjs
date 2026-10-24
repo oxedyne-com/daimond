@@ -143,7 +143,7 @@ function sourceGuards() {
 		check('a ref whose summary fp matches the manifest is reused WITHOUT a load',
 			body.includes('stored.fp === fpHave') && body.includes('var fpHave = sum.fp ||'), 'reuse-without-load path absent');
 		check('the authoritative fp/bytes are written back for next time',
-			body.includes('fixes.push({ id: id, bytes: serial.length, fp: fp, seed: seed0 })')
+			body.includes('fixes.push({ id: id, bytes: jsonBytes(serial), fp: fp, seed: seed0 })')
 			&& body.includes('ChatStore.noteFps'), 'noteFps writeback absent');
 	}
 

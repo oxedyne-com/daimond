@@ -717,6 +717,8 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .admin-sec:not(:first-child) { margin-top: var(--gap-section); }
 .admin-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); }
 .admin-item:hover { background: var(--bg-hover); }
+/* `display: block` above outranks the browser's own `[hidden]`: the attribute decides. */
+.admin-item[hidden] { display: none; }
 /* Keyboard focus, themed, matching the app's ring elsewhere (workspace.css).
    These rows take real focus when a dialog closes and hands it back, and a
    borderless button on a borderless panel showed nothing at all -- the caret was
@@ -5486,19 +5488,24 @@ button.agsq.o { cursor: pointer; }
    filled to its balance over the balance at its last top-up (D-20261015-14), the name and balance,
    then a dial for the 15-min pace and the range left at it. Tokens only, no lines but the drawings'. */
 /* A grid with one subgrid row a pool, so the dials and each pool's Today (D-20261023-05) line up
-   down the rail whatever the names. */
-.evpools { flex-basis: 100%; min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; column-gap: 8px; row-gap: 8px; padding: 2px 4px 10px; }
-.evp { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center; min-width: 0; }
-/* Each pool's own Today (D-20261023-05): the row's fourth column, read as the name and balance are. */
-.evday { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 0; white-space: nowrap; }
+   down the rail whatever the names. Two equal outer tracks either side of the dial's own keep it on
+   the row's centre at every rail width (D-20261024-17); long text is cut inside its own track. The
+   rows 1fr auto 1fr centre the dial's line, which the range shares through the tail's subgrid. */
+.evpools { flex-basis: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); column-gap: 8px; row-gap: 8px; padding: 2px 4px 10px; }
+.evp { display: grid; grid-template-columns: subgrid; grid-template-rows: 1fr auto 1fr; grid-column: 1 / -1; min-width: 0; }
+.evlead { grid-column: 1; grid-row: 1 / -1; align-self: center; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.evgau { grid-column: 2; grid-row: 2; display: block; }
+.evtail { grid-column: 3; grid-row: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: subgrid; column-gap: 8px; min-width: 0; }
+/* Each pool's own Today (D-20261023-05): the row's last cell, read as the name and balance are. */
+.evday { grid-column: 2; grid-row: 1 / -1; align-self: center; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 0; white-space: nowrap; }
 .evdv { line-height: 18px; font-variant-numeric: tabular-nums; }
 .evp svg { display: block; overflow: visible; flex: none; }
 .evwho { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 3px; }
 .evnm { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .evbal { display: block; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.evgau { flex: none; width: 116px; display: flex; align-items: flex-end; gap: 7px; min-width: 0; }
-/* The range: one line, the figure in the primary ink and its unit quieter; amber under an hour. */
-.evmi { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font); font-size: var(--fs-xs); line-height: 14px; margin-bottom: -1px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The range: one line beside the dial, its foot on the dial's, the figure in the primary ink and its
+   unit quieter; amber under an hour. */
+.evmi { grid-column: 1; grid-row: 2; align-self: end; display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font); font-size: var(--fs-xs); line-height: 14px; margin-bottom: -1px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .evmi b { font-weight: 600; color: var(--text-primary); }
 .evmi.low, .evmi.low b { color: var(--warn); }
 /* The battery: the cylinder's glass and charge, with a terminal; the charge is the skin's green,
@@ -5614,3 +5621,24 @@ button.agsq.o { cursor: pointer; }
 .rel-new-text { font-size: var(--fs-sm); color: var(--text-primary); line-height: 1.4; }
 /* The app's one disclosure look (summary), only spaced from the notes above it. */
 .rel-about > summary { margin: 4px 0 8px; }
+
+/* Settings grouped by intent (D-20261024-16), drawn by js/settingsgroups.js: the weekly
+   stop, six doors, and each door's own page. */
+/* The live readings are rows like any other in a group: the row's size, not the rail's.
+   `:root` lifts it past skin-daylight's `:root[data-skin] :is(.astat-row, #user-row)`, whose id counts. */
+:root #admin-home.sg .sg-status { font-size: var(--fs-sm); color: var(--text-primary); padding: 7px 8px; gap: 8px; min-height: 0; }
+@media (max-width: 760px) { :root #admin-home.sg .sg-status { padding-top: 10px; padding-bottom: 10px; min-height: 44px; } }
+.sg .sg-status .astat-dot { flex: none; }
+.sg .astat-copyrow { display: flex; align-items: center; }
+.sg .astat-copyrow > .sg-status { flex: 1 1 auto; }
+.sg .sg-subhead { margin-top: var(--gap-section); }
+/* The doors, one per group. */
+.sg-quick { display: flex; flex-direction: column; gap: 1px; margin-bottom: var(--gap-section); }
+.sg-doors { display: flex; flex-direction: column; gap: 1px; }
+.sg-door { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; column-gap: 8px; align-items: center; padding: 9px 8px; }
+.sg-door .sg-name { grid-column: 1; font-size: var(--fs-sm); color: var(--text-primary); }
+.sg-door .sg-what { grid-column: 1; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sg-door .sg-chev { grid-column: 2; grid-row: 1 / span 2; width: 16px; height: 16px; color: var(--text-muted); }
+.sg-back { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); margin-bottom: 4px; }
+.sg-back .ic { width: 16px; height: 16px; }
+.sg-foot { margin-top: calc(var(--gap-section) * 2); display: flex; flex-direction: column; gap: 1px; }

@@ -1827,9 +1827,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// size — and the whole point of the figure is that a trash quietly holding
 	/// hundreds of megabytes is how somebody's storage fills with things they
 	/// believe they deleted.
+	///
+	/// The same scan as sync.js `utf8Len`, which weighs the parcel at the door, so the
+	/// inline budget and the door count one unit (doorbudget.test.mjs holds them equal).
+	/// A scan rather than a Blob, which allocates: this runs over an 8 MB phone parcel.
 	function jsonBytes(s) {
-		try { return new Blob([s]).size; }
-		catch (e) { return String(s || '').length; }
+		s = String(s == null ? '' : s);
+		var n = 0, len = s.length;
+		for (var i = 0; i < len; i++) {
+			var c = s.charCodeAt(i);
+			if (c < 0x80) { n += 1; continue; }
+			if (c < 0x800) { n += 2; continue; }
+			if (c >= 0xD800 && c <= 0xDBFF && i + 1 < len) {
+				var d = s.charCodeAt(i + 1);
+				if (d >= 0xDC00 && d <= 0xDFFF) { n += 4; i++; continue; }
+			}
+			n += 3;		// a lone surrogate is written as U+FFFD
+		}
+		return n;
 	}
 
 	/// Everything in the trash, newest first, ready to draw.
@@ -3170,14 +3185,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// collect's `noteFps` later replaces `fp` with the authoritative value and
 				// leaves `seed`, which `carryChatFigures` compares against the copy in hand.
 				seed: fp,
-				// The serialised transcript's LENGTH, so `collectChatsRefs` can rank the
+				// The serialised transcript's LENGTH in UTF-8, the unit the door weighs (see
+				// `SYNC_DOOR_RESERVE`), so `collectChatsRefs` can rank the
 				// inline set from summaries alone -- never loading a transcript just to
 				// measure it (the S1 heap fix). Order-independent (a JSON array's length
 				// is the same however its elements are ordered), so two collects of an
 				// unchanged chat rank it identically and the push-skip fixed point holds.
 				// `fp` already carries this after its ':', but a named field is clearer at
 				// the ranking site and survives an fp cleared to a sentinel.
-				bytes: (typeof serial === 'string' ? serial.length : 0),
+				bytes: (typeof serial === 'string' ? jsonBytes(serial) : 0),
 			});
 		}
 
@@ -6064,58 +6080,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var SYNC_CHUNK_FILE_MAX  = 1024 * 1024 * 1024;
 	var SYNC_CHUNK_TOTAL_MAX = 4 * 1024 * 1024 * 1024;	// budget for all offloaded bytes.
 	// What the WHOLE parcel has to stay under, and THE NUMBER THAT DECIDES IT IS
-	// STEEL'S. Three ceilings sit on this path and only the smallest one is real, so
-	// the reasoning has to name which:
+	// STEEL'S. Three ceilings sit on this path and only the smallest one is real:
 	//
-	//   32 MiB  `max_bytes` on /api/sync (gateway/src/settings.rs). The parcel the
-	//           gateway would accept, refused with a 413 sync.js draws on the chip.
-	//           Nothing ever reaches it.
+	//   32 MiB  `max_bytes` on /api/sync (gateway/src/settings.rs). Nothing reaches it.
 	//   16 MiB  the gateway's own body cap (gateway/src/app_main.rs, MAX_BODY_BYTES).
-	//           Nothing reaches this either, and it is what the comment that used to
-	//           stand here derived 10 MiB from -- reasoning from an authority that is
-	//           not the one in force.
-	//    8 MiB  Steel's `http_max_body_bytes`. Steel terminates TLS in FRONT of the
-	//           gateway on jarrah, the key is absent from the deployed config, so
-	//           fe2o3_steel's default stands (fe2o3_steel/src/srv/cfg.rs). This is
-	//           the front door and it is the smallest of the three.
+	//    8 MiB  Steel's `http_max_body_bytes`, TLS terminated in FRONT of the gateway,
+	//           its default standing (fe2o3_steel/src/srv/cfg.rs). The front door.
 	//
-	// What travels is not the parcel: it is base64 of the SEALED parcel inside a JSON
-	// envelope (push() in sync.js, over DaimondIdentity.wrap), so the body is four
-	// bytes for every three of parcel, plus 12 of IV and 16 of GCM tag. 8 MiB of body
-	// is therefore 6,291,236 bytes of parcel and not one more.
+	// ONE BUDGET, FROM THE DOOR (DOORBUDGET, 24 Oct 2026). The inline budget was a fixed
+	// 5 MiB of `String.length` beside sections nothing subtracted -- the chunk index,
+	// the ledger, the models, the mail -- while the door weighs the UTF-8 of the
+	// JSON-escaped parcel, sealed and base64'd. Mail is CRLF-dense, quoted and partly
+	// non-ASCII, so 5 MiB of it was 5.48 MB of JSON, and beside 972 KB of the rest the
+	// parcel was 8,730,418 bytes on the wire and refused (diag_doorpush.md). So the
+	// three inline sections now spend `syncInlineRoom()`: the plaintext the door leaves
+	// (`DaimondSync.parcelRoom`, the exact inverse of the wire arithmetic), less the
+	// measured weight of every other section of this parcel, less this reserve; and
+	// every inline item is counted in JSON-escaped UTF-8 bytes (`jsonBytes`).
 	//
-	// 5 MiB rather than that 6 MiB, and the margin is not caution. FIRST, this bounds
-	// only the sections spent against it below -- the inline files, the Diamonds and
-	// the inline chat transcripts. All THREE spend from this one budget now: the
-	// transcripts had SYNC_CHATS_INLINE_MAX to themselves until 2026-09-12, counted
-	// nowhere else, so the arithmetic here was 5 MiB plus 2 MiB and the sections could
-	// sum past the front door between them while each read as inside its own ceiling.
-	// The mailboxes, the model tables, the device list, the
-	// LEDGER (one entry per turn, forever) and the chunk manifest still ride outside
-	// it and are capped by nothing -- the ledger is the one of those that grows
-	// without bound and is the next to watch. What they cannot now do is go unnoticed:
-	// sync.js weighs the whole body before the push and refuses one over the door,
-	// naming every section's bytes. SECOND, every byte
-	// counted against it is counted with `String.length`, which is UTF-16 code units,
-	// and the wire carries UTF-8: a parcel of Japanese transcripts weighs half again
-	// as much on the wire as it does here. A ceiling set at the arithmetic maximum is
-	// exceeded by either of those without either being a bug.
-	//
-	// Steel does answer a 413 rather than dropping the connection the way the gateway
-	// does -- an ErrTag::TooBig from the reader becomes HttpStatus::ContentTooLarge
-	// before a body byte is read (fe2o3_steel/src/srv/https.rs) -- so sync.js's 413
-	// arm is reachable here in a way it was not behind the gateway. Reachable is not
-	// reliable: the server answers and closes while the browser is still writing the
-	// body, which a browser may report as a reset instead. This ceiling exists to keep
-	// the request under the door, not to make the refusal legible.
-	var SYNC_PARCEL_MAX      = 5 * 1024 * 1024;
+	// The reserve is what moves between the measurement and the parcel's end: the
+	// tombs and the roster a collector touches, the `@d/` and `@c/` manifests the
+	// Diamonds and chats write, the chats' non-inline fields. The files' own new
+	// manifests are charged by `collectFiles` itself (`syncRefGrowth`). sync.js's
+	// refusal at the door stays, as the assertion that one of these was wrong.
+	var SYNC_DOOR_RESERVE    = 64 * 1024;
 	// And the most the Diamonds may take of it, so a store that grows without limit
 	// cannot crowd out the workspace files it shares the parcel with.
 	//
-	// SIX AGAINST A PARCEL OF FIVE WOULD NOT BE A CEILING AT ALL. `collectSync` spends
-	// this as min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - files), so a Diamonds cap at or
-	// above the parcel can never be the smaller of the two: it never binds, and reads as
-	// a guarantee it does not make.
+	// BELOW THE ROOM OR IT IS NO CEILING. `collectSync` spends this as
+	// min(SYNC_DIAMONDS_MAX, room - files), so a Diamonds cap at or above the room the
+	// door leaves (about 5.3 MB on a heavy account) could never be the smaller of the
+	// two: it would never bind, and would read as a guarantee it does not make.
 	//
 	// FOUR RATHER THAN THREE, because three would evict an ordinary store. Thirteen
 	// Diamonds at the shipped ceilings -- 16 KiB of memory and 256 KiB of page each --
@@ -6163,7 +6158,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// honest end state.
 	//
 	// NO LONGER A BUDGET OF ITS OWN. This was spent here and counted nowhere else, so
-	// the parcel's real arithmetic was SYNC_PARCEL_MAX + this -- and the three inline
+	// the parcel's real arithmetic was the parcel ceiling + this -- and the three inline
 	// sections could sum past Steel's 8 MiB front door while each read as inside its
 	// own ceiling, which is exactly how a phone's parcel reached ~8.09 MB of body with
 	// nothing over budget. `collectSync` now hands `collectChatsRefs` what is LEFT of
@@ -7527,7 +7522,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// local bytes to collect, and NOT A GAP. It is reported because the fork point
 		// has to tell the difference -- see `noteFileTombs`, where reading it as a gap
 		// deleted a file off another device's disk.
-		var out = { files: {}, large: {}, left: [], skipped: 0, oversize: [], bytes: 0,
+		var out = { files: {}, large: {}, left: [], skipped: 0, oversize: [], bytes: 0, growth: 0,
 			complete: false, pending: [], held: 0, softCap: budget, away: {},
 			// Which set this census is OF: the sandbox, or the folder roots a Diamond is
 			// scoped to. The merge reads it to decide whose deletion rule applies.
@@ -7552,7 +7547,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var soft = inlineSoftCap(budget, canOffload, isMobileDeviceSelf());
 		out.softCap = soft;
 		out.complete = true;						// until something below is missed.
-		var total = 0, largeTotal = 0;
+		// `total` is the inline files in the parcel's own unit: JSON-escaped UTF-8, path,
+		// quotes, colon and comma included, which is what the door weighs. `growth` is
+		// the index entries this round's offloads will add (`syncRefGrowth`), which ride
+		// in the same parcel and so spend the same budget.
+		var total = 0, largeTotal = 0, growth = 0;
+		var ix = (window.DaimondCloud && DaimondCloud.index) ? DaimondCloud.index() : {};
 		// THE CENSUS IS A LIST OF ENTRIES, AND ONLY ITS SOURCE DIFFERS. A shared folder is
 		// walked and SORTED by `walkShared`, because two desktops enumerate one directory
 		// in whatever order their filesystems hand it over and the order decides which
@@ -7624,6 +7624,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (e.size > SYNC_FILE_MAX) {
 					if (largeTotal + e.size > SYNC_CHUNK_TOTAL_MAX) { out.left.push(full); out.skipped++; continue; }
 					out.large[full] = { size: e.size };
+					if (syncRefIsNew(ix, full, e.size)) growth += syncRefGrowth(full, e.size);
 					largeTotal += e.size;
 					continue;
 				}
@@ -7646,15 +7647,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// carryable.
 					if (largeTotal + e.size > SYNC_CHUNK_TOTAL_MAX) { out.left.push(full); out.skipped++; continue; }
 					out.large[full] = { size: e.size };
+					if (syncRefIsNew(ix, full, e.size)) growth += syncRefGrowth(full, e.size);
 					largeTotal += e.size;
 					continue;
 				}
-				if (total + content.length > soft) {
+				// What it weighs in the parcel: `"path":"content",` as JSON writes it, in UTF-8.
+				// A CRLF is four bytes there and two code units here, a quote two and one,
+				// an `é` two and one; mail is dense in all three.
+				var cost = jsonBytes(JSON.stringify(content)) + jsonBytes(JSON.stringify(full)) + 2;
+				if (total + cost > soft) {
 					// PAST THE CEILING. Offload it like a large file so it still travels
 					// rather than eating the parcel; with nowhere to offload this round,
 					// NAME it (noteFilesLeft) — never a silent drop.
 					if (canOffload && largeTotal + e.size <= SYNC_CHUNK_TOTAL_MAX) {
 						out.large[full] = { size: e.size };
+						if (syncRefIsNew(ix, full, e.size)) growth += syncRefGrowth(full, e.size);
 						largeTotal += e.size;
 						// AND KEEP IT INLINE UNTIL ITS CHUNKS ARE CONFIRMED HELD. The offload
 						// queued above has not happened yet (`collectChunked` runs after this),
@@ -7680,24 +7687,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// `strand` already distinguishes for the Diamonds. `complete` must go
 						// false with it: the file is on disk and absent from `files`, and only an
 						// incomplete census stops a peer reading that absence as a deletion.
-						if (total + content.length > budget) {
+						if (total + growth + cost > budget) {
 							out.pending.push(full); out.held++; out.complete = false; continue;
 						}
 						out.pending.push(full);
-					} else if (total + content.length > budget) {
+					} else if (total + growth + cost > budget) {
 						// Past the HARD budget with nowhere to offload: this is the old
 						// end state, and it is still the honest one.
 						out.left.push(full); out.skipped++; continue;
 					}
 				}
-				out.files[full] = content; total += content.length;
+				out.files[full] = content; total += cost;
 			}
 		}
 		// Anything skipped -- for budget, for size, for an unreadable byte -- and a
 		// walk that hit the loop guard with directories still queued, are both a
 		// census that did not see everything.
 		if (out.skipped || todo.length) out.complete = false;
-		out.bytes = total;
+		out.bytes  = total;
+		out.growth = growth;
 		return out;
 	}
 
@@ -9532,7 +9540,40 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// its absence as a deletion.
 	async function syncFilesBudget(plan) {
 		if (!plan) plan = await planDiamonds();
-		return Math.max(0, Math.min(SYNC_FILES_TOTAL_MAX, SYNC_PARCEL_MAX - plan.refReserve));
+		return Math.max(0, Math.min(SYNC_FILES_TOTAL_MAX, syncInlineRoom() - plan.refReserve));
+	}
+
+	/// The room the last `collectSync` measured for the three inline sections (see
+	/// `SYNC_DOOR_RESERVE`), so the baseline commit and the pull merge hand `collectFiles`
+	/// the same budget the parcel did -- the agreement `inlineSoftCap` names as
+	/// load-bearing. Null until the first collect of the sitting.
+	var syncRoomLast = null;
+
+	/// The plaintext the three inline sections may spend: the door's room less the
+	/// parcel's other sections, as `collectSync` measured them last. Before the first
+	/// collect, measured now from the same literal with nothing that touches or decides.
+	function syncInlineRoom() {
+		if (syncRoomLast !== null) return syncRoomLast;
+		return Math.max(0, syncDoorRoom() - jsonBytes(JSON.stringify(syncParcelBase(null, true))) - SYNC_DOOR_RESERVE);
+	}
+
+	/// What the front door leaves for this parcel, in UTF-8 bytes (sync.js `parcelRoom`).
+	function syncDoorRoom() {
+		return (window.DaimondSync && DaimondSync.parcelRoom) ? (DaimondSync.parcelRoom() | 0) : 0;
+	}
+
+	/// The index entry `collectChunked` will write for a file offloaded this round: its
+	/// path, the fixed fields of a cloud.js `put` record (v, size, bytes, mtime, hash,
+	/// key, at, ver, an `anc` of up to ten) and one `{addr,size}` per 256 KiB chunk.
+	function syncRefGrowth(full, size) {
+		return jsonBytes(JSON.stringify(full)) + 512 + Math.ceil(Math.max(1, size | 0) / (256 * 1024)) * 96;
+	}
+
+	/// Does this round's offload of `full` add to the index, rather than restate a
+	/// manifest it already holds at this size?
+	function syncRefIsNew(ix, full, size) {
+		var m = ix && ix[full];
+		return !(m && (m.size | 0) === (size | 0));
 	}
 
 	/// Every Diamond this device holds that fits, packed for the parcel: the id,
@@ -9547,11 +9588,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// WHY THERE IS A BUDGET AT ALL. A Diamond carries its crystal, every version of
 	/// it, its log and its sidecars, and the whole store rides in one array with
-	/// nothing bounding it. Past the parcel ceiling the account stops syncing
+	/// nothing bounding it. Past the front door the account stops syncing
 	/// ALTOGETHER -- no transcripts, no files, no mail -- and whether the user is told
 	/// depends on which door refuses it: Steel answers a 413 the chip can draw, and
 	/// answers it while the browser is still writing the body, so a reset is the other
-	/// thing that can happen. See `SYNC_PARCEL_MAX`. Leaving out the Diamonds that do
+	/// thing that can happen. See `SYNC_DOOR_RESERVE`. Leaving out the Diamonds that do
 	/// not fit costs the user the ones named in `left`, tells them which, and keeps
 	/// everything else moving.
 	///
@@ -9686,13 +9727,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				catch (e) { out.complete = false; continue; }  // one unreadable Diamond must not hold up the rest
 				stamp = packHeadStamp(data) || stamp;	// what the bytes carry (B1)
 				// `continue`, not `break`: one Diamond must not stop the fresh ones behind it.
-				if (used + data.length + DIAMOND_ANC_BYTES > budget) {
+				// Weighed as the door weighs it, JSON-escaped UTF-8 (see `SYNC_DOOR_RESERVE`).
+				var dataBytes = jsonBytes(JSON.stringify(data));
+				if (used + dataBytes + DIAMOND_ANC_BYTES > budget) {
 					strand(d.id, d.name, false);
 					data = null;                 // let it go before the next one is read
 					continue;
 				}
 				var anc = lineage(d.id, stamp, data);
-				used += data.length + JSON.stringify(anc).length;
+				used += dataBytes + JSON.stringify(anc).length;
 				out.list.push({
 					id:      d.id,
 					updated: d.updated || 0,
@@ -9744,7 +9787,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// The offload could not be recorded this round, so the Diamond rides
 					// inline instead of not travelling at all -- exactly as it did
 					// before offload existed, budget permitting.
-					if (used + text.length + DIAMOND_ANC_BYTES > budget) {
+					var textBytes = jsonBytes(JSON.stringify(text));
+					if (used + textBytes + DIAMOND_ANC_BYTES > budget) {
 						// The offload was ATTEMPTED and failed (store full, the network,
 						// or an index that would not write): held, never named "too big".
 						// A store-full refusal has already been said honestly and
@@ -9755,7 +9799,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						text = null; continue;
 					}
 					var ancI = lineage(d.id, stamp, text);
-					used += text.length + JSON.stringify(ancI).length;
+					used += textBytes + JSON.stringify(ancI).length;
 					out.list.push({
 						id:      d.id,
 						updated: d.updated || 0,
@@ -10754,7 +10798,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						if (!gotU.failed) {
 							var msgsU = gotU.messages || [];
 							var serU = JSON.stringify(msgsU);
-							b = serU.length;
+							b = jsonBytes(serU);
 							meas[u.id] = { bytes: b, fp: fileHash(serU) };
 							fixes.push({ id: u.id, bytes: b, fp: meas[u.id].fp, seed: useed });
 							if (b <= SYNC_FILE_MAX && spent + b <= budget) kept[u.id] = { fp: meas[u.id].fp, messages: msgsU };
@@ -10865,7 +10909,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (canOffload && !gotI.failed) {
 						var serI = JSON.stringify(entryI.messages);
 						var fpI = fileHash(serI);
-						fixes.push({ id: id, bytes: serI.length, fp: fpI, seed: seed0 });
+						fixes.push({ id: id, bytes: jsonBytes(serI), fp: fpI, seed: seed0 });
 						held[id] = { fp: fpI, messages: entryI.messages.slice() };
 						serI = null;
 					}
@@ -10919,7 +10963,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// just read -- on the summary, so the next collect reuses this manifest with no
 			// load. A reused stale manifest keeps its own fp, so the two differ and the
 			// next collect retries the offload. Batched and flushed once below.
-			fixes.push({ id: id, bytes: serial.length, fp: fp, seed: seed0 });
+			fixes.push({ id: id, bytes: jsonBytes(serial), fp: fp, seed: seed0 });
 			if (entry) out.push(entry);
 			msgs = null;
 			serial = null;
@@ -11257,6 +11301,164 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out;
 	}
 
+	/// The parcel `collectSync` sends, but for its three inline sections (chats, files,
+	/// Diamonds), which are empty here and filled once the room is known: built ONCE, so
+	/// the room is measured from the very sections that travel. `quiet` leaves out the two
+	/// that act when read -- `collectDevices` saves the roster, `DEBUG_SHARE.syncSnapshot`
+	/// decides -- for a measurement outside a collect (`syncInlineRoom`).
+	function syncParcelBase(ownCol, quiet) {
+		return {
+			v:            3,
+			// Without the model's own conversation: it holds one provider's call ids,
+			// it is this device's copy of what its agent was told, and it would roughly
+			// double a parcel that is already every transcript the account has. The
+			// other device rebuilds it from the transcript it does receive. A heavy
+			// transcript travels as a `messagesRef`; see `collectChatsRefs`.
+			chats:        [],
+			// The quota-proof readers (localStorage cache ∪ tombMem), so a deletion
+			// recorded while localStorage was full still travels in the parcel and is
+			// not lost to the peer (S-SYNC #6).
+			tombs:        loadTombs(),
+			msgTombs:     loadMsgTombs(),
+			files:        [],
+			// Whether `files` above is the WHOLE workspace. This build deletes only on a
+			// tombstone (applyFiles); a build before 5.3 in the browser sandbox still
+			// deletes by absence from a census that says it is complete.
+			filesComplete: false,
+			// FOR 5.2 AND 5.2.1 RECEIVERS ONLY: this device's own deletions in the storage
+			// it is looking at, `path -> the fingerprint it held`, which is all such a page
+			// can act on (see `noteFileTombs`). A receiver on this build reads the records
+			// below and ignores this field from a sender that says `fileTombsStamped`.
+			fileTombs:    fileTombs(),
+			chunked:      window.DaimondCloud ? DaimondCloud.index() : {},
+			// EVERY WORKSPACE PATH'S DELETIONS AND RETURNS, inline and offloaded, stamped and
+			// joined from every parcel this device has merged, so a file deleted anywhere is
+			// deleted everywhere, whichever parcel a device pulls (see "Deletions of index
+			// paths" in js/cloud.js). Named for the offloaded files it first carried; a
+			// 5.2 page joins and carries the inline records and acts only on content keys.
+			chunkedTombs: window.DaimondCloud && DaimondCloud.tombs ? DaimondCloud.tombs() : {},
+			// Whether `chunked` above is the account's WHOLE index: this device held all of it
+			// at the version this parcel is based on. A device that is not whole learns it back
+			// from a parcel that says so (`syncIndexAt`); a build before 5.3 sends none.
+			chunkedFull:  indexWhole(),
+			// And the last version this device took from another (`DaimondSync.foreignAt`): every
+			// version after it is this device's own push, so a device whole at any of them is
+			// whole after merging this parcel. Masked out of the push's comparison key (sync.js
+			// `compareKey`), since it moves on every pull, so it may depend on nothing else: a
+			// value that flipped with an index write in flight would leave the mailbox holding a
+			// parcel no fresh collect gives. `chunked` is the in-memory index, which holds every
+			// change this page made whether or not its write landed.
+			chunkedFrom:  (window.DaimondSync && DaimondSync.foreignAt) ? (DaimondSync.foreignAt() | 0) : undefined,
+			// And the cursor this device stood at when it last loaded this build over one the build before
+			// wrote, while it has taken nothing foreign since (`DaimondSync.oldAt`): the versions `chunkedFrom` vouches for then
+			// reach back to the build before, and a reader that slept through them keeps the old rule
+			// (QCMG2's G4, `syncIndexAt`).
+			chunkedOld:   (window.DaimondSync && DaimondSync.oldAt && DaimondSync.oldAt() >= 0
+				&& (DaimondSync.foreignAt() | 0) <= DaimondSync.oldAt()) ? DaimondSync.oldAt() : undefined,
+			// This sender keeps the law of those records: it carries every one it holds, and
+			// a path it still carries while its record says deleted is a copy it still owes,
+			// not a write (`applyFiles`). A parcel without it is from an older page.
+			fileTombsStamped: true,
+			// The app's own store files (role prompts, the user's DAIMOND.md), whatever is mounted.
+			own:          ownCol,
+			diamonds:     [],
+			// Whether `diamonds` above is the WHOLE store. Nothing reads it today and
+			// nothing needs to: a Diamond is deleted on a tombstone, so absence is not
+			// news and cannot be mistaken for one. It is carried because the day
+			// somebody makes Diamonds delete by absence -- as files once did -- this is
+			// the flag that stops a budgeted parcel reading as a mass deletion, and the
+			// receiver that has to check it will only exist if the sender said it.
+			diamondsComplete: false,
+			diamondTombs: loadDiamondTombs(),
+			// The providers, their model lists and their SEALED keys. Deterministic
+			// by construction -- models.js sorts every id, every model list and every
+			// rate table -- which is what the push-skip comparison requires: anything
+			// whose serialisation followed enumeration order would push for ever.
+			models:       window.DaimondModels ? DaimondModels.exportSync() : null,
+			// The mailboxes, with their WRAPPED passwords. Same trust model as the
+			// sealed provider keys above: both devices hold one identity, so what
+			// opens here opens there, and the parcel is sealed over the top of it
+			// again before it leaves. What does NOT travel is the per-folder UID
+			// state -- it is rebuilt per device in a sync or two and would only
+			// give the merge a conflict to have.
+			mail:         (window.DaimondMail && DaimondMail.exportSync) ? DaimondMail.exportSync() : null,
+			// The account-level PERMISSION POLICY: the rung (ask/guarded/bypass) and
+			// the standing grants for gateway-brokered scopes (reading the web).
+			// These decide what a device may do WITHOUT asking, and a gated tool's
+			// egress is at the gateway on the account's credit, so the consent is the
+			// account's rather than one machine's -- a runner handed a turn must
+			// inherit it and NOT re-prompt. Deterministic (fixed field order, sorted
+			// scopes) and stamped only when a choice is made, so a quiet device does
+			// not defeat the push-skip. What is DELIBERATELY not here is machine-local
+			// trust: the bypass acknowledgement, whether a COMMAND keeps its network,
+			// the folder grant and this machine's postures all stay device-local (see
+			// handmode.js). `null` on a build without the module reads as a no-op.
+			// The icons a person chose for a Diamond or a chat (js/avatar.js): freshest
+			// stamp wins per entry. A default is never in it; it is the same everywhere.
+			avatars:      (window.DaimondAvatar && DaimondAvatar.syncSnapshot)
+			                  ? DaimondAvatar.syncSnapshot() : null,
+			perms:        (window.DaimondHandMode && DaimondHandMode.snapshotPolicy)
+			                  ? DaimondHandMode.snapshotPolicy() : null,
+			// Which devices sync this account. Deterministic by construction — the
+			// ids are sorted and each line has a fixed field order — and this
+			// device's own stamp only moves when it is stale AND is masked out of
+			// the push comparison besides (`compareKey`, sync.js), so the stamp alone
+			// can never put the parcel back on the wire.
+			devices:      quiet ? null : collectDevices(),
+			// And which lines were taken off the list on purpose, so a removal on
+			// one device is not undone by the next parcel from the other.
+			deviceTombs:  loadTombMap(DEVICE_TOMBS_KEY),
+			// The account's NOMINATED always-on runner -- one device id, freshest-`at`-
+			// wins, verbatim (see nominationSnapshot). A fact about the account like the
+			// handle, carried so an offline or freshly paired device learns the choice.
+			// `null` when never set, which reads to the merge as "nothing to say".
+			nominated:    nominationSnapshot(),
+			// TRAINING WHEELS -- rides out with the DEBUG_SHARE module in one grep. The
+			// "share all data for debugging" flag, an account-level fact carried so
+			// turning it on one device turns it on across the fleet and turning it off
+			// anywhere stops the fleet. Freshest-`at`-wins `{ on, at }`, verbatim -- the
+			// same shape and merge rule as `nominated` -- so a value both devices already
+			// agree on is byte-identical and the push-skip holds. Only the boolean and
+			// its stamp travel: no key or secret. `null` on a device that has never
+			// touched the toggle (or a build without the module), read as "nothing to
+			// say", so a fresh device cannot clear a fleet another device just armed.
+			debugShare:   (!quiet && window.DEBUG_SHARE && DEBUG_SHARE.syncSnapshot)
+			                  ? DEBUG_SHARE.syncSnapshot() : null,
+			// The "Something went wrong" report's CONSENT decision (D-20260920-02):
+			// an account-level fact, not a device one, carried the same way as
+			// `debugShare` just above -- freshest-`at`-wins `{on, at}`, verbatim, so
+			// agreeing on one device is remembered on every linked device rather than
+			// asked again. `null` on a device that has never been asked (or a build
+			// without the module) reads as "nothing to say".
+			support:      (window.DaimondSupport && DaimondSupport.syncSnapshot)
+			                  ? DaimondSupport.syncSnapshot() : null,
+			// The calendar dates are drawn in, Holocene or Common Era (D-20261006-34): an
+			// account fact like `support`, freshest-`at`-wins and verbatim; `null` is a
+			// device that never chose, so it cannot override one that did.
+			calendar:     (window.DaimondTime && DaimondTime.syncSnapshot)
+			                  ? DaimondTime.syncSnapshot() : null,
+			// The alerts Diamonds raised on the Pending panel (D-20261016-17, alerts.js):
+			// a register per item, later stamp wins, tombstones kept, so a clear or a
+			// dismiss on one device is the same on every other.
+			alerts:       (window.DaimondAlerts && DaimondAlerts.syncSnapshot)
+			                  ? DaimondAlerts.syncSnapshot() : null,
+			// What the account has spent, turn by turn.
+			//
+			// The provider keys and their credit bases already travel, so without
+			// this the two devices held the same "you put $40 on this key" and
+			// subtracted different spend from it: each knew only its own turns, and
+			// so each showed a different figure for the same key on the same day.
+			// A ledger merges by the join law (see `mergeLedgers`), which is what
+			// lets both arrive at the one number.
+			//
+			// Passed through the merge with nothing, which sorts it and drops any
+			// duplicate: the parcel is compared byte-for-byte against the last one
+			// pushed, so an order that depended on how storage enumerated would push
+			// for ever.
+			ledger:       mergeLedgers(DaimondLedger.entries(), []),
+		};
+	}
+
 	async function collectSync() {
 		// Not before the boot's migration (`bootInherit`): the first parcel carries its clears.
 		await inheritGate(30000);
@@ -11270,6 +11472,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// chunks the gateway holds? A manifest that survives its content is the
 		// one thing every collector below takes on trust.
 		await verifyManifestPresence();
+		// The app's own files ride apart from the workspace census, from every device.
+		var ownCol = await collectOwn();
+		// ONE BUDGET, FROM THE DOOR. The parcel is built once, its inline sections empty,
+		// and weighed as the door will weigh it: what the three inline sections may spend
+		// is the door's room less every other section as it stands, less the reserve for
+		// what moves before the parcel ends (`SYNC_DOOR_RESERVE`). Kept for the baseline
+		// commit and the pull merge, so they hand `collectFiles` this same budget.
+		var base = syncParcelBase(ownCol, false);
+		syncRoomLast = Math.max(0, syncDoorRoom() - jsonBytes(JSON.stringify(base)) - SYNC_DOOR_RESERVE);
 		// Size the Diamonds FIRST, so the room their `@d/` references need is reserved
 		// out of the parcel BEFORE the files spend against it. A heavy workspace can then
 		// no longer fill the parcel and leave the references nothing — the bug that named
@@ -11277,15 +11488,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var plan = await planDiamonds();
 		var filesBudget = await syncFilesBudget(plan);
 		var fileCol = await collectFiles(filesBudget);
-		// The app's own files ride apart from the workspace census, from every device.
-		var ownCol = await collectOwn();
 		// THE ONE LINE THAT WOULD HAVE NAMED THIS DEFECT. The inline files overspending
 		// the budget they were handed is what left the Diamonds a share of zero, and
 		// nothing anywhere said it had happened: the parcel was simply refused at the
 		// front door and 25 Diamonds were named. It cannot happen now -- `collectFiles`
 		// holds the overflow -- so this is the assertion that says if it ever does.
-		if (fileCol.bytes > filesBudget) {
-			diag('parcel files overspent', fileCol.bytes + ' B of inline files against a budget of '
+		if (fileCol.bytes + fileCol.growth > filesBudget) {
+			diag('parcel files overspent', (fileCol.bytes + fileCol.growth) + ' B of inline files and new manifests against a budget of '
 				+ filesBudget + ' B, so the diamonds were handed what is left of nothing');
 		}
 		previewReap();
@@ -11299,7 +11508,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// offload to (`plan.canOffload` false) the cap lifts and it rides inline as
 		// before, so nothing is ever shed.
 		var dCol = await collectDiamonds(
-			inlineSoftCap(Math.max(0, Math.min(SYNC_DIAMONDS_MAX, SYNC_PARCEL_MAX - fileCol.bytes)),
+			inlineSoftCap(Math.max(0, Math.min(SYNC_DIAMONDS_MAX, syncInlineRoom() - fileCol.bytes - fileCol.growth)),
 				plan.canOffload, isMobileDeviceSelf()), plan);
 		// ONE BUDGET FOR THE THREE INLINE SECTIONS, and this is the last of them to
 		// spend it. The inline transcripts had SYNC_CHATS_INLINE_MAX to themselves,
@@ -11318,7 +11527,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// every transcript inline regardless, and the too-large refusal (sync.js) is
 		// then the honest end state -- the same as before this.
 		var chatsCap = Math.max(0, Math.min(SYNC_CHATS_INLINE_MAX,
-			SYNC_PARCEL_MAX - fileCol.bytes - dCol.bytes));
+			syncInlineRoom() - fileCol.bytes - fileCol.growth - dCol.bytes));
 		// AND THE SOFT CEILING over the remainder. Without it, capping the files simply
 		// handed their budget to the transcripts: they rode inline instead of offloading
 		// and the parcel was as big as ever. A transcript past the cap becomes a
@@ -11363,156 +11572,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// name and a missing one is a no-op, so a v1, v2 and v3 device all sync in
 		// every direction -- an older side ignores a field it does not know, and a
 		// small Diamond or chat still rides inline so it degrades cleanly.
-		var parcel = {
-			v:            3,
-			// Without the model's own conversation: it holds one provider's call ids,
-			// it is this device's copy of what its agent was told, and it would roughly
-			// double a parcel that is already every transcript the account has. The
-			// other device rebuilds it from the transcript it does receive. A heavy
-			// transcript travels as a `messagesRef`; see `collectChatsRefs`.
-			chats:        chatsList,
-			// The quota-proof readers (localStorage cache ∪ tombMem), so a deletion
-			// recorded while localStorage was full still travels in the parcel and is
-			// not lost to the peer (S-SYNC #6).
-			tombs:        loadTombs(),
-			msgTombs:     loadMsgTombs(),
-			files:        fileCol.files,
-			// Whether `files` above is the WHOLE workspace. This build deletes only on a
-			// tombstone (applyFiles); a build before 5.3 in the browser sandbox still
-			// deletes by absence from a census that says it is complete.
-			filesComplete: fileCol.complete === true,
-			// FOR 5.2 AND 5.2.1 RECEIVERS ONLY: this device's own deletions in the storage
-			// it is looking at, `path -> the fingerprint it held`, which is all such a page
-			// can act on (see `noteFileTombs`). A receiver on this build reads the records
-			// below and ignores this field from a sender that says `fileTombsStamped`.
-			fileTombs:    fileTombs(),
-			chunked:      chunked,
-			// EVERY WORKSPACE PATH'S DELETIONS AND RETURNS, inline and offloaded, stamped and
-			// joined from every parcel this device has merged, so a file deleted anywhere is
-			// deleted everywhere, whichever parcel a device pulls (see "Deletions of index
-			// paths" in js/cloud.js). Named for the offloaded files it first carried; a
-			// 5.2 page joins and carries the inline records and acts only on content keys.
-			chunkedTombs: window.DaimondCloud && DaimondCloud.tombs ? DaimondCloud.tombs() : {},
-			// Whether `chunked` above is the account's WHOLE index: this device held all of it
-			// at the version this parcel is based on. A device that is not whole learns it back
-			// from a parcel that says so (`syncIndexAt`); a build before 5.3 sends none.
-			chunkedFull:  indexWhole(),
-			// And the last version this device took from another (`DaimondSync.foreignAt`): every
-			// version after it is this device's own push, so a device whole at any of them is
-			// whole after merging this parcel. Masked out of the push's comparison key (sync.js
-			// `compareKey`), since it moves on every pull, so it may depend on nothing else: a
-			// value that flipped with an index write in flight would leave the mailbox holding a
-			// parcel no fresh collect gives. `chunked` is the in-memory index, which holds every
-			// change this page made whether or not its write landed.
-			chunkedFrom:  (window.DaimondSync && DaimondSync.foreignAt) ? (DaimondSync.foreignAt() | 0) : undefined,
-			// And the cursor this device stood at when it last loaded this build over one the build before
-			// wrote, while it has taken nothing foreign since (`DaimondSync.oldAt`): the versions `chunkedFrom` vouches for then
-			// reach back to the build before, and a reader that slept through them keeps the old rule
-			// (QCMG2's G4, `syncIndexAt`).
-			chunkedOld:   (window.DaimondSync && DaimondSync.oldAt && DaimondSync.oldAt() >= 0
-				&& (DaimondSync.foreignAt() | 0) <= DaimondSync.oldAt()) ? DaimondSync.oldAt() : undefined,
-			// This sender keeps the law of those records: it carries every one it holds, and
-			// a path it still carries while its record says deleted is a copy it still owes,
-			// not a write (`applyFiles`). A parcel without it is from an older page.
-			fileTombsStamped: true,
-			// The app's own store files (role prompts, the user's DAIMOND.md), whatever is mounted.
-			own:          ownCol,
-			diamonds:     dCol.list,
-			// Whether `diamonds` above is the WHOLE store. Nothing reads it today and
-			// nothing needs to: a Diamond is deleted on a tombstone, so absence is not
-			// news and cannot be mistaken for one. It is carried because the day
-			// somebody makes Diamonds delete by absence -- as files once did -- this is
-			// the flag that stops a budgeted parcel reading as a mass deletion, and the
-			// receiver that has to check it will only exist if the sender said it.
-			diamondsComplete: dCol.complete === true,
-			diamondTombs: loadDiamondTombs(),
-			// The providers, their model lists and their SEALED keys. Deterministic
-			// by construction -- models.js sorts every id, every model list and every
-			// rate table -- which is what the push-skip comparison requires: anything
-			// whose serialisation followed enumeration order would push for ever.
-			models:       window.DaimondModels ? DaimondModels.exportSync() : null,
-			// The mailboxes, with their WRAPPED passwords. Same trust model as the
-			// sealed provider keys above: both devices hold one identity, so what
-			// opens here opens there, and the parcel is sealed over the top of it
-			// again before it leaves. What does NOT travel is the per-folder UID
-			// state -- it is rebuilt per device in a sync or two and would only
-			// give the merge a conflict to have.
-			mail:         (window.DaimondMail && DaimondMail.exportSync) ? DaimondMail.exportSync() : null,
-			// The account-level PERMISSION POLICY: the rung (ask/guarded/bypass) and
-			// the standing grants for gateway-brokered scopes (reading the web).
-			// These decide what a device may do WITHOUT asking, and a gated tool's
-			// egress is at the gateway on the account's credit, so the consent is the
-			// account's rather than one machine's -- a runner handed a turn must
-			// inherit it and NOT re-prompt. Deterministic (fixed field order, sorted
-			// scopes) and stamped only when a choice is made, so a quiet device does
-			// not defeat the push-skip. What is DELIBERATELY not here is machine-local
-			// trust: the bypass acknowledgement, whether a COMMAND keeps its network,
-			// the folder grant and this machine's postures all stay device-local (see
-			// handmode.js). `null` on a build without the module reads as a no-op.
-			// The icons a person chose for a Diamond or a chat (js/avatar.js): freshest
-			// stamp wins per entry. A default is never in it; it is the same everywhere.
-			avatars:      (window.DaimondAvatar && DaimondAvatar.syncSnapshot)
-			                  ? DaimondAvatar.syncSnapshot() : null,
-			perms:        (window.DaimondHandMode && DaimondHandMode.snapshotPolicy)
-			                  ? DaimondHandMode.snapshotPolicy() : null,
-			// Which devices sync this account. Deterministic by construction — the
-			// ids are sorted and each line has a fixed field order — and this
-			// device's own stamp only moves when it is stale AND is masked out of
-			// the push comparison besides (`compareKey`, sync.js), so the stamp alone
-			// can never put the parcel back on the wire.
-			devices:      collectDevices(),
-			// And which lines were taken off the list on purpose, so a removal on
-			// one device is not undone by the next parcel from the other.
-			deviceTombs:  loadTombMap(DEVICE_TOMBS_KEY),
-			// The account's NOMINATED always-on runner -- one device id, freshest-`at`-
-			// wins, verbatim (see nominationSnapshot). A fact about the account like the
-			// handle, carried so an offline or freshly paired device learns the choice.
-			// `null` when never set, which reads to the merge as "nothing to say".
-			nominated:    nominationSnapshot(),
-			// TRAINING WHEELS -- rides out with the DEBUG_SHARE module in one grep. The
-			// "share all data for debugging" flag, an account-level fact carried so
-			// turning it on one device turns it on across the fleet and turning it off
-			// anywhere stops the fleet. Freshest-`at`-wins `{ on, at }`, verbatim -- the
-			// same shape and merge rule as `nominated` -- so a value both devices already
-			// agree on is byte-identical and the push-skip holds. Only the boolean and
-			// its stamp travel: no key or secret. `null` on a device that has never
-			// touched the toggle (or a build without the module), read as "nothing to
-			// say", so a fresh device cannot clear a fleet another device just armed.
-			debugShare:   (window.DEBUG_SHARE && DEBUG_SHARE.syncSnapshot)
-			                  ? DEBUG_SHARE.syncSnapshot() : null,
-			// The "Something went wrong" report's CONSENT decision (D-20260920-02):
-			// an account-level fact, not a device one, carried the same way as
-			// `debugShare` just above -- freshest-`at`-wins `{on, at}`, verbatim, so
-			// agreeing on one device is remembered on every linked device rather than
-			// asked again. `null` on a device that has never been asked (or a build
-			// without the module) reads as "nothing to say".
-			support:      (window.DaimondSupport && DaimondSupport.syncSnapshot)
-			                  ? DaimondSupport.syncSnapshot() : null,
-			// The calendar dates are drawn in, Holocene or Common Era (D-20261006-34): an
-			// account fact like `support`, freshest-`at`-wins and verbatim; `null` is a
-			// device that never chose, so it cannot override one that did.
-			calendar:     (window.DaimondTime && DaimondTime.syncSnapshot)
-			                  ? DaimondTime.syncSnapshot() : null,
-			// The alerts Diamonds raised on the Pending panel (D-20261016-17, alerts.js):
-			// a register per item, later stamp wins, tombstones kept, so a clear or a
-			// dismiss on one device is the same on every other.
-			alerts:       (window.DaimondAlerts && DaimondAlerts.syncSnapshot)
-			                  ? DaimondAlerts.syncSnapshot() : null,
-			// What the account has spent, turn by turn.
-			//
-			// The provider keys and their credit bases already travel, so without
-			// this the two devices held the same "you put $40 on this key" and
-			// subtracted different spend from it: each knew only its own turns, and
-			// so each showed a different figure for the same key on the same day.
-			// A ledger merges by the join law (see `mergeLedgers`), which is what
-			// lets both arrive at the one number.
-			//
-			// Passed through the merge with nothing, which sorts it and drops any
-			// duplicate: the parcel is compared byte-for-byte against the last one
-			// pushed, so an order that depended on how storage enumerated would push
-			// for ever.
-			ledger:       mergeLedgers(DaimondLedger.entries(), []),
-		};
+		var parcel = base;
+		parcel.chats            = chatsList;
+		parcel.files            = fileCol.files;
+		parcel.filesComplete    = fileCol.complete === true;
+		parcel.diamonds         = dCol.list;
+		parcel.diamondsComplete = dCol.complete === true;
+		// And what the collectors above touched since the measurement: the tombs, the
+		// index the Diamonds and chats wrote their manifests into, and the cursors beside
+		// it. What they add is what `SYNC_DOOR_RESERVE` and `syncRefGrowth` are for.
+		parcel.tombs            = loadTombs();
+		parcel.msgTombs         = loadMsgTombs();
+		parcel.fileTombs        = fileTombs();
+		parcel.chunked          = chunked;
+		parcel.chunkedTombs     = window.DaimondCloud && DaimondCloud.tombs ? DaimondCloud.tombs() : {};
+		parcel.chunkedFull      = indexWhole();
+		parcel.chunkedFrom      = (window.DaimondSync && DaimondSync.foreignAt) ? (DaimondSync.foreignAt() | 0) : undefined;
+		parcel.chunkedOld       = (window.DaimondSync && DaimondSync.oldAt && DaimondSync.oldAt() >= 0
+			&& (DaimondSync.foreignAt() | 0) <= DaimondSync.oldAt()) ? DaimondSync.oldAt() : undefined;
+		parcel.diamondTombs     = loadDiamondTombs();
 		// Which location this parcel's census was of, for the fork point its landing sets.
 		if (fileCol.plan) _parcelPlace.set(parcel, { loc: syncFileLoc(fileCol.plan),
 			left: (fileCol.plan.left || []).map(function (r) { return r.root; }) });
@@ -23829,6 +23907,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function renderHomeBody() {
 			renderHomeBodyInner();
 			mountStatusDetail();
+			// Settings opens on the weekly stop and six doors (D-20261024-16): settingsgroups.js
+			// regroups what was just drawn, by intent.
+			if (window.DaimondSettingsGroups) DaimondSettingsGroups.apply(homeView, titleEl);
 		}
 		function renderHomeBodyInner() {
 			if (!homeView) return;
@@ -44134,8 +44215,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var tg = tag(p, p.amount);
 			if (tg) bal.appendChild(tg); else bal.textContent = amt(p, p.amount);
 			who.appendChild(nm); who.appendChild(bal);
+			// Three columns, the dial alone in the middle one between two equal outer ones, so it
+			// sits on the row's centre at every rail width (D-20261024-17).
+			var lead = document.createElement('span'); lead.className = 'evlead';
+			lead.innerHTML = G.batterySvg(p.level, p.low);
+			lead.appendChild(who);
 			var gau = document.createElement('span'); gau.className = 'evgau';
 			gau.innerHTML = G.dialSvg(p.angle, p.idle);
+			var tail = document.createElement('span'); tail.className = 'evtail';
 			// The figure in the primary ink and its unit quieter, in each language's own order.
 			var mi = document.createElement('span'); mi.className = 'evmi' + (p.idle ? ' rest' : '') + (p.short ? ' low' : '');
 			if (p.range) {
@@ -44144,7 +44231,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var fig = document.createElement('b'); fig.textContent = p.range.n; mi.appendChild(fig);
 				if (cut[1]) mi.appendChild(document.createTextNode(cut[1]));
 			} else mi.textContent = left;
-			gau.appendChild(mi);
+			tail.appendChild(mi);
 			// The pool's own Today (D-20261023-05), a fourth column in every row: no total.
 			var day = document.createElement('span'); day.className = 'evday';
 			var dl = document.createElement('span'); dl.className = 'spend-label evdl'; dl.textContent = t('spend.period_day');
@@ -44152,8 +44239,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var dt = (p.today !== null) ? DaimondI18n.poolTag(p.today, 'USD') : null;
 			if (dt) dv.appendChild(dt); else dv.textContent = (p.today !== null) ? DaimondI18n.priceText(p.today) : '\u2014';
 			day.appendChild(dl); day.appendChild(dv);
-			row.innerHTML = G.batterySvg(p.level, p.low);
-			row.appendChild(who); row.appendChild(gau); row.appendChild(day);
+			tail.appendChild(day);
+			row.appendChild(lead); row.appendChild(gau); row.appendChild(tail);
 			box.appendChild(row);
 		});
 		return box;

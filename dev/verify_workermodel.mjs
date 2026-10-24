@@ -27,7 +27,6 @@
 // it at the end.
 
 import { port } from './ports.mjs';
-import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,19 +38,11 @@ import { guardRan } from './verdict.mjs';
 const MOCK_LOG_PATH = process.env.DAIMOND_MOCK_LOG
 	|| path.join(path.dirname(fileURLToPath(import.meta.url)), 'mockllm.log');
 
-// THE PARCEL CEILING, READ FROM daimond.js RATHER THAN RESTATED.
+// THE PARCEL CEILING, READ FROM THE PAGE RATHER THAN RESTATED.
 //
-// This was `10 * 1024 * 1024` written out here, under a check that read "still far
-// inside its 10 MiB ceiling" -- a sentence that stayed green and stopped being true
-// the day `SYNC_PARCEL_MAX` moved. A restated constant is right only until somebody
-// changes the real one; `dev/verify_crystalcap.mjs` reads its two the same way.
-const PARCEL_MAX = (() => {
-	const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)),
-		'..', 'www', 'js', 'daimond.js'), 'utf8');
-	const m = /var\s+SYNC_PARCEL_MAX\s*=\s*(\d+)\s*\*\s*(\d+)\s*\*\s*(\d+)\s*;/.exec(src);
-	if (!m) throw new Error('verify_workermodel: SYNC_PARCEL_MAX not found in www/js/daimond.js');
-	return Number(m[1]) * Number(m[2]) * Number(m[3]);
-})();
+// This was `10 * 1024 * 1024` written out here, then `SYNC_PARCEL_MAX` read out of
+// daimond.js; since DOORBUDGET there is no such constant, and the ceiling is the
+// plaintext the door leaves (sync.js `parcelRoom`), asked of the page at the collect.
 
 // Offset by the world, so two worlds do not fight over one second provider.
 //
@@ -432,7 +423,8 @@ const parcel = await p.evaluate(async () => {
 	const chats = (j.chats || []).filter((c) => c.workerModel);
 	const dias  = (j.diamonds || []).filter((d) => d.model && d.model.workerModel);
 	return {
-		bytes:      JSON.stringify(j).length,
+		bytes:      DaimondSync.forTest.utf8Len(JSON.stringify(j)),
+		room:       DaimondSync.parcelRoom(),
 		chatWorker: chats.length ? chats[0].workerModel : '',
 		diaWorker:  dias.length ? dias[0].model.workerModel : '',
 		diaProv:    dias.length ? dias[0].model.workerProvider : '',
@@ -443,8 +435,8 @@ check('the parcel\'s CHAT section carries the chat\'s worker model',
 check('the parcel\'s DIAMOND section carries the Diamond\'s worker model',
 	parcel.diaWorker === MODEL2 && parcel.diaProv === 'mock2',
 	parcel.diaWorker + ' / ' + parcel.diaProv);
-check('the parcel is still far inside the ceiling daimond.js sets itself',
-	parcel.bytes < PARCEL_MAX, parcel.bytes + ' of ' + PARCEL_MAX + ' bytes');
+check('the parcel is still far inside the room the door leaves it',
+	parcel.bytes < parcel.room, parcel.bytes + ' of ' + parcel.room + ' bytes');
 
 // ── A Diamond cut from a chat inherits both ─────────────────────────
 //

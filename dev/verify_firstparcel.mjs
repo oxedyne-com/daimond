@@ -72,7 +72,6 @@ const constOf = (name) => {
 	if (!m) throw new Error('verify_firstparcel: ' + name + ' not found in www/js/daimond.js');
 	return m[1].split('*').reduce((a, b) => a * Number(b.trim()), 1);
 };
-const PARCEL_MAX = constOf('SYNC_PARCEL_MAX');
 const SOFT_MOB   = constOf('SYNC_INLINE_SOFT_MOBILE_MAX');
 const FILE_MAX   = constOf('SYNC_FILE_MAX');
 
@@ -128,6 +127,23 @@ async function arm(page, { diamonds, files }) {
 		// a phone — which is the ceiling the defect was measured against.
 		window.DaimondShell = window.DaimondShell || {};
 		window.DaimondShell.isMobileDevice = () => true;
+
+		// WHAT A FILE HOLDS. 'x' by default; `mail` is his workspace (case F): a
+		// quoted-printable HTML message, CRLF every 76 characters, `="…"` attributes and
+		// some `—` and `é` -- every one of which costs more in the parcel's JSON-UTF-8
+		// than it does in `String.length`. Deterministic, so a reload sees the same bytes.
+		window.__bodyOf = function (i, n, kind) {
+			if (kind !== 'mail') return 'x'.repeat(n);
+			const lines = [
+				'<td style=3D"font-family:Arial;color:#333333" class=3D"msg-body">Bonjour',
+				'<a href=3D"https://example.com/r?id=3D' + i + '">voil\u00e0 le r\u00e9sum\u00e9</a> \u2014 merci',
+				'<p class=3D"x" align=3D"left">caf\u00e9, d\u00e9j\u00e0 vu \u2014 "quoted" and \\ back</p>',
+				'Content-Type: text/html; charset=3D"utf-8"; format=3D"flowed" =E2=80=94 ',
+			];
+			let out = '', k = 0;
+			while (out.length < n) out += lines[k++ % lines.length].padEnd(76, ' ').slice(0, 76) + '\r\n';
+			return out.slice(0, n);
+		};
 
 		const m = await import('/pkg/oxedyne_daimond.js');
 		const P = m.DaimondApp.prototype;
@@ -216,6 +232,7 @@ async function arm(page, { diamonds, files }) {
 		if (files && !(navigator.storage && navigator.storage.getDirectory)) {
 			window.__files = {};
 			for (let i = 0; i < files.nFiles; i++) window.__files['bulk/f' + i + '.txt'] = files.perFile;
+			window.__kind = files.kind || '';
 			P.run_tool_outcome = async function (tool, argsJson) {
 				if (tool !== 'file_list') return { outcome: 'done', text: '' };
 				let at = '.';
@@ -232,7 +249,8 @@ async function arm(page, { diamonds, files }) {
 			window.DaimondCloud.fileAt = async function (full) {
 				const n = window.__files[full];
 				if (!n) return null;
-				return new File(['x'.repeat(n)], full, { type: 'text/plain', lastModified: 0 });
+				const i = +(full.match(/(\d+)\.txt$/) || [0, 0])[1];
+				return new File([window.__bodyOf(i, n, window.__kind)], full, { type: 'text/plain', lastModified: 0 });
 			};
 		}
 
@@ -261,29 +279,32 @@ async function arm(page, { diamonds, files }) {
 /// Write the heavy workspace into OPFS, once. Real files, not a stubbed
 /// `file_list`: the confirmed-offload path turns on a manifest's recorded size and
 /// mtime matching the file on disk, and a stub has neither.
-async function seedWorkspace(page, { nFiles, perFile }) {
-	return page.evaluate(async ({ nFiles, perFile }) => {
+async function seedWorkspace(page, { nFiles, perFile, kind }) {
+	return page.evaluate(async ({ nFiles, perFile, kind }) => {
 		if (!(navigator.storage && navigator.storage.getDirectory)) return 0;	// stubbed in `arm`
 		const root = await navigator.storage.getDirectory();
+		// A NEW WORKSPACE REPLACES THE OLD ONE, so case F is his files and not his files
+		// beside the 84 of the cases before it.
+		try { await root.removeEntry('bulk', { recursive: true }); } catch (e) {}
 		const d = await root.getDirectoryHandle('bulk', { create: true });
-		const body = 'x'.repeat(perFile);
 		for (let i = 0; i < nFiles; i++) {
 			const fh = await d.getFileHandle('f' + i + '.txt', { create: true });
 			const w  = await fh.createWritable();
-			await w.write(body);
+			await w.write(window.__bodyOf(i, perFile, kind));
 			await w.close();
 		}
 		return nFiles;
-	}, { nFiles, perFile });
+	}, { nFiles, perFile, kind: kind || '' });
 }
 
 /// One collect, and everything about it this file asserts on.
-async function collect(page, mode) {
-	return page.evaluate(async ({ mode }) => {
+async function collect(page, mode, whole) {
+	return page.evaluate(async ({ mode, whole }) => {
 		window.__mode = mode;
 		window.__trail = []; window.__diag = [];
 		const F = window.DaimondSync.forTest;
-		const parcel = await window.DaimondCore.collectSync();
+		// `whole`: the parcel a push would send, with the sections sync.js hangs on it.
+		const parcel = whole ? await window.DaimondSync.parcel() : await window.DaimondCore.collectSync();
 		const plain  = JSON.stringify(parcel);
 		const pbytes = F.utf8Len(plain);
 		const sizes  = F.parcelSizes(parcel, pbytes);
@@ -293,9 +314,13 @@ async function collect(page, mode) {
 		const diamonds = parcel.diamonds || [];
 		return {
 			f:        sizes.f | 0,
+			sizes:    sizes,
 			pbytes:   pbytes,
 			wire:     F.wireBytes(pbytes),
 			door:     F.door,
+			// The plaintext the door leaves this parcel (sync.js `parcelRoom`): the inline
+			// sections' ceiling, which replaced the fixed parcel constant (DOORBUDGET).
+			room:     window.DaimondSync.parcelRoom(),
 			nFiles:   Object.keys(parcel.files || {}).length,
 			complete: parcel.filesComplete,
 			diamonds: diamonds.length,
@@ -310,7 +335,7 @@ async function collect(page, mode) {
 			refused:  (DaimondChunks.state && DaimondChunks.state().refused) || '',
 			trail:    t, pend: pend,
 		};
-	}, { mode });
+	}, { mode, whole: !!whole });
 }
 
 const line = (r) => `f=${r.f} wire=${r.wire} files=${r.nFiles} complete=${r.complete}`
@@ -337,7 +362,7 @@ try {
 	note(`engine ${BROWSER}; ${seeded ? seeded + ' files in OPFS' : N_FILES + ' files stubbed (no OPFS on this engine)'}`
 		+ ` of ${PER_FILE} B (${N_FILES * PER_FILE} B of inline text)`
 		+ ` and ${N_DIAMONDS} Diamonds of ${D_SIZE} B`);
-	note(`ceilings: parcel ${PARCEL_MAX}, phone soft inline ${SOFT_MOB}`);
+	note(`ceilings: the door on the wire, phone soft inline ${SOFT_MOB}`);
 
 	// ═══ A — the first collect of a fresh sitting, the gateway answering ═══
 	//
@@ -349,8 +374,8 @@ try {
 	note(line(A));
 	note(A.trail || '(no trail)');
 	note(A.pend || '(no pending diag)');
-	check('A: the inline files stay inside the parcel ceiling',
-		A.f <= PARCEL_MAX, `${A.f} of ${PARCEL_MAX}`);
+	check('A: the inline files stay inside the room the door leaves',
+		A.f <= A.room, `${A.f} of ${A.room}`);
 	check('A: and the whole parcel fits the front door',
 		A.wire <= A.door, `${A.wire} of ${A.door}`);
 	check('A: all 25 Diamonds travel', A.diamonds === N_DIAMONDS, `${A.diamonds} sent`);
@@ -374,7 +399,7 @@ try {
 		note('C: no manifest can be recorded on this engine, so no round can demote a file'
 			+ ' to a reference; the parcel stays at the budget and is still inside it');
 		check('C: the parcel is bounded even where nothing can ever be confirmed',
-			C1.f <= PARCEL_MAX && C1.wire <= C1.door, `${C1.f} of ${PARCEL_MAX}, wire ${C1.wire}`);
+			C1.f <= C1.room && C1.wire <= C1.door, `${C1.f} of ${C1.room}, wire ${C1.wire}`);
 	}
 	check('C: all 25 Diamonds still travel, none named',
 		C1.diamonds === N_DIAMONDS && C1.named === 0, `${C1.diamonds} sent, named=${C1.named}`);
@@ -396,8 +421,8 @@ try {
 	} else {
 		note('D: and the same here — what a boot can be shown on this engine is that the'
 			+ ' budget binds from the first collect, not that the manifests are reused');
-		check('D: the first collect after a boot is inside the parcel ceiling',
-			D.f <= PARCEL_MAX, `${D.f} of ${PARCEL_MAX}`);
+		check('D: the first collect after a boot is inside the room the door leaves',
+			D.f <= D.room, `${D.f} of ${D.room}`);
 	}
 	check('D: and well inside the front door', D.wire <= D.door, `${D.wire} of ${D.door}`);
 	// Every one TRAVELS; how many ride inline is a budget question and not this file's.
@@ -429,7 +454,7 @@ try {
 	note(line(B));
 	note(B.pend || '(no pending diag)');
 	check('B: with nothing confirmable, the inline files still stay inside the parcel',
-		B.f <= PARCEL_MAX, `${B.f} of ${PARCEL_MAX}`);
+		B.f <= B.room, `${B.f} of ${B.room}`);
 	check('B: and the parcel is not refused at the front door',
 		B.wire <= B.door, `${B.wire} of ${B.door}`);
 	check('B: all 25 Diamonds travel', B.diamonds === N_DIAMONDS, `${B.diamonds} sent`);
@@ -455,7 +480,64 @@ try {
 	check('E: the Diamonds are HELD, not named', E.held >= N_DIAMONDS, `held=${E.held}`);
 	check('E: and the store\'s own refusal is what the user is shown',
 		/storage limit/i.test(E.refused), JSON.stringify(E.refused).slice(0, 70));
-	check('E: the parcel still fits the parcel ceiling', E.f <= PARCEL_MAX, `${E.f} of ${PARCEL_MAX}`);
+	check('E: the inline files still fit the room the door leaves', E.f <= E.room, `${E.f} of ${E.room}`);
+
+	// ═══ F — HIS SHAPE ON 24 OCT: mail, a big index, a big ledger, nothing confirmable ═══
+	//
+	// The parcel refused at 04:59:22 (diag_doorpush.md): f = 5,484,579, k = 666,736,
+	// l = 188,526, and 8,730,418 on the wire against the 8,388,608 door. The inline
+	// budget was 5 MiB of `String.length` beside sections nothing subtracted, and mail
+	// costs more in JSON-UTF-8 than it does in code units. Measured on the parcel a
+	// push sends (`DaimondSync.parcel()`), since that is what the door weighs.
+	console.log('\n— F: his shape — mail-shaped files, a 670 KB index, a 190 KB ledger, the sweep unanswered —');
+	await page.reload({ waitUntil: 'domcontentloaded' });
+	await signInAs(s, s.name);
+	await page.evaluate(() => {
+		try { localStorage.removeItem('daimond-cloud-index'); } catch (e) {}
+		window.__forgetAll && window.__forgetAll();
+	});
+	await page.reload({ waitUntil: 'domcontentloaded' });
+	await signInAs(s, s.name);
+	const mail = { nFiles: 55, perFile: 100 * KiB, kind: 'mail' };
+	await arm(page, { diamonds, files: mail });
+	await seedWorkspace(page, mail);
+	const seededF = await page.evaluate(async () => {
+		// THE ACCOUNT'S CHUNK INDEX, as a peer's manifests: about 670 KB of records of
+		// the shape `DaimondCloud.put` writes, for paths this device does not hold. Laid
+		// over the real index at the door every collector reads it through, so the
+		// sections ride exactly as his did and nothing on this page acts on them.
+		const seed = {};
+		const hex = (n, k) => (n.toString(16).padStart(8, '0') + 'a1b2c3d4e5f60718').repeat(8).slice(0, k);
+		for (let i = 0; i < 1000; i++) {
+			seed['archive/mail/' + i + '.eml'] = {
+				v: 3, size: 40960 + i, bytes: 40960 + i, mtime: 1760000000000 + i,
+				hash: hex(i, 64), key: hex(i + 7, 44), at: 1760000000000 + i, ver: hex(i, 12),
+				chunks: [{ addr: hex(i + 1, 64), size: 40960 + i }, { addr: hex(i + 2, 64), size: 1024 }],
+				anc: [hex(i + 3, 12), hex(i + 4, 12), hex(i + 5, 12)],
+			};
+		}
+		const real = window.DaimondCloud.index.bind(window.DaimondCloud);
+		window.DaimondCloud.index = function () { return Object.assign({}, seed, real()); };
+		// AND THE LEDGER, about 190 KB of priced turns, through its own merge.
+		const now = Date.now(), turns = [];
+		for (let i = 0; i < 1500; i++) {
+			turns.push({ t: now - i * 600000, u: 0.0123 + i / 1e6, m: 'anthropic/claude-opus-5-5',
+				p: 'anthropic', i: 12000 + i, o: 800 + i, c: 9000 + i, d: 'dev-' + (i % 3), k: 'turn-' + i });
+		}
+		window.DaimondLedger.adopt(turns);
+		return { k: JSON.stringify(window.DaimondCloud.index()).length,
+			l: JSON.stringify(window.DaimondLedger.entries()).length };
+	});
+	note(`seeded: index ${seededF.k} B, ledger ${seededF.l} B, ${mail.nFiles} mail files of ${mail.perFile} B`);
+	const Fr = await collect(page, 'have500', true);
+	note(line(Fr));
+	note('sections ' + JSON.stringify(Fr.sizes));
+	note(Fr.pend || '(no pending diag)');
+	check('F: his parcel fits the front door', Fr.wire <= Fr.door, `${Fr.wire} of ${Fr.door}`);
+	check('F: the overflow is HELD and the census says so',
+		Fr.fileHeld > 0 && Fr.complete === false, `held=${Fr.fileHeld} complete=${Fr.complete}`);
+	check('F: no file and no Diamond is NAMED', Fr.named === 0 && !Fr.banner, `named=${Fr.named}`);
+	check('F: all 25 Diamonds travel', Fr.diamonds === N_DIAMONDS, `${Fr.diamonds} sent`);
 
 	console.log('\nconsole errors:', s.errs.filter((e) => !/favicon|404|502|500|ERR_/.test(e)).slice(0, 4));
 } finally {
