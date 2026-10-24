@@ -1,1 +1,1 @@
-{"build":"2a9f051ba365","note":"A long-open Daimond tab no longer fills shared memory, and a nominated runner shows a filled star."}
+{"build":"6315f518b3d2","note":"When a nominated runner is not offered, the seat switch now says why in one line."}

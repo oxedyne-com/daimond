@@ -1418,6 +1418,9 @@ button.tag-pool { cursor: pointer; }
 .seat-switch[hidden] { display: none; }
 .composer-row .dview-btn { padding: 3px 7px; }
 #seat-here { flex: none; }
+/* WHY NO RUNNER: one line beside a plain "Here", cut to an ellipsis, whole on hover. */
+.seat-reason { flex: 0 1 auto; min-width: 0; font-size: 0.85em; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat-reason[hidden] { display: none; }
 #seat-runner { flex: 0 1 auto; min-width: 3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* HOW HARD IT THINKS: the same segmented control, as − level +. The level holds a
    fixed least width so a step does not move the + under the finger that pressed it. */

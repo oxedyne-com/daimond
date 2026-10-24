@@ -32069,6 +32069,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var run  = document.getElementById('seat-runner');
 		if (!box || !here || !run) return;
 		var sw = seatSwitchFor(current);
+		// SEATWHY: one line beside a plain "Here" when the nominated runner is held off by a
+		// rule the person can act on -- it serves credits only, or it runs another engine.
+		var why = document.getElementById('seat-reason');
+		if (why) {
+			var wk = !!sw && (sw.why === 'runner-credits-only' || sw.why === 'runner-engine');
+			var wo = wk ? { name: deviceLabelFor(sw.runnerId) || t('devices.unknown') } : null;
+			why.textContent = !wk ? ''
+				: sw.why === 'runner-credits-only' ? t('seat.why_runner_credits', wo) : t('seat.why_runner_engine', wo);
+			why.title = why.textContent;
+			why.hidden = !wk;
+		}
 		// R4: one timer, at the moment the runner stops counting as reachable on the beat
 		// it has, so the switch already reads Here when the person sends. A beat, a claim
 		// or a release redraws through its own event and re-arms it.

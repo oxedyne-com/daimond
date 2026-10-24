@@ -3653,6 +3653,8 @@
 	'turn.peer_stop_failed': 'もう一方のデバイスで停止できませんでした。もう一度お試しください。',
 	'seat.why_no_desktop': 'これを引き受けられる、起きている端末が他にありません。',
 	'seat.why_runner_silent': '{name} は起きていません——ロック画面かもしれません。',
+	'seat.why_runner_credits': '{name} は Daimond クレジットのチャットだけを受けます。このチャットは自分のキーを使っています。',
+	'seat.why_runner_engine': '{name} は別の Daimond バージョンで動いています。使うには更新してください。',
 	'seat.tile_local_mobile': 'ここで実行——開いたままにしてください',
 	'seat.refused': 'ここで実行中 · {name} が引き受けられませんでした',
 	'seat.here': 'ここ',

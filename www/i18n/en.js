@@ -2520,6 +2520,8 @@
 	// WHERE THE NEXT TURN RUNS. The reason a hand-off tile ran here, said on its tooltip.
 	'seat.why_no_desktop':       'No other device is awake to take it.',
 	'seat.why_runner_silent':    '{name} is not awake — it may be at its lock screen.',
+	'seat.why_runner_credits': '{name} takes Daimond-credits chats only; this one uses your own key.',
+	'seat.why_runner_engine': '{name} runs another Daimond version; update it to use it.',
 	'seat.tile_local_mobile':    'Runs here — keep this open',
 	// The relay REFUSED the hand-off (S-HAND #6): it never reached a peer, so the turn
 	// is running here. The status rides the tooltip; the reason `errand.prompt_too_large`

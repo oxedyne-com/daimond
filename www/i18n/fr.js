@@ -3626,6 +3626,8 @@
 	'turn.peer_stop_failed': 'Impossible de l’arrêter sur l’autre appareil. Réessayez.',
 	'seat.why_no_desktop': 'Aucun autre appareil n’est éveillé pour le prendre.',
 	'seat.why_runner_silent': '{name} n’est pas éveillé — il est peut-être sur son écran de verrouillage.',
+	'seat.why_runner_credits': '{name} ne prend que les discussions sur crédits Daimond ; celle-ci utilise votre propre clé.',
+	'seat.why_runner_engine': '{name} exécute une autre version de Daimond ; mettez-le à jour pour l’utiliser.',
 	'seat.tile_local_mobile': 'S’exécute ici — laissez ouvert',
 	'seat.refused': 'Exécution ici · {name} n’a pas pu le prendre',
 	'seat.here': 'Ici',

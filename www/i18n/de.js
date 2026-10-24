@@ -3618,6 +3618,8 @@
 	'turn.peer_stop_failed': 'Das konnte auf dem anderen Gerät nicht gestoppt werden. Versuche es erneut.',
 	'seat.why_no_desktop': 'Kein anderes Gerät ist wach, um das zu übernehmen.',
 	'seat.why_runner_silent': '{name} ist nicht wach — es ist vielleicht am Sperrbildschirm.',
+	'seat.why_runner_credits': '{name} übernimmt nur Chats mit Daimond-Guthaben; dieser nutzt deinen eigenen Schlüssel.',
+	'seat.why_runner_engine': '{name} läuft mit einer anderen Daimond-Version; aktualisiere es, um es zu nutzen.',
 	'seat.tile_local_mobile': 'Läuft hier — lass das geöffnet',
 	'seat.refused': 'Läuft hier · {name} konnte es nicht übernehmen',
 	'seat.here': 'Hier',

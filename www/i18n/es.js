@@ -3611,6 +3611,8 @@
 	'turn.peer_stop_failed': 'No se pudo detener en el otro dispositivo. Inténtalo de nuevo.',
 	'seat.why_no_desktop': 'Ningún otro dispositivo está despierto para tomarlo.',
 	'seat.why_runner_silent': '{name} no está despierto — puede estar en su pantalla de bloqueo.',
+	'seat.why_runner_credits': '{name} solo atiende chats con créditos de Daimond; este usa tu propia clave.',
+	'seat.why_runner_engine': '{name} ejecuta otra versión de Daimond; actualízalo para usarlo.',
 	'seat.tile_local_mobile': 'Se ejecuta aquí — manténlo abierto',
 	'seat.refused': 'Ejecutando aquí · {name} no pudo aceptarlo',
 	'seat.here': 'Aquí',

@@ -3610,6 +3610,8 @@
 	'turn.peer_stop_failed': 'Não foi possível parar no outro dispositivo. Tente de novo.',
 	'seat.why_no_desktop': 'Nenhum outro dispositivo está acordado para pegar isso.',
 	'seat.why_runner_silent': '{name} não está acordado — pode estar na tela de bloqueio.',
+	'seat.why_runner_credits': '{name} só aceita conversas com créditos Daimond; esta usa sua própria chave.',
+	'seat.why_runner_engine': '{name} roda outra versão do Daimond; atualize-o para usá-lo.',
 	'seat.tile_local_mobile': 'Roda aqui — mantenha aberto',
 	'seat.refused': 'Executando aqui · {name} não conseguiu assumir',
 	'seat.here': 'Aqui',

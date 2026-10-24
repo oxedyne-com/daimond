@@ -3641,6 +3641,8 @@
 	'turn.peer_stop_failed': '没能在另一台设备上停止。请重试。',
 	'seat.why_no_desktop': '没有醒着的其他设备可以接手。',
 	'seat.why_runner_silent': '{name} 没有醒着——可能在锁屏。',
+	'seat.why_runner_credits': '{name} 只接受使用 Daimond 点数的对话；这个对话用的是你自己的密钥。',
+	'seat.why_runner_engine': '{name} 运行的是另一个 Daimond 版本；请更新后再使用。',
 	'seat.tile_local_mobile': '在这里运行——请保持打开',
 	'seat.refused': '正在这里运行 · {name} 无法接手',
 	'seat.here': '这里',

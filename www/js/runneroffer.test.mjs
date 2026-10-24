@@ -140,5 +140,21 @@ const A = page(), B = page();
 		JSON.stringify(t));
 }
 
+// SEATWHY (SEAT-DIAG, 2026-10-24): the owner starred his paired runner and his chat, on his own
+// OpenRouter key, drew plain "Here" with nothing to say why. The switch now names the reason.
+{
+	const byok = { id: 'c6', model: 'm', provider: 'openrouter' };
+	const s = offer(A, answer(), ENGINE, byok, { nominatedId: 'rn', provider: 'openrouter' });
+	check('O12a an own-key chat with a nominated native runner says it serves credits only',
+		!s.runner && s.why === 'runner-credits-only' && s.runnerId === 'rn', JSON.stringify(s));
+	const e = offer(A, answer({ engine: OTHER }), ENGINE, chat, { nominatedId: 'rn', provider: 'credits' });
+	check('O12b a nominated native runner on another engine says so',
+		!e.runner && e.why === 'runner-engine' && e.runnerId === 'rn', JSON.stringify(e));
+	const ok = offer(A, answer(), ENGINE, chat, { nominatedId: 'rn', provider: 'credits' });
+	check('O12c an offered runner carries no reason', ok.runner && !ok.why, JSON.stringify(ok));
+	const tab = offer(A, answer(), ENGINE, byok, { nominatedId: 'tab', provider: 'openrouter' });
+	check('O12d a tab nominee gives no credits reason', tab.why !== 'runner-credits-only', JSON.stringify(tab));
+}
+
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall passed');
 process.exit(failures ? 1 : 0);

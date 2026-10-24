@@ -3369,7 +3369,19 @@
 				until = last + w + 1;
 			}
 		}
-		return { runner: runner, choice: here ? 'here' : 'runner', until: until };
+		var out = { runner: runner, choice: here ? 'here' : 'runner', until: until };
+		// WHY NO RUNNER (SEATWHY, 2026-10-24): a nominated paired native runner that is not
+		// offered for a rule the person can act on is named, so plain "Here" is never silent
+		// about it: it serves credits only (recEngineOk), or it runs another engine.
+		var nomId = String(o.nominatedId || '');
+		var nrec = nomId ? (presence || {})[nomId] : null;
+		if (!runner && nrec && nrec.kind === 'runner') {
+			var mine = (o.engineId != null) ? String(o.engineId) : _engineId;
+			var why = String(o.provider || '') !== 'credits' ? 'runner-credits-only'
+				: (mine && String(nrec.engine || '') !== mine) ? 'runner-engine' : '';
+			if (why) { out.why = why; out.runnerId = nomId; }
+		}
+		return out;
 	}
 
 	// ════════════════════════════════════════════════════════════

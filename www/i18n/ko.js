@@ -3651,6 +3651,8 @@
 	'turn.peer_stop_failed': '다른 기기에서 멈추지 못했어요. 다시 시도해 주세요.',
 	'seat.why_no_desktop': '이걸 받을, 깨어 있는 다른 기기가 없어요.',
 	'seat.why_runner_silent': '{name}이(가) 깨어 있지 않아요 — 잠금 화면일 수 있어요.',
+	'seat.why_runner_credits': '{name}은(는) Daimond 크레딧 채팅만 받아요. 이 채팅은 내 키를 써요.',
+	'seat.why_runner_engine': '{name}은(는) 다른 Daimond 버전이에요. 사용하려면 업데이트하세요.',
 	'seat.tile_local_mobile': '여기서 실행돼요 — 열어 두세요',
 	'seat.refused': '여기서 실행 중 · {name}이(가) 받을 수 없었어요',
 	'seat.here': '여기',
