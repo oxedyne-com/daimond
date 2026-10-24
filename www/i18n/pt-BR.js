@@ -1526,6 +1526,7 @@
 	'devices.remove_title': 'Remover este dispositivo',
 	'devices.remove_self_body': 'Você não pode remover o dispositivo que está usando.',
 	'devices.nominee_aria': '{name} assume os turnos quando os outros estão dormindo',
+	'devices.nominate_refused': 'Esse dispositivo não pode ser o executor aqui: o app não reconhece o id dele.',
 
 	// ── The status rows under the rail ─────────────────────────
 	'astat.offline': 'Offline',
@@ -1741,6 +1742,8 @@
 	// or more wanted tags combine. A chip in the rail cycles off, wanted,
 	// refused, off; a chip in the summary comes out of the filter altogether.
 	'tag.exclude_next': 'Mostrando os diamonds com a etiqueta “{tag}”. Clique de novo para escondê-los.',
+	'tag.more_all':      'Mais etiquetas: {tags}. Mostrar todas as etiquetas',
+	'tag.all_tags':      'Todas as etiquetas',
 	'tag.clear_exclude': 'Parar de esconder os diamonds com a etiqueta “{tag}”',
 	'tag.not_tagged': 'Sem a etiqueta “{tag}”',
 	'tag.mode_all': 'Todas',
@@ -3427,6 +3430,8 @@
 	'astat.sum_no_account': 'Sem sessão iniciada',
 	'astat.sum_offline': 'Offline',
 	'astat.sum_partial': 'Sincronizado, menos os arquivos',
+	'astat.needs_one': '{n} precisa de você',
+	'astat.needs_other': '{n} precisam de você',
 	'astat.sum_synced': 'Sincronizado',
 	'astat.sum_synced_n': 'Sincronizado · {n} dispositivos',
 	'astat.sum_local': 'Somente este dispositivo',

@@ -296,7 +296,7 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 			['model', '.session-box-meta, .tile-active-top'],
 			['chips', '.session-box-tags'],
 			['meter', '.diamond-meter, .tile-meter'],
-		]],
+		], '.session-box-name'],
 		// The stage head (V5): the title cluster and the tools must stay on one
 		// line whenever the panel is wide enough, whatever the title says.
 		['stage-head', '.panel:is(.ai, .web, .doc, .msg) > .chead', [
@@ -332,7 +332,9 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 		]],
 	];
 	const tiles = [];
-	for (const [kind, containerSel, rowSel] of COMPONENTS) {
+	// A component with a name part is named by it, not by its whole text: a tile's text holds its age ("1m ago", "vor 7 Min."),
+	// and the report merges a finding by text, so one tile made a row per capture (FIX-GATEKEYS, 24 Oct 2026).
+	for (const [kind, containerSel, rowSel, nameSel] of COMPONENTS) {
 		for (const box of root.querySelectorAll(containerSel)) {
 			if (!vis(box)) continue;
 			const rows = {};
@@ -351,7 +353,7 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 				// in every tile, whatever the model name above it measures).
 				if (top !== null) rows[part] = [Math.round(top), Math.round(bot), Math.round(left)];
 			}
-			if (Object.keys(rows).length >= 2) tiles.push({ kind, sig: sig(box), text: (box.textContent || '').trim().slice(0, 40), rows, surface, w: Math.round(box.getBoundingClientRect().width) });
+			if (Object.keys(rows).length >= 2) tiles.push({ kind, sig: sig(box), text: (((nameSel && box.querySelector(nameSel)) || box).textContent || '').trim().slice(0, 40), rows, surface, w: Math.round(box.getBoundingClientRect().width) });
 		}
 	}
 	// F10, the tap cross (rule 8, decision D6). From the centre of the control's box cut to the viewport, walk out left, right, up
@@ -1849,6 +1851,9 @@ const ROLES = [
 	['body-text',       'none',     () => true],
 ];
 const txt = (it) => it.text || '';
+// What a finding or an instance is merged by: its text with each run of digits as one `#`, so a live figure in it (an age,
+// a count, a size) does not make one element a row per capture (FIX-GATEKEYS, 24 Oct 2026). The text shown is unchanged.
+const keyText = (t) => (t || '').replace(/\d+/g, '#');
 const classify = (it) => { for (const [role, casing, f] of ROLES) { try { if (f(it)) return [role, casing]; } catch (e) {} } return ['unclassified', 'none']; };
 
 // Properties compared within a role. A role compares only what its members share
@@ -1999,7 +2004,7 @@ function report() {
 	const inst = new Map();
 	for (const it of items) {
 		const [role, casing] = classify(it); it.roleName = role; it.casing = casing;
-		const ik = cfgOf(it.surface) + '|' + role + '|' + it.sig + '|' + it.text.slice(0, 30);
+		const ik = cfgOf(it.surface) + '|' + role + '|' + it.sig + '|' + keyText(it.text.slice(0, 30));
 		const x = inst.get(ik); if (x) { if (!x.surfaces.includes(it.surface.split('/')[1])) x.surfaces.push(it.surface.split('/')[1]); continue; }
 		inst.set(ik, { ...it, cfg: cfgOf(it.surface), surfaces: [it.surface.split('/')[1]] });
 	}
@@ -2242,16 +2247,16 @@ function report() {
 	layout.push(...structure);
 	// Merge the same finding across configs.
 	const merge = (L, keyf) => { const m = new Map(); for (const f of L) { const k = keyf(f); const x = m.get(k); if (x) { if (!x.cfgs.includes(f.cfg)) x.cfgs.push(f.cfg); for (const s of f.surfaces) if (!x.surfaces.includes(s) && x.surfaces.length < 5) x.surfaces.push(s); } else m.set(k, { ...f, cfgs: [f.cfg], surfaces: [...f.surfaces] }); } return [...m.values()]; };
-	const D = merge(diffs, (f) => [f.role, f.p, f.sig, f.text, f.canon.replace(/rgb[^)]*\)/, 'c'), f.v.replace(/rgb[^)]*\)/, 'c')].join('|'));
-	const C = merge(casing, (f) => f.role + '|' + f.text);
-	const Lx = merge(layout, (f) => [f.kind, f.sig, f.text, f.canon, f.v].join('|'));
+	const D = merge(diffs, (f) => [f.role, f.p, f.sig, keyText(f.text), f.canon.replace(/rgb[^)]*\)/, 'c'), f.v.replace(/rgb[^)]*\)/, 'c')].join('|'));
+	const C = merge(casing, (f) => f.role + '|' + keyText(f.text));
+	const Lx = merge(layout, (f) => [f.kind, f.sig, keyText(f.text), f.canon, f.v].join('|'));
 	const unexplained = D.filter((d) => !d.allowed);
 	// F10, rule 8: every control on a phone surface has a tap cross of at least 44 each way. One row per distinct control (role, element,
 	// label), with the surfaces and configs it failed on; the worst reading is the one shown.
 	const TAPMIN = 44, tapSeen = new Set(), tapRows = new Map();
 	for (const t of taps) {
 		const [role] = classify(t); t.roleName = role;
-		const k = role + '|' + t.sig + '|' + t.text.slice(0, 30); tapSeen.add(k);
+		const k = role + '|' + t.sig + '|' + keyText(t.text.slice(0, 30)); tapSeen.add(k);
 		if (t.hit[0] >= TAPMIN && t.hit[1] >= TAPMIN) continue;
 		const surf = t.surface.split('/')[1], cfg = cfgOf(t.surface), x = tapRows.get(k);
 		if (!x) { tapRows.set(k, { kind: 'tap', role, sig: t.sig, text: t.text.slice(0, 40), box: t.box, hit: t.hit, by: t.by, cfgs: [cfg], surfaces: [surf] }); continue; }

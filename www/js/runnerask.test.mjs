@@ -65,10 +65,12 @@ function tab() {
 		'with (window) {\n' + run + '\n}')(win, document, idle, idle, idle, idle);
 	const body = cutNominee();
 	const press = new Function('window', 'DaimondRunner', 'DaimondSync', 'deviceId', 'nominateDevice',
-		'renderHome', body + '\nreturn setNominee;')(
+		'renderHome', 'toast', 't', body + '\nreturn setNominee;')(
 		win, win.DaimondRunner, undefined, () => ME,
-		(id) => { if (id) local.set(NOM, JSON.stringify({ id, at: 1 })); else local.delete(NOM); },
-		() => { drawn.n++; });
+		// Returns the record, as the real one does: a null is a refused id, and
+		// saveNominee says so (STARFIX).
+		(id) => { const rec = { id, at: 1 }; if (id) local.set(NOM, JSON.stringify(rec)); else local.delete(NOM); return rec; },
+		() => { drawn.n++; }, () => { throw new Error('a refused star in a test that refuses none'); }, (k) => k);
 	return {
 		local, dlg, drawn, press,
 		answer: async (yes) => { dlg.resolve(yes); await settle(); },

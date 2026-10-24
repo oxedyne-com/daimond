@@ -55,7 +55,8 @@
 	/// The devices a machine reference was made on, after the folder's name:
 	/// `usr@<id>` or `usr@<id>,<id>`. Hex ids only, so a folder whose own name
 	/// has an `@` in it keeps it.
-	var REF_DEVICES_RE = /@((?:[0-9a-f]{16}|[0-9a-f]{32})(?:,(?:[0-9a-f]{16}|[0-9a-f]{32}))*)$/;
+	/// A runner's gateway-minted id is one too (STARFIX): daimond.js `DEVICE_ID_RE`.
+	var REF_DEVICES_RE = /@((?:[0-9a-f]{32}|[0-9a-ikmnp-z]{16})(?:,(?:[0-9a-f]{32}|[0-9a-ikmnp-z]{16}))*)$/;
 
 	/// Split a reference into its kind, its workspace, and its path -- and, for a
 	/// machine reference, the folder's name and the devices it was made on. A

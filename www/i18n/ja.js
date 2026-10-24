@@ -1567,6 +1567,7 @@
 	'devices.remove_title': 'この端末を一覧から外す',
 	'devices.remove_self_body': '今使っている端末は削除できません。',
 	'devices.nominee_aria': '{name} は他が眠っている間に処理を引き受けます',
+	'devices.nominate_refused': 'この端末はここではランナーにできません。IDをアプリが認識できません。',
 
 	// ── レールの下の状態行 ─────────────────────────────────────
 	'astat.offline':             'オフライン',
@@ -1783,6 +1784,8 @@
 	// 以上あるときの組み合わせ方。レールのチップは、なし、欲しい、除く、
 	// なしと切り替わり、まとめのチップは絞り込みから丸ごと外れる。
 	'tag.exclude_next':  '「{tag}」の付いた diamond を表示しています。もう一度クリックすると隠します。',
+	'tag.more_all':      'ほかのタグ: {tags}。すべてのタグを表示',
+	'tag.all_tags':      'すべてのタグ',
 	'tag.clear_exclude': '「{tag}」の付いた diamond を隠すのをやめる',
 	'tag.not_tagged':    '「{tag}」が付いていない',
 	'tag.mode_all':      'すべて',
@@ -3470,6 +3473,8 @@
 	'astat.sum_no_account': '未サインイン',
 	'astat.sum_offline': 'オフライン',
 	'astat.sum_partial': '同期済み（ファイルを除く）',
+	'astat.needs_one': '要対応 {n} 件',
+	'astat.needs_other': '要対応 {n} 件',
 	'astat.sum_synced': '同期済み',
 	'astat.sum_synced_n': '同期済み · {n} 台',
 	'astat.sum_local': 'この端末のみ',

@@ -1564,6 +1564,7 @@
 	'devices.remove_title':'移除这台设备',
 	'devices.remove_self_body': '你不能移除正在使用的这台设备。',
 	'devices.nominee_aria': '其他设备休眠时由{name}接手处理',
+	'devices.nominate_refused': '无法将该设备设为运行器：应用无法识别它的设备 ID。',
 
 	// ── 侧栏下方的状态行 ───────────────────────────────────────
 	'astat.offline':             '离线',
@@ -1777,6 +1778,8 @@
 	// 侧栏里的标签片按关闭、要、不要、关闭循环；摘要里的标签片则整个
 	// 退出筛选。
 	'tag.exclude_next':  '正在显示标了“{tag}”的 diamond。再点一次就隐藏',
+	'tag.more_all':      '其他标签：{tags}。显示全部标签',
+	'tag.all_tags':      '全部标签',
 	'tag.clear_exclude': '不再隐藏标了“{tag}”的 diamond',
 	'tag.not_tagged':    '没标“{tag}”',
 	'tag.mode_all':      '全部',
@@ -3459,6 +3462,8 @@
 	'astat.sum_no_account': '未登录',
 	'astat.sum_offline': '离线',
 	'astat.sum_partial': '已同步，文件除外',
+	'astat.needs_one': '{n} 项需要你',
+	'astat.needs_other': '{n} 项需要你',
 	'astat.sum_synced': '已同步',
 	'astat.sum_synced_n': '已同步 · {n} 台设备',
 	'astat.sum_local': '仅此设备',

@@ -390,7 +390,11 @@
 
 			<div class="rhandle" id="handle-split" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
 
-			<!-- The Admin panel. -->
+			</div><!-- #rail-scroll -->
+			<!-- The Admin panel, OUTSIDE the scroller (RAILSTATUS, D-20261024-13): on a phone its status
+			     section is a row of its own pinned above the batteries, so the Diamonds and Chats scroll
+			     above it and never carry it away. The scroller is `display: contents` on a desktop, so
+			     the rail there is laid out exactly as before. -->
 			<div class="admin" id="admin">
 
 				<!-- The status header: the state of the machine, at a glance and
@@ -693,7 +697,6 @@
 					</div>
 				</div>
 			</div>
-			</div><!-- #rail-scroll -->
 			<!-- The money pools and Today (D-20261020-14 EV), pinned at the rail's foot,
 			     OUTSIDE every scroller: the batteries are always in view, on a desktop
 			     and in the phone drawer (D-20261023-05). Not a diagnostic, so not

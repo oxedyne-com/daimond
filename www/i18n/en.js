@@ -381,6 +381,7 @@
 	// device that may be closed mid-turn does not grab one.
 	'devices.nominee':          'runner',
 	'devices.nominee_aria':     '{name} runs turns when others sleep',
+	'devices.nominate_refused':     'That device can\'t be made the runner here — its id isn\'t one this app knows.',
 	'devices.nominate_aria':    'Make {name} the always-on runner',
 	'devices.unnominate_aria':  'Clear {name} as the always-on runner',
 	// Asked on the NOMINATED MACHINE ITSELF, once, because holding a screen wake
@@ -2437,6 +2438,8 @@
 	// or more wanted tags combine. A chip in the rail cycles off, wanted,
 	// refused, off; a chip in the summary comes out of the filter altogether.
 	'tag.exclude_next':  'Showing diamonds tagged "{tag}". Click again to hide them.',
+	'tag.more_all':      'More tags: {tags}. Show all tags',
+	'tag.all_tags':      'All tags',
 	'tag.clear_exclude': 'Stop hiding diamonds tagged "{tag}"',
 	'tag.not_tagged':    'Not tagged "{tag}"',
 	// i18n-indirect: daimond.js m[1] = tag.mode_all tag.mode_any
@@ -2573,6 +2576,8 @@
 	'astat.sum_no_account':   'Not signed in',
 	'astat.sum_offline':      'Offline',
 	'astat.sum_partial':      'Synced, but not files',
+	'astat.needs_one':        '{n} needs you',
+	'astat.needs_other':      '{n} need you',
 	'astat.sum_synced':       'Synced',
 	'astat.sum_synced_n':     'Synced \u00b7 {n} devices',
 	'astat.sum_local':        'This device only',

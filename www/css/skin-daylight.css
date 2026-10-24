@@ -1132,7 +1132,9 @@
 }
 :root[data-skin="daylight"] .diamond-box > .session-box-header { grid-area: head; }
 :root[data-skin="daylight"] .diamond-box > .diamond-from       { grid-area: from; margin-top: 2px; }
-:root[data-skin="daylight"] .diamond-box > .session-box-tags   { grid-area: tags; margin-top: 4px; }
+/* The chip row starts at the name's x at every width (CHIPLINE): the icon's 20px, its 2px margin and the header's 6px gap
+   (app.css .av-btn, .session-box-header). owner-eye R13 measures the two lefts equal. */
+:root[data-skin="daylight"] .diamond-box > .session-box-tags   { grid-area: tags; margin-top: 4px; margin-left: 28px; }
 /* The model is ONE line: the chip's own ellipsis (app.css) is what a long
    name gives way to, not the row's height or the meter's position. */
 :root[data-skin="daylight"] .diamond-box > .session-box-meta   { grid-area: model; margin-top: 3px; flex-wrap: nowrap; min-width: 0; gap: 6px; overflow: hidden; }
@@ -1458,21 +1460,11 @@
 	   and below the block make a 44px pitch, and 8px between chips, so the overlays of neighbours tile. A short tag is 44px wide, and
 	   `safe` keeps both ends of a long one on screen. */
 	:root[data-skin="daylight"] :is(.tagf-pool, .tagf-active) { row-gap: 26px; column-gap: 8px; padding-block: 13px; }
-	/* A Diamond's tags are ONE row that pans sideways, however many there are, so the tile is one height whatever its tags: a chip
-	   past the strip's right edge is cut by it, which is the cue. An x-scroller clips y too, so the strip's own box is the 44px
-	   the overlays need (19px chips, 13px above and below). It stops 32px short of the tile's right content edge, which is where the
-	   cog's overlay begins (the cog is 20px at the edge, its overlay reaches 12px to its left), so a chip never lies under it.
-   It starts 32px in on the left for the same reason: the tile's own icon (.av-btn, 20px at the edge) has the same overlay. */
-	:root[data-skin="daylight"] .diamond-box > .session-box-tags {
-		flex-wrap: nowrap; column-gap: 8px; padding-block: 13px; margin-right: 32px; margin-left: 32px;
-		overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
-	}
-	:root[data-skin="daylight"] .diamond-box > .session-box-tags::-webkit-scrollbar { display: none; }
-	/* On the name's line (app.css, eye F8) the strip keeps its 44px box for the chips' overlays and
-	   stops 12px short of the cog's overlay; the name, not a margin, keeps it off the icon. */
-	/* ONE line at the untagged height (app.css, F8): no padding-block, the 44px overlays hang over the
-	   tile as the cog's do; whole chips only (`foldTags`), so none is cut and none lies under the cog's overlay. */
-	:root[data-skin="daylight"] .session-box-header > .session-box-tags { column-gap: 8px; padding-block: 0; margin-right: 0; padding-right: 12px; }
+	/* A Diamond's tags are ONE row of whole chips under its name (CHIPLINE, D-20261024-04; `foldTags` folds the rest into "+N"),
+	   with no padding-block: the 44px overlays hang over the tile as the cog's do, so a tagged tile grows by one chip line. It
+	   stops 32px short of the tile's right content edge, where the cog's overlay begins (the cog is 20px at the edge, its overlay
+	   reaches 12px to its left). Its left is the name's (above, outside this block). */
+	:root[data-skin="daylight"] .diamond-box > .session-box-tags { column-gap: 8px; margin-right: 32px; }
 	:root[data-skin="daylight"] :is(.tagf-pool, .tagf-active, .session-box-tags) button.tag-chip {
 		overflow-x: clip; overflow-y: visible; min-width: 44px; justify-content: safe center;
 	}

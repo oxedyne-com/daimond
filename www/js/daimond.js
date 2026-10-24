@@ -5201,7 +5201,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// on is. 16 is the LEGACY width this file used to mint, accepted so a stored
 	// roster, a stored nomination and a peer still carrying old lines all decode
 	// while the migration works through them.
-	var DEVICE_ID_RE      = /^(?:[0-9a-f]{16}|[0-9a-f]{32})$/;
+	//
+	// AND A RUNNER'S. A paired runner (Kimberlite) holds an id the GATEWAY minted
+	// (gateway/src/handlers/runner_pair.rs: `util::gen_token(DEVICE_ID_LEN)`): sixteen
+	// characters of util.rs's TOKEN_CHARSET, lower-case letters less j, l and o, and
+	// digits. Not hex, so until STARFIX (UNBLOCK-36) this pattern refused it and the
+	// owner's star on the argonaut runner's row did nothing at all: `nominateDevice`
+	// returned null, and the roster, the merge and the name memory dropped its lines
+	// the same way. Sixteen hex is a subset of that alphabet, so the legacy width is
+	// still admitted. ONE contract for every id the account can hold; cloud.js
+	// `PEER_RE` and markshere.js `REF_DEVICES_RE` carry the same one, and
+	// www/js/runnerstar.test.mjs pins all three to the gateway's own minting.
+	var DEVICE_ID_RE      = /^(?:[0-9a-f]{32}|[0-9a-ikmnp-z]{16})$/;
 	// The LEGACY width on its own. Nothing has minted one of these since the id
 	// spaces were joined, so a line still keyed this way is a record a device wrote
 	// BEFORE it reloaded -- which is why the Devices panel does not draw one as a
@@ -24585,7 +24596,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		function saveNominee(id) {
-			nominateDevice(id);
+			// A star the contract refuses is SAID. It used to redraw the same hollow
+			// star and nothing else, which is how a runner's refused id went unseen
+			// (STARFIX, UNBLOCK-36).
+			if (!nominateDevice(id)) {
+				toast(t('devices.nominate_refused'), true);
+				return;
+			}
 			if (window.DaimondSync && DaimondSync.nudge) {
 				try { DaimondSync.nudge(); } catch (e) { /* not syncing */ }
 			}
@@ -24914,11 +24931,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// each, red first. The rules are js/needs.js's and tested there; this reads
 		/// the facts and runs the acts. Shown even when the section is folded.
 		var needPots = [];
+		/// The shut status's one voice (`#astat-flag`): how many needs wait behind the fold, else the
+		/// summary's fault, else nothing. The CSS shows it only where those rows are folded away.
+		var needFlag = { n: 0, tone: 'warn' }, sumFault = '';
+		function paintFlag() {
+			var flag = document.getElementById('astat-flag');
+			if (!flag) return;
+			var fv = flag.querySelector('.astat-val'), fd = flag.querySelector('.astat-dot');
+			var n = needFlag.n;
+			var text = n ? tOr(n === 1 ? 'astat.needs_one' : 'astat.needs_other', n === 1 ? '{n} needs you' : '{n} need you', { n: n }) : sumFault;
+			if (fv) fv.textContent = text;
+			if (fd) fd.className = 'astat-dot ' + (n ? needFlag.tone : 'warn');
+			if (n) flag.dataset.need = '1'; else delete flag.dataset.need;
+			flag.hidden = !text;
+		}
+
 		function renderNeeds() {
 			var box = document.getElementById('astat-needs');
 			var N = window.DaimondNeeds;
 			if (!box || !N) return;
-			if (locked) { N.paint(box, [], tOr, function () {}); return; }
+			if (locked) { needFlag = { n: 0, tone: 'warn' }; paintFlag(); N.paint(box, [], tOr, function () {}); return; }
 			var M = window.DaimondModels;
 			var stalled = null;
 			try {
@@ -24934,6 +24966,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				syncStalledMs: stalled,
 				noModel: !(M && M.ready()),
 			});
+			// Folded on a phone the rows are behind the chevron, bar Bypass, which stands (D-20261015-15);
+			// the flag says how many wait there (RAILSTATUS C).
+			var hid = rows.filter(function (r) { return r.id !== 'bypass'; });
+			needFlag = { n: hid.length, tone: hid.some(function (r) { return r.tone === 'bad'; }) ? 'bad' : 'warn' };
+			paintFlag();
 			N.paint(box, rows, tOr, function (r) {
 				if (r.act === 'guard') { if (window.DaimondHandMode) DaimondHandMode.set('guarded'); }
 				else if (r.act === 'topup') {
@@ -24992,13 +25029,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The shut section's one voice: only a fault passes the importance filter
 			// (no model, a stalled sync or a safe start, partial files, not signed in),
 			// so an ordinary, merely local or unentitled state leaves the line silent.
-			var flag = document.getElementById('astat-flag');
-			if (flag) {
-				var fv = flag.querySelector('.astat-val');
-				if (fv) fv.textContent = fault ? text : '';
-				// The calm line is never folded away now (D-20261015-15), so the flag would say it twice.
-				flag.hidden = true;
-			}
+			sumFault = fault ? text : '';
+			paintFlag();
 		}
 
 		/// " · just now": how long since a round worked, for the calm line.
@@ -60873,13 +60905,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
-	/// THE PHONE'S TAG STRIP DRAWS WHOLE CHIPS ONLY (UNBLOCK-33 F8, rulings §7 "give every
-	/// text slot an overflow policy"). On the name's line a sideways scroller cut its last chip
-	/// under the gear ("perso", "healt") and took the name's last pixel ("Diamond project …").
-	/// Here the name has its width first (app.css: the strip's basis is 0), and the chips that
-	/// do not fit whole fold, from the end, into one "+N" chip; if even "+N" does not fit it is
-	/// not drawn. The desktop strip is untouched (every chip, as before).
-	var tagFoldMq = window.matchMedia('(max-width: 760px)');
+	/// A DIAMOND'S CHIPS ARE ONE ROW OF WHOLE CHIPS, under its name, on every width (CHIPLINE,
+	/// D-20261024-04, his overflow pick 24 Oct). The chips that do not fit whole fold, from the
+	/// end, into one "+N" button, and "+N" opens the tile's every tag as filter chips
+	/// (`openTagMore`); if even "+N" does not fit, the strip draws no chip past it. No chip is
+	/// cut and the row never scrolls: a sideways strip hid its last tags, and a phone strip on
+	/// the name's line cut its last chip under the gear (UNBLOCK-33 F8).
 	function foldTags(strip) {
 		var chips = Array.prototype.filter.call(strip.children, function (c) {
 			return c.classList.contains('tag-chip') && !c.classList.contains('tag-more');
@@ -60887,14 +60918,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var more = strip.querySelector(':scope > .tag-more');
 		chips.forEach(function (c) { c.classList.remove('tag-fold'); });
 		if (more) more.hidden = true;
-		if (!tagFoldMq.matches || !strip.isConnected || !strip.clientWidth) return;
+		if (!strip.isConnected || !strip.clientWidth) return;
 		var cs = getComputedStyle(strip);
 		var edge = strip.getBoundingClientRect().right - (parseFloat(cs.paddingRight) || 0) + 0.5;
 		var fits = function (el) { return el.getBoundingClientRect().right <= edge; };
 		if (!chips.length || fits(chips[chips.length - 1])) return;
 		if (!more) {
-			more = document.createElement('span');
+			more = document.createElement('button');
+			more.type = 'button';
 			more.className = 'tag-chip tag-sm tag-more';
+			more.setAttribute('aria-haspopup', 'true');
+			more.setAttribute('aria-expanded', 'false');
+			more.addEventListener('click', function (e) {
+				e.stopPropagation();                   // the tile's own click opens the Diamond
+				openTagMore(more, chips.map(function (c) { return c.textContent; }));
+			});
+			// Enter and Space on it are its own, not the tile's (the tile's keydown answers only to itself).
 			strip.appendChild(more);
 		}
 		more.hidden = false;
@@ -60904,7 +60943,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			hid.unshift(chips[k].textContent);
 			more.textContent = '+' + hid.length;
 			more.title = hid.join(', ');
-			more.setAttribute('aria-label', more.textContent + ': ' + more.title);
+			more.setAttribute('aria-label', t('tag.more_all', { tags: hid.join(', ') }));
 			if (fits(more)) return;
 		}
 		more.hidden = true;
@@ -60923,9 +60962,47 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tagFoldRo.observe(strip);
 		Array.prototype.forEach.call(strip.children, function (c) { tagFoldRo.observe(c); });
 	}
-	tagFoldMq.addEventListener && tagFoldMq.addEventListener('change', function () {
-		document.querySelectorAll('.session-box-header > .session-box-tags').forEach(foldTags);
-	});
+
+	// ── "+N": a tile's every tag, each still a filter chip ──────
+	// A popover off the "+N" button, the shape `openChatsMenu` draws: a layer, so Escape and
+	// Back close it and the keyboard returns to "+N"; a press outside closes it too. A chip
+	// here does what the tile's own chip does (`cycleTagFilter`), and the rail it redraws
+	// takes this popover's anchor with it, so the press closes it first.
+	var _tagMore = null;
+	function closeTagMore() {
+		if (!_tagMore) return;
+		var pop = _tagMore;
+		_tagMore = null;
+		pop.el.remove();
+		document.removeEventListener('click', onTagMoreOutside, true);
+		DaimondLayers.done('tagmore');
+		pop.anchor.setAttribute('aria-expanded', 'false');
+	}
+	function onTagMoreOutside(e) { if (_tagMore && !_tagMore.el.contains(e.target) && e.target !== _tagMore.anchor) closeTagMore(); }
+	function openTagMore(anchor, tags) {
+		if (_tagMore) { var was = _tagMore.anchor; closeTagMore(); if (was === anchor) return; }	// a second press toggles it shut
+		var pop = document.createElement('div');
+		pop.className = 'railhead-menu tag-more-pop';
+		pop.setAttribute('role', 'group');
+		pop.setAttribute('aria-label', t('tag.all_tags'));
+		tags.forEach(function (tag) {
+			var on   = tagState(tag) === 'inc';
+			var chip = tagChip(tag, 'tag-sm' + (on ? ' tag-inc' : ''), function (tg) { closeTagMore(); cycleTagFilter(tg); });
+			chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
+			pop.appendChild(chip);
+		});
+		document.body.appendChild(pop);
+		var r = anchor.getBoundingClientRect();
+		pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+		var top = r.bottom + 4;
+		if (top + pop.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - 4 - pop.offsetHeight);
+		pop.style.top = top + 'px';
+		_tagMore = { el: pop, anchor: anchor };
+		DaimondLayers.open('tagmore', closeTagMore, anchor);
+		anchor.setAttribute('aria-expanded', 'true');
+		if (pop.firstChild) pop.firstChild.focus({ preventScroll: true });
+		setTimeout(function () { document.addEventListener('click', onTagMoreOutside, true); }, 0);
+	}
 
 	function diamondBox(f) {
 		var box = document.createElement('div');
@@ -61127,16 +61204,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A row with nothing in it still costs its margin-top, so it is not appended
 		// at all rather than appended empty.
 
-		// Tags on the name's line, after the name (D-20261023-05 eye F1/F8: a row of their
-		// own made a tagged tile two lines, and the rail showed one tile a list at 1280x720
-		// and hid Chats on the phone). EVERY tag renders and the row
-		// scrolls sideways when they do not fit, because the +N overflow chip hid
-		// the very thing a tag exists for: an excluded tag cannot be clicked back
-		// into a filter, and a Diamond you cannot see the filing of is a Diamond
-		// you cannot find by it. A chip scrolled out of view is still in the tab
-		// order and still a click away; a chip never rendered is neither. THE PHONE
-		// is the exception (UNBLOCK-33 F8, the lead's ruling): there the cut chip
-		// lay under the gear, so `foldTags` draws whole chips and one "+N".
+		// Tags in their own row, under the name (CHIPLINE, D-20261024-04: his pick over the
+		// name's line of D-20261023-05 eye F1/F8). One row of whole chips at every width:
+		// `foldTags` folds those that do not fit into one "+N", which opens them all.
 		var tags = tagsOf(f);
 		if (tags.length > 0) {
 			var tagsRow = document.createElement('div');
@@ -61151,7 +61221,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
 				tagsRow.appendChild(chip);
 			});
-			header.insertBefore(tagsRow, name.nextSibling);
+			box.appendChild(tagsRow);
 			foldTagsWatch(tagsRow);
 		}
 		// THE METER ROW GOES LAST, BELOW THE TAGS, which is where it was asked to be.

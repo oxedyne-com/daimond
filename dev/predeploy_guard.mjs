@@ -16,7 +16,8 @@
 //       release env's ARMS names (<x> or gw:<x>) passes on this key; consistency all / varlen, run_all and shots_matrix are
 //       refused even inside dk arms (owner, rc-a 23 Oct), bar (b);
 //   (d) one targeted verify_consistency scenario (`verify_consistency.mjs <scenario>`, any mode but all/varlen);
-//   (e) dk postgates' own run (DK_RUN ...-postgates): it refuses itself (41) before a real deploy of its HEAD.
+//   (e) dk postgates' own run (DK_RUN ...-postgates): it refuses itself (41) before a real deploy of its HEAD; it alone may carry
+//       DK_PREDEPLOY_GATE='fix-forward …' (it checks the parts against live's red gates), refused everywhere else.
 // The live record is read as dk check reads it: the build id jarrah serves (build.json over one read-only ssh to DK_HOST,
 // default jarrah; or the kit's stub DK_LIVE_FILE, its build_json= line), then the commit whose subject holds
 // "record build <id>". Offline or unknown refuses, bar (b)/(c)/(e).
@@ -48,13 +49,18 @@ export function heavyKind(argv) {
 	return null;
 }
 
-/// DK_PREDEPLOY_GATE as dk_postgates.sh parses it: '' none; *§14* or *two-context* the exception; 'fix-forward …' is
-/// postgates' own form (it runs only there); anything else is refused.
+/// DK_PREDEPLOY_GATE as dk_postgates.sh parses it: '' none; *§14* or *two-context* the exception; 'fix-forward <part>[, <part>…]'
+/// (each 'by-role' or '<engine> <vp>') postgates' own form, admitted only inside a dk postgates run; anything else is refused.
 export function parseGate(v) {
 	v = v || '';
 	if (!v) return { kind: 'none' };
 	if (v.includes('§14') || v.includes('two-context')) return { kind: 's14', why: v };
-	if (v.startsWith('fix-forward ')) return { kind: 'bad', msg: `DK_PREDEPLOY_GATE='${v}' is dk postgates' fix-forward form, which runs only inside dk postgates (it parses and checks the parts against live's red gates); a suite run by hand takes only the §14 class. ${S14}` };
+	if (v.startsWith('fix-forward ')) {
+		const parts = v.slice(12).split(',').map((p) => p.trim().replace(/\s+/g, ' ')).filter(Boolean);
+		const bad = parts.find((p) => p !== 'by-role' && !/^\S+ \S+$/.test(p));
+		if (!parts.length || bad !== undefined) return { kind: 'bad', msg: `DK_PREDEPLOY_GATE='${v}' is not a legal fix-forward form (${parts.length ? `'${bad}' is neither 'by-role' nor '<engine> <vp>'` : 'it names no part'}). ${S14}` };
+		return { kind: 'ff', why: v, msg: `DK_PREDEPLOY_GATE='${v}' is dk postgates' fix-forward form, which runs only inside dk postgates (it parses and checks the parts against live's red gates); a suite run by hand takes only the §14 class. ${S14}` };
+	}
 	return { kind: 'bad', msg: `DK_PREDEPLOY_GATE='${v}' names neither the rulings §14 two-context class nor anything else this guard admits. ${S14}` };
 }
 
@@ -118,6 +124,8 @@ export function decide({ argv = process.argv, env = process.env, tree = TREE } =
 	if (g.kind === 'bad') return { allow: false, msg: `${kind}: ${g.msg}` };
 	if (g.kind === 's14') return { allow: true, why: `${kind} BEFORE deploy, on the rulings §14 two-context exception: ${g.why}` };
 	const k = kitRun(env);
+	// Fix-forward: dk postgates checked the parts against live's red gates before it ran this suite; nowhere else may use it.
+	if (g.kind === 'ff') return k === 'postgates' ? { allow: true, why: `${kind}: dk postgates' fix-forward (${path.basename(env.DK_RUN)}): ${g.why}` } : { allow: false, msg: `${kind}: ${g.msg}` };
 	let armWhy = '';
 	if (k === 'arms') {
 		const x = /^verify_(.+)$/.exec(kind), arms = envArms(env.DK_RUN);

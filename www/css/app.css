@@ -533,7 +533,10 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    (the user row is `flex: 1; overflow: hidden`), never to the cog or the toggle. */
 .astat-flag { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; max-width: 45%; font-size: var(--fs-xs); color: var(--text-secondary); }
 .astat-flag[hidden] { display: none; }
-/* Open, the summary row below says it, so the flag steps aside. */
+/* Wherever the summary row is shown it says it, so the flag steps aside: always on a
+   desktop, and on a phone once the section is open (RAILSTATUS: folded, the phone's
+   pinned status is the identity row alone, and the flag is its warning). */
+@media (min-width: 761px) { .panel.rail .astat-flag { display: none; } }
 @media (max-width: 760px) { .panel.rail[data-fold-status="on"] .astat-flag { display: none; } }
 /* The one line, and the eight behind it (audit 2026-09-15, STRIP-01). The chevron
    is drawn by the rule rather than put in the markup, so nothing has to keep a
@@ -963,48 +966,24 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    is the one thing Simple must not take away, because Simple is the view with
    fewer other ways to tell two tiles apart.
 
-   On the desktop EVERY TAG RENDERS and the row SCROLLS SIDEWAYS rather than wrapping or
-   truncating with a +N chip: an unrendered tag cannot be clicked into a filter,
-   so the overflow chip hid the one thing a tag exists for. The row does not
-   wrap, and `scrollbar-width: none` keeps a scrollbar from stealing a row of
-   height on a narrow rail -- the chips say "more this way" by being cut at the
-   edge, which is the affordance a horizontal clip gives for free. The phone's strip
-   is the exception (below, UNBLOCK-33 F8): whole chips only, the rest one "+N". */
+   ONE ROW OF WHOLE CHIPS, under the name, at every width (CHIPLINE, D-20261024-04, his overflow
+   pick 24 Oct): the row neither wraps nor scrolls, and `foldTags` (daimond.js) folds the chips
+   that do not fit whole into one "+N" button, which opens every tag as a filter chip. A sideways
+   strip hid its last tags, and the name's line (eye F1/F8) cut the last chip under the gear. */
 .session-box-tags {
 	display: flex; flex-wrap: wrap; gap: 4px; row-gap: 4px; margin-top: 3px;
 	overflow: visible;
 }
 .session-box-tags .tag-chip { flex: none; }                /* keep chips their own width */
-/* A Diamond's chips sit on its name's line, after the name, so a tagged tile is one line, not two
-   (D-20261023-05 eye F1/F8). The name keeps its width first: the strip gives way 100x faster and
-   scrolls sideways, cut at its edge, rather than wrapping under. */
-.session-box-header:has(> .session-box-tags) > .session-box-name { flex: 0 1 auto; }
-.session-box-header > .session-box-tags {
-	flex: 0 100 auto; min-width: 0; margin: 0 auto 0 2px; flex-wrap: nowrap;
-	overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
-}
-.session-box-header > .session-box-tags::-webkit-scrollbar { display: none; }
-/* The phone's tagged tile is ONE line at the untagged tile's height (UNBLOCK-33 F8; every slot an
-   overflow policy, rulings §7). The name keeps its whole width first; the strip takes what is left
-   (basis 0) and draws only whole chips: `foldTags` (daimond.js) folds the ones that do not fit into
-   one "+N" chip, which fits or is not drawn. The strip does not scroll or clip, so no chip is cut
-   and none reaches the gear's column. Chips sit in the line's height, as on the desktop. */
-@media (max-width: 760px) {
-	.session-box-header:has(> .session-box-tags) > .session-box-name { flex: 0 1 auto; min-width: 0; }
-	.session-box-header > .session-box-tags {
-		flex: 1 1 0; min-width: 0; overflow: visible; flex-wrap: nowrap; margin: 0 0 0 2px;
-	}
-	.session-box-header > .session-box-tags > .tag-chip { padding-top: 0; padding-bottom: 0; }
-	.session-box-header > .session-box-tags > .tag-chip.tag-fold { display: none; }
-	.session-box-header > .session-box-tags > .tag-more { cursor: default; }
-}
+.diamond-box > .session-box-tags { flex-wrap: nowrap; min-width: 0; }
+.diamond-box > .session-box-tags > .tag-chip.tag-fold { display: none; }
 .session-box-tags > .tag-more[hidden] { display: none; }
 /* "+N" is a count, not a tag: no tag's hue (its --tag-h would read as a red tag). */
-html .session-box-header > .session-box-tags > .tag-chip.tag-more:not(.tag-inc):not(.tag-no) {
-	background: var(--bg-tertiary); color: var(--text-secondary); border-color: transparent;
+html .diamond-box > .session-box-tags > .tag-chip.tag-more:not(.tag-inc):not(.tag-no) {
+	background: var(--bg-tertiary); color: var(--text-secondary); border-color: transparent; cursor: pointer;
 }
-/* Not a control (the tile under it is), so no tap overlay: the skins' 44px `::after` would hang out of it. */
-html .session-box-header > .session-box-tags > .tag-chip.tag-more:not(.tag-inc):not(.tag-no)::after { content: none; }
+/* Its popover: the tile's every tag, wrapped, in the rail menu's box. */
+.railhead-menu.tag-more-pop { flex-direction: row; flex-wrap: wrap; gap: 4px; max-width: min(320px, calc(100vw - 16px)); }
 
 /* Simple is a DESIGN, not a subtraction. Take the room the hidden rows leave
    and give it to what is left, or the tile reads as the dense one with holes in
@@ -5522,12 +5501,13 @@ button.agsq.o { cursor: pointer; }
 .evmi { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font); font-size: var(--fs-xs); line-height: 14px; margin-bottom: -1px; color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .evmi b { font-weight: 600; color: var(--text-primary); }
 .evmi.low, .evmi.low b { color: var(--warn); }
-/* The battery: the cylinder's glass and charge, with a terminal; a low charge reads amber. */
+/* The battery: the cylinder's glass and charge, with a terminal; the charge is the skin's green,
+   a low one amber (D-20261024-14). */
 .evb .glass { fill: color-mix(in srgb, var(--text-primary) 5%, transparent); stroke: color-mix(in srgb, var(--text-primary) 42%, transparent); stroke-width: 1; }
 .evb .rim { fill: none; stroke: color-mix(in srgb, var(--text-primary) 42%, transparent); stroke-width: 1; }
 .evb .term { fill: color-mix(in srgb, var(--text-primary) 42%, transparent); }
-.evb .liq { fill: color-mix(in srgb, var(--text-secondary) 55%, transparent); }
-.evb .liqtop { fill: color-mix(in srgb, var(--text-secondary) 80%, transparent); }
+.evb .liq { fill: color-mix(in srgb, var(--ok) 60%, transparent); }
+.evb .liqtop { fill: color-mix(in srgb, var(--ok) 90%, transparent); }
 .evb.low .liq { fill: color-mix(in srgb, var(--warn) 60%, transparent); }
 .evb.low .liqtop { fill: color-mix(in srgb, var(--warn) 90%, transparent); }
 /* The dial in thirds (D-20261022-07): the lower uncoloured, the middle orange, the upper red,
@@ -5615,6 +5595,9 @@ button.agsq.o { cursor: pointer; }
 .astat-need .astat-val { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .astat-need .astat-dot.bad { background: var(--danger); }
 .astat-need .astat-dot.warn { background: var(--warn); }
+/* The shut status's count of them (RAILSTATUS C) takes the worst row's tone. */
+.astat-flag[data-need] .astat-dot.bad { background: var(--danger); }
+.astat-flag[data-need] .astat-dot.warn { background: var(--warn); }
 /* The row's act is a plain text button, never outlined: skin-daylight.css gives it the role's box. */
 .astat-act { flex: none; margin-left: auto; padding: 3px 10px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--fs-xs); line-height: 19px; cursor: pointer; }
 .astat-act:hover { background: var(--bg-hover); color: var(--text-primary); }

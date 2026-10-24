@@ -1568,6 +1568,7 @@
 	'devices.remove_title':'이 기기를 목록에서 빼기',
 	'devices.remove_self_body': '지금 사용 중인 기기는 제거할 수 없어요.',
 	'devices.nominee_aria': '{name}은(는) 다른 기기가 잠들었을 때 작업을 맡아요',
+	'devices.nominate_refused': '이 기기는 여기서 러너로 지정할 수 없어요. 앱이 기기 ID를 알아보지 못해요.',
 
 	// ── 레일 아래의 상태 줄 ────────────────────────────────────
 	'astat.offline':             '오프라인',
@@ -1782,6 +1783,8 @@
 	// 이상일 때 묶는 방식. 레일의 칩은 없음, 원함, 뺌, 없음으로 돌고,
 	// 요약의 칩은 거르기에서 아예 빠져요.
 	'tag.exclude_next':  '“{tag}” 태그가 붙은 diamond을 보는 중이에요. 다시 누르면 숨겨요',
+	'tag.more_all':      '다른 태그: {tags}. 모든 태그 보기',
+	'tag.all_tags':      '모든 태그',
 	'tag.clear_exclude': '“{tag}” 태그가 붙은 diamond을 그만 숨기기',
 	'tag.not_tagged':    '“{tag}” 태그 없음',
 	'tag.mode_all':      '모두',
@@ -3469,6 +3472,8 @@
 	'astat.sum_no_account': '로그인하지 않음',
 	'astat.sum_offline': '오프라인',
 	'astat.sum_partial': '동기화됨, 파일 제외',
+	'astat.needs_one': '확인 필요 {n}건',
+	'astat.needs_other': '확인 필요 {n}건',
 	'astat.sum_synced': '동기화됨',
 	'astat.sum_synced_n': '동기화됨 · 기기 {n}대',
 	'astat.sum_local': '이 기기에만',

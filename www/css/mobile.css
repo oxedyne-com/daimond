@@ -137,6 +137,25 @@
 	/* Its rule is the edge the lists scroll under, in either skin (the id outranks the
 	   daylight skin's borderless `.spend-row`, written for a row inside the status block). */
 	.panel.rail > #spend-row { flex: none; padding: 8px 8px 8px calc(8px + var(--safe-l)); border-top: 1px solid var(--border); }
+	/* The status section, pinned over the batteries (RAILSTATUS, D-20261024-13): out of the
+	   scroller, so the Diamonds and Chats scroll above it and it never moves. Its rule
+	   (`.admin-status`'s border-top) is now the edge the lists scroll under. Folded it is the
+	   identity row alone -- the name, the warning flag if any, the chevron -- with any "needs"
+	   row under it; the calm summary line waits behind the fold with the rest. */
+	.panel.rail > #admin { flex: none; padding: 0 8px 0 calc(8px + var(--safe-l)); }
+	.panel.rail:not([data-fold-status="on"]) .admin-status > .astat-summary { display: none; }
+	/* Variant C, "vertically tightened": folded, ONE line of 44 px with its rule -- the identity,
+	   and right-aligned before the chevron the flag counting the needs behind the fold. The needs
+	   rows open with the chevron like the rest, bar a Bypass-on row, which stands (D-20261015-15). */
+	.panel.rail:not([data-fold-status="on"]) .admin-status { padding-top: 0; gap: 0; }
+	/* 43 px and the 1 px rule make the 44. By id: the daylight finger floor (`:is(.astat-row.astat-id,
+	   .astat-row > #user-row, ...)` min-height 44) takes #user-row's specificity, which outranked a class
+	   rule here and drew the line at 45 (arms railstatus-20261024_133619). The identity button
+	   inside it is held to the same line, so it neither grows the row nor overhangs the rule. */
+	.panel.rail:not([data-fold-status="on"]) #admin-status > .astat-id,
+	.panel.rail:not([data-fold-status="on"]) #admin-status > .astat-id > #user-row { height: 43px; min-height: 43px; box-sizing: border-box; }
+	.panel.rail:not([data-fold-status="on"]) .astat-needs > .astat-need:not([data-need="bypass"]) { display: none; }
+	.panel.rail:not([data-fold-status="on"]) .admin-status > .astat-needs:not(:has(> [data-need="bypass"])) { display: none; }
 	/* The drawer is the scroller, and nothing inside it may be. Two competing
 	   scroll regions inside a 100dvh column meant the lists absorbed every
 	   shortfall instead of overflowing: at 320x568 the Diamonds list came out

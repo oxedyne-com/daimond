@@ -499,7 +499,10 @@
 	/// devices' fresh chunks on every push, and they re-offloaded the same items
 	/// minutes later, round after round. Two hex widths in two files is what made
 	/// that invisible; see www/js/peerkey.test.mjs.
-	var PEER_RE = /\.peer(?:\.([0-9a-f]{16}|[0-9a-f]{32}))?$/;
+	/// A RUNNER'S id too (STARFIX): sixteen of the gateway's TOKEN_CHARSET, which
+	/// the sixteen-hex width is a subset of. No dot in either alphabet, so the
+	/// `.peer` in front still cannot be swallowed.
+	var PEER_RE = /\.peer(?:\.([0-9a-f]{32}|[0-9a-ikmnp-z]{16}))?$/;
 
 	/// Drop every content manifest under `prefix` whose id is not in `live`.
 	/// Called by the Diamond and chat collectors once they have enumerated what

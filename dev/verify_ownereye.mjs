@@ -31,14 +31,24 @@
 //   R9  rail.no-nested-scroll        no scroller in a scroller; Models' "+ Add Provider"
 //                                    reachable at the panel's end
 //   R10 rail.pool.name-exact         each pool's name is its provider's name, whole
-//   R11 rail.desk.three-tiles        tagged, at rest, on `real` (his setup): 1280x720 and 1440x900 >= 2 whole
-//                                    Diamond tiles and >= 1 whole chat tile (owner, 23 Oct "Ship as is"; 1440
-//                                    holds at least his 1280 floor); on `full` the figures are report-only (its needs row is not his
-//                                    state); a tagged Diamond's chips are on its name's line (every state)
+//   R11 rail.desk.three-tiles        tagged, at rest, on `real` (his setup): 1280x720 and 1440x900 >= 1 whole
+//                                    Diamond tile and >= 1 whole chat tile (owner, 24 Oct "Own row, relax 1280",
+//                                    D-20261024-04; was 2 + 1 under D-20261023-05; 1440 holds at least his 1280 floor);
+//                                    on `full` the figures are report-only (its needs row is not his state); a tagged
+//                                    Diamond's chips are a row of their own, below its name (every state and size,
+//                                    CHIPLINE D-20261024-04)
 //   R12 rail.phone.tagged-one-line   phone, full + real: only whole chips (none past the gear, none cut); a tagged
-//                                    tile within 2 px of its untagged height; the name cut only when it cannot fit
-//                                    alone, with no chip beside it ("+N" folds first); full: Chats heading and one
-//                                    whole chat above the pinned foot at rest
+//                                    tile grows by one chip line and no more (CHIPLINE); the name cut only when it cannot fit
+//                                    alone, with no chip beside it ("+N" folds first); at rest, full: five whole
+//                                    Diamond tiles, then the Chats heading in view above the pinned foot, the first
+//                                    chat may be one scroll away (D-20261024-04, "Chats heading is enough"); real:
+//                                    the Chats heading in view. With the status row pinned over the batteries
+//                                    (D-20261024-13, his pick "Heading one scroll away"): five whole Diamond tiles
+//                                    always, full and real; the Chats heading may sit one scroll away under the row
+//   R13 rail.tags.more-opens         every size, full + real: one row of whole chips under the name, starting at the
+//                                    name's x, no scroller, the
+//                                    tile one chip row taller; "+N" a popup button opening every tag as a filter chip,
+//                                    Escape closing it back to "+N" (CHIPLINE D-20261024-04)
 //
 //   bash dev/world.sh 93 --up; eval "$(bash dev/world.sh 93 --env)"
 //   node dev/verify_ownereye.mjs [--cite <D-id>] [--only R1,R2] [--vp 1440x900,393x793]
@@ -254,7 +264,7 @@ const REG = [
 		nm.forEach((e) => { if (e.scrollWidth > e.clientWidth + 1) f.push(`"${e.textContent}" cut: ${e.scrollWidth} px in ${e.clientWidth} px`); });
 		return f;
 	}, POOLS) },
-	{ id: 'R11', name: 'rail.desk.three-tiles', cite: { id: 'D-20261023-05', quote: '2 Diamond tiles and 1 chat tile above the pinned batteries is accepted' },
+	{ id: 'R11', name: 'rail.desk.three-tiles', cite: { id: 'D-20261024-04', quote: 'Own row, relax 1280' },
 	  also: { id: 'D-20261020-12', quote: 'i can only see one or two diamond tiles or chat tiles at once' },
 	  vp: ['1440x900', '1280x720', '393x793'], states: ['full', 'real'], check: (p, c) => p.evaluate(({ phone, real, vp }) => {
 		const f = [];
@@ -272,9 +282,10 @@ const REG = [
 			const q = l.getBoundingClientRect();
 			const whole = [...l.querySelectorAll(row)].filter((x) => { const r = x.getBoundingClientRect(); return r.height > 0 && r.top >= q.top - 1 && r.bottom <= q.bottom + 1; });
 			if (phone) continue;
-			// The floor: the owner's 23 Oct ruling at 1280x720 (2 Diamonds, 1 chat). 1440x900 has at
-			// least the floor he accepted at 1280 (lead's ruling, derived from that line); its figures print as notes.
-			const floor = sel === '#diamond-list' ? 2 : 1;
+			// The floor: the owner's 24 Oct ruling at 1280x720 (1 Diamond, 1 chat; D-20261024-04 "Own row,
+			// relax 1280", the chips on their own row; was 2 + 1, D-20261023-05). 1440x900 has at least the
+			// floor he accepted at 1280 (lead's ruling, derived from that line); its figures print as notes.
+			const floor = 1;
 			const say = `${sel}: ${whole.length} whole tiles in its ${Math.round(q.height)} px window, want >= ${floor}`;
 			if (!real) f.push('NOTE: ' + say + ' (full: report-only)');
 			else if (whole.length < floor) f.push(say);
@@ -285,16 +296,19 @@ const REG = [
 		tagged.slice(0, 5).forEach((b) => {
 			const h = b.querySelector('.session-box-header'), t = b.querySelector('.session-box-tags');
 			const n = b.querySelector('.session-box-name');
-			if (!h.contains(t)) f.push(`"${n.textContent.trim()}": its tags are a row of their own, not on its name's line`);
+			// CHIPLINE (D-20261024-04, re-affirming D-20260929-03): the chips start on their own
+			// line, below the name, as a row of the tile and not of its header, on every size.
+			if (h.contains(t)) f.push(`"${n.textContent.trim()}": its tags are on its name's line, not a row of their own`);
 			const a = n.getBoundingClientRect(), z = t.getBoundingClientRect();
-			if (Math.abs((a.top + a.bottom) / 2 - (z.top + z.bottom) / 2) > 4) f.push(`"${n.textContent.trim()}": tags off the name's line`);
+			if (z.top < a.bottom - 0.5) f.push(`"${n.textContent.trim()}": tag row top ${z.top.toFixed(1)} above the name's bottom ${a.bottom.toFixed(1)}`);
 			if (n.scrollWidth > n.clientWidth + 1) f.push(`"${n.textContent.trim()}" cut by its tags: ${n.scrollWidth} px in ${n.clientWidth} px`);
 		});
 		return f;
 	}, { phone: !!c.phone, real: c.state === 'real', vp: c.vp }) },
 	{ id: 'R12', name: 'rail.phone.tagged-one-line', cite: { id: 'feedback_specify_structure_not_flow', quote: 'give every text slot an overflow policy' },
-	  also: { id: 'D-20261020-12', quote: 'i can only see one or two diamond tiles or chat tiles at once' },
-	  vp: ['393x793'], states: ['full', 'real'], check: (p, c) => p.evaluate(({ full, real }) => {
+	  also: [{ id: 'D-20261020-12', quote: 'i can only see one or two diamond tiles or chat tiles at once' },
+		{ id: 'D-20261024-13', quote: 'picked "Heading one scroll away (Recommended)"' }],
+	  vp: ['393x793', '390x845'], states: ['full', 'real'], check: (p, c) => p.evaluate(({ full, real }) => {
 		const f = [], R = (e) => e.getBoundingClientRect(), shown = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
 		const dl = document.getElementById('diamond-list'), sl = document.getElementById('session-list');
 		if (!dl || !sl) return ['#diamond-list or #session-list absent'];
@@ -320,10 +334,15 @@ const REG = [
 				if (q.right > s.right + 0.5 || q.left < s.left - 0.5) f.push(`"${nm}": chip "${w}" cut by its strip (${Math.round(q.left)}-${Math.round(q.right)} in ${Math.round(s.left)}-${Math.round(s.right)})`);
 				if (ch.scrollWidth > ch.clientWidth + 1) f.push(`"${nm}": chip "${w}" clipped: ${ch.scrollWidth} px in ${ch.clientWidth} px`);
 			}
-			// 2. One line at the untagged tile's height: the same tile measured with its tags taken out.
+			// 2. One chip line (CHIPLINE, D-20261024-04): the chips share one line, and the tile grows
+			// by that line and no more -- the same tile measured with its tags taken out.
+			const tops = chips.map((ch) => R(ch).top);
+			if (tops.length && Math.max(...tops) - Math.min(...tops) > 1) f.push(`"${nm}": chips on more than one line (tops ${Math.round(Math.min(...tops))}-${Math.round(Math.max(...tops))})`);
+			const line = chips.length ? Math.max(...chips.map((ch) => R(ch).height)) : 0;
+			const mt = parseFloat(getComputedStyle(strip).marginTop) || 0;
 			const h1 = R(b).height;
 			strip.style.display = 'none'; const h0 = R(b).height; strip.style.display = '';
-			if (Math.abs(h1 - h0) > 2) f.push(`"${nm}": tagged tile ${Math.round(h1)} px, untagged ${Math.round(h0)} px, want within 2`);
+			if (h1 - h0 > line + mt + 2) f.push(`"${nm}": tagged tile ${Math.round(h1)} px, untagged ${Math.round(h0)} px, want at most one chip line (${Math.round(line + mt)} px) more`);
 			// 3. The name gives up nothing to its chips: cut only when it cannot fit on its own,
 			// and then with no tag chip beside it (they fold first). Strict: a name 0.3 px short of
 			// its text already draws its ellipsis ("Diamond project …", 41f73df30).
@@ -334,20 +353,99 @@ const REG = [
 				if (nw <= own || plain.length) f.push(`"${nm}" cut by its tags: ${nw.toFixed(1)} px of name in ${cw.toFixed(1)} px, ${plain.length} chip(s) beside it`);
 			}
 		}
-		// 4. At rest in the full state, the Chats heading and one whole chat are above the pinned foot.
-		if (full) {
-			const sr = document.getElementById('spend-row');
-			const foot = sr && shown(sr) ? Math.min(R(sr).top, innerHeight) : innerHeight;
-			const head = sl.parentElement && [...sl.parentElement.querySelectorAll('.railhead')].find((h) => h.querySelector('[data-i18n="rail.chats"]'));
-			const hd = head || document.querySelector('[data-i18n="rail.chats"]');
-			if (!hd || R(hd).bottom > foot + 1 || R(hd).top < 0) f.push(`the Chats heading is not in view above the pinned foot (${hd ? Math.round(R(hd).top) + '-' + Math.round(R(hd).bottom) : 'absent'}, foot at ${Math.round(foot)})`);
-			const q = R(sl);
-			const whole = [...sl.querySelectorAll('.session-box')].filter((x) => { const r = R(x); return r.height > 0 && r.top >= Math.max(q.top, 0) - 1 && r.bottom <= Math.min(q.bottom, foot) + 1; });
-			if (!whole.length) f.push(`no whole chat tile in view above the pinned foot at ${Math.round(foot)} (list ${Math.round(q.top)}-${Math.round(q.bottom)})`);
+		// 4. At rest: the Chats heading above the pinned foot. Full: five whole Diamond tiles before it,
+		// and the first chat may be one scroll away (D-20261024-04, 24 Oct 11:5x, "Chats heading is
+		// enough"). Real had no whole-chat check before the ruling and its first chat is a scroll away.
+		const sr = document.getElementById('spend-row');
+		const hdTop = () => { const h = document.querySelector('#session-list') && [...document.querySelectorAll('.railhead')].find((h) => h.querySelector('[data-i18n="rail.chats"]')); return h ? Math.round(R(h).top) + '-' + Math.round(R(h).bottom) : 'absent'; };
+		let foot = sr && shown(sr) ? Math.min(R(sr).top, innerHeight) : innerHeight;
+		// The phone's status, pinned over the batteries out of the scroller (RAILSTATUS, D-20261024-13),
+		// is the foot's top now: what lies under it is clipped by the scroller, not in view.
+		const ad = document.getElementById('admin'), rs = document.getElementById('rail-scroll');
+		if (ad && rs && !rs.contains(ad) && shown(ad)) foot = Math.min(foot, R(ad).top);
+		f.push(`NOTE: foot ${Math.round(foot)}, Chats heading ${hdTop()}, Diamond tiles ${[...dl.querySelectorAll('.diamond-box')].slice(0, 6).map((x) => { const r = R(x); return Math.round(r.top) + '+' + Math.round(r.height); }).join(' ')}`);
+		const head = sl.parentElement && [...sl.parentElement.querySelectorAll('.railhead')].find((h) => h.querySelector('[data-i18n="rail.chats"]'));
+		const hd = head || document.querySelector('[data-i18n="rail.chats"]');
+		// With the status row pinned (D-20261024-13, his pick "Heading one scroll away"): five whole
+		// Diamond tiles always, full and real; on a shorter phone the Chats heading may sit one scroll
+		// away under the pinned row -- its top within one scroller-height of the foot.
+		const pinned = !!(ad && rs && !rs.contains(ad) && shown(ad));
+		const reach = pinned ? foot + rs.clientHeight : foot;
+		if (!hd || R(hd).top < 0 || (pinned ? R(hd).top > reach + 1 : R(hd).bottom > foot + 1))
+			f.push(`the Chats heading is not ${pinned ? 'within one scroll of' : 'in view above'} the pinned foot (${hd ? Math.round(R(hd).top) + '-' + Math.round(R(hd).bottom) : 'absent'}, foot at ${Math.round(foot)}${pinned ? ', one scroll to ' + Math.round(reach) : ''})`);
+		if (full || pinned) {
+			const d = R(dl);
+			const five = [...dl.querySelectorAll('.diamond-box')].filter((x) => { const r = R(x); return r.height > 0 && r.top >= Math.max(d.top, 0) - 1 && r.bottom <= Math.min(d.bottom, foot) + 1; });
+			if (five.length < 5) f.push(`${five.length} whole Diamond tiles above the Chats heading, want >= 5 (list ${Math.round(d.top)}-${Math.round(d.bottom)})`);
 		}
 		if (!real && !full) f.push('R12 ran on a state it does not cover');
 		return f;
 	}, { full: c.state === 'full', real: c.state === 'real' }) },
+	{ id: 'R13', name: 'rail.tags.more-opens', cite: { id: 'D-20261024-04', quote: 'own line' },
+	  also: { id: 'D-20260929-03', quote: 'the chip list in diamond tiles should start on its own line' },
+	  vp: ALL, states: ['full', 'real'], check: async (p, c) => {
+		// 1. Every tagged tile: one row of whole chips under the name, not a scroller, and the tile
+		// grows by that row and no more.
+		const f = await p.evaluate(() => {
+			const f = [], R = (e) => e.getBoundingClientRect(), shown = (e) => e.getClientRects().length > 0;
+			const dl = document.getElementById('diamond-list');
+			if (!dl) return ['#diamond-list absent'];
+			dl.scrollTop = 0;
+			const tiles = [...dl.querySelectorAll('.diamond-box')].filter((b) => b.querySelector('.session-box-tags .tag-chip') && R(b).height > 0).slice(0, 8);
+			if (!tiles.length) return ['no tagged Diamond drawn'];
+			for (const b of tiles) {
+				const nm = b.querySelector('.session-box-name').textContent.trim(), st = b.querySelector('.session-box-tags');
+				const chips = [...st.querySelectorAll('.tag-chip')].filter(shown), s = R(st);
+				const nl = R(b.querySelector('.session-box-name')).left;
+				if (Math.abs(s.left - nl) > 1) f.push(`"${nm}": chip row starts at ${s.left.toFixed(1)}, its name at ${nl.toFixed(1)} (want the same x)`);
+				if (st.scrollWidth > st.clientWidth + 1) f.push(`"${nm}": the chip row scrolls (${st.scrollWidth} px in ${st.clientWidth} px)`);
+				const tops = chips.map((ch) => R(ch).top);
+				if (Math.max(...tops) - Math.min(...tops) > 1) f.push(`"${nm}": chips on more than one line`);
+				for (const ch of chips) {
+					const q = R(ch);
+					if (q.right > s.right + 0.5 || q.left < s.left - 0.5) f.push(`"${nm}": chip "${ch.textContent.trim()}" cut by its row (${Math.round(q.left)}-${Math.round(q.right)} in ${Math.round(s.left)}-${Math.round(s.right)})`);
+				}
+				const line = Math.max(...chips.map((ch) => R(ch).height)) + (parseFloat(getComputedStyle(st).marginTop) || 0);
+				const h1 = R(b).height; st.style.display = 'none'; const h0 = R(b).height; st.style.display = '';
+				if (h1 - h0 > line + 2) f.push(`"${nm}": tagged tile ${Math.round(h1)} px, untagged ${Math.round(h0)} px, more than one chip row (${Math.round(line)} px)`);
+			}
+			return f;
+		});
+		// 2. The heavily filed Diamond folds into "+N", a button that opens every one of its tags as
+		// a filter chip; Escape closes it and gives the keyboard back to "+N".
+		const sel = '#diamond-list .diamond-box .session-box-tags > .tag-more:not([hidden])';
+		const st0 = await p.evaluate((sel) => {
+			const m = document.querySelector(sel);
+			if (!m) return null;
+			const b = m.closest('.diamond-box');
+			return { tag: m.tagName, exp: m.getAttribute('aria-expanded'), pop: m.getAttribute('aria-haspopup'), label: m.getAttribute('aria-label') || '',
+				name: b.querySelector('.session-box-name').textContent.trim(), n: b.querySelectorAll('.session-box-tags > .tag-chip:not(.tag-more)').length };
+		}, sel);
+		if (!st0) { f.push('no "+N" drawn on the heavily filed Diamond (8 tags)'); return f; }
+		if (st0.tag !== 'BUTTON' || st0.exp !== 'false' || !st0.pop || !st0.label) f.push(`"+N" on "${st0.name}" is not a closed popup button (${st0.tag}, aria-expanded=${st0.exp}, aria-haspopup=${st0.pop}, label "${st0.label}")`);
+		await p.click(sel);
+		const st1 = await p.evaluate((sel) => {
+			const m = document.querySelector(sel), pop = document.querySelector('.tag-more-pop');
+			if (!pop) return null;
+			const r = pop.getBoundingClientRect();
+			return { exp: m && m.getAttribute('aria-expanded'), chips: [...pop.querySelectorAll('button.tag-chip')].map((x) => x.textContent.trim()),
+				inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, focus: pop.contains(document.activeElement) };
+		}, sel);
+		if (!st1) { f.push(`pressing "+N" on "${st0.name}" opened no list of its tags`); return f; }
+		if (st1.chips.length !== st0.n) f.push(`"+N" list holds ${st1.chips.length} filter chips, the tile has ${st0.n} tags`);
+		if (st1.exp !== 'true') f.push(`"+N" open but aria-expanded=${st1.exp}`);
+		if (!st1.inView) f.push('the "+N" list is not whole on screen');
+		if (!st1.focus) f.push('the "+N" list took no keyboard focus');
+		await p.keyboard.press('Escape');
+		const st2 = await p.evaluate((sel) => {
+			const m = document.querySelector(sel);
+			return { open: !!document.querySelector('.tag-more-pop'), exp: m && m.getAttribute('aria-expanded'), back: document.activeElement === m };
+		}, sel);
+		if (st2.open) f.push('Escape left the "+N" list open');
+		if (st2.exp !== 'false') f.push(`after Escape aria-expanded=${st2.exp}`);
+		if (!st2.back) f.push('after Escape the keyboard is not back on "+N"');
+		return f;
+	} },
 ];
 
 // ── The loader: this file's R-list, then every dev/owner_eye/*.mjs module ──
@@ -384,7 +482,7 @@ const SEEDS = [], MODS = {};
 	let lines;
 	try { lines = fs.readFileSync(RULINGS, 'utf8').split('\n'); } catch (e) { console.error('rulings not readable: ' + RULINGS); process.exit(2); }
 	let bad = 0;
-	for (const r of REG) for (const c of [r.cite, r.also].filter(Boolean)) {
+	for (const r of REG) for (const c of [r.cite, ...[].concat(r.also || [])]) {	// `also`: one cite or a list
 		const at = lines.findIndex((l) => l.includes(c.id) && l.includes(c.quote));
 		if (at < 0) { console.error(`LINT ${r.id}: quote not found on a line carrying ${c.id}: "${c.quote}"`); bad++; continue; }
 		const sup = lines.filter((l) => /supersedes "([^"]+)"/.test(l)).map((l) => l.match(/supersedes "([^"]+)"/)[1]);
@@ -394,8 +492,9 @@ const SEEDS = [], MODS = {};
 }
 
 if (LIST) { for (const r of REG) console.log(`${r.id}\t${r.name}\t${r.cite.id}\t${r.from || 'verify_ownereye.mjs'}`); process.exit(0); }
-const want = REG.filter((r) => (!CITE || r.cite.id === CITE || (r.also && r.also.id === CITE)) && (!ONLY.length || ONLY.includes(r.id)));
-const CELLS = ALL.filter((v) => !VPS.length || VPS.includes(v)).map((vp) => {
+const want = REG.filter((r) => (!CITE || r.cite.id === CITE || [].concat(r.also || []).some((a) => a.id === CITE)) && (!ONLY.length || ONLY.includes(r.id)));
+// A --vp outside ALL is admitted (a module's record may name it; RAILSTATUS's 390x845).
+const CELLS = (VPS.length ? VPS : ALL).map((vp) => {
 	const [w, h] = vp.split('x').map(Number);
 	return { vp, w, h, phone: w < 600 };
 });
@@ -460,6 +559,10 @@ async function world(cell, state) {
 		if (n > 4) try {
 			const ls = JSON.parse(await app.list_diamonds());
 			for (let i = 0; i < ls.length; i++) await app.set_tags(ls[i].id, JSON.stringify([tags[i % 6], tags[(i + 2) % 6]]));
+			// One heavily filed Diamond, the newest (top of the rail), so the chip row folds into
+			// "+N" at every width (R13, CHIPLINE D-20261024-04).
+			const top = ls.find((d) => d.name === 'Diamond project ' + n);
+			if (top) await app.set_tags(top.id, JSON.stringify([...tags, 'reading-list', 'side-projects']));
 		} catch (e) { /* no OPFS */ }
 		await new Promise((res) => {
 			const now = Date.now(), rows = [];
