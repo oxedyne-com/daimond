@@ -136,7 +136,7 @@ function makeEnv(cfg) {
 		querySelectorAll: () => [],
 	};
 
-	const win = {};
+	const win = { DaimondGateway: { clientApi: () => 3 } };	// the page's gateway.js, the one copy of the version
 	// Capture registered window listeners so a test can fire a synthetic `storage`
 	// event (the same-device cross-tab path) and a `daimond:debugshare` can be observed.
 	const listeners = {};
@@ -2381,6 +2381,46 @@ async function main() {
 		const beat = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev beat').pop().data);
 		check('the next beat reports it beside cdrop', beat.tdrop === ticks - held && 'cdrop' in beat);
 		check('and clears it, so the count is per-beat', DS._health().tdrop === 0);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: mail — the beat carries each folder as metadata only (MAIL-BEAT)');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		const MB = 'hello@oxedyne.com';
+		// What a careless provider might hand over: extra fields the feed must never carry.
+		let rows = [{ mb: MB, f: 'INBOX', role: 'inbox', count: 4, newest: '2026-10-26T13:57:35Z', dups: 1,
+			subject: 'Quarterly salary review', from: 'kraig@k.test', body: 'Hi Kraig.' }];
+		for (let i = 0; i < 25; i++) rows.push({ mb: MB, f: '#box' + i, role: '', count: i, newest: '', dups: 0 });
+		env.win.DaimondMail = { beat: () => rows.map((r) => Object.assign({}, r)) };
+		DS.setEnabled(true);
+		DS._beatTick();
+		const mail = () => DS._outbox().filter((r) => r.tag === 'ev mail');
+		const first = mail().map((r) => JSON.parse(r.data));
+		check('the beat sends a mail row per folder, at most twenty a mailbox', first.length === 20, first.length + ' rows');
+		const ENV = ['v', 'd', 'n', 'b', 't'], ALLOW = ['count', 'dups', 'f', 'mb', 'newest', 'role'];
+		check('each mail row is the fixed shape and nothing else',
+			first.every((r) => JSON.stringify(Object.keys(r).filter((k) => !ENV.includes(k)).sort()) === JSON.stringify(ALLOW)),
+			JSON.stringify(first[0]));
+		const wire = mail().map((r) => r.data).join('\n');
+		check('no subject, sender or body reaches the wire',
+			!/salary|kraig|k\.test|Hi Kraig/i.test(wire));
+		check('newest is a date and nothing finer', first[0].newest === '2026-10-26');
+		check('dups travels', first[0].dups === 1 && first[0].count === 4);
+		check('every mail row stays within the 360-byte cap', mail().every((r) => DS._byteLen(r.data) <= 360));
+		const t0 = Date.now();
+		DS._mailBeat(t0 + 60000);
+		check('an unchanged folder is not said again on the next beat', mail().length === 20);
+		rows[0].count = 5;
+		DS._mailBeat(t0 + 120000);
+		check('a changed folder is said again, alone', mail().length === 21
+			&& JSON.parse(mail()[20].data).count === 5);
+		DS._mailBeat(t0 + 3600000 + 1000);
+		check('every folder is said again each hour, so the latest is never stale', mail().length === 41);
+		env.win.DaimondMail = { beat: () => { throw new Error('mail is not up'); } };
+		DS._mailBeat(t0 + 7200000 + 2000);
+		check('a mail module that throws costs the beat nothing', mail().length === 41);
 		DS.setEnabled(false);
 	}
 

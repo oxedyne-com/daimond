@@ -22,6 +22,8 @@
 	// ── 通用词 ─────────────────────────────────────────────────
 	'common.close':        '关闭',
 	'common.close_named':  '关闭{name}',
+	'common.show_secret':  '显示',
+	'common.hide_secret':  '隐藏',
 	'admin.close_drawer':  '关闭管理面板',
 	'rail.close_rail':     '关闭 diamonds 面板',
 	'sheet.close':         '关闭工作表',
@@ -848,8 +850,6 @@
 	'identity.your_name':          '你的名字',
 	'identity.passphrase':         '密码短语',
 	'identity.confirm_passphrase': '确认密码短语',
-	'identity.show_passphrase':    '显示密码短语',
-	'identity.hide_passphrase':    '隐藏密码短语',
 	'identity.generate_another':   '换一个',
 	'identity.wrote_it_down': '我已经记下来了',
 	'identity.choose_own':         '我自己定一个密码短语',

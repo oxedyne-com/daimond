@@ -51,7 +51,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function pushLanded(pg) {
 	return await pg.evaluate(async (ms) => {
 		const mailbox = async () => {
-			const res = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
+			const res = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': String(DaimondGateway.clientApi()) } });
 			const j = await res.json();
 			if (!j.present) return null;
 			try { return await window.DaimondIdentity.unwrap(j.blob); } catch (e) { return null; }

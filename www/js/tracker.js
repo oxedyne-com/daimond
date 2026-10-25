@@ -1243,7 +1243,7 @@
 			input.spellcheck = false;
 			input.placeholder = tOr('tracker.admin_ph', 'Paste your settle voice');
 			input.setAttribute('aria-label', tOr('tracker.admin_ph', 'Paste your settle voice'));
-			host.appendChild(input);
+			host.appendChild(DaimondSecret.eye(input));
 			host.appendChild(button('trk-admin-save', 'tracker-admin-save', tOr('tracker.admin_save', 'Save')));
 			host.appendChild(button('trk-admin-cancel', 'tracker-admin-cancel', tOr('common.cancel', 'Cancel')));
 			return host;
@@ -1323,7 +1323,7 @@
 		var input = document.getElementById('tracker-admin-in');
 		if (!input) return false;
 		var raw = String(input.value || '');
-		input.value = '';
+		DaimondSecret.set(input, '');	// cleared and masked again
 		try { await adminSet(raw); }
 		catch (e) { flash(String((e && e.message) || e)); return false; }
 		_voiceOpen = false;

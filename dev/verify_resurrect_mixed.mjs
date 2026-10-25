@@ -38,6 +38,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { CLIENT_API } from './clientapi.mjs';
 
 const F4T = process.cwd();
 const [, , WHICH = 'all', LIVET] = process.argv;
@@ -172,7 +173,7 @@ const first_of = () => FIRST;
 // ── The account's head and the sync rounds ───────────────────────────────
 async function head(d, wantParcel) {
 	const ck = (await d.ctx.cookies()).find((c) => c.name === 'daimond_gw_sess');
-	const r = await fetch(d.origin + '/api/sync', { headers: { cookie: 'daimond_gw_sess=' + (ck ? ck.value : ''), 'x-daimond-api': '2' } });
+	const r = await fetch(d.origin + '/api/sync', { headers: { cookie: 'daimond_gw_sess=' + (ck ? ck.value : ''), 'x-daimond-api': String(CLIENT_API) } });
 	const j = await r.json();
 	if (!wantParcel || !j || !j.present) return { version: j ? j.version : -1 };
 	const parcel = await E(d, async (b64) => {

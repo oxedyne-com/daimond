@@ -19,6 +19,8 @@
 	// ── Shared words ───────────────────────────────────────────
 	'common.close': 'Cerrar',
 	'common.close_named': 'Cerrar {name}',
+	'common.show_secret': 'Mostrar',
+	'common.hide_secret': 'Ocultar',
 	'admin.close_drawer': 'Cerrar el panel de administración',
 	'rail.close_rail': 'Cerrar el panel diamonds',
 	'sheet.close': 'Cerrar la hoja',
@@ -702,8 +704,6 @@
 	'identity.your_name': 'Tu nombre',
 	'identity.passphrase': 'Frase de paso',
 	'identity.confirm_passphrase': 'Confirma la frase de paso',
-	'identity.show_passphrase': 'Mostrar la frase de paso',
-	'identity.hide_passphrase': 'Ocultar la frase de paso',
 	'identity.generate_another': 'Generar otra',
 	'identity.wrote_it_down': 'Ya lo he anotado',
 	'identity.choose_own': 'Prefiero elegir mi propia frase de paso',

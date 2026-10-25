@@ -24,6 +24,8 @@
 	// ── 공통 낱말 ──────────────────────────────────────────────
 	'common.close':        '닫기',
 	'common.close_named':  '{name} 닫기',
+	'common.show_secret':  '보기',
+	'common.hide_secret':  '숨기기',
 	'admin.close_drawer':  '관리 패널 닫기',
 	'rail.close_rail':     'diamonds 패널 닫기',
 	'sheet.close':         '시트 닫기',
@@ -853,8 +855,6 @@
 	'identity.your_name':          '이름',
 	'identity.passphrase':         '암호문구',
 	'identity.confirm_passphrase': '암호문구 확인',
-	'identity.show_passphrase':    '암호문구 보기',
-	'identity.hide_passphrase':    '암호문구 숨기기',
 	'identity.generate_another':   '다른 것 만들기',
 	'identity.wrote_it_down': '적어 두었어요',
 	'identity.choose_own':         '암호문구를 직접 정할래요',

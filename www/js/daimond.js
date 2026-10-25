@@ -810,6 +810,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var tokEl  = document.getElementById('cfg-push-token');
 		if (!note || !hostEl || !tokEl) return;
 		var host  = (hostEl.value || '').trim();
+		hideSecret(tokEl);
 		var token = getSecret(tokEl).trim();
 		note.textContent = '';
 		// An empty token REMOVES the credential rather than storing an empty one, so
@@ -12545,92 +12546,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	// ── Masked secret inputs ───────────────────────────────────
-	// Secrets (the API key, the passphrase) are held in plain *text* inputs
-	// masked by JS rather than `type="password"`, so no browser or password
-	// manager offers to save them (the password-save popup, and the "username"
-	// it scavenges from a nearby text field, both need a real password field).
-	// The true value lives on `el._real`; the displayed value is bullets. The
-	// input handler diffs the change so typing, pasting, backspace, mid-string
-	// edits and select-all-replace all preserve the underlying value.
-	var BULLET = '•';
-	function installSecretMask(el, initial) {
-		if (!el || el._secretMasked) return;
-		el._secretMasked = true;
-		el.setAttribute('autocomplete', 'off');
-		el.setAttribute('data-1p-ignore', '');
-		el.setAttribute('data-lpignore', 'true');
-		el.setAttribute('spellcheck', 'false');
-		el._real = initial || '';
-		el._revealed = false;
-		el.value = new Array(el._real.length + 1).join(BULLET);
-		el.addEventListener('input', function () {
-			// Revealed: the field shows the real text, so it IS the value.
-			if (el._revealed) { el._real = el.value; return; }
-			var old = el._real;
-			var cur = el.value;
-			// Common leading run of bullets (unchanged prefix).
-			var p = 0;
-			while (p < old.length && p < cur.length && cur.charAt(p) === BULLET) p++;
-			// Common trailing run of bullets (unchanged suffix).
-			var s = 0;
-			while (s < (old.length - p) && s < (cur.length - p) && cur.charAt(cur.length - 1 - s) === BULLET) s++;
-			var inserted = cur.slice(p, cur.length - s);      // the freshly typed/pasted text
-			el._real = old.slice(0, p) + inserted + old.slice(old.length - s);
-			el.value = new Array(el._real.length + 1).join(BULLET);
-			var caret = p + inserted.length;
-			try { el.setSelectionRange(caret, caret); } catch (e) { /* not focusable yet */ }
-		});
-	}
-	function getSecret(el) { return el ? (el._real != null ? el._real : el.value) : ''; }
-	function setSecret(el, v) {
-		if (!el) return;
-		v = v || '';
-		if (el._real != null) {
-			el._real = v;
-			el.value = el._revealed ? v : new Array(v.length + 1).join(BULLET);
-		} else {
-			el.value = v;
-		}
-	}
-	/// Show or hide a secret field's real text. Reading and typing keep working
-	/// in both states; only the display changes.
-	///
-	/// Two kinds of field reach this. A real `type="password"` input reveals by
-	/// swapping its type, which is the ordinary web pattern and keeps the browser
-	/// treating it as a credential. The JS-masked text input (the API key) has no
-	/// type to swap, so it exchanges bullets for the value it is holding.
-	function setSecretRevealed(el, show) {
-		if (!el) return;
-		el._revealed = !!show;
-		if (el._real == null) {
-			el.type = show ? 'text' : 'password';
-		} else {
-			el.value = show ? el._real : new Array(el._real.length + 1).join(BULLET);
-		}
-		var caret = el.value.length;
-		try { el.setSelectionRange(caret, caret); } catch (e) { /* not focusable yet */ }
-	}
-
-	// The reveal toggle's two faces: an open eye to show, a struck-through one to
-	// hide. Module-level because the create screen reveals a generated passphrase
-	// on its own initiative, and the icon has to agree with what the field is doing.
-	var EYE_OPEN = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
-		+ '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/>'
-		+ '<circle cx="12" cy="12" r="2.6"/></svg>';
-	var EYE_OFF = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
-		+ '<path d="M2 12s3.5-6.5 10-6.5c1.8 0 3.4.5 4.8 1.2M22 12s-3.5 6.5-10 6.5c-1.8 0-3.4-.5-4.8-1.2"/>'
-		+ '<path d="M9.5 9.7a2.6 2.6 0 003.6 3.6M4 4l16 16"/></svg>';
-
-	/// Redraw a field's reveal toggle to match whether the field is revealed.
-	function syncEyeIcon(fid) {
-		var eye = document.getElementById(fid + '-eye');
-		var inp = document.getElementById(fid);
-		if (!eye || !inp) return;
-		var show = !!inp._revealed;
-		eye.innerHTML = show ? EYE_OFF : EYE_OPEN;
-		eye.title = show ? t('identity.hide_passphrase') : t('identity.show_passphrase');
-		eye.setAttribute('aria-label', eye.title);
-	}
+	// Secrets (the API key, the push token, a prompt's passphrase) are held in
+	// plain *text* inputs masked by JS rather than `type="password"`, so no
+	// browser or password manager offers to save them. The mask, the reveal and
+	// the eye every secret field wears are one component, www/js/secret.js.
+	// Functions, not aliases: each reaches the module when called, so a closure
+	// lifted out of this file by a test does not need secret.js to load.
+	function installSecretMask(el, v) { return DaimondSecret.mask(el, v); }
+	function getSecret(el)            { return DaimondSecret.get(el); }
+	function setSecret(el, v)         { return DaimondSecret.set(el, v); }
+	function setSecretRevealed(el, s) { return DaimondSecret.reveal(el, s); }
+	function hideSecret(el)           { return DaimondSecret.hide(el); }
+	function secretEye(el)            { return DaimondSecret.eye(el); }
 
 	// ── What the app says ──────────────────────────────────────
 	// The table lives in i18n/en.js and the engine in i18n.js; these are the
@@ -20097,7 +20024,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (f.hint) {
 				el.addEventListener('input', function () { f.hint(el.value, inputs, note); });
 			}
-			into.appendChild(el);
+			into.appendChild(f.secret ? secretEye(el) : el);
 			// What a field takes when its label cannot say all of it, under the field.
 			if (f.note) {
 				var sub = document.createElement('p');
@@ -20486,7 +20413,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// type=password, so no password manager offers to save it.
 				if (opts.secret) installSecretMask(input, opts.value || '');
 				else input.value = opts.value || '';
-				card.appendChild(input);
+				card.appendChild(opts.secret ? secretEye(input) : input);
 			}
 			if (opts.kind === 'form') {
 				form = buildForm(card, opts);
@@ -20570,6 +20497,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (!okOn) { err.textContent = okLastSaid = okWhy; return; }
 					return close(picked.read());
 				}
+				// Submitted: every secret on the card is masked again (secret.js).
+				Array.prototype.forEach.call(card.querySelectorAll('input'), hideSecret);
 				if (opts.kind === 'form') {
 					var vals = form.read();
 					var bad2 = opts.validate ? await opts.validate(vals) : '';
@@ -33085,7 +33014,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			fetch('/api/debug-trace', {
 				method:      'POST',
 				credentials: 'same-origin',
-				headers:     { 'content-type': 'application/json', 'x-daimond-api': '2' },
+				headers:     { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 				body:        JSON.stringify({ v: 1, device: device, rows: rows }),
 			}).then(function () {}, function () {});		// fire-and-forget; a down endpoint is not our problem
 		} catch (e) { /* diagnostics must never break a dispatch */ }
@@ -72848,7 +72777,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// credential largely on there being a real password field at that moment.
 			// The eye is still there for anyone who wants it.
 			setSecretRevealed(inp, false);
-			syncEyeIcon('id-pass');
 		}
 		syncPrimaryEnabled();
 	}
@@ -73052,8 +72980,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		setSecret(document.getElementById('id-pass2'), '');
 		setSecretRevealed(document.getElementById('id-pass'), false);
 		setSecretRevealed(document.getElementById('id-pass2'), false);
-		syncEyeIcon('id-pass');
-		syncEyeIcon('id-pass2');
 		m.dataset.mode = mode;
 		// Creating starts from a generated passphrase; unlocking never generates,
 		// so the readout and its acknowledgement stay out of the way.
@@ -73247,6 +73173,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	async function idPrimary() {
 		var mode = document.getElementById('identity-modal').dataset.mode;
 		var err = document.getElementById('id-error');
+		hideSecret(document.getElementById('id-pass'));
+		hideSecret(document.getElementById('id-pass2'));
 		var pass = getSecret(document.getElementById('id-pass'));
 		if (!pass) { err.textContent = t('identity.err_enter_pass'); return; }
 		if (mode === 'create') {
@@ -74161,8 +74089,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			againInp.autocomplete = 'new-password';
 			againInp.placeholder = t('changepass.again_ph');
 			againInp.style.marginTop = '8px';
-			typed.appendChild(newInp);
-			typed.appendChild(againInp);
+			typed.appendChild(secretEye(newInp));
+			typed.appendChild(secretEye(againInp));
 			card.appendChild(typed);
 
 			var choose = document.createElement('button');
@@ -74256,6 +74184,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					}
 					return close(pass);
 				}
+				hideSecret(newInp);
+				hideSecret(againInp);
 				var v = newInp.value;
 				if (v.length < 8) { err.textContent = t('changepass.err_short'); return; }
 				if (v === curPass) { err.textContent = t('changepass.err_same'); return; }
@@ -76029,6 +75959,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// reason: a real password field is what invites a browser or a manager
 			// to file somebody else's bearer credential away.
 			installSecretMask(box, '');
+			secretEye(box);
 			sel.addEventListener('change', function () {
 				DaimondSearch.setEngine(sel.value);
 				SearchRow.render();
@@ -76054,6 +75985,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!box || !window.DaimondSearch) return;
 			var id = DaimondSearch.engine();
 			if (id === DaimondSearch.CREDITS) return;
+			hideSecret(box);
 			var v = getSecret(box).trim();
 			// A box left alone shows bullets for the key already held. Re-sealing the
 			// same string on every blur would churn the store, and — worse — a
@@ -77249,6 +77181,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var aboutBtn = document.getElementById('about-btn');
 	if (aboutBtn) aboutBtn.addEventListener('click', function () { openAbout(); });
 	document.getElementById('byok-save').addEventListener('click', async function () {
+		hideSecret(document.getElementById('cfg-api-key'));
 		var next = {
 			baseUrl: document.getElementById('cfg-base-url').value.trim(),
 			apiKey: getSecret(document.getElementById('cfg-api-key')).trim(),
@@ -77975,19 +77908,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// credential against the user's own repositories, and a real password field
 		// is what invites a manager to file it away.
 		installSecretMask(document.getElementById('cfg-push-token'), '');
-		// The eye toggles reveal a passphrase field, so a long one typed on a
-		// phone can be checked. Each remembers its own state; the icon swaps
-		// between an open and a struck-through eye.
-		['id-pass', 'id-pass2'].forEach(function (fid) {
-			var eye = document.getElementById(fid + '-eye');
-			var inp = document.getElementById(fid);
-			if (!eye || !inp) return;
-			syncEyeIcon(fid);
-			eye.addEventListener('click', function () {
-				setSecretRevealed(inp, !inp._revealed);
-				syncEyeIcon(fid);
-				try { inp.focus(); } catch (e) { /* ignore */ }
-			});
+		// Every secret field in the served page wears the eye (secret.js), so a
+		// long one typed on a phone can be checked. The search key is masked and
+		// given its own when its row is wired (SearchRow.mount).
+		['id-pass', 'id-pass2', 'cfg-api-key', 'cfg-push-token'].forEach(function (fid) {
+			secretEye(document.getElementById(fid));
 		});
 		// The create screen's own controls: regenerate, copy, the written-it-down
 		// acknowledgement, and the way out to a typed passphrase.

@@ -36,7 +36,7 @@ export async function signInFresh(page, appUrl) {
 			var r = await fetch(path, {
 				method: 'POST',
 				credentials: 'same-origin',
-				headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+				headers: { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 				body: JSON.stringify(body),
 			});
 			var j = null;

@@ -48,6 +48,7 @@ import { webcrypto } from 'node:crypto';
 import { GWBIN, procLog, requireFreshGateway } from './gwbin.mjs';
 import { GW_PORT } from './ports.mjs';
 import { grantPro } from './pro.mjs';
+import { CLIENT_API } from './clientapi.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
@@ -136,7 +137,7 @@ const b64url = buf => Buffer.from(buf).toString('base64')
 	.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 async function post(pathname, body, cookie) {
-	const headers = { 'content-type': 'application/json', 'x-daimond-api': '2' };
+	const headers = { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) };
 	if (cookie) headers.cookie = cookie;
 	const r = await fetch(URL0 + pathname, { method: 'POST', headers, body: JSON.stringify(body) });
 	let j = null; try { j = await r.json(); } catch (e) {}

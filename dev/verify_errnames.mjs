@@ -197,7 +197,7 @@ const CASES = [
 		},
 		act:   async (page) => {
 			await fill(page, '#admin-form .dlg-input', 'definitely-not-an-address');
-			await pressLabel(page, '#admin-form', 'Add and sync');
+			await pressLabel(page, '#admin-form', 'Add and Sync');
 		},
 		err:   '#admin-form .dlg-err',
 		wants: /e-?mail|address/i,

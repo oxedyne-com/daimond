@@ -43,9 +43,6 @@
 	// The most rows one share carries. The gateway caps the body too; this keeps
 	// the post small on a phone.
 	var MAX_FLUSH_ROWS = 500;
-	// The client API version header, so a share is not met with a 426. Matches
-	// CLIENT_API in gateway.js.
-	var CLIENT_API = 2;
 
 	var t0 = Date.now();
 
@@ -199,10 +196,12 @@
 		// Persist the attempt time BEFORE the request, so a slow network cannot
 		// let a second tap through while the first is still in flight.
 		try { localStorage.setItem(LASTFLUSH_KEY, String(Date.now())); } catch (e) {}
+		// The version is read from gateway.js at the send, never copied: index.html loads
+		// gateway.js after this file, so a lookup at load would find nothing (as chunks.js).
 		return fetch(ENDPOINT, {
 			method:      'POST',
 			credentials: 'same-origin',
-			headers:     { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			headers:     { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 			body:        JSON.stringify(payload),
 		}).then(function (res) {
 			if (res && res.ok) { log('shared diagnostics', payload.rows.length + ' rows'); return { ok: true }; }

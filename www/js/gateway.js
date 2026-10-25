@@ -113,6 +113,7 @@
 		}
 		if (stale) { try { window.dispatchEvent(new Event('daimond:stale')); } catch (e) {} }
 	}
+	var HDR_API     = 'x-daimond-api';		// request: this build's version
 	var HDR_MIN_API = 'x-daimond-min-api';
 
 	/// A compact IANA-timezone → ISO-3166 alpha-2 table, the fallback when the
@@ -453,6 +454,17 @@
 		} catch (e2) { return e; }			// a frozen or exotic rejection: unchanged, so unmarked.
 	}
 
+	/// `init` with `x-daimond-api` added when neither it nor a Request `input`
+	/// carries one; `init` itself when one does, or when the headers will not parse.
+	function withApi(input, init) {
+		var base = (init && init.headers) || (input && typeof input === 'object' && input.headers) || undefined;
+		var h;
+		try { h = new Headers(base); } catch (e) { return init; }
+		if (h.has(HDR_API)) return init;
+		h.set(HDR_API, String(CLIENT_API));
+		return Object.assign({}, init || {}, { headers: h });
+	}
+
 	/// The last point before a request leaves the page, for the two callers that
 	/// hold their own `fetch` rather than coming through `gwFetch`: the Web
 	/// panel's `gw()` (web.js) and anything added beside it. Narrow on purpose —
@@ -464,6 +476,12 @@
 	/// taking it off a 423. This is the guard that holds until then, and it is
 	/// here because the alternative — a spend boundary that only the honest
 	/// callers respect — is the decoration this whole phase exists to avoid.
+	///
+	/// And the version. Every same-origin /api/ request leaves with
+	/// `x-daimond-api`, stamped here when the caller sent none: the gateway reads
+	/// a missing version as current, so a request without one is a tab behind the
+	/// floor that is never told (/api/policy and /api/tools went so, API-FLOOR).
+	/// A caller's own value is left as it is.
 	function guardFetch() {
 		if (typeof window === 'undefined' || !window.fetch || window.fetch.__daimondPause) return;
 		var real = window.fetch;
@@ -480,6 +498,7 @@
 			if (p.indexOf('/api/') === 0) {
 				var r = spendRefusal(p, init || (typeof input === 'object' ? input : null));
 				if (r) return Promise.resolve(refusedReply(r));
+				return real.call(window, input, withApi(input, init)).catch(function (e) { throw roadMark(e); });
 			}
 			return real.apply(window, arguments).catch(function (e) { throw roadMark(e); });
 		};

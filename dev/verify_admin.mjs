@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { signInFresh } from './session.mjs';
 import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
+import { CLIENT_API } from './clientapi.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
@@ -85,7 +86,7 @@ async function register(country) {
 	if (country) body.country = country;
 	const r = await fetch(`${GW_URL}/api/account`, {
 		method: 'POST',
-		headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+		headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 		body: JSON.stringify(body),
 	});
 	const j = await r.json();
@@ -138,7 +139,7 @@ async function seed() {
 // call is the only thing Node can make on its own -- and it must be refused.
 async function adminRaw() {
 	const r = await fetch(`${GW_URL}/api/admin?view=summary`, {
-		headers: { 'x-daimond-api': '2' },
+		headers: { 'x-daimond-api': String(CLIENT_API) },
 	});
 	let j = null; try { j = await r.json(); } catch (e) {}
 	return { status: r.status, j };

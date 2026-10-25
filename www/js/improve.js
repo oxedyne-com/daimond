@@ -678,7 +678,7 @@
 			input.spellcheck = false;
 			input.placeholder = tOr('social.voice_ph', 'Paste the line the forge showed you');
 			input.setAttribute('aria-label', tOr('social.voice_ph', 'Paste the line the forge showed you'));
-			host.appendChild(input);
+			host.appendChild(DaimondSecret.eye(input));
 			host.appendChild(button('imp-send', 'improve-voice-save', tOr('social.voice_save', 'Save the posting name')));
 			host.appendChild(button('imp-keep', 'improve-voice-cancel', t('common.cancel')));
 			return;
@@ -749,7 +749,7 @@
 		var input = el('improve-voice-in');
 		if (!input) return false;
 		var raw = String(input.value || '');
-		input.value = '';
+		DaimondSecret.set(input, '');	// cleared and masked again
 		var v = voice();
 		if (!v) return false;
 		var why = '';

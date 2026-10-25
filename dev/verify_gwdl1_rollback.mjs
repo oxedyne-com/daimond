@@ -67,12 +67,12 @@ try {
 	await page.evaluate(() => {
 		const api = (body) => fetch('/api/chunk', {
 			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 			body: JSON.stringify(body),
 		}).then(async r => ({ status: r.status, j: await r.json().catch(() => ({})) }));
 		window.__api = api;
 		window.__version = async () => {
-			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
+			const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': String(DaimondGateway.clientApi()) } });
 			return ((await r.json()).version) | 0;
 		};
 		window.__seed = async (n, tag) => {

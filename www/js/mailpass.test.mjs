@@ -38,7 +38,7 @@ function mailForm() {
 	const sb = {
 		t, mark, document, window: {}, String, parseInt,
 		DaimondAdmin: { form: (o) => { opts = o; } },
-		installSecretMask: () => {}, getSecret: (el) => el.value,
+		installSecretMask: () => {}, getSecret: (el) => el.value, secretEye: (el) => el,
 	};
 	vm.runInNewContext(fn('buildForm') + '\n' + fn('mailDialog')
 		+ '\nthis.buildForm = buildForm; this.mailDialog = mailDialog;', sb);

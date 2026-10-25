@@ -37,7 +37,8 @@ function loadFeed() {
 		addEventListener() {}, createElement: node, getElementById: () => null,
 		querySelector: () => null, querySelectorAll: () => [],
 	};
-	const win = { addEventListener() {}, dispatchEvent() { return true; }, DaimondSync: { nudge() {} } };
+	const win = { addEventListener() {}, dispatchEvent() { return true; }, DaimondSync: { nudge() {} },
+		DaimondGateway: { clientApi: () => 3 } };	// the page's gateway.js, the one copy of the version
 	const quiet = {};
 	['log', 'info', 'debug', 'warn', 'error'].forEach((l) => { quiet[l] = () => {}; });
 	const fetchImpl = () => new Promise(() => {});

@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { GW_URL as GW } from './ports.mjs';
+import { CLIENT_API } from './clientapi.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
@@ -61,18 +62,18 @@ async function account() {
 
 	const ts  = Math.floor(Date.now() / 1000);
 	const reg = await fetch(`${GW}/api/account`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 		body: JSON.stringify({ pubkey: pub, alg: 'Ed25519', ts, sig: sign(`daimond-gw-account:v1:${pub}:${ts}`) }),
 	});
 	if (!reg.ok) return null;
 	const regJ = await reg.json();
 	const accountId = regJ.account_id;
 	const ch = await (await fetch(`${GW}/api/auth/challenge`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 		body: JSON.stringify({ pubkey: pub, alg: 'Ed25519' }),
 	})).json();
 	const ver = await fetch(`${GW}/api/auth/verify`, {
-		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+		method: 'POST', headers: { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
 		body: JSON.stringify({ challenge_id: ch.challenge_id, sig: sign(ch.challenge) }),
 	});
 	const cookie = (ver.headers.get('set-cookie') || '').split(';')[0];
@@ -80,7 +81,7 @@ async function account() {
 }
 
 const authed = (cookie, path_, opts = {}) => fetch(`${GW}${path_}`, {
-	...opts, headers: { ...(opts.headers || {}), cookie, 'x-daimond-api': '2' },
+	...opts, headers: { ...(opts.headers || {}), cookie, 'x-daimond-api': String(CLIENT_API) },
 });
 
 // Mint a Pro licence the one way the gateway trusts: a signed checkout event.

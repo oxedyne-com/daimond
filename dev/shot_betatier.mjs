@@ -190,7 +190,7 @@ async function startGateway(cwd, owner) {
 		// than only the panel's own sentence.
 		const seen = await page.evaluate(async () => {
 			const r = await fetch('/api/admin?view=passcodes', {
-				credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
+				credentials: 'same-origin', headers: { 'x-daimond-api': String(DaimondGateway.clientApi()) } });
 			const j = await r.json();
 			return (j.passcodes || []).map(p => p.label + ': ' + p.pro);
 		});

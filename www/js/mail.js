@@ -1494,6 +1494,81 @@
 		}
 	}
 
+	var GEN_RE = /^\d+\.(\d+)\.daimond:2,/;		// a server copy's name; the middle field is its generation
+	var STEM_RE = /^(\d+\.\d+)\.daimond:2,/;		// a server copy's (uid, generation) stem, its identity
+
+	/// The (uid, generation) a server copy's name stands for, or '' for a local copy.
+	function heldStem(name) {
+		var s = STEM_RE.exec(String(name || '').split('/').pop());
+		return s ? s[1] : '';
+	}
+
+	/// The flags a held name carries, after `:2,`.
+	function nameFlags(name) {
+		var i = String(name).lastIndexOf(':2,');
+		return i < 0 ? '' : String(name).slice(i + 3);
+	}
+
+	/// Of several copies of one (uid, generation), the one to keep when no sync is at hand to
+	/// say the server's flags: the one with the most. A device cannot read when a copy was
+	/// written, and a flag is almost always added on the server (read, answered) rather than
+	/// taken off, so more flags is the later copy. A sync that re-pulls the uid settles it.
+	function keepOf(names) {
+		return names.slice().sort(function (x, y) {
+			return nameFlags(y).length - nameFlags(x).length || (x < y ? 1 : x > y ? -1 : 0);
+		})[0];
+	}
+
+	/// Take down a folder's copies from an earlier UIDVALIDITY, keeping one generation, and
+	/// collapse two copies of one message in the current generation to one.
+	///
+	/// Nothing goes before the current generation holds a file, so a rebuild whose re-fetch
+	/// failed loses nothing. While a rebuild is unfinished (`rebuilding`) or the byte cap held
+	/// some of it back, an old copy goes only when its Message-ID is held in the current
+	/// generation; a finished one takes them all. A message is one file per (uid, generation),
+	/// as Maildir has it, but a build before RESET-GEN part 3 wrote a second file when its
+	/// flags changed on the server (`1.7.daimond:2,` beside `1.7.daimond:2,S`); those pairs
+	/// heal here. Answers whether anything was removed.
+	///
+	/// # Arguments
+	/// * `msgs` - The folder as `readMailbox` read it.
+	async function dropStaleGen(a, name, msgs) {
+		var f = fld(a, name);
+		var cur = String((f && f.uidValidity) || '');
+		if (!cur) return false;
+		var now = {}, written = false, stale = [], stems = {}, drop = [];
+		msgs.forEach(function (m) {
+			var base = String(m.file || '').split('/').pop();
+			var g = GEN_RE.exec(base);
+			if (!g) return;							// a local copy has no generation
+			if (g[1] !== cur) { stale.push(m); return; }
+			written = true;
+			if (m.id) now[hash36(m.id)] = 1;
+			var st = heldStem(base);
+			(stems[st] = stems[st] || []).push(m.file);
+		});
+		Object.keys(stems).forEach(function (st) {
+			var fs = stems[st];
+			if (fs.length < 2) return;
+			var keep = keepOf(fs);
+			fs.forEach(function (x) { if (x !== keep) drop.push(x); });
+		});
+		var whole = !f.rebuilding && !(f.heldBack > 0);
+		if (written) {
+			stale.forEach(function (s) {
+				if (whole || (s.id && now[hash36(s.id)])) drop.push(s.file);
+			});
+		}
+		var gone = false;
+		for (var i = 0; i < drop.length; i++) {
+			try {
+				var r = await deps.runTool('file_delete', { path: drop[i] });
+				if (r && r.outcome === 'done') gone = true;
+			} catch (e) { /* left standing: a duplicate, not a loss; the next load tries again */ }
+		}
+		return gone;
+	}
+
 	/// The names in a directory, or none where it cannot be listed.
 	async function listNames(dir) {
 		var listing;
@@ -1637,15 +1712,20 @@
 				// is the string it will SELECT.
 				mailbox:   name,
 			};
-			if (older) body.before_uid = f.firstUid;
-			else       body.since_uid  = f.lastUid || 0;
+			// A rebuild a failure cut off (`rebuilding` still set: the new generation was
+			// saved, its re-fetch never finished) is finished by the next sync, from uid 0
+			// and as a rebuild, or the whole folder would come back as arrivals.
+			var resumed = !older && !!f.rebuilding;
+			if (older)        body.before_uid = f.firstUid;
+			else if (resumed) body.since_uid  = 0;
+			else              body.since_uid  = f.lastUid || 0;
 
 			// Read BEFORE the fetch, because the rebuild below moves both of them
 			// and the arrival test at the bottom is a question about the folder as
 			// it stood a moment ago.
 			var mark    = f.lastUid || 0;   // the high-water mark this fetch starts from
 			var known   = !!f.lastSync;     // has this folder ever been fetched?
-			var rebuilt = false;            // did the generation change under us?
+			var rebuilt = resumed;          // did the generation change under us, now or in a sync cut off?
 
 			var j = await post('/api/mail/sync', body);
 
@@ -1659,19 +1739,15 @@
 				// it comes back. That is a rebuild, not a delivery, and the arrival
 				// test at the bottom of this function has to be told.
 				rebuilt = true;
-				// KNOWN AND NOT FIXED HERE: the old generation's files stay on disk.
 				// A Maildir name carries the generation it was fetched under
-				// (`<uid>.<uidValidity>.daimond:2,`), so the re-fetch below writes
-				// every message again under a new name and nothing removes the old
-				// copies -- the panel then shows each message twice, and the folder
-				// row's count climbs with every change of generation. Measured, in a
-				// session that left thirteen copies of three messages on disk.
-				//
-				// Not fixed in this pass because the fix DELETES A USER'S MAIL, and
-				// `verify_mailfolders` cannot currently tell one run's files from
-				// another's (see the generation check in that file) -- so there is no
-				// way to prove the deletion right before shipping it. It needs a test
-				// that can see, and that needs the instrument fixed first.
+				// (`<uid>.<uidValidity>.daimond:2,`), so the re-fetch below writes every
+				// message again under a new name. The old copies go once the new ones
+				// are written (`dropStaleGen`, from `loadDigest`); until this rebuild's
+				// writes are done the folder is marked `rebuilding`, so one that fails
+				// or is cut off half way takes only what it has replaced. Before the
+				// rule, alerts@ held each message twice after the 26 Oct bump
+				// (D-20261026-01, `mailgen.test.mjs`).
+				f.rebuilding = true;
 				f.uidValidity = j.uid_validity;
 				save();
 				state.note = t('mail.note.rebuilt');
@@ -1682,12 +1758,31 @@
 
 			var msgs = j.messages || [];
 			var arrived = {};                  // the Message-IDs this fetch brought, hashed
+			// ONE FILE PER (UIDVALIDITY, UID), as Maildir has it. The flags are in the name, so
+			// a message re-pulled after its flags changed on the server (read in the web view)
+			// was written under a second name beside the first: one message, two files, the
+			// count one high (MAIL-BEAT, D-20261026-01, `mailbeat.test.mjs`). A copy held under
+			// another name is renamed to the server's flags, the new name written before the old
+			// goes so nothing is lost; one held under this name is left alone.
+			var cur = mailboxDir(a.address, name) + '/cur';
+			var held = {};                     // stem -> the names held for it
+			if (msgs.length) {
+				(await listNames(cur)).forEach(function (n) {
+					var st = heldStem(n);
+					if (st) (held[st] = held[st] || []).push(n);
+				});
+			}
 			for (var i = 0; i < msgs.length; i++) {
 				var m = msgs[i];
 				var bytes = Uint8Array.from(atob(m.raw), function (c) { return c.charCodeAt(0); });
-				var path = mailboxDir(a.address, name) + '/cur/'
-					+ maildirName(m.uid, f.uidValidity, m.flags);
-				await deps.writeBytes(path, bytes);
+				var file = maildirName(m.uid, f.uidValidity, m.flags);
+				var olds = held[heldStem(file)] || [];
+				if (olds.indexOf(file) < 0) await deps.writeBytes(cur + '/' + file, bytes);
+				for (var k = 0; k < olds.length; k++) {
+					if (olds[k] === file) continue;
+					try { await deps.runTool('file_delete', { path: cur + '/' + olds[k] }); }
+					catch (e) { /* a second copy left standing; the next load collapses it */ }
+				}
 				var mid = header(parseHeaders(atob(m.raw)), 'message-id').trim();
 				if (mid) arrived[hash36(mid)] = 1;
 				if (m.uid > (f.lastUid || 0)) f.lastUid = m.uid;
@@ -1695,6 +1790,8 @@
 				if (!f.firstUid || m.uid < f.firstUid) f.firstUid = m.uid;
 			}
 			await dropLocal(a, name, arrived);
+			// Every message of the rebuild is written, so the old generation may go.
+			if (rebuilt) delete f.rebuilding;
 			// A trigger watches for mail ARRIVING, and this is the only place that
 			// knows any has. Announced rather than called directly: mail must not
 			// have to know what a triggered action is, and a second listener --
@@ -1727,7 +1824,8 @@
 			// new uids are commonly far above the old ones -- which is why it has to
 			// say so itself. See dev/verify_mailtrigger.mjs, which breaks each fence
 			// in turn.
-			var fresh = (older || rebuilt || !known)
+			// `rebuilding` is the fence at its widest: no arrival while a rebuild is unfinished.
+			var fresh = (older || rebuilt || f.rebuilding || !known)
 				? []
 				: msgs.filter(function (m) { return m.uid > mark; });
 			if (fresh.length) {
@@ -1860,6 +1958,7 @@
 		var name = folder || a.folder || 'INBOX';
 		var f    = fld(a, name);
 		var msgs = await readMailbox(a.address, name);
+		noteBeat(a, name, msgs);
 		var cloud = msgs.filter(function (m) { return m.cloud; }).length;
 		// English, and deliberately so: this file is written for the agents'
 		// file tools to read, and a digest whose column headings move with the
@@ -1892,6 +1991,92 @@
 			path: mailboxDir(a.address, name) + '/index.md',
 			content: lines.join('\n') + '\n',
 		});
+	}
+
+	// ── What the lens heartbeat says ───────────────────────────────
+	//
+	// MAIL-BEAT (26 Oct 2026). After mailfix, "the 21:57 Kraig email is in [Gmail]/Sent Mail"
+	// could not be proven without his session: the gateway's log names no folder, and the lens
+	// carried no mail state. So each folder's digest leaves behind what debugshare.js puts on
+	// the feed beside the beat (`DaimondMail.beat`): its role, how many messages it holds, the
+	// newest one's UTC day, and how many Message-IDs it holds more than once. METADATA ONLY:
+	// no subject, sender, recipient or body, no folder name he chose, and no address but the
+	// mailbox's own. Kept per device under its own key and never in the parcel, because it is a
+	// fact about what THIS device has on disk.
+	var BEAT_LS  = 'daimond-mail-beat';
+	var BEAT_MAX = 20;			// folders a mailbox, on the beat
+
+	/// What one folder holds, as the beat says it. A cloud-only message has no Message-ID
+	/// read, so it counts but cannot be a duplicate.
+	function folderBeat(msgs) {
+		var newest = 0, seen = {}, dups = 0;
+		msgs.forEach(function (m) {
+			var at = Date.parse(m.date) || 0;
+			if (at > newest) newest = at;
+			if (!m.id) return;
+			seen[m.id] = (seen[m.id] || 0) + 1;
+			if (seen[m.id] === 2) dups++;
+		});
+		return {
+			count:  msgs.length,
+			newest: newest ? new Date(newest).toISOString().slice(0, 10) : '',
+			dups:   dups,
+		};
+	}
+
+	function beatRecord() {
+		try { return JSON.parse(localStorage.getItem(BEAT_LS) || '{}') || {}; }
+		catch (e) { return {}; }
+	}
+
+	/// The RFC 6154 role, or `inbox` for the one folder every server has and none marks.
+	function roleOf(a, name) {
+		if (name === 'INBOX') return 'inbox';
+		var c = state.folders[a.address];
+		var e = c && c.list && c.list.find(function (x) { return x.name === name; });
+		return (e && e.role) || '';
+	}
+
+	/// Keep what a digest just read, for the beat. Mailboxes no longer configured go.
+	function noteBeat(a, name, msgs) {
+		var rec = beatRecord();
+		Object.keys(rec).forEach(function (k) { if (!acct(k)) delete rec[k]; });
+		var mine = rec[a.address] = rec[a.address] || {};
+		var b = folderBeat(msgs);
+		b.role = roleOf(a, name) || (mine[name] && mine[name].role) || '';
+		mine[name] = b;
+		try { localStorage.setItem(BEAT_LS, JSON.stringify(rec)); }
+		catch (e) { /* storage full: the beat goes without, the mail does not */ }
+	}
+
+	/// Every configured mailbox's folders, as fixed-shape rows, at most `BEAT_MAX` a mailbox:
+	/// the inbox, then the role folders in the panel's order, then his own, which travel as a
+	/// hash of their name rather than the name.
+	function beat() {
+		var rec = beatRecord(), out = [];
+		state.accounts.forEach(function (a) {
+			var mine = rec[a.address] || {};
+			var rows = Object.keys(mine).map(function (name) {
+				var b = mine[name] || {};
+				var role = roleOf(a, name) || b.role || '';
+				return {
+					mb:     a.address,
+					f:      role ? name : '#' + hash36(name),
+					role:   role,
+					count:  b.count | 0,
+					newest: typeof b.newest === 'string' ? b.newest.slice(0, 10) : '',
+					dups:   b.dups | 0,
+				};
+			});
+			var rank = function (r) {
+				if (r.role === 'inbox') return 0;
+				var i = ROLE_ORDER.indexOf(r.role);
+				return r.role ? (i < 0 ? ROLE_ORDER.length : i) + 1 : ROLE_ORDER.length + 2;
+			};
+			rows.sort(function (x, y) { return rank(x) - rank(y) || (x.f < y.f ? -1 : x.f > y.f ? 1 : 0); });
+			out = out.concat(rows.slice(0, BEAT_MAX));
+		});
+		return out;
 	}
 
 	/// Read the mailbox back off disk. The files are the truth; nothing about a
@@ -2011,6 +2196,11 @@
 		// counted and the folder compared.
 		var name = folder || (a && a.folder) || 'INBOX';
 		var msgs = await readMailbox(address, name);
+		// One generation is kept: a folder loaded holding an earlier one's copies sheds them.
+		if (a && await dropStaleGen(a, name, msgs)) {
+			msgs = await readMailbox(address, name);
+			try { await rebuildIndex(a, name); } catch (e) { /* the digest catches up at the next sync */ }
+		}
 		if (address === state.sel && a && name === (a.folder || 'INBOX')) {
 			state.msgs = msgs;
 		}
@@ -3982,6 +4172,7 @@
 		state.msgs = [];
 		state.drafts = [];
 		state.folders = {};
+		try { localStorage.removeItem(BEAT_LS); } catch (e) { /* no storage */ }
 		// What was bound at the gateway is a fact about somebody who has just signed
 		// out. The next session states it again rather than assuming it.
 		bound = {};
@@ -4228,6 +4419,8 @@
 		/// held off the chip row until one is, since neither means anything
 		/// without somewhere for mail to come from.
 		hasAccounts: function () { return state.accounts.length > 0; },
+		/// What each folder holds, metadata only, for the lens heartbeat (debugshare.js).
+		beat:        beat,
 		/// The addresses configured, for a trigger that watches one of them. Names
 		/// only: nothing outside this module has any business with a password.
 		accounts: function () {

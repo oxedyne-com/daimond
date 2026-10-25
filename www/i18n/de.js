@@ -20,6 +20,8 @@
 	// ── Shared words ───────────────────────────────────────────
 	'common.close': 'Schließen',
 	'common.close_named': '{name} schließen',
+	'common.show_secret': 'Zeigen',
+	'common.hide_secret': 'Verbergen',
 	'admin.close_drawer': 'Admin-Bereich schließen',
 	'rail.close_rail': 'Diamonds-Bereich schließen',
 	'sheet.close': 'Blatt schließen',
@@ -705,8 +707,6 @@
 	'identity.your_name': 'Dein Name',
 	'identity.passphrase': 'Passphrase',
 	'identity.confirm_passphrase': 'Passphrase bestätigen',
-	'identity.show_passphrase': 'Passphrase zeigen',
-	'identity.hide_passphrase': 'Passphrase verbergen',
 	'identity.generate_another': 'Neue erzeugen',
 	'identity.wrote_it_down': 'Ich habe das aufgeschrieben',
 	'identity.choose_own': 'Lieber eigene Passphrase wählen',

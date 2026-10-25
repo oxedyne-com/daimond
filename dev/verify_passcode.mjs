@@ -63,6 +63,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, procLog, GWDIR, GWBIN, openBeta } from './gwbin.mjs';
+import { CLIENT_API } from './clientapi.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -183,7 +184,7 @@ function binding(dev) {
 /// session for another's request, which two accounts in one browser context
 /// would do silently.
 async function call(jar, method, url, body, xff) {
-	const headers = { 'x-daimond-api': '2' };
+	const headers = { 'x-daimond-api': String(CLIENT_API) };
 	if (jar && jar.cookie) headers.cookie = jar.cookie;
 	if (body !== undefined) headers['content-type'] = 'application/json';
 	// Talking to the gateway directly, as development does, there is no Steel in

@@ -658,7 +658,7 @@ async function startGateway(ownerAccount) {
 /// An admin call from a page, carrying that page's own session.
 async function api(page, view, body) {
 	return await page.evaluate(async a => {
-		const opts = { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } };
+		const opts = { credentials: 'same-origin', headers: { 'x-daimond-api': String(DaimondGateway.clientApi()) } };
 		if (a.body !== null) {
 			opts.method = 'POST';
 			opts.headers['content-type'] = 'application/json';

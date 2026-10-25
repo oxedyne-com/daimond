@@ -281,7 +281,7 @@ async function pageShare(page, file, rect) {
 		await B.page.evaluate(() => { if (window.DaimondLensShot) DaimondLensShot.setEnabled(true); });
 		const st403 = await B.page.evaluate(async (dev) => {
 			const r = await fetch('/api/lens-shot?device=' + encodeURIComponent(dev), {
-				credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
+				credentials: 'same-origin', headers: { 'x-daimond-api': String(DaimondGateway.clientApi()) } });
 			return r.status;
 		}, b.dev);
 		check('the gateway answers the non-owner 403', st403 === 403, 'status ' + st403);

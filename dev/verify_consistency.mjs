@@ -49,6 +49,7 @@ const OLD = new Set((process.env.CONS_OLD || '').split(',').filter(Boolean));
 const old = (k) => OLD.has('1') || OLD.has(k);
 // CONS_VONLY: a varlen pass takes only the slots whose name matches this pattern (the locale surfaces are skipped), for a quick reading of one.
 const VONLY = process.env.CONS_VONLY ? new RegExp(process.env.CONS_VONLY) : null;
+const CROP  = process.env.CONS_CROP ? new RegExp(process.env.CONS_CROP) : null;
 const MODE  = process.argv[2] || 'all';
 // The www tree this run starts on, so the by-role evidence it files (dev/gate_evidence.mjs, deploy.sh step 0h) is for the tree that was measured.
 const WWW0  = MODE === 'all' ? spawnSync('git', ['rev-parse', 'HEAD:www'], { cwd: path.join(import.meta.dirname, '..'), encoding: 'utf8' }).stdout.trim() : '';
@@ -499,6 +500,9 @@ async function grab(name, rootSel, keep) {
 	if (a.missing) { log('MISSING', surface, rootSel); CAP.missing.push(surface); return; }
 	CAP.items.push(...a.items); CAP.faults.push(...a.faults); CAP.tiles.push(...a.tiles); CAP.tap.push(...(a.tap || [])); CAP.surfaces.push(surface);
 	if (process.env.CONS_SHOTS) await page.screenshot({ path: `${OUT}/shot_${surface.replace(/\W+/g, '_')}.png`, animations: 'disabled' }).catch(() => {});
+	// CONS_CROP=<pattern>: the surfaces whose name matches it are also saved as a crop of their root alone, for a reviewer's eye.
+	if (CROP && CROP.test(surface)) await (rootSel ? page.locator(rootSel).first().screenshot({ path: `${OUT}/crop_${surface.replace(/\W+/g, '_')}.png`, animations: 'disabled' })
+		: page.screenshot({ path: `${OUT}/crop_${surface.replace(/\W+/g, '_')}.png`, animations: 'disabled' })).catch((e) => log('crop fail', surface, String(e).slice(0, 120)));
 	log('surface', surface, a.items.length);
 }
 // The Diamond on screen with its crystal.json broken, as a pre-K0 turn left Ontheism's (D-20261008-08): the note, the fault's line and
@@ -1023,6 +1027,7 @@ async function deskSurfaces() {
 	for (const re of ['^Change name', '^Change passphrase', '^Set up git push', '^Edit the Chat prompt', '^Forget this identity', '^Social settings']) {
 		await overlay('form_' + re.replace(/\W+/g, '').slice(0, 16), () => settingsRow(re));
 	}
+	await group('secret_surfaces', () => secretSurfaces(''));
 	await quiet();
 	// Every dock and stage panel on its own beside the chat.
 	const ids = await ev(() => DaimondPanels.panels().map((p) => p.id));
@@ -1148,6 +1153,53 @@ async function phoneSurfaces(wk) {
 	await group('p_carry_surfaces', () => carrySurfaces(wk));
 	await group('p_rating_surfaces', () => ratingSurfaces('p_', wk));
 	await group('p_change_surfaces', () => changeSurfaces('p_'));
+	await group('p_secret_surfaces', () => secretSurfaces('p_'));
+}
+
+// EYE-TOGGLE (D-20261025-10): the two secret fields no other surface opens, so the eye-toggle role compares every instance. The unlock
+// screen is drawn by the app's own `showIdentity('unlock')` and put away by display, as the gate's own hide does, with no unlock attempted;
+// the mailbox form is opened from the Mail panel's Add, as a person opens it, and closed unsubmitted.
+async function secretSurfaces(pre) {
+	await quiet();
+	const up = await ev(() => { try { window.DaimondCore.showIdentity('unlock'); } catch (e) { return String(e); }
+		const m = document.getElementById('identity-modal'); return !!m && m.getClientRects().length > 0; });
+	// The name and passphrase fields, the eye's own place: the front door's buttons are the card's own and not what this surface is for.
+	// The keyboard is taken off the passphrase the draw focuses, since a focused field wears the focus ring, not the field's rest.
+	if (up === true) { await ev(() => { if (document.activeElement) document.activeElement.blur(); }); await wait(500); await grab(pre + 'dlg_unlock', '#identity-modal .id-fields'); }
+	else { log('no unlock screen', JSON.stringify(up)); CAP.missing.push(`${CFG}/${pre}dlg_unlock`); }
+	await ev(() => { const m = document.getElementById('identity-modal'); if (m) m.style.display = 'none'; });
+	await quiet();
+	await ev(() => { try { window.DaimondPanels.show('mail'); } catch (e) {} }); await wait(700);
+	// Add opens the form only for an account that holds email (Pro); the world's does not, and whether the gateway's answer arrived
+	// decided it (desk drew the form, phone drew Credits). So the entitlement is answered in the page, as for a Pro holder, the panel
+	// re-reads it, and both are put back after the grab.
+	await ev(() => { const real = window.fetch; window.__mailUndo = real;
+		window.fetch = function (u) {
+			if (!/\/api\/mail\/accounts(\?|$)/.test(String((u && u.url) || u))) return real.apply(this, arguments);
+			return Promise.resolve(new Response(JSON.stringify({ ok: true, unlocked: true, max_accounts: 5, accounts: [] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+		};
+		try { window.DaimondMail.onOpen(); } catch (e) {} });
+	await wait(900);
+	// DaimondAdmin.form draws the form in the Settings drawer while the rail is on screen, and as a dialog when it is not, which is a
+	// phone's case with Mail up (the rail is one tab of four). So the root is the drawer's body (#admin's own box is the user row) or the
+	// top dialog, whichever holds the shown password, and the surface counts only once its password is there.
+	if (await click('#panel-mail [data-act="mail-add"]')) {
+		await wait(900);
+		const root = await ev(() => { const has = (el) => !!el && [...el.querySelectorAll('.pass-wrap input')].some((i) => i.getClientRects().length > 0);
+			if (has(document.querySelector('#admin.admin-open.admin-form-mode'))) return '#admin .admin-body';
+			const d = [...document.querySelectorAll('.modal')].filter((m) => m.getClientRects().length > 0 && has(m)).pop();
+			if (!d) return null; if (!d.id) d.id = 'cons-mailbox-dlg'; return '#' + d.id; });
+		if (typeof root === 'string') { await ev(() => { if (document.activeElement) document.activeElement.blur(); }); await wait(200); await grab(pre + 'form_mailbox', root); }
+		// A miss says what was on screen instead, so the next one is read from the log rather than probed.
+		else { log('no mailbox form', JSON.stringify(await ev(() => { const a = document.getElementById('admin');
+			const vis = (q) => [...document.querySelectorAll(q)].filter((e) => e.getClientRects().length > 0).map((e) => (e.id || e.className || e.tagName).toString().slice(0, 60));
+			return { admin: a && a.className, body: document.body.className, w: innerWidth, modals: vis('.modal, .dlg, [role=dialog]'), pass: vis('.pass-wrap input'), forms: vis('#admin form, #admin .admin-form') }; })));
+			CAP.missing.push(`${CFG}/${pre}form_mailbox`); }
+	} else { log('no mailbox Add'); CAP.missing.push(`${CFG}/${pre}form_mailbox`); }
+	await quiet();
+	await ev(() => { if (window.__mailUndo) { window.fetch = window.__mailUndo; delete window.__mailUndo; } try { window.DaimondMail.onOpen(); } catch (e) {} });
+	await wait(500);
+	await ev(() => { try { window.DaimondPanels.hide('mail'); window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400);
 }
 
 // The surfaces the 5.2.9 carry needs (G1, rule 4: every instance). Each starts from a known place, the main chat on the chat panel with
@@ -1812,6 +1864,8 @@ const within = (it, re) => it.anc.some((a) => re.test(a));
 const ROLES = [
 	// [role, casing rule, predicate]
 	// Controls.
+	// EYE-TOGGLE (D-20261025-10): the one show/hide eye every secret field wears (www/js/secret.js), compared with its own instances.
+	['eye-toggle',      'none',     (it) => it.ctrl && has(it, 'pass-eye')],
 	['close-button',    'none',     (it) => it.ctrl && (has(it, 'panel-close') || has(it, 'ui-close') || has(it, 'admin-back') || has(it, 'pal-close') || /^close\b/i.test(it.aria) && !txt(it))],
 	// 5.3.2 (G): a Pending tile's headline opens its detail, as a rail tile's name selects the tile: the same label button. Ahead of the
 	// create-button regex, which reads "Add a note for glm-5.2" as a creating verb.
@@ -1965,7 +2019,7 @@ const ROLE_PROPS = {
 	// `menu-item` too (CONS-BYROLE F1): an icon row's gap (About, Guide: 4px) is the icon-gap check's, and a Settings reading's is
 	// its status dot's (8px, his pick A), which is not an icon; compared here, one outvoted the other.
 	'create-button': PROPS_CTRL.concat('icon'), 'text-button': PROPS_CTRL, 'dialog-action': PROPS_CTRL, 'head-tool': PROPS_CTRL.filter((p) => p !== 'gap').concat('icon'),
-	'icon-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'bar-icon': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'composer-button': ['rad', 'h', 'icon', 'bd'], 'close-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'],
+	'icon-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'bar-icon': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'composer-button': ['rad', 'h', 'icon', 'bd'], 'close-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'eye-toggle': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'],
 	'tab': PROPS_CTRL, 'toggle-option': PROPS_CTRL, 'menu-item': PROPS_CTRL.filter((p) => p !== 'gap').concat('icon'), 'chip': PROPS_CTRL, 'filter-chip': PROPS_CTRL,
 	'field': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'h', 'sh'], 'select': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'], 'toggle': ['h', 'bd', 'rad'],
 	'disclosure': PROPS_TEXT.concat('bg', 'bd', 'pad', 'h'), 'inline-link': ['ff', 'fw', 'col', 'td', 'bg', 'bd', 'pad'],

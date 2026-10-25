@@ -2727,23 +2727,7 @@ span.arte-open { cursor: default; }
    manager file the entry under a username, but it reads as information. */
 .id-fields input[readonly] { color: var(--text-muted); border-style: dashed; }
 .id-fields input[readonly]:focus { border-color: var(--border); }
-/* The passphrase field carries a reveal toggle inside its right edge, so a long
-   passphrase typed on a phone can be checked. The input reserves room for it. */
-.pass-wrap { position: relative; display: flex; }
-/* THE RESERVATION IS PART OF THE FIELD, and it has to survive a skin. Any skin
-   that restates `padding` on inputs -- warm does, in `calc(9px * scale)
-   calc(13px * scale)` -- wipes the right-hand reservation with the shorthand,
-   and the typed passphrase then runs under the eye by ~17px at the default
-   reading size. A skin cannot be expected to know which fields carry something
-   inside them, so the field insists rather than the skin remembering. Measured
-   with dev/probe_passeye.mjs, which reports the overlap in pixels. */
-.pass-wrap input { flex: 1; padding-right: 40px !important; }
-.pass-eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-	width: 32px; height: 32px; padding: 0; display: flex; align-items: center;
-	justify-content: center; background: none; border: none; color: var(--text-muted);
-	cursor: pointer; }
-.pass-eye:hover { color: var(--text-primary); }
-.pass-eye .ic { width: 20px; height: 20px; }
+/* The eye a secret field wears is its own stylesheet, css/secret.css. */
 /* ── The foot that holds the one next step ──────────────────────
    `.modal-card` scrolls (`overflow-y: auto`), and the create screen is the
    tallest thing that has ever been put in one: a logo, the stranger strip, a

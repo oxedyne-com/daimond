@@ -87,6 +87,8 @@
 	// The spoken name of a closer, so a reader hears which of the app's
 	// crosses this is rather than a fourth button called Close.
 	'common.close_named':  'Close {name}',
+	'common.show_secret':  'Show',
+	'common.hide_secret':  'Hide',
 	'admin.close_drawer':  'Close the Admin panel',
 	'rail.close_rail':     'Close the diamonds panel',
 	'sheet.close':         'Close the sheet',
@@ -1662,7 +1664,7 @@
 	// Adding a mailbox.
 	'mail.add.title':         'Add a mailbox',
 	'mail.add.lead':          'Daimond’s gateway connects to your mail server, hands the messages back, and forgets your password. The password is encrypted on this device under your passphrase.',
-	'mail.add.ok':            'Add and sync',
+	'mail.add.ok':            'Add and Sync',
 	'mail.add.address':       'Email address',
 	'mail.add.password':      'Password',
 	'mail.add.password_ph':   'Your mailbox password',
@@ -1768,8 +1770,6 @@
 	'identity.your_name':          'Your name',
 	'identity.passphrase':         'Passphrase',
 	'identity.confirm_passphrase': 'Confirm passphrase',
-	'identity.show_passphrase':    'Show passphrase',
-	'identity.hide_passphrase':    'Hide passphrase',
 	'identity.generate_another':   'Generate another',
 	'identity.wrote_it_down':      'I have written this down',
 	'identity.choose_own':         'Choose my own passphrase instead',

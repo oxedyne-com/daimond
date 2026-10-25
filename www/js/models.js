@@ -4166,6 +4166,7 @@
 		set.className = 'models-refetch';
 		set.textContent = t('models.key_save');
 		var commit = async function () {
+			DaimondSecret.hide(input);
 			var v = String(input.value || '').trim();
 			if (!v) { note(t('models.key_empty')); return; }
 			note('');
@@ -4176,7 +4177,7 @@
 		input.addEventListener('keydown', function (ev) {
 			if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
 		});
-		row.appendChild(input);
+		row.appendChild(DaimondSecret.eye(input));
 		row.appendChild(set);
 		wrap.appendChild(row);
 		return wrap;

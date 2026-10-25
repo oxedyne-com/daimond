@@ -72,6 +72,7 @@
 <meta name="apple-mobile-web-app-title" content="Daimond">
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/secret.css"><!-- js/secret.js — the eye every secret field wears -->
 <link rel="stylesheet" href="css/render.css">
 <!-- crystal.css AFTER app.css, deliberately. Both sheets name classes beginning
      `crystal-`: app.css dresses the chrome around the frame (the ask row, the ✎
@@ -1750,11 +1751,9 @@
 				</div>
 				<div class="pass-wrap" id="id-pass-row">
 					<input type="password" id="id-pass" name="password" placeholder="Passphrase" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" data-i18n-placeholder="identity.passphrase">
-					<button type="button" class="pass-eye icon-btn" id="id-pass-eye" title="Show passphrase" aria-label="Show passphrase" data-i18n-title="identity.show_passphrase" data-i18n-aria-label="identity.show_passphrase"></button>
 				</div>
 				<div class="pass-wrap" id="id-pass2-row">
 					<input type="password" id="id-pass2" placeholder="Confirm passphrase" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" data-i18n-placeholder="identity.confirm_passphrase">
-					<button type="button" class="pass-eye icon-btn" id="id-pass2-eye" title="Show passphrase" aria-label="Show passphrase" data-i18n-title="identity.show_passphrase" data-i18n-aria-label="identity.show_passphrase"></button>
 				</div>
 			</div>
 			<div id="id-error" class="login-error"></div>
@@ -1855,6 +1854,9 @@
      immediately, because it is both the baseline and the fallback. -->
 <script src="js/i18n.js"></script>
 <script src="i18n/en.js"></script>
+<!-- secret.js right after the words it uses: the mask and the eye every secret
+     field wears, for the wasm module and the classic scripts alike. -->
+<script src="js/secret.js"></script>
 <!-- closer.js right after the words it uses: it builds the one cross every
      dialog, popover, drawer and sheet wears, and it is loaded before ANY of
      them so a classic script and the wasm module can both reach for it. -->

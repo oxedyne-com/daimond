@@ -26,7 +26,7 @@ export async function accountOf(page) {
 		const r = await fetch('/api/account', {
 			method: 'POST',
 			credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+			headers: { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 			body: JSON.stringify({ pubkey: pub, alg: alg, ts: ts, sig: sig }),
 		});
 		const j = await r.json();

@@ -39,7 +39,6 @@
 	'use strict';
 
 	var ENDPOINT   = '/api/debug-trace';
-	var CLIENT_API = 2;                          // matches diag.js / debugshare.js / gateway.js
 
 	// ── Auto-arm: a report made after an error is not empty ─────────
 	//
@@ -357,10 +356,12 @@
 	/// is answered with the same 429.
 	function post(reason) {
 		var rows = fitBudget(reportRows(reason));
+		// The version is read from gateway.js at the send, never copied: index.html loads
+		// gateway.js after this file, so a lookup at load would find nothing (as chunks.js).
 		return fetch(ENDPOINT, {
 			method:      'POST',
 			credentials: 'same-origin',
-			headers:     { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			headers:     { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 			body:        JSON.stringify({ v: 1, device: deviceId(), rows: rows }),
 		}).then(function (res) {
 			if (res && res.ok) return { ok: true, rows: rows.length };

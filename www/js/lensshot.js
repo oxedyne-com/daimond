@@ -21,7 +21,6 @@
 	var ENDPOINT	= '/api/lens-shot';
 	var POLL_MS	= 5000;
 	var FLOOR_MS	= 60000;		// the gateway's floor, kept here too so a slip costs nothing
-	var CLIENT_API	= 2;			// matches CLIENT_API in gateway.js / debugshare.js
 
 	var notify = null, label = '', timer = null, busy = false, barred = false, lastAt = 0;
 
@@ -48,10 +47,12 @@
 	}
 
 	function call(method, u, body) {
+		// The version is read from gateway.js at the send, never copied: index.html loads
+		// gateway.js after this file, so a lookup at load would find nothing (as chunks.js).
 		var o = {
 			method:      method,
 			credentials: 'same-origin',
-			headers:     { 'x-daimond-api': String(CLIENT_API) },
+			headers:     { 'x-daimond-api': String(DaimondGateway.clientApi()) },
 		};
 		if (body) {
 			o.headers['content-type'] = 'image/png';

@@ -114,7 +114,7 @@ function makeEnv(cfg) {
 		body,
 	};
 
-	const win = {};
+	const win = { DaimondGateway: { clientApi: () => 3 } };	// the page's gateway.js, the one copy of the version
 	// Trail: a fixed, non-empty ring, so a report's trail section is provably
 	// non-empty unless the seam itself is removed (the (a) revert below).
 	win.DaimondTrail = cfg.noTrail ? null : {

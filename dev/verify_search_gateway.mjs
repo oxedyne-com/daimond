@@ -62,6 +62,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { requireFreshGateway } from './gwbin.mjs';
+import { CLIENT_API } from './clientapi.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
@@ -179,7 +180,7 @@ async function start(bin, cwd, port) {
 	return up;
 }
 
-const H = { 'content-type': 'application/json', 'x-daimond-api': '2' };
+const H = { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) };
 const post = (port, body) => fetch(`http://127.0.0.1:${port}/api/web/search`,
 	{ method: 'POST', headers: H, body: JSON.stringify(body) });
 
@@ -287,7 +288,7 @@ async function refusal(port, body) {
 		'HTTP ' + big.status + ' ' + big.text);
 
 	const got = await fetch(`http://127.0.0.1:${A_PORT}/api/web/search?query=q`,
-		{ headers: { 'x-daimond-api': '2' } });
+		{ headers: { 'x-daimond-api': String(CLIENT_API) } });
 	check('GET is refused: a query belongs in a body, not in somebody\'s access log',
 		got.status === 405, 'HTTP ' + got.status);
 

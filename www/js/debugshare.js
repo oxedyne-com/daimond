@@ -127,7 +127,6 @@
 	var SIGNALS_KEY = 'daimond-signals';		// the per-Diamond / per-model signal index
 	var CROSS_KEY   = 'daimond-debug-cross';	// our own diamond×model spend cross (while on)
 	var ENDPOINT    = '/api/debug-trace';
-	var CLIENT_API  = 2;						// matches CLIENT_API in gateway.js / diag.js
 
 	var MAX_DATA_BYTES = 360;
 	var MAX_ROWS_POST  = 400;
@@ -1378,7 +1377,54 @@
 			cdrop:     (function () { var n = conDropped; conDropped = 0; return n; })(),
 			tdrop:     (function () { var n = telDropped; telDropped = 0; return n; })(),
 		});
+		mailBeat(now);
 		screenTick();
+	}
+
+	// ── The mail beat (MAIL-BEAT, 26 Oct 2026) ─────────────────────
+	//
+	// What each mail folder on this device holds, so `dev/lens.mjs mail` can prove a sync
+	// without his session: one `mail` row per folder, beside the beat rather than inside it,
+	// since twenty folders do not fit one 360-byte event. A row goes when its folder changed
+	// since the last one sent, and every folder goes again each hour, so the newest row is
+	// never more than an hour stale. THE ALLOW-LIST IS HERE, not in mail.js: whatever
+	// `DaimondMail.beat` hands over, only these six fields leave, `newest` cut to a date.
+	var MAIL_FULL_MS = 3600000;			// every folder said again this often
+	var MAIL_MAX     = 20;				// folders a mailbox
+	var mailSent     = {};				// mailbox + folder -> the row last sent
+	var mailFullAt   = 0;
+
+	function mailRow(r) {
+		var day = String((r && r.newest) || '').slice(0, 10);
+		return {
+			mb:     clip(r && r.mb, 96),
+			f:      clip(r && r.f, 64),
+			role:   clip(r && r.role, 12),
+			count:  (r && r.count) | 0,
+			newest: /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '',
+			dups:   (r && r.dups) | 0,
+		};
+	}
+
+	function mailBeat(now) {
+		var rows;
+		try {
+			if (!window.DaimondMail || !DaimondMail.beat) return;
+			rows = DaimondMail.beat();
+		} catch (e) { return; }		// mail is not up: the beat goes without it
+		if (!Array.isArray(rows)) return;
+		var full = !mailFullAt || (now - mailFullAt) >= MAIL_FULL_MS;
+		if (full) mailFullAt = now;
+		var next = {}, per = {};
+		rows.forEach(function (r) {
+			var row = mailRow(r);
+			per[row.mb] = (per[row.mb] || 0) + 1;
+			if (per[row.mb] > MAIL_MAX) return;
+			var key = row.mb + '\n' + row.f, sig = JSON.stringify(row);
+			next[key] = sig;
+			if (full || mailSent[key] !== sig) event('mail', row);
+		});
+		mailSent = next;
 	}
 
 	/// One post's worth of events, taken from the FRONT of the outbox and never
@@ -1438,10 +1484,12 @@
 		// when the post arrives, and a slow reply must not buy a second one.
 		lastPostAt = Date.now();
 		write(POST_AT_KEY, String(lastPostAt)); // survives a reload; `write` itself is guarded
+		// The version is read from gateway.js at the send, never copied: index.html loads
+		// gateway.js after this file, so a lookup at load would find nothing (as chunks.js).
 		return fetch(ENDPOINT, {
 			method:      'POST',
 			credentials: 'same-origin',
-			headers:     { 'content-type': 'application/json', 'x-daimond-api': String(CLIENT_API) },
+			headers:     { 'content-type': 'application/json', 'x-daimond-api': String(DaimondGateway.clientApi()) },
 			body:        body,
 		}).then(function (r) {
 			// A stub or a build whose fetch resolves nothing counts as delivered:
@@ -2057,6 +2105,7 @@
 		_arrivalsClear: function () { arrivals.length = 0; },
 		_persistNow:  persistNow,
 		_beatTick:    beatTick,
+		_mailBeat:    mailBeat,
 		_capabilities: capabilities,
 		_gatherScreen: gatherScreen,
 		_screenTick:   screenTick,

@@ -114,7 +114,7 @@ const landed = await a.page.evaluate(async () => {
 	while (Date.now() - t0 < 30000) {
 		await DaimondSync.push();
 		mine.add(JSON.stringify(await DaimondSync.parcel()));
-		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
+		const r = await fetch('/api/sync', { credentials: 'same-origin', headers: { 'x-daimond-api': String(DaimondGateway.clientApi()) } });
 		const j = await r.json();
 		if (j.present) {
 			try { const held = await window.DaimondIdentity.unwrap(j.blob); if (mine.has(held)) return { ok: true, v: j.version | 0 }; }

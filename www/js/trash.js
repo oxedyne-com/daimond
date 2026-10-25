@@ -275,7 +275,8 @@
 	async function refresh() {
 		var j;
 		try {
-			var res = await fetch('/api/policy', { headers: { 'accept': 'application/json' } });
+			var res = await fetch('/api/policy', { headers: { 'accept': 'application/json',
+				'x-daimond-api': String(DaimondGateway.clientApi()) } });
 			if (!res.ok) return false;
 			j = await res.json();
 		} catch (e) { return false; }		// offline, or no gateway in this build
@@ -305,8 +306,16 @@
 	};
 
 	// Ask once per boot. Nothing waits on it: the cached or shipped figures are
-	// already in force, and this only replaces them.
-	try { refresh(); } catch (e) { /* no fetch in this environment */ }
+	// already in force, and this only replaces them. Asked once every script has
+	// run, because index.html loads this file before gateway.js, whose
+	// clientApi() the request carries; asked at load, it went with no version.
+	try {
+		if (typeof document !== 'undefined' && document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', function () { refresh(); });
+		} else {
+			refresh();
+		}
+	} catch (e) { /* no fetch in this environment */ }
 })();
 (function () {
 	'use strict';

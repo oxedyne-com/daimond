@@ -22,6 +22,8 @@
 	// ── 共通の語 ───────────────────────────────────────────────
 	'common.close':        '閉じる',
 	'common.close_named':  '{name}を閉じる',
+	'common.show_secret':  '表示',
+	'common.hide_secret':  '隠す',
 	'admin.close_drawer':  '管理パネルを閉じる',
 	'rail.close_rail':     'diamonds パネルを閉じる',
 	'sheet.close':         'シートを閉じる',
@@ -852,8 +854,6 @@
 	'identity.your_name':          'お名前',
 	'identity.passphrase':         'パスフレーズ',
 	'identity.confirm_passphrase': 'パスフレーズの確認',
-	'identity.show_passphrase':    'パスフレーズを表示',
-	'identity.hide_passphrase':    'パスフレーズを隠す',
 	'identity.generate_another':   '別のものを生成',
 	'identity.wrote_it_down': '書き留めました',
 	'identity.choose_own':         '自分でパスフレーズを決める',
