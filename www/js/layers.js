@@ -77,6 +77,16 @@
      was taken). No module compares a key with 'Escape' to close a surface of its
      own; layers.wiring.test.mjs fails the one that does.
 
+     A MENU BELONGS TO THE VIEW IT WAS OPENED OVER (OWNKEY-PG). A menu hung on the
+     body (the source, Chats, Workspace, tag and fold menus, workspace.js's popovers)
+     is opened with `menu`, not `open`. One is up at a time: opening one closes the
+     other through its own closer. A navigation (a panel shown or hidden, a chat or a
+     Diamond selected) calls `leave`, which closes the menu and nothing else. Each
+     menu used to keep its own singleton and was dismissed only by a click outside,
+     so a change of view made without a click left it standing over the next control,
+     its rows bound to a chat no longer on screen. layers.wiring.test.mjs fails the
+     menu builder that does not use `menu`, and the navigation that does not `leave`.
+
      Three things stand outside that rule, each on purpose:
        - an element that owns Escape as input says so with `data-own-escape`
          (the terminal's input, whose Escape is a byte for its program), and an
@@ -113,7 +123,7 @@
 
 	function make(win) {
 		var api       = {};
-		var stack     = [];		// { id, close, opener, over }, bottom first; over: the claims live when it opened
+		var stack     = [];		// { id, close, opener, over, menu }, bottom first; over: the claims live when it opened
 		var claims    = [];		// { id, fn, live }, oldest first: Escape-only entries with no history
 		var pos       = 0;		// the history depth we believe the page is at
 		var pending   = [];		// when each traversal we issued was issued
@@ -247,6 +257,35 @@
 			else stack.push({ id: id, close: close, opener: opener || active(), over: liveClaims() });
 			later();
 			return id;
+		};
+
+		/// A menu is up: a layer hung on the body that belongs to the view it was opened over. One menu is up at a
+		/// time, so the one already up (another id) is first closed through its own closer, in the same turn, which
+		/// costs no traversal. A navigation (`leave`) closes it.
+		api.menu = function (id, close, opener) {
+			for (var i = stack.length - 1; i >= 0; i--) {
+				if (stack[i].menu && stack[i].id !== id) {
+					var l = stack.splice(i, 1)[0];
+					try { l.close(); } catch (e) { /* a closer that fails still leaves the stack */ }
+				}
+			}
+			api.open(id, close, opener);
+			stack[indexOf(id)].menu = true;
+			return id;
+		};
+
+		/// The view is changing: close the menu that is up, through its own closer. Sheets, dialogs and the drawer
+		/// stay. A menu bound to the old view would otherwise stand over the new one, and a pick in it act on a
+		/// chat no longer on screen (OWNKEY-PG).
+		api.leave = function () {
+			var hit = false;
+			for (var i = stack.length - 1; i >= 0; i--) {
+				if (!stack[i].menu) continue;
+				var l = stack.splice(i, 1)[0];
+				hit = true;
+				try { l.close(); } catch (e) { /* a closer that fails still leaves the stack */ }
+			}
+			if (hit) later();
 		};
 
 		/// A layer has closed. Nothing happens for one that is not up.

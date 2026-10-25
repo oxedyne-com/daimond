@@ -13832,9 +13832,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// that rises as a SHEET leaves the conversation underneath, so those are
 		// left alone.
 		if (crystalFull && name !== 'ai' && !MOBILE_GUESTS[name]) setCrystalFull(false);
-		// One panel at a time: the Workspace panel's menu hangs on the body and would stay over
-		// whatever is shown in its place (UNBLOCK-24 r3).
-		if (name !== 'work' && Files) Files.onLeave();
+		// A menu hangs on the body and would stay over whatever is shown in its place
+		// (UNBLOCK-24 r3, OWNKEY-PG): the stack puts it away.
+		DaimondLayers.leave();
 		// The rail is reached through the hamburger drawer, not the bar.
 		if (name === 'rail') {
 			if (window.DaimondShell) DaimondShell.openDrawer();
@@ -15333,10 +15333,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `quiet` opens the panel in the engine and leaves the phone's floor, and so its
 			// drawer, where they were: for a caller that is not a person's own tap.
 			var quiet = !!(opts && opts.quiet);
-			// A person asking for a panel, this one again included, is done with the Workspace
-			// panel's menu: it hangs on the body, and on a desktop, where that panel stays on
-			// screen beside the one asked for, it stayed over the rows under it (UNBLOCK-24 r3).
-			if (!quiet && Files) Files.onLeave();
+			// A person asking for a panel, this one again included, is done with the menu that is
+			// up: it hangs on the body, and on a desktop, where the panel it came from stays on
+			// screen beside the one asked for, it stayed over the rows under it (UNBLOCK-24 r3, OWNKEY-PG).
+			if (!quiet) DaimondLayers.leave();
 			// Before anything else, and before the already-open shortcut below: an
 			// asked-for panel that is still suppressed must be let out first, or it
 			// is seated where nothing can be seen. Ahead of the shortcut so that a
@@ -15447,7 +15447,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// open (S-UI #2) -- a panel closed and never reopened must not keep a
 			// listener nothing on screen needs any more.
 			if (id === 'modeldash' && window.DaimondModelDash) DaimondModelDash.onClose();
-			if (id === 'work' && Files) Files.onLeave();		// its menu is on the body, not in the panel
+			DaimondLayers.leave();		// a menu is on the body, not in the panel
 			open[id] = false;
 			if (id === 'rail') railForced = false;   // a closed rail is not a forced one
 			stage = stage.filter(function (x) { return x !== id; });
@@ -32398,6 +32398,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			case 'runner-rekey':		return t('seat.why_runner_rekey', { name: name });
 			case 'runner-engine':		return t('seat.why_runner_engine', { name: name });
 			case 'runner-credits-only':	return t('seat.why_runner_credits', { name: name });
+			case 'runner-silent':		return t('seat.why_runner_quiet', { name: name });
 			default:					return '';
 		}
 	}
@@ -32649,7 +32650,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var below = a.bottom + 4 + menu.offsetHeight <= window.innerHeight - 8;
 		menu.style.top = Math.max(8, below ? a.bottom + 4 : a.top - 4 - menu.offsetHeight) + 'px';
 		_sourceMenu = menu;
-		DaimondLayers.open('sourcemenu', closeSourceMenu, anchor);
+		DaimondLayers.menu('sourcemenu', closeSourceMenu, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
 		setTimeout(function () { document.addEventListener('click', onSourceMenuOutside, true); }, 0);
 	}
@@ -35383,7 +35384,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		menu.style.top = (r.bottom + 4) + 'px';
 		_chatsMenu = menu;
 		// A layer, so that Back closes it as Escape does; the button is where the keyboard goes back to.
-		DaimondLayers.open('chatsmenu', closeChatsMenu, anchor);
+		DaimondLayers.menu('chatsmenu', closeChatsMenu, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
 		setTimeout(function () {
 			document.addEventListener('click', onChatsMenuOutside, true);
@@ -35567,6 +35568,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function closeFoldMenu() {
 		_foldAnchor = null;
 		if (_foldMenu) { _foldMenu.remove(); _foldMenu = null; document.removeEventListener('click', onFoldOutside, true); }
+		DaimondLayers.done('foldmenu');
 	}
 	function onFoldOutside(e) {
 		if (_foldMenu && !_foldMenu.contains(e.target) && !(_foldAnchor && _foldAnchor.contains && _foldAnchor.contains(e.target))) closeFoldMenu();
@@ -35645,6 +35647,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		menu.style.top = (r.bottom + 4) + 'px';
 		_foldMenu = menu;
 		_foldAnchor = anchor || null;
+		// A menu of the stack's, so that Escape and Back reach it and a navigation takes it.
+		DaimondLayers.menu('foldmenu', closeFoldMenu, anchor);
 		setTimeout(function () { document.addEventListener('click', onFoldOutside, true); }, 0);
 	}
 
@@ -36062,6 +36066,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// turn and finished after twenty are different stories, and this is the
 		// only moment both the chat and the fact of leaving it are in hand.
 		if (current && current !== chat) tel('chat.leave', turnsIn(current));
+		// A menu up was bound to the chat being left (the source menu's rows pick for it).
+		DaimondLayers.leave();
 		// Before `current` moves, while the outgoing conversation is still the one
 		// the box belongs to. See `moveComposerTo`.
 		moveComposerTo(chat);
@@ -53860,7 +53866,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			menu.style.left = Math.max(8, Math.min(left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
 			menu.style.top = Math.max(8, Math.min(top, window.innerHeight - menu.offsetHeight - 8)) + 'px';
 			pop = { el: menu, key: key, anchor: anchor };
-			DaimondLayers.open('filesmenu', closePop, anchor);
+			DaimondLayers.menu('filesmenu', closePop, anchor);
 			anchor.setAttribute('aria-expanded', 'true');
 			setTimeout(function () { document.addEventListener('click', onPopOutside, true); }, 0);
 		}
@@ -56661,8 +56667,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// The DOC panel was asked for. Its own hook, not `onOpen`: that one is the
 			/// WORKSPACE panel's, and the two panels are opened separately.
 			onDocOpen:     onDocOpen,
-			/// The Workspace panel is leaving the screen: its one menu goes with it (UNBLOCK-24 r3).
-			onLeave:       closePop,
 			refresh:       refresh,
 			// Repaint what the Cloud chip claims, after a sync has moved residency.
 			tryReconnect:  tryReconnect,
@@ -62219,7 +62223,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (top + pop.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - 4 - pop.offsetHeight);
 		pop.style.top = top + 'px';
 		_tagMore = { el: pop, anchor: anchor };
-		DaimondLayers.open('tagmore', closeTagMore, anchor);
+		DaimondLayers.menu('tagmore', closeTagMore, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
 		if (pop.firstChild) pop.firstChild.focus({ preventScroll: true });
 		setTimeout(function () { document.addEventListener('click', onTagMoreOutside, true); }, 0);
@@ -63251,6 +63255,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			&& window.DaimondVersions && DaimondVersions.flush) {
 			DaimondVersions.flush(currentDiamond.id);
 		}
+		// A menu up was bound to the view being left (OWNKEY-PG).
+		DaimondLayers.leave();
 		// Before anything moves `current`, and once for both faces: they share the
 		// composer, so a draft belongs to the Diamond and not to the face. See
 		// `moveComposerTo`.

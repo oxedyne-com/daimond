@@ -3635,6 +3635,7 @@
 	'seat.why_runner_silent': '{name} n’est pas éveillé — il est peut-être sur son écran de verrouillage.',
 	'seat.why_runner_credits': '{name} ne prend que les discussions sur crédits Daimond ; celle-ci utilise votre propre clé.',
 	'seat.why_runner_engine': '{name} exécute une autre version de Daimond ; il se met à jour tout seul.',
+	'seat.why_runner_quiet': '{name} n’écoute pas les discussions pour l’instant ; celle-ci s’exécute donc ici.',
 	'seat.why_runner_source': '{name} ne peut pas utiliser {provider} : {reason}.',
 	'seat.why_runner_rekey': '{name} doit être approuvé à nouveau après le changement de votre phrase secrète pour utiliser vos propres clés.',
 	'seat.reach_https': 'il faut une adresse https',

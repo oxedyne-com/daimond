@@ -3620,6 +3620,7 @@
 	'seat.why_runner_silent': '{name} no está despierto — puede estar en su pantalla de bloqueo.',
 	'seat.why_runner_credits': '{name} solo atiende chats con créditos de Daimond; este usa tu propia clave.',
 	'seat.why_runner_engine': '{name} ejecuta otra versión de Daimond; se actualiza solo.',
+	'seat.why_runner_quiet': '{name} no está escuchando chats ahora mismo, así que este se ejecuta aquí.',
 	'seat.why_runner_source': '{name} no puede usar {provider}: {reason}.',
 	'seat.why_runner_rekey': '{name} necesita aprobarse de nuevo tras el cambio de tu frase de contraseña para usar tus propias claves.',
 	'seat.reach_https': 'necesita una dirección https',

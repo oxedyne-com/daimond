@@ -886,3 +886,78 @@ test('Back does not move the focus: only the key does', async () => {
 	await b.press();
 	assert.equal(b.dom.activeElement, inner, 'the stack does not reach into the page on a popstate');
 });
+
+// ── Menus: one up at a time, and gone on navigation (OWNKEY-PG) ─────────────
+
+// A menu that records its closer being called, and reports itself closed as the app's closers do.
+function menu(L, id, log) {
+	L.menu(id, () => { log.push(id); L.done(id); });
+	return id;
+}
+
+test('opening a menu closes the menu that was up, through its own closer, and no entry is spent', async () => {
+	const b = browser(), L = b.load(), log = [];
+	menu(L, 'sourcemenu', log);
+	await tick(); await b.land();
+	assert.equal(b.idx, 1);
+	menu(L, 'chatsmenu', log);
+	await tick(); await b.land();
+	assert.deepEqual(log, ['sourcemenu'], 'the first menu was not closed by its own closer');
+	assert.equal(L.depth(), 1);
+	assert.equal(L.top(), 'chatsmenu');
+	assert.equal(b.idx, 1, 'one menu up is one entry');
+	assert.ok(b.calls.filter((c) => c.startsWith('go')).length === 0, 'a menu swapped for another is no traversal');
+});
+
+test('a menu opened again only replaces its closer', async () => {
+	const b = browser(), L = b.load(), log = [];
+	menu(L, 'pop', log); menu(L, 'pop', log);
+	await tick();
+	assert.deepEqual(log, []);
+	assert.equal(L.depth(), 1);
+});
+
+test('leave closes the menu that is up and leaves the sheet, the dialog and the drawer', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'drawer', log); layer(L, 'sheet', log); layer(L, 'dialog#1', log);
+	menu(L, 'sourcemenu', log);
+	await tick(); await b.land();
+	assert.equal(b.idx, 4);
+	L.leave();
+	await tick(); await b.land();
+	assert.deepEqual(log, ['sourcemenu']);
+	assert.equal(L.depth(), 3);
+	assert.equal(L.top(), 'dialog#1');
+	assert.equal(b.idx, 3, 'the menu\'s entry went with it');
+	assert.equal(b.left, false);
+});
+
+test('leave with no menu up is a no-op, and the history depth settles where it was', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'sheet', log);
+	await tick(); await b.land();
+	const calls = b.calls.length;
+	L.leave(); L.leave();
+	await tick(); await b.land();
+	assert.deepEqual(log, []);
+	assert.equal(L.depth(), 1);
+	assert.equal(b.idx, 1);
+	assert.equal(b.calls.length, calls, 'nothing was pushed or traversed');
+});
+
+test('a menu is a layer: Escape and Back still close it, and leave then finds nothing', async () => {
+	const b = browser(), L = b.load(), log = [];
+	menu(L, 'foldmenu', log);
+	await tick(); await b.land();
+	await b.key('Escape');
+	assert.deepEqual(log, ['foldmenu']);
+	menu(L, 'foldmenu', log);
+	await tick(); await b.land();
+	await b.press();
+	assert.deepEqual(log, ['foldmenu', 'foldmenu']);
+	L.leave();
+	await tick(); await b.land();
+	assert.equal(L.depth(), 0);
+	assert.equal(b.idx, 0);
+	assert.equal(b.left, false);
+});

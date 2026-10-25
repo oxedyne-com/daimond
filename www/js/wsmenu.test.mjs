@@ -48,7 +48,7 @@ function panel() {
 		addEventListener(t, f, c) { doc.docListeners.push([t, f, c]); },
 		removeEventListener(t, f) { doc.docListeners = doc.docListeners.filter((l) => !(l[0] === t && l[1] === f)); },
 	};
-	const layers = { up: [], open(id, close) { layers.up.push({ id, close }); }, done(id) { layers.up = layers.up.filter((l) => l.id !== id); } };
+	const layers = { up: [], menu(id, close) { layers.up.push({ id, close }); }, done(id) { layers.up = layers.up.filter((l) => l.id !== id); } };
 	const shown = [];
 	const deps = {
 		document: doc, window: { innerWidth: 390, innerHeight: 845 }, DaimondLayers: layers,
@@ -107,17 +107,18 @@ test('Escape and Back shut it: its layer closer is the menu\'s own close', () =>
 	assert.equal(layers.up.length, 0);
 });
 
-test('the panel leaving the screen, or another asked for, takes its menu: Files.onLeave, from show, mshow and hide', () => {
-	assert.match(src, /\n\t\t\tonLeave:\s+closePop,\n/, 'Files offers no onLeave');
+test('the panel leaving the screen, or another asked for, takes its menu: DaimondLayers.leave, from show, mshow and hide', () => {
+	// The Workspace menu is a menu of the stack's, so a navigation closes it with every other (OWNKEY-PG).
+	assert.match(src, /DaimondLayers\.menu\('filesmenu', closePop, anchor\)/, 'the Workspace menu is not a menu of the stack');
 	const ms = cut('mshow', '\t');
-	const leave = ms.indexOf("if (name !== 'work' && Files) Files.onLeave();");
-	assert.ok(leave >= 0, 'mshow does not put the Workspace menu away for another panel');
+	const leave = ms.indexOf('DaimondLayers.leave();');
+	assert.ok(leave >= 0, 'mshow does not put the menu away for another panel');
 	assert.ok(leave < ms.indexOf('return;'), 'the close must come ahead of every early return (the rail, a guest sheet)');
 	const sh = cut('show', '\t\t', src.indexOf('function seatInDock('));
-	const ask = sh.indexOf('if (!quiet && Files) Files.onLeave();');
+	const ask = sh.indexOf('if (!quiet) DaimondLayers.leave();');
 	assert.ok(ask >= 0 && ask < sh.indexOf('if (open[id] && seated(id))'), 'a panel a person asks for, on a desktop, leaves the Workspace menu over its rows');
 	const hd = cut('hide', '\t\t', src.indexOf('function openHooks('));
-	assert.match(hd, /if \(id === 'work' && Files\) Files\.onLeave\(\);/, 'hiding the Workspace panel leaves its menu up');
+	assert.match(hd, /DaimondLayers\.leave\(\);/, 'hiding the Workspace panel leaves its menu up');
 });
 
 test('the rows drawn afresh take a row ⋯ that hung from one of them', () => {

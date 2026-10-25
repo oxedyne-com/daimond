@@ -2529,6 +2529,7 @@
 	'seat.why_runner_silent':    '{name} is not awake — it may be at its lock screen.',
 	'seat.why_runner_credits': '{name} takes Daimond-credits chats only; this one uses your own key.',
 	'seat.why_runner_engine': '{name} runs another Daimond version; it updates itself.',
+	'seat.why_runner_quiet': '{name} is not listening for chats right now, so this one runs here.',
 	'seat.why_runner_source': '{name} cannot use {provider}: {reason}.',
 	'seat.why_runner_rekey': '{name} needs approving again after your passphrase change to use your own keys.',
 	// i18n-family: seat.reach_ = https device unlock nokey

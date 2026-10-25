@@ -3619,6 +3619,7 @@
 	'seat.why_runner_silent': '{name} não está acordado — pode estar na tela de bloqueio.',
 	'seat.why_runner_credits': '{name} só aceita conversas com créditos Daimond; esta usa sua própria chave.',
 	'seat.why_runner_engine': '{name} roda outra versão do Daimond; ele se atualiza sozinho.',
+	'seat.why_runner_quiet': '{name} não está ouvindo conversas agora, então esta roda aqui.',
 	'seat.why_runner_source': '{name} não pode usar {provider}: {reason}.',
 	'seat.why_runner_rekey': '{name} precisa ser aprovado de novo após a troca da sua frase-senha para usar suas próprias chaves.',
 	'seat.reach_https': 'precisa de um endereço https',

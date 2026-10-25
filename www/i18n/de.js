@@ -3627,6 +3627,7 @@
 	'seat.why_runner_silent': '{name} ist nicht wach — es ist vielleicht am Sperrbildschirm.',
 	'seat.why_runner_credits': '{name} übernimmt nur Chats mit Daimond-Guthaben; dieser nutzt deinen eigenen Schlüssel.',
 	'seat.why_runner_engine': '{name} läuft mit einer anderen Daimond-Version; es aktualisiert sich selbst.',
+	'seat.why_runner_quiet': '{name} nimmt gerade keine Chats an, darum läuft dieser hier.',
 	'seat.why_runner_source': '{name} kann {provider} nicht nutzen: {reason}.',
 	'seat.why_runner_rekey': '{name} muss nach deiner Passphrasen-Änderung erneut freigegeben werden, um deine eigenen Schlüssel zu nutzen.',
 	'seat.reach_https': 'es braucht eine https-Adresse',

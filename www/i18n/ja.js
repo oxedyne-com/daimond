@@ -3662,6 +3662,7 @@
 	'seat.why_runner_silent': '{name} は起きていません——ロック画面かもしれません。',
 	'seat.why_runner_credits': '{name} は Daimond クレジットのチャットだけを受けます。このチャットは自分のキーを使っています。',
 	'seat.why_runner_engine': '{name} は別の Daimond バージョンで動いています。自動で更新されます。',
+	'seat.why_runner_quiet': '{name} は今チャットを受け付けていないため、このチャットはここで実行されます。',
 	'seat.why_runner_source': '{name} は {provider} を使えません：{reason}。',
 	'seat.why_runner_rekey': 'パスフレーズを変更したため、自分のキーを使うには {name} をもう一度承認してください。',
 	'seat.reach_https': 'https のアドレスが必要です',

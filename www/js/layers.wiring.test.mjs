@@ -58,7 +58,7 @@ test('a popover is hidden in one place, which tells the stack', () => {
 	assert.match(w, /function hidePop\(pop\) \{\s*pop\.hidden = true;\s*DaimondLayers\.done\('pop'\);/);
 	assert.equal(count(w, /\b(menuEl|galEl|el|pop)\.hidden = true/g), 1, 'a popover is hidden somewhere other than hidePop');
 	assert.equal(count(read('js', 'handmode.js'), /pop\.hidden = true/g), 0);
-	assert.match(w, /function openPop[\s\S]*?DaimondLayers\.open\('pop'/);
+	assert.match(w, /function openPop[\s\S]*?DaimondLayers\.menu\('pop'/);
 });
 
 test('the sheet, the palette and the Admin drawer register and report', () => {
@@ -115,8 +115,8 @@ test('the terminal marks the three elements that own Escape as input', () => {
 
 test('what Escape used to close is a layer, or a claim the router asks', () => {
 	const d = read('js', 'daimond.js'), p = read('js', 'passcode.js'), m = read('js', 'mobile.js');
-	// The Chats menu is a layer: Back closes it as well.
-	assert.match(d, /DaimondLayers\.open\('chatsmenu', closeChatsMenu(, anchor)?\)/);
+	// The Chats menu is a layer (a menu): Back closes it as well.
+	assert.match(d, /DaimondLayers\.menu\('chatsmenu', closeChatsMenu(, anchor)?\)/);
 	assert.match(d, /function closeChatsMenu\(\) \{[^}]*DaimondLayers\.done\('chatsmenu'\)/s);
 	// The composer's skill menu and the link form are claims: key modes, no history.
 	assert.match(d, /DaimondLayers\.claim\('skill', /);
@@ -181,5 +181,48 @@ test('a popover opened from a row of the fold gives the stack the fold\'s own bu
 	const open = w.slice(w.indexOf('function openPop'), w.indexOf('function hidePop'));
 	assert.match(open, /getClientRects\(\)\.length/, 'openPop does not ask whether the anchor is drawn');
 	assert.match(open, /getElementById\('help-btn'\)/, 'openPop has no drawn trigger to fall back on');
-	assert.match(open, /DaimondLayers\.open\('pop',[\s\S]*?\},\s*back\)/, 'the stack is not handed the drawn trigger');
+	assert.match(open, /DaimondLayers\.menu\('pop',[\s\S]*?\},\s*back\)/, 'the stack is not handed the drawn trigger');
+});
+
+// ── Menus are the stack's: one at a time, gone on navigation (OWNKEY-PG) ────
+
+test('every builder of a body-hung menu registers it as a menu, never as a plain layer', () => {
+	const BUILD = /className\s*=\s*'(railhead-menu[ ']|fold-menu')/g;
+	let builders = 0;
+	for (const f of JS) {
+		const s = read('js', f), n = count(s, BUILD);
+		if (!n) continue;
+		builders += n;
+		assert.ok(count(s, /DaimondLayers\.menu\(/g) >= n, `${f} builds ${n} menu(s) and calls DaimondLayers.menu fewer times`);
+	}
+	assert.ok(builders >= 5, 'the scan found only ' + builders + ' menu builders; the pattern has drifted');
+	for (const f of JS) {
+		assert.equal(count(read('js', f), /DaimondLayers\.open\('(sourcemenu|chatsmenu|filesmenu|tagmore|foldmenu|pop)'/g), 0,
+			`${f} opens a menu as a plain layer: it would outlive a navigation and stand over the next control`);
+	}
+	assert.match(read('js', 'workspace.js'), /DaimondLayers\.menu\('pop'/);
+	const d = read('js', 'daimond.js');
+	assert.match(d, /DaimondLayers\.menu\('foldmenu', closeFoldMenu/);
+	assert.match(d, /function closeFoldMenu\(\) \{[\s\S]*?DaimondLayers\.done\('foldmenu'\)[\s\S]*?\n\t\}/);
+});
+
+test('every navigation leaves the menu that is up: show, mshow, hide, selectChat and selectDiamond', () => {
+	const d = read('js', 'daimond.js');
+	const body = (re) => {
+		const m = d.match(re);
+		assert.ok(m, 'no ' + re);
+		const at = m.index, tabs = m[1];
+		return d.slice(at, d.indexOf('\n' + tabs + '}\n', at));
+	};
+	const ms = body(/\n(\t)function mshow\(name\) \{/);
+	assert.ok(ms.indexOf('DaimondLayers.leave()') >= 0 && ms.indexOf('DaimondLayers.leave()') < ms.indexOf('return;'), 'mshow: leave() must come ahead of every early return');
+	const sh = body(/\n(\t\t)function show\(id, opts\) \{/);
+	const lv = sh.indexOf('if (!quiet) DaimondLayers.leave();');
+	assert.ok(lv >= 0 && lv < sh.indexOf('if (open[id] && seated(id))'), 'show: a panel a person asks for must leave the menu, ahead of the already-open shortcut');
+	assert.match(body(/\n(\t\t)function hide\(id\) \{/), /DaimondLayers\.leave\(\);/, 'hide leaves the menu up');
+	for (const [ name, re ] of [ [ 'selectChat', /\n(\t)function selectChat\(chat\) \{/ ], [ 'selectDiamond', /\n(\t)async function selectDiamond\(f, view\) \{/ ] ]) {
+		const s = body(re), lv2 = s.indexOf('DaimondLayers.leave();');
+		assert.ok(lv2 >= 0 && lv2 < s.indexOf('moveComposerTo('), `${name}: leave() must come ahead of moveComposerTo, while the old chat is still current`);
+	}
+	assert.equal(count(d, /Files\.onLeave\(/g), 0, 'Files.onLeave is the stack\'s job now');
 });

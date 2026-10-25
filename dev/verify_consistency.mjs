@@ -1317,6 +1317,39 @@ async function seed() {
 	}
 	const s = await open({ name: 'alex', profile: PROF });
 	page = s.page;
+	const t0 = Date.now();
+	// A seed step waits for what it counts, up to `bound` ms, rather than sleeping a fixed time and counting once: the cut
+	// error turn was drawn interrupted 250 ms after a reload on one run and not by the 2500 ms sleep on another, and an A/B
+	// of the ownkey and ccp3 trees refused at a second such sleep at the same rate (OWNKEY-PG). `get` runs here, `ok`
+	// judges its value; the last value and the time it took are returned, so a refusal can say both.
+	const poll = async (get, ok, bound = 15000) => {
+		const t = Date.now();
+		for (;;) {
+			let v;
+			try { v = await get(); } catch (e) { v = { err: e.message.split('\n')[0] }; }
+			if (ok(v) || Date.now() - t >= bound) return { v, ms: Date.now() - t };
+			await wait(100);
+		}
+	};
+	const until = (fn, ok, bound, arg) => poll(() => ev(fn, arg), ok, bound);
+	// A seed that cannot go on says what it saw, and copies the page's console, the journal's interrupted turns and a
+	// screenshot into CONS_OUT before it exits: the kit's tidy removes the world, so nothing else is left to read.
+	const refuse = async (msg) => {
+		const tail = await ev(() => [...document.querySelectorAll('#chat-output > *')].slice(-6)
+			.map((e) => (e.className || e.tagName) + ': ' + (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120)));
+		log(`seed: ${msg} (at ${Date.now() - t0} ms into the seed) :: last rows ${JSON.stringify(tail)}`);
+		try {
+			const dir = path.join(OUT, 'seed_refusal');
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, 'console.log'), s.logs.join('\n') + '\n' + s.errs.map((e) => 'ERR ' + e).join('\n') + '\n');
+			const j = await ev(async () => { try { return await window.DaimondJournal.recover(); } catch (e) { return { err: String(e) }; } });
+			fs.writeFileSync(path.join(dir, 'journal.json'), JSON.stringify(j, null, 1));
+			fs.writeFileSync(path.join(dir, 'refusal.txt'), `${msg}\nat ${Date.now() - t0} ms\n${JSON.stringify(tail, null, 1)}\n`);
+			await page.screenshot({ path: path.join(dir, 'page.png') }).catch((e) => log('seed: no screenshot', e.message));
+			log(`seed: evidence in ${dir}`);
+		} catch (e) { log('seed: the evidence could not be written', e.message); }
+		await s.close().catch(() => {}); process.exit(3);
+	};
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await wait(800);
 	// A second handle on the store, for reading Diamond ids; a page reload drops it, so each reload re-opens it.
@@ -1342,8 +1375,9 @@ async function seed() {
 	// committed. The chat holds a lit pair, a details control that is `.on` and a Rating tile of two lines, for every surface after it.
 	{
 		const vis = (mid, cls) => page.locator(`#chat-output .ctile[data-mid="${mid}"] .${cls} >> visible=true`).first();
-		const mids = await ev(async () => [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant[data-mid]')].map((t) => t.dataset.mid));
-		if (mids.length < 2) { log(`seed: ${mids.length} answers with a mid, want >= 2`); await s.close().catch(() => {}); process.exit(3); }
+		const m = await until(() => [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant[data-mid]')].map((t) => t.dataset.mid), (v) => Array.isArray(v) && v.length >= 2, 10000);
+		const mids = Array.isArray(m.v) ? m.v : [];
+		if (mids.length < 2) await refuse(`${mids.length} answers with a mid after ${m.ms} ms, want >= 2`);
 		await vis(mids[0], 'ctile-rate-more').click();
 		await page.waitForSelector('.rate-card', { timeout: 6000 });
 		await page.locator('.rate-card .rate-scale .tile-dlg-level').first().click();
@@ -1354,9 +1388,8 @@ async function seed() {
 		await wait(300);
 		await vis(mids[1], 'ctile-rate-up').click();
 		await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
-		await wait(500);
-		const lines = await ev(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length);
-		if (lines !== 2) { log(`seed: the ratings did not land (${lines} Rating lines, want 2)`); await s.close().catch(() => {}); process.exit(3); }
+		const lines = await until(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length, (v) => v === 2, 8000);
+		if (lines.v !== 2) await refuse(`the ratings did not land (${lines.v} Rating lines after ${lines.ms} ms, want 2)`);
 	}
 	await chat(s, '@tool file_read {"path":"notes.md"}').catch((e) => log('tool turn', e.message));
 	await chat(s, '@tools file_read {"path":"budget.csv"} ;; file_read {"path":"quotes/harlow.md"}').catch((e) => log('tools turn', e.message));
@@ -1368,10 +1401,10 @@ async function seed() {
 		const cw = (p, c) => JSON.stringify({ path: `${cdir}/${p}`, content: c });
 		await chat(s, '@tools file_write ' + cw('o.md', 'old\n')).catch((e) => log('files turn 1', e.message));
 		await chat(s, '@tools file_write ' + cw('n.md', 'a new file\n') + ' ;; file_write ' + cw('o.md', 'old\nand a line more\n')).catch((e) => log('files turn 2', e.message));
-		await wait(800);
-		const tiles = await ev(() => document.querySelectorAll('#chat-output .turn-files').length);
-		const rows = await ev(() => [...document.querySelectorAll('#chat-output .turn-files')].pop().querySelectorAll('.turn-file-row[data-h]').length);
-		if (tiles !== 2 || rows !== 2) { log(`seed: the chat's Files rows did not land (${tiles} tiles, ${rows} rated rows in the last, want 2 and 2)`); await s.close().catch(() => {}); process.exit(3); }
+		const fr = await until(() => { const f = [...document.querySelectorAll('#chat-output .turn-files')]; return [f.length, f.length ? f[f.length - 1].querySelectorAll('.turn-file-row[data-h]').length : 0]; },
+			(v) => Array.isArray(v) && v[0] === 2 && v[1] === 2, 10000);
+		const [tiles, rows] = Array.isArray(fr.v) ? fr.v : [0, 0];
+		if (tiles !== 2 || rows !== 2) await refuse(`the chat's Files rows did not land (${tiles} tiles, ${rows} rated rows in the last after ${fr.ms} ms, want 2 and 2)`);
 		const nrow = page.locator('#chat-output .turn-files').last().locator('.turn-file-row', { hasText: 'n.md' });
 		await nrow.locator('.ctile-rate-more').click();
 		await page.waitForSelector('.rate-card', { timeout: 6000 });
@@ -1382,9 +1415,8 @@ async function seed() {
 		await page.locator('.rate-card .ui-close').first().click();
 		await wait(300);
 		await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
-		await wait(500);
-		const lines = await ev(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length);
-		if (lines !== 3) { log(`seed: the file rating did not land (${lines} Rating lines, want 3)`); await s.close().catch(() => {}); process.exit(3); }
+		const lines = await until(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length, (v) => v === 3, 8000);
+		if (lines.v !== 3) await refuse(`the file rating did not land (${lines.v} Rating lines after ${lines.ms} ms, want 3)`);
 	}
 	// L8 (an interrupted turn's warning and its Continue) is this turn. A 5xx is retried as a dropped road, eight tries over
 	// about 70 s, so `chat` returns at its 30 s bound with the turn still retrying; the reload cuts it there, and the write-ahead
@@ -1394,20 +1426,20 @@ async function seed() {
 	await chat(s, '@err 500').catch((e) => log('err turn', e.message));
 	{
 		const live = await ev(() => { try { return window.DaimondCore.busy(); } catch (e) { return String(e); } });
-		if (live !== true) { log(`seed: the error turn ended before the reload could cut it (busy=${live})`); await s.close().catch(() => {}); process.exit(3); }
-		await page.reload(); await wait(2500);
+		if (live !== true) await refuse(`the error turn ended before the reload could cut it (busy=${JSON.stringify(live)})`);
+		await page.reload();
+		const cut = await until(() => document.querySelectorAll('#chat-output .turn-interrupted').length, (v) => v === 1, 15000);
+		if (cut.v !== 1) await refuse(`the cut error turn is not drawn interrupted (${JSON.stringify(cut.v)} interrupted tiles ${cut.ms} ms after the reload, want 1)`);
 		await freeApp();
-		const cut = await ev(() => document.querySelectorAll('#chat-output .turn-interrupted').length);
-		if (cut !== 1) { log(`seed: the cut error turn is not drawn interrupted (${cut} interrupted tiles, want 1)`); await s.close().catch(() => {}); process.exit(3); }
 	}
 	// A Diamond's own turn that changes files leaves the tail note (a Files tile at the foot of its thread), one row rated up. It is the
 	// long-titled Kitchen Diamond, which the pass's `/Kitchen/` picks open (the most recently active), so every Diamond surface has the note. It runs on the
 	// default (mock) model, so it comes before the per-Diamond models below are set to names the mock has no route for.
 	{
 		const kid2 = await ev(async (n) => { const d = JSON.parse(await window.__free.list_diamonds()).find((x) => x.name === n); return d ? d.id : ''; }, DIAMONDS[3]);
-		if (typeof kid2 !== 'string' || !kid2) { log(`seed: no id for the long-titled Kitchen Diamond (${JSON.stringify(kid2)})`); await s.close().catch(() => {}); process.exit(3); }
-		const pick = await ev((name) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === name); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; }, DIAMONDS[3]);
-		if (pick !== true) { log('seed: no long-titled Kitchen Diamond to steer'); await s.close().catch(() => {}); process.exit(3); }
+		if (typeof kid2 !== 'string' || !kid2) await refuse(`no id for the long-titled Kitchen Diamond (${JSON.stringify(kid2)})`);
+		const pick = await until((name) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === name); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; }, (v) => v === true, 10000, DIAMONDS[3]);
+		if (pick.v !== true) await refuse(`no long-titled Kitchen Diamond to steer after ${pick.ms} ms`);
 		await wait(1000);
 		await page.locator('#dview-chat').click(); await wait(700);
 		const w = (p, c) => JSON.stringify({ path: `diamonds/${kid2}/code/${p}`, content: c });
@@ -1415,8 +1447,8 @@ async function seed() {
 			+ ' ;; file_write ' + w('drawings/stage-two/benchtop/final-revisions/kitchen-benchtop-and-splashback-v3.md', '# Drawing\n\nv3.\n') + ' ;; file_write ' + w('todo.md', '# To do\n\nPower points.\n'));
 		await page.click('#chat-send');
 		await page.waitForFunction((id) => !window.DaimondCore.diamondBusy(id), kid2, { timeout: 90000, polling: 500 }).catch((e) => log('diamond turn', e.message));
-		await wait(1500);
-		const rr = await ev(() => document.querySelectorAll('#chat-output .turn-files .turn-file-row[data-h]').length);
+		const rq = await until(() => document.querySelectorAll('#chat-output .turn-files .turn-file-row[data-h]').length, (v) => v === 4, 10000);
+		const rr = rq.v;
 		if (rr !== 4) {
 			// What the thread holds instead, so a seed that stops here says why.
 			const why = await ev((id) => { try {
@@ -1424,14 +1456,13 @@ async function seed() {
 				return JSON.stringify({ busy: window.DaimondCore.busy(), dBusy: window.DaimondCore.diamondBusy(id), files: document.querySelectorAll('#chat-output .turn-files').length,
 					input: (document.querySelector('#chat-input') || {}).value || '', tail: tiles });
 			} catch (e) { return String(e); } }, kid2);
-			log(`seed: the Diamond's tail note has ${rr} rated rows, want 4 :: ${why}`); await s.close().catch(() => {}); process.exit(3);
+			await refuse(`the Diamond's tail note has ${JSON.stringify(rr)} rated rows after ${rq.ms} ms, want 4 :: ${why}`);
 		}
 		await page.locator('#chat-output .turn-files .turn-file-row', { hasText: 'quotes.md' }).locator('.ctile-rate-up').click();
 		await wait(300);
 		await ev(async (id) => { const c = window.DaimondDiamond.conversation(id); await window.DaimondRatingUI.flush(String(c.id)); }, kid2);
-		await wait(600);
-		const lit = await ev(() => document.querySelectorAll('#chat-output .turn-files .ctile-rate-up[aria-pressed="true"]').length);
-		if (lit !== 1) { log(`seed: the Diamond's file rating did not land (${lit} lit arrows, want 1)`); await s.close().catch(() => {}); process.exit(3); }
+		const lit = await until(() => document.querySelectorAll('#chat-output .turn-files .ctile-rate-up[aria-pressed="true"]').length, (v) => v === 1, 8000);
+		if (lit.v !== 1) await refuse(`the Diamond's file rating did not land (${lit.v} lit arrows after ${lit.ms} ms, want 1)`);
 	}
 	// Three trashed things, so the Trash's rows are measured: two chats (Keep, Restore, the cross and the note) and a Diamond (no Keep).
 	{
@@ -1457,15 +1488,16 @@ async function seed() {
 	// template's fix in, with one line both changed (the conflicts disclosure). Delivered through the guide as a person gets one; the page and
 	// the record's base are then set to an older served page the person edited (`lifelogFork`).
 	{
-		await ev(() => window.DaimondWeb.guide('capps.html')); await wait(2500);
-		const gf = page.frames().find((fr) => /guide\/capps\.html/.test(fr.url()));
-		if (!gf) { log('seed: the guide did not show capps.html'); await s.close().catch(() => {}); process.exit(3); }
+		await ev(() => window.DaimondWeb.guide('capps.html'));
+		const gq = await poll(async () => page.frames().find((fr) => /guide\/capps\.html/.test(fr.url())) || null, (v) => !!v && !v.err, 15000);
+		const gf = gq.v && !gq.v.err ? gq.v : null;
+		if (!gf) await refuse(`the guide did not show capps.html after ${gq.ms} ms (frames ${JSON.stringify(page.frames().map((fr) => fr.url()))})`);
 		await gf.click('#make-lifelog');
 		await page.waitForSelector('.dlg-card .dlg-ok', { timeout: 8000 });
 		await ev(() => { const c = [...document.querySelectorAll('.dlg-card')].filter((x) => x.getClientRects().length).pop(); if (c) c.querySelector('.dlg-ok').click(); });
 		await wait(2500);
 		const fork = lifelogFork();
-		if (!fork) { log('seed: no served Log Life base gives a fork whose merge loads'); await s.close().catch(() => {}); process.exit(3); }
+		if (!fork) await refuse('no served Log Life base gives a fork whose merge loads');
 		const got = await ev(async (a) => {
 			const d = JSON.parse(await window.__free.list_diamonds()).find((x) => x.name === 'Log Life');
 			if (!d) return 'no Log Life';
@@ -1476,7 +1508,7 @@ async function seed() {
 			await m.store_write('diamonds/' + d.id + '/capp.json', JSON.stringify(rec));
 			return true;
 		}, fork);
-		if (got !== true) { log('seed: ' + got); await s.close().catch(() => {}); process.exit(3); }
+		if (got !== true) await refuse(typeof got === 'string' ? got : JSON.stringify(got));
 	}
 	// Three diamonds, three different shapes of the same tile (D-20260929-03
 	// followup): a short model and one tag, a long model and five tags, and a
@@ -1536,13 +1568,13 @@ async function seed() {
 			t.oncomplete = () => res(); t.onerror = () => rej(t.error); };
 		req.onerror = () => rej(req.error);
 	}), Date.now() - 120000);
-	await page.reload(); await wait(1500);
-	const tagCount = await ev(() => document.querySelectorAll('#panel-rail .session-box-tags .tag-chip').length);
-	if (tagCount < 10) { log(`seed: tags did not land (${tagCount} chips, want >= 10)`); await s.close().catch(() => {}); process.exit(3); }
+	await page.reload();
+	const tq = await until(() => document.querySelectorAll('#panel-rail .session-box-tags .tag-chip').length, (v) => v >= 10, 15000);
+	if (!(tq.v >= 10)) await refuse(`tags did not land (${JSON.stringify(tq.v)} chips ${tq.ms} ms after the reload, want >= 10)`);
 	// CONS-CRASH fix 2 (I10, as for the tags): the stopped chat is put raw into IndexedDB, behind the app, so check the rail drew it.
 	if (!old('stopped')) {
 		const st = await page.waitForFunction(() => [...document.querySelectorAll('#session-list .chat-box')].some((b) => /Stopped survey/.test(b.textContent)), null, { timeout: 10000 }).then(() => true, () => false);
-		if (!st) { log('seed: the stopped chat "Stopped survey" (cons-stopped) did not reach the rail; the app holds it hidden (in its trash?)'); await s.close().catch(() => {}); process.exit(3); }
+		if (!st) await refuse('the stopped chat "Stopped survey" (cons-stopped) did not reach the rail; the app holds it hidden (in its trash?)');
 	}
 	log('seeded');
 	await s.close();

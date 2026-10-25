@@ -3660,6 +3660,7 @@
 	'seat.why_runner_silent': '{name}이(가) 깨어 있지 않아요 — 잠금 화면일 수 있어요.',
 	'seat.why_runner_credits': '{name}은(는) Daimond 크레딧 채팅만 받아요. 이 채팅은 내 키를 써요.',
 	'seat.why_runner_engine': '{name}은(는) 다른 Daimond 버전이에요. 스스로 업데이트돼요.',
+	'seat.why_runner_quiet': '{name}이(가) 지금 채팅을 받지 않아서 이 채팅은 여기서 실행돼요.',
 	'seat.why_runner_source': '{name}은(는) {provider}을(를) 쓸 수 없어요: {reason}.',
 	'seat.why_runner_rekey': '암호 문구를 바꿨기 때문에 내 키를 쓰려면 {name}을(를) 다시 승인해야 해요.',
 	'seat.reach_https': 'https 주소가 필요해요',

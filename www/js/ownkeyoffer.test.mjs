@@ -329,6 +329,13 @@ function offerChecks(M) {
 	check('K4 an ABI runner is offered on his own key', !!own.runner && own.runner.deviceId === 'rn', JSON.stringify(own));
 	const other = abi({ engine: OTHER }, ['an', CR]);
 	check('K4 an ABI runner is offered whatever wasm it runs', !!other.runner, JSON.stringify(other));
+	// RUNNER-DOOR: a starred runner with no live door, or with no row at all, says why.
+	const deaf = abi({ listening: false, doors: 0, heard_at: 0, stated: true }, ['an']);
+	check('RUNNER-DOOR a starred runner that does not listen: runner-silent', !deaf.runner && deaf.why === 'runner-silent'
+		&& deaf.runnerId === 'rn', JSON.stringify(deaf));
+	const gone = offer(W, { tab: { name: 'laptop', last_seen: now, mobile: false } }, ['an']);
+	check('RUNNER-DOOR a starred runner with no presence row: runner-silent', !gone.runner && gone.why === 'runner-silent',
+		JSON.stringify(gone));
 	const lan = abi({}, ['lan', CR]);
 	check('K4 an ABI runner is offered a LAN https source', !!lan.runner, JSON.stringify(lan));
 	const http = abi({}, ['http']);
@@ -529,6 +536,7 @@ function pageChecks() {
 	check('K6 runner-engine says it updates itself', api.seatWhyText({ why: 'runner-engine', runnerId: 'rn' }).indexOf('seat.why_runner_engine') === 0);
 	check('K6 runner-rekey asks for re-approval', api.seatWhyText({ why: 'runner-rekey', runnerId: 'rn' }).indexOf('seat.why_runner_rekey') === 0);
 	check('K6 the legacy reason keeps its line', api.seatWhyText({ why: 'runner-credits-only', runnerId: 'rn' }).indexOf('seat.why_runner_credits') === 0);
+	check('RUNNER-DOOR runner-silent says it is not listening', api.seatWhyText({ why: 'runner-silent', runnerId: 'rn' }).indexOf('seat.why_runner_quiet') === 0);
 	check('K6 no reason, no line', api.seatWhyText({}) === '' && api.seatWhyText(null) === '');
 	check('K7 an abi hand-back says the runner runs another version', api.handBackNote('abi', 'argonaut').indexOf('seat.why_runner_engine') === 0,
 		api.handBackNote('abi', 'argonaut'));

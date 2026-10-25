@@ -928,7 +928,7 @@
 		// A row of the fold (Settings, in Help's popover on a phone) is hidden with its popover by now, so the
 		// keyboard goes back to the fold's own button, which is drawn.
 		var back = anchor.getClientRects().length ? anchor : (document.getElementById('help-btn') || anchor);
-		DaimondLayers.open('pop', function () { dismissPops(null); }, back);
+		DaimondLayers.menu('pop', function () { dismissPops(null); }, back);
 	}
 
 	/// The one place a popover is put away, so that the layer stack hears of it.

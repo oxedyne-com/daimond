@@ -3650,6 +3650,7 @@
 	'seat.why_runner_silent': '{name} 没有醒着——可能在锁屏。',
 	'seat.why_runner_credits': '{name} 只接受使用 Daimond 点数的对话；这个对话用的是你自己的密钥。',
 	'seat.why_runner_engine': '{name} 运行的是另一个 Daimond 版本；它会自行更新。',
+	'seat.why_runner_quiet': '{name} 现在没有在接收对话，所以这个对话在这里运行。',
 	'seat.why_runner_source': '{name} 无法使用 {provider}：{reason}。',
 	'seat.why_runner_rekey': '你更改了口令，需要再次批准 {name} 才能使用你自己的密钥。',
 	'seat.reach_https': '需要 https 地址',

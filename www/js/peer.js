@@ -3671,6 +3671,7 @@
 		// never silent about it. On an ABI: another engine range (`runner-engine`, it updates
 		// itself), a re-approval after a passphrase change (`runner-rekey`), or the first
 		// source it cannot reach, and why (`runner-source`). Legacy: credits only, or another wasm.
+		// One that is not listening, or not present at all, is `runner-silent` (RUNNER-DOOR).
 		var nomId = String(o.nominatedId || '');
 		var nrec = nomId ? (presence || {})[nomId] : null;
 		if (!runner && nrec && nrec.kind === 'runner') {
@@ -3688,7 +3689,13 @@
 				why = (own.length || !srcs.length) ? 'runner-credits-only'
 					: (mine && String(nrec.engine || '') !== mine) ? 'runner-engine' : '';
 			}
+			// RUNNER-DOOR: no rule above, yet not offered: it is not listening (no live door).
+			if (!why && !recGenuine(nrec, now, o.freshWindowMs || DISPATCH_FRESH_MS)) why = 'runner-silent';
 			if (why) { out.why = why; out.runnerId = nomId; }
+		} else if (!runner && nomId && !nrec && !o.presenceUnknown && nomId !== String(o.selfId || '')
+			&& Object.keys(presence || {}).length) {
+			// RUNNER-DOOR: the starred runner has no presence row at all: not present.
+			out.why = 'runner-silent'; out.runnerId = nomId;
 		}
 		return out;
 	}
