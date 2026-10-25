@@ -476,6 +476,9 @@ pub(crate) fn num(d: Option<&Dat>) -> f64 {
 		Some(Dat::I128(n)) => *n as f64,
 		Some(Dat::F32(n))  => n.0 as f64,
 		Some(Dat::F64(n))  => n.0,
+		// A JSON number with a point or an exponent decodes as a decimal (KT-2: `foldAt` 0.8
+		// read as 0, the engine's figure, until this arm).
+		Some(Dat::Adec(d)) => d.to_string().parse::<f64>().unwrap_or(0.0),
 		_                  => 0.0,
 	}
 }

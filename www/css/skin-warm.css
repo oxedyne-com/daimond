@@ -177,7 +177,7 @@
 	padding-left: 3px;
 	padding-right: 3px;
 }
-:root[data-skin="warm"] .admin-item {
+:root[data-skin="warm"] .admin-item, :root[data-skin="warm"] #admin-home.sg .sg-status {
 	border-radius: var(--radius);
 	padding: calc(8px * var(--space-scale)) calc(10px * var(--space-scale));
 }

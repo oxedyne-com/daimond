@@ -14,6 +14,9 @@ import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+// The REAL stamp module: a seed-built chat takes the seed's one-way taint through it (H3).
+const STAMPWIN = {};
+new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
 
 function cut(name) {
 	let at = src.indexOf('\n\tasync function ' + name + '(');
@@ -58,10 +61,11 @@ function world(turns) {
 		renderHistory: () => {},
 		diag: () => {},
 		current: null,
+		DaimondStamp: STAMPWIN.DaimondStamp,
 	};
 	deps.window.DaimondJournal = deps.DaimondJournal;
 	const f = theFold();
-	const graft = cut('graftSeed') || '';
+	const graft = (cut('graftSeed') || '') + '\n' + (cut('chatTaintOf') || '');
 	const run = new Function(...Object.keys(deps), 'er', 'c', 'ctx',
 		graft + '\n' + f.body + '\nreturn ' + f.call + ';');
 	W.fold = (er) => run(...Object.values(deps), er, undefined, undefined);

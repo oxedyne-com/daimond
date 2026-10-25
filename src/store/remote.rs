@@ -792,6 +792,14 @@ impl<L: StoreLink> HostStore for RemoteStore<L> {
         let call = StoreCall::AbsorbFoldNotes { id: s(id), notes: notes.clone() };
         answer!(self.link.call(&call).await, AbsorbFoldNotes).unwrap_or(None)
     }
+    async fn his_words(&self, keeper: &str, entries: String) -> Outcome<String> {
+        let call = StoreCall::HisWords { keeper: s(keeper), entries };
+        res!(answer!(self.link.call(&call).await, HisWords))
+    }
+    async fn his_words_read(&self, keeper: &str) -> Outcome<String> {
+        let call = StoreCall::HisWordsRead { keeper: s(keeper) };
+        res!(answer!(self.link.call(&call).await, HisWordsRead))
+    }
 
     // Links
     async fn add_link(

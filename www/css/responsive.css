@@ -178,7 +178,8 @@
 	.astat-row.astat-btn,
 	.astat-row.astat-sync { padding-top: 9px; padding-bottom: 9px; }
 	.astat-id .user-row { padding: 9px 4px; }
-	.admin-item { padding-top: 10px; padding-bottom: 10px; min-height: 44px; box-sizing: border-box; }
+	/* A Settings reading is a Settings row (app.css), so it takes the row's floor in the same rule. */
+	.admin-item, :root #admin-home.sg .sg-status { padding-top: 10px; padding-bottom: 10px; min-height: 44px; box-sizing: border-box; }
 	.tile-label, .pend-line { padding-top: 6px; padding-bottom: 6px; }
 	/* Steps / collapse, in the chat header: 26px tall is a pointer's target, not
 	   a thumb's. `.icon-chip` and `.label-chip` are excluded -- they are drawn

@@ -50,6 +50,7 @@
 use crate::llm::{extract_json_number, extract_json_string, extract_json_string_array};
 use crate::protocol::{ChatMessage, ImagePart, MessageContent, ToolCall};
 use crate::protocol::Retired;
+use crate::protocol::Origin;
 use crate::tools::{CallOutcome, Tool, call_outcome};
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -371,6 +372,39 @@ const FALLBACK_IMAGE_TOKENS_PER_BYTE: f64 = 0.05;
 /// one is not a statement about how large a crystal a fold can produce.  The crystal's own
 /// ceiling is [`crate::tools::crystal_cap`], enforced at the write.
 pub const FOLD_MAX_TOKENS: u32 = 1_400;
+
+/// Items a ledger line names before it counts the rest.
+pub const LEDGER_SHOWN: usize = 40;
+
+/// Tokens below which a fold's room is too small to ask a summary of: the notice keeps the
+/// ledger alone, and no call is paid for a note that could not say anything.
+pub const FOLD_MIN_ASK: u32 = 200;
+
+/// The share of a fold's room a summary is asked for (M1).  The gauge prices a byte at its
+/// measured ratio, and English prose runs more bytes a token than code: a reply written to the
+/// whole room at 4.4 bytes a token overran a room measured at 3.7 and was dropped whole.  The
+/// fifth held back is that difference, with some to spare.
+pub const FOLD_ASK_MARGIN: f64 = 0.8;
+
+/// What a summary the provider cut at its length limit ends with, once it is trimmed back to
+/// its last whole sentence.  See [`cut_short`].
+pub const CUT_SHORT_NOTE: &str =
+	"(This summary reached its length limit and was cut short there; what stands above is whole.)";
+
+/// A summary the provider cut at `max_tokens`, trimmed back to its last whole sentence or line
+/// and marked as cut short, so the model never reads a thought that stops mid-word as if it were
+/// whole.  `None` where not one sentence ended before the cut.
+pub fn cut_short(text: &str) -> Option<String> {
+	let end = match text.rfind(|c| matches!(c, '.' | '!' | '?' | '\n')) {
+		Some(i) => i,
+		None    => return None,
+	};
+	let kept = text[..=end].trim_end();
+	if kept.is_empty() {
+		return None;
+	}
+	Some(fmt!("{}\n\n{}", kept, CUT_SHORT_NOTE))
+}
 
 /// Tokens the summarising call may generate when it is asked for the structured shape.
 ///
@@ -1072,14 +1106,23 @@ impl Ledger {
 	/// The ledger as lines for the fold notice, each capped so one pathological session
 	/// cannot fill the window with its own history.
 	pub fn lines(&self) -> Vec<String> {
+		self.lines_showing(LEDGER_SHOWN)
+	}
+
+	/// The ledger as lines naming at most `per` items each, the rest counted.  A fold short of
+	/// room names fewer and drops none: every kind of act stays on its line.
+	pub fn lines_showing(&self, per: usize) -> Vec<String> {
 		let mut out = Vec::new();
 		let mut put = |label: &str, items: &Vec<String>| {
 			if items.is_empty() {
 				return;
 			}
-			let shown = items.len().min(40);
-			let mut s = fmt!("{}: {}", label, items[..shown].join(", "));
-			if items.len() > shown {
+			let shown = items.len().min(per);
+			let mut s = match shown {
+				0 => fmt!("{}: {} items", label, items.len()),
+				_ => fmt!("{}: {}", label, items[..shown].join(", ")),
+			};
+			if shown > 0 && items.len() > shown {
 				s.push_str(&fmt!(" (and {} more)", items.len() - shown));
 			}
 			out.push(s);
@@ -1538,11 +1581,37 @@ pub enum Summary<'a> {
 /// * `ledger` - What the folded part did.
 /// * `capped` - Whether the turn is CONTINUING from this note, which changes what `Next step` is.
 pub fn notice(folded: usize, summary: &Summary<'_>, ledger: &Ledger, capped: bool) -> String {
+	notice_showing(folded, "", summary, ledger, capped, LEDGER_SHOWN)
+}
+
+/// [`notice`] carrying `words`, his messages from the folded part, ahead of the summary: they
+/// come first and the summary gives way to them.  See [`person_words`].
+pub fn notice_saying(folded: usize, words: &[String], summary: &Summary<'_>, ledger: &Ledger,
+	capped: bool)
+	-> String
+{
+	notice_showing(folded, &words_section(words), summary, ledger, capped, LEDGER_SHOWN)
+}
+
+/// [`notice_saying`] carrying a words section already made (see [`said_section`]).
+pub fn notice_with(folded: usize, words: &str, summary: &Summary<'_>, ledger: &Ledger,
+	capped: bool)
+	-> String
+{
+	notice_showing(folded, words, summary, ledger, capped, LEDGER_SHOWN)
+}
+
+/// [`notice_with`] with the ledger naming at most `per` items a line.
+fn notice_showing(folded: usize, words: &str, summary: &Summary<'_>, ledger: &Ledger,
+	capped: bool, per: usize)
+	-> String
+{
 	let mut s = fmt!(
 		"[Daimond folded the earlier part of this conversation to keep it inside the model's \
 		 context window. {} messages were replaced by this note; everything after it is \
 		 exactly as it was. This note is the only record of them that the model now has.]\n",
 		folded);
+	s.push_str(words);
 	match summary {
 		Summary::Notes(n) => s.push_str(&structured_body(n, capped, false)),
 		Summary::Filed(n) => s.push_str(&structured_body(n, capped, true)),
@@ -1557,7 +1626,7 @@ pub fn notice(folded: usize, summary: &Summary<'_>, ledger: &Ledger, capped: boo
 			 record of the tool calls themselves and nothing more. Ask before assuming \
 			 anything not listed here was done.\n", reason)),
 	}
-	let lines = ledger.lines();
+	let lines = ledger.lines_showing(per);
 	if !lines.is_empty() {
 		s.push_str("\n## What was touched\n\n");
 		for l in lines {
@@ -1628,17 +1697,420 @@ fn structured_body(n: &FoldNotes, capped: bool, filed: bool) -> String {
 }
 
 
-/// Whether a message is a fold notice this module wrote.
+/// Bytes a fold notice may take and still let the fold land under `target`.
 ///
-/// Matched on the opening of [`notice`], which is the one sentence every notice carries and the
-/// same tell `dev/verify_foldreload.mjs` reads.  A user message that merely quotes it would be
-/// searched as a fold, which costs a line of context and nothing else.
-pub fn is_fold_notice(m: &ChatMessage) -> bool {
-	match m {
-		ChatMessage::User { content, .. } =>
-			content.as_text().starts_with("[Daimond folded the earlier part"),
-		_ => false,
+/// What the fold keeps is measured at its floor, as the first elision pass can leave it: the
+/// newest [`MIN_KEEP_MESSAGES`] whole, everything older shrunk.  The user's words are never
+/// shrunk, so the pinned opening counts in full -- that is the room reserved for them.  His words
+/// from the folded part ride inside the notice (`## Your words`), so they come out of this room,
+/// ahead of the summary, through the notice's own frame.
+///
+/// # Arguments
+/// * `kept` - The messages after the cut, as the fold keeps them.
+/// * `pin` - The turn's opening, set back verbatim behind the notice, if any.
+/// * `target` - The bytes the sent conversation must land under.
+pub fn notice_room(kept: &[ChatMessage], pin: Option<&ChatMessage>, target: u64) -> u64 {
+	let mut floor = kept.to_vec();
+	elide_bulk(&mut floor, 0, MIN_KEEP_MESSAGES);
+	let pinned = pin.map(msg_bytes).unwrap_or(0);
+	target.saturating_sub(conversation_bytes(&floor) + pinned)
+}
+
+/// The notice a fold writes, made to fit `room` bytes as a message.
+///
+/// One defined path and no second model call (R3): the notice as [`notice_saying`] writes it;
+/// failing that, the summary is dropped whole and the notice says why, since a summary cut short
+/// is a thought cut mid-way; failing that, the ledger names fewer items a line, down to counts.
+/// His words are never given up (R1): where they alone exceed the room the notice still carries
+/// them and the fold lands over target, since a fold that loses what he said is worse than one
+/// that lands high.  Returns the text and whether the summary rode in it.
+///
+/// # Arguments
+/// * `words` - The section carrying his words; see [`said_section`].
+/// * `tail` - Appended after the body, such as [`TURN_CONTINUES_NOTE`]; counted in the fit.
+pub fn notice_within(folded: usize, words: &str, summary: &Summary<'_>, ledger: &Ledger,
+	capped: bool, tail: &str, room: u64)
+	-> (String, bool)
+{
+	let fits = |t: &String| msg_bytes(&ChatMessage::user(t.clone())) <= room;
+	let mut s = notice_with(folded, words, summary, ledger, capped);
+	s.push_str(tail);
+	if fits(&s) {
+		return (s, true);
 	}
+	let why = match summary {
+		Summary::None(r)  => r.to_string(),
+		// Its decisions, open items and findings are already in their files (L3).
+		Summary::Filed(_) => fmt!("the summary came back longer than the {} bytes this fold had \
+			room for, and was left out whole rather than cut short; its decisions, open items and \
+			findings were filed into DECISIONS.md, REQUIREMENTS.md and STATE.md, which are in \
+			front of you on every round", room),
+		_                 => fmt!("the summary came back longer than the {} bytes this fold had \
+			room for, and was left out whole rather than cut short", room),
+	};
+	let mut last = String::new();
+	for per in [LEDGER_SHOWN, 20, 10, 5, 2, 0] {
+		let mut t = notice_showing(folded, words, &Summary::None(&why), ledger, capped, per);
+		t.push_str(tail);
+		if fits(&t) {
+			return (t, false);
+		}
+		last = t;
+	}
+	(last, false)
+}
+
+/// What opens the section of a fold notice that carries his words.
+const WORDS_HEAD: &str = "\n## Your words\n\nEvery message sent to you as the user before this \
+	note, word for word, oldest first:\n\n";
+
+/// Every message the person sent in `folded`, word for word, oldest first: what a fold notice
+/// carries under `## Your words` (R1, invariant 2).
+///
+/// The summary is a model's paraphrase and may be missing altogether -- a call that failed, a
+/// reply left out for room, a fold with no room for one -- so his words cannot rest on it.  An
+/// earlier notice among `folded` hands its own section on, so a second fold loses nothing the
+/// first kept.  The app's `pre` note is not his and is left out, and so is every message whose
+/// stored origin is the app's (nudges, a turn's tail notes): the origin says so, and the words
+/// are never read to guess it (MEDIUM-B).  A message with no stored origin reads as his.  `pin`
+/// is set back verbatim behind the notice, so it is not repeated here.
+///
+/// # Arguments
+/// * `folded` - The messages the fold replaces.
+/// * `pin` - The turn's opening, kept behind the notice, if any.
+pub fn person_words(folded: &[ChatMessage], pin: Option<&ChatMessage>) -> Vec<String> {
+	person_said(folded, pin).into_iter().map(|w| w.text).collect()
+}
+
+/// One message of his, with the transcript row it was said as (`mid`, empty for none).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Said {
+	pub mid:  String,
+	pub text: String,
+}
+
+/// [`person_words`] with each message's row id, which is what files it in the words log once and
+/// names it in a notice.
+pub fn person_said(folded: &[ChatMessage], pin: Option<&ChatMessage>) -> Vec<Said> {
+	let mut out = Vec::new();
+	for m in folded {
+		match m {
+			ChatMessage::User { content, origin, mid, .. } => {
+				let text = content.as_text();
+				match origin {
+					Origin::Notice => out.extend(said_in_notice(&text)),
+					Origin::App    => {},
+					Origin::Person => if !text.trim().is_empty() && pin != Some(m) {
+						out.push(Said { mid: mid.clone(), text: text.to_string() });
+					},
+				}
+			},
+			_ => {},
+		}
+	}
+	out
+}
+
+/// The `## Your words` section of a notice, empty where there are none.  Each message is quoted
+/// line by line (`> `, a bare `>` for an empty line), so a blank line ends one message and
+/// [`words_in_notice`] reads them back exactly.
+pub fn words_section(words: &[String]) -> String {
+	let said: Vec<Said> = words.iter().map(|w| Said { mid: String::new(), text: w.clone() })
+		.collect();
+	said_section(&said, "")
+}
+
+/// The `## Your words` section of a notice for `said`, each message labelled `[mid]` where it
+/// has one, and `older` (a sentence naming the messages filed but not carried) after them.  Empty
+/// where there is neither.
+pub fn said_section(said: &[Said], older: &str) -> String {
+	if said.is_empty() && older.is_empty() {
+		return String::new();
+	}
+	let mut s = String::from(WORDS_HEAD);
+	for (i, w) in said.iter().enumerate() {
+		if i > 0 {
+			s.push('\n');
+		}
+		if !w.mid.is_empty() {
+			s.push_str(&fmt!("[{}]\n", w.mid));
+		}
+		quote_into(&mut s, &w.text);
+	}
+	if !older.is_empty() {
+		if !said.is_empty() {
+			s.push('\n');
+		}
+		s.push_str(older);
+		s.push('\n');
+	}
+	s
+}
+
+/// `text` quoted line by line (`> `, a bare `>` for an empty line) onto `s`.
+fn quote_into(s: &mut String, text: &str) {
+	for line in text.split('\n') {
+		match line.is_empty() {
+			true  => s.push_str(">\n"),
+			false => s.push_str(&fmt!("> {}\n", line)),
+		}
+	}
+}
+
+/// Is `line` a `[mid]` label over a quoted message?
+fn label_of(line: &str) -> Option<&str> {
+	line.strip_prefix('[').and_then(|r| r.strip_suffix(']'))
+		.filter(|m| !m.is_empty() && !m.contains(' '))
+}
+
+/// Quoted messages read from `lines`, each with the label or `### ` header line over it, until a
+/// line that is neither.  `head` reads an entry's id from a non-quote line, `None` for a line that
+/// ends the run.
+fn quoted<'a>(lines: impl Iterator<Item = &'a str>, head: impl Fn(&'a str) -> Option<String>)
+	-> Vec<Said>
+{
+	let mut out = Vec::new();
+	let mut mid = String::new();
+	let mut cur: Option<Vec<&str>> = None;
+	for line in lines {
+		if line == ">" {
+			cur.get_or_insert_with(Vec::new).push("");
+		} else if let Some(rest) = line.strip_prefix("> ") {
+			cur.get_or_insert_with(Vec::new).push(rest);
+		} else {
+			if let Some(c) = cur.take() {
+				out.push(Said { mid: std::mem::take(&mut mid), text: c.join("\n") });
+			}
+			if line.is_empty() {
+				continue;
+			}
+			match head(line) {
+				Some(m) => mid = m,
+				None    => break,
+			}
+		}
+	}
+	if let Some(c) = cur.take() {
+		out.push(Said { mid, text: c.join("\n") });
+	}
+	out
+}
+
+/// His words as a notice carries them, each message exactly as [`words_section`] took it.
+pub fn words_in_notice(text: &str) -> Vec<String> {
+	said_in_notice(text).into_iter().map(|w| w.text).collect()
+}
+
+/// [`words_in_notice`] with each message's label.
+pub fn said_in_notice(text: &str) -> Vec<Said> {
+	match text.find(WORDS_HEAD) {
+		Some(i) => quoted(text[i + WORDS_HEAD.len()..].split('\n'),
+			|l| label_of(l).map(str::to_string)),
+		None    => Vec::new(),
+	}
+}
+
+// ── The words log (CCP2-FOLDFIX2) ────────────────────────────────────────────
+//
+// Every message of his a fold takes out of the conversation is filed verbatim, with its date and
+// row id, under `## His words` in the keeper's words log (`chats/<id>/WORDS.md`, or the Diamond's)
+// before the notice stops carrying it.  The app files it, never the model: the log is part of the
+// keeper's record (`tools::KEEPER_LOGS`), so no door a model, a page or a run reaches writes it
+// (CCP3 F1).  What accumulates is his typing alone; it lives with the chat, not in the prompt, and
+// goes with the chat's deletion.
+
+/// The share of the fold's target his newest words may take in a notice: 6k tokens of the 90k
+/// target at the standard 120k budget.  The rest are named, with a pointer to the words log.
+pub const WORDS_SHARE: f64 = 1.0 / 15.0;
+
+/// The words log's own file at the top of the keeper's home, beside its notes, and written by the
+/// app alone.
+pub const WORDS_FILE: &str = "WORDS.md";
+
+/// The heading of the words log in [`WORDS_FILE`].
+pub const WORDS_LOG_HEAD: &str = "## His words";
+
+/// `said` as words-log entries dated `date`: `### [<mid>] <date>` (`### <date>` with no row id),
+/// his message quoted, a blank line.
+pub fn log_entries(said: &[Said], date: &str) -> String {
+	let mut s = String::new();
+	for w in said {
+		match w.mid.is_empty() {
+			true  => s.push_str(&fmt!("### {}\n", date)),
+			false => s.push_str(&fmt!("### [{}] {}\n", w.mid, date)),
+		}
+		quote_into(&mut s, &w.text);
+		s.push('\n');
+	}
+	s
+}
+
+/// The entries of a words log, or of the text [`log_entries`] wrote, oldest first.
+fn entries_in(text: &str) -> Vec<Said> {
+	quoted(text.split('\n'), |l| l.strip_prefix("### ").map(head_mid))
+}
+
+/// The row id a log entry's header names, empty for none.
+fn head_mid(h: &str) -> String {
+	h.strip_prefix('[').and_then(|r| r.split_once(']')).map(|(m, _)| m.to_string())
+		.unwrap_or_default()
+}
+
+/// The UTC date of `ms` since the epoch, `YYYY-MM-DD`: a log entry's date.
+pub fn utc_date(ms: f64) -> String {
+	// Days to civil date (H. Hinnant's algorithm), proleptic Gregorian.
+	let z = (ms / 86_400_000.0).floor() as i64 + 719_468;
+	let era = z.div_euclid(146_097);
+	let doe = z.rem_euclid(146_097);
+	let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+	let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	let mp = (5 * doy + 2) / 153;
+	let d = doy - (153 * mp + 2) / 5 + 1;
+	let m = if mp < 10 { mp + 3 } else { mp - 9 };
+	let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+	fmt!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+/// Where the words log's body runs in `file`: from after its heading to the next `## ` heading or
+/// the end.  `None` where the file has no log.
+fn log_span(file: &str) -> Option<(usize, usize)> {
+	let mut at = 0usize;
+	let mut start: Option<usize> = None;
+	for line in file.split_inclusive('\n') {
+		let l = line.trim_end_matches('\n');
+		match start {
+			None    => if l == WORDS_LOG_HEAD { start = Some(at + line.len()); },
+			Some(b) => if l.starts_with("## ") { return Some((b, at)); },
+		}
+		at += line.len();
+	}
+	start.map(|b| (b, file.len()))
+}
+
+/// Every message in the words log of `file`, oldest first; none where it has no log.
+pub fn log_read(file: &str) -> Vec<Said> {
+	match log_span(file) {
+		Some((b, e)) => entries_in(&file[b..e]),
+		None         => Vec::new(),
+	}
+}
+
+/// `file` with `entries` merged into its words log, which is made at the end if absent.  An entry
+/// the log already holds, by row id and words, is not added again, so a refold that files the
+/// same words twice changes nothing.
+pub fn log_merge(file: &str, entries: &str) -> String {
+	let have = log_read(file);
+	let mut add = String::new();
+	let mut lines = entries.split_inclusive('\n').peekable();
+	// Entry by entry, so each keeps its own header and date.
+	while lines.peek().is_some() {
+		let mut one = String::new();
+		while let Some(l) = lines.next() {
+			one.push_str(l);
+			if l.trim_end_matches('\n').is_empty() {
+				break;
+			}
+		}
+		for w in entries_in(&one) {
+			if !have.contains(&w) && !entries_in(&add).contains(&w) {
+				if !one.ends_with("\n\n") {
+					one.push('\n');
+				}
+				add.push_str(&one);
+			}
+		}
+	}
+	if add.is_empty() {
+		return file.to_string();
+	}
+	match log_span(file) {
+		Some((b, e)) => {
+			let mut body = file[b..e].trim_end_matches('\n').to_string();
+			body.push_str(if body.is_empty() { "\n" } else { "\n\n" });
+			body.push_str(&add);
+			fmt!("{}{}{}", &file[..b], body, &file[e..])
+		},
+		None => {
+			let mut out = file.trim_end_matches('\n').to_string();
+			if !out.is_empty() {
+				out.push_str("\n\n");
+			}
+			out.push_str(&fmt!("{}\n\n{}", WORDS_LOG_HEAD, add));
+			out
+		},
+	}
+}
+
+/// The words log of `file` whole, as `recall` reads it; empty for none.
+pub fn log_text(file: &str) -> String {
+	match log_span(file) {
+		Some((b, e)) => file[b..e].to_string(),
+		None         => String::new(),
+	}
+}
+
+/// What the store answers a filing once it has read the file back: each of `entries` is checked
+/// to be in the log, and the answer is `<entries in the log> <row id of the oldest>`, small however
+/// long the log grows (a filing changes the store, so its answer must always frame).
+pub fn log_answer(file: &str, entries: &str, path: &str) -> Outcome<String> {
+	let asked = entries_in(entries);
+	let log = log_read(file);
+	if let Some(w) = asked.iter().find(|w| !log.contains(w)) {
+		return Err(err!("'{}' did not read back holding his message{} after it was written, so \
+			it was not filed.", path, if w.mid.is_empty() { String::new() } else {
+			fmt!(" {}", w.mid) }; IO, File, Write));
+	}
+	Ok(fmt!("{} {}", log.len(), log.first().map(|w| w.mid.as_str()).unwrap_or("")))
+}
+
+/// The count and the oldest row id a filing answered (see [`log_answer`]).
+pub fn log_tally(answer: &str) -> (usize, String) {
+	let (n, first) = answer.split_once(' ').unwrap_or((answer, ""));
+	(n.trim().parse().unwrap_or(0), first.trim().to_string())
+}
+
+/// His newest messages that fit `share` bytes as a notice section, contiguous back from the
+/// newest, and the rest, oldest first.
+pub fn newest_within(said: &[Said], share: u64) -> (Vec<Said>, Vec<Said>) {
+	let mut from = said.len();
+	while from > 0 {
+		let trial = said_section(&said[from - 1..], "");
+		if trial.len() as u64 > share {
+			break;
+		}
+		from -= 1;
+	}
+	(said[from..].to_vec(), said[..from].to_vec())
+}
+
+/// The sentence a notice says over his words that were filed and not carried: how many, which
+/// rows, and where to read them.
+pub fn older_words_line(older: &[Said], path: &str) -> String {
+	let first = older.first().map(|w| w.mid.as_str()).unwrap_or("");
+	let last  = older.last().map(|w| w.mid.as_str()).unwrap_or("");
+	older_line(older.len(), first, last, path)
+}
+
+/// [`older_words_line`] for `n` messages, from row `first` to row `last` (empty for unknown).
+pub fn older_line(n: usize, first: &str, last: &str, path: &str) -> String {
+	if n == 0 {
+		return String::new();
+	}
+	let rows = match (first.is_empty(), last.is_empty()) {
+		(false, false) if first != last => fmt!(", rows {} to {},", first, last),
+		(false, true)                   => fmt!(", from row {},", first),
+		(false, false)                  => fmt!(", row {},", first),
+		_                               => String::new(),
+	};
+	fmt!("({} earlier message{} of yours{} are kept word for word under \"{}\" in {} on his \
+		device, where `recall` reads them.)", n, if n == 1 { "" } else { "s" }, rows, WORDS_LOG_HEAD,
+		path)
+}
+
+/// Whether a message is a fold notice this module wrote: its stored origin, never its words, so
+/// a message of his that opens with a pasted notice stays his (MEDIUM-B).
+pub fn is_fold_notice(m: &ChatMessage) -> bool {
+	m.origin() == Some(Origin::Notice)
 }
 
 /// Every line of every fold notice in `msgs` that `re` matches, oldest notice first.
@@ -1661,6 +2133,7 @@ pub fn is_fold_notice(m: &ChatMessage) -> bool {
 /// * `limit` - Most matches to report.
 pub fn recall_folds(
 	msgs:    &[ChatMessage],
+	log:     &str,
 	matches: &mut impl FnMut(&str) -> bool,
 	before:  usize,
 	after:   usize,
@@ -1699,6 +2172,17 @@ pub fn recall_folds(
 			}
 			done = Some(hi);
 		}
+	}
+	// His words log, as `words:<n>:` lines, after the notices.
+	for (i, line) in log.lines().enumerate() {
+		if !matches(line) {
+			continue;
+		}
+		if hits >= limit {
+			return out;
+		}
+		hits += 1;
+		out.push(fmt!("words:{}:{}", i + 1, line));
 	}
 	out
 }
@@ -1850,7 +2334,7 @@ pub fn fold_keeping(
 			Invalid, Input));
 	}
 	let mut out = Vec::with_capacity(msgs.len() - cut + 2);
-	out.push(ChatMessage::user(notice));
+	out.push(ChatMessage::notice(notice));
 	if let Some(p) = pin {
 		out.push(p.clone());
 	}
@@ -2498,7 +2982,7 @@ pub fn note_reconcile(msgs: &mut Vec<ChatMessage>, prior_tail: Option<&ChatMessa
 	if said_last_turn {
 		return false;
 	}
-	msgs.push(ChatMessage::user(RECONCILE_NOTE.to_string()));
+	msgs.push(ChatMessage::app(RECONCILE_NOTE.to_string()));
 	true
 }
 
@@ -6169,31 +6653,31 @@ mod tests {
 		let first  = notice(9, &Summary::Prose("The cap is 4120 in m07.js.\nAnd nothing else was settled."), &l, false);
 		let second = notice(4, &Summary::Prose("Nothing to do with it."), &l, false);
 		let msgs = vec![
-			ChatMessage::user(first),
+			ChatMessage::notice(first),
 			ChatMessage::assistant("between the two"),
-			ChatMessage::user(second),
+			ChatMessage::notice(second),
 			ChatMessage::user(fmt!("what was the cap?")),
 		];
-		let hits = recall_folds(&msgs, &mut |l: &str| l.contains("4120"), 0, 0, 40);
+		let hits = recall_folds(&msgs, "", &mut |l: &str| l.contains("4120"), 0, 0, 40);
 		assert_eq!(1, hits.len(), "one line carries it: {:?}", hits);
 		assert!(hits[0].starts_with("fold:1:"),
 			"reported under the notice it came from, in file_search's own form: {}", hits[0]);
 		assert!(hits[0].contains("4120"));
 		// Context lines come back too, since "what was decided" is rarely one line.
-		let hits = recall_folds(&msgs, &mut |l: &str| l.contains("4120"), 0, 1, 40);
+		let hits = recall_folds(&msgs, "", &mut |l: &str| l.contains("4120"), 0, 1, 40);
 		assert_eq!(2, hits.len(), "the line after it as well: {:?}", hits);
 		assert!(hits[1].contains("nothing else was settled"));
 		// A user message that is not a notice is not searched: it is still in the
 		// conversation, so reporting it would be the tool answering about what is in front of
 		// the model already.
-		let hits = recall_folds(&msgs, &mut |l: &str| l.contains("what was the cap"), 0, 0, 40);
+		let hits = recall_folds(&msgs, "", &mut |l: &str| l.contains("what was the cap"), 0, 0, 40);
 		assert!(hits.is_empty(), "{:?}", hits);
 	}
 
 	#[test]
 	fn test_recall_answers_nothing_when_nothing_folded_00() {
 		let msgs = three_turns();
-		let hits = recall_folds(&msgs, &mut |_: &str| true, 0, 0, 40);
+		let hits = recall_folds(&msgs, "", &mut |_: &str| true, 0, 0, 40);
 		assert!(hits.is_empty(),
 			"a conversation that has folded nothing has nothing to recall: {:?}", hits);
 	}
@@ -6474,5 +6958,69 @@ mod tests {
 		let deep = fmt!("{}{}{}", "{\"a\":", "[".repeat(400), "]".repeat(400));
 		assert!(crystal_proposal(&fmt!("{}}}", deep)).is_err(),
 			"a proposal nested past the bound was parsed rather than refused");
+	}
+
+	#[test]
+	fn test_a_summary_cut_at_its_limit_is_trimmed_to_a_whole_sentence_and_marked_00() {
+		let t = match cut_short("Did the caps. Then the tes") {
+			Some(t) => t,
+			None    => panic!("a summary with one whole sentence was dropped"),
+		};
+		assert_eq!(t, fmt!("Did the caps.\n\n{}", CUT_SHORT_NOTE));
+		assert_eq!(cut_short("no sentence ended befo"), None);
+	}
+
+	#[test]
+	fn test_a_filed_summary_left_out_says_where_its_parts_went_00() {
+		let n = FoldNotes { task: "x".repeat(4_000), ..FoldNotes::default() };
+		let (t, kept) = notice_within(9, "", &Summary::Filed(n), &Ledger::default(), false, "", 900);
+		assert!(!kept, "the filed summary rode in no room");
+		assert!(t.contains("were filed into DECISIONS.md"), "the dropped filed summary did not say so: {}", t);
+	}
+
+	#[test]
+	fn test_his_words_ride_a_notice_and_are_read_back_exactly_00() {
+		let words = vec![
+			"Never touch prod.db.".to_string(),
+			"two\n\nparas, then\n> a quote and >\n ".to_string(),
+			">".to_string(),
+		];
+		let mut msgs: Vec<ChatMessage> = words.iter().map(|w| ChatMessage::user(w.clone())).collect();
+		msgs.push(ChatMessage::user_noted("".to_string(), "an app note only".to_string()));
+		msgs.push(ChatMessage::assistant("not his".to_string()));
+		assert_eq!(person_words(&msgs, None), words, "his messages, and nothing else");
+		let n = notice_saying(5, &words, &Summary::None("down"), &Ledger::default(), false);
+		assert_eq!(words_in_notice(&n), words, "the notice did not carry them verbatim: {}", n);
+		// A second fold over the first notice hands them on, and adds what came after.
+		let later = vec![ChatMessage::notice(n), ChatMessage::user("and blue headings".to_string())];
+		let mut both = words.clone();
+		both.push("and blue headings".to_string());
+		assert_eq!(person_words(&later, None), both, "a second fold lost the first one's words");
+		// Given up last: with no room at all the words still ride, and the summary does not.
+		let (t, kept) = notice_within(5, &words_section(&words), &Summary::Prose("a long summary"), &Ledger::default(),
+			false, "", 10);
+		assert!(!kept, "the summary rode in no room");
+		assert_eq!(words_in_notice(&t), words, "his words were given up for room: {}", t);
+	}
+
+	#[test]
+	fn test_foldcap_a_notice_fits_its_room_by_dropping_the_summary_then_the_names_00() {
+		// One defined path, no second call: a summary over its room goes whole, and a ledger
+		// still over it names fewer items a line until it fits.  Nothing is cut mid-sentence.
+		let mut l = Ledger::default();
+		for i in 0..40 {
+			l.read.push(fmt!("src/a_rather_long_directory_name/file_number_{:03}.rs", i));
+		}
+		let prose = "x".repeat(20_000);
+		let room  = 1_400;
+		let (n, kept) = notice_within(9, "", &Summary::Prose(&prose), &l, false, "", room);
+		assert!(!kept, "a summary over its room rode in the notice");
+		assert!(msg_bytes(&ChatMessage::user(n.clone())) <= room, "{} bytes", n.len());
+		assert!(n.contains("Files read"), "the ledger line went:\n{}", n);
+		assert!(n.contains("left out whole"), "the notice did not say why:\n{}", n);
+		// And a notice that fits is the one `notice` writes.
+		let (m, kept) = notice_within(9, "", &Summary::Prose("did things"), &l, false, "", 1_000_000);
+		assert!(kept);
+		assert_eq!(m, notice(9, &Summary::Prose("did things"), &l, false));
 	}
 }

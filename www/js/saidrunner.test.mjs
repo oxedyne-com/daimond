@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { webcrypto } from 'node:crypto';
+import { fakeIDB, tabJournal, journalQueueOver } from './journalfixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0, checks = 0;
@@ -205,7 +206,7 @@ if (typeof L.say === 'function') {
 // ── PAGE: delivered into the turn running here, once; unheard words re-queued once. ──
 {
 	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-	const must = ['interjectMessage', 'interjectInto', 'landInterjection', 'sayToRunner', 'requeueUnheard', 'drainAfterHeld'];
+	const must = ['interjectMessage', 'interjectInto', 'landInterjection', 'sayToRunner', 'requeueUnheard', 'drainAfterHeld', 'lapsedByClock', 'confirmLapse', 'leaseDoorRead'];
 	// R7c's helpers, lifted where they exist, so the arms above them still run on a tree without them.
 	const r7c = ['resendUnheard', 'heedUnheard', 'sendToDiamondTurn'];
 	const fns0 = must.map((n) => extractFn(src, n));
@@ -225,11 +226,13 @@ if (typeof L.say === 'function') {
 				chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid });
 				return true;
 			},
-			commitRatings: () => {}, ratingPre: () => '', journalQueue: () => {}, giveUpSent: () => {},
+			commitRatings: () => {}, ratingPre: () => '', journalQueue: journalQueueOver(src, tabJournal(fakeIDB(), new Set())), giveUpSent: () => {},
 			syncSendMode: () => {}, renderQueue: () => {}, heldNote: () => {}, diag: () => {},
 			appendInterjected: () => {}, touchChat: () => {}, persistChats: () => {}, ownsChat: () => false,
 			renderHistory: () => {}, updateQueueBadges: () => {}, recoveringHere: () => false, diamondBusy: () => false,
-			peerHeldTurnOf: () => null, peerSyncShim: () => ({}),
+			peerHeldTurnOf: () => null, dispatchInFlight: () => null, peerSyncShim: () => ({}),
+			// Nothing out lapsed by the clock alone: no lease door is read (QA ccp3 A R3).
+			peerUiStateFor: () => 'running', peerReports: {}, _localEnding: {}, _localRecovering: {}, _lapseReading: {},
 			honoursModelSet: () => true,		// its runner runs the model set (D-20261018-09 OR)
 			newMid: () => 'mid' + (++S.mids),
 			msgTombstone: (ids) => { S.tombs.push(...ids); },
@@ -308,7 +311,7 @@ if (typeof L.say === 'function') {
 		await flush();
 		S.dispatchOk = true;
 		check('page: unheard and not handed off, it is queued once and its said copy tombstoned',
-			JSON.stringify(qchat._queue) === '["queue me"]' && !qchat.messages.length && S.tombs.indexOf(qm) !== -1
+			JSON.stringify(qchat._queue) === '[{"text":"queue me"}]' && !qchat.messages.length && S.tombs.indexOf(qm) !== -1
 			&& S.drained.length === 1, JSON.stringify(qchat));
 
 		// ── R7c T1: a turn past its last model round is not said to; the words go out as the next turn at once. ──

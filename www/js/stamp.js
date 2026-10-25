@@ -58,5 +58,19 @@
 		return x > y;
 	}
 
-	window.DaimondStamp = { next: next, beats: beats, canon: canon, ms: ms };
+	/// The join of two ONE-WAY taint stamps (H3 TAINT-DURABLE): the earlier SET stamp, or 0
+	/// when neither is set. A stamp is set when it is a positive number; anything else is unset.
+	///
+	/// A monotone OR, so it cannot be widened by any merge: set beats unset in either order, and
+	/// two set stamps keep the earlier, which is when the conversation first read outside content.
+	/// It is commutative, associative and idempotent, so every device and every merge order
+	/// reaches the same value, and joining a record with itself changes nothing.
+	function taint(a, b) {
+		var x = ms(a), y = ms(b);
+		if (!(x > 0)) return y > 0 ? y : 0;
+		if (!(y > 0)) return x;
+		return x < y ? x : y;
+	}
+
+	window.DaimondStamp = { next: next, beats: beats, canon: canon, ms: ms, taint: taint };
 })();

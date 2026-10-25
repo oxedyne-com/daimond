@@ -73,7 +73,7 @@ const st = {
 	maybeAutoDispatch: async () => false,		// the election keeps the retry here
 	runTurn: (chat, text) => { sp.ran.push({ text, session: JSON.parse(JSON.stringify(chat.session || null)) }); return Promise.resolve(); },
 };
-const names = ['captureSession', 'tailAfter', 'sessionDoubt', 'sessionMarker', 'sessionCut', 'seedEngine', 'turnMessagesOf', 'askAgain', 'retryTurn', 'retryRouted', 'honourGone']
+const names = ['captureSession', 'sessionHeld', 'keepChatTaint', 'markChatTainted', 'chatTaintOf', 'tailAfter', 'sessionDoubt', 'sessionMarker', 'engineHolds', 'sessionCut', 'seedEngine', 'turnMessagesOf', 'askAgain', 'retryTurn', 'retryRouted', 'honourGone']
 	.filter((n) => n !== 'sessionCut' || lift(SRC, n));	// absent before the fix, so the red is the behaviour below
 const missing = names.filter((n) => !lift(SRC, n));
 check('the gone removal is a function of daimond.js', missing.length === 0, missing);

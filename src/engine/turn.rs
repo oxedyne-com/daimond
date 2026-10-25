@@ -13,6 +13,7 @@
 //! provider's own list.
 
 use crate::{
+    agent::Agent,
     diamond_versions::Cause,
     engine::{
         host::{
@@ -25,8 +26,8 @@ use crate::{
             Won,
         },
     },
-    marks::num,
-    protocol::ChatMessage,
+    marks::{num, Reach},
+    protocol::{seed_prior, ChatMessage},
     tools::{
         KeeperKind,
         ToolContext,
@@ -37,6 +38,7 @@ use crate::{
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::{
     Dat,
+    conv::FromDat,
     map::DaticleMap,
 };
 
@@ -64,8 +66,9 @@ pub struct Lease {
 /// Who asked for the turn: a person (`person`), and whether they typed it (`said`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct How {
-    pub person: bool,
-    pub said:   bool,
+    pub person:         bool,
+    pub said:           bool,
+    pub pending_only:   bool,   // a mail trigger's turn, which reports on Pending alone (`how.pendingOnly`)
 }
 
 /// Why a turn does not go out.
@@ -112,6 +115,84 @@ pub struct TurnSpec {
     /// The conversation before the turn, oldest first, as the page seeds it (the turn's own
     /// message excluded): what a detached run's agent holds before the instruction.
     pub thread:         Vec<ChatMessage>,
+    /// The page's applied limits (KT-2), `None` from a send that carried none.
+    pub limits:         Option<TurnLimits>,
+    pub today:          String,         // the page's `Today` block (KT-4), empty for none
+    pub reach:          Option<Reach>,  // the page's reach, its `Attached` block (KT-4)
+}
+
+/// The limits the page's agent runs a turn under (KT-2), carried so a turn run elsewhere folds,
+/// caps and spends as the tab's would.  Each figure is the page's setting as it hands it to its
+/// own agent, so zero or empty means the engine's own figure, read by the same setter; the
+/// window is the page's model table's (`pricing.js` `contextWindow`), zero where it has none.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TurnLimits {
+    pub window:         u64,	// tokens; `Agent::set_context_window`
+    pub fold_at:        f64,	// fraction of the window; `Agent::set_fold_at`
+    pub context_cap:    u64,	// tokens; `Agent::set_context_cap`
+    pub spend_cap_usd:  f64,	// per turn; `Agent::set_spend_cap_usd`
+    pub max_rounds:     usize,	// `Agent::set_max_rounds`
+    pub fold_model:     String,	// the effective Summarising model on the turn's provider
+    pub fold_prompt:    String,	// the person's `prompts/compactor.md`
+    pub tune:           String,	// the tune JSON; `Agent::set_tune`
+}
+
+impl TurnLimits {
+    /// The limits a send's `limits` object carries (the page's names), or `None` for anything
+    /// that is not an object.
+    pub fn of_dat(d: &Dat) -> Option<Self> {
+        let m = match d {
+            Dat::Map(m) => m,
+            _           => return None,
+        };
+        let whole = |k: &str| {
+            let n = num(m.get(&key(k)));
+            if n.is_finite() && n > 0.0 { n.trunc() as u64 } else { 0 }
+        };
+        let real = |k: &str| {
+            let n = num(m.get(&key(k)));
+            if n.is_finite() && n > 0.0 { n } else { 0.0 }
+        };
+        Some(Self {
+            window:         whole("window"),
+            fold_at:        real("foldAt"),
+            context_cap:    whole("contextCap"),
+            spend_cap_usd:  real("spendCap"),
+            max_rounds:     whole("maxRounds") as usize,
+            fold_model:     text(m, "foldModel"),
+            fold_prompt:    text(m, "foldPrompt"),
+            tune:           text(m, "tune"),
+        })
+    }
+
+    /// The limits under the page's names, as [`TurnLimits::of_dat`] reads them.
+    pub fn to_dat(&self) -> Dat {
+        let mut d = DaticleMap::new();
+        d.insert(key("window"), Dat::U64(self.window));
+        d.insert(key("foldAt"), Dat::from(self.fold_at));
+        d.insert(key("contextCap"), Dat::U64(self.context_cap));
+        d.insert(key("spendCap"), Dat::from(self.spend_cap_usd));
+        d.insert(key("maxRounds"), Dat::U64(self.max_rounds as u64));
+        d.insert(key("foldModel"), Dat::Str(self.fold_model.clone()));
+        d.insert(key("foldPrompt"), Dat::Str(self.fold_prompt.clone()));
+        d.insert(key("tune"), Dat::Str(self.tune.clone()));
+        Dat::Map(d)
+    }
+
+    /// Set `agent` to these limits as the page sets its own (daimond.js: the window and round
+    /// limit when the app is built, then `applyFoldSettings`), so the turn's [`Agent::limits`]
+    /// are the tab's, as [`Agent::adopt_limits`] makes a Diamond's daimon's the chat's.  A tune
+    /// the engine refuses is answered as the error, after every other figure is set.
+    pub fn apply(&self, agent: &Agent) -> Outcome<()> {
+        agent.set_context_window(self.window);
+        agent.set_max_rounds(self.max_rounds);
+        agent.set_fold_at(self.fold_at);
+        agent.set_context_cap(self.context_cap);
+        agent.set_spend_cap_usd(self.spend_cap_usd);
+        agent.set_fold_model(&self.fold_model);
+        agent.set_fold_prompt(&self.fold_prompt);
+        agent.set_tune(&self.tune)
+    }
 }
 
 /// The facts the page holds for one send.
@@ -137,10 +218,16 @@ pub struct TurnAsk {
     pub pre:        String,
     /// The row the turn's message is said as (`mid`).
     pub mid:        String,
-    /// The prior transcript rows (`thread`: `{role, content, pre, mid, interject?}` each), read
-    /// through [`ChatMessage::of_row_opening`] as the tab's `append_message` reads them: an
-    /// interjection opens no turn (B3).
+    /// The conversation before the turn, from the page's engine session (`session`: `{msgs,
+    /// tail}`, KT-4) as `ensureApp` restores it: the model's rows repaired by [`seed_prior`],
+    /// then the prose tail's `{role, content, pre, mid, interject?}` rows read through
+    /// [`ChatMessage::of_row_opening`] as `append_message` reads them (an interjection opens no
+    /// turn, B3).  Empty where the send carries no session.
     pub thread:     Vec<ChatMessage>,
+    /// The page's applied limits (`limits`), `None` where the send carries no object.
+    pub limits:     Option<TurnLimits>,
+    pub today:      String,         // `today`: the page's `Today` block, empty for none
+    pub reach:      Option<Reach>,  // `reach`: what the page's marks put in reach, `None` for none
 }
 
 /// The model a provider/model choice runs on, or `None` where no keyed provider serves it
@@ -204,6 +291,9 @@ pub fn resolve(ask: &TurnAsk) -> TurnSpec {
         pre:        ask.pre.clone(),
         mid:        ask.mid.clone(),
         thread:     ask.thread.clone(),
+        limits:     ask.limits.clone(),
+        today:      ask.today.clone(),
+        reach:      ask.reach.clone(),
     }
 }
 
@@ -237,6 +327,28 @@ fn model_of(d: Option<&Dat>) -> Option<Model> {
     }
 }
 
+/// The history the page's engine session `{msgs, tail}` restores (KT-4, binding 15), as the
+/// tab's `ensureApp` restores it: the model's own rows through [`seed_prior`]'s repair, then
+/// each prose row of the tail after `upto` as `append_message` reads it, an interjection opening
+/// no turn (B3).  The prose seed beside it is no source of history.
+fn session_thread(m: &DaticleMap) -> Vec<ChatMessage> {
+    let mut thread = match m.get(&key("msgs")) {
+        Some(Dat::List(l)) => seed_prior(l),
+        _                  => Vec::new(),
+    };
+    if let Some(Dat::List(l)) = m.get(&key("tail")) {
+        thread.extend(l.iter().filter_map(|d| match d {
+            Dat::Map(r) => match r.get(&key("content")) {
+                Some(Dat::Str(c)) => ChatMessage::of_row_opening(&text(r, "role"), c.clone(),
+                    text(r, "pre"), text(r, "mid"), !flag(r, "interject")),
+                _                 => None,
+            },
+            _ => None,
+        }));
+    }
+    thread
+}
+
 impl TurnAsk {
     /// The page's send, from its JSON (`turn_spec`'s argument).
     pub fn from_json(json: &str) -> Outcome<Self> {
@@ -262,7 +374,8 @@ impl TurnAsk {
             _ => None,
         };
         let how = match top.get(&key("how")) {
-            Some(Dat::Map(m)) => How { person: flag(m, "person"), said: flag(m, "said") },
+            Some(Dat::Map(m)) => How { person: flag(m, "person"), said: flag(m, "said"),
+                pending_only: flag(m, "pendingOnly") },
             _                 => How::default(),
         };
         Ok(Self {
@@ -281,16 +394,15 @@ impl TurnAsk {
             how,
             pre:        text(&top, "pre"),
             mid:        text(&top, "mid"),
-            thread:     match top.get(&key("thread")) {
-                Some(Dat::List(l)) => l.iter().filter_map(|d| match d {
-                    Dat::Map(m) => match m.get(&key("content")) {
-                        Some(Dat::Str(c)) => ChatMessage::of_row_opening(&text(m, "role"),
-                            c.clone(), text(m, "pre"), text(m, "mid"), !flag(m, "interject")),
-                        _                 => None,
-                    },
-                    _ => None,
-                }).collect(),
-                _ => Vec::new(),
+            thread:     match top.get(&key("session")) {
+                Some(Dat::Map(m)) => session_thread(m),
+                _                 => Vec::new(),
+            },
+            limits:     top.get(&key("limits")).and_then(TurnLimits::of_dat),
+            today:      text(&top, "today"),
+            reach:      match top.get(&key("reach")) {
+                Some(d @ Dat::Map(_)) => Reach::from_dat(d.clone()).ok(),
+                _                     => None,
             },
         })
     }
@@ -334,6 +446,10 @@ impl TurnSpec {
             Some(r) => r.word().to_string(),
             None    => String::new(),
         }));
+        // Written only when carried, so a spec without them is the bytes it always was.
+        if let Some(l) = &self.limits {
+            d.insert(key("limits"), l.to_dat());
+        }
         Dat::Map(d)
     }
 
@@ -645,8 +761,8 @@ mod tests {
     }
 
     #[test]
-    fn a_send_carries_its_note_its_row_and_the_thread_as_the_tab_seeds_it() {
-        let ask = match TurnAsk::from_json(r#"{"chat":"c1","default":{"provider":"a","model":"m"},"keyed":["a"],"typed":"go on","pre":"note","mid":"t9","thread":[{"role":"user","content":"first","pre":"p1","mid":"m1"},{"role":"assistant","content":"said"},{"role":"tool","content":"x"},{"role":"system","content":"s"},{"role":"user","content":7}]}"#) {
+    fn a_send_carries_its_note_its_row_and_the_session_tail_as_the_tab_restores_it() {
+        let ask = match TurnAsk::from_json(r#"{"chat":"c1","default":{"provider":"a","model":"m"},"keyed":["a"],"typed":"go on","pre":"note","mid":"t9","session":{"msgs":[],"tail":[{"role":"user","content":"first","pre":"p1","mid":"m1"},{"role":"assistant","content":"said"},{"role":"tool","content":"x"},{"role":"system","content":"s"},{"role":"user","content":7}]}}"#) {
             Ok(a)  => a,
             Err(e) => panic!("{}", e),
         };
@@ -663,12 +779,65 @@ mod tests {
     /// run as one, so it opens no turn (B3), as the tab's `append_message` reads it.
     #[test]
     fn a_thread_interjection_opens_no_turn() {
-        let ask = match TurnAsk::from_json(r#"{"chat":"c1","default":{"provider":"a","model":"m"},"keyed":["a"],"typed":"go on","mid":"t9","thread":[{"role":"user","content":"ran","mid":"m1"},{"role":"user","content":"said in","mid":"m2","interject":true}]}"#) {
+        let ask = match TurnAsk::from_json(r#"{"chat":"c1","default":{"provider":"a","model":"m"},"keyed":["a"],"typed":"go on","mid":"t9","session":{"msgs":[],"tail":[{"role":"user","content":"ran","mid":"m1"},{"role":"user","content":"said in","mid":"m2","interject":true}]}}"#) {
             Ok(a)  => a,
             Err(e) => panic!("{}", e),
         };
         let opens: Vec<bool> = resolve(&ask).thread.iter().map(|m| m.opens_turn()).collect();
         assert_eq!(opens, vec![true, false], "only the row a turn ran on opens one");
+    }
+
+    /// The engine session the page sends, as `ensureApp` restores it (KT-4, binding 15): the
+    /// model's own rows (a fold, a tool call and its folded reply, an orphaned call) made whole
+    /// by the `seed_prior` repair, then the prose tail after `upto`, read as `append_message`
+    /// reads it.  The prose `thread` beside it is no source of history.
+    pub(crate) const KT4_SESSION: &str = r#"{"msgs":[{"role":"user","content":"FOLD: the earlier turns read notes.txt"},{"role":"user","opens":true,"content":"Read notes.txt.","mid":"t1"},{"role":"assistant","content":"","tool_calls":[{"id":"c1","name":"file_read","arguments":"{\"path\":\"notes.txt\"}"}]},{"role":"tool","retired":true,"folded":true,"tool_call_id":"c1","content":"quillfeather-7731"},{"role":"assistant","content":"","tool_calls":[{"id":"c2","name":"file_read","arguments":"{}"}]},{"role":"assistant","content":"It says quillfeather-7731."}],"tail":[{"role":"user","content":"Say ok.","mid":"t2"},{"role":"user","content":"said in","mid":"t2b","interject":true},{"role":"assistant","content":"ok","mid":"a2"}]}"#;
+
+    /// [`KT4_SESSION`] as the tab's engine holds it.
+    pub(crate) fn kt4_history() -> Vec<ChatMessage> {
+        let call = |id: &str, args: &str| crate::protocol::ToolCall {
+            id: id.to_string(), name: "file_read".to_string(), arguments: args.to_string() };
+        let mut v = crate::protocol::pair_up(vec![
+            ChatMessage::user_noted("FOLD: the earlier turns read notes.txt".to_string(), String::new()),
+            ChatMessage::user_noted("Read notes.txt.".to_string(), String::new()).marked("t1".to_string()).opening(),
+            ChatMessage::assistant_calling(String::new(), vec![call("c1", r#"{"path":"notes.txt"}"#)]),
+            ChatMessage::tool("c1".to_string(), "quillfeather-7731".to_string()).as_retired().as_folded(),
+            ChatMessage::assistant_calling(String::new(), vec![call("c2", "{}")]),
+            ChatMessage::assistant("It says quillfeather-7731.".to_string()),
+        ]);
+        for (role, text, mid, opens) in [("user", "Say ok.", "t2", true), ("user", "said in", "t2b", false),
+            ("assistant", "ok", "a2", true)]
+        {
+            if let Some(m) = ChatMessage::of_row_opening(role, text.to_string(), String::new(),
+                mid.to_string(), opens)
+            {
+                v.push(m);
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn kt4_the_session_is_the_thread_and_today_and_reach_travel() {
+        let json = format!(r#"{{"chat":"c1","default":{{"provider":"a","model":"m"}},"keyed":["a"],"typed":"go on","mid":"t9","thread":[{{"role":"user","content":"prose only","mid":"p1"}}],"session":{},"today":"Today is Saturday.","reach":{{"attached":["code"],"read_only":["docs"],"unconfirmed":["far"],"nested":[]}}}}"#,
+            KT4_SESSION);
+        let ask = match TurnAsk::from_json(&json) {
+            Ok(a)  => a,
+            Err(e) => panic!("{}", e),
+        };
+        let spec = resolve(&ask);
+        let want = kt4_history();
+        assert!(!want.iter().any(|m| matches!(m, ChatMessage::Assistant { tool_calls, .. }
+            if tool_calls.iter().any(|c| c.id == "c2"))),
+            "the repair drops the orphaned call, so the test proves the repair ran");
+        assert_eq!(spec.thread, want, "the turn is not fed the page's session");
+        assert_eq!(spec.today, "Today is Saturday.");
+        assert_eq!(spec.reach, Some(Reach {
+            attached:       vec!["code".to_string()],
+            read_only:      vec!["docs".to_string()],
+            unconfirmed:    vec!["far".to_string()],
+            nested:         Vec::new(),
+        }));
     }
 }
 
@@ -797,6 +966,37 @@ mod driver {
         assert_eq!(l.until(), 5_000);
         l.renew(9_000);
         assert_eq!(l.until(), 9_000);
+    }
+
+    // KT-2: the page's limits travel on the send, decimals included (JSON `0.8` decodes as a
+    // decimal, which the number reader once read as nought), and a send with none carries none.
+    #[test]
+    fn send_limits_are_read_and_resolved() {
+        let txt = r#"{"chat":"c","default":{"provider":"credits","model":"m"},"keyed":["credits"],"typed":"hi",
+            "limits":{"window":1048576,"foldAt":0.8,"contextCap":200000,"spendCap":0.5,"maxRounds":40,
+            "foldModel":"f","foldPrompt":"p","tune":"{}"}}"#;
+        let ask = match TurnAsk::from_json(txt) {
+            Ok(a)  => a,
+            Err(e) => panic!("the send did not read: {}", e),
+        };
+        let want = TurnLimits {
+            window:         1_048_576,
+            fold_at:        0.8,
+            context_cap:    200_000,
+            spend_cap_usd:  0.5,
+            max_rounds:     40,
+            fold_model:     "f".to_string(),
+            fold_prompt:    "p".to_string(),
+            tune:           "{}".to_string(),
+        };
+        assert_eq!(ask.limits.as_ref(), Some(&want));
+        assert_eq!(resolve(&ask).limits, Some(want.clone()));
+        assert_eq!(TurnLimits::of_dat(&want.to_dat()), Some(want));
+        let bare = match TurnAsk::from_json(r#"{"chat":"c","typed":"hi"}"#) {
+            Ok(a)  => a,
+            Err(e) => panic!("the bare send did not read: {}", e),
+        };
+        assert_eq!(bare.limits, None);
     }
 
     const TEST_EPOCH: u64 = crate::engine::host::test::clock::TEST_EPOCH_MS as u64;

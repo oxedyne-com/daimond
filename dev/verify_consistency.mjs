@@ -532,6 +532,43 @@ async function overlay(name, opener) {
 	return ov;
 }
 
+// CONS-BYROLE F4 (D-20261024-16, his pick A): Settings home is the weekly stop, six doors and the session rows; every other row of the
+// drawer is drawn only on its door's own page, held off-page (settingsgroups.js `hold`) while the doors stand. So each door page is a
+// surface, and a row is reached through the door that holds it. A door that is not there is a counted finding (CONS-CRASH fix 3).
+// `drawer`: a phone, whose Settings opens from inside the rail's drawer.
+async function settingsHome(drawer) {
+	if (drawer) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(700); }
+	if (!(await click('#user-row'))) return false;
+	await wait(600);
+	await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(400);
+	// A door page left standing from before is walked back from, as a person would.
+	if (await ev(() => { const b = document.querySelector('#admin .sg-back'); if (!b || !b.getClientRects().length) return false; b.click(); return true; })) await wait(400);
+	return ev(() => [...document.querySelectorAll('#admin .sg-door[data-sgroup]')].filter((b) => b.getClientRects().length).map((b) => b.dataset.sgroup));
+}
+async function settingsDoor(id) {
+	if (!(await click(`#admin .sg-door[data-sgroup="${id}"]`))) return false;
+	await wait(500);
+	return ev(() => !!document.querySelector('#admin .sg-back') && document.querySelector('#admin .sg-back').getClientRects().length > 0);
+}
+// A row of the drawer by its label, on Settings home or behind the door that holds it.
+async function settingsRow(re, drawer) {
+	const doors = await settingsHome(drawer);
+	if (!doors) return false;
+	if (await clickText('#admin .admin-item:not(.sg-door)', re)) return true;
+	for (const id of doors) {
+		if (!(await settingsDoor(id))) return false;
+		if (await clickText('#admin .admin-item:not(.sg-back)', re)) return true;
+		await click('#admin .sg-back'); await wait(400);
+	}
+	return false;
+}
+// The Settings surfaces of one configuration, home and every door page, by name, and a floor under how much of the drawer they measure.
+const SETTINGS_SURF = /^(p_)?admin_(home|door_\w+)(_end)?$|^p_admin$/;
+// The Settings drawer's measured elements, each counted once across its surfaces, before the doors (chipline, 24 Oct, its one page:
+// desk 66, phone 67, WebKit 66; 69, 70 and 73 instances). A run that measures fewer has lost a part of the drawer without a fault, which
+// is how the doors' first build hid ~55 controls a configuration (diag_byrole_20261025 item 5): so it is a finding.
+const SETTINGS_FLOOR = { desk: 66, phone: 67, webkit: 66 };
+
 // CONS-CRASH fix 3 (rc ruling, 23 Oct): a control that is not there is a COUNTED FINDING, never a crash. One absent control used to throw
 // a Playwright TimeoutError out of rateSurfaces to the top level, so desk, phone, WebKit, the report and byrole.json were all lost.
 // `need` waits up to `ms` for `loc` to be visible; on a timeout it counts `<cfg>/<surface> (tile <tile>: .<control> not visible: <why>)`,
@@ -950,6 +987,18 @@ async function deskSurfaces() {
 		await ev(() => { const b = document.getElementById('admin-scroll') || document.getElementById('admin'); b.scrollTop = 99999; }); await wait(250);
 		await grab('admin_' + v + '_end', '#admin');
 	}
+	// F4: every door's own page, top and bottom.
+	await quiet();
+	const doors = await settingsHome();
+	if (!doors || !doors.length) CAP.missing.push(`${CFG}/admin_doors`);
+	for (const id of doors || []) {
+		await quiet();
+		if (!(await settingsHome()) || !(await settingsDoor(id))) { log('no door', id); CAP.missing.push(`${CFG}/admin_door_${id}`); continue; }
+		await ev(() => document.querySelectorAll('#admin details').forEach((d) => { d.open = true; }));
+		await grab('admin_door_' + id, '#admin');
+		await ev(() => { const b = document.getElementById('admin-scroll') || document.getElementById('admin'); b.scrollTop = 99999; }); await wait(250);
+		await grab('admin_door_' + id + '_end', '#admin');
+	}
 	// U5b (D-20261018-09): the Models view with OpenRouter routing rows drawn. A fixture, like RATING_FIX: an OpenRouter provider
 	// whose catalogue (two models) and per-model host lists are answered in the page, and measured figures for the first model
 	// with long host names (one slow, so "Avoided" and its reason are drawn; one preferred). The second model has no rounds, and
@@ -972,7 +1021,7 @@ async function deskSurfaces() {
 		await ev(ROUTE_UNDO);
 	} else CAP.missing.push(`${CFG}/admin_models_routing`);
 	for (const re of ['^Change name', '^Change passphrase', '^Set up git push', '^Edit the Chat prompt', '^Forget this identity', '^Social settings']) {
-		await overlay('form_' + re.replace(/\W+/g, '').slice(0, 16), async () => { await click('#user-row'); await wait(600); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(400); return clickText('#admin .admin-item', re); });
+		await overlay('form_' + re.replace(/\W+/g, '').slice(0, 16), () => settingsRow(re));
 	}
 	await quiet();
 	// Every dock and stage panel on its own beside the chat.
@@ -1080,6 +1129,13 @@ async function phoneSurfaces(wk) {
 	await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(300);
 	for (const [name, sel, drawer] of [['p_menu_settings', '#settings-menu-btn'], ['p_admin', '#user-row', 1], ['p_dlg_newdiamond', '#new-diamond-btn', 1], ['p_menu_handmode', '#hand-mode-chip'], ['p_dlg_chatcog', '#session-list .chat-box .tile-cog', 1]]) {
 		await overlay(name, async () => { if (drawer) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(700); } return click(sel); });
+	}
+	// F4: every door's own page on a phone, opened from the drawer as Settings itself is.
+	await quiet();
+	const pdoors = await settingsHome(1);
+	if (!pdoors || !pdoors.length) CAP.missing.push(`${CFG}/p_admin_doors`);
+	for (const id of pdoors || []) {
+		await overlay('p_admin_door_' + id, async () => (await settingsHome(1)) && settingsDoor(id));
 	}
 	await quiet();
 	await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700);
@@ -1744,6 +1800,14 @@ const ROLES = [
 	// text edge, no caret, shut or open -- so it is not a 12px muted fold head. Its own role, compared with its own instances; the name is
 	// the provider's own (OpenRouter, Fireworks AI), so its casing is not judged.
 	['provider-row',    'none',     (it) => it.ctrl && has(it, 'models-prov-head')],
+	// CONS-BYROLE F2 (D-20261024-16, his pick A): a Settings door is a component of its own -- the group's name, a muted line of what it
+	// holds, a chevron -- two lines tall (53px; 55 on a phone) and padded 9px 8px, not a one-line row. Compared with its own instances.
+	['door-row',        'sentence', (it) => it.ctrl && has(it, 'sg-door')],
+	// F4: a door page's way back ("‹ Settings", in the secondary ink, his pick a-*-you) names the page it returns to; its own role, as the door is.
+	['back-row',        'sentence', (it) => it.ctrl && has(it, 'sg-back')],
+	// F1: a Settings reading is drawn as a menu item, but its words are a reading -- a label and its figure ("Pro", "Get Pro";
+	// "Permissions: Guarded") -- whose casing was never copy's, as it was not when it stood in the rail as a status row.
+	['menu-item',       'none',     (it) => it.ctrl && has(it, 'sg-status')],
 	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-route-head'))],
 	['toggle-option',   'sentence', (it) => it.ctrl && (has(it, 'dview-btn') || within(it, /\.seg\b|\.size-row|-toggle\b|\.files-scope|\.imp-chips|\.net-row|\.tile-dlg-seg|\.files-mode\b/) && !has(it, 'files-mode-btn') || has(it, 'grid-opt'))],
 	// The walk-back pair is the composer's wherever it sits: in the bar on a computer, in the composer row on a phone (D-20261014-08).
@@ -1758,7 +1822,9 @@ const ROLES = [
 	// `div#….pop` clause below and then outvoted that role's real, compact
 	// entries on height.
 	['gallery-row',     'none',     (it) => has(it, 'gal-row') || has(it, 'gal-pin')],
-	['menu-item',       'sentence',    (it) => it.ctrl && (it.role === 'menuitem' || has(it, 'admin-item') || has(it, 'railhead-menu-item') || within(it, /^div#[\w-]*\.pop\b/) && /BUTTON/i.test(it.tag) && !/select|input/.test(it.tag))],
+	// CONS-BYROLE F1 (D-20261024-16, his pick A): a live reading on Settings (`.sg-status`) is drawn by the Settings row's own rule
+	// (app.css `.admin-item`), so it is a menu item, measured against Lock and Log out, not against the rail's 12px status rows it was built from.
+	['menu-item',       'sentence',    (it) => it.ctrl && (it.role === 'menuitem' || has(it, 'admin-item') || has(it, 'sg-status') || has(it, 'railhead-menu-item') || within(it, /^div#[\w-]*\.pop\b/) && /BUTTON/i.test(it.tag) && !/select|input/.test(it.tag))],
 	// G6: only the chip itself is a filter chip -- its × closer, its input and
 	// its "add" text-button are their own roles (ahead of filter-chip below).
 	// A tile's own icon (avatar.js) is one component drawn by one rule, the row's leading mark: not one of the
@@ -1864,9 +1930,11 @@ const PROPS_TEXT = ['ff', 'fs', 'fw', 'ls', 'tt', 'col', 'lh', 'td'];
 const ROLE_PROPS = {
 	// G17: a single-child button's `gap` is invisible, and the icon-gap check
 	// already measures the real gap, so `head-tool` drops it from its props.
+	// `menu-item` too (CONS-BYROLE F1): an icon row's gap (About, Guide: 4px) is the icon-gap check's, and a Settings reading's is
+	// its status dot's (8px, his pick A), which is not an icon; compared here, one outvoted the other.
 	'create-button': PROPS_CTRL.concat('icon'), 'text-button': PROPS_CTRL, 'dialog-action': PROPS_CTRL, 'head-tool': PROPS_CTRL.filter((p) => p !== 'gap').concat('icon'),
 	'icon-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'bar-icon': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'composer-button': ['rad', 'h', 'icon', 'bd'], 'close-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'],
-	'tab': PROPS_CTRL, 'toggle-option': PROPS_CTRL, 'menu-item': PROPS_CTRL.concat('icon'), 'chip': PROPS_CTRL, 'filter-chip': PROPS_CTRL,
+	'tab': PROPS_CTRL, 'toggle-option': PROPS_CTRL, 'menu-item': PROPS_CTRL.filter((p) => p !== 'gap').concat('icon'), 'chip': PROPS_CTRL, 'filter-chip': PROPS_CTRL,
 	'field': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'h', 'sh'], 'select': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'], 'toggle': ['h', 'bd', 'rad'],
 	'disclosure': PROPS_TEXT.concat('bg', 'bd', 'pad', 'h'), 'inline-link': ['ff', 'fw', 'col', 'td', 'bg', 'bd', 'pad'],
 	'breadcrumb': ['ff', 'fs', 'fw', 'col', 'pad'],
@@ -1876,6 +1944,8 @@ const ROLE_PROPS = {
 	'file-row-name': ['ff', 'fs', 'fw', 'col', 'lh'],
 	'status-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'], 'stat-strip': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'],
 	'gallery-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'],
+	'door-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h', 'gap'],
+	'back-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h', 'gap', 'icon'],
 	'palette-row': ['ff', 'fs', 'col', 'bd', 'rad', 'pad', 'h'],
 	'panel-title': PROPS_TEXT, 'dialog-title': PROPS_TEXT, 'section-head': PROPS_TEXT, 'field-label': PROPS_TEXT, 'note': ['ff', 'fs', 'fw', 'ls', 'col', 'lh'],
 	'list-text': ['ff', 'fs', 'fw', 'col', 'lh'],
@@ -1957,10 +2027,22 @@ const USER = /^Log Life$|Kitchen|Thesis|Tax return|Compare the three|Flights to|
 const GLY_CHARS = /[▸▾▶▼►◂◀←-⇿✎✕×⟳↺⋯☰✓✔•◈⚙⊕‹›»«⤓⬇⬆↗●○★☆…✏✂⧉⎘⏸■□◆◇≡✖✗✘⚠ℹ❓❗+＋📎🔒🔓📄📁🗑⭐⚡]/gu;
 // A contraction is one word: "Don't Change" is Title, not "Don", "t", "Change" (mixed) (r573).
 const words = (t) => t.replace(/(\p{L})['’](\p{L})/gu, '$1$2').replace(GLY_CHARS, ' ').replace(/[“”"'‘’()[\]…:.,!?]/g, ' ').split(/\s+/).filter((w) => /^\p{L}/u.test(w));
+// CONS-BYROLE F5 (A5, D-20260929-03 §13; his pick A, D-20261024-16): a label that names a page quotes the page's title, so the title's
+// own capital is not the label's casing ("Help and What’s new" names the page "What’s new"). The titles are read from the English
+// table, so the rule follows the words on screen (one apostrophe, ’, which i18ncheck holds every string to).
+const PAGE_TITLE_KEYS = ['rel.whats_new'];
+const EN_TABLE = fs.readFileSync(path.join(import.meta.dirname, '..', 'www', 'i18n', 'en.js'), 'utf8');
+const PAGE_TITLES = PAGE_TITLE_KEYS.map((k) => {
+	const m = EN_TABLE.match(new RegExp(`'${k.replace(/\./g, '\\.')}'\\s*:\\s*(['"])(.*?)\\1`));
+	if (!m) throw new Error(`verify_consistency: no English title for ${k} in www/i18n/en.js`);
+	return m[2];
+});
 function casingOf(t) {
 	// G4(a): a text whose first word character is a figure is data, not copy
 	// ("▸ 0 linked diamonds").
 	if (/^[^\p{L}]*\d/u.test(t)) return 'n/a';
+	// F5: a quoted page title after the label's first word is the page's own casing, not the label's.
+	for (const pt of PAGE_TITLES) { const i = t.indexOf(pt); if (i > 0) t = t.slice(0, i) + t.slice(i).split(pt).join(' '); }
 	// G3: a sentence is split on the full stop too, so "Ctrl K." reads as one.
 	const w = words(t.split(/[.?!]\s/)[0]); if (!w.length) return 'n/a';
 	const cap = (x) => /^\p{Lu}/u.test(x), acr = (x) => /^\p{Lu}[\p{Lu}\d]*$/u.test(x);
@@ -2023,8 +2105,9 @@ function report() {
 				if (p === 'h' && role !== 'list-row') { /* single-line only */ }
 				// Type is compared only where there is type; an icon's height only on
 				// one line. G12: a textarea sizes to its content, not to a rule. G10:
-				// `gap` means nothing on a box that isn't flex or grid.
-				const pool = L.filter((it) => !(p === 'h' && it.lines > 1) && !(p === 'icon' && !it.icon) && !(FONTP.has(p) && !/\p{L}/u.test(it.text))
+				// `gap` means nothing on a box that isn't flex or grid. CONS-BYROLE F1: a glyph after the words (a figure's price tag on a
+				// Settings reading, "Daimond credits ⌂0.00") is the figure's, not the control's icon: `icon` is the control's leading mark.
+				const pool = L.filter((it) => !(p === 'h' && it.lines > 1) && !(p === 'icon' && (!it.icon || it.icon.gap == null && it.tx != null)) && !(FONTP.has(p) && !/\p{L}/u.test(it.text))
 					&& !(p === 'h' && it.tag === 'textarea') && !(p === 'gap' && !/flex|grid/.test(it.st.disp)) && !(p.startsWith('pad:') && val(it, p) == null));
 				// G9: padding is compared icon with icon, word with word -- a 30×30
 				// icon tool and a worded tool cannot share one canonical padding.
@@ -2266,8 +2349,21 @@ function report() {
 	}
 	const Tx = [...tapRows.values()];
 	const roleCount = new Map(); for (const it of I) roleCount.set(it.roleName, (roleCount.get(it.roleName) || 0) + 1);
+	// F4: how much of the Settings drawer each configuration measured, one element once across home and the door pages; under the floor is a finding.
+	const settingsMeasured = {};
+	for (const it of items) {
+		const [cfg, surf] = it.surface.split('/');
+		if (!SETTINGS_SURF.test(surf)) continue;
+		(settingsMeasured[cfg] = settingsMeasured[cfg] || new Set()).add([it.tag, it.id, it.cls.join('.'), it.text].join('|'));
+	}
+	for (const cfg of new Set(items.map((it) => it.surface.split('/')[0]))) {
+		const n = settingsMeasured[cfg] ? settingsMeasured[cfg].size : 0, floor = SETTINGS_FLOOR[cfg.split('-')[0]];
+		if (!floor) { delete settingsMeasured[cfg]; continue; }
+		settingsMeasured[cfg] = n;
+		if (n < floor) missing.push(`${cfg}/settings_coverage (${n} of at least ${floor} measured)`);
+	}
 	const summary = {
-		surfaces: surfaces.length, missing, instances: I.length, roles: Object.fromEntries([...roleCount.entries()].sort((a, b) => b[1] - a[1])),
+		surfaces: surfaces.length, missing, settingsMeasured, instances: I.length, roles: Object.fromEntries([...roleCount.entries()].sort((a, b) => b[1] - a[1])),
 		styleDiffs: unexplained.length, allowedDiffs: D.length - unexplained.length, casing: C.length, layout: Lx.length, tap: Tx.length, tapMeasured: tapSeen.size, send: sends.length,
 		byRole: Object.fromEntries([...new Set(unexplained.map((d) => d.role))].map((r) => [r, unexplained.filter((d) => d.role === r).length])),
 		layoutByKind: Object.fromEntries([...new Set(Lx.map((d) => d.kind))].map((r) => [r, Lx.filter((d) => d.kind === r).length])),

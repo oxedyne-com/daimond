@@ -375,7 +375,8 @@
 :root[data-skin="daylight"] :is(.admin-note, .rail-note, .trash-note, .cap-blurb, .mail-fine, .pop-note,
 	.chat-msg-empty, .files-empty, .rel-blurb, .agents-empty, .mdash-empty, .hist-note, .mdash-note, .spend-note,
 	.mode-row-blurb, .shr-note, .cfg-hint, .search-engine-note, .tag-note, .spend-sec-hint,
-	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note, .pro-fine, .ar-hint, .tools-fine, .spend-empty, .pend-detail, .capp-offer-note) {
+	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note, .pro-fine, .ar-hint, .tools-fine, .spend-empty, .pend-detail, .capp-offer-note,
+	.post-empty, .post-nobody) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 1.45;
 }
 /* A dialog's note is the same note; its warning variant keeps the warning colour. */

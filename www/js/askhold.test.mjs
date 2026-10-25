@@ -71,9 +71,10 @@ function world() {
 		function unpinAwaiting(c) { W.unpinned.push(c); }
 		function renderQueue() { W.rendered++; }
 		function updateQueueBadges() {}
+		function dispatchInFlight() { return null; }
 		function returnQueue(c) { W.returned = (c._queue || []).slice(); c._queue = []; }
 		function runTurn(chat, text) { W.sent.push(text); }
-		async function sendQueued(chat, text) { W.sent.push(text); return 'here'; }	// the election kept it here
+		async function sendQueued(chat, item) { W.sent.push(item.text); return 'here'; }	// the election kept it here
 		function armIdleBound(stands, fire) { W.armed = { stands: stands, fire: fire }; }
 		function dialogIdleMs() { return 1800000; }
 		function trail() {}
@@ -127,12 +128,12 @@ test('an empty row is not an answer', () => {
 });
 
 test('a queue left by the asking turn is held while the question is open', () => {
-	const W = world(), c = card('Which way?'), chat = { id: 'c1', _queue: ['Fence checked too.'] };
+	const W = world(), c = card('Which way?'), chat = { id: 'c1', _queue: [{ text: 'Fence checked too.', drawn: '' }] };
 	W.api.open(chat);
 	W.api.draw(c);
 	W.api.drainQueue(chat, false);
 	assert.deepEqual(W.sent, [], 'the queued message was sent as the answer to a question nobody had seen (F-B2-1a)');
-	assert.deepEqual(chat._queue, ['Fence checked too.'], 'the held message left the queue box');
+	assert.deepEqual(chat._queue, [{ text: 'Fence checked too.', drawn: '' }], 'the held message left the queue box');
 	assert.equal(W.api.holds(), true);
 	// Answered: the queue goes on as before.
 	W.api.askMarkAnswered('Chose: Alpha');

@@ -1715,7 +1715,57 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The daimon chat's fold record (UNBLOCK-11), ABSENT when unset so a record without
 		// one travels as the same bytes it always did (the push-skip fixed point).
 		if (c.fold && typeof c.fold.text === 'string' && c.fold.text) out.fold = c.fold;
+		// WHEN THIS CONVERSATION FIRST READ OUTSIDE CONTENT (H3 TAINT-DURABLE), ABSENT when it never
+		// has, so a clean record travels as the same bytes it always did (the push-skip fixed point).
+		// One-way: no path clears it; `chatTaintJoin` is its only merge.
+		var ta = chatTaintOf(c);
+		if (ta) out.taintedAt = ta;
 		return out;
+	}
+	/// A chat record's one-way taint stamp, or 0 when it has never read outside content.
+	function chatTaintOf(c) { return c ? DaimondStamp.taint(c.taintedAt, 0) : 0; }
+	/// Join `a`'s and `b`'s taint onto `out`: the earlier SET stamp, set beating unset in either
+	/// order (`DaimondStamp.taint`). The ONE assignment every merge of two chat records makes,
+	/// `mergeChatRecords` and the tab adoption alike, and never a deletion of a stamp `out` holds.
+	function chatTaintJoin(out, a, b) {
+		var ta = DaimondStamp.taint(DaimondStamp.taint(chatTaintOf(a), chatTaintOf(b)), chatTaintOf(out));
+		if (ta) out.taintedAt = ta;
+		return ta;
+	}
+	/// Mark a chat record as having read outside content at `now` (default the clock). One-way:
+	/// a record already marked keeps its earlier stamp. Answers whether the record changed, so a
+	/// caller can save it.
+	function markChatTainted(c, now) {
+		if (!c) return false;
+		var was = chatTaintOf(c);
+		var ta = DaimondStamp.taint(was, (typeof now === 'number') ? now : Date.now());
+		if (ta === was) return false;
+		c.taintedAt = ta;
+		return true;
+	}
+	/// Keep the engine's taint verdict on a chat's RECORD, where a reload, a rebuilt engine and
+	/// another device can read it (H3). The engine's own flag is in memory only. Answers whether
+	/// the record changed.
+	function keepChatTaint(c, app) {
+		var t = false;
+		try { t = !!(app && typeof app.is_tainted === 'function' && app.is_tainted()); } catch (e) { t = false; }
+		return t ? markChatTainted(c) : false;
+	}
+	/// Put a chat record's taint onto an engine just built for it, so a reload, a model switch or
+	/// any other rebuild cannot start the conversation clean (H3). Answers whether it was put.
+	function applyChatTaint(c, app) {
+		if (!chatTaintOf(c) || !app || typeof app.set_tainted !== 'function') return false;
+		try { app.set_tainted(); return true; } catch (e) { return false; }
+	}
+	/// Take the taint a runner's report carries onto this device's record of the chat, and onto
+	/// the engine it holds for it (NF3 TRIP-MARK), so the next turn here cannot start clean.
+	/// One-way, like every mark: an earlier stamp stands.
+	function takeReportTaint(report) {
+		if (!report || typeof report.taintedAt !== 'number' || !report.chatId) return;
+		var rec = chats.find(function (c) { return c.id === report.chatId; });
+		if (!rec) return;
+		if (markChatTainted(rec, report.taintedAt)) persistChats();
+		if (rec.app) applyChatTaint(rec, rec.app);
 	}
 	/// Does this chat record own a model? A chat inside a Diamond does not (UNBLOCK-5, C3): the
 	/// Diamond's record owns `model`, and the composer, every label, the meter and the turn read it
@@ -2582,6 +2632,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (c.effort) sv.push('e:' + c.effort);
 			if (typeof c.mat === 'number') sv.push('t:' + c.mat);	// the model stamp, only when set (U1c)
 			if (typeof c.nat === 'number') sv.push('n:' + c.nat);	// the name stamp, likewise (S)
+			if (chatTaintOf(c)) sv.push('x:' + chatTaintOf(c));	// the taint stamp, only when set (H3)
 			return String(c.updatedAt || 0) + ':' + mc + ':' + sc + ':' + JSON.stringify(c.holds || []) + ':m' + ma
 				+ ':' + standingOf(c) + ':' + JSON.stringify(sv);
 		}
@@ -4390,7 +4441,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// alone while a metadata edit (`touchChatMeta`) moves it (S-SYNC #5).
 			metaAt: (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0),
 			mat: (typeof c.mat === 'number') ? c.mat : undefined,	// absent until a model edit (U1c)
-			nat: (typeof c.nat === 'number') ? c.nat : undefined };	// absent until the split (S)
+			nat: (typeof c.nat === 'number') ? c.nat : undefined,	// absent until the split (S)
+			// One-way, ABSENT when never set (H3): a reload keeps what the conversation has read.
+			taintedAt: chatTaintOf(c) || undefined };
 	}
 	/// Open the store and hand back what it holds, hydrated — everything the user
 	/// still has, which is not everything the store still holds. A trashed chat
@@ -4636,6 +4689,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The fold record: the longer range wins, the same from either side (`mergeFold`).
 		var fold = mergeFold(a.fold, b.fold);
 		if (fold) out.fold = fold; else delete out.fold;
+		// The taint is a monotone OR, decided by neither stamp (H3): `out` is the turn winner's
+		// copy, and the loser's taint must survive it.
+		chatTaintJoin(out, a, b);
 		return out;
 	}
 
@@ -4937,6 +4993,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			// The model half on its own stamp, under the same guard (D-20261018-09 U1c).
 			if (!c._generating) takeChatModel(c, s, c);
+			// The taint under NO guard (H3): it only narrows, so a turn in flight loses nothing by
+			// it, and the engine this tab holds is told at once.
+			if (chatTaintJoin(c, s, c) && c.app) applyChatTaint(c, c.app);
 			// Both stamps move forward to the max, so neither a turn nor a metadata edit
 			// applied here can make the record read older than the store already has it.
 			if (!c._generating) {
@@ -5042,6 +5101,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// refresh.
 		try { if (typeof document !== 'undefined' && document.hidden) _syncedWhileHidden = true; }
 		catch (e) { /* no document */ }
+		// A merge may have landed the answer or the end a queue waits behind (QA ccp2 M1).
+		try { drainHeldQueues(); } catch (e) { /* the hold's wake asks again */ }
 	}
 	// Another tab changed the Diamonds. Re-read the rail from the store, which
 	// is the truth; a turn in flight here is not disturbed, because nothing but
@@ -27946,6 +28007,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			delete existing.refused;		// a re-dispatch supersedes the last refusal
 			delete existing.busyBy;			// and the last seat's busy hand-back (Q19)
 			delete existing.threadBy;		// and its thread hand-back (D2)
+			delete existing.overDoor;		// and its session reference (KT-4b): the next seal decides
 			// The elected device joins what the retries already recorded, never replaces it.
 			(mark.tried || []).forEach(function (id) {
 				var had = Array.isArray(existing.triedDevices) ? existing.triedDevices : [];
@@ -28114,7 +28176,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// carried total on a re-run of a parked turn), so the ≤MAX_PARKS respend bound
 		// holds across devices.
 		var parkCount = (opts && (opts.parkCount | 0)) || 0;
+		// THE CHAT'S ENGINE AS IT STANDS BEFORE THE FENCE IS READ, because `errandFence` may drop
+		// it and build another, which starts with no mark (U4).
+		var heldApp = chat && chat.app;
 		var fence = await errandFence(chat, turnId);
+		var cleanDia = (opts && opts.diamondId) || (chat && chat.diamondId) || '';
 		var dispatchOpts = {
 			turnId: turnId,
 			// The Diamond this chat belongs to (a daimon chat), so the runner services it
@@ -28139,6 +28205,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			model:  errandModelOf(chat),
 			scope:  errandScope(chat, scopePaths || (Array.isArray(chat.holds) ? chat.holds : [])),
 			fence:  fence,
+			// THE CHAT HAS READ NOTHING FROM OUTSIDE (U4 ERRAND-TAINT): sent only when that is so,
+			// and never as false. The runner reads a missing `clean` as tainted, so it only narrows.
+			clean:  errandClean(chat, cleanDia, heldApp) ? true : undefined,
+			// THE PACKS THIS ACCOUNT HAS NOT BOUGHT (U13a PACK-CARRY), as this tab holds them: the
+			// runner never hears `pushLocks`, and it reads a missing list as every pack locked.
+			locked: errandLocked(),
+			// THE LIMITS THIS PAGE WOULD RUN THE TURN UNDER (KT-2): the runner applies them, and hands
+			// back an errand that carries none rather than guess the model's window.
+			limits: errandLimits(chat),
 			pause:  pause,
 			dispatchedBy: by,
 			// THIS device's posture goes with the turn: on the runner it is the asker's
@@ -28161,6 +28236,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (chat && chat._loaded === false) {
 			try { await loadChatMessages(chat); } catch (e) { /* refused below */ }
 		}
+		// THE CONVERSATION TRAVELS (KT-4, binding 15): the engine session this page would restore,
+		// its reach and its today line, taken once the chat is resident, so the runner's turn sends
+		// the same history and the same blocks as this page's.
+		dispatchOpts.session = errandSession(chat, turnId);
+		dispatchOpts.reach   = await errandReach(dispatchOpts.diamondId);
+		dispatchOpts.today   = errandToday();
 		var plan;
 		try { plan = DaimondPeer.buildDispatch(chat, dispatchOpts); }
 		catch (e) {
@@ -28238,6 +28319,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return { ok: false, why: whyS };
 		}
 		var body = sealed.body;
+		// THE SESSION WENT AS A REFERENCE (KT-4b): a runner that cannot read it hands the turn
+		// back `thread`, and the note says the chat was too big to send, not too long to take.
+		if (sealed.sessionRef) {
+			var phRef = placeholderNow();
+			if (phRef && !phRef.overDoor) { phRef.overDoor = true; touchMsg(phRef); }
+		}
 		// 2a. AN UNPOSTABLE PROMPT (S-HAND #6). Even seedless, the errand is over the relay
 		//     door -- the prompt alone is larger than the relay accepts (a shortened seed
 		//     always fits by construction, so this is only ever the prompt). Posting would
@@ -28440,6 +28527,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				updatedAt: 0,
 				metaAt:    0,
 			};
+			// What the dispatcher's record says the conversation has read (H3): one-way, so a seed
+			// can only narrow the chat it builds.
+			if (chatTaintOf(seed)) chat.taintedAt = chatTaintOf(seed);
 			chat._loaded = true;					// its transcript is what we are about to write
 			chats.push(chat);
 			// Its holdings arrive whole, so what was pressed on it here narrows to them.
@@ -29651,11 +29741,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try {
 				var tid = String(report.turnId);
 				peerReports[tid] = report;
+				takeReportTaint(report);
+				settleRunnerSession(report);
 				// THE TURN'S ROWS COME HOME WITH IT (RUN-HIST): a settling report that names the
 				// files the turn made or changed on the runner is recorded as a version of its
 				// keeper, so History shows the turn here and, through the parcel, everywhere.
 				if (report.turnRec && DaimondPeer.settlingReport(report)) recordCarriedTurn(report.turnRec);
 				requeueUnheard(report);
+				// A hand-off that ended without its answer (failed, cut short, refused) sends what queued
+				// behind it now; a `done` one sends it when its answer lands (`dropDispatchedPlaceholder`).
+				if (report.status !== 'done' && DaimondPeer.settlingReport(report)) {
+					var _behind = chatHoldingTurn(tid);
+					if (_behind && (_behind._queue || []).length) setTimeout(function () { drainAfterHeld(_behind); }, 0);
+				}
 				// A parked / terminal report settles the live question, so retire the
 				// dispatcher's "awaiting" marker; the footer then reads the report state.
 				// A parked, terminal or HANDED-BACK report settles the live question, so
@@ -29761,6 +29859,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			redriveHandBacks();
 			// A claim makes the runner busy and a release frees it: the switch follows.
 			try { renderSeatSwitch(); } catch (e) { /* the next beat redraws it */ }
+			// A lease that moved may have ended the hold a queue waits behind (QA ccp2 M1).
+			try { drainHeldQueues(); } catch (e) { /* the hold's wake asks again */ }
 		}); }
 		catch (e) { /* no lease module: the footer still advances on a report */ }
 		// The hand-off memory a reload lost, once the first pull has read the lease door.
@@ -31544,6 +31644,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { clearDispatchFallback(tid); } catch (e) { /* the timer finds no placeholder */ }
 	}
 
+	/// The plain note a hand-back leaves on the chat for `cause` (`thread`, `door` for a session
+	/// sent as a reference, or `limits`), naming the device it was sent to, or "another device"
+	/// where its name is not known.
+	function handBackNote(cause, name) {
+		var n = name || t('devices.another');
+		return cause === 'limits' ? t('chat.handback_old_page', { name: n })
+			: cause === 'door' ? t('chat.handback_too_big', { name: n })
+			: t('chat.handback_long', { name: n });
+	}
+
 	/// END A SENT TURN "NOT RUN" RATHER THAN RUN IT HERE (rulings §1 l.17; QA-HT-B F3). For a
 	/// turn the switch sent to a runner that did not take it -- withdrawn on loss (HT2 M9), or
 	/// handed back `models-behind` -- after `recoverDecision` found no live foreign lease and no
@@ -31598,6 +31708,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			delete _localRecovering[tid];
 			delete _localEnding[tid];
 			redrawRunner();
+			// The turn is ended, or another device ends it: what waited behind it goes (QA ccp2 M1).
+			try { drainAfterHeld(chat); } catch (e) { /* the queue stays, badged */ }
 		}
 	}
 
@@ -31623,13 +31735,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// door's own read is all it needs (`leaseGet`, the read the lease CAS and a lease wake
 			// use), adopted as a wake adopts it.
 			try { if (window.DaimondPost && DaimondPost.collect) await DaimondPost.collect(); } catch (e) { /* offline */ }
-			try {
-				if (window.DaimondSync && DaimondSync.leaseGet && window.DaimondLease && DaimondLease.adopt) {
-					var door = await DaimondSync.leaseGet();
-					// An unreadable door is unknown, never vacant (sync.js `leaseGet`): nothing adopted.
-					if (door && !door.unread) DaimondLease.adopt(door.leases);
-				}
-			} catch (e) { /* offline: the lease view this device holds decides */ }
+			await leaseDoorRead();	// unread or offline: the lease view this device holds decides
 			var chat = null;
 			for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === chatId) { chat = chats[i]; break; }
 			// A report-driven call may carry no/empty chatId; resolve by the turn's
@@ -31722,7 +31828,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var rn    = String(m.toDevice || '').slice(0, 8) || '?';
 			var cause = String(m.handBackCause || _handBackCause[tid] || '');
 			if (m.busyBy) { await endHandOffNotRun(chat, m, 'handed back: runner ' + String(m.busyBy).slice(0, 8) + ' was busy'); return; }
-			if (m.threadBy || cause === 'thread') { await endHandOffNotRun(chat, m, 'handed back: runner ' + rn + ' could not take the thread'); return; }
+			// THE TWO HAND-BACKS THE PERSON CAN ACT ON say why in plain words, naming the device
+			// (rc ruling, 24 Oct): a chat longer than it can take yet, and a page older than it.
+			if (m.threadBy || cause === 'thread') { await endHandOffNotRun(chat, m, handBackNote(m.overDoor ? 'door' : 'thread', deviceNameFor(m.toDevice))); return; }
+			if (cause === 'limits') { await endHandOffNotRun(chat, m, handBackNote('limits', deviceNameFor(m.toDevice))); return; }
 			if (cause === 'models') { await endHandOffNotRun(chat, m, 'handed back: runner ' + rn + ' could not run this turn\'s models'); return; }
 			await endHandOffNotRun(chat, m, cause ? 'handed back by runner ' + rn + ': ' + cause
 				: (lease && lease.mode === 'released') ? 'runner ' + rn + ' let it go unrun'
@@ -33807,7 +33916,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var why = String((took && took.why) || '?');
 					diag('retry stand-down', 'turn=' + nmid + ' lease ' + why + ' holder=' + String((took && took.holder) || '').slice(0, 8));
 					if (DaimondPeer.standDownUndecided && DaimondPeer.standDownUndecided(why)) {
-						if (ownsChat(chat) && chatInput && !chatInput.value.trim()) { chatInput.value = text; syncSendMode(); }
+						if (ownsChat(chat)) intoComposer(chat, text, false); // the words keep a draft, as every give-back does
 						toast(t('turn.retry_undecided'), true);
 					}
 					return false;
@@ -33880,10 +33989,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function editResend(chat, iturn, text) {
 		if (!chat || !text || chat._generating) return;
 		if (!iturn) return;
+		// NOT WHILE A TURN OF THE CHAT IS OUT (QA ccp2 HIGH-1): the Send it arms would be queued behind
+		// that turn, and an edit is not a message to queue. The control is withheld then too.
+		if (recoveringHere(chat) || dispatchInFlight(chat)) { toast(t('undo.edit_held'), true); return; }
 		chat._editing = iturn;
 		chatInput.value = text;
 		syncSendMode();
 		try { chatInput.focus(); } catch (e) { /* no composer on screen */ }
+	}
+
+	/// The prompt of the last turn of `chat`, the one Retry and Edit & resend replace, or null.
+	/// An interjected message belongs to the turn it cut into rather than starting one.
+	function lastTurnOf(chat) {
+		var msgs = (chat && chat.messages) || [];
+		for (var j = msgs.length - 1; j >= 0; j--) {
+			var m = msgs[j];
+			if (m && m.role === 'user' && !m.interject && m.iturn && m.content) return m;
+		}
+		return null;
 	}
 
 	/// Draw Retry and Edit & resend on the LAST user tile, and nowhere else.
@@ -33903,13 +34026,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var chat = current;
 		if (!chat || chat._generating) return;
 		if ((chat.status || 'active') !== 'active') return;
-		var msgs = chat.messages || [], last = null;
-		for (var j = msgs.length - 1; j >= 0; j--) {
-			// An interjected message belongs to the turn it cut into rather than
-			// starting one, so it is not a turn to replace.
-			if (msgs[j].role === 'user' && !msgs[j].interject && msgs[j].iturn && msgs[j].content) { last = msgs[j]; break; }
-		}
+		var msgs = chat.messages || [], last = lastTurnOf(chat);
 		if (!last) return;
+		// Withheld while a turn of the chat is out, here or on a runner, by the test a send queues on
+		// (QA ccp2 HIGH-1): pressed then, either would be queued as a new message, not replace the turn.
+		if (recoveringHere(chat) || dispatchInFlight(chat)) return;
 		// Withheld while a peer holds the lease, by the same test `continueTurn` and
 		// `retryTurn` make -- a control that would be refused is not drawn.
 		try {
@@ -34131,6 +34252,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			touchedAny = true;
 			if (current && current.id === cid) touchedCurrent = true;
 		});
+
+		// The queues a gone tab left, after the words each turn took (the order typed).
+		giveBackQueues(rec.queues);
 
 		(rec.agents || []).forEach(function (a) {
 			var run = null;
@@ -34574,6 +34698,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat._queue = [];
 		chat._interject = [];
 		chat._interjectNote = [];
+		journalQueue(chat);
 		if (current === chat) renderQueue();
 		chats = chats.filter(function (c) { return c.id !== chat.id; });
 		if (current === chat) {
@@ -39212,6 +39337,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// that follows the default stores no model and is never written one here, so an engine built
 		// on another pair is rebuilt at the next turn's start (never under a running turn).
 		var want = pair || turnModelOf(chat);
+		// A runner's turn settled while this engine was busy (`staleEngine`): it goes at the first
+		// build after, before anything reconciles it, and is laid again from the stored session.
+		if (chat._engineStale && chat.app && !chat._generating && !chat.app.busy) staleEngine(chat);
 		if (chat.app) {
 			var held = chat._appPair;
 			if (!held || chat._generating
@@ -39222,6 +39350,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return reconcileEngine(chat, exceptMid);
 			}
 			diag('chat engine', 'chat=' + String(chat.id || '').slice(0, 12) + ' model ' + held.model + ' -> ' + (want.model || '') + ', rebuilt');
+			keepChatTaint(chat, chat.app);	// the old engine's verdict, before it goes (H3)
 			chat.app = null; chat._held = null;
 		}
 		var a = appCfgFor(want);
@@ -39251,6 +39380,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (cfg.tools !== false && typeof chat.app.allow_dispatch === 'function') {
 			chat.app.allow_dispatch();
 		}
+		// WHAT THE CONVERSATION HAS READ, before it runs anything (H3 TAINT-DURABLE): the record's
+		// one-way stamp, so a reload, a model switch or an edit-and-resend's rebuild starts tainted.
+		applyChatTaint(chat, chat.app);
 		// What this engine was built on, beside it and NOT on the record (U1d): the record keeps only a
 		// deliberate pick, and writing the resolved pair back made every following chat a pinned one.
 		// Not persisted (`slimChat` keeps a whitelist): an engine does not survive a reload either.
@@ -39343,10 +39475,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (sess && sess.msgs && sess.msgs.length) {
 			tail = tailAfter(chat, sess);
 			var doubt = sessionDoubt(chat, sess, tail, exceptMid);
-			var early = doubt === 'early', lost = doubt === 'lost';
-			if (early || lost) {
+			var early = doubt === 'early', lost = doubt === 'lost', lacks = doubt === 'lacks';
+			if (early || lost || lacks) {
 				diag('session out of order', 'chat=' + String(chat.id || '').slice(0, 12) + (early
 					? ' a turn it never heard stands before one it holds'
+					: lacks ? ' a runner\'s answer it never took stands before its marker'
 					: ' an untagged answer follows a turn laid on by id') + '; the engine is laid from the transcript');
 				sess = null;
 			}
@@ -39433,16 +39566,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `order`  - something missing falls BEFORE the last message the engine holds (two devices sent at once): the
 	///   model's history cannot be inserted into, so it is laid again from the transcript, which is in the chat's order.
 	///
-	/// A partial or streamed copy of an answer is not missing yet: the whole copy replaces it under the same mid.
+	/// A partial or streamed copy of an answer is not missing yet: the whole copy replaces it under the same mid. A framed
+	/// copy (a runner's final frame) is missing once its turn's placeholder has gone, since none replaces it then.
 	function sessionPlan(held, ran, msgs, exceptMid) {
 		var ex = exceptMid ? String(exceptMid) : '', tail = -1, first = -1, add = [];
+		var unsettled = {};		// the turns whose hand-off still stands (an empty dispatched placeholder)
+		(msgs || []).forEach(function (m) {
+			if (m && m.why === 'dispatched' && m.iturn && !(m.content && m.content.trim())) unsettled[String(m.iturn)] = 1;
+		});
 		for (var i = 0; i < (msgs || []).length; i++) {
 			var m = msgs[i];
 			if (!m || !m.content || (m.role !== 'user' && m.role !== 'assistant')) continue;
 			var id = String(m.mid);
 			if (ex && id === ex) continue;
 			if (held[id] === 1) { tail = i; continue; }
-			if (m.role === 'assistant' && (m.interrupted || m.provisional || m.framed)) continue;
+			if (m.role === 'assistant' && (m.interrupted || m.provisional)) continue;
+			// A FRAMED ROW IS THE ANSWER once its turn has settled (QA ccp1 H1): no runner parcel replaces a
+			// Kimberlite runner's final frame, so a framed row whose placeholder is gone is laid as any answer.
+			if (m.role === 'assistant' && m.framed && unsettled[String(m.iturn || '')] === 1) continue;
 			if (first < 0) first = i;
 			add.push(m);
 		}
@@ -39522,10 +39663,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `upto` marks the last screen message the stored list accounts for, so a turn
 	/// another tab took meanwhile can be appended on the next restore rather than lost
 	/// or, worse, added twice.
-	function captureSession(chat, app) {
-		if (!chat || !app || !app.export_session) return;
+	///
+	/// `back` is a runner's session sent home (KT-5, `settleRunnerSession`), `{msgs, upto,
+	/// uptoTs}`: stored in place of this engine's, its marker the runner's final frame row, by
+	/// the same path, so a turn run there is kept as one run here is. `app` is then null.
+	function captureSession(chat, app, back) {
+		// The engine's taint verdict onto the record FIRST, before anything below can return (H3):
+		// every turn's end passes through here, and the engine is the only copy until it does.
+		keepChatTaint(chat, app);
+		if (!chat) return;
+		if (!back && (!app || !app.export_session)) return;
 		try {
-			var msgs = app.export_session();
+			var msgs = back ? back.msgs : app.export_session();
 			if (!msgs || !msgs.length) return;
 			var all  = chat.messages || [];
 			// THE MARKER MUST STAND ON A MESSAGE THE AGENT ACTUALLY HOLDS.
@@ -39542,7 +39691,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Trailing furniture is walked past for the same reason: an `end_log` or an
 			// `error_log` is not a message the agent holds, and a marker standing on one
 			// leaves `tailAfter` with nothing after it to find.
-			var last = sessionMarker(all);
+			//
+			// And a row that reached the transcript from outside this engine is not one it holds: a runner's
+			// streamed row, or its final frame that landed while a turn ran here (QA ccp1 M1). The marker
+			// stands on the last row the engine holds.
+			var holds = back ? null : engineHolds(chat, app);
+			var last = back ? { mid: String(back.upto || ''), ts: Number(back.uptoTs) || 0 } : sessionMarker(all, holds);
 			var list = Array.prototype.slice.call(msgs);
 			// WHERE EACH TURN STARTS in the list, by its prompt's mid, so a retracted turn can
 			// be cut out at its own prompt and the turns before it keep their tool-call ids and
@@ -39563,8 +39717,110 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				upto:   last ? (last.mid || '') : '',
 				uptoTs: last ? (last.ts  || 0)  : 0,
 				marks:  marks,
+				held:   sessionHeld(all, last, list, holds),
 			};
 		} catch (e) { /* the chat is fine without it; the next turn writes another */ }
+	}
+
+	/// The mids of the transcript rows at or above marker `last` that the stored list `list` holds,
+	/// as a set (QA ccp2 M2). A row above the marker that is not in it is one the engine never took:
+	/// a runner's answer still streaming at the capture and framed after it, or one that synced in
+	/// above the marker later, and `tailAfter` lays it. With `holds` (`engineHolds`), a row counts
+	/// only where the engine holds it and holds its turn's prompt, by the id rule of `tailAfter`; a
+	/// runner's session sent home (no `holds`) holds every row up to its marker but the streamed.
+	function sessionHeld(all, last, list, holds) {
+		var held = {};
+		if (!last) return held;
+		var end = all.indexOf(last);
+		if (end < 0) {
+			for (var b = all.length - 1; b >= 0; b--) if (all[b] && last.mid && all[b].mid === last.mid) { end = b; break; }
+		}
+		var heard = {}, first = '', whole = true;
+		for (var j = 0; j < list.length; j++) {
+			var x = list[j];
+			if (!x || x.role !== 'user') continue;
+			if (x.mid) { heard[String(x.mid)] = 1; if (!first) first = String(x.mid); }
+			else if (first) { whole = false; break; }
+		}
+		// The id rule from the first prompt the list holds by id on, as `tailAfter` reads it: before it, a
+		// folded or unmarked turn cannot be told from an unheard one, so the marker alone decides.
+		var firstAt = -1;
+		if (first && whole) for (var k = 0; k < all.length; k++) if (all[k] && all[k].role === 'user' && String(all[k].mid || '') === first) { firstAt = k; break; }
+		for (var a = 0; a < all.length; a++) {
+			var r = all[a];
+			if (!r || !r.mid || !r.content || (r.role !== 'user' && r.role !== 'assistant') || r.provisional) continue;
+			if (end >= 0 ? a > end : (r.ts || 0) > (last.ts || 0)) continue;
+			if (holds && !holds(r)) continue;
+			var turn = r.role === 'user' ? String(r.mid) : String(r.iturn || '');
+			if (firstAt >= 0 && a > firstAt && turn && heard[turn] !== 1) continue;
+			held[String(r.mid)] = 1;
+		}
+		return held;
+	}
+
+	/// THE CONVERSATION COMES HOME (KT-5): a runner's settling `report` carries its engine's
+	/// session after the turn, with the runner's tool calls and folds, and it is stored as the
+	/// chat's (or the Diamond's) session through `captureSession`, so the next turn here goes on
+	/// from it as if the turn had run here. No merge, and nothing stored where it would be wrong:
+	///
+	/// * `busy`   - a turn runs here in the same chat: its own capture would overwrite the runner's.
+	/// * `stayed` - the session stayed on the runner (over the post door).
+	/// * `moved`  - the session here moved meanwhile (its `upto` is not the `base` the errand carried).
+	/// * `cut`    - the turn was retracted here (its prompt or its answer is tombstoned): a report heard
+	///   again must not put it back (QA ccp1 M2). Keyed on the turn by the tombstones every retraction
+	///   writes, so it holds across a reload and grows nothing of its own.
+	///
+	/// Whatever stores nothing leaves the chat's engine stale (`staleEngine`): it holds the
+	/// conversation from before the turn, and the runner's answer is a `framed` row no parcel
+	/// replaces, so it is rebuilt from the stored session and the transcript (QA ccp1 H1). The
+	/// diagnostics say which. Answers 'stored', 'busy', 'stayed', 'moved', 'cut' or ''.
+	function settleRunnerSession(report) {
+		if (!report || !window.DaimondPeer || !window.DaimondPeer.settlingReport(report)) return '';
+		var chat = chatHoldingTurn(report.turnId);
+		if (!chat) return '';
+		var said = 'chat=' + String(chat.id || '').slice(0, 12) + ' turn=' + String(report.turnId || '');
+		var s = report.session;
+		var whole = !!(s && typeof s === 'object' && Array.isArray(s.msgs) && s.msgs.length);
+		var held = (chat.session && chat.session.msgs && chat.session.msgs.length) ? String(chat.session.upto || '') : '';
+		// The same report heard again (a re-collect) finds its own session already stored.
+		if (whole && held && held === String(s.upto || '')) return 'stored';
+		var out = '', why = '';
+		var tombs = loadMsgTombs();
+		if (chat._generating || (chat.app && chat.app.busy)) {
+			out = 'busy'; why = 'a turn runs here in this chat, and its own capture would overwrite it';
+		} else if (tombs[String(report.turnId || '')] || (whole && tombs[String(s.upto || '')])) {
+			out = 'cut'; why = 'the turn was retracted here';
+		} else if (report.sessionStayed) {
+			out = 'stayed'; why = 'it stayed on the runner (over the post door)';
+		} else if (!whole) {
+			out = ''; why = 'the report carries none';
+		} else if (held !== String(s.base || '')) {
+			out = 'moved'; why = 'the session here moved meanwhile (' + held + ', the runner began at ' + String(s.base || '') + ')';
+		}
+		if (out || why) {
+			diag('runner session', said + ' not stored: ' + why + '; the next turn lays its engine from the transcript');
+			staleEngine(chat);
+			return out;
+		}
+		captureSession(chat, null, { msgs: s.msgs, upto: s.upto, uptoTs: s.uptoTs });
+		// A chat's engine holds the conversation from before the turn: dropped, so the next Here
+		// turn is laid from the session just stored. A Diamond's daimon is laid from it per turn.
+		staleEngine(chat);
+		touchChat(chat);
+		persistChats();
+		return 'stored';
+	}
+
+	/// A runner's turn has settled in `chat`, so its engine, which holds the conversation from
+	/// before that turn, is stale. Dropped now, its taint verdict kept first (H3), or, while a
+	/// turn or a fold holds it, marked so that the next build (`ensureApp`) drops it, as
+	/// `_scopeStale` is honoured at a turn's start. A Diamond's daimon is laid per turn from
+	/// its record (`daimonPrior`) and is not touched.
+	function staleEngine(chat) {
+		if (!chat || chat.diamondId || !chat.app) return;
+		if (chat._generating || chat.app.busy) { chat._engineStale = true; return; }
+		keepChatTaint(chat, chat.app);
+		chat.app = null; chat._held = null; chat._engineStale = false;
 	}
 
 	/// Cut the stored session back to before the first of `rows` it holds, which are about to leave the transcript.
@@ -39651,6 +39907,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var left = {};
 		Object.keys(marks).forEach(function (k) { if (marks[k] < cut) left[k] = marks[k]; });
 		chat.session = { v: 1, msgs: keep, upto: prev.mid || '', uptoTs: prev.ts || 0, marks: left };
+		// What it held up to the new marker, still held (QA ccp2 M2).
+		if (sess.held && typeof sess.held === 'object') {
+			var kept = {};
+			for (var h = 0; h <= b; h++) if (all[h] && all[h].mid && sess.held[String(all[h].mid)] === 1) kept[String(all[h].mid)] = 1;
+			chat.session.held = kept;
+		}
 		diag('session cut', 'chat=' + String(chat.id || '').slice(0, 12) + ' it held ' + held.length
 			+ ' retracted row(s); kept ' + cut + ' of ' + sess.msgs.length + ' model message(s)');
 		return true;
@@ -39683,7 +39945,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// can. 'early': a turn it never heard stands before one it holds, and the model's history
 	/// cannot be inserted into (check_fix5 L1). 'lost': an untagged answer (an old-build peer's)
 	/// stands after a prompt the tail lays on by id, above the marker, so the tail would drop it
-	/// and the model would read that prompt with no answer (check_fix6 M1). Either way the
+	/// and the model would read that prompt with no answer (check_fix6 M1). 'lacks': an answer the engine never took
+	/// (not in `held`) stands above the marker with its prompt held (QA ccp1 M1, ccp2 M2), so laid behind it would follow a
+	/// later turn. Every way the
 	/// engine is laid from the transcript. `exceptMid` is the prompt about to be re-sent.
 	function sessionDoubt(chat, sess, tail, exceptMid) {
 		var msgs = chat.messages || [];
@@ -39694,6 +39958,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return m.role === 'user' && (!exceptMid || String(m.mid) !== String(exceptMid)) && msgs.indexOf(m) < lastHeld;
 		});
 		if (early) return 'early';
+		// An answer the engine never took stands above the marker, its prompt held (QA ccp1 M1, ccp2 M2):
+		// laid behind the session it would follow a later turn, so the engine is laid from the transcript.
+		if (sess.held && typeof sess.held === 'object') {
+			var mark = -1;
+			for (var u = 0; u < msgs.length; u++) if (msgs[u] && sess.upto && msgs[u].mid === sess.upto) { mark = u; break; }
+			var prompts = {};
+			tail.forEach(function (m) { if (m.role === 'user' && m.mid) prompts[String(m.mid)] = 1; });
+			var orphan = tail.some(function (m) {
+				var n = msgs.indexOf(m);
+				var above = mark >= 0 ? n < mark : (m.ts || 0) <= (Number(sess.uptoTs) || 0);
+				return above && m.role === 'assistant' && prompts[String(m.iturn || '')] !== 1;
+			});
+			if (orphan) return 'lacks';
+		}
 		var inTail = new Set(tail), byId = -1, lost = false;
 		msgs.forEach(function (m, n) {
 			if (lost || !m) return;
@@ -39710,15 +39988,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The transcript row a stored session's marker (`upto`, `uptoTs`) stands on: the last
 	/// user or assistant row with words that the agent actually holds, walking past trailing
 	/// furniture and an interrupted partial (see `captureSession`). null when there is none.
-	function sessionMarker(all) {
+	///
+	/// `holds`, where given (`engineHolds`), also walks past the rows the engine was never given.
+	function sessionMarker(all, holds) {
 		var at = (all || []).length - 1;
 		while (at >= 0) {
 			var m = all[at];
 			if (m && m.content && (m.role === 'user' || m.role === 'assistant')
-				&& !(m.role === 'assistant' && m.interrupted)) return m;
+				&& !(m.role === 'assistant' && m.interrupted) && (!holds || holds(m))) return m;
 			at--;
 		}
 		return null;
+	}
+
+	/// Does `app`, the engine of `chat`, hold the transcript row given? A streamed row of a runner's
+	/// turn never: nothing lays one. A runner's final frame (`framed`) only where the engine's record
+	/// (`_held`) says it was given it, since it reaches the transcript from the runner, not the engine.
+	/// Any other row the engine wrote or was laid, as every turn here passes.
+	function engineHolds(chat, app) {
+		var h = chat && chat._held;
+		var mids = (h && h.app === app && h.mids) || {};
+		return function (m) {
+			if (!m || m.provisional) return false;
+			if (m.framed) return mids[String(m.mid)] === 1;
+			return true;
+		};
 	}
 
 	/// THE CONVERSATION A DAIMON TURN STARTS FROM (UNBLOCK-11 F1): a function of the converged
@@ -40087,10 +40381,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (q && q.role === 'user' && q.mid && at[String(q.mid)] === undefined) at[String(q.mid)] = k;
 		}
 		if (first && whole && at[first] !== undefined) firstAt = at[first];
+		// THE ROWS IT HOLDS, where the session names them (`held`, QA ccp2 M2): every row above the marker and
+		// after the first id not in it is laid, a runner's answer streamed at the capture and framed after, or
+		// synced in above it later. Before the first id the marker alone decides, as below; a session from
+		// before `held` keeps the id rule.
+		var held = (sess && sess.held && typeof sess.held === 'object') ? sess.held : null;
 		return msgs.filter(function (m, n) {
 			if (!m || !m.content || (m.role !== 'user' && m.role !== 'assistant')) return false;
 			if (after(m, n)) return true;
 			if (firstAt < 0 || m.provisional) return false;
+			if (held && n > firstAt) return !!m.mid && held[String(m.mid)] !== 1;
 			var id = m.role === 'user' ? String(m.mid || '') : String(m.iturn || '');	// the row's turn, by id
 			var p = id ? at[id] : undefined;
 			return p !== undefined && p > firstAt && heard[id] !== 1;
@@ -40342,6 +40642,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		return null;
 	}
+
+	/// The hand-off of `c` still out, as its placeholder (or `{ iturn }`), or null: a turn another device
+	/// holds (`peerHeldTurnOf`), or one sent that no device has taken yet (`dispatched`), or one ended
+	/// only by this device's clock and not yet read at the lease's door (`lapsedByClock`), whose read
+	/// this starts (`confirmLapse`). A chat's send queues behind it as behind a turn here (QA ccp1 M1):
+	/// run here beside it, the turn here stored its engine's session over the runner's, and the
+	/// runner's answer was in neither. The queue goes when it settles (`drainAfterHeld`).
+	///
+	/// The one hold test: every door into a drain asks it, so none trusts a cached expiry, say on a
+	/// phone unlocked after a long run when the runner has renewed since (QA ccp3 A R3, ccp3r A MED-B).
+	function dispatchInFlight(c) {
+		var held = peerHeldTurnOf(c);
+		if (held) return held;
+		var ms = (c && c.messages) || [];
+		for (var i = ms.length - 1; i >= 0; i--) {
+			var m = ms[i];
+			if (!m || m.why !== 'dispatched' || !m.iturn || (m.content && m.content.trim())) continue;
+			try { if (peerUiStateFor(m) === 'dispatched') return m; }
+			catch (e) { /* a state that cannot be read holds nothing */ }
+		}
+		var lapsed = lapsedByClock(c);
+		if (!lapsed || lapseConfirmed(c, lapsed)) return null;
+		confirmLapse(c, lapsed);
+		return lapsed;
+	}
 	/// Per chat id, the newest run of it the runner lost, seen on this device (`peerHeldTurnOf`).
 	var _lostRunOf = {};
 
@@ -40461,6 +40786,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (current && current.diamondId) return taintDaimon(current.diamondId);
 			if (current && current.app && current.app.set_tainted) {
 				current.app.set_tainted();
+				if (markChatTainted(current)) persistChats();	// on the record too (H3)
 				return true;
 			}
 			// A DAIMON'S RECORD HAS NO AGENT OF ITS OWN, by design: it runs on its
@@ -41063,7 +41389,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		el.value = '';
 		el.style.height = 'auto';
 		if (el === chatInput) syncSendMode();
-		if (current) current._draft = '';
+		// The edit note is the draft's (QA ccp2 HIGH-1): a box emptied by code fires no `input`.
+		if (current) { current._draft = ''; current._editing = null; }
 		try {
 			var k = chatDraftKey(current);
 			if (k && window.DaimondDrafts) DaimondDrafts.drop(k);
@@ -41084,6 +41411,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function giveUpSent(chat, words) {
 		var w = String(words || '').trim();
 		if (!w) return;			// the words came from another door: the box gave nothing
+		// THE EDIT NOTE GOES WITH THE WORDS IT DESCRIBES (QA ccp2 HIGH-1). Left standing after a queue
+		// took them, it turned his next unrelated Send into a retraction of the turn it named.
+		if (chat) chat._editing = null;
 		var trim = function (v) {
 			var s = String(v || '').replace(/^\s+/, '');
 			if (!w || s.indexOf(w) !== 0) return String(v || '');		// edited since: all of it stays
@@ -41689,7 +42019,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Queued where it cannot run now: a turn that began on this Diamond in the wait
 			// (where `runSteer` would turn a typed preset away unsaid), or a Diamond left in
 			// the wait, since a steer runs on the one on screen.
-			if (diamondBusy(target.diamondId) || current !== target) { enqueueMessage(target, text, words); return; }
+			if (diamondBusy(target.diamondId) || current !== target) { enqueueMessage(target, text, words, press.drawn); return; }
 			giveUpSent(target, words);
 			doSteer(text, 0, { said: true });
 			return;
@@ -41735,23 +42065,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var releaseNew = holdSend(chat);
 			press.release = function () { releaseFirst(); releaseNew(); };
 		}
-		// BEHIND A TURN TAKEN BACK, TOO (R568-FU F4). A hand-off refused and fallen back here is
-		// this device's run before its claim lands and the chat reads generating; a send in
-		// that window ran first, and the refused turn after it. It waits in the queue instead.
-		//
-		// SAID INTO THE RUNNING TURN ONLY WHERE THE SWITCH SAYS THE TURN RUNS (UNBLOCK-1 QFOLLOW).
-		// A running turn here is this device's; with the switch on a runner, words said into
-		// it ran here, unelected, behind a switch naming argonaut. They queue instead, and the
-		// queue sends through the election as it drains (`sendQueued`).
-		if (chat._generating || recoveringHere(chat)) {
-			if (chat._generating && current === chat && sayIntoHere(chat, text, words)) return;
-			enqueueMessage(chat, text, words);
-			return;
-		}
-		// AUTO-DISPATCH (§4.1): with a fresh awake peer, a phone hands EVERY turn to
-		// it (the answer syncs back) and a desktop hands off only a long/agentic turn,
-		// staying local for a quick foreground one; no fresh peer means local. Guarded,
-		// so any hiccup runs locally.
 		// EDIT & RESEND, ON SEND AND NOT ON PRESS (§9). `editResend` put the words in
 		// the box and set the note; nothing was retracted, and clearing the box would
 		// have cost nothing. This is where the turn it names is taken out of the
@@ -41759,11 +42072,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so the two controls share one retraction and cannot come to disagree.
 		// The rewritten words leave the box only once the retraction has gone through: a
 		// retry turned away (a peer holds the turn, another tab took it) keeps them there.
+		//
+		// DECIDED BEFORE ANY QUEUE (QA ccp2 HIGH-1). A hold must not change what the press means: the
+		// queue made an edit of a turn still out into a new message, and the note left standing turned
+		// his next Send into a retraction. An edit that cannot replace its turn now (a turn of the chat
+		// is out or waits in the queue, or it is no longer the last) is turned away in one plain line,
+		// its words left in the box as words, and the note dropped.
 		var replacing = chat._editing;
 		// An edit of a conversation left in the wait stays in its box, still marked as the
 		// edit: the retraction redraws the thread on screen, which is not this one's.
 		if (replacing && current !== chat) return;
 		if (replacing) {
+			var lastAsk = lastTurnOf(chat);
+			if (chat._generating || recoveringHere(chat) || dispatchInFlight(chat)
+				|| ((chat._queue || []).length && !askHolds()) || !lastAsk || String(lastAsk.iturn) !== String(replacing)) {
+				chat._editing = null;
+				diag('edit refused', 'chat=' + String(chat.id || '') + ' turn=' + String(replacing) + ' a turn is out or it is not the last');
+				toast(t('undo.edit_held'), true);
+				return;
+			}
 			chat._editing = null;
 			// The switch as it was drawn at the press, not after the load and the hold's read above
 			// (rulings l.19; review_suhtr_delta D1).
@@ -41776,10 +42103,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (went !== true) { press.handed = true; Promise.resolve(went).then(press.release, press.release); }
 			return;
 		}
+		// BEHIND A TURN TAKEN BACK, TOO (R568-FU F4). A hand-off refused and fallen back here is
+		// this device's run before its claim lands and the chat reads generating; a send in
+		// that window ran first, and the refused turn after it. It waits in the queue instead.
+		//
+		// SAID INTO THE RUNNING TURN ONLY WHERE THE SWITCH SAYS THE TURN RUNS (UNBLOCK-1 QFOLLOW).
+		// A running turn here is this device's; with the switch on a runner, words said into
+		// it ran here, unelected, behind a switch naming argonaut. They queue instead, and the
+		// queue sends through the election as it drains (`sendQueued`).
+		if (chat._generating || recoveringHere(chat)) {
+			if (chat._generating && current === chat && sayIntoHere(chat, text, words)) return;
+			enqueueMessage(chat, text, words, press.drawn);
+			return;
+		}
+		// BEHIND A QUEUE ALREADY WAITING (QA ccp2 M1): a new send goes last, never ahead of what was
+		// typed first, and the queue is asked to go. Under an open question the queue is held, and
+		// the send answers it.
+		if ((chat._queue || []).length && !askHolds()) {
+			enqueueMessage(chat, text, words, press.drawn);
+			drainAfterHeld(chat);
+			return;
+		}
+		// BEHIND A HAND-OFF STILL OUT, TOO (QA ccp1 M1): the turn a runner has, or has yet to take, is
+		// this chat's running turn, and one started here beside it is the second of two at once.
+		if (dispatchInFlight(chat)) { enqueueMessage(chat, text, words, press.drawn); return; }
+		// AUTO-DISPATCH (§4.1): with a fresh awake peer, a phone hands EVERY turn to
+		// it (the answer syncs back) and a desktop hands off only a long/agentic turn,
+		// staying local for a quick foreground one; no fresh peer means local. Guarded,
+		// so any hiccup runs locally.
 		if (await maybeAutoDispatch(chat, text, words, undefined, undefined, press.drawn)) return;
 		// Left in the wait: a local turn draws into the thread on screen, which is no longer
 		// this one's, so it waits on its own conversation's queue for the person's return.
-		if (current !== chat) { enqueueMessage(chat, text, words); return; }
+		if (current !== chat) { enqueueMessage(chat, text, words, press.drawn); return; }
 		giveUpSent(chat, words);
 		// HELD UNTIL THE TURN IS UNDER WAY. `runTurn` awaits its scope before it marks the
 		// chat generating, and a second press in that gap started a second turn.
@@ -41813,18 +42168,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Hold a message until the turn in flight has finished. `words`, where the box held
 	/// something other than `text` (a `/concise` prefix is added on the way), is what the
 	/// composer gives up for it.
-	/// Write what is waiting on a chat's running turn into that turn's journal entry, so a
-	/// reload hands it back to the composer (`giveBackQueue`) rather than losing it
-	/// (D-20261012-07). In the order typed: what the turn already took (`_jsaid`), what was
-	/// said into it, then the queue. Only while the journalled turn (`_jturn`) runs: after
-	/// it closes its entry is gone, and a write then would open a stream with no turn in it.
+	/// The words of queued item `q`.
+	function queuedText(q) { return String((q && q.text) || ''); }
+
+	/// Keep on disk every word of `chat`'s that the box has given up and the stored conversation
+	/// does not yet hold, so a reload hands it back to the composer (`giveBackQueue`) rather than
+	/// losing it (D-20261012-07). Two records, by whose they are:
+	/// - what a turn running HERE took at a seam (`_jsaid`) and what was said into it, in that
+	///   turn's journal entry, only while it runs (after it closes its entry is gone);
+	/// - the chat's QUEUE, the item a drain has taken and not yet turned into a prompt row
+	///   (`_qflight`) first, in the chat's own record on every change, whether or not a turn runs
+	///   here (QA ccp3 A R2): behind a hand-off nothing runs here, and the queue was then only in
+	///   tab memory.
 	function journalQueue(chat) {
-		if (!chat || !chat._jturn || !chat._generating || !window.DaimondJournal) return;
-		var items = (chat._jsaid || []).concat(chat._interject || [], chat._queue || []);
-		var sig = chat._jturn + '\n' + JSON.stringify(items);
-		if (sig === chat._jqSig) return;
-		chat._jqSig = sig;
-		try { DaimondJournal.queueSet(chat._jturn, chat.id, items); } catch (e) { /* no IDB: the queue lives as long as the tab */ }
+		if (!chat || !chat.id || !window.DaimondJournal) return;
+		if (chat._jturn && chat._generating) {
+			var said = (chat._jsaid || []).concat(chat._interject || []);
+			var sig = chat._jturn + '\n' + JSON.stringify(said);
+			if (sig !== chat._jqSig) {
+				chat._jqSig = sig;
+				try { DaimondJournal.queueSet(chat._jturn, chat.id, said); } catch (e) { /* no IDB: they live as long as the tab */ }
+			}
+		}
+		var q = JSON.stringify((chat._qflight ? [chat._qflight] : []).concat(chat._queue || []).map(queuedText));
+		if (q === (chat._jqKept || '[]')) return;
+		chat._jqKept = q;
+		try { DaimondJournal.chatQueue(chat.id, JSON.parse(q)); } catch (e) { /* no IDB: the queue lives as long as the tab */ }
 	}
 
 	/// A journalled turn begins: what waits on it is written under its id from here on.
@@ -41842,26 +42211,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function giveBackQueue(chat, turnId, items) {
 		if (!chat || !items || !items.length || _queueGiven[turnId]) return;
 		_queueGiven[turnId] = true;
-		var text = items.join('\n\n');
-		var k = chatDraftKey(chat);
-		var join = function (had) { had = String(had || ''); return had.trim() ? text + '\n\n' + had : text; };
-		if (chatInput && (chat === current || (!!k && chatInput.dataset.draftKey === k))) {
-			chatInput.value = join(chatInput.value);
-			fitComposer();
-			syncSendMode();
-			try { if (k && window.DaimondDrafts) DaimondDrafts.set(k, chatInput.value); } catch (e) { /* storage blocked */ }
-		} else {
-			var kept = '';
-			try { kept = (k && window.DaimondDrafts) ? (DaimondDrafts.get(k) || '') : ''; } catch (e) { kept = ''; }
-			chat._draft = join(chat._draft || kept);
-			try { if (k && window.DaimondDrafts) DaimondDrafts.set(k, chat._draft); } catch (e) { /* storage blocked */ }
-		}
+		intoComposer(chat, items.join('\n\n'), true);
 		toast(t('chat.queue_returned'), true);
 	}
 
-	function enqueueMessage(chat, text, words) {
+	/// Hand back the queues a tab now gone left on disk (`DaimondJournal.chatQueue`, QA ccp3 A R2):
+	/// into each chat's composer, unsent, as a turn's are (D-20261012-07). A reload is no press,
+	/// so the runner each was pressed under goes with it and he sends them again. Cleared once
+	/// given back (the draft holds them by then); a chat that is gone takes its queue with it.
+	function giveBackQueues(queues) {
+		(queues || []).forEach(function (q) {
+			var chat = null;
+			for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === q.chatId) { chat = chats[i]; break; }
+			if (chat) giveBackQueue(chat, q.stream, (q.items || []).map(String));
+			try { DaimondJournal.clearQueue(q.stream); } catch (e) { /* the next boot clears it */ }
+		});
+	}
+
+	///
+	/// A queued item is `{ text, drawn }`: `drawn` is the runner the switch drew at the press it
+	/// came from, so the drain elects it under that runner (rulings, last line: gone at drain, it
+	/// ends "not run" with Retry, never Here). Undefined for words no press sent, which follow the
+	/// switch at drain (l.19).
+	function enqueueMessage(chat, text, words, drawn) {
 		chat._queue = chat._queue || [];
-		chat._queue.push(text);
+		chat._queue.push({ text: text, drawn: drawn });
 		diag('queue held', 'chat=' + String(chat.id || '') + ' queued=' + chat._queue.length);
 		journalQueue(chat);
 		giveUpSent(chat, words === undefined ? text : words);
@@ -41887,12 +42261,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var notes = chat._interjectNote || [];
 		var pre = from ? String(from.pre || '') : ratingPre(chat, notes.length ? notes[notes.length - 1].at : undefined);
 		var at = (chat.messages || []).length;
-		try { into(text, pre || undefined); }
+		// THE ROW ID IS CHOSEN HERE (CCP3 F3), so the engine's message and the row drawn when it
+		// lands (`landInterjection`) are one, and two equal corrections stay two in his words log.
+		var mid = from ? String(from.id || '') : '';
+		if (!mid) mid = newMid();
+		try { into(text, pre || undefined, mid); }
 		catch (e) { diag('said not', 'chat=' + String(chat.id || '') + ' the turn refused it: ' + ((e && e.message) || e)); return false; }
 		diag('said into', 'chat=' + String(chat.id || '') + (from ? ' from another device' : '') + ' at=' + at);
 		chat._interject = chat._interject || [];
 		chat._interject.push(text);
-		notes.push({ pre: pre, at: at, mid: from ? String(from.id || '') : '' });
+		notes.push({ pre: pre, at: at, mid: mid });
 		chat._interjectNote = notes;
 		journalQueue(chat);
 		if (!from) giveUpSent(chat, words === undefined ? text : words);
@@ -41917,10 +42295,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var did = String(chat.diamondId), fa = _steerApp[did];
 			if (!fa || typeof fa.interject_daimon !== 'function') return null;
 			if (_steerDetached[did] && !from) return null;
-			return function (text, pre) { fa.interject_daimon(did, text, pre); };
+			return function (text, pre, mid) { fa.interject_daimon(did, text, pre, mid); };
 		}
 		if (!chat.app || typeof chat.app.interject !== 'function') return null;
-		return function (text, pre) { chat.app.interject(text, pre); };
+		return function (text, pre, mid) { chat.app.interject(text, pre, mid); };
 	}
 
 	/// Say words typed at `chat` into the turn running HERE, but only where the switch keeps its
@@ -41941,7 +42319,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (diamondBusy(target.diamondId) && !recoveringHere(target) && sayIntoHere(target, text, words)) return true;
 		var heldThere = diamondBusy(target.diamondId) ? null : peerHeldTurnOf(target);
 		if (heldThere && await sayToRunner(target, heldThere, text, words)) return true;
-		if (diamondBusy(target.diamondId) || recoveringHere(target)) { enqueueMessage(target, text, words); return true; }
+		if (diamondBusy(target.diamondId) || recoveringHere(target)) { enqueueMessage(target, text, words, drawn); return true; }
+		// Behind a queue already waiting, as a chat's send (QA ccp2 M1).
+		if ((target._queue || []).length && !askHolds()) {
+			enqueueMessage(target, text, words, drawn);
+			drainAfterHeld(target);
+			return true;
+		}
 		return !!(await maybeAutoDispatch(target, text, words, undefined, undefined, drawn));
 	}
 
@@ -42055,7 +42439,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			msgTombstone([s.mid]);
 			touchChat(chat);
 		}
-		chat._queue = (chat._queue || []).concat([s.text]);
+		chat._queue = (chat._queue || []).concat([{ text: s.text }]);
 		journalQueue(chat);
 		try { persistChats(); } catch (e) { /* the queue is journalled */ }
 		if (ownsChat(chat)) renderHistory(chat.messages);
@@ -42070,9 +42454,113 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function drainAfterHeld(chat) {
 		if (!chat || !(chat._queue || []).length || chat._generating || recoveringHere(chat)) return;
 		if (chat.diamondId ? diamondBusy(chat.diamondId) : false) return;
-		if (peerHeldTurnOf(chat)) return;		// its answer has not landed: the drop sends it
+		var held = dispatchInFlight(chat);
+		if (held) {
+			// Its answer has not landed: the drop sends it, and if the runner never reports, the
+			// hold's own end does (QA ccp2 M1). A lapse being read at the door asks again at the read's end.
+			if (_lapseReading[String(chat.id || '')]) return;
+			try { armHeldWake(chat, held); } catch (e) { /* a lease change or a merge asks again */ }
+			return;
+		}
 		try { if (chat.diamondId) drainSteerQueue(chat, chat.diamondId, false); else drainQueue(chat, false); }
 		catch (e) { /* the queue stays, badged */ }
+	}
+
+	/// The newest hand-off of `c` whose end is read off this device's clock alone: an unanswered
+	/// placeholder with no report from its runner and no end begun here, whose state is `failed` or
+	/// `no-peer-awake` only because the lease view this device holds has lapsed. Null when none.
+	function lapsedByClock(c) {
+		var ms = (c && c.messages) || [];
+		for (var i = ms.length - 1; i >= 0; i--) {
+			var m = ms[i];
+			if (!m || m.why !== 'dispatched' || !m.iturn || (m.content && m.content.trim())) continue;
+			var tid = String(m.iturn);
+			if (peerReports[tid] || _localEnding[tid] || _localRecovering[tid]) return null;
+			var ui = '';
+			try { ui = peerUiStateFor(m); } catch (e) { return null; }
+			return (ui === 'failed' || ui === 'no-peer-awake') ? m : null;
+		}
+		return null;
+	}
+
+	/// Read the lease door before `chat`'s queue goes on a lapse seen only by the clock (`lapsedByClock`
+	/// gave `m`). Read, the fresh view is adopted, the lapse as it then stands is marked confirmed
+	/// (`lapseConfirmed`) and the queue asked again; unread, the queue waits for the hold's next end.
+	/// One read per chat at a time: the adopt's own change re-enters `drainAfterHeld` while it is in
+	/// flight, and finds it here.
+	var _lapseReading = {};
+	function confirmLapse(chat, m) {
+		var cid = String((chat && chat.id) || '');
+		if (!cid || _lapseReading[cid]) return;
+		_lapseReading[cid] = 1;
+		leaseDoorRead().then(function (read) {
+			delete _lapseReading[cid];
+			if (read) { _lapseRead[cid] = lapseMark(m); drainAfterHeld(chat); }
+			else { try { armHeldWake(chat, m); } catch (e) { /* a lease change or a merge asks again */ } }
+		});
+	}
+
+	/// Per chat id, the lapse last confirmed at the door (`lapseMark`), one per chat, overwritten by
+	/// the next. A renewal since changes the lease record, so a later lapse of it is read again.
+	var _lapseRead = {};
+	function lapseMark(m) {
+		var tid = String((m && m.iturn) || '');
+		var r = null;
+		try { r = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(tid) : null; } catch (e) { r = null; }
+		return tid + '|' + (r ? String(r.holder || '') + '|' + String(r.mode || '') + '|' + String(r.expiry || '') : '');
+	}
+
+	/// Has the door been read since `c`'s lapse `m` (`lapsedByClock`), so the lapse is the lease as it stands?
+	function lapseConfirmed(c, m) {
+		var cid = String((c && c.id) || '');
+		return !!cid && _lapseRead[cid] === lapseMark(m);
+	}
+
+	/// Read the lease at its own door (`DaimondSync.leaseGet`) and adopt it. False when the door
+	/// cannot be read (unread or offline: unknown, never vacant, so nothing is adopted); true when
+	/// it was read, or when there is no door, so the view this device holds is all there is.
+	async function leaseDoorRead() {
+		var S = window.DaimondSync, L = window.DaimondLease;
+		if (!(S && S.leaseGet && L && L.adopt)) return true;
+		try {
+			var door = await S.leaseGet();
+			if (!door || door.unread) return false;
+			L.adopt(door.leases);
+			return true;
+		} catch (e) { return false; }
+	}
+
+	/// Ask `chat`'s queue again when the hold `held` (a hand-off still out) must have ended by time
+	/// alone: the errand's deadline, or the lease's expiry, whichever comes first, so a runner that
+	/// never reports cannot keep the queue waiting for ever (QA ccp2 M1; rulings l.17). One timer
+	/// per chat; with neither known, it asks again in a few seconds.
+	var _heldWake = {};
+	function armHeldWake(chat, held) {
+		var cid = String((chat && chat.id) || '');
+		if (!cid) return;
+		var now = Date.now(), wait = 0;
+		var by = function (ms) { if (ms > 0 && (!wait || ms < wait)) wait = ms; };
+		try { if (window.DaimondPeer && window.DaimondPeer.handoffDeadline) by(window.DaimondPeer.handoffDeadline(held) - now); }
+		catch (e) { /* no deadline: the lease or the recheck */ }
+		try {
+			var tid = String((held && held.iturn) || '');
+			var rec = tid && window.DaimondLease && window.DaimondLease.record ? window.DaimondLease.record(tid) : null;
+			if (rec && rec.expiry) by(Number(rec.expiry) - leaseClockNow());
+		} catch (e) { /* no lease: the deadline or the recheck */ }
+		wait = wait ? wait + 250 : 5000;
+		if (_heldWake[cid]) clearTimeout(_heldWake[cid]);
+		_heldWake[cid] = setTimeout(function () {
+			delete _heldWake[cid];
+			diag('queue wake', 'chat=' + cid + ' the hold must have ended by now: asking the queue again');
+			drainAfterHeld(chat);
+		}, wait);
+	}
+
+	/// Ask every chat's queue again: the hold may have changed (a lease moved, a merge landed).
+	function drainHeldQueues() {
+		(chats || []).forEach(function (c) {
+			if (c && (c._queue || []).length) { try { drainAfterHeld(c); } catch (e) { /* the next change asks again */ } }
+		});
 	}
 
 	/// A correction has landed at the engine's seam: it stops waiting and joins the thread, as a person's
@@ -42125,7 +42613,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and a deleted chat has nowhere to send it.
 		var back = !!left.length && !locked && chats.indexOf(chat) !== -1;
 		if (back) {
-			chat._queue = (chat._queue || []).length ? left.concat(chat._queue) : left;
+			var said = left.map(function (w) { return { text: w }; });		// said, so no press of its own
+			chat._queue = (chat._queue || []).length ? said.concat(chat._queue) : said;
 		}
 		if (took) diag('said back', 'chat=' + String(chat.id || '') + ' unheard=' + took
 			+ (back ? ' queued=' + chat._queue.length : keep === false ? ' kept by its device' : ' dropped: nowhere to put it'));
@@ -42172,7 +42661,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		journalQueue(current);		// every change to the queue on screen redraws it, so lands here
 		if (!chatOutput) return;
 		var waiting = (current && current._interject) || [];
-		var q       = (current && current._queue) || [];
+		var q       = ((current && current._queue) || []).map(queuedText);
 		// A retry waiting on its Diamond's own turn (`awaitDiamondIdle`) is drawn as queued words are.
 		var rw      = ((current && current._retryWait) || []).map(function (w) { return w.text; });
 		var existing = document.getElementById('chat-queued');
@@ -42333,18 +42822,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Put text back in the composer, after whatever is already typed there.
 	function putInComposer(text) {
 		if (!text) return;
-		chatInput.value = chatInput.value.trim() ? chatInput.value + '\n\n' + text : text;
-		fitComposer();
+		intoComposer(current, text, false);
 		chatInput.focus();
-		syncSendMode();
+	}
+
+	/// The one way words the app hands back reach `chat`'s composer: into the box when that chat is on
+	/// screen, else into its kept draft, ahead of what is there (`ahead`) or after it. Kept in the draft
+	/// at once, before the record that held them (a queue, a reload's give-back) is cleared: a value set
+	/// by code fires no 'input', so the drafts never saw it, and a reload before a keystroke lost the
+	/// words (QA ccp3r A MED-A).
+	function intoComposer(chat, text, ahead) {
+		if (!text) return;
+		var k = chatDraftKey(chat);
+		var join = function (had) {
+			had = String(had || '');
+			return !had.trim() ? text : (ahead ? text + '\n\n' + had : had + '\n\n' + text);
+		};
+		if (chatInput && (chat === current || (!!k && chatInput.dataset.draftKey === k))) {
+			chatInput.value = join(chatInput.value);
+			fitComposer();
+			syncSendMode();
+			try { if (k && window.DaimondDrafts) DaimondDrafts.set(k, chatInput.value); } catch (e) { /* storage blocked */ }
+		} else {
+			var kept = '';
+			try { kept = (k && window.DaimondDrafts) ? (DaimondDrafts.get(k) || '') : ''; } catch (e) { kept = ''; }
+			chat._draft = join(chat._draft || kept);
+			try { if (k && window.DaimondDrafts) DaimondDrafts.set(k, chat._draft); } catch (e) { /* storage blocked */ }
+		}
 	}
 
 	/// Take a queued message out again: back to the composer to be edited, or
 	/// simply dropped.
 	function unqueue(i, toComposer) {
 		if (!current || !current._queue) return;
-		var text = current._queue.splice(i, 1)[0];
-		if (toComposer) putInComposer(text);
+		var item = current._queue.splice(i, 1)[0];
+		if (toComposer && item) putInComposer(item.text);
 		renderQueue();
 	}
 
@@ -42404,7 +42916,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (askHolds()) { renderQueue(); return; }
 		// A press in flight goes first; whatever it starts drains this when it ends.
 		if (chat._sending) { Promise.resolve(chat._sent).then(function () { drainQueue(chat, false); }); return; }
+		// One handed off is still out: the next waits for it to settle (`drainAfterHeld`), not beside it.
+		if (dispatchInFlight(chat)) { updateQueueBadges(); return; }
 		var next = q.shift();
+		chat._qflight = next;		// on disk until the turn it becomes has its prompt row (`sendQueued`)
 		renderQueue();
 		// Through the election, as a send is: one handed off sends the next the same way.
 		sendQueued(chat, next).then(function (r) { if (r === 'sent') drainQueue(chat, false); });
@@ -42417,14 +42932,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// election never saw it. The election goes first now, holding the composer as a press
 	/// does (`holdSend`), and only a turn it keeps here runs here. 'sent' when it was
 	/// handed off, 'here' when it runs here, 'kept' when it went back to the queue.
-	async function sendQueued(chat, text) {
-		var release = holdSend(chat);
+	///
+	/// Elected under the runner drawn at its press (`item.drawn`), so one pressed under a runner
+	/// gone by now ends "not run" with Retry rather than running here.
+	///
+	/// The item stays on disk as `_qflight` until the turn it became has its prompt row: handed off
+	/// or ended "not run" when the election answers, journalled at a Here turn's start (`onStart`),
+	/// or back in the queue (QA ccp3 A R2).
+	async function sendQueued(chat, item) {
+		var hold = holdSend(chat);
+		var landed = function () { if (chat._qflight === item) { chat._qflight = null; journalQueue(chat); } };
+		var release = function () { landed(); hold(); };
 		var handed = false;
+		var text = item.text;
 		try {
-			if (await maybeAutoDispatch(chat, text, '')) return 'sent';
+			if (await maybeAutoDispatch(chat, text, '', undefined, undefined, item.drawn)) return 'sent';
 			// The election's wait may have taken the person away or started a turn here.
 			if (current !== chat || chat._generating || recoveringHere(chat)) {
-				chat._queue = [text].concat(chat._queue || []);
+				chat._queue = [item].concat(chat._queue || []);
+				landed();
 				updateQueueBadges();
 				renderQueue();
 				return 'kept';
@@ -42487,22 +43013,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (failed) { dq('handed back: the turn failed'); returnQueue(rec); return; }
 		rec._queueFailed = false;
 		if (askHolds()) { dq('held under the open question'); renderQueue(); return; }		// held under the open question, as a chat's is
+		// One handed off is still out, or lapsed only by the clock: the next waits for it (`drainAfterHeld`), as a chat's does.
+		if (dispatchInFlight(rec)) { dq('held behind a hand-off still out'); updateQueueBadges(); return; }
 		dq('next to the election');
 		var next = rec._queue.shift();
+		journalQueue(rec);
 		renderQueue();
 		setTimeout(function () { steerQueued(rec, diamondId, next); }, 0);
 	}
 
 	/// `sendQueued` for a daimon: the election first, and the steer here only when it keeps
 	/// the turn here (UNBLOCK-1 QFOLLOW).
-	async function steerQueued(rec, diamondId, text) {
-		if (await maybeAutoDispatch(rec, text, '')) {
+	async function steerQueued(rec, diamondId, item) {
+		var text = item.text;
+		if (await maybeAutoDispatch(rec, text, '', undefined, undefined, item.drawn)) {
 			drainSteerQueue(rec, diamondId, false);
 			return;
 		}
 		if (!currentDiamond || currentDiamond.id !== diamondId || diamondBusy(diamondId)) {
 			diag('queue drain', 'chat=' + String(rec.id || '') + ' kept: the election kept it here and it cannot run now');
-			rec._queue = [text].concat(rec._queue || []);
+			rec._queue = [item].concat(rec._queue || []);
+			journalQueue(rec);
 			updateQueueBadges();
 			renderQueue();
 			return;
@@ -42523,16 +43054,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function returnQueue(chat) {
 		var q = chat._queue || [];
 		if (!q.length) return;
-		var text = q.join('\n\n');
+		var text = q.map(queuedText).join('\n\n');
 		// Only into the composer of the chat that is actually on screen. A background
 		// chat's queue stays where it is, still visible when the user returns to it,
 		// rather than being pasted into a conversation it was not meant for.
 		if (current !== chat) { diag('queue back', 'chat=' + String(chat.id || '') + ' queued=' + q.length + ' left: not on screen'); return; }
 		diag('queue back', 'chat=' + String(chat.id || '') + ' queued=' + q.length + ' into the composer');
 		chat._queue = [];
-		chatInput.value = chatInput.value.trim() ? text + '\n\n' + chatInput.value : text;
-		fitComposer();
-		syncSendMode();
+		intoComposer(chat, text, true);
 		renderQueue();
 		toast(t('chat.queue_returned'), true);
 	}
@@ -59487,6 +60016,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		app = buildDiamondClient(a, eff);
 		if (id) _daimonOf.set(app, id);
+		// The daimon's record remembers past a reload what `_daimonTaint` forgets (H3).
+		if (id && daimonRecordTainted(id)) _daimonTaint.add(id);
 		if (id && _daimonTaint.has(id) && typeof app.set_tainted === 'function') {
 			try { app.set_tainted(id); } catch (e) { /* an older engine has no taint */ }
 		}
@@ -59526,6 +60057,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { t = typeof app.is_tainted === 'function' && !!app.is_tainted(id); } catch (e) { t = false; }
 		if (!t) return;
 		_daimonTaint.add(id);
+		markDaimonRecord(id);
 		_daimonApps.forEach(function (other) {
 			if (other !== app && _daimonOf.get(other) === id && typeof other.set_tainted === 'function') {
 				try { other.set_tainted(id); } catch (e) { /* an older engine has no taint */ }
@@ -59561,15 +60093,158 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
+	/// The daimon conversation's record for Diamond `id`, if this device holds one.
+	function daimonRecordOf(id) {
+		return chats.find(function (c) { return c && c.diamondId === id; }) || null;
+	}
+	/// Has Diamond `id`'s daimon conversation read outside content, by its RECORD (H3)? What a
+	/// reload or another device knows, where `_daimonTaint` is this page load's alone.
+	function daimonRecordTainted(id) { return !!chatTaintOf(daimonRecordOf(id)); }
+	/// Put the daimon's taint on its conversation's record, one-way, and save it when it changed.
+	/// A Diamond with no record yet has nothing to carry it; `daimonChat` makes one on first use,
+	/// before any turn can read anything.
+	function markDaimonRecord(id) {
+		if (markChatTainted(daimonRecordOf(id))) persistChats();
+	}
+
 	/// Mark `diamondId`'s daimon as having read something from outside: on its client, and in
 	/// `_daimonTaint`, so a client built again for it starts tainted.
 	function taintDaimon(diamondId) {
 		var id = String(diamondId || '');
 		if (!id) return false;
 		_daimonTaint.add(id);
+		markDaimonRecord(id);
 		var da = daimonApp(id);
 		if (da && da.set_tainted) { da.set_tainted(id); return true; }
 		return false;
+	}
+
+	/// Has this chat read nothing from outside, so its errand may say `clean` (U4 ERRAND-TAINT)?
+	/// The runner reads a missing `clean` as tainted, so this only ever narrows: every doubt
+	/// answers no. Tainted when the Diamond is in `_daimonTaint` (what `markRead` and a kept
+	/// verdict write), when any built daimon client for it has the engine's own mark and the set
+	/// has not taken it yet (a read mid-turn), or when the chat's engine -- the one held before
+	/// `errandFence` may have rebuilt it, and the one after -- says so. No engine to ask is tainted.
+	///
+	/// # Arguments
+	/// * `chat`      - The chat being handed off.
+	/// * `diamondId` - The Diamond the errand names, '' for an ordinary chat.
+	/// * `held`      - The chat's engine before the fence was read, or nothing.
+	function errandClean(chat, diamondId, held) {
+		var id = String(diamondId || '');
+		function marked(app) {
+			if (!app || typeof app.is_tainted !== 'function') return false;
+			return !!app.is_tainted() || (!!id && !!app.is_tainted(id));
+		}
+		try {
+			if (id && _daimonTaint.has(id)) return false;
+			var any = false;
+			if (id) {
+				_daimonApps.forEach(function (a) { if (_daimonOf.get(a) === id && marked(a)) any = true; });
+				_daimonDraining.forEach(function (a) { if (_daimonOf.get(a) === id && marked(a)) any = true; });
+			}
+			if (any || marked(held)) return false;
+			var app = chat && chat.app;
+			if (!app || typeof app.is_tainted !== 'function') return false;
+			return !marked(app);
+		} catch (e) {
+			return false;
+		}
+	}
+
+	/// The limits this page puts on an agent for `chat`'s turn, for an errand to carry (KT-2, engine
+	/// `TurnLimits`): the model's window, then what `applyFoldSettings` and `applyRoundLimit` apply,
+	/// each zero or '' where this page leaves the engine's own default. A runner hands back an
+	/// errand without them rather than run the turn on a guessed window.
+	function errandLimits(chat) {
+		var m = errandModelOf(chat) || {};
+		var win = 0;
+		try {
+			win = (window.DaimondPricing && DaimondPricing.contextWindow)
+				? (DaimondPricing.contextWindow(m.model || '', m.provider || '') || 0) : 0;
+		} catch (e) { win = 0; }
+		return {
+			window:     win,
+			foldAt:     cfg.foldAt || 0,
+			contextCap: cfg.contextCap || 0,
+			spendCap:   cfg.spendCap || 0,
+			maxRounds:  cfg.maxRounds || 0,
+			foldModel:  foldModelFor(m.provider || ''),
+			foldPrompt: (Prompts && Prompts.md && Prompts.md.compactor) || '',
+			tune:       cfg.tune || '',
+		};
+	}
+
+	/// The engine session `seedEngine` would lay into a fresh engine for `chat`, less the turn
+	/// `turnId` about to be sent, for an errand's seed to carry (KT-4): the stored session cleaned
+	/// as it is cleaned there, with the prose after `upto` as its `tail`; or, where the stored one
+	/// is absent or out of order, no folded part and the whole prose as the tail, as the transcript
+	/// path lays it. Pure over the chat: nothing is written back to it.
+	function errandSession(chat, turnId) {
+		var c = chat || {}, id = String(turnId || '');
+		function row(m) {
+			var r = { role: m.role, content: String(m.content || ''), mid: String(m.mid || '') };
+			if (m.role === 'user' && typeof m.pre === 'string' && m.pre) r.pre = m.pre;
+			if (m.role === 'user' && m.interject) r.interject = true;
+			return r;
+		}
+		function rows(list) {
+			return list.filter(function (m) {
+				return m && m.content && (m.role === 'user' || m.role === 'assistant') && String(m.mid || '') !== id;
+			}).map(row);
+		}
+		var sess = c.session;
+		if (sess && Array.isArray(sess.msgs) && sess.msgs.length) {
+			var clean = dedupeSession(sess.msgs, c.messages, sess.upto, sess.uptoTs);
+			var held  = (clean !== sess.msgs) ? Object.assign({}, sess, { msgs: clean, marks: {} }) : sess;
+			var tail  = tailAfter(c, held);
+			var doubt = sessionDoubt(c, held, tail, id);
+			if (held.msgs.length && !doubt) {
+				return { v: held.v || 1, msgs: held.msgs, upto: String(held.upto || ''), uptoTs: +held.uptoTs || 0,
+					marks: held.marks || {}, tail: rows(tail) };
+			}
+		}
+		return { v: 1, msgs: [], upto: '', uptoTs: 0, marks: {}, tail: rows(c.messages || []) };
+	}
+
+	/// What the Diamond `did` reaches here, as the engine composes its `Attached` block from
+	/// (`diamond_reach`), for an errand to carry (KT-4); `undefined` for an ordinary chat, whose turn
+	/// composes none, and where the engine cannot say.
+	async function errandReach(did) {
+		if (!did) return undefined;
+		try {
+			var eng = diamondApp(did);
+			if (!eng || typeof eng.diamond_reach !== 'function') return undefined;
+			return JSON.parse(await eng.diamond_reach(String(did)));
+		} catch (e) {
+			return undefined;
+		}
+	}
+
+	/// This browser's `Today` line (`today_line`), for an errand to carry (KT-4), so the runner tells
+	/// the model the asker's day; '' where the module cannot say.
+	function errandToday() {
+		try {
+			var t = Wasm.today_line();
+			return typeof t === 'string' ? t : '';
+		} catch (e) {
+			return '';
+		}
+	}
+
+	/// The packs this account has not bought, as the wasm holds them (`set_locked_packs`), for an
+	/// errand to carry (U13a). `undefined` when the module cannot say -- not up, or a throw --
+	/// which the runner reads as every pack locked, so a doubt never unlocks a paid tool.
+	function errandLocked() {
+		try {
+			var csv = Wasm.locked_packs();
+			if (typeof csv !== 'string') return undefined;
+			return csv.split(',')
+				.map(function (k) { return k.trim().toLowerCase(); })
+				.filter(function (k) { return k !== ''; });
+		} catch (e) {
+			return undefined;
+		}
 	}
 
 	/// Forget what one Diamond's daimon said about reaching websites, because its conversation
@@ -65444,6 +66119,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return box;
 	}
 
+	/// Where a runner turn's commands reached the network (U8h HISTORY-NET): one line per
+	/// destination the runner's proxy logged, in plain words, and "and N more" past the rows it
+	/// sent. Null where the turn reached none. Nothing to press: it only says what happened.
+	function histAwayNet(away) {
+		var net = (away && Array.isArray(away.net)) ? away.net : [];
+		var more = (away && +away.netMore > 0) ? +away.netMore : 0;
+		if (!net.length && !more) return null;
+		var box = document.createElement('div');
+		box.className = 'hist-net';
+		var line = function (text) {
+			var p = document.createElement('div');
+			p.className = 'hist-note hist-net-row';
+			p.textContent = text;		// escaped via textContent (H5)
+			box.appendChild(p);
+		};
+		net.forEach(function (d) {
+			if (!d || !d.host) return;
+			var host = String(d.host);
+			if (d.v === 'registry') line(t('versions.net_registry', { host: host, size: fmtBytes(+d.down || 0) }));
+			else if (d.v === 'outside') line(t('versions.net_outside', { host: host }));
+			else if (d.v === 'refused') line(t('versions.net_refused', { host: host, port: +d.port || 0,
+				why: String(d.why || t('versions.net_no_why')) }));
+		});
+		if (more) line(t('versions.net_more', { n: more }));
+		return box;
+	}
+
 	/// One version: what it was, what it changed, and the two ways back.
 	///
 	/// `newer` is the row above it, so the state a restore replaced says so.
@@ -65516,6 +66218,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				row.appendChild(more);
 			}
 		}
+		// WHERE A RUNNER TURN REACHED THE NETWORK (U8h), under its files: what it downloaded,
+		// what outside content turned its later commands offline, and what was blocked.
+		var net = r.away ? histAwayNet(r.away) : null;
+		if (net) row.appendChild(net);
 
 		var acts = document.createElement('div');
 		acts.className = 'hist-acts';
@@ -70942,6 +71648,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			c._queue = [];
 			c._interject = [];
 			c._interjectNote = [];
+			journalQueue(c);
 			c._aborted = true;
 		});
 		hideSpinner();
@@ -75450,12 +76157,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// own key, so a model id belonging to somebody else's endpoint is not a fold with
 		// a different model — it is a request that fails, or one answered by whatever that
 		// endpoint does with an unknown name.
-		var fold = window.DaimondModels
-			? DaimondModels.effective({ kind: 'run', provider: provider || '' }, 'summarising')
-			: { model: (cfg.foldProvider || '') === (provider || '') ? (cfg.foldModel || '') : '' };
 		try {
 			if (typeof app.set_fold_model === 'function') {
-				app.set_fold_model(fold.model || '');
+				app.set_fold_model(foldModelFor(provider));
 			}
 		} catch (e) { /* an older wasm build has no setter */ }
 		try {
@@ -75463,6 +76167,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				app.set_role_prompt('compactor', (Prompts && Prompts.md.compactor) || '');
 			}
 		} catch (e) { /* an older wasm build does not know the role */ }
+	}
+
+	/// The model that folds a conversation on `provider`'s key, or '' for the conversation's own.
+	function foldModelFor(provider) {
+		var fold = window.DaimondModels
+			? DaimondModels.effective({ kind: 'run', provider: provider || '' }, 'summarising')
+			: { model: (cfg.foldProvider || '') === (provider || '') ? (cfg.foldModel || '') : '' };
+		return (fold && fold.model) || '';
 	}
 
 	/// Any built agent, for a setting that is the engine's rather than an agent's.

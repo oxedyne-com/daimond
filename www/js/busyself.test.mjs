@@ -124,13 +124,13 @@ console.log('\n— S: busy for this chat —');
 {
 	// F2: busyHere reads a queue by the same rule as chatHasWork.
 	const cp = (o) => Object.assign({ id: 'cq' }, o);
-	const live = rig({ chats: [cp({ _queue: ['x'] }), other()], current: 'cq' });
+	const live = rig({ chats: [cp({ _queue: [{ text: 'x' }] }), other()], current: 'cq' });
 	const lh = live.busyHere ? live.busyHere() : null;
 	check('S10 a draining queue is busy for another chat', live.busyForChat('other') > 0 && !!lh && lh.busyChats.includes('cq'), lh && JSON.stringify(lh));
-	const park = rig({ chats: [cp({ _queue: ['x'] }), other()], current: 'other' });
+	const park = rig({ chats: [cp({ _queue: [{ text: 'x' }] }), other()], current: 'other' });
 	const ph = park.busyHere ? park.busyHere() : null;
 	check('S10 a parked queue is no work', park.busyForChat('other') === 0 && !!ph && ph.busy === 0 && ph.busyChats.length === 0, ph && JSON.stringify(ph));
-	const held = rig({ chats: [cp({ _queue: ['x'] })], current: 'cq', ask: true });
+	const held = rig({ chats: [cp({ _queue: [{ text: 'x' }] })], current: 'cq', ask: true });
 	check('S10 a queue held by an open question is no work', held.busyForChat('other') === 0, held.busyForChat('other'));
 }
 {
@@ -198,13 +198,13 @@ console.log('\n— O: own turns, own work, the wait —');
 	// A queue is work only while it will drain on its own (F2): its chat on screen, no open
 	// question holding it, the turn ahead of it not failed. Else it is parked, and nothing runs.
 	const cp = (o) => Object.assign({ id: 'crig' }, o);		// a plain chat: drained by drainQueue
-	check('O2 a draining queue is work', w({ chats: [cp({ _queue: ['x'] })], current: 'crig' }) === true);
-	check('O2 a queue parked on a chat off screen is not', w({ chats: [cp({ _queue: ['x'] }), other()], current: 'other' }) === false);
-	check('O2 a queue held by an open question is not', w({ chats: [cp({ _queue: ['x'] })], current: 'crig', ask: true }) === false);
-	check('O2 a queue behind a failed turn is not', w({ chats: [cp({ _queue: ['x'], _queueFailed: true })], current: 'crig' }) === false);
-	check('O2 a daimon queue drains while its Diamond is on screen', w({ chats: [crig({ _queue: ['x'] })], currentDiamond: 'D' }) === true);
-	check('O2 and is parked while it is not', w({ chats: [crig({ _queue: ['x'] })], currentDiamond: 'E' }) === false);
-	check('O2 a parked queue behind a running turn: the turn is work', w({ chats: [cp({ _generating: true, _queue: ['x'] })], current: 'other' }) === true);
+	check('O2 a draining queue is work', w({ chats: [cp({ _queue: [{ text: 'x' }] })], current: 'crig' }) === true);
+	check('O2 a queue parked on a chat off screen is not', w({ chats: [cp({ _queue: [{ text: 'x' }] }), other()], current: 'other' }) === false);
+	check('O2 a queue held by an open question is not', w({ chats: [cp({ _queue: [{ text: 'x' }] })], current: 'crig', ask: true }) === false);
+	check('O2 a queue behind a failed turn is not', w({ chats: [cp({ _queue: [{ text: 'x' }], _queueFailed: true })], current: 'crig' }) === false);
+	check('O2 a daimon queue drains while its Diamond is on screen', w({ chats: [crig({ _queue: [{ text: 'x' }] })], currentDiamond: 'D' }) === true);
+	check('O2 and is parked while it is not', w({ chats: [crig({ _queue: [{ text: 'x' }] })], currentDiamond: 'E' }) === false);
+	check('O2 a parked queue behind a running turn: the turn is work', w({ chats: [cp({ _generating: true, _queue: [{ text: 'x' }] })], current: 'other' }) === true);
 	check('O2 its own Diamond is work', w({ chats: [crig()], crystal: { D: true } }) === true);
 	check('O2 its worker is work', w({ chats: [crig()], runs: [{ chatId: 'crig', status: 'running' }] }) === true);
 	check('O2 an earlier runner turn of the chat is work',

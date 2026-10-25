@@ -48,7 +48,7 @@ class Engine {
 	export_session() { return this.msgs.map((x) => Object.assign({}, x)); }
 }
 const stub = { diag(a, b) { if (process.env.DIAG) console.log('diag', a, b); }, dedupeSession: (m) => m };
-const NAMES = ['seedEngine', 'armEngine', 'reconcileEngine', 'heldRun', 'heldNote', 'tailAfter', 'captureSession'];
+const NAMES = ['seedEngine', 'armEngine', 'reconcileEngine', 'heldRun', 'heldNote', 'tailAfter', 'captureSession', 'sessionHeld'];
 const base = sliceDaimond(makeWindow({}), ['sessionPlan'].concat(NAMES), stub).fns;		// the code as it stands
 const sessionPlan = base.sessionPlan;
 let F = base;
@@ -93,7 +93,10 @@ console.log('sessionPlan (pure)');
 	check('the prompt about to be re-sent is not missing', sessionPlan({ u1: 1, a1: 1 }, true, ms, 'u2').add.map((m) => m.mid).join() === 'a2', '');
 	check('a partial answer, a streamed one and furniture are not missing',
 		sessionPlan({ u1: 1 }, true, [ms[0], Object.assign(A('p', 2, 'half'), { interrupted: true }), Object.assign(A('q', 3, 'half'), { provisional: true }),
-			Object.assign(A('r', 4, 'half'), { framed: true }), { role: 'error_log', mid: 'e', ts: 5, content: 'x' }, { role: 'user', mid: 'z', ts: 6, content: '' }]).act === 'none', '');
+			Object.assign(A('r', 4, 'half'), { framed: true, iturn: 'u1' }), { role: 'assistant', mid: 'ph', iturn: 'u1', why: 'dispatched', ts: 4, content: '' },
+			{ role: 'error_log', mid: 'e', ts: 5, content: 'x' }, { role: 'user', mid: 'z', ts: 6, content: '' }]).act === 'none', '');
+	check('a framed answer whose hand-off has settled (no placeholder) is missing (QA ccp1 H1)',
+		J(sessionPlan({ u1: 1 }, true, [ms[0], Object.assign(A('r', 4, 'whole'), { framed: true, iturn: 'u1' })]).add.map((m) => m.mid)) === '["r"]', '');
 	check('plan is deterministic and does not mutate its input', (() => { const h = { u1: 1 }, s = J(ms); sessionPlan(h, true, ms); return J(h) === '{"u1":1}' && J(ms) === s; })(), '');
 }
 

@@ -49,7 +49,7 @@ function world(claimed) {
 		dropDispatchedPlaceholder: () => {},
 		renderDispatchedBadges: () => {},
 		selfDeviceId: () => 'dev-self',
-		drainQueue: (c) => { if (c._queue.length) W.order.push(c._queue.shift()); },
+		drainQueue: (c) => { if (c._queue.length) W.order.push(c._queue.shift().text); },
 	};
 	const names = ['recoverOneLocally', 'recoveringHere'];
 	const body = names.map((n) => cut(n) || '').join('\n');
@@ -64,12 +64,12 @@ test('a follow-up typed while a refused turn is being taken back waits behind it
 	const run = W.fn.recoverOneLocally(W.chat, { iturn: 't-refused' });
 	assert.ok(W.fn.recoveringHere, 'nothing says a turn is being taken back to run in this chat');
 	assert.equal(W.fn.recoveringHere(W.chat), true, 'the chat reads free while its turn is taken back');
-	W.chat._queue.push('follow-up', 'and another');	// what sendPressed does with a chat that is not free
+	W.chat._queue.push({ text: 'follow-up' }, { text: 'and another' });	// what sendPressed does with a chat that is not free
 	W.claim();
 	await run;
 	// The second waits on the first, whose own end sends it: two at once would run side by side.
 	assert.deepEqual(W.order, ['refused turn', 'follow-up']);
-	assert.deepEqual(W.chat._queue, ['and another']);
+	assert.deepEqual(W.chat._queue, [{ text: 'and another' }]);
 	assert.equal(W.fn.recoveringHere(W.chat), false);
 });
 
@@ -77,7 +77,7 @@ test('a take-back that stands down still sends what waited on it', async () => {
 	const W = world(false);
 	const run = W.fn.recoverOneLocally(W.chat, { iturn: 't-refused' });
 	assert.ok(W.fn.recoveringHere && W.fn.recoveringHere(W.chat));
-	W.chat._queue.push('follow-up');
+	W.chat._queue.push({ text: 'follow-up' });
 	W.claim();
 	await run;
 	assert.deepEqual(W.order, ['follow-up'], 'the follow-up was stranded behind a turn that never ran here');

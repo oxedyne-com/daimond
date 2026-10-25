@@ -19,6 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { source, lift, liftFn } from './testlift.mjs';
+import { fakeIDB, tabJournal, journalQueueOver } from './journalfixture.mjs';
 
 const SRC = source('daimond.js');
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -38,8 +39,8 @@ function world(over) {
 		sayToRunner: async () => false,
 		maybeAutoDispatch: async (c, text) => { log.push(['elect', text]); await tick(); return true; },
 		interjectMessage: (c, text) => { log.push(['interject', text]); return true; },
-		journalQueue: () => {}, giveUpSent: () => {}, syncSendMode: () => {}, renderQueue: () => {},
-		updateQueueBadges: () => {}, returnQueue: () => { log.push(['returnQueue']); }, askHolds: () => false,
+		journalQueue: journalQueueOver(SRC, tabJournal(fakeIDB(), new Set())), giveUpSent: () => {}, syncSendMode: () => {}, renderQueue: () => {},
+		updateQueueBadges: () => {}, returnQueue: () => { log.push(['returnQueue']); }, askHolds: () => false, dispatchInFlight: () => null,
 		runSteer: async (f, text) => { log.push(['runSteer', text]); return true; },
 		seatOpts: () => ({ selfId: 'PHONE' }),
 		chatRunningOn: () => '',
@@ -68,7 +69,7 @@ test('F1: switch on a runner: a word typed into the busy daimon is queued, not s
 	const w = world({ sw: RUNNER });
 	assert.equal(await rig(w).sendToDiamondTurn(w.rec, 't', 't'), true);
 	assert.ok(!w.log.some((x) => x[0] === 'interject'), 'not said into the turn here: ' + JSON.stringify(w.log));
-	assert.deepEqual(w.rec._queue, ['t']);
+	assert.deepEqual(w.rec._queue, [{ text: 't', drawn: undefined }]);
 });
 
 test('F2: ... and as the turn ends the queue goes to the election, so the word reaches a model', async () => {

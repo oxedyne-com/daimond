@@ -105,7 +105,7 @@ function page(ls, o) {
 	if (win.DaimondPeer) win.DaimondPeer.sealForSelf = async (env) => ({ env });
 	win.DaimondPresence = presence;		// after peer.js, which publishes its own
 	const names = ['recordCarriedTurn', 'histOpenFor', 'undoneFromRunner', 'undoTurnDeps', 'undoTurnProbe',
-		'histAwayUndo', 'histRow', 'isRestoreRow', 'shownPath'];
+		'histAwayUndo', 'histAwayNet', 'fmtBytes', 'histRow', 'isRestoreRow', 'shownPath'];
 	const body = names.map(fn).join('\n');
 	const make = new Function('window', 'document', 't', 'tn', 'stubs',
 		'with (window) { with (stubs) {\n'
@@ -115,7 +115,7 @@ function page(ls, o) {
 	const stubs = {
 		currentDiamond: { id: 'd1' }, diamonds: [], selfDeviceId: () => 'PHONE', deviceNameFor: () => '',
 		relTime: () => 'just now', showCrystalHistory: () => { calls.redrawn = (calls.redrawn | 0) + 1; },
-		peerReports: {}, requeueUnheard() {}, renderDispatchedBadges() {}, updateExpedite() {},
+		peerReports: {}, requeueUnheard() {}, takeReportTaint() {}, settleRunnerSession() {}, renderDispatchedBadges() {}, updateExpedite() {},
 		adoptFinalFrame: () => false, _openAsk: {}, histFile: () => makeEl('div'),
 		diamondTurning: () => false, refreshDiamondAfterChange: async () => {},
 	};

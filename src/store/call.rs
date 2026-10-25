@@ -384,6 +384,9 @@ store_calls! {
     // The fold's output is capped at `FOLD_MAX_TOKENS_STRUCTURED`, so it is a `Meta` reply.
     wait Meta/Meta AbsorbFoldNotes "absorb_fold_notes" { id: String, notes: FoldNotes }
         -> Option<FoldNotes>;
+    // Filing answers a count and a row id, so its reply always frames; a read, the log whole.
+    wait Meta/Meta HisWords "his_words" { keeper: String, entries: String } -> Outcome<String>;
+    wait Meta/Read HisWordsRead "his_words_read" { keeper: String } -> Outcome<String>;
 
     // Links
     wait Meta/Meta AddLink "add_link" {

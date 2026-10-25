@@ -228,10 +228,10 @@ function lift(name) {
 	return SRC.slice(a, SRC.indexOf('\n\t}\n', a) + 3);
 }
 
-const NAMES = ['runDispatchFallback', 'electProvider', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
+const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
 	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
-	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled'];
+	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'handBackNote'];
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──
 const PW = { addEventListener() {}, dispatchEvent() { return true; } };
@@ -312,7 +312,8 @@ function world(fault, extra) {
 		touchChat: () => {}, persistChats: () => {}, renderHistory: () => {},
 		scheduleDispatchFallback: () => {}, PRESUMED_FALLBACK_MS: 5000, electedTried: () => ['argonaut1'],
 		turnEffortOf: () => null, storedPre: () => { if (fault === 'throw') throw new Error('qa: a throw before the mark'); return ''; },
-		storedEffort: () => null, errandModelOf: () => ({}), errandFence: async () => null, errandScope: (c, h) => h, autonomousPosture: () => false, msgTombsOwed: () => [],
+		storedEffort: () => null, errandModelOf: () => ({}), errandFence: async () => null, errandClean: () => false, errandLocked: () => undefined, errandLimits: () => undefined, errandSession: () => undefined, errandReach: async () => undefined, errandToday: () => '', errandScope: (c, h) => h, autonomousPosture: () => false, msgTombsOwed: () => [],
+		deviceNameFor: () => '',
 		loadChatMessages: async () => {}, friendlyError: (e) => String(e && e.message),
 		seatSwitchFor: () => ({ runner: { deviceId: 'argonaut1' } }),
 		peerReports: {}, placeholderParkCount: () => 0,
@@ -594,13 +595,13 @@ async function main() {
 	// waits behind a send in flight, the runner gone in that wait. Each: drawn at the press, so the
 	// read that finds it gone ends "not run", never Here. Red on df6fda35a.
 	// Breaks: editdrawn (the edit drops the snapshot), waitdrawn (taken after the wait).
-	const SEND = ['sendUserMessage', 'sendPressed', 'holdSend', 'retryRouted', 'askAgain'];
+	const SEND = ['sendUserMessage', 'sendPressed', 'holdSend', 'retryRouted', 'askAgain', 'lastTurnOf'];
 	function pressWorld(more) {
 		const W = drawnWorld(SEND.concat(more || []));
 		const e = W.env;
 		Object.assign(e, { chatInput: { value: '' }, syncSendMode: () => {}, confirmHold: async () => {},
 			cfgReady: () => true, newChat: () => {}, startChat: () => {}, conciseText: (c, x) => x,
-			recoveringHere: () => false, sayIntoHere: () => false, enqueueMessage: (c, x) => { W.ran.push('queued:' + x); },
+			recoveringHere: () => false, dispatchInFlight: () => null, sayIntoHere: () => false, enqueueMessage: (c, x) => { W.ran.push('queued:' + x); },
 			steerDiamondOf: () => null, diamondBusy: () => false, peerUiStateFor: () => '', answerAgain: () => { W.ran.push('answerAgain'); },
 			retryRouted: undefined });
 		e.DaimondModels = Object.assign({}, e.DaimondModels, { resolve: () => ({}) });
@@ -673,7 +674,7 @@ async function main() {
 		const other = { id: 'c0', holds: [], messages: [] };
 		e.current = other;
 		Object.assign(e, { diamonds: [f], currentDiamond: null, daimonChat: () => chat, toast: () => {},
-			peerHeldTurnOf: () => null, sayToRunner: async () => false,
+			peerHeldTurnOf: () => null, dispatchInFlight: () => null, sayToRunner: async () => false,
 			doSteer: (text) => { W.ran.push('steer:' + text); return Promise.resolve(''); },
 			settleConsent: () => true,
 			selectDiamond: async (d) => { W.redraw({}); e.currentDiamond = d; e.current = chat; } });

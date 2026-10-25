@@ -148,7 +148,7 @@ function device(peerWin, self, extra) {
 		runnerLabel: (id) => names[id] || '', deviceLabelFor: (id) => names[id] || '',
 		handoffTargetLabel: () => 'argonaut', interruptedRunner: () => null, pausedBack: () => '',
 		renderBlockerFooter: () => {}, consentActPhrase: () => '', retryTurn() {}, reRunParked() {},
-		continueTurn() {}, answerAgain() {}, current: null, ms: null,	// `ms`: a local name the lifter takes for a declaration
+		continueTurn() {}, answerAgain() {}, drainAfterHeld() {}, current: null, ms: null,	// `ms`: a local name the lifter takes for a declaration
 		t: (k, o) => k + (o ? J(o) : ''),
 	}, extra && extra.stub);
 	return sliceDaimond(w, ['endHandOffNotRun', 'turnRunnerId', 'peerUiStateFor', 'peerHeldTurnOf',
@@ -208,7 +208,7 @@ try {
 	const look = () => frames.push({ runner: A.turnRunnerId(TID), st: A.peerUiStateFor(m), held: !!A.peerHeldTurnOf(chat) });
 	A = device(phW, PHONE, {
 		syncCas: () => door,
-		names: ['runDispatchFallback'],
+		names: ['runDispatchFallback', 'leaseDoorRead'],
 		stub: {
 			chats: [chat], dispatchedChat: () => chat, dispatchedTurnFinished: () => false,
 			dispatchedAnswerPresent: () => false, recoverOneLocally: () => { frames.push({ ranHere: 1 }); },

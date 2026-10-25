@@ -30,6 +30,24 @@ pub struct TestStore {
     keeper_ends: Rc<Cell<u32>>,
     gate:        Rc<RefCell<Gate>>,
     settled:     Rc<RefCell<Vec<(String, SettlePhase)>>>,  // each settle asked, in order
+    held:        Rc<RefCell<Held>>,                         // a Diamond this store holds (KT-3)
+    notes:       Rc<RefCell<Notes>>,                        // keepers' notes files (CCP2-FOLDFIX2)
+}
+
+/// The notes files a test lets this store keep, by keeper: none kept, the words log refuses as
+/// before.
+#[derive(Debug, Default)]
+struct Notes {
+    keeps:  bool,
+    files:  std::collections::BTreeMap<String, String>,
+}
+
+/// The one Diamond a test may have this store hold: its crystal and its own K (KT-3).  None held,
+/// the crystal read refuses and K is zero, as before.
+#[derive(Debug, Default)]
+struct Held {
+    crystal: Option<String>,
+    k:       usize,
 }
 
 /// What a test sets the change gate's store side to (UNBLOCK-26).  By default the store keeps
@@ -50,6 +68,13 @@ struct Gate {
 }
 
 impl TestStore {
+    /// Hold `crystal` as every Diamond's crystal and `k` as its own K (KT-3).
+    pub fn hold_diamond(&self, crystal: &str, k: usize) {
+        let mut h = self.held.borrow_mut();
+        h.crystal = Some(crystal.to_string());
+        h.k = k;
+    }
+
     /// How many keeper turn ends the engine has driven on this store.
     pub fn keeper_ends(&self) -> u32 { self.keeper_ends.get() }
 
@@ -87,6 +112,14 @@ impl TestStore {
         g.copies = true;
     }
 
+    /// Keep every keeper's notes file in memory, so a fold can file his words.
+    pub fn keep_notes(&self) { self.notes.borrow_mut().keeps = true; }
+
+    /// The notes file kept for `keeper`, empty for none.
+    pub fn notes_of(&self, keeper: &str) -> String {
+        self.notes.borrow().files.get(keeper).cloned().unwrap_or_default()
+    }
+
     /// Say the Diamond made the file at `path`, so a change to it is not asked about.
     pub fn made_here(&self, path: &str) { self.gate.borrow_mut().mine.insert(path.to_string()); }
 }
@@ -102,7 +135,10 @@ impl HostStore for TestStore {
     type Marked = ();
 
     async fn read_crystal_data(&self, _: &str) -> Outcome<String> {
-        refused("read_crystal_data")
+        match &self.held.borrow().crystal {
+            Some(c) => Ok(c.clone()),
+            None    => refused("read_crystal_data"),
+        }
     }
     async fn read_crystal_data_strict(&self, _: &str) -> Outcome<String> {
         refused("read_crystal_data_strict")
@@ -167,6 +203,25 @@ impl HostStore for TestStore {
     }
     // None: nothing was written, so the fold notice stays as it was.
     async fn absorb_fold_notes(&self, _: &str, _: &FoldNotes) -> Option<FoldNotes> { None }
+    async fn his_words(&self, keeper: &str, entries: String) -> Outcome<String> {
+        use crate::agent::compact;
+        let mut n = self.notes.borrow_mut();
+        if !n.keeps {
+            return refused("his_words");
+        }
+        let old = n.files.get(keeper).cloned().unwrap_or_default();
+        let new = compact::log_merge(&old, &entries);
+        n.files.insert(keeper.to_string(), new.clone());
+        compact::log_answer(&new, &entries, keeper)
+    }
+    async fn his_words_read(&self, keeper: &str) -> Outcome<String> {
+        let n = self.notes.borrow();
+        match n.keeps {
+            true  => Ok(crate::agent::compact::log_text(
+                &n.files.get(keeper).cloned().unwrap_or_default())),
+            false => refused("his_words_read"),
+        }
+    }
 
     async fn add_link(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str)
         -> Outcome<String>
@@ -185,7 +240,7 @@ impl HostStore for TestStore {
     async fn activity_append(&self, _: &str, _: crate::activity::Turn, _: i64) -> Outcome<()> {
         refused("activity_append")
     }
-    async fn no_progress_rounds(&self, _: &str) -> usize { 0 }
+    async fn no_progress_rounds(&self, _: &str) -> usize { self.held.borrow().k }
 
     fn capture(&self, _: &str, _: &str, _: Change) -> Outcome<()> { Ok(()) }
     fn captured_room(&self, _: &str, _: &str, _: &Found, _: Option<u64>, _: bool, _: u64)

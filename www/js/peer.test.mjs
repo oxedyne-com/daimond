@@ -986,6 +986,139 @@ async function main() {
 			'seedless len=' + seedless.body.envelope.length);
 	}
 
+	// ── KT-4 (binding 15): the conversation travels ──
+	// The seed carries the page's engine session; one that would not fit the door is dropped
+	// first, whole, and the errand is then exactly today's sessionless one (hand back on the
+	// runner, never a truncated tail); the errand carries the page's reach and today line.
+	// Red before KT-4: buildDispatch and makeErrand drop all three.
+	console.log('\nKT-4 — the seed carries the session; reach and today ride the errand');
+	{
+		const P = phone.DaimondPeer;
+		const small = { id: 'chat-k4', provider: 'openrouter', model: 'test/m', holds: [], messages: [
+			{ role: 'user', content: 'q1', mid: 'k1', ts: T0 },
+			{ role: 'assistant', content: 'a1', mid: 'k2', ts: T0 + 1 },
+			{ role: 'user', content: 'the k4 turn', mid: 'TURN-K4', ts: T0 + 2 }] };
+		const kOpts = { turnId: 'TURN-K4', prompt: 'the k4 turn', dispatchedBy: 'devPHONE', now: T0 };
+		const sess = { v: 1, msgs: [{ role: 'user', content: 'FOLD: earlier' },
+			{ role: 'assistant', content: '', tool_calls: [{ id: 'c1', name: 'file_read', arguments: '{}' }] },
+			{ role: 'tool', tool_call_id: 'c1', content: 'x' }], upto: 'k1', uptoTs: T0, marks: {},
+			tail: [{ role: 'assistant', content: 'a1', mid: 'k2' }] };
+		const plan = P.buildDispatch(small, Object.assign({}, kOpts, { session: sess }));
+		const want = JSON.stringify(sess);
+		check('K4-1: buildDispatch carries the session on the seed',
+			!!plan.fields.seed && JSON.stringify(plan.fields.seed.session) === want,
+			JSON.stringify(plan.fields.seed && plan.fields.seed.session));
+		sess.tail.push({ role: 'user', content: 'later', mid: 'k9' });
+		check('K4-1: the seed holds a copy, not the chat\'s live session',
+			!!plan.fields.seed && JSON.stringify(plan.fields.seed.session) === want);
+		sess.tail.pop();
+		check('K4-1: and it survives the errand', JSON.stringify((plan.errand(0).seed || {}).session) === want);
+		check('K4-1: no session given, none on the seed',
+			!('session' in (P.buildDispatch(small, kOpts).fields.seed || {})));
+		const fitS = await P.sealFittingErrand(small, Object.assign({}, kOpts, { session: sess }));
+		check('K4-2: a session that fits is sealed whole',
+			JSON.stringify(((await laptop.DaimondPeer.openEnvelope(fitS.body.envelope)).seed || {}).session) === want);
+
+		// Over the door: the session alone is far past the cap, over FIX B's ~90 KB thread.
+		const cap = phone.DaimondPost.relayMaxBytes();
+		const big = { id: 'chat-big', provider: 'openrouter', model: 'test/m', holds: [], messages: [] };
+		for (let i = 0; i < 24; i++) {
+			const role = i % 2 ? 'assistant' : 'user';
+			big.messages.push({ role, content: (role[0]).repeat(3100), mid: 'b' + i, ts: T0 + i * 10 });
+		}
+		big.messages.push({ role: 'user', content: 'the big-thread prompt', mid: 'TURN-BIG', ts: T0 + 1000 });
+		const bigOpts = { turnId: 'TURN-BIG', prompt: 'the big-thread prompt', dispatchedBy: 'devPHONE', now: T0 };
+		const huge = { v: 1, msgs: [{ role: 'user', content: 'h'.repeat(90 * 1024) }], upto: '', uptoTs: 0,
+			marks: {}, tail: [] };
+		const base = await P.sealFittingErrand(big, bigOpts);
+		const over = await P.sealFittingErrand(big, Object.assign({}, bigOpts, { session: huge }));
+		const overSeed = over.plan.fields.seed || {};
+		check('K4-2: an over-door session is dropped whole, never cut',
+			!overSeed.session, JSON.stringify(Object.keys(overSeed)));
+		check('K4-2: and the errand is the sessionless ladder\'s, seed for seed',
+			JSON.stringify(over.plan.fields.seed) === JSON.stringify(base.plan.fields.seed)
+			&& over.seedClipped === base.seedClipped && over.seedDropped === base.seedDropped,
+			JSON.stringify({ o: [over.seedClipped, over.seedDropped], b: [base.seedClipped, base.seedDropped] }));
+		check('K4-2: and it fits the relay', phone.DaimondPost.fitsRelay(over.body.envelope.length, cap) === true);
+
+		const reach = { attached: ['code'], read_only: ['docs'], unconfirmed: [], nested: [] };
+		const today = 'Today is Saturday 24 October 2026 (Australia/Sydney, UTC+11:00).';
+		const lim = { window: 1048576, foldAt: 0.8 };
+		// The limits as KT-2's `limitsOf` writes them (every field, in the runner's order).
+		const ek = P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p', limits: lim, reach: reach, today: today });
+		check('K4-3: makeErrand writes reach and today after limits, closing the errand',
+			JSON.stringify(ek).endsWith(',"limits":' + JSON.stringify(ek.limits) + ',"reach":' + JSON.stringify(reach)
+				+ ',"today":' + JSON.stringify(today) + '}'), JSON.stringify(ek).slice(-200));
+		const bare = P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p', reach: null, today: '' });
+		check('K4-3: and neither key when not given', !('reach' in bare) && !('today' in bare)
+			&& !('reach' in P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p' })));
+		check('K4-3: buildDispatch passes reach and today to the errand',
+			JSON.stringify(P.buildDispatch(small, Object.assign({}, kOpts, { reach: reach, today: today })).errand(0).reach)
+				=== JSON.stringify(reach)
+			&& P.buildDispatch(small, Object.assign({}, kOpts, { reach: reach, today: today })).errand(0).today === today);
+	}
+
+	// ── KT-4b: an over-door session travels as a reference ──
+	// A session past the relay door is not dropped: the errand names it, `sessionRef =
+	// {chat, sig, upto}`, so the runner can read it where it holds the chat or hand the turn back
+	// `thread`; the seed still goes down today's ladder without it. Red before KT-4b: no reference.
+	console.log('\nKT-4b — an over-door session is sealed as {chat, sig, upto}');
+	{
+		const P = phone.DaimondPeer;
+		const big = { id: 'chat-k4b', provider: 'openrouter', model: 'test/m', holds: [], messages: [] };
+		for (let i = 0; i < 24; i++) {
+			const role = i % 2 ? 'assistant' : 'user';
+			big.messages.push({ role, content: (role[0]).repeat(3100), mid: 'r' + i, ts: T0 + i * 10 });
+		}
+		big.messages.push({ role: 'user', content: 'the ref prompt', mid: 'TURN-REF', ts: T0 + 1000 });
+		const rOpts = { turnId: 'TURN-REF', prompt: 'the ref prompt', dispatchedBy: 'devPHONE', now: T0 };
+		const huge = { v: 1, msgs: [{ role: 'user', content: 'h'.repeat(90 * 1024) }], upto: 'r21', uptoTs: T0 + 210,
+			marks: {}, tail: [{ role: 'assistant', content: 'a', mid: 'r23' }] };
+		const over = await P.sealFittingErrand(big, Object.assign({}, rOpts, { session: huge }));
+		const sig = P.threadSig(big, 'TURN-REF').sig;
+		const wantRef = JSON.stringify({ chat: 'chat-k4b', sig: sig, upto: 'r21' });
+		const opened = await laptop.DaimondPeer.openEnvelope(over.body.envelope);
+		check('K4b-1: the over-door errand carries the session reference',
+			JSON.stringify(opened.sessionRef) === wantRef, JSON.stringify(opened.sessionRef));
+		check('K4b-1: and no session on its seed', !(opened.seed && opened.seed.session));
+		check('K4b-1: and it fits the relay', phone.DaimondPost.fitsRelay(over.body.envelope.length) === true);
+		// The seedless rung keeps the reference: a cap under any seed.
+		const tiny = await P.sealFittingErrand(big, Object.assign({}, rOpts, { session: huge }), null, 3 * 1024);
+		const tOpen = await laptop.DaimondPeer.openEnvelope(tiny.body.envelope);
+		check('K4b-1: the seedless rung keeps the reference', tiny.seedDropped === true
+			&& JSON.stringify(tOpen.sessionRef) === wantRef, JSON.stringify([tiny.seedDropped, tOpen.sessionRef]));
+		const fit = await P.sealFittingErrand(big, Object.assign({}, rOpts,
+			{ session: { v: 1, msgs: [], upto: '', uptoTs: 0, marks: {}, tail: [] } }));
+		check('K4b-1: a session that fits sends no reference',
+			!('sessionRef' in (await laptop.DaimondPeer.openEnvelope(fit.body.envelope))));
+		check('K4b-3: the seal marks the reference for the dispatcher', JSON.stringify(over.sessionRef) === wantRef
+			&& !fit.sessionRef, JSON.stringify([over.sessionRef, fit.sessionRef]));
+		// Addendum 1: at every door, an over-door session is sealed whole, as the reference, or not
+		// at all; never as a cut-down `seed.session`.
+		const mid = { v: 1, msgs: [{ role: 'user', content: 'FOLD' }, { role: 'user', opens: true, content: 'q'.repeat(9000), mid: 'r0' },
+			{ role: 'assistant', content: '', tool_calls: [{ id: 'c1', name: 'file_read', arguments: '{}' }] },
+			{ role: 'tool', tool_call_id: 'c1', content: 'z'.repeat(9000) }, { role: 'assistant', content: 'done' }],
+			upto: 'r21', uptoTs: T0 + 210, marks: {}, tail: [{ role: 'assistant', content: 'a', mid: 'r23' }] };
+		const whole = JSON.stringify(mid);
+		let cut = [], refs = 0, wholes = 0;
+		for (const cap of [4, 8, 16, 24, 32, 48, 64, 96, 128].map((k) => k * 1024)) {
+			const r = await P.sealFittingErrand(big, Object.assign({}, rOpts, { session: mid }), null, cap);
+			const o = await laptop.DaimondPeer.openEnvelope(r.body.envelope);
+			const ss = o.seed && o.seed.session;
+			if (ss && JSON.stringify(ss) !== whole) cut.push(cap);
+			if (ss) wholes++;
+			if (!ss && JSON.stringify(o.sessionRef) === wantRef) refs++;
+			if (!ss && JSON.stringify(o.sessionRef) !== wantRef) cut.push('lost@' + cap);
+		}
+		check('K4b-3: an over-door session is never sent truncated', cut.length === 0 && refs > 0 && wholes > 0,
+			JSON.stringify({ cut, refs, wholes }));
+		const ref = { chat: 'c', sig: 7, upto: 'm1' };
+		const er = P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p', today: 'T', sessionRef: ref });
+		check('K4b-2: makeErrand writes sessionRef last, after today',
+			JSON.stringify(er).endsWith(',"today":"T","sessionRef":' + JSON.stringify(ref) + '}'), JSON.stringify(er).slice(-120));
+		check('K4b-2: and no key when not given', !('sessionRef' in P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p' })));
+	}
+
 	// ── S-HAND #3: the thread fingerprint and the runner's readiness over it ──
 	console.log('\nFIX #3 — threadSig/holdsThread: the runner never runs an incomplete thread');
 	{

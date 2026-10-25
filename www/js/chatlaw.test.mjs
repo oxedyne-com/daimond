@@ -47,8 +47,10 @@ function check(name, cond, detail) {
 
 const w = makeWindow({ now: 1_000_000_000 });
 const want = ['mergeChatRecords', 'slimChat', 'chatFields'];
+// The one-way taint (H3 TAINT-DURABLE), where the tree has it: its join and its reader.
+const TAINT = ['chatTaintOf', 'chatTaintJoin', 'applyChatTaint'];
 const has = (n) => new RegExp('\\n\\t+function ' + n + '\\(').test(APP);
-for (const n of ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel']) if (has(n)) want.push(n);
+for (const n of ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].concat(TAINT)) if (has(n)) want.push(n);
 const F = sliceDaimond(w, want, { loadMsgTombs: () => ({}) }).fns;
 const { mergeChatRecords, slimChat } = F;
 
@@ -65,12 +67,12 @@ function extractFn(src, name) {
 	}
 	return src.slice(start, i);
 }
-const { stampOf } = new Function([
+const { stampOf } = new Function('chatTaintOf', 'DaimondStamp', [
 	// `stampOf` and the residency-aware reads it makes (5.2.1's chatstore fix), as chatstamp.test lifts them.
 	extractFn(APP, 'stampOf'), extractFn(APP, 'msgStanding'), extractFn(APP, 'standingOf'),
 	extractFn(APP, 'chatMsgCount'), extractFn(APP, 'chatSessionMsgs'),
 	'return { stampOf };',
-].join('\n'))();
+].join('\n'))(F.chatTaintOf || (() => 0), w.DaimondStamp);
 
 // The record as it travels, without the transcript (the message law's own test covers it).
 const bytes = (c) => { const o = Object.assign({}, c); delete o.messages; delete o.session; return JSON.stringify(o); };
@@ -91,6 +93,7 @@ function rec(r) {
 	put('effort', [undefined, '', 'high']);
 	put('updatedAt', [undefined, 0, 100, 100, 200]);
 	put('metaAt', [undefined, 0, 100, 100, 200]);
+	put('taintedAt', [undefined, 0, 50, 150]);	// one-way, a monotone OR (H3)
 	put('promptTokens', [undefined, 0, 5, 9]);
 	put('costUsd', [undefined, 0, 0.01]);
 	return o;
@@ -132,15 +135,15 @@ function adoptionFn() {
 	if (at < 0 || end < 0) throw new Error('the tab adoption block was not found');
 	const body = APP.slice(at, end);
 	const args = ['s', 'c', 'DaimondStamp', 'slimChat', 'chatFields', 'CHAT_TURN_FIELDS', 'CHAT_META_FIELDS'];
-	const extra = ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].filter(has);
+	const extra = ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].concat(TAINT).filter(has);
 	return new Function(...args, ...extra, body + '\nreturn c;');
 }
 const ADOPT = adoptionFn();
 const TF = ['promptTokens', 'completionTokens', 'cachedTokens', 'costUsd', 'prevPrompt', 'prevCompletion', 'lastPrompt', 'prevCached', 'prevCost'];
 const MF = ['name', 'model', 'provider', 'workerModel', 'workerProvider', 'status', 'foldedInto', 'holds', 'diamondId'];
 const adopt = (s, c) => ADOPT(structuredClone(s), structuredClone(c), w.DaimondStamp, slimChat, F.chatFields, TF, MF,
-	...['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].filter(has).map((n) => F[n]));
-const decided = (c) => { const s = slimChat(c); const o = {}; for (const k of MF.concat(TF, ['updatedAt', 'metaAt'])) o[k] = s[k]; return JSON.stringify(o); };
+	...['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].concat(TAINT).filter(has).map((n) => F[n]));
+const decided = (c) => { const s = slimChat(c); const o = {}; for (const k of MF.concat(TF, ['updatedAt', 'metaAt', 'taintedAt'])) o[k] = s[k]; return JSON.stringify(o); };
 
 console.log('\nB. the tab adoption lands where the merge does\n');
 {

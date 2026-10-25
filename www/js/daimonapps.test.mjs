@@ -62,6 +62,8 @@ const stub = {
 	noteAppProv() {}, Notes: { applyTo() {} }, Instructions, Prompts,
 	recordSpend: (model, p, c, ca, cost, prov, dia) => { spent.push({ model, p, c, cost, prov, dia }); return {}; },
 	updateSpend() {}, cfg: { model: 'starred' }, chatWindow: (s) => s,
+	// The daimon's taint also lands on its conversation's record (H3): the store holds none here.
+	chats: [], persistChats() {},
 };
 const win = makeWindow({});
 win.DaimondLedger = {};

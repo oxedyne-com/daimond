@@ -66,7 +66,9 @@ const FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatM
 	'steerModelFor', 'readJson', 'sentModelsOf', 'steerModelsFor', 'turnModelsOfDiamond', 'turnModelsOfChat',
 	'chatWorkerModel', 'diamondWorkerModel', 'diamondVisionModel',
 	// The chat's model half on its own stamp (D-20261018-09 U1c).
-	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit'];
+	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit',
+	// The one-way taint (H3 TAINT-DURABLE).
+	'chatTaintOf', 'chatTaintJoin'];
 const VARS = ['CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', 'DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF',
 	'DIAMOND_EFFORT_HALF', '_chatModelShedSaid'];
 const BODY = VARS.map(function (v) { return liftVar(APP, v); }).join('\n') + '\n'

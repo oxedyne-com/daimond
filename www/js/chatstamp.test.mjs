@@ -44,6 +44,9 @@ function check(name, cond, detail) {
 }
 
 const APP = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+// The REAL stamp module, which the taint reader (`chatTaintOf`, H3) joins with.
+const STAMPWIN = {};
+new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
 
 /// Lifts `function name(...) { ... }` at any indentation by counting braces.
 function extractFn(src, name) {
@@ -76,19 +79,20 @@ function extractBlock(src, marker) {
 
 const carryBlock = extractBlock(extractFn(APP, 'persistChats'), 'if (c._loaded === false)');
 
-const { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimChat, applyCarry } = new Function([
+const { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimChat, applyCarry } = new Function('DaimondStamp', [
 	extractFn(APP, 'stampOf'),
 	extractFn(APP, 'msgStanding'),
 	extractFn(APP, 'standingOf'),
 	extractFn(APP, 'chatMsgCount'),
 	extractFn(APP, 'chatSessionMsgs'),
 	extractFn(APP, 'withRecent'),
+	extractFn(APP, 'chatTaintOf'),		// H3: the taint stamp's reader
 	'var _chatModelShedSaid = false; function diag() {}',
 	extractFn(APP, 'chatOwnsModel'),
 	extractFn(APP, 'slimChat'),
 	'function applyCarry(merged, c) { ' + carryBlock + ' }',
 	'return { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimChat, applyCarry };',
-].join('\n'))();
+].join('\n'))(STAMPWIN.DaimondStamp);
 
 const rows = (framed) => [
 	{ role: 'user', content: 'q', mid: 'u' },

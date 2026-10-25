@@ -669,7 +669,7 @@ async fn runhist_a_runner_turn_is_recorded_once_with_its_away() {
             None    => panic!("no away"),
         };
         assert_eq!(away, versions::Away { on: s("dev-argo"), on_name: s("argonaut"), run: s("e-1"),
-            since: 1000, until: 2000, more: 0 });
+            since: 1000, until: 2000, more: 0, ..Default::default() });
         assert_eq!(m.files.len(), 2);
         for e in m.files.iter() {
             assert_eq!(e.skipped.as_deref(), Some(versions::MADE_BY_COMMAND), "{:?}", e);
@@ -706,7 +706,7 @@ async fn runhist_a_runner_turn_is_recorded_once_with_its_away() {
         assert_eq!(m.cause, Cause::Restore);
         assert_eq!(m.turn, "t1", "the turn it undid");
         assert_eq!(m.away, Some(versions::Away { on: s("dev-argo"), on_name: s("argonaut"),
-            run: s("u-9"), since: 3000, until: 4000, more: 0 }));
+            run: s("u-9"), since: 3000, until: 4000, more: 0, ..Default::default() }));
         let rows: Vec<(String, bool)> = m.files.iter().map(|e| (e.path.clone(), e.gone)).collect();
         assert_eq!(rows, vec![(s("/home/jason/x/old.txt"), false), (s("/home/jason/x/out.mp3"), true)]);
     }).await;
@@ -735,6 +735,101 @@ async fn runhist_a_chats_carried_turn_lands_where_its_own_turns_do() {
             assert!(list.contains(want), "{} not in the chat's History: {}", want, list);
         }
         assert!(diamond::versions_manifests(chat).await.is_empty(), "nothing under diamonds/{}", chat);
+    }).await;
+    closed();
+}
+
+/// A runner turn record whose only act was networked commands (U8h): no `files`, three `net`
+/// rows of the pinned shape, two bad ones the reader drops, and `netMore`.
+fn net_rec(run: &str, keeper: &str) -> String {
+    net_rec_with(run, keeper, "\"net\":[\
+        {\"host\":\"PyPI.org\",\"port\":443,\"up\":1234,\"down\":1258291,\"v\":\"registry\"},\
+        {\"host\":\"pypi-mirror.example\",\"port\":443,\"up\":10,\"down\":20,\"v\":\"outside\"},\
+        {\"host\":\"127.0.0.1\",\"port\":9222,\"up\":0,\"down\":0,\"v\":\"refused\",\"why\":\"a local address\"},\
+        {\"host\":\"x.example\",\"port\":443,\"up\":1,\"down\":1,\"v\":\"maybe\"},\
+        {\"port\":80,\"up\":1,\"down\":1,\"v\":\"registry\"}],\"netMore\":2,")
+}
+
+/// [`net_rec`] with `net` in place of its network keys: empty for none.
+fn net_rec_with(run: &str, keeper: &str, net: &str) -> String {
+    fmt!("{{\"v\":1,\"files\":[],{}\"keeper\":\"{}\",\"turnId\":\"t9\",\"run\":\"{}\",\
+        \"on\":\"dev-argo\",\"onName\":\"argonaut\",\"since\":0,\"until\":0,\"ts\":1600,\"more\":0}}",
+        net, keeper, run)
+}
+
+/// **U8h-b (a): a runner turn with network rows and no file is recorded**, as one `turn` version
+/// with no entries whose `away.net` holds the three good rows (host lower-cased), bad rows
+/// dropped, `netMore` kept; it survives the store and the History's list; a repost writes nothing;
+/// more than [`versions::NET_ROWS_MAX`] rows keep that many and count the rest.  An old record,
+/// with no `net`, records as it did: no rows and no `net` key.
+async fn histnet_a_a_net_only_turn_is_recorded() {
+    fresh();
+    let id = "hn1";
+    env("p", id).scope(async {
+        diamond_at(id).await;
+        let got = ok("carried", diamond::versions_record_carried(id, &net_rec("e-5", id)).await);
+        let (v, files) = match got {
+            Some(g) => g,
+            None    => panic!("a net-only turn recorded nothing"),
+        };
+        assert!(files.is_empty(), "{:?}", files);
+        let held = carried(id).await;
+        assert_eq!(held.len(), 1, "{:?}", held);
+        let (n, m) = &held[0];
+        assert_eq!(*n, v);
+        assert_eq!((m.cause, m.turn.as_str(), m.ts), (Cause::Turn, "t9", 1600));
+        assert!(m.files.is_empty(), "{:?}", m.files);
+        let away = match &m.away {
+            Some(a) => a.clone(),
+            None    => panic!("no away"),
+        };
+        let row = |host: &str, port: u16, up: u64, down: u64, kind: versions::NetKind, why: &str|
+            versions::NetRow { host: s(host), port, up, down, kind, why: s(why) };
+        assert_eq!(away.net, vec![
+            row("pypi.org", 443, 1234, 1258291, versions::NetKind::Registry, ""),
+            row("pypi-mirror.example", 443, 10, 20, versions::NetKind::Outside, ""),
+            row("127.0.0.1", 9222, 0, 0, versions::NetKind::Refused, "a local address"),
+        ]);
+        assert_eq!(away.net_more, 2);
+        assert_eq!((away.run.as_str(), away.on_name.as_str()), ("e-5", "argonaut"));
+        let back = match versions::Manifest::from_json(&m.to_json()) {
+            Ok(b)  => b,
+            Err(e) => panic!("{}", e),
+        };
+        assert_eq!(&back, m, "round-trips");
+        let list = ok("list", diamond::versions_list(id).await);
+        assert!(list.contains("\"net\":[{\"host\":\"pypi.org\",\"port\":443,\"up\":1234,\"down\":1258291,\"v\":\"registry\"}"),
+            "{}", list);
+        assert!(list.contains("\"why\":\"a local address\"") && list.contains("\"netMore\":2"), "{}", list);
+        assert_eq!(ok("again", diamond::versions_record_carried(id, &net_rec("e-5", id)).await), None);
+        assert_eq!(carried(id).await.len(), 1, "still one");
+        // Past the bound: 34 good rows keep 32 and count 2 more beside the record's own 1.
+        let many: Vec<String> = (0..34).map(|i| fmt!(
+            "{{\"host\":\"h{}.example\",\"port\":443,\"up\":1,\"down\":2,\"v\":\"registry\"}}", i)).collect();
+        let rec = net_rec_with("e-6", id, &fmt!("\"net\":[{}],\"netMore\":1,", many.join(",")));
+        assert!(ok("many", diamond::versions_record_carried(id, &rec).await).is_some());
+        let held = carried(id).await;
+        let a = match held.last().and_then(|(_, m)| m.away.clone()) {
+            Some(a) => a,
+            None    => panic!("no away"),
+        };
+        assert_eq!((a.net.len(), a.net_more), (versions::NET_ROWS_MAX, 3), "{:?}", a);
+        // An old record: no `net`, so no rows, and its manifest says nothing of them.
+        ok("old", diamond::versions_record_carried(id, &turn_rec("e-7", id)).await);
+        let held = carried(id).await;
+        let (_, m) = match held.last() {
+            Some(h) => h,
+            None    => panic!("nothing held"),
+        };
+        let a = match &m.away {
+            Some(a) => a.clone(),
+            None    => panic!("no away"),
+        };
+        assert!(a.net.is_empty() && a.net_more == 0, "{:?}", a);
+        assert!(!m.to_json().contains("\"net"), "{}", m.to_json());
+        // A record with neither rows nor network still records nothing.
+        let bare = net_rec_with("e-8", id, "");
+        assert_eq!(ok("bare", diamond::versions_record_carried(id, &bare).await), None, "{}", bare);
     }).await;
     closed();
 }
@@ -1381,6 +1476,18 @@ async fn runhist_a_runner_turn_is_recorded_once_with_its_away_mem() {
 async fn runhist_a_runner_turn_is_recorded_once_with_its_away_ozone() {
     over(Over::Ozone);
     runhist_a_runner_turn_is_recorded_once_with_its_away().await
+}
+
+#[tokio::test]
+async fn histnet_a_a_net_only_turn_is_recorded_mem() {
+    over(Over::Mem);
+    histnet_a_a_net_only_turn_is_recorded().await
+}
+
+#[tokio::test]
+async fn histnet_a_a_net_only_turn_is_recorded_ozone() {
+    over(Over::Ozone);
+    histnet_a_a_net_only_turn_is_recorded().await
 }
 
 #[tokio::test]

@@ -574,8 +574,11 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    height never changes and nothing in the strip moves under a thumb.
    These rules were injected by sync.js while the chip was a pill in the top
    bar; they are here now because the row they draw is in the markup, and
-   because this is where the strip's other ten rows are drawn. */
-.astat-sync { position: relative; }
+   because this is where the strip's other ten rows are drawn.
+   NOT POSITIONED (CONS-BYROLE fix 2, 25 Oct). It carried `position: relative`, a leftover with no positioned
+   child to anchor, and that lifted it above its in-flow neighbours: at the shared edge a hit test gave the row's
+   top pixel line to the reading rather than to the row, so "Export a backup" under it on the Privacy and data
+   page took taps on 43 of its 44 lines. A row in the strip or the drawer is a static block, like every other. */
 #sync-chip {
 	display: none;
 	flex: 1 1 auto;
@@ -715,7 +718,11 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    sets a width, not a margin. */
 .admin-sec { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); padding: 2px 8px 4px; }
 .admin-sec:not(:first-child) { margin-top: var(--gap-section); }
-.admin-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); }
+.admin-item { display: block; width: 100%; text-align: left; background: none; border: none; }
+/* A Settings row's box, declared once: the live readings on Settings (settingsgroups.js `.sg-status`) are drawn as
+   rows, so they take these numbers from here rather than restating them. `:root` lifts the reading past
+   skin-daylight's `:root[data-skin] :is(.astat-row, #user-row)`, whose id counts; the list keeps `.admin-item` at its own weight. */
+.admin-item, :root #admin-home.sg .sg-status { color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); min-height: 0; }
 .admin-item:hover { background: var(--bg-hover); }
 /* `display: block` above outranks the browser's own `[hidden]`: the attribute decides. */
 .admin-item[hidden] { display: none; }
@@ -5628,10 +5635,9 @@ button.agsq.o { cursor: pointer; }
 
 /* Settings grouped by intent (D-20261024-16), drawn by js/settingsgroups.js: the weekly
    stop, six doors, and each door's own page. */
-/* The live readings are rows like any other in a group: the row's size, not the rail's.
-   `:root` lifts it past skin-daylight's `:root[data-skin] :is(.astat-row, #user-row)`, whose id counts. */
-:root #admin-home.sg .sg-status { font-size: var(--fs-sm); color: var(--text-primary); padding: 7px 8px; gap: 8px; min-height: 0; }
-@media (max-width: 760px) { :root #admin-home.sg .sg-status { padding-top: 10px; padding-bottom: 10px; min-height: 44px; } }
+/* The live readings are rows like any other in a group: their box is the row's (`.admin-item`, above, and the phone
+   floor in responsive.css), not the rail's. Only the reading's own layout is here: the dot's gap to its words. */
+.sg .sg-status { gap: 8px; }
 .sg .sg-status .astat-dot { flex: none; }
 .sg .astat-copyrow { display: flex; align-items: center; }
 .sg .astat-copyrow > .sg-status { flex: 1 1 auto; }

@@ -711,20 +711,146 @@ pub struct Away {
 	pub since:   u64,	// the meter's trash key on the runner, 0 where nothing was kept
 	pub until:   u64,	// epoch ms past which the runner keeps no earlier files
 	pub more:    u64,	// rows the runner did not list, still covered by its Undo
+	pub net:     Vec<NetRow>,	// where the turn's commands reached the network, at most NET_ROWS_MAX
+	pub net_more: u64,	// destinations past those
+}
+
+/// Destinations one carried turn lists ([`Away::net`]); the runner counts the rest in `netMore`.
+pub const NET_ROWS_MAX: usize = 32;
+
+/// What the runner's proxy did with one destination a turn's commands reached.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetKind {
+	Registry,	// allowed: a registry or other destination the clean chat may read
+	Outside,	// allowed, and it tripped the latch: later commands ran offline
+	Refused,	// refused, for the row's `why`
+}
+
+impl NetKind {
+
+	pub fn wire(self) -> &'static str {
+		match self {
+			Self::Registry	=> "registry",
+			Self::Outside	=> "outside",
+			Self::Refused	=> "refused",
+		}
+	}
+
+	pub fn of(word: &str) -> Option<Self> {
+		match word {
+			"registry"	=> Some(Self::Registry),
+			"outside"	=> Some(Self::Outside),
+			"refused"	=> Some(Self::Refused),
+			_		=> None,
+		}
+	}
+}
+
+/// One destination a runner's turn reached through its proxy, as its History row lists it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NetRow {
+	pub host: String,	// lower-case
+	pub port: u16,
+	pub up:   u64,	// bytes sent
+	pub down: u64,	// bytes received
+	pub kind: NetKind,
+	pub why:  String,	// a refusal's reason, empty otherwise
+}
+
+const NET_HOST_MAX: usize = 253;	// the longest DNS name
+const NET_WHY_MAX:  usize = 200;	// a refusal's reason, in chars
+
+impl NetRow {
+
+	/// The wire and stored form, `{"host","port","up","down","v"}` and `why` on a refusal.
+	pub fn to_json(&self) -> String {
+		let mut out = fmt!("{{\"host\":\"{}\",\"port\":{},\"up\":{},\"down\":{},\"v\":\"{}\"",
+			json_escape(&self.host), self.port, self.up, self.down, self.kind.wire());
+		if !self.why.is_empty() {
+			out.push_str(&fmt!(",\"why\":\"{}\"", json_escape(&self.why)));
+		}
+		out.push('}');
+		out
+	}
+
+	/// Read one row, or `None` for a row the History cannot say: no host or one no name could
+	/// be, a port out of range, or a verdict this build does not know.
+	pub fn from_json(obj: &str) -> Option<Self> {
+		let host = match extract_json_string(obj, "host") {
+			Some(h)	=> h.to_ascii_lowercase(),
+			None	=> return None,
+		};
+		if host.is_empty() || host.len() > NET_HOST_MAX
+			|| host.chars().any(|c| c.is_whitespace() || c.is_control() || c == '/')
+		{
+			return None;
+		}
+		let port = match extract_json_number(obj, "port") {
+			Some(p) if p > 0 && p <= u16::MAX as u64	=> p as u16,
+			_						=> return None,
+		};
+		let kind = match NetKind::of(&extract_json_string(obj, "v").unwrap_or_default()) {
+			Some(k)	=> k,
+			None	=> return None,
+		};
+		let why = match kind {
+			NetKind::Refused	=> extract_json_string(obj, "why").unwrap_or_default()
+				.chars().filter(|c| !c.is_control()).take(NET_WHY_MAX).collect(),
+			_			=> String::new(),
+		};
+		Some(Self {
+			host,
+			port,
+			up:   extract_json_number(obj, "up").unwrap_or(0),
+			down: extract_json_number(obj, "down").unwrap_or(0),
+			kind,
+			why,
+		})
+	}
+}
+
+/// The `net` rows of `obj` and the count past them: rows it cannot say are dropped, at most
+/// [`NET_ROWS_MAX`] are kept, and good rows past those add to its `netMore`.
+fn net_rows(obj: &str) -> (Vec<NetRow>, u64) {
+	let mut more = extract_json_number(&without(obj, "net"), "netMore").unwrap_or(0);
+	let mut rows: Vec<NetRow> = Vec::new();
+	if let Some(arr) = array_inside(obj, "net") {
+		for row in objects_in(arr).into_iter().filter_map(NetRow::from_json) {
+			match rows.len() < NET_ROWS_MAX {
+				true	=> rows.push(row),
+				false	=> more = more.saturating_add(1),
+			}
+		}
+	}
+	(rows, more)
 }
 
 impl Away {
 
-	/// The stored form, `{"on","onName","run","since","until","more"}`.
+	/// The stored form, `{"on","onName","run","since","until","more"}`, then `net` and `netMore`
+	/// where the turn reached the network (U8h): a manifest written before them is unchanged.
 	pub fn to_json(&self) -> String {
-		fmt!("{{\"on\":\"{}\",\"onName\":\"{}\",\"run\":\"{}\",\"since\":{},\"until\":{},\"more\":{}}}",
+		let mut out = fmt!("{{\"on\":\"{}\",\"onName\":\"{}\",\"run\":\"{}\",\"since\":{},\"until\":{},\"more\":{}",
 			json_escape(&self.on), json_escape(&self.on_name), json_escape(&self.run),
-			self.since, self.until, self.more)
+			self.since, self.until, self.more);
+		if !self.net.is_empty() {
+			let rows: Vec<String> = self.net.iter().map(|r| r.to_json()).collect();
+			out.push_str(&fmt!(",\"net\":[{}]", rows.join(",")));
+		}
+		if self.net_more > 0 {
+			out.push_str(&fmt!(",\"netMore\":{}", self.net_more));
+		}
+		out.push('}');
+		out
 	}
 
 	/// Read the object `obj`, or `None` where it names no run: a reference with no run reaches
-	/// nothing on the runner.
+	/// nothing on the runner.  Its scalars are read with `net` taken out, so no row's key is read
+	/// as the reference's.
 	pub fn from_json(obj: &str) -> Option<Self> {
+		let (net, net_more) = net_rows(obj);
+		let head = without(obj, "net");
+		let obj = head.as_str();
 		let run = match extract_json_string(obj, "run") {
 			Some(r) if !r.is_empty()	=> r,
 			_				=> return None,
@@ -736,6 +862,8 @@ impl Away {
 			since:   extract_json_number(obj, "since").unwrap_or(0),
 			until:   extract_json_number(obj, "until").unwrap_or(0),
 			more:    extract_json_number(obj, "more").unwrap_or(0),
+			net,
+			net_more,
 		})
 	}
 
@@ -2280,15 +2408,16 @@ pub fn carried_rows(rec: &str) -> Vec<Change> {
 }
 
 /// The [`Away`] a runner's turn record names: `{on, onName, run, since, until, more}` off its top
-/// level, its rows taken out first so no row's key is read as the record's.  `None` where it names
+/// level, with its `net` rows and `netMore` (U8h), its file rows taken out first so no row's key is read as the record's.  `None` where it names
 /// no run.
 pub fn carried_away(rec: &str) -> Option<Away> {
 	Away::from_json(&without(rec, "files"))
 }
 
-/// A runner turn record's top level, its rows taken out: where `turnId`, `ts` and `keeper` are read.
+/// A runner turn record's top level, its file and network rows taken out: where `turnId`, `ts` and
+/// `keeper` are read.
 pub fn carried_head(rec: &str) -> String {
-	without(rec, "files")
+	without(&without(rec, "files"), "net")
 }
 
 /// The row one carried change writes: the runner's path and the hash it was left with, no body and
@@ -3463,9 +3592,9 @@ pub fn is_users_path(home: &str, path: &str) -> bool {
 const KEEPER_DIRS: [&str; 4] = [".daimond", "versions", "shots", "dev"];
 
 /// The keeper's own records at the top of a home, which a page may never write (`crystal.js`
-/// `PAGE_NEVER_WRITES`).
-const KEEPER_FILES: [&str; 5] = ["crystal.json", "crystal.html", "crystal.md", "capp.json",
-	"triggers.json"];
+/// `PAGE_NEVER_WRITES`), his words log among them (`tools::KEEPER_LOGS`).
+const KEEPER_FILES: [&str; 6] = ["crystal.json", "crystal.html", "crystal.md", "capp.json",
+	"triggers.json", crate::agent::compact::WORDS_FILE];
 
 /// Could `path` be data a page keeps in its Diamond: inside the keeper's home `home`, and not one of
 /// the keeper's own directories ([`KEEPER_DIRS`]) or records ([`KEEPER_FILES`])?
@@ -4539,7 +4668,7 @@ mod tests {
 	#[test]
 	fn runhist_away_round_trips_after_the_rows() {
 		let away = Away { on: "dev".into(), on_name: "argonaut".into(), run: "e-1".into(),
-			since: 1, until: 2, more: 3 };
+			since: 1, until: 2, more: 3, ..Default::default() };
 		let rows = carried_rows(&fmt!("{{\"files\":[{{\"path\":\"/x/a\",\"hash\":\"{}\",\
 			\"created\":true,\"by\":{{\"role\":\"worker\",\"run\":\"w\"}}}}],\"run\":\"e-1\"}}",
 			"a".repeat(64)));

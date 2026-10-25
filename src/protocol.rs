@@ -589,11 +589,47 @@ pub enum Retired {
     Before,	// sent short, retired before a fold that kept it
 }
 
+/// Who a user-role message is from (CCP2-FOLDFIX2, QA ccp2 B MEDIUM-B).  The provider sees one
+/// role, but a conversation's user messages are not all his: the app nudges, notes a turn's end and
+/// writes the fold's notice in the same role.  Set where each message is made and stored with it,
+/// so a fold reads who said what from the structure and never guesses from the words.
+///
+/// A message stored with no origin reads as his: that reading carries more of his words, never
+/// fewer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Origin {
+    #[default]
+    Person,	// typed by him: a send or an interjection
+    App,	// the app's own words: a nudge, a turn's note, a worker's report
+    Notice,	// a fold's notice
+}
+
+impl Origin {
+
+    /// The stored key's value, `None` for him (the key is then not written).
+    pub fn key(self) -> Option<&'static str> {
+        match self {
+            Self::Person => None,
+            Self::App    => Some("app"),
+            Self::Notice => Some("notice"),
+        }
+    }
+
+    /// The origin a stored key names; absent or unknown reads as him.
+    pub fn of_key(k: &str) -> Self {
+        match k {
+            "app"    => Self::App,
+            "notice" => Self::Notice,
+            _        => Self::Person,
+        }
+    }
+}
+
 /// A single message in a conversation, mirroring the OpenAI API format.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChatMessage {
     System { content: MessageContent },
-    User { content: MessageContent, pre: String, mid: String, opens: bool },	// `pre`: the app's note; `mid`: the transcript row; empty for none; `opens`: see `opening`
+    User { content: MessageContent, pre: String, mid: String, opens: bool, origin: Origin },	// `pre`: the app's note; `mid`: the transcript row; empty for none; `opens`: see `opening`; `origin`: who it is from
     /// Assistant turn, with whatever tool calls it asked for.
     ///
     /// The calls are part of the message and are persisted with it.  They used to be
@@ -613,14 +649,43 @@ impl ChatMessage {
         Self::System { content: content.into() }
     }
 
-    /// A user message.
+    /// A user message: his words.
     pub fn user<C: Into<MessageContent>>(content: C) -> Self {
-        Self::User { content: content.into(), pre: String::new(), mid: String::new(), opens: false }
+        Self::User { content: content.into(), pre: String::new(), mid: String::new(), opens: false,
+            origin: Origin::Person }
     }
 
     /// A user message that carries an app note beside the person's words.
     pub fn user_noted<C: Into<MessageContent>>(content: C, pre: String) -> Self {
-        Self::User { content: content.into(), pre, mid: String::new(), opens: false }
+        Self::User { content: content.into(), pre, mid: String::new(), opens: false,
+            origin: Origin::Person }
+    }
+
+    /// A user-role message in the app's own words: a nudge, a turn's note, a worker's report.
+    pub fn app<C: Into<MessageContent>>(content: C) -> Self {
+        Self::user(content).said_by(Origin::App)
+    }
+
+    /// A fold's notice, in the user role.
+    pub fn notice<C: Into<MessageContent>>(content: C) -> Self {
+        Self::user(content).said_by(Origin::Notice)
+    }
+
+    /// The same user message said to be from `origin`; every other role comes back unchanged.
+    pub fn said_by(self, origin: Origin) -> Self {
+        match self {
+            Self::User { content, pre, mid, opens, .. } =>
+                Self::User { content, pre, mid, opens, origin },
+            other => other,
+        }
+    }
+
+    /// Who a user message is from; every other role answers `None`.
+    pub fn origin(&self) -> Option<Origin> {
+        match self {
+            Self::User { origin, .. } => Some(*origin),
+            _                         => None,
+        }
     }
 
     /// The same message tied to the transcript row it was said as, by that row's id.  Every other
@@ -631,8 +696,8 @@ impl ChatMessage {
     /// turn's place under the other's.
     pub fn marked(self, mid: String) -> Self {
         match self {
-            Self::User { content, pre, opens, .. } if !mid.is_empty() =>
-                Self::User { content, pre, mid, opens },
+            Self::User { content, pre, opens, origin, .. } if !mid.is_empty() =>
+                Self::User { content, pre, mid, opens, origin },
             other => other,
         }
     }
@@ -648,7 +713,8 @@ impl ChatMessage {
     /// marked, where it is pushed, and the mark travels with it through the store and the page.
     pub fn opening(self) -> Self {
         match self {
-            Self::User { content, pre, mid, .. } => Self::User { content, pre, mid, opens: true },
+            Self::User { content, pre, mid, origin, .. } =>
+                Self::User { content, pre, mid, opens: true, origin },
             other => other,
         }
     }
@@ -730,8 +796,12 @@ impl ChatMessage {
                 m.insert(dat!("role"), dat!("system"));
                 m.insert(dat!("content"), content.to_dat());
             }
-            Self::User { content, pre, mid, opens } => {
+            Self::User { content, pre, mid, opens, origin } => {
                 m.insert(dat!("role"), dat!("user"));
+                // Only when not his, so his message keeps the map it always had.
+                if let Some(k) = origin.key() {
+                    m.insert(dat!("origin"), dat!(k));
+                }
                 if *opens {
                     m.insert(dat!("opens"), Dat::Bool(true));
                 }
@@ -808,7 +878,11 @@ impl ChatMessage {
                     _                 => String::new(),
                 };
                 let opens = matches!(m.get(&dat!("opens")), Some(Dat::Bool(true)));
-                Ok(Self::User { content, pre, mid, opens })
+                let origin = match m.get(&dat!("origin")) {
+                    Some(Dat::Str(s)) => Origin::of_key(s),
+                    _                 => Origin::Person,
+                };
+                Ok(Self::User { content, pre, mid, opens, origin })
             }
             "assistant" => {
                 // Absent is an assistant turn that asked for nothing, and every snapshot
@@ -950,8 +1024,9 @@ impl ChatMessage {
     pub fn with_content(&self, content: MessageContent) -> Self {
         match self {
             Self::System { .. } => Self::System { content },
-            Self::User { pre, mid, opens, .. } =>
-                Self::User { content, pre: pre.clone(), mid: mid.clone(), opens: *opens },
+            Self::User { pre, mid, opens, origin, .. } =>
+                Self::User { content, pre: pre.clone(), mid: mid.clone(), opens: *opens,
+                    origin: *origin },
             Self::Assistant { tool_calls, .. } =>
                 Self::Assistant { content, tool_calls: tool_calls.clone() },
             Self::Tool { tool_call_id, post, retired, .. } =>
@@ -981,9 +1056,9 @@ pub fn join_notes(msgs: &[ChatMessage]) -> std::borrow::Cow<'_, [ChatMessage]> {
         return std::borrow::Cow::Borrowed(msgs);
     }
     std::borrow::Cow::Owned(msgs.iter().map(|m| match m {
-        ChatMessage::User { content, pre, mid, opens } if !pre.is_empty() =>
+        ChatMessage::User { content, pre, mid, opens, origin } if !pre.is_empty() =>
             ChatMessage::User { content: content.led_by(pre), pre: String::new(), mid: mid.clone(),
-                opens: *opens },
+                opens: *opens, origin: *origin },
         ChatMessage::Tool { tool_call_id, content, post, retired } if !post.is_empty() =>
             ChatMessage::Tool { tool_call_id: tool_call_id.clone(), content: content.trailed_by(post),
                 post: String::new(), retired: *retired },
@@ -1236,6 +1311,169 @@ impl UserConfig {
     }
 }
 
+
+/// A [`ChatMessage`] read back from the plain object the page holds for one (the shape
+/// `message_to_js` writes), or `None` for an object that is not one.  The tab's restore, its
+/// seed and a runner's turn (KT-4) all read a conversation through here, so they cannot differ.
+/// A tool reply with no `tool_call_id` is refused rather than given an empty one: the id is
+/// what pairs it with its call, and a reply that cannot be paired is worse than none.
+pub fn message_of_dat(d: &Dat) -> Option<ChatMessage> {
+    let m = match d {
+        Dat::Map(m) => m,
+        _           => return None,
+    };
+    let text = |k: &str| match m.get(&Dat::Str(k.to_string())) {
+        Some(Dat::Str(s))   => s.clone(),
+        _                   => String::new(),
+    };
+    let flag = |k: &str| matches!(m.get(&Dat::Str(k.to_string())), Some(Dat::Bool(true)));
+    let content = text("content");
+    match text("role").as_str() {
+        "system"    => Some(ChatMessage::system(content)),
+        "user"      => {
+            let u = ChatMessage::user_noted(content, text("pre")).marked(text("mid"))
+                .said_by(Origin::of_key(&text("origin")));
+            Some(if flag("opens") { u.opening() } else { u })
+        }
+        "tool"      => {
+            let id = text("tool_call_id");
+            if id.is_empty() {
+                return None;
+            }
+            let t = ChatMessage::tool(id, content).noted_after(&text("post"));
+            Some(match (flag("retired"), flag("folded")) {
+                (true, true)    => t.as_retired().as_folded(),
+                (true, false)   => t.as_retired(),
+                _               => t,
+            })
+        }
+        "assistant" => {
+            let mut tool_calls = Vec::new();
+            if let Some(Dat::List(calls)) = m.get(&Dat::Str("tool_calls".to_string())) {
+                for call in calls {
+                    let c = match call {
+                        Dat::Map(c) => c,
+                        _           => continue,
+                    };
+                    let field = |k: &str| match c.get(&Dat::Str(k.to_string())) {
+                        Some(Dat::Str(s))   => s.clone(),
+                        _                   => String::new(),
+                    };
+                    let id = field("id");
+                    if id.is_empty() {
+                        continue; // unpairable, so not a call at all
+                    }
+                    tool_calls.push(ToolCall { id, name: field("name"), arguments: field("arguments") });
+                }
+            }
+            Some(ChatMessage::assistant_calling(content, tool_calls))
+        }
+        _           => None,
+    }
+}
+
+/// A conversation handed over by the page, as a turn starts from it: each message it can read
+/// ([`message_of_dat`]), then [`pair_up`]'s repair, so a lost tool reply costs this read and not
+/// every turn after it.  The tab's `restore_session` and seeds and a runner's turn (KT-4) share it.
+pub fn seed_prior(msgs: &[Dat]) -> Vec<ChatMessage> {
+    pair_up(msgs.iter().filter_map(message_of_dat).collect())
+}
+
+/// [`seed_prior`] over the page's array as JSON text, which the wasm edge writes once with
+/// `JSON.stringify`.  Decoded under jdat's default limits, not the crystal's 1 MiB: a stored
+/// session may hold more.
+pub fn seed_prior_json(json: &str) -> Outcome<Vec<ChatMessage>> {
+    Ok(pair_up(res!(session_of_json(json))))
+}
+
+/// A conversation read back from the JSON array [`session_page_json`] writes, each message as
+/// [`message_of_dat`] reads it and with no repair: a runner's exported session (KT-5) comes home
+/// exactly as it left, and [`seed_prior_json`] repairs only where a turn starts from one.
+/// Decoded under jdat's default limits, not the crystal's 1 MiB: a stored session may hold more.
+pub fn session_of_json(json: &str) -> Outcome<Vec<ChatMessage>> {
+    let cfg: oxedyne_fe2o3_jdat::string::dec::DecoderConfig<
+        std::collections::BTreeMap<oxedyne_fe2o3_jdat::usr::UsrKindCode, oxedyne_fe2o3_jdat::usr::UsrKind>,
+        std::collections::BTreeMap<String, oxedyne_fe2o3_jdat::usr::UsrKindId>,
+    > = oxedyne_fe2o3_jdat::string::dec::DecoderConfig::json(None);
+    match res!(Dat::decode_string_with_config(json, &cfg)) {
+        Dat::List(l)    => Ok(l.iter().filter_map(message_of_dat).collect()),
+        _               => Err(err!("A conversation handed over must be a JSON array."; Input, Invalid)),
+    }
+}
+
+/// The page's plain object for one [`ChatMessage`], as JSON text: the one writer of that shape
+/// (KT-5), which the wasm edge's `message_to_js` parses and a runner's exported session sends
+/// home, so the tab's own turn and a runner's cannot store differently.  [`message_of_dat`] reads
+/// it back.  Optional keys are written only when set, so an ordinary message keeps the shape it
+/// always had; `content` is the text form, an image as the line that names it (see
+/// `message_to_js` for why).
+pub fn message_page_json(msg: &ChatMessage) -> String {
+    let esc = crate::llm::json_escape;
+    let mut o = String::with_capacity(64);
+    match msg {
+        ChatMessage::System { content } => {
+            o.push_str(&fmt!("{{\"role\":\"system\",\"content\":\"{}\"", esc(&content.as_text())));
+        }
+        ChatMessage::User { content, pre, mid, opens, origin } => {
+            o.push_str(&fmt!("{{\"role\":\"user\",\"content\":\"{}\"", esc(&content.as_text())));
+            if *opens {
+                o.push_str(",\"opens\":true");
+            }
+            if let Some(k) = origin.key() {
+                o.push_str(&fmt!(",\"origin\":\"{}\"", k));
+            }
+            if !pre.is_empty() {
+                o.push_str(&fmt!(",\"pre\":\"{}\"", esc(pre)));
+            }
+            if !mid.is_empty() {
+                o.push_str(&fmt!(",\"mid\":\"{}\"", esc(mid)));
+            }
+        }
+        ChatMessage::Assistant { content, tool_calls } => {
+            o.push_str(&fmt!("{{\"role\":\"assistant\",\"content\":\"{}\"", esc(&content.as_text())));
+            if !tool_calls.is_empty() {
+                o.push_str(",\"tool_calls\":[");
+                for (i, tc) in tool_calls.iter().enumerate() {
+                    if i > 0 {
+                        o.push(',');
+                    }
+                    o.push_str(&fmt!("{{\"id\":\"{}\",\"name\":\"{}\",\"arguments\":\"{}\"}}",
+                        esc(&tc.id), esc(&tc.name), esc(&tc.arguments)));
+                }
+                o.push(']');
+            }
+        }
+        ChatMessage::Tool { tool_call_id, content, post, retired } => {
+            o.push_str("{\"role\":\"tool\"");
+            if *retired != Retired::No {
+                o.push_str(",\"retired\":true");
+            }
+            if *retired == Retired::Before {
+                o.push_str(",\"folded\":true");
+            }
+            o.push_str(&fmt!(",\"tool_call_id\":\"{}\",\"content\":\"{}\"", esc(tool_call_id),
+                esc(&content.as_text())));
+            if !post.is_empty() {
+                o.push_str(&fmt!(",\"post\":\"{}\"", esc(post)));
+            }
+        }
+    }
+    o.push('}');
+    o
+}
+
+/// A whole conversation as the page's JSON array of [`message_page_json`] objects (KT-5).
+pub fn session_page_json(msgs: &[ChatMessage]) -> String {
+    let mut o = String::from("[");
+    for (i, m) in msgs.iter().enumerate() {
+        if i > 0 {
+            o.push(',');
+        }
+        o.push_str(&message_page_json(m));
+    }
+    o.push(']');
+    o
+}
 
 /// Make a restored conversation legal: every tool call answered, every tool reply
 /// answering something.
@@ -3387,5 +3625,60 @@ mod template_tests {
             assert!(!mine.iter().any(|p| p.ends_with(path)),
                 "the new Diamond arrived holding '{}', out of somebody else's Diamond", path);
         }
+    }
+
+    /// KT-5: the one writer of the page's shape reads back exactly, every optional key and
+    /// awkward character included, and the reader repairs nothing (a lone call stays lone).
+    #[test]
+    fn test_session_page_json_round_trips_unrepaired() {
+        let msgs = vec![
+            ChatMessage::system(String::from("sys")),
+            ChatMessage::user_noted(String::from("q \"x\" \\ ✓\n\u{1}"), String::from("pre")).marked(String::from("m1")).opening(),
+            ChatMessage::assistant_calling(String::new(), vec![ToolCall { id: String::from("c1"),
+                name: String::from("file_read"), arguments: String::from("{\"path\":\"a b\"}") }]),
+            ChatMessage::tool(String::from("c1"), String::from("ran\tok")).noted_after("after").as_retired().as_folded(),
+            ChatMessage::tool(String::from("c2"), String::from("now")).as_retired(),
+            ChatMessage::assistant(String::from("done")),
+            ChatMessage::assistant_calling(String::from("lone"), vec![ToolCall { id: String::from("c3"),
+                name: String::from("n"), arguments: String::new() }]),
+        ];
+        let json = session_page_json(&msgs);
+        let back = match session_of_json(&json) {
+            Ok(b)   => b,
+            Err(e)  => panic!("{} did not read back: {}", json, e),
+        };
+        assert_eq!(back, msgs, "{}", json);
+        assert_eq!(session_page_json(&back), json);
+        assert_eq!(session_page_json(&[]), "[]");
+    }
+
+    /// CCP2-FOLDFIX2: a user message's origin survives the page and the store; his own writes no
+    /// key, and a stored message with none, or an unknown one, reads as his.
+    #[test]
+    fn test_a_user_messages_origin_round_trips_and_absent_reads_as_his_00() {
+        let msgs = vec![
+            ChatMessage::user(String::from("mine")),
+            ChatMessage::app(String::from("a nudge")).marked(String::from("m2")),
+            ChatMessage::notice(String::from("[Daimond folded")),
+        ];
+        let json = session_page_json(&msgs);
+        assert_eq!(json.matches("\"origin\"").count(), 2, "{}", json);
+        let back = match session_of_json(&json) {
+            Ok(b)   => b,
+            Err(e)  => panic!("{} did not read back: {}", json, e),
+        };
+        assert_eq!(back, msgs, "{}", json);
+        for m in &msgs {
+            let d = match ChatMessage::from_datmap(&m.to_datmap()) {
+                Ok(d)  => d,
+                Err(e) => panic!("{}", e),
+            };
+            assert_eq!(&d, m);
+        }
+        let old = match session_of_json("[{\"role\":\"user\",\"content\":\"x\",\"origin\":\"martian\"}]") {
+            Ok(b)   => b,
+            Err(e)  => panic!("{}", e),
+        };
+        assert_eq!(old[0].origin(), Some(Origin::Person));
     }
 }

@@ -7,6 +7,8 @@
 use oxedyne_fe2o3_core::prelude::*;
 
 use std::cell::{Cell, RefCell};
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 
 use crate::engine::race::{race, Won};
@@ -88,6 +90,7 @@ pub type Interjections = Rc<RefCell<Vec<Said>>>;
 pub struct Said {
     pub text: String,
     pub pre:  String,	// joined ahead of `text` on the wire, never shown as it; empty for none
+    pub mid:  String,	// the row the page drew it as; empty for none, and the seam mints one
 }
 
 /// Give the session's copy of a tool result the notes its sent copy now carries (r578).
@@ -115,12 +118,15 @@ pub fn new_interjections() -> Interjections {
 }
 
 /// Queue what the user said, `text` with its note `pre`, on `q`; blank words queue nothing.
-/// Returns how many are now waiting.  See [`Agent::interject_noted`].
-pub fn say_into(q: &Interjections, text: &str, pre: &str) -> usize {
+/// Returns how many are now waiting.  See [`Agent::interject_marked`].
+///
+/// # Arguments
+/// * `mid` - The row id the page drew the words as, empty for none.
+pub fn say_into(q: &Interjections, text: &str, pre: &str, mid: &str) -> usize {
     let mut q = q.borrow_mut();
     let t = text.trim();
     if !t.is_empty() {
-        q.push(Said { text: t.to_string(), pre: pre.to_string() });
+        q.push(Said { text: t.to_string(), pre: pre.to_string(), mid: mid.to_string() });
     }
     q.len()
 }
@@ -211,6 +217,13 @@ pub struct Agent {
     /// less than `compact::MIN_FOLD_GAIN`, to the carry it left plus that gain: a fold that
     /// cannot make progress is not retried on every round.  Cleared at the top of each turn.
     fold_rest:           Cell<u64>,
+    /// The conversation as the last fold left it: its length and the notice it opens with.  A
+    /// refold is paid for only once history has grown past it (CCP3 (a)); see
+    /// [`Agent::fold_plan`].
+    folded_at:           RefCell<Option<(usize, String)>>,
+    /// Did the last fold fail to file his words?  Then they all ride in the notice (R1), and
+    /// the next fold plans to carry them all again.
+    words_unfiled:       Cell<bool>,
     /// Whether the turn in flight has been orphaned: whatever dispatched this agent has
     /// ended, so nothing is holding a promise on what it is about to say.
     ///
@@ -236,6 +249,7 @@ pub struct Agent {
     /// reason `briefing` is: a worker dispatched from a steering turn is inside the same
     /// Diamond.
     diamond:             Rc<RefCell<String>>,
+    words_home:          Rc<RefCell<String>>,            // the keeper whose notes file logs his words
     pending_only:        Cell<bool>,                     // reports on Pending, see `set_pending_only`
     /// The turn's last-progress clock (U3a LV1, UNBLOCK-16): beaten by every line the model
     /// stream hears, through the same clock handed to `llm`, and nothing else.  Its limit is
@@ -664,10 +678,13 @@ impl Agent {
             prior_end:       Cell::new(0),
             turn_start:      Cell::new(0),
             fold_rest:       Cell::new(0),
+            folded_at:       RefCell::new(None),
+            words_unfiled:   Cell::new(false),
             orphaned:        Cell::new(false),
             pending_only:    Cell::new(false),
             ending:          Rc::new(RefCell::new(None)),
             diamond:         Rc::new(RefCell::new(String::new())),
+            words_home:      Rc::new(RefCell::new(String::new())),
             liveness,
             blocks:          Rc::new(RefCell::new(crate::prompts::TurnBlocks::default())),
             turn_pre:        RefCell::new(String::new()),
@@ -1331,6 +1348,18 @@ impl Agent {
         self.diamond.borrow().clone()
     }
 
+    /// Say whose notes file a fold files his words into: a held Diamond's id or `chat:<id>`, as
+    /// `tools::keeper_home` reads it; empty for none, and then a fold carries all his words in
+    /// its notice as before (R1).
+    pub fn set_words_home(&self, keeper: &str) {
+        *self.words_home.borrow_mut() = keeper.to_string();
+    }
+
+    /// The keeper a fold files his words under, or empty.
+    pub fn words_home(&self) -> String {
+        self.words_home.borrow().clone()
+    }
+
     /// Say something into a turn that is already running.
     ///
     /// Takes effect at the next seam between rounds, which is the earliest moment a
@@ -1353,7 +1382,15 @@ impl Agent {
     /// * `text` - What the user said.
     /// * `pre` - The note for it, empty for none.
     pub fn interject_noted(&self, text: &str, pre: &str) -> usize {
-        say_into(&self.interject, text, pre)
+        self.interject_marked(text, pre, "")
+    }
+
+    /// [`interject_noted`](Self::interject_noted) under the row id `mid` the page drew the words
+    /// as, so the message in the conversation and the row on the page are one, and two equal
+    /// corrections are two of his messages in his words log (CCP3 F3).  An empty `mid` gets one
+    /// minted at the seam.
+    pub fn interject_marked(&self, text: &str, pre: &str, mid: &str) -> usize {
+        say_into(&self.interject, text, pre, mid)
     }
 
     /// Take `said` as this agent's interjection queue, in place of the empty one it was built with.
@@ -1686,7 +1723,21 @@ impl Agent {
     /// being too long -- the second is the net under the first.  Without it a chat whose
     /// window nobody published dies once and then dies on every turn after, because the
     /// same oversized history is sent again.
-    async fn run_streaming<H: Host>(
+    fn run_streaming<'a, H: Host>(
+        &'a self,
+        host:     &'a H,
+        session:  &'a mut Session,
+        working:  Vec<ChatMessage>,
+        on_event: &'a mut impl FnMut(AgentEvent),
+    )
+        -> Pin<Box<impl Future<Output = Outcome<()>> + 'a>>
+    {
+        // Boxed where it is defined, so a caller's poll frame holds a pointer and not this
+        // future: a debug wasm turn otherwise overflows its 1 MiB stack (CCP4-STACKPIN).
+        Box::pin(self.run_streaming_body(host, session, working, on_event))
+    }
+
+    async fn run_streaming_body<H: Host>(
         &self,
         host:       &H,
         session:    &mut Session,
@@ -1924,8 +1975,9 @@ impl Agent {
     /// * `session` - The conversation, whose fold notices are what is searched.
     /// * `tc` - The call, for its name and its arguments.
     /// * `result` - What the tool half answered.
-    fn with_folds(
+    async fn with_folds<H: Host>(
         &self,
+        host:    &H,
         session: &Session,
         tc:      &crate::protocol::ToolCall,
         result:  MessageContent,
@@ -1939,17 +1991,26 @@ impl Agent {
             Ok(q)  => q,
             Err(_) => return result,
         };
+        // AND HIS WORDS LOG (CCP2-FOLDFIX2): his messages a fold filed rather than carried.
+        let home = self.words_home();
+        // A log this host cannot reach is said in the store's own words, never read as empty: on
+        // the runner his filed words are the tab's (QA ccp3r B, M2).
+        let (log, away) = match home.is_empty() {
+            true  => (String::new(), None),
+            false => match host.store().his_words_read(&home).await {
+                Ok(log) => (log, None),
+                Err(e)  => (String::new(), Some(e.plain())),
+            },
+        };
         let lines = compact::recall_folds(
-            &session.messages, &mut |l: &str| q.matches(l), q.before, q.after, q.limit);
-        let head = if lines.is_empty() {
-            fmt!("[recall] Nothing this conversation has folded away matches.\n\n")
-        } else {
-            fmt!("{}\n\n[recall] {} line(s) from {} fold(s) of this conversation.\n\n",
+            &session.messages, &log, &mut |l: &str| q.matches(l), q.before, q.after, q.limit);
+        let head = match (lines.is_empty(), away) {
+            (true, None)        => fmt!("[recall] Nothing this conversation has folded away matches.\n\n"),
+            (true, Some(away))  => fmt!("[recall] {}\n\n", away),
+            (false, away)       => fmt!("{}\n\n[recall] {} line(s) from {} fold(s) of this conversation.{}\n\n",
                 lines.join("\n"), lines.len(),
-                session.messages.iter().filter(|m| matches!(m,
-                    ChatMessage::User { content, .. }
-                        if content.as_text().starts_with("[Daimond folded the earlier part")))
-                    .count())
+                session.messages.iter().filter(|m| compact::is_fold_notice(m)).count(),
+                away.map(|a| fmt!(" {}", a)).unwrap_or_default()),
         };
         MessageContent::text(fmt!("{}{}", head, result.as_text()))
     }
@@ -1972,7 +2033,21 @@ impl Agent {
     ///
     /// # Arguments
     /// * `truncated` - Whether the reply these calls were parsed out of hit the output limit.
-    async fn one_call<H: Host>(
+    fn one_call<'a, H: Host>(
+        &'a self,
+        registry:  &'a ToolRegistry<H>,
+        tc:        &'a crate::protocol::ToolCall,
+        truncated: bool,
+        on_event:  &'a mut impl FnMut(AgentEvent),
+    )
+        -> Pin<Box<impl Future<Output = Outcome<MessageContent>> + 'a>>
+    {
+        // Boxed where it is defined, so a caller's poll frame holds a pointer and not this
+        // future: a debug wasm turn otherwise overflows its 1 MiB stack (CCP4-STACKPIN).
+        Box::pin(self.one_call_body(registry, tc, truncated, on_event))
+    }
+
+    async fn one_call_body<H: Host>(
         &self,
         registry:  &ToolRegistry<H>,
         tc:        &crate::protocol::ToolCall,
@@ -2050,7 +2125,21 @@ impl Agent {
     /// gets a `Vec` of its own and the round drains them in the model's order.  A method rather
     /// than a closure at the call site because the borrow of the sink has to outlive the future,
     /// which a closure built inside a `map` cannot arrange.
-    async fn call_buffered<H: Host>(
+    fn call_buffered<'a, H: Host>(
+        &'a self,
+        registry:  &'a ToolRegistry<H>,
+        tc:        &'a crate::protocol::ToolCall,
+        truncated: bool,
+        sink:      &'a mut Vec<AgentEvent>,
+    )
+        -> Pin<Box<impl Future<Output = Outcome<MessageContent>> + 'a>>
+    {
+        // Boxed where it is defined, so a caller's poll frame holds a pointer and not this
+        // future: a debug wasm turn otherwise overflows its 1 MiB stack (CCP4-STACKPIN).
+        Box::pin(self.call_buffered_body(registry, tc, truncated, sink))
+    }
+
+    async fn call_buffered_body<H: Host>(
         &self,
         registry:  &ToolRegistry<H>,
         tc:        &crate::protocol::ToolCall,
@@ -2130,7 +2219,18 @@ impl Agent {
     /// every line its stream delivers; `None` when the clock ran out first and the call was
     /// dropped.  Stop still wins: the stream reader races the halt itself, and the call is
     /// polled first here.
-    async fn live_call<F: std::future::Future>(&self, call: F) -> Option<F::Output> {
+    fn live_call<'a, F: std::future::Future + 'a>(
+        &'a self,
+        call: F,
+    )
+        -> Pin<Box<impl Future<Output = Option<F::Output>> + 'a>>
+    {
+        // Boxed where it is defined, so a caller's poll frame holds a pointer and not this
+        // future: a debug wasm turn otherwise overflows its 1 MiB stack (CCP4-STACKPIN).
+        Box::pin(self.live_call_body(call))
+    }
+
+    async fn live_call_body<F: std::future::Future>(&self, call: F) -> Option<F::Output> {
         let live = self.liveness.clone();
         live.beat(crate::llm::now_ms());
         let out = async move {
@@ -2211,7 +2311,22 @@ impl Agent {
         Ok(())
     }
 
-    async fn run_tool_loop<H: Host>(
+    fn run_tool_loop<'a, H: Host>(
+        &'a self,
+        session:  &'a mut Session,
+        working:  Vec<ChatMessage>,
+        first:    &'a ToolRegistry<H>,
+        boundary: &'a mut impl Boundary<H>,
+        on_event: &'a mut impl FnMut(AgentEvent),
+    )
+        -> Pin<Box<impl Future<Output = Outcome<()>> + 'a>>
+    {
+        // Boxed where it is defined, so a caller's poll frame holds a pointer and not this
+        // future: a debug wasm turn otherwise overflows its 1 MiB stack (CCP4-STACKPIN).
+        Box::pin(self.run_tool_loop_body(session, working, first, boundary, on_event))
+    }
+
+    async fn run_tool_loop_body<H: Host>(
         &self,
         session:    &mut Session,
         mut working: Vec<ChatMessage>,
@@ -2569,8 +2684,8 @@ impl Agent {
                         // the family has earned any; a second leak after that is not something
                         // another sentence will fix.
                         let nudge = leak_nudge(&self.llm.model);
-                        working.push(ChatMessage::user(nudge.clone()));
-                        session.messages.push(ChatMessage::user(nudge));
+                        working.push(ChatMessage::app(nudge.clone()));
+                        session.messages.push(ChatMessage::app(nudge));
                         continue;
                     }
                     let ending = self.audit(
@@ -2636,8 +2751,8 @@ impl Agent {
                     working.push(said.clone());
                     session.messages.push(said);
                     let nudge = if pending_only { pending_report_nudge() } else { report_nudge() };
-                    working.push(ChatMessage::user(nudge.clone()));
-                    session.messages.push(ChatMessage::user(nudge));
+                    working.push(ChatMessage::app(nudge.clone()));
+                    session.messages.push(ChatMessage::app(nudge));
                     continue;
                 }
                 // THE MODEL REASONED AND THEN SAID NOTHING.  Found by proposal 15's naive
@@ -2663,8 +2778,8 @@ impl Agent {
                     session.messages.push(said);
                     if reasoned_only == 1 {
                         let nudge = if pending_only { pending_reasoned_nudge() } else { reasoned_only_nudge() };
-                        working.push(ChatMessage::user(nudge.clone()));
-                        session.messages.push(ChatMessage::user(nudge));
+                        working.push(ChatMessage::app(nudge.clone()));
+                        session.messages.push(ChatMessage::app(nudge));
                         continue;
                     }
                     // A ROUND EMPTY AGAIN AFTER THE NUDGE IS HONEST ABOUT WHY: `Silent` is a
@@ -2716,8 +2831,8 @@ impl Agent {
                         };
                         working.push(reply.clone());
                         session.messages.push(reply);
-                        working.push(ChatMessage::user(nudge.clone()));
-                        session.messages.push(ChatMessage::user(nudge));
+                        working.push(ChatMessage::app(nudge.clone()));
+                        session.messages.push(ChatMessage::app(nudge));
                         continue;
                     }
                     let u = setbacks.blocking().unwrap_or(u);
@@ -2740,8 +2855,8 @@ impl Agent {
                         };
                         working.push(reply.clone());
                         session.messages.push(reply);
-                        working.push(ChatMessage::user(nudge.clone()));
-                        session.messages.push(ChatMessage::user(nudge));
+                        working.push(ChatMessage::app(nudge.clone()));
+                        session.messages.push(ChatMessage::app(nudge));
                         continue;
                     }
                     how = TurnEnd::Blocked;
@@ -3021,7 +3136,7 @@ impl Agent {
                     // prepended to the result before anything downstream sees it -- the
                     // announce, the claims, the event and the stored reply are all built from
                     // this one value, so the pairing flow is untouched.
-                    let result = self.with_folds(session, tc, result);
+                    let result = self.with_folds(registry.ctx.host(), session, tc, result).await;
                     let outcome = crate::tools::call_outcome(&result.as_text());
                     // INTO THE TURN'S STATE, and a read that returns what the same call returned
                     // before says so (R3).  Prefixed rather than replacing the result: the
@@ -3185,9 +3300,16 @@ impl Agent {
             // every tool_call to be answered by a tool message: a user turn wedged
             // between the two is a malformed request, and a provider is entitled to
             // reject the whole thing.
-            for said in self.take_interjections() {
+            // EACH WITH ITS OWN ROW ID (CCP3 F3): the words log knows his messages by (row, text),
+            // so two equal ones with none were filed as one.  The page's id where it gave one.
+            let now = registry.ctx.host().clock().now_ms();
+            for (k, said) in self.take_interjections().into_iter().enumerate() {
                 on_event(AgentEvent::Interjected(said.text.clone()));
-                let msg = ChatMessage::user_noted(said.text, said.pre);
+                let mid = match said.mid.is_empty() {
+                    true  => fmt!("said-{:x}-{}", now as u64, k),
+                    false => said.mid,
+                };
+                let msg = ChatMessage::user_noted(said.text, said.pre).marked(mid);
                 working.push(msg.clone());
                 session.messages.push(msg);
             }
@@ -3360,7 +3482,26 @@ impl Agent {
     /// # Arguments
     /// * `decide` - Whether to offer the Decision at all; a sentence that is itself the question
     ///   stands alone, so the user is asked one thing and not two.
-    async fn end_blocked<H: Host>(
+    fn end_blocked<'a, H: Host>(
+        &'a self,
+        session:  &'a mut Session,
+        working:  &'a mut Vec<ChatMessage>,
+        said:     String,
+        decide:   bool,
+        rounds:   usize,
+        claims:   &'a Claims,
+        registry: &'a ToolRegistry<H>,
+        on_event: &'a mut impl FnMut(AgentEvent),
+    )
+        -> Pin<Box<impl Future<Output = ()> + 'a>>
+    {
+        // Boxed where it is defined, so a caller's poll frame holds a pointer and not this
+        // future: a debug wasm turn otherwise overflows its 1 MiB stack (CCP4-STACKPIN).
+        Box::pin(self.end_blocked_body(session, working, said, decide, rounds, claims, registry,
+            on_event))
+    }
+
+    async fn end_blocked_body<H: Host>(
         &self,
         session:    &mut Session,
         working:    &mut Vec<ChatMessage>,
@@ -3472,7 +3613,29 @@ impl Agent {
     /// # Arguments
     /// * `rounds` - The whole turn's count, legs included, not this leg's.
     /// * `continuations` - How many legs the turn has already taken; raised when it takes another.
-    async fn at_the_cap<H: Host>(
+    fn at_the_cap<'a, H: Host>(
+        &'a self,
+        session:       &'a mut Session,
+        working:       &'a mut Vec<ChatMessage>,
+        round_at:      &'a mut Vec<usize>,
+        schema:        u64,
+        registry:      &'a ToolRegistry<H>,
+        claims:        &'a Claims,
+        rounds:        usize,
+        max_rounds:    usize,
+        continuations: &'a mut usize,
+        opening_cost:  f64,
+        on_event:      &'a mut impl FnMut(AgentEvent),
+    )
+        -> Pin<Box<impl Future<Output = Option<Outcome<()>>> + 'a>>
+    {
+        // Boxed where it is defined, so a caller's poll frame holds a pointer and not this
+        // future: a debug wasm turn otherwise overflows its 1 MiB stack (CCP4-STACKPIN).
+        Box::pin(self.at_the_cap_body(session, working, round_at, schema, registry, claims, rounds, max_rounds,
+            continuations, opening_cost, on_event))
+    }
+
+    async fn at_the_cap_body<H: Host>(
         &self,
         session:        &mut Session,
         working:        &mut Vec<ChatMessage>,
@@ -3652,13 +3815,21 @@ impl Agent {
         // opening message is set back verbatim behind the notice, and its bytes come out of the
         // tail it joins: the cut is chosen again against what is left, which only moves it
         // later.  See `compact::pinned_opening`.
-        if let Some(p) = compact::pinned_opening(&msgs, ts, cut) {
-            let pb   = compact::msg_bytes(p);
-            let ceil = ceiling.saturating_sub(pb);
+        //
+        // AND SO DO HIS WORDS FROM THE FOLDED PART (R1, invariant 2).  His newest ride verbatim
+        // in the notice up to a fixed share, the rest are filed in his words log (HIGH-A), so only
+        // that bounded section is reserved here as the pin's bytes are, before the summary is
+        // sized.  With no words log they all ride, as before.
+        let pin0  = compact::pinned_opening(&msgs, ts, cut);
+        let said  = if cut > 0 { compact::person_said(&msgs[..cut], pin0) } else { Vec::new() };
+        let held  = pin0.map(compact::msg_bytes).unwrap_or(0)
+            + self.planned_words(&said, budget).len() as u64;
+        if held > 0 {
+            let ceil = ceiling.saturating_sub(held);
             cut = if capped {
                 compact::capped_cut(&msgs, ceil)
             } else {
-                compact::tail_start(&msgs, keep.saturating_sub(pb),
+                compact::tail_start(&msgs, keep.saturating_sub(held),
                     compact::MIN_KEEP_MESSAGES, ceil)
             };
         }
@@ -3668,15 +3839,80 @@ impl Agent {
         // of the note it writes, is re-triggered by the next tool result: on 2026-10-12 that was
         // sixteen paid summaries in sixteen rounds, each folding one message or none.  A forced
         // fold is asked for whatever it frees, so only the first test binds it.
+        //
+        // AND WORDS CARRIED AGAIN ARE NOT FREED (HIGH-A): what the new notice carries back of the
+        // old one's words is counted out, so a fold that only re-carries them is not made.
         if cut > 0 {
             let only_notes = msgs[..cut].iter().all(compact::is_fold_notice);
-            let freed = compact::conversation_bytes(&msgs[..cut]);
+            let again = self.planned_words(&compact::person_said(&msgs[..cut], pin.as_ref()),
+                budget).len() as u64;
+            let freed = compact::conversation_bytes(&msgs[..cut]).saturating_sub(again);
             let worth = self.gauge.bytes(gain + compact::FOLD_MAX_TOKENS as u64);
             if only_notes || (!why.forces() && freed < worth) {
                 cut = 0;
             }
         }
+        // NO REFOLD WITHOUT NEW HISTORY (CCP3 (a)).  A conversation that is still the one the
+        // last fold left holds nothing a new summary could say, so folding it again only rewrites
+        // the notice -- a new cache epoch and a paid summary -- turn after turn, which is the
+        // loop a notice carrying all his words (R1) fell into.  The copy is still shortened.
+        // Only his own press folds regardless.
+        if cut > 0 && !matches!(why, Fold::ByHand) && self.no_new_history(msgs) {
+            cut = 0;
+        }
         Some(FoldPlan { budget, ceiling, gain, cut, pin })
+    }
+
+    /// Is `msgs` still the conversation the last fold left, with nothing said since?
+    fn no_new_history(&self, msgs: &[ChatMessage]) -> bool {
+        match &*self.folded_at.borrow() {
+            Some((n, note)) => msgs.len() <= *n
+                && msgs.first().map(|m| m.text() == note.as_str()).unwrap_or(false),
+            None            => false,
+        }
+    }
+
+    /// The bytes his newest words may take in a notice: [`compact::WORDS_SHARE`] of the fold's
+    /// target under `budget`.
+    fn words_share(&self, budget: u64) -> u64 {
+        self.gauge.bytes((budget as f64 * compact::FOLD_TARGET * compact::WORDS_SHARE) as u64)
+    }
+
+    /// Where his words log is, as the notice names it: the words home's log file.
+    fn words_path(&self) -> String {
+        fmt!("{}/{}", crate::tools::keeper_home(&self.words_home()), compact::WORDS_FILE)
+    }
+
+    /// The words section a fold plans to carry for `said`: with a words home, his newest words
+    /// within the share and a line naming the rest; with none, every one of them (R1).
+    fn planned_words(&self, said: &[compact::Said], budget: u64) -> String {
+        if self.words_home().is_empty() || self.words_unfiled.get() {
+            return compact::said_section(said, "");
+        }
+        let (carried, older) = compact::newest_within(said, self.words_share(budget));
+        compact::said_section(&carried, &compact::older_words_line(&older, &self.words_path()))
+    }
+
+    /// File `said` in his words log before the notice stops carrying it, and answer the section
+    /// the notice carries: his newest words within the share and a line naming every older one
+    /// the log holds.  `Err` when there is no words home, or the write or its read-back failed;
+    /// the notice then carries them all (R1).
+    async fn file_words<H: Host>(&self, host: &H, said: &[compact::Said], budget: u64)
+        -> Outcome<String>
+    {
+        let home = self.words_home();
+        if home.is_empty() {
+            return Err(err!("this conversation keeps no notes file"; Missing));
+        }
+        let date = compact::utc_date(host.clock().now_ms());
+        let (total, first) = compact::log_tally(&res!(host.store().his_words(&home,
+            compact::log_entries(said, &date)).await));
+        let (carried, older) = compact::newest_within(said, self.words_share(budget));
+        // The newest older one is this fold's where it has any; else it was filed by an earlier
+        // fold and only the oldest is named.
+        let last = older.last().map(|w| w.mid.clone()).unwrap_or_default();
+        Ok(compact::said_section(&carried, &compact::older_line(
+            total.saturating_sub(carried.len()), &first, &last, &self.words_path())))
     }
 
     /// The tools array a request carries.  A worker on its parent's model sends its parent's,
@@ -3708,7 +3944,7 @@ impl Agent {
     {
         let note = crate::prompts::turn_note(&self.blocks.borrow(), prior);
         let mut msgs = prior.to_vec();
-        msgs.push(ChatMessage::user_noted(String::new(), note));
+        msgs.push(ChatMessage::user_noted(String::new(), note).said_by(crate::protocol::Origin::App));
         let mut sent = msgs.clone();
         let (keep, retire) = {
             let l = self.limits.borrow();
@@ -3770,7 +4006,23 @@ impl Agent {
     /// * `schema` - Bytes of tool definitions riding alongside the conversation.
     /// * `why` - What brought the fold about; see [`Fold`].
     /// * `on_event` - Where the user is told, since a silent fold is the one people hate.
-    async fn fold_if_needed<H: Host>(
+    fn fold_if_needed<'a, H: Host>(
+        &'a self,
+        host:     &'a H,
+        session:  &'a mut Session,
+        working:  &'a mut Vec<ChatMessage>,
+        schema:   u64,
+        why:      Fold,
+        on_event: &'a mut impl FnMut(AgentEvent),
+    )
+        -> Pin<Box<impl Future<Output = Refit> + 'a>>
+    {
+        // Boxed where it is defined, so a caller's poll frame holds a pointer and not this
+        // future: a debug wasm turn otherwise overflows its 1 MiB stack (CCP4-STACKPIN).
+        Box::pin(self.fold_if_needed_body(host, session, working, schema, why, on_event))
+    }
+
+    async fn fold_if_needed_body<H: Host>(
         &self,
         host:       &H,
         session:    &mut Session,
@@ -3807,6 +4059,7 @@ impl Agent {
         };
         let mut folded  = 0usize;
         let mut trouble = String::new();
+        let mut unfiled = String::new();     // filing his words failed, said on the fold row
         // WHO WROTE THE SUMMARY, for the product record its notice carries: the model the fold
         // actually asked -- the fold model where one is set, else this agent's -- and the
         // fingerprint of the compactor's instructions.  Both stay empty where no summary was
@@ -3816,6 +4069,10 @@ impl Agent {
         // Whether the note came back in the layout, which the feed carries and the bank counts.
         let mut structured = false;
         let mut summarised = false;
+        // THE LINE THE FOLD LANDS UNDER, set before the summary is asked for so the summary can
+        // be sized to it (invariant 7).  See `compact::FOLD_TARGET`.
+        let target = self.gauge.bytes((budget as f64 * compact::FOLD_TARGET) as u64)
+            .saturating_sub(schema);
         if cut > 0 {
             // Built before the summarising call, so a call that fails still leaves a
             // truthful record: which files were read, which were written, what ran, and
@@ -3824,16 +4081,60 @@ impl Agent {
             let ledger   = compact::ledger_of(&session.messages[..cut]);
             let rendered = compact::render_for_fold(&session.messages[..cut],
                 compact::FOLD_INPUT_CAP);
-            by_model = if model.trim().is_empty() { self.llm.model.clone() } else {
-                model.trim().to_string() };
-            by_sp = crate::prompts::fingerprint(&self.fold_prompt());
-            summarised = true;
-            let raw = match self.summarise(&rendered, &model, session, why, pin.is_some(), shape)
-                .await
-            {
-                Ok(s)  => Ok(s),
-                Err(e) => Err(fmt!("{}", e)),
+            // A SUMMARY IS ASKED FOR ONLY WHAT ROOM IS LEFT.  The notice is a user message, so
+            // no elision shortens it: a summary as long as the model cared to write was a fold
+            // that landed over target (KT-5b, 18.9k tokens against 11.2k).  The room is what the
+            // target leaves after the kept tail at its elided floor, his pinned words in full,
+            // and the notice's own frame and ledger.
+            let capped = why.at_the_cap() || pin.is_some();
+            let tail   = if pin.is_some() { compact::TURN_CONTINUES_NOTE } else { "" };
+            // HIS WORDS FIRST (R1): his newest messages before the cut ride verbatim in the
+            // notice, up to their share, and are part of its frame, so the summary is sized to
+            // what they leave; the rest are filed in his words log below (HIGH-A).
+            let said   = compact::person_said(&session.messages[..cut], pin.as_ref());
+            let planned = self.planned_words(&said, budget);
+            let room   = compact::notice_room(&session.messages[cut..], pin.as_ref(), target);
+            // THE FRAME A REAL SUMMARY SITS IN, heading and all: measured with a one-byte
+            // summary, less that byte.  An empty one leaves the heading out (M1).
+            let frame  = {
+                let mut f = compact::notice_with(cut, &planned, &compact::Summary::Prose("x"),
+                    &ledger, capped);
+                f.push_str(tail);
+                compact::msg_bytes(&ChatMessage::user(f)).saturating_sub(1)
             };
+            // Rounded down, and a fifth held back for a reply denser in bytes than the gauge
+            // prices it; see `compact::FOLD_ASK_MARGIN`.
+            let ask = ((room.saturating_sub(frame) as f64 * self.gauge.ratio()
+                * compact::FOLD_ASK_MARGIN) as u64).min(shape.max_tokens() as u64) as u32;
+            let raw = if ask < compact::FOLD_MIN_ASK {
+                Err(fmt!("there was no room left for one under the fold's target"))
+            } else {
+                by_model = if model.trim().is_empty() { self.llm.model.clone() } else {
+                    model.trim().to_string() };
+                by_sp = crate::prompts::fingerprint(&self.fold_prompt());
+                summarised = true;
+                match self.summarise(&rendered, &model, session, why, pin.is_some(), shape, ask)
+                    .await
+                {
+                    Ok((s, false)) => Ok(s),
+                    // CUT AT ITS LIMIT IS A DEFINED OUTCOME (M1): trimmed to its last whole
+                    // sentence and marked, never riding cut mid-word and never dropped unsaid.
+                    Ok((s, true))  => match compact::cut_short(&s) {
+                        Some(t) => Ok(t),
+                        None    => Err(fmt!("it reached its length limit before one sentence \
+                            ended")),
+                    },
+                    // In plain words: the model reads this, and so does he (L1).
+                    Err(e)         => Err(e.plain()),
+                }
+            };
+            // A STOP DURING THE FOLD IS A FOLD NOT MADE (M2).  The halt makes the summary call
+            // come back empty, and folding on would rewrite the session under a notice that
+            // blames the model for an empty summary it never wrote.  Asked once the call is back,
+            // before anything is filed or touched, so the session stands exactly as it was.
+            if self.llm.halt().is_set() {
+                return Refit::Untouched;
+            }
             // THE STRUCTURE IS WON OR LOST HERE AND THE FOLD IS NEITHER.  A reply that is not
             // the layout costs the structure and nothing else: the prose still becomes the
             // note, the ledger is still beneath it, and the turn never loses its fold to a
@@ -3858,14 +4159,31 @@ impl Agent {
                 (None, None, Ok(t))  => compact::Summary::Prose(t),
                 (None, None, Err(e)) => compact::Summary::None(e),
             };
-            structured = matches!(summary,
-                compact::Summary::Notes(_) | compact::Summary::Filed(_));
             if let Err(ref e) = raw { trouble = e.clone(); }
-            // A turn cut through CONTINUES from the note, exactly as a capped one does.
-            let mut note = compact::notice(cut, &summary, &ledger,
-                why.at_the_cap() || pin.is_some());
-            if pin.is_some() {
-                note.push_str(compact::TURN_CONTINUES_NOTE);
+            // HIS WORDS ARE FILED BEFORE THE NOTICE STOPS CARRYING THEM (HIGH-A): written, read
+            // back and compared by the store, and only then left out.  Filing that fails leaves
+            // every one of them in the notice (R1), and he is told.
+            let filing = self.file_words(host, &said, budget).await;
+            self.words_unfiled.set(filing.is_err() && !said.is_empty());
+            let words = match filing {
+                Ok(w)  => w,
+                Err(e) => {
+                    if !said.is_empty() && !self.words_home().is_empty() {
+                        unfiled = fmt!(" Your earlier messages could not be filed in this \
+                            conversation's notes ({}), so all of them stay in the note.", e.plain());
+                    }
+                    compact::said_section(&said, "")
+                },
+            };
+            // A turn cut through CONTINUES from the note, exactly as a capped one does.  And a
+            // reply longer than it was asked for -- a model, or a mock, that ignores
+            // `max_tokens` -- still lands under target: see `compact::notice_within`.
+            let (note, kept) = compact::notice_within(cut, &words, &summary, &ledger, capped,
+                tail, room);
+            structured = kept && matches!(summary,
+                compact::Summary::Notes(_) | compact::Summary::Filed(_));
+            if !kept && trouble.is_empty() {
+                trouble = fmt!("it came back longer than the fold had room for");
             }
             match compact::fold_keeping(&session.messages, cut, pin.as_ref(), note) {
                 Ok(new) => {
@@ -3874,6 +4192,8 @@ impl Agent {
                     if compact::conversation_bytes(&new) < before {
                         session.messages = new;
                         folded = cut;
+                        *self.folded_at.borrow_mut() = session.messages.first()
+                            .map(|m| (session.messages.len(), m.text().to_string()));
                         // AND THE BOUNDARY COMES WITH IT. A fold renumbers the conversation, so
                         // the index recorded at the top of the turn now names a different message
                         // -- a later one, because the list got shorter, which is the turn in
@@ -3898,7 +4218,7 @@ impl Agent {
                 },
                 // Refused rather than allowed to orphan a tool call. Eliding below still
                 // shrinks the same conversation, and cannot orphan anything at all.
-                Err(e) => trouble = fmt!("{}", e),
+                Err(e) => trouble = e.plain(),
             }
         }
 
@@ -3941,8 +4261,6 @@ impl Agent {
         // conversation crossed it again with the next round's tool result and folded again; see
         // `compact::FOLD_TARGET`.  The second pass, which reaches the newest messages, goes only
         // as far as the line: the newest work is cut only when it would not otherwise fit.
-        let target = self.gauge.bytes((budget as f64 * compact::FOLD_TARGET) as u64)
-            .saturating_sub(schema);
         let mut elided = compact::elide_bulk(&mut sent, target,
             compact::MIN_KEEP_MESSAGES);
         elided += compact::elide_bulk(&mut sent, ceiling, 1);
@@ -4007,6 +4325,17 @@ impl Agent {
             said.push_str(&fmt!(" The summary could not be written ({}), so only the record \
                 of what was read and written was kept.", trouble));
         }
+        if folded > 0 {
+            said.push_str(&unfiled);
+        }
+        // OVER THE TARGET IS SAID, WITH WHY (invariant 7, M1).  What is left is the newest work,
+        // which the second elision pass shortens only as far as the ceiling, and his own words,
+        // which nothing shortens.
+        if after > target {
+            said.push_str(&fmt!(" That is still above the fold's target of about {} tokens: \
+                what is left is the newest work and your own words, which are kept whole.",
+                self.gauge.tokens(target)));
+        }
         // Its own event, not a borrowed tool row. A fold is something the app did to the
         // user's conversation, and it is lossy; the counts travel beside the sentence so a
         // client can draw it as the act it was rather than parse prose to find out.
@@ -4068,7 +4397,10 @@ impl Agent {
     /// * `session` - Charged with what the call cost, so the fold is not spent invisibly.
     /// * `why` - What brought the fold about, which decides how the user message opens.
     /// * `mid_turn` - Whether the cut runs through the turn in flight, which then continues.
-    /// * `shape` - Which layout the compactor is asked for, and therefore its output budget.
+    /// * `shape` - Which layout the compactor is asked for.
+    /// * `ask` - Tokens it may write: the shape's budget, or less where the fold has less room.
+    ///
+    /// Answers the summary and whether the provider cut it at `ask`.
     async fn summarise(
         &self,
         rendered: &str,
@@ -4077,14 +4409,15 @@ impl Agent {
         why:      Fold,
         mid_turn: bool,
         shape:    compact::FoldShape,
+        ask:      u32,
     )
-        -> Outcome<String>
+        -> Outcome<(String, bool)>
     {
         let mut llm = self.llm.clone();
         if !model.trim().is_empty() {
             llm.model = model.trim().to_string();
         }
-        llm.max_tokens = shape.max_tokens();
+        llm.max_tokens = ask;
         // THE SHAPE IS APPENDED OVER A USER-EDITED PROMPT, on the reducer's own reasoning
         // (`prompts::Role::compose_for`): the compactor's prompt is the user's to rewrite, and
         // what `compact::parse_fold_notes` then reads is not. A user who rewrote the job
@@ -4116,9 +4449,12 @@ impl Agent {
         } else {
             "Here is the earlier part of the conversation."
         };
+        // THE LENGTH IS SAID, not only capped (M1): a model told nothing writes to its own idea
+        // of a summary and is cut mid-sentence at `max_tokens`.  Three words to four tokens.
+        let words = (ask as u64 * 3 / 4).max(1);
         let msgs = vec![
             ChatMessage::system(system),
-            ChatMessage::user(fmt!("{}\n\n{}", opening, rendered)),
+            ChatMessage::user(fmt!("{} Write at most {} words.\n\n{}", opening, words, rendered)),
         ];
         let resp = res!(llm.chat_once(&msgs, None).await);
         session.prompt_tokens     += resp.prompt_tokens;
@@ -4132,7 +4468,7 @@ impl Agent {
         if resp.content.trim().is_empty() {
             return Err(err!("Fold: the model returned an empty summary."; Invalid, Data));
         }
-        Ok(resp.content)
+        Ok((resp.content, resp.truncated))
     }
 }
 
@@ -5152,7 +5488,7 @@ mod tests {
         let a = make_test_agent();
         a.interject("stop and summarise");
         let taken = a.take_interjections();
-        assert_eq!(taken, vec![Said { text: fmt!("stop and summarise"), pre: String::new() }]);
+        assert_eq!(taken, vec![Said { text: fmt!("stop and summarise"), pre: String::new(), mid: String::new() }]);
         assert!(a.interjections().is_empty());
         assert!(a.take_interjections().is_empty(), "a second take yields nothing");
     }
@@ -5747,7 +6083,7 @@ mod tests {
                 AgentEvent::ToolCall { .. } => {
                     round += 1;
                     if round == 1 {
-                        held.borrow_mut().push(Said { text: fmt!("put it together now"), pre: String::new() });
+                        held.borrow_mut().push(Said { text: fmt!("put it together now"), pre: String::new(), mid: String::new() });
                     }
                 },
                 AgentEvent::Interjected(said) => heard.push(said),
@@ -11360,6 +11696,77 @@ mod tests {
         assert_eq!(2, told, "the summariser was told the turn continues {} of 2 times", told);
     }
 
+    /// What a fold says it left, in tokens: the "became about N" of its announcement.
+    fn landed_tokens(events: &[AgentEvent]) -> u64 {
+        let note = events.iter().find_map(|e| match e {
+            AgentEvent::Compacted { note, .. } => Some(note.clone()),
+            _                                  => None,
+        }).unwrap_or_default();
+        let tail = note.split("became about ").nth(1).unwrap_or("");
+        let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+        match digits.parse::<u64>() {
+            Ok(n)  => n,
+            Err(_) => panic!("no landing figure in the fold's announcement: {:?}", note),
+        }
+    }
+
+    /// The token line a fold must land under: `FOLD_TARGET` of the budget.
+    fn fold_line(a: &Agent) -> u64 {
+        let budget = a.limits.borrow().budget(a.reply_cap());
+        (budget as f64 * compact::FOLD_TARGET) as u64
+    }
+
+    #[tokio::test]
+    async fn test_foldcap_a_long_summary_still_lands_under_target_by_hand_00() {
+        // KT-5b's finding: a summariser that answers long -- the mock echoes the whole cut, some
+        // 47 KB -- left a hand fold at 18.9k tokens against an 11.2k target.  The notice is a user
+        // message, which no elision touches, so a summary nobody bounded is a fold over target.
+        let long = fmt!("I summarise: {}", "z".repeat(47_000));
+        let (port, seen) = crate::llm::tests::start_stub(vec![completion(&long)]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let moved = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+            &mut |ev| events.push(ev)).await;
+        assert!(moved, "R1: a fold is never refused, however long the summary came back");
+        let line = fold_line(&a);
+        let landed = landed_tokens(&events);
+        assert!(landed <= line, "the fold landed at {} tokens over its target of {}", landed, line);
+        // AND THE ASK WAS BOUNDED: the summarising call is told how much room it has.
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("{}", e) };
+        let fold_req = bodies.iter().find(|b| b.contains("folding the earlier part"))
+            .cloned().unwrap_or_default();
+        assert!(!fold_req.is_empty(), "no summarising call was made");
+        let asked: u64 = fold_req.split("\"max_tokens\":").nth(1).unwrap_or("")
+            .chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
+        assert!(asked > 0 && asked <= line, "the summary was asked for {} tokens", asked);
+    }
+
+    #[tokio::test]
+    async fn test_foldcap_a_long_summary_mid_turn_keeps_his_words_and_lands_under_00() {
+        // The same through a turn, where the cut runs through the turn in flight and his opening
+        // is pinned verbatim behind the notice: room is reserved for it, and it survives.
+        let long = fmt!("I summarise: {}", "z".repeat(47_000));
+        let (port, _seen) = crate::llm::tests::start_stub(
+            vec![completion(&long), plain_answer()]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        let registry = no_tools();
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let ask = "carry on with the caps, word for word";
+        let _ = a.run_turn(&mut session, fmt!("{}", ask), &registry,
+            &mut |ev| events.push(ev)).await;
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. })),
+            "R1: the fold was lost to a long summary");
+        let line = fold_line(&a);
+        let landed = landed_tokens(&events);
+        assert!(landed <= line, "the fold landed at {} tokens over its target of {}", landed, line);
+        assert!(session.messages.iter().any(|m| m.text() == ask),
+            "his words did not survive the fold verbatim");
+    }
+
     #[tokio::test]
     async fn test_a_garbage_reply_still_folds_and_still_announces_00() {
         // A malformed reply costs the STRUCTURE and nothing else. The turn must never lose its
@@ -11611,7 +12018,7 @@ fn test_agent_message_building() {
     /// each, then two newer rounds.
     fn bombed_session() -> Session {
         let mut session = Session::new(fmt!("s"), fmt!("bombed"), fmt!("model"));
-        session.messages.push(ChatMessage::user(
+        session.messages.push(ChatMessage::notice(
             fmt!("[Daimond folded the earlier part of this conversation] earlier work")));
         session.messages.push(ChatMessage::Assistant {
             content:    MessageContent::text(""),
@@ -12102,6 +12509,634 @@ fn test_agent_message_building() {
         assert_eq!(crate::tools::CallOutcome::Done, crate::tools::call_outcome(&results[1]),
             "round two's call did not run under the adopted registry: {}", results[1]);
     }
+
+    // ── QA ccp1 (B) probes, scratch only ─────────────────────────────────────────────
+    fn qa_reply(text: &str, finish: &str) -> crate::llm::tests::Reply {
+        let body = fmt!(
+            "{{\"choices\":[{{\"message\":{{\"role\":\"assistant\",\"content\":\"{}\"}},\
+             \"finish_reason\":\"{}\"}}],\"usage\":{{\"prompt_tokens\":9,\
+             \"completion_tokens\":9}}}}",
+            crate::llm::json_escape(text), finish);
+        crate::llm::tests::Reply::Http { status: 200, reason: "OK",
+            headers: vec![("Content-Type", "application/json".to_string())], body }
+    }
+    fn qa_asked(body: &str) -> u64 {
+        body.split("\"max_tokens\":").nth(1).unwrap_or("")
+            .chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0)
+    }
+    /// Prose a real model writes, cut where `max_tokens` cut it: `bytes` long, mid-word.
+    fn qa_prose(bytes: usize) -> String {
+        let s = "The user asked for the caps to agree across the seven module files and the tests. ";
+        let mut out = String::new();
+        while out.len() < bytes { out.push_str(s); }
+        out.truncate(bytes);
+        out
+    }
+    fn qa_notice(session: &Session) -> String {
+        session.messages.iter().find(|m| compact::is_fold_notice(m)).map(|m| m.text().to_string())
+            .unwrap_or_default()
+    }
+    /// A fold whose summariser answers like a real model at its cap: `bpt` bytes a token, cut.
+    async fn qa_fold_at_cap(bpt: f64, window: u64, pairs: usize, bytes: usize)
+        -> (Session, Vec<AgentEvent>, u64, u64, u64)
+    {
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(0u64));
+        let a2 = asked.clone();
+        let (port, _seen) = crate::llm::tests::start_stub_with(move |body: &str| {
+            let n = qa_asked(body);
+            *a2.lock().unwrap() = n;
+            qa_reply(&qa_prose((n as f64 * bpt) as usize), "length")
+        }).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(window);
+        let mut session = foldable_session(pairs, bytes);
+        let mut events = Vec::new();
+        let moved = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+            &mut |ev| events.push(ev)).await;
+        assert!(moved);
+        let n = *asked.lock().unwrap();
+        (session, events.clone(), n, landed_tokens(&events), fold_line(&a))
+    }
+
+    #[tokio::test]
+    async fn qa_b_p2a_a_real_model_at_its_cap_writes_more_bytes_than_the_gauge_allows() {
+        // English prose runs ~4.2-4.6 bytes a token; the gauge's default is 1/0.27 = 3.7.
+        let (s, _e, asked, landed, line) = qa_fold_at_cap(4.4, 20_000, 30, 3_000).await;
+        let n = qa_notice(&s);
+        eprintln!("P2a asked={} landed={} line={} left_out={}", asked, landed, line,
+            n.contains("left out whole"));
+        assert!(!n.contains("left out whole"),
+            "a summary the model wrote within its own max_tokens was dropped whole");
+    }
+
+    #[tokio::test]
+    async fn qa_b_p2b_a_summary_cut_by_max_tokens_rides_cut_mid_word() {
+        // Code-heavy summaries run ~3 bytes a token: the cut reply fits the room and rides.
+        let (s, _e, asked, landed, line) = qa_fold_at_cap(3.0, 20_000, 30, 3_000).await;
+        let n = qa_notice(&s);
+        let cut = qa_prose((asked as f64 * 3.0) as usize);
+        let tail: String = cut.chars().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
+        eprintln!("P2b asked={} landed={} line={} rides_cut={} tail={:?}", asked, landed, line,
+            n.contains(&tail), tail);
+        assert!(n.contains(compact::CUT_SHORT_NOTE) && !n.contains(&fmt!("{}\n", tail)),
+            "a summary the provider cut at max_tokens rode in the notice, mid-sentence, unmarked");
+    }
+
+    #[tokio::test]
+    async fn qa_b_p2c_the_largest_window_lands_under_target() {
+        // 1M window, default cap: the budget is ABSOLUTE_CAP; the session ~1.2 MB.
+        let long = fmt!("I summarise: {}", "z".repeat(47_000));
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion(&long)]).await;
+        let sys = "S".repeat(60_000);
+        let a = Agent::new(crate::llm::tests::stub_client(port), &sys);
+        a.set_context_window(1_000_000);
+        let mut session = foldable_session(400, 3_000);
+        let mut events = Vec::new();
+        let moved = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+            &mut |ev| events.push(ev)).await;
+        let line = fold_line(&a);
+        let landed = landed_tokens(&events);
+        let sys_t = a.gauge.tokens(compact::msg_bytes(&ChatMessage::system(sys.clone())));
+        eprintln!("P2c moved={} landed={} line={} system={} prompt={}", moved, landed, line, sys_t,
+            landed + sys_t);
+        assert!(landed <= line, "conversation over target");
+        assert!(landed + sys_t <= line, "the prompt (system + conversation) lands over FOLD_TARGET");
+    }
+
+    #[tokio::test]
+    async fn qa_b_p3_his_mid_turn_interjection_survives_a_summary_left_out() {
+        let long = fmt!("I summarise: {}", "z".repeat(47_000));
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion(&long)]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(3, 200);
+        let earlier = "Never touch prod.db, whatever the tests say.";
+        session.messages[0] = ChatMessage::user(earlier.to_string());
+        let ask = ChatMessage::user("Put the seven pages together as letter.typ.".to_string());
+        a.turn_start.set(session.messages.len());
+        session.messages.push(ask.clone());
+        let interject = "STOP: use blue for the headings, never red.";
+        for i in 0..60 {
+            session.messages.push(ChatMessage::Assistant {
+                content: MessageContent::text(fmt!("check {} {}", i, "z".repeat(800))),
+                tool_calls: Vec::new() });
+            session.messages.push(ChatMessage::user(
+                if i == 5 { interject.to_string() } else { fmt!("go on {}", i) }));
+        }
+        let mut working = session.messages.clone();
+        let mut events = Vec::new();
+        a.fold_if_needed(&crate::engine::host::DefaultHost::default(), &mut session, &mut working,
+            0, Fold::Refused, &mut |ev| events.push(ev)).await;
+        let n = qa_notice(&session);
+        let all: String = session.messages.iter().map(|m| m.text().to_string()).collect::<Vec<_>>().join("\n");
+        eprintln!("P3 folded={} left_out={} interject_kept={} earlier_kept={} ask_kept={}",
+            !n.is_empty(), n.contains("left out whole"), all.contains(interject),
+            all.contains(earlier), session.messages.iter().any(|m| *m == ask));
+        assert!(all.contains(interject), "his interjection is gone from what the model reads");
+        assert!(all.contains(earlier), "his earlier instruction is gone from what the model reads");
+    }
+
+    /// HIGH-1 on the no-summary paths: a summary call that fails, or comes back empty, still
+    /// leaves every message he sent before the cut in what the model reads.
+    #[tokio::test]
+    async fn qa_b_p3b_his_words_survive_a_failed_or_empty_summary() {
+        for (label, reply) in [
+            ("400", crate::llm::tests::Reply::Http { status: 400, reason: "Bad Request",
+                headers: vec![("Content-Type", "application/json".to_string())],
+                body: "{\"error\":{\"message\":\"bad\"}}".to_string() }),
+            ("empty", completion("   ")),
+        ] {
+            let (port, _seen) = crate::llm::tests::start_stub(vec![reply]).await;
+            let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+            a.set_context_window(20_000);
+            let mut session = foldable_session(30, 3_000);
+            let earlier = "Never touch prod.db.\n\n> quoted, with a blank line above";
+            session.messages[0] = ChatMessage::user(earlier.to_string());
+            let mut events = Vec::new();
+            let moved = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+                &mut |ev| events.push(ev)).await;
+            assert!(moved, "{}: the fold did not move", label);
+            let n = qa_notice(&session);
+            assert_eq!(compact::words_in_notice(&n).first().map(|w| w.as_str()), Some(earlier),
+                "{}: his earlier words are not in the notice verbatim: {}", label, n);
+        }
+    }
+
+    #[tokio::test]
+    async fn qa_b_p4_restated_blocks_land_the_fold_over_target() {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary.")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut blocks = crate::prompts::TurnBlocks::default();
+        blocks.set(crate::prompts::Block::State, &"state line\n".repeat(1_500));
+        a.set_blocks(blocks.clone());
+        let mut session = Session::new(fmt!("s"), fmt!("f"), fmt!("m"));
+        let full = crate::prompts::turn_note(&blocks, &[]);
+        session.messages.push(ChatMessage::user_noted(fmt!("first"), full));
+        session.messages.push(ChatMessage::assistant(fmt!("ok")));
+        for i in 0..20 {
+            session.messages.push(ChatMessage::user(fmt!("ask {}", i)));
+            session.messages.push(ChatMessage::assistant(fmt!("answer {} {}", i, "y".repeat(2_000))));
+        }
+        let note2 = crate::prompts::turn_note(&blocks, &session.messages);
+        eprintln!("P4 second note bytes={}", note2.len());
+        a.turn_start.set(session.messages.len());
+        session.messages.push(ChatMessage::user_noted(fmt!("second"), note2));
+        for i in 0..40 {
+            session.messages.push(ChatMessage::Assistant {
+                content: MessageContent::text(fmt!("work {} {}", i, "w".repeat(900))),
+                tool_calls: Vec::new() });
+            session.messages.push(ChatMessage::user(fmt!("go on {}", i)));
+        }
+        let mut working = session.messages.clone();
+        let mut events = Vec::new();
+        a.fold_if_needed(&crate::engine::host::DefaultHost::default(), &mut session, &mut working,
+            0, Fold::Refused, &mut |ev| events.push(ev)).await;
+        let line = fold_line(&a);
+        let landed = landed_tokens(&events);
+        eprintln!("P4 landed={} line={}", landed, line);
+        assert!(landed <= line, "restated blocks put the fold over target");
+    }
+
+    #[tokio::test]
+    async fn qa_b_p5_a_failed_or_empty_summary_still_rewrites_the_session() {
+        for (label, reply) in [
+            ("400", crate::llm::tests::Reply::Http { status: 400, reason: "Bad Request",
+                headers: vec![("Content-Type", "application/json".to_string())],
+                body: "{\"error\":{\"message\":\"bad\"}}".to_string() }),
+            ("empty", completion("   ")),
+        ] {
+            let (port, _seen) = crate::llm::tests::start_stub(vec![reply]).await;
+            let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+            a.set_context_window(20_000);
+            let mut session = foldable_session(30, 3_000);
+            session.messages[0] = ChatMessage::user("Never touch prod.db.".to_string());
+            let before = session.messages.clone();
+            let mut events = Vec::new();
+            let moved = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+                &mut |ev| events.push(ev)).await;
+            let n = qa_notice(&session);
+            let note = events.iter().find_map(|e| match e { AgentEvent::Compacted { note, .. } => Some(note.clone()), _ => None }).unwrap_or_default();
+            eprintln!("P5 {} moved={} unchanged={} prod_kept={} said={:?} notice_head={:?}", label, moved,
+                session.messages == before,
+                session.messages.iter().any(|m| m.text().contains("prod.db")),
+                note, n.chars().take(400).collect::<String>());
+        }
+    }
+
+    #[tokio::test]
+    async fn qa_b_p2d_tight_room_real_model_density() {
+        for bytes in [9_000usize, 10_000, 11_000, 12_000] {
+            for bpt in [3.0f64, 3.7, 4.4] {
+                let (s, e, asked, landed, line) = qa_fold_at_cap(bpt, 20_000, 30, bytes).await;
+                let n = qa_notice(&s);
+                eprintln!("P2d bytes={} bpt={} asked={} landed={} line={} left_out={} noroom={}",
+                    bytes, bpt, asked, landed, line, n.contains("left out whole"),
+                    n.contains("no room left"));
+                // M1: a reply written to its whole ask, at real-model density, rides.
+                assert!(!n.contains("left out whole"), "P2d {} B at {} B/tok: left out", bytes, bpt);
+                // Invariant 7, or why not: over the target is said, with the reason.
+                let said = e.iter().find_map(|v| match v {
+                    AgentEvent::Compacted { note, .. } => Some(note.clone()), _ => None })
+                    .unwrap_or_default();
+                assert!(landed <= line || said.contains("still above the fold's target"),
+                    "P2d {} B: landed {} over {} and said nothing: {}", bytes, landed, line, said);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn qa_b_p6_a_stop_during_the_fold_leaves_the_session_as_it_was() {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary.")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        session.messages[0] = ChatMessage::user("Never touch prod.db.".to_string());
+        let before = session.messages.clone();
+        let h = a.llm.halt();
+        h.rearm();
+        h.fire();
+        let mut events = Vec::new();
+        let moved = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+            &mut |ev| events.push(ev)).await;
+        let note = events.iter().find_map(|e| match e { AgentEvent::Compacted { note, .. } => Some(note.clone()), _ => None }).unwrap_or_default();
+        eprintln!("P6 moved={} unchanged={} said={:?}", moved, session.messages == before,
+            note.chars().take(300).collect::<String>());
+        assert!(session.messages == before, "a Stop during the fold still rewrote the session");
+    }
+
+    #[tokio::test]
+    async fn qa_b_p7_the_notice_carries_no_terminal_colour_codes() {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("   ")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        let mut events = Vec::new();
+        a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+            &mut |ev| events.push(ev)).await;
+        let n = qa_notice(&session);
+        let i = n.find("No summary could be written").unwrap_or(0);
+        eprintln!("P7 notice={:?}", n[i..].chars().take(260).collect::<String>());
+        assert!(!n.contains('\u{1b}'), "the model's notice carries ANSI escapes");
+    }
+
+    // ── QA ccp2 (B) probes, scratch only ─────────────────────────────────────────────
+    fn qc_paste(tag: &str, bytes: usize) -> String {
+        let mut s = String::new();
+        let mut i = 0;
+        while s.len() < bytes { s.push_str(&fmt!("{} log line {} status=ok took=12ms\n", tag, i)); i += 1; }
+        s.truncate(bytes);
+        s
+    }
+    fn qc_tokens(a: &Agent, s: &Session) -> u64 {
+        a.gauge.tokens(compact::conversation_bytes(&s.messages))
+    }
+    fn qc_budget(a: &Agent) -> u64 { a.limits.borrow().budget(a.reply_cap()) }
+    /// A chat where he pasted `n` logs of `bytes` each over earlier turns, then talked on.
+    fn qc_wordy(n: usize, bytes: usize) -> Session {
+        let mut s = Session::new(fmt!("s"), fmt!("wordy"), fmt!("model"));
+        for k in 0..n {
+            s.messages.push(ChatMessage::user(fmt!("Why did this fail?\n{}", qc_paste(&fmt!("P{}", k), bytes))));
+            s.messages.push(ChatMessage::assistant(fmt!("It failed at step {}. {}", k, "y".repeat(2_000))));
+        }
+        for i in 0..12 {
+            s.messages.push(ChatMessage::user(fmt!("ask {}", i)));
+            s.messages.push(ChatMessage::assistant(fmt!("answer {} {}", i, "y".repeat(3_000))));
+        }
+        s
+    }
+
+    #[tokio::test]
+    async fn qa_c1_his_pastes_alone_put_the_folded_chat_over_the_window() {
+        // Three pastes of 26 KB, each of which fitted the 20k window when he sent it.
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary."),
+            completion("Short summary."), completion("Short summary.")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let host = crate::engine::host::test::TestHost::default();
+        host.store().keep_notes();
+        a.set_words_home("chat:c1");
+        let mut session = qc_wordy(3, 26_000);
+        let before = qc_tokens(&a, &session);
+        let mut events = Vec::new();
+        let moved = a.fold_by_hand(&host, &mut session,
+            &mut |ev| events.push(ev)).await;
+        let after = qc_tokens(&a, &session);
+        let n = qa_notice(&session);
+        let said = events.iter().find_map(|e| match e { AgentEvent::Compacted { note, .. } => Some(note.clone()), _ => None }).unwrap_or_default();
+        eprintln!("C1 moved={} before={} after={} budget={} window=20000 words={} noroom={} said={:?}",
+            moved, before, after, qc_budget(&a), compact::words_in_notice(&n).len(),
+            n.contains("no room left"), said);
+        // A second fold, as the provider's refusal forces it.
+        let mut working = session.messages.clone();
+        let mut ev2 = Vec::new();
+        a.fold_if_needed(&host, &mut session, &mut working,
+            0, Fold::Refused, &mut |ev| ev2.push(ev)).await;
+        let sent = a.gauge.tokens(compact::conversation_bytes(&working));
+        eprintln!("C1 after a forced refold: session={} sent={}", qc_tokens(&a, &session), sent);
+        assert!(sent <= 20_000, "after every fold he can ask for, the request is still over the window: {} tokens", sent);
+        // Every word of his is in the notice, the kept tail or his words log.
+        let log = host.store().notes_of("chat:c1");
+        let all: String = session.messages.iter().map(|m| m.text().to_string()).collect::<Vec<_>>().join("\n");
+        for w in compact::person_words(&qc_wordy(3, 26_000).messages, None) {
+            let logged = compact::log_read(&log).iter().any(|x| x.text == w);
+            assert!(logged || all.contains(&w), "his message was lost: {:?}", &w[..w.len().min(40)]);
+        }
+    }
+
+    #[tokio::test]
+    async fn qa_c2_his_words_starve_the_summary_well_before_the_target() {
+        for kb in [4usize, 8, 12, 16, 20] {
+            let asked = std::sync::Arc::new(std::sync::Mutex::new(0u64));
+            let a2 = asked.clone();
+            let (port, _seen) = crate::llm::tests::start_stub_with(move |body: &str| {
+                *a2.lock().unwrap() = qa_asked(body);
+                completion("## Task\nKeep the caps.\n## Next step\nGo on.\n")
+            }).await;
+            let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+            a.set_context_window(20_000);
+        let host = crate::engine::host::test::TestHost::default();
+        host.store().keep_notes();
+        a.set_words_home("chat:c1");
+            let mut session = qc_wordy(2, kb * 1_000);
+            let mut events = Vec::new();
+            a.fold_by_hand(&host, &mut session,
+                &mut |ev| events.push(ev)).await;
+            let n = qa_notice(&session);
+            eprintln!("C2 words={}KB asked={} noroom={} left_out={} landed={} line={}", 2 * kb,
+                *asked.lock().unwrap(), n.contains("no room left"), n.contains("left out whole"),
+                landed_tokens(&events), fold_line(&a));
+            if kb >= 12 {
+                assert!(*asked.lock().unwrap() > 0,
+                    "with {} KB of his words the summary was asked for nothing", 2 * kb);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn qa_c3_an_app_nudge_is_quoted_to_the_model_as_his_words() {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary.")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        session.messages[2] = ChatMessage::app(report_nudge());
+        let mut events = Vec::new();
+        a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+            &mut |ev| events.push(ev)).await;
+        let w = compact::words_in_notice(&qa_notice(&session));
+        eprintln!("C3 nudge_quoted_as_his={}", w.iter().any(|x| *x == report_nudge()));
+        assert!(!w.iter().any(|x| *x == report_nudge()), "the app's nudge is quoted as his words");
+    }
+
+    #[tokio::test]
+    async fn qa_c4_a_notice_he_pasted_loses_his_own_question() {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary.")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = foldable_session(30, 3_000);
+        let pasted = fmt!("{}\n\nWhy did this fold leave out my summary?",
+            compact::notice(4, &compact::Summary::Prose("old"), &compact::Ledger::default(), false));
+        session.messages[0] = ChatMessage::user(pasted.clone());
+        let mut events = Vec::new();
+        a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+            &mut |ev| events.push(ev)).await;
+        let all: String = session.messages.iter().map(|m| m.text().to_string()).collect::<Vec<_>>().join("\n");
+        eprintln!("C4 question_kept={}", all.contains("Why did this fold leave out my summary?"));
+        assert!(all.contains("Why did this fold leave out my summary?"), "his question went with the pasted notice");
+    }
+
+    #[tokio::test]
+    async fn qa_c5_a_stop_with_no_room_for_a_summary_still_folds() {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary.")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let mut session = qc_wordy(2, 16_000);
+        let before = session.messages.clone();
+        let h = a.llm.halt();
+        h.rearm();
+        h.fire();
+        let mut events = Vec::new();
+        let moved = a.fold_by_hand(&crate::engine::host::DefaultHost::default(), &mut session,
+            &mut |ev| events.push(ev)).await;
+        eprintln!("C5 moved={} unchanged={} noroom={}", moved, session.messages == before,
+            qa_notice(&session).contains("no room left"));
+        assert!(session.messages == before, "a Stop with no room for a summary still rewrote the session");
+    }
+
+    #[tokio::test]
+    async fn qa_c6_each_new_turn_refolds_a_wordy_chat() {
+        // Words between the target and the budget: every turn's first round over the line folds
+        // again, rewriting the notice (a new cache epoch) and carrying the same words.
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let c2 = calls.clone();
+        let (port, _seen) = crate::llm::tests::start_stub_with(move |_b: &str| {
+            *c2.lock().unwrap() += 1; completion("Short summary.") }).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let host = crate::engine::host::test::TestHost::default();
+        host.store().keep_notes();
+        a.set_words_home("chat:c6");
+        let mut session = qc_wordy(2, 17_000);
+        let mut events = Vec::new();
+        a.fold_by_hand(&host, &mut session,
+            &mut |ev| events.push(ev)).await;
+        let mut notices = Vec::new();
+        notices.push(qa_notice(&session));
+        let mut calls_then = *calls.lock().unwrap();
+        let mut refolded_last = false;
+        for t in 0..4 {
+            a.fold_rest.set(0);
+            a.turn_start.set(session.messages.len());
+            session.messages.push(ChatMessage::user(fmt!("turn {}", t)));
+            for r in 0..3 {
+                session.messages.push(ChatMessage::assistant(fmt!("work {} {} {}", t, r, "w".repeat(2_500))));
+                session.messages.push(ChatMessage::user(fmt!("go on {} {}", t, r)));
+            }
+            let mut working = session.messages.clone();
+            let mut ev = Vec::new();
+            a.fold_if_needed(&host, &mut session, &mut working,
+                0, Fold::IfNeeded, &mut |e| ev.push(e)).await;
+            let n = qa_notice(&session);
+            eprintln!("C6 turn={} tokens={} budget={} refolded={} words={} summary_calls={}", t,
+                qc_tokens(&a, &session), qc_budget(&a), n != *notices.last().unwrap(),
+                compact::words_in_notice(&n).len(), *calls.lock().unwrap());
+            // A refold is paid only for new work: it writes a summary and frees what the turns
+            // since added, never re-carrying the same words turn after turn.
+            let calls_now = *calls.lock().unwrap();
+            if t >= 1 && n != *notices.last().unwrap() {
+                assert!(calls_now > calls_then, "turn {} refolded with no summary", t);
+                assert!(!refolded_last, "turn {} refolded straight after turn {}", t, t - 1);
+            }
+            refolded_last = n != *notices.last().unwrap();
+            calls_then = calls_now;
+            notices.push(n);
+        }
+    }
+
+    // ── CCP3-FOLDFIX3 (qa-ccp3-b F1, F3, (a)) ──────────────────────────────────────────
+    fn qc_said(events: &[AgentEvent]) -> String {
+        events.iter().find_map(|e| match e {
+            AgentEvent::Compacted { note, .. } => Some(note.clone()),
+            _                                  => None,
+        }).unwrap_or_default()
+    }
+
+    /// F1: the notice names his words log by its own name beside the notes, and a later fold
+    /// still files into it after the first.
+    #[tokio::test]
+    async fn ccp3_f1_the_words_log_has_its_own_name_and_a_later_fold_still_files() {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary."),
+            completion("Short summary."), completion("Short summary.")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let host = crate::engine::host::test::TestHost::default();
+        host.store().keep_notes();
+        a.set_words_home("chat:c1");
+        let mut session = qc_wordy(3, 26_000);
+        let mut events = Vec::new();
+        assert!(a.fold_by_hand(&host, &mut session, &mut |ev| events.push(ev)).await);
+        let log = fmt!("chats/c1/{}", compact::WORDS_FILE);
+        assert!(qa_notice(&session).contains(&log), "the notice does not name {}: {}", log,
+            qa_notice(&session));
+        let first = compact::log_read(&host.store().notes_of("chat:c1")).len();
+        assert!(first > 0, "the first fold filed nothing");
+        // New history: two more pastes, then a fold.
+        for k in 0..2 {
+            session.messages.push(ChatMessage::user(fmt!("And this?\n{}", qc_paste(&fmt!("Q{}", k), 26_000))));
+            session.messages.push(ChatMessage::assistant(fmt!("It failed at Q{}. {}", k, "y".repeat(2_000))));
+        }
+        for i in 0..12 {
+            session.messages.push(ChatMessage::user(fmt!("more {}", i)));
+            session.messages.push(ChatMessage::assistant(fmt!("reply {} {}", i, "y".repeat(3_000))));
+        }
+        let mut ev2 = Vec::new();
+        assert!(a.fold_by_hand(&host, &mut session, &mut |ev| ev2.push(ev)).await);
+        let logged = compact::log_read(&host.store().notes_of("chat:c1"));
+        assert!(logged.len() > first, "the later fold filed nothing: {} then {}", first, logged.len());
+        assert!(!qc_said(&ev2).contains("could not be filed"), "{}", qc_said(&ev2));
+    }
+
+    /// F3: two equal words said into a turn are two messages of his, each with its own row id,
+    /// so the words log files both.
+    #[tokio::test]
+    async fn ccp3_f3_two_equal_interjections_are_both_logged() {
+        let registry = one_tool();
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("twice"), fmt!("model"));
+        let ran = a.run_turn(&mut session, fmt!("write it"), &registry, &mut |ev| {
+            if let AgentEvent::ToolCall { .. } = ev {
+                a.interject("yes");
+                a.interject("yes");
+            }
+        }).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        let said = compact::person_said(&session.messages, None);
+        let yes: Vec<&compact::Said> = said.iter().filter(|w| w.text == "yes").collect();
+        assert_eq!(2, yes.len(), "both interjections are not in the session");
+        assert!(yes.iter().all(|w| !w.mid.is_empty()), "an interjection carries no row id");
+        assert!(yes[0].mid != yes[1].mid, "two interjections share a row id");
+        let log = compact::log_merge("", &compact::log_entries(&said, "2026-10-25"));
+        assert_eq!(2, compact::log_read(&log).iter().filter(|w| w.text == "yes").count(),
+            "two equal interjections were logged as one");
+    }
+
+    /// (a): when filing fails the notice carries every word of his (R1) and says so, and turn
+    /// after turn with no new history refolds nothing and pays for no summary.
+    #[tokio::test]
+    async fn ccp3_a_no_refold_without_new_history_when_filing_fails() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let c2 = calls.clone();
+        let (port, _seen) = crate::llm::tests::start_stub_with(move |_b: &str| {
+            *c2.lock().unwrap() += 1; completion("Short summary.") }).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        // A words home, and a store that refuses to file: R1.
+        let host = crate::engine::host::test::TestHost::default();
+        a.set_words_home("chat:c6");
+        let mut session = qc_wordy(2, 17_000);
+        let mut events = Vec::new();
+        assert!(a.fold_by_hand(&host, &mut session, &mut |ev| events.push(ev)).await);
+        assert!(qc_said(&events).contains("could not be filed"), "{}", qc_said(&events));
+        let first = qa_notice(&session);
+        let all: String = session.messages.iter().map(|m| m.text().to_string()).collect::<Vec<_>>().join("\n");
+        for w in compact::person_words(&qc_wordy(2, 17_000).messages, None) {
+            assert!(all.contains(&w) || compact::words_in_notice(&first).contains(&w),
+                "his message was lost: {:?}", &w[..w.len().min(40)]);
+        }
+        let paid = *calls.lock().unwrap();
+        for t in 0..4 {
+            a.fold_rest.set(0);
+            a.turn_start.set(session.messages.len());
+            for why in [Fold::IfNeeded, Fold::Refused, Fold::Capped] {
+                let mut working = session.messages.clone();
+                let mut ev = Vec::new();
+                a.fold_if_needed(&host, &mut session, &mut working, 0, why, &mut |e| ev.push(e)).await;
+                assert_eq!(first, qa_notice(&session), "turn {} {:?} refolded with no new history", t, why);
+            }
+        }
+        assert_eq!(paid, *calls.lock().unwrap(), "a summary was paid for with no new history");
+        // New history does let a fold run again.
+        for i in 0..14 {
+            session.messages.push(ChatMessage::user(fmt!("next {}", i)));
+            session.messages.push(ChatMessage::assistant(fmt!("done {} {}", i, "y".repeat(3_000))));
+        }
+        let mut working = session.messages.clone();
+        let mut ev = Vec::new();
+        a.fold_if_needed(&host, &mut session, &mut working, 0, Fold::Refused, &mut |e| ev.push(e)).await;
+        assert!(first != qa_notice(&session), "new history did not let the conversation fold again");
+    }
+
+    /// The futures on a turn's path, by size: what a wasm turn carries on its 1 MiB stack
+    /// (CCP3-STACK).  The figures are printed for the lead and bounded so that a growth shows.
+    #[test]
+    fn ccp3_stack_turn_futures_by_size() {
+        let host = crate::engine::host::DefaultHost::default();
+        let registry = one_tool();
+        let a = Agent::new(crate::llm::tests::stub_client(1), "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("sized"), fmt!("model"));
+        let mut sink = |_: AgentEvent| {};
+        let turn = {
+            let f = a.run_turn(&mut session, fmt!("hi"), &registry, &mut sink);
+            std::mem::size_of_val(&f)
+        };
+        let rounds = {
+            let mut fixed = Fixed;
+            let f = a.run_tool_loop_body(&mut session, Vec::new(), &registry, &mut fixed, &mut sink);
+            std::mem::size_of_val(&f)
+        };
+        let streaming = {
+            let f = a.run_streaming_body(&host, &mut session, Vec::new(), &mut sink);
+            std::mem::size_of_val(&f)
+        };
+        let fold = {
+            let mut working = Vec::new();
+            let f = a.fold_if_needed_body(&host, &mut session, &mut working, 0, Fold::IfNeeded, &mut sink);
+            std::mem::size_of_val(&f)
+        };
+        let filing = {
+            let f = a.file_words(&host, &[], 0);
+            std::mem::size_of_val(&f)
+        };
+        eprintln!("CCP3-STACK future bytes: run_turn={} run_tool_loop={} run_streaming={} \
+            fold_if_needed={} file_words={}", turn, rounds, streaming, fold, filing);
+        // CCP4-STACKPIN: a debug wasm turn overflowed its 1 MiB stack (1732 KiB peak) because each
+        // poll frame holds its child's whole future; the turn path boxes its children, so every
+        // future on it stays a few KiB in a debug build. A growth past the bound is a stack regression.
+        const MAX: usize = 8 * 1024;
+        for (name, size) in [("run_turn", turn), ("run_tool_loop", rounds), ("run_streaming", streaming),
+            ("fold_if_needed", fold), ("file_words", filing)]
+        {
+            assert!(size <= MAX, "the {} future is {} bytes, over the {} byte bound: box the child \
+                futures it awaits (CCP4-STACKPIN)", name, size, MAX);
+        }
+    }
+
 }
 
 /// ALERT-PENDING (D-20261016-17): a turn that reported on the Pending panel may end with no

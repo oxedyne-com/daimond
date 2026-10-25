@@ -2194,7 +2194,10 @@
 	/// a turn with nobody present. A page that wrote it could not arm anything, since a
 	/// triggered action is held until a person releases it on this device (`releasedHereOnly`
 	/// in pause.js), but what a page may not start it has no business writing either.
-	var PAGE_NEVER_WRITES = /^(crystal\.(json|html|md)$|versions\/|\.daimond\/|capp\.json$|triggers\.json$)/;
+	///
+	/// `WORDS.md` since 2026-10-25 (CCP3 F1): his words log, which only the app files. Matched
+	/// folded, as the engine's record is (`tools::fold`), which only refuses more.
+	var PAGE_NEVER_WRITES = /^(crystal\.(json|html|md)$|versions\/|\.daimond\/|capp\.json$|triggers\.json$|WORDS\.md$)/i;
 
 	/// The most a page may write in one call.
 	///

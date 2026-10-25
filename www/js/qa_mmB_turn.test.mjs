@@ -15,7 +15,7 @@ win.DaimondCore = { tombs: () => Object.assign({}, tombMap), tombstone: (k, id, 
 loadScript(source('stamp.js')); globalThis.DaimondStamp = win.DaimondStamp;
 loadScript(source('models.js'));
 const M = win.DaimondModels;
-const L = lift(source('daimond.js'), ['readJson', 'canRemint', 'setFoldPick', 'everyDiamondClient', 'applyFoldSettings', 'summarisingPick'], ['CFG_KEY']);
+const L = lift(source('daimond.js'), ['readJson', 'canRemint', 'setFoldPick', 'everyDiamondClient', 'applyFoldSettings', 'foldModelFor', 'summarisingPick'], ['CFG_KEY']);
 if (L.missing.length) console.log('  lacks: ' + L.missing.join(', '));
 const folds = [];
 const cfg = { foldProvider: '', foldModel: '' };

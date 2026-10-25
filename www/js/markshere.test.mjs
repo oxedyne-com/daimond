@@ -476,7 +476,7 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	const bare = iframes.filter((f) => !sandboxes.some(([g]) => g === f));
 	check('every file that makes a frame sandboxes it', bare.length === 0, JSON.stringify(bare));
 	const crystal = readFileSync(join(HERE, 'crystal.js'), 'utf8');
-	const m = /var PAGE_NEVER_WRITES = (\/.*\/);/.exec(crystal);
+	const m = /var PAGE_NEVER_WRITES = (\/.*\/[a-z]*);/.exec(crystal);
 	const re = m ? new Function('return ' + m[1])() : null;
 	check('a capp page may never write a Diamond\'s sidecar', !!re && re.test('.daimond/links.jsonl') && re.test('.daimond/meta.json'));
 	const key = 'daimond-marks-' + 'here';

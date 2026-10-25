@@ -174,12 +174,59 @@
 		return push(stamp({ type: 'tool_done', stream: turnId, chatId: chatId, callId: callId, result: result, outcome: String(outcome || '') }), true);
 	}
 	/// What the person typed into this turn and is not yet in the stored conversation: the
-	/// steers queued behind it, the ones said into it, in the order typed. The whole list each
+	/// words it took at a seam and the ones said into it, in the order typed (what waits behind
+	/// it is the chat's own queue, `chatQueue`). The whole list each
 	/// time, so the last entry is the truth. A reload hands it back to the composer and never
 	/// sends it (D-20261012-07): a steer is his to send again, not the app's to spend.
 	function queueSet(turnId, chatId, items) {
 		return push(stamp({ type: 'queue', stream: turnId, chatId: chatId, items: (items || []).slice() }), true);
 	}
+	// ── A chat's queue ──────────────────────────────────────────────
+	//
+	// What he sends while a turn of the chat is still out, here or on a runner, waits in the
+	// chat's queue, and the box he typed it in has been cleared: the queue is the only copy of
+	// his words (QA ccp3 A R2). It is a record of the CHAT, not of a turn running here, so it is
+	// written on every change, under a stream of its own per tab and chat, `queue:<tab>:<chat>`.
+	// The whole list each time with the older rows pruned first, so the stream holds one entry,
+	// and an empty list leaves none. A reload hands it back to the composer, unsent
+	// (D-20261012-07). Per tab, because a second tab of the account shares this database: a
+	// stream whose tab still holds its lock is that tab's, and a boot of another leaves it.
+	var TAB      = 'q' + Math.random().toString(36).slice(2, 10) + nowMs().toString(36);
+	var TAB_LOCK = 'daimond-journal-tab:';
+	var _qChain  = Promise.resolve();		// one write of a queue at a time, in the order made
+	try {
+		// Held for the life of the tab and released by the browser when it goes.
+		if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
+			navigator.locks.request(TAB_LOCK + TAB, function () { return new Promise(function () {}); });
+		}
+	} catch (e) { /* no Web Locks: every stream reads as a gone tab's, as with one tab */ }
+
+	/// Keep chat `chatId`'s queue, the words in the order typed, as its one durable entry.
+	function chatQueue(chatId, items) {
+		var s = 'queue:' + TAB + ':' + chatId, list = (items || []).slice();
+		_qChain = _qChain.then(function () { return clearStream(s); }).then(function () {
+			if (list.length) return push(stamp({ type: 'chat_queue', stream: s, chatId: chatId, tab: TAB, items: list }), true);
+		}).catch(function () { /* best effort, as every write here */ });
+		return _qChain;
+	}
+	function clearQueue(stream) { return clearStream(stream); }
+
+	/// The tabs of this account still alive, by the lock each holds, as a set of their ids.
+	async function liveTabs() {
+		var live = {};
+		try {
+			if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.query) {
+				var st = await navigator.locks.query();
+				(st.held || []).forEach(function (l) {
+					var n = String((l && l.name) || '');
+					if (n.indexOf(TAB_LOCK) === 0) live[n.slice(TAB_LOCK.length)] = 1;
+				});
+			}
+		} catch (e) { /* unknown: every other tab reads as gone */ }
+		live[TAB] = 1;
+		return live;
+	}
+
 	function turnError(turnId, chatId, message) {
 		return push(stamp({ type: 'turn_error', stream: turnId, chatId: chatId, message: message }), true);
 	}
@@ -235,7 +282,8 @@
 	// ── Recovery ────────────────────────────────────────────────────
 
 	/// Read the whole journal back, grouped per TURN into what was in flight when the tab died.
-	/// Returns { turns: [ {turnId, chatId, userText, text, tools, queue, closed, at, lastAt} ], agents: [ {runId, rec, text} ] }, where
+	/// Returns { turns: [ {turnId, chatId, userText, text, tools, queue, closed, at, lastAt} ], agents: [ {runId, rec, text} ],
+	/// queues: [ {stream, chatId, tab, items} ] }, where
 	/// `text` is the prose after the last tool and each tool carries the prose before it as `said`.
 	/// A turn is returned only if it never closed — i.e. it was interrupted — and can be placed in a
 	/// chat (its chatId is known). Because each turn is its own stream, successive turns of one chat
@@ -243,7 +291,7 @@
 	async function recover() {
 		await init();
 		await flush();                          // land anything still buffered before we read
-		var empty = { turns: [], agents: [] };
+		var empty = { turns: [], agents: [], queues: [] };
 		if (!db) return empty;
 		var rows = [];
 		try {
@@ -258,8 +306,13 @@
 
 		rows.sort(function (a, b) { return (a.k || 0) - (b.k || 0); });
 
-		var turns = {}, agents = {};
+		var turns = {}, agents = {}, queues = {};
 		rows.forEach(function (e) {
+			// A chat's queue is no turn: the last entry of its stream is the list.
+			if (e.type === 'chat_queue') {
+				if (e.stream && e.chatId) queues[e.stream] = { stream: e.stream, chatId: e.chatId, tab: String(e.tab || ''), items: Array.isArray(e.items) ? e.items : [] };
+				return;
+			}
 			if (e.type && e.type.indexOf('agent_') === 0 && e.runId) {
 				var a = agents[e.runId] || (agents[e.runId] = { runId: e.runId, rec: null, text: '', closed: false });
 				if (e.type === 'agent_open')       a.rec = e.rec;
@@ -298,7 +351,11 @@
 		var interruptedAgents = [];
 		Object.keys(agents).forEach(function (id) { if (!agents[id].closed && agents[id].rec) interruptedAgents.push(agents[id]); });
 
-		return { turns: interruptedTurns, agents: interruptedAgents };
+		// The queues a gone tab left; a live tab's (this one's included) are its own.
+		var live = await liveTabs(), leftQueues = [];
+		Object.keys(queues).forEach(function (k) { var q = queues[k]; if (!live[q.tab] && q.items.length) leftQueues.push(q); });
+
+		return { turns: interruptedTurns, agents: interruptedAgents, queues: leftQueues };
 	}
 
 	window.DaimondJournal = {
@@ -309,6 +366,8 @@
 		toolOpen:  toolOpen,
 		toolDone:  toolDone,
 		queueSet:  queueSet,
+		chatQueue: chatQueue,
+		clearQueue: clearQueue,
 		turnError: turnError,
 		turnClose: turnClose,
 		clearTurn: clearTurn,

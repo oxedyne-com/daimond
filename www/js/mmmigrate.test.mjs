@@ -35,7 +35,8 @@ const FNS = ['readJson', 'diamondModels', 'setDiamondModel', 'blankDiamondModel'
 	'adoptDiamondModel', 'diamondModel', 'migrateInherit', 'unmigrateInherit', 'setFoldPick', 'everyDiamondClient',
 	'withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
 	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit', 'mergeFold',
-	'mergeChatRecords', 'touchChatMeta', 'touchChatModel'];
+	'mergeChatRecords', 'touchChatMeta', 'touchChatModel',
+	'chatTaintOf', 'chatTaintJoin'];	// the one-way taint (H3)
 const VARS = ['DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF', 'DIAMOND_EFFORT_HALF', 'INHERIT_KEY',
 	'CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', '_chatModelShedSaid'];
 const MKEY = 'daimond-diamond-models', IKEY = 'daimond-inherit-v1', CKEY = 'daimond-config';

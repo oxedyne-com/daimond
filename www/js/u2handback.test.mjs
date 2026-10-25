@@ -65,7 +65,7 @@ function world(over) {
 }
 
 function rig(env) {
-	const l = lift(SRC, ['runDispatchFallback']);
+	const l = lift(SRC, ['runDispatchFallback', 'leaseDoorRead']);
 	assert.deepEqual(l.missing, []);
 	const scope = new Proxy(env, { has: (t, k) => typeof k === 'string' && k in t, get: (t, k) => t[k], set: (t, k, v) => { t[k] = v; return true; } });
 	return new Function('scope', 'with (scope) {\n' + l.body + '\nreturn runDispatchFallback;\n}')(scope);

@@ -278,7 +278,7 @@
 	/// so the gateway -- which cannot open the seal -- never sees it.
 	function makeErrand(f) {
 		var o = f || {};
-		return {
+		var e = {
 			t:       T_ERRAND,
 			v:       ENVELOPE_V,
 			eid:     o.eid || newId(),
@@ -371,6 +371,47 @@
 			pendingOnly: o.pendingOnly === true,
 			ts:      o.ts || Date.now(),
 		};
+		// THE CHAT HAS READ NOTHING FROM OUTSIDE (U4 ERRAND-TAINT): written only when exactly
+		// true, never as false, so a runner reads its absence -- and every older sender -- as tainted.
+		if (o.clean === true) e.clean = true;
+		// THE PACKS NOT BOUGHT (U13a PACK-CARRY): written only as a list, so a runner reads its
+		// absence -- and every older sender -- as every pack locked.
+		if (Array.isArray(o.locked)) e.locked = o.locked.map(String);
+		// THE PAGE'S APPLIED LIMITS (KT-2, engine `TurnLimits`): written only as an object, so a
+		// runner reads its absence -- and every older sender -- as limits it does not know, and
+		// hands the turn back rather than run it on a guessed window.
+		var lim = limitsOf(o.limits);
+		if (lim) e.limits = lim;
+		// THE PAGE'S REACH AND TODAY LINE (KT-4): the `Attached` block and the `Today` line the
+		// runner composes from, as this page reads them. Written only when present, so a runner
+		// reads an older sender as having neither, as before.
+		if (o.reach && typeof o.reach === 'object') e.reach = o.reach;
+		if (typeof o.today === 'string' && o.today !== '') e.today = o.today;
+		// THE OVER-DOOR SESSION'S REFERENCE (KT-4b), `{chat, sig, upto}`, in place of a session the
+		// relay door would not take: a runner holding the chat reads it there, checking `upto`, or
+		// hands the turn back `thread`. Written only when present, closing the errand.
+		if (o.sessionRef && typeof o.sessionRef === 'object') e.sessionRef = o.sessionRef;
+		return e;
+	}
+
+	/// The limits an errand carries, in the runner's field order with each field coerced as the
+	/// engine's `TurnLimits::of_dat` reads it (zero or '' is the engine's own default), or null
+	/// for anything that is not an object.
+	function limitsOf(l) {
+		if (!l || typeof l !== 'object' || Array.isArray(l)) return null;
+		function whole(v) { var n = +v; return (isFinite(n) && n > 0) ? Math.trunc(n) : 0; }
+		function real(v)  { var n = +v; return (isFinite(n) && n > 0) ? n : 0; }
+		function text(v)  { return typeof v === 'string' ? v : ''; }
+		return {
+			window:     whole(l.window),
+			foldAt:     real(l.foldAt),
+			contextCap: whole(l.contextCap),
+			spendCap:   real(l.spendCap),
+			maxRounds:  whole(l.maxRounds),
+			foldModel:  text(l.foldModel),
+			foldPrompt: text(l.foldPrompt),
+			tune:       text(l.tune),
+		};
 	}
 
 	/// Build a report envelope object (not yet sealed). §4.4: the report is the
@@ -431,8 +472,10 @@
 			// key, clamp, credits and spawn refusals), which the sender also ends "not run" with Retry.
 			// 'place' when the machine folder the turn is rooted in is not one it can work in
 			// (UNBLOCK-32 F2b): never run in its home instead; the sender ends it "not run" with Retry.
+			// 'limits' when the errand carried no limits the runner could apply (KT-2): a page older
+			// than the runner; never run on a guessed window, and the sender ends it "not run" with Retry.
 			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind'
-				|| o.cause === 'refused' || o.cause === 'place') ? o.cause : '',
+				|| o.cause === 'refused' || o.cause === 'place' || o.cause === 'limits') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
 			// final frame carries what it had done, badged (r545 F-C2-1). 0 elsewhere.
 			interrupted: o.interrupted | 0,
@@ -449,6 +492,16 @@
 		// or changed on the runner, and the restore reference `{on, run, since}` its Undo uses.
 		// Present only when the runner kept something, so an older asker sees the report it knew.
 		if (o.turnRec && typeof o.turnRec === 'object') rep.turnRec = o.turnRec;
+		// THE CHAT'S TAINT (NF3 TRIP-MARK): when the run read outside content, the time the chat
+		// was first marked, so the asker's record and engine are marked too. Present only as a
+		// number >= 1, so a clean run and an older asker see the report they knew.
+		if (typeof o.taintedAt === 'number' && o.taintedAt >= 1) rep.taintedAt = o.taintedAt;
+		// THE CONVERSATION COMES HOME (KT-5): the run's engine session after the turn, whole
+		// `{v, msgs, turnStart, base, upto, uptoTs}`, or the word that it stayed on the runner
+		// because whole it was over the post door. Each only when set, so an older asker sees
+		// the report it knew.
+		if (o.session && typeof o.session === 'object') rep.session = o.session;
+		if (o.sessionStayed) rep.sessionStayed = 1;
 		return rep;
 	}
 
@@ -1236,7 +1289,7 @@
 			keep.unshift(sm);
 		}
 		if (!keep.length) return null;
-		return {
+		var seed = {
 			chatId:   String(c.id || ''),
 			// The record's own `name` (it was `title`, a field no chat record has, so a seed
 			// never carried the name), and the worker the dispatcher chose (r53 W-rec).
@@ -1249,6 +1302,12 @@
 			whole:    1,				// no message in `msgs` is cut; see seedGraft
 			msgs:     keep,
 		};
+		// When the conversation first read outside content (H3), so a runner that builds the chat
+		// from this seed starts it tainted. It only narrows. The KEY is ABSENT when it never has:
+		// an errand is signed over its fields, and a key held as `undefined` signs bytes the
+		// opened copy (which JSON has dropped it from) does not verify.
+		if (Number(c.taintedAt) > 0) seed.taintedAt = Math.floor(Number(c.taintedAt));
+		return seed;
 	}
 
 	/// WHAT A RUNNER IS MISSING from a seeded errand: the seed's messages whose `mid`
@@ -1555,6 +1614,15 @@
 		// turn on the device that already holds the chat).
 		var seed = (o.seed === false) ? null
 			: (o.seed || seedFrom(c, turnId, o.seedMaxMsgs, o.seedMaxChars));
+		// THE ENGINE SESSION RIDES THE SEED (KT-4, binding 15): the folds, tool calls and marks
+		// with `upto`/`uptoTs` and the prose tail after `upto`, exactly what `ensureApp` restores,
+		// so the runner's history is the tab's. A copy, so a later write to the chat's live
+		// session never changes an errand already built; the prose `msgs` stay for readiness.
+		if (seed && o.session && typeof o.session === 'object') {
+			var sd = {}; Object.keys(seed).forEach(function (k) { sd[k] = seed[k]; });
+			sd.session = JSON.parse(JSON.stringify(o.session));
+			seed = sd;
+		}
 		// THE THREAD'S FINGERPRINT, computed from the SAME chat the seed is (content-free,
 		// so it is unaffected by whether the seed is clipped or dropped). It rides the
 		// errand and decides the runner's readiness -- the seed only ACCELERATES a runner
@@ -1602,7 +1670,8 @@
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
 					gone: gone, to: to, behind: behind, through: through, ids: ids,
-					auto: o.auto === true, pendingOnly: o.pendingOnly === true,
+					auto: o.auto === true, pendingOnly: o.pendingOnly === true, clean: o.clean === true,
+					locked: o.locked, limits: o.limits, reach: o.reach, today: o.today, sessionRef: o.sessionRef,
 				});
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
@@ -1631,7 +1700,8 @@
 	/// local mark can be drawn before this awaits; omitted, it is built here. `cap`
 	/// (optional) overrides the relay cap, for tests. Answers
 	/// `{ plan, body, seedDropped, sealedLen }` -- `plan` is the one whose `errand` the
-	/// returned `body` actually seals (the seedless re-seal when the seed was dropped).
+	/// returned `body` actually seals (the seedless re-seal when the seed was dropped) --
+	/// and `sessionRef` where the session went as a reference.
 	async function sealFittingErrand(chat, opts, plan, cap) {
 		// The door: `DaimondWire.fits('post', b64Len)` (the one client-side owner of the
 		// post cap), or the relay client's own `fitsRelay`, or the bare estimate -- and an
@@ -1678,6 +1748,23 @@
 			var bc   = await sealForSelf(pc.errand(0));
 			tries++;
 			if (fits(String((bc && bc.envelope) || '').length)) return answer(pc, bc, false, tries);
+		}
+		// AN OVER-DOOR SESSION GOES AS A REFERENCE (KT-4b), `{chat, sig, upto}`, once no rung above
+		// fits with it whole: never cut, since a cut session orphans a tool call or loses a fold. The
+		// seed then goes down the sessionless ladder, the reference on every rung, so a runner holding
+		// the chat reads the session there, checking `upto` against what it holds, and one that does
+		// not hands the turn back with cause `thread`.
+		if (p.fields.seed && p.fields.seed.session) {
+			var o1 = {}; if (opts) Object.keys(opts).forEach(function (k) { o1[k] = opts[k]; });
+			var s0 = p.fields.seed.session;
+			o1.session    = null;
+			o1.sessionRef = { chat: p.fields.chatId, sig: (p.fields.thread && p.fields.thread.sig) || 0,
+				upto: String(s0.upto || '') };
+			o1.eid     = p.fields.eid;
+			var bare = await sealFittingErrand(chat, o1, null, cap);
+			bare.tries     += tries;
+			bare.sessionRef = o1.sessionRef;	// the dispatcher's mark, for the hand-back's own words
+			return bare;
 		}
 		// Seedless.
 		var o3 = {}; if (opts) Object.keys(opts).forEach(function (k) { o3[k] = opts[k]; });

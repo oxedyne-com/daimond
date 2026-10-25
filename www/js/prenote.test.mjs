@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { fakeIDB, tabJournal, journalQueueOver } from './journalfixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0, checks = 0;
@@ -126,7 +127,7 @@ const calls_ = { interject: [], rendered: 0, gave: [], committed: [] };	// what 
 function scope() {
 	const mid = { n: 0 };
 	const stubs = { diag: () => {}, newMid: () => 'mi' + (++mid.n), nowTs: () => Date.now(), commitRatings: (id) => { calls_.committed.push(id); return false; },
-		giveUpSent: (c, w) => { calls_.gave.push(w); }, syncSendMode: () => {}, renderQueue: () => { calls_.rendered++; }, journalQueue: () => {}, _steerApp: {}, current: null };
+		giveUpSent: (c, w) => { calls_.gave.push(w); }, syncSendMode: () => {}, renderQueue: () => { calls_.rendered++; }, journalQueue: journalQueueOver(SRC, tabJournal(fakeIDB(), new Set())), _steerApp: {}, current: null };
 	return new Function('window', 'DaimondRatings', ...Object.keys(stubs), have.map((n) => src[n]).join('\n') + '\nreturn { ' + have.join(', ') + ' };')(win, R, ...Object.values(stubs));
 }
 const miss = (n) => () => { throw new Error(n + ' missing'); };

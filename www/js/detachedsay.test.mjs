@@ -25,14 +25,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { source, lift } from './testlift.mjs';
+import { fakeIDB, tabJournal, journalQueueOver } from './journalfixture.mjs';
 
 const SRC = source('daimond.js');
 const FNS = ['interjectInto', 'interjectMessage', 'sayIntoHere', 'sendToDiamondTurn', 'reclaimInterjections',
-	'enqueueMessage'];
+	'enqueueMessage', 'newMid'];
 
 // One runner device: the lifted code over fakes, with D busy on `fa`, the turn's app.
 function runner(detached) {
-	const L = lift(SRC, FNS);
+	const L = lift(SRC, FNS, ['midSeq']);
 	assert.deepEqual(L.missing, [], 'daimond.js lacks ' + L.missing.join(', '));
 	const log = [];
 	const shown = { id: 'cD', diamondId: 'D', messages: [], _queue: [] };	// D's chat, on screen here
@@ -50,7 +51,7 @@ function runner(detached) {
 		peerHeldTurnOf: () => null,
 		sayToRunner: async () => { log.push(['sayToRunner']); return false; },
 		maybeAutoDispatch: async () => { log.push(['elect']); return true; },
-		commitRatings: () => {}, ratingPre: () => '', journalQueue: () => {}, giveUpSent: () => {},
+		commitRatings: () => {}, ratingPre: () => '', journalQueue: journalQueueOver(SRC, tabJournal(fakeIDB(), new Set())), giveUpSent: () => {},
 		syncSendMode: () => {}, renderQueue: () => {}, diag: (k, m) => log.push(['diag', k, m]),
 	});
 	ctx.window = ctx;
@@ -67,7 +68,7 @@ test('W1: typed on the runner into a detached tool-less turn: queued, and still 
 	assert.equal(went, true);
 	assert.deepEqual(r.said(), [], 'not said into the turn it runs for another device');
 	r.end();
-	assert.deepEqual(r.shown._queue, ['t'], 'the word waits for the election: ' + JSON.stringify(r.log));
+	assert.equal(JSON.stringify(r.shown._queue), '[{"text":"t"}]', 'the word waits for the election: ' + JSON.stringify(r.log));
 	assert.deepEqual(r.shown._interject || [], [], 'no "said into" bubble left on the chat it was typed in');
 });
 

@@ -16,9 +16,10 @@
 use crate::agent::Agent;
 use crate::agent::Interjections;
 use crate::agent::new_interjections;
+use crate::engine::compose;
 use crate::llm::{Halt, LlmClient, StopMark, StopSet, parse_json_string_array};
 use crate::prompts::Role;
-use crate::protocol::{AgentEvent, ChatMessage, Session, ToolCall, generate_session_id};
+use crate::protocol::{AgentEvent, ChatMessage, Session, generate_session_id};
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 use crate::marks::{DiamondId, Live};
 use crate::executor::Executor;
@@ -336,8 +337,10 @@ impl DaimondApp {
     /// * `text` - What the user said while the turn was in flight.
     /// * `pre` - The app's note for it, joined ahead of the words in the round that carries it
     ///   and never shown as them.  Optional, so a caller that says nothing queues none.
-    pub fn interject(&self, text: String, pre: Option<String>) -> usize {
-        self.agent.interject_noted(&text, &pre.unwrap_or_default())
+    /// * `mid` - The row id the page draws the words as, so the conversation's message is that
+    ///   row (CCP3 F3).  Optional: without one the seam mints its own.
+    pub fn interject(&self, text: String, pre: Option<String>, mid: Option<String>) -> usize {
+        self.agent.interject_marked(&text, &pre.unwrap_or_default(), &mid.unwrap_or_default())
     }
 
     /// Take back everything that never made it in, leaving the queue empty.
@@ -361,8 +364,11 @@ impl DaimondApp {
     /// The daimon's half of [`DaimondApp::interject`] (UNBLOCK-27 R7): a daimon turn runs on an
     /// agent composed for it, and that agent shares this Diamond's queue.  Returns how many are
     /// now waiting.
-    pub fn interject_daimon(&self, id: String, text: String, pre: Option<String>) -> usize {
-        crate::agent::say_into(&said_for(&self.said, &id), &text, &pre.unwrap_or_default())
+    pub fn interject_daimon(&self, id: String, text: String, pre: Option<String>,
+        mid: Option<String>) -> usize
+    {
+        crate::agent::say_into(&said_for(&self.said, &id), &text, &pre.unwrap_or_default(),
+            &mid.unwrap_or_default())
     }
 
     /// Take back what was said into Diamond `id`'s turn and never reached a seam, as
@@ -851,9 +857,11 @@ impl DaimondApp {
     }
 
     /// What the Diamond `id` reaches on this device now, as the engine reads it at every act:
-    /// `{"attached":[…],"read_only":[…],"unconfirmed":[…]}`.  The page's panels draw from this
-    /// rather than composing the marks a second time, so what is shown is what is in force.  A
-    /// record that cannot be read rejects with [`crate::wasm::marks::UNREAD`].
+    /// `{"attached":[…],"read_only":[…],"unconfirmed":[…],"nested":[…]}`, the whole [`crate::marks::Reach`].
+    /// The page's panels draw from this rather than composing the marks a second time, so what
+    /// is shown is what is in force, and a handed-off turn carries it whole as the errand's
+    /// `reach` (KT-4), so the runner composes the same `Attached` block.  A record that cannot be
+    /// read rejects with [`crate::wasm::marks::UNREAD`].
     pub async fn diamond_reach(&self, id: String) -> Result<String, JsValue> {
         let id = match DiamondId::parse(&id) {
             Ok(d)  => d,
@@ -869,8 +877,8 @@ impl DaimondApp {
                 .collect();
             fmt!("[{}]", items.join(","))
         };
-        Ok(fmt!("{{\"attached\":{},\"read_only\":{},\"unconfirmed\":{}}}",
-            list(&reach.attached), list(&reach.read_only), list(&reach.unconfirmed)))
+        Ok(fmt!("{{\"attached\":{},\"read_only\":{},\"unconfirmed\":{},\"nested\":{}}}",
+            list(&reach.attached), list(&reach.read_only), list(&reach.unconfirmed), list(&reach.nested)))
     }
 
     /// What this agent is actually confined to, as the engine holds it.
@@ -1288,13 +1296,7 @@ impl DaimondApp {
     )
         -> Result<usize, JsValue>
     {
-        let mut restored: Vec<ChatMessage> = Vec::new();
-        for item in msgs.iter() {
-            if let Some(m) = js_to_message(&item) {
-                restored.push(m);
-            }
-        }
-        let whole = crate::protocol::pair_up(restored);
+        let whole = seed_prior(&msgs);
         let n = whole.len();
         let counters = restored_counters(prompt_tokens, completion_tokens, last_prompt_tokens,
             cached_tokens, cost_usd);
@@ -2202,9 +2204,12 @@ impl DaimondApp {
         // the band naming this computer is empty until a first turn has gone, which is the
         // same drift in miniature -- a view of the request that is only true afterwards.
         let registry = self.registry();
-        let (brief, blocks, rooted) = Self::briefing(&self.agent, &registry).await;
-        self.agent.set_briefing(&brief);
-        self.agent.set_blocks(blocks);
+        // A VIEW, so a copy: the live registry's machine answer belongs to the turn that was
+        // briefed with it, and a band opened mid-turn must not change that turn's offer.
+        let view = (*registry).clone();
+        if let Err(e) = Self::brief_own(&self.agent, &view).await {
+            return Err(to_js_err(e));
+        }
         // The conversation as the actor last published it, so the note composed is the one the
         // next turn would carry; none to read leaves every block in the note.  The fold check
         // reads the provider's real count of the last round, as the turn does (r578e D4), and as
@@ -2214,10 +2219,6 @@ impl DaimondApp {
             Err(_) => Vec::new(),
         };
         let real = self.counters().last_prompt;
-        // A VIEW, so a copy: the live registry's machine answer belongs to the turn that was
-        // briefed with it, and a band opened mid-turn must not change that turn's offer.
-        let view = (*registry).clone();
-        view.set_machine_rooted(rooted);
         Ok(wire_json(&self.agent, &view, "", &sent, real))
     }
 
@@ -3252,14 +3253,14 @@ fn wire_json(
 /// A conversation handed over by the page, read as a turn starts from it: each message the page
 /// can read, then paired up so a lost tool reply costs this read and not every turn after it.
 /// [`DaimondApp::steer_crystal`] and the Wire both read it here, so the two cannot differ.
+/// The reading is the engine's [`crate::protocol::seed_prior`], the one a runner's turn uses
+/// (KT-4); an array the page cannot write as JSON reads as nothing.
 fn seed_prior(prior: &js_sys::Array) -> Vec<ChatMessage> {
-    let mut seeded: Vec<ChatMessage> = Vec::new();
-    for item in prior.iter() {
-        if let Some(m) = js_to_message(&item) {
-            seeded.push(m);
-        }
-    }
-    crate::protocol::pair_up(seeded)
+    let json = match js_sys::JSON::stringify(prior) {
+        Ok(s)   => s.as_string().unwrap_or_default(),
+        Err(_)  => return Vec::new(),
+    };
+    crate::protocol::seed_prior_json(&json).unwrap_or_default()
 }
 
 /// Block `b` in a turn note exactly as written there, tags and all, or `""` where the note does
@@ -3298,7 +3299,7 @@ fn line_starts(s: &str) -> impl Iterator<Item = (usize, &str)> {
 /// Today's line for a turn's briefing, on this browser's clock and in its zone: the same day
 /// `diamond::today` stamps a decision with, so the date the model is told and the date the app
 /// writes cannot differ.
-fn today_line() -> String {
+pub(crate) fn today_line() -> String {
     const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     let d = js_sys::Date::new_0();
     let day = DAYS.get(d.get_day() as usize).copied().unwrap_or("");
@@ -3401,75 +3402,34 @@ impl DaimondApp {
     }
 
 
-    /// What this turn is told beyond its role: which model is carrying it, what day it is, and
-    /// what machine it can reach.
+    /// This app's own agent's turn parts, from the engine's one composition
+    /// ([`compose::compose_onto`], KT-3 invariant 8): the briefing and blocks a runner's chat turn
+    /// on the same inputs carries, set on the agent that lives across this chat's turns.  Its
+    /// system message is the page's (`Prompts.role('chat', …)`, the engine's head with no
+    /// instructions), and its limits are the page's own, so both are kept.
     ///
-    /// Composed per TURN and not at construction, because both halves move under a built agent --
-    /// the fence depends on the Diamond's bounds and on whether the turn has read a stranger's
-    /// words, and asking the hand needs an await the constructor does not have.  Either half may
-    /// come back empty (no model configured, no hand attached) and then it simply is not said:
-    /// this rides on every request of every turn, so an absent capability is not worth describing.
-    ///
-    /// The third value is whether a command has anywhere to run (`None` where the belt holds no
-    /// `run`), which a turn's owner sets on its own registry and a view of the request does not.
-    ///
-    /// # Arguments
-    /// * `registry` - The tools this turn will hold, which decide the fence and whether the model
-    ///   is asked to judge its own fan-out.
-    pub(crate) async fn briefing(agent: &Agent, registry: &ToolRegistry)
-        -> (String, crate::prompts::TurnBlocks, Option<bool>)
-    {
-        use crate::prompts::Block;
-        // Read off the client that will actually carry the request, never a constant: a written-
-        // down model name is a lie the moment the user switches provider.
-        // THE MODEL NOTE ALONE STAYS IN THE SYSTEM MESSAGE: it changes only with a model switch,
-        // which starts a new cache epoch anyway.  Everything else here is per turn, so it rides in
-        // the turn's own note, block by block (r578); see `prompts::turn_note`.
-        let mut blocks = crate::prompts::TurnBlocks::default();
-        let s = crate::prompts::model_note(
-            &agent.llm.model,
-            &agent.llm.host,
-            registry.tools.contains(&Tool::SpawnAgent));
-        // Whether a command has anywhere to run, RETURNED and never written here: the caller owns
-        // the registry the turn runs on, and a view of the request must not touch a live turn's.
-        let mut rooted = None;
-        // The machine only where a command can actually be run on it. A daimon holds file tools
-        // and `spawn_agent` and no `run`, so a paragraph about which folders a command may touch
-        // is a paragraph it can never act on -- and it would be paid for on every request of every
-        // steering turn.
-        if registry.tools.contains(&Tool::Run) {
-            // The whole context, so the folders and the network sentence the model is shown are
-            // the fence the command will actually run under -- which now includes what the user
-            // has already said about this turn reaching out. A worker told it had the network and
-            // then refused by the fence spends the turn debugging the app.
-            let (machine, on) = crate::prompts::machine_briefing(&registry.ctx).await;
-            blocks.set(Block::Machine, &machine);
-            rooted = Some(on);
-        }
-        // WHAT DAY IT IS, which no model knows; see `prompts::today_note`.
+    /// The app's agent is a chat's or a worker's, never a daimon's (a Diamond's turn is
+    /// [`Daimon::compose_daimon`]'s), so a worker scoped to a Diamond is briefed as a chat is,
+    /// with none of a Diamond's blocks.  Whether a command has anywhere to run is set on
+    /// `registry`, which a view of the request passes as its own copy.
+    pub(crate) async fn brief_own(agent: &Agent, registry: &ToolRegistry) -> Outcome<()> {
+        let keeper = match crate::tools::KeeperKind::of(&registry.ctx.keeper) {
+            crate::tools::KeeperKind::Chat  => registry.ctx.keeper.as_str(),
+            _                               => crate::tools::CHAT_KEEPER,
+        };
         let today = today_line();
-        blocks.set(Block::Today, &today);
-        // WHERE THE TURN IS, before anything else it may need to know.
-        //
-        // The largest round sink measured on the bank is not a tool failure at all: 21 of 27
-        // Claude trials opened by reading a path spelled relative to the wrong root, met a
-        // not-found, spent a `file_list '.'` and read again -- 44 rounds over 16 trials. A shell
-        // agent never pays that because its prompt says what its working directory is. This says
-        // the same thing once per turn, and costs a listing the page has already cached.
-        //
-        // Only where the turn holds file tools: a role with none cannot act on it.
-        if registry.tools.iter().any(|t| matches!(t, Tool::FileRead | Tool::FileList)) {
-            let note = crate::tools::orientation_tree(
-                &registry.ctx, &registry.ctx.cwd, &registry.ctx.no_write).await;
-            blocks.set(Block::Tree, &note);
-        }
-        // What the account has NOT bought, in one sentence, because the tools themselves are no
-        // longer in the request at all -- see `ToolRegistry::offered`.  Absent, and free, on an
-        // account that holds every pack its belt is sold under.
-        if let Some(packs) = registry.locked_pack_note() {
-            blocks.set(Block::Packs, &packs);
-        }
-        (s, blocks, rooted)
+        let ask = compose::Ask {
+            keeper,
+            own:            "",
+            steer:          "",
+            instructions:   "",
+            today:          &today,
+            reach:          None,
+            limits:         compose::Limited::Kept,
+            liveness_ms:    0,
+        };
+        res!(compose::compose_onto(agent, &ask, registry).await);
+        Ok(())
     }
 
     /// The registry as the page last set it: the one a turn sent now runs under.
@@ -3780,7 +3740,7 @@ impl Daimon {
             Err(_) => return Err(refuse(crate::wasm::marks::UNREAD)),
         };
         let marked = reach.places();
-        let consult = reach.read_only;
+        let consult = reach.read_only.clone();
         let mut bounds = crate::tools::diamond_bounds(
             &diamond::diamond_dir(id), &marked, &consult);
         // THE TOOLCHAINS THE USER TICKED ON THIS DIAMOND, and they were missing here.
@@ -3798,193 +3758,39 @@ impl Daimon {
         // fence, and both what a missing grant provokes.  The hand's journal for that turn
         // recorded `"ro": []`.
         bounds.extend(crate::tools::toolkit_bounds(&parse_path_array(toolkits)));
-        // Stateless per instruction: reconstruct context from the crystal.
-        //
-        // The heading names the FILE, not the format, and that is what makes the standing context
-        // and the file tools agree: a daimon told "here is the crystal" and left to find out where
-        // it lives has to guess a name, and the name changed under it.
-        let before = diamond::read_crystal_data(id).await.unwrap_or_default();
-        // COMPOSED FOR THE MODEL THAT WILL CARRY THE REQUEST, read off the client rather than
-        // from a constant, exactly as `briefing` reads it: two of the notes are dropped for a
-        // model measured not to need them, and a model this build has not heard of is given all
-        // of them.  See `prompts::CONDITIONAL` and `dev/PROMPT_NOTES.md`.
-        // The notes are this Diamond's and no other's, and are in `standing`, so the fingerprint
-        // taken over it below moves when a note does and for no other reason.
+        // This Diamond's steering notes, composed into the role text before the safety clause.
         let steer = self.ctl.steering.get(id).cloned().unwrap_or_default();
-        let standing = Role::Daimon.compose_wire_with(
-            &self.ctl.daimon_prompt, &self.agent.llm.model, &steer,
-            self.ctl.registry.claude_names());
-        // Named apart from the standing text rather than pushed onto it, and the reason is the
-        // question the Wire asks of every paragraph: WHOSE is it.  The role prompt above is one
-        // constant every Diamond shares and its owner may rewrite; what follows is true of THIS
-        // Diamond on THIS turn and of no other.  They are joined below in send order, so nothing
-        // here changes a byte of what the model reads.
-        let mut local = String::new();
-        // Where this daimon stands, said per turn because only the turn knows the id and the marks.
-        //
-        // The role text cannot carry either: it is one constant shared by every Diamond, and the
-        // user may edit it (`prompts/<role>.md`).  What goes here is the part that is true of THIS
-        // Diamond at THIS moment -- its own folder, and what the paperclip has put in reach.
-        //
-        // Naming the marks is worth its tokens, and the reason is a real failure: a daimon whose
-        // user had just attached a book spent a turn globbing for it, found nothing where it was
-        // pinned, and reported that the book did not exist.  A model that is TOLD `books/x` is
-        // attached does not have to discover it, and cannot conclude it is absent.
-        local.push_str("\n\nThis Diamond's own folder is `");
-        local.push_str(&diamond::diamond_dir(id));
-        local.push_str("/`, so its crystal is `");
-        local.push_str(&diamond::diamond_dir(id));
-        local.push_str("/crystal.json` and its page is the `crystal.html` beside it. Paths you \
-            give the file tools are whole workspace-relative paths, never bare names.");
-        // K4: the page to fork, so a new page starts from the channel and the infographic parts
-        // rather than from whatever page this Diamond last carried.
-        local.push_str(" To build a new page, fork `");
-        local.push_str(crate::tools::CRYSTAL_STARTER_PATH);
-        local.push_str("`: it speaks the channel and draws cards, rings, bars, a timeline and a \
-            spectrum from the data's keys.");
-        // MARKED, AND NOT IN FORCE ON THIS DEVICE.  A mark is in force only on a device where
-        // the user made it or confirmed it, so every mark made elsewhere -- and every one made
-        // before marks said who made them -- is out of reach here until they press to confirm it.
-        // A daimon not told that meets a plain refusal and concludes the folder is not its to use,
-        // or goes looking for another way in; told, it asks the user for the one press.
-        let waiting = reach.unconfirmed;
-        // WHAT IS ATTACHED changes when the user adds a folder, so it is a block of the turn's
-        // note and not part of the system message (r578).
-        let mut attached = String::new();
-        if marked.is_empty() && consult.is_empty() && waiting.is_empty() {
-            attached.push_str(" Nothing is attached to this Diamond yet, so the folder above is the \
-                only place you may write. If the user asks for work on files that are not there, \
-                say which folder to add with the + in the Workspace group rather than creating it.");
-        } else if marked.is_empty() && consult.is_empty() {
-            attached.push_str(" Nothing attached to this Diamond is in force on this device yet, so \
-                the folder above is the only place you may write.");
-        } else {
-            attached.push_str("\n\nAttached to this Diamond, and reachable now:\n");
-            for p in &marked {
-                attached.push_str("- `");
-                attached.push_str(p);
-                attached.push_str("` (yours to edit)\n");
-            }
-            for p in &consult {
-                attached.push_str("- `");
-                attached.push_str(p);
-                attached.push_str("` (read it; do not edit it)\n");
-            }
-            attached.push_str("Look at what is attached before you answer a question about it. You \
-                may READ anywhere in the workspace, and you may write only in the places above.");
-        }
-        if !waiting.is_empty() {
-            attached.push_str("\n\nAdded to this Diamond on another device, or before this \
-                device recorded added folders, and NOT yet in use on this device until the user confirms \
-                them here:\n");
-            for p in &waiting {
-                attached.push_str("- `");
-                attached.push_str(p);
-                attached.push_str("` (unconfirmed on this device)\n");
-            }
-            attached.push_str("You may read these but not write in them yet. If the work needs one, \
-                tell the user it is unconfirmed on this device and ask them to confirm it -- one \
-                press on the notice above the message box -- rather than working around it.");
-        }
-        // THE SAME DEPTH-LIMITED TREE A CHAT TURN GETS, not a bespoke sentence of its own -- see
-        // `DaimondApp::briefing`, called near the bottom of this function to build the agent's
-        // briefing.  It was ALSO composed here until measured: a daimon turn's `machine` carried
-        // one tree and its `local` carried a second, ~3,200 further characters against a cap
-        // (`ORIENTATION_TREE_CHARS`) meant to hold one.  `briefing()` already walks the same root
-        // with the same bounds, so a second walk here bought nothing but the duplicate -- the
-        // paragraph above, naming WHAT is attached and who may edit it, is the orientation this
-        // function itself still owns; WHAT IS IN each of those places is `briefing()`'s alone now.
-        // THE HOT PART AND AN OUTLINE OF THE REST, which is the seam the split is made at.
-        //
-        // `local` is per-turn truth the user cannot edit away -- the role prompt is theirs
-        // (`prompts/<role>.md`) -- and the outline is itself the proof that the cold part exists:
-        // a sentence saying "there is more" with nothing naming it is a sentence a model has no
-        // way to act on. A crystal under the hot ceiling composes exactly as it always did, which
-        // is every small crystal.
-        //
-        // `DaimonTurn.crystal` below stays the WHOLE text: the after-turn comparison diffs the
-        // FILE, and diffing the hot part would report every cold edit as no change at all.
-        // THE THREE FILES BESIDE IT, created on the spot for a Diamond that predates them, and
-        // read ONCE here so the block is byte-stable for every round of this turn -- exactly as
-        // the crystal above is.  A file re-read per round would change the system message under
-        // a turn that had already sent it, which is the one thing a standing context may not do.
-        let files = res!(diamond::ensure_standing(id).await);
-        // THE `nofiles` MEASUREMENT ARM'S OWN DOOR. `files` itself is read and tracked
-        // regardless -- the turn-end check below still needs the true content to diff against
-        // -- but what goes into THIS turn's prompt is an empty `Standing` when the switch is
-        // off, so the crystal gets the hot room back rather than paying for files it is not
-        // shown. See `dev/CRYSTAL_CONTRACT.md` §5 and `dev/tune/arms.json`'s `nofiles` arm.
-        let tune = self.agent.limits();
-        let prompt_files = if tune.standing_files {
-            files.clone()
-        } else {
-            crate::tools::Standing::default()
-        };
-        let split = crate::tools::crystal_split(
-            &before, crate::tools::crystal_hot_room(prompt_files.hot_bytes())).unwrap_or_default();
-        // THE CRYSTAL, THE THREE FILES, WHAT IS ATTACHED AND THE ACTIVITY CHANGE FROM TURN TO
-        // TURN, so each is a block of the turn's own note, restated only when it changed, and the
-        // system message stays the cached head of every request in the conversation (r578,
-        // ruling §17).  The crystal block keeps its outline, so a STATE edit restates STATE alone.
-        let mut blocks = crate::prompts::TurnBlocks::default();
-        {
-            use crate::prompts::Block;
-            blocks.set(Block::Crystal, &crate::tools::crystal_block_for(&split, &prompt_files, true));
-            blocks.set(Block::Requirements, &prompt_files.requirements_text());
-            blocks.set(Block::State, &prompt_files.state_text());
-            blocks.set(Block::Decisions, &prompt_files.decisions_text());
-            blocks.set(Block::Attached, &attached);
-        }
-        // WHAT THIS DIAMOND'S TURNS DID, on every device (UNBLOCK-11): a fact of the Diamond and
-        // not of this device's session, so a widget built on the phone yesterday is known here
-        // after a fold, a rebuild or a pull. Newest first, at most `activity::PROMPT_CAP`.
-        let activity: Vec<String> = diamond::activity_read_all(id).await
-            .into_iter().map(|(_, text)| text).collect();
-        blocks.set(crate::prompts::Block::Activity,
-            &crate::activity::prompt_from(&activity, js_sys::Date::now() as i64));
-
-        // The daimon reaches what its workers reach, and writes where the user marked.
-        //
-        // It was PINNED here until 2026-08-13 -- `path_prefix` at `diamonds/<id>` and the OPFS
-        // root -- and the two together meant a daimon could not see the folder attached to its own
-        // Diamond.  A user attached a 281-page book, asked the daimon to set up an editing loop
-        // over it, and was told the book did not exist: the glob walked `diamonds/<id>` in browser
-        // storage, found the crystal scaffold, and correctly reported no chapters.  It then offered
-        // to CREATE the manuscript, which under the prefix would have written a skeleton into the
-        // sandbox while the real book sat on disk.  The attachment had always reached the workers
-        // (`scopeAgentTo` in `www/js/daimond.js`) and never the daimon commanding them.
-        //
-        // So the reach is now composed exactly as a worker's is, from the same function, and the
-        // two cannot drift: read freely across the workspace, write and run only in this Diamond's
-        // own directory and what the user marked into it.
-        //
-        // `FileRoot::Workspace` is what makes BOTH halves reachable at once, and it is not a
-        // widening: `opfs::resolve_root` sends a store path to OPFS whatever folder is open, so
-        // `diamonds/<id>/crystal.json` still lands in the sandbox and `books/x/ch05.typ` still
-        // lands on the machine.  Pinning OPFS was what made the second impossible.
-        // In send order, and this is the join the turn and the band both depend on: the band is
-        // handed `local` to draw apart, and finds it by looking for it in the whole.
-        let system = fmt!("{}{}", standing, local);
         // THE INSTRUCTIONS, NOT THE MESSAGE: the role and the user's standing instructions, and
-        // not `local`, which changes whenever the folder, the marks or the crystal do.
+        // not the Diamond's own paragraph, which changes whenever the folder or the marks do.
+        // Over the same role text the engine sends (`compose::compose_head`).
+        let claude_names = self.ctl.registry.claude_names();
+        let standing = compose::role_text(Role::Daimon, &self.ctl.daimon_prompt,
+            &self.agent.llm.model, &steer, claude_names);
         let author = crate::rating::Author {
             role: "daimon".to_string(),
             m:    self.agent.llm.model.clone(),
             pv:   self.ctl.provider.clone(),
-            sp:   self.note_fingerprint("daimon", id, &self.with_instructions(&standing)),
+            sp:   self.note_fingerprint("daimon", id,
+                &compose::with_instructions(&standing, &self.ctl.instructions)),
             run:  String::new(),
             via:  String::new(),
         };
         // The tag the page set for THIS turn, taken now: the setting is the Diamond's, and a second
         // turn of the same Diamond (one run here for another device) rewrites it mid-flight.
         let turn = self.ctl.registry.ctx.turn_tag_for(id);
+        // The daimon reaches what its workers reach, and writes where the user marked.
+        //
+        // It was PINNED here until 2026-08-13 -- `path_prefix` at `diamonds/<id>` and the OPFS
+        // root -- and the two together meant a daimon could not see the folder attached to its own
+        // Diamond: a user attached a 281-page book and was told it did not exist.  So the reach is
+        // composed exactly as a worker's is, from the same function, and the two cannot drift.
+        // `FileRoot::Workspace` is what makes both halves reachable at once, and it is not a
+        // widening: `opfs::resolve_root` sends a store path to OPFS whatever folder is open.
         let ctx = ToolContext {
             workspace:   Workspace::unchecked(PathBuf::from("/")),
             executor:    Executor::Wasm,
             cwd:         String::new(),
-            // Empty, and that is the whole of the change: a prefix CONFINES, and this turn is
-            // confined by its bounds instead.  Its own paths are whole and workspace-relative now,
-            // exactly as a worker's are, which is what `DEFAULT_DAIMON` tells the model.
+            // Empty: a prefix CONFINES, and this turn is confined by its bounds instead.
             path_prefix: String::new(),
             root:        crate::tools::FileRoot::Workspace,
             // Shared with this app's own context, not fresh: a steering turn is stateless per
@@ -3992,12 +3798,12 @@ impl Daimon {
             // `is_tainted` would answer no to the very question the daimon asks it.
             read_seen:   self.ctl.registry.ctx.read_seen.clone(),
             no_write:    bounds,
-            // Who this turn acts for, which the prefix used to say and no longer can.  A link this
-            // daimon asserts goes in THIS Diamond's sidecar and is stamped `agent:daimon`.
+            // Who this turn acts for.  A link this daimon asserts goes in THIS Diamond's sidecar
+            // and is stamped `agent:daimon`.
             daimon_of:   id.to_string(),
             turn,
             keeper:      id.to_string(),
-            unconfirmed: waiting,
+            unconfirmed: reach.unconfirmed.clone(),
             // And re-read at every call the turn makes, so a mark withdrawn mid-turn is not
             // written through for the rest of it (QA B F3).
             live:        Some(Live::Diamond(did.clone(), parse_path_array(toolkits))),
@@ -4008,49 +3814,34 @@ impl Daimon {
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx)
             .with_family(self.ctl.registry.family());
-        // A STOP OF ITS OWN: this app is shared by every Diamond on one model, and a daimon
-        // stopped with the app's halt would stop them all.  `steer_inner` holds it under the
-        // page's tag.
-        let mut agent = Agent::new(self.agent.llm.with_halt(Halt::new()),
-            &self.with_instructions(&system));
+        // THE ALIAS TABLE TOO, so the tools the daimon is offered are named as its role text names
+        // them (KT-3): the role was composed with this app's setting and the registry left without
+        // it, so under `claude_names` the prompt said `Read` and the schema `file_read`.
+        registry.set_claude_names(claude_names);
+        // THE ONE COMPOSITION OF A TURN (KT-3, invariant 8), the runner's as well as this one's:
+        // the system message, the crystal, the three standing files, what is attached, the
+        // activity, the objectives, the briefing, the app agent's limits with this Diamond's own K
+        // after them, and the Diamond named for a fold.  A STOP OF ITS OWN: this app is shared by
+        // every Diamond on one model, and a daimon stopped with the app's halt would stop them all.
+        let today = today_line();
+        let ask = compose::Ask {
+            keeper:         id,
+            own:            &self.ctl.daimon_prompt,
+            steer:          &steer,
+            instructions:   &self.ctl.instructions,
+            today:          &today,
+            reach:          Some(&reach),
+            limits:         compose::Limited::Adopted(&self.agent),
+            liveness_ms:    0,
+        };
+        let composed = res!(compose::compose_turn(
+            self.agent.llm.with_halt(Halt::new()), &ask, &registry).await);
+        let mut agent = composed.agent;
         // SPOKEN TO WHILE IT RUNS (UNBLOCK-27 R7): the Diamond's queue, so `interject_daimon`
         // reaches this turn at its next seam.
         agent.share_interjections(&said_for(&self.said, id));
-        // A fresh agent starts from the default limits, so without this a Diamond's
-        // daimon would fold the same model's conversation at a different size from
-        // the chat that dispatched it.
-        agent.adopt_limits(&self.agent);
-        // AND THEN THIS DIAMOND'S OWN K (UNBLOCK-27 R4), which must come after: `adopt_limits`
-        // copies the app agent's figures, shared by every Diamond on this model.
-        agent.set_no_progress_rounds(diamond::no_progress_rounds(id).await);
-        // The liveness limit is not one of the limits `adopt_limits` carries, so a fresh agent
-        // ran at the engine's default whatever the app was set to (`applyLiveness`, a test's
-        // `__livenessMs`): a steer's turn was held to its own clock and not the Diamond's.
-        agent.set_liveness_ms(self.agent.liveness_ms());
-        // And it starts with no briefing at all, which left the ONE agent that dispatches workers
-        // as the one agent that could not judge how many to dispatch.
-        let (brief, machine, rooted) = DaimondApp::briefing(&self.agent, &registry).await;
-        registry.set_machine_rooted(rooted);
-        for b in crate::prompts::Block::ALL {
-            if !machine.get(b).is_empty() {
-                blocks.set(b, machine.get(b));
-            }
-        }
-        // "N objectives, M open tasks; top three: …" -- parsed from the SAME read of
-        // `REQUIREMENTS.md` the hot block above carries, not a second one, so the figure agrees
-        // with what the model is also being shown in the prompt and stays byte-stable for every
-        // round of this turn. See `dev/CRYSTAL_CONTRACT.md` §5.1.
-        let objectives = crate::tools::requirements_briefing(&files.requirements, tune.briefing_top3);
-        blocks.set(crate::prompts::Block::Objectives, &objectives);
-        agent.set_briefing(&brief);
-        agent.set_blocks(blocks);
-        // WHICH DIAMOND, so that a fold mid-turn can file what it is about to forget into
-        // `REQUIREMENTS.md`, `DECISIONS.md` and `STATE.md` rather than into a note that is
-        // re-summarised at the next fold. `Agent::fold_if_needed` is handed the conversation and
-        // nothing that names a Diamond, and this is the only place the name is in hand. See
-        // `dev/CRYSTAL_CONTRACT.md` §13.
-        agent.set_diamond(id);
-        Ok(DaimonTurn { agent, registry, crystal: before, standing: files, local })
+        Ok(DaimonTurn { agent, registry, crystal: composed.crystal, standing: composed.files,
+            local: composed.local })
     }
 
     /// Drive the crystal agent for one instruction (see
@@ -4360,13 +4151,13 @@ impl Daimon {
             // it reports that the app cannot, which is the defect `Tool::FileShow` was written
             // for arriving by another road.
             Ok(Some((v, files))) => session.messages.push(
-                ChatMessage::user(versions::tail_note(v, &files))),
+                ChatMessage::app(versions::tail_note(v, &files))),
             Ok(None) => {},         // nothing moved, so there is nothing to say
             Err(e)   => {
                 web_sys::console::warn_1(&JsValue::from_str(&fmt!(
                     "the files {} changed this turn could not be recorded: {}", id, e)));
                 // Told, so the daimon does not report a way back the History does not hold.
-                session.messages.push(ChatMessage::user(fmt!(
+                session.messages.push(ChatMessage::app(fmt!(
                     "What this turn changed is on disk as you left it, but it could not be \
                      recorded as a version: {}", e.plain())));
             },
@@ -4381,7 +4172,7 @@ impl Daimon {
                 // Read in the NEXT turn, so it names the turn that left the page.
                 let why = p.why.trim().trim_end_matches('.');
                 let why = if why.is_empty() { String::new() } else { fmt!(": {}", why) };
-                session.messages.push(ChatMessage::user(fmt!(
+                session.messages.push(ChatMessage::app(fmt!(
                     "The page your last turn left did not pass the load proof{}. Nothing was put \
                      back. Fix it in this turn.", why)));
                 let obj = js_sys::Object::new();
@@ -4851,129 +4642,10 @@ pub(crate) fn refuse(msg: &str) -> Error<ErrTag> {
 /// a reloaded chat is a chat the model is re-reading anyway.  It is the same trade
 /// `crate::agent::compact::elide_bulk` makes when the window fills, made for the same reason.
 pub(crate) fn message_to_js(msg: &ChatMessage) -> JsValue {
-    let obj = js_sys::Object::new();
-    let set = |k: &str, v: &JsValue| {
-        // `Reflect::set` on a fresh object cannot fail; ignore the result.
-        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
-    };
-    match msg {
-        ChatMessage::System { content } => {
-            set("role", &JsValue::from_str("system"));
-            set("content", &JsValue::from_str(&content.as_text()));
-        }
-        ChatMessage::User { content, pre, mid, opens } => {
-            set("role", &JsValue::from_str("user"));
-            set("content", &JsValue::from_str(&content.as_text()));
-            // Which messages opened a turn, so `compact::prior_end` finds the same boundary after
-            // a reload; only where true, so every other message keeps the shape it had.
-            if *opens {
-                set("opens", &JsValue::TRUE);
-            }
-            // Beside the words and only when there is one, as the JDAT form does, so the page's
-            // bubble reads `content` alone and an ordinary message keeps the shape it had.
-            if !pre.is_empty() {
-                set("pre", &JsValue::from_str(pre));
-            }
-            if !mid.is_empty() {
-                set("mid", &JsValue::from_str(mid));
-            }
-        }
-        ChatMessage::Assistant { content, tool_calls } => {
-            set("role", &JsValue::from_str("assistant"));
-            set("content", &JsValue::from_str(&content.as_text()));
-            // Written only when there are any, exactly as the JDAT form does, so an
-            // ordinary answer keeps the shape it always had.
-            if !tool_calls.is_empty() {
-                let calls = js_sys::Array::new();
-                for tc in tool_calls {
-                    let c = js_sys::Object::new();
-                    let cs = |k: &str, v: &str| {
-                        let _ = js_sys::Reflect::set(
-                            &c, &JsValue::from_str(k), &JsValue::from_str(v));
-                    };
-                    cs("id", &tc.id);
-                    cs("name", &tc.name);
-                    cs("arguments", &tc.arguments);
-                    calls.push(&c);
-                }
-                set("tool_calls", &calls);
-            }
-        }
-        ChatMessage::Tool { tool_call_id, content, post, retired } => {
-            set("role", &JsValue::from_str("tool"));
-            // Sent short since it was retired (r578d), so the next turn sends the same stub.
-            // Carried through a fold as well, so a reload knows the folded conversation has not
-            // been shortened yet (r578f).
-            if *retired != crate::protocol::Retired::No {
-                set("retired", &JsValue::TRUE);
-            }
-            if *retired == crate::protocol::Retired::Before {
-                set("folded", &JsValue::TRUE);
-            }
-            set("tool_call_id", &JsValue::from_str(tool_call_id));
-            set("content", &JsValue::from_str(&content.as_text()));
-            // The app's notes after the result (r578), only where there are any, so the next
-            // turn a Diamond's page hands back sends the bytes this one sent.
-            if !post.is_empty() {
-                set("post", &JsValue::from_str(post));
-            }
-        }
-    }
-    obj.into()
-}
-
-/// Read a [`ChatMessage`] back out of a plain JS object written by
-/// [`message_to_js`], or `None` when the object is not one.
-///
-/// A tool reply with no `tool_call_id` is refused rather than given an empty one:
-/// an id is what pairs it with its call, and a reply that cannot be paired is worse
-/// than one that was never read.
-fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
-    let content = js_prop(item, "content").unwrap_or_default();
-    match js_prop(item, "role").unwrap_or_default().as_str() {
-        "system" => Some(ChatMessage::system(content)),
-        "user"   => {
-            let m = ChatMessage::user_noted(content, js_prop(item, "pre").unwrap_or_default())
-                .marked(js_prop(item, "mid").unwrap_or_default());
-            let opens = js_sys::Reflect::get(item, &JsValue::from_str("opens"))
-                .map(|v| v.as_bool() == Some(true)).unwrap_or(false);
-            Some(if opens { m.opening() } else { m })
-        },
-        "tool"   => match js_prop(item, "tool_call_id") {
-            Some(id) if !id.is_empty() => {
-                let m = ChatMessage::tool(id, content)
-                    .noted_after(&js_prop(item, "post").unwrap_or_default());
-                let flag = |k: &str| js_sys::Reflect::get(item, &JsValue::from_str(k))
-                    .map(|v| v.as_bool() == Some(true)).unwrap_or(false);
-                Some(match (flag("retired"), flag("folded")) {
-                    (true, true)    => m.as_retired().as_folded(),
-                    (true, false)   => m.as_retired(),
-                    _               => m,
-                })
-            },
-            _ => None,
-        },
-        "assistant" => {
-            let mut tool_calls = Vec::new();
-            if let Ok(v) = js_sys::Reflect::get(item, &JsValue::from_str("tool_calls")) {
-                if let Some(arr) = v.dyn_ref::<js_sys::Array>() {
-                    for call in arr.iter() {
-                        let id = js_prop(&call, "id").unwrap_or_default();
-                        if id.is_empty() {
-                            continue;       // unpairable, so not a call at all
-                        }
-                        tool_calls.push(ToolCall {
-                            id,
-                            name:      js_prop(&call, "name").unwrap_or_default(),
-                            arguments: js_prop(&call, "arguments").unwrap_or_default(),
-                        });
-                    }
-                }
-            }
-            Some(ChatMessage::assistant_calling(content, tool_calls))
-        }
-        _ => None,
-    }
+    // One writer of the page's shape (KT-5): a runner's exported session is written by the same
+    // `protocol::message_page_json`, so a turn run here and one run there store alike.  The text
+    // is ours and always parses; an `Err` cannot happen, and reads as no message.
+    js_sys::JSON::parse(&crate::protocol::message_page_json(msg)).unwrap_or(JsValue::NULL)
 }
 
 /// Convert an [`AgentEvent`] to a plain JS object mirroring

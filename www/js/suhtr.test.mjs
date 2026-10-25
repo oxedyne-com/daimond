@@ -290,10 +290,10 @@ function endWorld(self, door, chat) {
 		} });
 	w.DaimondPost = { collect: async () => {} };
 	w.DaimondSync = { leaseGet: async () => ({ leases: (await door.read()).leases }), pull: async () => {} };
-	const { fns } = sliceDaimond(w, ['endHandOffNotRun', 'runDispatchFallback', 'peerCollectOnReturn'], {
+	const { fns } = sliceDaimond(w, ['endHandOffNotRun', 'runDispatchFallback', 'leaseDoorRead', 'peerCollectOnReturn'], {
 		selfDeviceId: () => self, leaseClockNow: () => Date.now(), peerSyncShim: () => ({}),
 		claimTurnHere: async () => ({ release() {} }), diag() {}, redrawRunner() {}, scheduleDispatchFallback() {},
-		UNDECIDED_RECOLLECT_MS: 1, clearDispatchFallback() {},
+		UNDECIDED_RECOLLECT_MS: 1, clearDispatchFallback() {}, drainAfterHeld() {},
 		dropDispatchedPlaceholder: (tid) => { W.dropped.push(tid); W.order.push('drop');
 			chat.messages = chat.messages.filter((x) => !(x.why === 'dispatched' && x.iturn === tid)); },
 		touchMsg: (m) => m, newMid: () => 'n1', touchChat() {}, persistChats: () => { W.order.push('persist'); },

@@ -2022,6 +2022,43 @@ pub fn standing_split(path: &str, text: String) -> Retire {
 /// # Arguments
 /// * `id` - The Diamond being steered.
 /// * `notes` - The fold's parsed notes, already reconciled against the turn's ledger.
+/// File `entries` into `keeper`'s words log, `<home>/WORDS.md`, made if absent,
+/// bound to the file as read so a write between is read again and never written over; then read
+/// it back and answer as `compact::log_answer` says.  An away Diamond's words are not kept here.
+pub async fn his_words(keeper: &str, entries: &str) -> Outcome<String> {
+    use crate::agent::compact;
+    let path = res!(words_path(keeper));
+    for _ in 0..SETTLE_TRIES {
+        let (text, seen) = res!(read_bound(FileRoot::Opfs, &path).await);
+        let merged = compact::log_merge(&text, entries);
+        if merged != text && !res!(write_bound(FileRoot::Opfs, &path, &merged, &seen).await) {
+            continue;
+        }
+        let (back, _) = res!(read_bound(FileRoot::Opfs, &path).await);
+        return compact::log_answer(&back, entries, &path);
+    }
+    Err(settle_busy(&path))
+}
+
+/// `keeper`'s words log whole, for `recall`; empty for none.
+pub async fn his_words_read(keeper: &str) -> Outcome<String> {
+    let path = res!(words_path(keeper));
+    let (text, _) = res!(read_bound(FileRoot::Opfs, &path).await);
+    Ok(crate::agent::compact::log_text(&text))
+}
+
+/// The words log of `keeper`, refused for one whose log is not in this store.
+fn words_path(keeper: &str) -> Outcome<String> {
+    res!(crate::tools::keeper_id_ok(keeper));
+    if keeper.is_empty() || matches!(crate::tools::KeeperKind::of(keeper),
+        crate::tools::KeeperKind::Away)
+    {
+        return Err(err!("'{}' keeps no notes in this store, so his words were not filed there.",
+            keeper; Invalid, Input));
+    }
+    Ok(fmt!("{}/{}", crate::tools::keeper_home(keeper), crate::agent::compact::WORDS_FILE))
+}
+
 pub async fn absorb_fold_notes(id: &str, notes: &crate::agent::compact::FoldNotes)
     -> Option<crate::agent::compact::FoldNotes>
 {
@@ -5845,8 +5882,10 @@ fn carried_keeper(id: &str, head: &str) -> Outcome<String> {
 /// Record a turn a runner ran for this device, as its report's `turnRec` carried it back (RUN-HIST
 /// S2): one [`Cause::Turn`] version under the keeper the asker's own turn end uses
 /// ([`carried_keeper`]), its rows the runner's files ([`versions::carried_rows`]), and its
-/// [`versions::Away`] the runner's restore reference.  Answers the version and the paths, as
-/// [`versions_record`] does; `Ok(None)` where the record lists no row.
+/// [`versions::Away`] the runner's restore reference, with the destinations its commands reached
+/// (`away.net`, U8h).  Answers the version and the paths, as [`versions_record`] does; `Ok(None)`
+/// where the record lists neither a file nor a destination.  A version of destinations alone has
+/// no rows, as a fold's does, and no Undo: the runner kept nothing for it (`since` 0).
 ///
 /// **Idempotent by `away.run`**: a report posted again, or reached from two tabs, finds the version
 /// the first wrote and records nothing.  Asked under the version hold, so two at once cannot both
@@ -5904,8 +5943,8 @@ pub async fn versions_record_undone(id: &str, json: &str)
 
 /// Write one version of a turn another device ran ([`versions_record_carried`],
 /// [`versions_record_undone`]): no bodies -- the bytes are on the runner -- so nothing is put down
-/// and nothing this device's own turn put down is taken back.  Nothing where `rows` is empty or a
-/// version already carries `away.run`.
+/// and nothing this device's own turn put down is taken back.  Nothing where `rows` and `away.net`
+/// are both empty, or a version already carries `away.run`.
 async fn record_away(
     key:  &str,
     cause: Cause,
@@ -5916,7 +5955,7 @@ async fn record_away(
 )
     -> Outcome<Option<(u64, Vec<String>)>>
 {
-    if rows.is_empty() {
+    if rows.is_empty() && away.net.is_empty() {
         return Ok(None);
     }
     let hold = res!(hold_versions(key).await);

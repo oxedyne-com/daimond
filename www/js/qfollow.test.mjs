@@ -30,6 +30,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { fakeIDB, tabJournal, journalQueueOver } from './journalfixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
@@ -78,14 +79,15 @@ function world(over) {
 		retryTurn: () => { log.push(['retryTurn']); return true; },
 		holdSend: (c) => { c._sending = true; let freed; c._sent = new Promise((r) => { freed = r; }); return () => { c._sending = false; freed(); }; },
 		interjectMessage: (c, text) => { log.push(['interject', text]); return true; },
-		enqueueMessage: (c, text) => { log.push(['enqueue', text]); (c._queue = c._queue || []).push(text); },
+		enqueueMessage: (c, text, words, drawn) => { log.push(['enqueue', text]); (c._queue = c._queue || []).push({ text: text, drawn: drawn }); },
 		giveUpSent: () => {},
+		journalQueue: journalQueueOver(SRC, tabJournal(fakeIDB(), new Set())),	// the real journal (QA ccp3 A R2)
 		renderQueue: () => {},
 		updateQueueBadges: () => {},
 		returnQueue: (c) => { log.push(['returnQueue']); },
 		askHolds: () => false,
 		diag: () => {},
-		recoveringHere: () => false,
+		recoveringHere: () => false, dispatchInFlight: () => null,
 		diamondBusy: () => false,
 		turnHold: () => null,
 		confirmHold: async () => {},
@@ -116,7 +118,7 @@ const STEER = ['drainSteerQueue', 'steerQueued?'];
 
 test('Q1: a queued follow-up goes to the election first, and is not run here', async () => {
 	const w = world();
-	w.chat._queue = ['t'];
+	w.chat._queue = [{ text: 't' }];
 	rig(QUEUE, w).drainQueue(w.chat, false);
 	await settle();
 	assert.deepEqual(w.log, [['elect', 't']], JSON.stringify(w.log));
@@ -126,7 +128,7 @@ test('Q1: a queued follow-up goes to the election first, and is not run here', a
 
 test('Q2: one the election keeps here runs here, as the person\'s', async () => {
 	const w = world({ elect: false });
-	w.chat._queue = ['t'];
+	w.chat._queue = [{ text: 't' }];
 	rig(QUEUE, w).drainQueue(w.chat, false);
 	await settle();
 	assert.deepEqual(w.log, [['elect', 't'], ['runTurn', 't', true]], JSON.stringify(w.log));
@@ -135,7 +137,7 @@ test('Q2: one the election keeps here runs here, as the person\'s', async () => 
 
 test('Q3: two queued, both handed off in the order typed', async () => {
 	const w = world();
-	w.chat._queue = ['t1', 't2'];
+	w.chat._queue = [{ text: 't1' }, { text: 't2' }];
 	rig(QUEUE, w).drainQueue(w.chat, false);
 	await settle();
 	assert.deepEqual(w.log, [['elect', 't1'], ['elect', 't2']], JSON.stringify(w.log));
@@ -146,11 +148,11 @@ test('Q4: the election\'s wait took the person away: it goes back to the queue, 
 	const other = { id: 'c2', messages: [] };
 	const w = world();
 	w.elect = () => { w.current = other; return false; };
-	w.chat._queue = ['t'];
+	w.chat._queue = [{ text: 't' }];
 	rig(QUEUE, w).drainQueue(w.chat, false);
 	await settle();
 	assert.deepEqual(w.log, [['elect', 't']], JSON.stringify(w.log));
-	assert.deepEqual(w.chat._queue, ['t']);
+	assert.deepEqual(w.chat._queue, [{ text: 't' }]);
 });
 
 test('Q5: typed into a running turn with the switch on a runner: queued, not said into it', async () => {
@@ -172,7 +174,7 @@ test('Q6: with the switch on Here: said into the running turn, as before', async
 
 test('Q7: a daimon\'s queued steer goes to the election first', async () => {
 	const w = world();
-	const rec = { id: 'd1chat', diamondId: 'D1', messages: [], _queue: ['s'] };
+	const rec = { id: 'd1chat', diamondId: 'D1', messages: [], _queue: [{ text: 's' }] };
 	w.currentDiamond = { id: 'D1' };
 	rig(STEER, w).drainSteerQueue(rec, 'D1', false);
 	await settle();

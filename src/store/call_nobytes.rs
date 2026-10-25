@@ -156,6 +156,7 @@ no_bytes_enum! {
     enum Live { Diamond(a, b), Chat(a, b) }
     enum Bound {
         NoWrite(a), NoRead(a), MayRead(a), OnlyUnder(a), OnlyWriteUnder(a), Toolkit(a), Nowhere,
+        NoSecretNames,
     }
     enum Toolkit { Rust, Node, Python, Go, Git, Remote }
     enum Fault { Down(a), Busy(a), Unbound(a), Unknown(a) }

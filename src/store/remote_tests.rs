@@ -103,6 +103,12 @@ impl HostStore for Direct {
     async fn absorb_fold_notes(&self, id: &str, notes: &FoldNotes) -> Option<FoldNotes> {
         diamond::absorb_fold_notes(id, notes).await
     }
+    async fn his_words(&self, keeper: &str, entries: String) -> Outcome<String> {
+        diamond::his_words(keeper, &entries).await
+    }
+    async fn his_words_read(&self, keeper: &str) -> Outcome<String> {
+        diamond::his_words_read(keeper).await
+    }
 
     async fn add_link(
         &self,

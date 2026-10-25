@@ -12,7 +12,8 @@ function check(name, cond, detail) {
 
 const MERGE_FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
 	'chatMetaBeats', 'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit',
-	'mergeFold', 'mergeChatRecords', 'touchChatMeta', 'touchChatModel'];
+	'mergeFold', 'mergeChatRecords', 'touchChatMeta', 'touchChatModel',
+	'chatTaintOf', 'chatTaintJoin'];	// the one-way taint (H3)
 const CREATE_FNS = ['storedPick', 'chatPairInForce', 'newChat', 'startChat', 'createDiamond'];
 const VARS = ['CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', '_chatModelShedSaid'];
 const NAMES = MERGE_FNS.concat(CREATE_FNS);

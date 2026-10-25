@@ -1116,7 +1116,8 @@ fn named(call: &StoreCall) -> Named<'_> {
         | C::LastPassed { id } | C::MarkPassed { id, .. } | C::StandingSettle { id, .. } | C::StateRead { id, .. }
         | C::StoreFileRead { id, .. } | C::StoreFileList { id, .. } | C::StoreWriteThen { id, .. }
         | C::StoreFileAct { id, .. }
-        | C::AbsorbFoldNotes { id, .. }
+        | C::AbsorbFoldNotes { id, .. } | C::HisWords { keeper: id, .. }
+        | C::HisWordsRead { keeper: id }
         | C::DiamondExists { id } | C::Capture { id, .. } | C::CapturedRoom { id, .. }
         | C::ActivityReadAll { id } | C::ActivityAppend { id, .. } | C::NoProgressRounds { id }
         | C::KeepRoom { id } | C::Release { id, .. } | C::HeldUnder { id, .. }
@@ -2087,6 +2088,19 @@ async fn serve_wait_late(st: &Shared, run: &str, bs: &Bodies, call: StoreCall,
         C::AbsorbFoldNotes { id, notes } =>
             R::AbsorbFoldNotes(diamond::absorb_fold_notes_guarded(&id, &notes,
                 || answered.commit()).await),
+        // HIS WORDS LOG HAS ONE HOME, the chat's store on the tab (l.368: Kimberlite holds no
+        // chats), so a fold on the runner files nothing here.  Answered as not filed, the fold
+        // keeps every word in the notice (R1, loop-free since CCP3 (a)); the composition is the
+        // tab's, only this answer differs (invariant 8).  The tab files through
+        // `diamond::his_words` directly; the runner stages it once U2 lands.
+        C::HisWords { keeper, .. } =>
+            R::HisWords(Err(err!("the notes of '{}' are kept in the browser, not on the \
+                runner", keeper; Unimplemented))),
+        // AND READS NONE: the log is the tab's, so an empty read here would tell `recall` that
+        // nothing was filed (QA ccp3r B, M2).  The sentence is what recall says on the runner.
+        C::HisWordsRead { .. } =>
+            R::HisWordsRead(Err(err!("His words filed from this conversation are kept on his \
+                device and can't be reached from the runner."; Unimplemented))),
         C::AddLink { owner, from, to, rel, note, by } =>
             R::AddLink(diamond::add_link(&owner, &from, &to, &rel, &note, &by).await),
         // A run reads the links of the Diamonds it was granted alone; the parent, every one.

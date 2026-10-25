@@ -115,6 +115,8 @@ fn calls() -> Outcome<Vec<StoreCall>> {
             act: crate::engine::host::types::store::FileAct::Move(s("diamonds/ab12/old/notes.md")),
         },
         StoreCall::AbsorbFoldNotes { id: id(), notes: notes() },
+        StoreCall::HisWords { keeper: s("chat:ab12"), entries: s("### [m1] 2026-10-25\n> hi\n\n") },
+        StoreCall::HisWordsRead { keeper: s("chat:ab12") },
         StoreCall::AddLink {
             owner:  id(),
             from:   s("diamond:ab12"),
@@ -299,6 +301,8 @@ fn replies() -> Outcome<Vec<StoreReply>> {
         StoreReply::StoreWriteThen(Ok(Some(Seen::Absent))),
         StoreReply::StoreFileAct(Ok(())),
         StoreReply::AbsorbFoldNotes(Some(notes())),
+        StoreReply::HisWords(Ok(s("3 m1"))),
+        StoreReply::HisWordsRead(Ok(s("### [m1] 2026-10-25\n> hi\n"))),
         StoreReply::AddLink(Ok(s("l1"))),
         StoreReply::AllLinks(Ok(s("[]"))),
         StoreReply::LinksJson(Ok(s("[]"))),
@@ -1163,7 +1167,7 @@ fn every_variant_at_its_ceilings_fits_its_class() -> Outcome<()> {
 /// The calls that change nothing and whose answer may be too big to frame: a `Read` reply,
 /// refused `TooBig` in its own `Outcome`, is safe only for these.
 const READS: &[&str] = &["all_links", "links_json", "links_page", "live_bounds", "reach",
-    "activity_read_all", "store_file_list"];
+    "activity_read_all", "store_file_list", "his_words_read"];
 
 /// A mutating call's reply always fits (D1k2 lead line, kept by D1v2): its effect has happened,
 /// so an answer too big to frame would tell the caller of a failure that did not happen.  Every

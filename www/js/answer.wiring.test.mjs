@@ -180,7 +180,7 @@ test('the home Send is built through the helper with a reason and a say, and not
 
 test('every place the composer\'s words change by script re-asks Send, since a script raises no input event', () => {
 	const d = read('js', 'daimond.js');
-	for (const fn of [ 'function putInComposer(', 'function clearComposer(', 'function editResend(' ]) {
+	for (const fn of [ 'function intoComposer(', 'function clearComposer(', 'function editResend(' ]) {
 		const at = d.indexOf(fn);
 		assert.ok(at > 0, fn + ' moved');
 		const next = d.slice(at + 10).search(/\n\t(async )?function \w+/);

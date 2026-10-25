@@ -78,6 +78,11 @@ pub trait HostStore {
     async fn standing_settle(&self, root: FileRoot, path: &str, landed: &Landed,
         phase: SettlePhase) -> Outcome<()>;
     async fn absorb_fold_notes(&self, id: &str, notes: &FoldNotes) -> Option<FoldNotes>;
+    /// File `entries` (`compact::log_entries`) into the words log of the keeper's notes file,
+    /// made if absent, then read it back: see `compact::log_answer` for what is answered.
+    async fn his_words(&self, keeper: &str, entries: String) -> Outcome<String>;
+    /// The keeper's words log whole, for `recall`; empty for none.
+    async fn his_words_read(&self, keeper: &str) -> Outcome<String>;
 
     // Links
     async fn add_link(

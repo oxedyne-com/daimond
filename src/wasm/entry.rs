@@ -1086,6 +1086,14 @@ pub fn locked_packs() -> String {
     crate::tools::locked_packs().join(",")
 }
 
+/// The `Today` line this browser briefs a turn with, on its clock and in its zone, so a turn
+/// handed off carries it as the errand's `today` (KT-4) and the runner tells the model the
+/// asker's day rather than its own.
+#[wasm_bindgen]
+pub fn today_line() -> String {
+    crate::wasm::app::today_line()
+}
+
 /// Whether a named tool is sold in a pack this account has not bought.
 ///
 /// The whole question in one call, so a caller in JavaScript holds NO copy of a pack key: it names

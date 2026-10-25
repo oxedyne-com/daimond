@@ -77,6 +77,8 @@ impl HostStore for LocalStore {
     }
     // None: nothing was written, so the fold notice stays as it was.
     async fn absorb_fold_notes(&self, _: &str, _: &FoldNotes) -> Option<FoldNotes> { None }
+    async fn his_words(&self, _: &str, _: String) -> Outcome<String> { refused("his_words") }
+    async fn his_words_read(&self, _: &str) -> Outcome<String> { refused("his_words_read") }
 
     async fn add_link(&self, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str)
         -> Outcome<String>

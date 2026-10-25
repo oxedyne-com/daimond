@@ -45,6 +45,9 @@ function check(name, cond, detail) {
 const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
 const POST = readFileSync(join(HERE, 'post.js'), 'utf8');
 const PEER = readFileSync(join(HERE, 'peer.js'), 'utf8');
+// The REAL stamp module: the record's one-way taint (H3) is read through it.
+const STAMPWIN = {};
+new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
 
 /// Lifts `function name(...) { ... }` (or `async function`) by counting braces.
 function extractFn(src, name) {
@@ -122,6 +125,10 @@ const LIFTED = [
 	extractFn(APP, 'ensureApp'),
 	extractFn(APP, 'applySight'),		// T2: ensureApp puts the model list's picture support on the app
 	extractFn(APP, 'applyEffort'),		// U-D #9: and the chat's chosen Effort
+	extractFn(APP, 'chatTaintOf'),		// H3: ensureApp keeps and puts the record's one-way taint
+	extractFn(APP, 'markChatTainted'),
+	extractFn(APP, 'keepChatTaint'),
+	extractFn(APP, 'applyChatTaint'),
 	extractFn(APP, 'seedEngine'),
 	extractFn(APP, 'armEngine'),
 	extractFn(APP, 'reconcileEngine'),
@@ -198,6 +205,7 @@ function makeTab(name, locks, w) {
 	scope.window = scope;
 	scope.window.DaimondPricing = null;
 	scope.window.DaimondHandMode = null;
+	scope.DaimondStamp = STAMPWIN.DaimondStamp;
 	Object.defineProperty(scope, '_runnerCtx', { get: () => tab.runnerCtx });
 	const fns = new Function('scope', 'with (scope) {\n' + LIFTED + '\n}')(scope);
 	scope.DaimondPost = { claimWork: fns.claimWork,

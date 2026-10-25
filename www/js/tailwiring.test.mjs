@@ -467,7 +467,7 @@ async function main() {
 	// and a stray errand. The two-line `_localRecovering` guard fixes it; this lifts the
 	// REAL runDispatchFallback out of daimond.js and locks the guard both ways.
 	{
-		const fnSrc = extractFn(src, 'runDispatchFallback');
+		const fnSrc = extractFn(src, 'runDispatchFallback') + '\n' + extractFn(src, 'leaseDoorRead');
 		const makeFn = (recovering) => {
 			// The backstop hands the turn to `recoverOneLocally(chat, m)`, which runs it here
 			// (no re-seat to another desktop since D-20261009-23).

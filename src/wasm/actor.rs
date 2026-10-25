@@ -267,12 +267,9 @@ impl Engine {
             Opened::Refuse(msg) => return Err(refuse(&msg)),
         };
         let registry = edge.controls().registry.clone();
-        let (brief, blocks, rooted) = DaimondApp::briefing(&self.agent, &registry).await;
-        self.agent.set_briefing(&brief);
-        self.agent.set_blocks(blocks);
-        // THIS TURN'S OWN ANSWER, on this turn's own registry, set once before the request is
-        // built (UNBLOCK-32 F4b): nothing else writes it until the next turn here is briefed.
-        registry.set_machine_rooted(rooted);
+        // THE ENGINE'S ONE COMPOSITION OF A TURN'S PARTS (KT-3), and THIS TURN'S OWN ANSWER on
+        // this turn's own registry, set once before the request is built (UNBLOCK-32 F4b).
+        res!(DaimondApp::brief_own(&self.agent, &registry).await);
         // THE SINK PUBLISHES BEFORE THE PAGE HEARS, so a counter read in the callback is the spend
         // so far.  The mirror is set from the session first: a restore since the last turn moved
         // the session and not the mirror, and the first event comes before the first response.
