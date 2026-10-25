@@ -305,7 +305,7 @@
 
 	// ── The picker ───────────────────────────────────────────────
 
-	var pickerEl = null, pickerClose = null;
+	var pickerEl = null, pickerClose = null, pickerAnchor = null;
 	function tr(k, fb, vars) {
 		try { if (root.tOr) return root.tOr(k, fb, vars); } catch (e) { /* fall through */ }
 		var s = fb; Object.keys(vars || {}).forEach(function (v) { s = s.replace('{' + v + '}', vars[v]); }); return s;
@@ -315,8 +315,10 @@
 	}
 
 	/// Open the picker for a Diamond or chat, beside `anchor` (a popover on a desktop, a bottom
-	/// sheet on a phone). `o`: `{ kind, id, name, tags }`.
+	/// sheet on a phone). `o`: `{ kind, id, name, tags }`. A second press of the same anchor shuts
+	/// it, as every other menu's does: `outside` leaves the anchor's press to this toggle.
 	function openPicker(anchor, o) {
+		if (pickerEl && anchor && pickerAnchor === anchor) { closePicker(); return null; }
 		closePicker();
 		var cur = iconFor(o.kind, o.id, o.name, o.tags);
 		var box = document.createElement('div');
@@ -439,10 +441,10 @@
 			document.removeEventListener('pointerdown', outside, true);
 			if (root.DaimondLayers) root.DaimondLayers.done('avatar');
 			if (box.parentNode) box.parentNode.removeChild(box);
-			if (pickerEl === box) { pickerEl = null; pickerClose = null; }
+			if (pickerEl === box) { pickerEl = null; pickerClose = null; pickerAnchor = null; }
 			try { if (anchor && anchor.focus) anchor.focus(); } catch (e) { /* gone */ }
 		}
-		pickerEl = box; pickerClose = done;
+		pickerEl = box; pickerClose = done; pickerAnchor = anchor;
 		// Not on a phone: focusing the box raises the keyboard over the sheet it opened.
 		if (!phone) { try { q.focus({ preventScroll: true }); } catch (e) { /* no focus */ } }
 		return box;

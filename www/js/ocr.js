@@ -28,36 +28,69 @@
 
 	function M() { return window.DaimondModels; }
 
-	/// The OpenRouter endpoint and key, or null when none can be found.
+	/// WHICH PROVIDER PAYS EACH READ (OWNKEY A1, QA OKD-A M-2): `{ pdf, image }`, each a provider
+	/// id or '' for none. This is the one place the decision is made: the fetches below obey it,
+	/// and peer.js `makeErrand` sends `route({ runner: true })` to a runner as the errand's `ocr`,
+	/// so a runner reads with exactly the keys this tab would and never guesses.
 	///
-	/// An explicit `openrouter` provider first; failing that, the running default provider WHEN
-	/// its endpoint is OpenRouter — which is how a Daimond-credits key, minted to run models
-	/// through OpenRouter, pays for the file parser without the user configuring a second thing.
-	function openrouter() {
+	/// `pdf` is an explicit `openrouter` provider first; failing that, the running default
+	/// provider WHEN its endpoint is OpenRouter -- which is how a Daimond-credits key, minted to
+	/// run models through OpenRouter, pays for the file parser without the user configuring a
+	/// second thing. `image` is `mistral` when he has a Mistral key (its OCR first, falling
+	/// through to a vision model on the `pdf` route), else the `pdf` route itself.
+	///
+	/// For a runner, a row that fails models.js `runnerReach` counts as absent (lead ruling,
+	/// ledger l.375): the route falls back exactly as it would without that row, so a turn that
+	/// never reads still runs there, and only an actual read meets the plain refusal.
+	function route(opts) {
+		var out = { pdf: '', image: '' };
 		var m = M();
-		if (!m) return null;
-		if (m.hasKey && m.hasKey('openrouter') && m.keyFor('openrouter')) {
-			var provs = m.providers ? m.providers() : {};
-			var known = m.known ? m.known() : {};
-			var url = (provs.openrouter && provs.openrouter.url)
-				|| (known.openrouter && known.openrouter.url)
-				|| OPENROUTER_CHAT;
-			return { url: url, key: m.keyFor('openrouter') };
+		if (!m) return out;
+		var runner = !!(opts && opts.runner);
+		var usable = function (pid) {
+			if (!runner) return true;
+			return typeof m.runnerReach === 'function' && !!m.runnerReach(pid).ok;
+		};
+		var own = function (pid) {
+			return !!(m.hasKey && m.hasKey(pid) && m.keyFor(pid)) && usable(pid);
+		};
+		if (own('openrouter')) {
+			out.pdf = 'openrouter';
+		} else {
+			var d = m.resolve ? m.resolve('', '') : null;
+			if (d && d.apiKey && d.baseUrl && d.provider && usable(String(d.provider))) {
+				var host = '';
+				try { host = new URL(d.baseUrl).host; } catch (e) { host = ''; }
+				if (/(^|\.)openrouter\.ai$/.test(host)) out.pdf = String(d.provider);
+			}
 		}
-		var d = m.resolve ? m.resolve('', '') : null;
-		if (d && d.apiKey && d.baseUrl) {
-			var host = '';
-			try { host = new URL(d.baseUrl).host; } catch (e) { host = ''; }
-			if (/(^|\.)openrouter\.ai$/.test(host)) return { url: d.baseUrl, key: d.apiKey };
-		}
-		return null;
+		out.image = own('mistral') ? 'mistral' : out.pdf;
+		return out;
 	}
 
-	/// The Mistral OCR endpoint and key, or null when no `mistral` provider is configured.
+	/// The OpenRouter endpoint and key `route()` names for a PDF, or null when it names none.
+	function openrouter() {
+		var m = M(), pid = route().pdf;
+		if (!m || !pid) return null;
+		// His row may hold a base URL or the whole endpoint; models.js `chatUrl` reconciles the
+		// two exactly as the runner's `LlmClient::from_url` does.
+		if (pid === 'openrouter') {
+			var base = (m.providerUrl && m.providerUrl('openrouter')) || OPENROUTER_CHAT;
+			return { url: m.chatUrl(String(base)), key: m.keyFor('openrouter') };
+		}
+		var d = m.resolve('', '');
+		return (d && d.provider === pid) ? { url: m.chatUrl(String(d.baseUrl)), key: d.apiKey } : null;
+	}
+
+	/// The Mistral OCR endpoint and key, or null when `route()` does not send pictures there. The
+	/// endpoint is his row's `/ocr` sibling (models.js `siblingUrl`), the address the runner's
+	/// `sibling` derives from the same row, so tab and runner follow his row alike.
 	function mistral() {
 		var m = M();
-		if (!m || !m.hasKey || !m.hasKey('mistral') || !m.keyFor('mistral')) return null;
-		return { url: MISTRAL_OCR, key: m.keyFor('mistral') };
+		if (!m || route().image !== 'mistral') return null;
+		var base = m.providerUrl ? m.providerUrl('mistral') : '';
+		var url = (base && m.siblingUrl) ? m.siblingUrl(String(base), 'ocr') : MISTRAL_OCR;
+		return { url: url, key: m.keyFor('mistral') };
 	}
 
 	/// POST a JSON body with the right auth for the endpoint. Returns {ok, status, body}.
@@ -110,5 +143,5 @@
 			+ 'or an OpenRouter key (a vision model reads it). Add one in the models panel.');
 	}
 
-	window.DaimondOcr = { chat: chat, image: image };
+	window.DaimondOcr = { chat: chat, image: image, route: route };
 })();

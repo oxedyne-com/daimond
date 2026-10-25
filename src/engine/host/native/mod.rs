@@ -17,6 +17,7 @@ use crate::{
     engine::host::{
         Host,
         exec::HostExec,
+        net::HostNet,
         ui::HostUi,
         local::{
             LocalSync,
@@ -47,12 +48,18 @@ pub type NativeStore = RemoteStore<PipeLink>;
 /// Its exec port `E` is named by its type, never `dyn`: [`LocalExec`] (no commands) unless a run's
 /// child gives it the runner's own, which runs each command under the run's fence (RKEY-c).  Its
 /// ui port `U` likewise: [`LocalUi`] (nobody there, so every ask stops the act) unless a run's
-/// child gives it one that carries the ask to the person who sent the turn (R3d-c).
+/// child gives it one that carries the ask to the person who sent the turn (R3d-c).  Its net port
+/// `N` likewise: [`LocalNet`] (every fetch refused, every egress question its refusing value)
+/// unless a run's child gives it one that carries the fetch to the parent (RUNNER-WEB).
 #[derive(Clone)]
-pub struct NativeHost<E: HostExec + Clone + 'static = LocalExec, U: HostUi + Clone + 'static = LocalUi> {
+pub struct NativeHost<
+    E: HostExec + Clone + 'static = LocalExec,
+    U: HostUi + Clone + 'static = LocalUi,
+    N: HostNet + Clone + 'static = LocalNet,
+> {
     fs:    NativeFs,
     exec:  E,
-    net:   LocalNet,
+    net:   N,
     clock: NativeClock,
     store: Arc<NativeStore>,
     ui:    U,
@@ -91,12 +98,23 @@ impl<E: HostExec + Clone + 'static, U: HostUi + Clone + 'static> NativeHost<E, U
     /// The host whose store is reached over `link`, whose files are `fs`'s, whose commands go to
     /// `exec` and whose asks go out through `ui`.
     pub fn asking(link: PipeLink, fs: NativeFs, exec: E, ui: U) -> Self {
+        NativeHost::asking_net(link, fs, exec, ui, LocalNet::default())
+    }
+}
+
+impl<E, U, N> NativeHost<E, U, N>
+    where E: HostExec + Clone + 'static, U: HostUi + Clone + 'static, N: HostNet + Clone + 'static
+{
+
+    /// The host whose store is reached over `link`, whose files are `fs`'s, whose commands go to
+    /// `exec`, whose asks go out through `ui` and whose fetches and egress questions go to `net`.
+    pub fn asking_net(link: PipeLink, fs: NativeFs, exec: E, ui: U, net: N) -> Self {
         // The fs reads a store-owned path from this same store (HL5a).
         let store = Arc::new(RemoteStore::new(link));
         Self {
             fs:    fs.reading(store.clone()),
             exec,
-            net:   LocalNet::default(),
+            net,
             clock: NativeClock,
             store,
             ui,
@@ -106,29 +124,35 @@ impl<E: HostExec + Clone + 'static, U: HostUi + Clone + 'static> NativeHost<E, U
     }
 }
 
-impl<E: HostExec + Clone + 'static, U: HostUi + Clone + 'static> std::fmt::Debug for NativeHost<E, U> {
+impl<E, U, N> std::fmt::Debug for NativeHost<E, U, N>
+    where E: HostExec + Clone + 'static, U: HostUi + Clone + 'static, N: HostNet + Clone + 'static
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NativeHost").field("store", self.store.link()).finish()
     }
 }
 
-impl<E, U> Default for NativeHost<E, U>
-    where E: HostExec + Clone + Default + 'static, U: HostUi + Clone + Default + 'static
+impl<E, U, N> Default for NativeHost<E, U, N>
+    where E: HostExec + Clone + Default + 'static,
+          U: HostUi + Clone + Default + 'static,
+          N: HostNet + Clone + Default + 'static,
 {
-    /// A host with no pipe and no workspace, on `E`'s and `U`'s defaults.
+    /// A host with no pipe and no workspace, on `E`'s, `U`'s and `N`'s defaults.
     fn default() -> Self {
-        NativeHost::asking(PipeLink::closed(), NativeFs::default(), E::default(), U::default())
+        NativeHost::asking_net(PipeLink::closed(), NativeFs::default(), E::default(), U::default(), N::default())
     }
 }
 
-impl<E, U> Host for NativeHost<E, U>
-    where E: HostExec + Clone + Default + 'static, U: HostUi + Clone + Default + 'static
+impl<E, U, N> Host for NativeHost<E, U, N>
+    where E: HostExec + Clone + Default + 'static,
+          U: HostUi + Clone + Default + 'static,
+          N: HostNet + Clone + Default + 'static,
 {
     // The tab's half, through these ports (R1 capture gate): never `local_execute`'s bare std::fs.
     const HOSTED: bool = true;
     type Fs    = NativeFs;
     type Exec  = E;
-    type Net   = LocalNet;
+    type Net   = N;
     type Clock = NativeClock;
     type Store = NativeStore;
     type Ui    = U;
@@ -136,7 +160,7 @@ impl<E, U> Host for NativeHost<E, U>
     type Web   = LocalWeb;
     fn fs(&self) -> &NativeFs { &self.fs }
     fn exec(&self) -> &E { &self.exec }
-    fn net(&self) -> &LocalNet { &self.net }
+    fn net(&self) -> &N { &self.net }
     fn clock(&self) -> &NativeClock { &self.clock }
     fn store(&self) -> &NativeStore { &self.store }
     fn ui(&self) -> &U { &self.ui }

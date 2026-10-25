@@ -391,7 +391,86 @@
 		// relay door would not take: a runner holding the chat reads it there, checking `upto`, or
 		// hands the turn back `thread`. Written only when present, closing the errand.
 		if (o.sessionRef && typeof o.sessionRef === 'object') e.sessionRef = o.sessionRef;
+		// THE SEALED KEYS of every own-key source the halves name, and his OCR rows (OWNKEY §1.2,
+		// A1, I1/I4): the row's `url`, `keyEnc` and `fetched`, never a plaintext key and never
+		// `credits`. Derived from the halves when the caller passes none. Written only when there
+		// is one.
+		var reads = ocrOf(o.ocr !== undefined ? o.ocr : ocrRoute());
+		var keys = keysOf(o.keys != null ? o.keys : keysForModel(o.model, reads));
+		if (keys) e.keys = keys;
+		// WHICH PROVIDER PAYS THE TURN'S READS (OWNKEY A1, QA OKD-A M-2), `{pdf, image}`: ocr.js
+		// `route()`'s own decision, a provider id or '' each, which the runner obeys rather than
+		// guess. Written only from a page that has ocr.js, so a runner reads its absence -- and
+		// every older sender -- as no read paid with credits.
+		if (reads) e.ocr = reads;
+		// THE PAGE'S ENGINE ABI, closing the errand (ABI-a; the runner's golden `errand_abi`).
+		// Left out from a wasm that names none, which a runner reads as legacy.
+		if (_engineAbi > 0) e.abi = _engineAbi;
 		return e;
+	}
+
+	/// The sources an errand's model halves name: the turn's own, its workers' and its images'.
+	function modelPids(m) {
+		var out = [];
+		[m, m && m.workers, m && m.images].forEach(function (h) {
+			var p = h && typeof h === 'object' ? String(h.provider || '') : '';
+			if (p && out.indexOf(p) < 0) out.push(p);
+		});
+		return out;
+	}
+
+	// The rows `ocr.js` reads PDFs and pictures with, whatever the halves name (OWNKEY A1).
+	var OCR_PIDS = ['openrouter', 'mistral'];
+
+	/// The sealed rows for a model's own-key halves, then his OCR rows where they reach a runner
+	/// (A1), from models.js; null when there are none.
+	function keysForModel(m, reads) {
+		var M = window.DaimondModels, out = {};
+		if (!M || typeof M.sealedRow !== 'function') return null;
+		modelPids(m).forEach(function (pid) {
+			if (pid === 'credits') return;
+			var row = M.sealedRow(pid);
+			if (row) out[pid] = row;
+		});
+		// His OCR rows, then any other source ocr.js routes a read to (his default on OpenRouter).
+		var ocrPids = OCR_PIDS.slice();
+		[reads && reads.pdf, reads && reads.image].forEach(function (pid) {
+			if (pid && pid !== 'credits' && ocrPids.indexOf(pid) < 0) ocrPids.push(pid);
+		});
+		ocrPids.forEach(function (pid) {
+			if (out[pid] || typeof M.runnerReach !== 'function' || !M.runnerReach(pid).ok) return;
+			var row = M.sealedRow(pid);
+			if (row) out[pid] = row;
+		});
+		return out;
+	}
+
+	/// ocr.js's route for the turn's reads on a runner (`DaimondOcr.route`), or null on a page without it.
+	function ocrRoute() {
+		var O = window.DaimondOcr;
+		return (O && typeof O.route === 'function') ? O.route({ runner: true }) : null;
+	}
+
+	/// A read route coerced to the wire shape `{pdf, image}`, a provider id or '' each, in the
+	/// runner's order; null for anything that is not an object.
+	function ocrOf(r) {
+		if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+		var id = function (v) { return typeof v === 'string' ? v : ''; };
+		return { pdf: id(r.pdf), image: id(r.image) };
+	}
+
+	/// `keys` coerced to the wire shape: sealed fields only, in the runner's order, credits and
+	/// any row with no `keyEnc` dropped; null when nothing is left.
+	function keysOf(k) {
+		if (!k || typeof k !== 'object' || Array.isArray(k)) return null;
+		var out = {}, n = 0;
+		Object.keys(k).forEach(function (pid) {
+			var r = k[pid];
+			if (pid === 'credits' || !r || typeof r !== 'object' || !r.keyEnc) return;
+			out[pid] = { url: String(r.url || ''), keyEnc: String(r.keyEnc), fetched: +r.fetched || 0 };
+			n++;
+		});
+		return n ? out : null;
 	}
 
 	/// The limits an errand carries, in the runner's field order with each field coerced as the
@@ -474,8 +553,12 @@
 			// (UNBLOCK-32 F2b): never run in its home instead; the sender ends it "not run" with Retry.
 			// 'limits' when the errand carried no limits the runner could apply (KT-2): a page older
 			// than the runner; never run on a guessed window, and the sender ends it "not run" with Retry.
+			// 'keys' when a sealed key the errand carries would not open there (OWNKEY): a
+			// passphrase change it was not re-approved after, in the runner's own words. 'abi' is the
+			// page's own, for a report below its min (`reportAbiOk`): ended "not run" with Retry.
 			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind'
-				|| o.cause === 'refused' || o.cause === 'place' || o.cause === 'limits') ? o.cause : '',
+				|| o.cause === 'refused' || o.cause === 'place' || o.cause === 'limits'
+				|| o.cause === 'keys' || o.cause === 'abi') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
 			// final frame carries what it had done, badged (r545 F-C2-1). 0 elsewhere.
 			interrupted: o.interrupted | 0,
@@ -2542,6 +2625,14 @@
 				// on a runner's row and only when it said so, so `honoursModelSet` never reads
 				// a guess. A tab states the same fact on its roster line, not here.
 				if (rec.modelset === true) recOut.modelset = true;
+				// Its engine ABI and the oldest it reads (OWNKEY ABI-b), kept only when it names
+				// one, so a legacy runner is judged by the old rule (`recEngineOk`).
+				if ((+rec.abi | 0) > 0) {
+					recOut.abi = +rec.abi | 0;
+					recOut.abiMin = (+rec.abiMin | 0) || recOut.abi;
+				}
+				// Waiting on re-approval after a passphrase change (M2, `noteRekey`).
+				if (rekeyed(id)) recOut.rekey = true;
 			}
 			// THE DERIVED TRUTH (HT1, design 2.1-2.2): whether the device holds a door
 			// (`listening`), when the gateway last heard a door event (`heard_at`, its
@@ -3049,21 +3140,136 @@
 	var _engineId = '';
 	function setEngineId(h) { _engineId = String(h || ''); }
 
-	/// May this record take a turn from this page's engine? A paired native runner
-	/// (`kind: 'runner'`) only when its engine id, stamped at its release build and carried
-	/// in its signed beat, equals the page's: the same id or not at all, no shim (design
-	/// §6.1/§12). A tab's record runs the engine it loaded and is not judged here.
-	/// `o.engineId`, when given, stands for the page's id.
-	///
-	/// A native runner serves DAIMOND CREDITS ONLY (lead ruling, R3c4c): it answers on its
-	/// one credits key and never maps a chat's own key onto it, so it is offered only when
-	/// `o.provider`, the provider the chat's turn runs on (the page passes the pair in force,
-	/// daimond.js electProvider, so a chat following a credits default counts), is `credits`. Absent is not offered: an election
-	/// that cannot say what the chat runs on does not hand it to a machine that can only
-	/// refuse it.
+	// THIS PAGE'S ENGINE ABI (OWNKEY ABI-a): the version of the errand and report shapes the
+	// wasm speaks (`engine_abi`), and the oldest a runner's report may be and still be applied.
+	// 0 from a wasm that predates it: the page writes no `abi` and offers a runner as before.
+	var _engineAbi = 0, _engineAbiMin = 0;
+	function setEngineAbi(abi, min) {
+		_engineAbi = Math.max(0, +abi | 0);
+		_engineAbiMin = Math.max(0, Math.min(+min | 0, _engineAbi));
+	}
+
+	/// The sources a turn pays with, across its halves (design §2.2): `o.sources`, else the one
+	/// `o.provider`; de-duplicated, empties dropped.
+	function sourcesOf(o) {
+		var raw = (o && Array.isArray(o.sources) && o.sources.length) ? o.sources : [o && o.provider];
+		var out = [];
+		raw.forEach(function (s) { s = String(s || ''); if (s && out.indexOf(s) < 0) out.push(s); });
+		return out;
+	}
+
+	/// Does a runner record speak an ABI inside this page's range? Both sides must name one.
+	function abiRunner(rec) { return !!rec && (+rec.abi | 0) > 0 && _engineAbi > 0; }
+	function abiInRange(rec) {
+		var abi = +rec.abi | 0, min = (+rec.abiMin | 0) || abi;
+		return abi >= _engineAbiMin && min <= _engineAbi;
+	}
+
+	/// Can the runner reach source `pid` (models.js `runnerReach`)? `{ ok, why }`.
+	function reachOf(pid) {
+		if (pid === 'credits') return { ok: true, why: '' };
+		var M = window.DaimondModels;
+		return (M && typeof M.runnerReach === 'function') ? M.runnerReach(pid) : { ok: false, why: 'nokey' };
+	}
+
+	// THE RE-APPROVAL MARK (M2): a passphrase change re-seals his keys under a new identity the
+	// runner does not hold, so it hands an own-key turn back `keys` until it is approved again.
+	// The mark is kept per runner, and stands on its presence record as `rekey`, with the
+	// approval generation it was set against (the gateway's `approved` stamp on the runner's
+	// row, seconds); any device's re-approval writes a later stamp, read on the runner-pair
+	// poll (`rekeyApproved`), which clears it on every device. Both sides of that comparison are
+	// on the gateway's clock: a mark set before any list was read holds no generation (`null`)
+	// and takes the next list's, never this device's clock (QA-OWNKEY-B F2).
+	var REKEY_LS = 'daimond-runner-rekey';
+	var _approvedSeen = {};		// runner id → its `approved` stamp, as last listed
+	function rekeyMarks() {
+		try { var m = JSON.parse(localStorage.getItem(REKEY_LS) || '{}'); return (m && typeof m === 'object') ? m : {}; }
+		catch (e) { return {}; }
+	}
+	function rekeySave(m) {
+		try {
+			if (Object.keys(m).length) localStorage.setItem(REKEY_LS, JSON.stringify(m));
+			else localStorage.removeItem(REKEY_LS);
+		} catch (e) { /* no storage: the mark lives as long as the page */ }
+	}
+	/// Is runner `id` waiting on re-approval?
+	function rekeyed(id) { return !!id && Object.prototype.hasOwnProperty.call(rekeyMarks(), id); }
+	/// Mark runner `id` as needing re-approval, against the approval generation last listed
+	/// for it, or the next list's when none has been.
+	function noteRekey(id) {
+		if (!id) return;
+		var m = rekeyMarks();
+		var seen = Object.prototype.hasOwnProperty.call(_approvedSeen, id);
+		m[id] = { gen: seen ? _approvedSeen[id] : null, at: Date.now() };
+		rekeySave(m);
+		if (_presence[id] && _presence[id].kind === 'runner') _presence[id].rekey = true;
+	}
+	function clearRekey(id) {
+		var m = rekeyMarks();
+		if (!id || !(id in m)) return;
+		delete m[id];
+		rekeySave(m);
+		if (_presence[id]) delete _presence[id].rekey;
+	}
+	/// The runner-pair list as the gateway sent it: an active row approved later than a
+	/// runner's mark clears the mark, whichever device approved it. True when one was cleared.
+	function rekeyApproved(runners) {
+		var m = rekeyMarks(), hit = false, save = false;
+		(Array.isArray(runners) ? runners : []).forEach(function (r) {
+			if (!r || r.state !== 'active' || !r.device) return;
+			var at = +r.approved || 0;
+			_approvedSeen[r.device] = at;
+			if (!m[r.device]) return;
+			// The first list after a mark set unseen names the generation it stands against.
+			if (m[r.device].gen == null) { m[r.device].gen = at; save = true; return; }
+			if (at > (+m[r.device].gen || 0)) {
+				delete m[r.device]; hit = true;
+				if (_presence[r.device]) delete _presence[r.device].rekey;
+			}
+		});
+		if (hit || save) rekeySave(m);
+		return hit;
+	}
+	/// The runner a hand-back names when its cause is a passphrase change: `keys` and a note
+	/// that says so, else ''.
+	function rekeyFrom(rep) {
+		return (rep && rep.cause === 'keys' && /passphrase/i.test(String(rep.why || ''))) ? String(rep.by || '') : '';
+	}
+
+	/// May this page take what device `by` made under `abi` (H3, A2): a report, or a progress
+	/// frame, which any device holding the placeholder may adopt as the turn? Not one from an ABI
+	/// runner below the page's min, whose shapes this page no longer reads. An ABI runner is one
+	/// whose presence names an ABI, or whose word names one itself (its runner unknown here). A
+	/// tab's, and a legacy runner's, are taken as before.
+	function abiOk(abi, by, presence) {
+		if (!_engineAbiMin) return true;
+		var a = +abi | 0;
+		var rec = (by && presence) ? presence[by] : null;
+		var abiRunner = a > 0 || (!!rec && rec.kind === 'runner' && (+rec.abi | 0) > 0);
+		return !abiRunner || a >= _engineAbiMin;
+	}
+	function reportAbiOk(rep, presence) {
+		return abiOk(rep && rep.abi, rep && rep.by, presence);
+	}
+
+	/// May this record take a turn from this page's engine? A tab's record runs the engine it
+	/// loaded and is not judged here. A paired native runner (`kind: 'runner'`):
+	///   * ON AN ABI (OWNKEY, design §2.2): when its range meets the page's, whatever wasm it
+	///     runs, and only for sources it can reach (`runnerReach`); a runner waiting on
+	///     re-approval (`noteRekey`) is offered credits only.
+	///   * LEGACY, naming no ABI: the old binary's capability, DAIMOND CREDITS ONLY on the same
+	///     wasm (R3c4c, design §6.1). Absent sources are not offered.
+	/// `o.sources` (or `o.provider`) are the sources the turn pays with; `o.engineId`, when
+	/// given, stands for the page's id.
 	function recEngineOk(rec, o) {
 		if (!rec || rec.kind !== 'runner') return true;
-		if (String((o && o.provider) || '') !== 'credits') return false;
+		var srcs = sourcesOf(o);
+		if (!srcs.length) return false;
+		if (abiRunner(rec)) {
+			if (!abiInRange(rec)) return false;
+			return srcs.every(function (s) { return s === 'credits' || (rec.rekey !== true && reachOf(s).ok); });
+		}
+		if (srcs.some(function (s) { return s !== 'credits'; })) return false;
 		var mine = (o && o.engineId != null) ? String(o.engineId) : _engineId;
 		return !!mine && String(rec.engine || '') === mine;
 	}
@@ -3260,6 +3466,9 @@
 			// What the chat runs on, as the page resolved it (the stored pick only when the
 			// caller gave none): a native runner is offered a credits chat only (recEngineOk).
 			provider:               o.provider != null ? o.provider : c.provider,
+			// Every source the turn pays with across its halves (OWNKEY §2.2, daimond.js
+			// electSources): the runner is offered only when it can use each one.
+			sources:                o.sources,
 			// A chat whose folder is rooted on this device runs only where a folder is
 			// rooted too (F4c, UNBLOCK-32): a runner without one would reach none of it, and
 			// a switch that offers a runner which then cannot do the turn is a fault (§1).
@@ -3457,15 +3666,28 @@
 			}
 		}
 		var out = { runner: runner, choice: here ? 'here' : 'runner', until: until };
-		// WHY NO RUNNER (SEATWHY, 2026-10-24): a nominated paired native runner that is not
-		// offered for a rule the person can act on is named, so plain "Here" is never silent
-		// about it: it serves credits only (recEngineOk), or it runs another engine.
+		// WHY NO RUNNER (SEATWHY, 2026-10-24; OWNKEY §5.2): a nominated paired native runner
+		// that is not offered for a rule the person can act on is named, so plain "Here" is
+		// never silent about it. On an ABI: another engine range (`runner-engine`, it updates
+		// itself), a re-approval after a passphrase change (`runner-rekey`), or the first
+		// source it cannot reach, and why (`runner-source`). Legacy: credits only, or another wasm.
 		var nomId = String(o.nominatedId || '');
 		var nrec = nomId ? (presence || {})[nomId] : null;
 		if (!runner && nrec && nrec.kind === 'runner') {
-			var mine = (o.engineId != null) ? String(o.engineId) : _engineId;
-			var why = String(o.provider || '') !== 'credits' ? 'runner-credits-only'
-				: (mine && String(nrec.engine || '') !== mine) ? 'runner-engine' : '';
+			var srcs = sourcesOf(o), why = '';
+			var own = srcs.filter(function (s) { return s !== 'credits'; });
+			if (abiRunner(nrec)) {
+				var miss = null;
+				own.some(function (s) { var r = reachOf(s); if (!r.ok) miss = { source: s, reach: r.why }; return !!miss; });
+				why = !abiInRange(nrec) ? 'runner-engine'
+					: (own.length && nrec.rekey === true) ? 'runner-rekey'
+					: miss ? 'runner-source' : '';
+				if (why === 'runner-source') { out.source = miss.source; out.reach = miss.reach; }
+			} else {
+				var mine = (o.engineId != null) ? String(o.engineId) : _engineId;
+				why = (own.length || !srcs.length) ? 'runner-credits-only'
+					: (mine && String(nrec.engine || '') !== mine) ? 'runner-engine' : '';
+			}
 			if (why) { out.why = why; out.runnerId = nomId; }
 		}
 		return out;
@@ -7532,6 +7754,17 @@
 		/// This page's engine id (R5a): a native runner is offered only on the same one.
 		setEngineId:   setEngineId,
 		recEngineOk:   recEngineOk,
+		/// OWNKEY: the page's ABI and min, the sources a turn pays with, the re-approval mark
+		/// (cleared by any device's re-approval through `rekeyApproved`), and the report gate.
+		setEngineAbi:  setEngineAbi,
+		sourcesOf:     sourcesOf,
+		rekeyFrom:     rekeyFrom,
+		rekeyed:       rekeyed,
+		noteRekey:     noteRekey,
+		clearRekey:    clearRekey,
+		rekeyApproved: rekeyApproved,
+		reportAbiOk:   reportAbiOk,
+		abiOk:         abiOk,
 		/// WHERE ANY TASK RUNS -- the placement. A turn goes through `seatPlan` verbatim;
 		/// a compile moves only for a file this device does not hold or a heap it cannot
 		/// afford; a `run` moves only to a device that holds the machine hand. Pure, so

@@ -4029,7 +4029,7 @@
 		return out;
 	}
 
-	/// Read `turnId`'s latest frame, newer than `since`: `{ seq, tail, final }`, or null
+	/// Read `turnId`'s latest frame, newer than `since`: `{ seq, tail, final, abi }`, or null
 	/// where there is nothing newer (the door's 204) or it could not be opened.
 	///
 	/// NEVER PARKED, and that is the fix of 2026-09-23. A watcher used to hold one read
@@ -4048,7 +4048,8 @@
 		if (!res || res.status !== 200 || !res.json || !res.json.blob) return null;
 		var frame = await progUnseal(res.json.blob);
 		if (!frame || String(frame.turn || '') !== String(turnId)) return null;
-		return { seq: res.json.seq | 0, tail: String(frame.tail || ''), final: !!frame.final };
+		// A runner's frame names its engine ABI (OWNKEY A2), which the page checks before it takes it.
+		return { seq: res.json.seq | 0, tail: String(frame.tail || ''), final: !!frame.final, abi: +frame.abi | 0 };
 	}
 
 	/// Follow `key`'s progress frames: `onFrame(frame)` is called with each frame newer

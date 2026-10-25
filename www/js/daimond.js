@@ -29740,6 +29740,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		DaimondPeer.onReport(function (report) {
 			try {
 				var tid = String(report.turnId);
+				// A REPORT BELOW THE PAGE'S MIN (OWNKEY H3, lead ruling 25 Oct): made by an engine
+				// whose shapes this page no longer reads, so nothing of it is applied -- not its
+				// rows, its session, its cost. The turn goes down the hand-back path with cause
+				// `abi` and ends as the visible "not run" row with Retry (rulings §1 l.17); any
+				// partial the progress door streamed for it is taken down (`dropRefusedTiles`),
+				// never left standing as if it were the answer.
+				var snap0 = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+				if (DaimondPeer.reportAbiOk && !DaimondPeer.reportAbiOk(report, snap0)) {
+					diag('handoff report refused', 'turn=' + tid + ' abi=' + String(report.abi || 0) + ' below the page\'s min');
+					refuseAbiTurn(tid, report.chatId, report);
+					return;
+				}
+				// A PASSPHRASE CHANGE strands his keys on the runner (M2): its own-key sources are
+				// not offered until it is approved again, on any device (`rekeyApproved`).
+				var rk = DaimondPeer.rekeyFrom ? DaimondPeer.rekeyFrom(report) : '';
+				if (rk) {
+					DaimondPeer.noteRekey(rk);
+					try { renderSeatSwitch(); } catch (e) { /* the next beat redraws */ }
+					// Read the list now, so a mark set before any was read takes its generation
+					// from the gateway's clock at once (QA-OWNKEY-B F2).
+					runnerPairPoll().catch(function () { /* the next poll names it */ });
+				}
 				peerReports[tid] = report;
 				takeReportTaint(report);
 				settleRunnerSession(report);
@@ -29747,6 +29769,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// files the turn made or changed on the runner is recorded as a version of its
 				// keeper, so History shows the turn here and, through the parcel, everywhere.
 				if (report.turnRec && DaimondPeer.settlingReport(report)) recordCarriedTurn(report.turnRec);
+				// Its own-key spend, booked to each source's pool (OWNKEY §5.4).
+				if (DaimondPeer.settlingReport(report)) bookReportCost(report);
 				requeueUnheard(report);
 				// A hand-off that ended without its answer (failed, cut short, refused) sends what queued
 				// behind it now; a `done` one sends it when its answer lands (`dropDispatchedPlaceholder`).
@@ -30265,6 +30289,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// runner will push, so the parcel merge converges by mid with no rebuild.
 	function applyProvisional(turnId, rows, final) {
 		if (!window.DaimondPeer || !DaimondPeer.foldProvisional) return;
+		if (_abiRefused[String(turnId)]) return;	// its runner's frame or report was below the page's min (A2)
 		var chat = finalFrameChat(turnId, final);
 		if (!chat || !chat.messages) return;
 		// A final frame whose every row the runner marked whole (`progressRow`) may become
@@ -30348,6 +30373,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function adoptFinalFrame(turnId) {
 		var tid = String(turnId || ''), mids = _finalMids[tid];
 		if (!mids || !handoffDone(tid)) return false;
+		if (_abiRefused[tid]) { delete _finalMids[tid]; delete _finalRun[tid]; return false; }	// never the turn (A2)
 		var chat = finalFrameChat(tid, true);
 		if (!chat || !chat.messages) return false;
 		var moved = 0, newest = 0;
@@ -30469,6 +30495,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// watches (see `DaimondSync.watchProgress`).
 	function onProgressFrame(key, frame) {
 		if (!_progressWatched[key] || !frame) return;
+		// A runner's frame below the page's min is never taken (OWNKEY A2); a refused turn's final
+		// frame still ends it here, so the check comes before the refused turn's stop.
+		if (!frameAbiOk(key, frame)) { if (frame.final || !_abiRefused[key]) refuseAbiFrame(key, frame); return; }
+		if (_abiRefused[key]) return;
 		// The door carries a string; an older build (or the compile hand-off) sends a
 		// text tail this reader does not fold. Only a structured turn frame yields rows.
 		var pf = parseFrameRef(frame.tail), rows = pf ? pf.msgs : null;
@@ -30531,6 +30561,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// a tail the turn has moved past, and is dropped as the closed view would drop it.
 	function onLastFrame(key, frame) {
 		if (!frame || !frame.final) return;
+		if (!frameAbiOk(key, frame)) { refuseAbiFrame(key, frame); return; }	// OWNKEY A2, as `onProgressFrame`
+		if (_abiRefused[key]) return;
 		var pf = parseFrameRef(frame.tail), rows = pf ? pf.msgs : null;
 		if (pf && pf.ui.length) applyFrameUi(key, pf.ui);
 		if (!rows || !rows.length) return;
@@ -31627,6 +31659,84 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	var _fallbackInFlight = Object.create(null);	// turn id -> a runDispatchFallback awaiting its reads
 	var _handBackCause    = Object.create(null);	// turn id -> a hand-back's cause, should the placeholder miss it
+	var _abiRefused       = Object.create(null);	// turn id -> its report or a frame was below the page's min (OWNKEY H3, A2)
+
+	/// End a turn whose runner's report or final frame is below the page's min (OWNKEY H3, A2):
+	/// nothing of it is applied. On the device that sent it, the turn goes down the hand-back path
+	/// with cause `abi` (`runDispatchFallback`), as a refused report always has; on any other device
+	/// holding its placeholder, which adopts a final frame with no report (`adoptFinalFrame`), it
+	/// ends here as the same visible "not run" row with Retry, whose mid is the turn's on every
+	/// device. Either way what the progress door drew is taken down first (`dropRefusedTiles`).
+	function refuseAbiTurn(tid, chatId, rep) {
+		_abiRefused[tid] = true;
+		peerReports[tid] = Object.assign({}, rep, { status: 'undeliverable', cause: 'abi', why: '' });
+		delete _openAsk[tid];
+		_handBackCause[tid] = 'abi';
+		_handBack[tid] = String(chatId || '');
+		var rc = null;
+		for (var ci = 0; ci < chats.length; ci++) if (chats[ci] && chats[ci].id === _handBack[tid]) { rc = chats[ci]; break; }
+		if (!rc) rc = finalFrameChat(tid, true);
+		if (dropRefusedTiles(rc, tid)) {
+			touchChat(rc);
+			try { persistChats(); } catch (e) { /* the not-run row persists it */ }
+			if (current && current.id === rc.id && ownsChat(rc)) { try { renderHistory(rc.messages); } catch (e) { /* the next draw */ } }
+		}
+		var ph = rc ? dispatchedPlaceholderIn(rc, tid) : null;
+		if (ph && String(ph.dispatchedBy || '') !== String(selfDeviceId())) {
+			delete _handBack[tid];
+			endTurnNotRun(rc, ph, handBackNote('abi', deviceNameFor(ph.toDevice)));
+			return;
+		}
+		try { runDispatchFallback(_handBack[tid], tid); } catch (e) { /* the lease re-drive and the backstop remain */ }
+	}
+
+	/// May this page take a frame of `tid` (OWNKEY A2)? The rule a report meets (`abiOk`), for the
+	/// runner the turn's lease names, else the device its placeholder was sent to.
+	function frameAbiOk(tid, frame) {
+		if (!window.DaimondPeer || !DaimondPeer.abiOk) return true;
+		var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(String(tid)) : null;
+		var chat = finalFrameChat(tid, true), ph = chat ? dispatchedPlaceholderIn(chat, tid) : null;
+		var by = (lease && lease.holder) || (ph && ph.toDevice) || '';
+		var snap = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
+		return DaimondPeer.abiOk(frame && frame.abi, by, snap);
+	}
+
+	/// A frame `frameAbiOk` refused: nothing of it is drawn. A streaming one takes down what the
+	/// turn drew and waits for its ending; a final one ends the turn (`refuseAbiTurn`).
+	function refuseAbiFrame(tid, frame) {
+		diag('handoff frame refused', 'turn=' + String(tid).slice(0, 12) + ' abi=' + String((frame && frame.abi) || 0)
+			+ ' below the page\'s min' + (frame && frame.final ? ', final' : ''));
+		var chat = finalFrameChat(tid, true);
+		if (frame && frame.final) {
+			refuseAbiTurn(tid, chat && chat.id, { t: 'report', turnId: tid, chatId: chat ? chat.id : '', abi: +frame.abi | 0 });
+			return;
+		}
+		_abiRefused[tid] = true;
+		if (dropRefusedTiles(chat, tid)) {
+			touchChat(chat);
+			try { persistChats(); } catch (e) { /* the turn's ending persists it */ }
+			if (current && current.id === chat.id && ownsChat(chat)) { try { renderHistory(chat.messages); } catch (e) { /* the next draw */ } }
+		}
+	}
+
+	/// Take down what the progress door drew for a turn whose report was refused (`abi`): its
+	/// provisional rows and those a whole final frame adopted, so the "not run" row is the
+	/// turn's only ending. The placeholder stays for `endTurnNotRun` to replace. Did any go?
+	/// The caller draws and persists.
+	function dropRefusedTiles(chat, tid) {
+		delete _progressView[tid];
+		var fm = _finalMids[tid] || {};
+		delete _finalMids[tid];
+		delete _finalRun[tid];
+		if (!chat || !chat.messages) return false;
+		var kept = chat.messages.filter(function (x) {
+			return !(x && String(x.iturn || '') === tid && x.role !== 'user' && x.why !== 'dispatched'
+				&& (x.provisional || (x.mid && fm[String(x.mid)])));
+		});
+		if (kept.length === chat.messages.length) return false;
+		chat.messages = kept;
+		return true;
+	}
 
 	/// Give a sent turn its "not run" ending and drop its placeholder (QA-SUHT-B F4). The row is
 	/// `answerUnhanded`'s, which adds nothing where the turn already has a row of its own past
@@ -31635,6 +31745,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function endTurnNotRun(chat, m, why) {
 		var tid = String((m && m.iturn) || '');
 		if (!chat || !tid) return;
+		if (_abiRefused[tid]) dropRefusedTiles(chat, tid);	// `answerUnhanded` draws and persists
 		answerUnhanded(chat, tid, String(m.itext || ''), { ok: false, why: why });
 		var ended = (chat.messages || []).some(function (x) {
 			return !!x && String(x.iturn || '') === tid && x.role !== 'user' && x.why !== 'dispatched';
@@ -31645,13 +31756,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// The plain note a hand-back leaves on the chat for `cause` (`thread`, `door` for a session
-	/// sent as a reference, or `limits`), naming the device it was sent to, or "another device"
-	/// where its name is not known.
-	function handBackNote(cause, name) {
+	/// sent as a reference, `limits`, `abi` for a report this page would not apply, or `keys` and
+	/// `oversize`, an answer too large to send back whole, which keep the runner's own words `why`),
+	/// naming the device it was sent to, or "another device" where its name is not known.
+	function handBackNote(cause, name, why) {
 		var n = name || t('devices.another');
 		return cause === 'limits' ? t('chat.handback_old_page', { name: n })
 			: cause === 'door' ? t('chat.handback_too_big', { name: n })
+			: cause === 'abi' ? t('seat.why_runner_engine', { name: n })
+			: ((cause === 'keys' || cause === 'oversize') && why) ? String(why)
 			: t('chat.handback_long', { name: n });
+	}
+
+	/// Book a runner's report to each own-key source's pool (OWNKEY §5.4): one ledger entry per
+	/// source in `cost.by` that is not credits (the gateway meters those), with the model of the
+	/// half on that source. The ledger's key (`ts`, `turnId`, source) makes a repeat harmless.
+	/// The count booked.
+	function bookReportCost(rep) {
+		var by = rep && rep.cost && rep.cost.by;
+		var ran = (rep && rep.cost && rep.cost.models && typeof rep.cost.models === 'object') ? rep.cost.models : null;
+		if (!by || typeof by !== 'object' || !window.DaimondLedger) return 0;
+		var chat = null;
+		for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === String(rep.chatId || '')) { chat = chats[i]; break; }
+		var m = null;
+		try { m = chat ? errandModelOf(chat) : null; } catch (e) { m = null; }
+		var credits = (window.DaimondModels && DaimondModels.CREDITS) || 'credits';
+		var n = 0;
+		Object.keys(by).forEach(function (pid) {
+			var usd = +by[pid];
+			if (pid === credits || !(usd > 0)) return;
+			// The model the turn ran on that source, as the runner says (`cost.models`); only a
+			// report without it falls back to the chat's model now, which a switch since may have moved.
+			var half = [m, m && m.workers, m && m.images].filter(function (h) { return h && h.provider === pid && h.model; })[0];
+			var model = (ran && typeof ran[pid] === 'string' && ran[pid]) ? ran[pid] : (half ? String(half.model) : '');
+			try {
+				DaimondLedger.record({ ts: +rep.ts || Date.now(), model: model, provider: pid,
+					costUsd: usd, turnId: String(rep.turnId || '') });
+				n++;
+			} catch (e) { /* the ledger is best-effort */ }
+		});
+		return n;
 	}
 
 	/// END A SENT TURN "NOT RUN" RATHER THAN RUN IT HERE (rulings §1 l.17; QA-HT-B F3). For a
@@ -31779,7 +31923,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					&& String(m.dispatchedBy || '') === String(selfDeviceId()) && !dispatchedAnswerPresent(chat, m)) {
 					delete _handBack[tid];
 					diag('handoff handback settled', 'turn=' + tid + ' handed back under a settled lease: not run');
-					endTurnNotRun(chat, m, 'handed back under a settled lease');
+					// A report refused after the runner ran (`abi`), or an answer it could not send
+					// back whole (`oversize`, PIPE_MAX), settled its lease: its line says why.
+					var sc = String(m.handBackCause || _handBackCause[tid] || '');
+					endTurnNotRun(chat, m, (sc === 'abi' || sc === 'oversize')
+						? handBackNote(sc, deviceNameFor(m.toDevice), (peerReports[tid] || {}).why)
+						: 'handed back under a settled lease');
 					return;
 				}
 				// Held only for a turn this device sent: no other device will run it.
@@ -31832,6 +31981,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// (rc ruling, 24 Oct): a chat longer than it can take yet, and a page older than it.
 			if (m.threadBy || cause === 'thread') { await endHandOffNotRun(chat, m, handBackNote(m.overDoor ? 'door' : 'thread', deviceNameFor(m.toDevice))); return; }
 			if (cause === 'limits') { await endHandOffNotRun(chat, m, handBackNote('limits', deviceNameFor(m.toDevice))); return; }
+			// OWNKEY: a report this page would not apply (`abi`), and sealed keys that would not
+			// open there (`keys`, in the runner's own words): "not run" with Retry, never run here.
+			if (cause === 'abi' || cause === 'keys' || cause === 'oversize') {
+				await endHandOffNotRun(chat, m, handBackNote(cause, deviceNameFor(m.toDevice), refRep && refRep.why)); return;
+			}
 			if (cause === 'models') { await endHandOffNotRun(chat, m, 'handed back: runner ' + rn + ' could not run this turn\'s models'); return; }
 			await endHandOffNotRun(chat, m, cause ? 'handed back by runner ' + rn + ': ' + cause
 				: (lease && lease.mode === 'released') ? 'runner ' + rn + ' let it go unrun'
@@ -32044,6 +32198,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			needFolder:     chatNeedsFolder(c),
 			runnerOnly:     true,
 			provider:       electProvider(c),
+			sources:        electSources(c),
 			// A re-read did not land (a gateway restart): the map is unknown and seats nobody.
 			presenceUnknown: !!(window.DaimondPresence && DaimondPresence.unknown && DaimondPresence.unknown()),
 		};
@@ -32057,6 +32212,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function electProvider(chat) {
 		try { return chat ? String(errandModelOf(chat).provider || '') : ''; }
 		catch (e) { return ''; }
+	}
+
+	/// Every source `chat`'s turn pays with, across its halves (OWNKEY §2.2): the turn's own,
+	/// its workers' and its images', as its errand carries them. A runner is offered only when
+	/// it can use each one (peer.js recEngineOk). [] only when nothing resolves.
+	function electSources(chat) {
+		var m = null;
+		try { m = chat ? errandModelOf(chat) : null; } catch (e) { m = null; }
+		var out = [];
+		[m, m && m.workers, m && m.images].forEach(function (h) {
+			var p = (h && h.provider) ? String(h.provider) : '';
+			if (p && out.indexOf(p) < 0) out.push(p);
+		});
+		return out;
 	}
 
 	/// Is this chat's folder ROOTED on this device (F4c, UNBLOCK-32): the real folder open
@@ -32182,12 +32351,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// rule the person can act on -- it serves credits only, or it runs another engine.
 		var why = document.getElementById('seat-reason');
 		if (why) {
-			var wk = !!sw && (sw.why === 'runner-credits-only' || sw.why === 'runner-engine');
-			var wo = wk ? { name: deviceLabelFor(sw.runnerId) || t('devices.unknown') } : null;
-			why.textContent = !wk ? ''
-				: sw.why === 'runner-credits-only' ? t('seat.why_runner_credits', wo) : t('seat.why_runner_engine', wo);
+			why.textContent = seatWhyText(sw);
 			why.title = why.textContent;
-			why.hidden = !wk;
+			why.hidden = !why.textContent;
 		}
 		// R4: one timer, at the moment the runner stops counting as reachable on the beat
 		// it has, so the switch already reads Here when the person sends. A beat, a claim
@@ -32217,11 +32383,49 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box.hidden = false;
 	}
 
+	/// SEATWHY's line for the switch's reason (OWNKEY §5.2), or '' when it names none: the source
+	/// the runner cannot use and why, the re-approval a passphrase change needs, another engine
+	/// (it updates itself), or a legacy runner's credits only.
+	function seatWhyText(sw) {
+		if (!sw || !sw.why) return '';
+		var name = deviceLabelFor(sw.runnerId) || t('devices.unknown');
+		switch (sw.why) {
+			case 'runner-source':
+				var M = window.DaimondModels;
+				return t('seat.why_runner_source', { name: name,
+					provider: (M && M.providerName) ? M.providerName(sw.source) : String(sw.source || ''),
+					reason:   t('seat.reach_' + (sw.reach || 'nokey')) });
+			case 'runner-rekey':		return t('seat.why_runner_rekey', { name: name });
+			case 'runner-engine':		return t('seat.why_runner_engine', { name: name });
+			case 'runner-credits-only':	return t('seat.why_runner_credits', { name: name });
+			default:					return '';
+		}
+	}
+
+	/// The wasm's engine ABI as `[abi, min]`, from its one export `engine_abi()` (a Uint32Array
+	/// of two). A build that predates it, or answers anything but two whole numbers with the
+	/// min no higher than the abi, is legacy: `[0, 0]`.
+	function wasmEngineAbi(W) {
+		var v = null;
+		try { v = (W && typeof W.engine_abi === 'function') ? W.engine_abi() : null; } catch (e) { v = null; }
+		if (!v || typeof v.length !== 'number' || v.length !== 2) return [0, 0];
+		var abi = v[0], min = v[1];
+		var whole = function (n) { return typeof n === 'number' && n >= 0 && n === Math.floor(n) && n <= 0xffffffff; };
+		if (!whole(abi) || !whole(min) || min > abi) return [0, 0];
+		return [abi, min];
+	}
+
 	/// THIS PAGE'S ENGINE ID (R5a, X12): the sha-256 of the wasm it runs, read back from
 	/// the cache the module was loaded from. A native runner is offered on the switch only
 	/// when the id stamped into it at its release build is this one; until it is known,
 	/// none is.
 	async function learnEngineId() {
+		// THE ENGINE ABI (OWNKEY ABI-a) first, read from the wasm and guarded for a build that
+		// predates it: 0 offers a runner by the legacy rule and writes no `abi`.
+		if (window.DaimondPeer && DaimondPeer.setEngineAbi) {
+			var ab = wasmEngineAbi(Wasm);
+			DaimondPeer.setEngineAbi(ab[0], ab[1]);
+		}
 		if (!window.DaimondPeer || !DaimondPeer.setEngineId || !(window.crypto && crypto.subtle)) return;
 		var res = await fetch(new URL('../pkg/oxedyne_daimond_bg.wasm', import.meta.url), { cache: 'force-cache' });
 		if (!res.ok) return;
@@ -32291,6 +32495,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Draw (or hide) the Effort step in the composer row (D-20261014-08): how hard the next
 	/// turn on screen thinks, over its model's levels. Hidden for a model that lists none.
 	function renderEffortStep() {
+		// The source names the same record's model, so whatever moves one moves the other.
+		renderSourceSwitch();
 		var box = document.getElementById('effort-step');
 		var dn  = document.getElementById('effort-dn');
 		var up  = document.getElementById('effort-up');
@@ -32351,6 +32557,134 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (effDn) effDn.addEventListener('click', function () { stepEffort(-1); });
 		if (effUp) effUp.addEventListener('click', function () { stepEffort(1); });
 		window.addEventListener('daimond:view', function () { renderEffortStep(); });
+	} catch (e) { /* no DOM */ }
+
+	/// Draw (or hide) the credit-source switch at the head of the composer row (OWNKEY SW-1): the
+	/// short name of what the chat on screen pays with, and whose choice it is in the tooltip.
+	function renderSourceSwitch() {
+		var box = document.getElementById('source-switch');
+		var btn = document.getElementById('source-btn');
+		var nm  = document.getElementById('source-name');
+		if (!box || !btn || !nm) return;
+		if (!current || !window.DaimondModels) { box.hidden = true; return; }
+		var id = '';
+		try { id = sourceOf(current); } catch (e) { id = ''; }
+		var name = sourceLabel(id);
+		nm.textContent = name || t('astat.credits');
+		var scope = t(current.diamondId ? 'composer.source_this_diamond' : 'composer.source_this_chat');
+		// The name whole, where the row cuts it short, over whose choice this is.
+		btn.title = (name ? name + '\n' : '') + t('composer.source_help', { scope: scope });
+		box.hidden = false;
+	}
+
+	// ── The source menu: the railhead menu, opened off the switch ──
+	var _sourceMenu = null;
+	function closeSourceMenu() {
+		if (!_sourceMenu) return;
+		_sourceMenu.remove(); _sourceMenu = null;
+		document.removeEventListener('click', onSourceMenuOutside, true);
+		DaimondLayers.done('sourcemenu');
+		var btn = document.getElementById('source-btn');
+		if (btn) btn.setAttribute('aria-expanded', 'false');
+	}
+	// The switch itself is left to its own click, which toggles: shut here in the capture phase,
+	// the menu would only be opened again by it.
+	function onSourceMenuOutside(e) {
+		var btn = document.getElementById('source-btn');
+		if (_sourceMenu && !_sourceMenu.contains(e.target) && !(btn && btn.contains(e.target))) closeSourceMenu();
+	}
+
+	/// List where this chat can pay from (`sourceMenuRows`): Daimond credits with the balance the
+	/// rail shows, each provider whose key opens here, and "Add a provider…". The current one is
+	/// ticked, and the head says whose choice it is.
+	function openSourceMenu(anchor) {
+		if (_sourceMenu) { closeSourceMenu(); return; }		// a second press toggles it shut
+		if (!current || !window.DaimondModels) return;
+		var chat = current;
+		var menu = document.createElement('div');
+		menu.className = 'railhead-menu source-menu';
+		menu.setAttribute('role', 'menu');
+		menu.setAttribute('aria-label', t('composer.source'));
+		var head = document.createElement('div');
+		head.className = 'railhead-menu-head';
+		head.textContent = t(chat.diamondId ? 'composer.source_this_diamond' : 'composer.source_this_chat');
+		menu.appendChild(head);
+		sourceMenuRows(chat).forEach(function (r) {
+			var b = document.createElement('button');
+			b.type = 'button';
+			if (r.add) {
+				var sep = document.createElement('div');
+				sep.className = 'railhead-menu-sep';
+				sep.setAttribute('role', 'separator');
+				menu.appendChild(sep);
+				b.className = 'railhead-menu-item';
+				b.setAttribute('role', 'menuitem');
+				b.textContent = t('composer.source_add');
+				b.addEventListener('click', function () { closeSourceMenu(); openSettings('', true); });
+				menu.appendChild(b);
+				return;
+			}
+			b.className = 'railhead-menu-item lead-ok';	// the tick is drawn by the role, as the Chats menu's is
+			b.setAttribute('role', 'menuitemradio');
+			b.setAttribute('aria-checked', r.checked ? 'true' : 'false');
+			var n = document.createElement('span');
+			n.className = 'source-row-name';
+			n.textContent = r.name;
+			b.title = r.name;
+			b.appendChild(n);
+			if (r.balance) {
+				// The rail's figure: the tag glyph beside the value, in his currency.
+				var bal = DaimondI18n.fillPrices(document.createElement('span'), r.balance);
+				bal.className = 'source-row-bal';
+				b.appendChild(bal);
+			}
+			b.addEventListener('click', function () { closeSourceMenu(); if (!r.checked) pickSource(chat, r.id); });
+			menu.appendChild(b);
+		});
+		document.body.appendChild(menu);
+		// Below the switch where there is room, else above it: on a desktop the row is the
+		// composer's last line, near the foot of the window.
+		var a = anchor.getBoundingClientRect();
+		menu.style.left = Math.max(8, Math.min(a.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+		var below = a.bottom + 4 + menu.offsetHeight <= window.innerHeight - 8;
+		menu.style.top = Math.max(8, below ? a.bottom + 4 : a.top - 4 - menu.offsetHeight) + 'px';
+		_sourceMenu = menu;
+		DaimondLayers.open('sourcemenu', closeSourceMenu, anchor);
+		anchor.setAttribute('aria-expanded', 'true');
+		setTimeout(function () { document.addEventListener('click', onSourceMenuOutside, true); }, 0);
+	}
+
+	/// A pick in the source menu: `chat` (or its Diamond) moves to `to`, the model chip and the
+	/// Effort step redraw, and the one toast says which model it now runs on.
+	async function pickSource(chat, to) {
+		if (!chat.diamondId && chat._generating) {
+			await noticeDialog(t('tile.chat_model_busy_title'), t('tile.chat_model_busy'));
+			return;
+		}
+		var out = switchChatSource(chat, to);
+		if (!out) {
+			// A source whose list was never asked for maps to nothing until it is.
+			try { await DaimondModels.fetchModels(to); } catch (e) { /* said below */ }
+			out = switchChatSource(chat, to);
+		}
+		if (!out) { toast(t('chat.no_key_start'), true); return; }
+		var note = effortClearedNote(out.eff, out.after.provider, out.after.model);
+		var said = sourceMovedPair(out);
+		renderSessionList();
+		if (chat.diamondId) {
+			if (currentDiamond && currentDiamond.id === chat.diamondId) await refreshDiamondAfterChange();
+			else await loadDiamonds();
+			toast(t('tile.model_changed', said) + note);
+		} else {
+			// A pending chat that can now start, starts (CHAT-01).
+			if (chat.status === 'pending' && current === chat) renderPendingCentre(chat);
+			toast(t('tile.chat_model_changed', said) + note);
+		}
+		renderEffortStep();
+	}
+	try {
+		var srcBtn = document.getElementById('source-btn');
+		if (srcBtn) srcBtn.addEventListener('click', function () { openSourceMenu(srcBtn); });
 	} catch (e) { /* no DOM */ }
 
 	/// The walk-back pair lives in the input bar on a desktop and in the composer row on a
@@ -32828,6 +33162,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				runnerOnly:    true,
 				// The provider the turn runs on, as the errand will carry it (`electProvider`).
 				provider:      electProvider(chat),
+				sources:       electSources(chat),
 			}, Date.now());
 			// THE SMOKING GUN: exactly what the election saw and chose. This is the
 			// line that says WHY iOS picks the device it picks.
@@ -33029,6 +33364,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					nominatedId:   nominatedDeviceId(),
 					freshWindowMs: DaimondPeer.DISPATCH_FRESH_MS,
 					provider:      electProvider(chat),	// as the send-time site
+					sources:       electSources(chat),
 				}, now);
 				diag('dispatch election', 'step-away ' + electionTrace(presence, self, nominatedDeviceId(), d, DaimondPeer.DISPATCH_FRESH_MS));
 				if (!d.dispatch) return;
@@ -34525,7 +34861,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// (D-20261018-09 U1c). Only a deliberate pick is stored: nothing chosen, or a choice equal to
 	/// `def`, stores `''` and the record follows. Equal is the same provider AND the same model; a
 	/// pair with no provider names `def`'s. Every path that creates or stores a chat's or a
-	/// Diamond's model comes through here.
+	/// Diamond's model comes through here, except the source switch (`switchChatSource`), which
+	/// is a deliberate pin and stores its pair as given.
 	function storedPick(pair, def) {
 		var m  = String((pair && pair.model) || ''),    p  = String((pair && pair.provider) || '');
 		var dm = String((def && def.model) || ''),      dp = String((def && def.provider) || '');
@@ -34967,7 +35304,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var btn = document.getElementById('chats-menu-btn');
 		if (btn) btn.setAttribute('aria-expanded', 'false');
 	}
-	function onChatsMenuOutside(e) { if (_chatsMenu && !_chatsMenu.contains(e.target)) closeChatsMenu(); }
+	// The button toggles the menu itself, so a press on it is left to its own click (OWNKEY K9):
+	// closed here first, its click would only open the menu again.
+	function onChatsMenuOutside(e) {
+		var btn = document.getElementById('chats-menu-btn');
+		if (_chatsMenu && !_chatsMenu.contains(e.target) && !(btn && btn.contains(e.target))) closeChatsMenu();
+	}
 
 	function openChatsMenu(anchor) {
 		if (_chatsMenu) { closeChatsMenu(); return; }		// second press on the button toggles it shut
@@ -35221,10 +35563,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	var _foldRun = null;
 	var _foldMenu = null;
+	var _foldAnchor = null;		// what opened it, left to its own click so a second press shuts it
 	function closeFoldMenu() {
+		_foldAnchor = null;
 		if (_foldMenu) { _foldMenu.remove(); _foldMenu = null; document.removeEventListener('click', onFoldOutside, true); }
 	}
-	function onFoldOutside(e) { if (_foldMenu && !_foldMenu.contains(e.target)) closeFoldMenu(); }
+	function onFoldOutside(e) {
+		if (_foldMenu && !_foldMenu.contains(e.target) && !(_foldAnchor && _foldAnchor.contains && _foldAnchor.contains(e.target))) closeFoldMenu();
+	}
 
 	/// Offer the Diamonds to fold into. `turns`, when given, narrows the fold to those turns.
 	///
@@ -35234,6 +35580,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// and any chat a reload left unopened -- answered "Turn into a diamond…" with "This
 	/// chat is empty", which is a sentence about this tab's memory and not about the chat.
 	async function openFoldPicker(chat, anchor, turns, chosen) {
+		if (_foldMenu && _foldAnchor === anchor) { closeFoldMenu(); return; }	// a second press shuts it
 		closeFoldMenu();
 		if (chat && !chat._loaded) {
 			try { await loadChatMessages(chat); }
@@ -35297,6 +35644,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		menu.style.left = Math.max(8, left) + 'px';
 		menu.style.top = (r.bottom + 4) + 'px';
 		_foldMenu = menu;
+		_foldAnchor = anchor || null;
 		setTimeout(function () { document.addEventListener('click', onFoldOutside, true); }, 0);
 	}
 
@@ -49747,6 +50095,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { return false; }
 		if (!j || j.ok !== true || !Array.isArray(j.runners)) return false;
 		runnerPairSettle(j.runners);
+		// A re-approval from any device clears this page's re-approval mark (M2).
+		if (window.DaimondPeer && DaimondPeer.rekeyApproved && DaimondPeer.rekeyApproved(j.runners)) {
+			try { renderSeatSwitch(); } catch (e) { /* the next beat redraws */ }
+		}
 		return true;
 	}
 
@@ -49765,6 +50117,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		finally { delete _runnerPairBusy[rp.device]; }
 		if (!res || !res.ok) return { ok: false, error: (res && res.error) || t('pending.runnerpair.failed') };
 		Pending.drop(it.id);
+		// Approved again: the keys sealed since a passphrase change open there now (M2). Other
+		// devices clear their mark from the list's later `approved` stamp (`rekeyApproved`).
+		if (window.DaimondPeer && DaimondPeer.clearRekey) { DaimondPeer.clearRekey(rp.device); try { renderSeatSwitch(); } catch (e) { /* next beat */ } }
 		return { ok: true };
 	}
 
@@ -53455,13 +53810,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			document.removeEventListener('click', onPopOutside, true);
 			DaimondLayers.done('filesmenu');
 		}
-		function onPopOutside(ev) { if (pop && !pop.el.contains(ev.target)) closePop(); }
+		function onPopOutside(ev) {
+			if (pop && !pop.el.contains(ev.target) && !(pop.anchor && pop.anchor.contains && pop.anchor.contains(ev.target))) closePop();
+		}
 
 		/// The panel's one menu, in the `railhead-menu` role: the head ⋯, + New and a row
 		/// ⋯ differ only in their items, which `fill(item, sep, menu)` adds. An item with
 		/// no `run` is drawn disabled; one with `checked` is a checkbox. It hangs from
 		/// `anchor`'s right edge, or from (x, y) for a right-click or a long-press.
 		function openPop(key, anchor, label, fill, x, y) {
+			if (pop && anchor && pop.anchor === anchor && pop.key === key) { closePop(); return; }	// a second press shuts it
 			closePop();
 			var menu = document.createElement('div');
 			menu.className = 'railhead-menu';
@@ -57872,6 +58230,93 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		persistChats();
 	}
 
+	// ── What a chat pays with (OWNKEY SW-1, D-20261024-19) ───────
+	// "and it should be easy to switch between credit sources!!!!!!" The composer row's first
+	// control names the provider the chat's daimon runs on and moves THIS chat (or, inside a
+	// Diamond, the Diamond) to another. The global default never moves here; it stays Models →
+	// model → "Make this the model new chats and diamonds start on".
+
+	/// The pair a chat's daimon runs on now: the Diamond's inside one, else the chat's own pick
+	/// or the default's.
+	function sourcePairOf(chat) {
+		if (!chat) return { provider: '', model: '' };
+		if (chat.diamondId) return diamondModel(chat.diamondId);
+		var e = DaimondModels.effective({ kind: 'chat', chat: chat }, 'daimon');
+		return { provider: e.provider || '', model: e.model || '' };
+	}
+
+	/// The provider a chat pays with.
+	function sourceOf(chat) { return sourcePairOf(chat).provider; }
+
+	/// A source's name as the switch shows it: "Credits", or the provider's row name.
+	function sourceLabel(id) {
+		if (!id) return '';
+		return id === DaimondModels.CREDITS ? t('astat.credits') : DaimondModels.providerName(id);
+	}
+
+	/// The `{ from, to }` a source move's toast says: the models, or the sources where the model
+	/// keeps its name across them, which would otherwise read "Thinker to Thinker".
+	function sourceMovedPair(out) {
+		var from = shortModel(out.before.model, out.before.provider) || t('tile.model_none');
+		var to   = shortModel(out.after.model, out.after.provider);
+		if (from === to) return { from: sourceLabel(out.before.provider), to: sourceLabel(out.after.provider) };
+		return { from: from, to: to };
+	}
+
+	/// The switch's menu for `chat`: each source as `DaimondModels.sources` lists it, with the
+	/// current one `checked`, then the "Add a provider…" row (`add`).
+	function sourceMenuRows(chat) {
+		var cur = sourceOf(chat);
+		return DaimondModels.sources().map(function (s) {
+			return { id: s.id, name: s.name, credits: s.credits, balance: s.balance, checked: s.id === cur };
+		}).concat([{ add: true }]);
+	}
+
+	/// Move `chat` to source `to`, as one stamped write on the record that owns its model: the
+	/// chat's own picks, or its Diamond's model set. The model is mapped across
+	/// (`DaimondModels.planSource`), the workers and images halves on the old source go with it,
+	/// and the Effort is re-clamped to the new model's levels. Answers `{ before, after, eff }`,
+	/// or null when nothing moved: the same source, or one that lists no model here.
+	function switchChatSource(chat, to) {
+		if (!chat || !to) return null;
+		var M = DaimondModels, before = sourcePairOf(chat);
+		if (before.provider === to) return null;
+		var did = chat.diamondId;
+		var plan = M.planSource(did ? diamondPicks(did) : chatPicks(chat), before, to);
+		var res = plan && M.resolve(plan.daimon.provider, plan.daimon.model);
+		if (!res) return null;
+		var after = { provider: res.provider, model: res.model };
+		var eff = M.effortClamp(did ? diamondEffort(did) : (chat.effort || ''), after.provider, after.model);
+		if (did) {
+			var pick = { provider: after.provider, model: after.model, effort: eff.effort,
+				effortProvider: eff.effort ? after.provider : '', effortModel: eff.effort ? after.model : '' };
+			if (plan.workers) { pick.workerProvider = plan.workers.provider; pick.workerModel = plan.workers.model; }
+			if (plan.images)  { pick.visionProvider = plan.images.provider;  pick.visionModel = plan.images.model; }
+			// A record with no last-run pair takes `before`, as `changeDiamondModel` does, so the
+			// next turn writes its note of the move.
+			var rec = diamondModels()[did] || {};
+			if (!rec.ranModel && before.model) { pick.ranProvider = before.provider; pick.ranModel = before.model; }
+			setDiamondModel(did, pick);
+			resetDiamondApps();
+			bumpDiamonds();
+		} else {
+			// A deliberate pin, stored as given, as the Diamond branch does: not through
+			// `storedPick`, which would read a pair equal to the default as "follow it" and let a
+			// later move of the default move this chat unasked (D-20261024-19, QA-B F1).
+			chat.provider = after.provider;
+			chat.model    = after.model;
+			if (plan.workers) {
+				chat.workerProvider = plan.workers.provider;
+				chat.workerModel    = plan.workers.model;
+			}
+			chat.effort = eff.effort;
+			chat.app = null;		// a DaimondApp's model and key are fixed at construction
+			touchChatModel(chat);
+			persistChats();
+		}
+		return { before: before, after: after, eff: eff };
+	}
+
 	/// The model this Diamond's WORKERS run on: what the user chose for them, and otherwise the
 	/// Diamond's own model.
 	///
@@ -61751,7 +62196,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		DaimondLayers.done('tagmore');
 		pop.anchor.setAttribute('aria-expanded', 'false');
 	}
-	function onTagMoreOutside(e) { if (_tagMore && !_tagMore.el.contains(e.target) && e.target !== _tagMore.anchor) closeTagMore(); }
+	function onTagMoreOutside(e) {
+		var anchor = _tagMore && _tagMore.anchor;
+		if (_tagMore && !_tagMore.el.contains(e.target) && !(anchor && anchor.contains && anchor.contains(e.target))) closeTagMore();
+	}
 	function openTagMore(anchor, tags) {
 		if (_tagMore) { var was = _tagMore.anchor; closeTagMore(); if (was === anchor) return; }	// a second press toggles it shut
 		var pop = document.createElement('div');
@@ -76274,8 +76722,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	};
 
 	/// Take the user to the settings, wherever the settings currently are: the
-	/// lower pane of the rail, or — where there is no rail — a modal card.
-	function openSettings(note) {
+	/// lower pane of the rail, or — where there is no rail — a modal card. `add` opens the
+	/// add-a-provider form, as the source menu's "Add a provider…" asks.
+	function openSettings(note, add) {
 		// On a phone the rail is a fixed drawer, so `available()` is false and the
 		// form opens in the modal; opening the drawer too would just flap behind it.
 		if (!isMobile()) DaimondPanels.show('rail');   // a no-op if it is already open
@@ -76285,7 +76734,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// user was sent here BECAUSE there is no model: in either case the thing to do is add one.
 		var form = document.getElementById('byok-form');
 		var none = !window.DaimondModels || !DaimondModels.providers().length;
-		if (form) form.style.display = (none || note) ? '' : 'none';
+		if (form) form.style.display = (none || note || add) ? '' : 'none';
 		if (form && form.style.display !== 'none') {
 			var provEl = document.getElementById('cfg-provider');
 			(provEl.value ? document.getElementById('cfg-api-key') : provEl).focus();

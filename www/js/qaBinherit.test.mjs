@@ -52,7 +52,7 @@ P.setEngineId(ENGINE);
 win.DaimondPresence.ingest({ rn: { name: 'argonaut', last_seen: now, runner: true, kind: 'runner',
 	serviced: true, serviced_at: now, mobile: false, busy: 0, engine: ENGINE } }, now);
 
-const NAMES = ['seatOpts', 'electProvider', 'errandModelOf', 'turnModelsOfChat', 'turnModelOf', 'seatSwitchFor'];
+const NAMES = ['seatOpts', 'electProvider', 'electSources', 'errandModelOf', 'turnModelsOfChat', 'turnModelOf', 'seatSwitchFor'];
 function world(def) {
 	const env = {
 		window: null, String: String, Object: Object, Date: Date,

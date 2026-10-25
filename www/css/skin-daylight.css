@@ -1353,7 +1353,7 @@
 /* `.chead-left > #diamond-view .dview-btn` (app.css) outranks the toggle-option
    rule above on specificity (an id), so its own 30px padding is repeated here.
    The seat switch by the composer is the same control, drawn the same. */
-:root[data-skin="daylight"] :is(#diamond-view, #seat-switch, #effort-step) .dview-btn { padding: 6px 8px; }
+:root[data-skin="daylight"] :is(#diamond-view, #source-switch, #seat-switch, #effort-step) .dview-btn { padding: 6px 8px; }
 :root[data-skin="daylight"] .theme-pick:hover,
 :root[data-skin="daylight"] .pop select:hover { border-color: transparent; background-color: var(--bg-hover); }
 /* A chat tile's name sits on the same edge as a diamond's. A Pending tile's headline is the same label button (5.3.2): its
@@ -1575,9 +1575,9 @@
 	:root[data-skin="daylight"] .panel.ai .chead #diamond-view { order: 5; margin: 7px 0 7px -8px; overflow: visible; }
 	:root[data-skin="daylight"] .panel.ai .chead #diamond-view .dview-btn { margin-block: 0; min-width: 44px; }
 	/* The seat switch by the composer is the face switch's control, so it keeps the same 30px box, 44px width and 44px overlay. */
-	:root[data-skin="daylight"] .panel.ai :is(#seat-switch, #effort-step) { overflow: visible; }
-	:root[data-skin="daylight"] .panel.ai :is(#seat-switch, #effort-step) .dview-btn { position: relative; min-width: 44px; }
-	:root[data-skin="daylight"] .panel.ai :is(#seat-switch, #effort-step) .dview-btn::before {
+	:root[data-skin="daylight"] .panel.ai :is(#source-switch, #seat-switch, #effort-step) { overflow: visible; }
+	:root[data-skin="daylight"] .panel.ai :is(#source-switch, #seat-switch, #effort-step) .dview-btn { position: relative; min-width: 44px; }
+	:root[data-skin="daylight"] .panel.ai :is(#source-switch, #seat-switch, #effort-step) .dview-btn::before {
 		content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%);
 	}
 	:root[data-skin="daylight"] .panel.ai .chead #chead-when { order: 6; margin-left: 8px; }

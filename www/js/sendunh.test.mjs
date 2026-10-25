@@ -228,10 +228,10 @@ function lift(name) {
 	return SRC.slice(a, SRC.indexOf('\n\t}\n', a) + 3);
 }
 
-const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
+const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'electSources', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
 	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
-	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'handBackNote'];
+	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'handBackNote', 'seatWhyText', 'dropRefusedTiles'];
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──
 const PW = { addEventListener() {}, dispatchEvent() { return true; } };
@@ -327,7 +327,7 @@ function world(fault, extra) {
 		loadMsgTombs: () => ({}), msgTombstone: () => {}, sessionCut: () => {}, ChatStore: { compact: () => {} },
 		leaseClockNow: () => Date.now(),
 		// The backstop's world: one chat, a lease the test sets, a hand-back held or not.
-		chats: [], _handBack: {}, _handBackCause: {}, _fallbackInFlight: {}, _localRecovering: {}, _localEnding: {}, LEASE: null,
+		chats: [], _handBack: {}, _handBackCause: {}, _abiRefused: {}, _progressView: {}, _finalMids: {}, _finalRun: {}, _fallbackInFlight: {}, _localRecovering: {}, _localEnding: {}, LEASE: null,
 		// The test's one lease is the turn under test's, never its retry's `-rt` lease unless it names it.
 		DaimondLease: { record: (tid) => (/-rt$/.test(String(tid)) && !(env.LEASE && (env.LEASE.turnId === tid || env.LEASE.turn === tid)) ? null : env.LEASE), snapshot: () => (env.LEASE ? { [env.LEASE.turn || '']: env.LEASE } : {}),
 			take: async (tid) => { W.taken.push(tid); return env.TAKE === 'won' ? { won: true } : { won: false, why: 'held', holder: 'argonaut1' }; } },

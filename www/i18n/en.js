@@ -642,6 +642,11 @@
 	'composer.effort_default': 'Default',
 	'composer.effort_less': 'Less effort',
 	'composer.effort_more': 'More effort',
+	'composer.source': 'Pays with',
+	'composer.source_help': '{scope}. New chats use the default in Models.',
+	'composer.source_add': 'Add a provider…',
+	'composer.source_this_chat': 'This chat only',
+	'composer.source_this_diamond': 'This Diamond',
 	'tile.effort_default_named': 'Model default ({level})',
 	'tile.effort_cleared': 'Effort is back to the default: {model} does not offer that level.',
 	// i18n-family: tile.effort_ = one-way none minimal low medium high xhigh max -- the reasoning rungs (models.js EFFORT_LADDER); help, default and cleared share the prefix
@@ -1048,7 +1053,6 @@
 
 	// ── The chat ───────────────────────────────────────────────
 	'chat.no_chat':        'No chat',
-	'chat.model_for_chat': 'Model for this chat',
 	'chat.select_all':     'Select All',
 	'chat.deselect_all':   'Deselect All',
 	'chat.fold_selected':  'Fold Selected',
@@ -2524,7 +2528,14 @@
 	'seat.why_no_desktop':       'No other device is awake to take it.',
 	'seat.why_runner_silent':    '{name} is not awake — it may be at its lock screen.',
 	'seat.why_runner_credits': '{name} takes Daimond-credits chats only; this one uses your own key.',
-	'seat.why_runner_engine': '{name} runs another Daimond version; update it to use it.',
+	'seat.why_runner_engine': '{name} runs another Daimond version; it updates itself.',
+	'seat.why_runner_source': '{name} cannot use {provider}: {reason}.',
+	'seat.why_runner_rekey': '{name} needs approving again after your passphrase change to use your own keys.',
+	// i18n-family: seat.reach_ = https device unlock nokey
+	'seat.reach_https': 'it needs an https address',
+	'seat.reach_device': 'it is on this device',
+	'seat.reach_unlock': 'unlock Daimond to seal its key',
+	'seat.reach_nokey': 'no key is saved for it',
 	'seat.tile_local_mobile':    'Runs here — keep this open',
 	// The relay REFUSED the hand-off (S-HAND #6): it never reached a peer, so the turn
 	// is running here. The status rides the tooltip; the reason `errand.prompt_too_large`

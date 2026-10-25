@@ -764,10 +764,16 @@ pub async fn read_one<R: AsyncRead + Unpin>(reader: &mut FrameReader<R>)
     }
 }
 
-/// Writes one message under the id frame `head`.
+/// Writes one message under the id frame `head`.  A frame over the writer's ceiling is refused
+/// before its id goes, so a refusal leaves the pipe in step: an id alone would have the reader
+/// take the next message's id for this one's frame.
 async fn write_msg<W: AsyncWrite + Unpin>(writer: &mut FrameWriter<W>, head: &[u8], frame: &[u8])
     -> Outcome<()>
 {
+    if frame.len() > writer.max() {
+        return Err(err!("A pipe message of {} bytes is over the ceiling of {}: nothing was written.",
+            frame.len(), writer.max(); Input, TooBig));
+    }
     res!(writer.write_bytes(head).await);
     writer.write_bytes(frame).await
 }

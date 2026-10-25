@@ -89,3 +89,50 @@ test('search matches Tabler names and tags, names first', () => {
 	assert.deepEqual(A.search(set, 'AIRcraft'), ['plane']);
 	assert.deepEqual(A.search(set, ''), []);
 });
+
+// The picker in a bare DOM: a second press of its anchor shuts it, as every other menu's does
+// (SW-1b sweep, QA-OWNKEY-B F3). The anchor's own click used to close the picker and open it again.
+test('a second press of the icon button shuts the picker', async () => {
+	const vm = await import('node:vm');
+	const { readFileSync } = await import('node:fs');
+	const listeners = [];
+	class El {
+		constructor(tag) { this.tag = tag; this.children = []; this.parentNode = null; this.style = {}; this.dataset = {};
+			this.on = {}; this.attrs = {}; this.classList = { toggle: () => {}, add: () => {}, remove: () => {} }; }
+		appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+		removeChild(c) { this.children = this.children.filter((x) => x !== c); c.parentNode = null; return c; }
+		setAttribute(k, v) { this.attrs[k] = v; }
+		addEventListener(k, f) { (this.on[k] = this.on[k] || []).push(f); }
+		contains(n) { for (let x = n; x; x = x.parentNode) if (x === this) return true; return false; }
+		closest() { return null; }
+		focus() {}
+		getBoundingClientRect() { return { top: 0, right: 0, left: 0, bottom: 0 }; }
+		click() { (this.on.click || []).forEach((f) => f({ target: this, stopPropagation: () => {} })); }
+	}
+	const body = new El('body');
+	const document = {
+		body, createElement: (t) => new El(t),
+		addEventListener: (k, f, c) => listeners.push({ k, f }),
+		removeEventListener: (k, f) => { const i = listeners.findIndex((l) => l.k === k && l.f === f); if (i >= 0) listeners.splice(i, 1); },
+	};
+	const ctx = vm.createContext({ document, console, Promise, Object, Array, Math, JSON, String,
+		setTimeout: (f) => f(), fetch: () => Promise.reject(new Error('offline')), innerWidth: 1200, innerHeight: 800,
+		localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} } });
+	ctx.window = ctx;
+	vm.runInContext(readFileSync(new URL('./avatar_core.js', import.meta.url), 'utf8'), ctx);
+	vm.runInContext(readFileSync(new URL('./avatar.js', import.meta.url), 'utf8'), ctx);
+	const A = ctx.DaimondAvatar;
+	const b = A.button({ kind: 'chat', id: 'c1', name: 'Garden', tags: [] });
+	body.appendChild(b);
+	const press = () => {
+		listeners.filter((l) => l.k === 'pointerdown').forEach((l) => l.f({ target: b }));
+		b.click();
+	};
+	const open = () => body.children.filter((c) => c.className === 'av-pick').length;
+	press();
+	assert.equal(open(), 1, 'the first press opens the picker');
+	press();
+	assert.equal(open(), 0, 'the second press shuts it');
+	press();
+	assert.equal(open(), 1, 'a third press opens it again');
+});

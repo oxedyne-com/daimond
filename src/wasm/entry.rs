@@ -165,6 +165,12 @@ pub fn liveness_ms() -> f64 {
     crate::agent::compact::LIVENESS_MS as f64
 }
 
+/// The engine ABI (OWNKEY §5) as `[ENGINE_ABI, ENGINE_ABI_MIN]`, for the page's `setEngineAbi`.
+#[wasm_bindgen]
+pub fn engine_abi() -> Vec<u32> {
+    vec![crate::engine::abi::ENGINE_ABI, crate::engine::abi::ENGINE_ABI_MIN]
+}
+
 /// The linear memory in whole megabytes, for a trail line.
 ///
 /// Separate from [`heap_bytes`] because the JS side wants bytes and every caller

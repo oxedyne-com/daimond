@@ -24712,6 +24712,11 @@ impl Tool {
                         Err(why) => return Ok(MessageContent::text(why)),
                     };
                     let raw  = res!(ctx.host().net().fetch_raw(&url).await);
+                    // The bytes are outside content the moment they arrive, as `wrap_untrusted`
+                    // says for the text path: the turn is tainted HERE, before the write, so
+                    // `tainted_landing` books the file as a stranger's (NF5) every time rather
+                    // than when a parent's async word happened to arrive first (RUNNER-WEB QA H1).
+                    ctx.set_tainted();
                     let ctype = raw.content_type;
                     match reach_of(ctx, &to, &path, Door::Change).await {
                         Reach::Refuse(why) => {
@@ -25877,10 +25882,17 @@ impl Tool {
         let path = res!(Self::scoped(ctx, &raw));
         let bytes = res!(ctx.host().fs().read_file(ctx.root, &path).await
             .map_err(|e| err!(e, "ocr: cannot read '{}'.", raw; IO, File, Read)));
+        // Whose words the picture carries is judged as `file_read` judges it: by the spelling and
+        // by where the path lands (U10), so `mail/x.png` read from `~/usr` is a stranger's.
+        // A test's red: `ocr_landing` off, the spelling alone, as `ocr` judged it before RW-CF3.
+        let stranger = match engine_rule_off("ocr_landing") {
+            true  => is_untrusted_path(&raw),
+            false => ws_stranger(ctx, &raw, &path),
+        };
         let hash = content_hash(&bytes);
         if let Some(hit) = OCR_CACHE.with(|c| c.borrow().get(&hash).cloned()) {
-            return Ok(MessageContent::text(Self::mark_if_untrusted(
-                ctx, &raw, Self::ocr_view(args_json, &raw, &hit, true))));
+            return Ok(MessageContent::text(Self::mark_if_from(
+                ctx, &raw, stranger, Self::ocr_view(args_json, &raw, &hit, true))));
         }
         // A PDF given to `ocr` is a request to OCR it: `mistral-ocr` straight away, since
         // the caller has said its pages are images. `file_read` keeps the free-first path.
@@ -25900,8 +25912,8 @@ impl Tool {
                 pages: pdf_page_count(&bytes), paid: true,
             };
             OCR_CACHE.with(|c| { c.borrow_mut().insert(hash, hit.clone()); });
-            return Ok(MessageContent::text(Self::mark_if_untrusted(
-                ctx, &raw, Self::ocr_view(args_json, &raw, &hit, false))));
+            return Ok(MessageContent::text(Self::mark_if_from(
+                ctx, &raw, stranger, Self::ocr_view(args_json, &raw, &hit, false))));
         }
         // A picture: each page as one the OCR services accept, converted here where the file
         // is in any other format this can read, and the pages' text joined in order.
@@ -25932,8 +25944,8 @@ impl Tool {
         }
         let hit = OcrHit { text, what: "an image", engine, pages, paid };
         OCR_CACHE.with(|c| { c.borrow_mut().insert(hash, hit.clone()); });
-        Ok(MessageContent::text(Self::mark_if_untrusted(
-            ctx, &raw, Self::ocr_view(args_json, &raw, &hit, false))))
+        Ok(MessageContent::text(Self::mark_if_from(
+            ctx, &raw, stranger, Self::ocr_view(args_json, &raw, &hit, false))))
     }
 
     /// The windowed transcript plus the engine/cost note the two OCR paths share.

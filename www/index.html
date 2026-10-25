@@ -891,12 +891,24 @@
 					     Emptying the box reaches stop in that mode. -->
 				</div>
 				<!-- THE COMPOSER ROW (D-20261014-08): what the next turn is, beside the box it
-				     is typed in (under it on a desktop, above it on a phone). Where it runs, how
-				     hard it thinks, and on a phone the walk-back pair, which `placeWalkPair` moves
-				     in here from the bar. One line at every width: the runner's name gives way
-				     first, then the Effort word. CSS alone hides it while none of its parts is
+				     is typed in (under it on a desktop, above it on a phone). What it pays with,
+				     where it runs, how hard it thinks, and on a phone the walk-back pair, which
+				     `placeWalkPair` moves in here from the bar. One line at every width: the
+				     runner's name gives way first, then the source's name, then the Effort word. CSS alone hides it while none of its parts is
 				     shown (`:has`), so no drawing has to keep a second flag in step with its parts. -->
 				<div class="composer-row" id="composer-row">
+					<!-- WHAT THIS CHAT PAYS WITH (OWNKEY SW-1, D-20261024-19): Daimond credits or a
+					     provider whose key opens here, for this chat only (inside a Diamond, the
+					     Diamond). A pulldown in the row's own segmented look; the menu is the
+					     railhead menu. Drawn by `renderSourceSwitch`. -->
+					<div class="dview source-switch" id="source-switch" hidden>
+						<button class="dview-btn source-btn" id="source-btn" type="button"
+						        aria-haspopup="menu" aria-expanded="false"
+						        data-i18n-aria-label="composer.source" aria-label="Pays with">
+							<span class="source-name" id="source-name"></span>
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
+						</button>
+					</div>
 					<!-- WHERE THE NEXT TURN RUNS, chosen by the person (owner, D-20261009-23):
 					     "Here | <runner>" while the nominated runner is reachable, plain "Here"
 					     otherwise. Sticky per chat; drawn by `renderSeatSwitch`. -->

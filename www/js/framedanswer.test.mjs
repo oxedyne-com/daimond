@@ -19,6 +19,8 @@
      RELOAD  the adopted rows are what the store holds (persistChats called)
      WHOLE   only a final frame every row of which the runner marked uncut, with
              no row left out, may become the answer (`progressRow`, `frameWhole`)
+     REF     a 100 kB answer the runner sent as a head and a `ref` (REPLY-REF):
+             a second device with no report adopts the whole from the chunks
 
    Run:  node www/js/framedanswer.test.mjs
    On 7ca624dd's daimond.js: adoptFinalFrame is missing (ABORT).
@@ -64,8 +66,11 @@ const lifted = new Function('env', [
 	'var REASON_DISPATCHED_STR = "dispatched";',
 	'function loadMsgTombs() { return {}; }',
 	'var window = env.window, DaimondPeer = env.window.DaimondPeer, DaimondLease = env.window.DaimondLease;',
-	'var peerReports = env.peerReports, _finalMids = env.finalMids, _finalRun = env.finalRun;',
+	'var peerReports = env.peerReports, _finalMids = env.finalMids, _finalRun = env.finalRun, _abiRefused = env.abiRefused || {};',
 	'var current = null; function renderHistory() {}',
+	// What `fetchFinalRef` and `applyProvisional` read beside the lifted law (REPLY-REF).
+	'var DaimondChunks = env.window.DaimondChunks, _refFetch = {}, _progressView = {}, _renderedSigs = null;',
+	'function ownsChat() { return true; } function growProvisionalTiles() {} function sigsOf() { return null; }',
 	'function msgTombstone(mids) { env.tombs.push.apply(env.tombs, mids); }',
 	'function dispatchedChat(t) { return env.chatFor(t); }',
 	'function chatHoldingTurn(t) { return env.holding ? env.holding(t) : null; }',
@@ -90,7 +95,9 @@ const lifted = new Function('env', [
 	extractFn(src, 'isNotRunRow'),
 	extractFn(src, 'isLostRow'),
 	extractFn(src, 'adoptFinalFrame'),
-	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame };',
+	extractFn(src, 'applyProvisional'),
+	extractFn(src, 'fetchFinalRef'),
+	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef };',
 ].join('\n'));
 const settledLease = new Function(extractFn(psrc, 'settledLease') + '\nreturn settledLease;')();
 const otherRunRows = (psrc.indexOf('function otherRunRows(') >= 0)
@@ -248,6 +255,46 @@ console.log('\nLATE: a final frame whose placeholder has already gone (hand-off 
 	w2.finalMids.u1 = { a1: 1 };
 	w2.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
 	check('[ctl] and nothing moves where no chat holds it', w2.adoptFinalFrame('u1') === false);
+}
+
+console.log('\nREF: a long answer sent as a head and a ref is adopted whole (REPLY-REF)\n');
+{
+	// The real peer.js, as WHOLE loads it, beside the settled-lease rule.
+	const win = {};
+	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
+		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+	// About 100 kB, of every UTF-8 width, as the runner's errand_settle arm sends it.
+	let long = '';
+	for (let i = 0; i < 10000; i++) long += String(i).padStart(4, '0') + 'é€😀 ';
+	// The runner's body (settle.rs `ref_body`): one `final_row`, marked whole.
+	const row = { mid: 'AN', role: 'assistant', content: long, ts: 12, run: 'R1', ranOn: 'b', ranMs: 900, ranCost: 0, whole: 1 };
+	const body = new TextEncoder().encode(JSON.stringify({ v: 1, turn: 'u1', msgs: [row] }));
+	const ref = { v: 2, size: body.length, key: 'k', chunks: [{ addr: 'a', size: body.length }] };
+	const w = world({ turnId: 'u1', holder: 'b', mode: 'released', expiry: 0, settled: 1 });
+	w.window.DaimondPeer = Object.assign({}, win.DaimondPeer, { settledLease, otherRunRows });
+	let asked = null;
+	w.window.DaimondChunks = { materialiseBytes: async (r) => { asked = r; return body; } };
+	Object.assign(w, lifted(w));
+	// The second device: the chat holds the turn and the streamed head, cut short; no report.
+	const head = prov('AN', long.slice(0, 16 * 1024));
+	w.chat = { id: 'c1', messages: [user(), place(), head] };
+	w.fetchFinalRef('u1', ref, 1);
+	for (let i = 0; i < 20 && !w.persisted; i++) await new Promise((r) => setTimeout(r, 0));
+	const an = find(w.chat.messages, 'AN');
+	check('the ref is read from the chunks', asked === ref);
+	check('no report here', !w.peerReports.u1);
+	check('the answer is adopted whole, byte for byte', an.length === 1 && an[0].content === long && an[0].framed === 1 && !an[0].provisional,
+		JSON.stringify(an.map((m) => ({ n: m.content.length, framed: m.framed, provisional: m.provisional }))));
+	check('the placeholder dropped and the store was written', w.dropped.join() === 'u1' && w.persisted >= 1);
+	const w2 = world({ turnId: 'u1', holder: 'b', mode: 'released', expiry: 0, settled: 1 });
+	w2.window.DaimondPeer = Object.assign({}, win.DaimondPeer, { settledLease, otherRunRows });
+	const cut = new TextEncoder().encode(JSON.stringify({ v: 1, turn: 'u1', msgs: [Object.assign({}, row, { whole: 0 })] }));
+	w2.window.DaimondChunks = { materialiseBytes: async () => cut };
+	Object.assign(w2, lifted(w2));
+	w2.chat = { id: 'c1', messages: [user(), place(), prov('AN', long.slice(0, 16 * 1024))] };
+	w2.fetchFinalRef('u1', ref, 1);
+	for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+	check('[ctl] a ref\'d row not marked whole is not adopted', find(w2.chat.messages, 'AN')[0].provisional === 1 && !w2.dropped.length);
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nALL PASS');

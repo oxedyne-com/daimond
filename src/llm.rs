@@ -32,6 +32,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(not(target_arch = "wasm32"))]
 use tokio_rustls::rustls::ClientConfig;
 
+use zeroize::Zeroizing;
+
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Dialect                                                        │
@@ -865,7 +867,7 @@ pub struct LlmClient {
     pub host:       String,
     pub port:       u16,
     pub path:       String,
-    pub api_key:    String,
+    pub api_key:    Zeroizing<String>, // wiped on drop: a runner's child holds his own key (M1)
     pub model:      String,
     /// Upper bound on generated tokens per turn.  Prevents runaway
     /// reasoning loops (e.g. GLM-5.2 without a cap).
@@ -1509,8 +1511,12 @@ impl TransportErr {
         } else if self.status == 401 {
             // The provider refused the KEY: a runner's held key is dead (revoked, swept) and
             // must be forgotten so the next turn mints afresh. 402 (no credit) and 403 (not
-            // allowed) are not dead keys and keep plain network tags.
+            // allowed) are not dead keys.
             err!(self.err, "{}", self.reason; IO, Network, Wire, Unauthorised)
+        } else if self.status == 403 {
+            // The provider will not let this key do this: no dead key, so no forget, but on his
+            // own key on a runner it ends the turn with a fixed note (OWNKEY L3).
+            err!(self.err, "{}", self.reason; IO, Network, Wire, Security)
         } else if matches!(self.status, 400 | 422) {
             err!(self.err, "{}", self.reason; IO, Network, Wire, Size)
         } else {
@@ -1884,7 +1890,7 @@ impl LlmClient {
             host:       host.to_string(),
             port,
             path:       path.to_string(),
-            api_key:    api_key.to_string(),
+            api_key:    Zeroizing::new(api_key.to_string()),
             model:      model.to_string(),
             max_tokens,
             retry:      RetryPolicy::default(),
@@ -1917,6 +1923,46 @@ impl LlmClient {
         max_tokens: u32,
         tls_config: Arc<ClientConfig>,
     ) -> Outcome<Self> {
+        let (plain, host, port, path) = res!(Self::url_parts(url));
+        let path = path.trim_end_matches('/');
+        let path = if path.ends_with("/chat/completions") || path.ends_with("/messages") {
+            path.to_string()
+        } else {
+            fmt!("{}/chat/completions", path)
+        };
+        let mut c = Self::new(&host, port, &path, api_key, model, max_tokens, tls_config);
+        c.plain = plain;
+        Ok(c)
+    }
+
+    /// The endpoint beside the chat endpoint `url` named `leaf`, as models.js `siblingUrl` makes
+    /// it: the first `/chat/completions` becomes `/<leaf>`, or else `/<leaf>` is appended.  A row
+    /// holds the chat endpoint (`https://api.mistral.ai/v1/chat/completions`), so Mistral's OCR is
+    /// `sibling(url, "ocr")`, `…/v1/ocr`, on the row's own host (I3).
+    pub fn sibling(url: &str, leaf: &str) -> String {
+        const CHAT: &str = "/chat/completions";
+        match url.find(CHAT) {
+            Some(i) => fmt!("{}/{}{}", &url[..i], leaf, &url[i + CHAT.len()..]),
+            None    => fmt!("{}/{}", url.trim_end_matches('/'), leaf),
+        }
+    }
+
+    /// A native client for exactly `url`, nothing appended, for a raw
+    /// [`post_whole`](Self::post_whole) of a body that is not a chat: Mistral's OCR [`sibling`](Self::sibling), as
+    /// the tab's `ocr.js` posts it.  The URL is vetted as [`from_url`](Self::from_url)'s is.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn for_post(url: &str, api_key: &str, tls_config: Arc<ClientConfig>) -> Outcome<Self> {
+        let (plain, host, port, path) = res!(Self::url_parts(url));
+        let mut c = Self::new(&host, port, &path, api_key, "", 0, tls_config);
+        c.plain = plain;
+        Ok(c)
+    }
+
+    /// `url` read as `(plain, host, port, path)`: `https://host[:port]/path`, or
+    /// `http://127.0.0.1:port/path` for a local mock and for nothing else.  The key is never in
+    /// an error this makes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn url_parts(url: &str) -> Outcome<(bool, String, u16, String)> {
         let (plain, rest) = if let Some(r) = url.strip_prefix("https://") {
             (false, r)
         } else if let Some(r) = url.strip_prefix("http://") {
@@ -1929,16 +1975,36 @@ impl LlmClient {
             Some(i) => (&rest[..i], &rest[i..]),
             None    => (rest, "/"),
         };
-        let (host, port) = match auth.rsplit_once(':') {
-            Some((h, p)) => match p.parse::<u16>() {
-                Ok(n) if n > 0  => (h, n),
+        let no_host = || err!("The model URL {:?} has no plain host.", url; Invalid, Input);
+        // An IPv6 host is bracketed (`[fd00::5]:8443`, a LAN row's), so its own colons are not
+        // the port's; the brackets are dropped, as connect and the TLS name want it bare.
+        let (host, port) = match auth.strip_prefix('[') {
+            Some(b) => match b.split_once(']') {
+                Some((h, rest)) if h.parse::<std::net::Ipv6Addr>().is_ok() => match rest {
+                    ""  => (h, None),
+                    _   => match rest.strip_prefix(':') {
+                        Some(p) => (h, Some(p)),
+                        None    => return Err(no_host()),
+                    },
+                },
+                _   => return Err(no_host()),
+            },
+            None    => match auth.rsplit_once(':') {
+                Some((h, _)) if h.contains(':') => return Err(no_host()), // IPv6 unbracketed
+                Some((h, p))                    => (h, Some(p)),
+                None                            => (auth, None),
+            },
+        };
+        let port = match port {
+            Some(p) => match p.parse::<u16>() {
+                Ok(n) if n > 0  => n,
                 _               => return Err(err!("The model URL's port {:?} is not a port.", p;
                     Invalid, Input)),
             },
-            None => (auth, if plain { 80 } else { 443 }),
+            None    => if plain { 80 } else { 443 },
         };
-        if host.is_empty() || host.contains(|c: char| c == '@' || c == '?' || c == '#' || c == '[') {
-            return Err(err!("The model URL {:?} has no plain host.", url; Invalid, Input));
+        if host.is_empty() || host.contains(|c: char| c == '@' || c == '?' || c == '#' || c == '[' || c == ']') {
+            return Err(no_host());
         }
         if path.contains(|c: char| c == '?' || c == '#' || c.is_whitespace()) {
             return Err(err!("The model URL {:?} carries a query, fragment or space.", url; Invalid, Input));
@@ -1947,20 +2013,32 @@ impl LlmClient {
             return Err(err!("The model URL {:?} is plain http to somewhere other than 127.0.0.1, \
                 so it is refused.", url; Invalid, Input, Security));
         }
-        let path = path.trim_end_matches('/');
-        let path = if path.ends_with("/chat/completions") || path.ends_with("/messages") {
-            path.to_string()
-        } else {
-            fmt!("{}/chat/completions", path)
-        };
-        let mut c = Self::new(host, port, &path, api_key, model, max_tokens, tls_config);
-        c.plain = plain;
-        Ok(c)
+        Ok((plain, host.to_string(), port, path.to_string()))
+    }
+
+    /// The request's `Host` value: an IPv6 host bracketed again, as HTTP requires.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn host_header(&self) -> String {
+        match self.host.contains(':') {
+            true    => fmt!("[{}]", self.host),
+            false   => self.host.clone(),
+        }
     }
 
     /// Whether this client speaks plain `http` (a loopback mock only).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn is_plain(&self) -> bool { self.plain }
+
+    /// POST `body` as it stands to this client's endpoint, with its key, and return the whole
+    /// response body: the tab's `ocr.js` `post` for a body the tool code built itself (an OCR
+    /// vision or file-parser request), sent once.  A refusal names the endpoint, never the key.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn post_whole(&self, body: &str) -> Outcome<String> {
+        match self.do_request_full(body).await {
+            Ok(r)   => Ok(r),
+            Err(e)  => Err(e.crossed()),
+        }
+    }
 
     /// Construct a client for the wasm transport (browser `fetch`).
     ///
@@ -1999,7 +2077,7 @@ impl LlmClient {
             host:       host.to_string(),
             port,
             path:       path.to_string(),
-            api_key:    api_key.to_string(),
+            api_key:    Zeroizing::new(api_key.to_string()),
             model:      model.to_string(),
             max_tokens,
             retry:      RetryPolicy::default(),
@@ -3189,10 +3267,10 @@ impl LlmClient {
         let mut out = vec![("Content-Type", "application/json".to_string())];
         match self.dialect {
             Dialect::OpenAi => {
-                out.push(("Authorization", fmt!("Bearer {}", self.api_key)));
+                out.push(("Authorization", fmt!("Bearer {}", self.api_key.as_str())));
             }
             Dialect::Anthropic => {
-                out.push(("x-api-key", self.api_key.clone()));
+                out.push(("x-api-key", self.api_key.to_string()));
                 out.push(("anthropic-version", ANTHROPIC_VERSION.to_string()));
                 if browser {
                     out.push(("anthropic-dangerous-direct-browser-access", "true".to_string()));
@@ -3415,7 +3493,7 @@ impl LlmClient {
 
         let mut request = String::with_capacity(512 + body_bytes.len());
         request.push_str(&fmt!("POST {} HTTP/1.1\r\n", self.path));
-        request.push_str(&fmt!("Host: {}\r\n", self.host));
+        request.push_str(&fmt!("Host: {}\r\n", self.host_header()));
         for (name, value) in self.auth_headers(false) {
             request.push_str(&fmt!("{}: {}\r\n", name, value));
         }
@@ -7354,6 +7432,58 @@ pub mod tests {
         assert!(!real.is_plain());
         assert_eq!((real.host.as_str(), real.port, real.path.as_str()),
             ("openrouter.ai", 443, "/api/v1/chat/completions"));
+    }
+
+    /// QA OKD-A M-1: the sibling rule is models.js `siblingUrl`'s: a row's chat endpoint gives
+    /// way to the leaf, and a base without one has the leaf appended.
+    #[test]
+    fn test_okd_m1_sibling_is_models_sibling_url() {
+        let cases = [
+            ("https://api.mistral.ai/v1/chat/completions",      "https://api.mistral.ai/v1/ocr"),
+            ("https://openrouter.ai/api/v1/chat/completions",   "https://openrouter.ai/api/v1/ocr"),
+            ("https://api.mistral.ai/v1",                       "https://api.mistral.ai/v1/ocr"),
+            ("https://api.mistral.ai/v1/",                      "https://api.mistral.ai/v1/ocr"),
+            ("https://[fd00::5]:8443/v1/chat/completions",      "https://[fd00::5]:8443/v1/ocr"),
+        ];
+        for (url, want) in cases {
+            assert_eq!(LlmClient::sibling(url, "ocr"), want, "sibling of {}", url);
+        }
+    }
+
+    /// OWNKEY A3: a LAN row on an IPv6 literal (`https://[fd00::5]:8443/v1`) is a client whose
+    /// host is the bare address, for connect and the TLS name, and whose `Host` is bracketed; a
+    /// bracket that is not an IPv6 address, or is left open, is no host.
+    #[test]
+    fn test_ocrok_a3_from_url_takes_a_bracketed_ipv6_host() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(
+            ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoVerify))
+                .with_no_client_auth()
+        );
+        let lan = LlmClient::from_url("https://[fd00::5]:8443/v1", "sk-secret", "m", 64, tls.clone());
+        let bare = LlmClient::from_url("https://[fd00::5]/v1/", "sk-secret", "m", 64, tls.clone());
+        let mut accepted = Vec::new();
+        for url in ["https://[fd00::5/v1", "https://[fd00::5]x/v1", "https://[not-v6]:8443/v1",
+            "https://[fd00::5]:/v1", "http://[::1]:9099/v1", "https://fd00::5:8443/v1"]
+        {
+            if LlmClient::from_url(url, "sk-secret", "m", 64, tls.clone()).is_ok() { accepted.push(url); }
+        }
+        println!("A3 ipv6: lan ok {} bare ok {} wrong accepted {:?}", lan.is_ok(), bare.is_ok(), accepted);
+        let lan = match lan { Ok(c) => c, Err(e) => panic!("{}", e) };
+        assert_eq!((lan.host.as_str(), lan.port, lan.path.as_str()), ("fd00::5", 8443, "/v1/chat/completions"));
+        assert_eq!(lan.host_header(), "[fd00::5]");
+        assert!(!lan.is_plain());
+        let bare = match bare { Ok(c) => c, Err(e) => panic!("{}", e) };
+        assert_eq!((bare.host.as_str(), bare.port), ("fd00::5", 443));
+        assert!(accepted.is_empty(), "malformed hosts were accepted: {:?}", accepted);
+        let named = match LlmClient::from_url("https://openrouter.ai/api/v1", "k", "m", 64, tls) {
+            Ok(c)   => c,
+            Err(e)  => panic!("{}", e),
+        };
+        assert_eq!(named.host_header(), "openrouter.ai");
     }
 
     /// RKEY-c rider (a): a client's `Debug` names its endpoint and model and never its key, so a

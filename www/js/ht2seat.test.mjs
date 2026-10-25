@@ -203,11 +203,11 @@ function liftSend(refresh) {
 	const make = new Function('window', 'DaimondSync', 'DaimondPeer', 'DaimondPresence', 'setTimeout', 'navigator',
 		'turnHold', 'selfDeviceId', 'nominatedDeviceId', 'diag', 'reconcileRoster', 'presenceWithLeaseBusy',
 		'turnPresence', 'isPhoneViewport', 'chatToolsEnabled', 'preferredWorkerLabel', 'fleetCurrentBuild',
-		'handoffWhenAway', 'chatRunningOn', 'chatSeatHere', 'chatNeedsFolder', 'electProvider', body);
+		'handoffWhenAway', 'chatRunningOn', 'chatSeatHere', 'chatNeedsFolder', 'electProvider', 'electSources', body);
 	const fn = make(win, DaimondSync, DaimondPeer, DaimondPresence, fakeTimeout, { onLine: true },
 		() => false, () => SELF, () => RUN, () => {}, () => {}, (p) => p,
 		(p) => p, () => false, () => true, () => '', () => '',
-		() => false, () => '', () => false, () => false, () => '');
+		() => false, () => '', () => false, () => false, () => '', () => []);
 	return { fn, delays, decided, presence };
 }
 {
@@ -319,9 +319,9 @@ console.log('\nA9. the map unknown');
 	const lifted = liftFn(DMND, 'seatOpts');
 	const mk = (unknown) => lifted ? new Function('window', 'DaimondPresence', 'DaimondPeer', 'current', 'selfDeviceId',
 		'isPhoneViewport', 'isMobileDeviceSelf', 'preferredWorkerLabel', 'fleetCurrentBuild', 'nominatedDeviceId',
-		'handoffWhenAway', 'chatSeatHere', 'chatNeedsFolder', 'electProvider', lifted + '\nreturn seatOpts;')(
+		'handoffWhenAway', 'chatSeatHere', 'chatNeedsFolder', 'electProvider', 'electSources', lifted + '\nreturn seatOpts;')(
 		{ DaimondPresence: { unknown: () => unknown } }, { unknown: () => unknown }, P, CHAT, () => SELF,
-		() => true, () => true, () => '', () => '', () => RUN, () => true, () => false, () => false, () => '')(CHAT) : {};
+		() => true, () => true, () => '', () => '', () => RUN, () => true, () => false, () => false, () => '', () => [])(CHAT) : {};
 	const o = mk(true);
 	check('A9a. the switch\'s options carry the unknown map', o.presenceUnknown === true, 'presenceUnknown=' + o.presenceUnknown);
 	const s = P.seatSwitch(CHAT, { [RUN]: derived() }, o, NOW);

@@ -711,6 +711,48 @@
 		return !!(p && p.keyEnc && !plain[id]);
 	}
 
+	/// Does `host`, a URL's hostname as `URL` gives it, name this device? Judged on the literal
+	/// text, since the page cannot resolve names: `localhost` and `*.localhost` (a trailing dot
+	/// too), `127.0.0.0/8`, `0.0.0.0`, `::`, `::1` and `::ffff:127.x`, bracketed or not. `URL`
+	/// has already put `127.1`, `0x7f.1` and `[0:…:1]` into their plain forms. The runner's
+	/// resolved-address check stays the authority for a name that resolves to one.
+	function loopbackHost(host) {
+		var h = String(host || '').toLowerCase().replace(/\.$/, '');
+		if (h.charAt(0) === '[' && h.slice(-1) === ']') h = h.slice(1, -1);
+		if (h === 'localhost' || /\.localhost$/.test(h)) return true;
+		if (h === '0.0.0.0' || h === '::' || h === '::1') return true;
+		if (/^127\.\d+\.\d+\.\d+$/.test(h)) return true;
+		var v4 = h.match(/^::ffff:(?:(\d+)\.\d+\.\d+\.\d+|([0-9a-f]+):[0-9a-f]+)$/);	// IPv4-mapped
+		if (v4) return v4[1] ? v4[1] === '127' : (parseInt(v4[2], 16) >> 8) === 0x7f;
+		return false;
+	}
+
+	/// Can a runner use this source on the page's behalf (OWNKEY design §2.3)? `{ ok, why }`,
+	/// `why` one of `nokey`, `device`, `https`, `unlock`. Credits always can: the runner mints
+	/// its own. The order is the order of the fix: a key first, then a host the runner can
+	/// reach, then a sealed copy of the key to send it. Loopback is this device whatever the
+	/// scheme; a LAN https host is reachable (D-20261024-21).
+	function runnerReach(id) {
+		if (id === CREDITS) return { ok: true, why: '' };
+		var p = store.providers[id];
+		if (!p || !(p.keyEnc || p.key || plain[id])) return { ok: false, why: 'nokey' };
+		var u = null;
+		try { u = new URL(String(p.url || '')); } catch (e) { u = null; }
+		if (u && loopbackHost(u.hostname)) return { ok: false, why: 'device' };
+		if (!u || u.protocol !== 'https:') return { ok: false, why: 'https' };
+		if (!p.keyEnc) return { ok: false, why: 'unlock' };
+		return { ok: true, why: '' };
+	}
+
+	/// The sealed row an errand carries for a source: `{ url, keyEnc, fetched }`, never the
+	/// plaintext key; null for credits or a row with no sealed key.
+	function sealedRow(id) {
+		if (id === CREDITS) return null;
+		var p = store.providers[id];
+		if (!p || !p.keyEnc) return null;
+		return { url: String(p.url || ''), keyEnc: String(p.keyEnc), fetched: ms(p.fetched) };
+	}
+
 	// ── Key adoption state (HT3, design §3.3, review M7) ─────────────
 	// `isSealed` cannot tell a key still opening from one that will never open here (sealed
 	// under a divergent identity) or from a locked app, and a runner judging a hand-off must:
@@ -855,9 +897,12 @@
 	/// accepted, since an operator who configures the whole endpoint is not wrong either. The two
 	/// are reconciled HERE rather than left to the caller, because a row built on the base URL
 	/// looks perfectly well until the first turn, which is much too late to discover it.
+	///
+	/// The rule is the runner's `LlmClient::from_url` (src/llm.rs), so tab and runner post a row's
+	/// turns, and ocr.js its PDFs, to one address.
 	function chatUrl(base) {
 		var s = String(base || '').replace(/\/+$/, '');
-		if (!s || s.indexOf('/chat/completions') !== -1) return s;
+		if (!s || /\/(chat\/completions|messages)$/.test(s)) return s;
 		return s + '/chat/completions';
 	}
 
@@ -1523,6 +1568,19 @@
 		return { effort: '', cleared: true };
 	}
 
+	/// A chat's Effort after its credit source moves it to another model (OWNKEY SW-1): kept when
+	/// the new model offers it, else brought down to the highest level it offers below it, else
+	/// up to its lowest, and '' for a model that lists none (`cleared`). The model's own default
+	/// stores as '', as a step onto it does.
+	function effortClamp(effort, provider, model) {
+		if (!effort) return { effort: '', cleared: false };
+		var f = effortsFor(provider, model);
+		if (!f) return { effort: '', cleared: true };
+		var at = EFFORT_LADDER.indexOf(effort), lv = f.levels[0];
+		f.levels.forEach(function (l) { if (EFFORT_LADDER.indexOf(l) <= at) lv = l; });
+		return { effort: lv === f.dflt ? '' : lv, cleared: false };
+	}
+
 	/// A daimon's Effort on the model in force. `rec` pairs the level with the model it was set
 	/// for (`effort`, `effortProvider`, `effortModel`), as the engine's `ChosenEffort` does, so a
 	/// Diamond that follows the default never has to pin a model to keep one. On that model the
@@ -2126,6 +2184,67 @@
 				canProbeCredit: !mine && canProbeCredit(providerUrl(id)),
 			};
 		});
+	}
+
+	// ── The per-chat credit source (OWNKEY SW-1, D-20261024-19) ─────
+	// What a chat pays with is the provider its daimon runs on. The composer's switch lists
+	// where it can go and maps the model across; the page stores the result on the chat (or
+	// its Diamond) and the global default never moves.
+
+	/// Where a chat can pay from, in the switch's order: Daimond credits, then each provider
+	/// whose key opens on this device (`canRun`), as `{ id, name, credits, balance }`. A
+	/// provider with no key, or one sealed and not opened here, is not listed.
+	function sources() {
+		var out = [];
+		if (store.providers[CREDITS]) {
+			out.push({ id: CREDITS, name: providerName(CREDITS), credits: true,
+				balance: credits.state === 'ready' ? DaimondI18n.poolMark(credits.bal / 100, credits.cur) : '' });
+		}
+		Object.keys(store.providers).forEach(function (id) {
+			if (id !== CREDITS && canRun(id)) out.push({ id: id, name: providerName(id), credits: false, balance: '' });
+		});
+		return out;
+	}
+
+	/// The model `model` becomes on source `to`, as `{ provider, model, step }`, or null when the
+	/// source lists none. `step` names the rule that answered: `same` (the source lists it),
+	/// `name` (the same canonical name, the vendor prefix stripped, `baseName`), `default` (the
+	/// default is on that source) or `first` (the source's first model).
+	function modelOnSource(to, model) {
+		var p = store.providers[to];
+		var list = (p && p.models) || [];
+		if (model && list.indexOf(model) >= 0) return { provider: to, model: model, step: 'same' };
+		var b = baseName(model);
+		var twin = model ? list.filter(function (m) { return baseName(m) === b; })[0] : '';
+		if (twin) return { provider: to, model: twin, step: 'name' };
+		var d = getDefault();
+		if (d.provider === to && d.model) return { provider: to, model: d.model, step: 'default' };
+		return list.length ? { provider: to, model: list[0], step: 'first' } : null;
+	}
+
+	/// What moving a record to source `to` writes: the daimon half mapped across, and each of
+	/// the workers and images halves that sat on the source being left (`inForce.provider`)
+	/// mapped too, or null where the half stays as it is. An images half keeps only the same
+	/// model: a text model chosen by rule cannot be assumed to see, so with none it clears and
+	/// the pictures go where the workers do. Null when `to` lists no model.
+	///
+	/// # Arguments
+	/// * `own` - the record's own picks, `{ daimon, workers, images }` as `ownPicks` answers them.
+	/// * `inForce` - the daimon's pair running now, `{ provider, model }`.
+	function planSource(own, inForce, to) {
+		own = own || {}; inForce = inForce || {};
+		var dm = modelOnSource(to, inForce.model || '');
+		if (!dm) return null;
+		var from = inForce.provider || '';
+		var onOld = function (h) { return !!(h && h.model) && (h.provider || from) === from; };
+		var wk = onOld(own.workers) ? modelOnSource(to, own.workers.model) : null;
+		var im = null;
+		if (onOld(own.images)) {
+			var m = modelOnSource(to, own.images.model);
+			im = (m && (m.step === 'same' || m.step === 'name')) ? m : { provider: '', model: '' };
+		}
+		var pair = function (x) { return x ? { provider: x.provider, model: x.model } : null; };
+		return { daimon: pair(dm), workers: pair(wk), images: pair(im), step: dm.step };
 	}
 
 	/// The bare name a model id ends in, for spotting one model behind two providers.
@@ -4892,12 +5011,21 @@
 		authHeaders:    authHeaders,
 		modelsUrl:      modelsUrl,
 		providers:      providers,
+		sources:        sources,
+		modelOnSource:  modelOnSource,
+		planSource:     planSource,
 		addProvider:    addProvider,
 		removeProvider: removeProvider,
 		setKey:         setKey,
 		keyFor:         keyFor,
 		hasKey:         hasKey,
 		isSealed:       isSealed,
+		// What a runner can use on the page's behalf, and the sealed row an errand carries.
+		runnerReach:    runnerReach,
+		sealedRow:      sealedRow,
+		providerUrl:    providerUrl,
+		chatUrl:        chatUrl,
+		siblingUrl:     siblingUrl,
 		keyState:       keyState,
 		keyOpening:     keyOpening,
 		canRun:         canRun,
@@ -4916,6 +5044,7 @@
 		effortsOf:      effortsOf,
 		effortsFor:     effortsFor,
 		effortAfterSwitch: effortAfterSwitch,
+		effortClamp:    effortClamp,
 		effortInForce:  effortInForce,
 		// OpenRouter provider routing, set on a model's own row; see `routing` above.
 		routing:        routing,

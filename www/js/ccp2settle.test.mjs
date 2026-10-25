@@ -46,6 +46,8 @@ function lift(src, name) {
 }
 /// Lift `names` over `stubs` (each a free name in the lifted code), with `pre` run first.
 function build(names, stubs, pre) {
+	// OWNKEY's `endTurnNotRun` reads `_abiRefused` and calls `dropRefusedTiles` (QA ownkey-d B, L1).
+	stubs = Object.assign({ _abiRefused: {}, dropRefusedTiles() {} }, stubs);
 	return new Function(...Object.keys(stubs), (pre || '') + '\n' + names.map((n) => lift(SRC, n)).join('\n')
 		+ '\nreturn { ' + names.join(', ') + ' };')(...Object.values(stubs));
 }

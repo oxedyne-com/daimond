@@ -1414,14 +1414,29 @@ button.tag-pool { cursor: pointer; }
 
 /* THE COMPOSER ROW (D-20261014-08): under the composer on a desktop and above it on a
    phone (responsive.css), inside its border so it reads as part of the one control. ONE LINE AT EVERY WIDTH, never wrapped: each text slot
-   says how it gives way. The runner's name is the one that shrinks, to an ellipsis at
-   3em at the least; the Effort word is held between 4em and 8em, past which it ends in
+   says how it gives way. The runner's name is the one that shrinks first, to an ellipsis at
+   3em at the least, then the source's name; the Effort word is held between 4em and 8em, past which it ends in
    an ellipsis; the switch's "Here", the steps and the walk-back squares never shrink. */
 .composer-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; margin: 0 12px 8px; min-width: 0; }
 .composer-row:not(:has(> :not([hidden]))) { display: none; }
+/* WHAT IT PAYS WITH (OWNKEY SW-1): one segment naming the source, with a chevron, that opens
+   the railhead menu. Its name gives way after the runner's (a shrink weight a hundredth of the
+   seat switch's), to an ellipsis at 3em at the least and never past 12em; whole on hover. The
+   weights are 1 and 100, not 0.01 and 1: weights summing below one give away only that share
+   of the overflow, so with no runner shown the source stayed whole and pushed the + out. */
+.source-switch { flex: 0 1 auto; min-width: 0; }
+.source-switch[hidden] { display: none; }
+#source-btn { display: inline-flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; }
+#source-btn .source-name { min-width: 3em; max-width: 12em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#source-btn .ic { flex: none; width: 12px; height: 12px; }
+#source-btn[aria-expanded="true"] { color: var(--text-primary); }
+/* Its menu: the balance sits at the row's end, in the muted ink every price tally uses. */
+.source-menu .railhead-menu-item { display: flex; align-items: baseline; gap: 12px; max-width: min(320px, calc(100vw - 16px)); }
+.source-menu .source-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.source-menu .source-row-bal { flex: none; color: var(--text-muted); }
 /* WHERE THE NEXT TURN RUNS: the "Here | <runner>" switch (D-20261009-23), the same
    segmented control as Crystal | Chat. Sized to its words until the row runs short. */
-.seat-switch { flex: 0 1 auto; min-width: 0; }
+.seat-switch { flex: 0 100 auto; min-width: 0; }
 .seat-switch[hidden] { display: none; }
 .composer-row .dview-btn { padding: 3px 7px; }
 #seat-here { flex: none; }

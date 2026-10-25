@@ -294,6 +294,34 @@ fn native_host_drives_a_store_call_through_its_pipe() {
     eprintln!("NativeHost: read_crystal_data over its pipe = the seeded crystal; no pipe → StoreDown");
 }
 
+/// RUNNER-WEB RW-b: NativeHost takes a net port by its type.  A host built with
+/// [`TestNet`](crate::engine::host::test::net::TestNet) as its third generic answers `net().fetch`
+/// with TestNet's own value; the two-generic host every caller names still carries `LocalNet`.
+#[test]
+fn native_host_takes_a_net_port() {
+    use crate::engine::host::{
+        local::{exec::LocalExec, net::LocalNet, ui::LocalUi},
+        native::fs::NativeFs,
+        net::HostNet,
+        test::net::TestNet,
+    };
+    const URL: &str = "https://example.com/a";
+    let host: NativeHost<LocalExec, LocalUi, TestNet> = NativeHost::asking_net(
+        PipeLink::closed(), NativeFs::default(), LocalExec::default(), LocalUi::default(), TestNet,
+    );
+    let got = rt().block_on(host.net().fetch(URL));
+    let want = rt().block_on(TestNet.fetch(URL));
+    let said = |r: &Outcome<String>| match r {
+        Ok(v)   => fmt!("ok {}", v),
+        Err(e)  => fmt!("err {}", e),
+    };
+    assert_eq!(said(&got), said(&want), "the host's net port is the TestNet it was given");
+    let _: &TestNet = host.net();
+    let plain: NativeHost<LocalExec, LocalUi> = NativeHost::default();
+    let _: &LocalNet = plain.net();
+    eprintln!("NativeHost<_, _, TestNet>: net().fetch = TestNet's {}; the default host keeps LocalNet", said(&got));
+}
+
 // ┌───────────────────────────────────────────────────────────────┐
 // │ HL5a: the child reads a Diamond's standing files from the store │
 // └───────────────────────────────────────────────────────────────┘

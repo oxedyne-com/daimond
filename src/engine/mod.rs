@@ -1,5 +1,6 @@
 //! The engine's runtime pieces: what a turn races, and the actor that owns a session.
 
+pub mod abi;
 pub mod actor;
 pub mod compose;
 pub mod counters;
