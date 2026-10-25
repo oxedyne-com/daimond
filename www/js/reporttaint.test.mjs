@@ -110,7 +110,7 @@ console.log('\n(b) take: the asker marks, saves and tells the engine\n');
 
 console.log('\n(c) wiring: onReport hands every report to takeReportTaint\n');
 {
-	const at = APP.indexOf('DaimondPeer.onReport(function (report) {');
+	const at = APP.indexOf('DaimondPeer.onReport(async function (report) {');
 	// The whole handler, to its closing `});` at the opening's indent, not a fixed window: the
 	// OWNKEY refused-ABI branch at its top pushed the call past the old 1200 characters.
 	const end = at >= 0 ? APP.indexOf('\n\t\t});', at) : -1;

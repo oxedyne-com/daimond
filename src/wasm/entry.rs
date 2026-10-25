@@ -171,6 +171,13 @@ pub fn engine_abi() -> Vec<u32> {
     vec![crate::engine::abi::ENGINE_ABI, crate::engine::abi::ENGINE_ABI_MIN]
 }
 
+/// The first runner ABI that stages his words home (`WORDS_ABI`, U2), for the page's
+/// `setEngineAbi`: a runner below it is sent no `seed.words`.
+#[wasm_bindgen]
+pub fn words_abi() -> u32 {
+    crate::engine::abi::WORDS_ABI
+}
+
 /// The linear memory in whole megabytes, for a trail line.
 ///
 /// Separate from [`heap_bytes`] because the JS side wants bytes and every caller
@@ -568,6 +575,21 @@ pub async fn store_read(path: String) -> Result<String, JsValue> {
         Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
         Err(e)    => Err(to_js_err(e)),
     }
+}
+
+/// The words log of `keeper` (a Diamond id or `chat:<id>`), in `compact::log_text` form: what the
+/// tab seeds a runner with, so the runner files and recalls over the tab's own log (U2).
+#[wasm_bindgen]
+pub async fn words_read(keeper: String) -> Result<String, JsValue> {
+    diamond::his_words_read(&keeper).await.map_err(to_js_err)
+}
+
+/// File a runner's staged `entries` (`compact::log_entries` form) into `keeper`'s words log, as the
+/// tab's own fold does; idempotent, since the merge drops entries already held.  The tab calls this
+/// before it lands the runner's session, so a session is never stored ahead of its words (U2).
+#[wasm_bindgen]
+pub async fn words_file(keeper: String, entries: String) -> Result<String, JsValue> {
+    diamond::his_words(&keeper, &entries).await.map_err(to_js_err)
 }
 
 /// Write a file into Daimond's own store (OPFS), never a real folder.

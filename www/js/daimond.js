@@ -28242,6 +28242,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		dispatchOpts.session = errandSession(chat, turnId);
 		dispatchOpts.reach   = await errandReach(dispatchOpts.diamondId);
 		dispatchOpts.today   = errandToday();
+		dispatchOpts.words   = await errandWordsFor(chat, runTo);
 		var plan;
 		try { plan = DaimondPeer.buildDispatch(chat, dispatchOpts); }
 		catch (e) {
@@ -29737,7 +29738,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the durable answer actually merges -- the sync-path reconcile in
 		// `onChatsChangedElsewhere`, guarded by `dispatchedAnswerPresent`. Until then the
 		// streamed provisional tiles carry the answer and the chrome keeps its spinner.
-		DaimondPeer.onReport(function (report) {
+		//
+		// HIS WORDS ARE FILED BEFORE THE SESSION LANDS (U2): a report carrying words its run's folds
+		// staged waits for them to be in this tab's words log, so a session is never stored ahead of
+		// the words it folded away. A report with none settles at once, as it always has.
+		DaimondPeer.onReport(async function (report) {
 			try {
 				var tid = String(report.turnId);
 				// A REPORT BELOW THE PAGE'S MIN (OWNKEY H3, lead ruling 25 Oct): made by an engine
@@ -29764,7 +29769,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				peerReports[tid] = report;
 				takeReportTaint(report);
-				settleRunnerSession(report);
+				var filed = report.words ? await settleRunnerWords(report) : true;
+				settleRunnerSession(report, filed);
+				await settleRunnerAlerts(report);
 				// THE TURN'S ROWS COME HOME WITH IT (RUN-HIST): a settling report that names the
 				// files the turn made or changed on the runner is recorded as a version of its
 				// keeper, so History shows the turn here and, through the parcel, everywhere.
@@ -30690,18 +30697,35 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	function chatHoldingTurn(turnId) {
-		var id = String(turnId || '');
-		if (!id) return null;
+		if (!String(turnId || '')) return null;
 		for (var i = 0; i < chats.length; i++) {
-			var c = chats[i];
-			if (!c || !c._loaded || !c.messages) continue;
-			for (var j = c.messages.length - 1; j >= 0; j--) {
-				var m = c.messages[j];
-				if (m && m.role === 'user' && (String(m.mid || '') === id
-					|| String(m.iturn || '') === id)) return c;
-			}
+			if (chats[i] && chats[i]._loaded && chatHoldsTurn(chats[i], turnId)) return chats[i];
 		}
 		return null;
+	}
+
+	/// Does resident chat `c` hold turn `turnId`: a user row whose `mid` or `iturn` it is?
+	function chatHoldsTurn(c, turnId) {
+		var id = String(turnId || '');
+		if (!id || !c || !c.messages) return false;
+		for (var j = c.messages.length - 1; j >= 0; j--) {
+			var m = c.messages[j];
+			if (m && m.role === 'user' && (String(m.mid || '') === id || String(m.iturn || '') === id)) return true;
+		}
+		return false;
+	}
+
+	/// The chat holding `report`'s turn, loaded on demand (QA ccp4-b K2): a resident one, else the
+	/// chat the report names once its transcript is read and seen to hold the turn, so a report
+	/// heard after a reload finds its chat, and a chatId alone never chooses one. Null for none.
+	async function chatHoldingReport(report) {
+		var c = chatHoldingTurn(report && report.turnId);
+		if (c) return c;
+		var id = String((report && report.chatId) || '');
+		for (var i = 0; id && i < chats.length; i++) if (chats[i] && chats[i].id === id) { c = chats[i]; break; }
+		if (!c || c._loaded) return null;
+		try { await loadChatMessages(c); } catch (e) { return null; }
+		return chatHoldsTurn(c, report.turnId) ? c : null;
 	}
 
 	/// This device's stable id -- a PER-DEVICE random id (identity.js:deviceId), NOT
@@ -32416,6 +32440,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return [abi, min];
 	}
 
+	/// The wasm's first runner ABI that stages his words home (`words_abi()`), 0 from a build that
+	/// predates it or answers anything but a whole number from 1.
+	function wasmWordsAbi(W) {
+		var v = 0;
+		try { v = (W && typeof W.words_abi === 'function') ? W.words_abi() : 0; } catch (e) { v = 0; }
+		return (typeof v === 'number' && v >= 1 && v === Math.floor(v) && v <= 0xffffffff) ? v : 0;
+	}
+
 	/// THIS PAGE'S ENGINE ID (R5a, X12): the sha-256 of the wasm it runs, read back from
 	/// the cache the module was loaded from. A native runner is offered on the switch only
 	/// when the id stamped into it at its release build is this one; until it is known,
@@ -32425,7 +32457,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// predates it: 0 offers a runner by the legacy rule and writes no `abi`.
 		if (window.DaimondPeer && DaimondPeer.setEngineAbi) {
 			var ab = wasmEngineAbi(Wasm);
-			DaimondPeer.setEngineAbi(ab[0], ab[1]);
+			DaimondPeer.setEngineAbi(ab[0], ab[1], wasmWordsAbi(Wasm));
 		}
 		if (!window.DaimondPeer || !DaimondPeer.setEngineId || !(window.crypto && crypto.subtle)) return;
 		var res = await fetch(new URL('../pkg/oxedyne_daimond_bg.wasm', import.meta.url), { cache: 'force-cache' });
@@ -40127,8 +40159,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Whatever stores nothing leaves the chat's engine stale (`staleEngine`): it holds the
 	/// conversation from before the turn, and the runner's answer is a `framed` row no parcel
 	/// replaces, so it is rebuilt from the stored session and the transcript (QA ccp1 H1). The
-	/// diagnostics say which. Answers 'stored', 'busy', 'stayed', 'moved', 'cut' or ''.
-	function settleRunnerSession(report) {
+	/// diagnostics say which. Answers 'stored', 'busy', 'stayed', 'moved', 'cut', 'words' or ''.
+	///
+	/// * `words`  - the words the run's folds staged were not filed here (`settleRunnerWords`
+	///   answered `filed` false): the session folded them away, so only the transcript, which
+	///   still holds every one, may lay the next engine (U2).
+	function settleRunnerSession(report, filed) {
 		if (!report || !window.DaimondPeer || !window.DaimondPeer.settlingReport(report)) return '';
 		var chat = chatHoldingTurn(report.turnId);
 		if (!chat) return '';
@@ -40140,7 +40176,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (whole && held && held === String(s.upto || '')) return 'stored';
 		var out = '', why = '';
 		var tombs = loadMsgTombs();
-		if (chat._generating || (chat.app && chat.app.busy)) {
+		if (filed === false) {
+			out = 'words'; why = 'his words the run staged were not filed here';
+		} else if (chat._generating || (chat.app && chat.app.busy)) {
 			out = 'busy'; why = 'a turn runs here in this chat, and its own capture would overwrite it';
 		} else if (tombs[String(report.turnId || '')] || (whole && tombs[String(s.upto || '')])) {
 			out = 'cut'; why = 'the turn was retracted here';
@@ -40163,6 +40201,71 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		touchChat(chat);
 		persistChats();
 		return 'stored';
+	}
+
+	/// HIS WORDS COME HOME (U2): a runner's folds filed nothing on its own disk; what they staged over
+	/// the words log this tab seeded rides the `report` as `words`, in the log's entry form, and is
+	/// filed here through the wasm door (`words_file`, the store's own `his_words`) under the keeper
+	/// of the chat holding the turn -- a Diamond's id, else `chat:<id>`, never a keeper the report
+	/// names. Filing is a merge that drops what the log holds, so a report heard again files
+	/// harmlessly. Answers whether the words are in the log (true when the report owes none).
+	async function settleRunnerWords(report) {
+		var words = report && typeof report.words === 'string' ? report.words : '';
+		if (!words) return true;
+		var chat = chatHoldingTurn(report.turnId);
+		var said = 'turn=' + String(report.turnId || '');
+		if (!chat) {
+			diag('runner words', said + ' not filed: no chat here holds the turn');
+			return false;
+		}
+		var keeper = chat.diamondId ? String(chat.diamondId) : 'chat:' + String(chat.id || '');
+		said = 'chat=' + String(chat.id || '').slice(0, 12) + ' ' + said;
+		try {
+			await Wasm.words_file(keeper, words);
+			return true;
+		} catch (e) {
+			diag('runner words', said + ' not filed: ' + String((e && e.message) || e)
+				+ '; the session is not stored, and the transcript holds his words');
+			return false;
+		}
+	}
+
+	/// A RUNNER'S ALERTS COME HOME (KT-5d): a Diamond's turn on a runner raised or cleared alerts
+	/// with no page to put them on, and its `report` carries each. They go on this tab's Pending
+	/// panel through the engine's own door (`DaimondPendingTool`), in order, under the Diamond of
+	/// the chat holding the turn (`chatHoldingReport`, loaded on demand) -- never a Diamond the
+	/// report names. Each is stamped by the turn's own time, the report's `ts` plus its place, so
+	/// a report applied again can never outrank a take-down made since; and applied is kept per
+	/// errand on this device (`DaimondAlerts.hear`), across a reload (QA ccp4-b K2). Answers how
+	/// many the panel took.
+	async function settleRunnerAlerts(report) {
+		var list = report && Array.isArray(report.alerts) ? report.alerts : [];
+		var A = window.DaimondAlerts;
+		if (!list.length || !window.DaimondPendingTool || !A) return 0;
+		var eid = String(report.eid || '');
+		if (!eid || A.heard(eid)) return 0;
+		var chat = await chatHoldingReport(report);
+		if (!chat || !chat.diamondId) {
+			diag('runner alerts', 'eid=' + eid.slice(0, 12) + ' ' + list.length + ' not applied: no chat here holds turn '
+				+ String(report.turnId || '').slice(0, 12) + (chat ? ' in a Diamond' : ''));
+			return 0;
+		}
+		if (A.heard(eid)) return 0;		// applied while the chat loaded
+		var ts = Number(report.ts) > 0 ? Math.floor(Number(report.ts)) : 0;
+		var took = 0;
+		list.forEach(function (a, i) {
+			var op = a && a.op;
+			if (op !== 'raise' && op !== 'clear') return;
+			var rest = op === 'raise' ? { key: a.key, headline: a.headline, detail: a.detail, needs: a.needs } : { key: a.key };
+			var said = {};
+			try { said = JSON.parse(window.DaimondPendingTool[op](chat.diamondId, JSON.stringify(rest), ts ? ts + i : 0)) || {}; }
+			catch (e) { said = {}; }
+			if (said.ok) took++;
+			else diag('runner alert', 'chat=' + String(chat.id || '').slice(0, 12) + ' ' + op + ' ' + String(a.key || '')
+				+ ' not taken: ' + String(said.reason || 'no answer'));
+		});
+		A.hear(eid);
+		return took;
 	}
 
 	/// A runner's turn has settled in `chat`, so its engine, which holds the conversation from
@@ -60666,6 +60769,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!eng || typeof eng.diamond_reach !== 'function') return undefined;
 			return JSON.parse(await eng.diamond_reach(String(did)));
 		} catch (e) {
+			return undefined;
+		}
+	}
+
+	/// The words log for an errand's seed (U2), only when runner `runTo` stages words home
+	/// (`takesWords`, from its presence row, as the offer rule reads its ABI); `undefined` for any
+	/// other, so an older runner is not sent a log it would ignore.
+	async function errandWordsFor(chat, runTo) {
+		var rec = null;
+		try {
+			var pr = (window.DaimondPresence && DaimondPresence.snapshot && DaimondPresence.snapshot()) || {};
+			rec = runTo ? pr[String(runTo)] : null;
+		} catch (e) { rec = null; }
+		if (!(window.DaimondPeer && DaimondPeer.takesWords && DaimondPeer.takesWords(rec))) return undefined;
+		return errandWords(chat);
+	}
+
+	/// The words log of `chat`'s keeper (a Diamond's id, else `chat:<id>`), as `words_read` gives it,
+	/// for an errand's seed (U2), so the runner's folds file over the log this tab files into.
+	/// `undefined` where it cannot be read, which the diagnostics say: an empty log would be a
+	/// claim the log is empty.
+	async function errandWords(chat) {
+		if (!chat) return undefined;
+		var keeper = chat.diamondId ? String(chat.diamondId) : 'chat:' + String(chat.id || '');
+		try {
+			var t = await Wasm.words_read(keeper);
+			return typeof t === 'string' ? t : undefined;
+		} catch (e) {
+			diag('runner words', 'chat=' + String(chat.id || '').slice(0, 12) + ' log not read for the seed: '
+				+ String((e && e.message) || e));
 			return undefined;
 		}
 	}

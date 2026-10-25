@@ -55,6 +55,7 @@ pub struct Ask<'a> {
     pub reach:          Option<&'a Reach>,  // what the marks put in reach, `None` where unread here
     pub limits:         Limited<'a>,
     pub liveness_ms:    u64,                // zero leaves the engine's own
+    pub words:          Option<(&'a str, &'a str)>, // a runner's: the tab's keeper and words log (U2a)
 }
 
 /// One turn, composed.
@@ -206,14 +207,18 @@ pub async fn compose_onto<H: Host>(agent: &Agent, ask: &Ask<'_>, registry: &Tool
         agent.set_diamond(id);
     }
     // U12b: Block::Notes, a chat's NOTES.md, goes here.  A fold files his words into the words log
-    // beside it (`WORDS.md`, CCP3 F1); an away Diamond's log is not here, so it files none.  Set on
-    // every host (invariant 8): on a runner it is the store that answers "not filed" (CCP3 item 4).
-    agent.set_words_home(match KeeperKind::of(ask.keeper) {
-        _ if ask.keeper.is_empty()  => "",
-        KeeperKind::Away            => "",
-        KeeperKind::Chat
-        | KeeperKind::Diamond       => ask.keeper,
-    });
+    // beside it (`WORDS.md`, CCP3 F1); an away Diamond's log is not here, so it files none.  A
+    // runner's ask carries the tab's log, and its folds stage his words over it under the tab's
+    // keeper, a Diamond's too, for the report to carry home (U2a): its notice is the tab's.
+    match ask.words {
+        Some((keeper, log)) => agent.set_words_staged(keeper, log),
+        None                => agent.set_words_home(match KeeperKind::of(ask.keeper) {
+            _ if ask.keeper.is_empty()  => "",
+            KeeperKind::Away            => "",
+            KeeperKind::Chat
+            | KeeperKind::Diamond       => ask.keeper,
+        }),
+    }
     registry.set_machine_rooted(rooted);
     agent.set_briefing(&brief);
     agent.set_blocks(blocks);

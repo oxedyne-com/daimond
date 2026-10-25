@@ -2049,6 +2049,15 @@ pub fn log_text(file: &str) -> String {
 	}
 }
 
+/// A words log rebuilt from the text [`log_text`] read of it, so it files and answers as the log
+/// itself does (U2a: a runner stages over the log the tab sent); empty for none.
+pub fn log_file(text: &str) -> String {
+	match text.is_empty() {
+		true  => String::new(),
+		false => fmt!("{}\n{}", WORDS_LOG_HEAD, text),
+	}
+}
+
 /// What the store answers a filing once it has read the file back: each of `entries` is checked
 /// to be in the log, and the answer is `<entries in the log> <row id of the oldest>`, small however
 /// long the log grows (a filing changes the store, so its answer must always frame).
@@ -7022,5 +7031,21 @@ mod tests {
 		let (m, kept) = notice_within(9, "", &Summary::Prose("did things"), &l, false, "", 1_000_000);
 		assert!(kept);
 		assert_eq!(m, notice(9, &Summary::Prose("did things"), &l, false));
+	}
+
+	/// U2a premise of invariant 8: a log rebuilt from the text `recall` reads ([`log_text`], as the
+	/// tab's `words_read` answers) files and answers as the log itself does.
+	#[test]
+	fn u2_log_text_round_trip() {
+		let w = |m: &str, t: &str| Said { mid: m.to_string(), text: t.to_string() };
+		let f = log_merge("", &log_entries(&[w("a", "one"), w("b", "two\nlines")], "2026-10-01"));
+		let e = log_entries(&[w("c", "three"), w("a", "one")], "2026-10-25");
+		let staged = log_file(&log_text(&f));
+		assert_eq!(log_text(&staged), log_text(&f), "the rebuilt log reads differently");
+		let (sm, fm) = (log_merge(&staged, &e), log_merge(&f, &e));
+		let ans = |x: &str| match log_answer(x, &e, "p") { Ok(a) => a, Err(err) => panic!("{}", err) };
+		assert_eq!(ans(&sm), ans(&fm), "a filing answers differently over the rebuilt log");
+		assert_eq!(log_text(&sm), log_text(&fm), "a filing leaves a different log");
+		assert_eq!(log_file(""), "", "no log rebuilds as none");
 	}
 }

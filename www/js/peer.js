@@ -585,7 +585,31 @@
 		// the report it knew.
 		if (o.session && typeof o.session === 'object') rep.session = o.session;
 		if (o.sessionStayed) rep.sessionStayed = 1;
+		// THE TURN'S ALERTS COME HOME (KT-5d): a Diamond's turn on a runner has no page, so each
+		// pending_raise / pending_clear it made rides home here, in order, for the asking tab to
+		// put on its Pending panel. Present only when there are any.
+		var alerts = reportAlerts(o.alerts);
+		if (alerts.length) rep.alerts = alerts;
+		// HIS WORDS COME HOME (U2): what the run's folds staged over the tab's own words log, in
+		// the log's entry form, for the asking tab to file before it lands the session. Last, and
+		// only when there are any, so an older asker sees the report it knew.
+		if (typeof o.words === 'string' && o.words) rep.words = o.words;
 		return rep;
+	}
+
+	/// A report's alerts, each `{op:'raise', key, headline, detail, needs}` or `{op:'clear', key}`;
+	/// one with no key, or any other op, is dropped. The runner's codec reads them the same way.
+	function reportAlerts(v) {
+		if (!Array.isArray(v)) return [];
+		var out = [];
+		v.forEach(function (a) {
+			if (!a || typeof a !== 'object' || typeof a.key !== 'string' || !a.key) return;
+			var str = function (s) { return typeof s === 'string' ? s : ''; };
+			if (a.op === 'raise') out.push({ op: 'raise', key: a.key, headline: str(a.headline), detail: str(a.detail),
+				needs: a.needs === true });
+			else if (a.op === 'clear') out.push({ op: 'clear', key: a.key });
+		});
+		return out;
 	}
 
 	/// Build an undo-turn envelope (not yet sealed): ask the runner `to` to undo its run
@@ -1701,9 +1725,14 @@
 		// with `upto`/`uptoTs` and the prose tail after `upto`, exactly what `ensureApp` restores,
 		// so the runner's history is the tab's. A copy, so a later write to the chat's live
 		// session never changes an errand already built; the prose `msgs` stay for readiness.
-		if (seed && o.session && typeof o.session === 'object') {
+		// HIS WORDS LOG RIDES BESIDE IT (U2): the chat's log as the tab reads it (`words_read`),
+		// so the runner's folds file and recall over this log and stage what they add, never
+		// filing on the runner's own disk. Absent where the tab could not read it.
+		var hasSession = !!(o.session && typeof o.session === 'object');
+		if (seed && (hasSession || typeof o.words === 'string')) {
 			var sd = {}; Object.keys(seed).forEach(function (k) { sd[k] = seed[k]; });
-			sd.session = JSON.parse(JSON.stringify(o.session));
+			if (hasSession) sd.session = JSON.parse(JSON.stringify(o.session));
+			if (typeof o.words === 'string') sd.words = o.words;
 			seed = sd;
 		}
 		// THE THREAD'S FINGERPRINT, computed from the SAME chat the seed is (content-free,
@@ -1841,6 +1870,7 @@
 			var o1 = {}; if (opts) Object.keys(opts).forEach(function (k) { o1[k] = opts[k]; });
 			var s0 = p.fields.seed.session;
 			o1.session    = null;
+			o1.words      = null;		// the log goes with the session it was folded beside (U2)
 			o1.sessionRef = { chat: p.fields.chatId, sig: (p.fields.thread && p.fields.thread.sig) || 0,
 				upto: String(s0.upto || '') };
 			o1.eid     = p.fields.eid;
@@ -3143,10 +3173,13 @@
 	// THIS PAGE'S ENGINE ABI (OWNKEY ABI-a): the version of the errand and report shapes the
 	// wasm speaks (`engine_abi`), and the oldest a runner's report may be and still be applied.
 	// 0 from a wasm that predates it: the page writes no `abi` and offers a runner as before.
-	var _engineAbi = 0, _engineAbiMin = 0;
-	function setEngineAbi(abi, min) {
+	// THE FIRST RUNNER ABI THAT STAGES HIS WORDS HOME (`words_abi`, U2): 0 from a wasm that names
+	// none, which sends no runner `seed.words`.
+	var _engineAbi = 0, _engineAbiMin = 0, _wordsAbi = 0;
+	function setEngineAbi(abi, min, words) {
 		_engineAbi = Math.max(0, +abi | 0);
 		_engineAbiMin = Math.max(0, Math.min(+min | 0, _engineAbi));
+		_wordsAbi = Math.max(0, +words | 0);
 	}
 
 	/// The sources a turn pays with, across its halves (design §2.2): `o.sources`, else the one
@@ -3163,6 +3196,14 @@
 	function abiInRange(rec) {
 		var abi = +rec.abi | 0, min = (+rec.abiMin | 0) || abi;
 		return abi >= _engineAbiMin && min <= _engineAbi;
+	}
+
+	/// Does this record stage his words over the log a seed sends (U2, CCP4-U2ABI)? A runner on an
+	/// ABI in this page's range, read as the offer rule reads it, at `words_abi` or above. Any
+	/// other is sent no `seed.words`: an older runner ignores them, so they only grow its errand.
+	function takesWords(rec) {
+		return !!rec && rec.kind === 'runner' && _wordsAbi > 0 && abiRunner(rec) && abiInRange(rec)
+			&& (+rec.abi | 0) >= _wordsAbi;
 	}
 
 	/// Can the runner reach source `pid` (models.js `runnerReach`)? `{ ok, why }`.
@@ -7764,6 +7805,7 @@
 		/// OWNKEY: the page's ABI and min, the sources a turn pays with, the re-approval mark
 		/// (cleared by any device's re-approval through `rekeyApproved`), and the report gate.
 		setEngineAbi:  setEngineAbi,
+		takesWords:    takesWords,
 		sourcesOf:     sourcesOf,
 		rekeyFrom:     rekeyFrom,
 		rekeyed:       rekeyed,

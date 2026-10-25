@@ -79,6 +79,8 @@
 	var ITEM_MAX     = 200;				// live and tombstoned, all Diamonds together
 	var LIVE_MAX     = 20;				// live alerts one Diamond may hold (src/tools.rs PENDING_LIVE_MAX)
 	var TOMB_MAX_MS  = 30 * 24 * 3600 * 1000;	// a taken-down item is remembered a month; an up one lives as long
+	var HEARD_KEY    = 'daimond-alerts-heard';	// this device's applied runner reports, never synced (QA ccp4-b K2)
+	var HEARD_MAX    = 200;				// errands remembered, and each a month (TOMB_MAX_MS) at most
 	var RESTAMP_MS   = 7 * 24 * 3600 * 1000;	// an alert raised again in the same words after this is re-stamped
 	var STATES       = { up: 0, clear: 1, dismissed: 2 };
 	var KEY_RE       = /^[A-Za-z0-9._-]+$/;
@@ -227,11 +229,12 @@
 		catch (e) { /* no window to tell */ }
 	}
 
-	/// Set one item by a local act, stamped past the one it replaces.
-	function set(id, next) {
+	/// Set one item by a local act, stamped past the one it replaces; or, given `at`, by that
+	/// stamp, which the caller has checked is past it (a runner turn's own time, `carried`).
+	function set(id, next, at) {
 		var rec = read(), prev = rec.items[id];
 		var S = window.DaimondStamp;
-		next.at = S ? S.next(prev && prev.at) : Math.max(now(), (prev ? prev.at : 0) + 1);
+		next.at = at ? at : S ? S.next(prev && prev.at) : Math.max(now(), (prev ? prev.at : 0) + 1);
 		next.seen = 0;
 		rec.items[id] = next;
 		write(shed(rec), false);
@@ -245,19 +248,24 @@
 	/// Diamond already holds `LIVE_MAX` live alerts: nothing written). Null for an argument out of
 	/// bounds -- the engine has checked them already, so that is a caller that did not.
 	/// `needs` false makes it quiet: off the badge, and lapsing `QUIET_MS` from now.
-	function raise(diamond, key, headline, detail, needs) {
+	/// `at`, when given, is the stamp of the act it records, made elsewhere and earlier: a runner
+	/// turn's (QA ccp4-b K2). An item set since then stands, and the answer is `stale`, so a report
+	/// applied again after a reload never puts back an alert taken down after its turn.
+	function raise(diamond, key, headline, detail, needs, at) {
 		if (typeof needs !== 'boolean') return null;
+		at = ms(at);
 		var next = clean({ diamond: String(diamond || ''), key: String(key || ''), headline: String(headline || '').trim(),
-			detail: String(detail || '').trim(), needs: needs, expires: needs ? 0 : now() + QUIET_MS, state: 'up', at: 1 });
+			detail: String(detail || '').trim(), needs: needs, expires: needs ? 0 : (at || now()) + QUIET_MS, state: 'up', at: 1 });
 		if (!next) return null;
 		var id = nsKey(next.diamond, next.key), prev = read().items[id];
+		if (at && prev && prev.at >= at) return 'stale';
 		var up = prev && isLive(prev);
 		var same = prev && prev.headline === next.headline && prev.detail === next.detail && prev.needs === next.needs;
 		if (up && same && now() - prev.at < RESTAMP_MS) return 'same';
-		if (up && same) { set(id, next); return 'same'; }		// still so, a week on: re-stamped, so it does not lapse
+		if (up && same) { set(id, next, at); return 'same'; }		// still so, a week on: re-stamped, so it does not lapse
 		if (prev && prev.state === 'dismissed' && same) return 'dismissed';
 		if (!up && !pageKey(next.key) && full(next.diamond)) return 'full';
-		set(id, next);
+		set(id, next, at);
 		return up ? 'updated' : 'new';
 	}
 
@@ -310,13 +318,44 @@
 	}
 
 	/// Take one alert of `diamond`'s down because the condition is over. True if one was up.
-	function clear(diamond, key) {
+	/// `at` as `raise` takes it: an item set since that stamp stands.
+	function clear(diamond, key, at) {
 		var id = nsKey(diamond, key), prev = read().items[id];
-		if (!prev || prev.state !== 'up') return false;
+		at = ms(at);
+		if (!prev || prev.state !== 'up' || (at && prev.at >= at)) return false;
 		var was = isLive(prev);
 		set(id, { diamond: prev.diamond, key: prev.key, headline: prev.headline, detail: prev.detail,
-			needs: prev.needs, expires: prev.expires, state: 'clear' });
+			needs: prev.needs, expires: prev.expires, state: 'clear' }, at);
 		return was;
+	}
+
+	/// The runner reports this device has applied, `{eid: when}`: local, so it survives a reload,
+	/// never synced (each device applies a report for itself, and the stamps make that agree).
+	/// A month at most and `HEARD_MAX` errands, the oldest forgotten first; forgetting one is safe,
+	/// as its alerts carry their turn's stamp and lose to anything set since.
+	function heardRec() {
+		var r = null;
+		try { r = JSON.parse(window.localStorage.getItem(HEARD_KEY) || 'null'); } catch (e) { r = null; }
+		return (r && typeof r === 'object' && !Array.isArray(r)) ? r : {};
+	}
+
+	/// Has this device applied the report of errand `eid`?
+	function heard(eid) {
+		var t = ms(heardRec()[String(eid || '')]);
+		return !!t && now() - t <= TOMB_MAX_MS;
+	}
+
+	/// Errand `eid`'s report is applied here.
+	function hear(eid) {
+		if (!eid) return;
+		var rec = heardRec(), t = now(), top = 0;
+		Object.keys(rec).forEach(function (k) { top = Math.max(top, ms(rec[k])); });
+		rec[String(eid)] = Math.max(t, top + 1);	// strictly the newest, so the order is the order heard
+		var ids = Object.keys(rec).filter(function (k) { return ms(rec[k]) && t - ms(rec[k]) <= TOMB_MAX_MS; })
+			.sort(function (x, y) { return ms(rec[y]) - ms(rec[x]) || (x < y ? -1 : 1); }).slice(0, HEARD_MAX);
+		var out = {};
+		ids.forEach(function (k) { out[k] = ms(rec[k]); });
+		try { window.localStorage.setItem(HEARD_KEY, JSON.stringify(out)); } catch (e) { /* refused: a replay is harmless */ }
 	}
 
 	/// The person took it down. By its namespaced id, which is what a tile holds.
@@ -388,6 +427,8 @@
 		note:    note,		// the page's quiet notes, appended (mail-note)
 		clear:   clear,
 		dismiss: dismiss,
+		heard:   heard,		// a runner report applied here (daimond.js `settleRunnerAlerts`)
+		hear:    hear,
 		live:    live,
 		count:   count,
 		merge:   merge,		// pure, for the tests and the store's law
@@ -399,28 +440,30 @@
 
 	/// The engine's door (src/wasm/pending.rs). `diamond` is the turn's own Diamond, passed by the
 	/// engine and never by the model; `payload` is the checked JSON `pending_step` composed. Each
-	/// answers JSON text, `ok` false with a `reason` when nothing was done.
+	/// answers JSON text, `ok` false with a `reason` when nothing was done. `at` is a runner turn's
+	/// stamp, for the alerts its report carries (daimond.js `settleRunnerAlerts`); the engine passes none.
 	function parse(payload) {
 		try { var p = JSON.parse(payload); return (p && typeof p === 'object') ? p : null; }
 		catch (e) { return null; }
 	}
 	window.DaimondPendingTool = {
-		raise: function (diamond, payload) {
+		raise: function (diamond, payload, at) {
 			var p = parse(payload);
 			if (!diamond || !p) return JSON.stringify({ ok: false, reason: 'the call could not be read' });
 			if (typeof p.needs !== 'boolean') return JSON.stringify({ ok: false, reason: "'needs' must be true or false" });
 			if (pageKey(p.key)) return JSON.stringify({ ok: false, reason: "the key '" + p.key + "' is the app's own; choose another" });
-			var was = raise(diamond, p.key, p.headline, p.detail, p.needs);
+			var was = raise(diamond, p.key, p.headline, p.detail, p.needs, at);
 			if (!was) return JSON.stringify({ ok: false, reason: 'the key, headline or detail is out of bounds' });
+			if (was === 'stale') return JSON.stringify({ ok: false, stale: true, reason: 'the panel holds a later change to this alert' });
 			if (was === 'full') return JSON.stringify({ ok: false, full: true, max: LIVE_MAX, reason: 'this Diamond already has ' +
 				LIVE_MAX + ' alerts up on the Pending panel; update one of them (raise its key again) or clear one with pending_clear before raising a new key' });
 			return JSON.stringify({ ok: true, was: was === 'same' ? 'updated' : was });
 		},
-		clear: function (diamond, payload) {
+		clear: function (diamond, payload, at) {
 			var p = parse(payload);
 			if (!diamond || !p || typeof p.key !== 'string') return JSON.stringify({ ok: false, reason: 'the call could not be read' });
 			if (pageKey(p.key)) return JSON.stringify({ ok: false, reason: "the key '" + p.key + "' is the app's own; the app takes it down" });
-			return JSON.stringify({ ok: true, cleared: clear(diamond, p.key) });
+			return JSON.stringify({ ok: true, cleared: clear(diamond, p.key, at) });
 		},
 	};
 })();

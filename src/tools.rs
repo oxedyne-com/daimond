@@ -19052,7 +19052,17 @@ pub(crate) fn pending_landed(result: &str) -> bool {
 /// * `answer` - The page's JSON answer.
 fn pending_result(raise: bool, key: &str, answer: &str) -> String {
     if !crate::llm::extract_json_bool(answer, "ok").unwrap_or(false) {
-        if crate::llm::extract_json_bool(answer, "full").unwrap_or(false) {
+        // QA ccp4-b K1: a runner's turn carries its alerts home on one report, bounded as the
+        // panel is, so a new key past the bound is this turn's limit, not the panel's.
+        let full = crate::llm::extract_json_bool(answer, "full").unwrap_or(false);
+        if full && extract_json_string(answer, "was").as_deref() == Some("carried") {
+            return pending_refusal(&fmt!(
+                "'{}' was not {}: this turn already carries {} alerts home on its report, the \
+                most one report holds. Raise or clear one of those keys again to change it, or \
+                say this in your reply.", key, if raise { "raised" } else { "cleared" },
+                PENDING_LIVE_MAX));
+        }
+        if full {
             return pending_refusal(&fmt!(
                 "This Diamond already has {} alerts up on the Pending panel, the most it may hold, \
                 so '{}' was not raised. Update one of them by raising its key again, or take down \
@@ -19060,6 +19070,21 @@ fn pending_result(raise: bool, key: &str, answer: &str) -> String {
         }
         let why = extract_json_string(answer, "reason").unwrap_or_else(|| fmt!("the page did not say"));
         return pending_refusal(&fmt!("The panel did not take it: {}.", why));
+    }
+    // KT-5d: a runner's turn has no page, so its alert goes home on the turn's report and the
+    // asking tab puts it on the panel when that report reaches it.
+    let carried = extract_json_string(answer, "was").as_deref() == Some("carried");
+    if carried {
+        return match raise {
+            true    => fmt!(
+                "{} '{}' goes on the user's Pending panel, with a link back to this Diamond, when \
+                this turn's report reaches them. Raising the same key again updates it in place. \
+                Clear it with pending_clear {{\"key\":\"{}\"}} the moment the condition is \
+                over.", PENDING_RAISED, key, key),
+            false   => fmt!(
+                "{} The alert '{}' comes off the user's Pending panel when this turn's report \
+                reaches them.", PENDING_CLEARED, key),
+        };
     }
     if !raise {
         return if crate::llm::extract_json_bool(answer, "cleared").unwrap_or(false) {
@@ -54581,6 +54606,33 @@ mod tests_pending {
         let bad = pending_result(true, "k", r#"{"ok":false,"reason":"no panel"}"#);
         assert!(bad.starts_with(REFUSAL_OPENING), "{}", bad);
         assert!(bad.contains("no panel"), "{}", bad);
+    }
+
+    /// KT-5d: a runner turn's raise or clear is carried home on its report, so the model is told
+    /// it lands when the report reaches the user, and it still counts as landed.
+    #[test]
+    fn test_kt5d_pending_carried_says_it_lands_with_the_report() {
+        let up = pending_result(true, "k", r#"{"ok":true,"was":"carried"}"#);
+        assert!(up.starts_with(PENDING_RAISED) && pending_landed(&up), "{}", up);
+        assert!(up.contains("report"), "a carried raise says when it lands: {}", up);
+        assert!(up.contains("pending_clear"), "a raise must say how it comes down: {}", up);
+        let gone = pending_result(false, "k", r#"{"ok":true,"was":"carried"}"#);
+        assert!(gone.starts_with(PENDING_CLEARED) && pending_landed(&gone), "{}", gone);
+        assert!(gone.contains("report"), "a carried clear says when it lands: {}", gone);
+    }
+
+    /// QA ccp4-b K1: a runner turn carries at most PENDING_LIVE_MAX keys home, and refuses a new
+    /// key past it; the model is told that bound and the way out, never that the panel is full.
+    #[test]
+    fn test_k1_pending_carried_full_says_the_report_is_full() {
+        for raise in [true, false] {
+            let full = pending_result(raise, "k21", r#"{"ok":false,"full":true,"was":"carried","max":20}"#);
+            assert!(full.starts_with(REFUSAL_OPENING), "{}", full);
+            assert!(full.contains("this turn") && full.contains(&fmt!("{} alerts", PENDING_LIVE_MAX)),
+                "the turn's bound: {}", full);
+            assert!(!full.contains("already has"), "not the panel's bound: {}", full);
+            assert!(full.contains("again") && full.contains("reply"), "the way out: {}", full);
+        }
     }
 
     /// Review AP-1: a Diamond holds at most PENDING_LIVE_MAX live alerts, and the page refuses a

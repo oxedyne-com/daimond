@@ -3427,6 +3427,7 @@ impl DaimondApp {
             reach:          None,
             limits:         compose::Limited::Kept,
             liveness_ms:    0,
+            words:          None,
         };
         res!(compose::compose_onto(agent, &ask, registry).await);
         Ok(())
@@ -3833,6 +3834,7 @@ impl Daimon {
             reach:          Some(&reach),
             limits:         compose::Limited::Adopted(&self.agent),
             liveness_ms:    0,
+            words:          None,
         };
         let composed = res!(compose::compose_turn(
             self.agent.llm.with_halt(Halt::new()), &ask, &registry).await);

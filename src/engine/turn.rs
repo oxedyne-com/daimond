@@ -119,6 +119,7 @@ pub struct TurnSpec {
     pub limits:         Option<TurnLimits>,
     pub today:          String,         // the page's `Today` block (KT-4), empty for none
     pub reach:          Option<Reach>,  // the page's reach, its `Attached` block (KT-4)
+    pub words:          Option<(String, String)>,   // the tab's words log, `(keeper, log)` (U2a)
 }
 
 /// The limits the page's agent runs a turn under (KT-2), carried so a turn run elsewhere folds,
@@ -228,6 +229,9 @@ pub struct TurnAsk {
     pub limits:     Option<TurnLimits>,
     pub today:      String,         // `today`: the page's `Today` block, empty for none
     pub reach:      Option<Reach>,  // `reach`: what the page's marks put in reach, `None` for none
+    /// The tab's words log for a runner's fold to stage over (`words`: `{keeper, log}`, U2a):
+    /// `(keeper, log)`, `None` where the send carries none.
+    pub words:      Option<(String, String)>,
 }
 
 /// The model a provider/model choice runs on, or `None` where no keyed provider serves it
@@ -294,6 +298,7 @@ pub fn resolve(ask: &TurnAsk) -> TurnSpec {
         limits:     ask.limits.clone(),
         today:      ask.today.clone(),
         reach:      ask.reach.clone(),
+        words:      ask.words.clone(),
     }
 }
 
@@ -403,6 +408,10 @@ impl TurnAsk {
             reach:      match top.get(&key("reach")) {
                 Some(d @ Dat::Map(_)) => Reach::from_dat(d.clone()).ok(),
                 _                     => None,
+            },
+            words:      match top.get(&key("words")) {
+                Some(Dat::Map(m)) => Some((text(m, "keeper"), text(m, "log"))),
+                _                 => None,
             },
         })
     }
@@ -752,6 +761,29 @@ mod tests {
         assert!(s.contains("\"instruction\":\"hi\""), "{}", s);
         assert!(s.contains("\"refused\":\"\""), "{}", s);
         assert!(s.contains("\"lease\":null"), "{}", s);
+    }
+
+    /// U2a: a runner's send carries the tab's words log, `{keeper, log}`, to the spec; a send with
+    /// none carries none.
+    #[test]
+    fn u2_turn_ask_reads_words() {
+        let ask = match TurnAsk::from_json(r#"{"chat":"c1","default":{"provider":"a","model":"m"},"keyed":["a"],"typed":"go","words":{"keeper":"chat:c1","log":"\n### [m1] 2026-10-01\n> hi\n\n"}}"#) {
+            Ok(a)  => a,
+            Err(e) => panic!("{}", e),
+        };
+        let want = Some((String::from("chat:c1"), String::from("\n### [m1] 2026-10-01\n> hi\n\n")));
+        assert_eq!(ask.words, want, "the send's words");
+        assert_eq!(resolve(&ask).words, want, "the spec's words");
+        let empty = match TurnAsk::from_json(r#"{"chat":"c1","default":{"provider":"a","model":"m"},"keyed":["a"],"typed":"go","words":{"keeper":"d1","log":""}}"#) {
+            Ok(a)  => a,
+            Err(e) => panic!("{}", e),
+        };
+        assert_eq!(empty.words, Some((String::from("d1"), String::new())), "an empty log is still staged");
+        let none = match TurnAsk::from_json(r#"{"chat":"c1","default":{"provider":"a","model":"m"},"keyed":["a"],"typed":"go"}"#) {
+            Ok(a)  => a,
+            Err(e) => panic!("{}", e),
+        };
+        assert_eq!(none.words, None, "a send with no words");
     }
 
     #[test]

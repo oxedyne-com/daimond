@@ -1186,6 +1186,13 @@ fn refusal(st: &Shared, run: &str, tag: Tag, env: &RunEnv, call: &StoreCall) -> 
             }
         }
     }
+    // A run's child keeps no words log: its folds stage his words for the tab to file (U2a,
+    // qa-ccp3-b F2), so none is ever filed into, or read from, the runner's store.
+    if matches!(call, StoreCall::HisWords { .. } | StoreCall::HisWordsRead { .. })
+        && tag == Tag::Run && !rule_off(st, "run_words")
+    {
+        return Some(unbound(call, String::from("his words")));
+    }
     // Which runs have a journal, and the sweep of them, are the parent's alone (R1i).
     if matches!(call, StoreCall::JournalList { .. } | StoreCall::JournalSweep { .. })
         && tag != Tag::Parent && !rule_off(st, "journal_parent")

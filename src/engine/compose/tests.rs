@@ -79,6 +79,7 @@ fn ask<'a>(keeper: &'a str, l: &'a TurnLimits) -> Ask<'a> {
         reach:          None,
         limits:         Limited::Page(l),
         liveness_ms:    45_000,
+        words:          None,
     }
 }
 
@@ -184,4 +185,24 @@ async fn kt3_keeperless_turn_holds_no_diamond() {
     assert_eq!(c.agent.diamond(), "", "a keeperless turn named a Diamond");
     assert!(reg.ctx.host().fs().peek(FileRoot::Opfs, "REQUIREMENTS.md").is_none(),
         "a keeperless turn seeded a standing file");
+}
+
+/// U2a: a runner's ask carrying the tab's words log stages his words under the tab's keeper, even
+/// for an away Diamond, whose log is not on this store; an ask with none files as before.
+#[tokio::test]
+async fn u2_ask_with_words_stages_them() {
+    let l = limits();
+    for (keeper, tab) in [("chat:c1", "chat:c1"), ("away:d1", "d1")] {
+        let reg = registry(keeper);
+        let a = Ask { words: Some((tab, "")), ..ask(keeper, &l) };
+        let c = match compose_turn(crate::llm::tests::stub_client(1), &a, &reg).await {
+            Ok(c)   => c,
+            Err(e)  => panic!("compose_turn for {}: {}", keeper, e),
+        };
+        assert!(c.agent.is_staged(), "{}'s fold files to the store", keeper);
+        assert_eq!(c.agent.words_home(), tab, "{}'s fold stages under the wrong keeper", keeper);
+    }
+    let c = composed("chat:c1").await;
+    assert!(!c.agent.is_staged(), "an ask with no words staged them");
+    assert_eq!(c.agent.words_home(), "chat:c1");
 }

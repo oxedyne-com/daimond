@@ -1950,3 +1950,30 @@ fn a_grant_whose_keeper_id_holds_a_colon_or_is_over_128_bytes_is_refused_at_the_
     }
     eprintln!("BREAK KEEPER ID D3: keeper_id off, every colon and over-long grant is bound");
 }
+
+/// U2a (qa-ccp3-b F2): a run's child keeps no words log, so the store refuses it the words calls
+/// even on a keeper it was granted; the parent gets the store's own answer.  Break: rule `run_words` off serves it.
+#[test]
+fn u2_run_binding_refuses_his_words() {
+    let srv = server();
+    let run = match srv.bind(Tag::Run, env("w", &["chat:c1"])) {
+        Ok(l)   => l,
+        Err(e)  => panic!("binding w: {}", e),
+    };
+    let entries = s("### [m1] 2026-10-25\n> hi\n\n");
+    let filed = ask(&run, C::HisWords { keeper: s("chat:c1"), entries: entries.clone() });
+    assert_eq!(unbound_id(&filed).as_deref(), Some("his words"), "a run filed his words: {:?}", filed);
+    let read = ask(&run, C::HisWordsRead { keeper: s("chat:c1") });
+    assert_eq!(unbound_id(&read).as_deref(), Some("his words"), "a run read his words: {:?}", read);
+    // The parent is not refused by the binding: it gets the runner store's own answer, that his
+    // words are kept on his device (ccp3 M2: this store holds no words log for anyone).
+    let parent = bind(&srv, Tag::Parent, "p");
+    let served = ask(&parent, C::HisWordsRead { keeper: s("chat:c1") });
+    assert!(unbound_id(&served).is_none(), "the parent was refused his words: {:?}", served);
+    assert!(matches!(&served, R::HisWordsRead(Err(e)) if fmt!("{}", e).contains("kept on his device")),
+        "the parent was not given the store's own sentence: {:?}", served);
+    assert!(srv.rule_off("run_words").is_ok());
+    let red = ask(&run, C::HisWordsRead { keeper: s("chat:c1") });
+    assert!(unbound_id(&red).is_none(), "break: rule run_words off still refused: {:?}", red);
+    eprintln!("BREAK RUN WORDS: run_words off, a run is served his words");
+}

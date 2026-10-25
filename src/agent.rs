@@ -141,6 +141,32 @@ pub fn take_said(q: &Interjections) -> Vec<String> {
 // │ Agent                                                          │
 // └───────────────────────────────────────────────────────────────┘
 
+/// Where a fold puts his words (U2a, qa-ccp3-b F2).  A runner keeps no words log of its own: its
+/// folds stage them over the log the tab sent, and they ride home on the report for the tab to
+/// file, so its notice and `recall` are the tab's own.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum WordsHome {
+    /// No words home: a fold carries all his words in its notice (R1).
+    #[default]
+    None,
+    /// The store files them in this keeper's words log.
+    Store(String),
+    /// A runner's: the tab's keeper, its words log as a file (`compact::log_file`) with this
+    /// turn's filings merged in, and the entries filed, in `compact::log_entries` form.
+    Staged { keeper: String, log: String, added: String },
+}
+
+impl WordsHome {
+    /// The keeper his words are filed under, empty for none.
+    pub fn keeper(&self) -> &str {
+        match self {
+            Self::None                      => "",
+            Self::Store(k)
+            | Self::Staged { keeper: k, .. } => k,
+        }
+    }
+}
+
 /// The Daimond agent — drives a single conversation turn.
 ///
 /// Holds a reference to the LLM client (shared across sessions) and
@@ -249,7 +275,7 @@ pub struct Agent {
     /// reason `briefing` is: a worker dispatched from a steering turn is inside the same
     /// Diamond.
     diamond:             Rc<RefCell<String>>,
-    words_home:          Rc<RefCell<String>>,            // the keeper whose notes file logs his words
+    words_home:          Rc<RefCell<WordsHome>>,         // where a fold puts his words
     pending_only:        Cell<bool>,                     // reports on Pending, see `set_pending_only`
     /// The turn's last-progress clock (U3a LV1, UNBLOCK-16): beaten by every line the model
     /// stream hears, through the same clock handed to `llm`, and nothing else.  Its limit is
@@ -684,7 +710,7 @@ impl Agent {
             pending_only:    Cell::new(false),
             ending:          Rc::new(RefCell::new(None)),
             diamond:         Rc::new(RefCell::new(String::new())),
-            words_home:      Rc::new(RefCell::new(String::new())),
+            words_home:      Rc::new(RefCell::new(WordsHome::None)),
             liveness,
             blocks:          Rc::new(RefCell::new(crate::prompts::TurnBlocks::default())),
             turn_pre:        RefCell::new(String::new()),
@@ -1352,12 +1378,37 @@ impl Agent {
     /// `tools::keeper_home` reads it; empty for none, and then a fold carries all his words in
     /// its notice as before (R1).
     pub fn set_words_home(&self, keeper: &str) {
-        *self.words_home.borrow_mut() = keeper.to_string();
+        *self.words_home.borrow_mut() = match keeper.is_empty() {
+            true    => WordsHome::None,
+            false   => WordsHome::Store(keeper.to_string()),
+        };
     }
 
     /// The keeper a fold files his words under, or empty.
     pub fn words_home(&self) -> String {
-        self.words_home.borrow().clone()
+        self.words_home.borrow().keeper().to_string()
+    }
+
+    /// Stage his words rather than file them (U2a, a runner's turn): a fold merges them into
+    /// `log`, the tab's words log as its `words_read` answers it ([`compact::log_text`]), and
+    /// answers as the tab's store would over it, and [`Self::staged_words`] says what it filed.
+    /// `keeper` is the tab's, which names the log in the notice.
+    pub fn set_words_staged(&self, keeper: &str, log: &str) {
+        *self.words_home.borrow_mut() = WordsHome::Staged { keeper: keeper.to_string(),
+            log: compact::log_file(log), added: String::new() };
+    }
+
+    /// Does a fold stage his words rather than file them?
+    pub fn is_staged(&self) -> bool {
+        matches!(*self.words_home.borrow(), WordsHome::Staged { .. })
+    }
+
+    /// The entries this agent's folds staged, oldest first, for the tab to file; empty for none.
+    pub fn staged_words(&self) -> String {
+        match &*self.words_home.borrow() {
+            WordsHome::Staged { added, .. } => added.clone(),
+            _                               => String::new(),
+        }
     }
 
     /// Say something into a turn that is already running.
@@ -1992,15 +2043,17 @@ impl Agent {
             Err(_) => return result,
         };
         // AND HIS WORDS LOG (CCP2-FOLDFIX2): his messages a fold filed rather than carried.
-        let home = self.words_home();
-        // A log this host cannot reach is said in the store's own words, never read as empty: on
-        // the runner his filed words are the tab's (QA ccp3r B, M2).
-        let (log, away) = match home.is_empty() {
-            true  => (String::new(), None),
-            false => match host.store().his_words_read(&home).await {
+        // A runner's is the log the tab sent with what its folds staged (U2a); a log this host
+        // cannot reach is said in the store's own words, never read as empty: on the runner his
+        // filed words are the tab's (QA ccp3r B, M2).
+        let home = self.words_home.borrow().clone();
+        let (log, away) = match home {
+            WordsHome::None                 => (String::new(), None),
+            WordsHome::Store(k)             => match host.store().his_words_read(&k).await {
                 Ok(log) => (log, None),
                 Err(e)  => (String::new(), Some(e.plain())),
             },
+            WordsHome::Staged { log, .. }   => (compact::log_text(&log), None),
         };
         let lines = compact::recall_folds(
             &session.messages, &log, &mut |l: &str| q.matches(l), q.before, q.after, q.limit);
@@ -3900,13 +3953,23 @@ impl Agent {
     async fn file_words<H: Host>(&self, host: &H, said: &[compact::Said], budget: u64)
         -> Outcome<String>
     {
-        let home = self.words_home();
-        if home.is_empty() {
-            return Err(err!("this conversation keeps no notes file"; Missing));
-        }
         let date = compact::utc_date(host.clock().now_ms());
-        let (total, first) = compact::log_tally(&res!(host.store().his_words(&home,
-            compact::log_entries(said, &date)).await));
+        let entries = compact::log_entries(said, &date);
+        // A runner's fold files into the staged log by the store's own steps, so it answers as
+        // the tab's store would, and never into the runner's store (U2a).
+        let home = self.words_home.borrow().clone();
+        let answer = match home {
+            WordsHome::None         => return Err(err!("this conversation keeps no notes file"; Missing)),
+            WordsHome::Store(k)     => res!(host.store().his_words(&k, entries).await),
+            WordsHome::Staged { keeper, log, added } => {
+                let merged = compact::log_merge(&log, &entries);
+                let answer = res!(compact::log_answer(&merged, &entries, &self.words_path()));
+                *self.words_home.borrow_mut() = WordsHome::Staged { keeper, log: merged,
+                    added: fmt!("{}{}", added, entries) };
+                answer
+            },
+        };
+        let (total, first) = compact::log_tally(&answer);
         let (carried, older) = compact::newest_within(said, self.words_share(budget));
         // The newest older one is this fold's where it has any; else it was filed by an earlier
         // fold and only the oldest is named.
@@ -13135,6 +13198,87 @@ fn test_agent_message_building() {
             assert!(size <= MAX, "the {} future is {} bytes, over the {} byte bound: box the child \
                 futures it awaits (CCP4-STACKPIN)", name, size, MAX);
         }
+    }
+
+    // ┌───────────────────────────────────────────────────────────────┐
+    // │ U2a: a runner's fold stages his words (qa-ccp3-b F2)            │
+    // └───────────────────────────────────────────────────────────────┘
+
+    /// The words a tab's log already holds before the fold: two of his older messages.
+    fn u2_old() -> String {
+        compact::log_entries(&[
+            compact::Said { mid: fmt!("m-old1"), text: fmt!("u2 seed alpha, from last week") },
+            compact::Said { mid: fmt!("m-old2"), text: fmt!("u2 seed beta\nover two lines") },
+        ], "2026-10-01")
+    }
+    /// A wordy chat whose every message of his has its own row id, as the tab's have.
+    fn u2_session() -> Session {
+        let mut s = qc_wordy(3, 26_000);
+        let mut k = 0;
+        s.messages = s.messages.into_iter().map(|m| match m {
+            m @ ChatMessage::User { .. } => { k += 1; m.marked(fmt!("m{}", k)) },
+            m                            => m,
+        }).collect();
+        s
+    }
+    /// The tab's way, the store filing: the notice its fold made and the log after.
+    async fn u2_stored() -> (String, String) {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary.")]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.set_context_window(20_000);
+        let host = crate::engine::host::test::TestHost::default();
+        host.store().keep_notes();
+        assert!(host.store().his_words("chat:c1", u2_old()).await.is_ok(), "the seed log");
+        a.set_words_home("chat:c1");
+        let mut s = u2_session();
+        assert!(a.fold_by_hand(&host, &mut s, &mut |_| {}).await, "the stored fold moved nothing");
+        (qa_notice(&s), host.store().notes_of("chat:c1"))
+    }
+    /// The runner's way: staged over the log the tab read (`log_text`, as `his_words_read`
+    /// answers), on a host whose store keeps no notes, so any filing there fails.
+    async fn u2_staged() -> (Agent, crate::engine::host::test::TestHost, Session, Vec<AgentEvent>) {
+        let (port, _seen) = crate::llm::tests::start_stub(vec![completion("Short summary.")]).await;
+        let b = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        b.set_context_window(20_000);
+        let host = crate::engine::host::test::TestHost::default();
+        b.set_words_staged("chat:c1", &compact::log_text(&compact::log_merge("", &u2_old())));
+        let mut s = u2_session();
+        let mut ev = Vec::new();
+        assert!(b.fold_by_hand(&host, &mut s, &mut |e| ev.push(e)).await, "the staged fold moved nothing");
+        (b, host, s, ev)
+    }
+
+    /// Invariant 8: a staged fold's notice equals the store's byte for byte, nothing is filed in
+    /// the runner's store, and what it staged is what the store's log gained.
+    #[tokio::test]
+    async fn u2_staged_fold_answers_as_the_store_does() {
+        let (notice, log) = u2_stored().await;
+        let (b, host, s, ev) = u2_staged().await;
+        assert!(!qc_said(&ev).contains("could not be filed"), "the staged fold did not file: {}", qc_said(&ev));
+        assert_eq!(qa_notice(&s), notice, "the staged notice differs from the store's");
+        assert_eq!(host.store().notes_of("chat:c1"), "", "the staged fold wrote the runner's store");
+        let seed = compact::log_read(&compact::log_merge("", &u2_old()));
+        let gained: Vec<compact::Said> = compact::log_read(&log).into_iter()
+            .filter(|w| !seed.contains(w)).collect();
+        assert!(!gained.is_empty(), "the store's fold filed nothing");
+        assert_eq!(compact::log_read(&compact::log_merge("", &b.staged_words())), gained,
+            "staged_words is not what the store's log gained");
+    }
+
+    /// `recall` on a staged agent reads the log it was seeded with and what its folds staged.
+    #[tokio::test]
+    async fn u2_staged_recall_reads_seed_and_staged() {
+        let (b, host, s, _ev) = u2_staged().await;
+        let ask = |q: &str| crate::protocol::ToolCall { id: fmt!("r1"),
+            name: crate::tools::Tool::Recall.name().to_string(),
+            arguments: fmt!(r#"{{"query":"{}","fixed":true}}"#, q) };
+        let seeded = b.with_folds(&host, &s, &ask("u2 seed alpha"), MessageContent::text("")).await;
+        assert!(seeded.as_text().contains("u2 seed alpha, from last week"),
+            "recall missed the seeded log: {}", seeded.as_text());
+        assert!(!qa_notice(&s).contains("P0 log line 0 "), "the oldest paste is in the notice");
+        let staged = b.with_folds(&host, &s, &ask("P0 log line 0 "), MessageContent::text("")).await;
+        assert!(staged.as_text().contains("P0 log line 0 status=ok"),
+            "recall missed the staged words: {}", &staged.as_text()[..staged.as_text().len().min(300)]);
     }
 
 }
