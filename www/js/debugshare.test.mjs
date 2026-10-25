@@ -212,6 +212,7 @@ function makeEnv(cfg) {
 			setTimeoutImpl, clearTimeout, noInterval, noClear, consoleShim);
 	}
 	loadScript('stamp.js');			// the shared stamp rule, loaded first as index.html does
+	loadScript('scrub.js');			// the one scrubber, loaded before debugshare.js as index.html does
 	loadScript('debugshare.js');
 	// Release every gated POST currently in flight, let the microtasks and the (fast)
 	// pacing timer run, and repeat until nothing new is queued -- so a gated drain runs
@@ -2059,6 +2060,70 @@ async function main() {
 		check('scrubbing twice is scrubbing once, for every rule', nested.length === 0);
 	}
 
+	console.log('debugshare: scrubber — SCRUB-ONE arms: a named value goes whole, however it is written');
+	{
+		const env = makeEnv();
+		const DS = env.win.DEBUG_SHARE;
+		// Each arm: the text, and what of it must not survive. The `named` rule once
+		// took only an unbroken run of eight after the name, so a passphrase of words
+		// travelled whole (D-20261006-24).
+		const gone = (name, text, secret) => {
+			const out = DS._scrubText(text);
+			check(name, out.indexOf(secret) === -1 && DS._scrubText(out) === out);
+		};
+		const PHRASE = 'correct horse battery staple';
+		gone('ARM multi-word: passphrase: <four words>', 'passphrase: ' + PHRASE, 'horse');
+		gone('ARM multi-word: mid-line, the words still go', '[id] unlock with passphrase: ' + PHRASE, 'battery');
+		gone('ARM multi-word: a mnemonic', 'mnemonic = ' + PHRASE + ' again', 'battery');
+		gone('ARM case/sep: PASSPHRASE=', 'PASSPHRASE=' + PHRASE, 'horse');
+		gone('ARM case/sep: Password:',   'Password: hunter2', 'hunter2');
+		gone('ARM case/sep: password =',  'login password = tr0ub4dor', 'tr0ub4dor');
+		gone('ARM case/sep: passwd=',     'passwd=s3cr3t pa55', 's3cr3t');
+		gone('ARM case/sep: PASSWD:',     'PASSWD: s3cr3t pa55', 'pa55');
+		gone('ARM case/sep: newPassword:', 'newPassword: abc', 'abc');
+		gone('ARM quoted: double',        'password: "' + PHRASE + '"', 'horse');
+		gone('ARM quoted: single',        "passphrase='" + PHRASE + "'", 'horse');
+		gone('ARM quoted: an escaped quote inside', 'password: "pa\\"ss wo rd"', 'wo rd');
+		gone('ARM quoted: a short quoted value', 'config password="hunter2" set', 'hunter2');
+		gone('ARM quoted: a JSON key', '{"user":"me","password":"' + PHRASE + '","port":993}', 'horse');
+		gone('ARM key: sk-or-v1-',        'key sk-or-v1-' + fakeHex(64, 201) + ' set', fakeHex(64, 201));
+		gone('ARM key: sk_live_',         'stripe sk_live_' + fakeRun(24, 202) + ' ok', fakeRun(24, 202));
+		gone('ARM key: sk-ant-',          'anthropic sk-ant-api03-' + fakeB64(90, 203), fakeB64(90, 203));
+		gone('ARM key: Bearer',           'Authorization: Bearer ' + fakeRun(20, 204), fakeRun(20, 204));
+		gone('ARM key: bearer, lower case', 'authorization: bearer ' + fakeRun(20, 205), fakeRun(20, 205));
+		gone('ARM key: BEARER, upper case', 'AUTHORIZATION: BEARER ' + fakeRun(20, 206), fakeRun(20, 206));
+
+		// The mailbox. `mail.js` posts the app password as `password` (an app
+		// password is four groups of four, spaced) and stores it sealed as `pass`.
+		const APP = 'abcd efgh ijkl mnop';
+		gone('ARM mailbox: the posted body, as text',
+			'{"address":"me@x.org","host":"imap.x.org","user":"me","password":"' + APP + '"}', 'efgh');
+		const posted = DS._scrubDeep({ address: 'me@x.org', user: 'me', password: APP, pass: APP,
+			smtpPassword: APP, passAt: 1789300000000 });
+		check('ARM mailbox: a password-named FIELD goes whole in the walk',
+			JSON.stringify(posted).indexOf('efgh') === -1);
+		check('ARM mailbox: and the fields beside it still read',
+			posted.address === 'me@x.org' && posted.user === 'me' && posted.passAt === 1789300000000);
+		check('ARM mailbox: the name redactor keeps no head of a password',
+			JSON.stringify(DS._redact({ password: PHRASE, pass: APP })).indexOf('correc') === -1
+			&& JSON.stringify(DS._redact({ pass: APP })).indexOf('abcd') === -1);
+
+		// The negative arm: prose about a password, with no value, reads as written.
+		const PROSE = [
+			'Forgot your password? Reset it from the sign-in screen.',
+			'the password was wrong',
+			'Password must be at least 12 characters',
+			'Enter your passphrase:',
+			'passphrase: ',
+			'Change password',
+			'Set a passphrase, then confirm it',
+			'the compass bypass passes',
+		];
+		const mangled = PROSE.filter((p) => DS._scrubText(p) !== p);
+		if (mangled.length) console.log('       mangled: ' + mangled.join(' | '));
+		check('ARM negative: prose with "password" and no value is left readable', mangled.length === 0);
+	}
+
 	console.log('debugshare: scrubber — what the feed is SUPPOSED to carry still reads');
 	{
 		const env = makeEnv();
@@ -2170,25 +2235,17 @@ async function main() {
 		env.halt();
 	}
 
-	console.log('debugshare: scrubber — the shared block, and what it costs a tick');
+	console.log('debugshare: scrubber — the one module, and what it costs a tick');
 	{
-		// THE TWO COPIES MUST MATCH. `www/js/debugshare.js` is a classic script and
-		// `dev/lens.mjs` a node tool, so neither can import the other and the block
-		// is duplicated; this is what stops the copies drifting. The client's copy
-		// sits one tab in, being inside the IIFE, so one leading tab comes off each
-		// line before the comparison and nothing else does.
-		const cut = (src) => {
-			const a = src.indexOf('// ── THE CONTENT SCRUBBER (SHARED BLOCK) ──');
-			const b = src.indexOf('// ── END OF THE SHARED SCRUBBER BLOCK ──');
-			return (a < 0 || b < 0) ? null : src.slice(a, b);
-		};
-		const client = cut(readFileSync(join(HERE, 'debugshare.js'), 'utf8'));
-		const lens   = cut(readFileSync(join(HERE, '..', '..', 'dev', 'lens.mjs'), 'utf8'));
-		check('the block is present in www/js/debugshare.js', !!client);
-		check('the block is present in dev/lens.mjs', !!lens);
-		const undent = (s) => s.split(NL).map((l) => l.replace(/^\t/, '')).join(NL);
-		check('and the two copies are identical, character for character',
-			!!client && !!lens && undent(client) === lens);
+		const env0 = makeEnv();
+		// ONE SCRUBBER. The block was once copied into `dev/lens.mjs` and held equal
+		// by a test here; both now load `www/js/scrub.js`, so neither may grow a copy.
+		const SRC = ['debugshare.js', join('..', '..', 'dev', 'lens.mjs')];
+		const copies = SRC.filter((rel) => /SCRUB_SHAPES|function scrubText|function fingerprint|SECRET_RE\s*=/
+			.test(readFileSync(join(HERE, rel), 'utf8')));
+		check('no scrubber copy is left in debugshare.js or lens.mjs', copies.length === 0);
+		check('debugshare.js scrubs with the module the page loads first',
+			env0.win.DEBUG_SHARE._scrubText === env0.win.DaimondScrub.scrubText);
 
 		// THE PER-TICK COST, measured rather than assumed: this runs on every event,
 		// every telemetry tick and every snapshot. The ceiling is deliberately

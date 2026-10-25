@@ -34,6 +34,8 @@ function world(over) {
 		log, chat, m,
 		chats: [chat], _handBack: { T1: 'c1' }, _handBackCause: {}, _localRecovering: {}, _fallbackInFlight: {},
 		endHandOffNotRun: async (c, mm) => { log.push(['notRun', mm.iturn]); },
+		// The row's cause (NOTRUN-WHY): none on the placeholder, so the backstop names it.
+		placeholderNotRun: () => null, notRunCause: (cause, to) => ({ cause: cause, to: to }),
 		door: { version: 3, leases: { T1: { holder: 'PHONE', vacated: true } }, unread: false },
 		DaimondPost: { collect: async () => { log.push('collect'); } },
 		// A push holds the round gate for the whole test: a pull waits behind it, as `gatedPull` does.

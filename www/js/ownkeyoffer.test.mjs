@@ -336,6 +336,26 @@ function offerChecks(M) {
 	const gone = offer(W, { tab: { name: 'laptop', last_seen: now, mobile: false } }, ['an']);
 	check('RUNNER-DOOR a starred runner with no presence row: runner-silent', !gone.runner && gone.why === 'runner-silent',
 		JSON.stringify(gone));
+	// SEATWHY-ALL: a starred runner that listens and is still passed over always says why.
+	check('SEATWHY-ALL an offered runner names no reason', !own.why, JSON.stringify(own));
+	const busy = abi({ busy: 1 }, ['an']);
+	check('SEATWHY-ALL a busy starred runner: runner-busy', !busy.runner && busy.why === 'runner-busy'
+		&& busy.runnerId === 'rn', JSON.stringify(busy));
+	const phone = abi({ mobile: true }, ['an']);
+	check('SEATWHY-ALL a starred runner that is a phone: runner-phone', !phone.runner && phone.why === 'runner-phone',
+		JSON.stringify(phone));
+	const req = offer(W, answer({ abi: 1, abiMin: 1 }), ['an'], { needFolder: true });
+	check('SEATWHY-ALL a starred runner without the chat\'s folder: runner-require', !req.runner
+		&& req.why === 'runner-require' && req.require === 'folder', JSON.stringify(req));
+	const none = abi({}, []);
+	check('SEATWHY-ALL a turn with no source at all: runner-nosource', !none.runner && none.why === 'runner-nosource',
+		JSON.stringify(none));
+	W.DaimondPresence.ingest(answer({}), now);
+	W.DaimondPeer.setEngineId('');
+	const unk = W.DaimondPeer.seatSwitch({ id: 'c1', model: 'm', provider: CR }, W.DaimondPresence.snapshot(),
+		{ selfId: 'me', runnerOnly: true, nominatedId: 'rn', sources: [CR], freshWindowMs: W.DaimondPeer.DISPATCH_FRESH_MS }, now);
+	check('SEATWHY-ALL a legacy runner before this page knows its engine: runner-unchecked', !unk.runner
+		&& unk.why === 'runner-unchecked', JSON.stringify(unk));
 	const lan = abi({}, ['lan', CR]);
 	check('K4 an ABI runner is offered a LAN https source', !!lan.runner, JSON.stringify(lan));
 	const http = abi({}, ['http']);
@@ -440,8 +460,8 @@ function frameChecks(M) {
 	if (typeof P.abiOk !== 'function') { check('K10 abiOk exists', false); return; }
 	P.setEngineAbi(2, 2);
 	const NAMES = ['onProgressFrame', 'onLastFrame', 'frameAbiOk', 'refuseAbiFrame', 'refuseAbiTurn', 'dropRefusedTiles', 'adoptFinalFrame',
-		'endTurnNotRun', 'answerUnhanded', 'isNotRunRow', 'handBackNote', 'seatReason', 'applyProvisional'];
-	const L = lift(source('daimond.js'), NAMES, []);
+		'endTurnNotRun', 'answerUnhanded', 'notRunRecord', 'placeholderNotRun', 'notRunCause', 'isNotRunRow', 'handBackNote', 'seatReason', 'applyProvisional'];
+	const L = lift(source('daimond.js'), NAMES, ['NOTRUN_KEYS']);
 	check('K10 the frame functions are there', L.missing.length === 0, L.missing.join());
 	if (L.missing.length) return;
 	const run = (holder, by, frame, last) => {
@@ -541,6 +561,11 @@ function pageChecks() {
 		api.seatWhyText({ why: 'runner-unchecked', runnerId: 'rn' }));
 	check('TRUTH page-old has its line', api.seatWhyText({ why: 'page-old', runnerId: 'rn' }).indexOf('seat.why_page_old') === 0,
 		api.seatWhyText({ why: 'page-old', runnerId: 'rn' }));
+	for (const [why, key] of [['runner-busy', 'busy'], ['runner-phone', 'phone'], ['runner-require', 'require'],
+		['runner-nosource', 'nosource']]) {
+		check('SEATWHY-ALL ' + why + ' has its line', api.seatWhyText({ why: why, runnerId: 'rn' }).indexOf('seat.why_runner_' + key) === 0,
+			api.seatWhyText({ why: why, runnerId: 'rn' }));
+	}
 	check('K6 no reason, no line', api.seatWhyText({}) === '' && api.seatWhyText(null) === '');
 	check('K7 an abi hand-back says the runner runs another version', api.handBackNote('abi', 'argonaut').indexOf('seat.why_runner_engine') === 0,
 		api.handBackNote('abi', 'argonaut'));

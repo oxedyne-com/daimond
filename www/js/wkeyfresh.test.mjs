@@ -137,7 +137,7 @@ function workerKeySegment() {
 	if (a < 0 || z < 0) { console.error('ABORT: the worker key segment is not in daimond.js'); process.exit(2); }
 	const seg = src.slice(a, z);
 	return new Function('run', 'self', 'onCredits', 'DaimondModels', 'ensureWantMinor', 'runNode',
-		'friendlyError', 'closeEarly',
+		'friendlyError', 'closeEarly', 'isPassingFailure',
 		'return (async function () {\n' + seg + '\n\treturn true;\n}).call(this);');
 }
 
@@ -148,7 +148,7 @@ async function runWorker(M, slot, want) {
 	const pump = { active: 1, render() {}, pump() {} };
 	let closed = false;
 	const went = await seg.call(pump, run, self, true, M, () => want, 'self',
-		(e) => (e && e.message) || String(e), () => { closed = true; });
+		(e) => (e && e.message) || String(e), () => { closed = true; }, () => false);
 	return { run, went: went === true, closed };
 }
 
@@ -202,7 +202,10 @@ async function main() {
 		const { M, gw } = loadModels();
 		gw.refuse = status;
 		const r = await runWorker(M, 4, 500);
-		check(status + ': the run is an error, and goes no further', r.run.status === 'error' && !r.went && r.closed,
+		// A refused key never reached the loop, so it is `not_started` with the refusal as its
+		// reason (ZERO-ROUND), never `error` and never run on a smaller key.
+		check(status + ': the run could not start, and goes no further', r.run.status === 'not_started'
+			&& /Refused/.test(r.run.why || '') && !r.went && r.closed,
 			'status=' + r.run.status + ' went=' + r.went);
 		check(status + ': the refusal is in the run\'s text', /Refused/.test(r.run.text), 'text=' + r.run.text);
 		check(status + ': the slot holds no key', !M.slotConfig(4), 'slot=' + JSON.stringify(M.slotConfig(4)));

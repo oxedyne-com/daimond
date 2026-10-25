@@ -29,6 +29,8 @@ import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+/// The not-run cause map (NOTRUN-WHY), lifted as the page holds it.
+const NOTRUN_SRC = (/\n\tvar NOTRUN_KEYS = \{[\s\S]*?\n\t\};/.exec(SRC) || [''])[0];
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
 	checks++;
@@ -57,7 +59,7 @@ const win = { addEventListener() {}, dispatchEvent() { return true; } };
 }
 const P = win.DaimondPeer;
 
-const NAMES = ['honoursModelSet', 'turnPresence', 'seatSwitchFor', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'reRunParked', 'sayToRunner'];
+const NAMES = ['honoursModelSet', 'turnPresence', 'seatSwitchFor', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'notRunRecord', 'notRunCause', 'reRunParked', 'sayToRunner'];
 function world(rosterLine, presRec, provider) {
 	const now = Date.now();
 	const W = { built: [], ran: [], said: [],
@@ -93,7 +95,7 @@ function world(rosterLine, presRec, provider) {
 	};
 	env.window = env;
 	const have = NAMES.map((n) => [n, lift(n)]).filter((x) => x[1]);
-	const body = have.map((x) => x[1]).join('\n') + '\nreturn {' + have.map((x) => x[0] + ': ' + x[0]).join(', ') + '};';
+	const body = NOTRUN_SRC + have.map((x) => x[1]).join('\n') + '\nreturn {' + have.map((x) => x[0] + ': ' + x[0]).join(', ') + '};';
 	const scope = new Proxy(env, {
 		has: (t, k) => typeof k === 'string' && (k in t || !(k in globalThis)),
 		get: (t, k) => t[k],

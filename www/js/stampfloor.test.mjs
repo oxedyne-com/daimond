@@ -67,7 +67,7 @@ await skewCase('reading scope: granted, then withheld', async (now) => {
 		read: () => H.scopeGranted('reading') };
 }, true, false);
 await skewCase('debug-share: on, then off', async (now) => {
-	const w = makeWindow({ now }); loadScript(w, 'debugshare.js');
+	const w = makeWindow({ now }); loadScript(w, 'scrub.js'); loadScript(w, 'debugshare.js');
 	const D = w.DEBUG_SHARE;
 	return { w, write: (on) => D.setEnabled(on), snap: () => D.syncSnapshot(), adopt: (r) => D.adoptSync(r), read: () => D.isOn() };
 }, true, false);

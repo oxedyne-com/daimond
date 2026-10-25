@@ -231,7 +231,8 @@ function lift(name) {
 const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'electSources', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
 	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
-	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'handBackNote', 'seatReason', 'seatWhyKey', 'seatWhyText', 'dropRefusedTiles'];
+	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'handBackNote', 'seatReason', 'seatWhyKey', 'seatWhyText', 'dropRefusedTiles',
+	'notRunCause', 'notRunRecord', 'placeholderNotRun', 'notRunWhyKey', 'drawNotRunReason'];
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──
 const PW = { addEventListener() {}, dispatchEvent() { return true; } };
@@ -250,8 +251,9 @@ const RP = PW.DaimondPeer;
 
 // A small element, enough for `markInterrupted` to draw a footer and a button.
 function el(tag) {
-	const e = { tag, children: [], handlers: {}, textContent: '', className: '',
+	const e = { tag, children: [], handlers: {}, textContent: '', className: '', dataset: {}, attrs: {},
 		classList: { add() {} },
+		setAttribute(k, v) { this.attrs[k] = String(v); }, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
 		appendChild(c) { this.children.push(c); return c; },
 		addEventListener(k, f) { this.handlers[k] = f; } };
 	return e;
@@ -341,7 +343,9 @@ function world(fault, extra) {
 	env.window = env;
 	const have = NAMES.concat(extra || []).map((n) => [n, lift(n)]).filter((x) => x[1]);
 	W.have = have.map((x) => x[0]);
-	const body = have.map((x) => x[1]).join('\n') + '\nreturn {' + have.map((x) => x[0] + ': ' + x[0]).join(', ') + '};';
+	// The not-run cause map (NOTRUN-WHY), as the page holds it.
+	const notrunKeys = (/\n\tvar NOTRUN_KEYS = \{[\s\S]*?\n\t\};/.exec(SRC) || [''])[0];
+	const body = notrunKeys + have.map((x) => x[1]).join('\n') + '\nreturn {' + have.map((x) => x[0] + ': ' + x[0]).join(', ') + '};';
 	const scope = new Proxy(env, {
 		has: (t, k) => typeof k === 'string' && (k in t || !(k in globalThis)),
 		get: (t, k) => t[k],

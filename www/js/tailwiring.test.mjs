@@ -471,7 +471,7 @@ async function main() {
 		const makeFn = (recovering) => {
 			// The backstop hands the turn to `recoverOneLocally(chat, m)`, which runs it here
 			// (no re-seat to another desktop since D-20261009-23).
-			const localSpy = [], endSpy = [];
+			const localSpy = [], endSpy = [], causeSpy = [];
 			const peer  = { REASON_DISPATCHED: 'dispatched', recoverDecision: () => true, runErrand: () => {} };
 			const lease = { record: () => null };
 			const stubs = {
@@ -489,11 +489,14 @@ async function main() {
 				peerReports:                 Object.create(null),
 				diag:                        () => {},
 				recoverOneLocally:           async (chat, m, o) => { localSpy.push(o); },
-				endHandOffNotRun:            async (chat, m, why) => { endSpy.push(why); },
+				endHandOffNotRun:            async (chat, m, why, nr) => { endSpy.push(why); causeSpy.push(nr && nr.cause); },
+				// The row's cause (NOTRUN-WHY): none on the placeholder, so the backstop names it.
+				placeholderNotRun:           () => null,
+				notRunCause:                 (cause, to) => ({ cause: cause, to: to }),
 			};
 			const names = Object.keys(stubs);
 			const fn = new Function(...names, fnSrc + '\nreturn runDispatchFallback;')(...names.map((n) => stubs[n]));
-			return { fn, localSpy, endSpy };
+			return { fn, localSpy, endSpy, causeSpy };
 		};
 
 		// (d1) GUARD ON: a turn already recovering locally is not run again.
@@ -509,8 +512,8 @@ async function main() {
 		const off = makeFn(false);
 		await off.fn('c1', 't1');
 		check('(d2) with no local recovery in flight, the backstop ends it "not run", never runs it here',
-			off.localSpy.length === 0 && off.endSpy.length === 1,
-			{ local: off.localSpy.length, end: off.endSpy });
+			off.localSpy.length === 0 && off.endSpy.length === 1 && off.causeSpy[0] === 'unclaimed',
+			{ local: off.localSpy.length, end: off.endSpy, cause: off.causeSpy });
 	}
 
 	console.log(failures ? ('\nFAIL -- ' + failures + '/' + checks + ' checks') : ('\nALL PASS -- ' + checks + '/' + checks));

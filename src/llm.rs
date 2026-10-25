@@ -1519,6 +1519,16 @@ impl TransportErr {
             err!(self.err, "{}", self.reason; IO, Network, Wire, Security)
         } else if matches!(self.status, 400 | 422) {
             err!(self.err, "{}", self.reason; IO, Network, Wire, Size)
+        } else if self.status == 429 {
+            // The passing kinds are tagged too, so whoever reads the failure later -- a worker's
+            // parent deciding whether to dispatch again -- reads the tag, never the digits
+            // (ZERO-ROUND run 4, see `failure_class`).
+            err!(self.err, "{}", self.reason; IO, Network, Wire, LimitReached)
+        } else if (500..600).contains(&self.status) {
+            err!(self.err, "{}", self.reason; IO, Network, Wire, Upstream)
+        } else if self.status == 0 && self.retryable {
+            // No status and worth another go: the road broke before the provider answered.
+            err!(self.err, "{}", self.reason; IO, Network, Wire, Unreachable)
         } else {
             err!(self.err, "{}", self.reason; IO, Network, Wire)
         }
@@ -1612,6 +1622,28 @@ impl StreamOutcome {
 /// status is about this request and will not change by being sent twice.
 pub(crate) fn status_retryable(status: u16) -> bool {
     status == 429 || (500..600).contains(&status)
+}
+
+/// The class of a failure, read from its tags, in the words the page's `failureClass` uses.
+///
+/// `offline`, `timed_out`, `rate_limited` and `server_error` pass: the same dispatch again is
+/// right.  Every other class fails the same way twice.  The tags are set by
+/// [`TransportErr::crossed`], where the status code was still in hand, so no source line number
+/// in the error's text can be mistaken for a status (ZERO-ROUND run 4).  Outermost tag first,
+/// as `tags()` gathers them, so a stall wrapped around a refusal reads as the stall.
+pub(crate) fn failure_class(e: &Error<ErrTag>) -> &'static str {
+    for tag in e.tags() {
+        match tag {
+            ErrTag::Timeout                         => return "timed_out",
+            ErrTag::Unreachable                     => return "offline",
+            ErrTag::LimitReached                    => return "rate_limited",
+            ErrTag::Upstream                        => return "server_error",
+            ErrTag::Unauthorised | ErrTag::Security => return "refused",
+            ErrTag::TooBig                          => return "too_large",
+            _                                       => (),
+        }
+    }
+    "other"
 }
 
 /// Read a `Retry-After` header value as milliseconds.
@@ -8434,6 +8466,30 @@ pub mod tests {
     /// whether to hand a turn back with a Continue button or write it off, so while only `err`
     /// crossed, that decision was a property of the browser. `crossed` puts `reason` -- which is
     /// this file's wording and is the same everywhere -- in front of it.
+    /// A failure is classed by the tags `crossed` sets where the status was in hand, so a
+    /// source line number in its text is never read as a status (ZERO-ROUND run 4).
+    #[test]
+    fn test_a_crossed_failure_is_classed_by_its_tags() {
+        let at = |status: u16, retryable: bool| {
+            let err = err!("LLM: HTTP error: {} | src/wasm/llm_fetch.rs:512:", status; IO, Network, Wire, Read);
+            let t = if retryable { TransportErr::transient(fmt!("HTTP {}", status), err) }
+                    else { TransportErr::fatal(fmt!("HTTP {}", status), err) };
+            failure_class(&t.at(status).crossed())
+        };
+        assert_eq!("other",        at(400, false), "a framed 400 is lasting");
+        assert_eq!("server_error", at(503, true),  "a framed 503 is passing");
+        assert_eq!("rate_limited", at(429, true));
+        assert_eq!("refused",      at(401, false));
+        assert_eq!("other",        at(404, false));
+        let road = TransportErr::transient("could not reach the provider".to_string(),
+            err!("LLM: fetch failed: TypeError: Load failed."; IO, Network, Wire));
+        assert_eq!("offline", failure_class(&road.crossed()));
+        let stall = TransportErr::classify("no response from the provider".to_string(),
+            err!("waited 503 s"; IO, Network, Timeout));
+        assert_eq!("timed_out", failure_class(&stall.crossed()));
+        assert_eq!("other", failure_class(&err!("tool broke at src/x.rs:502:"; Invalid, Input)));
+    }
+
     #[test]
     fn test_a_transport_failure_carries_its_reason_out_of_this_module() {
         // The exact shape of the iOS case: the fetch never got a response, and the browser's

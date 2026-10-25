@@ -26,9 +26,19 @@ test('state: one colour per state, and waiting on you beats everything', () => {
 	assert.equal(G.stateOf(run('w1', 'capped')), 'fail');
 	assert.equal(G.stateOf(run('w1', 'spend_cap')), 'fail');
 	assert.equal(G.stateOf(run('w1', 'blocked')), 'fail');
+	// ZERO-ROUND: a run that could not start, or timed out, is not a done run.
+	assert.equal(G.stateOf(run('w1', 'not_started')), 'fail');
+	assert.equal(G.stateOf(run('w1', 'timed_out')), 'fail');
 	assert.equal(G.stateOf(run('w1', 'paused')), 'stop');
 	assert.equal(G.stateOf(run('w1', 'stopped')), 'stop');
 	assert.equal(G.stateOf(run('w1', 'running'), true), 'wait');
+});
+
+test('failed: one predicate for every ending whose text is an error, not a result', () => {
+	assert.equal(G.isFailed('error'), true);
+	assert.equal(G.isFailed('not_started'), true);
+	for (const st of ['done', 'blocked', 'capped', 'spend_cap', 'timed_out', 'stopped', 'paused', 'running', undefined])
+		assert.equal(G.isFailed(st), false, String(st));
 });
 
 test('rows: one per origin, newest origin first, start order within, the thread first', () => {

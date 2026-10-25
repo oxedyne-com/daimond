@@ -44,7 +44,7 @@ function loadFeed() {
 	function CustomEventShim(type, init) { this.type = type; this.detail = init && init.detail; }
 	const btoa = (s) => Buffer.from(s, 'binary').toString('base64');
 	const atob = (s) => Buffer.from(s, 'base64').toString('binary');
-	for (const rel of ['stamp.js', 'debugshare.js']) {
+	for (const rel of ['stamp.js', 'scrub.js', 'debugshare.js']) {
 		const fn = new Function(
 			'window', 'document', 'localStorage', 'fetch', 'btoa', 'atob',
 			'TextEncoder', 'TextDecoder', 'CustomEvent',

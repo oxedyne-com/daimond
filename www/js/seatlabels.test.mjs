@@ -82,12 +82,33 @@ if (!L.missing.length) {
 	check('a reason renders a label and its sentence', r && /^seat\.label_runner_unchecked/.test(r.label)
 		&& /^seat\.why_runner_unchecked/.test(r.why) && r.label.indexOf('argonaut') > 0, JSON.stringify(r));
 	for (const w of ['runner-source', 'runner-rekey', 'runner-engine', 'runner-credits-only', 'runner-silent',
-		'runner-unchecked', 'page-old']) {
+		'runner-busy', 'runner-phone', 'runner-require', 'runner-nosource', 'runner-unchecked', 'page-old']) {
 		const k = api.seatWhyKey({ why: w, runnerId: 'rn', source: 'an', reach: 'nokey' });
 		check('switch reason ' + w + ' has a key with a label', !!k && !!en['seat.why_' + k.k] && whys.indexOf('seat.why_' + k.k) >= 0,
 			JSON.stringify(k));
 	}
 	check('no reason, no render', api.seatReason(api.seatWhyKey({})) === null && api.seatReason(null) === null);
+}
+
+// NOTRUN-WHY: the "not run" tile names its cause through the same renderer, every cause keyed.
+{
+	const N = lift(src, ['seatReason', 'notRunWhyKey'], ['NOTRUN_KEYS']);
+	check('the not-run cause map and its key are there', N.missing.length === 0, N.missing.join());
+	if (!N.missing.length) {
+		const ctx = vm.createContext({ t: (k, o) => k + (o ? JSON.stringify(o) : ''),
+			deviceNameFor: (id) => (id === 'rn' ? 'argonaut' : '') });
+		const api = vm.runInContext(N.body + ';({seatReason, notRunWhyKey, NOTRUN_KEYS})', ctx);
+		for (const c of Object.keys(api.NOTRUN_KEYS)) {
+			const k = api.notRunWhyKey({ cause: c, to: 'rn' });
+			check('not-run cause ' + c + ' has a reason with a label', !!k && whys.indexOf('seat.why_' + k.k) >= 0, JSON.stringify(k));
+		}
+		const r = api.seatReason(api.notRunWhyKey({ cause: 'size', to: 'rn' }));
+		check('size renders its label naming the runner', !!r && /^seat\.label_notrun_size/.test(r.label) && r.label.indexOf('argonaut') > 0, JSON.stringify(r));
+		check('a row with no cause names none', api.notRunWhyKey({ why: 'x' }) === null && api.notRunWhyKey(null) === null);
+	}
+	const mi = /function markInterrupted\([\s\S]*?\n\t\}/.exec(src);
+	check('the not-run tile draws its reason, not the bare words', !!mi && /drawNotRunReason\(label, m\.notRun\)/.test(mi[0])
+		&& mi[0].indexOf("t('turn.not_run')") < 0);
 }
 
 console.log(checks + ' checks, ' + failures + ' failed');

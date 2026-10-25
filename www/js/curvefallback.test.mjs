@@ -30,6 +30,14 @@
          NotSupportedError makes create() throw that error, write
          nothing, and never switch to another curve.
 
+     (d2) A KEY THE ENGINE REFUSES IS DRAWN AGAIN: Playwright's Linux
+         WebKit (libgcrypt) rejects about 1 Ed25519 generateKey in 150
+         with OperationError, and imports no pkcs8 whose seed begins
+         0x00 (measured 2026-10-25: 20 of 3000 draws, 200 of 200
+         imports). One refused draw is not a broken engine, so create()
+         draws a fresh key in WebCrypto and the account is made, with no
+         pure-JS key and nothing of the refused draw kept.
+
      (e) NEITHER WEBCRYPTO ED25519 NOR THE FALLBACK: create() throws
          with reason 'unsupported' and writes nothing.
 
@@ -80,7 +88,7 @@ const unb64  = (s) => new Uint8Array(Buffer.from(String(s), 'base64'));
 // 129, Safari before 17). `edFail` and `exportFail` are the other kind -- a
 // genuine failure of an engine that DOES implement Ed25519 -- so the test can
 // tell the two apart the way identity.js must.
-const flags = { noEd: false, noX: false, edFail: null, exportFail: null };
+const flags = { noEd: false, noX: false, edFail: null, edRefuse: 0, exportFail: null };	// edRefuse: draws refused before one is made
 const calls = [];				// every algorithm a key was generated or imported for.
 function blocked(name) {
 	return (name === 'Ed25519' && flags.noEd) || (name === 'X25519' && flags.noX);
@@ -96,6 +104,10 @@ const cryptoShim = {
 			if (blocked(name)) return unsupported(name);
 			if (name === 'Ed25519' && flags.edFail) {
 				return Promise.reject(new DOMException('the engine failed', flags.edFail));
+			}
+			if (name === 'Ed25519' && flags.edRefuse > 0) {
+				flags.edRefuse--;
+				return Promise.reject(new DOMException('The operation failed for an operation-specific reason', 'OperationError'));
 			}
 			return real.subtle.generateKey(algo, ex, u);
 		},
@@ -404,6 +416,22 @@ async function main() {
 	check('and writes nothing', !store.has('daimond-id-priv') && !store.has('daimond-id-alg'));
 	check('and asks for no ECDSA key', !askedEcdsa());
 	flags.exportFail = null;
+
+	// ── Phase D2 — one refused draw, as Linux WebKit refuses ──
+	console.log('\nPhase D2 — the engine refuses one random Ed25519 key');
+	freshStore();
+	flags.noEd = false; flags.noX = false;
+	flags.edRefuse = 1;
+	const d2Before = nobleCalls(), d2Gen = calls.filter((c) => c.op === 'generateKey' && c.name === 'Ed25519').length;
+	let d2Err = null;
+	try { await ID.create('Refused once', PASS); } catch (e) { d2Err = e; }
+	check('create makes the account', d2Err === null, d2Err ? d2Err.name + ': ' + d2Err.message : '');
+	check('drawn again in WebCrypto: two draws', calls.filter((c) => c.op === 'generateKey' && c.name === 'Ed25519').length - d2Gen === 2);
+	check('the account is Ed25519', localStorage.getItem('daimond-id-alg') === 'Ed25519');
+	check('never touching the pure-JS code', nobleCalls() === d2Before, (nobleCalls() - d2Before) + ' pure-JS call(s)');
+	check('it is unlocked and signs', ID.isUnlocked() && opensslVerifies(await ID.publicKeyRaw(), unb64(await ID.sign(MSG)), MSG));
+	ID.lock();
+	flags.edRefuse = 0;
 
 	// ── Phase E — neither WebCrypto Ed25519 nor the fallback ──
 	console.log('\nPhase E — no WebCrypto Ed25519 and no fallback');

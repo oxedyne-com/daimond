@@ -22904,6 +22904,10 @@ impl Tool {
             // not say (an older page, or a record restored from before it did).
             let live_ms = extract_json_number(o, "live_ms").unwrap_or(0);
             let writes = extract_json_number(o, "writes").unwrap_or(0);
+            // A failure's own reason (ZERO-ROUND); empty from an older page.
+            let why    = extract_json_string(o, "why").unwrap_or_default();
+            // ... and whether it passes (a rate limit, the road), so a retry is right.
+            let transient = extract_json_bool(o, "transient").unwrap_or(false);
             // The kind it ran as, from a page that says; an older page's report goes unmarked.
             let kind   = extract_json_string(o, "context")
                 .filter(|k| !k.is_empty())
@@ -22918,7 +22922,7 @@ impl Tool {
             blocks.push(fmt!("### {}{}{}\n{}",
                 who,
                 kind,
-                Self::gather_ending_note(&status, rounds, spent, live_ms, writes),
+                Self::gather_ending_note(&status, rounds, spent, live_ms, writes, &why, transient),
                 if text.is_empty() { "(no report)" } else { text }));
         }
 
@@ -23001,13 +23005,21 @@ impl Tool {
     ///
     /// Mirrors `workerEndingNote` in `www/js/daimond.js`; see [`Self::gather_result`] for why
     /// the vocabulary is shared.  `done` says nothing, because the ordinary case needs no note.
-    fn gather_ending_note(status: &str, rounds: u64, usd: f64, live_ms: u64, writes: u64) -> String {
+    fn gather_ending_note(status: &str, rounds: u64, usd: f64, live_ms: u64, writes: u64, why: &str,
+        transient: bool) -> String
+    {
         // A non-`done` ending carries NO verdict: the worker was cut off (a round or spend cap,
         // the liveness bound, an error, or a stop) before it could report.  The heading says so, so
         // a partial run is never read as a verification or a pass.  A stop names the rounds and
         // the spend too (r578c T): the page waits for the stopped turn to settle, so both are the
         // worker's own, and a reader told nothing of them re-dispatched work already paid for.
         let wrote = Self::gather_wrote(writes);
+        // A FAILURE SAYS WHY (ZERO-ROUND, 25 Oct): the page's `why`, which a bare "error" over
+        // "(no report)" withheld, so the parent re-dispatched into the same failure.
+        let why = match why.trim() {
+            "" => String::new(),
+            w  => fmt!(": {}", w),
+        };
         match status {
             "capped" => fmt!(
                 " — stopped at the round cap after {} rounds, US${:.4}{} (no verdict; treat as \
@@ -23023,7 +23035,17 @@ impl Tool {
                  unverified)\n\n(partial — continue with resume)",
                 if live_ms > 0 { fmt!(" for {} s", (live_ms + 500) / 1_000) } else { String::new() },
                 rounds, usd, wrote),
-            "error"   => fmt!(" — error (no verdict; treat as unverified)"),
+            // Only a lasting failure warns that the same dispatch fails the same way; a passing
+            // one (the road, a rate limit, the provider's own fault) is worth sending again.
+            "not_started" if transient => fmt!(
+                " — could not start{} (no verdict)\n\n(it did no work and cost nothing; a passing \
+                 failure: dispatching it again is right)", why),
+            "not_started" => fmt!(
+                " — could not start{} (no verdict)\n\n(it did no work and cost nothing; the same \
+                 dispatch on the same model fails the same way: change what caused it, or do the \
+                 work yourself)", why),
+            "error"   => fmt!(" — error after {} rounds, US${:.4}{}{} (no verdict; treat as unverified)",
+                rounds, usd, why, wrote),
             "stopped" => fmt!(" — stopped after {} rounds, US${:.4}{} (no verdict; treat as \
                  unverified)", rounds, usd, wrote),
             _         => fmt!(" — done, {} rounds, US${:.4}{}", rounds, usd, wrote),
@@ -39961,17 +39983,17 @@ mod tests {
     /// used to file a silent worker as `capped`).
     #[test]
     fn gather_note_for_timed_out_is_not_round_cap() {
-        let note = Tool::gather_ending_note("timed_out", 3, 0.03, 120_000, 0);
+        let note = Tool::gather_ending_note("timed_out", 3, 0.03, 120_000, 0, "", false);
         assert!(note.contains("timed out: no progress for 120 s"), "no timed-out note: {}", note);
         assert!(note.contains("after 3 rounds"), "rounds missing: {}", note);
         assert!(note.contains("no verdict; treat as unverified"), "no verdict guard: {}", note);
         assert!(note.contains("continue with resume"), "no resume offer: {}", note);
         assert!(!note.contains("round cap"), "a timed-out worker read as the round cap: {}", note);
         // A page that did not say its limit gets no invented figure.
-        let bare = Tool::gather_ending_note("timed_out", 1, 0.0, 0, 0);
+        let bare = Tool::gather_ending_note("timed_out", 1, 0.0, 0, 0, "", false);
         assert!(bare.contains("timed out: no progress, after 1 rounds"), "bare note: {}", bare);
         // `capped` is unchanged.
-        assert!(Tool::gather_ending_note("capped", 2, 0.0, 120_000, 0).contains("round cap"));
+        assert!(Tool::gather_ending_note("capped", 2, 0.0, 120_000, 0, "", false).contains("round cap"));
     }
 
     /// Every ending is named in the model's own reading, and so is what is still running.
@@ -51070,6 +51092,41 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert!(text.contains("### reader [full] — done"), "{}", text);
         assert!(text.contains("### counter [brief] — done"), "{}", text);
         assert!(text.contains("### old — done"), "{}", text);
+    }
+
+    /// **A worker that failed says why, and one that never started says so** (ZERO-ROUND,
+    /// 25 Oct).  34 of 80 workers were once logged `capped` at 0 rounds; since the clock went, a
+    /// failure reached the parent as a bare "error" over "(no report)", and the parent re-dispatched
+    /// into the same failure.  The reason travels as `why`.
+    #[test]
+    fn test_a_failed_worker_says_why_and_one_never_started_says_so_00() {
+        let args = GatherArgs { wait: Vec::new(), unknown: Vec::new(), timeout_s: 0, partial: false };
+        let json = r#"{"reports":[
+            {"id":"w1","name":"reader","status":"not_started","rounds":1,"usd":0,"report":"",
+             "why":"Provider error 400: maximum context length is 65536 tokens"},
+            {"id":"w2","name":"writer","status":"error","rounds":3,"usd":0.02,"writes":2,"report":"half",
+             "why":"Provider error 502: upstream gone"},
+            {"id":"w3","name":"old","status":"error","rounds":1,"usd":0,"report":""},
+            {"id":"w4","name":"waiter","status":"not_started","rounds":1,"usd":0,"report":"",
+             "why":"Provider error 429: rate limited","transient":true}],
+            "pending":[],"unresolved":[],"timed_out":false,"cancelled":false,"waited_ms":0}"#;
+        let (text, _, _) = Tool::gather_result(json, &args);
+        // A PASSING FAILURE says a retry is right, and never that it fails the same way (QA 3).
+        let waiter = text.split("### ").find(|b| b.starts_with("waiter")).unwrap_or_default();
+        assert!(waiter.contains("could not start: Provider error 429")
+            && waiter.contains("passing failure: dispatching it again is right"), "{}", waiter);
+        assert!(!waiter.contains("same way"), "a passing failure warned off a retry: {}", waiter);
+        let reader = text.split("### ").find(|b| b.starts_with("reader")).unwrap_or_default();
+        assert!(!reader.contains("passing failure"), "a lasting failure was called passing: {}", reader);
+        assert!(text.contains("### reader — could not start: Provider error 400: maximum context length"),
+            "{}", text);
+        assert!(text.contains("same way"), "no warning against the same dispatch: {}", text);
+        assert!(text.contains("### writer — error after 3 rounds, US$0.0200: Provider error 502: upstream gone"),
+            "{}", text);
+        assert!(text.contains("2 file writes"), "{}", text);
+        // A page that sends no reason gets no invented one.
+        assert!(text.contains("### old — error after 1 rounds, US$0.0000 (no verdict"), "{}", text);
+        assert!(!text.contains("round cap"), "a failure read as the round cap: {}", text);
     }
 
     /// **The schema offers both kinds and the description says when to choose each**, in one

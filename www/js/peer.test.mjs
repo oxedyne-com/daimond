@@ -156,6 +156,7 @@ function makeTab(clockOffsetMs) {
 	installSeal(win);	// the wasm seal post.js and peer.js call (S1 SEAL)
 	loadScript('post.js');
 	loadScript('peer.js');
+	win.__loadScript = loadScript;	// a later script for one tab only (ERRAND-REF loads chunks.js)
 	return win;
 }
 
@@ -991,6 +992,53 @@ async function main() {
 	// first, whole, and the errand is then exactly today's sessionless one (hand back on the
 	// runner, never a truncated tail); the errand carries the page's reach and today line.
 	// Red before KT-4: buildDispatch and makeErrand drop all three.
+	// ERRAND-REF: the phone tab carries the real chunks.js over an in-memory `/api/chunk`, so the
+	// reference also carries the session itself, sealed in chunks (errandref_contract.md).
+	const chunkStore = new Map();
+	let chunkPuts = 0;
+	{
+		const prev = phone.DaimondGateway;
+		phone.DaimondGateway = {
+			clientApi: prev.clientApi,
+			gwFetch: async (path, opts) => {
+				if (String(path) !== '/api/chunk') return prev.gwFetch(path, opts);
+				const b = JSON.parse(opts.body);
+				if (b.op === 'put') { b.chunks.forEach((c) => { chunkStore.set(c.addr, c.blob); chunkPuts++; }); return httpResp({ ok: true }); }
+				if (b.op === 'have') return httpResp({ ok: true, missing: b.addrs.filter((a) => !chunkStore.has(a)) });
+				if (b.op === 'get') return httpResp(chunkStore.has(b.addr) ? { ok: true, present: true, blob: chunkStore.get(b.addr) }
+					: { ok: true, present: false });
+				return httpResp({ ok: false, error: 'op' });
+			},
+		};
+		phone.__loadScript('chunks.js');
+	}
+	// The runner's checks (settle.rs `open_pieces`, `session_of_ref`), in the laptop's tab: every
+	// piece present, at its address and size, opening under the account key, the whole at `size`
+	// hashing to `key`, and the body naming the errand's chat, thread sig and session marker.
+	const shaHex = async (u8) => toHex(await real.subtle.digest('SHA-256', u8));
+	async function openRef(errand) {
+		const r = errand && errand.sessionRef;
+		if (!r || r.v !== 2 || !Array.isArray(r.chunks) || !r.chunks.length) return { why: 'no manifest' };
+		if (r.size > 8 * 1048576) return { why: 'over 8 MB' };
+		const parts = []; let ph = '';
+		for (const c of r.chunks) {
+			if (!chunkStore.has(c.addr)) return { why: 'missing' };
+			const ct = new Uint8Array(Buffer.from(chunkStore.get(c.addr), 'base64url'));
+			if (await shaHex(ct) !== c.addr || ct.length !== c.size) return { why: 'address' };
+			let plain;
+			try { plain = new Uint8Array(await laptop.DaimondIdentity.unwrapBytes(ct)); } catch (e) { return { why: 'seal' }; }
+			ph += await shaHex(plain); parts.push(plain);
+		}
+		const body = Buffer.concat(parts.map((x) => Buffer.from(x)));
+		if (body.length !== r.size || await shaHex(new TextEncoder().encode(ph)) !== r.key) return { why: 'key' };
+		const b = JSON.parse(body.toString('utf8'));
+		const sig = errand.thread && errand.thread.sig;
+		if (b.v !== 1 || b.chat !== r.chat || b.chat !== errand.chatId) return { why: 'chat' };
+		if (JSON.stringify(b.sig) !== JSON.stringify(r.sig) || JSON.stringify(b.sig) !== JSON.stringify(sig)) return { why: 'sig' };
+		if (b.upto !== r.upto || b.upto !== String((b.session && b.session.upto) || '')) return { why: 'upto' };
+		return { session: b.session, size: body.length, body: b };
+	}
+	const refHead = (r) => r ? JSON.stringify({ chat: r.chat, sig: r.sig, upto: r.upto }) : '';
 	console.log('\nKT-4 — the seed carries the session; reach and today ride the errand');
 	{
 		const P = phone.DaimondPeer;
@@ -1079,19 +1127,19 @@ async function main() {
 		const wantRef = JSON.stringify({ chat: 'chat-k4b', sig: sig, upto: 'r21' });
 		const opened = await laptop.DaimondPeer.openEnvelope(over.body.envelope);
 		check('K4b-1: the over-door errand carries the session reference',
-			JSON.stringify(opened.sessionRef) === wantRef, JSON.stringify(opened.sessionRef));
+			refHead(opened.sessionRef) === wantRef, JSON.stringify(opened.sessionRef));
 		check('K4b-1: and no session on its seed', !(opened.seed && opened.seed.session));
 		check('K4b-1: and it fits the relay', phone.DaimondPost.fitsRelay(over.body.envelope.length) === true);
 		// The seedless rung keeps the reference: a cap under any seed.
 		const tiny = await P.sealFittingErrand(big, Object.assign({}, rOpts, { session: huge }), null, 3 * 1024);
 		const tOpen = await laptop.DaimondPeer.openEnvelope(tiny.body.envelope);
 		check('K4b-1: the seedless rung keeps the reference', tiny.seedDropped === true
-			&& JSON.stringify(tOpen.sessionRef) === wantRef, JSON.stringify([tiny.seedDropped, tOpen.sessionRef]));
+			&& refHead(tOpen.sessionRef) === wantRef, JSON.stringify([tiny.seedDropped, tOpen.sessionRef]));
 		const fit = await P.sealFittingErrand(big, Object.assign({}, rOpts,
 			{ session: { v: 1, msgs: [], upto: '', uptoTs: 0, marks: {}, tail: [] } }));
 		check('K4b-1: a session that fits sends no reference',
 			!('sessionRef' in (await laptop.DaimondPeer.openEnvelope(fit.body.envelope))));
-		check('K4b-3: the seal marks the reference for the dispatcher', JSON.stringify(over.sessionRef) === wantRef
+		check('K4b-3: the seal marks the reference for the dispatcher', refHead(over.sessionRef) === wantRef
 			&& !fit.sessionRef, JSON.stringify([over.sessionRef, fit.sessionRef]));
 		// Addendum 1: at every door, an over-door session is sealed whole, as the reference, or not
 		// at all; never as a cut-down `seed.session`.
@@ -1107,11 +1155,77 @@ async function main() {
 			const ss = o.seed && o.seed.session;
 			if (ss && JSON.stringify(ss) !== whole) cut.push(cap);
 			if (ss) wholes++;
-			if (!ss && JSON.stringify(o.sessionRef) === wantRef) refs++;
-			if (!ss && JSON.stringify(o.sessionRef) !== wantRef) cut.push('lost@' + cap);
+			if (!ss && refHead(o.sessionRef) === wantRef && (await openRef(o)).session) refs++;
+			if (!ss && refHead(o.sessionRef) !== wantRef) cut.push('lost@' + cap);
+			if (!ss && (await openRef(o)).session && JSON.stringify((await openRef(o)).session) !== whole) cut.push('cutref@' + cap);
 		}
 		check('K4b-3: an over-door session is never sent truncated', cut.length === 0 && refs > 0 && wholes > 0,
 			JSON.stringify({ cut, refs, wholes }));
+
+		// ── ERRAND-REF: the over-door session goes by sealed chunks ──
+		// Red before ERRAND-REF: the reference was the bare KT-4b triple, so a runner without the
+		// chat handed the turn back `thread` (his Nancy turn 3, a 74,643 B errand, 25 Oct).
+		// Incompressible words, as a real chat is to the seal's compressor: a repeated letter would
+		// seal under the door and never test the reference at all.
+		const noise = (n) => { let x = 0x9e3779b9, out = ''; while (out.length < n) { x = (x * 1103515245 + 12345) >>> 0;
+			const c = 0x23 + ((x >>> 16) % 92); out += String.fromCharCode(c >= 0x5c ? c + 1 : c); } return out; };	// no " or \\
+		const NOISE = noise(9 * 1048576 + 1024);
+		const nancy = (pad) => ({ v: 1, msgs: [{ role: 'user', content: NOISE.slice(0, pad) }], upto: 'r21', uptoTs: T0 + 210,
+			marks: {}, tail: [{ role: 'assistant', content: 'a', mid: 'r23' }] });
+		// His chat: a short recent tail, and a long session (the fold and the turns since) that is
+		// nearly all of the errand, so no rung of the seed ladder brings it under the door.
+		const nchat = { id: 'chat-k4b', provider: 'openrouter', model: 'test/m', holds: [], messages: big.messages.slice(-3) };
+		const errLen = (pad) => JSON.stringify(P.buildDispatch(nchat, Object.assign({}, rOpts, { session: nancy(pad) })).errand(0)).length;
+		let pad = 60000;
+		pad += 74643 - errLen(pad);
+		check('ER-1: the fixture errand is 74,643 B whole', errLen(pad) === 74643, String(errLen(pad)));
+		const nOver = await P.sealFittingErrand(nchat, Object.assign({}, rOpts, { session: nancy(pad) }));
+		const nOpen = await laptop.DaimondPeer.openEnvelope(nOver.body.envelope);
+		const nRef  = await openRef(nOpen);
+		check('ER-1: a 74,643 B errand carries its session by chunk manifest',
+			!!nOpen.sessionRef && nOpen.sessionRef.v === 2 && Array.isArray(nOpen.sessionRef.chunks)
+			&& nOpen.sessionRef.chunks.length > 0
+			&& refHead(nOpen.sessionRef) === JSON.stringify({ chat: 'chat-k4b', sig: P.threadSig(nchat, 'TURN-REF').sig, upto: 'r21' }), JSON.stringify(nOpen.sessionRef));
+		check('ER-1: and the manifest checks out as the runner checks it, the session whole',
+			!!nRef.session && JSON.stringify(nRef.session) === JSON.stringify(nancy(pad)), nRef.why);
+		check('ER-1: and no session rides the seed', !(nOpen.seed && nOpen.seed.session));
+		check('ER-1: and the dispatcher\'s mark is the full reference', JSON.stringify(nOver.sessionRef) === JSON.stringify(nOpen.sessionRef));
+		check('ER-3: the errand stays under the post door', phone.DaimondPost.fitsRelay(nOver.body.envelope.length) === true,
+			String(nOver.body.envelope.length));
+		// ER-4 (replaces "an ABI-1 runner gets the bare ref", daimond-runner-b 25 Oct): the page
+		// seals to its own box, not to one runner, and every over-door errand carries the manifest.
+		let bare = [];
+		for (const cap of [3, 8, 16, 32, 48, 64].map((k) => k * 1024)) {
+			const r = await P.sealFittingErrand(nchat, Object.assign({}, rOpts, { session: nancy(pad) }), null, cap);
+			const o = await laptop.DaimondPeer.openEnvelope(r.body.envelope);
+			if (!(o.seed && o.seed.session) && !(await openRef(o)).session) bare.push(cap);
+		}
+		check('ER-4: an over-door errand always carries the chunk manifest, at every door', bare.length === 0, JSON.stringify(bare));
+		// ER-5 (contract amendment, 25 Oct): the sealed body carries his words log exactly as the
+		// seed would, and only when it would; the errand still fits the door.
+		const LOG = '# Words\n\n- his first note\n- his second note\n';
+		const wOver = await P.sealFittingErrand(nchat, Object.assign({}, rOpts, { session: nancy(pad), words: LOG }));
+		const wOpen = await laptop.DaimondPeer.openEnvelope(wOver.body.envelope);
+		const wRef  = await openRef(wOpen);
+		const seedWords = P.buildDispatch(nchat, Object.assign({}, rOpts, { session: nancy(pad), words: LOG })).fields.seed.words;
+		check('ER-5: the sealed body carries the words the seed would', !!wRef.body && wRef.body.words === seedWords
+			&& seedWords === LOG, JSON.stringify(wRef.body && wRef.body.words));
+		check('ER-5: and omits the key when the seed has none', !!nRef.body && !('words' in nRef.body), JSON.stringify(nRef.body && Object.keys(nRef.body)));
+		check('ER-5: and the over-door errand still fits', !!wOver.body && phone.DaimondPost.fitsRelay(wOver.body.envelope.length) === true
+			&& !(wOpen.seed && (wOpen.seed.session || 'words' in wOpen.seed)), String(wOver.body && wOver.body.envelope.length));
+		// ER-2: over 8 MB the turn ends "not run", cause `size`, and nothing is put or posted.
+		const putsBefore = chunkPuts;
+		const nine = await P.sealFittingErrand(nchat, Object.assign({}, rOpts, { session: nancy(9 * 1048576) }));
+		check('ER-2: a 9 MB session ends not run with cause size', !!nine && nine.notRun === 'size' && !nine.body,
+			JSON.stringify(nine && { notRun: nine.notRun, body: !!nine.body }));
+		check('ER-2: and puts no chunk', chunkPuts === putsBefore, String(chunkPuts - putsBefore));
+		const dsrc = DAIMOND_SRC;
+		const atSeal = dsrc.indexOf('DaimondPeer.sealFittingErrand(chat, dispatchOpts, plan)');
+		const atPost = dsrc.indexOf('DaimondPost.post(body)', atSeal);
+		const notRunAt = dsrc.indexOf('sealed.notRun', atSeal);
+		check('ER-2: the dispatcher ends a notRun seal before it posts', atSeal > 0 && notRunAt > atSeal && notRunAt < atPost
+			&& /if \(sealed\.notRun\)[\s\S]{0,600}refuseAndEndNotRun\([^)]*sealed\.notRun\)[\s\S]{0,200}return/.test(dsrc.slice(notRunAt - 4, atPost)),
+			String([atSeal, notRunAt, atPost]));
 		const ref = { chat: 'c', sig: 7, upto: 'm1' };
 		const er = P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p', today: 'T', sessionRef: ref });
 		check('K4b-2: makeErrand writes sessionRef last, after today',

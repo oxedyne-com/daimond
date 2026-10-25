@@ -1765,7 +1765,8 @@ pub enum AgentEvent {
         malformed: usize,       // rounds re-sent because a tool call arrived as text
         reasoned:  usize,       // rounds re-sent because a reply reasoned and answered nothing
         why:       String,      // `blocked` beside `failed`, else empty; see `TurnEnd::why`
-        said:      String,      // the plain sentence a blocked turn ends on, else empty
+        said:      String,      // the plain sentence a blocked, malformed or failed turn ends on, else empty
+        fault:     String,      // a failed turn's class of failure (`llm::failure_class`), else empty
         touched:   Vec<String>, // paths completed calls left, at most 40 then "+k more"
     },
     /// A tool call arrived as TEXT, in the model's own native call syntax, with no JSON
@@ -1805,7 +1806,7 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("thinking"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned, why, said, touched } => {
+            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned, why, said, fault, touched } => {
                 m.insert(dat!("type"),      dat!("ended"));
                 m.insert(dat!("how"),       dat!(how.clone()));
                 m.insert(dat!("offered"),   Dat::U64(*offered as u64));
@@ -1819,10 +1820,9 @@ impl AgentEvent {
                     Dat::List(missing.iter().map(|p| dat!(p.clone())).collect()));
                 m.insert(dat!("touched"),
                     Dat::List(touched.iter().map(|p| dat!(p.clone())).collect()));
-                if !why.is_empty() {
-                    m.insert(dat!("why"),   dat!(why.clone()));
-                    m.insert(dat!("said"),  dat!(said.clone()));
-                }
+                if !why.is_empty()  { m.insert(dat!("why"),  dat!(why.clone())); }
+                if !said.is_empty() { m.insert(dat!("said"), dat!(said.clone())); }
+                if !fault.is_empty() { m.insert(dat!("fault"), dat!(fault.clone())); }
             }
             Self::Leaked { fragment, recovered } => {
                 m.insert(dat!("type"),      dat!("leaked"));

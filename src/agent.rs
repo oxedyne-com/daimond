@@ -471,7 +471,8 @@ pub struct TurnEnding {
 	// `malformed` is: the round still cost a request and a nudge, and a turn that ends
 	// `Answered` after one of these is not the same as a turn that never needed telling.
 	pub reasoned:	usize,
-	pub said:		String,			// the sentence a `Blocked` turn ends on, else empty
+	pub said:		String,			// the sentence a blocked, malformed or failed turn ends on, else empty
+	pub fault:		&'static str,	// a failed turn's class of failure (`llm::failure_class`), else empty
 	// Paths the turn's completed write calls left on the store, in first-touch order, at most
 	// `TOUCHED_CAP` and then one "+k more".  A worker that ends anything but `done` reports
 	// them, so the conductor learns what the work left even when no verdict came (U3a REP).
@@ -788,6 +789,7 @@ impl Agent {
             reasoned: ending.reasoned,
             why:     ending.how.why().to_string(),
             said:    ending.said.clone(),
+            fault:   ending.fault.to_string(),
             touched: ending.touched.clone(),
         });
         *self.ending.borrow_mut() = Some(ending);
@@ -838,6 +840,7 @@ impl Agent {
             malformed: claims.malformed,
             reasoned: claims.reasoned,
             said:    String::new(),
+            fault:   "",
             touched: claims.touched(),
         }
     }
@@ -1918,7 +1921,9 @@ impl Agent {
                         }
                     }
                     on_event(AgentEvent::Error(e.to_string()));
-                    let ending = self.audit(TurnEnd::Failed, rounds, &Claims::default(), None::<&ToolRegistry<H>>).await;
+                    let mut ending = self.audit(TurnEnd::Failed, rounds, &Claims::default(), None::<&ToolRegistry<H>>).await;
+                    ending.said = e.to_string();
+                    ending.fault = crate::llm::failure_class(&e);
                     self.ended(ending, on_event);
                     return Err(e);
                 }
@@ -2601,8 +2606,10 @@ impl Agent {
                             }
                         }
                         on_event(AgentEvent::Error(e.to_string()));
-                        let ending = self.audit(
+                        let mut ending = self.audit(
                             TurnEnd::Failed, rounds, &claims, Some(registry)).await;
+                        ending.said = e.to_string();
+                        ending.fault = crate::llm::failure_class(&e);
                         self.ended(ending, on_event);
                         return Err(e);
                     }
@@ -2741,8 +2748,11 @@ impl Agent {
                         session.messages.push(ChatMessage::app(nudge));
                         continue;
                     }
-                    let ending = self.audit(
+                    let mut ending = self.audit(
                         TurnEnd::Malformed, rounds, &claims, Some(registry)).await;
+                    // A malformed turn resolves rather than errs, so this sentence is the only
+                    // reason a parent of a worker ever reads (ZERO-ROUND QA 2).
+                    ending.said = fmt!("The model wrote its tool calls as text twice running, so none of them ran.");
                     self.ended(ending, on_event);
                     on_event(AgentEvent::Done);
                     return Ok(());
@@ -3139,8 +3149,10 @@ impl Agent {
                         Err(e) => {
                             self.abandon_round(session, &mut working);
                             on_event(AgentEvent::Error(e.plain()));
-                            let ending = self.audit(
+                            let mut ending = self.audit(
                                 TurnEnd::Failed, rounds, &claims, Some(registry)).await;
+                            ending.said = e.plain();
+                            ending.fault = crate::llm::failure_class(&e);
                             self.ended(ending, on_event);
                             return Err(e);
                         }
@@ -10780,11 +10792,13 @@ mod tests {
         assert_eq!(2, events.iter().filter(|e| matches!(e, AgentEvent::Leaked { .. })).count(),
             "both leaks must be reported, not just the one that ended the turn");
         match events.iter().find(|e| matches!(e, AgentEvent::Ended { .. })) {
-            Some(AgentEvent::Ended { how, malformed, calls, .. }) => {
+            Some(AgentEvent::Ended { how, malformed, calls, said, .. }) => {
                 // THE WHOLE POINT. `answered` here is the defect.
                 assert_eq!("malformed", how, "a wire fault was reported as an answer");
                 assert_eq!(2, *malformed, "end_log.malformed did not count both rounds");
                 assert_eq!(0, *calls, "nothing ran, and the count must say so");
+                // And it says why, for a worker's parent has no other reason to read.
+                assert!(said.contains("as text"), "a malformed ending gave no reason: {:?}", said);
             }
             _ => panic!("no ending to read"),
         }

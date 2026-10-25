@@ -1499,7 +1499,7 @@
 	// Built by concatenation at daimond.js's `tOr('agents.status_' + run.status,
 	// run.status)`, so a status with no key here reaches the screen as the raw
 	// internal word -- which is what it used to do for all seven.
-	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap blocked waiting timed_out
+	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap blocked waiting timed_out not_started
 	'agents.status_queued':      'queued',
 	'agents.status_running':     'running',
 	'agents.status_waiting': 'waiting',
@@ -1524,6 +1524,7 @@
 	'agents.status_capped':      'capped',
 	'agents.status_spend_cap':   'spend capped',
 	'agents.status_timed_out':   'timed out',
+	'agents.status_not_started': 'could not start',
 	'agents.status_blocked':     'not done',
 
 	'agents.search':         'Search agents',
@@ -1663,14 +1664,15 @@
 	'mail.add.lead':          'Daimond’s gateway connects to your mail server, hands the messages back, and forgets your password. The password is encrypted on this device under your passphrase.',
 	'mail.add.ok':            'Add and sync',
 	'mail.add.address':       'Email address',
-	'mail.add.password':      'App password',
-	'mail.add.password_ph':   'The app password from your provider',
+	'mail.add.password':      'Password',
+	'mail.add.password_ph':   'Your mailbox password',
+	'mail.add.password_hint': 'or an app password, if your provider uses them (Gmail, iCloud, Outlook)',
 	'mail.add.imap':          'IMAP server',
 	'mail.add.smtp':          'SMTP server',
 	'mail.add.port':          'Port',
 	'mail.add.guess':         'Daimond will need this provider’s server names (often imap.{domain} for reading, smtp.{domain} for sending).',
 	'mail.add.err_address':   'That is not an email address.',
-	'mail.add.err_password':  'The app password is required.',
+	'mail.add.err_password':  'The password is required.',
 	'mail.add.err_imap':      'Daimond needs the IMAP server name.',
 	'mail.add.err_port':      'IMAP runs on port 993 (TLS) or 143.',
 	'mail.add.err_smtp':      'Daimond needs the SMTP server name to send from this mailbox.',
@@ -2505,6 +2507,7 @@
 	'turn.runner_lost':       'Interrupted. The device running this reloaded before it finished.',
 	'turn.retry':             'Retry',
 	'turn.not_run':           'Not run. The hand-off couldn’t start.',
+	'turn.not_run_because': 'Not run · {why}',
 	'turn.interrupted_early': 'Interrupted before it could answer.',
 	'turn.offline':           'The connection dropped before this finished.',
 	'turn.offline_early':     'The connection dropped before an answer arrived.',
@@ -2537,14 +2540,33 @@
 	'seat.why_runner_quiet': '{name} is not listening for chats right now, so this one runs here.',
 	'seat.why_runner_unchecked': 'This page has not yet checked {name}’s Daimond version.',
 	'seat.why_page_old': 'This page runs an older Daimond than {name}; it updates itself.',
+	'seat.why_runner_busy': '{name} is busy with another chat, so this one runs here.',
+	'seat.why_runner_phone': '{name} is a phone, so this one runs here.',
+	'seat.why_runner_require': '{name} does not hold this chat’s folder.',
+	'seat.why_runner_nosource': 'No model is chosen for this chat.',
 	'seat.why_runner_source': '{name} cannot use {provider}: {reason}.',
 	'seat.why_runner_rekey': '{name} needs approving again after your passphrase change to use your own keys.',
 	'seat.why_runner_road': '{name} could not reach {host} over its own connection, so no answer came back.',
 	'seat.why_runner_road_any': '{name} could not reach the provider over its own connection, so no answer came back.',
+	'seat.why_notrun_size': 'This conversation is bigger than {name} accepts in one hand-off, so it did not run there.',
+	'seat.why_notrun_door': 'This chat is too big to send to {name} yet, so it did not run there.',
+	'seat.why_notrun_thread': 'This chat is longer than {name} can take yet, so it did not run there.',
+	'seat.why_notrun_models': '{name} cannot run this turn’s models, so it did not run there.',
+	'seat.why_notrun_models_behind': '{name} had not caught up with this turn’s models in time, so it did not run there.',
+	'seat.why_notrun_refused': '{name} refused this turn before running it.',
+	'seat.why_notrun_place': '{name} cannot work in the folder this turn is rooted in, so it did not run there.',
+	'seat.why_notrun_busy': '{name} was busy with another turn, so this one did not run there.',
+	'seat.why_notrun_unable': '{name} has not shown it runs this turn’s models, so the turn was not sent.',
+	'seat.why_notrun_gone': '{name} stopped listening before it took this turn.',
+	'seat.why_notrun_unclaimed': '{name} did not pick this turn up in time.',
+	'seat.why_notrun_released': '{name} let this turn go without running it.',
+	'seat.why_notrun_unchecked': 'This page could not check {name} in time, so the turn was not sent.',
+	'seat.why_notrun_post': 'The relay would not take the hand-off to {name}.',
+	'seat.why_notrun_oversize': 'The answer from {name} was too large to send back whole.',
 	// THE SEAT REASON'S LABEL (SEAT-LABELS, owner 25 Oct): 2-4 words beside the seat; the
 	// sentence above is its hover title and its tap. Drawn by daimond.js `seatReason` alone.
-	// i18n-family: seat.why_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_unchecked page_old runner_source runner_rekey runner_road runner_road_any
-	// i18n-family: seat.label_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_unchecked page_old runner_source runner_rekey runner_road runner_road_any
+	// i18n-family: seat.why_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_busy runner_phone runner_require runner_nosource runner_unchecked page_old runner_source runner_rekey runner_road runner_road_any notrun_size notrun_door notrun_thread notrun_models notrun_models_behind notrun_refused notrun_place notrun_busy notrun_unable notrun_gone notrun_unclaimed notrun_released notrun_unchecked notrun_post notrun_oversize
+	// i18n-family: seat.label_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_busy runner_phone runner_require runner_nosource runner_unchecked page_old runner_source runner_rekey runner_road runner_road_any notrun_size notrun_door notrun_thread notrun_models notrun_models_behind notrun_refused notrun_place notrun_busy notrun_unable notrun_gone notrun_unclaimed notrun_released notrun_unchecked notrun_post notrun_oversize
 	'seat.label_no_desktop': 'No device awake',
 	'seat.label_runner_silent': '{name} asleep',
 	'seat.label_runner_credits': '{name}: credits only',
@@ -2556,6 +2578,25 @@
 	'seat.label_runner_rekey': 'Re-approve {name}',
 	'seat.label_runner_road': '{name} can’t reach {host}',
 	'seat.label_runner_road_any': '{name} can’t connect',
+	'seat.label_runner_busy': '{name} busy',
+	'seat.label_runner_phone': '{name} is a phone',
+	'seat.label_runner_require': '{name} lacks the folder',
+	'seat.label_runner_nosource': 'No model chosen',
+	'seat.label_notrun_size': 'Too large for {name}',
+	'seat.label_notrun_door': 'Too big to send',
+	'seat.label_notrun_thread': 'Too long for {name}',
+	'seat.label_notrun_models': '{name} lacks the models',
+	'seat.label_notrun_models_behind': '{name} catching up',
+	'seat.label_notrun_refused': '{name} refused it',
+	'seat.label_notrun_place': 'Folder not on {name}',
+	'seat.label_notrun_busy': '{name} busy',
+	'seat.label_notrun_unable': '{name} can’t run this',
+	'seat.label_notrun_gone': '{name} went away',
+	'seat.label_notrun_unclaimed': '{name} didn’t take it',
+	'seat.label_notrun_released': '{name} let it go',
+	'seat.label_notrun_unchecked': 'Couldn’t check {name}',
+	'seat.label_notrun_post': 'Relay refused it',
+	'seat.label_notrun_oversize': 'Answer too large',
 	// i18n-family: seat.reach_ = https device unlock nokey
 	'seat.reach_https': 'it needs an https address',
 	'seat.reach_device': 'it is on this device',
@@ -2569,6 +2610,9 @@
 	'seat.here':                 'Here',
 	'seat.switch':               'Where the next turn runs',
 	'errand.prompt_too_large':   'the prompt alone is larger than the relay accepts',
+	// ERRAND-REF: a session that can go no way, so the turn ends "not run" before any post.
+	'errand.session_too_large':  'the conversation is larger than a hand-off carries',
+	'errand.session_unsent':     'the conversation could not be stored for the hand-off',
 	// ── WHERE A TASK OTHER THAN A TURN RUNS (owner design, 2026-09-14) ──
 	// A compile and a publish are placed by the same election a turn is, and the
 	// button says WHERE while its tooltip says WHY. A task moves only for a need this

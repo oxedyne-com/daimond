@@ -31,18 +31,30 @@
 	/// * `waiting` - Whether a question from this run is waiting on him.
 	function stateOf(run, waiting) {
 		if (waiting) return 'wait';
+		if (isFailed(run && run.status)) return 'fail';
 		switch (run && run.status) {
 			case 'running': return 'run';
 			case 'queued':  return 'que';
 			case 'paused':
 			case 'stopped': return 'stop';
-			case 'error':
 			case 'interrupted':
 			case 'blocked':
 			case 'capped':
-			case 'spend_cap': return 'fail';
+			case 'spend_cap':
+			case 'timed_out': return 'fail';
 			default: return 'done';
 		}
+	}
+
+	/// The endings that are failures: the run's text is the app's error sentence, not a
+	/// result (ZERO-ROUND, 25 Oct). One list, read by every site that branches on a failed
+	/// ending -- the pill, Fold in, `isTerminal`, this grid -- so a new failure word cannot
+	/// slip past one of them, as `not_started` slipped past Fold in.
+	var FAILED_ENDINGS = ['error', 'not_started'];
+
+	/// Did the run end in a failure?
+	function isFailed(status) {
+		return FAILED_ENDINGS.indexOf(status) !== -1;
 	}
 
 	/// Where a run came from, as a row key: its Diamond, else its chat.
@@ -347,6 +359,7 @@
 		needleAngle: needleAngle,
 		range:       range,
 		stateOf:     stateOf,
+		isFailed:    isFailed,
 		originKey:   originKey,
 		rows:        rows,
 		LENSES:      LENSES,

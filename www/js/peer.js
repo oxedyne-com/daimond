@@ -556,9 +556,11 @@
 			// 'keys' when a sealed key the errand carries would not open there (OWNKEY): a
 			// passphrase change it was not re-approved after, in the runner's own words. 'abi' is the
 			// page's own, for a report below its min (`reportAbiOk`): ended "not run" with Retry.
+			// 'size' when the errand was larger than the runner reads (NOTRUN-WHY, BOX-HOT), and
+			// 'oversize' when its answer was too large to send back whole: each ended "not run" with Retry.
 			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind'
 				|| o.cause === 'refused' || o.cause === 'place' || o.cause === 'limits'
-				|| o.cause === 'keys' || o.cause === 'abi') ? o.cause : '',
+				|| o.cause === 'keys' || o.cause === 'abi' || o.cause === 'size' || o.cause === 'oversize') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
 			// final frame carries what it had done, badged (r545 F-C2-1). 0 elsewhere.
 			interrupted: o.interrupted | 0,
@@ -1796,6 +1798,35 @@
 		};
 	}
 
+	var SESSION_REF_MAX = 8 * 1048576;	// body bytes; the runner's `REPLY_MAX`, a long answer's bound too
+
+	/// An over-door session put in the account's chunks (ERRAND-REF, errandref_contract.md):
+	/// `{ref}`, KT-4b's `{chat, sig, upto}` with REPLY-REF's manifest `{v:2, size, key, chunks}`
+	/// beside it, or `{notRun, why}`. The body is `{v:1, chat, sig, upto, session}`, with his
+	/// words log as `words` only where the seed carried one (contract amendment, 25 Oct), sealed
+	/// and put by `DaimondChunks.offloadBytes`, the one sealer a long answer's pieces go through.
+	async function sessionByChunks(chat, sig, upto, session, words) {
+		var b = { v: 1, chat: chat, sig: sig, upto: upto, session: session };
+		if (typeof words === 'string') b.words = words;
+		var bytes = new TextEncoder().encode(JSON.stringify(b));
+		if (bytes.length > SESSION_REF_MAX) {
+			diag('errand ref', 'chat=' + chat + ' session ' + bytes.length + ' B over ' + SESSION_REF_MAX);
+			return { notRun: 'size', why: 'the conversation is ' + bytes.length + ' bytes, over the '
+				+ (SESSION_REF_MAX / 1048576) + ' MB a hand-off carries' };
+		}
+		// A page always loads chunks.js; its absence is a broken page, said rather than guessed round.
+		if (!(window.DaimondChunks && DaimondChunks.offloadBytes)) {
+			return { notRun: 'post', why: 'the conversation could not be stored for the hand-off: no chunk store' };
+		}
+		var man;
+		try { man = await DaimondChunks.offloadBytes('session:' + chat, bytes); }
+		catch (e) {
+			diag('errand ref', 'chat=' + chat + ' put failed: ' + (e && e.message || e));
+			return { notRun: 'post', why: 'the conversation could not be stored for the hand-off: ' + (e && e.message || e) };
+		}
+		return { ref: { chat: chat, sig: sig, upto: upto, v: man.v, size: man.size, key: man.key, chunks: man.chunks } };
+	}
+
 	/// Seal the dispatch errand, DROPPING the thread seed when the sealed envelope
 	/// would not fit the relay. The seed is a fast-path for a peer that has NOT synced
 	/// (peer.js §, "a device that has not synced"); a peer already holding the thread
@@ -1813,7 +1844,8 @@
 	/// (optional) overrides the relay cap, for tests. Answers
 	/// `{ plan, body, seedDropped, sealedLen }` -- `plan` is the one whose `errand` the
 	/// returned `body` actually seals (the seedless re-seal when the seed was dropped) --
-	/// and `sessionRef` where the session went as a reference.
+	/// and `sessionRef` where the session went as a reference; or, posting nothing,
+	/// `{ plan, body: null, notRun, why }` where the session can go no way (`sessionByChunks`).
 	async function sealFittingErrand(chat, opts, plan, cap) {
 		// The door: `DaimondWire.fits('post', b64Len)` (the one client-side owner of the
 		// post cap), or the relay client's own `fitsRelay`, or the bare estimate -- and an
@@ -1866,13 +1898,25 @@
 		// seed then goes down the sessionless ladder, the reference on every rung, so a runner holding
 		// the chat reads the session there, checking `upto` against what it holds, and one that does
 		// not hands the turn back with cause `thread`.
+		//
+		// ERRAND-REF (25 Oct 2026): the reference also carries the session itself, sealed in the
+		// account's chunks as a long answer comes back (REPLY-REF), so a runner without the chat
+		// runs the turn on the whole session. It goes to every runner, whatever its ABI: one
+		// that cannot read chunks hands back `thread`, as it did the bare reference. Over
+		// `SESSION_REF_MAX`, or with no chunk store to put it in, the turn ends "not run" here
+		// and nothing is posted (`notRun`, the cause the dispatcher ends it with).
 		if (p.fields.seed && p.fields.seed.session) {
 			var o1 = {}; if (opts) Object.keys(opts).forEach(function (k) { o1[k] = opts[k]; });
 			var s0 = p.fields.seed.session;
+			var carried = await sessionByChunks(p.fields.chatId, (p.fields.thread && p.fields.thread.sig) || 0,
+				String(s0.upto || ''), s0, p.fields.seed.words);
+			if (carried.notRun) {
+				return { plan: p, body: null, notRun: carried.notRun, why: carried.why, tries: tries,
+					seedDropped: false, seedClipped: false, sealedLen: 0 };
+			}
 			o1.session    = null;
-			o1.words      = null;		// the log goes with the session it was folded beside (U2)
-			o1.sessionRef = { chat: p.fields.chatId, sig: (p.fields.thread && p.fields.thread.sig) || 0,
-				upto: String(s0.upto || '') };
+			o1.words      = null;		// the log goes with the session it was folded beside (U2), in its chunks
+			o1.sessionRef = carried.ref;
 			o1.eid     = p.fields.eid;
 			var bare = await sealFittingErrand(chat, o1, null, cap);
 			bare.tries     += tries;
@@ -3723,7 +3767,12 @@
 		var nomId = String(o.nominatedId || '');
 		var nrec = nomId ? (presence || {})[nomId] : null;
 		if (!runner && nrec && nrec.kind === 'runner') {
-			var srcs = sourcesOf(o), why = '';
+			// The turn as the election saw it (autoDispatchDecision): the chat's own provider
+			// and id stand in where the caller gave none.
+			var c = chat || {};
+			var eo = Object.assign({}, o, { provider: o.provider != null ? o.provider : c.provider,
+				chatId: o.chatId != null ? o.chatId : c.id });
+			var srcs = sourcesOf(eo), why = '';
 			var own = srcs.filter(function (s) { return s !== 'credits'; });
 			if (abiRunner(nrec)) {
 				var miss = null;
@@ -3748,6 +3797,18 @@
 			}
 			// RUNNER-DOOR: no rule above, yet not offered: it is not listening (no live door).
 			if (!why && !recGenuine(nrec, now, o.freshWindowMs || DISPATCH_FRESH_MS)) why = 'runner-silent';
+			// SEATWHY-ALL: listening, yet passed over: the seating rule that kept it (reachable,
+			// busyHere). No source at all, a phone, without the chat's folder, an engine this page
+			// cannot yet check (its id unknown), or busy with another chat.
+			if (!why) {
+				var req = o.needFolder ? 'folder' : '';
+				why = !srcs.length ? 'runner-nosource'
+					: recMobileView(nrec) ? 'runner-phone'
+					: !meetsRequire(nrec, req) ? 'runner-require'
+					: !recEngineOk(nrec, eo) ? 'runner-unchecked'
+					: recBusy(nrec, nomId, eo) ? 'runner-busy' : '';
+				if (why === 'runner-require') out.require = req;
+			}
 			if (why) { out.why = why; out.runnerId = nomId; }
 		} else if (!runner && nomId && !nrec && !o.presenceUnknown && nomId !== String(o.selfId || '')
 			&& Object.keys(presence || {}).length) {
@@ -7289,7 +7350,7 @@
 
 	// The run states a frame's `workers` may name (daimond.js `Workers`).
 	var WORKER_STATES = ['queued', 'running', 'paused', 'done', 'error', 'stopped',
-		'interrupted', 'capped', 'spend_cap', 'blocked', 'timed_out'];
+		'interrupted', 'capped', 'spend_cap', 'blocked', 'timed_out', 'not_started'];
 	var FRAME_WORKERS_MAX = 32;		// workers read off one frame
 
 	/// The workers a runner's frame names, `[{ id, name, status }]`, read field by field:

@@ -995,6 +995,8 @@
 			// Payment Required` is the gateway saying exactly that; the balance is checked too,
 			// so this holds whichever way it chooses to say it.
 			err.noCredits = r.status === 402 || !!(j && j.credits_minor === 0);
+			// The status as a number, so a caller classes the refusal by it, never by its words.
+			err.status = r.status;
 			throw err;
 		}
 		// An `ensure` that RAISED a live key answers with no key -- the key the caller

@@ -60,7 +60,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { open, signInAs, APP } from './harness.mjs';
+import { open, signInAs, scratch, APP } from './harness.mjs';
 import { standInPools } from './ownereye_pools.mjs';
 import { railWinFindings } from './railwin.mjs';
 
@@ -71,6 +71,22 @@ const OTHER = arg('--www') || process.env.OE_WWW || null;	// OE_WWW: the same th
 const LIST = process.argv.includes('--list');
 const RULINGS = process.env.DK_RULINGS || path.join(process.env.HOME, 'usr/code/ai/claude/rulings/daimond_rulings.md');
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+// WHERE AND WHEN EVERY SCENARIO IS: one zone, and the instants each world is opened at.
+// The zone alone left the date free, and R4 read a Yesterday head as tile height between
+// 00:00 and 01:00 Sydney (2026-10-25). Every world opens at the first instant, a Wednesday
+// afternoon, its clock flowing from there. The rail's full and real worlds open again
+// either side of midnight, their clock held still so the boundary falls where it is put
+// (rig-prod §3.7 rule 1). Each page is checked to be on its instant's day before any check.
+const OE_ZONE = 'Australia/Sydney', OE_AT = [
+	{ at: '2026-10-21T14:00:00+11:00', held: false },	// every world
+	{ at: '2026-10-21T23:59:50+11:00', held: true },	// rail full, real: the last seconds of a day
+	{ at: '2026-10-22T00:00:10+11:00', held: true },	// rail full, real: the first of the next
+];
+// Installed on the page before its first script: Playwright's clock, flowing or held.
+const clockAt = (t) => (pg) => t.held ? pg.clock.setFixedTime(t.at) : pg.clock.install({ time: t.at });
+// A world's name is its account's, drawn in the rail's footer, so it carries no clock; its
+// browser profile is made fresh per run by `fresh` instead.
+const fresh = (name) => scratch('pw', `${name}-${process.pid}-${Date.now()}`);
 const POOLS = ['Daimond credits', 'OpenRouter', 'Fireworks AI'];
 
 const Q_0523 = "The rail's dual scrolling (five-tile floor) is for the phone only";
@@ -539,11 +555,14 @@ const settle = async (p) => {
 };
 
 // ── A world: one session per (cell, state) ───────────────────────────
-async function world(cell, state) {
+async function world(cell, state, t) {
 	const n = state === 'thin' ? 4 : 40, nc = state === 'real' ? 20 : n;
-	const s = await open({ name: `oe${cell.w}${state[0]}${Date.now() % 100000}`, connect: false, viewport: { width: cell.w, height: cell.h },
-		timezoneId: 'Australia/Sydney', ...(OTHER ? { serviceWorkers: 'block' } : {}),
-		...(cell.phone ? { browser: 'webkit', touch: true, ua: IPHONE } : { browser: 'chromium' }), route: serve });
+	const s = await open({ name: `oe${cell.w}${state[0]}`, profile: fresh(`oe${cell.w}${state[0]}`), connect: false, viewport: { width: cell.w, height: cell.h },
+		// No service worker: WebKit's routes do not see what one fetches, so the phone read the
+		// public release log, not the tree's, and drew "Update ready" the moment a release went
+		// out (seq 418, 2026-10-25 22:42 AWST). The models world blocks it for the same reason.
+		timezoneId: OE_ZONE, serviceWorkers: 'block',
+		...(cell.phone ? { browser: 'webkit', touch: true, ua: IPHONE } : { browser: 'chromium' }), route: async (pg) => { await clockAt(t)(pg); await serve(pg); } });
 	const p = s.page;
 	await p.addInitScript(SEEDED_RANDOM, 20261023);
 	await p.emulateMedia({ reducedMotion: 'reduce' });
@@ -610,26 +629,33 @@ async function world(cell, state) {
 let ran = 0;
 const red = [];
 const t0 = Date.now();
-const CTX = { open, signInAs, serve, settle, SEEDED_RANDOM, IPHONE, OTHER };
-for (const wk of ['rail', ...Object.keys(MODS)]) for (const cell of CELLS) for (const state of ['thin', 'full', 'real']) {
+// A module's world opens through the pin too, whatever it asks for, in a fresh profile.
+const pinned = (o) => open({ ...o, timezoneId: OE_ZONE, profile: o.profile || fresh(o.name),
+	route: async (pg) => { await clockAt(OE_AT[0])(pg); if (o.route) await o.route(pg); } });
+const CTX = { open: pinned, signInAs, serve, settle, SEEDED_RANDOM, IPHONE, OTHER };
+for (const t of OE_AT) for (const wk of ['rail', ...Object.keys(MODS)]) for (const cell of CELLS) for (const state of ['thin', 'full', 'real']) {
+	if (t !== OE_AT[0] && (wk !== 'rail' || state === 'thin')) continue;
 	const todo = want.filter((r) => (r.world || 'rail') === wk && r.vp.includes(cell.vp) && r.states.includes(state));
 	if (!todo.length) continue;
+	const when = t === OE_AT[0] ? '' : ' @' + t.at.slice(11, 19);
 	let s;
-	try { s = wk === 'rail' ? await world(cell, state) : await MODS[wk].world(cell, state, CTX); }
-	catch (e) { console.log(`  FAIL setup ${wk} ${cell.vp} ${state}: ${e.message.split('\n')[0]}`); red.push('setup'); continue; }
-	if (s.setup) { console.log(`  FAIL setup ${cell.vp} ${state}: ${s.setup}`); red.push('setup'); }
+	try { s = wk === 'rail' ? await world(cell, state, t) : await MODS[wk].world(cell, state, CTX); }
+	catch (e) { console.log(`  FAIL setup ${wk} ${cell.vp} ${state}${when}: ${e.message.split('\n')[0]}`); red.push('setup'); continue; }
+	if (s.setup) { console.log(`  FAIL setup ${cell.vp} ${state}${when}: ${s.setup}`); red.push('setup'); }
+	const at = await s.page.evaluate((z) => new Date().toLocaleString('sv-SE', { timeZone: z }), OE_ZONE).catch((e) => 'unread: ' + e.message.split('\n')[0]);
+	if (!at.startsWith(t.at.slice(0, 10))) { console.log(`  FAIL setup clock ${wk} ${cell.vp} ${state}${when}: the page reads ${at} in ${OE_ZONE}, not the pinned ${t.at}`); red.push('setup'); }
 	for (const theme of ['obsidian', 'porcelain']) {
 		await s.page.evaluate((t) => DaimondTheme.set(t), theme);
 		await s.page.waitForTimeout(400);
 		await settle(s.page);
-		if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await s.page.screenshot({ path: path.join(SHOTS, `oe_${wk}_${state}_${theme}_${cell.phone ? 'phone' : cell.vp}.png`) }); }
+		if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await s.page.screenshot({ path: path.join(SHOTS, `oe_${wk}_${state}${when.replace(/\W/g, "")}_${theme}_${cell.phone ? 'phone' : cell.vp}.png`) }); }
 		for (const r of todo) {
 			let f;
 			// shot(n): a frame of what the check has open, named by world, state, theme and cell.
-			const shot = SHOTS ? (n) => s.page.screenshot({ path: path.join(SHOTS, `oe_${wk}_${state}_${theme}_${cell.phone ? 'phone' : cell.vp}_${n}.png`) }) : null;
+			const shot = SHOTS ? (n) => s.page.screenshot({ path: path.join(SHOTS, `oe_${wk}_${state}${when.replace(/\W/g, "")}_${theme}_${cell.phone ? 'phone' : cell.vp}_${n}.png`) }) : null;
 			try { f = await r.check(s.page, { ...cell, state, theme, shot }); } catch (e) { f = ['threw: ' + e.message.split('\n')[0]]; }
 			ran++;
-			const where = `${cell.vp} ${theme} ${state}`;
+			const where = `${cell.vp} ${theme} ${state}${when}`;
 			// A finding that begins "NOTE: " is a figure reported, not a fault.
 			for (const x of f.filter((x) => x.startsWith('NOTE: '))) console.log(`  note ${r.id} ${r.name} [${where}] ${x.slice(6)}`);
 			f = f.filter((x) => !x.startsWith('NOTE: '));

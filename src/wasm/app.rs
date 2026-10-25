@@ -4669,7 +4669,7 @@ pub(crate) fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("thinking"));
             set("content", &JsValue::from_str(text));
         }
-        AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned, why, said, touched } => {
+        AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned, why, said, fault, touched } => {
             set("type",      &JsValue::from_str("ended"));
             set("how",       &JsValue::from_str(how));
             set("offered",   &JsValue::from_f64(*offered   as f64));
@@ -4679,11 +4679,11 @@ pub(crate) fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("failed",    &JsValue::from_f64(*failed    as f64));
             set("malformed", &JsValue::from_f64(*malformed as f64));
             set("reasoned",  &JsValue::from_f64(*reasoned  as f64));
-            // Only when there is one, so a page from before `why` reads exactly what it did.
-            if !why.is_empty() {
-                set("why",  &JsValue::from_str(why));
-                set("said", &JsValue::from_str(said));
-            }
+            // Each only when there is one, so a page from before `why` reads exactly what it
+            // did; `said` rides alone where a malformed or failed turn names its reason.
+            if !why.is_empty()  { set("why",  &JsValue::from_str(why)); }
+            if !said.is_empty() { set("said", &JsValue::from_str(said)); }
+            if !fault.is_empty() { set("fault", &JsValue::from_str(fault)); }
             let arr = js_sys::Array::new();
             for p in missing { arr.push(&JsValue::from_str(p)); }
             set("missing", &arr);

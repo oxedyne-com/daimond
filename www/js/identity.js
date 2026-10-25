@@ -71,6 +71,7 @@
 	// nothing is deployed publicly yet.
 	var PBKDF2_ITERATIONS = 600000;	// PBKDF2-SHA-256 rounds.
 	var SALT_BYTES        = 16;		// Per-install random salt length.
+	var KEY_DRAWS         = 4;		// Ed25519 draws before an engine's refusal stands.
 	var IV_BYTES          = 12;		// AES-GCM nonce length.
 	var AES_BITS          = 256;		// AES-GCM key length.
 	var CHUNK_KEY_INFO    = 'daimond chunk-iv key v1';	// HKDF label, see chunkKeyFromBits.
@@ -517,19 +518,32 @@
 	/// Now a rejection that is not a missing feature is thrown as it is, and an
 	/// engine that has neither WebCrypto Ed25519 nor the fallback throws the
 	/// error `unsupportedError` makes.
+	///
+	/// A REFUSED DRAW IS DRAWN AGAIN. Linux WebKit (libgcrypt, as Playwright and
+	/// GNOME Web ship it) refuses about one Ed25519 key in 150 with OperationError
+	/// and imports no pkcs8 whose seed begins 0x00: 20 of 3000 draws and 200 of
+	/// 200 such imports, measured 2026-10-25. The refusal is of that random key, not
+	/// of the engine, so a fresh draw is independent of it and KEY_DRAWS of them
+	/// all refused is about 2e-9. An engine that refuses every draw still throws
+	/// its own error, as above.
 	async function generateSigningKey() {
-		try {
-			var pair = await crypto.subtle.generateKey(
-				{ name: 'Ed25519' },
-				true,					// extractable, so the private key can be wrapped.
-				['sign', 'verify'],
-			);
+		for (var draw = 1; ; draw++) {
+			var pair;
+			try {
+				pair = await crypto.subtle.generateKey(
+					{ name: 'Ed25519' },
+					true,				// extractable, so the private key can be wrapped.
+					['sign', 'verify'],
+				);
+			} catch (e) {
+				if (notSupported(e)) break;
+				if (e && e.name === 'OperationError' && draw < KEY_DRAWS) continue;
+				throw e;
+			}
 			return {
 				pkcs8: new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey)),
 				pub:   new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey)),
 			};
-		} catch (e) {
-			if (!notSupported(e)) throw e;
 		}
 		var fb = curveFallback();
 		if (!fb) throw unsupportedError();

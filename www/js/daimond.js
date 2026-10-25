@@ -4072,6 +4072,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var RESUMABLE_ENDINGS = ['paused', 'interrupted', 'capped', 'spend_cap',
 		'timed_out'];
 
+	/// Did this worker end in a failure (`error`, `not_started`)? The one list is
+	/// `DaimondAgentGrid.isFailed`'s, so every site here and the grid agree (ZERO-ROUND).
+	function isFailedEnding(status) {
+		return DaimondAgentGrid.isFailed(status);
+	}
+
+	/// May this worker's text be folded into its crystal? Only a run that finished its work,
+	/// from a Diamond, once: a failed run's text is an error sentence and a blocked run's is
+	/// not a result, so folding either writes the failure into the crystal.
+	function workerFoldable(run) {
+		return !isFailedEnding(run.status) && run.status !== 'blocked' && !run.folded && !!run.diamondId;
+	}
+
 	/// A worker's tile status, from the engine's own `TurnEnd::wire()` word --
 	/// `run.ended.how` -- rather than the blanket `done` `start()` used to write
 	/// regardless of how the turn actually stopped. `capped` and `spend_cap` are kept
@@ -4187,8 +4200,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return ' — timed out: no progress' + (r.liveMs > 0 ? ' for ' + Math.round(r.liveMs / 1000) + ' s' : '')
 					+ ', after ' + rounds + ' rounds, US$' + usd
 					+ workerWroteClause(r) + '\n\n(partial — continue with resume)';
+			// A FAILURE SAYS WHY (ZERO-ROUND). The reason is the app's sentence, so it is
+			// subtracted from the report (`run.said`) and would otherwise reach the parent as a
+			// bare "error" over an empty body -- which it re-dispatched into the same failure.
+			// Only a lasting failure warns that the same dispatch fails the same way; a passing
+			// one (the road, a rate limit, the provider's own fault) is worth sending again.
+			case 'not_started':
+				return ' — could not start' + workerWhyClause(r)
+					+ (r.whyTransient
+						? '\n\n(it did no work and cost nothing; a passing failure: dispatching it again is right)'
+						: '\n\n(it did no work and cost nothing; the same dispatch on the same model fails the'
+							+ ' same way: change what caused it, or do the work yourself)');
 			case 'error':
-				return ' — error';
+				return ' — error after ' + rounds + ' rounds, US$' + usd + workerWhyClause(r)
+					+ workerWroteClause(r);
 			case 'blocked':
 				return ' — not done: stopped on something it could not get past';
 			// A STOP NAMES ITS ROUNDS AND SPEND (r578c T): the page waits for the stopped turn to
@@ -4203,6 +4228,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// A worker's report as `gather` composes it: its own final answer, or -- where it died
 	/// before the engine could say how it ended -- whatever it had narrated.
+	/// `: <reason>` for a run that failed with one; empty for the rest.
+	function workerWhyClause(r) {
+		var why = String(r.why || '').trim();
+		return why ? ': ' + why : '';
+	}
+
 	function reportBody(r) {
 		return String(r.report != null ? r.report : (r.text || '')).trim();
 	}
@@ -13435,28 +13466,48 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Which class of failure an error is, from the module's `FAILURES` table.
 	///
-	/// A SECOND READING of the same evidence `friendlyError` reads, not a copy of
-	/// it: that one turns an error into a sentence for a person, and this one
-	/// turns it into one of nine numbers. They agree on the order they test in --
-	/// transport first, because a connection that never opened is not a provider
-	/// response -- and they must keep agreeing, so a change to one is a look at
-	/// the other.
+	/// Which of nine classes a failure is, read from its STRUCTURE first.
+	///
+	/// `raw` is an engine ending (`run.ended`, or any object carrying the engine's `fault`), an
+	/// error from the HTTP layer carrying its `status`, or failure text. The engine names the
+	/// class from the error's tags, set where the status code was still in hand (`crossed`,
+	/// src/llm.rs), and a gateway refusal carries its status as a number: both are read as they
+	/// stand. Text is only the fallback, for a failure that carries neither.
+	///
+	/// THE TEXT IS READ AS `friendlyError` READS IT: source frames stripped, then a status only
+	/// beside the word that makes it one (`httpStatus`). Every engine error carries `src/…:NNN:`
+	/// positions, and a bare `\b5\d\d\b` over the raw text read a framed 400 at line 512 as a
+	/// server error -- a passing failure -- so a parent was told to send a lasting one again
+	/// (ZERO-ROUND run 4). Transport is tested first in both, because a connection that never
+	/// opened is not a provider response.
 	function failureClass(raw) {
+		if (raw && typeof raw.fault === 'string' && raw.fault) return raw.fault;
+		if (raw && typeof raw.status === 'number' && raw.status >= 400) return statusClass(raw.status);
 		var s = String(raw == null ? '' : (raw && raw.message ? raw.message : raw));
-		// THE SAME TWO SOURCES `isUnreachable` READS, in the same order: the client's own
-		// reason first, the browser's sentence second. This test used to hold one vendor's
-		// wording and none of the client's, so an iOS turn that died on the road was counted
-		// as `other` -- which is why the defect never showed up in the numbers that would
-		// have found it. `isUnreachable` is not called here because that one is fed a
-		// stripped string and this one is not; the patterns are shared instead.
-		if (CLIENT_ROAD.test(s) || BROWSER_ROAD.test(s))      return 'offline';
+		s = stripAnsi(s).replace(/src\/[^\s":]+\.rs:\d+:?/g, ' ');
+		// THE SAME TWO SOURCES `isUnreachable` READS: the client's own reason first, the
+		// browser's sentence second, so an iOS turn that died on the road is `offline`.
+		if (isUnreachable(s))                                 return 'offline';
 		if (/\btimed? ?out\b|ETIMEDOUT|AbortError/i.test(s))  return 'timed_out';
-		if (/\b(401|403)\b/.test(s))                          return 'refused';
-		if (/\b429\b/.test(s))                                return 'rate_limited';
-		if (/\b409\b/.test(s))                                return 'conflict';
-		if (/\b413\b/.test(s))                                return 'too_large';
-		if (/\b5\d\d\b/.test(s))                              return 'server_error';
+		return statusClass(httpStatus(s));
+	}
+
+	/// The class of an HTTP status; `other` for no status (0) or one that names no class.
+	function statusClass(code) {
+		if (code === 401 || code === 403)   return 'refused';
+		if (code === 429)                   return 'rate_limited';
+		if (code === 409)                   return 'conflict';
+		if (code === 413)                   return 'too_large';
+		if (code >= 500 && code <= 599)     return 'server_error';
 		return 'other';
+	}
+
+	/// Is this a passing failure -- the road, a timeout, a rate limit, the provider's own
+	/// fault -- where the same dispatch again is right? Any other (a refusal, a request too
+	/// large, a model that cannot do the task) fails the same way twice (ZERO-ROUND QA 3).
+	function isPassingFailure(raw) {
+		var c = failureClass(raw);
+		return c === 'offline' || c === 'timed_out' || c === 'rate_limited' || c === 'server_error';
 	}
 
 	// ── The screen must not sleep in the middle of a turn ──────
@@ -20047,6 +20098,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				el.addEventListener('input', function () { f.hint(el.value, inputs, note); });
 			}
 			into.appendChild(el);
+			// What a field takes when its label cannot say all of it, under the field.
+			if (f.note) {
+				var sub = document.createElement('p');
+				sub.className = 'cfg-fieldnote';
+				mark(sub, '', f.note);
+				into.appendChild(sub);
+			}
 			inputs[f.name] = el;
 			if (!first && !f.advanced) first = el;
 		});
@@ -23445,7 +23503,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// The lower pane of the rail: who you are, how Daimond is set up, and what it is
 	// costing. Configuring Daimond is not a popup — the forms that ask the user for
 	// something (a provider key, a mailbox) open HERE, with the chat still
-	// running beside them, so the user can ask Daimond what an app password is and
+	// running beside them, so the user can ask Daimond which password a mailbox wants and
 	// read the answer while the box asking for one is on screen.
 	//
 	// It has a status header, which is always on, and a body showing one of
@@ -27484,6 +27542,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+	/// THE "NOT RUN" LINE SAYS WHY (NOTRUN-WHY; rulings §7 "Seat reasons are short"): "Not run ·"
+	/// and its cause's 2-4 word label, through the one renderer (`seatReason`), the sentence on
+	/// hover and, tapped, in its place; the runner's own words follow it where it gave them
+	/// (RUN-HIST E). A row with no cause keeps the plain words, its diagnostic on hover.
+	function drawNotRunReason(label, nr) {
+		var r = seatReason(notRunWhyKey(nr));
+		if (!r) {
+			label.textContent = t('turn.not_run');
+			if (nr && nr.why) label.title = String(nr.why);
+			return;
+		}
+		var said = (nr.said && (nr.cause === 'refused' || nr.cause === 'keys' || nr.cause === 'oversize')) ? ' ' + String(nr.said) : '';
+		var short = t('turn.not_run_because', { why: r.label }), whole = r.why + said;
+		label.textContent = short;
+		label.title = whole;
+		label.dataset.why = String(nr.cause);
+		label.setAttribute('role', 'button');
+		label.setAttribute('tabindex', '0');
+		label.setAttribute('aria-label', whole);
+		label.setAttribute('aria-expanded', 'false');
+		var flip = function (e) {
+			if (e && e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+			if (e && e.preventDefault) e.preventDefault();
+			var open = label.getAttribute('aria-expanded') !== 'true';
+			label.textContent = open ? whole : short;
+			label.setAttribute('aria-expanded', open ? 'true' : 'false');
+		};
+		label.addEventListener('click', flip);
+		label.addEventListener('keydown', flip);
+	}
+
 	/// Badge a recovered assistant message as interrupted, with a Continue button that runs the
 	/// turn again. `m.iturn` groups every message of the interrupted turn; `m.itext` is the prompt
 	/// to re-run.
@@ -27508,14 +27597,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (isLostRow(m) && drawLostRowRunning(div, foot, m)) return;
 		if (isNotRunRow(m)) {
 			label.className = 'ti-label lead-warn';
-			label.textContent = t('turn.not_run');
-			// Why it did not run, the runner's own words for a refusal (RUN-HIST E), on hover.
-			if (m.notRun && m.notRun.why) label.title = String(m.notRun.why);
+			drawNotRunReason(label, m.notRun);
+			// RETRY FOLLOWS THE SWITCH; RUN HERE IS HIS CHOICE OF THIS DEVICE (NOTRUN-WHY 2). Both go
+			// through the one fenced retry path (rulings l.16-18: one turn id, one lease); Run here
+			// passes the switch by. A press disables both, so one tile asks once.
 			var nb = document.createElement('button');
 			nb.className = 'ti-continue';
 			nb.textContent = t('turn.retry');
-			nb.addEventListener('click', function () { retryTurn(current, m.iturn, notRunAsk(current, m), { lost: true }); });
-			foot.appendChild(label); foot.appendChild(nb);
+			var hb = document.createElement('button');
+			hb.className = 'ti-continue';
+			hb.textContent = t('turn.peer_runhere');
+			var press = function (here) {
+				return function () {
+					if (nb.disabled) return;
+					nb.disabled = hb.disabled = true;
+					retryTurn(current, m.iturn, notRunAsk(current, m), here ? { lost: true, here: true } : { lost: true });
+				};
+			};
+			nb.addEventListener('click', press(false));
+			hb.addEventListener('click', press(true));
+			foot.appendChild(label); foot.appendChild(nb); foot.appendChild(hb);
 			div.appendChild(foot);
 			return;
 		}
@@ -28136,7 +28237,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { r = await dispatchToPeer(chat, turnId, promptText, scopePaths, opts, st); }
 		catch (e) { r = { ok: false, why: String((e && e.message) || e) }; }
 		if (!r) r = { ok: false, why: 'the hand-off door gave no answer' };
-		if (!r.ok && !st.marked) answerUnhanded(chat, turnId, promptText, r);
+		if (!r.ok && !st.marked) {
+			if (!r.nr && r.unable) r.nr = notRunCause('unable', opts && opts.runTo, opts && opts.toName);
+			answerUnhanded(chat, turnId, promptText, r);
+		}
 		return r;
 	}
 
@@ -28336,13 +28440,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// never runs elsewhere: the placeholder is stamped with the refusal, and
 		// `endHandOffNotRun` takes and settles the turn's lease (a post whose answer was lost
 		// may still have landed), writes the "not run" row with Retry and drops the placeholder.
-		function refuseAndEndNotRun(status, why) {
+		function refuseAndEndNotRun(status, why, cause) {
 			var ph = placeholderNow();
 			if (!ph) return;
 			ph.refused = { status: status | 0, why: why, ts: Date.now() };
 			touchMsg(ph);
 			try { touchChat(chat); persistChats(); } catch (e) { /* the record stands regardless */ }
-			try { endHandOffNotRun(chat, ph, 'refused after the mark: ' + why); } catch (e) { /* backstop + recovery-on-return remain */ }
+			try { endHandOffNotRun(chat, ph, 'refused after the mark: ' + why, notRunCause(cause, ph.toDevice, ph.toName)); } catch (e) { /* backstop + recovery-on-return remain */ }
 		}
 		// 2. SEAL THE ERRAND, dropping the thread seed if the sealed envelope would not
 		//    fit the relay. A large recent tail both DUPLICATES what a synced peer already
@@ -28367,6 +28471,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			return { ok: false, why: whyS };
 		}
+		// THE SESSION CAN GO NO WAY (ERRAND-REF): over the 8 MB a hand-off carries (`size`), or
+		// its chunks could not be put (`post`). Nothing was posted; the turn ends "not run" with
+		// that cause, which NOTRUN-WHY draws ("Too large to hand off", with Run here).
+		if (sealed.notRun) {
+			var whyN = sealed.notRun === 'size' ? t('errand.session_too_large') : t('errand.session_unsent');
+			diag('dispatch FAILED', 'turn=' + turnId + ' ' + sealed.notRun + ': ' + sealed.why);
+			// NOTRUN-WHY's call site: fire/notrunwhy gives refuseAndEndNotRun its `cause`; until it
+			// merges, the third argument is unread and the row keeps the plain "not run" words.
+			refuseAndEndNotRun(0, whyN, sealed.notRun);
+			return { ok: false, why: whyN, refused: true };
+		}
 		var body = sealed.body;
 		// THE SESSION WENT AS A REFERENCE (KT-4b): a runner that cannot read it hands the turn
 		// back `thread`, and the note says the chat was too big to send, not too long to take.
@@ -28389,7 +28504,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!fitsPostDoor(body && body.envelope)) {
 			var whyBig = t('errand.prompt_too_large');
 			diag('dispatch FAILED', 'turn=' + turnId + ' unpostable: prompt over the relay door');
-			refuseAndEndNotRun(0, whyBig);
+			refuseAndEndNotRun(0, whyBig, 'size');
 			return { ok: false, why: whyBig, refused: true };
 		}
 		// 2b. THE ERRAND IS NEVER BEHIND THE PARCEL (UNBLOCK-1, D-20261013-02). A whole-
@@ -28419,7 +28534,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// correct route (it is the same money-safe path the +95 s backstop takes).
 			var whyR = (res && res.why) || 'the relay would not take the errand';
 			diag('dispatch FAILED', 'turn=' + turnId + ' ' + whyR + ' status=' + (res && res.status | 0));
-			refuseAndEndNotRun((res && res.status) | 0, whyR);
+			refuseAndEndNotRun((res && res.status) | 0, whyR, 'post');
 			return { ok: false, why: whyR, refused: true };
 		}
 		// (a) THE ERRAND POSTED, and WHAT IT WEIGHED. The seed count is named -- and a
@@ -31549,7 +31664,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// backstop ends it (`runDispatchFallback`); it is never run here.
 				if (jobs[k].m.stepAway) await recoverOneLocally(jobs[k].chat, jobs[k].m);
 				else await endHandOffNotRun(jobs[k].chat, jobs[k].m, 'runner '
-					+ (String(jobs[k].m.toDevice || '').slice(0, 8) || '?') + ' never claimed it (found on return)');
+					+ (String(jobs[k].m.toDevice || '').slice(0, 8) || '?') + ' never claimed it (found on return)',
+					placeholderNotRun(jobs[k].m) || notRunCause('unclaimed', jobs[k].m.toDevice, jobs[k].m.toName));
 			}
 		} finally { _recovering = false; }
 	}
@@ -31810,15 +31926,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+	/// The cause a dispatched placeholder `m` carries, as a `notRunCause`: its runner's hand-back
+	/// cause (a busy runner's and a thread hand-back's by their own marks), or null. For an ending
+	/// rebuilt from a lease or found on return, where the caller knows no more than the record.
+	function placeholderNotRun(m) {
+		if (!m) return null;
+		var c = m.busyBy ? 'busy' : (m.threadBy ? (m.overDoor ? 'door' : 'thread')
+			: String(m.handBackCause || _handBackCause[String(m.iturn || '')] || ''));
+		return notRunCause(c, m.toDevice, m.toName, (peerReports[String(m.iturn || '')] || {}).why);
+	}
+
 	/// Give a sent turn its "not run" ending and drop its placeholder (QA-SUHT-B F4). The row is
 	/// `answerUnhanded`'s, which adds nothing where the turn already has a row of its own past
 	/// its prompt (a journal-recovered partial, say); that row is then the turn's ending, so the
 	/// placeholder goes either way and never stands as "not run" with no control. Idempotent.
-	function endTurnNotRun(chat, m, why) {
+	function endTurnNotRun(chat, m, why, nr) {
 		var tid = String((m && m.iturn) || '');
 		if (!chat || !tid) return;
 		if (_abiRefused[tid]) dropRefusedTiles(chat, tid);	// `answerUnhanded` draws and persists
-		answerUnhanded(chat, tid, String(m.itext || ''), { ok: false, why: why });
+		answerUnhanded(chat, tid, String(m.itext || ''), { ok: false, why: why, nr: nr || placeholderNotRun(m) });
 		var ended = (chat.messages || []).some(function (x) {
 			return !!x && String(x.iturn || '') === tid && x.role !== 'user' && x.why !== 'dispatched';
 		});
@@ -31883,7 +32009,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// device the lease synced to. So the take carries `intent: 'end'` (`DaimondPeer.endingLease`),
 	/// and this device marks the turn as ending (`_localEnding`) before its first await: from
 	/// the first frame to the row, every runner reader reads nobody's run.
-	async function endHandOffNotRun(chat, m, why) {
+	async function endHandOffNotRun(chat, m, why, nr) {
 		var tid = String((m && m.iturn) || '');
 		if (!tid || _localRecovering[tid]) return;
 		_localRecovering[tid] = String(chat.id || '') || true;
@@ -31910,7 +32036,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// leaves an `ending` lease the backstop and recovery-on-return finish from
 				// (`DaimondPeer.endedHere`).
 				diag('handoff not run', 'turn=' + tid + ' ' + why);
-				endTurnNotRun(chat, m, why);
+				endTurnNotRun(chat, m, why, nr);
 				try {
 					await DaimondPeer.settleLease('turn', tid, self, 'done', cas, leaseClockNow);
 					await DaimondPeer.settleLease('turn', tid, self, 'released', cas, leaseClockNow);
@@ -31918,7 +32044,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return;
 			}
 			diag('handoff not run', 'turn=' + tid + ' ' + why);
-			endTurnNotRun(chat, m, why);
+			endTurnNotRun(chat, m, why, nr);
 		} finally {
 			if (claim) claim.release();
 			delete _localRecovering[tid];
@@ -32034,7 +32160,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var notRun = (opts && opts.notRun) ? String(opts.notRun)
 				: (hbCause === 'models-behind' ? 'handed back: the runner had not reached this turn\'s models'
 				: ((hbCause === 'refused' || (lease && lease.mode === 'released' && String(lease.cut || '') === 'refused')) ? 'the runner refused it before the run' + refWhy : ''));
-			if (notRun) { await endHandOffNotRun(chat, m, notRun); return; }
+			if (notRun) {
+				var nrc = (opts && opts.notRun) ? String(opts.cause || '') : (hbCause === 'models-behind' ? hbCause : 'refused');
+				await endHandOffNotRun(chat, m, notRun, notRunCause(nrc, m.toDevice, m.toName, refRep && refRep.why));
+				return;
+			}
 			// A STEP-AWAY HAND-OFF (`stepAway`) is a turn already running here that this device
 			// handed on as it went to the background; the switch did not send it. One its runner
 			// did not take is run here (owner, D-20261009-23), never re-seated on another desktop.
@@ -32061,7 +32191,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (cause === 'models') { await endHandOffNotRun(chat, m, 'handed back: runner ' + rn + ' could not run this turn\'s models'); return; }
 			await endHandOffNotRun(chat, m, cause ? 'handed back by runner ' + rn + ': ' + cause
 				: (lease && lease.mode === 'released') ? 'runner ' + rn + ' let it go unrun'
-				: 'runner ' + rn + ' never claimed it within the backstop window');
+				: 'runner ' + rn + ' never claimed it within the backstop window',
+				placeholderNotRun(m) || notRunCause((lease && lease.mode === 'released') ? 'released' : 'unclaimed', m.toDevice, m.toName));
 		} catch (e) { /* the 15-min deadline + [Run here] remain the ultimate backstop */ }
 		finally { if (mine) delete _fallbackInFlight[tid]; }
 	}
@@ -32085,7 +32216,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(tid) : null;
 			if (!DaimondPeer.withdrawOnLoss(m, lease, snap[String(m.toDevice)], self, now)) return;
 			diag('handoff withdraw', 'turn=' + tid + ' runner ' + String(m.toDevice).slice(0, 8) + ' stopped listening unclaimed');
-			runDispatchFallback(chat.id, tid, { notRun: 'withdrawn: runner ' + String(m.toDevice).slice(0, 8) + ' stopped listening, unclaimed' });
+			runDispatchFallback(chat.id, tid, { notRun: 'withdrawn: runner ' + String(m.toDevice).slice(0, 8) + ' stopped listening, unclaimed', cause: 'gone' });
 		});
 	}
 
@@ -32476,8 +32607,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// The switch's reason (SEATWHY, OWNKEY §5.2) as `{ k, vars }` for `seatReason`, or null when it
 	/// names none: the source the runner cannot use and why, the re-approval a passphrase change
-	/// needs, another engine (it updates itself), a page older than the runner, or a legacy runner's
-	/// credits only.
+	/// needs, another engine (it updates itself), a page older than the runner, a legacy runner's
+	/// credits only, or a seating rule (SEATWHY-ALL).
 	function seatWhyKey(sw) {
 		if (!sw || !sw.why) return null;
 		var name = deviceLabelFor(sw.runnerId) || t('devices.unknown');
@@ -32492,6 +32623,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			case 'runner-engine':		return { k: 'runner_engine',		vars: v };
 			case 'runner-credits-only':	return { k: 'runner_credits',		vars: v };
 			case 'runner-silent':		return { k: 'runner_quiet',		vars: v };
+			case 'runner-busy':		return { k: 'runner_busy',		vars: v };
+			case 'runner-phone':		return { k: 'runner_phone',		vars: v };
+			case 'runner-require':		return { k: 'runner_require',		vars: v };
+			case 'runner-nosource':	return { k: 'runner_nosource',	vars: v };
 			case 'runner-unchecked':	return { k: 'runner_unchecked',	vars: v };
 			case 'page-old':			return { k: 'page_old',			vars: v };
 			default:					return null;
@@ -32502,6 +32637,51 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function seatWhyText(sw) {
 		var r = seatReason(seatWhyKey(sw));
 		return r ? r.why : '';
+	}
+
+	// WHY A TURN DID NOT RUN (NOTRUN-WHY): a "not run" row's cause, the tail of its `seat.why_`
+	// key. A runner's hand-back cause by its own name, and the page's own: `size` (an errand over
+	// what the runner reads), `unable`, `gone`, `unclaimed`, `released`, `unchecked`, `post`. Three
+	// are a switch reason already and are said the same way.
+	var NOTRUN_KEYS = {
+		'size':          'notrun_size',
+		'door':          'notrun_door',
+		'thread':        'notrun_thread',
+		'models':        'notrun_models',
+		'models-behind': 'notrun_models_behind',
+		'refused':       'notrun_refused',
+		'place':         'notrun_place',
+		'busy':          'notrun_busy',
+		'unable':        'notrun_unable',
+		'gone':          'notrun_gone',
+		'unclaimed':     'notrun_unclaimed',
+		'released':      'notrun_released',
+		'unchecked':     'notrun_unchecked',
+		'post':          'notrun_post',
+		'oversize':      'notrun_oversize',
+		'abi':           'runner_engine',
+		'limits':        'page_old',
+		'keys':          'runner_rekey',
+	};
+
+	/// A "not run" cause as the row keeps it, `{ cause, to, name, said }`: the runner it was sent
+	/// to by id and by the name known now, and the runner's own words where it gave them. Null for
+	/// a cause this page has no words for, which leaves the row's plain "not run".
+	function notRunCause(cause, to, name, said) {
+		var c = String(cause || '');
+		if (!NOTRUN_KEYS[c]) return null;
+		var id = String(to || '');
+		var nm = String(name || '') || (id ? deviceNameFor(id) : '');
+		return { cause: c, to: id, name: nm, said: said ? String(said) : '' };
+	}
+
+	/// A "not run" row's reason (`m.notRun`) as `{ k, vars }` for `seatReason`, or null where it
+	/// names no cause (a row written before causes, or a throw), which keeps the plain words.
+	function notRunWhyKey(nr) {
+		var k = nr && NOTRUN_KEYS[String(nr.cause || '')];
+		if (!k) return null;
+		var name = (nr.to ? deviceNameFor(nr.to) : '') || String(nr.name || '') || t('devices.another');
+		return { k: k, vars: { name: name } };
 	}
 
 	/// The wasm's engine ABI as `[abi, min]`, from its one export `engine_abi()` (a Uint32Array
@@ -33076,7 +33256,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					mid: newMid(), iturn: tid, ts: Date.now() }));
 				diag('dispatch unhanded', 'turn=' + tid + ' paused at ' + r.node);
 			} else if (have) {
-				have.notRun = { why: why, unable: !!(r && r.unable), ts: Date.now() };
+				have.notRun = notRunRecord(why, r);
 				touchMsg(have);
 				diag('dispatch not run', 'turn=' + tid + ' again: ' + why);
 			} else {
@@ -33084,7 +33264,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// lost turn, a Diamond's as "not run", the only tag the live build routes for one.
 				msgs.push(touchMsg({ role: 'assistant', content: '', interrupted: true, why: chat.diamondId ? 'notrun' : 'runner',
 					iturn: tid, itext: String(text || ''), mid: tid + '-nr', ts: Date.now(),
-					notRun: { why: why, unable: !!(r && r.unable), ts: Date.now() } }));
+					notRun: notRunRecord(why, r) }));
 				diag('dispatch not run', 'turn=' + tid + ' ' + why);
 			}
 			touchChat(chat);
@@ -33093,10 +33273,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { /* the prompt stands in the transcript either way */ }
 	}
 
+	/// A "not run" row's `notRun`: the diagnostic words `why`, and the cause the tile names
+	/// (`r.nr`, a `notRunCause`), kept flat so a row synced to an older page still reads.
+	function notRunRecord(why, r) {
+		var o = { why: why, unable: !!(r && r.unable), ts: Date.now() };
+		var nr = r && r.nr;
+		if (nr && nr.cause) {
+			o.cause = nr.cause;
+			if (nr.to) o.to = nr.to;
+			if (nr.name) o.name = nr.name;
+			if (nr.said) o.said = nr.said;
+		}
+		return o;
+	}
+
 	/// End a send whose pressed runner cannot take it as the "not run" row with Retry on
 	/// this device (`answerUnhanded`): the composer gives up the words, the prompt is
 	/// written under the turn id, and nothing runs anywhere. True, so no local run follows.
-	function endSendNotRun(chat, text, words, mid, app, why) {
+	function endSendNotRun(chat, text, words, mid, app, why, nr) {
 		var nmid = mid || newMid();
 		giveUpSent(chat, words === undefined ? text : words);
 		commitRatings(chat.id, { });
@@ -33106,7 +33300,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: nmid, iturn: nmid, ts: nts,
 			effort: turnEffortOf(chat) }), !app);
-		answerUnhanded(chat, nmid, text, { ok: false, why: why });
+		answerUnhanded(chat, nmid, text, { ok: false, why: why, nr: nr });
 		return true;
 	}
 
@@ -33187,7 +33381,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (!pressed || turnHold(chat)) return false;
 					if (how && how.prep) how.prep();		// a retry's turn is retracted at the commit
 					return endSendNotRun(chat, text, words, mid, app, 'presence read did not land in '
-						+ PRESENCE_READ_CAP_MS + 'ms; runner ' + shown + ' unconfirmed');
+						+ PRESENCE_READ_CAP_MS + 'ms; runner ' + shown + ' unconfirmed', notRunCause('unchecked', '', shown));
 				}
 				presence = read;
 				refreshLanded = true;
@@ -33300,8 +33494,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { renderSeatSwitch(); } catch (e) { /* the next beat redraws it */ }
 				if (!shown || chatSeatHere(chat) || turnHold(chat)) return false;
 				if (how && how.prep) how.prep();
+				// A runner no longer seen is said to have gone; any other decline keeps the plain words.
+				var gone = d.reason === 'no-genuine-peer' || d.reason === 'no-runner';
 				return endSendNotRun(chat, text, words, mid, app, 'runner ' + shown
-					+ ' was pressed and the election declined it (' + String(d.reason || 'no reason') + ')');
+					+ ' was pressed and the election declined it (' + String(d.reason || 'no reason') + ')',
+					gone ? notRunCause('gone', '', shown) : null);
 			}
 			// ASKED AGAIN AT THE COMMIT (R53-U8, 2026-09-25). The question at the top was asked
 			// before the presence refresh, which can hold the send for NOMINEE_REFRESH_CAP_MS,
@@ -34094,6 +34291,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `text` - What to send. Retry passes the original prompt back; Edit & resend
 	///   passes what the user rewrote.
 	/// * `ropts` - `runTurn`'s options for the new turn; a person's retry by default.
+	///   `here` is his Run here: the turn runs on this device and the switch is not asked.
 	///
 	/// Answers false where the retry was turned away, so Edit & resend keeps the rewritten
 	/// words; the new turn (`runTurn`'s promise) where one was asked; and true where its
@@ -34167,8 +34365,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// or leased, so a reload mid-wait leaves the row and its Retry where they were. Only the press's
 		// draw is held, in memory (rulings §1 l.19); a runner drawn at the press is handed it now, as
 		// before. Woken, the retry is admitted again from the top, then retracts, claims and runs.
+		// Run here (`ropts.here`) draws no runner: it waits for the Diamond, never hands off.
 		if (rf && diamondBusy(rf.id)) {
-			var drawnAt = ropts ? ropts.drawn : undefined;
+			var drawnAt = (ropts && ropts.here) ? '' : (ropts ? ropts.drawn : undefined);
 			if (drawnAt === undefined) { try { drawnAt = seatDrawnRunner(chat); } catch (e) { drawnAt = ''; } }
 			drawnAt = String(drawnAt || '');
 			if (!drawnAt) {
@@ -34209,7 +34408,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// it was asked; only a hand-off that declines runs it here, through `runSteer`.
 		// EVERY RETRY IS ROUTED (UNBLOCK-1 QFOLLOW). The tile's Retry and an edit's resend ran
 		// here, whatever the switch said; the switch decides where a retry runs, as at Send.
-		return retryRouted(chat, text, nmid, lost, ropts && ropts.onStart, ropts ? ropts.drawn : undefined);
+		return retryRouted(chat, text, nmid, lost, ropts && ropts.onStart, ropts ? ropts.drawn : undefined, !!(ropts && ropts.here));
 	}
 
 	/// A Diamond's retry, routed, then run as ONE STEP (STEER-2, lead usr-63; rulings §1 l.16,
@@ -34226,7 +34425,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		ropts = Object.assign({}, ropts, { drawn: String(drawn || '') });
 		var cut = false;
 		var prep = function () { if (!cut) { cut = true; retract(); } };
-		if (await maybeAutoDispatch(chat, text, '', nmid, undefined, ropts.drawn, { prep: prep })) { prep(); return true; }
+		if (!ropts.here && await maybeAutoDispatch(chat, text, '', nmid, undefined, ropts.drawn, { prep: prep })) { prep(); return true; }
 		var claim = null, self = selfDeviceId(), cas = null, won = false, watch = null;
 		if (lost) {
 			claim = await claimTurnHere(nmid);
@@ -34331,8 +34530,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// hand-off steers here (`askAgain`), under the retry's own id, as its send does.
 	/// `drawn` is the runner the switch drew at the press, where the press waited before it got
 	/// here (an edit's resend); undefined reads the switch now, as the tile's Retry does.
-	async function retryRouted(chat, text, nmid, lost, onStart, drawn) {
-		if (await maybeAutoDispatch(chat, text, '', nmid, undefined, drawn)) return true;
+	/// `here` is his Run here: the switch is not asked, and the turn runs on this device.
+	async function retryRouted(chat, text, nmid, lost, onStart, drawn, here) {
+		if (!here && await maybeAutoDispatch(chat, text, '', nmid, undefined, drawn)) return true;
 		if (lost) return runRetryHere(chat, text, nmid);
 		// An edit's resend holds its press until the turn is under way, as a send does.
 		return askAgain(chat, text, { person: true, mid: nmid, onStart: onStart });
@@ -43934,6 +44134,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A pause caught the turn running and it was handed back badged, Continue beside it.
 		var pausedBack = false;
 		var telErr = null;                       // what threw, for the one number that says which class
+		var telFault = '';                        // the engine's own class of it, off its `ended`
 		var turnText = '';   // THE CURRENT SEGMENT ONLY — reset on every `tool_call`; see below
 		// The feed's `round` rows for this turn: every round up to 60, then ten to a row,
 		// flushed where the turn ends (`DEBUG_SHARE.roundFeed`).
@@ -44177,6 +44378,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					? (chat._stopWhy || (chat._aborted ? 'user' : 'stream_abort')) : '';
 				var endLog = endLogOf(ev, endWhy);
 				if (endLog) pendingEnd = endLog;
+				telFault = String(ev.fault || '');	// the engine's class of a failed turn
 				// TRAINING WHEELS — the debug feed's `ended`, after any rounds still folding.
 				rounds.flush();
 				turnRounds = ev.rounds | 0;
@@ -44878,7 +45080,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// `capFail` is the app's own word for a provider refusing the
 					// reply length; anything else is read off the error itself.
 					tel('turn.fail', telOrd('FAILURES',
-						capFail ? 'too_long' : failureClass(telErr)));
+						capFail ? 'too_long' : failureClass(telFault ? { fault: telFault } : telErr)));
 					// D-20260920-02: arm the diag ring, so a "Something went wrong" report
 					// made after this failure (from the chat's own error line, or from
 					// Settings) is not empty.
@@ -45608,7 +45810,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// `capped`, `spend_cap` and `timed_out` are, since the turn is over and waiting for any of
 		/// them to become something else would strand the round for ever.
 		isTerminal: function (status) {
-			return status === 'done' || status === 'error' || status === 'stopped'
+			return status === 'done' || isFailedEnding(status) || status === 'stopped'
 				|| status === 'blocked' || status === 'capped' || status === 'spend_cap'
 				|| status === 'timed_out';
 		},
@@ -45867,6 +46069,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						live_ms: r.liveMs || 0,
 						writes: workerWrites(r),
 						context: workerKindSaid(r),		// the engine heads the report with it
+						why:    String(r.why || ''),		// a failure's reason, for its heading
+						transient: !!r.whyTransient,		// ... and whether a retry is right
 						// `r.report` is the whole final answer -- see the `finally` in `start`.
 						// `r.text` is the fallback for a worker that died before it ever answered.
 						report: String(r.report != null ? r.report : (r.text || '')),
@@ -45901,6 +46105,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						live_ms: r.liveMs || 0,
 						writes: workerWrites(r),
 						context: workerKindSaid(r),
+						why:    String(r.why || ''),
+						transient: !!r.whyTransient,
 						report: String(r.report != null ? r.report : (r.text || '')),
 					});
 				});
@@ -45955,7 +46161,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				: status === 'running' ? 'run'
 				: status === 'queued' ? 'queued'
 				: (status === 'paused' || status === 'capped' || status === 'spend_cap' || status === 'timed_out') ? 'paused'
-				: status === 'error' ? 'err'
+				: isFailedEnding(status) ? 'err'
 				: (status === 'stopped' || status === 'interrupted' || status === 'blocked') ? 'stopped' : 'ok');
 			// The state in the reader's own language. It used to be the internal
 			// status word, which is the one label on the tile a person actually
@@ -46919,6 +47125,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Held for the run's life, asked before it reads as `running` (see `holdRunLock`).
 			this.holdRunLock(run);
 			run.status = 'running';
+			run.why = '';		// a failure's own sentence, set where the run fails (ZERO-ROUND)
+			run.whyTransient = false;	// ... and whether it passes, so a retry is right
 			this.render();
 			var self2 = this;
 			/// TRAINING WHEELS — a worker that dies BEFORE its loop still finished.
@@ -46943,6 +47151,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					turn:  String(run.turnId || ''),
 					cx:    workerKind(run),	// the kind adopted; brief when it never got that far
 					p: 0, c: 0, ca: 0, usd: 0, r: 0, rb: 0, sb: 0,
+					why:   String(run.why || '').slice(0, 160),	// why it could not start
 				});
 				// A worker that died before its loop is terminal too, so a gather waiting on it
 				// must be answered rather than left to its timeout.
@@ -47123,9 +47332,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// The mint throws an error carrying `.paused` precisely so the two
 					// can be told apart: an agent shown as failed when the user paused
 					// it is a bug report from your future self.
-					run.status = e && e.paused ? 'paused' : 'error';
-					// Appended and kept apart, as in the hold above (U3a QC2).
+					// A REFUSED KEY NEVER REACHED THE LOOP: `not_started`, with the refusal as its
+					// reason, so the parent reads why rather than a bare failure (ZERO-ROUND).
 					var refused = friendlyError(e);
+					run.status = e && e.paused ? 'paused' : 'not_started';
+					if (run.status === 'not_started') { run.why = refused; run.whyTransient = isPassingFailure(e); }
+					// Appended and kept apart, as in the hold above (U3a QC2).
 					run.text = run.text ? run.text + '\n' + refused : refused;
 					run.said = (run.said || []).concat([refused]);
 					self.giveSlot(run.slot); DaimondModels.forgetSlot(run.slot);
@@ -47138,8 +47350,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				build();
 				await scope();
 			} catch (e) {
-				run.status = 'error';
-				run.text = friendlyError(e);
+				run.status = 'not_started';
+				run.text = run.why = friendlyError(e);
+				run.whyTransient = isPassingFailure(e);
 				if (run.slot) { self.giveSlot(run.slot); if (window.DaimondModels) DaimondModels.forgetSlot(run.slot); }
 				this.active--; this.render(); this.pump();
 				closeEarly();
@@ -47292,6 +47505,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// What its completed writes left (at most 40, then "+k more"): a run
 						// that ends without a verdict reports these, see the `finally` (U3a REP).
 						touched: Array.isArray(ev.touched) ? ev.touched.map(String) : [],
+						// The engine's own sentence for an ending it can name (a malformed or
+						// failed turn), read by the `finally` where no throw gave a reason.
+						said:    String(ev.said || ''),
+						// The engine's class of a failed turn, from its error's tags: what
+						// `failureClass` reads before any words (ZERO-ROUND run 4).
+						fault:   String(ev.fault || ''),
 					};
 				} else if (ev.type === 'unseeable') {
 					self.unseeable(run, ev);
@@ -47470,12 +47689,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// The worker's own prose is kept aside before the app's sentence replaces it
 					// on the tile: the report is composed from the worker's words (U3a REP).
 					run._prose = run.text;
-					run.status = 'error'; run.text = friendlyError(e);
+					run.text = run.why = friendlyError(e);
+					// Classed by the engine's own `fault` on its ending where it sent one, else
+					// from the raw error: the friendly sentence has lost its status code.
+					run.whyTransient = isPassingFailure(run.ended && run.ended.fault ? run.ended : e);
+					// NO REPLY SEEN, NO START (ZERO-ROUND). A turn refused before its first reply
+					// did no work and cost nothing, and the same dispatch fails the same way; one
+					// that replied and then failed may have left files. The page's own count of
+					// replies (`wround`, one per `round_meta`) decides it, not the engine's
+					// `rounds`, which counts a request the provider refused.
+					run.status = wround ? 'error' : 'not_started';
 				}
 			} finally {
 				forkForget(run);
 				WakeLock.release();
 				settleKind(run);		// a spawn still waiting is never left hanging
+				// A FAILED ENDING ALWAYS SAYS WHY (ZERO-ROUND QA 2). A turn the engine ended
+				// `malformed` resolves rather than throws, so no `catch` named its reason; the
+				// engine's own sentence on its `ended` event does.
+				if (isFailedEnding(run.status) && !run.why && run.ended && run.ended.said) {
+					run.why = friendlyError(run.ended.said);
+					run.whyTransient = isPassingFailure(run.ended.fault ? run.ended : run.ended.said);
+				}
 				// A worker spends the user's money like anything else, so it is metered like
 				// anything else: this bills the attempt that ran last (see `billAttempt`). A
 				// resumed worker bills only its own session here -- the paused session was
@@ -47595,6 +47830,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					tc:    touchedCount(run.ended),
 					wr:    wround,			// the rounds this page saw, beside the engine's own `r`
 					rb:    run.reportRaw, sb: run.reportSent,
+					why:   String(run.why || '').slice(0, 160),	// a failure's reason, so a lens can class it
 				});
 				this.active--;
 				if (run.slot) { self.giveSlot(run.slot); if (window.DaimondModels) DaimondModels.forgetSlot(run.slot); }
@@ -47912,6 +48148,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					tOr('agents.no_diamond_fold', 'This agent was sent from a chat, so there is no crystal to fold it into. Its report is in that conversation, and its full text is under Read.'));
 				return;
 			}
+			// AND A FAILED OR BLOCKED RUN IS NEVER FOLDED, whoever calls (ZERO-ROUND): its text is
+			// the failure, not a result. Already folded is the same answer: nothing to add.
+			if (!workerFoldable(run)) return;
 			if (!run.text.trim()) {
 				noticeDialog(t('fold.nothing'), t('fold.agent_empty'));
 				return;
@@ -48297,7 +48536,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// so folding it would write the error into the crystal. Offer the
 					// fold only for an agent that actually finished its work, and
 					// only once -- a folded summary is not offered again.
-					var foldable = run.status !== 'error' && run.status !== 'blocked' && !run.folded && !!run.diamondId;
+					var foldable = workerFoldable(run);
 					if (foldable) {
 						var fold = document.createElement('button');
 						fold.className = 'abtn';
@@ -63173,7 +63412,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				set('smtpHost', 'smtp.' + dom);
 			}
 		}
-		// In the pane, so the user can ask Daimond what an app password is \u2014 and read
+		// In the pane, so the user can ask Daimond which password this wants \u2014 and read
 		// the answer \u2014 while the box asking for one is still on screen.
 		return DaimondAdmin.form({
 			kind:  'form',
@@ -63183,7 +63422,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			fields: [
 				{ name: 'address',  label: t('mail.add.address'), placeholder: 'you@example.com',
 				  hint: function (v, inputs, note) { apply(v, inputs, note); } },
-				{ name: 'password', label: t('mail.add.password'), placeholder: t('mail.add.password_ph'), secret: true },
+				{ name: 'password', label: t('mail.add.password'), placeholder: t('mail.add.password_ph'), secret: true,
+				  note: t('mail.add.password_hint') },
 				{ name: 'host',     label: t('mail.add.imap'),    placeholder: 'imap.example.com' },
 				{ name: 'port',     label: t('mail.add.port'),    placeholder: '993', value: '993' },
 				{ name: 'smtpHost', label: t('mail.add.smtp'),    placeholder: 'smtp.example.com' },
@@ -73053,6 +73293,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// A browser that can do no Ed25519 at all is told so, and told what
 				// will work; any other failure is the plain "could not create". Never
 				// an account of another kind: identity.js makes Ed25519 or nothing.
+				// The engine's own error goes to the console: the sentence names no
+				// cause, and on 2026-10-25 a WebKit key refusal hid behind it for days.
+				console.warn('identity: create failed:', (e && e.name) || '', (e && e.message) || String(e));
 				err.textContent = (e && e.reason === 'unsupported')
 					? t('identity.err_create_unsupported')
 					: t('identity.err_create');

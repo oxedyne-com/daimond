@@ -10,10 +10,11 @@
  *   mail/<address>/INBOX/index.md      a digest, so an agent can see the shape
  *                                      of an inbox without reading every message
  *
- * The credential is an app password. It is wrapped under the user's passphrase
- * with the same key that wraps their API key, and it is sent to the gateway only
- * as part of a sync — the gateway holds it for one IMAP conversation and then
- * forgets it. Daimond stores no mail server-side, and never sees the passphrase.
+ * The credential is the mailbox password, or the provider's app password. It is
+ * wrapped under the user's passphrase with the same key that wraps their API key,
+ * and it is sent to the gateway only as part of a sync — the gateway holds it
+ * for one IMAP conversation and then forgets it. Daimond stores no mail
+ * server-side, and never sees the passphrase.
  *
  * THAT IS THE TRANSPORT THIS RELEASE SHIPS, and the tunnel section below is NOT
  * yet carrying anything. TLS in the page is built and tested — the socket, the

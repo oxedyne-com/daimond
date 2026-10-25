@@ -121,7 +121,7 @@ const KINDS = [
 	{
 		name: 'debug-share: adoptSync',
 		gen: (r) => ({ on: r.chance(0.5), at: T(r) }),
-		join: (...xs) => { const w = win(); loadScript(w, 'debugshare.js'); for (const x of xs) w.DEBUG_SHARE.adoptSync(clone(x)); return w.DEBUG_SHARE.syncSnapshot(); },
+		join: (...xs) => { const w = win(); loadScript(w, 'scrub.js'); loadScript(w, 'debugshare.js'); for (const x of xs) w.DEBUG_SHARE.adoptSync(clone(x)); return w.DEBUG_SHARE.syncSnapshot(); },
 	},
 	{
 		name: 'graph layout: adopt',

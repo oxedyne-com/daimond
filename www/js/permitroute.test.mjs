@@ -359,10 +359,10 @@ test('B10: a refused permit\'s Retry sends the turn the way a send goes, so it i
 	const rt = lift('retryTurn');
 	// Every routed Retry, a daimon's too (R3 3c, 7c939256): the hand-off first; one the hand-off
 	// declines is asked again here through askAgain (runSteer for a daimon), as its send would be.
-	assert.ok(rt.indexOf('return retryRouted(chat, text, nmid, lost, ropts && ropts.onStart, ropts ? ropts.drawn : undefined);') >= 0);	// every Retry is routed (UNBLOCK-1 QFOLLOW)
+	assert.ok(rt.indexOf('return retryRouted(chat, text, nmid, lost, ropts && ropts.onStart, ropts ? ropts.drawn : undefined, !!(ropts && ropts.here));') >= 0);	// every Retry is routed (UNBLOCK-1 QFOLLOW)
 	// A refused permit's Retry is not a lost run's: it runs unfenced, as a send that stayed here;
 	// a lost run's is fenced for a chat and a daimon alike (SUHT-R F2).
 	assert.match(lift('retryRouted'), /if \(lost\) return runRetryHere\(chat, text, nmid\);[\s\S]*return askAgain\(chat, text, \{ person: true, mid: nmid, onStart: onStart \}\);/);
-	assert.match(lift('retryRouted'), /if \(await maybeAutoDispatch\(chat, text, '', nmid, undefined, drawn\)\) return true;/);
+	assert.match(lift('retryRouted'), /if \(!here && await maybeAutoDispatch\(chat, text, '', nmid, undefined, drawn\)\) return true;/);
 	assert.match(lift('maybeAutoDispatch'), /var umid = mid \|\| newMid\(\);/);
 });

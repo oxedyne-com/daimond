@@ -24,6 +24,8 @@ import { fakeIDB, tabJournal, journalQueueOver } from './journalfixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(process.env.CCP2SETTLE_SRC || join(HERE, 'daimond.js'), 'utf8');
+/// The not-run cause map (NOTRUN-WHY), lifted as the page holds it.
+const NOTRUN_SRC = (/\n\tvar NOTRUN_KEYS = \{[\s\S]*?\n\t\};/.exec(SRC) || [''])[0];
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
 	checks++;
@@ -47,8 +49,10 @@ function lift(src, name) {
 /// Lift `names` over `stubs` (each a free name in the lifted code), with `pre` run first.
 function build(names, stubs, pre) {
 	// OWNKEY's `endTurnNotRun` reads `_abiRefused` and calls `dropRefusedTiles` (QA ownkey-d B, L1).
-	stubs = Object.assign({ _abiRefused: {}, dropRefusedTiles() {} }, stubs);
-	return new Function(...Object.keys(stubs), (pre || '') + '\n' + names.map((n) => lift(SRC, n)).join('\n')
+	// NOTRUN-WHY's `placeholderNotRun` reads the hand-back's cause and the runner's words.
+	stubs = Object.assign({ _abiRefused: {}, dropRefusedTiles() {}, _handBackCause: {}, peerReports: {},
+		deviceNameFor: () => '' }, stubs);
+	return new Function(...Object.keys(stubs), NOTRUN_SRC + (pre || '') + '\n' + names.map((n) => lift(SRC, n)).join('\n')
 		+ '\nreturn { ' + names.join(', ') + ' };')(...Object.values(stubs));
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -112,7 +116,7 @@ const onDisk = () => (IDB.dbs['daimond-journal'] ? IDB.dbs['daimond-journal'].ro
 // ── MED-1: a queued send always goes, in order, under the runner pressed ──
 // Probe notrun_strands_queue: the hand-off ends "not run" across a slow lease settle.
 {
-	const names = ['endHandOffNotRun', 'endTurnNotRun', 'dropDispatchedPlaceholder', 'drainAfterHeld', 'recoveringHere', 'dispatchInFlight', 'armHeldWake', 'lapsedByClock', 'confirmLapse', 'leaseDoorRead', 'lapseConfirmed', 'lapseMark'];
+	const names = ['endHandOffNotRun', 'endTurnNotRun', 'placeholderNotRun', 'notRunCause', 'dropDispatchedPlaceholder', 'drainAfterHeld', 'recoveringHere', 'dispatchInFlight', 'armHeldWake', 'lapsedByClock', 'confirmLapse', 'leaseDoorRead', 'lapseConfirmed', 'lapseMark'];
 	const st = { drained: 0 };
 	const T = 'tid-2';
 	const chat = { id: 'c1', _queue: [{ text: 'typed while t2 was out', drawn: '' }], messages: [
