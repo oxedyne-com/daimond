@@ -153,7 +153,12 @@ async function main() {
 		check('and in the `finally`, so a turn that wrote a file and then failed still has its row', tryEnd > 0 && iFlog > tryEnd, { tryEnd, iFlog });
 		check('it is pushed with its turn tag (pushRunRow, UNBLOCK-1 F2), then drawn only where this chat is on screen', /pushRunRow\(chat, [\w.]+, flog\); if \(owns\(\)\) appendFilesLog\(flog\)/.test(SRC));
 		check('the event is spent after it is read (a second path to the row would write it twice)', /var fev = filesEv; filesEv = null;/.test(SRC) && (SRC.match(/filesLogOf\(/g) || []).length === 2, (SRC.match(/filesLogOf\(/g) || []).length);
-		check('only runTurn makes one: no other caller of filesLogOf, and nothing else pushes a files_log', (SRC.match(/role:\s*'files_log'/g) || []).length === 1, (SRC.match(/role:\s*'files_log'/g) || []).length);
+		// RT-C: a runner's turn gets the same row from the version its report recorded
+		// (`carriedFilesRow`), the one other maker.
+		const flogAt = [...SRC.matchAll(/role:\s*'files_log'/g)].map((m) => m.index);
+		const carried = SRC.indexOf('async function carriedFilesRow('), carriedEnd = SRC.indexOf('\n\t}\n', carried);
+		check('only runTurn makes one, and a runner turn\'s carriedFilesRow: no other caller of filesLogOf, and nothing else pushes a files_log',
+			flogAt.length === 2 && flogAt.filter((i) => i > carried && i < carriedEnd).length === 1, JSON.stringify(flogAt));
 		check('a failure to build it never fails the turn', /try \{\s*var flog = await filesLogOf[\s\S]{0,260}catch \(eF\)/.test(SRC));
 	}
 

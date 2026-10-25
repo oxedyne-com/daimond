@@ -25,6 +25,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { performance } from 'node:perf_hooks';
+
+import { gateNow } from './rig/gateclock.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const ROOT  = path.join(HERE, '..');
@@ -383,4 +386,52 @@ export async function stopGatewayCleanly(proc, health, ms = 45000) {
 		await nap(200);
 	}
 	return note || `  note  something is still answering ${health} after the gateway was stopped`;
+}
+
+/// The environment a verifier spawns its own gateway with: `extra` over this process's, the gate's
+/// instant carried to the gateway through the setting it reads.
+///
+/// `DAIMOND_CLOCK` is two things. To a gate script it is the instant its pages open at (gateclock.mjs),
+/// and to the gateway it is the process clock spec, `system` or `driven:<path>`, which refuses an
+/// instant and so never comes up. Passing it through stopped every own-gateway verifier under the gate
+/// clock; dropping it left the gateway on today's date while the pages ran at the gate's, so a
+/// signature the page dates (an account binding, 300 s of tolerance) was refused 401, which turn_parity
+/// --two met as "Sign in on this device before linking another" (2026-10-26).
+///
+/// So a gate instant becomes a driven clock: a file in `dir` holding the instant plus the time since
+/// this call, rewritten every 100 ms, as `driven:<file>` with `DAIMOND_GW_DEV=1`, which the gateway
+/// requires for a driven clock (and refuses on its production port). Both clocks flow in real time
+/// from the same instant, as a page's `clock.install` does. A spec (`system`, `driven:…`) or no
+/// `DAIMOND_CLOCK` at all is passed through unchanged.
+let driven = null;	// { base, t0 } of the driven clock gatewayEnv started in this process, if any
+
+/// The gateway's "now", in ms, for what node signs for it to check (a webhook's timestamp, a period end):
+/// the driven clock `gatewayEnv` started, else the host's, which is the clock any other gateway runs on
+/// (one given a gate instant as its `DAIMOND_CLOCK` refuses to start).
+export function gatewayNow() {
+	if (driven) return Math.floor(driven.base + performance.now() - driven.t0);
+	return Date.now();	// Real time: the gateway runs on the system clock.
+}
+
+export function gatewayEnv(extra, dir) {
+	const env = { ...process.env, ...extra };
+	const c = env.DAIMOND_CLOCK;
+	if (c == null || c === '' || c === 'system' || c.startsWith('driven:')) return env;
+	const base = gateNow(), t0 = performance.now();
+	driven = { base, t0 };
+	const file = path.join(dir, 'gate.clock'), tmp = file + '.tmp';
+	const tick = () => {
+		const b = Buffer.alloc(8);
+		b.writeBigUInt64LE(BigInt(gatewayNow()));
+		fs.writeFileSync(tmp, b);
+		fs.renameSync(tmp, file);	// whole or not at all: the gateway refuses a file not 8 bytes long
+	};
+	fs.mkdirSync(dir, { recursive: true });
+	tick();
+	// A run that clears its directory ends the clock with it, rather than the run on an uncaught throw.
+	const iv = setInterval(() => { try { tick(); } catch (e) { clearInterval(iv); } }, 100);
+	iv.unref();
+	env.DAIMOND_CLOCK = 'driven:' + file;
+	env.DAIMOND_GW_DEV = '1';
+	return env;
 }

@@ -460,8 +460,11 @@ function frameChecks(M) {
 	if (typeof P.abiOk !== 'function') { check('K10 abiOk exists', false); return; }
 	P.setEngineAbi(2, 2);
 	const NAMES = ['onProgressFrame', 'onLastFrame', 'frameAbiOk', 'refuseAbiFrame', 'refuseAbiTurn', 'dropRefusedTiles', 'adoptFinalFrame',
-		'endTurnNotRun', 'answerUnhanded', 'notRunRecord', 'placeholderNotRun', 'notRunCause', 'isNotRunRow', 'handBackNote', 'seatReason', 'applyProvisional'];
-	const L = lift(source('daimond.js'), NAMES, ['NOTRUN_KEYS']);
+		'endTurnNotRun', 'answerUnhanded', 'notRunRecord', 'placeholderNotRun', 'notRunCause', 'isNotRunRow', 'handBackNote', 'seatReason', 'applyProvisional',
+		// The fold of a native runner's figures, which the adoption calls (RT-C).
+		'runKeyCmp', 'hasNativeRuns', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals',
+		'runFolded', 'markRunFolded', 'runnerRoadNative', 'foldRunnerTotals'];
+	const L = lift(source('daimond.js'), NAMES, ['NOTRUN_KEYS', 'FOLDED_RUNS_MAX', 'NATIVE_FIGS', 'HERE_FIELDS', 'TOTAL_FIELDS']);
 	check('K10 the frame functions are there', L.missing.length === 0, L.missing.join());
 	if (L.missing.length) return;
 	const run = (holder, by, frame, last) => {

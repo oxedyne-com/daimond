@@ -18,7 +18,7 @@ const check = (name, pass, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 
-const s = await open({ name: 'version', signIn: true, connect: false });
+const s = await open({ name: 'version', signIn: true, connect: false, serviceWorkers: 'allow' });	// an update check: the app's own worker in control, as on a real device
 const { page } = s;
 
 // Wait for both the updater and the gateway client to be live.

@@ -596,6 +596,11 @@
 		// the log's entry form, for the asking tab to file before it lands the session. Last, and
 		// only when there are any, so an older asker sees the report it knew.
 		if (typeof o.words === 'string' && o.words) rep.words = o.words;
+		// THE TURN'S QUESTION COMES HOME (RUNNER-ASK): the choice a runner turn put him, as the
+		// object the runner wrote, for the asking tab to draw as its Decision tile
+		// (`settleRunnerAsk`, which checks it). After `words`, so it is the last key, and only
+		// when there is one, so an older asker sees the report it knew.
+		if (o.ask && typeof o.ask === 'object' && !Array.isArray(o.ask)) rep.ask = o.ask;
 		return rep;
 	}
 
@@ -1730,11 +1735,15 @@
 		// HIS WORDS LOG RIDES BESIDE IT (U2): the chat's log as the tab reads it (`words_read`),
 		// so the runner's folds file and recall over this log and stage what they add, never
 		// filing on the runner's own disk. Absent where the tab could not read it.
+		// THE ANSWER'S RECORD, LESS THE RUN (RT-C): what this page would stamp on the answer
+		// (`errandProdBase`), so the runner's answer carries the same record a Here one does.
 		var hasSession = !!(o.session && typeof o.session === 'object');
-		if (seed && (hasSession || typeof o.words === 'string')) {
+		var hasProd = !!(o.prodBase && typeof o.prodBase === 'object');
+		if (seed && (hasSession || hasProd || typeof o.words === 'string')) {
 			var sd = {}; Object.keys(seed).forEach(function (k) { sd[k] = seed[k]; });
 			if (hasSession) sd.session = JSON.parse(JSON.stringify(o.session));
 			if (typeof o.words === 'string') sd.words = o.words;
+			if (hasProd) sd.prodBase = JSON.parse(JSON.stringify(o.prodBase));
 			seed = sd;
 		}
 		// THE THREAD'S FINGERPRINT, computed from the SAME chat the seed is (content-free,
@@ -7255,7 +7264,7 @@
 	/// real answer only when every row says so (`adoptFinalFrame`); a cut row would be a
 	/// truncated answer kept for good if the runner's own copy never arrived.
 	function progressRow(m, full) {
-		if (!m || !m.role || !PROGRESS_ROLES[m.role]) return null;
+		if (!m || !m.role || !(PROGRESS_ROLES[m.role] || runnerSteerRow(m))) return null;
 		var lim = full ? Infinity : PROGRESS_MSG_CHARS;
 		var c = String(m.content == null ? '' : m.content);
 		var cut = c.length > lim;
@@ -7276,6 +7285,10 @@
 		if (m.interrupted && m.itext) row.itext = String(m.itext);
 		if (m.run)         row.run     = String(m.run);
 		if (m.interrupted && m.lostOn) row.lostOn = String(m.lostOn);
+		// What the row says as the page's own i18n key and params (a native runner's error,
+		// vision and failed-answer rows, whose content is empty), so the asker says it in its
+		// own language (`logRowText`).
+		if (m.say && m.say.k) row.say = sayOf(m.say);
 		// `ranOn` is what the answer's final copy carries (the device that ran the turn):
 		// streaming it means the FINAL provisional row byte-matches the parcel copy's
 		// `msgSig`, so the merge is a no-op redraw rather than a rebuild.
@@ -7301,8 +7314,21 @@
 	var END_FIELDS = ['how', 'why', 'offered', 'rounds', 'calls', 'refused', 'failed', 'malformed', 'reasoned', 'missing'];
 
 	// The figures `runTurn` stamps on a handed-off answer, and their types off the door.
-	var RAN_FACTS = ['ranMs', 'ranModel', 'ranTokIn', 'ranTokOut', 'ranCost'];
+	var RAN_FACTS = ['ranMs', 'ranModel', 'ranTokIn', 'ranTokOut', 'ranCost', 'ranCached', 'ranCtx'];
 	function ranFact(k, v) { return k === 'ranModel' ? String(v) : (+v || 0); }
+
+	// A row's `say`, `{k, v}`, as the door carries it: the key a string, the params as given.
+	function sayOf(s) {
+		var o = { k: String(s.k) };
+		if (s.v != null) o.v = s.v;
+		return o;
+	}
+
+	/// Is this a runner's steer row: a user row of the run, mid `<run>-t<i>`? It is drawn in
+	/// the turn, never taken for the turn's opening row.
+	function runnerSteerRow(m) {
+		return !!(m && m.role === 'user' && m.run && String(m.mid || '').indexOf(String(m.run) + '-t') === 0);
+	}
 
 	/// A frame's rows as the door's payload, `{v:1, msgs:[...]}` JSON, fitted to the door:
 	/// `budget` is `{chars, bytes}` and `weigh(text)` what a text adds (sync.js
@@ -7554,7 +7580,8 @@
 		var userAt = -1, placeAt = -1;
 		for (var i = 0; i < msgs.length; i++) {
 			var m = msgs[i];
-			if (m && m.role === 'user' && (String(m.mid || '') === id || String(m.iturn || '') === id)) userAt = i;
+			if (m && m.role === 'user' && !runnerSteerRow(m)
+				&& (String(m.mid || '') === id || String(m.iturn || '') === id)) userAt = i;
 			if (userAt >= 0 && m && m.why === REASON_DISPATCHED && String(m.iturn || '') === id) { placeAt = i; break; }
 		}
 		if (userAt < 0) return null;					// the watcher does not hold this turn yet
@@ -7631,6 +7658,7 @@
 		if (r.run)         m.run     = String(r.run);
 		if (r.interrupted && r.lostOn) m.lostOn = String(r.lostOn);
 		if (r.ranOn)       m.ranOn   = String(r.ranOn);
+		if (r.say && r.say.k) m.say = sayOf(r.say);
 		RAN_FACTS.forEach(function (k) { if (r[k] != null && r[k] !== '') m[k] = ranFact(k, r[k]); });
 		if (r.prod)        m.prod    = r.prod;
 		if (r.role === 'end_log') END_FIELDS.forEach(function (k) { if (r[k] != null) m[k] = r[k]; });
@@ -7644,6 +7672,7 @@
 		dst.callId = src.callId; dst.folded = src.folded; dst.kept = src.kept;
 		dst.interrupted = src.interrupted; dst.ranOn = src.ranOn;
 		['why', 'itext', 'run', 'lostOn'].forEach(function (k) { if (src[k] != null) dst[k] = src[k]; });
+		if (src.say) dst.say = src.say; else delete dst.say;
 		RAN_FACTS.forEach(function (k) { if (src[k] != null) dst[k] = src[k]; else delete dst[k]; });
 		// Never taken away: a record, once a row has one, is the row's for good.
 		if (src.prod) dst.prod = src.prod;
@@ -7657,7 +7686,9 @@
 		var c = m.content == null ? '' : String(m.content);
 		return m.role + '#' + c.length + '#' + (m.outcome || '') + '#' + (m.name || '')
 			+ '#' + (m.folded || 0) + '#' + (m.kept || 0) + '#' + (m.interrupted ? 1 : 0)
-			+ '#' + (m.ranOn || '') + '#' + (m.ranMs || 0) + '#' + (m.run || '')
+			+ '#' + (m.ranOn || '') + '#' + (m.run || '')
+			+ '#' + RAN_FACTS.map(function (k) { return m[k] == null ? '' : m[k]; }).join(',')
+			+ '#' + (m.prod ? m.prod.length || 1 : 0) + '#' + (m.say ? JSON.stringify(m.say) : '')
 			+ (m.interrupted ? '#' + (m.why || '') + '#' + (m.lostOn || '') : '')
 			+ (m.role === 'end_log' ? '#' + (m.how || '') + '#' + (m.why || '') : '');
 	}

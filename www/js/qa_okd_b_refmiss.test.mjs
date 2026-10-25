@@ -94,6 +94,9 @@ const lifted = new Function('env', [
 	// The lost-row predicate the adopted frame reads (SUHT-R F1+F3).
 	extractFn(src, 'isNotRunRow'),
 	extractFn(src, 'isLostRow'),
+	// The fold of a native runner's figures, which the adoption calls (RT-C).
+	...['FOLDED_RUNS_MAX', 'NATIVE_FIGS', 'HERE_FIELDS', 'TOTAL_FIELDS'].map((n) => extractVar(src, n)),
+	...['runKeyCmp', 'hasNativeRuns', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals', 'runFolded', 'markRunFolded', 'runnerRoadNative', 'foldRunnerTotals'].map((n) => extractFn(src, n)),
 	extractFn(src, 'adoptFinalFrame'),
 	extractFn(src, 'applyProvisional'),
 	extractFn(src, 'fetchFinalRef'),

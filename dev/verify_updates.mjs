@@ -26,7 +26,7 @@ const until = async (page, fn, ms = 5000) => {
 	}
 };
 
-const s = await open({ signIn: false });
+const s = await open({ signIn: false, serviceWorkers: 'allow' });	// an update check: the app's own worker in control, as on a real device
 const { page } = s;
 
 // Serve a chosen stamp for build.json. `stamp === null` means "no version system deployed" (404).

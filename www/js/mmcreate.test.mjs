@@ -30,9 +30,10 @@ function check(name, cond, detail) {
 const MERGE_FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
 	'chatMetaBeats', 'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit',
 	'mergeFold', 'mergeChatRecords', 'touchChatMeta', 'touchChatModel',
-	'chatTaintOf', 'chatTaintJoin'];	// the one-way taint (H3)
+	'chatTaintOf', 'chatTaintJoin',	// the one-way taint (H3)
+	'runKeyCmp', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals'];	// the derived totals (RT-C)
 const CREATE_FNS = ['storedPick', 'chatPairInForce', 'newChat', 'startChat', 'createDiamond', 'diamondPickFromChat'];
-const VARS = ['CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', '_chatModelShedSaid'];
+const VARS = ['FOLDED_RUNS_MAX', 'NATIVE_FIGS', 'HERE_FIELDS', 'TOTAL_FIELDS', 'CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', '_chatModelShedSaid'];
 const NAMES = MERGE_FNS.concat(CREATE_FNS);
 
 const DEF = { provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' };

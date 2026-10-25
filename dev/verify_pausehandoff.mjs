@@ -51,7 +51,7 @@ import { fileURLToPath } from 'node:url';
 import { open, chat, signInAs, newChat, connectMock, mockLog, SCRATCH } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
-import { GWBIN, requireFreshGateway } from './gwbin.mjs';
+import { GWBIN, requireFreshGateway, gatewayEnv } from './gwbin.mjs';
 import { checker, storedMsgs, placeholders, send, freshChat, settle, until, nominateRunner } from './handoffpair.mjs';
 import { guardRan } from './verdict.mjs';
 
@@ -111,7 +111,7 @@ async function stack() {
 	execFileSync('bash', ['dev/devgw.sh'], { cwd: TREE, env: Object.assign({}, process.env, { DAIMOND_GW_PORT: String(GW_PORT) }) });
 	fs.copyFileSync(path.join(TREE, 'dev/devgw/app.jdat'), path.join(cwd, 'app.jdat'));
 	fs.symlinkSync(fs.realpathSync(path.join(TREE, 'gateway/keys')), path.join(cwd, 'keys'));
-	child(GWBIN, [], { cwd, env: Object.assign({}, process.env, { APP_MODE: 'sandbox' }) }, 'gateway');
+	child(GWBIN, [], { cwd, env: gatewayEnv({ APP_MODE: 'sandbox' }, cwd) }, 'gateway');
 	// The world's mock writes the same file (`connectMock` asks it), so the log starts empty either way.
 	fs.writeFileSync(MOCK_LOG, '');
 	if (!mockUp) child('node', ['dev/mockllm.mjs', String(MOCK_PORT)], { cwd: TREE, env: Object.assign({}, process.env, { DAIMOND_MOCK_LOG: MOCK_LOG }) }, 'mock');

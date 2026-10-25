@@ -558,6 +558,8 @@
 	'chat.handback_too_big': 'This chat is too big to send to {name} yet, so it did not run there.',
 	'chat.handback_old_page': 'This page is older than {name} expects, so the chat did not run there. Reload this page to update it.',
 	'chat.handoff_tokens':        '{n} tok',
+	'chat.handoff_cached':        '{n} cached',
+	// i18n-indirect: daimond.js m.say.k = open -- a native runner's error, vision or failed-answer row names the page's own key (`friendlyError`, `blindLine`) in `say` (`logRowText`); a key this build lacks says the row's content
 	'chat.who_handoff':    'Hand-off',
 	'chat.who_tool':       'Tool',
 	'chat.who_files':      'Files',
@@ -1859,6 +1861,21 @@
 	'sync.unsent':         'Not sent yet',
 	'sync.unsent_reason':  'The last send from this device did not get through, so its work has not reached the account yet. It is tried again on its own, less often the longer that lasts, until it goes.',
 	'sync.files_not_here':        'Files not synced here',
+	'recover.not_yet':            'Not recoverable yet',
+	'recover.not_yet_reason':     'This account’s key is kept only in this browser. If the browser clears its storage, the account cannot be opened again.',
+	'recover.not_yet_act':        'Make it recoverable',
+	'recover.file_title':         'Save a recovery file',
+	'recover.file_body':          'This account’s key is kept only in this browser. Save a recovery file somewhere else, such as Files, another computer or a USB stick. With it and your passphrase, Restore brings the account back.',
+	'recover.file_save':          'Save the file',
+	'recover.saved_title':        'Did the file save?',
+	'recover.saved_body':         'Keep it somewhere other than this device. It opens only with your passphrase.',
+	'recover.saved_yes':          'It saved',
+	'recover.saved_no':           'It did not',
+	'recover.home_title':         'Add Daimond to your Home Screen',
+	'recover.home_body':          'Safari can clear this site’s storage after seven days without a visit. A Daimond on the Home Screen is kept, but it starts empty: it has its own storage, not this tab’s. To put this account in it, tap Share, then Add to Home Screen, open Daimond from there, choose Pair with your other Daimond, and enter the code this tab shows.',
+	'recover.home_pair':          'Show the pairing code',
+	'recover.pair_first':         'Pair with your other Daimond',
+	'recover.pair_first_lead':    'This Home Screen app starts empty. If you already use Daimond in Safari, pair it from there to bring that account here.',
 	'sync.files_none_reason':     'This browser has no file storage (an older Safari, or Private Browsing), so your workspace files stay on your other devices and in cloud storage. Chats, hand-offs and settings still sync.',
 	'sync.files_refused_reason':  'This browser refused file storage (Private Browsing, or site data blocked or cleared), so your workspace files stay on your other devices and in cloud storage. Chats, hand-offs and settings still sync, and the files follow once storage is back.',
 	'sync.last_synced':    'Last synced {when}.',
@@ -3590,6 +3607,11 @@
 	'gateway.acct_unreachable': 'Could not reach the Daimond account service. Try again shortly.',
 	'gateway.session_no_url':   'The checkout session came back without a URL.',
 	'gateway.card_no_url':      'The card session came back without a URL.',
+	// Why a send did not land, after "Not sent:" (`DaimondGateway.failWhy`).
+	'gateway.fail_unreachable': 'the account service could not be reached',
+	'gateway.fail_stale':      'Daimond is out of date and must reload first',
+	'gateway.fail_soon':       'too soon after the last one; wait a moment',
+	'gateway.fail_status':     'the server answered {status}',
 
 	// ── A few more from the Workspace and Agents panels ────────
 	'files.folder_open_failed': 'Could not open that folder.',
@@ -3624,6 +3646,8 @@
 	'err.ratelimit_429': 'The provider is rate-limiting you (429). Wait a moment and retry.',
 	'err.server_5xx':   'The provider had a server error. Try again shortly.',
 	'err.generic':      'Something went wrong. Try again.',
+	// A runner's turn that failed: its reason, in the runner's words.
+	'err.runner_reason': '{why}',
 	'err.reply_cut':    'The reply ran out of room at {max} tokens, so a tool call arrived incomplete and could not run. Raise the reply length in Settings, or ask for a smaller change',
 
 	// ── How long a reply may be ────────────────────────────────
@@ -4150,7 +4174,6 @@
 	'settings.diag_share':      'Share diagnostic log',
 	'settings.diag_sharing':    'Sharing…',
 	'settings.diag_shared':     'Shared — thank you',
-	'settings.diag_share_fail': 'Could not share',
 	'settings.diag_share_note': 'Sends this device’s diagnostic log to the team, never message text.',
 
 	// The "Something went wrong" report, D-20260920-02: the error toast's
@@ -4167,7 +4190,6 @@
 	'support.done':            'Close',
 	'support.sending':         'Sending a report…',
 	'support.sent':            'Sent — thank you.',
-	'support.send_failed':     'Could not send',
 
 	// ── TRAINING WHEELS — the temporary debug-data-sharing feature ──
 	// Remove these with www/js/debugshare.js and the DEBUG_SHARE touch points in

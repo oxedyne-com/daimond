@@ -131,7 +131,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { staleSources, procLog, GWDIR, GWBIN } from './gwbin.mjs';
+import { staleSources, procLog, GWDIR, GWBIN, gatewayEnv } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
 import { CLIENT_API } from './clientapi.mjs';
 
@@ -408,15 +408,14 @@ let gw = null;
 async function startGateway(ownerAccount) {
 	gw = spawn(BIN, [], {
 		cwd: WORK,
-		env: {
-			...process.env,
+		env: gatewayEnv({
 			APP_MODE: 'sandbox',
 			// The invitation mailbox, pointed at this run's own SMTP server.
 			// Empty under `--break nomail`, which is a gateway nobody finished
 			// configuring — it still mints, and it writes to nobody.
 			...mailEnv(),
 			...(ownerAccount ? { DAIMOND_OWNER_ACCOUNTS: ownerAccount } : {}),
-		},
+		}, WORK),
 		stdio: GW_LOG.stdio,
 	});
 	procs.push(gw);

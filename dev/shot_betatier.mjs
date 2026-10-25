@@ -25,7 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, procLog, GWDIR, GWBIN, openBeta } from './gwbin.mjs';
+import { requireFreshGateway, procLog, GWDIR, GWBIN, openBeta, gatewayEnv } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
 
 const HERE    = path.dirname(fileURLToPath(import.meta.url));
@@ -93,8 +93,8 @@ async function startGateway(cwd, owner) {
 	if (gw) { try { gw.kill('SIGKILL'); } catch (e) {} await sleep(1200); }
 	gw = launch(GWBIN, [], {
 		cwd,
-		env: { ...process.env, APP_MODE: 'sandbox',
-			...(owner ? { DAIMOND_OWNER_ACCOUNTS: owner } : {}) },
+		env: gatewayEnv({ APP_MODE: 'sandbox',
+			...(owner ? { DAIMOND_OWNER_ACCOUNTS: owner } : {}) }, cwd),
 		stdio: GW_LOG.stdio,
 	});
 	return await waitFor(async () => (await fetch(`${GW}/api/health`)).ok, 25000);

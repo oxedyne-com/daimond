@@ -40,11 +40,12 @@ impl<'a> Change<'a> {
 }
 
 /// The person's answer.  Only `Apply` lets the change through.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Answer {
 	Apply,
 	Refused,		// they pressed Don't Change
 	Unanswered,		// ten minutes, a reload, no page to ask on, or no device to ask
+	Unkept(String),	// a host that keeps instead of asking could not keep a copy first: why
 }
 
 impl Answer {
@@ -64,6 +65,10 @@ impl Answer {
 			Self::Apply			=> return None,
 			Self::Refused		=> "The user chose not to have",
 			Self::Unanswered	=> "The user did not answer whether to have",
+			Self::Unkept(why)	=> return Some(fmt!("A copy of '{}' could not be kept first, so \
+				that it could be put back: {}. Nothing was changed. Do not make this change \
+				another way; finish the rest and say in your answer what you would have changed.",
+				path, why.trim_end_matches('.'))),
 		};
 		Some(fmt!("{} '{}' changed. Nothing was changed. Do not make this change another way; \
 			finish the rest and say in your answer what you would have changed.", why, path))

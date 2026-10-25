@@ -182,7 +182,8 @@
 		var last = 0;
 		try { last = parseInt(read(LASTFLUSH_KEY) || '0', 10) || 0; } catch (e) {}
 		if (Date.now() - last < MIN_FLUSH_MS) {
-			return Promise.resolve({ ok: false, why: 'too soon; wait a moment and try again' });
+			// Held back here, so it never left: told as a 429 would be, and not counted.
+			return Promise.resolve({ ok: false, status: 429, why: failWhy(429) });
 		}
 		var device = '';
 		try { device = (window.DaimondIdentity && DaimondIdentity.deviceId()) || ''; } catch (e) {}
@@ -205,10 +206,46 @@
 			body:        JSON.stringify(payload),
 		}).then(function (res) {
 			if (res && res.ok) { log('shared diagnostics', payload.rows.length + ' rows'); return { ok: true }; }
-			return { ok: false, why: 'the server declined (' + (res && res.status) + ')' };
-		}, function (e) {
-			return { ok: false, why: 'the request could not be sent' };
+			return failed(res ? (res.status | 0) : 0);
+		}, function () {
+			return failed(0);
 		});
+	}
+
+	/// A share that reached the wire and did not land: counted into the debug-share
+	/// beat's `postFail`, so a run of them is visible beyond this screen.
+	function failed(status) {
+		try { if (window.DEBUG_SHARE && DEBUG_SHARE.notePostFail) DEBUG_SHARE.notePostFail(); }
+		catch (e) { /* the count is not the share */ }
+		return { ok: false, status: status, why: failWhy(status) };
+	}
+
+	/// Read from gateway.js at the failure, as the version is at the send.
+	function failWhy(status) {
+		try { return DaimondGateway.failWhy(status); }
+		catch (e) { return String(status || ''); }
+	}
+
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
+	/// Settings' "Share diagnostic log": `btn` shares and says how it went, and
+	/// `retry`, shown only beside a "Not sent: {reason}", shares again. Answers the
+	/// share, for both buttons' click handlers to call.
+	function shareControl(btn, retry) {
+		retry.textContent = t('mail.retry');
+		retry.hidden = true;
+		return function share() {
+			btn.textContent = t('settings.diag_sharing');
+			retry.hidden = true;
+			return flush().then(function (r) {
+				var ok = !!(r && r.ok);
+				btn.textContent = ok
+					? t('settings.diag_shared')
+					: t('mail.unsent', { reason: (r && r.why) || failWhy(0) });
+				retry.hidden = ok;
+				return r;
+			});
+		};
 	}
 
 	// ── The on-device panel ──────────────────────────────────────
@@ -318,6 +355,7 @@
 		text:        text,
 		clear:       clear,
 		flush:       flush,
+		shareControl: shareControl,
 		lastTs:      lastTs,
 		renderPanel: renderPanel,
 	};

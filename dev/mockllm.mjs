@@ -60,6 +60,10 @@
 //                           the same, spelled `delta.reasoning_content` -- which is
 //                           what DeepSeek's own endpoint calls it, and the reason the
 //                           accumulator reads two field names.
+//   @parity <working> ;; <name> <json> ;; <name> <json> ;; <answer>
+//                           the RUNNER-TURN parity turn (dev/turn_parity.sh): round 0 thinks
+//                           and makes the first call, round 1 the second, round 2 answers.
+//                           Run Here and on a runner, the two turns' rows are compared.
 //   @reasontool <working> ;; <name> <json>
 //                           working, then a tool call and no text at all: the round
 //                           that spends a minute and a half thinking and then says one
@@ -81,6 +85,9 @@
 //                            read twenty of in one turn while asking where the
 //                            folding was, and nothing could have caught it, because
 //                            nothing could make it happen.
+//   @toolerr <code> <name> <json>
+//                            one round calling the tool, billed, then HTTP <code> on every
+//                            later round: a turn that spends and then fails.
 //   @cutreason <words>       an ordinary text reply, but `finish_reason:"length"`
 //                            rather than `"stop"` -- the provider's own word for a
 //                            reply it cut at the output limit.
@@ -887,6 +894,17 @@ const planOf = (messages, tools) => {
 		case 'err':
 			return { httpError: numArg(d.rest, 500, 'err') };
 
+		// A TURN THAT SPENDS AND THEN FAILS (QA-B MED 1): round one calls `<name> <json>` and is
+		// billed as any round is (an `@usage` tail sets its figures), and every later round is
+		// answered HTTP `<code>`. The bill of the round that ran must still reach the totals.
+		case 'toolerr': {
+			const sp = d.rest.indexOf(' ');
+			const code = numArg(sp === -1 ? d.rest : d.rest.slice(0, sp), 400, 'toolerr');
+			if (rounds > 0) return { httpError: code };
+			const { name, args } = splitCall(sp === -1 ? 'file_list {"path":"."}' : d.rest.slice(sp + 1).trim());
+			return { calls: [toolCall(nextCallId(), name, args)] };
+		}
+
 		// A connection that dies mid-answer. `n` words arrive first so the partial
 		// reply is a real one -- a drop before the first token is a different and
 		// much easier case, and the app retries THAT one on its own.
@@ -1031,6 +1049,17 @@ const planOf = (messages, tools) => {
 		// reasoning then a tool call; round 1 streams MORE reasoning then the answer.
 		// Used to prove a Tool tile renders BETWEEN the two Thinking tiles.
 		//   @rtr <think1> ;; <name> <json> ;; <think2>
+		// The parity turn (dev/turn_parity.sh): think and call, call, then answer.
+		case 'parity': {
+			const [think, c1, c2, said] = d.rest.split(';;');
+			if (rounds >= 2) return { text: (said || 'Parity done.').trim() };
+			const { name, args } = splitCall(((rounds === 0 ? c1 : c2) || 'file_list {"path":"."}').trim());
+			return rounds === 0
+				? { think: (think || 'Let me work.').trim(), thinkKey: 'reasoning', text: '',
+					calls: [toolCall(nextCallId(), name, args)] }
+				: { text: '', calls: [toolCall(nextCallId(), name, args)] };
+		}
+
 		case 'rtr': {
 			const [t1, call, t2] = d.rest.split(';;');
 			if (rounds > 0) {
@@ -1330,7 +1359,7 @@ const server = http.createServer((req, res) => {
 		// `sha` and `directives` say which REVISION is answering; see the note beside
 		// them. `log` says which world. A caller needs both and they are different
 		// questions.
-		return sendJson(res, { log: LOG, port: PORT, pid: process.pid,
+		return sendJson(res, { log: LOG, port: server.address().port, pid: process.pid,
 			sha: SHA, directives: DIRECTIVES });
 	}
 
@@ -1461,5 +1490,6 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-	console.log(`mockllm: http://127.0.0.1:${PORT}/v1/chat/completions  (log: ${LOG})`);
+	// The port it really bound: asked for 0, the OS chose it, and a test reads it from here.
+	console.log(`mockllm: http://127.0.0.1:${server.address().port}/v1/chat/completions  (log: ${LOG})`);
 });

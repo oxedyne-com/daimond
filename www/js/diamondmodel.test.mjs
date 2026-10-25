@@ -68,8 +68,10 @@ const FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatM
 	// The chat's model half on its own stamp (D-20261018-09 U1c).
 	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit',
 	// The one-way taint (H3 TAINT-DURABLE).
-	'chatTaintOf', 'chatTaintJoin'];
-const VARS = ['CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', 'DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF',
+	'chatTaintOf', 'chatTaintJoin',
+	// The totals derived from the native runs (RT-C).
+	'runKeyCmp', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals'];
+const VARS = ['FOLDED_RUNS_MAX', 'NATIVE_FIGS', 'HERE_FIELDS', 'TOTAL_FIELDS', 'CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', 'DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF',
 	'DIAMOND_EFFORT_HALF', '_chatModelShedSaid'];
 const BODY = VARS.map(function (v) { return liftVar(APP, v); }).join('\n') + '\n'
 	+ FNS.map(function (f) { return liftFn(APP, f); }).join('\n');

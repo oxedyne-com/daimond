@@ -132,7 +132,7 @@ const stubs = {
 	touchChat() {}, persistChats() { st.persisted++; },
 	markChatTainted: () => false,
 	loadMsgTombs: () => ({}),
-	peerReports: {}, takeReportTaint() {}, settleRunnerAlerts() {}, recordCarriedTurn() {}, requeueUnheard() {},
+	peerReports: {}, takeReportTaint() {}, settleRunnerAlerts() {}, settleRunnerAsk() {}, recordCarriedTurn() {}, requeueUnheard() {},
 	_openAsk: {}, markPlaceholderParked() {}, updateExpedite() {}, adoptFinalFrame: () => false, renderDispatchedBadges() {},
 };
 const names = ['settleRunnerWords', 'settleRunnerSession', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint'];

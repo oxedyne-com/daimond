@@ -166,7 +166,7 @@ async function refusedPost(mode) {
 		errandScope: (c, h) => h,		// the folder's scope (UNBLOCK-32 F2b) is f2native.test's
 		errandFence: async () => null,		// the page's fence (R3c2) is peer.test's FN1/FN2, not this test's
 		errandLimits: () => undefined,		// the page's limits (KT-2b) are errandlimits.test's
-		errandSession: () => undefined, errandReach: async () => undefined, errandToday: () => '', errandWords: async () => undefined, errandWordsFor: async () => undefined,	// KT-4's are peer.test's
+		errandSession: () => undefined, errandReach: async () => undefined, errandToday: () => '', errandWords: async () => undefined, errandWordsFor: async () => undefined, errandProdBase: () => null,	// KT-4's are peer.test's
 		markTurnDispatched: (ch, mark) => { ch.messages.push({ role: 'assistant', content: '', why: 'dispatched', iturn: mark.iturn, toDevice: DESK, toName: 'argonaut' }); },
 		seatNoteOnPrompt: () => true, seatNameOf: (id, nm) => nm || id,
 		touchMsg: () => {}, touchChat: () => {}, persistChats: () => { rec.persisted++; }, ownsChat: () => false, renderHistory: () => {},

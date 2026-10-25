@@ -63,7 +63,7 @@ const check = (ok, what, detail) => {
 const PROFILE = scratch('pw', 'reloadloop-' + process.pid);
 fs.rmSync(PROFILE, { recursive: true, force: true });
 
-const s = await open({ name: 'reloadloop', connect: false, profile: PROFILE });
+const s = await open({ name: 'reloadloop', connect: false, profile: PROFILE, serviceWorkers: 'allow' });	// an update check: the app's own worker in control, as on a real device
 const p = s.page;
 
 if (BREAK) {

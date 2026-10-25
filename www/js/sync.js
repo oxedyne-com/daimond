@@ -353,7 +353,7 @@
 		'fileTombsStamped', 'ledger', 'left', 'mail', 'models', 'msgTombs', 'nominated', 'own',
 		'peer', 'perms', 'size', 'support', 'tombs', 'v',
 		// hung on by collectParcel itself
-		'graph', 'handle', 'look', 'pause', 'post', 'trash', 'voice'];
+		'graph', 'handle', 'look', 'pause', 'post', 'recover', 'trash', 'voice'];
 	var knownSection = Object.create(null);	// KNOWN_SECTIONS, plus any key this page has collected itself
 	KNOWN_SECTIONS.forEach(function (k) { knownSection[k] = true; });
 	var carried     = Object.create(null);	// unknown sections of the last merged parcel, verbatim
@@ -1895,6 +1895,12 @@
 		// verbatim, so nothing on this path can stamp. See `handleSnapshot`.
 		try { if (window.DaimondIdentity) state.handle = DaimondIdentity.handleSnapshot(); }
 		catch (e) { log('handle snapshot failed', e); }
+		// WHAT BRINGS THE IDENTITY BACK -- a passkey the gateway holds, a recovery file
+		// saved -- which is a fact about the identity and not this browser, so it clears
+		// "Not recoverable yet" on every device of the account. Fixed shape, stamped
+		// only on a real change, like the handle. See identity.js `recoverable`.
+		try { if (window.DaimondIdentity && DaimondIdentity.recoverSnapshot) state.recover = DaimondIdentity.recoverSnapshot(); }
+		catch (e) { log('recover snapshot failed', e); }
 		// AND HOW THE ACCOUNT LOOKS, for the device that has not been dressed.
 		// A pairing bundle carries this to a device linked by a code; nothing
 		// carried it to one brought across by a passkey, or to one that simply
@@ -2069,6 +2075,11 @@
 		if (window.DaimondIdentity && DaimondIdentity.adoptHandle) {
 			try { DaimondIdentity.adoptHandle(state && state.handle); }
 			catch (e) { log('handle adopt failed', e); failed.push('handle'); }
+		}
+		// The recovery record, each half by the later stamp; a tie never invents one.
+		if (window.DaimondIdentity && DaimondIdentity.adoptRecover) {
+			try { DaimondIdentity.adoptRecover(state && state.recover); }
+			catch (e) { log('recover adopt failed', e); failed.push('recover'); }
 		}
 		// How the account looks, under the same rule again -- the later record,
 		// stored verbatim -- with one thing on top of it: a device that has never

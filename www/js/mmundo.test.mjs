@@ -85,8 +85,9 @@ const PAGE = ['readJson', 'diamondModels', 'setDiamondModel', 'blankDiamondModel
 	'withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
 	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit', 'mergeFold',
 	'mergeChatRecords', 'touchChatMeta', 'touchChatModel',
-	'chatTaintOf', 'chatTaintJoin'];	// the one-way taint (H3)
-const PAGE_VARS = ['DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF', 'DIAMOND_EFFORT_HALF', '_picksDirty',
+	'chatTaintOf', 'chatTaintJoin',	// the one-way taint (H3)
+	'runKeyCmp', 'hasNativeRuns', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals'];	// the derived totals (RT-C)
+const PAGE_VARS = ['FOLDED_RUNS_MAX', 'NATIVE_FIGS', 'HERE_FIELDS', 'TOTAL_FIELDS', 'DIAMOND_MODELS_KEY', 'DIAMOND_MODEL_HALF', 'DIAMOND_EFFORT_HALF', '_picksDirty',
 	'CHAT_TURN_FIELDS', 'CHAT_META_FIELDS', 'CHAT_NAME_FIELDS', 'CHAT_MODEL_FIELDS', '_chatModelShedSaid'];
 const MKEY = 'daimond-diamond-models', CKEY = 'daimond-byok';
 const copy = (o) => JSON.parse(JSON.stringify(o));

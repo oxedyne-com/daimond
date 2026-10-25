@@ -314,7 +314,7 @@ function world(fault, extra) {
 		touchChat: () => {}, persistChats: () => {}, renderHistory: () => {},
 		scheduleDispatchFallback: () => {}, PRESUMED_FALLBACK_MS: 5000, electedTried: () => ['argonaut1'],
 		turnEffortOf: () => null, storedPre: () => { if (fault === 'throw') throw new Error('qa: a throw before the mark'); return ''; },
-		storedEffort: () => null, errandModelOf: () => ({}), errandFence: async () => null, errandClean: () => false, errandLocked: () => undefined, errandLimits: () => undefined, errandSession: () => undefined, errandReach: async () => undefined, errandToday: () => '', errandWords: async () => undefined, errandWordsFor: async () => undefined, errandScope: (c, h) => h, autonomousPosture: () => false, msgTombsOwed: () => [],
+		storedEffort: () => null, errandModelOf: () => ({}), errandFence: async () => null, errandClean: () => false, errandLocked: () => undefined, errandLimits: () => undefined, errandSession: () => undefined, errandReach: async () => undefined, errandToday: () => '', errandWords: async () => undefined, errandWordsFor: async () => undefined, errandProdBase: () => null, errandScope: (c, h) => h, autonomousPosture: () => false, msgTombsOwed: () => [],
 		deviceNameFor: () => '',
 		loadChatMessages: async () => {}, friendlyError: (e) => String(e && e.message),
 		seatSwitchFor: () => ({ runner: { deviceId: 'argonaut1' } }),

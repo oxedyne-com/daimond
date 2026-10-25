@@ -1583,13 +1583,15 @@ impl Change {
 	/// captured no prior bytes, and every later act it folds in found the bytes the turn had left
 	/// (`capture_into` replaces a run another hand broke).  A walk's or a ledger's re-read found
 	/// nothing it can vouch for ([`Found::Unread`]), a refused read knows nothing, and bytes a move
-	/// carried keep their own history -- made only where the turn made them at the source.
+	/// carried keep their own history -- made only where the turn made them at the source.  A
+	/// held after put down and named by hash ([`Body::Stored`], D1mem fix B) is the same capture:
+	/// a runner keeper's ledger holds every one so (RT-D1 Finding A).
 	///
 	/// A command's row ([`ran_rows`]) says so where the hand's write meter reported the file
 	/// `created`: the run found nothing there, which the row keeps as [`Found::Nothing`].  One it
 	/// reported `changed` found bytes that stood, and is made only through the run of rows before it.
 	pub fn made(&self) -> bool {
-		let tool = matches!(self.after, Body::Held(_))
+		let tool = matches!(self.after, Body::Held(_) | Body::Stored(_))
 			&& self.refused.is_none()
 			&& matches!(self.found, Found::Nothing | Found::Hash(_))
 			&& matches!(self.carried, None | Some(Carried::Made));
@@ -2217,7 +2219,8 @@ pub fn made_by_diamond_ran(
 				turns_made(&newest, &c.path, c.folder.as_deref(), &b.hash())));
 		let hash = match (&c.after, made) {
 			(Body::Held(b), true)	=> Some(hash_of(b)),
-			(Body::Large(r), true)	=> Some(r.hash.clone()),
+			(Body::Large(r), true)
+				| (Body::Stored(r), true)	=> Some(r.hash.clone()),
 			_			=> None,
 		};
 		take(&c.path, hash, &mut out);
@@ -2284,7 +2287,8 @@ impl RanMade {
 			if extract_json_bool(own, "created_capped").unwrap_or(false) {
 				out.capped = true;
 			}
-			for (key, created) in [("created", true), ("changed", false)] {
+			// `kept`: his files changed, each kept first (METER-KEEP), so Undo restores them.
+			for (key, created) in [("created", true), ("changed", false), ("kept", false)] {
 				for w in extract_json_objects(own, key).unwrap_or_default() {
 					out.add(&w, created);
 				}
@@ -2336,10 +2340,20 @@ impl RanMade {
 /// * `ran` - Each file a command made, with its hash, whether the run created it, and who ran the
 ///   command, oldest first.
 pub fn ran_rows(ran: &[(String, String, bool, Option<Author>)]) -> Vec<Change> {
+	let ran: Vec<(String, String, bool, Option<Author>)> = ran.iter()
+		.map(|(p, h, c, by)| (p.clone(), h.clone(), *c,
+			by.as_ref().map(|a| Author { via: VIA_COMMAND.to_string(), ..a.clone() })))
+		.collect();
+	meter_rows(&ran)
+}
+
+/// The rows of `ran` in [`ran_rows`]' shape, each credited as it is named: a carried turn's file
+/// tool keeps its `via` empty, as Here, where a command's reads [`VIA_COMMAND`] (RT-D2).
+fn meter_rows(ran: &[(String, String, bool, Option<Author>)]) -> Vec<Change> {
 	let mut out: Vec<Change> = Vec::new();
 	for (path, hash, created, by) in ran.iter().rev() {
 		let by = match by {
-			Some(a) => Author { via: VIA_COMMAND.to_string(), ..a.clone() },
+			Some(a) => a.clone(),
 			None	=> continue,
 		};
 		if out.iter().any(|c| c.path == *path) {
@@ -2363,8 +2377,8 @@ pub fn ran_rows(ran: &[(String, String, bool, Option<Author>)]) -> Vec<Change> {
 /// The rows a runner's turn record (`turnRec`, RUN-HIST S1) carries back to the asker: one per file
 /// the runner's command made or changed, in [`ran_rows`]' shape -- the meter's hash and no body
 /// ([`MADE_BY_COMMAND`]), [`Found::Nothing`] where the run created it and [`Found::Unread`] where
-/// it changed one, credited to the agent that ran it with `via` [`VIA_COMMAND`].  A row whose path
-/// is not plainly absolute or whose hash is not one is left out, as the meter's own are; at most
+/// it changed one, credited as the runner credited it: `via` [`VIA_COMMAND`] where a command
+/// changed it, else empty, the file tool's, as Here (RT-D2).  A row whose path is not plainly absolute or whose hash is not one is left out, as the meter's own are; at most
 /// [`MADE_SENT_MAX`].  An author the record does not name is still the runner's agent, so no row
 /// is dropped for want of one.
 ///
@@ -2399,12 +2413,17 @@ pub fn carried_rows(rec: &str) -> Vec<Change> {
 				role: by.and_then(|b| extract_json_string(b, "agent"))
 					.filter(|a| !a.is_empty())
 					.unwrap_or_else(|| "daimon".to_string()),
+				// The runner's own credit: a command's, else its file tool's, as Here (RT-D2).
+				via:  match by.and_then(|b| extract_json_string(b, "via")).as_deref() {
+					Some(VIA_COMMAND)	=> VIA_COMMAND.to_string(),
+					_			=> String::new(),
+				},
 				..Default::default()
 			},
 		};
 		ran.push((path, hash, created, Some(author)));
 	}
-	ran_rows(&ran)
+	meter_rows(&ran)
 }
 
 /// The [`Away`] a runner's turn record names: `{on, onName, run, since, until, more}` off its top
@@ -2424,7 +2443,8 @@ pub fn carried_head(rec: &str) -> String {
 /// no `was` -- the bytes before are on the runner, in its trash -- marked as the meter's
 /// ([`MADE_BY_COMMAND`]), and `made` where the runner's turn created the file.
 pub fn carried_entry(ch: Change) -> Entry {
-	let made = ch.made();
+	// The runner said it created the file, whether its command or its file tool did (RT-D2).
+	let made = matches!(ch.after, Body::Large(_)) && ch.before.is_none() && ch.found == Found::Nothing;
 	let (hash, gone) = match ch.after {
 		Body::Large(r)	=> (r.hash, false),
 		Body::Gone	=> (String::new(), true),
@@ -5208,6 +5228,12 @@ Garden: order two bags of bark for a bed.
 		assert!(Change { carried: Some(Carried::Made), ..cap(None, Found::Nothing) }.made(),
 			"a move of a file the turn made");
 		assert!(!Change { after: Body::Gone, ..cap(None, Found::Nothing) }.made(), "a deletion");
+		// A held after put down and named by hash (D1mem fix B) is the same capture: a runner's
+		// keeper ledger holds every one so (RT-D1 Finding A).
+		let stored = Body::Stored(BodyRef::of(b"B"));
+		assert!(Change { after: stored.clone(), ..cap(None, Found::Nothing) }.made(), "a stored first act");
+		assert!(!Change { after: stored, ..cap(Some("his"), Found::of(Some(b"his"))) }.made(),
+			"a stored capture of bytes that stood");
 		// A move of his file onto a new path: the destination found nothing there, and still the
 		// bytes are his.  Its row has no `was` and makes nothing, so the walk reads it as his.
 		let (_, his) = moved(("vault/a.md", true), ("vault/p.md", true),

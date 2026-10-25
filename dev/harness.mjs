@@ -494,8 +494,18 @@ export async function open(opts = {}) {
 		// `Date` getter answers relative to it -- a plain pass-through to the
 		// context option of the same name, exposed here so a verifier of LOCAL time
 		// (a tile header's own Holocene clock) can drive two zones without a second
-		// launch. Left unset, the context keeps the host's own zone, as it always did.
-		timezoneId = null,
+		// launch. DAIMOND_TZ sets it for every open() of a run that names none.
+		timezoneId = process.env.DAIMOND_TZ || null,
+		// THE PAGE'S CLOCK, PINNED: an instant (ISO string, Date or ms) the page's
+		// Date, timers and performance clock start from, before its first script
+		// (Playwright's `page.clock.install`), flowing in real time from there. The
+		// zone above fixes WHERE the page is; this fixes WHEN, so a verifier whose
+		// figures fall on a day boundary ("Yesterday" heads, a day's spend) measures
+		// the same day whatever the host's clock says. ownereye's R4 read a Yesterday
+		// head as tile height between 00:00 and 01:00 Sydney on 2026-10-25 with the
+		// zone pinned and the date left free. DAIMOND_CLOCK sets it for every open()
+		// of a run that names none, to replay a run at a chosen moment.
+		clock     = process.env.DAIMOND_CLOCK || null,
 		// CHROMIUM'S OWN STATEMENT THAT THIS IS A PHONE: `navigator.userAgentData.mobile`.
 		// The UA string alone is NOT enough here, and that is not a detail. mobile.js
 		// `detectMobile` reads the client hint FIRST and returns it whatever it says,
@@ -530,11 +540,18 @@ export async function open(opts = {}) {
 		// a demo, an owner recording -- rather than for asserting on. Left unset,
 		// nothing is recorded, as before.
 		video     = null,
-		// SERVICE WORKERS, passed to the context ('allow' or 'block'). A verifier that
-		// serves another build's www through `route` blocks them: Playwright's page.route
-		// never sees a request a service worker answers, so a worker could serve the page
-		// this tree's files behind the route's back.
-		serviceWorkers = 'allow',
+		// SERVICE WORKERS, passed to the context ('allow' or 'block'), BLOCKED BY DEFAULT.
+		// Playwright's page.route never sees a request a service worker answers, so with
+		// the app's worker allowed a page reads past every route: another build's www
+		// behind the route's back, and in WebKit the LIVE public log and the internet in
+		// place of the test's local copy (found by ownereye-stable, 25 Oct). A check of the
+		// worker itself, and every update / stale-tab / install / PWA check (verify_pwa,
+		// verify_fleetbuild, verify_updates, verify_version, verify_reloadloop,
+		// verify_release) opts in with 'allow', so blocking cannot hide a stale build served
+		// through an update; a gates.json gate declaring `sw: true` opts in every open() of
+		// its run through DAIMOND_SW=allow (gateclock.mjs). An extension session defaults to
+		// 'allow', as its background is a worker.
+		serviceWorkers = extension || process.env.DAIMOND_SW === 'allow' ? 'allow' : 'block',
 		// THE WINDOW, for a session that is a particular device (dev/rig/devices.mjs).
 		// Left unset, the 1500x950 every verifier was written against.
 		viewport  = { width: 1500, height: 950 },
@@ -553,6 +570,17 @@ export async function open(opts = {}) {
 		// device's shaper `/llm/...`. Left unset, the world's MOCK.
 		mock      = MOCK,
 	} = opts;
+	// NO GATE READS THE WALL CLOCK (RIG-PROD P2, §3.7 rule 1). A context with no instant or no
+	// zone is refused: it would judge the page at the host's own moment, and a figure that
+	// falls on a day boundary then turns red one hour a night (ownereye R4, 00:02 Sydney,
+	// 25 Oct). A gate's instant and zone are declared in dev/rig/gates.json; the kit exports
+	// them as DAIMOND_CLOCK and DAIMOND_TZ, and `node dev/rig/gateclock.mjs env <gate>`
+	// prints them for a run by hand.
+	const unset = [clock == null ? 'clock (DAIMOND_CLOCK)' : '', timezoneId ? '' : 'timezoneId (DAIMOND_TZ)'].filter(Boolean);
+	if (unset.length) {
+		throw new Error(`open(): no ${unset.join(' and no ')}: a gate runs at its declared instant and zone, `
+			+ 'never the host\u2019s. Pass them, or run under `eval "$(node dev/rig/gateclock.mjs env <gate>)"` (dev/rig/gates.json).');
+	}
 
 	// Before a browser is even launched: is the mock this run will read the mock
 	// this run will talk to? See `requireOwnMock` for the gate that made this
@@ -778,6 +806,7 @@ export async function open(opts = {}) {
 		}
 	}
 
+	if (clock != null) await page.clock.install({ time: clock });
 	if (route) await route(page);
 	await page.addInitScript(PRESS_MARK);
 	await page.addInitScript(PRESS_SQUARES);
@@ -1011,6 +1040,50 @@ export async function signInAs(s, name) {
 			throw new Error(`sign-in did not take: ${why}`);
 		});
 	await page.waitForTimeout(400);
+	await answerRecover(page);
+}
+
+/// Answer the recovery offer that follows a first-run create (spec §5.1), OK to each card.
+///
+/// Every card carries `data-ask="recover"`: the passkey offer, the file offer, the "did it
+/// save?" question after a download, and the iOS home-screen notice. Left standing, the
+/// first card blocks every verifier, and a declined one leaves the chip on "Not
+/// recoverable yet". A card with a field is the passkey's passphrase prompt; it gets the
+/// harness phrase. Done when no card shows on two polls running and the identity is either
+/// recoverable or has been asked once on this device; an unlock (no offer due) passes at once.
+async function answerRecover(page) {
+	const sel = '.modal.dlg[data-ask="recover"]';
+	let quiet = 0;
+	for (const t0 = Date.now(); Date.now() - t0 < SIGN_IN_WAIT_MS; ) {
+		const card = await page.$(sel);
+		if (card) {
+			quiet = 0;
+			await page.evaluate(([q, pass]) => {
+				const m = document.querySelectorAll(q);
+				const c = m[m.length - 1];
+				const f = c.querySelector('.dlg-input');
+				if (f && !f.value) {
+					f.value = pass;
+					f.dispatchEvent(new Event('input', { bubbles: true }));
+				}
+				const ok = c.querySelector('.dlg-ok');
+				if (ok) ok.click();
+			}, [sel, PASS]);
+			await page.waitForTimeout(300);
+			continue;
+		}
+		const settled = await page.evaluate(() => {
+			try {
+				return !window.DaimondIdentity || !DaimondIdentity.exists()
+					|| !!(DaimondIdentity.recoverable && DaimondIdentity.recoverable())
+					|| localStorage.getItem('daimond-recover-asked') === '1';
+			} catch (e) { return true; }
+		});
+		if (settled && ++quiet >= 2) return;
+		await page.waitForTimeout(250);
+	}
+	throw new Error('sign-in: the recovery offer (data-ask="recover") did not settle in '
+		+ Math.round(SIGN_IN_WAIT_MS / 1000) + 's.');
 }
 
 /// Start a chat, which is what makes the composer appear.

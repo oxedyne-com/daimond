@@ -11,6 +11,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { gatewayNow } from './gwbin.mjs';
 import { GW_URL } from './ports.mjs';
 
 /// The account id the page's own identity binds to.
@@ -62,7 +63,7 @@ export async function grantPro(accountId, gatewayDir, gwUrl = GW_URL) {
 		path.join(gatewayDir, 'keys/stripe/sandbox/whsec'), 'utf8').trim();
 	// A year out, so the recency guard (a period end predating the stored one is a
 	// stale redelivery) never rejects it whenever the run happens.
-	const cpe = Math.floor(Date.now() / 1000) + 365 * 24 * 3600;
+	const cpe = Math.floor(gatewayNow() / 1000) + 365 * 24 * 3600;
 	const payload = JSON.stringify({
 		id: `evt_pro_${accountId}`,
 		object: 'event',
@@ -76,7 +77,8 @@ export async function grantPro(accountId, gatewayDir, gwUrl = GW_URL) {
 			metadata: { account_id: accountId, product: 'pro' },
 		} },
 	});
-	const t   = Math.floor(Date.now() / 1000);
+	// The gateway checks the signature's timestamp against its own clock, 300 s either way.
+	const t   = Math.floor(gatewayNow() / 1000);
 	const mac = crypto.createHmac('sha256', whsec).update(`${t}.${payload}`).digest('hex');
 	const r = await fetch(`${gwUrl}/webhook/stripe`, {
 		method: 'POST',
@@ -120,7 +122,8 @@ export async function grantPack(accountId, pack, gatewayDir, gwUrl = GW_URL) {
 			metadata: { account_id: accountId, product: 'pack', pack: pack },
 		} },
 	});
-	const t   = Math.floor(Date.now() / 1000);
+	// The gateway checks the signature's timestamp against its own clock, 300 s either way.
+	const t   = Math.floor(gatewayNow() / 1000);
 	const mac = crypto.createHmac('sha256', whsec).update(`${t}.${payload}`).digest('hex');
 	const r = await fetch(`${gwUrl}/webhook/stripe`, {
 		method: 'POST',

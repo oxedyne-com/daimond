@@ -24,7 +24,7 @@ import os   from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, GWBIN, GWDIR, openBeta, procLog,
+import { requireFreshGateway, GWBIN, GWDIR, openBeta, procLog, gatewayEnv,
 	stopGatewayCleanly } from './gwbin.mjs';
 
 const HERE     = path.dirname(fileURLToPath(import.meta.url));
@@ -93,8 +93,8 @@ let gw = null, srv = null;
 function startGateway(owner) {
 	gw = spawn(GWBIN, [], {
 		cwd: GWWORK,
-		env: { ...process.env, APP_MODE: 'sandbox', DAIMOND_DEBUG_TRACE_DIR: TRACES,
-			...(owner ? { DAIMOND_OWNER_ACCOUNTS: owner } : {}) },
+		env: gatewayEnv({ APP_MODE: 'sandbox', DAIMOND_DEBUG_TRACE_DIR: TRACES,
+			...(owner ? { DAIMOND_OWNER_ACCOUNTS: owner } : {}) }, GWWORK),
 		stdio: GW_LOG.stdio,
 	});
 	return waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok, 30000);

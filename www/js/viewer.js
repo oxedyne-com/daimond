@@ -1005,6 +1005,8 @@
 	var HANDOVER_KEEP_MS = 60000;	// how long a download's URL outlives the click
 
 	/// Give `data` -- a `Blob`, bytes, or a string -- to the user as a file called `name`.
+	/// Resolves how it went: 'shared' (the share sheet took it), 'cancelled' (the person
+	/// closed the sheet), or 'download' (queued to the shelf, which reports nothing back).
 	function handOver(data, mime, name) {
 		var type = mime || (data && data.type) || 'application/octet-stream';
 		var blob = (data instanceof Blob) ? data : new Blob([data], { type: type });
@@ -1028,10 +1030,12 @@
 				if (navigator.canShare({ files: [f] })) sheet = f;
 			}
 		} catch (e) { sheet = null; }	// no File constructor, or a sheet that cannot say
-		if (!sheet) { shelf(); return; }
+		if (!sheet) { shelf(); return Promise.resolve('download'); }
 		// Cancelling the sheet is the user's answer, not a failure to fall back from.
-		navigator.share({ files: [sheet] }).catch(function (e) {
-			if (!e || e.name !== 'AbortError') shelf();
+		return navigator.share({ files: [sheet] }).then(function () { return 'shared'; }, function (e) {
+			if (e && e.name === 'AbortError') return 'cancelled';
+			shelf();
+			return 'download';
 		});
 	}
 

@@ -1088,6 +1088,26 @@ static_one() {                  # name, command…
 		say "      full output: $SCRATCH/out/$name.log"
 	fi
 }
+# A static check whose exit 3 means "refused, not run here" (a fixture it needs is absent):
+# that is reported as NOT RUN and counted with the skips, never as a pass, and never as a
+# failure either, since nothing was asserted. Any other non-zero exit is a failure.
+static_or_notrun() {            # name, command…
+	local name="$1"; shift
+	local out code
+	out=$("$@" 2>&1); code=$?
+	mkdir -p "$SCRATCH/out"
+	printf '%s\n' "$out" > "$SCRATCH/out/$name.log"
+	if [ $code -eq 3 ]; then
+		skip_one "$name" "NOT RUN (exit 3): $(echo "$out" | grep -m1 -A1 'REFUSED' | tail -1 | sed 's/^ *//')"
+		say "      full output: $SCRATCH/out/$name.log"
+	elif [ $code -eq 0 ]; then
+		pass=$((pass+1)); say "PASS  $name  — $(echo "$out" | grep -v '^$' | tail -1)"
+	else
+		fail=$((fail+1)); failed="$failed $name"
+		say "FAIL  $name (exit $code)  — $(echo "$out" | grep -v '^$' | tail -1)"
+		say "      full output: $SCRATCH/out/$name.log"
+	fi
+}
 # `--frozen`, because a suite ASSERTS and does not write. Without it `i18ncheck`
 # rewrites `dev/results/i18n-coverage.json` as it runs, and under `dev/gate.sh`
 # it would rewrite the copy in the gate's own worktree -- a file nobody reads,
@@ -1175,6 +1195,12 @@ if [ $# -eq 0 ]; then
 	# DPY2 and the account wrap are written and read by src/seal/ through window.DaimondSeal, the
 	# one implementation the native runner shares (S1 SEAL, 16 Oct 2026).
 	static_one sealjs       bash dev/breakproof_sealjs.sh
+	# The deploy script's own guards, proved against fixtures: nothing ships and production is
+	# never reached. Both refuse with exit 3 when what they prove against is absent (the public
+	# mirror; the fe2o3 checkout gateway/Cargo.toml names by path), which reads NOT RUN here.
+	# MIRROR defaults to the owner's daimond-oss checkout, as deploy.sh resolves it.
+	MIRROR="${MIRROR:-$HOME/usr/code/web/apps/oxedyne/daimond-oss}" static_or_notrun deploy        node dev/verify_deploy.mjs
+	MIRROR="${MIRROR:-$HOME/usr/code/web/apps/oxedyne/daimond-oss}" static_or_notrun deploywwwonly bash dev/verify_deploy_wwwonly.sh
 fi
 
 # ── Phase 0b: the Rust tests, counted ───────────────────────────────────────

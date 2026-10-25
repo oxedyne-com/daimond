@@ -2770,6 +2770,21 @@ impl DaimondApp {
         versions_said(ok!(diamond::versions_record_carried(&id, &json).await.map_err(to_js_err)))
     }
 
+    /// The tail note a turn's session takes where it changed files, the Here turn's
+    /// ([`versions::tail_note`]), as a page message: the runner's session gets the same one from
+    /// the version [`Self::versions_record_carried`] wrote (RT-C, invariant 8).  `{}` where
+    /// `files_json` names no file.
+    ///
+    /// # Arguments
+    /// * `files_json` - The paths the version kept, as a JSON array, in the manifest's order.
+    pub fn versions_tail_note(&self, version: f64, files_json: String) -> String {
+        let names = crate::llm::parse_json_string_array(&files_json);
+        if names.is_empty() || !(version >= 1.0) {
+            return "{}".to_string();
+        }
+        crate::protocol::message_page_json(&ChatMessage::app(versions::tail_note(version as u64, &names)))
+    }
+
     /// Record what a runner's undo of a carried turn did, from its `undone` answer (RUN-HIST S3):
     /// `{version, files}`, or `{}` where it changed nothing or was recorded already.  Its version's
     /// `away` is the undo's own reference, for "Undo this restore".

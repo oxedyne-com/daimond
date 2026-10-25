@@ -10398,6 +10398,34 @@ fn stored_in<H: Host>(ctx: &ToolContext<H>, path: &str) -> Storage {
     ctx.host().fs().storage_of(ctx.root, path)
 }
 
+/// Whether this turn runs on the runner, which keeps a file a change replaces before it goes, so
+/// "Undo this turn" puts it back (QA R2 F1, M1): a native hosted engine, a folder on this computer
+/// open, and a keeper for the turn.  The browser and Daimond's own storage answer `false`.
+fn runner_keeps<H: Host>(ctx: &ToolContext<H>) -> bool {
+    !cfg!(target_arch = "wasm32") && H::HOSTED && ctx.host().fs().folder_open()
+        && ctx.keeper().is_some()
+}
+
+/// `file_move`'s description where the runner keeps files ([`runner_keeps`]).
+const FILE_MOVE_KEPT_DESC: &str = "Move or rename a file or directory within the workspace. A file \
+    already at 'to' is REPLACED: it is kept first, so \"Undo this turn\" restores it, and the reply \
+    says it was replaced. Daimond's own storage (diamonds/...) still refuses a destination that is \
+    already there.";
+
+/// `file_move`'s schema where the runner keeps files ([`runner_keeps`]).
+const FILE_MOVE_KEPT_PARAMS: &str = r#"{"type":"object","properties":{"path":{"type":"string","description":"Existing workspace-relative path"},"to":{"type":"string","description":"New workspace-relative path. A file already there is replaced -- kept first, so \"Undo this turn\" restores it"}},"required":["path","to"]}"#;
+
+/// The reply to a move that landed, which says when it replaced a file standing at `to`
+/// (QA R2 M1), and that the file was kept first and "Undo this turn" restores it when it was.
+fn moved_line(from: &str, to: &str, replaced: bool, kept: bool) -> String {
+    match (replaced, kept) {
+        (false, _)    => fmt!("Moved {} to {}.", from, to),
+        (true, false) => fmt!("Moved {} to {}, replacing the {} that was there.", from, to, to),
+        (true, true)  => fmt!("Moved {} to {}, replacing the {} that was there. It was kept \
+            first, so \"Undo this turn\" puts both back.", from, to, to),
+    }
+}
+
 /// Which filesystem a file tool call is about, decided once and before it acts.
 ///
 /// The cheap facts settle it first and none of them costs a round trip: a real folder open
@@ -11763,6 +11791,19 @@ const LINKING_SCRIPTS: &[Linking] = &[
         instead: "It builds and stands up a gateway and replays the runner's golden exchanges \
             against it: a release lane's version-skew check, not one you run inside a turn. Ask \
             the user to run it, and say which runner version you wanted checked.",
+    },
+    Linking {
+        path: "dev/turn_parity.sh",
+        does: "the sandbox gateway keys into the page export's gateway directory (--two)",
+        instead: "It builds a runner and a page, stands up a world and a gateway and drives a \
+            browser: it is the release gate's turn check, not one to run inside a turn. Ask the \
+            user to run it, and say which runner and page you wanted compared.",
+    },
+    Linking {
+        path: "dev/turn_parity.mjs",
+        does: "the page's gateway keys into the scratch directory its two-device gateway runs in",
+        instead: "turn_parity.sh drives it with the world it needs; ask the user to run that, and \
+            say which runner and page you wanted compared.",
     },
 ];
 
@@ -22108,7 +22149,7 @@ impl Tool {
             Tool::FileGlob    => "Find files by name, e.g. every '.md' in the folder.",
             Tool::FileDelete  => "Delete one file.",
             Tool::FileRevert  => "Put a file back.",
-            Tool::FileMove    => "Move or rename a file.",
+            Tool::FileMove    => "Move or rename a file. On the runner, a file already at the destination is replaced, kept first, so \"Undo this turn\" restores it.",
             Tool::DirCreate   => "Make a folder.",
             Tool::ArtefactAdd => "Count an existing file as this Diamond's.",
             Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
@@ -22277,14 +22318,30 @@ impl Tool {
     /// * `claude_names` - Whether the Claude Code alias table is in effect, from
     ///   [`ToolRegistry::claude_names`].
     pub fn definition_json_for(&self, family: crate::profile::Family, claude_names: bool) -> String {
-        let params = match (self, family.single_edit_only()) {
-            (Tool::FileEdit, true) => FILE_EDIT_SINGLE,
-            _                      => self.parameters(),
+        self.definition_json_where(family, claude_names, false)
+    }
+
+    /// The same, told whether the runner keeps what this turn replaces ([`runner_keeps`]).
+    ///
+    /// `file_move` is the one tool whose words differ by it (QA R2 M1): in Daimond's own storage
+    /// a move onto a file standing at `to` is refused, so the default text says `to` must not
+    /// already exist; where the runner keeps files the move replaces that file, keeps it first,
+    /// and "Undo this turn" puts it back, and the model is told so rather than told to avoid it.
+    pub fn definition_json_where(&self, family: crate::profile::Family, claude_names: bool,
+        kept: bool) -> String
+    {
+        let params = match (self, family.single_edit_only(), kept) {
+            (Tool::FileEdit, true, _) => FILE_EDIT_SINGLE,
+            (Tool::FileMove, _, true) => FILE_MOVE_KEPT_PARAMS,
+            _                         => self.parameters(),
+        };
+        let says = match (self, kept) {
+            (Tool::FileMove, true) => FILE_MOVE_KEPT_DESC,
+            _                      => self.description_for(family, claude_names),
         };
         fmt!(
             r#"{{"type":"function","function":{{"name":"{}","description":"{}","parameters":{}}}}}"#,
-            self.wire_name(family, claude_names),
-            json_escape(self.description_for(family, claude_names)), params,
+            self.wire_name(family, claude_names), json_escape(says), params,
         )
     }
 
@@ -25866,9 +25923,19 @@ impl Tool {
             Ok(a)  => a,
             Err(r) => return Ok(MessageContent::text(r)),
         };
-        res!(ctx.host().ui().put(&asked.payload).await);
-        ctx.set_asked();
-        Ok(MessageContent::text(ask_result(&asked)))
+        // RUNNER-ASK: a host with no page carries the question home and answers in its own
+        // words; one it would not carry is refused, and the turn may ask again.
+        match res!(ctx.host().ui().put_ask(&asked.payload).await) {
+            crate::engine::host::ui::AskShown::Page         => {
+                ctx.set_asked();
+                Ok(MessageContent::text(ask_result(&asked)))
+            },
+            crate::engine::host::ui::AskShown::Said(s)      => {
+                ctx.set_asked();
+                Ok(MessageContent::text(s))
+            },
+            crate::engine::host::ui::AskShown::Refused(s)   => Ok(MessageContent::text(ask_refusal(&s))),
+        }
     }
 
     /// Read a PDF's text: the free layer first, OCR only where there is none.
@@ -26120,13 +26187,20 @@ impl Tool {
                 // and its copy is on disk before the write -- held as a delete's is where
                 // the write wipes it (`Tool::before_overwrite`).
                 let mut over: Option<Overwrite> = None;
-                if let Some((dia, (Some(before), _))) = &keep {
-                    match Self::before_overwrite(ctx, dia, &abs, &raw, Some(before),
-                        Some(content.as_bytes()), true).await
+                match &keep {
+                    Some((dia, (Some(before), _))) => match Self::before_overwrite(ctx, dia, &abs,
+                        &raw, Some(before), Some(content.as_bytes()), true).await
                     {
                         Ok(o)    => over = Some(o),
                         Err(why) => return Ok(MessageContent::text(why)),
-                    }
+                    },
+                    // Nothing there: the file the write makes is told to the host first.
+                    Some((dia, (None, None))) => if let Err(why) =
+                        Self::note_create(ctx, dia, &abs, &raw).await
+                    {
+                        return Ok(MessageContent::text(why));
+                    },
+                    _ => {},
                 }
                 // A RESTORE'S WRITE KEEPS WHAT IT REPLACES, read through the hand at the act:
                 // the person's own save since the version is the file's newest state, and the
@@ -26350,7 +26424,12 @@ impl Tool {
                     Ok(o)    => Some(o),
                     Err(why) => return Ok(MessageContent::text(why)),
                 },
-                _ => None,
+                // Nothing there: the file the write makes is told to the host first.
+                Some((dia, None)) => match Self::note_create(ctx, dia, &path, &raw).await {
+                    Ok(())   => None,
+                    Err(why) => return Ok(MessageContent::text(why)),
+                },
+                None => None,
             }
         };
         // A RESTORE'S WRITE KEEPS WHAT IT REPLACES, read the moment before it lands: what the
@@ -27314,8 +27393,10 @@ impl Tool {
             return Ok(MessageContent::text(refusal_line(
                 &move_into_itself_refusal(&raw, &to))));
         }
-        // The SOURCE only. `move_entry` refuses an existing destination in its own words,
-        // and those are about this filesystem and correct.
+        // The SOURCE only. In Daimond's own storage `move_entry` refuses an existing destination
+        // in its own words, and those are correct there.  On this computer the move replaces a
+        // file standing at the destination, and the runner keeps that file first, so "Undo
+        // this turn" puts back both (QA R2 F1).
         if let Some(note) = absent_here(ctx, &raw, &from).await {
             return Err(err!("file_move: {}", note; IO, File, Read, Missing));
         }
@@ -27377,6 +27458,11 @@ impl Tool {
         } else {
             (from_lic, to_lic)
         };
+        // A FILE STANDING AT `to` is replaced on this computer and refused in Daimond's own
+        // storage, so only the first can be a replace the reply has to own up to (QA R2 M1).
+        let replacing = !is_store_path(&to)
+            && matches!(ctx.host().fs().exists(ctx.root, &to).await, Ok(true))
+            && matches!(ctx.host().fs().is_directory(ctx.root, &to).await, Ok(false));
         if let Err(e) = ctx.host().fs().move_licensed(ctx.root, &from_lic, &to_lic).await {
             if let Some((d, h)) = &hold {
                 Self::move_failed(d, h, ctx.host());
@@ -27391,7 +27477,8 @@ impl Tool {
         if let Some((d, h)) = hold {
             unkept.push_str(&Self::captured_move(ctx, &d, h));
         }
-        Ok(MessageContent::text(fmt!("Moved {} to {}.{}", from, to, unkept)))
+        let kept = runner_keeps(ctx) && unkept.is_empty();
+        Ok(MessageContent::text(fmt!("{}{}", moved_line(&from, &to, replacing, kept), unkept)))
     }
 
     async fn file_show<H: Host>(args_json: &str, ctx: &ToolContext<H>) -> Outcome<MessageContent> {
@@ -28168,6 +28255,12 @@ impl Tool {
         } else {
             None
         };
+        if before.is_none() {
+            if let Err(why) = Self::note_create(ctx, dia, &key, raw).await {
+                Self::let_go(&claimed, ctx.host()).await;
+                return Err(why);
+            }
+        }
         // HIS FILE IS ASKED ABOUT FIRST (UNBLOCK-26 U3): nothing is written before he says Apply,
         // and only over the bytes he was shown.
         let mut shown: Option<crate::diamond_versions::Seen> = None;
@@ -28215,6 +28308,21 @@ impl Tool {
             None => None,
         };
         Ok(Overwrite { held, counted, wiped, copy, shown })
+    }
+
+    /// A FILE THE TURN MAKES WHERE NOTHING STOOD is told to the host before it lands (R2 U2b), in
+    /// its place among the turn's other acts, so Undo removes it; `Err` is the sentence for the
+    /// model where the host could not record it, and nothing is made.
+    async fn note_create<H: Host>(ctx: &ToolContext<H>, dia: &str, key: &str, raw: &str)
+        -> Result<(), String>
+    {
+        if !ctx.by_model {
+            return Ok(());
+        }
+        match ctx.host().ui().note_create(dia, key, &ctx.turn_tag()).await.told(raw) {
+            None        => Ok(()),
+            Some(why)   => Err(why),
+        }
     }
 
     /// Must a model's turn ask the person before it changes the file at `key`, as `now` holds it?
@@ -30585,13 +30693,18 @@ impl Tool {
         // What the deletion meter kept. Said so the model knows the removal happened and that
         // it can be undone, without having to infer either from a quiet `rm`.
         if let Some(n) = extract_json_number(res, "counted").filter(|n| *n > 0) {
-            // Only what was REMOVED: a file emptied or written over in place loses its bytes
-            // through no call the meter holds (audit F1), so the sentence says where it stops
-            // rather than letting "can be put back" stand for the whole command.
+            // A meter that sends `kept` (METER-KEEP, R2) keeps his file before any change, so
+            // Undo covers the whole command.  One that does not kept only what was removed: a
+            // file emptied or written over in place lost its bytes (audit F1), and the sentence
+            // says where the keeping stops.
+            let rest = if extract_json_objects(res, "kept").is_some() {
+                "A file changed in place is kept first too, and Undo puts it back"
+            } else {
+                "A file emptied or written over in place is not kept, and cannot be put back"
+            };
             s.push_str(&fmt!(
                 "\n[the machine hand: this command removed {} file(s) that existed before this \
-                turn; each was kept in the hand's trash first and can be put back. A file emptied \
-                or written over in place is not kept, and cannot be put back]", n));
+                turn; each was kept in the hand's trash first and can be put back. {}]", n, rest));
         }
         if let Some(n) = extract_json_string(res, "note").filter(|n| !n.is_empty()) {
             s.push_str(&fmt!("\n[the machine hand: {}]", n));
@@ -32902,8 +33015,9 @@ impl<H: Host> ToolRegistry<H> {
         if offered.is_empty() {
             return None;
         }
+        let kept = runner_keeps(&self.ctx);
         let mut defs: Vec<String> = offered.iter()
-            .map(|t| t.definition_json_for(self.family.get(), self.claude_names.get()))
+            .map(|t| t.definition_json_where(self.family.get(), self.claude_names.get(), kept))
             .collect();
         // Not in `tool_names`: the briefing says plainly that run is not on the belt.
         defs.extend(self.machine_stub_json());
@@ -44695,8 +44809,14 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         let out = Tool::run_result(&argv, kept, &ctx(), NetCut::Online, false, false, None);
         assert!(out.contains("removed 12 file(s) that existed before this turn"), "{}", out);
         assert!(out.contains("can be put back"), "{}", out);
-        // And where the keeping stops (audit F1): an overwrite in place is not a removal.
+        // A hand with no `kept` list predates METER-KEEP: an overwrite in place is not kept (audit F1).
         assert!(out.contains("emptied or written over in place is not kept"), "{}", out);
+        // The runner's meter keeps his file before any change (R2), and says so with `kept`.
+        let runner = r#"{"stdout":"","stderr":"","exit":0,"counted":12,"stopped":false,"kept":[]}"#;
+        let out = Tool::run_result(&argv, runner, &ctx(), NetCut::Online, false, false, None);
+        assert!(out.contains("removed 12 file(s)"), "{}", out);
+        assert!(out.contains("changed in place is kept first too, and Undo puts it back"), "{}", out);
+        assert!(!out.contains("cannot be put back"), "{}", out);
         let none = r#"{"stdout":"","stderr":"","exit":0,"counted":0,"stopped":false}"#;
         let out = Tool::run_result(&argv, none, &ctx(), NetCut::Online, false, false, None);
         assert!(!out.contains("existed before this turn"), "{}", out);

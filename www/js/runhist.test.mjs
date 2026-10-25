@@ -115,7 +115,7 @@ function page(ls, o) {
 	const stubs = {
 		currentDiamond: { id: 'd1' }, diamonds: [], selfDeviceId: () => 'PHONE', deviceNameFor: () => '',
 		relTime: () => 'just now', showCrystalHistory: () => { calls.redrawn = (calls.redrawn | 0) + 1; },
-		peerReports: {}, requeueUnheard() {}, takeReportTaint() {}, settleRunnerWords: async () => true, settleRunnerSession() {}, settleRunnerAlerts() {}, renderDispatchedBadges() {}, updateExpedite() {},
+		peerReports: {}, requeueUnheard() {}, takeReportTaint() {}, settleRunnerWords: async () => true, settleRunnerSession() {}, settleRunnerAlerts() {}, settleRunnerAsk() {}, renderDispatchedBadges() {}, updateExpedite() {},
 		adoptFinalFrame: () => false, _openAsk: {}, histFile: () => makeEl('div'),
 		diamondTurning: () => false, refreshDiamondAfterChange: async () => {},
 	};

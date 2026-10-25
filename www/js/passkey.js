@@ -783,6 +783,37 @@
 		return true;
 	}
 
+	/// Record a passkey enrolled before the recovery record existed (identity.js
+	/// `recoverable`), so a device that has one is not told it has no way back and
+	/// offered a second. Recorded only when the gateway holds the sealed copy, the
+	/// same fact `enrol` reports as `synced`: a passkey without it opens this browser
+	/// alone. Asked once per page and credential, and not at all once the record says
+	/// passkey. Resolves whether it recorded; never throws.
+	var _heldAsked = {};	// credential -> the one answer this page gets
+	function noteHeld() {
+		var I = window.DaimondIdentity;
+		var r = record();
+		try {
+			if (!r || !r.cred || !I || !I.noteRecovery || !I.exists()) return Promise.resolve(false);
+			if (I.recoverable() === 'passkey') return Promise.resolve(false);
+		} catch (e) { return Promise.resolve(false); }
+		if (!_heldAsked[r.cred]) {
+			_heldAsked[r.cred] = (async function () {
+				try {
+					var blob = await getBlob(await handleFor(b64urlDec(r.cred)));
+					if (!blob) return false;
+					// The record may have moved while the gateway answered: the passkey
+					// removed here, or the identity forgotten.
+					var now = record();
+					if (!now || now.cred !== r.cred || !I.exists()) return false;
+					return !!I.noteRecovery('passkey', true);
+				} catch (e) { return false; }
+			})();
+			return _heldAsked[r.cred];
+		}
+		return _heldAsked[r.cred].then(function () { return false; });
+	}
+
 	/// Whether a passkey on THIS device might be able to adopt an account.
 	///
 	/// It cannot be known for certain without asking the authenticator, which
@@ -801,6 +832,7 @@
 	window.DaimondPasskey = {
 		available:          available,
 		isEnrolled:         isEnrolled,
+		noteHeld:           noteHeld,
 		enrol:              enrol,
 		unlockWithPasskey:  unlockWithPasskey,
 		adoptWithPasskey:   adoptWithPasskey,

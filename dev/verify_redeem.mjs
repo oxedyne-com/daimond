@@ -80,7 +80,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, procLog, GWDIR, GWBIN } from './gwbin.mjs';
+import { requireFreshGateway, procLog, GWDIR, GWBIN, gatewayEnv } from './gwbin.mjs';
 import { CLIENT_API } from './clientapi.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -369,11 +369,10 @@ async function waitFor(fn, ms = 20000, gap = 250) {
 async function startGateway(cwd, ownerAccount) {
 	const gw = spawn(GWBIN, [], {
 		cwd,
-		env: {
-			...process.env,
+		env: gatewayEnv({
 			APP_MODE: 'sandbox',
 			...(ownerAccount ? { DAIMOND_OWNER_ACCOUNTS: ownerAccount } : {}),
-		},
+		}, cwd),
 		stdio: LOG.stdio,
 	});
 	procs.push(gw);

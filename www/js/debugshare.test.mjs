@@ -1649,6 +1649,20 @@ async function main() {
 		check('no 429 was provoked', DS._health().throttled === 0);
 	}
 
+	console.log('debugshare: a background post another file failed is counted into the beat (API-FLOOR 3)');
+	{
+		const env = makeEnv({ fastTimers: true });
+		const DS = env.win.DEBUG_SHARE;
+		const before = DS._health().postFail;
+		check('debugshare offers notePostFail to the files that post in the background',
+			typeof DS.notePostFail === 'function');
+		try { DS.notePostFail(); DS.notePostFail(); } catch (e) { /* counted below */ }
+		check('each one is counted as a post failure', DS._health().postFail === before + 2,
+			String(DS._health().postFail));
+		check('and none of them as a 429', DS._health().throttled === 0);
+		env.halt();
+	}
+
 	console.log('debugshare: rate — a 429 widens the gap, is counted, and is announced once');
 	{
 		const env = makeEnv({ fastTimers: true, respond: () => 429 });

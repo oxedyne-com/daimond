@@ -48,7 +48,8 @@ function check(name, cond, detail) {
 const w = makeWindow({ now: 1_000_000_000 });
 const want = ['mergeChatRecords', 'slimChat', 'chatFields'];
 // The one-way taint (H3 TAINT-DURABLE), where the tree has it: its join and its reader.
-const TAINT = ['chatTaintOf', 'chatTaintJoin', 'applyChatTaint'];
+// And the derived totals of the native runs (RT-C), which both merges make beside it.
+const TAINT = ['chatTaintOf', 'chatTaintJoin', 'applyChatTaint', 'runKeyCmp', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals'];
 const has = (n) => new RegExp('\\n\\t+function ' + n + '\\(').test(APP);
 for (const n of ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].concat(TAINT)) if (has(n)) want.push(n);
 const F = sliceDaimond(w, want, { loadMsgTombs: () => ({}) }).fns;

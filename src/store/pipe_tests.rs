@@ -1154,3 +1154,40 @@ fn loud_is_steering_refused_at_the_turn_end_is_said_with_keeper_op_and_reason() 
     assert!(red.is_none(), "break: loud off still said the refusal: {:?}", red);
     eprintln!("BREAK LOUD STEER: loud off, is_steering refused is 'steering' again, unsaid");
 }
+
+/// QA R2 M1: where the runner keeps files, a move onto a file standing at the destination tells
+/// the model the truth -- the file there was replaced, kept first, and "Undo this turn" puts it
+/// back -- and so do the schema and the description it was offered.  In Daimond's own storage the
+/// same move is still refused, and the default text still says the destination must not exist.
+#[test]
+fn r2_m1_a_move_onto_his_file_says_it_replaced_it_and_undo_puts_it_back() {
+    use crate::tools::{Tool, ToolRegistry};
+    let (srv, pipe, h) = piped(standing());
+    let ctx = keeper_ctx(pipe, "r2_m1");
+    plant(&ctx, "rw/a.txt", b"a\n");
+    plant(&ctx, "rw/b.txt", b"his b\n");
+    let over = child_said(Tool::FileMove, r#"{"path":"rw/a.txt","to":"rw/b.txt"}"#, &ctx);
+    plant(&ctx, "rw/c.txt", b"c\n");
+    let fresh = child_said(Tool::FileMove, r#"{"path":"rw/c.txt","to":"rw/d.txt"}"#, &ctx);
+    let store = child_said(Tool::FileMove,
+        r#"{"path":"diamonds/d/STATE.md","to":"diamonds/d/.daimond/decisions-archive.md"}"#, &ctx);
+    let defs = ToolRegistry::new_on(vec![Tool::FileMove], ctx.clone()).definitions_json()
+        .unwrap_or_default();
+    let _ = rt().block_on(crate::engine::turn::end_keeper_turn(&ctx, true));
+    drop(ctx);
+    ended(h);
+    srv.stop();
+    assert!(over.contains("Moved rw/a.txt to rw/b.txt") && over.contains("replacing")
+        && over.contains("kept first") && over.contains("Undo this turn"),
+        "the runner's reply to a move onto his file: {}", over);
+    assert!(fresh.contains("Moved rw/c.txt to rw/d.txt") && !fresh.contains("replacing"),
+        "a move onto nothing claims a replace: {}", fresh);
+    assert!(!store.contains("replacing") && !store.starts_with("Moved"),
+        "Daimond's own storage no longer refuses a move onto a file: {}", store);
+    assert!(defs.contains("replaced") && defs.contains("kept first")
+        && defs.contains("Undo this turn") && !defs.contains("must not already exist"),
+        "the runner's file_move schema and description: {}", defs);
+    let plain = Tool::FileMove.definition_json();
+    assert!(plain.contains("must not already exist") && !plain.contains("Undo this turn"),
+        "Daimond's own storage lost its refusal text: {}", plain);
+}

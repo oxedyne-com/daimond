@@ -1721,6 +1721,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// One-way: no path clears it; `chatTaintJoin` is its only merge.
 		var ta = chatTaintOf(c);
 		if (ta) out.taintedAt = ta;
+		// The native runs in the totals and the here part they are derived beside (RT-C), ABSENT
+		// on a chat no native run touched (the push-skip fixed point).
+		if (Array.isArray(c.foldedRuns) && c.foldedRuns.length) out.foldedRuns = c.foldedRuns;
+		if (c.nativeBase) out.nativeBase = c.nativeBase;
+		['hereP', 'hereC', 'hereCa', 'hereUsd', 'hereAt'].forEach(function (k) {
+			if (typeof c[k] === 'number') out[k] = c[k];
+		});
 		return out;
 	}
 	/// A chat record's one-way taint stamp, or 0 when it has never read outside content.
@@ -4475,7 +4482,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			mat: (typeof c.mat === 'number') ? c.mat : undefined,	// absent until a model edit (U1c)
 			nat: (typeof c.nat === 'number') ? c.nat : undefined,	// absent until the split (S)
 			// One-way, ABSENT when never set (H3): a reload keeps what the conversation has read.
-			taintedAt: chatTaintOf(c) || undefined };
+			taintedAt: chatTaintOf(c) || undefined,
+			// The native runs in the totals and the here part beside them (RT-C), ABSENT when none.
+			foldedRuns: (Array.isArray(c.foldedRuns) && c.foldedRuns.length) ? c.foldedRuns : undefined,
+			nativeBase: c.nativeBase || undefined,
+			hereP: (typeof c.hereP === 'number') ? c.hereP : undefined,
+			hereC: (typeof c.hereC === 'number') ? c.hereC : undefined,
+			hereCa: (typeof c.hereCa === 'number') ? c.hereCa : undefined,
+			hereUsd: (typeof c.hereUsd === 'number') ? c.hereUsd : undefined,
+			hereAt: (typeof c.hereAt === 'number') ? c.hereAt : undefined };
 	}
 	/// Open the store and hand back what it holds, hydrated — everything the user
 	/// still has, which is not everything the store still holds. A trashed chat
@@ -4724,6 +4739,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The taint is a monotone OR, decided by neither stamp (H3): `out` is the turn winner's
 		// copy, and the loser's taint must survive it.
 		chatTaintJoin(out, a, b);
+		// The totals are derived (RT-C): the turn winner's here part, last-write as the totals
+		// always were, plus the union of both sides' native runs, each counted once.
+		deriveNativeTotals(out, hereOf(turnNewer), nativeJoin(a, b));
 		return out;
 	}
 
@@ -5002,7 +5020,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// newer stamp and kept its own worker over an empty one, where the merge takes
 			// the canonically greater side at a tie and an empty value as a value, so a
 			// tab and the store it reads could each hold their own for good.
+			var hereSrc = c;	// whose here part the totals are derived from (RT-C)
 			if (chatTurnBeats(s, c) && !c._generating) {
+				hereSrc = s;
 				c.promptTokens     = s.promptTokens || 0;
 				c.completionTokens = s.completionTokens || 0;
 				c.cachedTokens     = s.cachedTokens || 0;
@@ -5028,6 +5048,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The taint under NO guard (H3): it only narrows, so a turn in flight loses nothing by
 			// it, and the engine this tab holds is told at once.
 			if (chatTaintJoin(c, s, c) && c.app) applyChatTaint(c, c.app);
+			// The native runs under no guard (RT-C): a union only grows, and the totals are
+			// derived from it beside the here part the guard above chose.
+			deriveNativeTotals(c, hereOf(hereSrc), nativeJoin(c, s));
 			// Both stamps move forward to the max, so neither a turn nor a metadata edit
 			// applied here can make the record read older than the store already has it.
 			if (!c._generating) {
@@ -17872,7 +17895,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the answer synced back) or 'ranhere' (a hand-off that fell back to run here);
 	/// `name` is the other device. `meta` is the answer message, which for a
 	/// dispatched turn carries the runner's own figures (`ranMs`, `ranModel`,
-	/// `ranTokIn`/`ranTokOut`, `ranCost` — stamped in `runTurn`). Only figures that
+	/// `ranTokIn`/`ranTokOut`, `ranCost`, `ranCached`, `ranCtx` — stamped in `runTurn`). Only figures that
 	/// are actually present are drawn, so the body says what is known and no more; a
 	/// message from before those were stamped shows just the provenance line.
 	function handoffBody(kind, name, meta) {
@@ -17897,16 +17920,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (meta && meta.ranModel) facts.push(String(meta.ranModel));
 		var toks = meta ? ((meta.ranTokIn | 0) + (meta.ranTokOut | 0)) : 0;
 		if (toks > 0) facts.push(tOr('chat.handoff_tokens', '{n} tok', { n: fmtCtx(toks) }));
+		if (meta && (meta.ranCached | 0) > 0) facts.push(tOr('chat.handoff_cached', '{n} cached', { n: fmtCtx(meta.ranCached | 0) }));
 		// The cost is a price tag after the rest; its glyph is the separator.
 		var cost = meta && (meta.ranCost || 0) > 0 ? meta.ranCost : null;
 		var peek = facts.concat(cost !== null ? [DaimondI18n.priceText(cost)] : []).join(' · ');
-		if (facts.length || cost !== null) {
+		// How full the runner's context was, as the chat meter draws it: the meter's own bar
+		// and title, against this chat's window.
+		var bar = meta && (meta.ranCtx | 0) > 0 && current
+			? tileCtxBar({ lastPrompt: meta.ranCtx | 0 }, chatWindow(current)) : null;
+		if (facts.length || cost !== null || bar) {
 			var row = document.createElement('div');
 			row.className = 'ct-handoff-facts';
 			row.textContent = facts.join(' · ');
 			if (cost !== null) {
 				if (facts.length) row.appendChild(document.createTextNode(' '));
 				row.appendChild(DaimondI18n.priceTag(cost));
+			}
+			if (bar) {
+				if (facts.length || cost !== null) row.appendChild(document.createTextNode(' '));
+				row.appendChild(bar);
 			}
 			wrap.appendChild(row);
 		}
@@ -20640,7 +20672,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function noticeDialog(title, message, opts) {
 		opts = opts || {};
 		return dialog({ kind: 'notice', title: title, message: message, okLabel: 'OK',
-			danger: false, cancelLabel: null, pre: !!opts.pre })
+			danger: false, cancelLabel: null, pre: !!opts.pre, ask: opts.ask })
 			.then(function () { return true; });
 	}
 
@@ -24247,7 +24279,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					} catch (e) { diagPanel.textContent = ''; }
 				}
 
-				var toggleBtn, panelBtn, shareBtn;
+				var toggleBtn, panelBtn, shareBtn, retryBtn, share;
 				toggleBtn = item('', function () {
 					DaimondDiag.set(!DaimondDiag.on(), 'settings');
 					var now = DaimondDiag.on();
@@ -24256,6 +24288,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						: tOr('settings.diag_on', 'Turn diagnostics on');
 					panelBtn.hidden = !now;
 					shareBtn.hidden = !now;
+					retryBtn.hidden = true;
 					shareNote.hidden = !now;
 					if (!now) { diagPanel.hidden = true; diagPanel.textContent = ''; }
 				});
@@ -24276,14 +24309,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 				panelBtn.hidden = !diagOn;
 
-				shareBtn = item(tOr('settings.diag_share', 'Share diagnostic log'), function () {
-					shareBtn.textContent = tOr('settings.diag_sharing', 'Sharing…');
-					DaimondDiag.flush().then(function (r) {
-						shareBtn.textContent = (r && r.ok)
-							? tOr('settings.diag_shared', 'Shared — thank you')
-							: tOr('settings.diag_share_fail', 'Could not share') + (r && r.why ? ': ' + r.why : '');
-					});
-				});
+				// A share that does not land reads "Not sent: {reason}", with Retry beside it.
+				shareBtn = item(tOr('settings.diag_share', 'Share diagnostic log'), function () { share(); });
+				retryBtn = item('', function () { share(); });
+				share = DaimondDiag.shareControl(shareBtn, retryBtn);
 				shareBtn.hidden = !diagOn;
 
 				homeView.appendChild(diagPanel);
@@ -25170,6 +25199,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} else {
 				dot = 'off'; text = tOr('astat.sum_local', 'This device only');
 			}
+			// The key lives only in this browser (spec §5.1, R1): a fault until a passkey or a
+			// confirmed recovery file covers it, voiced here (and as its Pending row) and never
+			// as a sync state. BELOW EVERY FAULT ABOVE: it masked a stalled or refused sync when
+			// it was the chip's word (QA M3), so it takes only a line that is not one already.
+			if (!fault && !locked && Pending.unrecoverable()) {
+				dot = 'warn'; fault = true; text = tOr('recover.not_yet', 'Not recoverable yet');
+			}
 			row('astat-summary', dot, '', text);
 			// A calm line has no dot to read (STATUS-REVIEW S1): muted words only.
 			el.classList.toggle('astat-calm', !fault);
@@ -25752,6 +25788,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			toggle: toggleSettings,
 			home: home, homeContent: homeContent, form: form, closeModal: closeModal,
 			clear: clear, status: status, summary: renderStatusSummary,
+			// The "Not recoverable yet" Pending row's act: the enrolment, asked again.
+			recover: function () { return offerRecovery(null, true); },
 			close: closeAdmin,
 		};
 	})();
@@ -25762,6 +25800,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// something unrelated caused. sync.js says when the chip's word changes.
 	window.addEventListener('daimond:sync-chip', function () {
 		try { DaimondAdmin.summary(); } catch (e) { /* the panel is not up yet */ }
+	});
+	// And the record of what brings the identity back (identity.js `noteRecovery`, a pull's
+	// `adoptRecover`, a create): the summary and the Pending row both follow it.
+	window.addEventListener('daimond:recoverable', function () {
+		try { DaimondAdmin.summary(); } catch (e) { /* the panel is not up yet */ }
+		try { Pending.fresh(); Pending.render(); } catch (e) { /* before boot */ }
 	});
 
 	// Published on purpose. Two other modules already ask for `window.DaimondAdmin`
@@ -25822,6 +25866,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return m ? m[1] : '';
 	}
 
+	/// The host a keyed row names (`say.v.host`), when it is one by `roadHost`'s own test, else ''.
+	/// A runner's words are not trusted to be a host because they sit where one goes.
+	function keyedHost(h) {
+		return typeof h === 'string' && h && roadHost('could not reach ' + h) === h ? h : '';
+	}
+
 	/// A failed turn's error row that broke on ANOTHER device's road, as its seat reason
 	/// ("argonaut can't reach openrouter.ai", the sentence on hover or tap), or null (RUNNER-ROAD,
 	/// owner 25 Oct). Where it failed is the row's `ranOn`, stamped by whichever device ran the
@@ -25831,9 +25881,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function runnerRoad(m) {
 		if (!m || m.role !== 'error_log' || !m.ranOn || String(m.ranOn) === String(selfDeviceId())) return null;
 		var s = stripAnsi(String(m.content == null ? '' : m.content)).replace(/src\/[^\s":]+\.rs:\d+:?/g, ' ');
-		if (!isUnreachable(s)) return null;
+		// A native runner's keyed row says it was the road by its key, and names the host in
+		// its params (RT-C); the words are read only where the key is absent or names none.
+		var keyed = !!(m.say && m.say.k === 'err.unreachable');
+		if (!keyed && !isUnreachable(s)) return null;
 		var name = deviceLabelFor(m.ranOn) || t('devices.another');	// never "This device": it is not this one
-		var host = roadHost(s);
+		var host = (keyed && m.say.v && keyedHost(m.say.v.host)) || roadHost(s);
 		return seatReason(host ? { k: 'runner_road', vars: { name: name, host: host } }
 			: { k: 'runner_road_any', vars: { name: name } });
 	}
@@ -27056,7 +27109,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// line survives a redraw). Both change the drawing without changing the id.
 			+ '#' + (m.refused ? 1 : 0) + '#' + (m.handoffRefused ? 1 : 0) + '#' + (m.handoffBusy || '') + '#' + (m.handoffThread || '')
 			+ '#' + (m.toDevice || '') + '#' + (m.claimedBy || '') + '#' + (m.seatNote || '')
-			+ '#' + (m.name || '') + '#' + (m.callId || '');
+			+ '#' + (m.name || '') + '#' + (m.callId || '') + '#' + (m.say ? JSON.stringify(m.say) : '');
 	}
 
 	function sigsOf(messages) {
@@ -27103,7 +27156,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& window.DaimondPeer && DaimondPeer.uiState) {
 				appendDispatchedTile(m);
 			} else {
-				appendAssistantText(m.content || '', m.ranOn, m.handoffFellBack, m);
+				appendAssistantText(logRowText(m), m.ranOn, m.handoffFellBack, m);
 				var div = curAsstDiv;
 				finalizeAssistant();
 				// A turn the tab died in the middle of: show what arrived, badge it, and offer to
@@ -27111,7 +27164,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (m.interrupted && div) markInterrupted(div, m);
 			}
 		}
-		else if (m.role === 'error_log') { appendError(m.content, m); }
+		else if (m.role === 'error_log') { appendError(logRowText(m), m); }
 		// A rating, drawn as one tile for its whole burst. Anything this build cannot read
 		// (`isRatingMsg`) draws nothing, as a role it had never heard of would.
 		else if (m.role === 'rating_log') { appendRatingLine(m); }
@@ -27124,7 +27177,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A `vision_log` shares this drawing and is not a fold, so it passes none and gets
 		// the plain notice -- see `appendCompacted`.
 		else if (m.role === 'fold_log') { appendCompacted(m.content || '', m.folded, m.kept, m.ts); }
-		else if (m.role === 'vision_log') { appendCompacted(m.content || '', undefined, undefined, m.ts); }
+		else if (m.role === 'vision_log') { appendCompacted(logRowText(m) || '', undefined, undefined, m.ts); }
 		else if (m.role === 'think_log') { appendThinking(m.content || '', false, m.ts, m.mid); }
 		// A tool call that arrived as prose. Its own role rather than an assistant
 		// message, because it is not the model's answer and must never be redrawn as
@@ -28082,6 +28135,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			existing.itext        = mark.itext;
 			existing.ts           = Date.now();
 			if (mark.stepAway) existing.stepAway = true; else delete existing.stepAway;
+			if (mark.toNative) existing.toNative = 1; else delete existing.toNative;
 			delete existing.refused;		// a re-dispatch supersedes the last refusal
 			delete existing.busyBy;			// and the last seat's busy hand-back (Q19)
 			delete existing.threadBy;		// and its thread hand-back (D2)
@@ -28116,6 +28170,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The device the errand was elected to, tried from the first send (R4b).
 			if (Array.isArray(mark.tried) && mark.tried.length) rec.triedDevices = mark.tried.slice();
 			if (mark.stepAway) rec.stepAway = true;
+			if (mark.toNative) rec.toNative = 1;	// a native runner's road (RT-C)
 			chat.messages.push(touchMsg(rec));
 		}
 		diag('handoff mark', (chat && chat.id) + ' turn=' + mark.iturn
@@ -28324,6 +28379,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		dispatchOpts.reach   = await errandReach(dispatchOpts.diamondId);
 		dispatchOpts.today   = errandToday();
 		dispatchOpts.words   = await errandWordsFor(chat, runTo);
+		dispatchOpts.prodBase = errandProdBase(chat, dispatchOpts.model);
 		var plan;
 		try { plan = DaimondPeer.buildDispatch(chat, dispatchOpts); }
 		catch (e) {
@@ -28344,6 +28400,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A step-away hand-off (a turn already running here, handed on as the page went) is
 		// marked so, since one its runner did not take is run here, not ended "not run".
 		if (opts && opts.stepAway) plan.mark.stepAway = true;
+		// And whether the runner is native (its presence row, as `honoursModelSet` reads it), so
+		// the asker folds its figures into the totals on adoption (RT-C): a page runner's own
+		// record carries them home.
+		try {
+			var prN = (window.DaimondPresence && DaimondPresence.snapshot && DaimondPresence.snapshot()) || {};
+			if (runTo && prN[runTo] && prN[runTo].kind === 'runner') plan.mark.toNative = 1;
+		} catch (e) { /* no presence: the adoption falls back on the answer's `ranOn` */ }
 		// 1. MARK THE LOCAL TURN FIRST. The DURABLE `why:'dispatched'` placeholder --
 		//    and, through `drawHistoryMessage`, its hand-off tile -- is written BEFORE
 		//    the post, so a refused post is a TRANSCRIPT event a store-driven rebuild
@@ -29864,10 +29927,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var filed = report.words ? await settleRunnerWords(report) : true;
 				settleRunnerSession(report, filed);
 				await settleRunnerAlerts(report);
+				await settleRunnerAsk(report);
 				// THE TURN'S ROWS COME HOME WITH IT (RUN-HIST): a settling report that names the
 				// files the turn made or changed on the runner is recorded as a version of its
 				// keeper, so History shows the turn here and, through the parcel, everywhere.
-				if (report.turnRec && DaimondPeer.settlingReport(report)) recordCarriedTurn(report.turnRec);
+				if (report.turnRec && DaimondPeer.settlingReport(report)) recordCarriedTurn(report.turnRec, report);
 				// Its own-key spend, booked to each source's pool (OWNKEY §5.4).
 				if (DaimondPeer.settlingReport(report)) bookReportCost(report);
 				requeueUnheard(report);
@@ -30469,18 +30533,165 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The rows are marked `framed`: the runner's own copy, when it arrives, replaces
 	/// each by mid (`mergeMessages`), and a framed copy never stands over a real one.
 	/// Only rows still provisional are touched, so a real copy already merged is left.
+	// ── A native runner's figures in the chat's totals, derived once per run (RT-C) ──
+	//
+	// A page runner bills a dispatched turn into its own totals and its record syncs home; a
+	// native runner has no chat record, so its answer's figures (`ran*`) are the only account
+	// of the turn. The totals are therefore DERIVED, never last-write:
+	//
+	//   total = here (`hereP`/`hereC`/`hereCa`/`hereUsd`, billed on a page, last-write as the
+	//           totals always were) + `nativeBase` (runs trimmed past the bound) + the sum of
+	//           `foldedRuns` ([{r, at, p, c, ca, usd, ctx}], one per run, a union by r).
+	//
+	// So a device holding the newer record without a run still ends with that run counted
+	// once, in either sync order. A page runner's own run is held with no figures: its bill is
+	// in its here part. Every field is ABSENT on a chat no native run touched, so its record
+	// travels as the same bytes it always did (the push-skip fixed point).
+	var FOLDED_RUNS_MAX = 64;
+	var NATIVE_FIGS = ['p', 'c', 'ca', 'usd'];
+	var HERE_FIELDS = { p: 'hereP', c: 'hereC', ca: 'hereCa', usd: 'hereUsd' };
+	var TOTAL_FIELDS = { p: 'promptTokens', c: 'completionTokens', ca: 'cachedTokens', usd: 'costUsd' };
+
+	/// Order two runs by (at, r), the one order every device trims by.
+	function runKeyCmp(x, y) {
+		return ((+x.at || 0) - (+y.at || 0)) || (x.r < y.r ? -1 : x.r > y.r ? 1 : 0);
+	}
+
+	/// Does `chat` hold any native-run state?
+	function hasNativeRuns(chat) {
+		return !!(chat && ((Array.isArray(chat.foldedRuns) && chat.foldedRuns.length) || chat.nativeBase));
+	}
+
+	/// The part of `chat`'s totals billed on a page, with `at` its last Here turn. A chat no
+	/// native run touched is all here.
+	function hereOf(chat) {
+		var h = { at: +(chat && chat.hereAt) || 0 }, own = !!chat && typeof chat.hereP === 'number';
+		NATIVE_FIGS.forEach(function (k) { h[k] = +(chat && chat[own ? HERE_FIELDS[k] : TOTAL_FIELDS[k]]) || 0; });
+		return h;
+	}
+
+	/// The trimmed base of the two that covers more runs: the larger count, then the later
+	/// last key, then the larger figures, so every device picks the same one.
+	function nativeBaseWinner(a, b) {
+		if (!a || !a.n) return (b && b.n) ? b : null;
+		if (!b || !b.n) return a;
+		if (a.n !== b.n) return a.n > b.n ? a : b;
+		var k = runKeyCmp(a, b);
+		if (k) return k > 0 ? a : b;
+		return JSON.stringify(a) >= JSON.stringify(b) ? a : b;
+	}
+
+	/// The native-run state of records `x` and `y` joined: the runs a union by r (the earlier
+	/// stamp, then the canonically smaller entry), those at or before the winning base's last
+	/// key dropped as already in it, and the oldest past `FOLDED_RUNS_MAX` added into the base.
+	function nativeJoin(x, y) {
+		var base = nativeBaseWinner(x && x.nativeBase, y && y.nativeBase), by = {};
+		[x && x.foldedRuns, y && y.foldedRuns].forEach(function (l) {
+			(Array.isArray(l) ? l : []).forEach(function (f) {
+				if (!f || typeof f.r !== 'string' || !f.r) return;
+				var had = by[f.r];
+				if (!had || runKeyCmp(f, had) < 0 || (!runKeyCmp(f, had) && JSON.stringify(f) < JSON.stringify(had))) by[f.r] = f;
+			});
+		});
+		var runs = Object.keys(by).map(function (r) { return by[r]; })
+			.filter(function (f) { return !base || runKeyCmp(f, base) > 0; });
+		runs.sort(runKeyCmp);
+		if (runs.length > FOLDED_RUNS_MAX) {
+			var cut = runs.slice(0, runs.length - FOLDED_RUNS_MAX), nb = { n: base ? base.n : 0 };
+			NATIVE_FIGS.forEach(function (k) { nb[k] = base ? (+base[k] || 0) : 0; });
+			cut.forEach(function (f) { NATIVE_FIGS.forEach(function (k) { nb[k] += +f[k] || 0; }); nb.n++; });
+			nb.r = cut[cut.length - 1].r; nb.at = +cut[cut.length - 1].at || 0;
+			base = nb;
+			runs = runs.slice(runs.length - FOLDED_RUNS_MAX);
+		}
+		return { runs: runs, base: base };
+	}
+
+	/// Set `chat`'s native-run state to `nat` (`nativeJoin`) and derive its totals from
+	/// `here` (`hereOf`) and it. The context meter takes the newest run's `ctx` when that run is
+	/// newer than the last Here turn.
+	function deriveNativeTotals(chat, here, nat) {
+		var on = !!(nat && (nat.runs.length || nat.base));
+		NATIVE_FIGS.forEach(function (k) {
+			var v = here[k] + (on && nat.base ? (+nat.base[k] || 0) : 0);
+			if (on) nat.runs.forEach(function (f) { v += +f[k] || 0; });
+			chat[TOTAL_FIELDS[k]] = v;
+			if (on) chat[HERE_FIELDS[k]] = here[k]; else delete chat[HERE_FIELDS[k]];
+		});
+		if (!on) { delete chat.foldedRuns; delete chat.nativeBase; delete chat.hereAt; return; }
+		if (nat.runs.length) chat.foldedRuns = nat.runs; else delete chat.foldedRuns;
+		if (nat.base) chat.nativeBase = nat.base; else delete chat.nativeBase;
+		if (here.at) chat.hereAt = here.at; else delete chat.hereAt;
+		for (var i = nat.runs.length - 1; i >= 0; i--) {
+			var f = nat.runs[i];
+			if (!(+f.ctx > 0)) continue;
+			if ((+f.at || 0) > here.at) chat.lastPrompt = +f.ctx;
+			break;
+		}
+	}
+
+	/// A Here turn has just set `chat.lastPrompt`: stamp when, so a derive leaves it standing
+	/// over an older native run's context. Only on a chat a native run has touched.
+	function noteHerePrompt(chat) {
+		if (hasNativeRuns(chat)) chat.hereAt = Date.now();
+	}
+
+	/// Are run `run`'s figures (its answer stamped `at`) already in `chat`'s totals?
+	function runFolded(chat, run, at) {
+		if (!chat || !run) return false;
+		var l = chat.foldedRuns, b = chat.nativeBase;
+		if (Array.isArray(l) && l.some(function (f) { return f && f.r === String(run); })) return true;
+		return !!(b && b.n && at != null && runKeyCmp({ r: String(run), at: +at || 0 }, b) <= 0);
+	}
+
+	/// Hold run `run` (stamped `at`, default the clock) in `chat`'s totals with figures `d`
+	/// (`{p, c, ca, usd, ctx}`; none for a page runner, whose bill is in its here part), and
+	/// derive them again.
+	function markRunFolded(chat, run, at, d) {
+		if (!chat || !run) return;
+		var f = { r: String(run), at: +at || Date.now() };
+		NATIVE_FIGS.concat(['ctx']).forEach(function (k) { if (d && +d[k] > 0) f[k] = +d[k]; });
+		deriveNativeTotals(chat, hereOf(chat), nativeJoin(chat, { foldedRuns: [f] }));
+	}
+
+	/// Did answer `row` come from a native runner? The dispatch mark says so (`toNative`); a
+	/// mark from before it falls back on the presence row of the device that ran it.
+	function runnerRoadNative(ph, row) {
+		if (ph && ph.toNative) return true;
+		try {
+			var dp = window.DaimondPresence;
+			var pr = (dp && dp.snapshot && dp.snapshot()) || {};
+			var rec = row && row.ranOn ? pr[String(row.ranOn)] : null;
+			return !!(rec && rec.kind === 'runner');
+		} catch (e) { return false; }
+	}
+
+	/// Fold answer `row`'s figures into `chat`'s totals, once per run and for a native runner
+	/// only, `ph` being the turn's dispatch mark. Answers whether it folded. `prev*` is left
+	/// alone: it is this device's own app baseline, and the runner's turn was not one.
+	function foldRunnerTotals(chat, row, ph) {
+		if (!chat || !row || !row.run || runFolded(chat, row.run, row.ts)) return false;
+		var d = { p: +row.ranTokIn || 0, c: +row.ranTokOut || 0, ca: +row.ranCached || 0,
+			usd: +row.ranCost || 0, ctx: +row.ranCtx || 0 };
+		if (!(d.p || d.c || d.ca || d.usd || d.ctx)) return false;	// an old runner said nothing
+		if (!runnerRoadNative(ph, row)) return false;			// a page runner's record carries its own
+		markRunFolded(chat, row.run, +row.ts || Date.now(), d);
+		return true;
+	}
+
 	function adoptFinalFrame(turnId) {
 		var tid = String(turnId || ''), mids = _finalMids[tid];
 		if (!mids || !handoffDone(tid)) return false;
 		if (_abiRefused[tid]) { delete _finalMids[tid]; delete _finalRun[tid]; return false; }	// never the turn (A2)
 		var chat = finalFrameChat(tid, true);
 		if (!chat || !chat.messages) return false;
-		var moved = 0, newest = 0;
+		var moved = 0, newest = 0, real = [];
 		var next = chat.messages.map(function (m) {
 			if (!m || !m.provisional || String(m.iturn || '') !== tid || !mids[String(m.mid)]) return m;
 			var c = {};
 			for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k) && k !== 'provisional') c[k] = m[k]; }
 			c.framed = 1;
+			real.push(c);
 			moved++;
 			newest = Math.max(newest, +m.ts || 0);
 			return c;
@@ -30500,10 +30711,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!moved && !dropped) return false;
 		if (newest > Date.now() - ARRIVE_FRESH_MS) noteArrive('commit', { via: 'frame', cid: chat.id, tid: tid, rows: moved, made: newest });
 		chat.messages = next;
+		// The mark is read before it is dropped below: it says which road the turn took.
+		var ph = dispatchedPlaceholderIn(chat, tid);
+		real.forEach(function (m) { foldRunnerTotals(chat, m, ph); });
 		touchChat(chat);
 		try { persistChats(); } catch (e) { /* drawn; the runner's parcel still comes */ }
 		diag('handoff final frame adopted', 'turn=' + tid.slice(0, 12) + ' ' + moved + ' rows real');
-		var ph = dispatchedPlaceholderIn(chat, tid);
 		// A run the runner lost comes home as its interrupted answer, which is the turn's
 		// ending: the placeholder's footer must not stand beside its badge.
 		var lost = next.some(function (m) {
@@ -38174,7 +38387,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The session on record is now the folded one, so the stored copy has to
 		// follow — otherwise a reload springs the conversation back to its full size
 		// and the fold the user paid for is undone.
-		try { chat.lastPrompt = app.last_prompt_tokens || chat.lastPrompt || 0; }
+		try { chat.lastPrompt = app.last_prompt_tokens || chat.lastPrompt || 0; noteHerePrompt(chat); }
 		catch (e) { /* mid-turn read is impossible here; the turn is not running */ }
 		captureSession(chat, app);
 		persistChats();
@@ -38738,6 +38951,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		rec.messages = [];
 		rec.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };
 		rec.lastPrompt = 0;
+		noteHerePrompt(rec);
 		if (id) forgetDiamondWebConsent(id);
 		touchChat(rec);
 		persistChats();
@@ -39893,6 +40107,40 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { return Wasm.prompt_fingerprint ? Wasm.prompt_fingerprint(String(text || '')) : ''; }
 		catch (e) { return ''; }
 	}
+	/// The answer's product record as this page would stamp it, less what only the run knows
+	/// (`h`, `t`, `dev`, `at`, `hash`, `run`, `via`): the runner completes it, so a runner's
+	/// answer names the same role, model and instructions a Here answer does. Null where
+	/// provenance.js is not loaded. `em` is the turn's `errandModelOf(chat)`.
+	function errandProdBase(chat, em) {
+		if (!chat) return null;
+		var model = (em && em.model) || '';
+		var dia = !!chat.diamondId;
+		// A chat's fingerprint is of the text its engine is built with (`ensureApp`); a daimon's
+		// is empty, as `noteAppProv` gives it.
+		var sp = dia ? '' : promptPrint(Instructions.compose(SYSTEM_PROMPT(model, chat._steer), ''));
+		var p = stampProd({ k: 'answer', m: model, pv: (em && em.provider) || '',
+			role: dia ? 'daimon' : 'chat', sp: sp, d: chat.diamondId || '', c: chat.id || '' });
+		return prodBaseOf(p);
+	}
+	/// A product record's author, the part every record of one turn shares (`prodBase`): the
+	/// record with its per-row keys dropped, or null where there is none.
+	function prodBaseOf(p) {
+		if (!p || typeof p !== 'object') return null;
+		var b = Object.assign({}, p);
+		['h', 't', 'dev', 'at', 'hash', 'run', 'via'].forEach(function (k) { delete b[k]; });
+		return b;
+	}
+	/// The prodBase a runner's carried turn ran under, read back from its answer row's record
+	/// (`<run>-final`), which the runner stamped from the errand's; null where the run left no
+	/// stamped answer here.
+	function carriedProdBase(chat, run) {
+		var ms = (chat && chat.messages) || [], mid = String(run) + '-final';
+		for (var i = ms.length - 1; i >= 0; i--) {
+			var m = ms[i];
+			if (m && m.mid === mid) return Array.isArray(m.prod) && m.prod[0] ? prodBaseOf(m.prod[0]) : null;
+		}
+		return null;
+	}
 	/// A product record, or null where provenance.js is not loaded.
 	function stampProd(o) {
 		if (!window.DaimondProvenance) return null;
@@ -40486,6 +40734,77 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		A.hear(eid);
 		return took;
+	}
+
+	/// A runner's question, in the shape the Decision tile draws (`renderAsk`), or null where the
+	/// tile cannot draw it. Only the tile's own fields are kept, each as a string: an option's
+	/// `means` is the contract's word, an older `description` standing for it, and an `app` mark is never
+	/// taken, so a model's question can never pass for the engine's own blocked Decision.
+	function runnerAskArgs(p) {
+		if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+		var str = function (s) { return typeof s === 'string' ? s : ''; };
+		var o = {
+			question:  str(p.question),
+			options:   (Array.isArray(p.options) ? p.options : []).map(function (op) {
+				op = op && typeof op === 'object' ? op : {};
+				var c = { label: str(op.label), means: str(op.means) || str(op.description) };
+				if (op.recommended === true) c.recommended = true;
+				return c;
+			}),
+			recommend: str(p.recommend),
+			why:       str(p.why),
+			if_silent: str(p.if_silent),
+		};
+		if (Number(p.n) > 0 && Number(p.of) >= Number(p.n)) { o.n = Math.floor(Number(p.n)); o.of = Math.floor(Number(p.of)); }
+		return askDrawable(o) ? o : null;
+	}
+
+	/// A RUNNER'S QUESTION COMES HOME AS BUTTONS (RUNNER-ASK, UNBLOCK-38): a turn on a runner that
+	/// put him a choice ends with `report.ask`. It is stored in the chat holding the turn
+	/// (`chatHoldingReport`, K2's rule) as the Ask row a local `ask` call leaves, so the existing
+	/// Decision tile draws it, inline at the end of the turn, and a reload draws it again from the
+	/// transcript. Its mid is the errand's, so the report heard again, here or on another device,
+	/// stores nothing more. The tile writes the model's words as text, never HTML (`renderAsk`), and
+	/// his pick goes as his next message through the one send entry, on the seat drawn at the press
+	/// (`askAnswer` -> `sendUserMessage`). Answers whether a row was stored.
+	async function settleRunnerAsk(report) {
+		var o = runnerAskArgs(report && report.ask);
+		if (!o || !window.DaimondPeer || !window.DaimondPeer.settlingReport(report)) return false;
+		var eid = String(report.eid || ''), tid = String(report.turnId || '');
+		if (!eid || !tid) return false;
+		// ONE ROW ID, ONE CARD: the runner names the frame's own Ask row (`report.ask.row`, as its
+		// turn rows write it, `<run>-t<i>`), and the row is stored under that id, so the frame's copy
+		// and this one are the same row whichever lands first. A report without it falls back to
+		// the errand's id and the question match below.
+		var named = report.ask && typeof report.ask.row === 'string' && /^[A-Za-z0-9_.:-]{1,160}$/.test(report.ask.row)
+			? report.ask.row : '';
+		var mid = named || 'ask-' + eid;
+		if (loadMsgTombs()[mid]) return false;		// deleted here
+		var chat = await chatHoldingReport(report);
+		if (!chat || !Array.isArray(chat.messages)) {
+			diag('runner ask', 'eid=' + eid.slice(0, 12) + ' not drawn: no chat here holds turn ' + tid.slice(0, 12));
+			return false;
+		}
+		// ONE ASK ROW PER QUESTION (QA MED2): the runner's final frame carries the question as the
+		// done Ask row its run wrote, so the report's copy is only the fallback for a frame that
+		// held none; a second row would draw a second tile for the one question.
+		for (var i = 0; i < chat.messages.length; i++) {
+			var m = chat.messages[i];
+			if (!m) continue;
+			if (m.mid === mid) return false;
+			if (!named && m.role === 'tool_log' && m.name === 'ask' && m.outcome === 'done' && String(m.iturn || '') === tid) {
+				var had = null;
+				try { had = runnerAskArgs(JSON.parse(m.args)); } catch (e) { had = null; }
+				if (had && had.question === o.question) return false;
+			}
+		}
+		var ts = Number(report.ts) > 0 ? Math.floor(Number(report.ts)) : Date.now();
+		chat.messages.push(touchMsg({ role: 'tool_log', mid: mid, iturn: tid, name: 'ask', args: JSON.stringify(o),
+			content: '', outcome: 'done', ts: ts }));
+		touchChat(chat);
+		persistChats();
+		if (ownsChat(chat)) renderHistory(chat.messages);
+		return true;
 	}
 
 	/// A runner's turn has settled in `chat`, so its engine, which holds the conversation from
@@ -44040,8 +44359,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat._runApp = app;           // what Stop and a pause reach, whatever becomes of `chat.app` meanwhile
 		// The chat's totals as the turn begins: every attempt's bill moves them, so the turn's
 		// whole spend is their growth, whichever app each attempt ran on (r543 QA F-A2-2).
-		var tok0 = { p: chat.promptTokens || 0, c: chat.completionTokens || 0, cost: chat.costUsd || 0,
-			ca: chat.cachedTokens || 0 };
+		// Read from the here part (RT-C), so a native run folded in mid-turn is not this turn's.
+		var h0 = hereOf(chat);
+		var tok0 = { p: h0.p, c: h0.c, cost: h0.usd, ca: h0.ca };
 
 		// Which round of the turn this is: one per tool-call round, counted so the
 		// indicator has something that MOVES on it. A caption that never changes
@@ -44719,10 +45039,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// billed as it was replaced (`rebuildAppWithout`, r543 QA F-A2-2).
 				var tb = billChatSpend(chat, app, umid);
 				turnSpent = tb.entry;
-				var turnP = Math.max(0, (chat.promptTokens || 0) - tok0.p);
-				var turnC = Math.max(0, (chat.completionTokens || 0) - tok0.c);
-				var turnCost = Math.max(0, (chat.costUsd || 0) - tok0.cost);
-				var turnCa = Math.max(0, (chat.cachedTokens || 0) - tok0.ca);
+				var h1 = hereOf(chat);
+				var turnP = Math.max(0, h1.p - tok0.p);
+				var turnC = Math.max(0, h1.c - tok0.c);
+				var turnCost = Math.max(0, h1.usd - tok0.cost);
+				var turnCa = Math.max(0, h1.ca - tok0.ca);
 				// WHAT THIS HAND-OFF RUN COST, stamped on the answer so the device that
 				// dispatched the turn can say what happened in the hand-off tile's body
 				// rather than expanding to nothing. Only for a dispatched/errand turn
@@ -44737,6 +45058,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					ansMsg.ranTokIn  = turnP;
 					ansMsg.ranTokOut = turnC;
 					ansMsg.ranCost   = turnCost;
+					ansMsg.ranCached = turnCa;
+					ansMsg.ranCtx    = app.last_prompt_tokens || 0;
+					// This runner billed the turn into its own record, which syncs home: the
+					// run is marked in, so the asker never folds it a second time (RT-C).
+					var trun = _turnRun[String(umid)];
+					if (trun && trun.id) markRunFolded(chat, trun.id);
 				}
 				// What the LAST request actually sent, not what the turn sent in total.
 				// The two are the same only for a one-round turn: an agentic turn sends
@@ -44747,6 +45074,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// there was simply no getter for it, so `restore` could set it and
 				// nothing could read it back.
 				chat.lastPrompt = app.last_prompt_tokens || 0;
+				noteHerePrompt(chat);
 				// A tool call arrived unparseable, which means the reply ran out of room
 				// mid-argument. Said once, at the end, naming the limit and the setting —
 				// the alternative is a tool that silently did nothing.
@@ -44926,10 +45254,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (threw && app) {
 					var tbx = billChatSpend(chat, app, umid);
 					if (tbx.entry) turnSpent = tbx.entry;
-					turnP = Math.max(0, (chat.promptTokens || 0) - tok0.p);
-					turnC = Math.max(0, (chat.completionTokens || 0) - tok0.c);
-					turnCa = Math.max(0, (chat.cachedTokens || 0) - tok0.ca);
-					turnCost = Math.max(0, (chat.costUsd || 0) - tok0.cost);
+					var h2 = hereOf(chat);
+					turnP = Math.max(0, h2.p - tok0.p);
+					turnC = Math.max(0, h2.c - tok0.c);
+					turnCa = Math.max(0, h2.ca - tok0.ca);
+					turnCost = Math.max(0, h2.usd - tok0.cost);
 				}
 				tmeter.end(lastHow);
 				recordTurnOutcome(tp.model, tp.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'), turnSpent);
@@ -45254,6 +45583,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat.completionTokens = (chat.completionTokens || 0) + d.c;
 		chat.cachedTokens = (chat.cachedTokens || 0) + d.ca;
 		chat.costUsd = (chat.costUsd || 0) + d.cost;
+		// The here part moves with them where a native run has split it out (RT-C).
+		if (typeof chat.hereP === 'number') {
+			chat.hereP += d.p; chat.hereC = (chat.hereC || 0) + d.c;
+			chat.hereCa = (chat.hereCa || 0) + d.ca; chat.hereUsd = (chat.hereUsd || 0) + d.cost;
+		}
 		// Billed to the chat's OWN Diamond, which for an ordinary chat is nothing at all,
 		// never the selected one (see `recordSpend`).
 		// Billed to the model THIS engine was built on (U1d): a following chat's record names none.
@@ -49397,6 +49731,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	var Pending = {
 		items: [],
+		RECOVER:   'r:recover',	// the recovery row's id
+		recoverAt: 0,			// when this page first found the identity unrecoverable
+
+		/// Is there an identity here that nothing outside this browser would bring back?
+		/// (identity.js `recoverable`.) False where the question cannot be asked.
+		unrecoverable: function () {
+			try {
+				var I = window.DaimondIdentity;
+				return !!(I && I.recoverable && I.exists && I.exists() && !I.recoverable());
+			} catch (e) { return false; }
+		},
 
 		load: function () { this.fresh(); },
 
@@ -49421,7 +49766,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Every synced DaimondAlerts item (an alert, the runner's tile, its alarm notice) is the
 			// record's, drawn below from it: one a save or an older build left in the local list is
 			// not drawn twice, nor kept past its clearing (rafreeze).
-			this.items = this.items.filter(function (it) { return !Pending.fromAlerts(it); });
+			this.items = this.items.filter(function (it) { return !Pending.derived(it); });
+			// R1: one row while nothing outside this browser would bring the identity back.
+			// Worked out on every read and never stored, so it goes when its cause does.
+			if (this.unrecoverable()) {
+				if (!this.recoverAt) this.recoverAt = Date.now();
+				this.items.push({ id: this.RECOVER, kind: 'recover', priority: 'high', at: this.recoverAt,
+					headline: t('recover.not_yet'), detail: t('recover.not_yet_reason') });
+			} else this.recoverAt = 0;
 			this.items.forEach(function (it) {
 				if (it.kind === 'consent') it.expired = !_parked[it.id];
 			});
@@ -49457,8 +49809,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// ONE RULE, by id and never by kind: the runner's alarm is drawn as a `notice` and its
 		/// update as a `runner`, and a kind list kept a saved alarm tile past the alarm (rafreeze).
 		fromAlerts: function (it) { return !!it && String(it.id).indexOf('a:') === 0; },
+		/// Is this item drawn from elsewhere on every read (a synced alert, the recovery row),
+		/// and so never this list's to store or to reprioritise?
+		derived: function (it) { return Pending.fromAlerts(it) || (!!it && it.id === Pending.RECOVER); },
 		save: function () {
-			var mine = this.items.filter(function (it) { return !Pending.fromAlerts(it); });
+			var mine = this.items.filter(function (it) { return !Pending.derived(it); });
 			try { localStorage.setItem(PENDING_KEY, JSON.stringify(mine)); }
 			catch (e) { /* quota: it holds for this session */ }
 			this.render();
@@ -49652,7 +50007,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				head.appendChild(badge);
 			}
 			// A synced item (`a:`) has no priority to set here: the list it would be saved to is not its record.
-			var prio = Pending.fromAlerts(it) ? null : document.createElement('select');
+			var prio = Pending.derived(it) ? null : document.createElement('select');
 			if (prio) {
 			prio.className = 'pend-prio';
 			prio.title = t('pending.priority');
@@ -49728,6 +50083,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (it.kind === 'runner') { runnerTile(box, it); return box; }
 			// A runner asking to join is approved here, with his passkey (R2d1).
 			if (it.kind === 'runnerpair') { runnerPairTile(box, it); return box; }
+			// Not recoverable yet: its one act is the enrolment (`offerRecovery`), asked again.
+			if (it.kind === 'recover') {
+				var racts = document.createElement('div');
+				racts.className = 'pend-acts';
+				var rgo = document.createElement('button');
+				rgo.type = 'button';
+				rgo.className = 'pend-act pend-go pend-recover-go';
+				rgo.textContent = t('recover.not_yet_act');
+				rgo.addEventListener('click', function () { offerRecovery(null, true); });
+				racts.appendChild(rgo);
+				box.appendChild(racts);
+				return box;
+			}
 			// An alert's two: go to the Diamond that raised it, or take it down.
 			if (it.kind === 'alert') {
 				var aacts = document.createElement('div');
@@ -66848,14 +67216,89 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// a runner, or what the undo did. Never a button that does nothing.
 
 	/// Record a settling report's `turnRec` and send the new version on. Fired, not awaited:
-	/// a report is folded under the mailbox lock, which no network wait may hold.
-	function recordCarriedTurn(rec) {
-		if (!window.DaimondVersions || !DaimondVersions.recordCarried) return;
-		DaimondVersions.recordCarried(rec).then(function (did) {
-			if (!did) return;
+	/// a report is folded under the mailbox lock, which no network wait may hold. Where the
+	/// engine recorded a version (`{version, files, note}`), the turn gets the Files row a Here
+	/// turn gets and the runner's session the tail note (RT-C); `{}` (recorded already, by run,
+	/// as on a second device) builds nothing, and the row comes by sync. Answers its promise.
+	function recordCarriedTurn(rec, report) {
+		if (!window.DaimondVersions || !DaimondVersions.recordCarried) return null;
+		return DaimondVersions.recordCarried(rec).then(function (said) {
+			if (!said) return;
 			if (window.DaimondSync && DaimondSync.flush) DaimondSync.flush().catch(function () {});
 			if (histOpenFor(rec.keeper)) showCrystalHistory();
+			if (!(said.version > 0)) return;
+			var chat = chatHoldingTurn(rec.turnId);
+			if (!chat) return;
+			return carriedFilesRow(chat, rec, said).then(function (row) {
+				// The tail note onto the session the report stored (invariant 8), as the Here
+				// session takes it; once.
+				var s = chat.session, rs = report && report.session, note = said.note, told = false;
+				if (note && note.content && s && Array.isArray(s.msgs) && rs
+					&& String(s.upto || '') === String(rs.upto || '')) {
+					var tail = s.msgs[s.msgs.length - 1];
+					if (!tail || tail.role !== note.role || tail.content !== note.content) { s.msgs.push(note); told = true; }
+				}
+				if (!row && !told) return;
+				touchChat(chat);
+				persistChats();
+				if (row && ownsChat(chat)) renderHistory(chat.messages);
+			});
 		}).catch(function () { /* the next report of the run, or none: the rows are only History */ });
+	}
+
+	/// The Files row of a runner's turn, `<run>-files`, as the Here turn's end makes it: a chat
+	/// keeper's `files_log` (`filesLogOf`), a Diamond keeper's `user` row with the tail note, its
+	/// `prod` and `files` (the turn's end). Credited to the runner device; the line counts come
+	/// from the turnRec, as this device holds no bodies. Placed before `<run>-end`, else after the
+	/// turn's last row. Answers the row, or null where it is held already or nothing is credited.
+	async function carriedFilesRow(chat, rec, said) {
+		var store = String(rec.keeper || ''), v = Number(said.version), turnId = String(rec.turnId || '');
+		var mid = String(rec.run) + '-files', ms = chat.messages || (chat.messages = []);
+		if (ms.some(function (m) { return m && m.mid === mid; })) return null;
+		var isChat = store.indexOf('chat:') === 0;
+		var counts = {};
+		(rec.files || []).forEach(function (f) {
+			if (f && f.path && !f.gone && (typeof f.add === 'number' || typeof f.del === 'number'))
+				counts[f.path] = { add: f.add || 0, del: f.del || 0 };
+		});
+		// Credited as the Here turn credits its files: to the turn's author, its prodBase, never the
+		// runner's own name for its seat (RT-D1 finding B).
+		var prod = await turnFileProds(store, v, chat.id, turnId, isChat ? '' : undefined, null, String(rec.on || ''),
+			carriedProdBase(chat, rec.run));
+		var row;
+		if (isChat) {
+			if (!prod.length) return null;
+			var delta = Object.keys(counts).map(function (p) {
+				return { h: DaimondProvenance.h.file(store, v, p), add: counts[p].add, del: counts[p].del };
+			});
+			row = { role: 'files_log', mid: mid, iturn: turnId, ts: 0, prod: prod, delta: delta };
+		} else {
+			if (!said.note || !said.note.content) return null;
+			var files = await turnFileList(store, v);
+			files.forEach(function (f) {
+				var c = counts[f.path];
+				if (c && !f.gone && f.add === undefined) { f.add = c.add; f.del = c.del; }
+			});
+			row = { role: 'user', content: said.note.content, mid: mid, iturn: turnId, ts: 0 };
+			if (prod.length) row.prod = prod;
+			if (files.length) row.files = files;
+		}
+		// Held meanwhile (the awaits above): the first one in keeps it.
+		if (ms.some(function (m) { return m && m.mid === mid; })) return null;
+		var end = -1, last = -1;
+		for (var i = 0; i < ms.length; i++) {
+			var m = ms[i];
+			if (!m) continue;
+			if (m.mid === String(rec.run) + '-end') end = i;
+			if (m.mid === turnId || m.iturn === turnId) last = i;
+		}
+		var ts = rec.ts || Date.now();
+		if (end >= 0 && ms[end].ts) ts = Math.min(ts, ms[end].ts - 1);
+		row.ts = ts;
+		if (end >= 0) ms.splice(end, 0, row);
+		else if (last >= 0) ms.splice(last + 1, 0, row);
+		else ms.push(row);
+		return row;
 	}
 
 	/// The live History rows with an Undo of a runner turn, by run, so an answer redraws its row.
@@ -70820,7 +71263,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `dia` is the record's Diamond, which defaults to the store and is '' for a plain chat's.
 	/// `delta`, where given, is filled with `{ h, add, del }` for each row the store can count (a file
 	/// that is gone has none, and nor has one past the diff's cap or one whose body is not held).
-	async function turnFileProds(store, v, chatId, turnMid, dia, delta) {
+	/// `dev` is the device that wrote the files: this one unless named (a runner's carried turn).
+	/// `base`, where given, is the turn's author (`prodBase`): its model, provider, role, prompt print,
+	/// Diamond and chat stand for each entry's own, whose file, hash, run and via are kept.
+	async function turnFileProds(store, v, chatId, turnMid, dia, delta, dev, base) {
 		var out = [], todo = [];
 		if (!window.DaimondProvenance || !window.DaimondVersions || !(v > 0)) return out;
 		var mv = null;
@@ -70830,9 +71276,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { mv = null; }
 		((mv && mv.files) || []).forEach(function (e) {
 			if (!e || !e.path || !e.by || !e.by.role) return;
+			var a = base ? base : { m: e.by.m || '', pv: e.by.pv || '', role: e.by.role, sp: e.by.sp || '',
+				d: dia === undefined ? store : dia, c: chatId };
 			var p = stampProd({ h: DaimondProvenance.h.file(store, v, e.path), k: 'file',
-				m: e.by.m || '', pv: e.by.pv || '', role: e.by.role, sp: e.by.sp || '',
-				d: dia === undefined ? store : dia, c: chatId, t: turnMid, dev: selfDeviceId(), at: mv.ts || 0,
+				m: a.m || '', pv: a.pv || '', role: a.role, sp: a.sp || '',
+				d: a.d || '', c: a.c || '', t: turnMid, dev: dev || selfDeviceId(), at: mv.ts || 0,
 				hash: e.gone ? '' : (e.hash || ''), run: e.by.run || '', via: e.by.via || '' });
 			if (p) { out.push(p); if (delta && p.hash) todo.push({ h: p.h, was: e.was || '', now: p.hash }); }
 		});
@@ -71788,6 +72236,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (sFold) rec.fold = sFold;
 			try {
 				rec.lastPrompt = fa.last_prompt_tokens || rec.lastPrompt || 0;
+				noteHerePrompt(rec);
 			} catch (e) { /* the app is mid-turn nowhere here */ }
 			touchChat(rec);
 			persistChats();
@@ -72963,6 +73412,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// sign-up, which decides between offering to fill and offering to save.
 		document.getElementById('id-pass').setAttribute('autocomplete',
 			unlock ? 'current-password' : 'new-password');
+		pairFirst(!unlock);
 		document.getElementById('id-primary').textContent    = unlock ? t('identity.unlock') : t('identity.create_account');
 		document.getElementById('id-skip').textContent       = unlock ? t('identity.forget') : t('identity.skip');
 		document.getElementById('id-error').textContent = '';
@@ -72997,6 +73447,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		m.style.display = 'flex';
 		(unlock ? document.getElementById('id-pass') : document.getElementById('id-name')).focus();
 	}
+	/// On an iOS Home Screen app with no identity, pairing comes before creating: its storage
+	/// is not the Safari tab's, so the account made there is reached by pairing from that
+	/// tab, and a create would make a second one (`offerRecovery`'s Home Screen step).
+	function pairFirst(on) {
+		var form = document.getElementById('id-form');
+		var box = document.getElementById('id-pairfirst');
+		var want = false;
+		try { want = on && DaimondIdentity.homeScreen() && !DaimondIdentity.exists(); } catch (e) { want = false; }
+		if (!want) { if (box) box.remove(); return; }
+		if (box || !form) return;
+		box = document.createElement('div');
+		box.id = 'id-pairfirst';
+		var lead = document.createElement('p');
+		lead.className = 'cfg-lead';
+		lead.textContent = t('recover.pair_first_lead');
+		var go = document.createElement('button');
+		go.type = 'button';
+		go.className = 'pair-btn';
+		go.id = 'id-pairfirst-go';
+		go.style.cssText = 'width:100%;margin-bottom:12px';
+		go.textContent = t('recover.pair_first');
+		go.addEventListener('click', function () { if (window.DaimondPairing) DaimondPairing.showRedeem(); });
+		box.appendChild(lead);
+		box.appendChild(go);
+		form.parentNode.insertBefore(box, form);
+	}
+
 	/// Turn the unlock screen into a RECOVER screen: the keys did not read, but this
 	/// account has held an identity, so a bare create is refused and this is shown
 	/// instead. Called straight after `showIdentity('unlock')`.
@@ -73146,7 +73623,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// until the same moment. Separate from the models unseal above only
 		// because they are separate stores; nothing orders them.
 		if (window.DaimondSearch) await DaimondSearch.unseal();
-		try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* best-effort */ }
 		// The settings are on screen now, not behind a button, so they must show
 		// the user's own provider and key rather than an empty form.
 		step('fillSettings', function () { fillSettings(); });
@@ -73279,7 +73755,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		//
 		// The app is on screen before this asks, so the offer reads as an aside
 		// rather than one more gate between the user and their workspace.
-		await maybeOfferPasskey(pass);
+		await offerRecovery(pass);
 	}
 
 	/// Ask the browser to remember the passphrase, where it offers a way to ask.
@@ -73328,6 +73804,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		trail('afterUnlock start');
 		await afterUnlock();
 		trail('afterUnlock done');
+		// At every load into an identity, a passkey from before the recovery record is
+		// recorded once its sealed copy is found on the gateway. Not awaited: the chip
+		// follows `daimond:recoverable`, and the offer awaits the same answer.
+		noteHeldPasskey();
 		hideIdentity();
 		try { DaimondTrail.note('unlocked'); } catch (e) { /* no trail is not an error */ }
 		// TRAINING WHEELS — the debug feed's `boot`. HERE rather than in `boot()`:
@@ -73592,16 +74072,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			},
 		});
 		if (!pass) return;
-		var r;
-		try { r = await DaimondPasskey.enrol(pass); }
-		catch (e) { r = { ok: false, error: friendlyError(e) }; }
-		if (!r || !r.ok) { noticeDialog(t('passkey.not_added'), (r && r.error) || t('passkey.err_create_failed2')); return; }
+		var r = await addPasskey(pass);
+		if (!r.ok) { noticeDialog(t('passkey.not_added'), r.error || t('passkey.err_create_failed2')); return; }
 		// Whether the sealed copy reached the gateway decides what this passkey can
 		// do, so it is stated rather than glossed: with it, the passkey brings the
 		// account to a new device; without it, the passkey only opens this one.
 		noticeDialog(t('passkey.added'),
 			t(r.synced ? 'passkey.added_synced' : 'passkey.added_local'));
 		DaimondAdmin.home();	// re-render so the control flips to "Remove passkey".
+	}
+
+	/// Enrol a passkey with a passphrase already in hand: the one routine Settings and
+	/// the recovery offer share. A passkey whose sealed copy reached the gateway brings
+	/// the identity back on a bare device (`adoptWithPasskey`), so that, and only that,
+	/// is recorded as a way back (identity.js `noteRecovery`). Resolves
+	/// `{ ok, synced, error }`, and never throws.
+	async function addPasskey(pass) {
+		var r;
+		try { r = await DaimondPasskey.enrol(pass); }
+		catch (e) { r = { ok: false, error: friendlyError(e) }; }
+		if (!r || !r.ok) return { ok: false, synced: false, error: (r && r.error) || '' };
+		if (r.synced) { try { DaimondIdentity.noteRecovery('passkey', true); } catch (e) { /* no identity */ } }
+		return { ok: true, synced: !!r.synced, error: '' };
 	}
 
 	/// Remove the enrolled passkey: this device's sealed copy and the one held for
@@ -73614,43 +74106,111 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			{ title: t('passkey.remove_title'), danger: false });
 		if (!ok) return;
 		try { await DaimondPasskey.remove(); } catch (e) { /* nothing to remove */ }
+		// The gateway's copy went with it, so no device can be brought back by it now.
+		try { DaimondIdentity.noteRecovery('passkey', false); } catch (e) { /* no identity */ }
 		noticeDialog(t('passkey.removed'), t('passkey.removed_body'));
 		DaimondAdmin.home();
 	}
 
-	/// Offer a passkey once, just after an unlock, on a device that could hold one
-	/// and does not.
+	/// Make this identity recoverable (spec §5.1, R1), just after an unlock, or when the
+	/// "Not recoverable yet" chip is pressed (`ask` true, with no passphrase in hand).
 	///
-	/// This is the missing step that left the whole feature unused: enrolling was
-	/// only ever reachable from a Settings item that nothing pointed at, so a phone
-	/// arrived with no passkey and stayed that way, and the user retyped a
-	/// passphrase every time the browser discarded the tab. The moment just after
-	/// an unlock is the one moment the passphrase is in hand and enrolment is free.
-	/// Asked once per device, and never again whatever the answer.
-	var K_PASSKEY_ASKED = 'daimond-passkey-asked';
-	async function maybeOfferPasskey(passphrase) {
-		if (!passphrase || !window.DaimondPasskey) return;
+	/// The moment after an unlock is the one moment the passphrase is in hand, so
+	/// enrolment costs nothing. In order: a passkey where WebAuthn PRF is available;
+	/// otherwise, or when that is declined or fails, a recovery file; and then, on
+	/// iOS outside the home screen, the Add to Home Screen step, since an installed app
+	/// is not cleared after seven days the way a Safari tab is. Every card carries
+	/// `ask: 'recover'`, for a reader that cannot match a translated title.
+	///
+	/// Asked unprompted once per device, marked BEFORE asking so a reload does not
+	/// meet it again; the chip asks again whenever it is pressed.
+	var K_RECOVER_ASKED = 'daimond-recover-asked';
+	async function offerRecovery(pass, ask) {
+		if (!window.DaimondIdentity || !DaimondIdentity.recoverable) return;
+		// A passkey enrolled before the record existed is recorded first, when the gateway
+		// holds its copy, so it is not offered a second time (passkey.js `noteHeld`).
+		await noteHeldPasskey();
 		try {
-			if (localStorage.getItem(K_PASSKEY_ASKED) === '1') return;
-			if (DaimondPasskey.isEnrolled()) return;
-			if (!(await DaimondPasskey.available())) return;
-		} catch (e) { return; }
-		// Mark it asked BEFORE asking: a user who dismisses the dialog by
-		// reloading should not meet it again on the next unlock.
-		try { localStorage.setItem(K_PASSKEY_ASKED, '1'); } catch (e) { /* private mode */ }
-		var yes = await confirmDialog(
-			t('passkey.offer_body'),
-			t('passkey.add_title'),
-			{ title: t('passkey.offer_title'), danger: false, cancelLabel: t('dlg.not_now') });
-		if (!yes) return;
-		var r;
-		try { r = await DaimondPasskey.enrol(passphrase); }
-		catch (e) { r = { ok: false, error: friendlyError(e) }; }
-		if (!r || !r.ok) {
-			noticeDialog(t('passkey.not_added'), (r && r.error) || t('passkey.err_create_retry'));
-			return;
+			if (!DaimondIdentity.exists() || DaimondIdentity.recoverable()) return;
+			if (!ask) {
+				if (localStorage.getItem(K_RECOVER_ASKED) === '1') return;
+				localStorage.setItem(K_RECOVER_ASKED, '1');
+			}
+		} catch (e) { if (!ask) return; }
+		var pk = false;
+		try { pk = !!(window.DaimondPasskey && await DaimondPasskey.available()); } catch (e) { pk = false; }
+		if (pk && await confirmDialog(t('passkey.offer_body'), t('passkey.add_title'),
+			{ title: t('passkey.offer_title'), danger: false, cancelLabel: t('dlg.not_now'), ask: 'recover' })) {
+			if (!pass) pass = await promptDialog(t('passkey.add_title'), {
+				message: t('passkey.add_body'), okLabel: t('passkey.continue'), secret: true,
+				validate: async function (v) {
+					if (!v) return t('passkey.err_enter_pass');
+					return (await DaimondIdentity.verify(v)) ? '' : t('passkey.err_bad_passphrase');
+				},
+			});
+			if (pass) {
+				var r = await addPasskey(pass);
+				if (r.ok) await noticeDialog(t('passkey.added'), t(r.synced ? 'passkey.added_offer' : 'passkey.added_local'));
+				else      await noticeDialog(t('passkey.not_added'), r.error || t('passkey.err_create_retry'));
+			}
 		}
-		noticeDialog(t('passkey.added'), t('passkey.added_offer'));
+		// A passkey the gateway does not hold opens only this browser, so the file is
+		// still owed after it.
+		if (!DaimondIdentity.recoverable() && await confirmDialog(t('recover.file_body'), t('recover.file_save'),
+			{ title: t('recover.file_title'), danger: false, cancelLabel: t('dlg.not_now'), ask: 'recover' })) {
+			await saveRecoveryFile();
+		}
+		// A Home Screen app has its own storage, empty at first, so creating there makes a
+		// SECOND account and helps this one not at all. The step says so, and offers this
+		// tab's pairing code, which the Home Screen app's first screen asks for. Only while
+		// nothing else brings this identity back.
+		if (iosTab() && !DaimondIdentity.recoverable()
+			&& await confirmDialog(t('recover.home_body'), t('recover.home_pair'),
+				{ title: t('recover.home_title'), danger: false, cancelLabel: t('dlg.not_now'), ask: 'recover' })) {
+			if (window.DaimondPairing && DaimondPairing.showLink) DaimondPairing.showLink();
+		}
+	}
+
+	/// passkey.js `noteHeld`, where the page has it. Never throws.
+	async function noteHeldPasskey() {
+		try { if (window.DaimondPasskey && DaimondPasskey.noteHeld) await DaimondPasskey.noteHeld(); }
+		catch (e) { /* the record stays as it was */ }
+	}
+
+	/// Is this iOS (or iPadOS, which reports a Mac) in a tab rather than a home-screen app?
+	function iosTab() {
+		try { return DaimondIdentity.ios() && !DaimondIdentity.homeScreen(); }
+		catch (e) { return false; }
+	}
+
+	/// The identity alone, as a backup Restore reads (`doImport` adopts it on a browser
+	/// that holds none): the recovery file, and the head of every full backup.
+	function recoveryBundle() {
+		return {
+			format: 'daimond-backup',
+			version: BACKUP_VERSION,
+			exported: new Date().toISOString(),
+			name: DaimondIdentity.displayName(),
+			// Null when there is no identity to carry; the restore then leaves this
+			// device's own alone.
+			identity: (function () {
+				try { return DaimondIdentity.exportBundle(); } catch (e) { return null; }
+			})(),
+		};
+	}
+
+	/// Hand the person the recovery file, and record it only when it was saved: a
+	/// download the browser cannot report on is asked about, and a share sheet that
+	/// was cancelled is not saved (R1, the chip never clears falsely).
+	async function saveRecoveryFile() {
+		var b = recoveryBundle();
+		if (!b.identity) return false;
+		var how = await DaimondViewer.handOver(JSON.stringify(b, null, 2), 'application/json',
+			'daimond-recovery-' + new Date().toISOString().slice(0, 10) + '.json');
+		if (how === 'cancelled') return false;
+		if (how !== 'shared' && !(await confirmDialog(t('recover.saved_body'), t('recover.saved_yes'),
+			{ title: t('recover.saved_title'), cancelLabel: t('recover.saved_no'), danger: false, ask: 'recover' }))) return false;
+		try { return DaimondIdentity.noteRecovery('file'); } catch (e) { return false; }
 	}
 
 	/// The secondary button: "Skip for now" on create, "Forget this identity…"
@@ -73755,6 +74315,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// record that no longer exists, and left behind it would deny the next
 		// identity the one offer it gets.
 		'daimond-passkey', 'daimond-passkey-asked',
+		// The recovery offer's own mark, for the same reason: the next identity gets one.
+		'daimond-recover-asked',
 		// THE AGREEMENT TO BE RECORDED, which the sign-out above already clears
 		// (`DaimondGateway.logout` withdraws it before it touches the network).
 		// Named here anyway, and not as a flourish: that call is wrapped in a
@@ -74594,16 +75156,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var BACKUP_VERSION = 1;
 
 	async function doExport() {
-		var out = {
-			format: 'daimond-backup',
-			version: BACKUP_VERSION,
-			exported: new Date().toISOString(),
-			name: DaimondIdentity.displayName(),
-			// Null when there is no identity to carry; the restore then leaves this
-			// device's own alone.
-			identity: (function () {
-				try { return DaimondIdentity.exportBundle(); } catch (e) { return null; }
-			})(),
+		var out = recoveryBundle();
+		Object.assign(out, {
 			// Whole transcripts, loaded from the authoritative rows -- the mirror holds
 			// only summaries since seq 213, so a backup built from it alone would be empty.
 			chats: await chatsWithTranscripts(storedChats()),
@@ -74625,7 +75179,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { return window.DaimondTrash ? DaimondTrash.snapshot() : null; }
 				catch (e) { return null; }
 			})(),
-		};
+		});
 		try {
 			var list = await diamondApp().list_diamonds();
 			var arr = JSON.parse(list || '[]');
@@ -75207,6 +75761,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return String(fallback).replace(/\{(\w+)\}/g, function (whole, k) {
 			return vars[k] != null ? String(vars[k]) : whole;
 		});
+	}
+
+	/// A row's text in the page's language: its `say` key (params `say.v`) when it carries one
+	/// (a native runner's error, vision and failed-answer rows), else its content.
+	function logRowText(m) {
+		var content = m.content == null ? '' : String(m.content);
+		return m.say && m.say.k ? tOr(m.say.k, content, m.say.v) : content;
 	}
 
 	/// The round-limit setting: how many tool-call rounds one turn may take.

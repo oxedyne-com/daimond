@@ -13,7 +13,7 @@
 // debug share's drain, the Lens shot poll, then the operator console. A refusal from the
 // gateway does not matter here; what the page sent does.
 //
-//   eval "$(bash dev/world.sh N --env)"; node dev/probe_apifloor.mjs
+//   eval "$(bash dev/world.sh N --env)"; eval "$(node dev/rig/gateclock.mjs env probe_apifloor)"; node dev/probe_apifloor.mjs
 //
 // Exit 0 when every request carried a version at the floor or above, 1 otherwise.
 import { MIN_CLIENT_API, CLIENT_API } from './clientapi.mjs';

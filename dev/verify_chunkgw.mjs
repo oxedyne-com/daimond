@@ -42,7 +42,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, GWBIN, procLog, GWCWD } from './gwbin.mjs';
+import { requireFreshGateway, GWBIN, procLog, GWCWD, gatewayEnv } from './gwbin.mjs';
 import { open } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
@@ -95,7 +95,7 @@ const alreadyUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)
 if (alreadyUp) {
 	console.log(`  ok   using the gateway already on :${GW_PORT}`);
 } else {
-	gw = spawn(GWBIN, [], { cwd: GWCWD, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio });
+	gw = spawn(GWBIN, [], { cwd: GWCWD, env: gatewayEnv({ APP_MODE: 'sandbox' }, GWCWD), stdio: GW_LOG.stdio });
 	check('gateway starts', await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok), GWBIN);
 }
 

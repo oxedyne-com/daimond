@@ -2077,6 +2077,9 @@
 		feedOk:           function () { return !feedOff; },
 		/// How many events are waiting to go out.
 		outboxDepth:      function () { return outbox.length; },
+		/// Count a post another file made in the background and lost (diag.js, lensshot.js),
+		/// so the beat's `postFail` covers every feed, not only this file's own.
+		notePostFail:     function () { postFailCount += 1; },
 		// Exposed for the verifier: drive one telemetry tick without the 30 s timer.
 		_telemetryTick:   telemetryTick,
 		// Exposed for the verifier (www/js/debugshare.test.mjs):

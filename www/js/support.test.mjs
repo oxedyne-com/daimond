@@ -114,7 +114,8 @@ function makeEnv(cfg) {
 		body,
 	};
 
-	const win = { DaimondGateway: { clientApi: () => 3 } };	// the page's gateway.js, the one copy of the version
+	// The page's gateway.js: the one copy of the version, and the one sentence for a failure.
+	const win = { DaimondGateway: { clientApi: () => 3, failWhy: (s) => 'WHY' + (s | 0) } };
 	// Trail: a fixed, non-empty ring, so a report's trail section is provably
 	// non-empty unless the seam itself is removed (the (a) revert below).
 	win.DaimondTrail = cfg.noTrail ? null : {
@@ -167,7 +168,7 @@ function makeEnv(cfg) {
 	loadScript('support.js');
 
 	return {
-		win, document, localStorage, posts, body, store,
+		win, document, localStorage, posts, body, store, cfg,
 		diagOn: () => diagOn, setCalls, nudges: () => nudges, timerDelays,
 	};
 }
@@ -551,6 +552,49 @@ async function main() {
 		check('the first-ever tap still calls DaimondSupport.report', reported.length === 1);
 		check('an unconsented tap leaves the toast\'s own auto-dismiss running (the consent sheet owns its own timing)',
 			cleared.indexOf(scheduled[0].id) === -1 && cleared.indexOf(scheduled[1].id) === -1);
+	}
+
+	console.log('(k) a report that did not land says "Not sent: {reason}" with Retry (API-FLOOR 3)');
+	{
+		const env = makeEnv({ respondStatus: 426 });
+		const said = [];
+		env.win.DaimondSupport.report('error.thrown', (s) => said.push(s));
+		const sheet = findById(env.body, 'support-sheet');
+		fire(findByClass(sheet, 'report-send'), 'click');
+		await sleep(5);
+		const status = findByClass(sheet, 'report-status');
+		const go = findByClass(sheet, 'report-send');
+		check('the sheet reads Not sent: with the gateway\'s reason', status.textContent === 'Not sent: WHY426', status.textContent);
+		check('the caller is told the same', said[said.length - 1] === 'Not sent: WHY426', said[said.length - 1]);
+		check('the send button becomes Retry, and can be pressed', go.textContent === 'Retry' && go.disabled === false, go.textContent);
+		const at = env.win.DaimondSupport.syncSnapshot().at;
+		env.cfg.respondStatus = 200;
+		fire(go, 'click');
+		await sleep(5);
+		check('Retry sends the report again', env.posts.length === 2);
+		check('and a landed retry says so', /sent/i.test(status.textContent) && !/Not sent/.test(status.textContent), status.textContent);
+		check('a retry does not restamp a consent already given', env.win.DaimondSupport.syncSnapshot().at === at);
+
+		console.log('    a caller that already has consent gets the same failed sheet');
+		env.cfg.respondStatus = 429;
+		const said2 = [];
+		env.win.DaimondSupport.report('turn.fail', (s) => said2.push(s));
+		await sleep(5);
+		const failed = findById(env.body, 'support-sheet');
+		check('the consented send went out', env.posts.length === 3);
+		check('its failure opens the sheet in its failed state',
+			!!failed && countById(env.body, 'support-sheet') >= 1
+			&& findByClass(failed, 'report-status').textContent === 'Not sent: WHY429',
+			failed && findByClass(failed, 'report-status').textContent);
+		check('with Retry', !!failed && findByClass(failed, 'report-send').textContent === 'Retry');
+		check('and the caller is told', said2[said2.length - 1] === 'Not sent: WHY429');
+
+		console.log('    revert: a consented send that lands opens no sheet');
+		env.cfg.respondStatus = 200;
+		const n = countById(env.body, 'support-sheet');
+		env.win.DaimondSupport.report('turn.fail', () => {});
+		await sleep(5);
+		check('no new sheet for a report that landed', countById(env.body, 'support-sheet') === n && env.posts.length === 4);
 	}
 
 	console.log('\n' + (failures ? 'FAIL' : 'PASS') + ' — support.js (D-20260920-02)');

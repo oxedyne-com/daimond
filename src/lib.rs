@@ -106,6 +106,7 @@ pub mod store;
 pub mod syntax;
 pub mod tools;
 pub mod turn_state;
+pub mod turn_log;
 /// The browser (wasm32) entry surface — a `#[wasm_bindgen]` API plus the
 /// OPFS filesystem edge.  Gated to wasm32 so the native build never sees
 /// `wasm-bindgen`'s generated glue.

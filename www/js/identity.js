@@ -87,6 +87,7 @@
 	var K_FP   = 'daimond-id-fp';		// CACHED fingerprint rendering. See fingerprint().
 	var K_NAME = 'daimond-id-name';		// the user's chosen display name.
 	var K_HDL  = 'daimond-id-handle';	// the ACCOUNT's public handle: {h, t}. See below.
+	var K_RECOVER = 'daimond-id-recover';	// what brings the identity back: {v, pk, file}. See `recoverable`.
 	// The sealing subkey: a SECOND keypair, for receiving sealed messages. Separate
 	// from the signing pair on purpose — see the note above `ensureSealingKey`.
 	var K_SEALP = 'daimond-id-sealpub';	// base64 raw public sealing key (32 bytes).
@@ -1094,6 +1095,12 @@
 		wipe(bits);
 		announce('unlock');
 		share('unlock', { via: 'typed' });
+		// The keys are stored: ask at once, before anything below can stall, and not
+		// awaited, so a browser slow to answer does not hold up the first run.
+		keep();
+		// R1: an identity now exists that nothing outside this browser would bring back.
+		// The sync chip was painted at load, before there was one, so it must be told.
+		tellRecoverable();
 
 		// The sealing key is made here so a new identity can be messaged from the
 		// moment it exists. A failure is not fatal to creating an identity — an
@@ -2350,6 +2357,174 @@
 		// marker exists to end. Cleared only here, on confirmed success, so a
 		// failed import leaves the device exactly as removed as it was.
 		localStorage.removeItem(K_REMOVED);
+		tellRecoverable();	// a different key: the record's halves were bound to the old one
+		return true;
+	}
+
+	// ── Keeping it ─────────────────────────────────────────────
+	//
+	// Everything above lives in this origin's storage, which a browser may clear
+	// under pressure unless it has been asked to keep it. Asking is quiet: Chromium
+	// and WebKit answer by their own heuristics and show nothing, and Firefox shows
+	// its own permission line, never text of ours. The answer makes eviction rarer;
+	// it does not make the identity recoverable (see `recoverable` below), and
+	// WebKit's seven-day clearing of script-writable storage is not documented to
+	// honour it.
+
+	/// Ask the browser to keep this origin's storage, unless it already does.
+	/// Resolves whether it is kept; false where there is no storage manager.
+	async function keep() {
+		var sto = null;
+		try { sto = window.navigator && window.navigator.storage; } catch (e) { sto = null; }
+		if (!sto || typeof sto.persist !== 'function') return false;
+		try {
+			if (typeof sto.persisted === 'function' && await sto.persisted()) return true;
+			return !!(await sto.persist());
+		} catch (e) { return false; }
+	}
+
+	// Once at load, for an identity already here: the ask at create was made by a
+	// browser whose answer may since have changed (Chromium weighs engagement).
+	try { if (exists()) keep(); } catch (e) { /* no storage at all */ }
+
+	// ── Getting it back ────────────────────────────────────────
+	//
+	// The wrapped key, its salt and the seal key live in this origin's storage, so a
+	// browser that clears it (Safari's seven-day rule, an eviction, a person's own
+	// "clear data") takes the key that opens the cloud copy with it. The identity is
+	// RECOVERABLE when something outside this storage would bring it back:
+	//
+	//   'passkey'  a passkey whose sealed copy the gateway holds (`adoptWithPasskey`),
+	//   'file'     a recovery file saved at this identity's current epoch -- a file
+	//              from before a passphrase change opens only with the old one, and
+	//              is not counted on the chance that it is remembered,
+	//   'home'     this iOS or iPadOS device runs it from the Home Screen, which
+	//              WebKit's seven-day rule spares (`homeScreen`).
+	//
+	// The passkey and the file are facts about the IDENTITY, so their record travels
+	// in the sync parcel (`recover`) and clears the chip on every device of the
+	// account. The home screen is a fact about this device and travels nowhere.
+	//
+	// R1: the chip never clears falsely. Each half of the record names the public
+	// key it was made for, so a record of another identity is inert here; each is
+	// stamped, the later stamp wins, and on an equal stamp the half that says LESS
+	// wins on both devices alike, so a merge can never invent a recovery.
+
+	var RECOVER_KINDS = { passkey: 'pk', file: 'file' };
+
+	/// A half of the record, or the empty one.
+	function saneHalf(h, kind) {
+		var o = (h && typeof h === 'object') ? h : {};
+		var t   = Number(o.t);
+		var pub = typeof o.pub === 'string' ? o.pub : '';
+		t = (isFinite(t) && t > 0) ? Math.floor(t) : 0;
+		if (kind === 'pk') return { pub: pub, on: o.on === 1 ? 1 : 0, t: t };
+		var ep = Number(o.epoch);
+		return { pub: pub, epoch: (isFinite(ep) && ep > 0) ? Math.floor(ep) : 0, t: t };
+	}
+
+	/// The record as held, always in its full fixed shape.
+	function recoverRecord() {
+		var r = null;
+		try { r = window.DaimondStore.get(K_RECOVER, null); } catch (e) { r = null; }
+		r = (r && typeof r === 'object') ? r : {};
+		return { v: 1, pk: saneHalf(r.pk, 'pk'), file: saneHalf(r.file, 'file') };
+	}
+
+	/// Does the incoming half beat the one held? The later stamp; on a tie, the one
+	/// that says less (`on` 0, then the smaller serialisation), the same on both sides.
+	function halfBeats(inc, mine) {
+		if (inc.t !== mine.t) return inc.t > mine.t;
+		var a = JSON.stringify(inc), b = JSON.stringify(mine);
+		if (a === b) return false;
+		if (inc.on !== undefined && inc.on !== mine.on) return inc.on < mine.on;
+		return a < b;
+	}
+
+	function recoverLaw(a, b) {
+		var mine = (a && typeof a === 'object') ? a : {}, inc = (b && typeof b === 'object') ? b : {};
+		var out = { v: 1, pk: saneHalf(mine.pk, 'pk'), file: saneHalf(mine.file, 'file') };
+		var ip = saneHalf(inc.pk, 'pk'), ifl = saneHalf(inc.file, 'file');
+		if (halfBeats(ip, out.pk))    out.pk   = ip;
+		if (halfBeats(ifl, out.file)) out.file = ifl;
+		return out;
+	}
+
+	/// Is this iOS or iPadOS? iPadOS asks for desktop pages and reports a Mac, so a Mac
+	/// user agent with more than one touch point counts.
+	function ios() {
+		try {
+			var ua = String(window.navigator.userAgent || '');
+			if (/\bAndroid\b/.test(ua)) return false;
+			if (/\b(iPhone|iPad|iPod)\b/.test(ua)) return true;
+			return /\bMac OS X\b/.test(ua) && (window.navigator.maxTouchPoints | 0) > 1;
+		} catch (e) { return false; }
+	}
+
+	/// Is this iOS or iPadOS running the app from the Home Screen? Only there does it
+	/// count as a way back: WebKit's seven-day rule spares a Home Screen app and not a
+	/// Safari tab (spec §5.1.3). An installed app anywhere else (desktop, Android, a Mac's
+	/// Dock) is still one browser profile, which "clear data" or an eviction removes.
+	function homeScreen() {
+		if (!ios()) return false;
+		try { if (window.navigator.standalone === true) return true; } catch (e) { /* no navigator */ }
+		try {
+			return !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+		} catch (e) { return false; }
+	}
+
+	/// What would bring this identity back if this browser's storage were cleared:
+	/// 'passkey', 'file', 'home', or '' when nothing would (and when there is no identity).
+	function recoverable() {
+		var pub = null;
+		try { pub = localStorage.getItem(K_PUB); } catch (e) { pub = null; }
+		if (!pub) return '';
+		var r = recoverRecord();
+		if (r.pk.on === 1 && r.pk.pub === pub) return 'passkey';
+		if (r.file.t > 0 && r.file.pub === pub && r.file.epoch === epochNow()) return 'file';
+		if (homeScreen()) return 'home';
+		return '';
+	}
+
+	function tellRecoverable() {
+		try { window.dispatchEvent(new Event('daimond:recoverable')); } catch (e) { /* no window */ }
+	}
+
+	/// Record that this identity gained (or, for a passkey, lost) a way back. `kind` is
+	/// 'passkey' or 'file'; `on` false records a passkey's removal. Stamped past the
+	/// half it replaces, so a device whose clock is behind still moves the record on.
+	function noteRecovery(kind, on) {
+		var half = RECOVER_KINDS[kind];
+		var pub = null;
+		try { pub = localStorage.getItem(K_PUB); } catch (e) { pub = null; }
+		if (!half || !pub) return false;
+		var r = recoverRecord();
+		var t = Math.max(Date.now(), r[half].t + 1);
+		r[half] = half === 'pk'
+			? { pub: pub, on: on === false ? 0 : 1, t: t }
+			: { pub: pub, epoch: epochNow(), t: t };
+		window.DaimondStore.put(K_RECOVER, r, recoverLaw);
+		tellRecoverable();
+		return true;
+	}
+
+	/// The record as it travels in the sync parcel: one fixed shape, whatever it holds.
+	function recoverSnapshot() {
+		return recoverRecord();
+	}
+
+	/// Take the record from the sync parcel, each half by the later stamp. Written only
+	/// when something moved, so an agreeing parcel leaves the next one byte-identical.
+	/// True when this device moved; a record the box refuses is held owed and THROWS,
+	/// so the section is re-pulled rather than read as applied (as `adoptHandle`).
+	function adoptRecover(rec) {
+		if (!rec || typeof rec !== 'object') return false;
+		var mine = recoverRecord();
+		var next = recoverLaw(mine, rec);
+		if (JSON.stringify(next) === JSON.stringify(mine)) return false;
+		var landed = window.DaimondStore.put(K_RECOVER, next, recoverLaw);
+		tellRecoverable();
+		if (!landed) throw window.DaimondStore.refusal(K_RECOVER);
 		return true;
 	}
 
@@ -2493,5 +2668,12 @@
 		removed:      removed,
 		exportBundle: exportBundle,
 		importBundle: importBundle,
+		keep:         keep,
+		recoverable:     recoverable,
+		noteRecovery:    noteRecovery,
+		recoverSnapshot: recoverSnapshot,
+		adoptRecover:    adoptRecover,
+		ios:             ios,
+		homeScreen:      homeScreen,
 	};
 })();

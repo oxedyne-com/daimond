@@ -21,7 +21,7 @@ function check(name, ok, detail) {
 }
 
 const src = source('daimond.js');
-const L = lift(src, ['runnerRoad', 'roadHost', 'seatReason', 'isUnreachable', 'stripAnsi'],
+const L = lift(src, ['runnerRoad', 'roadHost', 'keyedHost', 'seatReason', 'isUnreachable', 'stripAnsi'],
 	['CLIENT_ROAD', 'BROWSER_ROAD']);
 check('the runner-road reader and its parts are there', L.missing.length === 0, L.missing.join());
 
@@ -51,6 +51,21 @@ if (!L.missing.length) {
 	check('an unnamed runner is "another device", never this one or blank', !!u && u.label.indexOf('devices.another') > 0, JSON.stringify(u));
 	check('only an error row is read', api.runnerRoad({ role: 'assistant', ranOn: 'rn', content: dns }) === null
 		&& api.runnerRoad(null) === null);
+	// A native runner's keyed row (RT-C, `say: {k, v}`): the key says it was the road, and the host
+	// it names is read first, the content only where the key carries none.
+	const k1 = api.runnerRoad(row({ ranOn: 'rn', say: { k: 'err.unreachable', v: { host: 'api.x.ai' } } }));
+	check('a keyed road row names say.v.host before the content\'s host', !!k1
+		&& k1.label === 'seat.label_runner_road{"name":"argonaut","host":"api.x.ai"}', JSON.stringify(k1));
+	const k2 = api.runnerRoad(row({ ranOn: 'rn', say: { k: 'err.unreachable', v: {} } }));
+	check('a keyed road row with no host falls back to the content\'s', !!k2
+		&& k2.label === 'seat.label_runner_road{"name":"argonaut","host":"openrouter.ai"}', JSON.stringify(k2));
+	const k3 = api.runnerRoad(row({ ranOn: 'rn', content: '', say: { k: 'err.unreachable' } }));
+	check('a keyed road row is the road even when its content says nothing', !!k3
+		&& k3.label === 'seat.label_runner_road_any{"name":"argonaut"}', JSON.stringify(k3));
+	check('a keyed row of another kind is not the road', api.runnerRoad(row({ ranOn: 'rn',
+		content: 'LLM: HTTP error: 401 Unauthorized', say: { k: 'err.auth', v: { host: 'api.x.ai' } } })) === null);
+	check('a keyed host is a host, never an arbitrary string', api.runnerRoad(row({ ranOn: 'rn', content: '',
+		say: { k: 'err.unreachable', v: { host: '<b>x</b> y' } } })).label === 'seat.label_runner_road_any{"name":"argonaut"}');
 	for (const [s, h] of [[dns, 'openrouter.ai'], ['could not reach 127.0.0.1:1', '127.0.0.1'],
 		['TLS handshake with api.anthropic.com failed', 'api.anthropic.com'],
 		['could not reach the provider', ''], ['Could not reach that endpoint.', '']]) {
@@ -62,7 +77,7 @@ if (!L.missing.length) {
 // asks `runnerRoad` first, and every error row a turn writes is stamped `ranOn`, the device it failed on.
 const ae = /function appendError\(msg, m\) \{[\s\S]*?\n\t\}/.exec(src);
 check('appendError reads the row\'s origin', !!ae && /runnerRoad\(m\)/.test(ae[0]), ae ? '' : 'no appendError(msg, m)');
-check('the history passes the row', /m\.role === 'error_log'\) \{ appendError\(m\.content, m\); \}/.test(src));
+check('the history passes the row', /m\.role === 'error_log'\) \{ appendError\(logRowText\(m\), m\); \}/.test(src));
 const stamped = src.match(/role: (?:'error_log'|failRole\(e\)), content: friendlyError\([^)]*\)\)?,[^\n]*ranOn: selfDeviceId\(\)/g) || [];
 check('a runner\'s own error rows carry ranOn', stamped.length === 2, stamped.length + ' stamped');
 

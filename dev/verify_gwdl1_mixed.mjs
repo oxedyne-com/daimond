@@ -45,7 +45,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { webcrypto } from 'node:crypto';
-import { GWBIN, procLog, requireFreshGateway } from './gwbin.mjs';
+import { GWBIN, procLog, requireFreshGateway, gatewayEnv } from './gwbin.mjs';
 import { GW_PORT } from './ports.mjs';
 import { grantPro } from './pro.mjs';
 import { CLIENT_API } from './clientapi.mjs';
@@ -111,7 +111,7 @@ async function start(bin, extra) {
 	fs.mkdirSync(path.dirname(LOG), { recursive: true });
 	const out = fs.openSync(LOG, 'a');
 	fs.writeSync(out, `\n===== ${new Date().toISOString()} start ${bin}\n`);
-	gw = spawn(bin, [], { cwd: WORK, env: { ...process.env, APP_MODE: 'sandbox', ...(extra || {}) },
+	gw = spawn(bin, [], { cwd: WORK, env: gatewayEnv({ APP_MODE: 'sandbox', ...(extra || {}) }, WORK),
 		stdio: ['ignore', out, out] });
 	const t0 = Date.now();
 	while (Date.now() - t0 < 60000) {

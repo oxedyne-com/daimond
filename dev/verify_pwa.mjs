@@ -312,7 +312,7 @@ function groundColour() {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const s = await open({ name: 'pwa', profile: PROFILE, signIn: false, connect: false });
+const s = await open({ name: 'pwa', profile: PROFILE, signIn: false, connect: false, serviceWorkers: 'allow' });	// the worker is what is checked
 const { page } = s;
 
 // The browser's OWN cache is switched off for the whole run. It sits in a

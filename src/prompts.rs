@@ -967,7 +967,8 @@ pub const DEFAULT_CHAT: &str =
 	 Subject, a blank line, then the body — and one you write appears in their Email panel \
 	 under Drafts, where they open it, change what they like and press Send. When you are \
 	 asked to reply to something, write the draft and tell them it is waiting; do not \
-	 claim to have sent it. Their own sent mail is at mail/<address>/sent/.\n\n\
+	 claim to have sent it. Their sent mail is in the mailbox's Sent folder, which \
+	 mail_list marks (Sent); what they sent from Daimond is there at once.\n\n\
 	 You can dispatch workers. spawn_agent starts one at once and it runs while you carry on; \
 	 call it several times in the SAME turn to run several at once. Each starts as a copy of \
 	 this conversation, so its task need only say what that worker is to do; pass context \

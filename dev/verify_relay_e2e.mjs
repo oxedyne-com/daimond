@@ -64,7 +64,7 @@ import os   from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, GWBIN, GWDIR, openBeta, procLog } from './gwbin.mjs';
+import { requireFreshGateway, GWBIN, GWDIR, openBeta, procLog, gatewayEnv } from './gwbin.mjs';
 
 // `harness.mjs` reads the app's URL into a module CONST at import time, so this
 // file cannot set `DAIMOND_APP` in its own body and be believed: an `import`
@@ -294,7 +294,7 @@ const GWORDS = 'thimble cartography ' + Math.random().toString(36).slice(2, 10);
 	}
 
 	const cwd = buildWorkDir();
-	gw = spawn(GWBIN, [], { cwd, env: { ...process.env, APP_MODE: 'sandbox' }, stdio: GW_LOG.stdio });
+	gw = spawn(GWBIN, [], { cwd, env: gatewayEnv({ APP_MODE: 'sandbox' }, cwd), stdio: GW_LOG.stdio });
 	const gwUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok);
 	check('this run\'s own gateway is up, on an empty store', gwUp, `${GW_URL} — ${cwd}`);
 	if (!gwUp) { GW_LOG.report(); cleanup(); process.exit(1); }

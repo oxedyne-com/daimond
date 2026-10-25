@@ -271,6 +271,16 @@
 	/// What the app says. The table lives in i18n/en.js.
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
+	/// Why a request to the gateway did not land, as the words after "Not sent:".
+	/// One sentence per cause, so every file that posts names a failure the same way.
+	function failWhy(status) {
+		var s = status | 0;
+		if (!s)        return t('gateway.fail_unreachable');	// no answer at all
+		if (s === 426) return t('gateway.fail_stale');			// this tab is below the floor
+		if (s === 429) return t('gateway.fail_soon');
+		return t('gateway.fail_status', { status: s });
+	}
+
 	/// The words for a refusal: the table's sentence, or the whole English one the
 	/// caller wrote, so nothing ever shows a bare key.
 	///
@@ -845,6 +855,13 @@
 	/// Through `gwFetch` all the same, so the shared 401 rule still applies.
 	/// `/api/account` is an auth path, so `isBootstrapOwn` answers true for it
 	/// and no renewal can be re-entered from here.
+	/// An account now stands on this identity: ask the browser to keep the store
+	/// that holds its key (`DaimondIdentity.keep`), while the first push is owed.
+	function keepStore() {
+		try { if (window.DaimondIdentity && DaimondIdentity.keep) DaimondIdentity.keep(); }
+		catch (e) { /* quiet: a refusal changes nothing here */ }
+	}
+
 	async function register(body) {
 		var r = await gwFetch('/api/account', {
 			method: 'POST',
@@ -856,6 +873,7 @@
 		try { j = await r.json(); } catch (e) { j = null; }
 		if (r.ok && j && j.ok !== false) {
 			noteBalance(j);
+			keepStore();
 			// The account's own facts, carried out rather than dropped. This
 			// returned a bare `{ok:true}` and the reply's other fields died
 			// here, which is why the beta wave could not reach the browser on
@@ -1107,6 +1125,7 @@
 		// longer true. Cleared BEFORE the bootstrap, so the round below starts
 		// from the state it would have had on a device that was never refused.
 		forgetRefusal();
+		keepStore();
 		var authed = await bootstrap();
 		if (authed) {
 			// The event `reauth()` raises for the same fact: there is a session
@@ -1551,6 +1570,9 @@
 		/// The contract version this build speaks, for a caller making its own
 		/// gateway request. There is one copy of this number and it lives here.
 		clientApi:      function () { return CLIENT_API; },
+		/// Why a request did not land, for a caller that holds its own `fetch`: 0 for
+		/// no answer, else the status.
+		failWhy:        failWhy,
 		/// Whether the pause tree refuses this call, and in whose name. For a
 		/// caller that holds its own `fetch` and would rather show the sentence
 		/// in its own panel than read it off a 423.

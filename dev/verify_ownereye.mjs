@@ -83,7 +83,8 @@ const OE_ZONE = 'Australia/Sydney', OE_AT = [
 	{ at: '2026-10-22T00:00:10+11:00', held: true },	// rail full, real: the first of the next
 ];
 // Installed on the page before its first script: Playwright's clock, flowing or held.
-const clockAt = (t) => (pg) => t.held ? pg.clock.setFixedTime(t.at) : pg.clock.install({ time: t.at });
+// open() installs the instant (RIG-PROD P2: it refuses a page without one); a held instant is then stopped there.
+const clockAt = (t) => async (pg) => { if (t.held) await pg.clock.setFixedTime(t.at); };
 // A world's name is its account's, drawn in the rail's footer, so it carries no clock; its
 // browser profile is made fresh per run by `fresh` instead.
 const fresh = (name) => scratch('pw', `${name}-${process.pid}-${Date.now()}`);
@@ -558,10 +559,7 @@ const settle = async (p) => {
 async function world(cell, state, t) {
 	const n = state === 'thin' ? 4 : 40, nc = state === 'real' ? 20 : n;
 	const s = await open({ name: `oe${cell.w}${state[0]}`, profile: fresh(`oe${cell.w}${state[0]}`), connect: false, viewport: { width: cell.w, height: cell.h },
-		// No service worker: WebKit's routes do not see what one fetches, so the phone read the
-		// public release log, not the tree's, and drew "Update ready" the moment a release went
-		// out (seq 418, 2026-10-25 22:42 AWST). The models world blocks it for the same reason.
-		timezoneId: OE_ZONE, serviceWorkers: 'block',
+		timezoneId: OE_ZONE, clock: t.at, ...(OTHER ? { serviceWorkers: 'block' } : {}),
 		...(cell.phone ? { browser: 'webkit', touch: true, ua: IPHONE } : { browser: 'chromium' }), route: async (pg) => { await clockAt(t)(pg); await serve(pg); } });
 	const p = s.page;
 	await p.addInitScript(SEEDED_RANDOM, 20261023);
@@ -630,7 +628,7 @@ let ran = 0;
 const red = [];
 const t0 = Date.now();
 // A module's world opens through the pin too, whatever it asks for, in a fresh profile.
-const pinned = (o) => open({ ...o, timezoneId: OE_ZONE, profile: o.profile || fresh(o.name),
+const pinned = (o) => open({ ...o, timezoneId: OE_ZONE, clock: OE_AT[0].at, profile: o.profile || fresh(o.name),
 	route: async (pg) => { await clockAt(OE_AT[0])(pg); if (o.route) await o.route(pg); } });
 const CTX = { open: pinned, signInAs, serve, settle, SEEDED_RANDOM, IPHONE, OTHER };
 for (const t of OE_AT) for (const wk of ['rail', ...Object.keys(MODS)]) for (const cell of CELLS) for (const state of ['thin', 'full', 'real']) {

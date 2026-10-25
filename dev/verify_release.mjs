@@ -66,7 +66,7 @@ const LOG = [
 const asUrl = (rows) => 'data:text/plain,' + encodeURIComponent(rows.map(e => JSON.stringify(e)).join('\n'));
 const LOG_URL = asUrl(LOG);
 
-const s = await open({ name: 'release', connect: false });
+const s = await open({ name: 'release', connect: false, serviceWorkers: 'allow' });	// an update check: the app's own worker in control, as on a real device
 const p = s.page;
 await p.waitForTimeout(2500);
 

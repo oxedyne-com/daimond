@@ -61,9 +61,27 @@
 		return fetch(u, o);
 	}
 
+	/// A call that did not land: logged here, and counted into the debug-share beat's
+	/// `postFail`, so a Lens that never gets its picture shows why on the feed. The Lens
+	/// itself times out and says so.
+	function lost(what, r) {
+		var status = r ? (r.status | 0) : 0;
+		try { console.warn('lensshot: ' + what + ' did not land (' + (status || 'no answer') + ')'); }
+		catch (e) { /* no console */ }
+		try { if (window.DEBUG_SHARE && DEBUG_SHARE.notePostFail) DEBUG_SHARE.notePostFail(); }
+		catch (e) { /* the count is not the picture */ }
+	}
+
+	/// Settle a call: a failed answer or none is `lost`, and nothing is thrown on.
+	function landed(what, p) {
+		return p.then(function (r) {
+			if (!r || !r.ok) lost(what, r);
+			return r;
+		}, function () { lost(what, null); return null; });
+	}
+
 	function refuse(dev, rid, why) {
-		return call('POST', url(dev, '&rid=' + encodeURIComponent(rid) + '&refused=' + encodeURIComponent(why)))
-			.catch(function () { /* the Lens times out and says so */ });
+		return landed('refusal', call('POST', url(dev, '&rid=' + encodeURIComponent(rid) + '&refused=' + encodeURIComponent(why))));
 	}
 
 	function loadImage(src) {
@@ -126,8 +144,10 @@
 		try { if (notify) notify(); } catch (e) { /* the toast is not the picture */ }
 		return capture().then(function (blob) {
 			return call('POST', url(dev, '&rid=' + encodeURIComponent(rid)), blob).then(function (r) {
+				// Too large is refused in words the Lens shows, so it is not also a loss.
 				if (r && r.status === 413) return refuse(dev, rid, 'the picture was too large');
-			});
+				if (!r || !r.ok) lost('picture', r);
+			}, function () { lost('picture', null); });
 		}, function (err) {
 			return refuse(dev, rid, 'error: ' + String(err && err.message || err).slice(0, 160));
 		});
@@ -140,14 +160,16 @@
 		if (busy || document.hidden || !dev) { schedule(); return; }
 		busy = true;
 		call('GET', url(dev)).then(function (r) {
-			if (!r) return null;
-			if (r.status === 403) { barred = true; return null; }
-			if (!r.ok) return null;
+			// A 403 is an answer: this account may not use the Lens, so stop asking.
+			if (r && r.status === 403) { barred = true; return null; }
+			if (!r || !r.ok) { lost('poll', r); return null; }
 			return r.json().then(function (j) {
 				var rid = j && typeof j.want === 'string' ? j.want : '';
 				return rid ? take(dev, rid) : null;
 			});
-		}).catch(function () { /* offline: the next poll asks again */ }).then(function () {
+		}, function () {
+			lost('poll', null);		// offline: the next poll asks again
+		}).catch(function () { /* a reply that would not read: the next poll asks again */ }).then(function () {
 			busy = false;
 			schedule();
 		});

@@ -351,9 +351,10 @@
 	function nonEmpty(rows) { return Array.isArray(rows) && rows.length > 1; }
 
 	/// Post one report to the existing debug-trace gate. Answers
-	/// `{ok, rows, why}`. Subject to the SAME gateway rate floor diag.js's own
-	/// `flush()` observes (`debug_trace.rs::MIN_INTERVAL_MS`) -- a double tap
-	/// is answered with the same 429.
+	/// `{ok, rows, status, why}`, `why` in gateway.js's words for the failure.
+	/// Subject to the SAME gateway rate floor diag.js's own `flush()` observes
+	/// (`debug_trace.rs::MIN_INTERVAL_MS`) -- a double tap is answered with the
+	/// same 429.
 	function post(reason) {
 		var rows = fitBudget(reportRows(reason));
 		// The version is read from gateway.js at the send, never copied: index.html loads
@@ -365,10 +366,17 @@
 			body:        JSON.stringify({ v: 1, device: deviceId(), rows: rows }),
 		}).then(function (res) {
 			if (res && res.ok) return { ok: true, rows: rows.length };
-			return { ok: false, rows: rows.length, why: 'the server declined (' + (res && res.status) + ')' };
+			var status = res ? (res.status | 0) : 0;
+			return { ok: false, rows: rows.length, status: status, why: failWhy(status) };
 		}, function () {
-			return { ok: false, rows: rows.length, why: 'the request could not be sent' };
+			return { ok: false, rows: rows.length, status: 0, why: failWhy(0) };
 		});
+	}
+
+	/// Read from gateway.js at the failure, as the version is at the send.
+	function failWhy(status) {
+		try { return DaimondGateway.failWhy(status); }
+		catch (e) { return String(status || ''); }
 	}
 
 	// ── The consent sheet, and the one-tap entry point ───────────────
@@ -389,14 +397,18 @@
 
 	/// The one-tap action, called from the error toast and from Settings.
 	/// Sends straight away once this account has agreed; the FIRST time ever,
-	/// shows the consent sheet instead. `say(text)`, optional, is handed a
-	/// short line the caller may display (a toast update, a settings status
-	/// line...).
+	/// shows the consent sheet instead. A send that does not land opens the
+	/// sheet in its failed state, so it is never lost in silence. `say(text)`,
+	/// optional, is handed a short line the caller may display (a toast update,
+	/// a settings status line...).
 	function reportProblem(reason, say) {
 		say = typeof say === 'function' ? say : function () {};
 		if (consented()) {
 			say(tOr('support.sending', 'Sending a report…'));
-			post(reason).then(function (r) { say(sentLine(r)); });
+			post(reason).then(function (r) {
+				say(sentLine(r));
+				if (!r.ok) openConsent(reason, say, r);
+			});
 			return;
 		}
 		openConsent(reason, say);
@@ -405,10 +417,12 @@
 	function sentLine(r) {
 		return r.ok
 			? tOr('support.sent', 'Sent — thank you.')
-			: tOr('support.send_failed', 'Could not send') + (r.why ? ': ' + r.why : '');
+			: tOr('mail.unsent', 'Not sent: {reason}', { reason: r.why || failWhy(0) });
 	}
 
-	function openConsent(reason, say) {
+	/// The consent sheet, or, given the result of a send that did not land, the
+	/// same sheet in its failed state: "Not sent: {reason}" with Retry.
+	function openConsent(reason, say, failed) {
 		close();
 		var wrap = elt('div', 'modal');
 		wrap.id = 'support-sheet';
@@ -431,16 +445,24 @@
 		acts.appendChild(no);
 		card.appendChild(acts);
 		no.addEventListener('click', close);
+		function settled(r) {
+			status.textContent = sentLine(r);
+			no.textContent = tOr('support.done', 'Close');
+			if (r.ok) return;
+			go.textContent = tOr('mail.retry', 'Retry');
+			go.disabled = false;
+		}
 		go.addEventListener('click', function () {
-			setConsented(true);
+			// A retry under consent already given leaves its stamp alone (A1).
+			if (!consented()) setConsented(true);
 			go.disabled = true;
 			status.textContent = tOr('support.sending', 'Sending a report…');
 			post(reason).then(function (r) {
-				status.textContent = sentLine(r);
+				settled(r);
 				say(sentLine(r));
-				no.textContent = tOr('support.done', 'Close');
 			});
 		});
+		if (failed) settled(failed);
 		wrap.appendChild(card);
 		document.body.appendChild(wrap);
 		_open = wrap;

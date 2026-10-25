@@ -47,7 +47,7 @@ const OLD_BUILD = 'old0build0aaa';
 const PROFILE = scratch('pw', 'fleetbuild-' + process.pid);
 fs.rmSync(PROFILE, { recursive: true, force: true });
 
-const s = await open({ name: 'fleetbuild', connect: false, profile: PROFILE });
+const s = await open({ name: 'fleetbuild', connect: false, profile: PROFILE, serviceWorkers: 'allow' });	// §3 needs the app's own worker in control
 const { page } = s;
 
 try {

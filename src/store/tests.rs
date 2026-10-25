@@ -674,8 +674,10 @@ async fn runhist_a_runner_turn_is_recorded_once_with_its_away() {
         for e in m.files.iter() {
             assert_eq!(e.skipped.as_deref(), Some(versions::MADE_BY_COMMAND), "{:?}", e);
             assert!(e.was.is_none() && e.mark, "{:?}", e);
-            assert_eq!(e.by.as_ref().map(|a| a.via.as_str()), Some(versions::VIA_COMMAND), "{:?}", e);
         }
+        // Each credited as the runner credited it: a command's, else its file tool's (RT-D2).
+        assert_eq!(m.files.iter().map(|e| e.by.as_ref().map(|a| a.via.as_str())).collect::<Vec<_>>(),
+            vec![Some(versions::VIA_COMMAND), Some("")], "{:?}", m.files);
         assert!(m.files[0].made && !m.files[1].made, "created vs changed: {:?}", m.files);
         assert_eq!(m.files[0].by.as_ref().map(|a| a.role.as_str()), Some("w1"), "the agent named");
         // Again, as a reposted report: nothing.

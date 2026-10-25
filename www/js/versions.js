@@ -1109,18 +1109,30 @@
 	}
 
 	/// Record a settling report's turn rows as one version of the keeper. Once per run
-	/// on this page (the engine is idempotent by run as well). Answers whether it recorded.
+	/// on this page (the engine is idempotent by run as well). Answers what the engine said,
+	/// `{version, files, note}` (`note` the tail note a Here session takes, as a page message),
+	/// or `{}` where it recorded nothing; null where it was not asked or failed.
 	async function recordCarried(rec) {
-		if (!rec || typeof rec !== 'object' || !rec.keeper || !rec.run) return false;
+		if (!rec || typeof rec !== 'object' || !rec.keeper || !rec.run) return null;
 		var run = String(rec.run);
-		if (_carried.indexOf(run) >= 0) return false;
+		if (_carried.indexOf(run) >= 0) return null;
 		var a = app();
-		if (!a || typeof a.versions_record_carried !== 'function') return false;
+		if (!a || typeof a.versions_record_carried !== 'function') return null;
 		_carried.push(run);
 		if (_carried.length > UNDO_MAX) _carried.shift();
-		try { await a.versions_record_carried(String(rec.keeper), JSON.stringify(rec)); }
-		catch (e) { _carried.splice(_carried.indexOf(run), 1); return false; }
-		return true;
+		var got;
+		try { got = await a.versions_record_carried(String(rec.keeper), JSON.stringify(rec)); }
+		catch (e) { _carried.splice(_carried.indexOf(run), 1); return null; }
+		var said = {};
+		try { said = JSON.parse(got) || {}; } catch (e) { said = {}; }
+		if (!(said.version > 0) || !Array.isArray(said.files) || !said.files.length) return said;
+		if (typeof a.versions_tail_note === 'function') {
+			try {
+				var note = JSON.parse(a.versions_tail_note(said.version, JSON.stringify(said.files)));
+				if (note && note.content) said.note = note;
+			} catch (e) { /* the row is still made; a chat keeper's needs no note */ }
+		}
+		return said;
 	}
 
 	/// The mark kept for `run`, or null.
