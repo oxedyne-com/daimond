@@ -545,6 +545,7 @@
 	'mail.folders_err': 'Não foi possível buscar a lista de pastas: {reason}',
 	'mail.folder.inbox': 'Caixa de entrada',
 	'mail.folder.sent': 'Enviados',
+	'mail.own_folder': '{name} (pasta própria)',
 	'mail.folder.drafts': 'Rascunhos',
 	'mail.folder.trash': 'Lixeira',
 	'mail.folder.junk': 'Spam',
@@ -556,6 +557,10 @@
 	'mail.drafts_head': 'Rascunhos · {n}',
 	'mail.no_subject': '(sem assunto)',
 	'mail.no_recipient': '(sem destinatário)',
+	'mail.unsent': 'Não enviado: {reason}',
+	'mail.retry': 'Tentar de novo',
+	'mail.note.sent_to': 'Enviado para {to}.',
+	'mail.err.copy_failed': 'Enviado. A cópia em Enviados não foi guardada: {reason}',
 	'mail.unknown_sender': '(desconhecido)',
 	'mail.nothing_yet': 'Ainda não há nada aqui. Pressione <b>⟳</b> para sincronizar.',
 

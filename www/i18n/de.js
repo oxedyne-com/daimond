@@ -549,6 +549,7 @@
 	'mail.folders_err': 'Die Ordnerliste ließ sich nicht holen: {reason}',
 	'mail.folder.inbox': 'Posteingang',
 	'mail.folder.sent': 'Gesendet',
+	'mail.own_folder': '{name} (eigener Ordner)',
 	'mail.folder.drafts': 'Entwürfe',
 	'mail.folder.trash': 'Papierkorb',
 	'mail.folder.junk': 'Spam',
@@ -560,6 +561,10 @@
 	'mail.drafts_head': 'Entwürfe · {n}',
 	'mail.no_subject': '(kein Betreff)',
 	'mail.no_recipient': '(kein Empfänger)',
+	'mail.unsent': 'Nicht gesendet: {reason}',
+	'mail.retry': 'Erneut versuchen',
+	'mail.note.sent_to': 'An {to} gesendet.',
+	'mail.err.copy_failed': 'Gesendet. Die Kopie unter Gesendet wurde nicht gespeichert: {reason}',
 	'mail.unknown_sender': '(unbekannt)',
 	'mail.nothing_yet': 'Hier ist noch nichts. Drücke <b>⟳</b> zum Synchronisieren.',
 

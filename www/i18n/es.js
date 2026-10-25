@@ -546,6 +546,7 @@
 	'mail.folders_err': 'No se ha podido traer la lista de carpetas: {reason}',
 	'mail.folder.inbox': 'Bandeja de entrada',
 	'mail.folder.sent': 'Enviados',
+	'mail.own_folder': '{name} (carpeta propia)',
 	'mail.folder.drafts': 'Borradores',
 	'mail.folder.trash': 'Papelera',
 	'mail.folder.junk': 'Spam',
@@ -557,6 +558,10 @@
 	'mail.drafts_head': 'Borradores · {n}',
 	'mail.no_subject': '(sin asunto)',
 	'mail.no_recipient': '(sin destinatario)',
+	'mail.unsent': 'No enviado: {reason}',
+	'mail.retry': 'Reintentar',
+	'mail.note.sent_to': 'Enviado a {to}.',
+	'mail.err.copy_failed': 'Enviado. No se guardó su copia en Enviados: {reason}',
 	'mail.unknown_sender': '(desconocido)',
 	'mail.nothing_yet': 'Aquí todavía no hay nada. Pulsa <b>⟳</b> para sincronizar.',
 

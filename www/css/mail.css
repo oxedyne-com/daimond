@@ -300,6 +300,21 @@
 }
 .mail-draft:hover { background: var(--bg-hover); }
 .mail-draft .mail-subj { font-weight: 600; }
+/* A send that failed: the server's reason, and Retry. */
+.mail-unsent {
+	display: flex; align-items: center; gap: 8px;
+	padding: 0 10px 7px;
+	font-size: var(--fs-xs); color: var(--accent-text);
+}
+.mail-draft.unsent { border-bottom: 0; }
+.mail-unsent-why { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mail-retry {
+	background: var(--bg-secondary); color: var(--text-primary);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
+	padding: 4px 10px; font-size: var(--fs-xs);
+}
+.mail-retry:hover { color: var(--accent-text); background: var(--bg-hover); }
+.mail-retry:disabled { opacity: 0.5; cursor: default; }
 
 /* ── Writing one ─────────────────────────────────────────────────
  * A stage panel, so the daimon stays beside the draft while it is written. The

@@ -121,6 +121,7 @@
 		sel:      null,              // the selected address
 		msgs:     [],                // the digest of the selected mailbox
 		drafts:   [],                // unsent messages held for the selected mailbox
+		retrying: {},                // draft path -> 1 while its Retry runs
 		// address -> { list: [{name, dir, label, role, selectable, delimiter}], err, busy }
 		// The folder list is the SERVER's answer, cached per account for as long
 		// as the page lives. Nothing is stored: a folder that was renamed on the
@@ -188,6 +189,7 @@
 			var j = JSON.parse(localStorage.getItem(LS) || '{}');
 			state.accounts = Array.isArray(j.accounts) ? j.accounts : [];
 			state.accounts.forEach(liftFolders);
+			state.accounts.forEach(adoptDefault);
 			state.sel = j.sel || (state.accounts[0] && state.accounts[0].address) || null;
 		} catch (e) { state.accounts = []; }
 	}
@@ -426,11 +428,69 @@
 	// Seconds, not minutes, because the unit a test needs is not the unit a
 	// person picks from and the store should not make them the same choice.
 
-	/// The frequencies the dialog offers, in seconds. 0 is "manual only", which
-	/// is what every folder is until someone says otherwise: a mailbox that
-	/// started polling on its own the moment it was added would spend the user's
-	/// credits on a decision they never made.
+	/// The frequencies the dialog offers, in seconds. 0 is "manual only", and
+	/// is stored as 0 rather than as a missing key, so that a folder somebody
+	/// set to Manual can be told apart from one nobody ever decided about.
 	var EVERY = [0, 300, 900, 1800, 3600, 14400, 43200, 86400];
+
+	/// How often a NEW mailbox's followed folders refresh, until someone says
+	/// otherwise. A mailbox is added to be read, and one born "manual only"
+	/// synced once and never again (D-20261025-10): nobody had said so, and the
+	/// gear dialog was the only way to say otherwise. A poll that finds nothing
+	/// is free at the gateway (`mail.rs` `charge_minor`), so the default spends
+	/// only on mail that arrives. Manual stays one choice away in the gear.
+	var EVERY_NEW = 900;
+
+	/// The folders a new mailbox follows besides its inbox: the two RFC 6154
+	/// roles that hold a person's own history. Not Drafts (Daimond keeps its
+	/// own), not Junk or Trash, and not Gmail's All Mail, which is a second copy
+	/// of everything else. A folder the user made is one choice in the gear.
+	var FOLLOWED_ROLES = ['sent', 'archive'];
+
+	/// Follow a mailbox's history folders when its server names them. A folder
+	/// already decided about, Manual included, is left alone.
+	///
+	/// Two cases. A new mailbox (`a.seed`, set by `addAccount` and this device's
+	/// alone) follows them on the new-mailbox schedule, and that is a statement
+	/// which moves `touched`. A mailbox whose inbox already polls follows them on
+	/// the inbox's own schedule: hoogland@ was set long before Sent was followed,
+	/// so his Sent was never fetched and a message he sent never showed (26 Oct).
+	/// That second case is no statement by the user and does not move `touched`;
+	/// every device reaches the same map from the same list on its own. A mailbox
+	/// whose inbox is Manual follows nothing it was not asked to.
+	function seedFollowed(a, list) {
+		if (!a) return false;
+		var every = a.seed ? EVERY_NEW : refreshOf(a, 'INBOX');
+		if (!every) return false;
+		var m = refreshMap(a), added = false;
+		(list || []).forEach(function (e) {
+			if (!e.selectable || FOLLOWED_ROLES.indexOf(e.role) < 0) return;
+			if (!Object.prototype.hasOwnProperty.call(m, e.name)) { m[e.name] = every; added = true; }
+			fld(a, e.name);
+		});
+		if (!a.seed) return added;
+		delete a.seed;
+		if (a.pass) a.passAt = passAt(a);	// pinned: the password did not move with the schedule
+		a.touched = DaimondStamp.next(a.touched);
+		return true;
+	}
+
+	/// A mailbox whose schedule map is empty was born under the old "manual
+	/// until told" rule and has never been decided about: until 25 Oct Manual
+	/// was stored as a missing key, and since then it is stored as 0, so empty
+	/// can mean nothing else. It gets what a new mailbox gets (rc-b ruling, 25
+	/// Oct; D-20261025-10). Run at load and on every arriving record, so each
+	/// device reaches the same map on its own; once the map holds a key it
+	/// never runs again, whatever the user later chooses. `touched` does not
+	/// move: this is no statement by the user, and must not outrank one made
+	/// on another device meanwhile.
+	function adoptDefault(a) {
+		if (!a || Object.keys(refreshMap(a)).length) return false;
+		a.refresh.INBOX = EVERY_NEW;
+		a.seed = 1;
+		fld(a, 'INBOX');
+		return true;
+	}
 
 	function refreshMap(a) {
 		if (!a) return {};
@@ -452,7 +512,7 @@
 		secs = (typeof secs === 'number' && isFinite(secs) && secs > 0) ? Math.floor(secs) : 0;
 		var m = refreshMap(a);
 		if (refreshOf(a, name) === secs) return false;
-		if (secs) m[name] = secs; else delete m[name];
+		m[name] = secs;		// 0 included: Manual is a choice, not an absence
 		// The folder needs a record for its watermarks and for the pause tree,
 		// which daimond.js builds out of this map (daimond.js:6819). A folder
 		// scheduled but never opened would otherwise have no leaf, and pausing
@@ -466,13 +526,11 @@
 		return true;
 	}
 
-	/// The map as it travels: sorted keys, integer seconds, nothing else.
+	/// The map as it travels: sorted keys, integer seconds (0 for Manual),
+	/// nothing else.
 	function sortedRefresh(a) {
 		var m = refreshMap(a), out = {};
-		Object.keys(m).sort().forEach(function (k) {
-			var v = refreshOf(a, k);
-			if (v) out[k] = v;
-		});
+		Object.keys(m).sort().forEach(function (k) { out[k] = refreshOf(a, k); });
 		return out;
 	}
 
@@ -613,15 +671,16 @@
 	}
 
 	/// A refresh map off the wire, reduced to what this module will act on:
-	/// string keys, whole positive seconds, sorted. A parcel is another device's
-	/// word for it, and a `-1` in there would arm a timer that fires for ever.
+	/// string keys, whole seconds (0 is Manual), sorted. A parcel is another
+	/// device's word for it, and a `-1` in there would arm a timer that fires for
+	/// ever.
 	function cleanRefresh(m) {
 		var out = {};
 		if (!m || typeof m !== 'object') return out;
 		Object.keys(m).sort().forEach(function (k) {
 			var v = m[k];
 			if (!k) return;
-			if (typeof v === 'number' && isFinite(v) && v > 0) out[k] = Math.floor(v);
+			if (typeof v === 'number' && isFinite(v) && v >= 0) out[k] = Math.floor(v);
 		});
 		return out;
 	}
@@ -676,9 +735,8 @@
 				smtpPort: a.smtpPort | 0,
 				user:     String(a.user || ''),
 				pass:     String(a.pass || ''),		// wrapped; see above
-				// Always present, even empty: absent has to keep meaning "that
-				// device predates the setting", or clearing the last schedule
-				// could never travel.
+				// Always present: absent has to keep meaning "that device
+				// predates the setting". Manual travels as 0.
 				refresh:  sortedRefresh(a),
 				touched:  ms(a.touched),
 			};
@@ -757,6 +815,7 @@
 					lastSync: 0,
 				};
 				if (r.security) fresh.security = String(r.security);
+				adoptDefault(fresh);
 				state.accounts.push(fresh);
 				added++;
 				return;
@@ -775,8 +834,11 @@
 			mine.user     = String(r.user || mine.user || r.address);
 			if (r.security) mine.security = String(r.security);
 			// Absent means the other device predates the setting and has nothing
-			// to say about it; an empty map is a real answer and clears ours.
-			if (r.refresh && typeof r.refresh === 'object') mine.refresh = cleanRefresh(r.refresh);
+			// to say about it. An empty map is the old default, made the new one.
+			if (r.refresh && typeof r.refresh === 'object') {
+				mine.refresh = cleanRefresh(r.refresh);
+				adoptDefault(mine);
+			}
 			mine.touched  = ms(r.touched);
 			updated++;
 		});
@@ -1230,14 +1292,24 @@
 	// the mail migration copies rather than moves and never deletes anything.
 
 	function draftsDir(address) { return mailDir(address) + '/drafts'; }
-	function sentDir(address)   { return mailDir(address) + '/sent'; }
+
+	/// Where Daimond's own sent copies USED to go, a place no view showed. It is
+	/// now only a holding place, for a copy made before the server has said which
+	/// folder is Sent; `fileSent` moves what is in it into that folder.
+	function unfiledDir(address) { return mailDir(address) + '/sent'; }
+
+	var NOT_SENT = 'X-Daimond-Not-Sent';
 
 	async function saveDraft(d) {
 		if (!d.from) throw new Error(t('mail.err.draft_needs_mailbox'));
 		d.id = d.id || ('draft-' + Date.now() + '-' + rand(3));
 		d.messageId = d.messageId || messageId(d.from);
 		var path = draftsDir(d.from) + '/' + d.id + '.eml';
-		await deps.writeBytes(path, utf8(buildMessage(d)));
+		var text = buildMessage(d);
+		// Why the last send of it failed, on the draft and never on the wire:
+		// `sendDraft` builds what it posts without it.
+		if (d.failed) text = NOT_SENT + ': ' + String(d.failed).replace(/[\r\n]+/g, ' ') + '\r\n' + text;
+		await deps.writeBytes(path, utf8(text));
 		if (deps.refreshFiles) deps.refreshFiles();
 		return path;
 	}
@@ -1269,6 +1341,7 @@
 				to:      decodeWords(header(hs, 'to')),
 				subject: decodeWords(header(hs, 'subject')) || t('mail.no_subject'),
 				date:    header(hs, 'date'),
+				failed:  header(hs, NOT_SENT.toLowerCase()),
 			});
 		}
 		out.sort(function (x, y) { return (Date.parse(y.date) || 0) - (Date.parse(x.date) || 0); });
@@ -1298,6 +1371,7 @@
 			references:  header(hs, 'references'),
 			messageId:   header(hs, 'message-id'),
 			attachments: mime.attachments,
+			failed:      header(hs, NOT_SENT.toLowerCase()),
 		};
 	}
 
@@ -1326,28 +1400,142 @@
 		if (!rcpt.length) throw new Error(t('mail.err.no_recipients'));
 
 		var smtp    = smtpFor(a);
+		// Generated here and kept, because it is what the server's own copy of this
+		// message will carry, and what lets that copy replace the local one.
+		d.messageId = d.messageId || messageId(d.from);
+		d.failed    = '';
 		var raw     = buildMessage(d);
-		var payload = b64(utf8(raw));
-		var password = await DaimondIdentity.unwrap(a.pass);
 
-		var j = await post('/api/mail/send', {
-			address:  a.address,
-			host:     smtp.host,
-			port:     smtp.port,
-			security: smtp.security,
-			user:     a.user || a.address,
-			password: password,
-			rcpt:     rcpt,
-			raw:      payload,
-		});
+		// THE OUTBOX IS THE DRAFTS. From here until it has gone the message is a
+		// draft file, so a tab closed mid-send, or a send that fails after the
+		// compose panel is shut, leaves it on screen as unsent rather than nowhere.
+		// A draft that cannot be written does not stop the send: the compose panel
+		// still holds the message until it has gone.
+		try { await saveDraft(d); } catch (e) { /* see above */ }
 
-		// A sent message is a file too, so "what did I send them" is answerable by the
-		// same agent, with the same tools, as "what did they send me".
+		var j;
 		try {
-			await deps.writeBytes(sentDir(a.address) + '/' + (d.id || rand(6)) + '.eml', utf8(raw));
-		} catch (e) { /* the mail is gone whatever the local copy did */ }
+			var password = await DaimondIdentity.unwrap(a.pass);
+			j = await post('/api/mail/send', {
+				address:  a.address,
+				host:     smtp.host,
+				port:     smtp.port,
+				security: smtp.security,
+				user:     a.user || a.address,
+				password: password,
+				rcpt:     rcpt,
+				raw:      b64(utf8(raw)),
+			});
+		} catch (e) {
+			// Kept, with the server's own words for why, and a Retry beside it.
+			d.failed = friendly(e);
+			try { await saveDraft(d); } catch (e2) { /* the compose panel says it */ }
+			try { await refreshDrafts(); render(); } catch (e3) { /* drawn at the next render */ }
+			throw e;
+		}
+
+		// The mail is gone whatever the copy does next, so a copy that fails is
+		// told, not thrown: it must not read as a send that failed.
+		j.copyErr = await keepSent(a, raw, d.messageId);
 		await discardDraft(d);
 		return j;
+	}
+
+	// ── The sent copy ───────────────────────────────────────────────
+	// What he sends shows in Sent at once: a copy is filed in the folder whose
+	// role is `sent` as a Maildir file named `local.<ms>.<hash of Message-ID>`,
+	// with no UID, since the server has given it none. When that folder next
+	// syncs, the server's own copy (Gmail and most providers file one on
+	// submission) arrives with the same Message-ID, and the local file is
+	// removed. Daimond never APPENDs: a server that files no copy simply keeps
+	// the local one. A sent message is a file like any other, so "what did I send
+	// them" is answered by the same tools as "what did they send me".
+
+	var LOCAL_RE = /^local\.(\d+)\.([0-9a-z]+)\.daimond:2,/;
+
+	function localName(id, at) {
+		return 'local.' + (at || Date.now()) + '.' + hash36(String(id || rand(6)).trim()) + '.daimond:2,S';
+	}
+
+	/// File a sent copy. Answers '' when it is filed, or the reason it is not.
+	async function keepSent(a, raw, id) {
+		await loadFolders(a.address);
+		var name = sentFolder(a);
+		try {
+			if (!name) {
+				await deps.writeBytes(unfiledDir(a.address) + '/' + localName(id) + '.eml', utf8(raw));
+				return '';
+			}
+			await deps.writeBytes(mailboxDir(a.address, name) + '/cur/' + localName(id), utf8(raw));
+		} catch (e) {
+			return friendly(e);
+		}
+		try {
+			fld(a, name);
+			await rebuildIndex(a, name);
+			await loadDigest(a.address, name);
+			save();
+		} catch (e) { /* the copy is filed; the digest catches up at the next sync */ }
+		if (deps.refreshFiles) deps.refreshFiles();
+		return '';
+	}
+
+	/// Take down the local copies a sync has just brought the server's own copy of.
+	async function dropLocal(a, name, ids) {
+		if (!Object.keys(ids).length) return;
+		var dir = mailboxDir(a.address, name) + '/cur';
+		var names = await listNames(dir);
+		for (var i = 0; i < names.length; i++) {
+			var m = LOCAL_RE.exec(names[i]);
+			if (!m || !ids[m[2]]) continue;
+			try { await deps.runTool('file_delete', { path: dir + '/' + names[i] }); }
+			catch (e) { /* left standing: a duplicate, not a loss */ }
+		}
+	}
+
+	/// The names in a directory, or none where it cannot be listed.
+	async function listNames(dir) {
+		var listing;
+		try { listing = await deps.runTool('file_list', { path: dir }); }
+		catch (e) { return []; }
+		if (!listing || listing.outcome !== 'done') return [];
+		return listing.text.split('\n').map(function (l) {
+			var m = l.match(/^\s*(?:[-*]\s*)?(\S.*?)(?:\s+\(\d+.*\))?\s*$/);
+			return m ? m[1].trim().replace(/\/$/, '') : '';
+		}).filter(Boolean);
+	}
+
+	/// Move what waits in the holding place, and what an older build left there as
+	/// `<id>.eml`, into the folder whose role is `sent`. A message the server
+	/// already holds there is not filed twice. Run once the server has listed
+	/// its folders.
+	async function fileSent(a) {
+		var name = sentFolder(a);
+		if (!name) return;
+		var from = unfiledDir(a.address);
+		var names = (await listNames(from)).filter(function (n) { return /\.eml$/i.test(n); });
+		if (!names.length) return;
+		var held = {};
+		(await readMailbox(a.address, name)).forEach(function (m) { if (m.id) held[hash36(m.id)] = 1; });
+		var dir = mailboxDir(a.address, name) + '/cur';
+		for (var i = 0; i < names.length; i++) {
+			var path = from + '/' + names[i];
+			var r = await readText(path);
+			if (r.outcome !== 'done') continue;
+			var hs = parseHeaders(r.text);
+			var id = header(hs, 'message-id').trim() || names[i];
+			try {
+				if (!held[hash36(id)]) {
+					await deps.writeBytes(dir + '/' + localName(id, Date.parse(header(hs, 'date')) || Date.now()),
+						utf8(r.text));
+				}
+				await deps.runTool('file_delete', { path: path });
+			} catch (e) { /* left where it is, to be moved next time */ }
+		}
+		fld(a, name);
+		await rebuildIndex(a, name);
+		await loadDigest(a.address, name);
+		save();
 	}
 
 	// ── The sync ────────────────────────────────────────────────────
@@ -1492,16 +1680,20 @@
 			f.uidValidity = j.uid_validity || f.uidValidity;
 
 			var msgs = j.messages || [];
+			var arrived = {};                  // the Message-IDs this fetch brought, hashed
 			for (var i = 0; i < msgs.length; i++) {
 				var m = msgs[i];
 				var bytes = Uint8Array.from(atob(m.raw), function (c) { return c.charCodeAt(0); });
 				var path = mailboxDir(a.address, name) + '/cur/'
 					+ maildirName(m.uid, f.uidValidity, m.flags);
 				await deps.writeBytes(path, bytes);
+				var mid = header(parseHeaders(atob(m.raw)), 'message-id').trim();
+				if (mid) arrived[hash36(mid)] = 1;
 				if (m.uid > (f.lastUid || 0)) f.lastUid = m.uid;
 				// The oldest UID held is the floor a later "fetch older" reaches back from.
 				if (!f.firstUid || m.uid < f.firstUid) f.firstUid = m.uid;
 			}
+			await dropLocal(a, name, arrived);
 			// A trigger watches for mail ARRIVING, and this is the only place that
 			// knows any has. Announced rather than called directly: mail must not
 			// have to know what a triggered action is, and a second listener --
@@ -1692,7 +1884,7 @@
 		msgs.slice().reverse().forEach(function (m) {
 			var cell = function (s) { return String(s || '').replace(/\|/g, '\\|').replace(/\n/g, ' '); };
 			var date = m.cloud ? 'cloud' : cell(m.date);
-			lines.push('| ' + m.uid + ' | ' + date + ' | ' + cell(m.from)
+			lines.push('| ' + (m.local ? 'local' : m.uid) + ' | ' + date + ' | ' + cell(m.from)
 				+ ' | ' + cell(m.subject) + ' | `' + cell(m.file) + '` |');
 		});
 		await deps.runTool('file_write', {
@@ -1731,6 +1923,7 @@
 		for (var i = 0; i < entries.length; i++) {
 			var name = entries[i].name;
 			var uid  = parseInt(name.split('.')[0], 10) || 0;
+			var local = LOCAL_RE.test(name);  // a sent copy the server has not yet handed back
 			// A cloud-only message is folded in from the listing alone, with no body read:
 			// the point is that the digest and an oldest-by-date answer stand WITHOUT the
 			// expense of fetching. Its date is unknown until it is fetched, so it sorts by
@@ -1754,13 +1947,21 @@
 				uid:     uid,
 				file:    dir + '/' + name,
 				from:    decodeWords(header(hs, 'from')),
+				to:      decodeWords(header(hs, 'to')),
 				subject: decodeWords(header(hs, 'subject')) || t('mail.no_subject'),
 				date:    header(hs, 'date'),
 				seen:    /:2,[^,]*S/.test(name),
 				cloud:   false,
+				local:   local,
+				id:      header(hs, 'message-id').trim(),
 			});
 		}
-		out.sort(function (x, y) { return x.uid - y.uid; });
+		// A local copy has no UID and is newer than anything the server has handed
+		// back, so it sorts last, which is newest.
+		out.sort(function (x, y) {
+			if (x.local !== y.local) return x.local ? 1 : -1;
+			return x.uid - y.uid || (Date.parse(x.date) || 0) - (Date.parse(y.date) || 0);
+		});
 		return out;
 	}
 
@@ -2517,7 +2718,69 @@
 		if (name === 'INBOX') return t('mail.folder.inbox');
 		var e = folderEntry(a, name);
 		if (e && e.role && ROLE_ORDER.indexOf(e.role) >= 0) return t('mail.folder.' + e.role);
+		// A folder of his own spelt like a role another folder holds: Gmail's
+		// `[Gmail]/Sent Mail` is called Sent here, and a label "Sent" a client once
+		// filed into beside it must not read the same.
+		if (e && !e.role && clashes(a, e)) return t('mail.own_folder', { name: name });
 		return name;
+	}
+
+	function clashes(a, e) {
+		var leaf = e.delimiter ? e.name.split(e.delimiter).pop() : e.name;
+		var role = NAME_ROLES[String(leaf).trim().toLowerCase()];
+		var c = state.folders[a.address];
+		return !!(role && c && c.list && c.list.some(function (f) { return f.role === role; }));
+	}
+
+	/// The names a server that declares no RFC 6154 role at all gives its own
+	/// folders, by the leaf of the name and in lower case.
+	var NAME_ROLES = {
+		'sent':           'sent',
+		'sent items':     'sent',
+		'sent mail':      'sent',
+		'sent messages':  'sent',
+		'drafts':         'drafts',
+		'draft':          'drafts',
+		'archive':        'archive',
+		'archives':       'archive',
+		'trash':          'trash',
+		'deleted items':  'trash',
+		'deleted messages': 'trash',
+		'junk':           'junk',
+		'junk e-mail':    'junk',
+		'junk email':     'junk',
+		'spam':           'junk',
+	};
+
+	/// Give a list with no roles the roles its names imply, one folder per role.
+	///
+	/// ONLY when the server declared none. A role the server gives is the truth and
+	/// a name is a guess: Gmail lists `[Gmail]/Sent Mail` with `\Sent`, and a
+	/// top-level label a client once filed into as "Sent" beside it, and only the
+	/// role says which is the one Gmail files a sent message into. So a single
+	/// declared role anywhere on the list switches the guessing off.
+	function nameRoles(list) {
+		if (list.some(function (f) { return f.role; })) return;
+		var taken = {};
+		list.forEach(function (f) {
+			if (!f.selectable || f.name === 'INBOX') return;
+			var leaf = f.delimiter ? f.name.split(f.delimiter).pop() : f.name;
+			var role = NAME_ROLES[String(leaf).trim().toLowerCase()];
+			if (!role || taken[role]) return;
+			taken[role] = 1;
+			f.role = role;
+		});
+	}
+
+	/// The folder holding a mailbox's sent mail: the one whose role is `sent`, or
+	/// '' while the server has not said, or has none.
+	function sentFolder(a) {
+		var c = a && state.folders[a.address];
+		var list = (c && c.list) || [];
+		for (var i = 0; i < list.length; i++) {
+			if (list[i].role === 'sent' && list[i].selectable) return list[i].name;
+		}
+		return '';
 	}
 
 	function folderEntry(a, name) {
@@ -2537,6 +2800,7 @@
 				delimiter:  f.delimiter || '',
 			};
 		}).filter(function (f) { return f.name; });
+		nameRoles(out);
 		// A server that does not name its inbox in LIST still has one.
 		if (!out.some(function (f) { return f.name === 'INBOX'; })) {
 			out.unshift({ name: 'INBOX', role: '', selectable: true, delimiter: '' });
@@ -2591,7 +2855,9 @@
 			// A record is watermarks at zero; it fetches nothing and says nothing
 			// beyond "this folder exists".
 			state.folders[address].list.forEach(function (e) { if (e.selectable) fld(a, e.name); });
+			seedFollowed(a, state.folders[address].list);
 			save();
+			await fileSent(a);
 			// A folder that is no longer there cannot go on being the selected
 			// one, or every sync would ask for a mailbox the server has not got.
 			var list = state.folders[address].list;
@@ -2882,11 +3148,24 @@
 				+ esc(t('mail.drafts_head', { n: state.drafts.length })) + '</div></div>');
 			state.drafts.forEach(function (d) {
 				var row = document.createElement('div');
-				row.className = 'mail-draft';
+				row.className = 'mail-draft' + (d.failed ? ' unsent' : '');
 				row.innerHTML = '<div class="mail-subj">' + esc(d.subject) + '</div>'
 					+ '<div class="mail-from">' + esc(d.to || t('mail.no_recipient')) + '</div>';
 				rowAsButton(row, function () { openDraft(d.path); });
 				box.appendChild(row);
+				// A send that failed: its reason in its own words, and the one thing to do.
+				if (d.failed) {
+					var why = html('<div class="mail-unsent"><span class="mail-unsent-why">'
+						+ esc(t('mail.unsent', { reason: d.failed })) + '</span>'
+						+ '<button class="mail-retry"' + (state.retrying[d.path] ? ' disabled' : '') + '>'
+						+ esc(t('mail.retry')) + '</button></div>');
+					var rb = why.querySelector('.mail-retry');
+					if (rb) rb.addEventListener('click', function (ev) {
+						if (ev && ev.stopPropagation) ev.stopPropagation();
+						retrySend(d.path);
+					});
+					box.appendChild(why);
+				}
 			});
 			els.list.appendChild(box);
 		}
@@ -3409,10 +3688,17 @@
 			return;
 		}
 		d.from = d.from || state.sel || state.accounts[0].address;
+		var copyErr = '';                 // why the sent copy is missing, when it is
 		deps.showCompose({
 			draft:   d,
 			from:    state.accounts.map(function (a) { return a.address; }),
-			send:    async function (fields) { return sendDraft(Object.assign({}, d, fields)); },
+			// Into `d`, so a second press after a failure sends the same message,
+			// under the same Message-ID and draft file, and leaves one unsent row.
+			send:    async function (fields) {
+				var j = await sendDraft(Object.assign(d, fields));
+				copyErr = (j && j.copyErr) || '';
+				return j;
+			},
 			save:    async function (fields) {
 				var path = await saveDraft(Object.assign(d, fields));
 				await refreshDrafts();
@@ -3424,7 +3710,7 @@
 			},
 			sent:    function (note) {
 				state.note = note;
-				state.err = '';
+				state.err = copyErr ? t('mail.err.copy_failed', { reason: copyErr }) : '';
 				refreshDrafts().then(render);
 			},
 		});
@@ -3499,6 +3785,28 @@
 		});
 	}
 
+	/// Send an unsent message again, from its row. It was confirmed when Send was
+	/// first pressed; Retry is that same message, not a new one.
+	async function retrySend(path) {
+		if (state.retrying[path]) return;
+		state.retrying[path] = 1;
+		state.note = '';
+		state.err  = '';
+		render();
+		try {
+			var d = await readDraft(state.sel, path);
+			var j = await sendDraft(d);
+			state.note = t('mail.note.sent_to', { to: d.to });
+			if (j && j.copyErr) state.err = t('mail.err.copy_failed', { reason: j.copyErr });
+		} catch (e) {
+			state.err = t('mail.unsent', { reason: friendly(e) });
+		} finally {
+			delete state.retrying[path];
+		}
+		await refreshDrafts();
+		render();
+	}
+
 	async function refreshDrafts() {
 		state.drafts = state.sel ? await listDrafts(state.sel) : [];
 	}
@@ -3544,6 +3852,10 @@
 			// arrive when the server is asked what it has.
 			folder:      'INBOX',
 			folders:     { INBOX: blankFolder('INBOX') },
+			// Polling from the moment it exists; see EVERY_NEW. Its Sent and
+			// Archive join when the server names them (`seedFollowed`).
+			refresh:     { INBOX: EVERY_NEW },
+			seed:        1,
 			lastSync:    0,
 			// When this configuration was last stated. The cross-device merge decides
 			// on it, and on nothing else: a device that merely SYNCED a mailbox has
@@ -3729,6 +4041,10 @@
 				+ '  (in cloud storage — its date, sender and subject are not on this device; '
 				+ 'fetch it with file_fetch ' + m.file + ' to read it)';
 		}
+		if (m.local) {
+			return 'sent from Daimond, the server\'s copy not yet synced  ' + (m.date || '')
+				+ '  to ' + (m.to || '?') + '  — ' + (m.subject || '(no subject)') + '  (file ' + m.file + ')';
+		}
 		return 'uid ' + m.uid + (m.seen ? '' : '  [unread]')
 			+ '  ' + (m.date || '') + '  from ' + (m.from || '?')
 			+ '  — ' + (m.subject || '(no subject)');
@@ -3747,7 +4063,8 @@
 			var folders = a.folders || { INBOX: {} };
 			Object.keys(folders).sort().forEach(function (n) {
 				var f = folders[n] || {};
-				lines.push('      ' + n + ' — ' + (f.count | 0) + ' message(s) synced');
+				lines.push('      ' + n + ' — ' + (f.count | 0) + ' message(s) synced'
+					+ (n === sentFolder(a) ? ' (Sent)' : ''));
 			});
 		});
 		var folder = req.folder || folderOf(addr);
@@ -3947,7 +4264,18 @@
 			return (c && c.list) ? c.list.slice() : [];
 		},
 		loadFolders:  function (address, force) { return loadFolders(address || state.sel, force); },
+		/// The folder sent mail is filed in, by its role, and what a folder is called on screen.
+		sentFolder:   function (address) { return sentFolder(acct(address || state.sel)); },
+		label:        function (address, name) { return labelFor(acct(address || state.sel), name); },
 		folder:       function () { var a = acct(state.sel); return (a && a.folder) || 'INBOX'; },
+		/// The messages the panel lists for the folder on screen.
+		shown:        function () { return state.msgs.slice(); },
+		/// The unsent messages listed, each with why its last send failed, if it did;
+		/// Retry on one; and what the panel's two lines say.
+		drafts:       function () { return state.drafts.slice(); },
+		refreshDrafts: refreshDrafts,
+		retry:        retrySend,
+		said:         function () { return { note: state.note, err: state.err }; },
 		selectFolder: selectFolder,
 		/// How often a folder refreshes itself, in seconds; 0 for manual only.
 		/// Seconds rather than the dialog's eight choices, so a verifier can ask

@@ -172,7 +172,8 @@ const after = await p.evaluate(async () => {
 	const mail = await root.getDirectoryHandle('mail');
 	return await walk(mail, 'mail/');
 });
-check('the sent message is kept as a file', after.some(f => /\/sent\/.*\.eml$/.test(f)),
+// Filed in the role-sent folder as `cur/local.*`, or held in `sent/` where the server listed none.
+check('the sent message is kept as a file', after.some(f => /\/sent\/.*\.eml$|\/cur\/local\./.test(f)),
 	after.filter(f => /sent/.test(f)).join(', '));
 check('the sent draft is cleared',          !after.some(f => /\/drafts\/.*\.eml$/.test(f)),
 	after.filter(f => /drafts/.test(f)).join(', ') || 'none left');

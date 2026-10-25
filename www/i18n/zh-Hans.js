@@ -685,6 +685,7 @@
 	'mail.folders_err':     '取不到文件夹列表：{reason}',
 	'mail.folder.inbox':    '收件箱',
 	'mail.folder.sent':     '已发送',
+	'mail.own_folder': '{name}（自建文件夹）',
 	'mail.folder.drafts':   '草稿',
 	'mail.folder.trash':    '已删除',
 	'mail.folder.junk':     '垃圾邮件',
@@ -696,6 +697,10 @@
 	'mail.drafts_head':    '草稿 · {n}',
 	'mail.no_subject':     '（无主题）',
 	'mail.no_recipient':   '（无收件人）',
+	'mail.unsent': '未发送：{reason}',
+	'mail.retry': '重试',
+	'mail.note.sent_to': '已发送给 {to}。',
+	'mail.err.copy_failed': '已发送。未能在“已发送”中保留副本：{reason}',
 	'mail.unknown_sender': '（未知）',
 	'mail.nothing_yet':    '这里还什么都没有。按 <b>⟳</b> 同步。',
 

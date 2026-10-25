@@ -1596,6 +1596,7 @@
 	// i18n-family: mail.folder. = inbox sent drafts trash junk archive flagged all
 	'mail.folder.inbox':    'Inbox',
 	'mail.folder.sent':     'Sent',
+	'mail.own_folder':      '{name} (own folder)',
 	'mail.folder.drafts':   'Drafts',
 	'mail.folder.trash':    'Bin',
 	'mail.folder.junk':     'Spam',
@@ -1607,6 +1608,10 @@
 	'mail.drafts_head':    'Drafts · {n}',
 	'mail.no_subject':     '(no subject)',
 	'mail.no_recipient':   '(no recipient)',
+	'mail.unsent': 'Not sent: {reason}',
+	'mail.retry': 'Retry',
+	'mail.note.sent_to': 'Sent to {to}.',
+	'mail.err.copy_failed': 'Sent. Its copy in Sent was not kept: {reason}',
 	'mail.unknown_sender': '(unknown)',
 	'mail.nothing_yet':    'Nothing here yet. Press <b>⟳</b> to sync.',
 

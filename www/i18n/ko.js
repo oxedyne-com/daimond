@@ -689,6 +689,7 @@
 	'mail.folders_err':     '폴더 목록을 가져오지 못했어요: {reason}',
 	'mail.folder.inbox':    '받은편지함',
 	'mail.folder.sent':     '보낸편지함',
+	'mail.own_folder': '{name} (사용자 폴더)',
 	'mail.folder.drafts':   '임시보관함',
 	'mail.folder.trash':    '휴지통',
 	'mail.folder.junk':     '스팸',
@@ -700,6 +701,10 @@
 	'mail.drafts_head':    '임시보관함 · {n}',
 	'mail.no_subject':     '(제목 없음)',
 	'mail.no_recipient':   '(받는 사람 없음)',
+	'mail.unsent': '보내지 않음: {reason}',
+	'mail.retry': '다시 시도',
+	'mail.note.sent_to': '{to}에게 보냈습니다.',
+	'mail.err.copy_failed': '보냈습니다. 보낸편지함 사본은 저장되지 않았습니다: {reason}',
 	'mail.unknown_sender': '(알 수 없음)',
 	'mail.nothing_yet':    '아직 아무것도 없어요. <b>⟳</b>를 눌러 동기화하세요.',
 

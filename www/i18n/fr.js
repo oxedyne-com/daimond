@@ -550,6 +550,7 @@
 	'mail.folders_err': 'La liste des dossiers n’a pas pu être récupérée : {reason}',
 	'mail.folder.inbox': 'Boîte de réception',
 	'mail.folder.sent': 'Envoyés',
+	'mail.own_folder': '{name} (dossier personnel)',
 	'mail.folder.drafts': 'Brouillons',
 	'mail.folder.trash': 'Corbeille',
 	'mail.folder.junk': 'Spam',
@@ -561,6 +562,10 @@
 	'mail.drafts_head': 'Brouillons · {n}',
 	'mail.no_subject': '(sans objet)',
 	'mail.no_recipient': '(sans destinataire)',
+	'mail.unsent': 'Non envoyé : {reason}',
+	'mail.retry': 'Réessayer',
+	'mail.note.sent_to': 'Envoyé à {to}.',
+	'mail.err.copy_failed': 'Envoyé. Sa copie dans Envoyés n’a pas été conservée : {reason}',
 	'mail.unknown_sender': '(inconnu)',
 	'mail.nothing_yet': 'Rien ici pour l’instant. Appuyez sur <b>⟳</b> pour synchroniser.',
 

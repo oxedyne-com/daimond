@@ -688,6 +688,7 @@
 	'mail.folders_err':     'フォルダーの一覧を取得できませんでした：{reason}',
 	'mail.folder.inbox':    '受信箱',
 	'mail.folder.sent':     '送信済み',
+	'mail.own_folder': '{name}（独自フォルダ）',
 	'mail.folder.drafts':   '下書き',
 	'mail.folder.trash':    'ごみ箱',
 	'mail.folder.junk':     '迷惑メール',
@@ -699,6 +700,10 @@
 	'mail.drafts_head':    '下書き · {n}',
 	'mail.no_subject':     '（件名なし）',
 	'mail.no_recipient':   '（宛先なし）',
+	'mail.unsent': '未送信: {reason}',
+	'mail.retry': '再試行',
+	'mail.note.sent_to': '{to} に送信しました。',
+	'mail.err.copy_failed': '送信しました。送信済みへのコピーは保存されませんでした: {reason}',
 	'mail.unknown_sender': '（不明）',
 	'mail.nothing_yet':    'ここにはまだ何もありません。<b>⟳</b> を押して同期してください。',
 
