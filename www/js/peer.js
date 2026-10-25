@@ -3175,8 +3175,12 @@
 	// 0 from a wasm that predates it: the page writes no `abi` and offers a runner as before.
 	// THE FIRST RUNNER ABI THAT STAGES HIS WORDS HOME (`words_abi`, U2): 0 from a wasm that names
 	// none, which sends no runner `seed.words`.
-	var _engineAbi = 0, _engineAbiMin = 0, _wordsAbi = 0;
+	// `_engineAbiKnown` is false until daimond.js has read the wasm's answer: an ABI not yet read
+	// is "not checked yet", never the legacy 0 (SEAT-LABELS truth).
+	var _engineAbi = 0, _engineAbiMin = 0, _wordsAbi = 0, _engineAbiKnown = false;
+	function engineAbiKnown() { return _engineAbiKnown; }
 	function setEngineAbi(abi, min, words) {
+		_engineAbiKnown = true;
 		_engineAbi = Math.max(0, +abi | 0);
 		_engineAbiMin = Math.max(0, Math.min(+min | 0, _engineAbi));
 		_wordsAbi = Math.max(0, +words | 0);
@@ -3306,6 +3310,9 @@
 		if (!rec || rec.kind !== 'runner') return true;
 		var srcs = sourcesOf(o);
 		if (!srcs.length) return false;
+		// An ABI runner before this page has read its own ABI: not checked yet, so not offered;
+		// the switch is drawn again when the ABI arrives.
+		if ((+rec.abi | 0) > 0 && !_engineAbiKnown) return false;
 		if (abiRunner(rec)) {
 			if (!abiInRange(rec)) return false;
 			return srcs.every(function (s) { return s === 'credits' || (rec.rekey !== true && reachOf(s).ok); });
@@ -3725,6 +3732,15 @@
 					: (own.length && nrec.rekey === true) ? 'runner-rekey'
 					: miss ? 'runner-source' : '';
 				if (why === 'runner-source') { out.source = miss.source; out.reach = miss.reach; }
+			} else if (!_engineAbiKnown || ((+nrec.abi | 0) <= 0 && !String(nrec.engine || ''))) {
+				// SEAT-LABELS truth: an ABI unknown on either side (this page has not read its own,
+				// or the row names neither an ABI nor an engine) is not checked yet. The legacy
+				// reason below is said only of a row that truly names no ABI.
+				why = srcs.length ? 'runner-unchecked' : '';
+			} else if ((+nrec.abi | 0) > 0) {
+				// The runner speaks an ABI and this page's wasm predates it: the page is behind,
+				// and only its update can offer the runner his own key (`page-old`).
+				why = own.length ? 'page-old' : '';
 			} else {
 				var mine = (o.engineId != null) ? String(o.engineId) : _engineId;
 				why = (own.length || !srcs.length) ? 'runner-credits-only'
@@ -7805,6 +7821,7 @@
 		/// OWNKEY: the page's ABI and min, the sources a turn pays with, the re-approval mark
 		/// (cleared by any device's re-approval through `rekeyApproved`), and the report gate.
 		setEngineAbi:  setEngineAbi,
+		engineAbiKnown: engineAbiKnown,
 		takesWords:    takesWords,
 		sourcesOf:     sourcesOf,
 		rekeyFrom:     rekeyFrom,

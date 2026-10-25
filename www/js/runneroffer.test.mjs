@@ -143,6 +143,8 @@ const A = page(), B = page();
 // SEATWHY (SEAT-DIAG, 2026-10-24): the owner starred his paired runner and his chat, on his own
 // OpenRouter key, drew plain "Here" with nothing to say why. The switch now names the reason.
 {
+	// The legacy reason is said only while this page knows its own ABI (SEAT-LABELS truth).
+	A.DaimondPeer.setEngineAbi(1, 1);
 	const byok = { id: 'c6', model: 'm', provider: 'openrouter' };
 	const s = offer(A, answer(), ENGINE, byok, { nominatedId: 'rn', provider: 'openrouter' });
 	check('O12a an own-key chat with a nominated native runner says it serves credits only',

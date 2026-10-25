@@ -110,7 +110,7 @@ const SRC = source('daimond.js');
 	for (const code of LOCALES) {
 		const tab = table(code);
 		let F = null;
-		try { F = sliceDaimond(makeWindow({}), ['handBackNote'], { t: tOf(tab) }).fns; }
+		try { F = sliceDaimond(makeWindow({}), ['handBackNote', 'seatReason'], { t: tOf(tab) }).fns; }
 		catch (e) { check(code + ': handBackNote is in daimond.js', false, String(e && e.message)); continue; }
 		const th = F.handBackNote('thread', 'argonaut'), li = F.handBackNote('limits', 'argonaut');
 		const dr = F.handBackNote('door', 'argonaut');	// the session sent as a reference (KT-4b)
@@ -152,7 +152,7 @@ const SRC = source('daimond.js');
 			Date, JSON, String, Object, Array, Promise,
 		};
 		env.window = env;
-		const l = lift(SRC, ['runDispatchFallback', 'leaseDoorRead', 'handBackNote']);
+		const l = lift(SRC, ['runDispatchFallback', 'leaseDoorRead', 'handBackNote', 'seatReason']);
 		if (l.missing.length) return 'missing ' + l.missing.join(',');
 		const scope = new Proxy(env, { has: (o, k) => typeof k === 'string' && k in o, get: (o, k) => o[k], set: (o, k, v) => { o[k] = v; return true; } });
 		const f = new Function('scope', 'with (scope) {\n' + l.body + '\nreturn [runDispatchFallback, handBackNote];\n}')(scope);

@@ -79,13 +79,17 @@
 
      A MENU BELONGS TO THE VIEW IT WAS OPENED OVER (OWNKEY-PG). A menu hung on the
      body (the source, Chats, Workspace, tag and fold menus, workspace.js's popovers)
-     is opened with `menu`, not `open`. One is up at a time: opening one closes the
+     is put up with `hang`, which appends it, marks it a menu and registers it, and
+     never with `open`. One is up at a time: opening one closes the
      other through its own closer. A navigation (a panel shown or hidden, a chat or a
      Diamond selected) calls `leave`, which closes the menu and nothing else. Each
      menu used to keep its own singleton and was dismissed only by a click outside,
      so a change of view made without a click left it standing over the next control,
-     its rows bound to a chat no longer on screen. layers.wiring.test.mjs fails the
-     menu builder that does not use `menu`, and the navigation that does not `leave`.
+     its rows bound to a chat no longer on screen. layers.wiring.test.mjs fails any
+     code that puts an element on the body other than through `hang` (a short list
+     of non-menus excepted, each named), and the navigation that does not `leave`;
+     menugate.test.mjs runs the builders and finds no menu on the body that `hang`
+     did not put there.
 
      Three things stand outside that rule, each on purpose:
        - an element that owns Escape as input says so with `data-own-escape`
@@ -132,6 +136,7 @@
 		var seq       = 0;
 		var base      = [];		// base[d]: history.length just after depth d's entry was pushed
 		var capped    = false;	// the history stopped growing as entries were pushed: lengths say nothing
+		var hung      = new WeakSet();	// the elements `hang` put up as menus
 
 		function hist() { return win.history; }
 		function now()  { return api.clock(); }
@@ -261,8 +266,9 @@
 
 		/// A menu is up: a layer hung on the body that belongs to the view it was opened over. One menu is up at a
 		/// time, so the one already up (another id) is first closed through its own closer, in the same turn, which
-		/// costs no traversal. A navigation (`leave`) closes it.
-		api.menu = function (id, close, opener) {
+		/// costs no traversal. A navigation (`leave`) closes it. Not on the api: a menu is registered only with
+		/// its element, through `hang`.
+		function menu(id, close, opener) {
 			for (var i = stack.length - 1; i >= 0; i--) {
 				if (stack[i].menu && stack[i].id !== id) {
 					var l = stack.splice(i, 1)[0];
@@ -272,6 +278,31 @@
 			api.open(id, close, opener);
 			stack[indexOf(id)].menu = true;
 			return id;
+		}
+
+		/// Hang `el` on the body as the menu `id`: the one way a menu reaches the body (MENUGATE). An element the
+		/// page already holds on the body (workspace.js's popovers) stays where it is, and a role the element
+		/// declares stands (the tag popover is a group of filter chips); any other is a `menu`.
+		api.hang = function (el, id, close, opener) {
+			var b = win.document.body;
+			if (el.parentNode !== b) b.appendChild(el);
+			if (!el.getAttribute('role')) el.setAttribute('role', 'menu');
+			hung.add(el);
+			return menu(id, close, opener);
+		};
+
+		/// Was `el` hung through `hang`?
+		api.hung = function (el) { return hung.has(el); };
+
+		/// The menus on the body that did not come through `hang`: none, in a page that keeps the rule.
+		api.strays = function () {
+			var b = win.document.body, out = [];
+			var kids = b && b.children ? Array.prototype.slice.call(b.children) : [];
+			for (var i = 0; i < kids.length; i++) {
+				var k = kids[i];
+				if (k.getAttribute && k.getAttribute('role') === 'menu' && !hung.has(k)) out.push(k);
+			}
+			return out;
 		};
 
 		/// The view is changing: close the menu that is up, through its own closer. Sheets, dialogs and the drawer

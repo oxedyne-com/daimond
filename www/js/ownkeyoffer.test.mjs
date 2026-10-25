@@ -440,7 +440,7 @@ function frameChecks(M) {
 	if (typeof P.abiOk !== 'function') { check('K10 abiOk exists', false); return; }
 	P.setEngineAbi(2, 2);
 	const NAMES = ['onProgressFrame', 'onLastFrame', 'frameAbiOk', 'refuseAbiFrame', 'refuseAbiTurn', 'dropRefusedTiles', 'adoptFinalFrame',
-		'endTurnNotRun', 'answerUnhanded', 'isNotRunRow', 'handBackNote', 'applyProvisional'];
+		'endTurnNotRun', 'answerUnhanded', 'isNotRunRow', 'handBackNote', 'seatReason', 'applyProvisional'];
 	const L = lift(source('daimond.js'), NAMES, []);
 	check('K10 the frame functions are there', L.missing.length === 0, L.missing.join());
 	if (L.missing.length) return;
@@ -510,7 +510,7 @@ function frameChecks(M) {
 
 // ── daimond.js, the page half ───────────────────────────────────
 function pageChecks() {
-	const NAMES = ['electSources', 'seatWhyText', 'bookReportCost', 'handBackNote', 'wasmEngineAbi'];
+	const NAMES = ['electSources', 'seatReason', 'seatWhyKey', 'seatWhyText', 'bookReportCost', 'handBackNote', 'wasmEngineAbi'];
 	const L = lift(source('daimond.js'), NAMES, []);
 	check('K6 the page functions are there', L.missing.length === 0, L.missing.join());
 	if (L.missing.length) return;
@@ -537,6 +537,10 @@ function pageChecks() {
 	check('K6 runner-rekey asks for re-approval', api.seatWhyText({ why: 'runner-rekey', runnerId: 'rn' }).indexOf('seat.why_runner_rekey') === 0);
 	check('K6 the legacy reason keeps its line', api.seatWhyText({ why: 'runner-credits-only', runnerId: 'rn' }).indexOf('seat.why_runner_credits') === 0);
 	check('RUNNER-DOOR runner-silent says it is not listening', api.seatWhyText({ why: 'runner-silent', runnerId: 'rn' }).indexOf('seat.why_runner_quiet') === 0);
+	check('TRUTH runner-unchecked has its line', api.seatWhyText({ why: 'runner-unchecked', runnerId: 'rn' }).indexOf('seat.why_runner_unchecked') === 0,
+		api.seatWhyText({ why: 'runner-unchecked', runnerId: 'rn' }));
+	check('TRUTH page-old has its line', api.seatWhyText({ why: 'page-old', runnerId: 'rn' }).indexOf('seat.why_page_old') === 0,
+		api.seatWhyText({ why: 'page-old', runnerId: 'rn' }));
 	check('K6 no reason, no line', api.seatWhyText({}) === '' && api.seatWhyText(null) === '');
 	check('K7 an abi hand-back says the runner runs another version', api.handBackNote('abi', 'argonaut').indexOf('seat.why_runner_engine') === 0,
 		api.handBackNote('abi', 'argonaut'));
@@ -623,11 +627,52 @@ function menuChecks() {
 		&& /nm\.textContent = name \|\| t\('astat\.credits'\)/.test(src));
 }
 
+// SEAT-LABELS truth (owner, 25 Oct ~18:2x: "I can't click argonaut"): the seat line read
+// "argonaut takes Daimond-credits chats only" on his own-key chat while argonaut's row carried
+// abi 1, because the page's own ABI was 0. An ABI unknown on either side is "not checked yet",
+// never the legacy case, and the offer is decided again once the ABI arrives.
+function truthChecks(M) {
+	const W = page(M), P = W.DaimondPeer;
+	// His state: argonaut's row names abi 1, his chat is on his own key, this page has not read its ABI.
+	const his = offer(W, answer({ abi: 1, abiMin: 1 }), ['an']);
+	check('TRUTH an ABI runner before this page knows its ABI is not checked yet, not credits-only',
+		!his.runner && his.why === 'runner-unchecked' && his.runnerId === 'rn', JSON.stringify(his));
+	P.setEngineAbi(1, 1);
+	const then = offer(W, answer({ abi: 1, abiMin: 1 }), ['an']);
+	check('TRUTH once the ABI arrives the same runner is offered on his own key', !!then.runner
+		&& then.runner.deviceId === 'rn' && !then.why, JSON.stringify(then));
+	// A row that names no ABI and no engine: its build is not known either.
+	const bare = offer(W, answer({ engine: '' }), ['an']);
+	check('TRUTH a runner row with no ABI and no engine id is not checked yet', !bare.runner
+		&& bare.why === 'runner-unchecked', JSON.stringify(bare));
+	// The legacy reason is true only for a row that truly names no ABI while the page knows its own.
+	const leg = offer(W, answer(), ['an']);
+	check('TRUTH a row naming no ABI, page ABI known: the legacy credits-only reason',
+		!leg.runner && leg.why === 'runner-credits-only', JSON.stringify(leg));
+	// A page whose wasm predates the ABI (it read 0) facing an ABI runner: the page is behind.
+	const W2 = page(M), P2 = W2.DaimondPeer;
+	P2.setEngineAbi(0, 0);
+	const stale = offer(W2, answer({ abi: 1, abiMin: 1 }), ['an']);
+	check('TRUTH a page below the runner-offer ABI says the page is behind, not credits-only',
+		!stale.runner && stale.why === 'page-old' && stale.runnerId === 'rn', JSON.stringify(stale));
+	const lc = offer(W2, answer({ abi: 1, abiMin: 1 }), [CR]);
+	check('TRUTH a legacy page still hands credits to a runner on its own wasm (the legacy rule)', !!lc.runner,
+		JSON.stringify(lc));
+	// Before the page reads its ABI an ABI runner is not offered at all, credits or not.
+	const W3 = page(M);
+	const early = offer(W3, answer({ abi: 1, abiMin: 1 }), [CR]);
+	check('TRUTH an ABI runner is not offered credits before the page knows its ABI', !early.runner
+		&& early.why === 'runner-unchecked', JSON.stringify(early));
+	check('TRUTH engineAbiKnown reports the page side', typeof P.engineAbiKnown === 'function'
+		&& P.engineAbiKnown() === true && page(M).DaimondPeer.engineAbiKnown() === false);
+}
+
 const M = await reachChecks();
 errandChecks(M);
 await ocrRowChecks();
 await ocrRouteChecks();
 offerChecks(M);
+truthChecks(M);
 pageChecks();
 await syncFrameChecks();
 frameChecks(M);

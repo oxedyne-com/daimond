@@ -48,7 +48,7 @@ function panel() {
 		addEventListener(t, f, c) { doc.docListeners.push([t, f, c]); },
 		removeEventListener(t, f) { doc.docListeners = doc.docListeners.filter((l) => !(l[0] === t && l[1] === f)); },
 	};
-	const layers = { up: [], menu(id, close) { layers.up.push({ id, close }); }, done(id) { layers.up = layers.up.filter((l) => l.id !== id); } };
+	const layers = { up: [], hang(m, id, close) { body.appendChild(m); layers.up.push({ id, close }); }, done(id) { layers.up = layers.up.filter((l) => l.id !== id); } };
 	const shown = [];
 	const deps = {
 		document: doc, window: { innerWidth: 390, innerHeight: 845 }, DaimondLayers: layers,
@@ -109,7 +109,7 @@ test('Escape and Back shut it: its layer closer is the menu\'s own close', () =>
 
 test('the panel leaving the screen, or another asked for, takes its menu: DaimondLayers.leave, from show, mshow and hide', () => {
 	// The Workspace menu is a menu of the stack's, so a navigation closes it with every other (OWNKEY-PG).
-	assert.match(src, /DaimondLayers\.menu\('filesmenu', closePop, anchor\)/, 'the Workspace menu is not a menu of the stack');
+	assert.match(src, /DaimondLayers\.hang\(menu, 'filesmenu', closePop, anchor\)/, 'the Workspace menu is not a menu of the stack');
 	const ms = cut('mshow', '\t');
 	const leave = ms.indexOf('DaimondLayers.leave();');
 	assert.ok(leave >= 0, 'mshow does not put the menu away for another panel');

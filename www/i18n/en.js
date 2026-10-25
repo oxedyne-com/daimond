@@ -2530,8 +2530,27 @@
 	'seat.why_runner_credits': '{name} takes Daimond-credits chats only; this one uses your own key.',
 	'seat.why_runner_engine': '{name} runs another Daimond version; it updates itself.',
 	'seat.why_runner_quiet': '{name} is not listening for chats right now, so this one runs here.',
+	'seat.why_runner_unchecked': 'This page has not yet checked {name}’s Daimond version.',
+	'seat.why_page_old': 'This page runs an older Daimond than {name}; it updates itself.',
 	'seat.why_runner_source': '{name} cannot use {provider}: {reason}.',
 	'seat.why_runner_rekey': '{name} needs approving again after your passphrase change to use your own keys.',
+	'seat.why_runner_road': '{name} could not reach {host} over its own connection, so no answer came back.',
+	'seat.why_runner_road_any': '{name} could not reach the provider over its own connection, so no answer came back.',
+	// THE SEAT REASON'S LABEL (SEAT-LABELS, owner 25 Oct): 2-4 words beside the seat; the
+	// sentence above is its hover title and its tap. Drawn by daimond.js `seatReason` alone.
+	// i18n-family: seat.why_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_unchecked page_old runner_source runner_rekey runner_road runner_road_any
+	// i18n-family: seat.label_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_unchecked page_old runner_source runner_rekey runner_road runner_road_any
+	'seat.label_no_desktop': 'No device awake',
+	'seat.label_runner_silent': '{name} asleep',
+	'seat.label_runner_credits': '{name}: credits only',
+	'seat.label_runner_engine': '{name} updating',
+	'seat.label_runner_quiet': '{name} not listening',
+	'seat.label_runner_unchecked': '{name} not checked yet',
+	'seat.label_page_old': 'Page out of date',
+	'seat.label_runner_source': '{name} can’t use {provider}',
+	'seat.label_runner_rekey': 'Re-approve {name}',
+	'seat.label_runner_road': '{name} can’t reach {host}',
+	'seat.label_runner_road_any': '{name} can’t connect',
 	// i18n-family: seat.reach_ = https device unlock nokey
 	'seat.reach_https': 'it needs an https address',
 	'seat.reach_device': 'it is on this device',
@@ -3826,6 +3845,7 @@
 	'update.ready_help': 'Update ready. It applies when this finishes, or click to force it.',
 	'update.updated':    'Daimond updated',
 	'update.stale':      'Daimond is out of date and must reload to keep working. Click to reload.',
+	'update.stale_short': 'Out of date, updating',
 	'update.available':  'A new version of Daimond is available.',
 	// Desktop only (see updater.js's `syncBanner`): the automatic path is still
 	// watching for a quiet moment, so this says that rather than reading as a

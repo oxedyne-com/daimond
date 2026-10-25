@@ -58,7 +58,7 @@ test('a popover is hidden in one place, which tells the stack', () => {
 	assert.match(w, /function hidePop\(pop\) \{\s*pop\.hidden = true;\s*DaimondLayers\.done\('pop'\);/);
 	assert.equal(count(w, /\b(menuEl|galEl|el|pop)\.hidden = true/g), 1, 'a popover is hidden somewhere other than hidePop');
 	assert.equal(count(read('js', 'handmode.js'), /pop\.hidden = true/g), 0);
-	assert.match(w, /function openPop[\s\S]*?DaimondLayers\.menu\('pop'/);
+	assert.match(w, /function openPop[\s\S]*?DaimondLayers\.hang\(pop, 'pop'/);
 });
 
 test('the sheet, the palette and the Admin drawer register and report', () => {
@@ -116,7 +116,7 @@ test('the terminal marks the three elements that own Escape as input', () => {
 test('what Escape used to close is a layer, or a claim the router asks', () => {
 	const d = read('js', 'daimond.js'), p = read('js', 'passcode.js'), m = read('js', 'mobile.js');
 	// The Chats menu is a layer (a menu): Back closes it as well.
-	assert.match(d, /DaimondLayers\.menu\('chatsmenu', closeChatsMenu(, anchor)?\)/);
+	assert.match(d, /DaimondLayers\.hang\(menu, 'chatsmenu', closeChatsMenu(, anchor)?\)/);
 	assert.match(d, /function closeChatsMenu\(\) \{[^}]*DaimondLayers\.done\('chatsmenu'\)/s);
 	// The composer's skill menu and the link form are claims: key modes, no history.
 	assert.match(d, /DaimondLayers\.claim\('skill', /);
@@ -181,28 +181,152 @@ test('a popover opened from a row of the fold gives the stack the fold\'s own bu
 	const open = w.slice(w.indexOf('function openPop'), w.indexOf('function hidePop'));
 	assert.match(open, /getClientRects\(\)\.length/, 'openPop does not ask whether the anchor is drawn');
 	assert.match(open, /getElementById\('help-btn'\)/, 'openPop has no drawn trigger to fall back on');
-	assert.match(open, /DaimondLayers\.menu\('pop',[\s\S]*?\},\s*back\)/, 'the stack is not handed the drawn trigger');
+	assert.match(open, /DaimondLayers\.hang\(pop, 'pop',[\s\S]*?\},\s*back\)/, 'the stack is not handed the drawn trigger');
 });
 
 // ── Menus are the stack's: one at a time, gone on navigation (OWNKEY-PG) ────
 
-test('every builder of a body-hung menu registers it as a menu, never as a plain layer', () => {
-	const BUILD = /className\s*=\s*'(railhead-menu[ ']|fold-menu')/g;
-	let builders = 0;
-	for (const f of JS) {
-		const s = read('js', f), n = count(s, BUILD);
-		if (!n) continue;
-		builders += n;
-		assert.ok(count(s, /DaimondLayers\.menu\(/g) >= n, `${f} builds ${n} menu(s) and calls DaimondLayers.menu fewer times`);
+// MENUGATE. A menu reaches the body only through DaimondLayers.hang, which registers it as the one menu up. The gate is
+// by what code does to the body, not by a class name or a role: every use of the body (or the root, or an alias of
+// either) other than a read of its state is on KEPT below, by file and line, with what it puts there and why that is
+// no menu. A new menu, whatever its class and however it is built, is a new use and fails; so is an alias
+// (`var b = document.body`), a guard chain (`(x || document.body).appendChild(m)`) and an insert next to a child.
+// menugate.test.mjs runs the builders themselves and finds no menu on the body that `hang` did not put there.
+const BODY = /\bdocument\s*\.\s*(body|documentElement|scrollingElement)\b|\bdocument\s*\[\s*['"](body|documentElement)['"]\s*\]|\bownerDocument\s*\.\s*(body|documentElement)\b|querySelector(All)?\(\s*['"](body|html)\b|getElementsByTagName\(\s*['"](body|html)['"]/g;
+const READS = new Set([ 'classList', 'dataset', 'style', 'contains', 'getAttribute', 'setAttribute', 'removeAttribute', 'hasAttribute',
+	'toggleAttribute', 'getBoundingClientRect', 'getClientRects', 'clientWidth', 'clientHeight', 'scrollTop', 'scrollLeft', 'scrollHeight',
+	'scrollWidth', 'offsetWidth', 'offsetHeight', 'focus', 'addEventListener', 'removeEventListener', 'querySelector', 'querySelectorAll',
+	'getElementsByClassName', 'matches', 'className', 'id', 'lang', 'dir', 'removeChild' ]);
+
+/// Every use of the body in `src` that is not a read of its state: [ trimmed line, … ], one per use.
+function bodyUses(src) {
+	const out = [];
+	for (const ln of src.split('\n')) {
+		const tr = ln.trim();
+		if (/^(\/\/|\/\*|\*)/.test(tr)) continue;
+		BODY.lastIndex = 0;
+		let m;
+		while ((m = BODY.exec(ln))) {
+			const after = ln.slice(m.index + m[0].length), before = ln.slice(0, m.index);
+			const mem = after.match(/^\s*\.\s*([A-Za-z_$][\w$]*)/);
+			if (mem && READS.has(mem[1])) continue;
+			if (/^\s*[!=]==?/.test(after) || /[!=]==?\s*$/.test(before) || /!\s*$/.test(before)) continue;	// a comparison or a guard
+			if (/(getComputedStyle|\.observe)\(\s*$/.test(before)) continue;	// its style read, or its changes watched
+			out.push(tr);
+		}
 	}
-	assert.ok(builders >= 5, 'the scan found only ' + builders + ' menu builders; the pattern has drifted');
+	return out;
+}
+
+// What else is put on the body, or holds it, and why each is no menu. A line that changes is a new use: say here what
+// it puts on the body, or put a menu up with DaimondLayers.hang.
+const KEPT = {
+	'avatar.js':     [ [ 'document.body.appendChild(box);', 'the avatar picker, a modal' ] ],
+	'crystal.js':    [ [ "var el = document.getElementById('crystal-body') || document.body;", 'where the crystal is measured' ],
+	                   [ 'var root = document.documentElement;', 'the theme read for the frame' ],
+	                   [ '(el || document.body).appendChild(probe);', 'a measuring probe, removed at once' ],
+	                   [ "say({ cmd: 'data', data: wireData(data, req, document.body, names) });", 'the page passed as data' ],
+	                   [ 'document.body.appendChild(frame);', 'a hidden sight-probe frame' ] ],
+	'daimond.js':    [ [ 'document.body.appendChild(box);', 'the storage alarm (role alert), and two toasts' ],
+	                   [ 'document.body.appendChild(box);', '' ], [ 'document.body.appendChild(box);', '' ],
+	                   [ '(document.body || document.documentElement).appendChild(chatsHeldEl);', 'the chats-held status line' ],
+	                   [ '(document.body || document.documentElement).appendChild(chatsHeldEl);', '' ],
+	                   [ 'document.body.appendChild(b);', 'the left banner (role status)' ],
+	                   [ 'var root = document.documentElement;', 'theme properties set on the root' ], [ 'var root = document.documentElement;', '' ],
+	                   [ 'document.body.appendChild(back);', 'modal dialogs: confirm and prompt, the tile dialogs, the lock' ],
+	                   [ 'document.body.appendChild(back);', '' ], [ 'document.body.appendChild(back);', '' ], [ 'document.body.appendChild(back);', '' ],
+	                   [ 'document.body.appendChild(menu);', 'the / skill list: a listbox of the composer, a claim of its input and no layer' ],
+	                   [ 'document.body.appendChild(ta);', 'a copy textarea, removed at once' ] ],
+	'debugshare.js': [ [ '(document.head || document.body || document.documentElement).appendChild(s);', 'a style element' ],
+	                   [ '(document.head || document.body || document.documentElement).appendChild(s);', '' ] ],
+	'dockdrag.js':   [ [ 'document.body.appendChild(overlay);', 'the drop-zone overlay of a drag' ],
+	                   [ 'document.body.appendChild(g);', 'the dragged ghost' ] ],
+	'fullscreen.js': [ [ 'var docEl = document.documentElement;', 'what full screen is asked of' ] ],
+	'lapse.js':      [ [ 'document.body.appendChild(host);', 'the notices host' ] ],
+	'lensshot.js':   [ [ 'return S.rasterise(document.body, { viewport: true, frame_label: label })', 'a screenshot of the page' ] ],
+	'mail.js':       [ [ 'document.body.appendChild(back);', 'a modal dialog' ] ],
+	'mobile.js':     [ [ 'var root = document.documentElement;', 'the viewport properties' ],
+	                   [ 'document.body.appendChild(mirror);', 'a hidden caret-measuring mirror' ] ],
+	'models.js':     [ [ 'var cs = getComputedStyle(inp.isConnected ? inp : document.body);', 'a style read' ],
+	                   [ 'document.body.appendChild(mpPop);', 'the model picker\'s list: a listbox of its input, closed on blur, no layer' ] ],
+	'pairing.js':    [ [ 'document.body.appendChild(scrim);', 'the pairing modal' ] ],
+	'passcode.js':   [ [ 'document.body.appendChild(scrim);', 'the passcode modal' ] ],
+	'record.js':     [ [ "push({ type: 'key', key: name }, el.nodeType === 1 ? el : document.body);", 'the target of a recorded key' ],
+	                   [ 'document.body.appendChild(badge);', 'the recording badge' ] ],
+	'render.js':     [ [ 'document.body.appendChild(ta);', 'a copy textarea, removed at once' ] ],
+	'report.js':     [ [ 'document.body.appendChild(wrap);', 'the report modal and its alert line' ], [ 'document.body.appendChild(wrap);', '' ] ],
+	'selfshot.js':   [ [ 'if (!sel || !String(sel).trim()) return document.body;', 'the page as a screenshot target' ],
+	                   [ "var root = name === 'screen' ? document.body : viewEl(name);", '' ] ],
+	'share.js':      [ [ 'document.body.appendChild(input);', 'a file input, clicked and removed' ], [ 'document.body.appendChild(input);', '' ] ],
+	'support.js':    [ [ 'document.body.appendChild(wrap);', 'the support modal' ] ],
+	'syncicon.js':   [ [ 'document.body.appendChild(tip);', 'the sync tooltip' ] ],
+	'terminal.js':   [ [ 'document.body.appendChild(ta);', 'a copy textarea, removed at once' ] ],
+	'undo.js':       [ [ 'document.body.appendChild(el);', 'the undo bar (role status)' ] ],
+	'updater.js':    [ [ 'document.body.appendChild(b);', 'the update banner (role status)' ] ],
+	'viewer.js':     [ [ 'document.body.appendChild(a);', 'a download link, clicked and removed' ] ],
+	'web.js':        [ [ "var main = document.querySelector('main, [role=\"main\"], article') || document.body;", 'what a page reader reads' ] ],
+	'workspace.js':  [ [ 'document.body.appendChild(safeProbe);', 'the safe-area probe, hidden' ] ],
+};
+const tally = (xs) => xs.reduce((m, x) => m.set(x, (m.get(x) || 0) + 1), new Map());
+
+/// What in file `f`, whose source is `src`, puts something on the body that neither hang nor KEPT accounts for.
+function unnamed(f, src) {
+	const got = tally(bodyUses(src)), want = tally((KEPT[f] || []).map((k) => k[0])), out = [];
+	for (const [ ln, n ] of got) {
+		if ((want.get(ln) || 0) < n) out.push(`${f}: \`${ln}\` puts something on the body (${n} use(s), ${want.get(ln) || 0} named). `
+			+ 'A menu goes up with DaimondLayers.hang(el, id, close, opener); anything else is named in KEPT with why it is no menu');
+	}
+	return out;
+}
+
+test('nothing reaches the body but through DaimondLayers.hang, outside the uses named here (MENUGATE)', () => {
 	for (const f of JS) {
-		assert.equal(count(read('js', f), /DaimondLayers\.open\('(sourcemenu|chatsmenu|filesmenu|tagmore|foldmenu|pop)'/g), 0,
+		if (f === 'layers.js') continue;		// hang itself
+		assert.deepEqual(unnamed(f, read('js', f)), []);
+		const got = tally(bodyUses(read('js', f)));
+		for (const [ ln, n ] of tally((KEPT[f] || []).map((k) => k[0]))) {
+			assert.equal(got.get(ln) || 0, n, `${f}: KEPT names \`${ln}\` ${n} time(s) and the source has ${got.get(ln) || 0}: prune it`);
+		}
+	}
+	for (const f of Object.keys(KEPT)) assert.ok(JS.includes(f), `KEPT names ${f}, which is gone`);
+});
+
+test('the gate fails a new menu whatever its class, role or route to the body (the QA mutations, and the aliases)', () => {
+	const d = read('js', 'daimond.js');
+	const builder = (cls, attach, reg) => `\n\tfunction openSeatMenu(anchor) {\n\t\tvar menu = document.createElement('div');\n\t\t${cls}\n`
+		+ `\t\t${attach}\n\t\t${reg}\n\t}\n`;
+	const MUT = [
+		[ 'class seat-menu, a plain open',            builder("menu.className = 'seat-menu';", 'document.body.appendChild(menu);', "DaimondLayers.open('seatmenu', function () {}, anchor);") ],
+		[ 'classList.add, no layers call',            builder("menu.classList.add('railhead-menu');", 'document.body.appendChild(menu);', '') ],
+		[ 'classList.add with a new class name',      builder("menu.classList.add('seat-picker');", 'document.body.appendChild(menu);', '') ],
+		[ 'class railhead-menu seat, a plain open',   builder("menu.className = 'railhead-menu seat';", 'document.body.appendChild(menu);', "DaimondLayers.open('seatmenu', function () {});") ],
+		[ 'no role and no class at all',              builder('', 'document.body.append(menu);', '') ],
+		[ 'an alias of the body',                     builder('', 'var host = document.body; host.appendChild(menu);', '') ],
+		[ 'a guard chain',                            builder('', '(document.body || document.documentElement).appendChild(menu);', '') ],
+		[ 'next to a child of the body',              builder('', 'document.body.firstElementChild.after(menu);', '') ],
+		[ 'on the root',                              builder('', 'document.documentElement.appendChild(menu);', '') ],
+		[ 'through a query',                          builder('', "document.querySelector('body').appendChild(menu);", '') ],
+		[ 'through an element\'s document',           builder('', 'anchor.ownerDocument.body.insertAdjacentElement(\'beforeend\', menu);', '') ],
+		[ 'a second copy of a named line',            builder('', 'document.body.appendChild(back);', '') ],
+	];
+	for (const [ what, m ] of MUT) assert.ok(unnamed('daimond.js', d + m).length > 0, 'the gate let through a menu put up by ' + what);
+	assert.ok(unnamed('seat.js', builder("menu.className = 'railhead-menu';", 'document.body.appendChild(menu);', '')).length > 0, 'a new file');
+	assert.equal(unnamed('daimond.js', d + builder("menu.classList.add('seat-picker');", '', "DaimondLayers.hang(menu, 'seatmenu', function () {}, anchor);")).length, 0,
+		'a menu put up through hang is the rule kept');
+});
+
+test('the stack takes a menu only with its element: DaimondLayers.menu and a plain open of a menu are gone', () => {
+	for (const f of JS) {
+		const s = read('js', f);
+		assert.equal(count(s, /DaimondLayers\.menu\(/g), 0, `${f} registers a menu apart from its element; use DaimondLayers.hang`);
+		assert.equal(count(s, /DaimondLayers\.open\('(sourcemenu|chatsmenu|filesmenu|tagmore|foldmenu|pop)'/g), 0,
 			`${f} opens a menu as a plain layer: it would outlive a navigation and stand over the next control`);
 	}
-	assert.match(read('js', 'workspace.js'), /DaimondLayers\.menu\('pop'/);
+	const hangs = JS.reduce((n, f) => n + count(read('js', f), /DaimondLayers\.hang\(/g), 0);
+	assert.ok(hangs >= 6, 'only ' + hangs + ' menus go up through hang; the source, Chats, Workspace, tag, fold and pop menus all do');
+	assert.match(read('js', 'workspace.js'), /DaimondLayers\.hang\(pop, 'pop'/);
 	const d = read('js', 'daimond.js');
-	assert.match(d, /DaimondLayers\.menu\('foldmenu', closeFoldMenu/);
+	assert.match(d, /DaimondLayers\.hang\(menu, 'foldmenu', closeFoldMenu/);
 	assert.match(d, /function closeFoldMenu\(\) \{[\s\S]*?DaimondLayers\.done\('foldmenu'\)[\s\S]*?\n\t\}/);
 });
 
@@ -226,3 +350,19 @@ test('every navigation leaves the menu that is up: show, mshow, hide, selectChat
 	}
 	assert.equal(count(d, /Files\.onLeave\(/g), 0, 'Files.onLeave is the stack\'s job now');
 });
+
+test('the chat on screen changes in one place, which leaves the menu up: setCurrent (MENUGATE, the LOW of runnerdoor QA)', () => {
+	const d = read('js', 'daimond.js');
+	// Every assignment to `current`, the shadowing `var current` of another function aside.
+	const sets = [ ...d.matchAll(/(?<![.\w$])current\s*=(?!=)/g) ].filter((m) => !/var\s+$/.test(d.slice(m.index - 8, m.index)));
+	const fn = d.match(/\n\tfunction setCurrent\(chat\) \{[\s\S]*?\n\t\}\n/);
+	assert.ok(fn, 'no setCurrent: each change of the chat on screen is its own, and the one that forgets leave() leaves a menu bound to the old chat');
+	assert.equal(sets.length, 1, sets.length + ' assignments to current; all but setCurrent\'s should call it');
+	assert.ok(sets[0].index > fn.index && sets[0].index < fn.index + fn[0].length, 'the one assignment to current is not setCurrent\'s');
+	assert.ok(fn[0].indexOf('DaimondLayers.leave();') >= 0 && fn[0].indexOf('DaimondLayers.leave();') < fn[0].indexOf('current = chat'),
+		'setCurrent must leave the menu up while the old chat is still current');
+	// The sync path: a merge that finds the open chat deleted elsewhere.
+	assert.match(d, /if \(current && !chats\.some\(function \(c\) \{ return c\.id === current\.id; \}\)\) \{\n\t\t\tsetCurrent\(null\);/,
+		'a remote deletion of the open chat goes through setCurrent');
+});
+

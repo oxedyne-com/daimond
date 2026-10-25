@@ -20,7 +20,8 @@
 //                                    top, middle and end
 //   R3  rail.today.shares-row        each pool's own Today shares its pool's row; no total
 //                                    Today anywhere (none at all with no pool)
-//   R4  rail.phone.five-tiles        phone: each list its own window of >= 5 of its tiles
+//   R4  rail.phone.five-tiles        phone: each list its own window, holding >= 5 whole tiles at rest
+//                                    whatever day heads fall among them (dev/railwin.mjs)
 //   R5  rail.no-week-month-ev        no Week or Month tally, no "ev" title
 //   R6  rail.pools.rows-shape        one row a pool, battery left of name and balance,
 //                                    dials and Todays aligned down the rail, one-line range,
@@ -61,6 +62,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { open, signInAs, APP } from './harness.mjs';
 import { standInPools } from './ownereye_pools.mjs';
+import { railWinFindings } from './railwin.mjs';
 
 const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
 const CITE = arg('--cite'), ONLY = (arg('--only') || process.env.OE_ONLY || '').split(',').filter(Boolean);	// OE_ONLY / OE_VP: the same through dk arms
@@ -142,19 +144,19 @@ const REG = [
 		return f;
 	}, c.state) },
 	{ id: 'R4', name: 'rail.phone.five-tiles', cite: { id: 'D-20261020-12', quote: 'we need dual scrolling to provide scrollable windows of say min height 5 tiles or something' },
-	  vp: ['393x793'], states: ['full'], check: (p) => p.evaluate(() => {
-		const f = [];
-		for (const [sel, row] of [['#diamond-list', '.diamond-box'], ['#session-list', '.session-box']]) {
+	  vp: ['393x793'], states: ['full'], check: async (p) => {
+		// The page reports each list's geometry and railwin.mjs counts it, so dev/railwin.test.mjs
+		// can feed it any hour's day heads without a browser.
+		const got = await p.evaluate(() => [['#diamond-list', '.diamond-box'], ['#session-list', '.session-box']].map(([sel, row]) => {
 			const l = document.querySelector(sel);
-			const t = l ? [...l.querySelectorAll(row)].filter((x) => x.getBoundingClientRect().height > 0) : [];
-			if (t.length < 6) { f.push(`${sel}: ${t.length} tiles drawn, want > 5`); continue; }
-			const pitch = t[1].getBoundingClientRect().top - t[0].getBoundingClientRect().top;
-			const n = l.clientHeight / pitch;
-			if (!(l.scrollHeight > l.clientHeight + 1)) f.push(`${sel} is not its own scroller (${l.scrollHeight}/${l.clientHeight})`);
-			if (n < 4.95) f.push(`${sel} window ${l.clientHeight} px = ${n.toFixed(2)} tiles of ${pitch} px, want >= 5`);
-		}
-		return f;
-	}) },
+			const t = l ? [...l.querySelectorAll(row)].map((x) => x.getBoundingClientRect()).filter((b) => b.height > 0) : [];
+			if (t.length < 6) return { sel, f: `${sel}: ${t.length} tiles drawn, want > 5` };
+			const g = { clientHeight: l.clientHeight, scrollTop: l.scrollTop, top: l.getBoundingClientRect().top + l.clientTop,
+				tiles: t.map((b) => ({ top: b.top, bottom: b.bottom })) };
+			return { sel, g, f: l.scrollHeight > l.clientHeight + 1 ? '' : `${sel} is not its own scroller (${l.scrollHeight}/${l.clientHeight})` };
+		}));
+		return got.flatMap((x) => [...(x.f ? [x.f] : []), ...(x.g ? railWinFindings(x.sel, x.g) : [])]);
+	} },
 	{ id: 'R5', name: 'rail.no-week-month-ev', cite: { id: 'D-20261022-07', quote: 'Week and Month removed; no "ev" title' },
 	  vp: ALL, states: ['thin', 'full'], check: (p) => p.evaluate(() => {
 		const f = [], rail = document.getElementById('panel-rail');

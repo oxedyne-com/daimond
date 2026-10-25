@@ -31,7 +31,12 @@ function dom() {
 	d.el = (name, o = {}) => {
 		const e = { name, shown: o.shown !== false, isConnected: o.connected !== false, own: !!o.own, focus() { d.activeElement = e; },
 			getClientRects() { return e.shown && e.isConnected ? [ {} ] : []; },
-			closest(sel) { return sel === '[data-own-escape]' && e.own ? e : null; } };
+			closest(sel) { return sel === '[data-own-escape]' && e.own ? e : null; },
+			// Enough of a tree for `hang`: a parent, children, and the role attribute.
+			parentNode: null, children: [], attrs: {},
+			appendChild(c) { if (c.parentNode) c.parentNode.children.splice(c.parentNode.children.indexOf(c), 1); c.parentNode = e; e.children.push(c); return c; },
+			setAttribute(k, v) { e.attrs[k] = String(v); },
+			getAttribute(k) { return k in e.attrs ? e.attrs[k] : null; } };
 		return e;
 	};
 	d.body = d.el('body');
@@ -891,7 +896,8 @@ test('Back does not move the focus: only the key does', async () => {
 
 // A menu that records its closer being called, and reports itself closed as the app's closers do.
 function menu(L, id, log) {
-	L.menu(id, () => { log.push(id); L.done(id); });
+	const attrs = {}, el = { parentNode: null, setAttribute(k, v) { attrs[k] = v; }, getAttribute(k) { return k in attrs ? attrs[k] : null; } };
+	L.hang(el, id, () => { log.push(id); L.done(id); });
 	return id;
 }
 
@@ -960,4 +966,40 @@ test('a menu is a layer: Escape and Back still close it, and leave then finds no
 	assert.equal(L.depth(), 0);
 	assert.equal(b.idx, 0);
 	assert.equal(b.left, false);
+});
+
+// ── hang: the one way a menu reaches the body (MENUGATE) ─────────────────────
+
+test('hang puts the element on the body, marks it a menu and registers it as the one menu up', async () => {
+	const b = browser(), L = b.load(), log = [];
+	const el = b.dom.el('m');
+	L.hang(el, 'sourcemenu', () => { log.push('sourcemenu'); L.done('sourcemenu'); });
+	assert.equal(el.parentNode, b.dom.body);
+	assert.equal(el.getAttribute('role'), 'menu');
+	assert.ok(L.hung(el));
+	assert.equal(L.top(), 'sourcemenu');
+	await tick(); await b.land();
+	L.leave();
+	assert.deepEqual(log, ['sourcemenu'], 'a hung element is a menu: a navigation closes it');
+});
+
+test('hang keeps a role the element declares, and does not move one already on the body', () => {
+	const b = browser(), L = b.load();
+	const pop = b.dom.el('pop');
+	pop.setAttribute('role', 'dialog');
+	b.dom.body.appendChild(b.dom.el('before')); b.dom.body.appendChild(pop); b.dom.body.appendChild(b.dom.el('after'));
+	L.hang(pop, 'pop', () => L.done('pop'));
+	assert.equal(pop.getAttribute('role'), 'dialog');
+	assert.equal(b.dom.body.children.indexOf(pop), 1, 'a popover of the page stays where the page put it');
+	assert.ok(L.hung(pop));
+});
+
+test('a menu put on the body without hang is a stray, and the stack has no other way to take a menu', () => {
+	const b = browser(), L = b.load();
+	const ok = b.dom.el('ok'), stray = b.dom.el('stray'), plain = b.dom.el('toast');
+	L.hang(ok, 'chatsmenu', () => L.done('chatsmenu'));
+	stray.setAttribute('role', 'menu');
+	b.dom.body.appendChild(stray); b.dom.body.appendChild(plain);
+	assert.deepEqual(L.strays(), [ stray ]);
+	assert.equal(L.menu, undefined, 'a menu registered without its element is how one slips past hang');
 });

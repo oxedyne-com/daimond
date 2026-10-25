@@ -1102,7 +1102,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var cfg = loadCfg();
 	var chats = [];             // { id, name, app, messages:[{role,content}], promptTokens, completionTokens }
 	var chatsUp = false;        // the boot's chat load has returned (`migrateInherit` waits on it)
-	var current = null;         // active chat object
+	var current = null;         // active chat object: changed only by `setCurrent`
 	var _unloading = false;     // the page is on its way out — an aborted request is not a failure
 
 	// Persist chats (minus the non-serialisable DaimondApp) so they survive a
@@ -5086,8 +5086,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			renderHistory(current.messages);      // another tab may have added turns
 		}
 		if (current && !chats.some(function (c) { return c.id === current.id; })) {
-			current = null;
-			undoCheck();
+			setCurrent(null);
 			sessionNameEl.textContent = t('chat.no_chat');
 			renderEmptyState();
 			chatInputBar.style.display = 'none';
@@ -16936,7 +16935,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// copy/checkbox) over a body. `opts.expanded` opens it; `opts.copy` is the
 	/// text (or a function returning it) the header copy button puts on the
 	/// clipboard; `opts.ts` is the local time shown at the right of the bar (see
-	/// `tileTimeEl`).
+	/// `tileTimeEl`). `opts.head === false` draws the body alone, with no header bar: a
+	/// live hand-off tile's footer already says its state (`appendDispatchedTile`).
 	function buildTile(type, opts) {
 		opts = opts || {};
 		var tile = document.createElement('div');
@@ -16964,7 +16964,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (time) lbl.appendChild(time);
 		lbl.appendChild(ctl);
 		var body = document.createElement('div'); body.className = 'ctile-body';
-		tile.appendChild(lbl); tile.appendChild(body);
+		if (opts.head !== false) tile.appendChild(lbl);
+		tile.appendChild(body);
 		tile._lbl = lbl; tile._body = body; tile._peek = peek; tile._meta = meta; tile._who = who; tile._time = time;
 		lbl.addEventListener('click', function (e) {
 			if (e.target.closest('.ctile-copy, .ctile-rate')) return;
@@ -19885,11 +19886,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 	}
 
-	function appendError(msg) {
+	function appendError(msg, m) {
 		var div = document.createElement('div');
 		div.className = 'chat-msg chat-msg-error';
 		div.innerHTML = '<div class="chat-msg-content" style="color: var(--danger);"></div>';
-		div.querySelector('.chat-msg-content').textContent = friendlyError(msg);
+		var body = div.querySelector('.chat-msg-content');
+		// A road that broke on the runner names the runner, as a seat reason: its label here, its
+		// sentence on hover, and a tap swaps the one for the other (RUNNER-ROAD). The tab's own
+		// text would send the reader to this device's Settings for a fault that is not here.
+		var road = runnerRoad(m);
+		if (road) {
+			body.className += ' chat-err-why';
+			body.textContent = road.label;
+			body.title = road.why;
+			body.setAttribute('aria-label', road.why);
+			body.setAttribute('aria-expanded', 'false');
+			body.addEventListener('click', function () {
+				var open = body.getAttribute('aria-expanded') !== 'true';
+				body.textContent = open ? road.why : road.label;
+				body.setAttribute('aria-expanded', open ? 'true' : 'false');
+			});
+		} else {
+			body.textContent = friendlyError(msg);
+		}
 		// D-20260920-02 (#4): the chat's own error line is where a person
 		// actually IS when a turn fails -- give the one-tap report a home here,
 		// not only on the unhandled-rejection toast (`errorToastWithReport`)
@@ -25807,6 +25826,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return isUnreachable(stripAnsi(s).replace(/src\/[^\s":]+\.rs:\d+:?/g, ' '));
 	}
 
+	/// The host a road failure names (`could not reach <host>`, `TLS handshake with <host>`, the
+	/// engine's own words in src/llm.rs), without its port, or '' when it names none: "the provider"
+	/// and the tab's "that endpoint" are not hosts.
+	function roadHost(s) {
+		var m = /(?:could not reach|TLS handshake with)\s+((?:[a-z0-9-]+\.)+[a-z0-9-]+|localhost|\[[0-9a-f:]+\])/i
+			.exec(String(s == null ? '' : s));
+		return m ? m[1] : '';
+	}
+
+	/// A failed turn's error row that broke on ANOTHER device's road, as its seat reason
+	/// ("argonaut can't reach openrouter.ai", the sentence on hover or tap), or null (RUNNER-ROAD,
+	/// owner 25 Oct). Where it failed is the row's `ranOn`, stamped by whichever device ran the
+	/// turn, never read from the words: a road failure here, or a row with no `ranOn`, keeps the
+	/// tab's own text, which points at this device's Settings and connection. A runner's fault
+	/// never does.
+	function runnerRoad(m) {
+		if (!m || m.role !== 'error_log' || !m.ranOn || String(m.ranOn) === String(selfDeviceId())) return null;
+		var s = stripAnsi(String(m.content == null ? '' : m.content)).replace(/src\/[^\s":]+\.rs:\d+:?/g, ' ');
+		if (!isUnreachable(s)) return null;
+		var name = deviceLabelFor(m.ranOn) || t('devices.another');	// never "This device": it is not this one
+		var host = roadHost(s);
+		return seatReason(host ? { k: 'runner_road', vars: { name: name, host: host } }
+			: { k: 'runner_road_any', vars: { name: name } });
+	}
+
 	/// The HTTP status a failure is reporting, or 0 when it is not reporting one.
 	///
 	/// **A bare number is not a status code.** The tests here were `\b429\b` and `\b5\d\d\b`
@@ -27080,7 +27124,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (m.interrupted && div) markInterrupted(div, m);
 			}
 		}
-		else if (m.role === 'error_log') { appendError(m.content); }
+		else if (m.role === 'error_log') { appendError(m.content, m); }
 		// A rating, drawn as one tile for its whole burst. Anything this build cannot read
 		// (`isRatingMsg`) draws nothing, as a role it had never heard of would.
 		else if (m.role === 'rating_log') { appendRatingLine(m); }
@@ -27889,7 +27933,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var line = dl  ? tOr('chat.handed_off', 'Handed off to {name}', { name: dl })
 			: tgt ? t('turn.peer_sending_named', { name: tgt })
 			:       tOr('chat.who_handoff', 'Hand-off');
-		var tile = buildTile('handoff', { expanded: true, who: line, ts: m.ts });
+		// ONE STATUS LINE WHILE IT RUNS, as a Here turn has (owner, Nancy run: "the double
+		// "argonaut is on it", "argonaut is doing this" are redundant"). The footer's dots
+		// and line carry every live state, so a live tile draws no header; a turn that
+		// ended keeps it, over the footer that says how.
+		var tile = buildTile('handoff', { expanded: true, who: line, ts: m.ts, head: !handoffLive(st) });
 		tile.classList.add('chat-msg-handoff');
 		// The turn this tile is for, and the state it was drawn in (`handoffTileMoved`).
 		tile.dataset.handoffTurn = String(m.iturn || '');
@@ -27948,10 +27996,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		if (st === 'no-peer-awake' && isMobileDeviceSelf()) {
 			var plan = seatPlanNow();
-			var why  = (plan && plan.why === 'runner-silent')
-				? t('seat.why_runner_silent',
-					{ name: (plan.runnerId && deviceLabelFor(plan.runnerId)) || t('devices.unknown') })
-				: t('seat.why_no_desktop');
+			var why  = seatReason((plan && plan.why === 'runner-silent')
+				? { k: 'runner_silent',
+					vars: { name: (plan.runnerId && deviceLabelFor(plan.runnerId)) || t('devices.unknown') } }
+				: { k: 'no_desktop' }).why;
 			// One clause on the tile, the reason on its tooltip -- the seat switch's rule.
 			return { text: t('seat.tile_local_mobile'), why: why, warn: true };
 		}
@@ -31787,7 +31835,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var n = name || t('devices.another');
 		return cause === 'limits' ? t('chat.handback_old_page', { name: n })
 			: cause === 'door' ? t('chat.handback_too_big', { name: n })
-			: cause === 'abi' ? t('seat.why_runner_engine', { name: n })
+			: cause === 'abi' ? seatReason({ k: 'runner_engine', vars: { name: n } }).why
 			: ((cause === 'keys' || cause === 'oversize') && why) ? String(why)
 			: t('chat.handback_long', { name: n });
 	}
@@ -32365,6 +32413,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// restated 2026-10-11: "down near the input box where the users eyes are"). Cheap and idempotent: it reads the live
 	/// snapshot, takes the pure decision and sets two buttons, so it can be called on
 	/// every presence beat without thought.
+	var _seatWhyOpen = '';	// the reason (its key tail) whose sentence a tap has opened in place
+
 	function renderSeatSwitch() {
 		var box  = document.getElementById('seat-switch');
 		var here = document.getElementById('seat-here');
@@ -32373,11 +32423,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var sw = seatSwitchFor(current);
 		// SEATWHY: one line beside a plain "Here" when the nominated runner is held off by a
 		// rule the person can act on -- it serves credits only, or it runs another engine.
+		// SEAT-LABELS: the label beside the seat, the sentence on hover and, tapped, in its place.
 		var why = document.getElementById('seat-reason');
 		if (why) {
-			why.textContent = seatWhyText(sw);
-			why.title = why.textContent;
-			why.hidden = !why.textContent;
+			var r = seatReason(seatWhyKey(sw));
+			if (!r || r.k !== _seatWhyOpen) _seatWhyOpen = '';
+			var open = !!r && _seatWhyOpen === r.k;
+			why.textContent = r ? (open ? r.why : r.label) : '';
+			why.title = r ? r.why : '';
+			why.setAttribute('aria-label', r ? r.why : '');
+			why.setAttribute('aria-expanded', open ? 'true' : 'false');
+			why.dataset.why = r ? r.k : '';
+			why.hidden = !r;
 		}
 		// R4: one timer, at the moment the runner stops counting as reachable on the beat
 		// it has, so the switch already reads Here when the person sends. A beat, a claim
@@ -32407,24 +32464,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box.hidden = false;
 	}
 
-	/// SEATWHY's line for the switch's reason (OWNKEY §5.2), or '' when it names none: the source
-	/// the runner cannot use and why, the re-approval a passphrase change needs, another engine
-	/// (it updates itself), or a legacy runner's credits only.
-	function seatWhyText(sw) {
-		if (!sw || !sw.why) return '';
+	/// THE ONE SEAT-REASON RENDERER (SEAT-LABELS; owner, 25 Oct: "wtf is this ridiculously long
+	/// explanation?"): the reason `{ k, vars }` as its 2-4 word label, drawn beside the seat, and its
+	/// sentence, the hover title and the tap. `k` is the tail of a `seat.why_` key. Every seat reason
+	/// the page shows is read here and nowhere else, so none can bypass its label
+	/// (seatlabels.test.mjs holds every key to a label in every locale). Null for no reason.
+	function seatReason(r) {
+		if (!r || !r.k) return null;
+		return { k: r.k, label: t('seat.label_' + r.k, r.vars), why: t('seat.why_' + r.k, r.vars) };
+	}
+
+	/// The switch's reason (SEATWHY, OWNKEY §5.2) as `{ k, vars }` for `seatReason`, or null when it
+	/// names none: the source the runner cannot use and why, the re-approval a passphrase change
+	/// needs, another engine (it updates itself), a page older than the runner, or a legacy runner's
+	/// credits only.
+	function seatWhyKey(sw) {
+		if (!sw || !sw.why) return null;
 		var name = deviceLabelFor(sw.runnerId) || t('devices.unknown');
+		var v = { name: name };
 		switch (sw.why) {
 			case 'runner-source':
 				var M = window.DaimondModels;
-				return t('seat.why_runner_source', { name: name,
+				return { k: 'runner_source', vars: { name: name,
 					provider: (M && M.providerName) ? M.providerName(sw.source) : String(sw.source || ''),
-					reason:   t('seat.reach_' + (sw.reach || 'nokey')) });
-			case 'runner-rekey':		return t('seat.why_runner_rekey', { name: name });
-			case 'runner-engine':		return t('seat.why_runner_engine', { name: name });
-			case 'runner-credits-only':	return t('seat.why_runner_credits', { name: name });
-			case 'runner-silent':		return t('seat.why_runner_quiet', { name: name });
-			default:					return '';
+					reason:   t('seat.reach_' + (sw.reach || 'nokey')) } };
+			case 'runner-rekey':		return { k: 'runner_rekey',		vars: v };
+			case 'runner-engine':		return { k: 'runner_engine',		vars: v };
+			case 'runner-credits-only':	return { k: 'runner_credits',		vars: v };
+			case 'runner-silent':		return { k: 'runner_quiet',		vars: v };
+			case 'runner-unchecked':	return { k: 'runner_unchecked',	vars: v };
+			case 'page-old':			return { k: 'page_old',			vars: v };
+			default:					return null;
 		}
+	}
+
+	/// The switch's reason as its whole sentence, or ''.
+	function seatWhyText(sw) {
+		var r = seatReason(seatWhyKey(sw));
+		return r ? r.why : '';
 	}
 
 	/// The wasm's engine ABI as `[abi, min]`, from its one export `engine_abi()` (a Uint32Array
@@ -32458,6 +32535,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondPeer && DaimondPeer.setEngineAbi) {
 			var ab = wasmEngineAbi(Wasm);
 			DaimondPeer.setEngineAbi(ab[0], ab[1], wasmWordsAbi(Wasm));
+			// The offer is decided again now the page's side is known: until this line every ABI
+			// runner read "not checked yet" (SEAT-LABELS truth).
+			renderSeatSwitch();
 		}
 		if (!window.DaimondPeer || !DaimondPeer.setEngineId || !(window.crypto && crypto.subtle)) return;
 		var res = await fetch(new URL('../pkg/oxedyne_daimond_bg.wasm', import.meta.url), { cache: 'force-cache' });
@@ -32488,6 +32568,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var seatRunBtn  = document.getElementById('seat-runner');
 		if (seatHereBtn) seatHereBtn.addEventListener('click', function () { chooseSeat(true); });
 		if (seatRunBtn)  seatRunBtn.addEventListener('click',  function () { chooseSeat(false); });
+		// A tap on the label shows its sentence in its place, and a second tap the label again.
+		var seatWhyEl = document.getElementById('seat-reason');
+		if (seatWhyEl) seatWhyEl.addEventListener('click', function () {
+			var k = seatWhyEl.dataset.why || '';
+			_seatWhyOpen = (k && _seatWhyOpen !== k) ? k : '';
+			renderSeatSwitch();
+		});
 	} catch (e) { /* no DOM */ }
 
 	// Every way the plan can change, wired to the one redraw. A presence beat or an
@@ -32636,7 +32723,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var chat = current;
 		var menu = document.createElement('div');
 		menu.className = 'railhead-menu source-menu';
-		menu.setAttribute('role', 'menu');
 		menu.setAttribute('aria-label', t('composer.source'));
 		var head = document.createElement('div');
 		head.className = 'railhead-menu-head';
@@ -32674,15 +32760,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			b.addEventListener('click', function () { closeSourceMenu(); if (!r.checked) pickSource(chat, r.id); });
 			menu.appendChild(b);
 		});
-		document.body.appendChild(menu);
+		_sourceMenu = menu;
+		DaimondLayers.hang(menu, 'sourcemenu', closeSourceMenu, anchor);
 		// Below the switch where there is room, else above it: on a desktop the row is the
 		// composer's last line, near the foot of the window.
 		var a = anchor.getBoundingClientRect();
 		menu.style.left = Math.max(8, Math.min(a.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
 		var below = a.bottom + 4 + menu.offsetHeight <= window.innerHeight - 8;
 		menu.style.top = Math.max(8, below ? a.bottom + 4 : a.top - 4 - menu.offsetHeight) + 'px';
-		_sourceMenu = menu;
-		DaimondLayers.menu('sourcemenu', closeSourceMenu, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
 		setTimeout(function () { document.addEventListener('click', onSourceMenuOutside, true); }, 0);
 	}
@@ -35075,8 +35160,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The next CHAT, never the next daimon: a daimon's record has no tile and
 			// is reached through its Diamond, so opening one as a chat would put a
 			// conversation on screen that the rail says does not exist.
-			current = chats.find(function (c) { return !c.diamondId; }) || null;
-			undoCheck();
+			setCurrent(chats.find(function (c) { return !c.diamondId; }) || null);
 			if (current) selectChat(current);
 			else { sessionNameEl.textContent = t('chat.no_chat'); renderEmptyState(); chatInputBar.style.display = 'none'; updateMeters(); }
 		}
@@ -35223,6 +35307,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// The chat on screen moved: withdraw an undo that belongs to the one that left.
+	/// The chat on screen is now `chat` (or none). THE place it changes: a menu up was bound to the chat being left (the
+	/// source menu's rows pick for it), so it goes first, while that chat is still current, and the undo bar is asked
+	/// again. A remote deletion and the last chat deleted used to change it without the leave (runnerdoor QA, LOW).
+	function setCurrent(chat) {
+		DaimondLayers.leave();
+		current = chat;
+		undoCheck();
+	}
+
 	function undoCheck() {
 		try { if (window.DaimondUndo && DaimondUndo.check) DaimondUndo.check(); }
 		catch (e) { /* the window is best-effort */ }
@@ -35348,7 +35441,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (_chatsMenu) { closeChatsMenu(); return; }		// second press on the button toggles it shut
 		var menu = document.createElement('div');
 		menu.className = 'railhead-menu';
-		menu.setAttribute('role', 'menu');
 
 		// SHOW THE FIRST MESSAGE, or do not. It lives here rather than in the
 		// settings drawer because it is about THIS list and nothing else, and
@@ -35409,14 +35501,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		menu.appendChild(del);
 
-		document.body.appendChild(menu);
+		_chatsMenu = menu;
+		// A layer, so that Back closes it as Escape does; the button is where the keyboard goes back to.
+		DaimondLayers.hang(menu, 'chatsmenu', closeChatsMenu, anchor);
 		var r = anchor.getBoundingClientRect();
 		var left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
 		menu.style.left = Math.max(8, left) + 'px';
 		menu.style.top = (r.bottom + 4) + 'px';
-		_chatsMenu = menu;
-		// A layer, so that Back closes it as Escape does; the button is where the keyboard goes back to.
-		DaimondLayers.menu('chatsmenu', closeChatsMenu, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
 		setTimeout(function () {
 			document.addEventListener('click', onChatsMenuOutside, true);
@@ -35647,6 +35738,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// position does not move as Diamonds are made and renamed.
 		var neww = document.createElement('button');
 		neww.className = 'fold-menu-item new'; neww.textContent = t('fold.new_diamond');
+		neww.setAttribute('role', 'menuitem');
 		neww.addEventListener('click', function () {
 			closeFoldMenu();
 			if (chosen) chosen();
@@ -35663,6 +35755,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		targets.forEach(function (f) {
 			var item = document.createElement('button');
 			item.className = 'fold-menu-item';
+			item.setAttribute('role', 'menuitem');
 			item.textContent = f.name;                 // escaped via textContent (H5)
 			item.addEventListener('click', function () {
 				closeFoldMenu();
@@ -35672,15 +35765,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			menu.appendChild(item);
 		});
 
-		document.body.appendChild(menu);
+		_foldMenu = menu;
+		_foldAnchor = anchor || null;
+		// A menu of the stack's, so that Escape and Back reach it and a navigation takes it.
+		DaimondLayers.hang(menu, 'foldmenu', closeFoldMenu, anchor);
 		var r = anchor.getBoundingClientRect();
 		var left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
 		menu.style.left = Math.max(8, left) + 'px';
 		menu.style.top = (r.bottom + 4) + 'px';
-		_foldMenu = menu;
-		_foldAnchor = anchor || null;
-		// A menu of the stack's, so that Escape and Back reach it and a navigation takes it.
-		DaimondLayers.menu('foldmenu', closeFoldMenu, anchor);
 		setTimeout(function () { document.addEventListener('click', onFoldOutside, true); }, 0);
 	}
 
@@ -36103,8 +36195,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Before `current` moves, while the outgoing conversation is still the one
 		// the box belongs to. See `moveComposerTo`.
 		moveComposerTo(chat);
-		current = chat;
-		undoCheck();
+		setCurrent(chat);
 		// Remembered so this tab's next boot comes back here; a chat is where you
 		// are now, so the Diamond goes. See TAB_VIEW_KEY.
 		tabViewSet({ chat: chat && chat.id ? chat.id : '', diamond: '', face: '' });
@@ -41918,7 +42009,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// its dots again -- the thread was thrown away and rebuilt by
 		// `renderHistory`, and the old code left the node detached, so the chat
 		// looked finished and the NEXT turn could not raise a spinner at all.
-		if (g) showSpinner((current && current._busy) || tOr('chat.busy', 'Thinking…'));
+		// The dots are for a turn running HERE. A turn another device holds is said once, by
+		// its hand-off tile's footer or its lost row ("argonaut is doing this."), so the
+		// thread raises no second "Thinking…" under it (RUNNER-TURN-ONCE, owner 25 Oct).
+		if (g && !peerHeldTurnOf(current)) showSpinner((current && current._busy) || tOr('chat.busy', 'Thinking…'));
 		else hideSpinner();
 		liveWork();
 		if (!chatInput) return;
@@ -44299,7 +44393,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					&& (capRefused(ev.content) || opaqueRefusal(ev.content))) {
 					capFail = true; return;
 				}
-				pushRunRow(chat, umid, { role: 'error_log', content: friendlyError(ev.content || 'Error'), mid: newMid(), ts: Date.now() });
+				pushRunRow(chat, umid, { role: 'error_log', content: friendlyError(ev.content || 'Error'), mid: newMid(), ts: Date.now(), ranOn: selfDeviceId() });
 				if (J) J.turnError(umid, chat.id, friendlyError(ev.content || 'Error'));
 				// TRAINING WHEELS — the debug feed's `turn.error`: the engine's own sentence,
 				// whole, with the Diamond, chat and turn it broke (D-20261008-02).
@@ -44626,7 +44720,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					persistChats();
 				} else {
 					if (!sawError) {
-						pushRunRow(chat, umid, { role: failRole(e), content: friendlyError(e), mid: newMid(), ts: Date.now() });
+						pushRunRow(chat, umid, { role: failRole(e), content: friendlyError(e), mid: newMid(), ts: Date.now(), ranOn: selfDeviceId() });
 						if (J) J.turnError(umid, chat.id, friendlyError(e));
 						appendFailure(e);
 					}
@@ -53933,7 +54027,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var menu = document.createElement('div');
 			menu.className = 'railhead-menu';
 			menu.dataset.menu = key.split(':')[0];
-			menu.setAttribute('role', 'menu');
 			menu.setAttribute('aria-label', label);
 			function item(act, text, run, checked, title) {
 				var it = document.createElement('button');
@@ -53962,14 +54055,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				menu.appendChild(d);
 			}
 			fill(item, sep, menu);
-			document.body.appendChild(menu);
+			pop = { el: menu, key: key, anchor: anchor };
+			DaimondLayers.hang(menu, 'filesmenu', closePop, anchor);
 			var r = anchor.getBoundingClientRect();
 			var left = x !== undefined ? x : r.right - menu.offsetWidth;
 			var top = y !== undefined ? y : r.bottom + 4;
 			menu.style.left = Math.max(8, Math.min(left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
 			menu.style.top = Math.max(8, Math.min(top, window.innerHeight - menu.offsetHeight - 8)) + 'px';
-			pop = { el: menu, key: key, anchor: anchor };
-			DaimondLayers.menu('filesmenu', closePop, anchor);
 			anchor.setAttribute('aria-expanded', 'true');
 			setTimeout(function () { document.addEventListener('click', onPopOutside, true); }, 0);
 		}
@@ -62349,14 +62441,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
 			pop.appendChild(chip);
 		});
-		document.body.appendChild(pop);
+		_tagMore = { el: pop, anchor: anchor };
+		DaimondLayers.hang(pop, 'tagmore', closeTagMore, anchor);
 		var r = anchor.getBoundingClientRect();
 		pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
 		var top = r.bottom + 4;
 		if (top + pop.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - 4 - pop.offsetHeight);
 		pop.style.top = top + 'px';
-		_tagMore = { el: pop, anchor: anchor };
-		DaimondLayers.menu('tagmore', closeTagMore, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
 		if (pop.firstChild) pop.firstChild.focus({ preventScroll: true });
 		setTimeout(function () { document.addEventListener('click', onTagMoreOutside, true); }, 0);
@@ -63415,8 +63506,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The turn itself still goes through `steer_crystal`, because a daimon's
 			// tools and fence are not a chat's; `sendUserMessage` is where the two part.
 			var rec = daimonChat(f);
-			current = rec;
-			undoCheck();
+			setCurrent(rec);
 			curAsstDiv = null; curAsstText = ''; lastToolBlock = null;
 			updateActiveSession();
 			showCentre('daimon');
@@ -63466,8 +63556,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// true of what is DISPLAYED, and false of what the box at the bottom
 		// talks to. The thread stays hidden; only the destination is set.
 		var crec = daimonChat(f);
-		current = crec;
-		undoCheck();
+		setCurrent(crec);
 		updateActiveSession();
 		showCentre('focus');
 		syncComposer();
@@ -72278,8 +72367,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// is supposed to put away. Unlocking selects a conversation, which hands
 		// the draft straight back.
 		moveComposerTo(null);
-		current = null;
-		undoCheck();
+		setCurrent(null);
 		currentDiamond = null;
 		signalDiamondChanged();
 

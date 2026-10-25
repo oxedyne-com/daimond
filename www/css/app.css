@@ -770,6 +770,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    `.imp-chip.on` marks the active chip (improve.css), so "Send this report"
    reads as the main verb beside "Not now". */
 .report-send   { background: var(--accent-soft); color: var(--accent-text); }
+.chat-msg-error > .chat-err-why { cursor: pointer; }
 .chat-msg-error > .chat-err-report { display: block; margin-top: 6px; margin-inline-start: -10px; font-size: var(--fs-xs); border: 0; }
 /* The pill's 1px border would stand its words 1px off the note's foot, so here the hover ring is
    drawn inside the box and takes no room. With no ground and no border the button reads as a
@@ -1440,9 +1441,14 @@ button.tag-pool { cursor: pointer; }
 .seat-switch[hidden] { display: none; }
 .composer-row .dview-btn { padding: 3px 7px; }
 #seat-here { flex: none; }
-/* WHY NO RUNNER: one line beside a plain "Here", cut to an ellipsis, whole on hover. */
+/* WHY NO RUNNER: its short label beside a plain "Here", cut to an ellipsis, the sentence on hover. */
 .seat-reason { flex: 0 1 auto; min-width: 0; font-size: 0.85em; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .seat-reason[hidden] { display: none; }
+/* SEAT-LABELS: a 2-4 word label; a tap opens the whole sentence in its place, wrapped into the
+   room the row has left. Basis 0: with its whole width as its basis the sentence took that room
+   from the seat switch, which gives way first, and "Here" was drawn under it on a phone. */
+.seat-reason { cursor: pointer; }
+.seat-reason[aria-expanded="true"] { flex: 1 1 0; white-space: normal; }
 #seat-runner { flex: 0 1 auto; min-width: 3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* HOW HARD IT THINKS: the same segmented control, as − level +. The level holds a
    fixed least width so a step does not move the + under the finger that pressed it. */

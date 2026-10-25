@@ -1074,6 +1074,12 @@
 			var reason = heldReason(heldWhy);
 			if (reason) msg = msg + ' — ' + reason;
 		}
+		// Stale says why in a few words, and what it waits on when the door holds it (a turn,
+		// a command); the whole sentence stays on the chip's title (D-20261025-06).
+		if (state === 'stale') {
+			var wait = heldReason(busyWhy());
+			msg = t('update.stale_short') + (wait ? ' — ' + wait : '');
+		}
 		banner.msg.textContent = msg;
 		// The stuck button offers the guarded cache-clear reload -- the one worth
 		// trying -- while the message names the sure escape (close and reopen).

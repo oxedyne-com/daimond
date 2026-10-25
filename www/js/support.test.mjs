@@ -437,14 +437,16 @@ async function main() {
 				report: (reason, say) => { reported.push(reason); say('Sent — thank you.'); },
 			},
 		};
-		const fn = new Function('window', 'document', 'tOr', 'friendlyError', 'tagTurn', 'postToChat', 'pinBottom',
+		const fn = new Function('window', 'document', 'tOr', 'friendlyError', 'tagTurn', 'postToChat', 'pinBottom', 'runnerRoad',
 			'with (window) {\n' + appendErrorSrc + '\nreturn appendError;\n}\n');
 		const appendError = fn(win, doc,
 			(k, fallback) => fallback,
 			(m) => String(m),
 			(d) => tagged.push(d),
 			(d) => posted.push(d),
-			() => { pins++; });
+			() => { pins++; },
+			// The tab's own failure: no runner's road (runnerroad.test.mjs holds that case).
+			() => null);
 
 		appendError('the turn failed');
 		check('appendError arms the diag ring, so the tap has something to send',
