@@ -69,7 +69,9 @@ function page(ls, gw) {
 				}
 				return { status: 200, ok: true, json: async () => ({ ok: true, folders: LIST }) };
 			}
+			if (path === '/api/mail/accounts' && body.action === 'bind') gw.order.push(['bind', body]);
 			if (path === '/api/mail/sync') {
+				gw.order.push(['sync', body.mailbox]);
 				gw.synced.push(body.mailbox);
 				return { status: 200, ok: true,
 					json: async () => ({ ok: true, messages: [], uid_validity: 1, held_back: 0 }) };
@@ -105,7 +107,7 @@ function page(ls, gw) {
 	};
 }
 
-function gateway() { return { at: NOW, lists: 0, listFails: 0, synced: [] }; }
+function gateway() { return { at: NOW, lists: 0, listFails: 0, synced: [], order: [] }; }
 const count = (xs, n) => xs.filter((x) => x === n).length;
 
 test('an added mailbox polls its inbox on a schedule, with no one setting it', async () => {
@@ -270,4 +272,17 @@ test('an empty schedule arriving from another device is the default, an explicit
 	await p.M.applySync({ v: 1, sel: LEGACY, tombs: {}, accounts: [row(LEGACY, {}), row(ADDR, { INBOX: 0 })] });
 	assert.equal(p.M.refreshOf(LEGACY, 'INBOX'), 900, 'an empty map is the old default');
 	assert.equal(p.M.refreshOf(ADDR, 'INBOX'), 0, 'an explicit Manual is a choice');
+});
+
+// FIRE mailhost: the gateway refuses a send from a mailbox with no SMTP host on record, and a sync
+// records only the IMAP one, so the add flow binds both servers before its first sync.
+test('an added mailbox binds both its servers before its first sync', async () => {
+	const gw = gateway(), ls = makeWindow().localStorage;
+	const p = page(ls, gw);
+	await p.add();
+	const first = gw.order[0];
+	assert.ok(first && first[0] === 'bind', 'the first call was not a bind: ' + JSON.stringify(gw.order));
+	assert.equal(first[1].address,   ADDR);
+	assert.equal(first[1].host,      'imap.x.test');
+	assert.equal(first[1].smtp_host, 'smtp.x.test', 'the SMTP server was not recorded');
 });

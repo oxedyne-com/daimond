@@ -3885,6 +3885,11 @@
 		state.sel = v.address;
 		save();
 		render();
+		// Both servers are recorded before the first sync (FIRE mailhost): the gateway
+		// sends only through a recorded SMTP host, and a sync records only the IMAP one.
+		// A re-add is this same flow, so it records them again.
+		try { await ensureBound(v.address); }
+		catch (e) { state.err = (e && e.message) || String(e); render(); }
 		syncAccount(v.address);
 		loadFolders(v.address, true);
 	}
