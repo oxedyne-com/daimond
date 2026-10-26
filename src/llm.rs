@@ -274,6 +274,11 @@ fn attempt_wait(idle: u64, stall_tries: u32, elapsed: u64) -> (u64, u64) {
 /// multiple of the idle figure -- 5 x 60 s = 300 s by default.
 pub(crate) const REPLY_WAIT_FACTOR: u64 = 5;
 
+/// The most of an error status's body the native transport reads to explain it (GW-RESTART):
+/// the status already decided the round, and only the first `ERR_BODY_BYTES` are shown.
+#[cfg(not(target_arch = "wasm32"))]
+const ERR_BODY_READ_MAX: usize = 64 * 1024;
+
 /// How hard an OpenAI-dialect model is asked to reason: OpenRouter's `reasoning.effort`.
 ///
 /// Not [`Effort`], which is the Anthropic Messages API's own ladder: OpenRouter's has `none`
@@ -942,6 +947,10 @@ pub struct LlmClient {
     /// again where the connection is opened.  Private, so no caller can set it around that check.
     #[cfg(not(target_arch = "wasm32"))]
     plain: bool,
+    /// The one address the native transport connects to in place of resolving `host`: set only
+    /// by [`LlmClient::fetch_linked`], to an address the [`crate::net_guard::Guard`] judged.
+    #[cfg(not(target_arch = "wasm32"))]
+    dial_at: Option<std::net::SocketAddr>,
 }
 
 /// Written by hand so that a client printed into a log, an error or a panic names its endpoint
@@ -1939,6 +1948,7 @@ impl LlmClient {
             halt:       Halt::new(),
             liveness:   None,
             plain:      false,
+            dial_at:    None,
         }
     }
 
@@ -3518,28 +3528,71 @@ impl LlmClient {
     )
         -> Result<(Conn, bool, Option<String>), TransportErr>
     {
+        self.open_with(Some(body), wait_ms).await
+    }
+
+    /// [`open`](Self::open) for a POST of `Some(body)` with this client's key, or for a bare GET
+    /// of the path when `None`: no key, no auth headers and no body, as a picture a provider
+    /// links to is fetched.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn open_with(
+        &self,
+        body:    Option<&str>,
+        wait_ms: u64,
+    )
+        -> Result<(Conn, bool, Option<String>), TransportErr>
+    {
         use tokio_rustls::TlsConnector;
         use tokio::net::TcpStream;
 
-        let body_bytes = body.as_bytes();
+        let body_bytes = match body {
+            Some(b) => b.as_bytes(),
+            None    => &[][..],
+        };
 
         let mut request = String::with_capacity(512 + body_bytes.len());
-        request.push_str(&fmt!("POST {} HTTP/1.1\r\n", self.path));
-        request.push_str(&fmt!("Host: {}\r\n", self.host_header()));
-        for (name, value) in self.auth_headers(false) {
-            request.push_str(&fmt!("{}: {}\r\n", name, value));
+        match body {
+            Some(_) => {
+                request.push_str(&fmt!("POST {} HTTP/1.1\r\n", self.path));
+                request.push_str(&fmt!("Host: {}\r\n", self.host_header()));
+                for (name, value) in self.auth_headers(false) {
+                    request.push_str(&fmt!("{}: {}\r\n", name, value));
+                }
+                request.push_str(&fmt!("Content-Length: {}\r\n", body_bytes.len()));
+            },
+            None    => {
+                request.push_str(&fmt!("GET {} HTTP/1.1\r\n", self.path));
+                request.push_str(&fmt!("Host: {}\r\n", self.host_header()));
+                request.push_str("Accept: */*\r\n");
+            },
         }
-        request.push_str(&fmt!("Content-Length: {}\r\n", body_bytes.len()));
         request.push_str("Connection: close\r\n");
         request.push_str("\r\n");
 
         // A connection that never came up carries no partial answer, so every
         // failure from here to the status line is worth another attempt.
-        let tcp = match TcpStream::connect((self.host.as_str(), self.port)).await {
-            Ok(s) => s,
-            Err(e) => return Err(TransportErr::transient(fmt!("could not reach {}", self.host), err!(e,
+        // EVERY WAIT BEFORE THE STREAM IS BOUNDED BY THE IDLE FIGURE (GW-RESTART, 26 Oct).  The
+        // header read always was; the dial, the TLS handshake, the request's write and an error
+        // status's body were not, and a gateway restarting under a live run held one of them for
+        // 13 minutes, ended only by the page's Stop.  A timeout is a stall, so it ends the round
+        // with its sentence ([`TransportErr::classify`]), as the header wait's does, rather than
+        // being sent again: the exception to the line above.
+        let idle = std::time::Duration::from_millis(wait_ms);
+        let dial = async {
+            match self.dial_at {
+                Some(at)    => TcpStream::connect(at).await,
+                None        => TcpStream::connect((self.host.as_str(), self.port)).await,
+            }
+        };
+        let tcp = match tokio::time::timeout(idle, dial).await {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => return Err(TransportErr::transient(fmt!("could not reach {}", self.host), err!(e,
                 "LLM: TCP connect to {}:{} failed.", self.host, self.port;
                 IO, Network, Init))),
+            Err(_elapsed) => return Err(TransportErr::classify(
+                fmt!("could not reach {} in {} s", self.host, wait_ms / 1000), err!(
+                "LLM: TCP connect to {}:{} took over {} ms.", self.host, self.port, wait_ms;
+                IO, Network, Init, Timeout))),
         };
         let mut stream = if self.plain {
             // Checked again here, so plain http can reach nothing but this machine's loopback
@@ -3559,24 +3612,35 @@ impl LlmClient {
                     IO, Network, Invalid, Input))),
             };
             let connector = TlsConnector::from(self.tls_config.clone());
-            match connector.connect(server_name, tcp).await {
-                Ok(s) => Conn::Tls(Box::new(s)),
-                Err(e) => return Err(TransportErr::transient(fmt!("TLS handshake with {} failed", self.host), err!(e,
+            match tokio::time::timeout(idle, connector.connect(server_name, tcp)).await {
+                Ok(Ok(s)) => Conn::Tls(Box::new(s)),
+                Ok(Err(e)) => return Err(TransportErr::transient(fmt!("TLS handshake with {} failed", self.host), err!(e,
                     "LLM: TLS handshake to {} failed.", self.host;
                     IO, Network, Init))),
+                Err(_elapsed) => return Err(TransportErr::classify(
+                    fmt!("the TLS handshake with {} did not finish in {} s", self.host, wait_ms / 1000), err!(
+                    "LLM: TLS handshake to {} took over {} ms.", self.host, wait_ms;
+                    IO, Network, Init, Timeout))),
             }
         };
 
         let mut req = Vec::with_capacity(request.as_bytes().len() + body_bytes.len());
         req.extend_from_slice(request.as_bytes());
         req.extend_from_slice(body_bytes);
-        if let Err(e) = stream.write_all(&req).await {
-            return Err(TransportErr::transient("could not send the request".to_string(), err!(e,
-                "LLM: write request failed."; IO, Network, Wire, Write)));
-        }
-        if let Err(e) = stream.flush().await {
-            return Err(TransportErr::transient("could not send the request".to_string(), err!(e,
-                "LLM: flush failed."; IO, Network, Wire, Write)));
+        let sent = tokio::time::timeout(idle, async {
+            match stream.write_all(&req).await {
+                Ok(()) => stream.flush().await,
+                Err(e) => Err(e),
+            }
+        }).await;
+        match sent {
+            Ok(Ok(())) => {},
+            Ok(Err(e)) => return Err(TransportErr::transient("could not send the request".to_string(), err!(e,
+                "LLM: write request failed."; IO, Network, Wire, Write))),
+            Err(_elapsed) => return Err(TransportErr::classify(
+                fmt!("{} did not take the request in {} s", self.host, wait_ms / 1000), err!(
+                "LLM: writing the request to {} took over {} ms.", self.host, wait_ms;
+                IO, Network, Wire, Write, Timeout))),
         }
 
         // Read headers byte-by-byte until \r\n\r\n.  Each read is bounded by the first-byte
@@ -3584,7 +3648,6 @@ impl LlmClient {
         // is the same hang the stream watchdog catches mid-body, so it ends the attempt as a
         // transient timeout rather than blocking the round.  Per-read, so a header block that
         // dribbles in is never cut -- each byte that arrives re-arms the window.
-        let idle = std::time::Duration::from_millis(wait_ms);
         let mut hdr_buf = Vec::with_capacity(2048);
         let mut byte = [0u8; 1];
         loop {
@@ -3610,15 +3673,20 @@ impl LlmClient {
         let status_line = headers_str.lines().next().unwrap_or("");
         let status = status_code(status_line).unwrap_or(0);
         if status != 200 {
+            // The status decides the round; the body only explains it.  So it is read for the idle
+            // figure at most and to ERR_BODY_READ_MAX bytes at most, and a body a restarting
+            // gateway never finishes on a socket it never closes is cut there, not waited on.
             let mut err_body = Vec::new();
             let mut chunk = [0u8; 4096];
-            loop {
-                match stream.read(&mut chunk).await {
-                    Ok(0) => break,
-                    Ok(n) => err_body.extend_from_slice(&chunk[..n]),
-                    Err(_) => break,
+            let _ = tokio::time::timeout(idle, async {
+                while err_body.len() < ERR_BODY_READ_MAX {
+                    match stream.read(&mut chunk).await {
+                        Ok(0) => break,
+                        Ok(n) => err_body.extend_from_slice(&chunk[..n]),
+                        Err(_) => break,
+                    }
                 }
-            }
+            }).await;
             let err_msg = String::from_utf8_lossy(&err_body);
             let err = err!(
                 "LLM: HTTP error: {} | {}", status_line, clip_bytes(&err_msg, ERR_BODY_BYTES);
@@ -3675,6 +3743,70 @@ impl LlmClient {
             }
         }
         Ok(full)
+    }
+
+    /// GETs the picture a remote party linked at `url`, without a key, through `guard` (R3 F1):
+    /// https only, the name resolved once and every address it resolves to judged, the connection
+    /// made to a judged address with the TLS name still `url`'s host, no redirect followed, and a
+    /// body past `max` refused.  The bytes and their declared `Content-Type`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn fetch_linked(
+        url:    &str,
+        guard:  &crate::net_guard::Guard,
+        tls:    Arc<ClientConfig>,
+        max:    usize,
+    )
+        -> Outcome<(Vec<u8>, Option<String>)>
+    {
+        if !url.starts_with("https://") {
+            return Err(err!("The picture's link is not https, so it was not fetched."; Network, Security));
+        }
+        let (_, host, port, path) = res!(Self::url_parts(url));
+        let addrs = res!(guard.judge(&host, port).await);
+        let mut last = None;
+        for at in addrs {
+            let mut c = Self::new(&host, port, &path, "", "", 0, tls.clone());
+            c.dial_at = Some(at);
+            match c.get_bytes(max).await {
+                Ok(got) => return Ok(got),
+                Err(e)  => last = Some(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| err!("{} had no address to fetch from.", host; Network, Missing)))
+    }
+
+    /// GET this client's URL without its key: the body's bytes, at most `max` of them, and its
+    /// declared `Content-Type`.  Bounded per read as [`post_whole`](Self::post_whole) is; a body
+    /// past `max` is refused, not cut.  Private: a link a remote party names is fetched only
+    /// through [`fetch_linked`](Self::fetch_linked).
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn get_bytes(&self, max: usize) -> Outcome<(Vec<u8>, Option<String>)> {
+        let wait_ms = self.stream_idle_ms.get().saturating_mul(REPLY_WAIT_FACTOR);
+        let (stream, is_chunked, ctype) = match self.open_with(None, wait_ms).await {
+            Ok(v)  => v,
+            Err(e) => return Err(e.crossed()),
+        };
+        let mut reader = LineReader::new(stream, is_chunked);
+        let idle = std::time::Duration::from_millis(wait_ms);
+        let mut out = Vec::new();
+        loop {
+            match tokio::time::timeout(idle, reader.read_chunk()).await {
+                Ok(Ok(Some(b))) => {
+                    if out.len() + b.len() > max {
+                        return Err(err!("The download from {} passed {} bytes, so it was \
+                            refused.", self.host, max; IO, Network, TooBig, Size));
+                    }
+                    out.extend_from_slice(&b);
+                },
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
+                Ok(Err(e)) => return Err(err!(e, "The download from {} was cut short.", self.host;
+                    IO, Network, Wire, Read)),
+                Err(_elapsed) => return Err(err!("The download from {} stopped for {} ms.",
+                    self.host, wait_ms; IO, Network, Timeout)),
+            }
+        }
+        Ok((out, ctype))
     }
 
     /// Send the HTTP request and stream the SSE response line-by-line,
@@ -3970,6 +4102,27 @@ impl<S: tokio::io::AsyncRead + Unpin> LineReader<S> {
                 return Ok(None);
             }
             // Need more data.
+            match self.fill_buf().await {
+                Ok(())  => {},
+                Err(e)  => return Err(e),
+            }
+        }
+    }
+
+    /// The next run of body bytes as they stand, dechunked, or `None` at the end: a binary body
+    /// read whole, where lines mean nothing.
+    async fn read_chunk(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        loop {
+            if self.buf_pos < self.buf.len() {
+                let out = self.buf.split_off(self.buf_pos);
+                self.read = self.read.saturating_add(out.len() as u64);
+                self.buf.clear();
+                self.buf_pos = 0;
+                return Ok(Some(out));
+            }
+            if self.eof {
+                return Ok(None);
+            }
             match self.fill_buf().await {
                 Ok(())  => {},
                 Err(e)  => return Err(e),
@@ -9980,6 +10133,94 @@ pub mod tests {
         // the round is over, with whatever it had, not sent again from the top.
         assert_eq!(connections(&seen), 1,
             "a stall must not trigger a full resend of the request");
+    }
+
+    /// GW-RESTART (26 Oct): a peer that takes the TCP connection and never says a word of TLS
+    /// -- a gateway half-way through a restart -- is bounded by the idle figure, and the round
+    /// ends with a sentence.  It held a live run for 13 minutes, where nothing timed the
+    /// handshake and only the page's Stop ended it.
+    #[tokio::test]
+    async fn test_gwrestart_a_silent_tls_handshake_ends_within_the_idle_bound() {
+        let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
+            Ok(l)  => l,
+            Err(e) => panic!("listen: {}", e),
+        };
+        let port = match listener.local_addr() {
+            Ok(a)  => a.port(),
+            Err(e) => panic!("addr: {}", e),
+        };
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                match listener.accept().await {
+                    Ok((s, _)) => held.push(s),     // held open, never answered
+                    Err(_)     => return,
+                }
+            }
+        });
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let started = std::time::Instant::now();
+        let r = tokio::time::timeout(std::time::Duration::from_secs(8),
+            client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens))).await;
+        let elapsed = started.elapsed();
+        println!("GW-RESTART tls: ended={} after {:?}", r.is_ok(), elapsed);
+        let ended = match r {
+            Ok(x)  => x,
+            Err(_) => panic!("a silent TLS handshake held the round past 8 s: no idle bound"),
+        };
+        match ended {
+            Ok(_)  => panic!("nothing was said, so the round cannot have succeeded"),
+            Err(e) => assert!(fmt!("{}", e).contains("TLS"), "the sentence names the handshake: {}", e),
+        }
+        assert!(elapsed < std::time::Duration::from_secs(4), "bounded near the 1 s idle figure: {:?}", elapsed);
+    }
+
+    /// GW-RESTART (26 Oct): an error status whose body never finishes -- a restarting gateway's
+    /// 503 with a Content-Length it does not keep, on a socket it does not close -- is read for
+    /// no longer than the idle figure, and the status still decides the round.
+    #[tokio::test]
+    async fn test_gwrestart_an_unfinished_error_body_ends_within_the_idle_bound() {
+        let (listener, acceptor, port) = stub_listener().await;
+        tokio::spawn(async move {
+            loop {
+                let (tcp, _) = match listener.accept().await {
+                    Ok(v)  => v,
+                    Err(_) => return,
+                };
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let mut tls = match acceptor.accept(tcp).await {
+                        Ok(s)  => s,
+                        Err(_) => return,
+                    };
+                    let _ = read_request(&mut tls).await;
+                    let _ = tls.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 400\r\n\
+                        \r\nthe gateway is restar").await;
+                    let _ = tls.flush().await;
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                });
+            }
+        });
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let started = std::time::Instant::now();
+        let r = tokio::time::timeout(std::time::Duration::from_secs(10),
+            client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens))).await;
+        let elapsed = started.elapsed();
+        println!("GW-RESTART body: ended={} after {:?}", r.is_ok(), elapsed);
+        let ended = match r {
+            Ok(x)  => x,
+            Err(_) => panic!("an unfinished error body held the round past 10 s: no idle bound"),
+        };
+        match ended {
+            Ok(_)  => panic!("a 503 is not a reply"),
+            Err(e) => assert!(fmt!("{}", e).contains("503"), "the sentence names the status: {}", e),
+        }
     }
 
     /// THE ROUND'S TIMING FACTS (U3a RM, UNBLOCK-16). A worker's liveness limit is tuned from

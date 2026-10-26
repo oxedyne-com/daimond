@@ -19,6 +19,10 @@
            for the turn's opening row (`foldProvisional`'s anchor);
      KEY   a row that carries `say: {k, v}` (a native runner's error, vision or failed answer,
            content empty) is said through `t(k, v)`, else its content.
+     CUT   the runner's stand-in for rows a frame had to drop (`<run>-cut`, role `cut_log`,
+           say `turn.rows_cut` {n}) is drawn as "N steps not shown", in the locale's plural,
+           once at its ts, before and after adoption, and a re-read frame does not repeat it;
+           the transcript export says the same sentence (D-20261026-05).
 
    Run:  node www/js/runnerturn_page.test.mjs
    On 9f601b5b4: the RT-C functions are missing (FAILs).
@@ -26,6 +30,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import vm from 'node:vm';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -416,6 +421,73 @@ console.log('\nKEY: an error or vision row with a key is said in the page\'s lan
 		check('an unknown key: the content', logRowText({ role: 'error_log', say: { k: 'err.none' }, content: 'Rate limited' }) === 'Rate limited');
 		check('no key: the content', logRowText({ role: 'vision_log', content: 'blind' }) === 'blind');
 	}
+}
+
+console.log('\nCUT: a frame\'s "N steps not shown" row is drawn, once, where it stands\n');
+{
+	// The real i18n module with the real English table, so the plural pair is the one shipped.
+	const iw = {};
+	const ictx = vm.createContext({ window: iw, console, navigator: { language: 'en' },
+		localStorage: { getItem: () => null, setItem() {} },
+		document: { querySelectorAll: () => [], documentElement: { setAttribute() {}, lang: '' } } });
+	vm.runInContext(readFileSync(join(HERE, 'i18n.js'), 'utf8'), ictx);
+	ictx.DaimondI18n = iw.DaimondI18n;
+	vm.runInContext(readFileSync(join(HERE, '..', 'i18n', 'en.js'), 'utf8'), ictx);
+	const I = iw.DaimondI18n;
+	const logRowText = new Function('t', 'tn', [extractFn(src, 'tOr'), extractFn(src, 'logRowText'),
+		'return logRowText;'].join('\n'))(I.t, I.tn);
+	const cutRow = (n) => ({ mid: 'R1-cut', role: 'cut_log', content: '', ts: 15, run: 'R1',
+		say: { k: 'turn.rows_cut', v: { n } } });
+	check('three rows: "3 steps not shown"', logRowText(cutRow(3)) === '3 steps not shown', logRowText(cutRow(3)));
+	check('one row: "1 step not shown"', logRowText(cutRow(1)) === '1 step not shown', logRowText(cutRow(1)));
+
+	// drawHistoryMessage, every helper it calls a recorder: what was drawn, and with what words.
+	let drawn = [];
+	const scope = new Proxy({ logRowText, window: {} }, {
+		has: (o, k) => typeof k === 'string' && !(k in globalThis && !(k in o)),
+		get: (o, k) => (k in o ? o[k] : (...a) => { drawn.push([k, a]); return null; }),
+	});
+	const draw = new Function('S', 'with (S) {\n' + extractFn(src, 'drawHistoryMessage') + '\nreturn drawHistoryMessage; }')(scope);
+	const says = (msgs) => {
+		drawn = [];
+		msgs.forEach((m, i, a) => draw(m, i, a));
+		return drawn.filter((d) => d[1].some((x) => x === '3 steps not shown'));
+	};
+
+	const frame = [Object.assign(cutRow(3), { whole: 1 }),
+		{ mid: 'R1-t5', role: 'tool_log', name: 'read', content: 'ok', ts: 30, run: 'R1', whole: 1 },
+		{ mid: 'R1-final', role: 'assistant', content: 'six', ts: 40, run: 'R1', whole: 1 }];
+	check('progressRow passes a cut_log row on, its say with it',
+		J((P.progressRow(cutRow(3)) || {}).say) === J({ k: 'turn.rows_cut', v: { n: 3 } }), J(P.progressRow(cutRow(3))));
+
+	// Before adoption: the frame folded in as provisional rows.
+	const once = P.foldProvisional([user()], 'u1', frame) || [];
+	check('folded: the cut row sits at its ts, after the ask and before the kept rows',
+		J(once.map((m) => m.mid)) === J(['u1', 'R1-cut', 'R1-t5', 'R1-final']), J(once.map((m) => m.mid)));
+	check('folded: drawn once as "3 steps not shown"', says(once).length === 1, J(drawn.map((d) => d[0])));
+	// The same frame read again: no second row.
+	const twice = P.foldProvisional(once, 'u1', frame) || once;
+	check('a re-read frame does not repeat it', twice.filter((m) => m.role === 'cut_log').length === 1, J(twice.map((m) => m.mid)));
+
+	// After adoption: the final frame merged as the real turn.
+	const w = world({ RUN: { kind: 'runner' } });
+	w.chat = { id: 'c1', updatedAt: 5, metaAt: 5, messages: [user(), place(true)].concat(
+		frame.map((r) => Object.assign(P.provRow(r, 'u1'), r.mid === 'R1-final' ? answer('R1', 'RUN', { provisional: 1 }) : {}))) };
+	w.finalMids.u1 = { 'R1-cut': 1, 'R1-t5': 1, 'R1-final': 1 };
+	w.finalRun.u1 = 'R1';
+	w.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
+	check('adopted', w.adoptFinalFrame('u1') === true);
+	const kept = w.chat.messages.filter((m) => m.mid !== 'p1');
+	check('adopted: the cut row stays at its ts', J(kept.map((m) => m.mid)) === J(['u1', 'R1-cut', 'R1-t5', 'R1-final']),
+		J(w.chat.messages.map((m) => m.mid)));
+	check('adopted: drawn once as "3 steps not shown"', says(w.chat.messages).length === 1, J(drawn.map((d) => d[0])));
+
+	// Agent-accessible: the plain-text transcript says the same sentence.
+	const transcriptOf = new Function('logRowText', [
+		'function chatDisplayName() { return "c"; } function outcomeOfStoredText() { return "done"; }',
+		extractFn(src, 'transcriptOf'), 'return transcriptOf;'].join('\n'))(logRowText);
+	const text = transcriptOf(w.chat);
+	check('the transcript export says "3 steps not shown"', text.split('3 steps not shown').length === 2, J(text));
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nALL PASS');

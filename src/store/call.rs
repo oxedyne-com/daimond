@@ -455,9 +455,10 @@ store_calls! {
     sync Meta/Meta FolderOf "folder_of" { path: String } -> Option<String>;
     sync Meta/Meta Versionable "versionable" { id: String, path: String } -> bool;
     /// Is the file at `path`, as `now` holds it, the user's rather than the Diamond's own
-    /// (UNBLOCK-26 U1)?
-    wait Meta/Meta AuthoredByUser "authored_by_user" { id: String, path: String, now: BodyRef }
-        -> bool;
+    /// (UNBLOCK-26 U1)?  `below` judges it before a kept version.
+    wait Meta/Meta AuthoredByUser "authored_by_user" {
+        id: String, path: String, now: BodyRef, below: Option<u64>,
+    } -> bool;
     /// Did the person decline a change at `path` this turn (UNBLOCK-26 U3)?
     sync Meta/Meta ChangeRefused "change_refused" { id: String, path: String } -> bool;
     sync Meta/Meta RefuseChange "refuse_change" { id: String, path: String } -> ();

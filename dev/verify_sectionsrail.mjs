@@ -13,7 +13,7 @@
 //
 // `refreshToc` is lifted verbatim from the real file (`grabFn`, brace-matched, not
 // retyped) and driven with a mocked `window.DaimondTypst.queryProject` returning each
-// engine's real shape, exactly as `verify_draftdup.mjs` drives `mergeAttachPrefix`.
+// engine's real shape, exactly as `verify_draftdup.mjs` drives `scrubAttachPrefixDup`.
 //
 //   node dev/verify_sectionsrail.mjs
 //   node dev/verify_sectionsrail.mjs --break bodyonly   # restores the shipped defect

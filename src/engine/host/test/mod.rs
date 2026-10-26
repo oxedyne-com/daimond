@@ -386,4 +386,81 @@ mod tests {
         let text = match got { Ok(t) => t, Err(e) => e };
         assert!(text.contains("changed while the user was being asked"), "{}", text);
     }
+
+    // ── UNBLOCK-9 U1: image_edit makes a new picture through the host's image route ──────────
+
+    const HIS_JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, b'h', b'i', b's'];
+    /// A whole 1x1 grey JPEG: the image route's reply must decode to land (R3 QA-a F1).
+    const MADE_JPEG: &[u8] = &[
+        0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+        0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x10, 0x0b, 0x0c, 0x0e, 0x0c, 0x0a, 0x10,
+        0x0e, 0x0d, 0x0e, 0x12, 0x11, 0x10, 0x13, 0x18, 0x28, 0x1a, 0x18, 0x16, 0x16, 0x18, 0x31, 0x23,
+        0x25, 0x1d, 0x28, 0x3a, 0x33, 0x3d, 0x3c, 0x39, 0x33, 0x38, 0x37, 0x40, 0x48, 0x5c, 0x4e, 0x40,
+        0x44, 0x57, 0x45, 0x37, 0x38, 0x50, 0x6d, 0x51, 0x57, 0x5f, 0x62, 0x67, 0x68, 0x67, 0x3e, 0x4d,
+        0x71, 0x79, 0x70, 0x64, 0x78, 0x5c, 0x65, 0x67, 0x63, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01,
+        0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xc4, 0x00, 0x14,
+        0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0x3f, 0xff, 0xd9];
+
+    /// A model's turn with his `a.jpg` on disk and the image route answering with `MADE_JPEG`.
+    fn his_photo(name: &str) -> ToolContext<TestHost> {
+        let c = his_letter(name);
+        if let Err(e) = c.host().fs().put(FileRoot::Workspace, "a.jpg", HIS_JPEG) {
+            panic!("seeding his photo: {}", e);
+        }
+        let reply = fmt!(r#"{{"created":0,"data":[{{"b64_json":"{}","media_type":"image/jpeg"}}],"usage":{{"cost":0.009}}}}"#,
+            oxedyne_fe2o3_text::base64::encode(MADE_JPEG));
+        c.host().net().serve_images(crate::image_edit::ImageModel {
+            id: fmt!("maker/klein"), price: fmt!("$0.008 an image") }, &reply);
+        c
+    }
+
+    /// "colourise a.jpg": one post carrying his picture, and a new `a.colour.jpg` holding the
+    /// reply's bytes beside his untouched original, with nothing asked.
+    #[tokio::test]
+    async fn image_edit_makes_a_new_sibling_file() {
+        let c = his_photo("daimond_ublk9_new");
+        let args = r#"{"path":"a.jpg","instruction":"colourise, period-accurate"}"#;
+        let got = said(Tool::ImageEdit, args, &c).await;
+        let posted = c.host().net().images_posted();
+        assert_eq!(posted.len(), 1, "posts: {:?} ({:?})", posted, got);
+        assert!(posted[0].contains(r#""model":"maker/klein""#), "{}", posted[0]);
+        assert!(posted[0].contains(&oxedyne_fe2o3_text::base64::encode(HIS_JPEG)), "{}", posted[0]);
+        assert_eq!(c.host().fs().peek(FileRoot::Workspace, "a.colour.jpg").as_deref(),
+            Some(MADE_JPEG), "not landed: {:?}", got);
+        assert_eq!(c.host().fs().peek(FileRoot::Workspace, "a.jpg").as_deref(), Some(HIS_JPEG));
+        assert!(c.host().ui().changes_asked().is_empty());
+        let text = match got { Ok(t) => t, Err(e) => panic!("{}", e) };
+        assert!(text.contains("a.colour.jpg") && text.contains("maker/klein")
+            && text.contains("$0.009"), "{}", text);
+        assert_eq!(Tool::ImageEdit.path_claims(args, None),
+            vec![(fmt!("a.colour.jpg"), crate::tools::PathClaim::Left)]);
+    }
+
+    /// Named over his own `a.jpg`: asked once, and unanswered his bytes stand.
+    #[tokio::test]
+    async fn image_edit_over_his_photo_asks_first() {
+        let c = his_photo("daimond_ublk9_over");
+        let got = said(Tool::ImageEdit,
+            r#"{"path":"a.jpg","instruction":"colourise","out":"a.jpg"}"#, &c).await;
+        assert_eq!(c.host().ui().changes_asked().len(), 1, "not asked: {:?}", got);
+        assert_eq!(c.host().fs().peek(FileRoot::Workspace, "a.jpg").as_deref(), Some(HIS_JPEG),
+            "replaced unasked: {:?}", got);
+    }
+
+    /// A provider's refusal is said, cut short, and nothing is written.
+    #[tokio::test]
+    async fn image_edit_refused_writes_nothing() {
+        let c = his_photo("daimond_ublk9_refused");
+        let long = "A".repeat(5000);
+        c.host().net().serve_images(crate::image_edit::ImageModel {
+            id: fmt!("maker/klein"), price: String::new() },
+            &fmt!(r#"{{"error":{{"message":"too small: {}","code":422}}}}"#, long));
+        let text = match said(Tool::ImageEdit, r#"{"path":"a.jpg","instruction":"colourise"}"#, &c).await {
+            Ok(t) | Err(t) => t,
+        };
+        assert!(text.contains("refused") && text.len() < 600, "{}", text);
+        assert!(c.host().fs().peek(FileRoot::Workspace, "a.colour.jpg").is_none());
+    }
 }

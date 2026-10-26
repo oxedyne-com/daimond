@@ -258,6 +258,15 @@ async function ocrRouteChecks() {
 	const e4 = oth.DaimondPeer.makeErrand({ turnId: 't', chatId: 'c', model: { provider: 'an', model: 'm1' } });
 	check('M2 a default of his own on OpenRouter is routed by its id, and its row is sent',
 		JSON.stringify(e4.ocr) === '{"pdf":"orx","image":"orx"}' && !!(e4.keys || {}).orx, JSON.stringify([e4.ocr, Object.keys(e4.keys || {})]));
+	// UNBLOCK-9 U4: the "Image editing" Jobs pick rides the route that pays for it, so a runner's
+	// image_edit uses the model the tab would; with no pick and no catalogue, none is written.
+	check('U4 no image pick and no catalogue: the route names no edit model', !('edit' in e2.ocr), JSON.stringify(e2.ocr));
+	cr.DaimondModels.setJob('imageEditing', CR, 'bfl/flux-x');
+	const e9 = cr.DaimondPeer.makeErrand({ turnId: 't', chatId: 'c', model: { provider: CR, model: 'm1' } });
+	const k9 = Object.keys(e9);
+	check('U4 the image pick rides the errand route as edit, the errand still closing ocr, abi',
+		e9.ocr.edit === 'bfl/flux-x' && e9.ocr.pdf === 'credits' && typeof e9.ocr.editPrice === 'string'
+		&& k9[k9.length - 1] === 'abi' && k9[k9.length - 2] === 'ocr', JSON.stringify([e9.ocr, k9.slice(-2)]));
 	// Lead ruling (ledger l.375): a row the runner cannot reach counts as absent in the errand's
 	// route, so a turn that never reads is never handed back for it. The tab's own route keeps it.
 	const ORHTTP = ['openrouter', 'http://openrouter.example/api/v1/chat/completions', 'or-key'];

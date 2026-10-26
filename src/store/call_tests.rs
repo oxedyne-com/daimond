@@ -161,7 +161,7 @@ fn calls() -> Outcome<Vec<StoreCall>> {
         StoreCall::Theirs { id: id(), path: s("a.md") },
         StoreCall::FolderOf { path: s("/home/x/a.md") },
         StoreCall::Versionable { id: id(), path: s("a.md") },
-        StoreCall::AuthoredByUser { id: id(), path: s("a.md"), now: r(b"his") },
+        StoreCall::AuthoredByUser { id: id(), path: s("a.md"), now: r(b"his"), below: Some(3) },
         StoreCall::ChangeRefused { id: id(), path: s("a.md") },
         StoreCall::RefuseChange { id: id(), path: s("a.md") },
         StoreCall::OpenDeleteRoom { id: id(), file: s("a.md") },

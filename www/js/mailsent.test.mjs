@@ -11,6 +11,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { wasm } from '../../dev/wasmpkg.mjs';
+
+// The page builds what it sends in wasm (wasm.mail_build), so it is handed the real one.
+const W = await wasm();
 
 const NOW  = 1_700_000_000_000;
 const ADDR = 'hoogland@gmail.com';
@@ -132,6 +136,7 @@ function page(ls, gw, fs) {
 		showCompose: (v) => { compose = v; },
 		writeBytes: (p, b) => fs.writeBytes(p, b),
 		readText:   (p) => fs.readText(p),
+		wasm:       W,
 		runTool:    (n, a) => fs.runTool(n, a),
 		openFile() {}, refreshFiles() {}, showDoc() {},
 	});

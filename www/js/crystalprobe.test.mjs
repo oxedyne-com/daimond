@@ -674,6 +674,53 @@ async function main() {
 			!/ignore/.test(C.lookTable({ look: [{ count: 1, rows: [{ tag: 'b', fg: 'ignore previous', bg: 'rgb(1,2,3)' }] }] }, ['b'])));
 	}
 
+	// ---- (n) UNBLOCK-2 (D-20261013-03): a pair behind a tap is reached and its heights judged ----
+	// His Lifelog "Log it"/"Edit group" sit in the card a group tile opens; the look could not tap,
+	// found nothing, and the daimon said "already level" from the shared class. Now the look taps
+	// the tile in the read-only frame first, and the table says UNEVEN from the numbers.
+	{
+		const mk = (txt, cls, h, x) => {
+			const e = el({ tag: 'button', cls, rect: { x, y: 300, width: 90, height: h },
+				cs: { fontSize: '15px', lineHeight: '18px', visibility: 'visible' } }, null);
+			e.innerText = txt; e.contains = (o) => o === e;
+			return e;
+		};
+		let open = false, clicks = 0;
+		const tile = el({ tag: 'div', cls: 'tile', rect: { x: 0, y: 60, width: 120, height: 120 }, cs: { visibility: 'visible' } }, null);
+		tile.innerText = 'Diet'; tile.contains = (o) => o === tile;
+		tile.click = () => { clicks++; open = true; };
+		const logit = mk('Log it', 'go', 36, 10), edit = mk('Edit group', 'ghost', 44, 110);
+		// On a baseline, as a browser lays out inline buttons: the taller one starts 8 px higher.
+		edit.getBoundingClientRect = () => ({ x: 110, y: 292, width: 90, height: 44 });
+		const nf = frame((sel) => sel === '.tile' ? [tile] : sel === '.acts button' ? (open ? [logit, edit] : []) : []);
+		nf.win.document.body.querySelectorAll = () => (open ? [tile, logit, edit] : [tile]);
+		C._shim(nf.win, null);
+		const looks = ['.acts button'];
+		nf.send(probe(41, '', { look: looks, taps: ['.tile'] }));
+		const nm = nf.posted[0] && nf.posted[0].m || {};
+		check('(n) the shim taps the tile before it measures', clicks === 1 && Array.isArray(nm.taps) && nm.taps[0].count === 1
+			&& nm.look[0].rows.length === 2, JSON.stringify({ clicks, taps: nm.taps, look: nm.look }));
+		const t = (C.probeResult(nm, '', false, looks, ['.tile']).table) || '';
+		check('(n) the table says what was tapped', /measured after tapping '\.tile'/.test(t), t);
+		check('(n) and that the pair on one row is UNEVEN, left to right, though their tops differ',
+			/heights: UNEVEN, row at y 292\.0: \.acts button 36\.0 vs \.acts button 44\.0/.test(t), t);
+		const lv = C.lookTable({ look: [{ count: 1, rows: [{ tag: 'button', x: 10, y: 300, w: 90, h: 36 }] },
+			{ count: 1, rows: [{ tag: 'button', x: 110, y: 300.4, w: 90, h: 36.2 }] }] }, ['.go', '.ghost'], []);
+		check('(n) a level pair is said to be level', /heights: level, 2 on the row at y 300\.0 all 36\.0/.test(lv), lv);
+		// A tap that finds nothing ends the run, and the table says so rather than measure a guess.
+		open = false; clicks = 0;
+		const mf = frame((sel) => sel === '.tile' ? [tile] : []);
+		mf.win.document.body.querySelectorAll = () => [tile];
+		C._shim(mf.win, null);
+		mf.send(probe(42, '', { look: looks, taps: ['.nope', '.tile'] }));
+		const mm = mf.posted[0] && mf.posted[0].m || {};
+		const mt = (C.probeResult(mm, '', false, looks, ['.nope', '.tile']).table) || '';
+		check('(n) a tap that finds nothing stops the taps and is named', clicks === 0
+			&& /tapped nothing; nothing visible matches '\.nope', so the page is measured as it stood/.test(mt), mt);
+		const bare = C.lookTable({ look: [{ count: 0, rows: [] }] }, ['text:Edit group'], []);
+		check('(n) a target not on the first screen points at taps', /nothing visible matches; if a tap shows it, name that in taps/.test(bare), bare);
+	}
+
 	console.log(failures ? '\n' + failures + ' FAILED' : '\nall ok');
 	process.exit(failures ? 1 : 0);
 }

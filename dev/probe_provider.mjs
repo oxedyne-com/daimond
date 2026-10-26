@@ -10,7 +10,7 @@
 //
 // The key is read from the environment and from nowhere else:
 //
-//   OPENROUTER_API_KEY=$(cat ~/.config/oxedyne/daimond/openrouter.key) \
+//   OPENROUTER_API_KEY=$(. ~/usr/code/bash/devkey && devkey) \
 //     node dev/probe_provider.mjs dev/latmock-x.log z-ai/glm-5.2
 //
 // Every round reports time to first token, total time, the prompt tokens the

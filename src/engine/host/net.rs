@@ -34,4 +34,10 @@ pub trait HostNet {
     async fn egress_allowed_run(&self, turn: &str, tool: &str, cmd: &str, cwd: &str) -> Option<Permit>;
     async fn openrouter_chat(&self, body: &str) -> Outcome<String>;
     async fn image_ocr(&self, mistral_body: &str, vision_body: &str) -> Outcome<(String, String)>;
+    /// The account's "Image editing" model and its catalogue price, or the refusal saying why
+    /// there is none (no key, no credits, no model that takes a picture in).
+    async fn image_model(&self) -> Outcome<crate::image_edit::ImageModel>;
+    /// POST an Image API body to OpenRouter's `/images` on the account's own route, never the
+    /// gateway; the raw reply, with any `url` result already fetched into `b64_json`.
+    async fn openrouter_images(&self, body: &str) -> Outcome<String>;
 }

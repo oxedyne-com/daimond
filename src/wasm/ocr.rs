@@ -35,6 +35,14 @@ extern "C" {
     /// string `{"route":"mistral"|"vision","body":<raw response>}`.
     #[wasm_bindgen(catch, method)]
     fn image(this: &Driver, mistral_body: &str, vision_body: &str) -> Result<JsValue, JsValue>;
+
+    /// The "Image editing" model: resolves a JSON string `{"id":…,"price":…}` (UNBLOCK-9).
+    #[wasm_bindgen(catch, method, js_name = imageModel)]
+    fn image_model(this: &Driver) -> Result<JsValue, JsValue>;
+
+    /// POST one Image API body to OpenRouter's `/images`; resolve the raw response text.
+    #[wasm_bindgen(catch, method)]
+    fn images(this: &Driver, body: &str) -> Result<JsValue, JsValue>;
 }
 
 
@@ -72,4 +80,26 @@ pub async fn image_ocr(mistral_body: &str, vision_body: &str) -> Outcome<(String
     let route = extract_json_string(&v, "route").unwrap_or_default();
     let body  = extract_json_string(&v, "body").unwrap_or_default();
     Ok((route, body))
+}
+
+/// The account's "Image editing" model and its catalogue price, as `models.js` computes it.
+pub async fn image_model() -> Outcome<crate::image_edit::ImageModel> {
+    let d = res!(driver());
+    let v = match crate::wasm::settle_call(d.image_model()).await {
+        Ok(v)  => v.as_string().unwrap_or_default(),
+        Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
+    };
+    Ok(crate::image_edit::ImageModel {
+        id:    extract_json_string(&v, "id").unwrap_or_default(),
+        price: extract_json_string(&v, "price").unwrap_or_default(),
+    })
+}
+
+/// POST an Image API body to OpenRouter and return the raw response body.
+pub async fn openrouter_images(body: &str) -> Outcome<String> {
+    let d = res!(driver());
+    match crate::wasm::settle_call(d.images(body)).await {
+        Ok(v)  => Ok(v.as_string().unwrap_or_default()),
+        Err(e) => Err(err!("{}", refusal(&e); IO, Invalid)),
+    }
 }

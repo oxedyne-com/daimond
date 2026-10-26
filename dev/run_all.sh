@@ -292,12 +292,12 @@ needs_input() {                 # name -> prints why it cannot run, or nothing
 		# through `verify` still gets the run.
 		# The images model's LIVENESS PROBE: the one check that sees a retired model id or a
 		# provider route gone dark, which no mock can. It asks a real provider on the probe key,
-		# and that key EXPIRED on 2026-10-12. OWNER STEP: replace the key in
-		# ~/.config/oxedyne/daimond/openrouter.key, then set DAIMOND_IMAGES_PROBE=1 (and, once it
+		# and that key EXPIRED on 2026-10-12. Since DEV-KEY it reads the `openrouter` entry of
+		# the dev key config (the daimond-hand key, live 26 Oct): set set DAIMOND_IMAGES_PROBE=1 (and, once it
 		# runs green, drop this guard). Until then it is skipped loudly rather than reported red
 		# for a key, not a model; run by hand it says "probe key expired" and exits 3.
 		probe_imagesmodel)
-			[ -n "${DAIMOND_IMAGES_PROBE:-}" ] || echo "OWNER STEP: the probe key expired 2026-10-12; replace ~/.config/oxedyne/daimond/openrouter.key and set DAIMOND_IMAGES_PROBE=1" ;;
+			[ -n "${DAIMOND_IMAGES_PROBE:-}" ] || echo "skipped: set DAIMOND_IMAGES_PROBE=1 to spend on the images liveness probe (key: openrouter in the dev key config)" ;;
 		verify_reflux)
 			[ -n "${DAIMOND_REFLUX_PAID:-}" ] || echo "spends real money at a real provider; set DAIMOND_REFLUX_PAID=1 to let a suite run it (it exits 2 rather than pass)" ;;
 	esac

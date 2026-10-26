@@ -65,4 +65,10 @@ impl HostNet for WasmNet {
     async fn image_ocr(&self, mistral_body: &str, vision_body: &str) -> Outcome<(String, String)> {
         ocr::image_ocr(mistral_body, vision_body).await
     }
+    async fn image_model(&self) -> Outcome<crate::image_edit::ImageModel> {
+        ocr::image_model().await
+    }
+    async fn openrouter_images(&self, body: &str) -> Outcome<String> {
+        ocr::openrouter_images(body).await
+    }
 }

@@ -145,3 +145,93 @@ pub async fn sender(req: &str) -> Outcome<String> {
     let p = res!(panel());
     text(p.tool_sender(req)).await
 }
+
+
+// ── The page's one reader and one builder ───────────────────────────────
+
+/// A message as the panel's viewer shows it, read by [`oxedyne_fe2o3_mail::message::MessageView`]:
+/// `{from, to, cc, replyTo, subject, date, messageId, inReplyTo, references, text, html,
+/// parts: [{name, type, cid, inline, bytes}]}`, `bytes` a `Uint8Array`. The `html` names no
+/// remote resource unless `pictures` is set, which "Load pictures" asks for.
+#[wasm_bindgen]
+pub fn mail_view(raw: &[u8], pictures: bool) -> JsValue {
+    use oxedyne_fe2o3_mail::message::{MessageView, Remote};
+    let v = MessageView::read(raw, if pictures { Remote::Allowed } else { Remote::Blocked });
+    let o = js_sys::Object::new();
+    let set = |o: &js_sys::Object, k: &str, x: JsValue| {
+        // Setting a property on a fresh plain object cannot fail.
+        let _ = js_sys::Reflect::set(o, &JsValue::from_str(k), &x);
+    };
+    for (k, s) in [
+        ("from",        &v.from),
+        ("to",          &v.to),
+        ("cc",          &v.cc),
+        ("replyTo",     &v.reply_to),
+        ("subject",     &v.subject),
+        ("date",        &v.date),
+        ("messageId",   &v.message_id),
+        ("inReplyTo",   &v.in_reply_to),
+        ("references",  &v.references),
+        ("text",        &v.text),
+        ("html",        &v.html),
+    ] {
+        set(&o, k, JsValue::from_str(s));
+    }
+    let parts = js_sys::Array::new();
+    for p in &v.parts {
+        let po = js_sys::Object::new();
+        set(&po, "name",   JsValue::from_str(&p.name));
+        set(&po, "type",   JsValue::from_str(&p.media_type));
+        set(&po, "cid",    JsValue::from_str(&p.content_id));
+        set(&po, "inline", JsValue::from_bool(p.inline));
+        set(&po, "bytes",  js_sys::Uint8Array::from(p.bytes.as_slice()).into());
+        parts.push(&po);
+    }
+    set(&o, "parts", parts.into());
+    o.into()
+}
+
+/// The RFC 5322 bytes of a draft, built by [`oxedyne_fe2o3_mail::message::DraftMessage`]:
+/// `{from, fromName, to: [..], cc: [..], subject, body, inReplyTo, references, date,
+/// messageId, attachments: [{name, type, bytes}]}`.
+#[wasm_bindgen]
+pub fn mail_build(d: &JsValue) -> Result<Vec<u8>, JsValue> {
+    use oxedyne_fe2o3_mail::message::{DraftAttachment, DraftMessage};
+    let get = |o: &JsValue, k: &str| js_sys::Reflect::get(o, &JsValue::from_str(k)).unwrap_or(JsValue::UNDEFINED);
+    let s = |o: &JsValue, k: &str| get(o, k).as_string().unwrap_or_default();
+    let list = |o: &JsValue, k: &str| -> Vec<String> {
+        let v = get(o, k);
+        if !js_sys::Array::is_array(&v) { return Vec::new(); }
+        js_sys::Array::from(&v).iter().filter_map(|x| x.as_string()).collect()
+    };
+    let mut attachments = Vec::new();
+    let av = get(d, "attachments");
+    if js_sys::Array::is_array(&av) {
+        for a in js_sys::Array::from(&av).iter() {
+            let b = get(&a, "bytes");
+            if !b.is_instance_of::<js_sys::Uint8Array>() {
+                return Err(JsValue::from_str(&fmt!(
+                    "Attachment '{}' has no bytes, so the message cannot be built.", s(&a, "name"))));
+            }
+            attachments.push(DraftAttachment {
+                name:       s(&a, "name"),
+                media_type: s(&a, "type"),
+                bytes:      b.unchecked_into::<js_sys::Uint8Array>().to_vec(),
+            });
+        }
+    }
+    let draft = DraftMessage {
+        from:        s(d, "from"),
+        from_name:   s(d, "fromName"),
+        to:          list(d, "to"),
+        cc:          list(d, "cc"),
+        subject:     s(d, "subject"),
+        body:        s(d, "body"),
+        in_reply_to: s(d, "inReplyTo"),
+        references:  s(d, "references"),
+        date:        s(d, "date"),
+        message_id:  s(d, "messageId"),
+        attachments,
+    };
+    draft.build().map_err(|e| JsValue::from_str(&e.plain()))
+}

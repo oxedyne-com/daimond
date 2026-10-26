@@ -16,7 +16,7 @@
 // FAILS ITS LOAD PROOF (crystal.json unreadable: the proof's must-fix comes first and the engine does not look).
 //
 //   node dev/verify_crystallook.mjs
-import { open, steerDiamond, mockLog, clearMockLog, contentText } from './harness.mjs';
+import { open, steerDiamond, mockLog, clearMockLog, contentText, turnTools } from './harness.mjs';
 
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {
@@ -79,13 +79,6 @@ await pg.evaluate(async ({ id, json, html }) => {
 await pg.evaluate(() => { const c = document.getElementById('dview-chat'); if (c) c.click(); });
 await pg.waitForTimeout(900);
 
-// This turn's tool results only: the session's history carries every earlier turn's too.
-const toolsIn = (r) => {
-	const m = (r && r.messages) || [];
-	let k = m.length - 1;
-	while (k >= 0 && !(m[k].role === 'user' && /^@/.test(contentText(m[k].content).trim()))) k--;
-	return m.slice(k + 1).filter((x) => x.role === 'tool');
-};
 // The engine's own look: an assistant tool call with the look_auto id, in any request of the turn.
 // This turn's engine looks, as calls: those in its latest request beyond the ones its first request carried as history.
 const autoCalls = () => {
@@ -118,7 +111,7 @@ async function turn(directive, calls) {
 	for (let i = 0; i < 240 && results.length < calls; i++) {
 		await pg.waitForTimeout(500);
 		const log = mockLog();
-		for (const r of log) { const t = toolsIn(r); if (t.length > results.length) results = t; }
+		for (const r of log) { const t = turnTools(r, directive); if (t.length > results.length) results = t; }
 	}
 	await pg.waitForTimeout(5000);
 	return results.map((m) => contentText(m.content));
@@ -181,6 +174,33 @@ console.log('\nNEVER LOOKED, NO IMAGES MODEL: edit the buttons 53 -> 61 px and s
 		/by the account's default images model \(mock\/cheap-eyes, the cheapest that takes pictures from a maker the account already uses; \d+ tokens, \$0\.0*[1-9]\d?\)/.test(line), line.slice(0, 200));
 	check('no "No images model is set" while one is on the account', !/No images model is set/.test(said));
 	check('the engine looks once for one edit', calls.length === 1, String(calls.length));
+}
+
+console.log('\nBEHIND A TAP (UNBLOCK-2): a pair a tile opens, 36 and 38 px, is reached by tapping and called UNEVEN');
+// His Lifelog "Log it"/"Edit group" live in the card a group tile opens. A look without taps finds nothing and says
+// how to reach it; with taps it clicks the tile in the read-only copy, measures both, and the table says UNEVEN.
+{
+	const tapPage = page(53).replace('</style>', '.card{display:none;position:absolute;top:300px;left:8px}.card.on{display:block}'
+		+ '.acts button{box-sizing:border-box}.acts .go{height:36px}.acts .ghost{height:38px}</style>')
+		.replace('<main id="out"', '<div class="tile" onclick="document.querySelector(\'.card\').classList.add(\'on\')">Diet</div>'
+			+ '<div class="card"><div class="acts"><button class="go">Log it</button> <button class="ghost">Edit group</button></div></div><main id="out"');
+	await pg.evaluate(async ({ id, html }) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		await m.write_file('diamonds/' + id + '/crystal.html', html);
+	}, { id, html: tapPage });
+	const bare = 'crystal_look ' + JSON.stringify({ targets: ['.acts button'] });
+	const tapped = 'crystal_look ' + JSON.stringify({ targets: ['.acts button'], taps: ['.tile'] });
+	const [b, t] = await turn('@seq ' + [bare, tapped].join(' ;; '), 2);
+	show(b || '(no result)'); show(t || '(no result)');
+	check('without taps the pair is not on the first screen, and the table says how to reach it',
+		/nothing visible matches; if a tap shows it, name that in taps/.test(b || ''), (b || '').slice(0, 200));
+	check('with taps the tile is tapped first', /measured after tapping '\.tile'/.test(t || ''), (t || '').slice(0, 200));
+	check('and the pair is measured UNEVEN, 36 vs 38', /heights: UNEVEN, row at y [\d.]+: \.acts button 36\.0 vs \.acts button 38\.0\./.test(t || ''),
+		((t || '').split('\n').find((l) => /^heights:/.test(l)) || '(no heights line)'));
+	await pg.evaluate(async ({ id, html }) => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		await m.write_file('diamonds/' + id + '/crystal.html', html);
+	}, { id, html: page(61) });
 }
 
 console.log('\nA PAGE THAT FAILS ITS LOAD PROOF: crystal.json unreadable, edit the buttons 61 -> 62 px and stop');

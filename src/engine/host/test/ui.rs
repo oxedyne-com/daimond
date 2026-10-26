@@ -26,6 +26,7 @@ use oxedyne_fe2o3_core::prelude::*;
 #[derive(Clone, Debug, Default)]
 pub struct TestUi {
     change: std::rc::Rc<std::cell::RefCell<ChangeAsk>>,
+    mail:   std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>, // (listing, one message)
 }
 
 /// How the change ask answers, what it was shown, and what lands while it waits.
@@ -48,6 +49,11 @@ impl TestUi {
         bytes: &[u8])
     {
         self.change.borrow_mut().meddle = Some((fs.clone(), path.to_string(), bytes.to_vec()));
+    }
+
+    /// Serve a mailbox: `listing` answers `list` and `search`, and `raw` every `read_raw`.
+    pub fn serve_mail(&self, listing: &str, raw: &[u8]) {
+        *self.mail.borrow_mut() = Some((listing.to_string(), raw.to_vec()));
     }
 
     /// Each change ask put, in order: the path and the bytes shown as what stands there.
@@ -94,13 +100,22 @@ impl HostUi for TestUi {
         LocalUi.commit(token).await
     }
     async fn list(&self, req: &str) -> Outcome<String> {
-        LocalUi.list(req).await
+        match self.mail.borrow().as_ref() {
+            Some((listing, _)) => Ok(listing.clone()),
+            None               => LocalUi.list(req).await,
+        }
     }
     async fn search(&self, req: &str) -> Outcome<String> {
-        LocalUi.search(req).await
+        match self.mail.borrow().as_ref() {
+            Some((listing, _)) => Ok(listing.clone()),
+            None               => LocalUi.search(req).await,
+        }
     }
     async fn read_raw(&self, req: &str) -> Outcome<Read> {
-        LocalUi.read_raw(req).await
+        match self.mail.borrow().as_ref() {
+            Some((_, raw)) => Ok(Read::Bytes(raw.clone())),
+            None           => LocalUi.read_raw(req).await,
+        }
     }
     async fn put_draft(&self, req: &str) -> Outcome<String> {
         LocalUi.put_draft(req).await

@@ -52,10 +52,10 @@
 //
 // ── The key this file spends from ───────────────────────────────────
 //
-// NOT the owner's.  `~/.config/oxedyne/daimond/openrouter.key` is his; the daimon
-// holds its own beside its own ssh key, at
+// NOT the owner's.  The dev key config names his as `owner_openrouter`; the daimon
+// holds its own beside its own ssh key, the `openrouter` entry there:
 //
-//	~/.config/oxedyne/daimond-hand/openrouter.key      0600, in a 0700 directory
+//	~/.config/oxedyne/daimond-hand/                    0600, in a 0700 directory
 //
 // OpenRouter enforces a limit per key, so a key of its own IS a budget of its own
 // -- the first half of B13 is a second key and always was.  Outside `~/usr`
@@ -82,6 +82,7 @@
 // name gets the run.
 
 import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -96,6 +97,7 @@ import {
 	OWNED_VAR,
 	SEAT_DISPLAY,
 } from './display.mjs';
+import { configFile, keyFile } from './devkey.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -113,20 +115,33 @@ const BREAK = (() => {
 	return b;
 })();
 
-/// Where the daimon's own provider key lives.
-///
-/// Beside its own ssh key, in the directory that is already the machine hand's
-/// and already 0700.  Absolute, and built from the home directory rather than
-/// written down twice, so a scratch home in a break resolves to a scratch path.
-function daimonKeyFile(home = os.homedir()) {
-	return path.join(home, '.config/oxedyne/daimond-hand/openrouter.key');
+/// Where the daimon's own provider key lives: the `openrouter` entry of the dev key config,
+/// beside its own ssh key in the hand's 0700 directory. Under a scratch `home`, the same file
+/// name there, so a break resolves to a scratch path that holds nothing.
+function daimonKeyFile(home = '') {
+	const real = keyFile('openrouter');
+	return home ? path.join(home, path.basename(real)) : real;
 }
 
 /// Where the OWNER's key lives, which is the one this file must never reach for.
 ///
 /// Named only to be compared against.  Nothing here opens it.
-function ownerKeyFile(home = os.homedir()) {
-	return path.join(home, '.config/oxedyne/daimond/openrouter.key');
+function ownerKeyFile() {
+	return keyFile('owner_openrouter');
+}
+
+/// A scratch dev key config naming `file` as the key, handed to the child as DAIMOND_DEVKEY.
+function childConfig(file) {
+	const f = path.join(SCRATCH, `devkey-${crypto.createHash('sha256').update(file).digest('hex').slice(0, 8)}.jdat`);
+	fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 });
+	fs.writeFileSync(f, JSON.stringify({ openrouter: file }), { mode: 0o600 });
+	return f;
+}
+
+/// The key file a child with environment `env` will read.
+function namedTo(env) {
+	try { return keyFile('openrouter', env.DAIMOND_DEVKEY || configFile()); }
+	catch (e) { return ''; }
 }
 
 const SCRATCH = path.join(process.env.DAIMOND_SCRATCH
@@ -268,9 +283,10 @@ function childEnv(display, keyFile) {
 	// A key IN THE ENVIRONMENT is a key this file did not choose. `readKey` reads
 	// this name before it reads any file, so leaving it would let whatever started
 	// the hand decide what a daimon spends.
+	// The child gets a config of its own naming exactly `keyFile`; the `ownerkey` break
+	// names his instead, which every check below must catch.
 	delete env.DAIMOND_PROBE_KEY;
-	if (keyFile) env.DAIMOND_PROBE_KEY_FILE = keyFile;
-	else delete env.DAIMOND_PROBE_KEY_FILE;
+	env.DAIMOND_DEVKEY = childConfig(keyFile || ownerKeyFile());
 	env.DAIMOND_SCRATCH = SCRATCH;
 	return env;
 }
@@ -367,7 +383,7 @@ if (DISPLAY && BREAK !== 'inheritseat') {
 
 console.log('\n── A key of its own ──────────────────────────────────');
 
-const NAMED = ENV.DAIMOND_PROBE_KEY_FILE || '';
+const NAMED = namedTo(ENV);
 
 check('the key named to the child is the daimon\'s, not the owner\'s',
 	!!NAMED && NAMED !== ownerKeyFile() && /daimond-hand/.test(NAMED),
@@ -384,7 +400,7 @@ check('and it lives outside ~/usr, which is replicated and is a candidate for or
 check('the child is handed a path to the key and never the key itself',
 	ENV.DAIMOND_PROBE_KEY === undefined && !!NAMED,
 	`DAIMOND_PROBE_KEY ${ENV.DAIMOND_PROBE_KEY === undefined ? 'unset' : 'SET'}, `
-	+ `DAIMOND_PROBE_KEY_FILE ${ENV.DAIMOND_PROBE_KEY_FILE || '<unset>'}`);
+	+ `key file ${NAMED || '<unset>'}`);
 
 // What `reflux` actually does when the key it is pointed at is not there. The real
 // file, the real `readKey`, and a home directory of this run's own so that neither
@@ -399,11 +415,11 @@ check('the child is handed a path to the key and never the key itself',
 	const said = `${r.stdout || ''}${r.stderr || ''}`;
 	check('with no key of its own, reflux stops rather than spending, and names the file',
 		r.status !== 0 && said.includes(daimonKeyFile(home)),
-		(said.split('\n').find((l) => l.includes('openrouter.key')) || said.split('\n')[0] || '')
+		(said.split('\n').find((l) => l.includes(path.basename(daimonKeyFile(home)))) || said.split('\n')[0] || '')
 			.trim().slice(0, 160));
 	check('and the file it names is not the owner\'s',
-		!said.includes(ownerKeyFile(home)),
-		said.includes(ownerKeyFile(home)) ? 'it reached for the owner\'s key' : 'it did not');
+		!said.includes(ownerKeyFile()),
+		said.includes(ownerKeyFile()) ? 'it reached for the owner\'s key' : 'it did not');
 }
 
 // ── The number ──────────────────────────────────────────────────────
@@ -435,8 +451,8 @@ if (BREAK) {
 		false,
 		`there is no key at ${KEY_FILE}. Only the owner can mint one: a NEW key at `
 		+ 'openrouter.ai/settings/keys with a credit limit of its own, then `install -d '
-		+ '-m 700 ~/.config/oxedyne/daimond-hand && install -m 600 /dev/stdin '
-		+ '~/.config/oxedyne/daimond-hand/openrouter.key`. This file WILL NOT reach for '
+		+ `-m 700 ${path.dirname(daimonKeyFile())} && install -m 600 /dev/stdin `
+		+ `${daimonKeyFile()}\`. This file WILL NOT reach for `
 		+ 'his. The door above is proved; the run behind it did not run.');
 	console.log('');
 	console.log('  The checks above are real. The run is not run, and that is not a pass.');

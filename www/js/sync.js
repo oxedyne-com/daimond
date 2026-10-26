@@ -205,6 +205,9 @@
 	// channel has not been heard to tap it: no channel at all, or a gateway older than
 	// the tap, which never sends one. See `progressTick`.
 	var PROGRESS_TICK_MS = 4000;
+	// A standing (`quiet`) watch is read on every 15th of those ticks, once a minute.
+	var PROGRESS_QUIET_TICKS = 15;
+	var progQuietN = 0;
 	// ── The streaming progress push ────────────────────────────
 	// The minimum spacing between the OLD-gateway whole-parcel progress pushes. On a
 	// current gateway a hand-off streams through the lightweight frame door
@@ -4073,11 +4076,15 @@
 	/// holds the one wake channel it holds anyway, whatever it watches, and a frame is
 	/// read within a moment of being stored. A new watch is read at once, because a
 	/// frame stored before it began is not going to be tapped again.
-	function watchProgress(key, onFrame) {
+	///
+	/// `opts.quiet` marks a STANDING watch (a peer's `agents.<deviceId>`, held for the
+	/// page's life): read on every tap like the rest, but where no tap comes only every
+	/// `PROGRESS_QUIET_TICKS`th tick, so a watch that never ends is not a read every 4 s.
+	function watchProgress(key, onFrame, opts) {
 		key = String(key || '');
 		if (!key || typeof onFrame !== 'function') return;
 		var had = !!progWatch[key];
-		progWatch[key] = { since: had ? progWatch[key].since : 0, onFrame: onFrame };
+		progWatch[key] = { since: had ? progWatch[key].since : 0, onFrame: onFrame, quiet: !!(opts && opts.quiet) };
 		if (!had) {
 			setProgressWanted();
 			progressSweep();
@@ -4133,7 +4140,9 @@
 	function progressTick() {
 		if (!Object.keys(progWatch).length) return;
 		if (wakeOpen() && progTapGen === wakeGen) return;
-		progressSweep();
+		progQuietN = (progQuietN + 1) % PROGRESS_QUIET_TICKS;
+		var loud = Object.keys(progWatch).some(function (k) { return !progWatch[k].quiet; });
+		if (loud || !progQuietN) progressSweep();
 	}
 
 	/// Read every watched key once, in turn. Coalesced: a tap during a sweep asks for

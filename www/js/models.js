@@ -147,8 +147,10 @@
 	var store = { v: 2, def: { provider: '', model: '' }, providers: {} };
 	// The stamped choices, each one register merged on its own stamp `<slot>At` (SIM-18):
 	// the default, then the global Jobs picks. A Jobs pick unset means "as the daimon".
-	var CHOICES  = ['def', 'draft', 'workers', 'images'];
-	var JOB_SLOT = { drafting: 'draft', workers: 'workers', images: 'images' };
+	// `imageEdit` is the model `image_edit` MAKES pictures with (UNBLOCK-9); `images` is the
+	// model a daimon LOOKS at them with, and the two are never the same choice.
+	var CHOICES  = ['def', 'draft', 'workers', 'images', 'imageEdit'];
+	var JOB_SLOT = { drafting: 'draft', workers: 'workers', images: 'images', imageEditing: 'imageEdit' };
 
 	/// Provider id -> plaintext key, memory only.
 	///
@@ -1549,6 +1551,84 @@
 			});
 		});
 		return near || best;
+	}
+
+	// ── Image editing (UNBLOCK-9) ───────────────────────────────────
+	// The model `image_edit` makes a picture with comes from OpenRouter's Image API catalogue
+	// (`/images/models`), which carries no prices: each model's price is on its own
+	// `/endpoints`. ocr.js fetches both on the OpenRouter route and hands them here; the rule
+	// and the Jobs row are here. Memory only: a catalogue is a fetch away.
+	var imageCat = { models: null, prices: {} };
+
+	/// Does this Image API model take a picture in (`input_references.max` of 1 or more)?
+	function imageTakesPicture(m) {
+		var sp = m && m.supported_parameters, r = sp && sp.input_references;
+		var out = m && m.architecture && m.architecture.output_modalities;
+		return !!(r && typeof r.max === 'number' && r.max >= 1)
+			&& (!Array.isArray(out) || out.indexOf('image') >= 0);
+	}
+
+	/// The price of one picture out of a model's `/endpoints` reply, as `{ usd, unit }`, the
+	/// cheapest endpoint's: an `output_image` billed by the `image` or the `megapixel` (about
+	/// one picture at the sizes asked for). A model billed by the token, or at nothing, has no
+	/// price here, since the cost of a call cannot then be quoted before it is made.
+	function imagePrice(ep) {
+		var best = null;
+		var eps = (ep && Array.isArray(ep.endpoints)) ? ep.endpoints : [];
+		eps.forEach(function (e) {
+			(Array.isArray(e && e.pricing) ? e.pricing : []).forEach(function (p) {
+				if (!p || p.billable !== 'output_image') return;
+				if (p.unit !== 'image' && p.unit !== 'megapixel') return;
+				if (typeof p.cost_usd !== 'number' || !(p.cost_usd > 0)) return;
+				if (!best || p.cost_usd < best.usd) best = { usd: p.cost_usd, unit: p.unit };
+			});
+		});
+		return best;
+	}
+
+	/// The default Image editing model, never a literal: of the catalogue's models that take a
+	/// picture and have a price, the cheapest, among the makers the account already uses first
+	/// (as `cheapestSeeing`), and NEVER a `google/` model, which he may still pick by name
+	/// (D-20261026-04). `prices` maps an id to `imagePrice`'s answer. `{ id, usd, unit }` or null.
+	function cheapestImage(models, prices) {
+		var makers = {};
+		[getDefault(), getDraft(), getJob('workers')].forEach(function (u) {
+			if (u && u.model) makers[makerOf(u.provider, u.model)] = true;
+		});
+		var best = null, near = null;
+		var beats = function (c, b) { return !b || c.usd < b.usd || (c.usd === b.usd && c.id < b.id); };
+		(models || []).forEach(function (m) {
+			var id = String((m && m.id) || '');
+			if (!id || /^google\//.test(id) || !imageTakesPicture(m)) return;
+			var pr = prices && prices[id];
+			if (!pr) return;
+			var c = { id: id, usd: pr.usd, unit: pr.unit };
+			if (beats(c, best)) best = c;
+			if (makers[makerOf('', id)] && beats(c, near)) near = c;
+		});
+		return near || best;
+	}
+
+	/// A picture's price in words ("$0.008 an image", "$0.014 a megapixel"), or ''.
+	function imagePriceWords(pr) {
+		if (!pr) return '';
+		return t(pr.unit === 'megapixel' ? 'models.image_per_mp' : 'models.image_per_image',
+			{ amount: '$' + pr.usd });
+	}
+
+	/// ocr.js hands the catalogue and the prices it fetched; the Jobs row redraws with them.
+	function setImageCatalogue(models, prices) {
+		imageCat = { models: Array.isArray(models) ? models : [], prices: prices || {} };
+		if (typeof render === 'function') try { render(); } catch (e) { /* no panel drawn */ }
+	}
+
+	/// The Image editing model `image_edit` runs on as `{ id, price }`: his Jobs pick, else the
+	/// computed default; null when there is neither. `cat` is the catalogue as ocr.js fetched it.
+	function imageModelOf(cat) {
+		var c = cat || imageCat, pick = getJob('imageEditing');
+		if (pick.model) return { id: pick.model, price: imagePriceWords(c.prices[pick.model]) };
+		var best = cheapestImage(c.models, c.prices);
+		return best ? { id: best.id, price: imagePriceWords(best) } : null;
 	}
 
 	/// The Effort levels `provider` lists for `model`, as `{ levels, dflt }`, or null when it
@@ -3699,7 +3779,7 @@
 	var everyoneAsk  = null;	// { to }: a change waiting on Move Them Too or Keep Theirs
 	var everyoneDone = null;	// { undo, to } after a change; { kept } after its Undo
 
-	var JOB_ROLES = ['workers', 'images', 'drafting', 'summarising'];
+	var JOB_ROLES = ['workers', 'images', 'imageEditing', 'drafting', 'summarising'];
 
 	function elt(tag, cls, text) {
 		var n = document.createElement(tag);
@@ -3913,6 +3993,7 @@
 		var box = elt('div', 'models-jobs');
 		box.appendChild(secHead(t('models.jobs_head')));
 		JOB_ROLES.forEach(function (role) {
+			if (role === 'imageEditing') { box.appendChild(imageJobRow()); return; }
 			var cur = JOB_SLOT[role] ? pairOf(store[JOB_SLOT[role]])
 				: pairOf(picks && typeof picks.summarising === 'function' && picks.summarising());
 			var lab = elt('label', 'models-job');
@@ -3939,6 +4020,48 @@
 			});
 		});
 		return box;
+	}
+
+	/// *Image editing*: the models that take a picture and make one, from the Image API
+	/// catalogue, and first "Cheapest" (the computed default, named), the unset pick.
+	function imageJobRow() {
+		var lab = elt('label', 'models-job');
+		lab.appendChild(elt('span', 'models-job-lab', t('models.job_imageEditing')));
+		lab.title = t('models.image_editing_help');
+		var sel = elt('select', 'settings-select models-job-sel');
+		sel.dataset.job = 'imageEditing';
+		lab.appendChild(sel);
+		var cur = getJob('imageEditing'), cat = imageCat;
+		var best = cheapestImage(cat.models, cat.prices);
+		var auto = elt('option', '', best ? t('models.image_cheapest_is', { model: best.id, price: imagePriceWords(best) })
+			: t('models.image_cheapest'));
+		auto.value = '';
+		sel.appendChild(auto);
+		(cat.models || []).filter(imageTakesPicture).forEach(function (m) {
+			var pw = imagePriceWords(cat.prices[m.id]);
+			var o = elt('option', '', String(m.name || m.id) + (pw ? ' · ' + pw : ''));
+			o.value = String(m.id);
+			if (cur.model === m.id) o.selected = true;
+			sel.appendChild(o);
+		});
+		// A pick the catalogue has not listed (yet, or any more) still shows as picked.
+		if (cur.model && !(cat.models || []).some(function (m) { return m.id === cur.model; })) {
+			var k = elt('option', '', cur.model);
+			k.value = cur.model;
+			k.selected = true;
+			sel.appendChild(k);
+		}
+		if (!cur.model) auto.selected = true;
+		// The catalogue is fetched the first time the row is drawn, and the row redrawn with it.
+		if (!cat.models && window.DaimondOcr && typeof DaimondOcr.imageCatalogue === 'function') {
+			DaimondOcr.imageCatalogue().catch(function () { /* the row stays on Cheapest */ });
+		}
+		sel.addEventListener('change', function () {
+			var pid = (window.DaimondOcr && DaimondOcr.route) ? DaimondOcr.route().pdf : '';
+			setJob('imageEditing', pid, sel.value);
+			render();
+		});
+		return lab;
 	}
 
 	/// The figure a provider's head shows: what is left, in the currency it is held in
@@ -5083,6 +5206,12 @@
 		resolveDraft:   resolveDraft,
 		// The global Jobs picks (Drafting, Workers, Images), and the one resolver.
 		getJob:         getJob,
+		imageTakesPicture: imageTakesPicture,
+		imagePrice:     imagePrice,
+		cheapestImage:  cheapestImage,
+		imagePriceWords: imagePriceWords,
+		setImageCatalogue: setImageCatalogue,
+		imageModelOf:   imageModelOf,
 		setJob:         setJob,
 		effective:      effective,
 		bindPicks:      bindPicks,

@@ -307,10 +307,10 @@ fn native_host_takes_a_net_port() {
     };
     const URL: &str = "https://example.com/a";
     let host: NativeHost<LocalExec, LocalUi, TestNet> = NativeHost::asking_net(
-        PipeLink::closed(), NativeFs::default(), LocalExec::default(), LocalUi::default(), TestNet,
+        PipeLink::closed(), NativeFs::default(), LocalExec::default(), LocalUi::default(), TestNet::default(),
     );
     let got = rt().block_on(host.net().fetch(URL));
-    let want = rt().block_on(TestNet.fetch(URL));
+    let want = rt().block_on(TestNet::default().fetch(URL));
     let said = |r: &Outcome<String>| match r {
         Ok(v)   => fmt!("ok {}", v),
         Err(e)  => fmt!("err {}", e),

@@ -408,5 +408,171 @@ if (typeof L.say === 'function') {
 	await running;
 }
 
+// ── HATE-3: a cut-in re-sent as the next turn draws its reply, and keeps it (26 Oct 2026). ──
+// A word said into a native runner's turn that its report does not name heard goes out as turn 2
+// under the id it was said as (`resendUnheard`). Turn 2 ran and settled done, its report reached the
+// page, and nothing drew: no frame folded and the placeholder went with no answer. Drives the page's
+// REAL say, re-send, watch, last read, fold, adoption, merge and placeholder drop, on peer.js's rules.
+await (async () => {
+	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const { liftSource } = await import('../../dev/syncprobe.mjs');
+	const FNS = ['touchMsg', 'sayToRunner', 'requeueUnheard', 'resendUnheard', 'pushUserRecord', 'tsPast', 'markTurnDispatched',
+		'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished', 'dispatchedTurnSettled',
+		'handoffLeaseSettled', 'handoffDone', 'dispatchedAnswerPresent', 'updateExpedite', 'updateProgressWatch',
+		'onLastFrame', 'applyProvisional', 'adoptFinalFrame', 'finalFrameChat', 'dropOtherRunRows', 'isNotRunRow',
+		'isLostRow', 'dropDispatchedPlaceholder', 'dispatchedChat', 'chatHoldingTurn', 'chatHoldsTurn'];
+	const lifted = FNS.map((n) => extractFn(src, n));
+	check('HATE-3: the page functions exist', lifted.every(Boolean), FNS.filter((n, i) => !lifted[i]).join(','));
+	if (!lifted.every(Boolean)) return;
+	// The merge reconcile a parcel pull runs (`onChatsChangedElsewhere`), lifted from its own text.
+	const r0 = src.indexOf('var dispTurns = Object.keys(_dispatchedIx);');
+	const r1 = src.indexOf('} catch (e) { /* a reconcile must never break the merge */ }', r0);
+	const reconcile = 'function reconcileMerged() {\n' + src.slice(r0, r1) + '}\n';
+	check('HATE-3: the merge reconcile is found', r0 > 0 && r1 > r0);
+	const stampSrc = readFileSync(join(HERE, 'stamp.js'), 'utf8');
+
+	let clock = 1793000000000;
+	const D = { now: () => clock };
+	let seq = 0;
+	const mid = () => clock.toString(36) + '-' + (++seq).toString(36) + '-hate3';
+	const leases = {}, watched = [], lastReads = {}, tombs = {}, events = [];
+	const W = {};
+	W.DaimondPeer = P;
+	W.DaimondLease = {
+		say: async () => ({ ok: true }),
+		record: (t) => leases[t] || null,
+		holder: (t) => (leases[t] && leases[t].holder) || '',
+	};
+	W.DaimondSync = {
+		watchProgress: (k) => { watched.push(k); },
+		unwatchProgress: (k, last) => { lastReads[k] = last || null; },		// a read started before the frame finds none
+	};
+	W.DaimondPresence = { snapshot: () => ({}) };
+	let gate = null;
+	const S = {
+		chats: [], current: null, peerReports: {}, _saidThere: {}, _peerStopping: {}, _progressView: {},
+		_dispatchedIx: {}, _watchIx: {}, _progressWatched: {}, _progressSent: {}, _frameWorkers: {}, _finalMids: {},
+		_finalRun: {}, _abiRefused: {}, _handoffStart: {}, _watchTick: 1, msgFpSeen: new WeakMap(), _expediting: false, _renderedSigs: null,
+		WATCH_RECHECK_MS: 1000, ARRIVE_FRESH_MS: 60000, REASON_DISPATCHED_STR: 'dispatched',
+		honoursModelSet: () => true, commitRatings: () => {}, ratingPre: () => '', giveUpSent: () => {},
+		appendInterjected: () => {}, syncSendMode: () => {}, diag: () => {}, persistChats: () => {}, touchChat: () => {},
+		ownsChat: () => false, renderHistory: () => {}, renderQueue: () => {}, updateQueueBadges: () => {},
+		journalQueue: () => {}, drainAfterHeld: () => {}, renderDispatchedBadges: () => {}, growProvisionalTiles: () => {},
+		sigsOf: () => null, selfDeviceId: () => 'PAGE', deviceLabelFor: () => 'runner', handoffTargetLabel: () => 'runner',
+		autoLogHandoffLatency: () => {}, clearDispatchFallback: () => {}, ChatStore: { compact: () => {} },
+		frameAbiOk: () => true, refuseAbiFrame: () => {}, applyFrameUi: () => {}, setFrameWorkers: () => {},
+		fetchFinalRef: () => {}, foldRunnerTotals: () => {}, onProgressFrame: () => {}, frameUi: () => [],
+		// `parseFrameRef` for a frame with no chunks (its `'{'` test defeats the brace lift).
+		parseFrameRef: (t) => { try { const o = JSON.parse(t); return { msgs: o.msgs, ref: null, n: 0, ui: [], workers: [] }; } catch (e) { return null; } },
+		noteArrive: (k, o) => { events.push(['arrive', k, o && o.tid]); },
+		newMid: mid, peerSyncShim: () => ({}),
+		msgTombstone: (ids) => { ids.forEach((i) => { tombs[i] = 1; events.push(['tomb', i]); }); },
+		loadMsgTombs: () => tombs,
+		// The hand-off as `maybeAutoDispatch` makes it: a presence read awaited, then the turn's
+		// stamped message under the id given and its dispatched placeholder (`handOffTurn` → mark).
+		maybeAutoDispatch: async (chat, text, words, m) => {
+			await new Promise((r) => { gate = r; });
+			const umid = m || mid();
+			api.pushUserRecord(chat, api.touchMsg({ role: 'user', content: text, mid: umid, iturn: umid, ts: clock }), true);
+			api.markTurnDispatched(chat, { why: 'dispatched', iturn: umid, itext: text, dispatchedBy: 'PAGE',
+				toDevice: 'RUNNER', toNative: 1, ts: clock });
+			return true;
+		},
+	};
+	const keys = Object.keys(S);
+	const api = new Function('S', 'window', 'Date',
+		'var DaimondPeer = window.DaimondPeer, DaimondLease = window.DaimondLease, DaimondSync = window.DaimondSync,'
+		+ ' DaimondPresence = window.DaimondPresence;\n'
+		+ 'var DaimondStamp = (function () { var window = {}; ' + stampSrc + '\n return window.DaimondStamp; })();\n'
+		+ keys.map((k) => 'var ' + k + ' = S.' + k + ';').join('\n') + '\n'
+		+ liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src + '\n'
+		+ lifted.join('\n') + '\n' + reconcile
+		+ 'return { ' + FNS.map((n) => n + ': ' + n).join(', ') + ', mergeMessages: mergeMessages,'
+		+ ' reconcileMerged: reconcileMerged, chats: chats };')(S, W, D);
+
+	const chat = { id: 'hc3', _loaded: true, messages: [] };
+	S.chats.push(chat);
+	const live = (t) => { leases[t] = { holder: 'RUNNER', mode: 'running', expiry: clock + 10 * MIN, renewedAt: clock }; api.updateExpedite(); };
+	const settle = (t) => { leases[t] = { holder: 'RUNNER', mode: 'released', settled: 1, expiry: 0, renewedAt: clock }; api.updateExpedite(); };
+	const frame = (t, run, text, ts) => ({ turn: t, seq: 1, final: true, tail: JSON.stringify({ v: 1, msgs: [
+		{ mid: run + '-final', role: 'assistant', content: text, ts, run, ranOn: 'RUNNER', whole: 1 },
+		{ mid: run + '-end', role: 'end_log', content: '', ts, run, whole: 1 }] }) });
+	// A parcel pull: the store's copy unioned in, then the merge's reconcile of placeholders.
+	const pull = () => {
+		chat.messages = api.mergeMessages(JSON.parse(JSON.stringify(chat.messages)), chat.messages, chat.id, tombs);
+		api.reconcileMerged();
+	};
+	// The page's `onReport`, in its order (daimond.js DaimondPeer.onReport).
+	const report = (t, heard) => {
+		const rep = { t: 'report', turnId: t, chatId: chat.id, status: 'done', heard: heard || [] };
+		S.peerReports[t] = rep;
+		delete lastReads[t];		// only a read the report starts finds the final frame
+		api.requeueUnheard(rep);
+		api.updateExpedite();
+		api.adoptFinalFrame(t);
+	};
+	const lastRead = (t, f) => { const fn = lastReads[t]; if (fn) fn(f); return !!fn; };
+	const answerOf = (t) => chat.messages.filter((m) => m.role === 'assistant' && String(m.iturn) === t
+		&& !m.provisional && m.content && m.content.trim());
+	const phOf = (t) => api.dispatchedPlaceholderIn(chat, t);
+	// A plain hand-off: sent, claimed, reported, its frame read last, pulled.
+	const handOff = async (text, run, ans) => {
+		const p = S.maybeAutoDispatch(chat, text, '', '');
+		clock += 50; gate(); await p; await flush();
+		const t = chat.messages.filter((m) => m.role === 'user').slice(-1)[0].mid;
+		clock += 1000; live(t);
+		clock += 5000; report(t, []); settle(t);
+		lastRead(t, frame(t, run, ans, clock - 10)); pull();
+		return t;
+	};
+
+	// Turn 1 is sent and claimed; a cut-in is said into it while it runs.
+	clock += 1000;
+	const p1 = S.maybeAutoDispatch(chat, 'review the plan', '', '');
+	clock += 50; gate(); await p1; await flush();
+	const T1 = chat.messages[0].mid;
+	clock += 1000; live(T1);
+	clock += 60000;
+	const said2 = await api.sayToRunner(chat, { iturn: T1 }, 'and check the tests', 'and check the tests');
+	check('HATE-3: the cut-in is said into turn 1', said2 === true, String(said2));
+	const T2 = chat.messages[chat.messages.length - 1].mid;
+	// Turn 1 ends without hearing it: the report re-sends it as turn 2 under the said id, and the
+	// watch's last read of turn 1 lands while that hand-off's presence read is out. The runner
+	// stamped turn 1's rows at its settle, a moment after the page's clock read for turn 2.
+	clock += 60000;
+	report(T1, []);
+	settle(T1);
+	clock += 300;
+	gate(); await flush();
+	lastRead(T1, frame(T1, 'R1', 'answer one', clock + 400));
+	pull();
+	check('HATE-3: turn 1 answered and its placeholder gone', answerOf(T1).length === 1 && !phOf(T1), JSON.stringify(chat.messages));
+	check('HATE-3: the cut-in went out as turn 2, under its said id, with its placeholder', !!phOf(T2)
+		&& chat.messages.filter((m) => m.mid === T2).length === 1, JSON.stringify(chat.messages));
+	// Turn 2 is claimed, runs and settles done; a pull lands meanwhile.
+	clock += 1000; live(T2);
+	clock += 1000; pull();
+	check('HATE-3 (a): turn 2 is watched while its runner holds it', watched.indexOf(T2) !== -1 && !!S._progressWatched[T2],
+		JSON.stringify({ watched, ph: !!phOf(T2), fin: api.dispatchedAnswerPresent(chat, phOf(T2) || {}) }));
+	check('HATE-3 (c): no pull drops turn 2\'s placeholder before its answer', !!phOf(T2), JSON.stringify(chat.messages));
+	clock += 120000;
+	report(T2, []);
+	const read2 = lastRead(T2, frame(T2, 'R2', 'answer two', clock - 50));
+	check('HATE-3 (a): its report ends the watch with a last read', read2, JSON.stringify(Object.keys(lastReads)));
+	settle(T2); pull();
+	const a2 = answerOf(T2);
+	check('HATE-3 (b): turn 2\'s final frame is folded and adopted as its answer', a2.length === 1 && a2[0].content === 'answer two',
+		JSON.stringify(chat.messages));
+	const phTomb = events.findIndex((e) => e[0] === 'tomb' && !chat.messages.some((m) => m.mid === e[1]) && e[1] !== T2);
+	check('HATE-3: and its placeholder goes only with the answer drawn', !phOf(T2) && events.some((e) => e[0] === 'arrive' && e[2] === T2),
+		JSON.stringify({ events, phTomb }));
+	// The next two hand-offs leave turn 2's answer standing.
+	await handOff('next one', 'R3', 'answer three');
+	await handOff('and another', 'R4', 'answer four');
+	const kept2 = answerOf(T2);
+	check('HATE-3 (c): turn 2\'s answer survives the next two hand-offs', kept2.length === 1 && !tombs[kept2[0].mid]
+		&& !tombs[T2] && chat.messages.some((m) => m.mid === T2), JSON.stringify(chat.messages.map((m) => [m.mid, m.role, m.iturn, m.content])));
+})();
+
 console.log('\n' + (checks - failures) + '/' + checks + ' passed');
 if (failures) process.exit(1);

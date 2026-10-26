@@ -202,6 +202,18 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // The log is per-world, not per-repo: two mocks appending to one file make every
 // assertion that reads it see another agent's traffic.  See dev/world.sh.
 const LOG  = process.env.DAIMOND_MOCK_LOG || path.join(HERE, 'mockllm.log');
+// The Image API's one model and the picture every edit returns: a whole 1x1 PNG, as the engine
+// lands only bytes that decode (R3 QA-a F1), whose tEXt chunk carries the marker "MOCK-COLOUR",
+// so a check can find exactly these bytes in the file the edit landed.
+const MOCK_IMAGE_MODEL = 'mock/image-edit';
+const MOCK_PICTURE = Buffer.from([
+	0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+	0x89, 0x00, 0x00, 0x00, 0x13, 0x74, 0x45, 0x58, 0x74, 0x43, 0x6F, 0x6D, 0x6D, 0x65, 0x6E, 0x74,
+	0x00, 0x4D, 0x4F, 0x43, 0x4B, 0x2D, 0x43, 0x4F, 0x4C, 0x4F, 0x55, 0x52, 0xF8, 0x9B, 0x9C, 0x9D,
+	0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x38, 0x51, 0xA1, 0xF1, 0x1F,
+	0x00, 0x05, 0xDC, 0x02, 0x68, 0x88, 0x92, 0x98, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+	0x44, 0xAE, 0x42, 0x60, 0x82]);
 const PORT = Number(process.argv[2] || process.env.DAIMOND_MOCK_PORT || 9099);
 
 // ── WHICH REVISION OF THIS FILE IS ANSWERING ────────────────────────────────
@@ -1383,6 +1395,36 @@ const server = http.createServer((req, res) => {
 		}
 		return sendJson(res, { object: 'list', data: MODELS.map(id => ({ id, object: 'model',
 			...(EFFORT_LEVELS[id] ? { reasoning: EFFORT_LEVELS[id] } : {}), ...(CATALOGUE[id] || {}) })) });
+	}
+
+	// THE IMAGE API (UNBLOCK-9), beside the chat endpoint as OpenRouter has it: the catalogue at
+	// `…/images/models`, each model's `endpoints` priced by the picture, and a POST to `…/images`
+	// answered with MOCK_PICTURE inline as `b64_json`, the shape one live call settled (26 Oct).
+	if (req.method === 'GET' && /\/images\/models\/[^?]+\/endpoints(\?|$)/.test(req.url)) {
+		return sendJson(res, { endpoints: [{ pricing: [
+			{ billable: 'output_image', unit: 'image', cost_usd: 0.008 }] }] });
+	}
+	if (req.method === 'GET' && /\/images\/models(\?|$)/.test(req.url)) {
+		const base = req.url.replace(/\/images\/models.*$/, '');
+		return sendJson(res, { data: [{ id: MOCK_IMAGE_MODEL,
+			architecture: { output_modalities: ['image'] },
+			supported_parameters: { input_references: { max: 4 } },
+			endpoints: base + '/images/models/' + MOCK_IMAGE_MODEL + '/endpoints' }] });
+	}
+	if (req.method === 'POST' && /\/images(\?|$)/.test(req.url)) {
+		let ib = '';
+		req.on('data', c => { ib += c; });
+		req.on('end', () => {
+			let q = null;
+			try { q = JSON.parse(ib); } catch { return sendJson(res, { error: { message: 'mock: body was not JSON', code: 400 } }, 400); }
+			const refs = Array.isArray(q.input_references) ? q.input_references : [];
+			log({ at: new Date().toISOString(), imageEdit: true, model: q.model, prompt: q.prompt,
+				pictures: refs.length, bytes: ib.length });
+			if (!refs.length) return sendJson(res, { error: { message: 'mock: no input picture', code: 422 } }, 422);
+			return sendJson(res, { created: 0, data: [{ b64_json: MOCK_PICTURE.toString('base64'),
+				media_type: 'image/png' }], usage: { cost: 0.008 } });
+		});
+		return;
 	}
 
 	if (req.method !== 'POST') { cors(res); res.writeHead(404); return res.end(); }

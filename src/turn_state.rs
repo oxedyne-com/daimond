@@ -59,7 +59,7 @@ impl Class {
 			| Some(Tool::FileGlob) | Some(Tool::FileSearch) | Some(Tool::Recall)	=> Self::Read,
 			Some(Tool::FileWrite) | Some(Tool::FileEdit) | Some(Tool::FileDelete)
 			| Some(Tool::FileMove) | Some(Tool::DocEdit) | Some(Tool::SheetWrite)
-			| Some(Tool::TypstCompile)												=> Self::Write,
+			| Some(Tool::TypstCompile) | Some(Tool::ImageEdit)						=> Self::Write,
 			Some(Tool::ArtefactAdd) | Some(Tool::SpawnAgent)						=> Self::Deliver,
 			_																		=> Self::Neutral,
 		}

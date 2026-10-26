@@ -144,12 +144,14 @@ async fn run() -> Outcome<()> {
             // that hid it would read a leaked call as an ordinary answer.
             // `reasoned` counts rounds re-sent because a reply reasoned and answered nothing.
             // `why` is `blocked` beside a failed turn, and `said` the sentence it ended on.
-            // `touched` lists the files the turn's completed writes landed on.
+            // `touched` lists the files the turn's completed writes landed on, and `fault`
+            // is a failed turn's class of failure.
             AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed,
-                reasoned, why, said, touched } =>
-                println!("\n[ended] {}{} — {} tool(s) offered, {} round(s), {} call(s), \
+                reasoned, why, said, fault, touched } =>
+                println!("\n[ended] {}{}{} — {} tool(s) offered, {} round(s), {} call(s), \
                     {} refused, {} failed, {} malformed, {} reasoned{}{}{}",
                     how, if why.is_empty() { String::new() } else { format!(" ({})", why) },
+                    if fault.is_empty() { String::new() } else { format!(" [{}]", fault) },
                     offered, rounds, calls, refused, failed, malformed, reasoned,
                     if missing.is_empty() { String::new() }
                     else { format!(", missing: {}", missing.join(" ")) },

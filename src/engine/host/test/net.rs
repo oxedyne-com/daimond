@@ -16,9 +16,32 @@ use crate::{
 
 use oxedyne_fe2o3_core::prelude::*;
 
-/// TestHost's net port.
+/// TestHost's net port.  The image route answers as a test sets it (UNBLOCK-9), refusing as
+/// LocalHost's does by default; every other method is LocalHost's.
 #[derive(Clone, Debug, Default)]
-pub struct TestNet;
+pub struct TestNet {
+    images: std::rc::Rc<std::cell::RefCell<Images>>,
+}
+
+/// The image route's model and reply, and each body posted to it.
+#[derive(Debug, Default)]
+struct Images {
+    model:  Option<crate::image_edit::ImageModel>,
+    reply:  Option<String>,
+    posted: Vec<String>,
+}
+
+impl TestNet {
+    /// Answer `image_model` with `model` and every `/images` post with `reply`.
+    pub fn serve_images(&self, model: crate::image_edit::ImageModel, reply: &str) {
+        let mut i = self.images.borrow_mut();
+        i.model = Some(model);
+        i.reply = Some(reply.to_string());
+    }
+
+    /// Each body posted to `/images`, in order.
+    pub fn images_posted(&self) -> Vec<String> { self.images.borrow().posted.clone() }
+}
 
 impl HostNet for TestNet {
     async fn fetch(&self, url: &str) -> Outcome<String> {
@@ -59,6 +82,24 @@ impl HostNet for TestNet {
     }
     async fn image_ocr(&self, mistral_body: &str, vision_body: &str) -> Outcome<(String, String)> {
         LocalNet.image_ocr(mistral_body, vision_body).await
+    }
+    async fn image_model(&self) -> Outcome<crate::image_edit::ImageModel> {
+        let model = self.images.borrow().model.clone();
+        match model {
+            Some(m) => Ok(m),
+            None    => LocalNet.image_model().await,
+        }
+    }
+    async fn openrouter_images(&self, body: &str) -> Outcome<String> {
+        let reply = {
+            let mut i = self.images.borrow_mut();
+            i.posted.push(body.to_string());
+            i.reply.clone()
+        };
+        match reply {
+            Some(r) => Ok(r),
+            None    => LocalNet.openrouter_images(body).await,
+        }
     }
 }
 

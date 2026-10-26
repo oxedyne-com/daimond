@@ -874,6 +874,7 @@
 	var LOOK_MAX = 8;
 	var LOOK_CHARS = 120;
 	var LOOK_ROWS = 4;
+	var LOOK_TAPS = 4;
 	/// The canvas limits `selfshot.js` draws within: a side, and the pixels in all.
 	var PROBE_PX_SIDE = 16384;
 	var PROBE_PX_MAX = 64e6;
@@ -885,7 +886,7 @@
 	/// window, and `mk` is the app's rasteriser (`selfshot.js`) or `null`, so a picture
 	/// is drawn by the very code the app uses on itself.
 	function shim(win, mk, nonce) {
-		var doc = win.document, up = win.parent, ROWS = 12, OUT_ROWS = 24, raster = null;
+		var doc = win.document, up = win.parent, ROWS = 12, OUT_ROWS = 24, raster = null, tapped = null;
 		// Out of the document before any page script can read the nonce from it.
 		try { var me = doc.currentScript; if (me && me.parentNode) me.parentNode.removeChild(me); } catch (e) { /* no tag to remove */ }
 		function s(v, n) { v = v == null ? '' : String(v); return v.length > n ? v.slice(0, n) : v; }
@@ -1006,14 +1007,33 @@
 			// The innermost: an element that holds another match is the match's wrapper.
 			return hit.filter(function (e) { return !hit.some(function (f) { return f !== e && e.contains(f); }); });
 		}
+		// The visible elements a target names; throws on a selector the page cannot run.
+		function pick(t) {
+			return /^text:/i.test(t) ? byText(t.slice(5)) : Array.prototype.filter.call(doc.querySelectorAll(t), shown);
+		}
+		// crystal_look's `taps`: each target's first visible match is clicked, in order, with a beat
+		// for the page to redraw, so a part behind a tap (a card a tile opens) can be measured. The
+		// frame is read-only, so a tap that saves writes nothing. The first tap that finds nothing,
+		// or is no selector, ends the run: the taps after it assume the state it would have made.
+		function tapAll(ts, done) {
+			var got = [], k = 0;
+			function next() {
+				if (k >= ts.length || k >= 4) { done(got); return; }
+				var t = s(ts[k++], 120), o = { t: t }, list;
+				got.push(o);
+				try { list = pick(t); } catch (err) { o.error = 1; done(got); return; }
+				o.count = list.length;
+				if (!list.length) { done(got); return; }
+				try { list[0].click(); } catch (err) { o.threw = 1; }
+				if (win.setTimeout) win.setTimeout(next, 150); else next();
+			}
+			next();
+		}
 		function look(ts) {
 			return ts.slice(0, 8).map(function (t) {
 				t = s(t, 120);
 				var o = { t: t, rows: [] }, list;
-				try {
-					list = /^text:/i.test(t) ? byText(t.slice(5))
-						: Array.prototype.filter.call(doc.querySelectorAll(t), shown);
-				} catch (err) { o.error = 1; return o; }
+				try { list = pick(t); } catch (err) { o.error = 1; return o; }
 				o.count = list.length;
 				for (var i = 0; i < list.length && i < 4; i++) o.rows.push(lrow(list[i]));
 				return o;
@@ -1027,6 +1047,7 @@
 		function answer(m) {
 			var out = { id: m.id }, sel = typeof m.sel === 'string' ? m.sel.slice(0, 300) : '', list, i;
 			out.trace = ring.slice();
+			if (tapped) out.taps = tapped;
 			if (Array.isArray(m.look) && m.look.length) {
 				try { out.look = look(m.look); } catch (err) { out.look = []; }
 			}
@@ -1100,7 +1121,10 @@
 			var m = e.data;
 			if (m && m.dc === 1 && typeof m.cmd === 'string' && m.cmd !== 'probe') note('host -> page', s(m.cmd, 24));
 			if (!m || m.dc !== 1 || m.v !== 1 || m.cmd !== 'probe') return;
-			settle(function () { answer(m); });
+			settle(function () {
+				if (!Array.isArray(m.taps) || !m.taps.length) { answer(m); return; }
+				tapAll(m.taps, function (got) { tapped = got; answer(m); });
+			});
 		});
 	}
 
@@ -1492,17 +1516,23 @@
 	/// crystal_look's measurement, built HERE from the shim's reply: for each target the model named,
 	/// in its order, the matches' box, type, padding and colours, each value one its property could
 	/// hold. `looks` is the targets as the host sent them, so a target's name is never the page's.
-	function lookTable(m, looks) {
+	function lookTable(m, looks, taps) {
 		var got = arr(m.look), v = obj(m.view), out = [];
 		out.push('look at the crystal page (frame ' + pi(v.w) + 'x' + pi(v.h) + ', page ' + pi(v.sw) + 'x' + pi(v.sh)
 			+ '), as its owner sees it: ' + looks.length + ' target' + (looks.length === 1 ? '' : 's') + '.');
+		var tapLine = lookTaps(arr(m.taps), arr(taps));
+		if (tapLine) out.push(tapLine);
 		var cols = ['target', '#', 'element', 'x', 'y', 'w', 'h', 'font-size', 'line-h', 'weight', 'box', 'padding', 'colour', 'background', 'border'];
 		var rows = [cols];
 		looks.forEach(function (t, k) {
 			var g = obj(got[k]), raw = arr(g.rows).slice(0, LOOK_ROWS), name = pc(t, 40);
 			var count = (typeof g.count === 'number' && isFinite(g.count) && g.count >= 0) ? Math.min(Math.floor(g.count), 1000000) : raw.length;
 			if (g.error) { rows.push([name, '-', 'not a selector the page can run'].concat(cols.slice(3).map(function () { return ''; }))); return; }
-			if (!raw.length) { rows.push([name, '-', 'nothing visible matches'].concat(cols.slice(3).map(function () { return ''; }))); return; }
+			if (!raw.length) {
+				rows.push([name, '-', 'nothing visible matches' + (arr(taps).length ? '' : '; if a tap shows it, name that in taps')]
+					.concat(cols.slice(3).map(function () { return ''; })));
+				return;
+			}
 			raw.forEach(function (r, i) {
 				r = obj(r);
 				var bd = pc(r.bd, 80).split(' '), bw = pv(bd[0], 'size'), bc = pv(bd.slice(1).join(' '), 'colour');
@@ -1515,7 +1545,63 @@
 		rows.forEach(function (x) {
 			out.push(x.map(function (c, k) { c = String(c || ''); return k === x.length - 1 ? c : c + ' '.repeat(wide[k] - c.length); }).join('  ').replace(/\s+$/, ''));
 		});
+		var even = lookEven(got, looks);
+		if (even) out.push(even);
 		return out.join('\n');
+	}
+
+	/// What the taps did, in the host's words and the daimon's own target names: `''` with no taps.
+	function lookTaps(said, taps) {
+		if (!taps.length) return '';
+		var done = [], i;
+		for (i = 0; i < taps.length && i < 4; i++) {
+			var o = obj(said[i]), name = "'" + pc(taps[i], 40) + "'";
+			if (!said[i]) return 'tapped ' + (done.join(', ') || 'nothing') + '; ' + name + ' was not reached, so the page is measured as it stood.';
+			if (o.error) return 'tapped ' + (done.join(', ') || 'nothing') + '; ' + name + ' is not a selector the page can run, so the page is measured as it stood.';
+			if (!(o.count > 0)) return 'tapped ' + (done.join(', ') || 'nothing') + '; nothing visible matches ' + name + ', so the page is measured as it stood.';
+			done.push(name);
+		}
+		return 'measured after tapping ' + done.join(', then ') + '.';
+	}
+
+	/// The verdict on height across the targets: boxes that overlap down the page by at least half
+	/// the shorter one's height sit on one row (buttons on a baseline do not share a top), and a row
+	/// whose boxes differ in height by more than half a pixel is UNEVEN, so the daimon is told and
+	/// does not infer it from a shared class. Left to right; numbers and the daimon's target names only.
+	function lookEven(got, looks) {
+		var bs = [], seen = {};
+		looks.forEach(function (t, k) {
+			arr(obj(got[k]).rows).slice(0, LOOK_ROWS).forEach(function (r) {
+				r = obj(r);
+				var ok = [r.x, r.y, r.w, r.h].every(function (n) { return typeof n === 'number' && isFinite(n) && Math.abs(n) < 1e7; });
+				if (!ok || !(r.w > 0) || !(r.h > 0)) return;
+				var key = r.x + ',' + r.y + ',' + r.w + ',' + r.h;
+				if (seen[key]) return;   // one element named by two targets
+				seen[key] = 1;
+				bs.push({ t: pc(t, 30), x: r.x, y: r.y, h: r.h });
+			});
+		});
+		bs.sort(function (a, b) { return a.y - b.y; });
+		var bands = [];
+		bs.forEach(function (b) {
+			var last = bands[bands.length - 1], f = last && last.bs[0];
+			var lap = f ? Math.min(f.y + f.h, b.y + b.h) - Math.max(f.y, b.y) : 0;
+			if (f && lap >= Math.min(f.h, b.h) / 2) last.bs.push(b); else bands.push({ y: b.y, bs: [b] });
+		});
+		bands.forEach(function (bd) { bd.bs.sort(function (a, b) { return a.x - b.x; }); });
+		var rows = bands.filter(function (bd) { return bd.bs.length > 1; });
+		if (!rows.length) return '';
+		var odd = rows.filter(function (bd) {
+			var hs = bd.bs.map(function (b) { return b.h; });
+			return Math.max.apply(null, hs) - Math.min.apply(null, hs) > 0.5;
+		});
+		if (!odd.length) {
+			return 'heights: level, ' + rows.map(function (bd) { return bd.bs.length + ' on the row at y ' + pn(bd.y) + ' all ' + pn(bd.bs[0].h); }).join('; ') + '.';
+		}
+		var line = 'heights: UNEVEN, ' + odd.slice(0, 3).map(function (bd) {
+			return 'row at y ' + pn(bd.y) + ': ' + bd.bs.slice(0, 4).map(function (b) { return b.t + ' ' + pn(b.h); }).join(' vs ');
+		}).join('; ') + '.';
+		return line.length > 230 ? line.slice(0, 229) + '~' : line;
 	}
 
 	function probeSight(r) {
@@ -1549,7 +1635,7 @@
 
 	/// A probe's reply as the daimon gets it: `{ err }` in the daimon's words, or
 	/// `{ table, png_b64, w, h }`. Pure: the page's reply `m` is believed in nothing.
-	function probeResult(m, sel, wantPng, looks) {
+	function probeResult(m, sel, wantPng, looks, taps) {
 		m = obj(m);
 		looks = arr(looks);
 		if (typeof m.error === 'string' && m.error) {
@@ -1562,7 +1648,7 @@
 				+ '. This measures the Diamond\'s own page, not the app. Leave the selector out to list its body and the '
 				+ 'body\'s children, or name an element the page has.' };
 		}
-		var table = looks.length ? lookTable(m, looks) : probeTable(m, sel), b64 = wantPng ? probePng(m) : '';
+		var table = looks.length ? lookTable(m, looks, taps) : probeTable(m, sel), b64 = wantPng ? probePng(m) : '';
 		if (wantPng && !b64) {
 			table += '\nNo picture: ' + (typeof m.png_error === 'string' && m.png_error ? pngWhy(m.png_error)
 				: (typeof m.png_b64 === 'string' && m.png_b64 ? 'the page returned something that is not a picture' : 'the page returned none')) + '.';
@@ -1692,6 +1778,9 @@
 		var settleFirst = req.settle === true;
 		var looks = arr(req.look).filter(function (t) { return typeof t === 'string' && t.trim(); })
 			.slice(0, LOOK_MAX).map(function (t) { return t.trim().slice(0, LOOK_CHARS); });
+		// Taps open what a tap shows before the targets are measured; they ride only with targets.
+		var taps = looks.length ? arr(req.taps).filter(function (t) { return typeof t === 'string' && t.trim(); })
+			.slice(0, LOOK_TAPS).map(function (t) { return t.trim().slice(0, LOOK_CHARS); }) : [];
 		var page = str(req.page).trim() ? draw(String(req.page)) : DEFAULT_PAGE;
 		// A crystal that does not parse is an ERROR here and never `{}`: the probe used to draw the
 		// empty card for it, and a daimon went looking for a layout fault in a page that had
@@ -1749,7 +1838,7 @@
 				if (asked || settled) return;
 				clearTimeout(quietT); clearTimeout(settleT);
 				asked = ++probeSeq;
-				say({ cmd: 'probe', id: asked, sel: sel, png: wantPng, proof: wantProof, look: looks,
+				say({ cmd: 'probe', id: asked, sel: sel, png: wantPng, proof: wantProof, look: looks, taps: taps,
 					max_w: Number(req.max_w) > 0 ? Math.min(Number(req.max_w), 4000) : 0,
 					background: str(req.background).slice(0, 64), fallback: appBackdrop() });
 				replyT = setTimeout(function () {
@@ -1788,7 +1877,7 @@
 						// answer is let go, and the shim's genuine one still lands.
 						if (!asked || answered || m.id !== asked || typeof m.nonce !== 'string' || m.nonce !== nonce) return;
 						answered = true;
-						var r = probeResult(m, sel, wantPng, looks);
+						var r = probeResult(m, sel, wantPng, looks, taps);
 						if (r.err) { end(reject, new Error(r.err)); return; }
 						if (!rendered) r.table += '\nThe page never said what it drew; it may not follow the channel.';
 						r.trace = traceText(arr(m.trace).concat(verbs));

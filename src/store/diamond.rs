@@ -3800,13 +3800,21 @@ pub async fn turns_found(id: &str, path: &str, now: &[u8]) -> Option<Vec<u8>> {
 /// # Arguments
 /// * `path` - As the capture names it: normalised, or absolute for a machine file.
 /// * `now` - The bytes at `path` as the act found them.
-pub async fn authored_by_user(id: &str, path: &str, now: &[u8]) -> bool {
-    let found = match this_turn_found(id, path, now).await {
-        TurnFound::Made       => return false,
-        TurnFound::Carried(_) => return true,
-        TurnFound::Was(w)     => w,
+/// * `below` - A turn already kept as this version, asked of afterwards: the file is judged as that
+///   turn found it, by the manifests before it alone, since its own row names the bytes it left.
+pub async fn authored_by_user(id: &str, path: &str, now: &[u8], below: Option<u64>) -> bool {
+    let found = match below {
+        // A kept turn's question: what a live turn captures says nothing of it.
+        Some(_) => now.to_vec(),
+        None    => match this_turn_found(id, path, now).await {
+            TurnFound::Made       => return false,
+            TurnFound::Carried(_) => return true,
+            TurnFound::Was(w)     => w,
+        },
     };
-    let held = versions_manifests(id).await;
+    let held: Vec<(u64, Manifest)> = versions_manifests(id).await.into_iter()
+        .filter(|(n, _)| below.map_or(true, |b| *n < b))
+        .collect();
     !versions::made_by_turns(&held, path, folder_of(path).as_deref(), &versions::hash_of(&found))
 }
 

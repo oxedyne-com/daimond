@@ -240,7 +240,7 @@ function el(tag) {
 function all(e) { return [e].concat(...e.children.map(all)); }
 
 function drawTile(it) {
-	const src = lift('changeName') + lift('changeTile') + '\nreturn changeTile;';
+	const src = lift('changeName') + lift('changeDiff') + lift('changeTile') + '\nreturn changeTile;';
 	const calls = [];
 	const f = new Function('document', 't', 'tn', 'Pending', src)(
 		{ createElement: el }, t, (k, n, v) => k + '.' + (n === 1 ? 'one' : 'other') + JSON.stringify(v),

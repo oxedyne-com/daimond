@@ -55,13 +55,14 @@
 //	  --dry                                      build every request, send none
 //
 // The key is read as `dev/probe_notes.mjs` reads it and there is no default:
-//   ~/.config/oxedyne/daimond/openrouter.key (0600), or DAIMOND_PROBE_KEY.
+//   DAIMOND_PROBE_KEY, else the `openrouter` file of the dev key config (~/.config/oxedyne/daimond-dev/devkey.jdat) (0600), checked first.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PANEL, BASELINE, OPEN, priceOf } from './models.mjs';
+import { devKey } from './devkey.mjs';
 
 const HERE   = path.dirname(fileURLToPath(import.meta.url));
 const REFLUX = path.join(HERE, 'reflux.mjs');
@@ -180,18 +181,6 @@ if (TOOLS.length !== OFFERED.length) {
 		+ 'this probe implements. Capture a request from a role that holds the file tools.');
 }
 
-function readKey() {
-	const env = (process.env.DAIMOND_PROBE_KEY || '').trim();
-	if (env) return env;
-	const file = process.env.DAIMOND_PROBE_KEY_FILE
-		|| path.join(os.homedir(), '.config/oxedyne/daimond/openrouter.key');
-	let text;
-	try { text = fs.readFileSync(file, 'utf8'); }
-	catch (e) { throw new Error(`No provider key. Put one in ${file} (0600), or set DAIMOND_PROBE_KEY.`); }
-	const key = text.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#'));
-	if (!key) throw new Error(`${file} holds no key.`);
-	return key;
-}
 
 // ── The fixture ─────────────────────────────────────────────────────
 //
@@ -588,7 +577,7 @@ function report(rows) {
 if (SELFTEST) {
 	process.exit(selftest() ? 1 : 0);
 }
-const key = DRY ? 'dry' : readKey();
+const key = DRY ? 'dry' : (await devKey('openrouter', ['DAIMOND_PROBE_KEY']));
 const rows = [];
 const out = KEEP ? path.join(KEEP, 'rows.json') : '';
 const say = (rec, i) => console.log(`${rec.model.padEnd(28)} ${rec.reg.padEnd(14)} #${i} `

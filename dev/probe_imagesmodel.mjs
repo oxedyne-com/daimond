@@ -9,8 +9,8 @@
 //
 //   node dev/probe_imagesmodel.mjs [--model ~deepseek/deepseek-flash-latest] [--url https://openrouter.ai/api/v1]
 //
-// Key: DAIMOND_PROBE_KEY, or the file DAIMOND_PROBE_KEY_FILE, or ~/.config/oxedyne/daimond/openrouter.key
-// (0600). The key is never printed.
+// Key: DAIMOND_PROBE_KEY, else the `openrouter` file of the dev key config (~/.config/oxedyne/daimond-dev/devkey.jdat) (0600), checked against
+// OpenRouter first. The key is never printed.
 //
 // A dead PROBE KEY is not a dead model, and the two must never read alike: one is an owner step
 // (replace the key), the other is the finding this probe exists for. So the provider's answer is
@@ -24,20 +24,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { devKey } from './devkey.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
 const MODEL = flag('model', '~deepseek/deepseek-flash-latest');
 const URL_  = flag('url', 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
 
-function readKey() {
-	const env = (process.env.DAIMOND_PROBE_KEY || '').trim();
-	if (env) return env;
-	const file = process.env.DAIMOND_PROBE_KEY_FILE || path.join(os.homedir(), '.config/oxedyne/daimond/openrouter.key');
-	let text = '';
-	try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return ''; }
-	return text.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#')) || '';
-}
 
 /// A w-by-w PNG of one colour, so the probe carries no binary fixture.
 function square(w, rgb) {
@@ -55,8 +48,7 @@ function square(w, rgb) {
 		chunk('IDAT', zlib.deflateSync(Buffer.concat(Array(w).fill(row)))), chunk('IEND', Buffer.alloc(0))]);
 }
 
-const key = readKey();
-if (!key) { console.error('No provider key: set DAIMOND_PROBE_KEY or put one in ~/.config/oxedyne/daimond/openrouter.key.'); process.exit(2); }
+const key = await devKey('openrouter', ['DAIMOND_PROBE_KEY']);
 const png = square(16, [220, 20, 20]).toString('base64');
 const t0 = Date.now();
 let res, raw = '';

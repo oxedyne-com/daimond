@@ -63,8 +63,12 @@ pub mod handle_cache;
 pub mod held_change;
 /// How fast each host serves each model, and the hosts routing leaves out (D-20261020-10).
 pub mod hostspeed;
+pub mod image_edit;
 pub mod llm;
 pub mod marks;
+/// One address check for every request a remote party's word sends out (R3 F1).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod net_guard;
 /// The system prompt each kind of agent runs under, and the part of it a user
 /// may replace from their workspace.
 /// What a model's own dialect needs, read off the provider's slug: the prompt addendum it

@@ -568,6 +568,8 @@
 			png:        req.png !== false,
 			// crystal_look: the targets to measure, each a selector or `text:` and its words.
 			look:       Array.isArray(req.look) ? req.look : [],
+			// What to tap first, so a part behind a tap is measured.
+			taps:       Array.isArray(req.taps) ? req.taps : [],
 			// The load proof (K1): the verdict and the debug count come back beside the table.
 			proof:        req.proof === true,
 			graphics_min: Number(req.graphics_min) || 0,

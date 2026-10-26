@@ -17,6 +17,10 @@
  *   IMAGE   Mistral's own `/v1/ocr` (returns markdown text, the cheap path) when a `mistral`
  *           key is configured, else a vision model on OpenRouter reading an `image_url` part.
  *
+ *   EDIT    OpenRouter's Image API, `/images` beside his row's chat endpoint, on the PDF route's
+ *           key (UNBLOCK-9, `image_edit`). A reply that links to its picture rather than
+ *           carrying it is fetched here, so the wasm always sees `data[0].b64_json`.
+ *
  * Everything here returns the RAW response body to the wasm, which parses it — so the defensive
  * parsing is one place, in Rust, and tested there.
  */
@@ -143,5 +147,97 @@
 			+ 'or an OpenRouter key (a vision model reads it). Add one in the models panel.');
 	}
 
-	window.DaimondOcr = { chat: chat, image: image, route: route };
+	/// The bytes behind an `ArrayBuffer`, as base64, in slices `String.fromCharCode` can take.
+	function b64(buf) {
+		var u = new Uint8Array(buf), s = '';
+		for (var i = 0; i < u.length; i += 0x8000) {
+			s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+		}
+		return btoa(s);
+	}
+
+	/// A reply whose first picture is a `url` and not `b64_json`, with that picture fetched into
+	/// `b64_json` so the wasm parses one shape. Any other reply is returned as it came.
+	async function inlined(body) {
+		var j = null;
+		try { j = JSON.parse(body); } catch (e) { return body; }
+		var d = j && j.data && j.data[0];
+		if (!d || d.b64_json || typeof d.url !== 'string' || !/^https:/.test(d.url)) return body;
+		var r = await fetch(d.url);
+		if (!r.ok) throw new Error('The image model made a picture, but fetching it returned HTTP ' + r.status + '.');
+		d.b64_json = b64(await r.arrayBuffer());
+		delete d.url;
+		return JSON.stringify(j);
+	}
+
+	/// POST an Image API body (`image_edit`) to OpenRouter's `/images` on the PDF route: his
+	/// `openrouter` row, else the Daimond-credits key routed through OpenRouter. Resolves the
+	/// raw response body, a linked picture already fetched into it.
+	async function images(body) {
+		var o = openrouter();
+		if (!o) {
+			throw new Error(
+				'Editing a picture needs an OpenRouter key or Daimond credits: an image model there '
+				+ 'makes it. Add a key in the models panel, or run your models through OpenRouter.');
+		}
+		// The sibling of his chat endpoint, as the runner's `LlmClient::sibling` derives it.
+		var url = M().siblingUrl(o.url, 'images'); // fixed: OpenRouter Image API path
+		var res = await post(url, o.key, body);
+		if (!res.ok && !res.body) {
+			throw new Error('OpenRouter returned HTTP ' + res.status + ' with no body.');
+		}
+		return res.ok ? inlined(res.body) : res.body;
+	}
+
+	/// GET a JSON document on the OpenRouter route, or null where it did not answer with one.
+	async function getJson(o, url) {
+		try {
+			var auth = (M() && M().authHeaders) ? M().authHeaders(url, o.key) : { authorization: 'Bearer ' + o.key };
+			var r = await fetch(url, { headers: auth });
+			return r.ok ? await r.json() : null;
+		} catch (e) { return null; }
+	}
+
+	var catalogueOnce = null;	// the one fetch of the catalogue this page makes, shared
+
+	/// The Image API catalogue and each picture-taking model's price, fetched once a page on the
+	/// PDF route and handed to models.js (`setImageCatalogue`): the list at `/images/models`
+	/// beside his chat endpoint, then each model's own `endpoints` address, which the list names.
+	/// A `google/` model is listed but not priced, since it is never the computed default.
+	function imageCatalogue() {
+		if (catalogueOnce) return catalogueOnce;
+		catalogueOnce = (async function () {
+			var o = openrouter(), m = M();
+			if (!o || !m) { catalogueOnce = null; return { models: [], prices: {} }; }
+			var list = await getJson(o, m.siblingUrl(o.url, 'images/models')); // fixed: OpenRouter Image API path
+			var models = (list && Array.isArray(list.data)) ? list.data : [];
+			var prices = {};
+			await Promise.all(models.filter(function (x) {
+				return m.imageTakesPicture(x) && typeof x.endpoints === 'string' && !/^google\//.test(String(x.id));
+			}).map(async function (x) {
+				var at = '';
+				try { at = new URL(x.endpoints, o.url).href; } catch (e) { return; }
+				var pr = m.imagePrice(await getJson(o, at));
+				if (pr) prices[x.id] = pr;
+			}));
+			if (!models.length) catalogueOnce = null;	// asked again next time, not cached empty
+			var cat = { models: models, prices: prices };
+			m.setImageCatalogue(models, prices);
+			return cat;
+		})();
+		return catalogueOnce;
+	}
+
+	/// The "Image editing" model as `{"id","price"}` JSON: his Jobs pick, else the cheapest the
+	/// catalogue prices (models.js `imageModelOf`); empty when there is neither.
+	async function imageModel() {
+		var m = M();
+		if (!m || typeof m.imageModelOf !== 'function') return JSON.stringify({ id: '', price: '' });
+		var pick = m.getJob('imageEditing');
+		var cat = pick.model ? null : await imageCatalogue();
+		return JSON.stringify(m.imageModelOf(cat) || { id: '', price: '' });
+	}
+
+	window.DaimondOcr = { chat: chat, image: image, images: images, imageModel: imageModel,
+		imageCatalogue: imageCatalogue, route: route };
 })();

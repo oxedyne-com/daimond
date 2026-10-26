@@ -577,7 +577,7 @@
 	'chat.handback_old_page': 'This page is older than {name} expects, so the chat did not run there. Reload this page to update it.',
 	'chat.handoff_tokens':        '{n} tok',
 	'chat.handoff_cached':        '{n} cached',
-	// i18n-indirect: daimond.js m.say.k = open -- a native runner's error, vision or failed-answer row names the page's own key (`friendlyError`, `blindLine`) in `say` (`logRowText`); a key this build lacks says the row's content
+	// i18n-indirect: daimond.js m.say.k = open -- a native runner's error, vision or failed-answer row names the page's own key (`friendlyError`, `blindLine`) in `say` (`logRowText`), and a cut row its count (`turn.rows_cut` {n}, said through `tn`); a key this build lacks says the row's content
 	'chat.who_handoff':    'Hand-off',
 	'chat.who_tool':       'Tool',
 	'chat.who_files':      'Files',
@@ -830,6 +830,12 @@
 	// i18n-family: models.job_ = one-way workers images drafting summarising -- the Jobs rows (models.js jobsBlock, ownerName); job_pin shares the prefix
 	'models.job_workers': 'Workers',
 	'models.job_images': 'Images',
+	'models.job_imageEditing': 'Image editing',
+	'models.image_editing_help': 'The model that makes a new picture from one, for image_edit: colourise, restore, change. Unset, the cheapest priced one that takes a picture, never a Google model.',
+	'models.image_cheapest': 'Cheapest that edits pictures',
+	'models.image_cheapest_is': 'Cheapest: {model} ({price})',
+	'models.image_per_image': '{amount} an image',
+	'models.image_per_mp': '{amount} a megapixel',
 	'models.job_drafting': 'Drafting',
 	'models.job_summarising': 'Summarising',
 	'models.same_as_daimon': 'Same as daimon',
@@ -2541,6 +2547,8 @@
 	'turn.interrupted':       'Interrupted. The browser closed before this finished.',
 	'turn.runner_lost':       'Interrupted. The device running this reloaded before it finished.',
 	'turn.retry':             'Retry',
+	'turn.rows_cut.one':      '{n} step not shown',
+	'turn.rows_cut.other':    '{n} steps not shown',
 	'turn.not_run':           'Not run. The hand-off couldn’t start.',
 	'turn.not_run_because': 'Not run · {why}',
 	'turn.interrupted_early': 'Interrupted before it could answer.',
@@ -3783,6 +3791,8 @@
 	'permit.act_run': 'run a command',
 	// A change to a file the person made, asked first (UNBLOCK-26 U5).
 	'change.head': 'Change {name}?',
+	'change.yours': 'Changed your file {name}',
+	'change.file': 'Changed {name}',
 	'change.head_delete': 'Delete {name}?',
 	'change.head_move': 'Move {name}?',
 	'change.in': 'In {folder}',

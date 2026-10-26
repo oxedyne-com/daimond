@@ -240,6 +240,11 @@ use oxedyne_daimond::protocol::{AgentEvent, Session};
 use oxedyne_daimond::tools::{CallOutcome, diamond_bounds, FileRoot, Tool, ToolContext, ToolRegistry};
 use oxedyne_daimond::workspace::Workspace;
 
+use oxedyne_fe2o3_jdat::Dat;
+use oxedyne_fe2o3_jdat::string::dec::DecoderConfig;
+use oxedyne_fe2o3_jdat::usr::{UsrKind, UsrKindCode, UsrKindId};
+
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -364,7 +369,7 @@ struct Task {
 fn check_bigfile(repo: &Path, reply: &str) -> Result<(), String> {
     let (line, _) = match first_cell_line(repo) {
         Some(f) => f,
-        None    => return Err(fmt!("www/js/daimond.js no longer holds an appendChild(cell( inside \
+        None    => return Err(fmt!("www/js/daimond.js no longer holds a row.appendChild( inside \
             updateSpend, so this task has rotted -- re-point it")),
     };
     let plain = fmt!("{}", line);
@@ -376,7 +381,10 @@ fn check_bigfile(repo: &Path, reply: &str) -> Result<(), String> {
         reply.chars().take(200).collect::<String>()))
 }
 
-/// The line the task above asks for: the first `appendChild(cell(` inside `updateSpend`.
+/// The line the task above asks for: the first `row.appendChild(` inside `updateSpend`.
+///
+/// Re-pointed 2026-10-26: `updateSpend` no longer builds cells, so the old anchor
+/// `appendChild(cell(` had gone and the self-test said so.
 ///
 /// **Found in the file, because it was written down and it rotted.**  The number was 15996, and
 /// the comment beside it said the answer was checked against the file rather than against a
@@ -396,7 +404,7 @@ fn first_cell_line(repo: &Path) -> Option<(usize, String)> {
             inside = true;
             continue;
         }
-        if inside && line.contains("appendChild(cell(") {
+        if inside && line.contains("row.appendChild(") {
             return Some((i + 1, line.trim().to_string()));
         }
     }
@@ -765,11 +773,19 @@ fn aliases_of(text: &str, what: &str) -> Vec<String> {
     out
 }
 
-/// Every place in `www/js` that calls `DaimondLedger.totals`, alias and all.
+/// The `DaimondLedger` method the `alias` task asks about.
+///
+/// Re-pointed 2026-10-26 from `totals`, which by then had one caller left, the aliased one in
+/// `spend.js`, so the task no longer had the direct-plus-aliased shape it was written for.
+/// `perProvider` has three: two direct, in `daimond.js` and `models.js`, and one through the
+/// `L` of `spend.js`.
+const ALIAS_METHOD: &str = "perProvider";
+
+/// Every place in `www/js` that calls `DaimondLedger.perProvider`, alias and all.
 ///
 /// Computed from the tree on every run rather than written down, so a caller added, moved or
 /// renamed cannot turn the task green by having been recorded here once.
-fn totals_callers(repo: &Path) -> Result<Vec<(String, usize)>, String> {
+fn method_callers(repo: &Path) -> Result<Vec<(String, usize)>, String> {
     let dir = repo.join("www/js");
     let listing = match std::fs::read_dir(&dir) {
         Ok(l)  => l,
@@ -794,8 +810,8 @@ fn totals_callers(repo: &Path) -> Result<Vec<(String, usize)>, String> {
         };
         let aliases = aliases_of(&text, "window.DaimondLedger");
         for (i, line) in text.lines().enumerate() {
-            let direct = line.contains("DaimondLedger.totals(");
-            let through = aliases.iter().any(|a| line.contains(&fmt!("{}.totals(", a)));
+            let direct = line.contains(&fmt!("DaimondLedger.{}(", ALIAS_METHOD));
+            let through = aliases.iter().any(|a| line.contains(&fmt!("{}.{}(", a, ALIAS_METHOD)));
             if direct || through {
                 out.push((n.clone(), i + 1));
             }
@@ -806,12 +822,12 @@ fn totals_callers(repo: &Path) -> Result<Vec<(String, usize)>, String> {
 
 /// The same answer by a different road, for the self-test to hold `check_alias` against.
 ///
-/// A bare scan for `.totals(` needs no alias resolution and finds both callers, so it is an
+/// A bare scan for `.perProvider(` needs no alias resolution and finds both callers, so it is an
 /// oracle the check does not share a line of code with -- which is the point, since a self-test
 /// that builds its right answer out of the thing under test proves only that the thing agrees
 /// with itself.  If the two ever disagree, the self-test goes red and that is a finding: either
-/// the alias walk has broken, or `.totals(` has grown a second meaning in this tree.
-fn bare_totals_scan(repo: &Path) -> String {
+/// the alias walk has broken, or `.perProvider(` has grown a second meaning in this tree.
+fn bare_method_scan(repo: &Path) -> String {
     let dir = repo.join("www/js");
     let listing = match std::fs::read_dir(&dir) {
         Ok(l)  => l,
@@ -833,7 +849,7 @@ fn bare_totals_scan(repo: &Path) -> String {
             Err(_) => continue,
         };
         for (i, line) in text.lines().enumerate() {
-            if line.contains(".totals(") {
+            if line.contains(&fmt!(".{}(", ALIAS_METHOD)) {
                 out.push(fmt!("www/js/{}:{}", n, i + 1));
             }
         }
@@ -852,7 +868,7 @@ fn bare_totals_scan(repo: &Path) -> String {
 /// what `file_search` can see.  The check computes the callers from the tree at run time, so it
 /// follows a file that moves and goes red rather than stale when the alias does.
 fn check_alias(repo: &Path, reply: &str) -> Result<(), String> {
-    let callers = match totals_callers(repo) {
+    let callers = match method_callers(repo) {
         Ok(c)  => c,
         Err(e) => return Err(e),
     };
@@ -862,9 +878,9 @@ fn check_alias(repo: &Path, reply: &str) -> Result<(), String> {
     // A task pointed at a question that no longer has the shape it was written for measures
     // nothing, and must say that rather than pass.
     if files.len() < 2 {
-        return Err(fmt!("the tree holds {} caller(s) of DaimondLedger.totals in {} file(s), so \
+        return Err(fmt!("the tree holds {} caller(s) of DaimondLedger.{} in {} file(s), so \
             there is no aliased one left and this task has rotted -- re-point it",
-            callers.len(), files.len()));
+            callers.len(), ALIAS_METHOD, files.len()));
     }
     let missed: Vec<String> = callers.iter()
         .filter(|(f, l)| !reply.contains(f.as_str()) || !reply.contains(&fmt!("{}", l)))
@@ -907,7 +923,7 @@ const TASKS: &[Task] = &[
         catches:   "file_read refusing the app's own 1.6 MB UI source, and reading it whole",
         mark:      Mark::App,
         brief:     "In {app}/www/js/daimond.js, find the function updateSpend. Tell me the line \
-                    number of the first el.appendChild(cell(...)) call inside it. Answer \
+                    number of the first row.appendChild(...) call inside it. Answer \
                     with the number and nothing else. Change no files.",
         check:     check_bigfile,
         max_calls: 6,
@@ -1013,7 +1029,7 @@ const TASKS: &[Task] = &[
         name:      "alias",
         catches:   "\"who calls this?\" answered by string matching, one caller of two",
         mark:      Mark::App,
-        brief:     "Name every place in {app}/www/js that calls DaimondLedger's totals method, \
+        brief:     "Name every place in {app}/www/js that calls DaimondLedger's perProvider method, \
                     each as a file and a line number. Include the ones that reach it through a \
                     local name. Change no files.",
         check:     check_alias,
@@ -1070,6 +1086,68 @@ struct Spend {
     prompt:   u64,
     completion: u64,
     secs:     f64,
+    key_refused: bool, // The provider answered 401: the key, not the model.
+}
+
+// ── The key ──────────────────────────────────────────────────────────────────────────
+
+/// The one dev key config, outside every tree: `$DAIMOND_DEVKEY`, else
+/// `~/.config/oxedyne/daimond-dev/devkey.jdat` -- the file `dev/devkey.mjs` and rc's
+/// `~/usr/code/bash/devkey` read.
+fn devkey_config() -> Outcome<PathBuf> {
+    match std::env::var("DAIMOND_DEVKEY") {
+        Ok(p) if !p.trim().is_empty() => Ok(PathBuf::from(p)),
+        _ => Ok(PathBuf::from(res!(std::env::var("HOME").map_err(|_| err!(
+            "HOME is not set, so the dev key config cannot be found; set DAIMOND_DEVKEY.";
+            Init, Missing)))).join(".config/oxedyne/daimond-dev/devkey.jdat")),
+    }
+}
+
+fn fingerprint(key: &str) -> String {
+    let n = key.chars().count();
+    fmt!("…{}", key.chars().skip(n.saturating_sub(4)).collect::<String>())
+}
+
+/// The OpenRouter key and where it came from: `DAIMOND_PROBE_KEY`, else the file the
+/// `openrouter` entry of the dev key config names (DEV-KEY), the one `dev/devkey.mjs` and
+/// `dev/devkey.sh` read. Anthropic models go through OpenRouter's `anthropic/*` slugs, so one
+/// key serves. No fallback: a missing entry, file or key is an error naming the fix.
+fn dev_key() -> Outcome<(String, String)> {
+    if let Ok(k) = std::env::var("DAIMOND_PROBE_KEY") {
+        if !k.trim().is_empty() {
+            return Ok((k.trim().to_string(), fmt!("DAIMOND_PROBE_KEY")));
+        }
+    }
+    let cfg = res!(devkey_config());
+    let text = res!(std::fs::read_to_string(&cfg).map_err(|e| err!(
+        "Cannot read the dev key config {:?} ({}). Create it (0700 directory, 0600 file): a \
+         JSON map such as {{\"openrouter\": \"/abs/path/openrouter.key\"}}, or set \
+         DAIMOND_DEVKEY.", cfg, e;
+        Init, Missing)));
+    let dcfg: DecoderConfig<BTreeMap<UsrKindCode, UsrKind>, BTreeMap<String, UsrKindId>> =
+        DecoderConfig::json(None);
+    let map = match res!(Dat::decode_string_with_config(&text, &dcfg)) {
+        Dat::Map(m) => m,
+        _           => return Err(err!("The dev key config {:?} is not a map.", cfg; Init, Invalid)),
+    };
+    let tail = match map.get(&Dat::Str(fmt!("openrouter"))) {
+        Some(Dat::Str(v)) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => return Err(err!("The dev key config {:?} has no \"openrouter\" entry. Add one \
+            naming the key file.", cfg; Init, Missing)),
+    };
+    let file = PathBuf::from(&tail);
+    if !file.is_absolute() {
+        return Err(err!("\"openrouter\" in {:?} is not an absolute path: {}", cfg, tail;
+            Init, Invalid));
+    }
+    let body = res!(std::fs::read_to_string(&file).map_err(|e| err!(
+        "Cannot read the openrouter key file {:?} ({}). Install one there (0600, in a 0700 \
+         directory), point \"openrouter\" in {:?} at a working one, or set DAIMOND_PROBE_KEY. \
+         Run PROBE_SELFTEST=1 first: it is free.", file, e, cfg; Init, Missing)));
+    let key = res!(body.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#'))
+        .ok_or_else(|| err!("{:?} holds no key -- every line is empty or a comment.", file;
+            Init, Missing)));
+    Ok((key.to_string(), fmt!("{}", file.display())))
 }
 
 fn main() {
@@ -1140,7 +1218,7 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
             // and `alias` is handed the reply a daimon really gave: the literal caller, alone.
             "parses"  => (fmt!("jscheck: 1 file(s) do not parse."),
                           fmt!("node --check reported nothing, so the file parses.")),
-            "alias"   => (bare_totals_scan(repo), fmt!("www/js/daimond.js:16036 is the caller.")),
+            "alias"   => (bare_method_scan(repo), fmt!("www/js/daimond.js:45705 is the caller.")),
             "world"   => (fmt!("export DAIMOND_SCRATCH={}/.cache/daimond",
                                std::env::var("HOME").unwrap_or_default().trim_end_matches('/')),
                           fmt!("dev/world.sh: line 84: HOME: unbound variable")),
@@ -1315,10 +1393,7 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
 // ── The live run ─────────────────────────────────────────────────────────────────────
 
 fn live(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
-    let key = res!(std::env::var("DAIMOND_PROBE_KEY").map_err(|_| err!(
-        "Set DAIMOND_PROBE_KEY to a provider key. Run PROBE_SELFTEST=1 first -- it is free \
-         and it proves these checks can go red.";
-        Init, Missing)));
+    let (key, key_from) = res!(dev_key());
     let host  = std::env::var("DAIMOND_PROBE_HOST")
         .unwrap_or_else(|_| fmt!("openrouter.ai"));
     let path  = std::env::var("DAIMOND_PROBE_PATH")
@@ -1331,6 +1406,7 @@ fn live(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
     println!("  workspace   {:?}", ws_root());
     println!("  marks       {} (app), {} (wide)", app_rel(), wide_rel());
     println!("  model       {}", model);
+    println!("  key         {} from {}", fingerprint(&key), key_from);
     println!("  THIS SPENDS: one turn per task, each up to {} tool call(s).",
         chosen.iter().map(|t| t.max_calls).max().unwrap_or(0));
     if std::env::var("PROBE_YES").is_err() {
@@ -1366,6 +1442,15 @@ fn live(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
         // After the check, which reads the fixture, and before the next task.
         if let Some(unbuild) = t.teardown {
             unbuild(repo);
+        }
+        // A refused key fails every task the same way, so the run stops at the first one and
+        // says which file to replace, rather than printing eight model failures.
+        if spend.key_refused {
+            return Err(err!("The provider refused the key {} from {}: expired or revoked. \
+                Replace that file with a live key, or point \"openrouter\" in {} at one. ({})",
+                fingerprint(&key), key_from,
+                devkey_config().map(|p| fmt!("{}", p.display())).unwrap_or_default(), why;
+                Init, Unauthorised));
         }
         // Four other people have uncommitted work in this tree. A task that moved HEAD or added
         // to the index did it to them, so it is a failure whatever its own verdict was -- and
@@ -1588,6 +1673,7 @@ fn one_task(
             agent.run_turn(&mut session, brief, &registry, &mut on_event))
         {
             s.secs = started.elapsed().as_secs_f64();
+            s.key_refused = e.tags().contains(&ErrTag::Unauthorised);
             return (false, s, fmt!("the turn ended in an error: {}", e));
         }
     }

@@ -279,7 +279,7 @@ impl HostStore for TestStore {
     // true refuses: claim and move_ends then hold, and the hold refuses (u2_plan §9.2).
     fn versionable(&self, _: &str, _: &str) -> bool { !self.gate.borrow().keeps }
     // His unless a test said the Diamond made it; refusals kept as the store keeps them.
-    async fn authored_by_user(&self, _: &str, path: &str, _: &[u8]) -> bool {
+    async fn authored_by_user(&self, _: &str, path: &str, _: &[u8], _: Option<u64>) -> bool {
         !self.gate.borrow().mine.contains(path)
     }
     fn change_refused(&self, _: &str, path: &str) -> bool {

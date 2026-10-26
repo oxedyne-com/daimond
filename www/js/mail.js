@@ -116,6 +116,22 @@
 		return { text: '', outcome: 'failed' };
 	}
 
+	/// A message file's bytes, `{ bytes, outcome }`, for the one reader there is
+	/// (`wasm.mail_view`): a message is bytes, and a charset other than UTF-8 is lost the
+	/// moment it is read as text. `deps.readBytes` is that door; a host without it is read
+	/// as text and encoded back, which keeps every 7-bit message whole.
+	async function readRaw(path) {
+		if (deps && typeof deps.readBytes === 'function') {
+			try {
+				return { bytes: await deps.readBytes(path), outcome: 'done' };
+			} catch (e) {
+				return { bytes: null, outcome: 'failed' };
+			}
+		}
+		var r = await readText(path);
+		return { bytes: r.outcome === 'done' ? utf8(r.text) : null, outcome: r.outcome };
+	}
+
 	var els     = {};
 	var state   = {
 		accounts: [],                // [{address, host, port, user, pass (wrapped), folder, folders:{}}]
@@ -896,10 +912,6 @@
 		var h = hs.find(function (x) { return x[0] === name; });
 		return h ? h[1] : '';
 	}
-	function bodyOf(text) {
-		var m = text.match(/\r?\n\r?\n/);
-		return m ? text.slice(m.index + m[0].length) : '';
-	}
 
 	/// Decode an RFC 2047 encoded-word (`=?utf-8?B?...?=`), which is how a
 	/// subject line carries anything that is not ASCII.
@@ -929,84 +941,7 @@
 		return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 	}
 
-	function decodeQP(s) {
-		return s.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, function (_, h) {
-			return String.fromCharCode(parseInt(h, 16));
-		});
-	}
-	function decodeB64(s) {
-		try { return atob(s.replace(/\s+/g, '')); } catch (e) { return s; }
-	}
 
-	/// Re-read a decoded byte-string as UTF-8. `atob` and quoted-printable both
-	/// yield one character per byte, so a multi-byte character arrives as
-	/// mojibake unless it is decoded again.
-	function asUtf8(bytes, charset) {
-		try {
-			var arr = Uint8Array.from(bytes, function (c) { return c.charCodeAt(0) & 0xff; });
-			var cs = (charset || 'utf-8').toLowerCase().replace(/^utf8$/, 'utf-8');
-			return new TextDecoder(cs, { fatal: false }).decode(arr);
-		} catch (e) { return bytes; }
-	}
-
-	/// The readable text of a message: the `text/plain` part of a multipart, or
-	/// the body itself, decoded out of whatever transfer encoding it arrived in.
-	function readableText(raw) {
-		var hs   = parseHeaders(raw);
-		var ctype = header(hs, 'content-type') || 'text/plain';
-		var body  = bodyOf(raw);
-
-		var mb = ctype.match(/boundary="?([^";]+)"?/i);
-		if (/multipart/i.test(ctype) && mb) {
-			var parts = body.split('--' + mb[1]);
-			var plain = null, html = null;
-			parts.forEach(function (p) {
-				var phs = parseHeaders(p.replace(/^\r?\n/, ''));
-				var pct = header(phs, 'content-type') || '';
-				var pte = (header(phs, 'content-transfer-encoding') || '').toLowerCase();
-				var pb  = bodyOf(p.replace(/^\r?\n/, ''));
-				if (!pb) return;
-				if (pte === 'base64')           pb = decodeB64(pb);
-				else if (pte === 'quoted-printable') pb = decodeQP(pb);
-				var pcs = (pct.match(/charset="?([^";]+)"?/i) || [])[1];
-				pb = asUtf8(pb, pcs);
-				if (/text\/plain/i.test(pct) && plain === null) plain = pb;
-				else if (/text\/html/i.test(pct) && html === null) html = pb;
-				else if (/multipart/i.test(pct) && plain === null) {
-					// One level of nesting: multipart/alternative inside
-					// multipart/mixed is the common shape of a message with an
-					// attachment, and the text is inside the inner part.
-					var inner = readableText('content-type: ' + pct + '\r\n\r\n' + pb);
-					if (inner) plain = inner;
-				}
-			});
-			if (plain) return plain.trim();
-			if (html) return stripHtml(html).trim();
-			return '';
-		}
-
-		var te = (header(hs, 'content-transfer-encoding') || '').toLowerCase();
-		if (te === 'base64')                 body = decodeB64(body);
-		else if (te === 'quoted-printable')  body = decodeQP(body);
-		var cs = (ctype.match(/charset="?([^";]+)"?/i) || [])[1];
-		body = asUtf8(body, cs);
-		if (/text\/html/i.test(ctype)) return stripHtml(body).trim();
-		return body.trim();
-	}
-
-	/// Reduce HTML to its text. The message is never inserted as markup: a mail
-	/// body is the least trustworthy string in the application.
-	function stripHtml(html) {
-		var bare = String(html)
-			.replace(/<style[\s\S]*?<\/style>/gi, '')
-			.replace(/<script[\s\S]*?<\/script>/gi, '')
-			.replace(/<\/(p|div|tr|h[1-6]|li)>/gi, '\n')
-			.replace(/<br\s*\/?>/gi, '\n')
-			.replace(/<[^>]+>/g, '');
-		var d = document.createElement('textarea');
-		d.innerHTML = bare;                              // entity decode only
-		return d.value.replace(/\n{3,}/g, '\n\n');
-	}
 
 	// ── Maildir ─────────────────────────────────────────────────────
 
@@ -1094,45 +1029,8 @@
 		}
 		return btoa(s);
 	}
-	function isAscii(s) {
-		return !/[^\x20-\x7e]/.test(String(s == null ? '' : s));
-	}
 
-	/// A header value with anything but plain ASCII in it, as RFC 2047 encoded-words.
-	///
-	/// The words are chunked so no line runs past the 76-character limit, and the chunk
-	/// boundary is taken at a *character*, never inside a multi-byte one — split a
-	/// character across two encoded-words and the recipient decodes rubbish.
-	function encodeWord(s) {
-		s = String(s == null ? '' : s);
-		if (isAscii(s)) return s;
-		var out = [], chunk = '', bytes = 0;
-		for (var i = 0; i < s.length; i++) {
-			var ch = s[i];
-			// A surrogate pair is one character and must not be halved.
-			if (/[\uD800-\uDBFF]/.test(ch) && i + 1 < s.length) ch += s[++i];
-			var n = utf8(ch).length;
-			if (bytes + n > 39 && chunk) {
-				out.push('=?utf-8?B?' + b64(utf8(chunk)) + '?=');
-				chunk = ''; bytes = 0;
-			}
-			chunk += ch; bytes += n;
-		}
-		if (chunk) out.push('=?utf-8?B?' + b64(utf8(chunk)) + '?=');
-		return out.join('\r\n ');
-	}
 
-	/// One address as a header writes it: `Name <addr>`, with the name encoded if it
-	/// needs it and quoted if it holds a character that would otherwise punctuate.
-	function encodeAddr(a) {
-		if (typeof a === 'string') a = splitAddr(a);
-		if (!a || !a.addr) return '';
-		if (!a.name) return a.addr;
-		var nm = isAscii(a.name)
-			? (/[(),:;<>@\[\]".]/.test(a.name) ? '"' + a.name.replace(/(["\\])/g, '\\$1') + '"' : a.name)
-			: encodeWord(a.name);
-		return nm + ' <' + a.addr + '>';
-	}
 	/// Split a header's worth of addresses on the commas that separate them, ignoring
 	/// the ones inside a quoted display name.
 	function addrList(s) {
@@ -1151,44 +1049,6 @@
 		return addrList(s).map(function (x) { return splitAddr(x).addr; }).filter(Boolean);
 	}
 
-	/// Quoted-printable, over the UTF-8 bytes.
-	///
-	/// The rules that bite: a space or tab at the end of a line is invisible and would be
-	/// stripped in transit, so it is encoded; a line is folded with a soft break before it
-	/// reaches 76 characters; and a line beginning `From ` is escaped, because some
-	/// software still treats one as the start of a new message.
-	function encodeQP(text) {
-		var bytes = utf8(String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
-		var lines = [], line = '', held = '';
-		function flush() { lines.push(line); line = ''; }
-		function push(tok) {
-			if (line.length + tok.length > 75) { lines.push(line + '='); line = ''; }
-			line += tok;
-		}
-		for (var i = 0; i < bytes.length; i++) {
-			var b = bytes[i];
-			if (b === 0x0a) {                                   // end of line
-				if (held) { push(held === ' ' ? '=20' : '=09'); held = ''; }
-				flush();
-				continue;
-			}
-			if (held) { push(held); held = ''; }
-			if (b === 0x20) { held = ' '; continue; }
-			if (b === 0x09) { held = '\t'; continue; }
-			if (b >= 33 && b <= 126 && b !== 61) push(String.fromCharCode(b));
-			else push('=' + ('0' + b.toString(16).toUpperCase()).slice(-2));
-			if (line === 'From' && i + 1 < bytes.length && bytes[i + 1] === 0x20) {
-				line = '=46rom';                                // a line may not begin "From "
-			}
-		}
-		if (held) push(held === ' ' ? '=20' : '=09');
-		flush();
-		return lines.join('\r\n');
-	}
-	/// Base64, wrapped to the 76-character line a MIME body is allowed.
-	function b64Lines(bytes) {
-		return (b64(bytes).match(/.{1,76}/g) || []).join('\r\n');
-	}
 
 	/// The date, as a mail header spells it. Built by hand rather than through
 	/// `toLocaleString`, because the format is fixed and English and the user's locale
@@ -1213,55 +1073,31 @@
 		return '<' + rand(10) + '.' + Date.now() + '@' + (domainOf(from) || 'daimond.local') + '>';
 	}
 
-	/// Build the RFC 5322 document a draft describes.
-	///
-	/// A draft with no attachment is one `text/plain` part; a draft with attachments is a
-	/// `multipart/mixed` whose first part is that text. Nothing here is optional
-	/// decoration: the `Message-ID` is what a reply to this message will point back at,
-	/// and `In-Reply-To` / `References` are what make a reply *thread* in the recipient's
-	/// client rather than arrive as an unrelated message with a similar subject.
-	function buildMessage(d) {
-		var from = { name: d.fromName || '', addr: d.from };
-		var id   = d.messageId || messageId(d.from);
-		var h    = [];
-		h.push('Message-ID: ' + id);
-		h.push('Date: ' + mailDate(new Date()));
-		h.push('From: ' + encodeAddr(from));
-		h.push('To: ' + addrList(d.to).map(encodeAddr).join(', '));
-		if (String(d.cc || '').trim()) h.push('Cc: ' + addrList(d.cc).map(encodeAddr).join(', '));
-		h.push('Subject: ' + encodeWord(d.subject || ''));
-		if (d.inReplyTo) {
-			h.push('In-Reply-To: ' + d.inReplyTo);
-			h.push('References: ' + (d.references || d.inReplyTo));
-		}
-		h.push('MIME-Version: 1.0');
-		h.push('User-Agent: Daimond');
-
-		var atts = d.attachments || [];
-		if (!atts.length) {
-			h.push('Content-Type: text/plain; charset=utf-8');
-			h.push('Content-Transfer-Encoding: quoted-printable');
-			return h.join('\r\n') + '\r\n\r\n' + encodeQP(d.body || '') + '\r\n';
-		}
-
-		var bnd = '=_daimond_' + rand(12);
-		h.push('Content-Type: multipart/mixed; boundary="' + bnd + '"');
-		var out = h.join('\r\n') + '\r\n\r\n'
-			+ 'This is a message in MIME format.\r\n'
-			+ '--' + bnd + '\r\n'
-			+ 'Content-Type: text/plain; charset=utf-8\r\n'
-			+ 'Content-Transfer-Encoding: quoted-printable\r\n\r\n'
-			+ encodeQP(d.body || '') + '\r\n';
-		atts.forEach(function (att) {
-			var name = att.name || 'attachment';
-			out += '--' + bnd + '\r\n'
-				+ 'Content-Type: ' + (att.type || 'application/octet-stream') + '\r\n'
-				+ 'Content-Transfer-Encoding: base64\r\n'
-				+ 'Content-Disposition: attachment; filename="' + encodeWord(name).replace(/"/g, '') + '"\r\n\r\n'
-				+ b64Lines(att.bytes) + '\r\n';
+	/// The RFC 5322 document a draft describes, from the one builder there is:
+	/// `fe2o3_mail::message::DraftMessage` in wasm, which also builds the agent's drafts, so a
+	/// person's message and the agent's come out of the same code. The page supplies the two
+	/// facts a builder must not reach for itself, the clock and the Message-ID; the `Message-ID`
+	/// is what a reply will point back at, and `In-Reply-To` / `References` make it thread.
+	/// Every byte of the result is 7-bit (encoded-words, quoted-printable, base64), so it is
+	/// carried on as a string.
+	async function built(d) {
+		var wasm  = await engine();
+		var bytes = wasm.mail_build({
+			from:        d.from,
+			fromName:    d.fromName || '',
+			to:          addrList(d.to),
+			cc:          addrList(d.cc),
+			subject:     d.subject || '',
+			body:        d.body || '',
+			inReplyTo:   d.inReplyTo || '',
+			references:  d.inReplyTo ? (d.references || d.inReplyTo) : '',
+			date:        mailDate(new Date()),
+			messageId:   d.messageId || messageId(d.from),
+			attachments: (d.attachments || []).map(function (a) {
+				return { name: a.name || 'attachment', type: a.type || '', bytes: a.bytes };
+			}),
 		});
-		out += '--' + bnd + '--\r\n';
-		return out;
+		return new TextDecoder().decode(bytes);
 	}
 
 	/// Where a message is posted from, which is not where it was read from: submission is
@@ -1306,7 +1142,7 @@
 		d.id = d.id || ('draft-' + Date.now() + '-' + rand(3));
 		d.messageId = d.messageId || messageId(d.from);
 		var path = draftsDir(d.from) + '/' + d.id + '.eml';
-		var text = buildMessage(d);
+		var text = await built(d);
 		// Why the last send of it failed, on the draft and never on the wire:
 		// `sendDraft` builds what it posts without it.
 		if (d.failed) text = NOT_SENT + ': ' + String(d.failed).replace(/[\r\n]+/g, ' ') + '\r\n' + text;
@@ -1352,27 +1188,28 @@
 	/// Read a draft file back into the thing the compose panel edits. A draft an agent
 	/// wrote is an ordinary message file, so it opens the same way.
 	async function readDraft(address, path) {
-		var raw = await readText(path);
+		var raw = await readRaw(path);
 		if (raw.outcome !== 'done') {
 			throw new Error(t('mail.err.draft_unreadable'));
 		}
-		var hs   = parseHeaders(raw.text);
-		var mime = parseMime(raw.text, 0);
-		var f    = splitAddr(header(hs, 'from'));
+		var wasm = await engine();
+		var v    = wasm.mail_view(raw.bytes, false);
+		var f    = splitAddr(v.from);
 		return {
 			id:          (path.split('/').pop() || '').replace(/\.eml$/i, ''),
 			path:        path,
 			from:        f.addr || address,
 			fromName:    f.name,
-			to:          decodeWords(header(hs, 'to')),
-			cc:          decodeWords(header(hs, 'cc')),
-			subject:     decodeWords(header(hs, 'subject')),
-			body:        mime.plain || (mime.html ? stripHtml(mime.html) : ''),
-			inReplyTo:   header(hs, 'in-reply-to'),
-			references:  header(hs, 'references'),
-			messageId:   header(hs, 'message-id'),
-			attachments: mime.attachments,
-			failed:      header(hs, NOT_SENT.toLowerCase()),
+			to:          v.to,
+			cc:          v.cc,
+			subject:     v.subject,
+			body:        v.text,
+			inReplyTo:   v.inReplyTo,
+			references:  v.references,
+			messageId:   v.messageId,
+			attachments: filesOf(v),
+			// Daimond's own line above the headers, which no mail reader knows about.
+			failed:      header(parseHeaders(new TextDecoder().decode(raw.bytes)), NOT_SENT.toLowerCase()),
 		};
 	}
 
@@ -1405,7 +1242,7 @@
 		// message will carry, and what lets that copy replace the local one.
 		d.messageId = d.messageId || messageId(d.from);
 		d.failed    = '';
-		var raw     = buildMessage(d);
+		var raw     = await built(d);
 
 		// THE OUTBOX IS THE DRAFTS. From here until it has gone the message is a
 		// draft file, so a tab closed mid-send, or a send that fails after the
@@ -2271,6 +2108,8 @@
 
 	/// The wasm namespace, once.
 	async function engine() {
+		// A host that holds the namespace already hands it over (the node tests do).
+		if (deps && deps.wasm) return deps.wasm;
 		if (!pkgP) pkgP = import(PKG);
 		return pkgP;
 	}
@@ -3740,69 +3579,49 @@
 		});
 	}
 
-	/// Show a message where there is room to read it. The body is inserted as
-	/// text, never as markup — a mail body is the least trustworthy string in
-	/// the application, and this is the one place it meets the DOM.
-	/// Walk a MIME tree and collect what a reader needs: the plain part, the HTML part, and every
-	/// attachment. `readableText` answers "what does this message say" in one string, which is the
-	/// right answer for an index and the wrong one for a person reading their mail — it throws
-	/// away the markup, the pictures and the files.
-	///
-	/// Returns `{ plain, html, attachments: [{ name, type, size, bytes }] }`.
-	function parseMime(raw, depth) {
-		var out = { plain: '', html: '', attachments: [] };
-		if ((depth || 0) > 8) return out;                 // a malformed message must not recurse forever
+	/// The files a message carries, as the panel lists and saves them: every part the HTML
+	/// does not show by `cid:`.
+	function filesOf(v) {
+		return (v.parts || []).filter(function (p) { return !p.inline; }).map(function (p) {
+			return { name: p.name || 'attachment', type: p.type, size: p.bytes.length, bytes: p.bytes };
+		});
+	}
 
-		var hs    = parseHeaders(raw);
-		var ctype = header(hs, 'content-type') || 'text/plain';
-		var body  = bodyOf(raw);
-		var mb    = ctype.match(/boundary="?([^";]+)"?/i);
+	/// The picture types an embedded part may be shown as. Not `image/svg+xml`: an SVG is a
+	/// document that can carry script, and a raster type cannot.
+	var EMBED_TYPES = { 'image/png': 1, 'image/jpeg': 1, 'image/gif': 1, 'image/webp': 1 };
 
-		if (/^multipart\//i.test(ctype.trim()) && mb) {
-			var parts = body.split('--' + mb[1]);
-			parts.forEach(function (p) {
-				p = p.replace(/^\r?\n/, '');
-				if (!p.trim() || /^--/.test(p)) return;   // the closing delimiter, not a part
-				var sub = parseMime(p, (depth || 0) + 1);
-				if (!out.plain && sub.plain) out.plain = sub.plain;
-				if (!out.html  && sub.html)  out.html  = sub.html;
-				out.attachments = out.attachments.concat(sub.attachments);
-			});
-			return out;
+	/// The message's HTML with every `cid:` picture it embeds as a `data:` URL of that part's
+	/// bytes. Not a `blob:` URL: that belongs to this page's origin, and the message frame,
+	/// sandboxed without `allow-same-origin`, has none, so no engine loads it there. Only image
+	/// positions are rewritten (`src`, `background`, CSS `url(`), which wasm.mail_view writes
+	/// double-quoted, and only for a part of a type in EMBED_TYPES; a reference is matched on its
+	/// Content-ID, percent-decoded and without regard to case. Anything else, a link to a `cid:`
+	/// or a part of another type, is left as it was, and loads nothing.
+	function embed(v) {
+		var byCid = {};
+		(v.parts || []).forEach(function (p) {
+			var type = String(p.type || '').toLowerCase();
+			if (p.inline && p.cid && EMBED_TYPES[type]) byCid[p.cid.toLowerCase()] = { part: p, type: type, url: '' };
+		});
+		function dataUrl(id) {
+			var key;
+			try { key = decodeURIComponent(id).toLowerCase(); } catch (e) { key = id.toLowerCase(); }
+			var e = byCid[key];
+			if (!e) return '';
+			if (!e.url) e.url = 'data:' + e.type + ';base64,' + b64(e.part.bytes);
+			return e.url;
 		}
-
-		// A leaf part.
-		var enc  = (header(hs, 'content-transfer-encoding') || '').toLowerCase();
-		var disp = header(hs, 'content-disposition') || '';
-		var name = decodeWords(
-			(disp.match(/filename="?([^";]+)"?/i) || ctype.match(/name="?([^";]+)"?/i) || [])[1] || '');
-
-		var decoded = body;
-		if (enc === 'base64')                 decoded = decodeB64(body);
-		else if (enc === 'quoted-printable')  decoded = decodeQP(body);
-
-		// An attachment is anything the sender marked as one, or any leaf that is not text and
-		// carries a filename. Inline images (a signature logo) are attachments too as far as we
-		// are concerned: we do not render remote or embedded pictures.
-		var isText = /^text\/(plain|html)/i.test(ctype.trim());
-		if (/attachment/i.test(disp) || (!isText && name)) {
-			var bytes = new Uint8Array(decoded.length);
-			for (var i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i) & 0xff;
-			out.attachments.push({
-				name: name || 'attachment',
-				type: (ctype.split(';')[0] || '').trim(),
-				size: bytes.length,
-				bytes: bytes,
+		var html = String(v.html || '')
+			.replace(/(\s(?:src|background)=")cid:([^"]*)"/gi, function (all, pre, id) {
+				var u = dataUrl(id);
+				return u ? pre + u + '"' : all;
+			})
+			.replace(/(url\(\s*(?:&quot;|["'])?)cid:([^"'\s)&]+)/gi, function (all, pre, id) {
+				var u = dataUrl(id);
+				return u ? pre + u : all;
 			});
-			return out;
-		}
-
-		var cs = (ctype.match(/charset="?([^";]+)"?/i) || [])[1];
-		var txt = asUtf8(decoded, cs);
-		if (/text\/html/i.test(ctype))       out.html  = txt;
-		else if (/text\/plain/i.test(ctype)) out.plain = txt;
-		else if (!/^multipart\//i.test(ctype.trim()) && !name) out.plain = txt;
-		return out;
+		return html;
 	}
 
 	/// Split "Jason Hoogland <jason@example.com>" into the two things a reader wants shown
@@ -3817,25 +3636,30 @@
 		return { name: '', addr: s };
 	}
 
+	/// Show a message where there is room to read it, read by `wasm.mail_view`, the reader the
+	/// agent's tools use too, so the person and the agent see one message. Its HTML is a
+	/// stranger's markup and goes only into the panel's sandboxed frame.
 	async function openMessage(m) {
-		var raw = await readText(m.file);
+		var raw = await readRaw(m.file);
 		if (raw.outcome !== 'done') {
 			state.err = t('mail.err.msg_unreadable');
 			render();
 			return;
 		}
-		var hs    = parseHeaders(raw.text);
-		var mime  = parseMime(raw.text, 0);
+		var wasm = await engine();
+		var mv   = wasm.mail_view(raw.bytes, false);
 		var view = {
-			subject: decodeWords(header(hs, 'subject')) || t('mail.no_subject'),
-			from:    splitAddr(header(hs, 'from')),
-			to:      decodeWords(header(hs, 'to')),
-			cc:      decodeWords(header(hs, 'cc')),
-			replyTo: decodeWords(header(hs, 'reply-to')),
-			date:    header(hs, 'date'),
-			html:    mime.html,
-			text:    mime.plain || (mime.html ? '' : readableText(raw)),
-			attachments: mime.attachments,
+			subject: mv.subject || t('mail.no_subject'),
+			from:    splitAddr(mv.from),
+			to:      mv.to,
+			cc:      mv.cc,
+			replyTo: mv.replyTo,
+			date:    mv.date,
+			// Its HTML names nothing remote; "Load pictures" asks for `withPictures`.
+			html:    embed(mv),
+			withPictures: function () { return embed(wasm.mail_view(raw.bytes, true)); },
+			text:    mv.text,
+			attachments: filesOf(mv),
 			mailbox: state.sel,
 			// The folder it was read from, so an attachment saved out of it
 			// lands beside the message rather than in the inbox.
@@ -3843,8 +3667,8 @@
 			file:    m.file,
 			// What a reply to this message must point back at, so it threads rather than
 			// arriving as an unrelated message with a similar subject.
-			messageId:  header(hs, 'message-id'),
-			references: header(hs, 'references'),
+			messageId:  mv.messageId,
+			references: mv.references,
 			// Saving an attachment is the panel's job, but the workspace is the mail module's:
 			// it knows where this mailbox lives on disk.
 			save:    async function (att) {
@@ -3920,7 +3744,7 @@
 		var head = dated
 			? t('mail.quote.head', { date: window.DaimondTime.fmtLocal(when, 'weekday'), who: who })
 			: t('mail.quote.head_undated', { who: who });
-		var text = v.text || (v.html ? stripHtml(v.html) : '');
+		var text = v.text || '';
 		var body = String(text).split('\n').map(function (l) { return '> ' + l; }).join('\n');
 		return '\n\n' + head + '\n' + body + '\n';
 	}
@@ -3970,7 +3794,7 @@
 			to:          '',
 			cc:          '',
 			subject:     subj,
-			body:        head + (v.text || (v.html ? stripHtml(v.html) : '')),
+			body:        head + (v.text || ''),
 			// A forward that dropped the attachments would forward the wrong message.
 			attachments: (v.attachments || []).slice(),
 		});
@@ -4509,7 +4333,9 @@
 		},
 		// Exposed for the tests, which have no business driving the DOM to find out whether
 		// a message they built is the message that would go on the wire.
-		build:   buildMessage,
+		build:   built,
+		/// Open one message as its row does, for a test that must see what the panel is handed.
+		open:    openMessage,
 		/// Open one tunnel, for a test that has to watch a handshake finish, a
 		/// certificate be refused, or a close code become a sentence — none of which a
 		/// mailbox is needed for, and none of which can be seen from outside the page.

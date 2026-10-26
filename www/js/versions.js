@@ -1159,7 +1159,9 @@
 
 	/// Ask again, of a runner seen back (`online(id)`), every ask of it still unanswered
 	/// and older than the relay keeps a row, so the undo waits for the runner however long
-	/// it is away, up to its own `until`. Answers how many were asked again.
+	/// it is away, up to its own `until`. A keeper whose turn is running (`deps.busy`) is
+	/// left for the next presence change, as its own Undo button refuses while it runs.
+	/// Answers how many were asked again.
 	async function undoTurnAgain(deps, online) {
 		var m = storeGet(), now = Date.now(), n = 0;
 		var runs = Object.keys(m);
@@ -1168,6 +1170,7 @@
 			if (!k || k.result || !(now - (k.asked || 0) > RELAY_KEEP_MS)) continue;
 			if (k.until && now > k.until) continue;
 			if (!online || !online(k.on)) continue;
+			if (deps && deps.busy && deps.busy(k.keeper)) continue;
 			if (await undoTurn(k.keeper, { on: k.on, onName: k.onName, run: k.run, until: k.until }, deps)) n++;
 		}
 		return n;

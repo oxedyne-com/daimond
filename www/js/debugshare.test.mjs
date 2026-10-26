@@ -1397,8 +1397,11 @@ async function main() {
 		env.win.DaimondFiles = { folder: () => ({ name: 'workspace' }) };
 		env.win.DaimondCore  = { syncMayCommitChunks: () => true };
 		DS.setEnabled(true);
-		DS.event('boot', { ua: 'desktop' });
+		const BROWSER = { engine: 'Gecko', brand: 'Firefox', major: 131 };	// LENS-UA
+		DS.event('boot', { ua: 'desktop', browser: BROWSER });
 		const boot = JSON.parse(DS._outbox()[0].data);
+		check('boot carries the browser through the redactor unchanged',
+			JSON.stringify(boot.browser) === JSON.stringify(BROWSER));
 		check('boot carries tools', boot.tools === true);
 		check('boot carries folder', boot.folder === true);
 		check('boot carries mayCommit', boot.mayCommit === true);

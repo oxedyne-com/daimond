@@ -45,12 +45,13 @@
 //	  --keep <dir>                   write every raw reply there
 //
 // The key is read as `dev/reflux.mjs` reads it and there is no default:
-//   ~/.config/oxedyne/daimond/openrouter.key (0600), or DAIMOND_PROBE_KEY.
+//   DAIMOND_PROBE_KEY, else the `openrouter` file of the dev key config (~/.config/oxedyne/daimond-dev/devkey.jdat) (0600), checked first.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readNotes, constText, PROMPTS } from './promptparts.mjs';
 import { PANEL, BASELINE, FREE, priceOf } from './models.mjs';
+import { devKey } from './devkey.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n, d) => {
@@ -87,18 +88,6 @@ for (const spec of argv.filter((a) => a.startsWith('--alt='))
 	ALT.set(spec.slice(0, eq), fs.readFileSync(spec.slice(eq + 1), 'utf8').trim());
 }
 
-function readKey() {
-	const env = (process.env.DAIMOND_PROBE_KEY || '').trim();
-	if (env) return env;
-	const file = process.env.DAIMOND_PROBE_KEY_FILE
-		|| path.join(os.homedir(), '.config/oxedyne/daimond/openrouter.key');
-	let text;
-	try { text = fs.readFileSync(file, 'utf8'); }
-	catch (e) { throw new Error(`No provider key. Put one in ${file} (0600), or set DAIMOND_PROBE_KEY.`); }
-	const key = text.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#'));
-	if (!key) throw new Error(`${file} holds no key.`);
-	return key;
-}
 
 // ── The words the app really sends ──────────────────────────────────
 
@@ -528,7 +517,7 @@ if (DRY) {
 	process.exit(0);
 }
 
-const key = readKey();
+const key = await devKey('openrouter', ['DAIMOND_PROBE_KEY']);
 if (KEEP) fs.mkdirSync(KEEP, { recursive: true });
 const tally = new Map();
 let spentPrompt = 0, spentOut = 0;

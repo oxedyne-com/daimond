@@ -109,7 +109,7 @@ function page(ls, o) {
 	const body = names.map(fn).join('\n');
 	const make = new Function('window', 'document', 't', 'tn', 'stubs',
 		'with (window) { with (stubs) {\n'
-		+ 'var _histUndoRows = new Map(); var _histList = null;\n'
+		+ 'var _histUndoRows = new Map(); var _turnUndoRows = new Map(); var _histList = null;\n'
 		+ body + '\nreturn { ' + names.filter((n) => fn(n)).map((n) => n + ': ' + n).join(', ')
 		+ ', onReport: ' + (reportHandler() || 'null') + ' };\n} }');
 	const stubs = {
@@ -117,7 +117,8 @@ function page(ls, o) {
 		relTime: () => 'just now', showCrystalHistory: () => { calls.redrawn = (calls.redrawn | 0) + 1; },
 		peerReports: {}, requeueUnheard() {}, takeReportTaint() {}, settleRunnerWords: async () => true, settleRunnerSession() {}, settleRunnerAlerts() {}, settleRunnerAsk() {}, renderDispatchedBadges() {}, updateExpedite() {},
 		adoptFinalFrame: () => false, _openAsk: {}, histFile: () => makeEl('div'),
-		diamondTurning: () => false, refreshDiamondAfterChange: async () => {},
+		diamondTurning: (id) => !!(o.turning && o.turning(id)), refreshDiamondAfterChange: async () => {},
+		noticeDialog: (title, body) => { (calls.notices = calls.notices || []).push([title, body]); },
 	};
 	const L = make(win, win.document, t, (k, n, v) => t(k + (n === 1 ? '.one' : '.other'), v), stubs);
 	return { win, L, calls };
@@ -263,6 +264,35 @@ const row = (a, cause) => ({ v: 7, ts: NOW, kind: 'files', cause: cause || 'turn
 	check('N-b: on a presence change, not on a page load',
 		/addEventListener\('daimond:presence', function \(\) \{\s*if \(!window\.DaimondVersions \|\| !DaimondVersions\.undoTurnAgain\) return;\s*DaimondVersions\.undoTurnAgain\(undoTurnDeps\(\), undoTurnProbe\(\)\.online\)/.test(src));
 	check('N-b: no Cancel key left', !/'versions\.undo_cancel/.test(en));
+}
+
+console.log('\nRUN-HIST N-c -- a turn running in the Diamond holds its away Undo, as Here does (QA-A LOW-1)');
+{
+	// Pressed while the keeper's turn runs: refused with the Here row's own notice, nothing posted.
+	let busy = true;
+	const ls = storage();
+	const p = page(ls, { online: true, turning: (id) => busy && id === 'd1' });
+	const el = p.L.histRow('d1', row(away), true, null);
+	await button(el, 'Undo this turn').press();
+	check('N-c: pressed during a turn, nothing is posted', p.calls.posts.length === 0, JSON.stringify(p.calls.posts));
+	check('N-c: and the busy notice is shown, as for Here', (p.calls.notices || []).length === 1
+		&& p.calls.notices[0][0] === t('fold.busy_title'), JSON.stringify(p.calls.notices));
+	check('N-c: and the row still offers the Undo', !!button(el, 'Undo this turn'), texts(el).join(' | '));
+	busy = false;
+	await button(el, 'Undo this turn').press();
+	check('N-c: once the turn is done, the press posts', p.calls.posts.length === 1 && p.calls.posts[0].t === 'undo-turn');
+}
+{
+	// The ask-again on a presence change waits for the keeper's turn too.
+	const ls = storage();
+	const first = page(ls, { online: false });
+	await button(first.L.histRow('d1', row(away), true, null), 'Undo this turn').press();
+	const held = page(ls, { online: true, now: NOW + 25 * 3600e3, turning: (id) => id === 'd1' });
+	await held.win.DaimondVersions.undoTurnAgain(held.L.undoTurnDeps(), held.L.undoTurnProbe().online);
+	check('N-c: undoTurnAgain asks nothing while the keeper\'s turn runs', held.calls.posts.length === 0, JSON.stringify(held.calls.posts));
+	const free = page(ls, { online: true, now: NOW + 25 * 3600e3 });
+	await free.win.DaimondVersions.undoTurnAgain(free.L.undoTurnDeps(), free.L.undoTurnProbe().online);
+	check('N-c: and asks again once it is done', free.calls.posts.length === 1 && free.calls.posts[0].run === 'e-42');
 }
 
 if (failures) { console.log(failures + ' failure(s)'); process.exit(1); }

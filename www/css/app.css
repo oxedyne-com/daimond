@@ -456,8 +456,11 @@ label.addbtn { cursor: pointer; }
 .pptw-act:disabled { color: var(--text-muted); opacity: 0.32; }
 
 /* Centred by the flex box above and by the viewBox: the ink sits at 8,8 of
-   0 0 16 16, so it is on the box's centre and not merely the sprite. */
-.pptw-act .pptw-ic { display: block; fill: currentColor; }
+   0 0 16 16, so it is on the box's centre and not merely the sprite.
+   SIZED HERE, by role, for every host: an <svg> with a viewBox and no size is
+   0x0 in WebKit (the iPhone's 36px phone button showed nothing) and 300x150 in
+   Chromium. 16px is the house `.ic`, and it fits the 20px desktop box. */
+.pptw-act .pptw-ic { display: block; flex: none; width: 16px; height: 16px; fill: currentColor; }
 
 /* The global control's own row, above the Diamonds list.
    Deliberately NOT a .railhead and deliberately not dressed as one. Given the
@@ -3604,6 +3607,7 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    because one long line in a file must not push the whole history off screen. */
 .hist-diff { flex: 1 0 100%; margin-top: 4px; max-height: 40vh; overflow: auto; background: var(--bg-primary); border: 1px solid transparent; border-radius: var(--radius-sm); padding: 4px 6px; }
 .hist-diff-line { font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.45; white-space: pre; color: var(--text-secondary); }
+.turn-yours-head { font-weight: 600; color: var(--text-primary); margin-top: 6px; }	/* UNBLOCK-26: "Changed your file", the line he must not miss */
 
 /* #22 — the changed-files table under a turn. Two columns, name left and
    delta right; the name and the delta are each pressable (Doc panel, diff). */
@@ -5456,6 +5460,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .agsq { --s: 12px; width: var(--s); height: var(--s); border-radius: 2px; border: 0; padding: 0; flex: none; position: relative; cursor: pointer; background: var(--c, var(--bg-tertiary)); }
 .agsq.o { cursor: default; transform: rotate(45deg) scale(0.84); }
 button.agsq.o { cursor: pointer; }
+span.agsq:not(.o) { cursor: default; }
 .agsq.run { --c: var(--accent); }
 /* A running square fills bottom-up by its turn's spend over its cap (--f, set from agentgrid.js budget). */
 .agsq.run { background: linear-gradient(to top, var(--accent) var(--f, 0%), color-mix(in srgb, var(--accent) 34%, var(--bg-primary)) var(--f, 0%)); }

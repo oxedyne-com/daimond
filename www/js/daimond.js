@@ -51,6 +51,13 @@ async function readBytes(path) {
 	catch (e) { noteFolderLost(e); throw e; }
 }
 
+/// A file's raw BYTES, whole, with the same withdrawn-grant alarm. For a reader that must
+/// not have them decoded as UTF-8 first: a message in ISO-8859-1 is not UTF-8.
+async function readRawBytes(path) {
+	try { return await Wasm.read_bytes(path, 0, 4294967295); }
+	catch (e) { noteFolderLost(e); throw e; }
+}
+
 // ── A withdrawn folder grant, on the paths the tool registry never sees ──
 //
 // The browser can take a real folder away at any moment, and every call that
@@ -5409,8 +5416,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `navigator.userAgentData`. Order matters: every one of these also says
 	/// "Safari" or "Chrome" somewhere, so the specific tokens are tested first.
 	function uaBrand(ua) {
-		if (/\bFirefox\//.test(ua))        return 'Firefox';
-		if (/\bEdg\//.test(ua))            return 'Edge';
+		if (/\b(Firefox|FxiOS)\//.test(ua)) return 'Firefox';
+		if (/\bEdg(A|iOS)?\//.test(ua))    return 'Edge';
 		if (/\bOPR\//.test(ua))            return 'Opera';
 		if (/\bSamsungBrowser\//.test(ua)) return 'Samsung Internet';
 		if (/\b(Chrome|CriOS)\//.test(ua)) return 'Chrome';
@@ -5434,6 +5441,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (/\bChrome\b/i.test(n))         return 'Chrome';
 		if (/\bSafari\b/i.test(n))         return 'Safari';
 		return n.replace(/^Google\s+/i, '').replace(/^Microsoft\s+/i, '');
+	}
+
+	/// The browser the lens `boot` event names (LENS-UA, 26 Oct 2026): its engine
+	/// (Blink, Gecko or WebKit), its brand in `shortBrand`'s words and its major
+	/// version, so "which browsers does he use" is answered from data. Nothing
+	/// finer rides: no minor version, no OS build. `uad` is
+	/// `navigator.userAgentData`, preferred where present because Chromium's
+	/// reduced user-agent string is frozen in every field but the major.
+	function browserOf(ua, uad) {
+		ua = String(ua || '');
+		var brand = '', major = null;
+		try {
+			var b = (uad && uad.brands) || [];
+			for (var i = 0; i < b.length; i++) {
+				var n = b[i] && b[i].brand;
+				if (!n || /not.*brand/i.test(n)) continue;	// the deliberate nonsense entry
+				// A named browser beats the engine it is built on.
+				if (!brand || /^chromium$/i.test(brand)) { brand = String(n); major = parseInt(b[i].version, 10); }
+			}
+		} catch (e) { brand = ''; major = null; }
+		if (!brand) brand = uaBrand(ua);
+		brand = shortBrand(brand);
+		// Every iOS browser is WebKit underneath, whatever it calls itself.
+		var ios = /\b(iPhone|iPad|iPod)\b/.test(ua);
+		var engine = ios                                        ? 'WebKit'
+			: /\bFirefox\//.test(ua)                           ? 'Gecko'
+			: /\b(Chrome|Chromium|Edg|OPR|SamsungBrowser)\//.test(ua) || /chromium/i.test(brandsOf(uad)) ? 'Blink'
+			: /\bAppleWebKit\//.test(ua)                       ? 'WebKit'
+			: '';
+		// A Home Screen app names no browser and no `Version/`: it is Safari's engine,
+		// and on iOS that engine's major is the OS's.
+		if (!brand && ios) brand = 'Safari';
+		if (!(major > 0)) {
+			var tok = { Firefox: '(?:Firefox|FxiOS)', Edge: 'Edg(?:A|iOS)?', Opera: 'OPR',
+				'Samsung Internet': 'SamsungBrowser', Chrome: '(?:Chrome|CriOS)', Safari: 'Version' }[brand];
+			var m = tok ? new RegExp('\\b' + tok + '\\/(\\d+)').exec(ua) : null;
+			if (!m && brand === 'Safari' && ios) m = /\bOS (\d+)_/.exec(ua);
+			major = m ? parseInt(m[1], 10) : null;
+		}
+		return { engine: engine, brand: brand, major: major > 0 ? major : null };
+	}
+
+	/// The brand names `userAgentData` lists, joined, or '' when it cannot say.
+	function brandsOf(uad) {
+		try { return ((uad && uad.brands) || []).map(function (x) { return (x && x.brand) || ''; }).join(' '); }
+		catch (e) { return ''; }
 	}
 
 	/// The platform a user-agent string names. Coarse on purpose: "Windows", not
@@ -17749,6 +17802,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return tile;
 	}
 
+	/// "Changed your file <name>" (UNBLOCK-26, his ruling 26 Oct: "Change it, show it, Undo"). A
+	/// runner turn changes a file of his without asking, having kept it first, so the turn shows
+	/// each such change as his ask would have, and the runner turn's own Undo under them. Which
+	/// files were his is the runner's word (`yours`, from its `his` rows), never guessed here.
+	function appendYoursTile(m) {
+		var ys = (m && Array.isArray(m.yours)) ? m.yours : [];
+		if (!ys.length) return null;
+		var box = document.createElement('div');
+		box.className = 'turn-yours';
+		var names = [];
+		var first = null;	// the file the peek names
+		ys.forEach(function (y) {
+			if (!y || !y.path) return;
+			var at = changeName(y.path);
+			if (!first) first = y;
+			names.push(at.name);
+			var head = document.createElement('div');
+			head.className = 'turn-yours-head';
+			head.textContent = t(y.unsure ? 'change.file' : 'change.yours', { name: at.name });
+			box.appendChild(head);
+			var where = document.createElement('div');
+			where.className = 'rail-note pend-change-in';
+			where.textContent = t('change.in', { folder: at.folder });
+			box.appendChild(where);
+			// A change the runner's record had no room for is still counted.
+			var n = ((y.add | 0) + (y.del | 0));
+			changeDiff(box, (y.change && typeof y.change === 'object') ? y.change : { text: true, rows: [], more: n });
+		});
+		if (!names.length) return null;
+		if (m.away && m.away.run) box.appendChild(histAwayUndo(String(m.away.keeper || ''), { away: m.away, cause: 'turn' }, _turnUndoRows));
+		var tile = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: true, result: true, copy: names.join('\n'), ts: m.ts });
+		tile._body.appendChild(box);
+		tilePeek(tile, t(first.unsure ? 'change.file' : 'change.yours', { name: names[0] }));
+		postToChat(tile);
+		pinBottom();
+		return tile;
+	}
+
 	function appendUserMessage(text, ts, prod, files, app) {
 		// #22 live-fix: the tail note is the daimon's WORK, not the user's words — it
 		// renders as a tool-style tile (the same furniture #17's fold tiles use),
@@ -26504,7 +26595,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// when it was typed): it is written as given, an empty one meaning none, and nothing is composed.
 	function pushUserRecord(chat, rec, said, told) {
 		if (said) {
-			var pre = (typeof told === 'string') ? told : ratingPre(chat);
+			// The folders a fresh thread holds ride its first message's note (HATE-10): put on
+			// the record by `syncAttachPrefix`, taken once here, so a later message has none.
+			var held = (typeof chat._attachPre === 'string') ? chat._attachPre : '';
+			delete chat._attachPre;
+			var pre = (typeof told === 'string') ? told : (held + ratingPre(chat));
 			if (pre) rec.pre = pre;
 		} else {
 			rec.app = true;
@@ -27155,6 +27250,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A question already answered is drawn as answered (`askMarkAnswered`, inside).
 			var ut = appendUserMessage(m.content, m.ts, m.prod, m.files, m.app === true);
 			if (m.seatNote) drawSeatNote(ut, String(m.seatNote));
+			// A runner turn's Files row names the files of his it changed (UNBLOCK-26).
+			if (m.yours) appendYoursTile(m);
 		}
 		else if (m.role === 'assistant') {
 			// A turn HANDED TO A PEER, still in flight: an empty `dispatched`
@@ -27182,7 +27279,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// (`isRatingMsg`) draws nothing, as a role it had never heard of would.
 		else if (m.role === 'rating_log') { appendRatingLine(m); }
 		// A chat turn's changed files, drawn from its records (display only, never sent to the model).
-		else if (m.role === 'files_log') { appendFilesLog(m); }
+		else if (m.role === 'files_log') { appendFilesLog(m); if (m.yours) appendYoursTile(m); }
 		// The app's own NEUTRAL voice -- a fan-out handover, drawn as a status line
 		// rather than the red of an error. Its own role so a reload draws it that way.
 		else if (m.role === 'note_log') { appendNote(m.content); }
@@ -27200,6 +27297,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// would leave a reader who had walked away with the same silence the
 		// line exists to replace.
 		else if (m.role === 'end_log') { appendEnding(m, !!arr && i === arr.length - 1); }
+		// The runner's stand-in for the oldest rows of a frame it had to cut ("N steps not
+		// shown"): a silent cut reads as a turn that did less than it did.
+		else if (m.role === 'cut_log') { appendNote(logRowText(m)); }
 		else if (m.role === 'tool_log') {
 			// A record of a tool the agent ran. Display only: it is not sent
 			// back to the model, which cannot replay a tool call it has no
@@ -27934,11 +28034,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Positional: from the placeholder to the next question, a real reply is this
 		// turn's answer. A synthetic send-time `m` is not in the array (indexOf -1);
 		// nothing has merged yet then, so this correctly finds nothing.
+		//
+		// A ROW TAGGED WITH ANOTHER TURN IS THAT TURN'S WHEREVER IT STANDS (HATE-3, as
+		// `turnSpan`). A cut-in re-sent as the next turn is pushed while the turn before it
+		// is still settling, and a merge orders by `ts`: that turn's answer, stamped by its
+		// runner a moment later, sorted below this placeholder and was taken for this turn's.
+		// The placeholder was dropped, the watch ended before the runner ran, and the reply
+		// it then sent was never read.
 		var i = msgs.indexOf(m);
 		if (i < 0) return false;
 		for (var j = i + 1; j < msgs.length; j++) {
 			var mm = msgs[j];
 			if (mm.role === 'user' && !mm.interject) break;		// the next turn began
+			if (mm.iturn && String(mm.iturn) !== String(m.iturn)) continue;	// another turn's row
 			if (mm.role === 'assistant' && !mm.interrupted && !mm.provisional && mm.content && mm.content.trim()) return true;
 		}
 		return false;
@@ -36591,13 +36699,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// so a GENUINELY unstarted chat is still seeded once, rather than
 					// never, because the seed above ran before there was anything to
 					// read `threadStarted` from.
-					if (current === chat) syncComposerAttachPrefix();
+					if (current === chat) syncAttachPrefix();
 				}).catch(function () { /* loadMessages never throws; the row was empty */ });
 			}
 		}
 		syncComposer();   // reflect THIS chat's own generating state
 		renderChatAttachments();
-		syncComposerAttachPrefix();
+		syncAttachPrefix();
 		updateActiveSession();
 		updateMeters();
 		// Anything queued on this chat is drawn again — renderHistory has just
@@ -42278,7 +42386,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// of every Diamond share `chat-input`, and until this existed the switch
 	/// re-pointed everything about the box except the text in it -- so a
 	/// half-typed sentence followed the user into the next conversation, and
-	/// `syncComposerAttachPrefix` then glued the incoming Diamond's prefix onto
+	/// `syncAttachPrefix` then glued the incoming Diamond's prefix onto
 	/// the outgoing chat's words, which is what put a stranger's text box in a
 	/// Diamond that had never seen it.
 	///
@@ -42360,16 +42468,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var cleaned = scrubAttachPrefixDup(chatInput.value, curPrefix, hasTurns);
 				if (cleaned !== chatInput.value) chatInput.value = cleaned;
 			}
-			// Never persist text as a draft that THIS MODULE wrote and nobody has
-			// touched since -- `attachPrefixWritten` is `syncComposerAttachPrefix`'s
-			// own record of what it last seeded for this focus, keyed the same way
-			// `attachFocus` keys a Diamond's daimon (by the Diamond's id, not the
-			// chat record's own id). Skipping the write here is what stops an
-			// auto-seeded hint from being kept as though it were the user's own
-			// words the moment the thread is revisited -- the draft store must
-			// hold what somebody typed, never what the app put there for them to
-			// see and never touched.
-			//
 			// AN EMPTY BOX STILL HAS TO BE WRITTEN. The old guard here was
 			// `if (chatInput.value)`, so a scrub that had just emptied the box --
 			// every leading copy of the prefix stripped, above -- left the STALE,
@@ -42379,10 +42477,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// this pass had just removed on screen. `set` with '' drops the entry
 			// (see drafts.js), so writing unconditionally clears it as well as
 			// stores it.
-			var focusKey = next ? (next.diamondId || next.id) : '';
-			if (chatInput.value !== attachPrefixWritten[focusKey]) {
-				DaimondDrafts.set(k, chatInput.value);
-			}
+			DaimondDrafts.set(k, chatInput.value);
 		} catch (e) { /* storage blocked: the box behaves as it did before this existed */ }
 	}
 
@@ -45835,7 +45930,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The 24 h fade moves with no event at all, so the grid (only the grid) is redrawn
 			// every five minutes: squares deepen their fade and leave once their day is out.
 			setInterval(function () {
-				try { if (window.DaimondWorkers && agentsGrid && agentsGrid.isConnected) renderAgentGrid(Workers.runs); } catch (e) { /* next time */ }
+				try { if (window.DaimondWorkers && agentsGrid && agentsGrid.isConnected) renderAgentGrid(); } catch (e) { /* next time */ }
 			}, 300e3);
 		}
 	}
@@ -46641,6 +46736,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				dsEvent('workers.persist', { runs: all.length, chars: body.length,
 					err: String((e && e.name) || e).slice(0, 60) });
 			}
+			// Every status change is saved here, so the peers hear of it from here too
+			// (`PeerAgents.start` sets it).
+			if (this.onSaved) this.onSaved();
 		},
 
 		load: function () {
@@ -48408,6 +48506,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			this.persistNow();
 			this._locked = true; this._lockedSaid = false;
+			if (this.onLocked) this.onLocked();
 			this.runs = [];
 			this.queue = [];
 		},
@@ -48553,7 +48652,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			this._dirty = {};
 			this._drawn = {};
 			this.stampEnds();
-			renderAgentGrid(this.runs);
+			renderAgentGrid();
 			// THE LOWER HALF: the pinned runs and nothing else. A pin whose run has been
 			// cleared goes with it; nothing is ever added here but by a press.
 			agentPins = DaimondAgentGrid.prunePins(agentPins, this.runs);
@@ -48849,6 +48948,113 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// `dev/verify_gather.mjs` sets MAX_GATHER_DEPTH to 0 through this to restore
 	// the pre-gather behaviour and prove its checks against it.
 	window.DaimondWorkers = Workers;
+
+	// ── Agents across devices (UNBLOCK-28) ──────────────────────────
+	//
+	// This device's agents go out as one sealed frame on the progress door, under
+	// `agents.<deviceId>` (`DaimondPeer.agentsFrame`), and each peer's frame is followed
+	// and held here, so the grid draws every agent of the account (rulings §17: "a worker
+	// running on one device shows, live, in the Agents panel of every device viewing that
+	// Diamond"). The door is the hand-off's own carrier: sealed with the account key, and
+	// the gateway taps the wake channel when a frame is stored, so a peer reads it within
+	// a moment. Peer runs are drawn read-only. Held in memory only: a reload reads the
+	// frames again, and a frame lives an hour on the door, which `REFRESH_MS` renews.
+	var PeerAgents = {
+		store: {},		// deviceId -> { got, runs }, DaimondPeer.peerRunsMerge
+		seen: {},		// deviceId -> when its frame was last read
+		sent: '',		// the last frame sent, so an unchanged one is not sent again
+		sentAt: 0,
+		timer: 0,
+		ticker: 0,
+		SPACING_MS: 2000,		// at most one send per this, the last change always sent
+		REFRESH_MS: 30 * 60e3,	// an unchanged frame is renewed before the door's hour runs out
+		REWATCH_MS: 40 * 60e3,	// a peer silent this long is read again from the start
+		TICK_MS: 60e3,
+
+		/// Ask for this device's frame to be sent: spaced, and the newest state always last.
+		publish: function () {
+			var self = this;
+			if (this.timer) return;
+			var wait = Math.max(0, this.sentAt + this.SPACING_MS - Date.now());
+			this.timer = setTimeout(function () { self.timer = 0; self.publishNow(); }, wait);
+		},
+
+		publishNow: function () {
+			if (Workers._locked || !window.DaimondSync || !DaimondSync.pushProgressFrame || !window.DaimondPeer) return;
+			var me = '';
+			try { me = deviceId(); } catch (e) { return; }
+			Workers.stampEnds();
+			var body = DaimondPeer.agentsFrame(Workers.runs, me, Date.now(), DaimondSync.progressBudget, DaimondSync.progressWeight);
+			if (!body) return;
+			if (body === this.sent && Date.now() - this.sentAt < this.REFRESH_MS) return;
+			var self = this;
+			this.sentAt = Date.now();
+			DaimondSync.pushProgressFrame(DaimondPeer.agentsKey(me), body).then(function (out) {
+				if (out && out.ok) self.sent = body;
+			}, function () { /* the next change, or the renewal, sends it again */ });
+		},
+
+		/// Follow every other device's key, and renew this device's frame. Once a minute.
+		tick: function () {
+			if (!window.DaimondSync || !DaimondSync.watchProgress || !window.DaimondPeer) return;
+			var me = '', now = Date.now(), self = this;
+			try { me = deviceId(); } catch (e) { return; }
+			Object.keys(loadDevices()).forEach(function (dev) {
+				if (dev === me) return;
+				var key = DaimondPeer.agentsKey(dev);
+				// Read again from the start where nothing has come for a while: a record the
+				// gateway has let go numbers its next frame from one, under the place held.
+				var stale = self.seen[dev] != null && now - self.seen[dev] > self.REWATCH_MS;
+				if (stale) { DaimondSync.unwatchProgress(key); self.seen[dev] = now; }
+				if (stale || DaimondSync.progressWatched().indexOf(key) < 0) {
+					if (self.seen[dev] == null) self.seen[dev] = now;
+					DaimondSync.watchProgress(key, function (frame) { self.take(dev, frame); }, { quiet: true });
+				}
+			});
+			this.publishNow();
+			this.draw();		// presence moves with no frame: a peer gone reads `interrupted`
+		},
+
+		take: function (dev, frame) {
+			var got = DaimondPeer.agentsFromFrame(frame && frame.tail, dev);
+			if (!got) return;
+			this.seen[dev] = Date.now();
+			this.store = DaimondPeer.peerRunsMerge(this.store, got, Date.now());
+			this.draw();
+		},
+
+		draw: function () {
+			try { if (agentsGrid && agentsGrid.isConnected && Object.keys(this.store).length) renderAgentGrid(); } catch (e) { /* next frame */ }
+		},
+
+		/// The peers' runs for the grid, a run this device holds left out.
+		list: function () {
+			if (!window.DaimondPeer || !DaimondPeer.peerRunsList) return [];
+			var awake = null;
+			try {
+				if (window.DaimondPresence && !DaimondPresence.unknown()) {
+					awake = DaimondPresence.awake(deviceId()).map(function (p) { return p.deviceId; });
+				}
+			} catch (e) { awake = null; }
+			return DaimondPeer.peerRunsList(this.store, awake, Workers.runs, Date.now());
+		},
+
+		start: function () {
+			var self = this;
+			if (this.ticker) return;
+			Workers.onSaved  = function () { self.publish(); };
+			Workers.onLocked = function () { self.forget(); };
+			this.ticker = setInterval(function () { self.tick(); }, this.TICK_MS);
+			this.tick();
+		},
+
+		/// The app locked: nothing of the peers' is kept on screen, and nothing goes out.
+		forget: function () {
+			this.store = {};
+			this.sent = '';
+		},
+	};
+	window.DaimondPeerAgents = PeerAgents;
 
 	// A DaimondApp used only to run file tools directly (no LLM turn), rooted at the
 	// active workspace. Shared by the Workspace panel and the instructions loader.
@@ -51215,28 +51421,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return v ? steerPress(it, 'add', v) : false;
 	}
 
-	/// The body and the buttons of a change ask's tile (called by `Pending.tile`, UNBLOCK-26
-	/// U5): where the file is, the change as History draws one, Apply and Don't Change. No
-	/// discuss: the turn is held on this answer, and a turn sent to talk about it would be a
-	/// second one beside it.
-	function changeTile(box, it) {
-		var c = it.change || {}, at = changeName(c.path);
-		var line = document.createElement('div');
-		line.className = 'pend-line pend-change-head';
-		line.textContent = it.headline;
-		box.appendChild(line);
-		var where = document.createElement('div');
-		where.className = 'rail-note pend-change-in';
-		where.textContent = t('change.in', { folder: at.folder })
-			+ (c.act === 'move' && c.to ? ' · ' + t('change.move_to', { to: String(c.to) }) : '');
-		box.appendChild(where);
-		// Asked here for a turn another device is running: which one.
-		if (it.detail) {
-			var from = document.createElement('div');
-			from.className = 'rail-note pend-change-from';
-			from.textContent = it.detail;
-			box.appendChild(from);
-		}
+	/// The change `c` (`{ text, rows, more }`, as `held_change::diff` makes it) drawn into `box` as
+	/// History draws a diff: the change ask's tile and a runner turn's "Changed your file" alike.
+	function changeDiff(box, c) {
 		if (c.text === false) {
 			var none = document.createElement('div');
 			none.className = 'rail-note pend-change-none';
@@ -51262,6 +51449,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			more.textContent = tn('change.more', c.more | 0, { n: c.more | 0 });
 			box.appendChild(more);
 		}
+	}
+
+	/// The body and the buttons of a change ask's tile (called by `Pending.tile`, UNBLOCK-26
+	/// U5): where the file is, the change as History draws one, Apply and Don't Change. No
+	/// discuss: the turn is held on this answer, and a turn sent to talk about it would be a
+	/// second one beside it.
+	function changeTile(box, it) {
+		var c = it.change || {}, at = changeName(c.path);
+		var line = document.createElement('div');
+		line.className = 'pend-line pend-change-head';
+		line.textContent = it.headline;
+		box.appendChild(line);
+		var where = document.createElement('div');
+		where.className = 'rail-note pend-change-in';
+		where.textContent = t('change.in', { folder: at.folder })
+			+ (c.act === 'move' && c.to ? ' · ' + t('change.move_to', { to: String(c.to) }) : '');
+		box.appendChild(where);
+		// Asked here for a turn another device is running: which one.
+		if (it.detail) {
+			var from = document.createElement('div');
+			from.className = 'rail-note pend-change-from';
+			from.textContent = it.detail;
+			box.appendChild(from);
+		}
+		changeDiff(box, c);
 		if (it.expired) {
 			var gone = document.createElement('div');
 			gone.className = 'rail-note pend-consent';
@@ -59311,8 +59523,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			uids: occasion.uids, uidValidity: occasion.uidValidity };
 	}
 
-	/// The mail turns this page is running now, by claim id: its own claim, held live by its
-	/// renew, is not one to take again (and then release) from under the running turn.
+	/// What this page has in flight, by key, so it is not taken again (and then released) from
+	/// under itself: this device's own live claim is one the lease door lets it RE-TAKE
+	/// (`leaseTakeFrom`, RUNNER-READY F2), so the door cannot be the guard here.
+	///
+	/// A MAIL ARRIVAL IS KEYED BY ITS FOLDER and held from before its claim until its settle has
+	/// raised the mark (MAIL-TWICE, 2026-10-26). Keyed by claim id and held only while its turn
+	/// ran, the 60 s tick's `retryMail` that fell while the mark's write was on the wire read the
+	/// mark still under the arrival, owed it, re-took the claim and bought a second turn (two in
+	/// four C1b `verify_mailtrigger` runs). Whatever uid set a later occasion names, one turn
+	/// at a time answers a folder here; what arrived meanwhile waits owed, and the mark decides it.
+	/// A timer's firing is keyed by its claim id (`keepMailClaim`, `claimTimerFire`).
 	var _mailRunning = {};
 	// The failed runs of each arrival on this device, by claim id, and the bound on them
 	// (post-QA r569qa2 Q4; see `settleMailClaim`). In memory: a reload counts afresh, so it
@@ -59366,8 +59587,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Claim an arrival for this device. Answers `{ go }` to run it (with what
 	/// `settleMailClaim` needs when it was claimed), `{ drop }` when the folder's mark says
-	/// it was answered, or `{ go: false }` to hold it owed: lost to a live claim, held by a
-	/// turn this page is running, or a door that could not decide.
+	/// it was answered, or `{ go: false }` to hold it owed: lost to a live claim, or a door that
+	/// could not decide. One this page already has in flight never reaches here (`Triggers.fire`).
 	/// A refusal that will not change by asking again -- a device behind the epoch chain, a
 	/// full door -- runs unclaimed, as every arrival did before this: a turn too many is a
 	/// cost, an alert lost is a fault nobody hears of.
@@ -59388,7 +59609,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			retryMailOnHeard();
 			return { go: false, why: 'unheard' };
 		}
-		if (_mailRunning[tid]) return { go: false, why: 'running' };
 		if ((_mailTries[tid] | 0) >= MAIL_TRIES_MAX) return { drop: true, why: 'tries' };	// tried enough here (Q4)
 		var lo = 0, hi = 0;
 		occasion.uids.forEach(function (x) {
@@ -59744,24 +59964,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					oweMail(id, occasion); seedMailMark(id, occasion); continue;
 				}
 				var t = owed[0];
-				// ONE DEVICE PER ARRIVAL (MO-1): a mail occasion is claimed before it runs.
-				var claim = mail ? await claimMailArrival(id, occasion) : null;
-				if (claim && claim.drop) {
-					if (claim.why !== 'settled') trailTrigger('mail dropped', arrival + ' why=' + claim.why);
-					continue;
-				}
-				if (claim && !claim.go) {
-					trailTrigger('mail held', arrival + ' claim not won why=' + claim.why);
+				// ONE ARRIVAL IN FLIGHT PER FOLDER HERE (MAIL-TWICE), taken before the first await
+				// and given back only once the settle has raised the mark: see `_mailRunning`.
+				var folder = mail ? id + '\u0000' + (occasion.mailbox || '') + '\u0000' + (occasion.folder || '') : '';
+				if (mail && _mailRunning[folder]) {
+					trailTrigger('mail held', arrival + ' an arrival of this folder is in flight here');
 					oweMail(id, occasion); continue;
 				}
-				var msg = DaimondTriggers.compose(t, occasion.said);
-				var out = null, stop = keepMailClaim(claim);
-				// A turn that threw may still have run, so it settles as one that went; it answered
-				// the arrival only when it ran through and the judgement found no failure (B-1).
-				try { out = await steerFromTrigger(f, msg.text, t); }
-				finally {
-					stop();
-					if (claim) await settleMailClaim(claim, !out || out.went, !!out && out.went && !out.failed, !!out && out.stopped);
+				if (mail) _mailRunning[folder] = 1;
+				var claim = null, msg = null, out = null;
+				try {
+					// ONE DEVICE PER ARRIVAL (MO-1): a mail occasion is claimed before it runs.
+					claim = mail ? await claimMailArrival(id, occasion) : null;
+					if (claim && claim.drop) {
+						if (claim.why !== 'settled') trailTrigger('mail dropped', arrival + ' why=' + claim.why);
+						continue;
+					}
+					if (claim && !claim.go) {
+						trailTrigger('mail held', arrival + ' claim not won why=' + claim.why);
+						oweMail(id, occasion); continue;
+					}
+					msg = DaimondTriggers.compose(t, occasion.said);
+					var stop = keepMailClaim(claim);
+					// A turn that threw may still have run, so it settles as one that went; it answered
+					// the arrival only when it ran through and the judgement found no failure (B-1).
+					try { out = await steerFromTrigger(f, msg.text, t); }
+					finally {
+						stop();
+						if (claim) await settleMailClaim(claim, !out || out.went, !!out && out.went && !out.failed, !!out && out.stopped);
+					}
+				} finally {
+					if (mail) delete _mailRunning[folder];
 				}
 				// Run by another device (`claimTimerFire`): fired, so its stopwatch restarts here too.
 				if (out.elsewhere) { fired.push({ id: id, actionId: t.id }); continue; }
@@ -62092,8 +62325,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// square per run in start order. Colour is state; amber alone means "you". A search
 	/// or a filter DIMS what it leaves out rather than removing it, so no square moves
 	/// under the reader (think pass §1).
-	function renderAgentGrid(runs) {
+	///
+	/// EVERY AGENT OF THE ACCOUNT: this device's runs and the peers' (`PeerAgents`), in the
+	/// same rows and lenses. A peer's square is read-only, so it is no button: its tile and
+	/// its controls are on the device that runs it.
+	function renderAgentGrid() {
 		if (!agentsGrid) return;
+		var peerIds = {};
+		var runs = Workers.runs.concat((PeerAgents ? PeerAgents.list() : []).map(function (r) { peerIds[r.id] = 1; return r; }));
 		agentsGrid.innerHTML = '';
 		if (!runs.length) {
 			var empty = document.createElement('div');
@@ -62133,9 +62372,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (n.at !== i) return;
 					r.appendChild(agentThreadDiamond('nested ' + n.st, n.first, origin));
 				});
-				var b = document.createElement('button');
-				b.type = 'button';
-				var pinned = agentPins.indexOf(it.id) !== -1;
+				var peer = !!peerIds[it.id];
+				var b = document.createElement(peer ? 'span' : 'button');
+				if (!peer) b.type = 'button';
+				var pinned = !peer && agentPins.indexOf(it.id) !== -1;
 				b.className = 'agsq ' + it.st + (pinned ? ' pin' : '') + (agentMatches(it.run) ? ' match' : '');
 				b.dataset.run = it.id;
 				if (it.st === 'done') b.style.setProperty('--fade', String(it.fade));
@@ -62145,8 +62385,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var lensWord = lensDress(b, it.run);
 				b.title = it.run.name + ' · ' + word + (lensWord ? ' · ' + lensWord : '');
 				b.setAttribute('aria-label', it.run.name + ', ' + word + (lensWord ? ', ' + lensWord : ''));
-				b.setAttribute('aria-pressed', pinned ? 'true' : 'false');
-				b.addEventListener('click', function () { setAgentPinned(it.id, agentPins.indexOf(it.id) === -1); });
+				if (peer) b.setAttribute('role', 'img');
+				else {
+					b.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+					b.addEventListener('click', function () { setAgentPinned(it.id, agentPins.indexOf(it.id) === -1); });
+				}
 				r.appendChild(b);
 			});
 			agentsGrid.appendChild(r);
@@ -63479,7 +63722,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
 			frame.setAttribute('referrerpolicy', 'no-referrer');
 
-			function paint(withPictures) {
+			// The policy is the second wall. The first is the HTML itself: with pictures off it
+			// names nothing remote (fe2o3_mail's MessageView), since Firefox's preload fetches a
+			// `srcset` before a `<meta>` policy applies. An embedded picture is a `data:` URL.
+			function paint(withPictures, html) {
 				var csp = withPictures
 					? "default-src 'none'; img-src https: data: cid:; style-src 'unsafe-inline'; font-src data:"
 					: "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:";
@@ -63491,10 +63737,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					+ 'font:14px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;'
 					+ 'word-break:break-word;overflow-wrap:anywhere}'
 					+ 'img{max-width:100%;height:auto}table{max-width:100%}'
-					+ 'a{color:#0b57d0}</style></head><body>' + v.html + '</body></html>';
+					+ 'a{color:#0b57d0}</style></head><body>' + html + '</body></html>';
 			}
-			btn.addEventListener('click', function () { paint(true); bar.remove(); });
-			paint(false);
+			// "Load pictures" asks for the message again with its remote pictures named.
+			btn.addEventListener('click', function () {
+				paint(true, typeof v.withPictures === 'function' ? v.withPictures() : v.html);
+				bar.remove();
+			});
+			paint(false, v.html);
 
 			body.appendChild(bar);
 			body.appendChild(frame);
@@ -64072,7 +64322,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// See the matching note in `selectChat`: the transcript just
 					// landed, so re-run the gate now that `threadStarted` has real
 					// turns (or genuinely none) to read rather than a bare summary.
-					if (current === rec) syncComposerAttachPrefix();
+					if (current === rec) syncAttachPrefix();
 				}).catch(function () { /* loadMessages never throws */ });
 			}
 			// A thread with nothing in it reads as a thing that is broken rather than
@@ -64093,7 +64343,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			syncComposer();
 			renderChatAttachments();          // the chat footer never applies to a Diamond
-			syncComposerAttachPrefix();       // may seed the composer -- see ATTACH_CONTRACT.md §6
+			syncAttachPrefix();       // the first message's note -- see ATTACH_CONTRACT.md §6
 			// Anything left queued on this daimon is drawn again -- `renderHistory` has
 			// just rebuilt the thread it lives in -- and then acted on, one tick later
 			// so this function finishes drawing before a turn starts writing into it.
@@ -64114,7 +64364,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		showCentre('focus');
 		syncComposer();
 		renderChatAttachments();
-		syncComposerAttachPrefix();
+		syncAttachPrefix();
 		// And on the crystal face too: the composer is the same box talking to the
 		// same daimon, so a queue left behind is picked up from whichever face the
 		// user comes back on. The thread it draws into is hidden here, which costs a
@@ -67299,6 +67549,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (prod.length) row.prod = prod;
 			if (files.length) row.files = files;
 		}
+		// UNBLOCK-26: the files of his the turn changed, which the runner kept first and marks `his`,
+		// each with its change, and the turn's away Undo as History offers it.
+		// A file kept first whose authorship the runner could not judge (`unsure`) is shown, but never
+		// as his.
+		var yours = (rec.files || []).filter(function (f) {
+			return f && (f.his === true || f.unsure === true) && !f.created && f.path;
+		})
+			.map(function (f) {
+				var y = { path: String(f.path) };
+				if (f.his !== true) y.unsure = true;
+				if (typeof f.add === 'number') y.add = f.add;
+				if (typeof f.del === 'number') y.del = f.del;
+				if (f.change && typeof f.change === 'object') y.change = f.change;
+				return y;
+			});
+		if (yours.length) {
+			row.yours = yours;
+			row.away = { keeper: store, on: String(rec.on || ''), onName: String(rec.onName || ''), run: String(rec.run),
+				since: Number(rec.since) || 0, until: Number(rec.until) || 0 };
+		}
 		// Held meanwhile (the awaits above): the first one in keeps it.
 		if (ms.some(function (m) { return m && m.mid === mid; })) return null;
 		var end = -1, last = -1;
@@ -67317,8 +67587,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return row;
 	}
 
-	/// The live History rows with an Undo of a runner turn, by run, so an answer redraws its row.
+	/// The live History rows with an Undo of a runner turn, by run, so an answer redraws its row;
+	/// and the chat's "Changed your file" tiles with the same Undo (UNBLOCK-26), which History's
+	/// redraw does not clear.
 	var _histUndoRows = new Map();
+	var _turnUndoRows = new Map();
 	var _histList = null;		// the History list last drawn
 
 	/// Is History open on `keeper` now, so a version recorded for it should be drawn?
@@ -67333,8 +67606,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var got = { mark: null, recorded: false };
 		try { got = await DaimondVersions.undoneArrived(env); } catch (e) { return; }
 		if (got.recorded && window.DaimondSync && DaimondSync.flush) DaimondSync.flush().catch(function () {});
-		var draw = _histUndoRows.get(String(env.run || ''));
-		if (draw) { try { draw(); } catch (e) { /* the panel's next open draws it */ } }
+		[_histUndoRows, _turnUndoRows].forEach(function (rows) {
+			var draw = rows.get(String(env.run || ''));
+			if (draw) { try { draw(); } catch (e) { /* the next drawing shows it */ } }
+		});
 		if (got.recorded && histOpenFor(env.keeper)) {
 			try { showCrystalHistory(); } catch (e) { /* the panel's next open shows the undo's entry */ }
 		}
@@ -67344,6 +67619,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function undoTurnDeps() {
 		return {
 			by: selfDeviceId(),
+			// An undo is refused while its keeper's turn runs, Here and away alike (QA-A LOW-1).
+			busy: function (keeper) { return diamondTurning(keeper); },
 			post: async function (env) {
 				var body = await DaimondPeer.sealForSelf(env);
 				var r = await DaimondPost.post(body);
@@ -67372,8 +67649,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// The Undo of a runner turn (or of the undo itself), drawn into `box` as one state.
-	function histAwayUndo(id, r) {
-		var away = r.away, box = document.createElement('div');
+	function histAwayUndo(id, r, rows) {
+		var away = r.away, box = document.createElement('div'), live = rows || _histUndoRows;
 		box.className = 'hist-away';
 		var runner = String(away.onName || deviceNameFor(away.on) || t('devices.another'));
 		var label = r.cause === 'restore' ? 'versions.undo_restore' : 'versions.undo_turn';
@@ -67381,7 +67658,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var draw = function () {
 			box.replaceChildren();
 			var st = DaimondVersions.undoState(away, Date.now(), undoTurnProbe());
-			if (!st.k) { _histUndoRows.delete(String(away.run)); return; }
+			if (!st.k) { live.delete(String(away.run)); return; }
 			var line = function (key, v) {
 				var p = document.createElement('div');
 				p.className = 'hist-note hist-away-state';
@@ -67396,6 +67673,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				box.appendChild(b);
 			};
 			var ask = async function () {
+				// As the Here row's "Undo this restore": not while the Diamond's turn runs,
+				// which could be writing the very files the runner is asked to put back.
+				if (diamondTurning(id)) {
+					var f = diamonds.find(function (x) { return x.id === id; }) || {};
+					noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
+					return;
+				}
 				said = '';
 				var mark = await DaimondVersions.undoTurn(id, away, undoTurnDeps());
 				if (!mark) said = 'versions.undo_not_sent';
@@ -67418,7 +67702,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			else if (st.k === 'busy') { line('versions.undo_busy'); button(label, ask); }
 			else { line('versions.undo_error', { why: (res && res.why) || t('versions.undo_no_why') }); button(label, ask); }
 		};
-		_histUndoRows.set(String(away.run), draw);
+		live.set(String(away.run), draw);
 		draw();
 		return box;
 	}
@@ -68117,7 +68401,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					writeAttachState(l.id, state === 'read' ? 'note' : 'read');
 					renderArtefacts();
 					// A still-fresh agent's seeded prefix reads this same store.
-					syncComposerAttachPrefix();
+					syncAttachPrefix();
 				},
 				// Opening it is the obvious click, and every kind already has a panel
 				// that knows how to show it \u2014 so this routes rather than rendering
@@ -69079,35 +69363,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out;
 	}
 
-	// The text this module put in front of the composer last, per chat (or per
-	// Diamond, while its agent is still fresh) — so a later change can find and
-	// replace it rather than stacking a second copy, and an edit the user made
-	// to it is left alone rather than fought.
-	var attachPrefixWritten = {};
-
-	/// Does this call get to touch the composer at all? Split out, like
-	/// `mergeAttachPrefix` below, so the RULE can be proved without a browser:
-	/// the prefix is offered only into the FIRST turn of a new thread —
-	/// `hasTurns` false — and only where there is nothing to lose by writing:
-	/// an EMPTY box, or one that still starts with what this module wrote
-	/// there last THIS page life (`lastWritten`, '' if never) — which covers a
-	/// live attach/detach or a Note ⇄ Read flip typed after, per the box's own
-	/// doc comment, since the user's words merely follow it there.
-	///
-	/// Anything else — a real draft restored by `drafts.js`, the user's own
-	/// words with none of this module's text in front, or this module's own
-	/// prior text from a PREVIOUS page life (`lastWritten` is '' again on a
-	/// fresh reload, so it cannot be recognised as "ours" here) — is left
-	/// exactly as it stands: the composer on return is the persisted draft,
-	/// full stop, never reconciled against whatever the attach list has since
-	/// become. `hasTurns` is `true` for a thread with no conversation to seed
-	/// at all (`current` unset), by the caller passing it so, so one rule
-	/// covers "no thread" and "thread already under way" alike.
-	function attachPrefixGateOpen(hasTurns, boxValue, lastWritten) {
-		if (hasTurns) return false;
-		if (!boxValue) return true;
-		return !!(lastWritten && boxValue.indexOf(lastWritten) === 0);
-	}
+	var attachPrefixSeq = 0;			// the latest `syncAttachPrefix`; an older one landing late is dropped
 
 	// A single `Note …` / `Read …` line, the shape `attachPrefixText` builds one
 	// of. Used only as the LOOSE fallback below, for a draft whose attach list
@@ -69117,7 +69373,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// A draft written before 5ede1ba could pick up one more copy of the attach
 	/// prefix every reload or unlock (owner report, 2026-09-13: six stacked
 	/// copies on one chat). This collapses what is ALREADY sitting in storage,
-	/// once, on restore — `syncComposerAttachPrefix` itself only ever seeds one
+	/// once, on restore — `syncAttachPrefix` itself only ever seeds one
 	/// copy now, but a draft corrupted before that fix is not self-healing.
 	///
 	/// `current` is what `attachPrefixText` would build for this thread RIGHT
@@ -69159,40 +69415,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return block + rest;                          // unstarted with several: collapse to one
 	}
 
-	/// Put the generated prefix in front of whatever is typed, replacing only
-	/// the text this module itself wrote there last — so attaching one more
-	/// thing, or flipping Note ⇄ Read, updates it, while a person who has
-	/// edited or deleted it keeps their own words. This is the `✎ Page`
-	/// decision of 2026-08-10 applied here: a prompt the app writes and hides is
-	/// a prompt nobody can argue with (§6).
+	/// Work out the attach prefix the focused thread's first message will carry (HATE-10), and
+	/// keep it on the thread as `_attachPre`, which `pushUserRecord` takes into that message's
+	/// note: beside the words and never in them, so the composer holds only what was typed.
+	/// Transient, like `_draft`, and kept out of the store by `slimChat`'s whitelist. Called
+	/// wherever the attachment set or the focus changes.
 	///
-	/// Confined to a thread's FIRST turn, with an otherwise-empty composer
-	/// (`attachPrefixGateOpen`) — ATTACH_CONTRACT.md §6 always meant this for
-	/// the Diamond side ("when a new agent is initialised"), but the chat side
-	/// had no such gate at all, so an EXISTING chat's composer came back
-	/// prefilled with workspace instructions on focus, reload and unlock (owner
-	/// report, 2026-09-13). Checked once here, ahead of both branches and
-	/// before any of the async work below, so every caller — `selectChat`
-	/// (thread-switch-back, boot's restore), the Diamond face switch,
-	/// attach/detach, an unlock — is covered by the one rule rather than
-	/// needing a patch at each.
-	async function syncComposerAttachPrefix() {
+	/// `threadStarted`, not `current.messages.length` and not `chatMsgCount` alone: a chat
+	/// just opened from the rail is often not yet RESIDENT (seq 213), and a daimon chat that
+	/// arrived by SYNC metadata-only reads `chatMsgCount` as zero for good.
+	async function syncAttachPrefix() {
 		var f = attachFocus();
 		if (!f) return;
-		var input = document.getElementById('chat-input');
-		if (!input) return;
-		var last = attachPrefixWritten[f.id] || '';
-		// `threadStarted`, not `current.messages.length` and not `chatMsgCount`
-		// alone: a chat just opened from the rail is often not yet RESIDENT (seq
-		// 213) -- its transcript loads async and `messages` reads `[]` in the
-		// meantime -- and a daimon chat that arrived by SYNC metadata-only reads
-		// `chatMsgCount` as zero for good, its transcript never having been here
-		// to load. Both read as a thread with no turns without the scalars
-		// `threadStarted` also checks, and let a real, multi-turn chat's composer
-		// be reseeded (gap between `selectChat` and the load landing; second
-		// device that never sends a turn itself, ever).
-		var hasTurns = !current || threadStarted(current);
-		if (!attachPrefixGateOpen(hasTurns, input.value, last)) return;
+		var mine = ++attachPrefixSeq;
+		var thread = current;			// the thread in focus now; `current` may move during the awaits
+		if (!thread) return;
+		if (threadStarted(thread)) { delete thread._attachPre; return; }
 		var list;
 		if (f.kind === 'chat') {
 			list = chatAttachList(f.id);
@@ -69217,37 +69455,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// out, and quoting the same file into a seeded composer would pay for it
 		// twice. Two surfaces, one control, and the difference is the fence.
 		if (text && f.kind === 'chat') text += await attachReadBodies(list, f.id);
-		var val  = input.value;
-		input.value = mergeAttachPrefix(text, val, last);
-		attachPrefixWritten[f.id] = text;
-		if (input.dispatchEvent) input.dispatchEvent(new Event('input', { bubbles: true }));
-	}
-
-	/// The composer's next value, given what it holds NOW (`val`), what this
-	/// module would write as the attach prefix THIS time (`text`), and what it
-	/// wrote LAST time this page life (`last`, '' if it never has).
-	///
-	/// `attachPrefixWritten` -- where `last` comes from -- is this module's own
-	/// memory, not the page's: it starts fresh on every reload while a RESTORED
-	/// draft (`drafts.js`) can still open with the very prefix this function
-	/// wrote last time, in a PREVIOUS page life. A version of this that trusted
-	/// `last` alone found `last === ''` on that first call after a reload, fell
-	/// through to prepending unconditionally, and stacked a second copy in front
-	/// of the one already sitting there -- and the box's own `input` event then
-	/// handed that doubled text straight back to `drafts.js` to keep, so the next
-	/// reload started from two and produced three. One more copy every load or
-	/// unlock, forever.
-	///
-	/// Checking `val` against the freshly computed `text` first catches that
-	/// case with no memory of having written it this page life at all: if the
-	/// box already starts with exactly what would be written now, there is
-	/// nothing to do. Split out as its own function so a page load's worth of
-	/// restores can be proved idempotent without a browser -- see
-	/// `verify_draftdup.mjs`.
-	function mergeAttachPrefix(text, val, last) {
-		if (text && val.indexOf(text) === 0) return val;                     // already exactly this prefix
-		if (last && val.indexOf(last) === 0) return text + val.slice(last.length);
-		return text ? text + val : val;
+		if (mine !== attachPrefixSeq || threadStarted(thread)) return;
+		if (text) thread._attachPre = text;
+		else delete thread._attachPre;
 	}
 
 	/// One tile in a footer or a panel, in whichever view is chosen. The
@@ -69950,7 +70160,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var grants = attachAddGrants(opts);
 		var dir = '';
 		var ticked = {};				// path -> { dir }
-		var picked = await dialog({
+		var relist = null;				// the open picker's re-read of the folder it shows
+		var picked;
+		try { picked = await dialog({
 			kind:  'pick',
 			title: grants ? t('attach.pick_mark_title') : t('attach.pick_title'),
 			okLabel: t(grants ? 'attach.select' : 'attach.add'),
@@ -69982,6 +70194,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				var showing = 0;			// the latest `show`; an older one that lands late is dropped
 				show('');
+				// THE DISK AS IT IS NOW (HATE-8). Opening and entering a folder each read it
+				// afresh, but a picker left open while a folder is made in a terminal kept the
+				// listing it opened with until Workspace › Refresh. Coming back to the tab reads
+				// the folder shown again, through the same listing; the ticks are kept by path.
+				relist = function () { show(dir); };
+				window.addEventListener('daimond:tabfocus', relist);
 				async function show(next) {
 					var mine = ++showing;
 					dir = next || '';
@@ -70067,7 +70285,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				return { read: function () { return ticked; } };
 			},
-		});
+		}); }
+		finally { if (relist) window.removeEventListener('daimond:tabfocus', relist); }
 		if (!picked) return;
 		var paths = Object.keys(picked);
 		for (var i = 0; i < paths.length; i++) {
@@ -70084,17 +70303,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// Everywhere the attachment set is drawn redraws: the chat footer, and the
-	/// composer's generated prefix.
+	/// note a fresh thread's first message carries.
 	function attachChanged() {
 		renderChatAttachments();
-		syncComposerAttachPrefix();
+		syncAttachPrefix();
 	}
 
 	// A Diamond's own links changing — attaching or detaching a folder or file,
 	// or flipping a tile's Note ⇄ Read — can change what a still-fresh agent
 	// would be seeded with.
 	document.addEventListener('daimond-links-changed', function () {
-		syncComposerAttachPrefix();
+		syncAttachPrefix();
 		renderMarkNotice();
 	});
 
@@ -70156,7 +70375,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chatConfirm:  chatConfirmHere,
 		prefixText:   attachPrefixText,
 		readBodies:   attachReadBodies,
-		syncPrefix:   syncComposerAttachPrefix,
+		syncPrefix:   syncAttachPrefix,
 		render:       renderChatAttachments,
 		// The local, unsynced Note/Read map -- see its own comment above.
 		diamondState:    readAttachState,
@@ -72696,6 +72915,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function renderAll() {
 		trail('renderAll');
 		step('Workers.load', function () { return Workers.load(); });
+		step('PeerAgents.start', function () { return PeerAgents.start(); });
 		// These two were called with no `await` and no `.catch`, so anything they
 		// threw became an unhandled rejection -- which is exactly what the phone's
 		// trail showed, twice per boot, from `opfs.rs` failing to open a path.
@@ -73831,6 +74051,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// a decrypted store behind it, which is what the event claims.
 		dsEvent('boot', {
 			ua:  (typeof navigator !== 'undefined' && /iPhone|iPad|Android/i.test(navigator.userAgent || '')) ? 'mobile' : 'desktop',
+			browser: (typeof navigator !== 'undefined') ? browserOf(navigator.userAgent, navigator.userAgentData) : null,
 			sw:  (typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.controller) ? 1 : 0,
 			vis: (typeof document !== 'undefined' && document.visibilityState) || '',
 			fold: cfg.foldAt || 0,
@@ -75780,10 +76001,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// A row's text in the page's language: its `say` key (params `say.v`) when it carries one
-	/// (a native runner's error, vision and failed-answer rows), else its content.
+	/// (a native runner's error, vision, failed-answer and cut rows), else its content.
 	function logRowText(m) {
 		var content = m.content == null ? '' : String(m.content);
-		return m.say && m.say.k ? tOr(m.say.k, content, m.say.v) : content;
+		if (!(m.say && m.say.k)) return content;
+		var v = m.say.v;
+		// A COUNTED key (`turn.rows_cut` {n}) is a plural pair in the table, `<k>.one` /
+		// `<k>.other`, so it is said in the locale's form for the count (`tn`).
+		if (v && typeof v.n === 'number') {
+			var s = tn(m.say.k, v.n, v);
+			if (s !== m.say.k + (v.n === 1 ? '.one' : '.other')) return s;
+		}
+		return tOr(m.say.k, content, v);
 	}
 
 	/// The round-limit setting: how many tool-call rounds one turn may take.
@@ -78015,7 +78244,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			agentLens = b.dataset.lens;
 			try { localStorage.setItem(AGENT_LENS_KEY, agentLens); } catch (er) { /* kept for this page */ }
 			paintAgentLensSwitch();
-			renderAgentGrid(Workers.runs);
+			renderAgentGrid();
 		});
 	}
 	var agentsClearBtn = document.getElementById('agents-clear');
@@ -78129,8 +78358,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The app's own voice about the conversation -- a refusal, a limit
 				// reached, a fan-out handover. Kept, because a transcript that silently
 				// drops the reason a turn stopped misleads whoever reads it next.
+				// A native runner's row carries its words as a key (`say`), its content empty.
 				case 'error_log':
-				case 'note_log':  out.push('\n> ' + body); break;
+				case 'note_log':
+				case 'cut_log':   out.push('\n> ' + logRowText(m).trim()); break;
 				default: break;
 			}
 		});
@@ -78561,6 +78792,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// withdrawn-grant alarm on it, and Mail reads the user's folder like
 				// anything else here.
 				readText:     readBytes,
+				// A message as bytes, for `wasm.mail_view`, which reads its charset itself.
+				readBytes:    readRawBytes,
 				openFile:     Files.open,
 				// The workspace tree. Mail calls this at every moment a draft file can
 				// appear or vanish -- saving one, discarding one, sending one -- so the
@@ -79309,7 +79542,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var last = msgs.length ? msgs[msgs.length - 1] : null;
 				if (last) {
 					role = String(last.role || '');
-					text = (last.content == null) ? '' : String(last.content);
+					text = logRowText(last);
 				}
 			} catch (e) { /* no current chat yet */ }
 			// What is in front of the person, cheaply and honestly: the app's own

@@ -68,4 +68,10 @@ impl HostNet for LocalNet {
     async fn image_ocr(&self, _mistral_body: &str, _vision_body: &str) -> Outcome<(String, String)> {
         unavailable("net", "image_ocr")
     }
+    async fn image_model(&self) -> Outcome<crate::image_edit::ImageModel> {
+        unavailable("net", "image_model")
+    }
+    async fn openrouter_images(&self, _body: &str) -> Outcome<String> {
+        unavailable("net", "openrouter_images")
+    }
 }

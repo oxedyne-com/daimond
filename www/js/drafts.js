@@ -193,7 +193,7 @@
 				// prefill as though the user had typed it, so a reload restored it, the
 				// prefill code ran again unable to tell its old text from fresh box
 				// content, and prepended another copy -- one more each load or unlock.
-				// See `syncComposerAttachPrefix` in daimond.js.
+				// The attach prefix now rides the first message's note, not the box (HATE-10).
 				if (e && e.isTrusted === false) return;
 				set(el.dataset.draftKey || '', el.value);
 			});

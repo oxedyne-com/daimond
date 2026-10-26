@@ -46,7 +46,7 @@
 // regardless of `hasTurns` -- the exact keeper that left the owner's box
 // filled for ever, one collapse short of empty. `--break` re-splices that
 // return into the function's source (grabbed fresh from `www/js/daimond.js`,
-// the way `verify_draftdup.mjs` proves `mergeAttachPrefix`) and runs ONLY
+// the way `verify_draftdup.mjs` proves `scrubAttachPrefixDup`) and runs ONLY
 // that check, no browser needed, so the fault this file exists to catch has
 // an on-request way to go red:
 //

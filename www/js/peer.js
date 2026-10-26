@@ -395,7 +395,7 @@
 		// A1, I1/I4): the row's `url`, `keyEnc` and `fetched`, never a plaintext key and never
 		// `credits`. Derived from the halves when the caller passes none. Written only when there
 		// is one.
-		var reads = ocrOf(o.ocr !== undefined ? o.ocr : ocrRoute());
+		var reads = ocrOf(o.ocr !== undefined ? o.ocr : withEdit(ocrRoute()));
 		var keys = keysOf(o.keys != null ? o.keys : keysForModel(o.model, reads));
 		if (keys) e.keys = keys;
 		// WHICH PROVIDER PAYS THE TURN'S READS (OWNKEY A1, QA OKD-A M-2), `{pdf, image}`: ocr.js
@@ -456,7 +456,24 @@
 	function ocrOf(r) {
 		if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
 		var id = function (v) { return typeof v === 'string' ? v : ''; };
-		return { pdf: id(r.pdf), image: id(r.image) };
+		var out = { pdf: id(r.pdf), image: id(r.image) };
+		// The image editing model rides the route that pays for it, written only when named.
+		if (id(r.edit)) { out.edit = r.edit; out.editPrice = id(r.editPrice); }
+		return out;
+	}
+
+	/// Read route `r` with the "Image editing" Jobs pick (models.js `imageModelOf`) as `edit`, so
+	/// a runner's `image_edit` uses the model the tab would. With no catalogue yet and no pick,
+	/// the fetch is started, so the next errand carries the computed default.
+	function withEdit(r) {
+		if (!r || typeof r !== 'object') return r;
+		var M = window.DaimondModels, O = window.DaimondOcr;
+		var im = (M && typeof M.imageModelOf === 'function') ? M.imageModelOf() : null;
+		if (!im && O && typeof O.imageCatalogue === 'function') {
+			try { O.imageCatalogue().catch(function () {}); } catch (e) { /* the next errand asks again */ }
+		}
+		if (im && im.id) { r.edit = im.id; r.editPrice = im.price || ''; }
+		return r;
 	}
 
 	/// `keys` coerced to the wire shape: sealed fields only, in the runner's order, credits and
@@ -7211,7 +7228,7 @@
 	// user turn is view-only scaffolding the watcher rebuilds for itself.
 	var PROGRESS_ROLES = {
 		assistant: 1, think_log: 1, tool_log: 1, vision_log: 1,
-		error_log: 1, note_log: 1, fold_log: 1, leak_log: 1, end_log: 1,
+		error_log: 1, note_log: 1, fold_log: 1, leak_log: 1, end_log: 1, cut_log: 1,
 	};
 
 	/// The turn's messages AFTER its own user message, as STRUCTURED rows a watcher can
@@ -7397,6 +7414,120 @@
 		return out;
 	}
 
+
+	// ── Agents across devices (UNBLOCK-28) ─────────────────────
+	//
+	// Every device publishes its own agents as one sealed frame on the progress door,
+	// under `agents.<deviceId>`, and every device follows each peer's key. The Agents
+	// panel draws its own runs and the peers' together, so a worker running on argonaut
+	// is in gilgamesh's grid with its state and its ending. Before this the grid drew
+	// `Workers.runs` alone, and no worker state crossed devices at all: the hand-off
+	// frame's `workers` reach only the hand-off tile, and only while that turn runs.
+	var AGENTS_KEY_PREFIX = 'agents.';
+	var AGENTS_DAY_MS     = 24 * 3600e3;		// the grid's working set: live, or ended within a day
+	var AGENTS_RUNS_MAX   = 200;			// runs read off one peer's frame
+	var AGENTS_LIVE       = ['queued', 'running', 'paused'];
+	// What a run carries across, and the longest each string may be. Nothing else
+	// leaves the device: no task, no transcript, no engine.
+	var AGENTS_STR = { id: 64, name: 80, diamondId: 64, diamondName: 120, chatId: 64, chatName: 120,
+		turnId: 64, parentId: 64, model: 120, deviceId: 64, context: 16 };
+	var AGENTS_NUM = ['costUsd', 'priorCost', 'capUsd', 'endedAt', 'rating'];
+
+	/// The door key a device's agents frame is stored under.
+	function agentsKey(dev) { return AGENTS_KEY_PREFIX + String(dev || ''); }
+
+	/// One run as it crosses: the whitelisted fields, each checked, or null.
+	function agentsRun(r) {
+		if (!r || typeof r !== 'object') return null;
+		var st = (typeof r.status === 'string') ? r.status : '';
+		if (WORKER_STATES.indexOf(st) < 0) return null;
+		var out = { status: st };
+		for (var k in AGENTS_STR) {
+			if (typeof r[k] === 'string' && r[k]) out[k] = r[k].slice(0, AGENTS_STR[k]);
+		}
+		if (!out.id) return null;
+		AGENTS_NUM.forEach(function (k) {
+			var n = Number(r[k]);
+			if (r[k] != null && isFinite(n)) out[k] = n;
+		});
+		if (!out.name) out.name = out.id;
+		return out;
+	}
+
+	/// Is this run in the grid's working set at `now`: live, or ended within the day?
+	function agentsCurrent(r, now) {
+		if (AGENTS_LIVE.indexOf(r.status) >= 0) return true;
+		return !(Number(r.endedAt) > 0) || now - Number(r.endedAt) <= AGENTS_DAY_MS;
+	}
+
+	/// This device's agents frame, `{v:1, dev, runs:[...]}` JSON, newest run first, fitted
+	/// to the door (`budget`/`weigh` as `frameJson`) by leaving out the OLDEST runs: a cut
+	/// string would be lost whole. '' when there is no device id. An empty list is still a
+	/// frame, so a peer learns the runs have gone.
+	function agentsFrame(runs, dev, now, budget, weigh) {
+		if (!dev) return '';
+		var parts = [];
+		(runs || []).forEach(function (r) {
+			var c = agentsRun(r);
+			if (c && agentsCurrent(c, now)) parts.push(JSON.stringify(c));
+		});
+		var head = '{"v":1,"dev":' + JSON.stringify(String(dev)) + ',"runs":[';
+		if (budget && typeof weigh === 'function') {
+			var w0 = weigh(head + ']}'), chars = w0.chars, bytes = w0.bytes, keep = 0;
+			for (var i = 0; i < parts.length; i++) {
+				var w = weigh(parts[i]), sep = keep ? 1 : 0;
+				if (chars + w.chars + sep > budget.chars || bytes + w.bytes + sep > budget.bytes) break;
+				chars += w.chars + sep; bytes += w.bytes + sep; keep++;
+			}
+			parts = parts.slice(0, keep);
+		}
+		return head + parts.join(',') + ']}';
+	}
+
+	/// A peer's agents frame read off the door, `{ dev, runs }`, or null. Untrusted: a
+	/// frame naming another device than its key, or not a frame at all, is refused, and
+	/// each run is read field by field (`agentsRun`).
+	function agentsFromFrame(text, dev) {
+		var obj;
+		try { obj = JSON.parse(String(text || '')); } catch (e) { return null; }
+		if (!obj || obj.v !== 1 || !Array.isArray(obj.runs) || String(obj.dev || '') !== String(dev || '')) return null;
+		var runs = [];
+		for (var i = 0; i < obj.runs.length && runs.length < AGENTS_RUNS_MAX; i++) {
+			var c = agentsRun(obj.runs[i]);
+			if (c) { c.deviceId = String(dev); runs.push(c); }
+		}
+		return { dev: String(dev), runs: runs };
+	}
+
+	/// The peers' runs held, with `frame` taken in: a device's newest frame replaces its
+	/// last, so taking the same frame twice changes nothing. `got` is when it was read.
+	function peerRunsMerge(store, frame, got) {
+		var out = Object.assign({}, store || {});
+		if (frame && frame.dev) out[frame.dev] = { got: got, runs: frame.runs };
+		return out;
+	}
+
+	/// Every peer's runs for the grid, newest first per device. A run already in `own` (this
+	/// device's list) is left out, so a run is drawn once. A device not `awake` cannot still
+	/// be running anything it said was live, so those runs read `interrupted` rather than a
+	/// silent `running`; with `awake` null (presence unknown) they stand as said. A device
+	/// whose last frame is over a day old, and runs past the working set, are dropped.
+	function peerRunsList(store, awake, own, now) {
+		var have = {}, out = [];
+		(own || []).forEach(function (r) { have[String(r.id)] = 1; });
+		Object.keys(store || {}).forEach(function (dev) {
+			var s = store[dev];
+			if (!s || now - (s.got || 0) > AGENTS_DAY_MS) return;
+			var gone = Array.isArray(awake) && awake.indexOf(dev) < 0;
+			s.runs.forEach(function (r) {
+				if (have[r.id] || !agentsCurrent(r, now)) return;
+				have[r.id] = 1;
+				out.push((gone && AGENTS_LIVE.indexOf(r.status) >= 0)
+					? Object.assign({}, r, { status: 'interrupted', endedAt: s.got }) : r);
+			});
+		});
+		return out;
+	}
 	/// EVERY row of the turn, each whole (`progressRow(m, true)`), in document order up to
 	/// the next user message: what a final frame stands for. `progressTail` is the view of it that fits one frame; these
 	/// are the rows a watcher may make its answer (`adoptFinalFrame`), so nothing is cut or
@@ -7838,6 +7969,11 @@
 		frameWhole:    frameWhole,
 		frameJson:     frameJson,
 		frameWorkers:  frameWorkers,
+		agentsKey:     agentsKey,
+		agentsFrame:   agentsFrame,
+		agentsFromFrame: agentsFromFrame,
+		peerRunsMerge: peerRunsMerge,
+		peerRunsList:  peerRunsList,
 		turnRows:      turnRows,
 		otherRunRows:  otherRunRows,
 		turnSpan:      turnSpan,

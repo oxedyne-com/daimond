@@ -196,8 +196,8 @@ impl HostStore for WasmStore {
     fn versionable(&self, id: &str, path: &str) -> bool {
         diamond::versionable(id, path)
     }
-    async fn authored_by_user(&self, id: &str, path: &str, now: &[u8]) -> bool {
-        diamond::authored_by_user(id, path, now).await
+    async fn authored_by_user(&self, id: &str, path: &str, now: &[u8], below: Option<u64>) -> bool {
+        diamond::authored_by_user(id, path, now, below).await
     }
     fn change_refused(&self, id: &str, path: &str) -> bool {
         diamond::change_refused(id, path)

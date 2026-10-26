@@ -367,6 +367,22 @@ export const contentText = (content) => {
 	return '';
 };
 
+/// The tool results of the turn that `directive` started, in one request the model was sent.
+///
+/// The turn begins at the LAST user message carrying the directive's words, and not at the last that starts with `@`:
+/// since r578 U2 (19 Oct) the engine leads each typed message with its `[Standing context for this turn. ...]` note, so
+/// no user message starts with `@`, and an anchor on `^@` found no turn and handed back every tool result in the
+/// conversation. verify_crystallook's BEHIND A TAP arm, its third turn, read the first turn's look and file_read as
+/// its own (26 Oct, ccp8 arms); the probe of the same arm passed only because it ran in a fresh conversation. A
+/// request from before the directive was sent has no such message, and so no results.
+export const turnTools = (request, directive) => {
+	const m = (request && request.messages) || [];
+	const said = String(directive || '').trim();
+	let k = m.length - 1;
+	while (k >= 0 && !(m[k].role === 'user' && said && contentText(m[k].content).includes(said))) k--;
+	return k < 0 ? [] : m.slice(k + 1).filter((x) => x.role === 'tool');
+};
+
 /// A file's bytes, in the one shape that crosses into `page.evaluate` cheaply.
 ///
 /// Never send a file as `Array.from(buf)`: Playwright turns each element of a number array into

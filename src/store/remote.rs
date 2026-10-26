@@ -1020,8 +1020,8 @@ impl<L: StoreLink> HostStore for RemoteStore<L> {
         answer!(self.link.call_blocking(&StoreCall::Versionable { id: s(id), path: s(path) }),
             Versionable).unwrap_or(true)
     }
-    async fn authored_by_user(&self, id: &str, path: &str, now: &[u8]) -> bool {
-        let call = StoreCall::AuthoredByUser { id: s(id), path: s(path), now: BodyRef::of(now) };
+    async fn authored_by_user(&self, id: &str, path: &str, now: &[u8], below: Option<u64>) -> bool {
+        let call = StoreCall::AuthoredByUser { id: s(id), path: s(path), now: BodyRef::of(now), below };
         answer!(self.send(id, call, &[now]).await, AuthoredByUser).unwrap_or(true)
     }
     fn change_refused(&self, id: &str, path: &str) -> bool {

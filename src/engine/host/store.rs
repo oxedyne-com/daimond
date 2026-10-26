@@ -142,8 +142,9 @@ pub trait HostStore {
     // The change gate (UNBLOCK-26)
     /// Is the file at `path`, as `now` holds it, the user's rather than this Diamond's own
     /// ([`crate::store::diamond::authored_by_user`])?  A host without a store answers yes: when
-    /// unsure, the file is his.
-    async fn authored_by_user(&self, id: &str, path: &str, now: &[u8]) -> bool;
+    /// unsure, the file is his.  `below` judges a turn kept as that version, by the manifests
+    /// before it; `None` is a live act's question.
+    async fn authored_by_user(&self, id: &str, path: &str, now: &[u8], below: Option<u64>) -> bool;
     /// Did the person decline, this turn, a change at `path` or around it
     /// ([`crate::diamond_versions::ChangeRefusals::refused`])?
     fn change_refused(&self, id: &str, path: &str) -> bool;

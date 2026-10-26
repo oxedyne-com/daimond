@@ -2127,8 +2127,8 @@ async fn serve_wait_late(st: &Shared, run: &str, bs: &Bodies, call: StoreCall,
         C::DiamondExists { id } => R::DiamondExists(diamond::diamond_exists(&id).await),
         C::KeepRoom { id } => R::KeepRoom(diamond::keep_room(&id).await),
         // A body that will not read is the user's (UNBLOCK-26: unsure is his).
-        C::AuthoredByUser { id, path, now } => R::AuthoredByUser(match body(bs, &now) {
-            Ok(b)   => diamond::authored_by_user(&id, &path, &b).await,
+        C::AuthoredByUser { id, path, now, below } => R::AuthoredByUser(match body(bs, &now) {
+            Ok(b)   => diamond::authored_by_user(&id, &path, &b, below).await,
             Err(_)  => true,
         }),
         C::TurnsFound { id, path, now } => R::TurnsFound(match body(bs, &now) {
