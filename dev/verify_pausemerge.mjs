@@ -172,7 +172,7 @@ if (on('U')) {
 	const c = await newChat(s); await sleep(600);
 	const other = await newChat(s); await sleep(600);
 	const leaf = await p.evaluate((c) => window.DaimondPause.id('root', 'chats', c), c);
-	const S = Date.now() - 60000;
+	const S = (await p.evaluate(() => Date.now())) - 60000;	// on the page's clock, which stamps the next write
 	await p.evaluate(({ leaf, S }) => {
 		localStorage.setItem('daimond-pause', JSON.stringify({ paused: [leaf], stamp: S }));
 	}, { leaf, S });

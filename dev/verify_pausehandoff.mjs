@@ -111,7 +111,7 @@ async function stack() {
 	execFileSync('bash', ['dev/devgw.sh'], { cwd: TREE, env: Object.assign({}, process.env, { DAIMOND_GW_PORT: String(GW_PORT) }) });
 	fs.copyFileSync(path.join(TREE, 'dev/devgw/app.jdat'), path.join(cwd, 'app.jdat'));
 	fs.symlinkSync(fs.realpathSync(path.join(TREE, 'gateway/keys')), path.join(cwd, 'keys'));
-	child(GWBIN, [], { cwd, env: gatewayEnv({ APP_MODE: 'sandbox' }, cwd) }, 'gateway');
+	child(GWBIN, [], { cwd, env: gatewayEnv({ APP_MODE: 'sandbox' }) }, 'gateway');
 	// The world's mock writes the same file (`connectMock` asks it), so the log starts empty either way.
 	fs.writeFileSync(MOCK_LOG, '');
 	if (!mockUp) child('node', ['dev/mockllm.mjs', String(MOCK_PORT)], { cwd: TREE, env: Object.assign({}, process.env, { DAIMOND_MOCK_LOG: MOCK_LOG }) }, 'mock');

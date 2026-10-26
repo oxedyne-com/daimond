@@ -511,6 +511,8 @@
 			'.pair-btn{padding:8px 14px;border-radius:8px;border:1px solid var(--border,#444);' +
 			'background:var(--accent,#4a7);color:#fff;cursor:pointer;font-size:var(--fs-base)}' +
 			'.pair-btn.ghost{background:transparent;color:inherit}' +
+			// A thumb's floor on a phone (UI bar rule 8): every dialog button here is at least 44px.
+			'@media (max-width:700px){.pair-btn{min-height:44px}}' +
 			// --danger, not a literal: #e66 was chosen against a dark card and reads
 			// at about 3:1 on the light and lollypop ones, which is under the floor
 			// for the one line on this dialog that says something went wrong.
@@ -759,6 +761,225 @@
 		});
 	}
 
+	// ── Pairing a computer as a runner (PAIR-QR, UNBLOCK-35) ────
+	//
+	// The computer starts it: `runner pair` opens a session at the gateway and
+	// shows a QR of `…/#runner=<session>.<kc>` and a short code. The phone's
+	// camera opens the link, or he types the code into Settings → Devices. Both
+	// CLAIM the session (the gateway turns it into a pending runner of whoever
+	// claims it), and one press on Approve is the Pending tile's own approval,
+	// `DaimondPasskey.approveRunner`: one tap, one passkey call.
+	//
+	// THE KEY IS CHECKED BY THE PAGE, NOT BY HIM, ON THE QR PATH. Approving seals
+	// his whole identity to whatever key the claim names, so a gateway that
+	// substituted its own would open it. `kc` is the computer's commitment to its
+	// key, carried in the QR beside the session; the claim's key must hash to it
+	// or nothing is offered (pairqr_review H1). The code path carries no
+	// commitment, so there he compares the key groups with the computer's, as the
+	// Pending tile asks.
+	//
+	// A second claim by the same account answers as the first (H2.2), so a
+	// cancelled passkey or a closed dialog is undone by scanning again. A claim
+	// by another account after his is contested and cancelled (410).
+	var RUNNER_CLAIM_URL  = '/api/runner/pair/claim';	// fixed: gateway wire contract
+	var RUNNER_HASH_RE    = /[#&]runner=([^&]*)/;
+	var RUNNER_SESS_RE    = /^[A-Za-z0-9]{8,64}$/;
+	var RUNNER_KC_RE      = /^[A-Za-z0-9_-]{16}$/;		// fixed: 12 bytes, base64url
+	var RUNNER_DEVICE_RE  = /^[A-Za-z0-9_-]{8,64}$/;
+	var RUNNER_KEY_RE     = /^[A-Za-z0-9_-]{43}$/;		// fixed: 32 bytes, base64url
+	// fixed: the gateway's code alphabet (app_main.rs), six characters shown as xxx-xxx.
+	var RUNNER_CODE_RE    = /^[abcdefghikmnpqrstuvw0-9]{6}$/;
+
+	function b64urlBytes(s) {
+		var b = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+		while (b.length % 4) b += '=';
+		var bin = atob(b), out = new Uint8Array(bin.length);
+		for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+		return out;
+	}
+
+	/// The commitment to a runner's key that its QR carries: the first 12 bytes of
+	/// SHA-256 of the raw 32-byte key, base64url. '' for a key that is not 32 bytes.
+	async function runnerKeyCommit(pubkey) {
+		try {
+			var raw = b64urlBytes(pubkey);
+			if (raw.length !== 32) return '';
+			var d = new Uint8Array(await crypto.subtle.digest('SHA-256', raw));
+			var bin = '';
+			for (var i = 0; i < 12; i++) bin += String.fromCharCode(d[i]);
+			return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+		} catch (e) { return ''; }
+	}
+
+	/// A typed code as the gateway keeps it: lower case, the hyphen and spaces gone.
+	function runnerCodeOf(typed) {
+		return String(typed || '').toLowerCase().replace(/[\s-]+/g, '');
+	}
+
+	function apiHeaders() {
+		var h = { 'content-type': 'application/json' };
+		if (window.DaimondGateway && DaimondGateway.clientApi) h['x-daimond-api'] = String(DaimondGateway.clientApi());
+		return h;
+	}
+
+	/// Claim a session (`{ session }`) or a code (`{ code }`). Resolves the runner
+	/// `{ device, pubkey, name }`, or `{ error }` with the sentence to show.
+	async function runnerClaim(by) {
+		var r = null, j = null;
+		try {
+			r = await DaimondGateway.gwFetch(RUNNER_CLAIM_URL, {
+				method: 'POST', credentials: 'same-origin', cache: 'no-store',
+				headers: apiHeaders(), body: JSON.stringify(by),
+			});
+			try { j = await r.json(); } catch (e) { j = null; }
+		} catch (e) { return { error: t('runnerpair.err_failed') }; }
+		var st = (r && r.status) || 0;
+		if (r && r.ok && j && j.ok === true
+			&& RUNNER_DEVICE_RE.test(String(j.device || '')) && RUNNER_KEY_RE.test(String(j.pubkey || ''))) {
+			return { device: String(j.device), pubkey: String(j.pubkey), name: String(j.name || '').slice(0, 64) };
+		}
+		// Not signed in on this browser (Safari, when he runs Daimond from the Home Screen):
+		// where to go instead. The code is on the computer's screen beside the QR.
+		if (st === 401) return { error: t(by.session ? 'runnerpair.err_signin_nocode' : 'runnerpair.err_signin_here') };
+		if (st === 404) return { error: t(by.code ? 'runnerpair.err_bad_code' : 'runnerpair.err_unknown') };
+		if (st === 409) return { error: t('runnerpair.err_used') };
+		if (st === 410) return { error: t('runnerpair.err_contested') };
+		// The rate limits have two sentences between them, the gateway's own (§4).
+		if (st === 429 && j && typeof j.error === 'string' && j.error) return { error: j.error.slice(0, 200) };
+		return { error: t('runnerpair.err_failed') };
+	}
+
+	/// The approval card, drawn into `box` once the claim is in: who, the key, and
+	/// the one Approve. `kc` is the QR's commitment, or '' on the code path.
+	async function runnerApproveView(box, close, rp, kc) {
+		var name = rp.name || t('pending.runnerpair.unnamed');
+		if (kc && (await runnerKeyCommit(rp.pubkey)) !== kc) {
+			runnerSay(box, close, t('runnerpair.err_key'));
+			return;
+		}
+		var fp = '';
+		try { fp = window.DaimondRunnerPair ? await DaimondRunnerPair.fingerprint(rp.pubkey) : ''; }
+		catch (e) { fp = ''; }
+		// The code path's key is his to compare, so no key shown is no Approve.
+		if (!kc && !fp) { runnerSay(box, close, t('runnerpair.err_failed')); return; }
+		runnerClear(box);
+		var h = box.querySelector('.pair-runner-title');
+		if (h) h.textContent = t('pending.runnerpair.headline', { name: name });
+		box.appendChild(el('p', null, t('pending.runnerpair.detail')));
+		if (fp) box.appendChild(el('p', 'pair-note', t(kc ? 'runnerpair.qr_key' : 'runnerpair.code_key', { fp: fp })));
+		var err = el('p', 'pair-err');
+		box.appendChild(err);
+		var row = el('div', 'pair-row');
+		var go = el('button', 'pair-btn pair-runner-approve', t('pending.runnerpair.approve'));
+		go.type = 'button';
+		row.appendChild(go);
+		box.appendChild(row);
+		go.addEventListener('click', async function () {
+			if (go.disabled) return;
+			go.disabled = true;
+			err.textContent = '';
+			var res = null;
+			try { res = await DaimondPasskey.approveRunner(rp.device, rp.pubkey); }
+			catch (e) { res = null; }
+			if (!res || !res.ok) {
+				// Cancelled or refused: the card stays, so the next tap is a fresh gesture.
+				err.textContent = (res && res.error) || t('pending.runnerpair.failed');
+				go.disabled = false;
+				return;
+			}
+			runnerSay(box, close, t('pending.runnerpair.approved', { name: name }), true);
+		});
+	}
+
+	/// Empty the card for its next state, keeping its title and closer.
+	function runnerClear(box) {
+		[].slice.call(box.children).forEach(function (c) {
+			var keep = c.classList && (c.classList.contains('ui-head') || c.classList.contains('pair-runner-title'));
+			if (!keep) box.removeChild(c);
+		});
+	}
+
+	/// The card's last word: a sentence and a way out.
+	function runnerSay(box, close, msg, done) {
+		runnerClear(box);
+		// The ask is answered, so the card goes back to naming itself.
+		var h = box.querySelector('.pair-runner-title');
+		if (h) h.textContent = t('runnerpair.title');
+		box.appendChild(el('p', done ? null : 'pair-err', msg));
+		var row = el('div', 'pair-row');
+		var ok = el('button', 'pair-btn' + (done ? '' : ' ghost'), t('common.close'));
+		ok.type = 'button';
+		ok.addEventListener('click', function () { close(); });
+		row.appendChild(ok);
+		box.appendChild(row);
+	}
+
+	// The latest link's whole flow, claim to card, settled once the card is drawn.
+	// Published as `runner.flow()` so a caller (a verifier, a shot) waits on the page
+	// itself rather than guessing how long a claim and a redraw take.
+	var runnerFlow = null;
+
+	/// Arrived from a scanned QR: claim, then the approval card.
+	function showRunnerFromLink(raw) {
+		var parts = String(raw || '').split('.');
+		var sess = parts[0] || '', kc = parts[1] || '';
+		var claimed = null;
+		overlay(function (box, close) {
+			box.appendChild(el('h3', 'pair-runner-title', t('runnerpair.title')));
+			if (parts.length !== 2 || !RUNNER_SESS_RE.test(sess) || !RUNNER_KC_RE.test(kc)) {
+				runnerSay(box, close, t('runnerpair.err_link'));
+				return;
+			}
+			box.appendChild(el('p', null, t('runnerpair.claiming')));
+			claimed = runnerFlow = runnerClaim({ session: sess }).then(function (rp) {
+				if (rp.error) { runnerSay(box, close, rp.error); return; }
+				return runnerApproveView(box, close, rp, kc);
+			});
+		});
+		return claimed;
+	}
+
+	/// Settings → Devices → "Pair a computer": the code the computer shows, typed.
+	function showRunnerCode() {
+		overlay(function (box, close) {
+			box.appendChild(el('h3', 'pair-runner-title', t('runnerpair.title')));
+			box.appendChild(el('p', null, t('runnerpair.code_lead')));
+			var input = document.createElement('input');
+			input.className = 'pair-input';
+			input.setAttribute('placeholder', t('runnerpair.code_ph'));
+			input.setAttribute('autocomplete', 'off');
+			input.setAttribute('autocapitalize', 'off');
+			input.setAttribute('spellcheck', 'false');
+			input.setAttribute('aria-label', t('runnerpair.code_lead'));
+			box.appendChild(input);
+			var err = el('p', 'pair-err');
+			box.appendChild(err);
+			var row = el('div', 'pair-row');
+			var cancel = el('button', 'pair-btn ghost', t('common.cancel'));
+			cancel.type = 'button';
+			cancel.addEventListener('click', function () { close(); });
+			var go = el('button', 'pair-btn pair-runner-claim', t('runnerpair.find'));
+			go.type = 'button';
+			row.appendChild(cancel);
+			row.appendChild(go);
+			box.appendChild(row);
+			async function submit() {
+				if (go.disabled) return;
+				var code = runnerCodeOf(input.value);
+				if (!RUNNER_CODE_RE.test(code)) { err.textContent = t('runnerpair.err_code'); return; }
+				go.disabled = true;
+				err.textContent = '';
+				var rp = await runnerClaim({ code: code });
+				go.disabled = false;
+				if (rp.error) { err.textContent = rp.error; return; }
+				await runnerApproveView(box, close, rp, '');
+			}
+			go.addEventListener('click', submit);
+			input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
+			setTimeout(function () { try { input.focus(); } catch (e) {} }, 50);
+		});
+	}
+
 	// ── Entry points (injected, so no shared markup to edit) ────
 
 	function injectEntryPoints() {
@@ -857,10 +1078,53 @@
 		showRedeem(code);
 	}
 
+	/// A computer's pairing link (`…/#runner=<session>.<kc>`): read once, stripped
+	/// at once so neither a reload nor history holds the session, then claimed.
+	// The one link waiting for his unlock: a later scan replaces it, so a second scan
+	// while locked is neither a second claim nor a second card.
+	var runnerWaiting = '';
+	function runnerOnAuthed() {
+		window.removeEventListener('daimond:authed', runnerOnAuthed);
+		var raw = runnerWaiting;
+		runnerWaiting = '';
+		if (raw && !document.querySelector('.pair-scrim')) showRunnerFromLink(raw);
+	}
+
+	function maybeOpenRunnerHash() {
+		var m = RUNNER_HASH_RE.exec(location.hash || '');
+		if (!m) return null;
+		// Stripped before anything else, so no early return leaves the session in the
+		// address bar or history.
+		try {
+			var h = (location.hash || '').replace(/[#&]?runner=[^&]*/, '');
+			if (h === '#') h = '';
+			history.replaceState(history.state, '', location.pathname + location.search + h);
+		} catch (e) { /* the address keeps it; the claim is still once */ }
+		if (document.querySelector('.pair-scrim')) return null;	// a dialog is already up
+		var raw = '';
+		try { raw = decodeURIComponent(m[1]); } catch (e) { raw = ''; }
+		// His own browser, still locked: the claim waits for the unlock, rather than
+		// a card over the unlock screen or a 401 sending him to another browser.
+		var locked = false;
+		try { locked = !!(window.DaimondIdentity && DaimondIdentity.exists() && !DaimondIdentity.isUnlocked()); }
+		catch (e) { locked = false; }
+		if (locked) {
+			if (!runnerWaiting) window.addEventListener('daimond:authed', runnerOnAuthed);
+			runnerWaiting = raw || '-';	// a malformed link still says so, once
+			return null;
+		}
+		return showRunnerFromLink(raw);
+	}
+
+	function onHash() {
+		maybeOpenFromHash();
+		maybeOpenRunnerHash();
+	}
+
 	function start() {
 		injectEntryPoints();
-		maybeOpenFromHash();									// arrived via a fresh load
-		window.addEventListener('hashchange', maybeOpenFromHash);	// or an already-open tab
+		onHash();								// arrived via a fresh load
+		window.addEventListener('hashchange', onHash);	// or an already-open tab
 	}
 
 	// ── Public surface ─────────────────────────────────────────
@@ -884,6 +1148,12 @@
 	// this is where they were first needed.
 	window.DaimondPairing = { create: create, redeem: redeem, showLink: showLink, showRedeem: showRedeem,
 		stashName: stashName,
+		runner: {
+			fromHash:  maybeOpenRunnerHash,
+			flow:      function () { return runnerFlow || Promise.resolve(); },
+			enterCode: showRunnerCode,
+			commit:    runnerKeyCommit,
+		},
 		ui: {
 			overlay:      overlay,
 			qrCanvas:     qrCanvas,

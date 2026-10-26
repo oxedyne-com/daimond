@@ -95,7 +95,7 @@ const alreadyUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)
 if (alreadyUp) {
 	console.log(`  ok   using the gateway already on :${GW_PORT}`);
 } else {
-	gw = spawn(GWBIN, [], { cwd: GWCWD, env: gatewayEnv({ APP_MODE: 'sandbox' }, GWCWD), stdio: GW_LOG.stdio });
+	gw = spawn(GWBIN, [], { cwd: GWCWD, env: gatewayEnv({ APP_MODE: 'sandbox' }), stdio: GW_LOG.stdio });
 	check('gateway starts', await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok), GWBIN);
 }
 

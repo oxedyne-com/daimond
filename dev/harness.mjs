@@ -52,6 +52,8 @@ import { extDev, isExtSource } from './extdev.mjs';
 import { PW, chromium, webkit, firstThatOpens, WEBKIT_SAFARI_FEATURES } from './pw.mjs';
 import { testCfg } from './testcfg.mjs';
 import { verdict } from './verdict.mjs';
+import { GW_URL } from './ports.mjs';
+import { gateNow, requireDrivenGateway, startRunClock } from './rig/gateclock.mjs';
 
 // playwright-core is reached only through ./pw.mjs, whose Chromium keeps its
 // shared memory in /dev/shm; PW is re-exported for the files that name it.
@@ -266,6 +268,16 @@ function ourDirectives() {
 }
 
 let mockIdentity = null;
+/// The world's gateway, when one answers its port, is on a driven clock (gateclock.mjs gatewayDriven); asked once a process.
+let gwClockAsked = null;
+function requireWorldGatewayClock() {
+	return gwClockAsked ||= (async () => {
+		if (!process.env.DAIMOND_GW_PORT) return;	// no world gateway port: /api reaches nothing of this run's
+		const up = await fetch(`${GW_URL}/api/health`, { signal: AbortSignal.timeout(2000) }).then(() => true, () => false);
+		if (up) await requireDrivenGateway(GW_URL);
+	})();
+}
+
 async function requireOwnMock() {
 	if (mockIdentity) return mockIdentity;
 	const url = new URL('/__world', MOCK).href;
@@ -505,7 +517,9 @@ export async function open(opts = {}) {
 		// head as tile height between 00:00 and 01:00 Sydney on 2026-10-25 with the
 		// zone pinned and the date left free. DAIMOND_CLOCK sets it for every open()
 		// of a run that names none, to replay a run at a chosen moment.
-		clock     = process.env.DAIMOND_CLOCK || null,
+		// ONE CLOCK PER RUN: the run clock's current value (gateclock.mjs startRunClock), so a page opened late in a
+		// run stamps the same "now" the gateway reads, not the bare instant again (four false reds, 26 Oct).
+		clock     = process.env.DAIMOND_CLOCK ? (startRunClock(), gateNow()) : null,
 		// CHROMIUM'S OWN STATEMENT THAT THIS IS A PHONE: `navigator.userAgentData.mobile`.
 		// The UA string alone is NOT enough here, and that is not a detail. mobile.js
 		// `detectMobile` reads the client hint FIRST and returns it whatever it says,
@@ -586,6 +600,9 @@ export async function open(opts = {}) {
 	// this run will talk to? See `requireOwnMock` for the gate that made this
 	// necessary. Only when the session is going to be pointed at one.
 	if (connect) await requireOwnMock();
+	// A gateway answering this world's port runs on the run clock, or the gate is red here, at start-up, and not later
+	// with a pairing 401 (the page's stamps are the run clock's, a host-clock gateway's are not).
+	await requireWorldGatewayClock();
 
 	const args = ['--no-sandbox'];
 	if (Array.isArray(extraArgs)) args.push(...extraArgs);
@@ -691,23 +708,34 @@ export async function open(opts = {}) {
 			...(ua ? { userAgent: ua } : {}),
 			...(timezoneId ? { timezoneId: timezoneId } : {}),
 			...(video ? { recordVideo: { dir: video, size: viewport } } : {}),
-			serviceWorkers,
+			serviceWorkers: 'allow',	// 'block' is the init script below, as in WebKit
 		});
 	} else {
 		throw new Error('unknown engine "' + engine + '"; set DAIMOND_BROWSER to chromium or webkit');
 	}
 
 	const page = browser.pages()[0] || await browser.newPage();
-	// WEBKIT HONOURS 'block' ONLY BY HAND. Under Playwright's own 'block' WebKit closes the
-	// page the moment the app calls `serviceWorker.register`, and with workers allowed a
-	// page the worker controls is invisible to `page.route` -- even a request the worker
-	// passes straight through -- so every route-made withhold is a no-op (measured 12 Oct
-	// 2026: a controlled page 0 of 2 requests routed, an uncontrolled one 2 of 2). The
-	// registration is refused before any app script runs, which pwa.js already treats as
-	// "no worker, no cache".
-	if (serviceWorkers === 'block' && engine === 'webkit') {
+	// 'block' IS THIS INIT SCRIPT IN BOTH ENGINES, never Playwright's own. Under Playwright's
+	// 'block' WebKit closes the page the moment the app calls `serviceWorker.register`, and
+	// with workers allowed a page the worker controls is invisible to `page.route` -- even a
+	// request the worker passes straight through -- so every route-made withhold is a no-op
+	// (measured 12 Oct 2026: a controlled page 0 of 2 requests routed, an uncontrolled one 2
+	// of 2). The registration is refused before any app script runs, which pwa.js already
+	// treats as "no worker, no cache".
+	//
+	// An init script runs in EVERY frame, and in a frame with an opaque origin -- a crystal's
+	// `sandbox="allow-scripts"` page (crystal.js makeFrame) -- merely reading
+	// `navigator.serviceWorker` throws ("Service worker is disabled because the context is
+	// sandboxed and lacks the 'allow-same-origin' flag"). Playwright's own Chromium 'block'
+	// is `if (navigator.serviceWorker) ...`, so from the default block (3a57f8aa3) every
+	// crystal frame raised a pageerror the app never caused: ccp7's by-role gate, transcript
+	// gaps "nothing threw", red in both engines (26 Oct). Such a frame can register no
+	// worker, so there is nothing in it to block: it is left alone, and `in` (which runs no
+	// getter) asks the rest.
+	if (serviceWorkers === 'block') {
 		await browser.addInitScript(() => {
-			if (navigator.serviceWorker) navigator.serviceWorker.register = () => Promise.reject(new Error('service workers blocked by the verifier'));
+			if (self.origin === 'null' || !('serviceWorker' in navigator)) return;
+			navigator.serviceWorker.register = () => Promise.reject(new Error('service workers blocked by the verifier'));
 		});
 	}
 	const errs   = [];

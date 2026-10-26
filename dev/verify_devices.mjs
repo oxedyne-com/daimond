@@ -150,7 +150,7 @@ try {
 		try { localStorage.setItem('daimond-devices', JSON.stringify(reg)); } catch (e) {}
 		try { localStorage.setItem('daimond-device-id', LEGACY); } catch (e) {}
 		R.nominate(LEGACY);						// the star, on the id about to be retired
-		const out = { LEGACY, PEER, ID };
+		const out = { LEGACY, PEER, ID, now };	// now: the page's clock, which the stamps below are read against
 		const after = await DaimondCore.collectSync();
 		out.devices   = after.devices;
 		out.stored    = R.load();
@@ -175,7 +175,7 @@ try {
 		!!mig.stored[mig.ID] && mig.stored[mig.ID].label === 'Kitchen laptop',
 		JSON.stringify(mig.stored[mig.ID] || null));
 	check('so do its created, namedAt and build stamps',
-		!!mig.stored[mig.ID] && mig.stored[mig.ID].created < Date.now() - 8e8
+		!!mig.stored[mig.ID] && mig.stored[mig.ID].created < mig.now - 8e8
 			&& mig.stored[mig.ID].namedAt > 1.7e12,
 		JSON.stringify(mig.stored[mig.ID] || null));
 	check('the legacy line is gone from the roster',

@@ -107,43 +107,51 @@ if (!sees) {
 
 // ── Instruments, in the page ───────────────────────────────────────────────────
 const send = await page.locator('#chat-send').boundingBox();
+// ONE CLOCK (rc-b, 26 Oct): every time the page records is on its native timeline, the one its events' timeStamp and
+// its long-task entries carry, read with `nnow()`. harness open() pins the page's Date and performance.now() at the run
+// clock (Playwright's page.clock.install), which the native timeline is not, so a press timed by node's Date.now() and a
+// flip by the page's Date.now() were two clocks; so was performance.timeOrigin + a long task's startTime. The window is
+// the two presses as the page saw them (W.press: Send, then Stop); node times only its own work, with performance.now().
 await page.evaluate(async () => {
-	const W = window.__ew = { lt: [], lag: [], raf: 0, inp: [], flips: [], turns: [], outMut: [] };
+	const nnow = () => new Event('t').timeStamp;	// the native high-resolution now (the pinned clock fakes performance.now)
+	const W = window.__ew = { lt: [], lag: [], raf: 0, inp: [], flips: [], turns: [], outMut: [], press: [],
+		base: { d: Date.now(), n: nnow() } };	// base: the page's Date against its native now, for the lens beats' Date stamps
+	window.addEventListener('mousedown', (e) => W.press.push(e.timeStamp), true);
 	new PerformanceObserver((l) => { for (const e of l.getEntries()) W.lt.push([e.startTime, e.duration]); })
 		.observe({ type: 'longtask' });
 	let due = performance.now() + 50;
 	setInterval(() => { const n = performance.now(); W.lag.push(Math.max(0, n - due)); due = n + 50; }, 50);
 	const tick = () => { W.raf++; requestAnimationFrame(tick); };
 	requestAnimationFrame(tick);
-	document.addEventListener('pointermove', (e) => W.inp.push(performance.now() - e.timeStamp), true);
+	document.addEventListener('pointermove', (e) => W.inp.push(nnow() - e.timeStamp), true);
 	const b = document.getElementById('chat-send');
 	const busy = () => /stop/i.test((b.getAttribute('title') || '') + (b.className || '')) || b.disabled;
 	let was = busy();
-	new MutationObserver(() => { const n = busy(); if (n !== was) { was = n; W.flips.push([Date.now(), n]); } })
+	new MutationObserver(() => { const n = busy(); if (n !== was) { was = n; W.flips.push([nnow(), n]); } })
 		.observe(b, { attributes: true, childList: true, subtree: true });
-	// SA: when the button first says "Stopping…" (wall clock, for the press), and the
-	// frame after that against the handler's own start (the click's capture phase).
-	W.sa = { click: 0, clickTs: 0, label: 0, labelPerf: 0, raf: 0, f0: 0, f1: 0 };	// f0/f1: frame counts
+	// SA: when the button first says "Stopping…", and the frame after that against the
+	// handler's own start (the click's capture phase), all on the native timeline.
+	W.sa = { click: 0, clickTs: 0, label: 0, raf: 0, f0: 0, f1: 0 };	// f0/f1: frame counts
 	// The last press before the label is the Stop; the Send press came first.
 	window.addEventListener('click', (e) => {
-		if (!W.sa.label && b.contains(e.target)) { W.sa.click = performance.now(); W.sa.clickTs = e.timeStamp; W.sa.f0 = W.raf; }
+		if (!W.sa.label && b.contains(e.target)) { W.sa.click = nnow(); W.sa.clickTs = e.timeStamp; W.sa.f0 = W.raf; }
 	}, true);
 	new MutationObserver(() => {
 		if (W.sa.label || !/^Stopping/.test(b.getAttribute('aria-label') || '')) return;
-		W.sa.label = Date.now(); W.sa.labelPerf = performance.now();
-		requestAnimationFrame(() => { W.sa.raf = performance.now(); W.sa.f1 = W.raf; });
+		W.sa.label = nnow();
+		requestAnimationFrame(() => { W.sa.raf = nnow(); W.sa.f1 = W.raf; });
 	}).observe(b, { attributes: true });
-	new MutationObserver((ms) => { W.outMut.push([Date.now(), ms.length]); })
+	new MutationObserver((ms) => { W.outMut.push([nnow(), ms.length]); })
 		.observe(document.getElementById('chat-output'), { childList: true, subtree: true, characterData: true });
 	// The engine's own end of a turn: a `run_turn` settling, timed on every instance.
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const P = mod.DaimondApp.prototype;
 	const real = P.run_turn;
 	P.run_turn = function (...a) {
-		const rec = { t0: Date.now(), t1: 0 };
+		const rec = { t0: nnow(), t1: 0 };
 		W.turns.push(rec);
 		const r = real.apply(this, a);
-		Promise.resolve(r).finally(() => { rec.t1 = Date.now(); }).catch(() => {});
+		Promise.resolve(r).finally(() => { rec.t1 = nnow(); }).catch(() => {});
 		return r;
 	};
 	window.DEBUG_SHARE.setEnabled(true);
@@ -151,12 +159,12 @@ await page.evaluate(async () => {
 
 // ── Profile ───────────────────────────────────────────────────────────────────
 const cdp = await page.context().newCDPSession(page);
-let profWall = 0;					// wall clock at Profiler.start
+let profWall = 0;					// node's performance.now() at Profiler.start (the window's bounds are on it too)
 if (PROFILE) {
 	await cdp.send('Profiler.enable');
 	await cdp.send('Profiler.setSamplingInterval', { interval: 250 });
 	await cdp.send('Profiler.start');
-	profWall = Date.now();
+	profWall = performance.now();
 	// `toplevel` across every process filled the default buffer in 29 s of a 120 s window
 	// (11 Oct), so ask for the largest preset; the analysis checks the coverage either way.
 	await cdp.send('Tracing.start', { transferMode: 'ReturnAsStream', traceConfig: {
@@ -171,21 +179,21 @@ const spawns = Array.from({ length: WORKERS }, (_, i) =>
 	`spawn_agent ${JSON.stringify({ name: 'grind' + (i + 1), task })}`);
 clearMockLog();
 await page.fill('#chat-input', '@tools ' + spawns.concat(['file_search ' + SEARCH]).join(' ;; '));
-const tSend = Date.now();
+const tSend = performance.now();			// node's own clock: the probe's loop and the profile's window
 await page.click('#chat-send', { force: true });
 
 const evalMs = [], ackMs = [], rafAt = [];
 let anims = null;
 const tEnd = tSend + WINDOW_S * 1000;
 let lastRaf = -1;
-while (Date.now() < tEnd) {
-	const a = Date.now();
+while (performance.now() < tEnd) {
+	const a = performance.now();
 	await cdp.send('Runtime.evaluate', { expression: '1', returnByValue: true });
-	evalMs.push(Date.now() - a);
-	const b = Date.now();
+	evalMs.push(performance.now() - a);
+	const b = performance.now();
 	await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 10 + (evalMs.length % 50), y: 10 });
-	ackMs.push(Date.now() - b);
-	if (!anims && Date.now() - tSend > WINDOW_S * 500) {
+	ackMs.push(performance.now() - b);
+	if (!anims && performance.now() - tSend > WINDOW_S * 500) {
 		// What is animating half-way through: a running animation repaints every frame.
 		anims = (await cdp.send('Runtime.evaluate', { returnByValue: true, expression: `document.getAnimations()
 			.filter((a) => a.playState === 'running').map((a) => { const t = a.effect && a.effect.target;
@@ -193,12 +201,12 @@ while (Date.now() < tEnd) {
 					+ (t.id ? '#' + t.id : '') + (t.className && typeof t.className === 'string'
 					? '.' + t.className.trim().split(/\\s+/).join('.') : '') : '?'); })` })).result.value;
 	}
-	if (Date.now() - (rafAt.length ? rafAt[rafAt.length - 1][0] : tSend) >= 5000) {
+	if (performance.now() - (rafAt.length ? rafAt[rafAt.length - 1][0] : tSend) >= 5000) {
 		const n = (await cdp.send('Runtime.evaluate', { expression: '__ew.raf', returnByValue: true })).result.value;
-		rafAt.push([Date.now(), n - lastRaf]);
+		rafAt.push([performance.now(), n - lastRaf]);
 		lastRaf = n;
 	}
-	const spare = 1000 - (Date.now() - a);
+	const spare = 1000 - (performance.now() - a);
 	if (spare > 0) await new Promise((r) => setTimeout(r, spare));
 }
 
@@ -206,7 +214,7 @@ while (Date.now() < tEnd) {
 const stillBusy = (await cdp.send('Runtime.evaluate', { returnByValue: true,
 	expression: `(() => { const b = document.getElementById('chat-send');
 		return /stop/i.test((b.getAttribute('title') || '') + (b.className || '')) || b.disabled; })()` })).result.value;
-const tStop = Date.now();
+const tStop = performance.now();
 await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: send.x + send.width / 2,
 	y: send.y + send.height / 2, button: 'left', clickCount: 1 });
 await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: send.x + send.width / 2,
@@ -235,23 +243,27 @@ if (PROFILE) {
 
 const W = await page.evaluate(() => {
 	const W = window.__ew;
-	const beats = window.DEBUG_SHARE._outbox().filter((r) => r.tag === 'ev beat').map((r) => [r.ts, r.data]);
+	// A beat is stamped with the page's Date: onto the native timeline through the one base pair, so it meets the presses.
+	const beats = window.DEBUG_SHARE._outbox().filter((r) => r.tag === 'ev beat').map((r) => [r.ts - W.base.d + W.base.n, r.data]);
 	const wasmByPage = performance.getEntriesByType('resource').filter((e) => /\.wasm(\?|$)/.test(e.name)).map((e) => e.name);
-	return { lt: W.lt, lag: W.lag, inp: W.inp, flips: W.flips, turns: W.turns, outMut: W.outMut, sa: W.sa,
-		beats, wasmByPage, origin: performance.timeOrigin };
+	return { lt: W.lt, lag: W.lag, inp: W.inp, flips: W.flips, turns: W.turns, outMut: W.outMut, sa: W.sa, press: W.press,
+		beats, wasmByPage };
 });
 const calls = mockLog().length;
 await s.close();
 
 // ── Results ───────────────────────────────────────────────────────────────────
-const inWin = (tPerf) => W.origin + tPerf >= tSend && W.origin + tPerf <= tStop;
+// The window on the page's timeline: from the Send press to the Stop press, as its mousedown events stamped them.
+if (W.press.length < 2) { console.error(`the page saw ${W.press.length} press(es), not Send and Stop; this run proves nothing.`); process.exit(2); }
+const pSend = W.press[0], pStop = W.press[W.press.length - 1];
+const inWin = (t) => t >= pSend && t <= pStop;
 const lts = W.lt.filter(([t]) => inWin(t));
 const ltMax = lts.reduce((m, [, d]) => Math.max(m, d), 0);
 const ltSum = lts.reduce((m, [, d]) => m + d, 0);
-console.log(`\nwindow ${r0((tStop - tSend) / 1000)} s, ${WORKERS} workers, ${calls} provider calls; `
+console.log(`\nwindow ${r0((pStop - pSend) / 1000)} s, ${WORKERS} workers, ${calls} provider calls; `
 	+ `turn still running at Stop: ${stillBusy}`);
 check('L1 the longest long task is under 200 ms', ltMax < 200,
-	`max ${r0(ltMax)} ms, ${lts.length} long tasks, ${r0(ltSum)} ms in them (${r0(100 * ltSum / (tStop - tSend))}% of the window)`);
+	`max ${r0(ltMax)} ms, ${lts.length} long tasks, ${r0(ltSum)} ms in them (${r0(100 * ltSum / (pStop - pSend))}% of the window)`);
 
 let g1 = null;
 if (PROFILE) {
@@ -268,29 +280,29 @@ check('L5 requestAnimationFrame advances in every 5 s slice', stalls === 0,
 	`frames per slice: ${rafAt.map(([, d]) => d).join(',')}`);
 check('L6 CDP Runtime.evaluate answers in under 1 s', Math.max(...evalMs) < 1000,
 	`p50 ${r0(pct(evalMs, 0.5))} ms, p99 ${r0(pct(evalMs, 0.99))} ms, max ${Math.max(...evalMs)} ms, ${evalMs.filter((x) => x >= 1000).length} over 1 s of ${evalMs.length}`);
-const bt = W.beats.map(([ts]) => ts).filter((t) => t >= tSend && t <= tStop);
+const bt = W.beats.map(([ts]) => ts).filter(inWin);
 const gaps = bt.slice(1).map((t, i) => t - bt[i]);
 check('L7 lens beats keep their 30 s cadence within 5 s', bt.length >= 2 && gaps.every((g) => g <= 35000),
 	`${bt.length} beats, gaps ${gaps.map((g) => r0(g / 1000) + 's').join(',')}; `
 	+ `lag/ltmax per beat ${W.beats.map(([, d]) => { try { const b = JSON.parse(d); return b.lag + '/' + b.ltmax; } catch (e) { return '?'; } }).join(',')}`);
-const flip = W.flips.find(([t, busy]) => t >= tStop && !busy);
-const mainTurn = W.turns.find((t) => t.t0 >= tSend - 50);
-check('S1 the page marks the turn stopped within 100 ms of the press', !!flip && flip[0] - tStop <= 100,
-	flip ? `${flip[0] - tStop} ms` : 'never within 8 s');
-check('S2 the engine ends the turn within 1 s', !!(mainTurn && mainTurn.t1) && mainTurn.t1 - tStop <= 1000,
-	mainTurn ? (mainTurn.t1 ? `${mainTurn.t1 - tStop} ms` : 'not ended within 8 s') : 'no run_turn seen');
+const flip = W.flips.find(([t, busy]) => t >= pStop && !busy);
+const mainTurn = W.turns.find((t) => t.t0 >= pSend - 50);
+check('S1 the page marks the turn stopped within 100 ms of the press', !!flip && flip[0] - pStop <= 100,
+	flip ? `${r0(flip[0] - pStop)} ms` : 'never within 8 s');
+check('S2 the engine ends the turn within 1 s', !!(mainTurn && mainTurn.t1) && mainTurn.t1 - pStop <= 1000,
+	mainTurn ? (mainTurn.t1 ? `${r0(mainTurn.t1 - pStop)} ms` : 'not ended within 8 s') : 'no run_turn seen');
 // SA: the acknowledgement, which the engine on the page can delay only by the task the press lands in.
-const sa = W.sa, pressPerf = tStop - W.origin;
+const sa = W.sa, pressPerf = pStop;
 const saOver = W.lt.filter(([t, d]) => t <= (sa.clickTs || pressPerf) + 1 && t + d >= pressPerf);
-check('SA press-to-visible: the button says "Stopping…" within 200 ms of the press', stillBusy && !!sa.label && sa.label - tStop < 200,
-	!stillBusy ? 'no turn was running at the press (shorten --window)' : sa.label ? `${sa.label - tStop} ms; long task over the press: ${saOver.length ? saOver.map(([t, d]) => r0(d) + ' ms').join(',') : 'none'}`
+check('SA press-to-visible: the button says "Stopping…" within 200 ms of the press', stillBusy && !!sa.label && sa.label - pStop < 200,
+	!stillBusy ? 'no turn was running at the press (shorten --window)' : sa.label ? `${r0(sa.label - pStop)} ms; long task over the press: ${saOver.length ? saOver.map(([t, d]) => r0(d) + ' ms').join(',') : 'none'}`
 		: 'never within 8 s');
 check('SA handler-to-visible: the label is up by the frame after the handler (<= 1 frame)', !!sa.raf && sa.f1 - sa.f0 <= 1,
-	sa.raf ? `handler->label ${r0(sa.labelPerf - sa.click)} ms, handler->frame ${r0(sa.raf - sa.click)} ms (${sa.f1 - sa.f0} frame(s)), `
+	sa.raf ? `handler->label ${r0(sa.label - sa.click)} ms, handler->frame ${r0(sa.raf - sa.click)} ms (${sa.f1 - sa.f0} frame(s)), `
 		+ `event->handler ${r0(sa.click - sa.clickTs)} ms` : 'no frame after the label');
 const late = flip ? W.outMut.filter(([t]) => t > flip[0] + 100).reduce((m, [, n]) => m + n, 0) : NaN;
-console.log(`  --   Send/Stop flips after the send: ${W.flips.map(([t, b]) => (b ? 'busy' : 'idle') + '@' + r0((t - tSend) / 1000) + 's').join(' ')}`);
-console.log(`  --   run_turn calls: ${W.turns.map((t) => r0((t.t0 - tSend) / 1000) + 's->' + (t.t1 ? r0((t.t1 - tSend) / 1000) + 's' : 'open')).join(' ')}`);
+console.log(`  --   Send/Stop flips after the send: ${W.flips.map(([t, b]) => (b ? 'busy' : 'idle') + '@' + r0((t - pSend) / 1000) + 's').join(' ')}`);
+console.log(`  --   run_turn calls: ${W.turns.map((t) => r0((t.t0 - pSend) / 1000) + 's->' + (t.t1 ? r0((t.t1 - pSend) / 1000) + 's' : 'open')).join(' ')}`);
 console.log(`  --   running animations mid-window: ${(anims || []).length} ${JSON.stringify((anims || []).slice(0, 12))}`);
 console.log(`  --   after the stop mark the chat's DOM took ${late} further mutation(s)`);
 check('W1 the .wasm is fetched by the worker only', W.wasmByPage.length === 0,
@@ -354,7 +366,7 @@ function g1Report(a, dataLoss) {
 /// nor marked idle, and it runs well past what the trace shows the thread doing.
 function analyse(prof, traceFile, t0, t1, startWall) {
 	// Profile timestamps are microseconds on the trace's monotonic clock; the window is located
-	// by wall clock through the profile's start (`startWall`, taken at Profiler.start).
+	// by node's clock through the profile's start (`startWall`, its performance.now() at Profiler.start).
 	const w0 = prof.startTime + (t0 - startWall) * 1000, w1 = prof.startTime + (t1 - startWall) * 1000;
 	const tr = readTrace(traceFile);
 	// The page's main thread: the CrRendererMain that runs the most script (FunctionCall), which

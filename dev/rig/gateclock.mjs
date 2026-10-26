@@ -7,12 +7,23 @@
 //	node dev/rig/gateclock.mjs seeds			every gating `<gate> <seed>`, one a line, the quarantined ones left out
 //	node dev/rig/gateclock.mjs quarantined <gate> <seed>	exit 0 and print the entry when the seed is quarantined, else 1
 //	node dev/rig/gateclock.mjs list-quarantine	one line per quarantined seed, for every release's list
+//	node dev/rig/gateclock.mjs tick <file> <pid>	the run clock: <file> ticked from DAIMOND_CLOCK's instant until <pid> ends
+//	node dev/rig/gateclock.mjs driven <url>	exit 0 when the gateway at <url> runs on a driven clock, else 1, saying why
 //
 // No gate reads the wall clock: the page runs at its gate's declared instant and zone (harness open() refuses a
 // context without both), and node-side code that needs "now" reads `gateNow()`, the same instant. Elapsed work is
 // measured with `performance.now()`, which tells no date. clockscan.mjs --gates holds every other script to this.
+//
+// ONE CLOCK PER RUN (rc-b, 26 Oct, from four false reds). The pages, node and the gateway read one run clock: a file of 8
+// bytes, the run's "now" in ms (little-endian), rewritten every 100 ms from the gate's instant, named by DAIMOND_RUN_CLOCK.
+// The gateway reads it as `driven:<file>` (gwbin gatewayEnv), harness open() installs each page at its current value and
+// gateNow() returns it, so a stamp a page makes is the gateway's "now" too however long the run has gone. The kit starts it
+// once for a run (dk_gate, postgates, arms), and a hand run gets one from its first startRunClock(); no verifier starts its
+// own. Before, each page restarted at the bare instant on every open() while a gateway ran on the host's clock, and a
+// pairing stamp 5 days old was refused 401 (turn_parity --two, ccp7 by-role WebKit).
 
 import fs   from 'node:fs';
+import os   from 'node:os';
 import path from 'node:path';
 import url  from 'node:url';
 
@@ -32,8 +43,63 @@ export function declared(gate, seed = null, file = GATES_FILE) {
 	return { instant, tz, sw: g.sw === true };	// sw: the app's service worker allowed (harness open() blocks it by default)
 }
 
-/// The gate's "now", as ms: the declared instant DAIMOND_CLOCK names, never the host's.
+export const RUN_CLOCK = 'DAIMOND_RUN_CLOCK';
+const TICK_MS = 100;	// the run clock file's period, ms; the gateway's driven clock rereads it as it needs
+
+/// The run clock's value in `file`, as ms.
+export function readRunClock(file) {
+	const b = fs.readFileSync(file);
+	if (b.length !== 8) throw new Error(`gateclock: run clock ${file} is ${b.length} bytes, not 8`);
+	return Number(b.readBigUInt64LE(0));
+}
+
+/// Writes the run clock from `base` (ms) every TICK_MS, whole or not at all (the gateway refuses a file not 8 bytes long).
+function ticker(file, base) {
+	const t0 = performance.now(), tmp = `${file}.${process.pid}.tmp`;
+	const tick = () => {
+		const b = Buffer.alloc(8);
+		b.writeBigUInt64LE(BigInt(Math.floor(base + performance.now() - t0)));
+		fs.writeFileSync(tmp, b);
+		fs.renameSync(tmp, file);
+	};
+	tick();
+	return setInterval(tick, TICK_MS);
+}
+
+/// The run clock this process and its children read: DAIMOND_RUN_CLOCK when the kit (or an earlier call) started one, else one
+/// started here from the gate's instant, ticked while the process lives and removed at its exit. Returns its file.
+export function startRunClock() {
+	const e = process.env;
+	if (e[RUN_CLOCK] && fs.existsSync(e[RUN_CLOCK])) return e[RUN_CLOCK];
+	const base = gateNow();
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'runclock-')), file = path.join(dir, 'clock');
+	ticker(file, base).unref();
+	process.on('exit', () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* gone already */ } });
+	e[RUN_CLOCK] = file;
+	return file;
+}
+
+/// Does the gateway at `url` run on a driven clock? `/__rig/report` exists only on one (gateway rigreport.rs), so a 404 is a
+/// gateway on the host's clock, which would refuse every page-dated stamp of a pinned run.
+export async function gatewayDriven(url) {
+	let r;
+	try { r = await fetch(`${url}/__rig/report?since=0`, { signal: AbortSignal.timeout(5000) }); }
+	catch (e) { return { ok: false, why: `gateway clock not driven: ${url} did not answer /__rig/report (${e.cause?.code || e.message})` }; }
+	if (r.status === 404) return { ok: false, why: `gateway clock not driven: ${url} answers /__rig/report 404, so it runs on the host's clock; a gate's gateway runs on the run clock (DAIMOND_CLOCK=driven:<${RUN_CLOCK}>, DAIMOND_GW_DEV=1)` };
+	return { ok: r.ok, why: r.ok ? `gateway clock driven: ${url}` : `gateway clock not driven: ${url} answers /__rig/report ${r.status}` };
+}
+
+/// Throws at start-up when the gateway at `url` is not on a driven clock, rather than letting a pairing 401 say so later.
+export async function requireDrivenGateway(url) {
+	const d = await gatewayDriven(url);
+	if (!d.ok) throw new Error(d.why);
+}
+
+/// The gate's "now", as ms: the run clock when one runs (DAIMOND_RUN_CLOCK), else the declared instant DAIMOND_CLOCK names;
+/// never the host's.
 export function gateNow() {
+	const f = process.env[RUN_CLOCK];
+	if (f && fs.existsSync(f)) return readRunClock(f);
 	const c = process.env.DAIMOND_CLOCK;
 	if (!c) throw new Error('gateclock: DAIMOND_CLOCK is unset: run under the gate’s declared instant (gateclock.mjs env <gate>)');
 	const t = /^\d+$/.test(c) ? Number(c) : Date.parse(c);
@@ -100,11 +166,28 @@ if (process.argv[1] && path.resolve(process.argv[1]) === url.fileURLToPath(impor
 			console.log(JSON.stringify(e));
 			break;
 		}
+		case 'tick': {	// <file> <pid>: the kit's run clock, from DAIMOND_CLOCK's instant, until <pid> (the run) ends
+			const [file, pid] = [gate, Number(seed)];
+			if (!file || !pid) throw new Error('gateclock: tick <file> <pid>');
+			delete process.env[RUN_CLOCK];	// a new run's clock starts at the instant, never at an inherited run's
+			const h = ticker(file, gateNow());
+			const alive = () => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
+			const end = () => { clearInterval(h); try { fs.rmSync(file, { force: true }); } catch (_) { /* gone already */ } process.exit(0); };
+			setInterval(() => { if (!alive()) end(); }, TICK_MS);
+			for (const s of ['SIGTERM', 'SIGINT', 'SIGHUP']) process.on(s, end);
+			break;
+		}
+		case 'driven': {
+			const d = await gatewayDriven(gate);
+			(d.ok ? console.log : console.error)(d.why);
+			process.exit(d.ok ? 0 : 1);
+			break;
+		}
 		case 'list-quarantine':
 			for (const e of quarantine(qf)) console.log(`quarantined ${e.gate} ${e.seed}: since ${e.since}, ${e.why} (FIRE ${e.fire || 'defect'})`);
 			break;
 		default:
-			console.error('gateclock: env <gate> [seed] | run <gate> <seed> | seeds | quarantined <gate> <seed> | list-quarantine'); process.exit(2);
+			console.error('gateclock: env <gate> [seed] | run <gate> <seed> | seeds | quarantined <gate> <seed> | list-quarantine | tick <file> <pid> | driven <url>'); process.exit(2);
 		}
 	} catch (e) { console.error(e.message); process.exit(2); }
 }

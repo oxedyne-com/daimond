@@ -415,7 +415,7 @@ async function startGateway(ownerAccount) {
 			// configuring — it still mints, and it writes to nobody.
 			...mailEnv(),
 			...(ownerAccount ? { DAIMOND_OWNER_ACCOUNTS: ownerAccount } : {}),
-		}, WORK),
+		}),
 		stdio: GW_LOG.stdio,
 	});
 	procs.push(gw);

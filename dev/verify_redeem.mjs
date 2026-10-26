@@ -372,7 +372,7 @@ async function startGateway(cwd, ownerAccount) {
 		env: gatewayEnv({
 			APP_MODE: 'sandbox',
 			...(ownerAccount ? { DAIMOND_OWNER_ACCOUNTS: ownerAccount } : {}),
-		}, cwd),
+		}),
 		stdio: LOG.stdio,
 	});
 	procs.push(gw);

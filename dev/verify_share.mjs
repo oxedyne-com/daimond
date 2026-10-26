@@ -678,7 +678,8 @@ const doorThere = await page.evaluate(async () => {
 });
 check(doorThere, 'the bundle carries store_write_bytes', String(doorThere));
 
-const before = Date.now();
+// The page's clock, which stamps the landed copy (one clock per run; the host's is on another date).
+const before = await page.evaluate(() => Date.now());
 const landedPic = await page.evaluate(async (b64) => {
 	const raw = atob(b64);
 	const png = new Uint8Array(raw.length);

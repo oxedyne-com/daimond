@@ -364,8 +364,18 @@
 	color: var(--text-muted);
 	padding: 8px 10px 4px;
 }
-:root[data-skin="daylight"] .tile-x { border-radius: var(--radius-sm); color: var(--text-muted); }
+/* A tile's x is a row's own x: the one icon button's --text-secondary (D-20260929-03), as its cog beside it, not a step muted
+   (by-role gate, icon-button col: masked until 26 Oct by the gate reading the active tile's x first). Danger on hover, as app.css
+   means it: this rule's specificity outranks app.css's `.tile-x:hover`, so the hover is restated here. */
+:root[data-skin="daylight"] .tile-x { border-radius: var(--radius-sm); color: var(--text-secondary); }
+:root[data-skin="daylight"] .tile-x:hover { color: var(--danger); }
 :root[data-skin="daylight"] .rail-builtin > summary { text-transform: none; letter-spacing: 0; font-size: var(--dl-xs); padding-left: 4px; }
+
+/* The gallery's pin is a row's own icon toggle: --text-secondary at rest (D-20260929-03), not a step muted. Its hover and pressed
+   colours are restated, as this rule outranks workspace.css's. */
+:root[data-skin="daylight"] .gal-pin { color: var(--text-secondary); }
+:root[data-skin="daylight"] .gal-pin:hover { color: var(--text-primary); }
+:root[data-skin="daylight"] .gal-pin[aria-pressed="true"] { color: var(--accent); }
 
 /* ── Notes and meta (§9) ──────────────────────────────────── */
 /* One note: 12px, --w-text, --text-muted, line-height 1.45. Admin's,

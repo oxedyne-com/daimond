@@ -26,7 +26,7 @@
 	// ...unless its own label says it belongs elsewhere.
 	var BY_LABEL = {
 		'home.export_backup': 'data', 'home.import_backup': 'data',
-		'devices.runner_mint': 'tools', 'home.limits': 'models',
+		'devices.runner_code': 'tools', 'devices.runner_mint': 'tools', 'home.limits': 'models',
 		'safe.turn_off': 'data', 'safe.turn_on': 'data',
 		'home.lock': 'foot', 'home.log_out': 'foot', 'identity.forget': 'foot',
 	};

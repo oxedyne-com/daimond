@@ -72,7 +72,7 @@
 	// keys behind a string a widget was handed. Every one of them is handed a
 	// name from somewhere else, so no list here could be right.
 	// i18n-indirect: i18n.js key + (n === 1 ? '.one' : '.other') = open -- `tn` appends the plural form to the key its own caller named
-	// i18n-indirect: settingsgroups.js k = home.sec_account home.sec_devices home.sec_accounts home.sec_lens home.sec_prompts home.sec_running home.sec_push home.sec_sync home.sec_diag home.sec_debugshare home.export_backup home.import_backup devices.runner_mint home.limits safe.turn_off safe.turn_on home.lock home.log_out identity.forget
+	// i18n-indirect: settingsgroups.js k = devices.runner_code home.sec_account home.sec_devices home.sec_accounts home.sec_lens home.sec_prompts home.sec_running home.sec_push home.sec_sync home.sec_diag home.sec_debugshare home.export_backup home.import_backup devices.runner_mint home.limits safe.turn_off safe.turn_on home.lock home.log_out identity.forget
 	// i18n-indirect: settingsgroups.js g.name = settings.group_models settings.group_tools settings.group_you settings.group_prompts settings.group_data settings.group_help
 	// i18n-indirect: settingsgroups.js g.what = settings.group_models_what settings.group_tools_what settings.group_you_what settings.group_prompts_what settings.group_data_what settings.group_help_what
 	// i18n-indirect: needs.js r.key = needs.bypass needs.money_hours needs.money_mins needs.update needs.sync_hours needs.sync_mins needs.no_model
@@ -406,7 +406,25 @@
 	'devices.replaced':         'replaced',
 	'devices.replaced_aria':    'A device that is here now has taken this one’s place. It is safe to remove.',
 	'devices.prune_one':        'Remove the replaced device',
-	'devices.runner_mint': 'Pair a computer as a runner',
+	'devices.runner_mint': 'Pair with a token instead',
+	'devices.runner_code': 'Pair a computer',
+	'runnerpair.title': 'Pair a computer',
+	'runnerpair.claiming': 'Finding the computer…',
+	'runnerpair.code_lead': 'Enter the code shown on the computer.',
+	'runnerpair.code_ph': 'e.g. k7m-q2p',
+	'runnerpair.find': 'Find Computer',
+	'runnerpair.qr_key': 'Key {fp}, checked against the code the computer showed.',
+	'runnerpair.code_key': 'Key {fp}. Approve only if it matches the key shown on the computer.',
+	'runnerpair.err_link': 'This pairing link is incomplete. Run runner pair again on the computer.',
+	'runnerpair.err_key': 'This computer’s key does not match the code it showed. Do not approve; run runner pair again.',
+	'runnerpair.err_unknown': 'That pairing is unknown or has expired. Run runner pair again on the computer.',
+	'runnerpair.err_bad_code': 'That code is unknown or has expired. Check it, or run runner pair again on the computer.',
+	'runnerpair.err_used': 'This pairing was already used. Run runner pair again on the computer.',
+	'runnerpair.err_contested': 'Someone else used this pairing first. It has been cancelled; run runner pair again.',
+	'runnerpair.err_signin_nocode': 'Open Daimond where you are signed in, go to Settings → Devices → Pair a computer, and enter the code shown on the computer.',
+	'runnerpair.err_signin_here': 'Sign in on this device again, then enter the code.',
+	'runnerpair.err_code': 'Enter the six-character code shown on the computer.',
+	'runnerpair.err_failed': 'The computer could not be paired just now. Try again.',
 	'devices.runner_mint_expiry': 'Run this on the computer within {n} minutes.',
 	'devices.runner_mint_what': 'the pairing command',
 	'devices.runner_mint_lapsed': 'That token has expired. Pair again for a new one.',

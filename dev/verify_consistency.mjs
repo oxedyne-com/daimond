@@ -2073,6 +2073,10 @@ const ALLOW = [
 	// standalone 20px control.
 	{ role: 'icon-button', m: /^button\.dm\b/, p: ['col', 'rad', 'h', 'icon'], why: 'the ◈ is the mock’s round 28px target (44px on a phone) around a 12px glyph, the row’s one standing mark; its state, not a text colour, colours it (mock r2 `.dm`)' },
 	{ role: 'icon-button', m: /\.tag-x\b/, p: ['col', 'h'], why: 'the chip’s own × colour is inherited from its tag’s hue, and it is sized by its chip, not a standalone control' },
+	// The pin is in the gallery row's role for its box (a 31px target filling the row), but it is the row's one icon toggle, and an
+	// icon button's colour is --text-secondary (D-20260929-03), the accent when pressed. Masked from 29 Sep to 26 Oct: the unpinned
+	// pin merged into the pinned one's instance and took its state allowance.
+	{ role: 'gallery-row', m: /\.gal-pin\b/, p: ['col'], why: 'the pin is the row’s icon toggle: the one icon-button colour at rest, the accent pressed, never the row’s text colour' },
 	// r526 residual allow-list, all approved by the lead (D-20260929-03):
 	{ role: 'inline-link', m: /^a\.(brand|mb-hit)\b/, p: ['col'], why: 'the wordmark and the About picture’s hotspots keep the brand colour -- they are not text links' },
 	{ role: 'text-button', m: /\.attach-add\.grants\b/, p: ['col'], why: 'a "+" that widens a fence takes the accent, like every granting control (daimond.js)' },
@@ -2169,10 +2173,18 @@ function report() {
 	const engines = notCovered.filter((n) => /^\w+-\*$/.test(n.surface));
 	const cfgOf = (s) => s.split('/')[0];
 	// One instance = one element (config + signature + text), seen on one or more surfaces.
+	// What an allowance reads of an element: itself, its nearest three ancestors, and whether it is current or focused.
+	const ctxOf = (it) => it.sig + ' ' + it.text + ' < ' + it.anc.slice(0, 3).join(' ') + (it.sel ? ' aria-current' : '') + (it.foc ? ' :focus' : '');
+	// Which allowances an element's context meets is part of its instance. Keyed without it, the rail's four tile x's were one
+	// instance (same signature, no text) carrying the FIRST one's ancestors and style, and one of them sits inside the `.active`
+	// tile: the state allowance passed or failed on which tile the capture happened to read first. ccp6b's run read the active tile
+	// first and allowed a muted x on every tile, ccp7's read a plain one first and refused it (by-role "style 1", 26 Oct). The same
+	// element under the same allowances is still one instance, so the votes for a canonical form are counted as before.
+	const allowKey = (it) => { const c = ctxOf(it); return ALLOW.map((a, i) => a.m.test(c) ? i : '').filter((i) => i !== '').join(','); };
 	const inst = new Map();
 	for (const it of items) {
 		const [role, casing] = classify(it); it.roleName = role; it.casing = casing;
-		const ik = cfgOf(it.surface) + '|' + role + '|' + it.sig + '|' + keyText(it.text.slice(0, 30));
+		const ik = cfgOf(it.surface) + '|' + role + '|' + it.sig + '|' + keyText(it.text.slice(0, 30)) + '|' + allowKey(it);
 		const x = inst.get(ik); if (x) { if (!x.surfaces.includes(it.surface.split('/')[1])) x.surfaces.push(it.surface.split('/')[1]); continue; }
 		inst.set(ik, { ...it, cfg: cfgOf(it.surface), surfaces: [it.surface.split('/')[1]] });
 	}
@@ -2180,7 +2192,7 @@ function report() {
 	const byRole = new Map(); for (const it of I) { const k = it.roleName; if (!byRole.has(k)) byRole.set(k, []); byRole.get(k).push(it); }
 	const SIDEPAD = /^(tile|data)-table-(head|cell)$/;
 	const val = (it, p) => p === 'icon' ? (it.icon ? it.icon.w + '×' + it.icon.h : '-') : p.startsWith('pad:') ? (it.st.padS ? it.st.padS['TRBL'.indexOf(p[4])] : null) : it.st[p];
-	const allowed = (role, it, p) => ALLOW.find((a) => (a.role === '*' || a.role === role) && a.p.includes(p) && a.m.test(it.sig + ' ' + it.text + ' < ' + it.anc.slice(0, 3).join(' ') + (it.sel ? ' aria-current' : '') + (it.foc ? ' :focus' : '')));
+	const allowed = (role, it, p) => ALLOW.find((a) => (a.role === '*' || a.role === role) && a.p.includes(p) && a.m.test(ctxOf(it)));
 	const diffs = [];	// style differences within a role
 	for (const [role, list] of byRole) {
 		const props = ROLE_PROPS[role]; if (!props) continue;
@@ -2416,7 +2428,9 @@ function report() {
 	layout.push(...structure);
 	// Merge the same finding across configs.
 	const merge = (L, keyf) => { const m = new Map(); for (const f of L) { const k = keyf(f); const x = m.get(k); if (x) { if (!x.cfgs.includes(f.cfg)) x.cfgs.push(f.cfg); for (const s of f.surfaces) if (!x.surfaces.includes(s) && x.surfaces.length < 5) x.surfaces.push(s); } else m.set(k, { ...f, cfgs: [f.cfg], surfaces: [...f.surfaces] }); } return [...m.values()]; };
-	const D = merge(diffs, (f) => [f.role, f.p, f.sig, keyText(f.text), f.canon.replace(/rgb[^)]*\)/, 'c'), f.v.replace(/rgb[^)]*\)/, 'c')].join('|'));
+	// An allowed difference and an unexplained one are never one row: merged, the row took the first one's verdict (the same order
+	// dependence as the instances' key, above).
+	const D = merge(diffs, (f) => [f.role, f.p, f.sig, keyText(f.text), f.canon.replace(/rgb[^)]*\)/, 'c'), f.v.replace(/rgb[^)]*\)/, 'c'), f.allowed || ''].join('|'));
 	const C = merge(casing, (f) => f.role + '|' + keyText(f.text));
 	const Lx = merge(layout, (f) => [f.kind, f.sig, keyText(f.text), f.canon, f.v].join('|'));
 	const unexplained = D.filter((d) => !d.allowed);

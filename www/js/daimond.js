@@ -24753,6 +24753,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (ids.length === 1) {
 				homeView.appendChild(el('div', 'admin-note', t('devices.only_this')));
 			}
+			if (window.DaimondPairing && DaimondPairing.runner) runnerCodeRow(homeView);
 			if (window.DaimondGateway && DaimondGateway.gwFetch) runnerMintRow(homeView);
 		}
 
@@ -24988,6 +24989,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// it joins, so it lives in this row and nowhere else: never stored, synced or logged,
 		/// and gone from the row when the gateway's ten minutes are up. Only a signed-in device
 		/// can mint (the door is session-authed), so it is shown only on the device that asked.
+		/// PAIR A COMPUTER BY ITS CODE (PAIR-QR). The computer's `runner pair` shows a QR and a
+		/// short code; the camera opens the QR, and this is the way in when the camera's
+		/// browser is not the one he is signed in on. The dialog is pairing.js's.
+		function runnerCodeRow(view) {
+			var go = document.createElement('button');
+			go.type = 'button';
+			go.className = 'admin-item';
+			go.textContent = t('devices.runner_code');
+			go.addEventListener('click', function () { DaimondPairing.runner.enterCode(); });
+			view.appendChild(go);
+		}
+
 		var RUNNER_MINT_URL = '/api/runner/pair/mint';
 		var RUNNER_MINT_CMD = '/opt/kimberlite/bin/runner pair ';
 		var RUNNER_MINT_TOKEN_RE = /^[A-Za-z0-9_-]{8,128}$/;
@@ -50787,6 +50800,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return hex;
 		} catch (e) { return ''; }
 	}
+	// Published for pairing.js's QR and code approval (PAIR-QR), so the key shown there is
+	// this one rendering and not a second copy of it.
+	window.DaimondRunnerPair = { fingerprint: runnerPairFingerprint };
 
 	/// A pending runner as the tile keeps it, or null for one that is not usable.
 	function runnerPairShape(r) {

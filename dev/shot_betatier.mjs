@@ -94,7 +94,7 @@ async function startGateway(cwd, owner) {
 	gw = launch(GWBIN, [], {
 		cwd,
 		env: gatewayEnv({ APP_MODE: 'sandbox',
-			...(owner ? { DAIMOND_OWNER_ACCOUNTS: owner } : {}) }, cwd),
+			...(owner ? { DAIMOND_OWNER_ACCOUNTS: owner } : {}) }),
 		stdio: GW_LOG.stdio,
 	});
 	return await waitFor(async () => (await fetch(`${GW}/api/health`)).ok, 25000);

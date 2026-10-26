@@ -35,6 +35,12 @@ const check = (name, cond, detail) => {
 // is in sessionStorage, so it outlives a navigation the first run makes; each entry says which
 // document asked and whether an identity was already stored when that document loaded.
 //
+// A DOCUMENT IS NAMED BY ITS LOAD NUMBER IN THE TAB, NOT BY A CLOCK. Until 2026-10-26 it was
+// `performance.timeOrigin`, which harness open()'s pinned clock (`page.clock.install`, RIG-PROD P2)
+// fakes: it read -1 in every document's init script and the pinned instant once the page ran, so no
+// ask matched the reload and A2 counted 0 in both engines while identity.js had asked (write-up
+// ~/usr/code/ai/claude/agents/daimond-sync/20261026_f3b_a2_diag.md).
+//
 // ON THE PROTOTYPE, NOT ON `navigator.storage`. WebKit lets the JS wrapper of the StorageManager be
 // collected while nothing but the navigator names it, and hands out a fresh one, without expandos,
 // the next time `navigator.storage` is read. A spy set on the instance was gone by the time the
@@ -43,7 +49,9 @@ const check = (name, cond, detail) => {
 // ~/usr/code/ai/claude/agents/daimond-sync/20261026_f3b_webkit_a1_diag.md). The prototype is held
 // by the global and survives in both engines.
 const SPY = () => {
-	const nav = String(performance.timeOrigin);
+	const nav = Number(sessionStorage.getItem('__docs') || 0) + 1;
+	sessionStorage.setItem('__docs', String(nav));
+	Object.defineProperty(window, '__doc', { value: nav });
 	const had = (() => { try { return !!localStorage.getItem('daimond-id-pub'); } catch (e) { return false; } })();
 	try {
 		const proto = window.StorageManager && StorageManager.prototype;
@@ -82,7 +90,7 @@ console.log(`probe_recoverable on ${BROWSER}`);
 	await p.reload();
 	await p.waitForFunction(() => !!window.DaimondIdentity, null, { timeout: 30000 });
 	await p.waitForTimeout(800);
-	const now = await p.evaluate(() => String(performance.timeOrigin));
+	const now = await p.evaluate(() => window.__doc);
 	const again = { asks: (await asks(p)).filter((a) => a.nav === now).length };
 	if (!first.has) check('A2 a reload asks nothing of an engine without persist()', again.asks === 0);
 	else if (first.kept) check('A2 a reload the engine already keeps asks nothing', again.asks === 0, `asks ${again.asks}`);

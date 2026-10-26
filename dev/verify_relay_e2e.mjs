@@ -294,7 +294,7 @@ const GWORDS = 'thimble cartography ' + Math.random().toString(36).slice(2, 10);
 	}
 
 	const cwd = buildWorkDir();
-	gw = spawn(GWBIN, [], { cwd, env: gatewayEnv({ APP_MODE: 'sandbox' }, cwd), stdio: GW_LOG.stdio });
+	gw = spawn(GWBIN, [], { cwd, env: gatewayEnv({ APP_MODE: 'sandbox' }), stdio: GW_LOG.stdio });
 	const gwUp = await waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok);
 	check('this run\'s own gateway is up, on an empty store', gwUp, `${GW_URL} — ${cwd}`);
 	if (!gwUp) { GW_LOG.report(); cleanup(); process.exit(1); }

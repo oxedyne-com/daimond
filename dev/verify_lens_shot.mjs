@@ -94,7 +94,7 @@ function startGateway(owner) {
 	gw = spawn(GWBIN, [], {
 		cwd: GWWORK,
 		env: gatewayEnv({ APP_MODE: 'sandbox', DAIMOND_DEBUG_TRACE_DIR: TRACES,
-			...(owner ? { DAIMOND_OWNER_ACCOUNTS: owner } : {}) }, GWWORK),
+			...(owner ? { DAIMOND_OWNER_ACCOUNTS: owner } : {}) }),
 		stdio: GW_LOG.stdio,
 	});
 	return waitFor(async () => (await fetch(`${GW_URL}/api/health`)).ok, 30000);

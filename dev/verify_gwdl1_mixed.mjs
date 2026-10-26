@@ -111,7 +111,7 @@ async function start(bin, extra) {
 	fs.mkdirSync(path.dirname(LOG), { recursive: true });
 	const out = fs.openSync(LOG, 'a');
 	fs.writeSync(out, `\n===== ${new Date().toISOString()} start ${bin}\n`);
-	gw = spawn(bin, [], { cwd: WORK, env: gatewayEnv({ APP_MODE: 'sandbox', ...(extra || {}) }, WORK),
+	gw = spawn(bin, [], { cwd: WORK, env: gatewayEnv({ APP_MODE: 'sandbox', ...(extra || {}) }),
 		stdio: ['ignore', out, out] });
 	const t0 = Date.now();
 	while (Date.now() - t0 < 60000) {
