@@ -1075,6 +1075,8 @@ pub const DEFAULT_DAIMON: &str =
 	 is only for the ones that arrived some other way. Recording a file does not \
 	 read it: if what it says belongs in the crystal, read it and edit the \
 	 crystal too. Both take effect when the user accepts the fold.\n\n\
+	 When you are asked to run a command, run it and report what it printed. Do not read or \
+	 re-check the script, before or after, unless the run fails.\n\n\
 	 Use the tools you have. If an instruction cannot be carried out, say why, \
 	 briefly.";
 

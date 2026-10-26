@@ -8418,6 +8418,17 @@ pub(crate) fn path_refusal(tool: &Tool, path: &str) -> Option<String> {
         Fault::Absolute     => absolute_path_refusal(tool, path),
         Fault::EdgeSpace    => padded_name_refusal(tool.name(), path),
         Fault::DotDot       => Some(dotdot_refusal(tool.name(), path)),
+        // ONE trailing '/' on a path that is otherwise canonical (HATE-15, rc-b ruling of 26 Oct
+        // 2026, amending PATHTYPE's refusal for this case only): a listing tool's 'dev/' names
+        // the same folder as 'dev', and refusing it cost a call in 3 of 3 probe runs. The tool
+        // is handed the path without it (see `trailing_slash_args`). A file tool still refuses,
+        // in one plain sentence.
+        Fault::EmptySegment if trailing_slash_stem(path).is_some() => match tool {
+            Tool::FileList | Tool::FileSearch | Tool::FileGlob => None,
+            _ => Some(fmt!("'{}' ends in '/', and {} takes a file: drop the trailing slash and \
+                write '{}'. Nothing was read or changed.",
+                path, tool.name(), path.trim_end_matches('/'))),
+        },
         _                   => {
             // The one spelling, offered only where it is the same place without resolving a
             // `..` or guessing at a control character.
@@ -8433,6 +8444,35 @@ pub(crate) fn path_refusal(tool: &Tool, path: &str) -> Option<String> {
                 root joined by single '/', with no '.', '..' or trailing '/'.{}",
                 path, fault, tool.name(), hint))
         },
+    }
+}
+
+/// `path` without its one trailing '/', where that is all that keeps it from being canonical.
+fn trailing_slash_stem(path: &str) -> Option<&str> {
+    match path.strip_suffix('/') {
+        Some(stem) if !stem.is_empty() && RelPath::is_canonical(stem) => Some(stem),
+        _ => None,
+    }
+}
+
+/// A listing call's `path` without its one trailing '/', which [`path_refusal`] lets through
+/// (HATE-15), or `None` where there is nothing to drop.
+pub(crate) fn trailing_slash_args(tool: &Tool, args: &str) -> Option<String> {
+    match tool {
+        Tool::FileList | Tool::FileSearch | Tool::FileGlob => (),
+        _ => return None,
+    }
+    let path = match extract_json_string(args, "path") {
+        Some(p) => p,
+        None    => return None,
+    };
+    let stem = match trailing_slash_stem(&path) {
+        Some(s) => s.to_string(),
+        None    => return None,
+    };
+    match crate::profile::string_span(args, "path") {
+        Some((from, to)) => Some(fmt!("{}\"{}\"{}", &args[..from], json_escape(&stem), &args[to..])),
+        None             => None,
     }
 }
 
@@ -16498,7 +16538,13 @@ const READ_LINES_DEFAULT: usize = 2_000;
 ///
 /// An EXPLICIT `offset` or `limit` is honoured to the old ceiling, whatever the size. A caller
 /// that has said which part it wants has answered this question itself.
-const READ_BIG_BYTES: usize = 64_000;
+///
+/// **16 KB since 26 Oct 2026, and the default of [`OutputCaps::read_bytes`].** At 64 KB the
+/// description's promise -- "a bare read of a big file is a 200-line peek" -- was not kept: the
+/// probe's `locales` task read the 41.6 KB `i18ncheck.mjs` bare and took 44,763 bytes. Sixteen
+/// is the figure `run` already uses for the same question ([`RUN_SPEND_UNASKED`]), and twice
+/// what a 200-line peek costs, so a file the peek would mostly cover still comes back whole.
+const READ_BIG_BYTES: usize = 16_000;
 
 /// Lines a peek returns: enough to see what a file IS, never enough to search it by eye.
 ///
@@ -16510,9 +16556,6 @@ const READ_PEEK_LINES: usize = 200;
 
 /// The most lines one `file_read` returns, however large a `limit` it is given.
 const READ_LINES_MAX: usize = 10_000;
-
-/// How many matches `file_search` reports when the call does not say.
-const SEARCH_MATCHES_DEFAULT: usize = 200;
 
 /// The most matches `file_search` reports, however large a `limit` it is given.
 const SEARCH_MATCHES_MAX: usize = 1_000;
@@ -16542,8 +16585,107 @@ const SEARCH_MACHINE_MAX_FILE: u64 = 256 * 1024 * 1024;
 /// A reported line longer than this is cut, so one minified file cannot fill the whole answer.
 const SEARCH_MAX_COLUMNS: usize = 500;
 
-/// The most paths `file_glob` returns in one call.
+/// The most paths `file_glob` returns in one call, whatever `limit` it is given.
 const GLOB_PATHS_MAX: usize = 500;
+
+/// What a listing tool hands back when the call does not say otherwise (HATE-17).
+///
+/// **Claude Code caps and pages its glob and grep output, and this did not.**  A `file_glob` of
+/// `**/*` under an app came back as 500 workspace paths, each with its time -- 39,542 bytes in one
+/// result, re-sent on every later round of the turn, to answer a question one script run answered
+/// in 330.  A cap on the COUNT alone cannot stop that, because a path is as long as the tree is
+/// deep, so the default answer is bounded twice: by paths and by bytes.  What is cut is never
+/// silent -- the result names how many were held back and gives the `offset` that pages on.
+///
+/// Configuration and not literals: [`set_output_caps`] replaces them for the process, and the
+/// agent's tune (`glob_paths`, `glob_bytes`, `search_matches`, `search_bytes`) reaches it, so a
+/// trial can move them without a build.  A call's own `limit` still asks for more paths or
+/// matches, up to [`GLOB_PATHS_MAX`] or [`SEARCH_MATCHES_MAX`]. A glob page's byte cap holds
+/// regardless, the rest reached by `offset`; a search's holds only where no `limit` was named.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OutputCaps {
+    /// Paths a `file_glob` lists when the call names no `limit`.
+    pub glob_paths:     usize,
+    /// Bytes of paths one `file_glob` page holds.
+    pub glob_bytes:     usize,
+    /// Matches a `file_search` reports when the call names no `limit`.
+    pub search_matches: usize,
+    /// Bytes of matching lines a `file_search` reports when the call names no `limit`.
+    pub search_bytes:   usize,
+    /// Bytes of entries a native `file_list` returns before it pages: `dev/` alone is 526
+    /// entries and 36,443 bytes, which is a directory spent to learn one script's name.
+    pub list_bytes:     usize,
+    /// Bytes above which a bare `file_read` is a [`READ_PEEK_LINES`] peek.
+    pub read_bytes:     usize,
+}
+
+impl OutputCaps {
+    /// The shipped figures: about four kilobytes of paths, about eight of matching lines.
+    pub const DEFAULT: Self = Self {
+        glob_paths:     100,
+        glob_bytes:     4_000,
+        search_matches: 200,
+        search_bytes:   8_000,
+        list_bytes:     4_000,
+        read_bytes:     READ_BIG_BYTES,
+    };
+}
+
+impl Default for OutputCaps {
+    fn default() -> Self { Self::DEFAULT }
+}
+
+/// Which page of a `file_glob` answer one call shows: where it starts, and the most bytes of
+/// paths it may hold.
+#[derive(Clone, Copy, Debug)]
+struct GlobPage {
+    offset: usize,
+    bytes:  usize,
+}
+
+impl GlobPage {
+    /// The page a call's arguments ask for, under the caps in force.
+    fn of(args: &str) -> (usize, Self) {
+        let caps = output_caps();
+        let limit = uint_arg(args, "limit", caps.glob_paths, GLOB_PATHS_MAX).max(1);
+        // The byte cap holds whatever `limit` says: a probe turn asked for `"limit":500` of
+        // `dev/*.mjs` and took 41,294 bytes. `limit` raises the COUNT; the page bounds the bytes.
+        (limit, Self { offset: uint_arg(args, "offset", 0, usize::MAX), bytes: caps.glob_bytes })
+    }
+
+    /// Every path, from the first: a caller composing a result it has already bounded.
+    #[cfg(test)]
+    fn whole() -> Self { Self { offset: 0, bytes: usize::MAX } }
+}
+
+/// The caps in force; see [`OutputCaps`].
+static OUTPUT_CAPS: std::sync::RwLock<OutputCaps> = std::sync::RwLock::new(OutputCaps::DEFAULT);
+
+/// The listing caps in force for this process.
+pub fn output_caps() -> OutputCaps {
+    match OUTPUT_CAPS.read() {
+        Ok(c)  => *c,
+        Err(p) => *p.into_inner(),
+    }
+}
+
+/// Replace the listing caps for this process. A zero figure keeps the one in force, so a partial
+/// tune moves only what it names.
+pub fn set_output_caps(c: OutputCaps) {
+    let mut w = match OUTPUT_CAPS.write() {
+        Ok(w)  => w,
+        Err(p) => p.into_inner(),
+    };
+    let keep = |new: usize, old: usize| if new == 0 { old } else { new };
+    *w = OutputCaps {
+        glob_paths:     keep(c.glob_paths, w.glob_paths),
+        glob_bytes:     keep(c.glob_bytes, w.glob_bytes),
+        search_matches: keep(c.search_matches, w.search_matches),
+        search_bytes:   keep(c.search_bytes, w.search_bytes),
+        list_bytes:     keep(c.list_bytes, w.list_bytes),
+        read_bytes:     keep(c.read_bytes, w.read_bytes),
+    };
+}
 
 /// The most directory entries one `file_search` or `file_glob` walk looks at.
 ///
@@ -17238,6 +17380,18 @@ fn stopped_empty(tool: &str, start: &str, budget: &WalkBudget, matched: usize)
         Invalid, Input, Size))
 }
 
+/// What a walk asked with `"all":true` says when it stops with nothing found (HATE-12).
+///
+/// `all` opens `node_modules`, `target` and the rest, so on a wide mark it is the call that meets
+/// [`WALK_ENTRIES_MAX`]. That is the caller's question being too wide, not the tool failing, so it
+/// is answered plainly rather than booked as a failed call -- and it still says that what was not
+/// reached was not searched, which is the reason [`stopped_empty`] refuses at all.
+fn stopped_wide(tool: &str, start: &str) -> String {
+    fmt!("{}: too many entries under '{}' to walk with \"all\":true, so it stopped after {} and \
+        found nothing in what it reached, which does not mean nothing is there; narrow the path or \
+        pattern.", tool, start, WALK_ENTRIES_MAX)
+}
+
 /// One line of a search result, cut when it is long enough to swamp the answer.
 fn cut_line(line: &str) -> String {
     if line.chars().count() <= SEARCH_MAX_COLUMNS {
@@ -17272,6 +17426,8 @@ struct SearchOpts {
     skip:   usize,
     /// The most matches to report.
     limit:  usize,
+    /// The most bytes of reported lines, past which the search stops as it does at `limit`.
+    bytes:  usize,
     /// Which of the build and version-control directories this call passes over.
     walk:   Skips,
 }
@@ -17288,6 +17444,10 @@ struct SearchStats {
     matched:   usize,
     /// Matches found, including those passed over for paging.
     seen:      usize,
+    /// Bytes of reported lines, matches and their neighbours, for [`SearchOpts::bytes`].
+    emitted:   usize,
+    /// The report stopped on [`SearchOpts::bytes`] rather than on the match count.
+    by_bytes:  bool,
     /// Files the MACHINE half of the walk passed over for being larger than
     /// [`SEARCH_MACHINE_MAX_FILE`].  The page has no such ceiling: it reads a line at a time.
     too_big:   usize,
@@ -17361,7 +17521,11 @@ fn search_opts(args: &str) -> Outcome<SearchOpts> {
         before: match context { Some(n) => n, None => uint_arg(args, "before", 0, SEARCH_CONTEXT_MAX) },
         after:  match context { Some(n) => n, None => uint_arg(args, "after",  0, SEARCH_CONTEXT_MAX) },
         skip:   uint_arg(args, "offset", 0, usize::MAX),
-        limit:  uint_arg(args, "limit", SEARCH_MATCHES_DEFAULT, SEARCH_MATCHES_MAX).max(1),
+        limit:  uint_arg(args, "limit", output_caps().search_matches, SEARCH_MATCHES_MAX).max(1),
+        // Bounded in bytes where the call named no `limit` (HATE-17). A search's `limit` is a
+        // count of MATCHES the caller has decided it wants, and the cross-checks against grep
+        // rely on it being honoured whole; a glob's is not, see [`GlobPage::of`].
+        bytes:  if arg_given(args, "limit") { usize::MAX } else { output_caps().search_bytes },
         // Read from the strings the caller wrote and not from the compiled `Glob`, which has
         // forgotten its own source text by the time it gets here.
         walk:   Skips::new(
@@ -17677,6 +17841,7 @@ impl<'a> LineScanner<'a> {
         -> bool
     {
         let mut hit_here = false;
+        let mark = out.len();
         if self.room {
             // A pattern that backtracks itself to a standstill on one line has not said "no
             // match" -- it has said nothing, and the honest report is that this line's answer is
@@ -17685,8 +17850,10 @@ impl<'a> LineScanner<'a> {
                 Ok(true) => {
                     stats.seen += 1;
                     if stats.seen > self.opts.skip {
-                        if stats.matched >= self.opts.limit {
+                        let full = stats.matched > 0 && stats.emitted >= self.opts.bytes;
+                        if stats.matched >= self.opts.limit || full {
                             stats.capped = true;
+                            stats.by_bytes = full && stats.matched < self.opts.limit;
                             self.room = false;
                         } else {
                             stats.matched += 1;
@@ -17733,6 +17900,7 @@ impl<'a> LineScanner<'a> {
             }
             self.ring.push_back((n, line.to_string()));
         }
+        stats.emitted += out[mark..].iter().map(|l| l.len() + 1).sum::<usize>();
         self.room || self.after > 0
     }
 
@@ -18284,11 +18452,16 @@ fn search_notes(
             you named it.", named.join(", ")));
     }
     if stats.capped {
+        let at = if stats.by_bytes {
+            fmt!("about {} bytes of matching lines", opts.bytes)
+        } else {
+            fmt!("the {}-match limit", opts.limit)
+        };
         out.push_str(&fmt!(
-            "\n[file_search] STOPPED at the {}-match limit, so there are more matches than are \
-            shown and later files were never opened. Page on with \"offset\":{}, raise \"limit\" \
-            (up to {}), or narrow the search with \"glob\" or \"path\".",
-            opts.limit, opts.skip + stats.matched, SEARCH_MATCHES_MAX));
+            "\n[file_search] STOPPED at {}, so there are more matches than are shown and later \
+            files were never opened. Narrow the search with \"glob\" or \"path\" -- the usual \
+            answer -- or page on with \"offset\":{}, or raise \"limit\" (up to {}).",
+            at, opts.skip + stats.matched, SEARCH_MATCHES_MAX));
     } else if opts.skip > 0 {
         out.push_str(&fmt!(
             "\n[file_search] this is the page beginning at match {}; the whole search found {}.",
@@ -20352,6 +20525,20 @@ fn file_edited_all(path: &str, data: &str, hunks: &[(String, String)])
                 continue;
             }
         }
+        // AND THE SAME SLIP INSIDE A LINE (HATE-13): a column of values the file aligns with a run
+        // of spaces, retyped with one. DeepSeek's `ko.js` hunk was refused this way, its nearest
+        // match quoted back the same two lines, and the fan-out went the long way round. The
+        // same two rules hold: only runs of spaces and tabs are relaxed, never a character of
+        // content, and the match must be unique. The lines the model only meant to keep are
+        // written back as the FILE has them, so a relaxed edit changes nothing it did not mean to.
+        if count == 0 {
+            if let Some((from, to)) = unique_space_relaxed(&out, &old) {
+                let put = respaced(&out[from..to], &old, &new);
+                out = fmt!("{}{}{}", &out[..from], put, &out[to..]);
+                relaxed.push(i + 1);
+                continue;
+            }
+        }
         match count {
             1 => out = out.replacen(&old, &new, 1),
             0 => bad.push(fmt!("{}: old_string not found{}", i + 1,
@@ -20558,6 +20745,58 @@ fn unique_indent_relaxed(data: &str, old: &str) -> Option<(usize, usize)> {
     found
 }
 
+/// A line with every run of spaces and tabs read as one space, and none at either end.
+fn spaces_folded(line: &str) -> String {
+    line.split([' ', '\t']).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
+/// The span of `old` in `data` when it matches exactly once with every run of spaces and tabs
+/// inside a line read as one, or `None`: [`unique_indent_relaxed`]'s rule, carried inside the
+/// line. Ambiguity and a hunk of nothing but whitespace are refused for the same reasons.
+fn unique_space_relaxed(data: &str, old: &str) -> Option<(usize, usize)> {
+    let want: Vec<String> = old.split('\n').map(spaces_folded).collect();
+    if want.iter().all(|l| l.is_empty()) {
+        return None;
+    }
+    let lines: Vec<(usize, &str)> = line_spans(data);
+    if want.len() > lines.len() {
+        return None;
+    }
+    let mut found: Option<(usize, usize)> = None;
+    for start in 0..=(lines.len() - want.len()) {
+        let hit = want.iter().enumerate()
+            .all(|(k, w)| spaces_folded(lines[start + k].1) == *w);
+        if !hit {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        let (from, _) = lines[start];
+        let (last_at, last) = lines[start + want.len() - 1];
+        found = Some((from, last_at + last.len()));
+    }
+    found
+}
+
+/// `new` for a span [`unique_space_relaxed`] placed: each line of `new` that is, spacing aside,
+/// a line of `old` is written as the file's own line there, and every other line as sent.
+fn respaced(found: &str, old: &str, new: &str) -> String {
+    let theirs: Vec<(String, &str)> = old.split('\n').map(spaces_folded)
+        .zip(found.split('\n'))
+        .collect();
+    new.split('\n')
+        .map(|l| {
+            let key = spaces_folded(l);
+            match theirs.iter().find(|(k, _)| !k.is_empty() && *k == key) {
+                Some((_, file)) => file.to_string(),
+                None            => l.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Every line of `data` as `(byte offset, text without its newline)`.
 fn line_spans(data: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
@@ -20688,6 +20927,25 @@ fn bound_quote(text: &str, max_lines: usize) -> String {
     fmt!("{}\n... ({} more line(s) not shown)", all[..max_lines].join("\n"), all.len() - max_lines)
 }
 
+/// Where `old` first parts from the nearest text, shown with its whitespace visible, so the retry
+/// can be corrected without another read (HATE-13). Empty where the two are the same.
+fn first_difference(old: &str, near: &str) -> String {
+    let a: Vec<char> = old.chars().collect();
+    let b: Vec<char> = near.chars().collect();
+    let at = a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count();
+    if at == a.len() && at == b.len() {
+        return String::new();
+    }
+    let line = a[..at].iter().filter(|c| **c == '\n').count() + 1;
+    let col = at - a[..at].iter().rposition(|c| *c == '\n').map(|p| p + 1).unwrap_or(0) + 1;
+    let snip = |v: &[char]| -> String {
+        let s: String = v[at.min(v.len())..].iter().take(24).collect();
+        fmt!("{:?}", s)
+    };
+    fmt!("\nThey first differ at line {} column {} of your old_string: you sent {}, the file has {}.",
+        line, col, snip(&a), snip(&b))
+}
+
 /// The clause a `file_edit` miss earns naming the nearest text, or `None` where nothing was close
 /// enough to be worth naming.
 ///
@@ -20698,7 +20956,8 @@ fn nearest_span_note(data: &str, old: &str) -> Option<String> {
         NearestSpan::None => None,
         NearestSpan::One(first, last, text) => {
             let at = if first == last { fmt!("line {}", first) } else { fmt!("lines {}-{}", first, last) };
-            Some(fmt!(" -- the nearest match is {}, which reads:\n{}", at, bound_quote(&text, 40)))
+            Some(fmt!(" -- the nearest match is {}, which reads:\n{}{}", at, bound_quote(&text, 40),
+                first_difference(old, &text)))
         },
         NearestSpan::Tied(count, ranges) => {
             let mut named: Vec<String> = ranges.iter()
@@ -20721,11 +20980,11 @@ fn relaxed_said(relaxed: &[usize]) -> String {
         return String::new();
     }
     if relaxed.len() == 1 {
-        return fmt!(" Edit {} matched with indentation relaxed, and was written with the file's \
-            own indentation.", relaxed[0]);
+        return fmt!(" Edit {} matched with indentation relaxed (or the spacing inside a line), \
+            and the lines it kept were written with the file's own whitespace.", relaxed[0]);
     }
-    fmt!(" Edit(s) {} matched with indentation relaxed, and were written with the file's own \
-        indentation.",
+    fmt!(" Edit(s) {} matched with indentation relaxed (or the spacing inside a line), and the \
+        lines they kept were written with the file's own whitespace.",
         relaxed.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", "))
 }
 
@@ -22181,9 +22440,9 @@ impl Tool {
             Tool::FileWrite   => "Create or overwrite a file in the workspace with the given content.",
             Tool::FileEdit    => "Replace exact, unique substrings in a workspace text file. Give either one 'old_string'/'new_string' pair, or 'edits' -- a list of such pairs applied in order, in one round. ALL OR NOTHING (STATE.md: per section): if any pair fails to match, nothing at all is written and the reply names the ones that failed, so re-send only those. 'old_string' must be the file's own bytes -- file_read prefixes each line with its number and a TAB, so strip that from anything copied out of a read -- and must be unique; include surrounding text.",
             Tool::FileList    => "List the entries of a workspace directory. One directory, no recursion: to find files by name across a tree use file_glob, and to find files by their contents use file_search.",
-            Tool::FileSearch  => "Search file CONTENTS; each hit is 'path:line:text', a neighbour 'path-line-text'. THIS IS THE FIRST THING TO REACH FOR on any tree. 'query' is a regex; \"fixed\":true for literal text, \"ignore_case\":true to fold case. Narrow with \"glob\" ('**/*.rs') and \"path\"; \"context\" (or \"before\"/\"after\") adds neighbouring lines. ANY file size. At most 200 matches unless you raise \"limit\"; a stopped search says so and gives the \"offset\" to page with, and it names what it never opened -- read that before concluding anything is absent. .git, node_modules and target are skipped unless \"all\":true or you NAME one. Past twenty thousand directory entries it STOPS and says where: narrow 'path' and ask again. Inside a folder added on this computer it runs there natively in ONE call; 'rg' or 'grep' through run buys none of that. Use run for a command that DOES something, this to find where to change.",
+            Tool::FileSearch  => "Search file CONTENTS; each hit is 'path:line:text', a neighbour 'path-line-text'. THIS IS THE FIRST THING TO REACH FOR on any tree. 'query' is a regex; \"fixed\":true for literal text, \"ignore_case\":true to fold case. Narrow with \"glob\" ('**/*.rs') and \"path\"; \"context\" (or \"before\"/\"after\") adds neighbouring lines. ANY file size. At most 200 matches or about 8 KB unless you set \"limit\"; a stopped search says so and gives the \"offset\" to page with, and it names what it never opened -- read that before concluding anything is absent. .git, node_modules and target are skipped unless \"all\":true or you NAME one. Past twenty thousand directory entries it STOPS and says where: narrow 'path' and ask again. Inside a folder added on this computer it runs there natively in ONE call; 'rg' or 'grep' through run buys none of that. Use run for a command that DOES something, this to find where to change.",
             Tool::Outline     => "Map a file: one row per function, method, type, section or heading -- 'start-end  kind  name', nested items indented -- in about a kilobyte for any size of file. Rust, JS/TS, Python, Markdown and Typst. Use it BEFORE reading a file you do not know, then file_read the region by 'offset'/'limit'. Ranges end where the next item begins.",
-            Tool::FileGlob    => "Find files by PATH without reading any: give a glob, get the matching paths, most recently modified first. Each line is the path, a TAB and the UTC mtime; a path whose storage keeps no time reads 'unknown' and sorts last. '**' spans directories, '{a,b}' either. A pattern with no '/' matches the file NAME anywhere under 'path' ('*_test.rs'); one with a '/' matches the whole relative path ('src/**/*.rs'). This is 'where is X'; file_search is 'which lines say X'. A folder added on this computer is walked there at native speed; a call spanning it and Daimond's own storage reports both. .git, .hg, .svn, node_modules and target are skipped unless \"all\":true or you NAME one; every other dotted directory is walked. Past twenty thousand entries it STOPS and names where it reached: narrow 'path' or the pattern rather than reading a short result as an absence.",
+            Tool::FileGlob    => "Find files by PATH without reading any: give a glob, get the matching paths, most recently modified first. Each line is the path, a TAB and the UTC mtime; a path whose storage keeps no time reads 'unknown' and sorts last. '**' spans directories, '{a,b}' either. A pattern with no '/' matches the file NAME anywhere under 'path' ('*_test.rs'); one with a '/' matches the whole relative path ('src/**/*.rs'). This is 'where is X'; file_search is 'which lines say X'. A folder added on this computer is walked there at native speed; a call spanning it and Daimond's own storage reports both. .git, .hg, .svn, node_modules and target are skipped unless \"all\":true or you NAME one; every other dotted directory is walked. Past twenty thousand entries it STOPS and names where it reached: narrow 'path' or the pattern rather than reading a short result as an absence. A long answer comes back as one page, saying how many more there are and the 'offset' that pages on; a narrower pattern is usually the better next call.",
             Tool::FileDelete  => "Delete ONE file; a folder is refused. With a folder open, this removes the file from the user's own disk and from every copy their sync reaches, so delete only what the user asked to go. Daimond keeps a copy they can restore for at least seven days, and refuses a delete it has no room to keep. It has no hand door: a path in a folder added through the hand is an error, not a delete.",
             Tool::FileRevert  => "Put ONE file back to how it was. ONLY WHEN THE USER ASKS to undo something -- never to walk back your own work. 'version' defaults to the state before the most recent change Daimond recorded, which is what 'undo that' means. Daimond keeps only what it changed itself, so a file changed outside Daimond, or one too large to keep, has nothing to go back to and this says so. Same write door as file_write; reverting is itself recorded.",
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
@@ -22306,10 +22565,10 @@ impl Tool {
             Tool::FileRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute. May be a glob such as 'src/*.js', which reads every file it matches."},"paths":{"type":"array","items":{"type":"string"},"description":"Several files in one call, each under its own header."},"offset":{"type":"integer","description":"1-based first line (default 1); a partial page names the next."},"limit":{"type":"integer","description":"Lines to return (default 2000, max 10000); fewer if the output budget runs out."},"end":{"type":"integer","description":"1-based last line, inclusive, e.g. 40-90 with offset 40; overrides 'limit'."},"as":{"type":"string","enum":["image","base64"],"description":"For a picture or other binary; omit to be told what it is. 'image' attaches it to look at, and only works if you can see. 'base64' returns the bytes as a data: URI."}},"required":["path"]}"#,
             Tool::FileWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"content":{"type":"string","description":"Full file content"}},"required":["path","content"]}"#,
             Tool::FileEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path; never absolute"},"edits":{"type":"array","description":"The replacements, in order; each applies to the file as the one before it left it","items":{"type":"object","properties":{"old_string":{"type":"string","description":"Exact substring to replace; must be unique in the file"},"new_string":{"type":"string","description":"Replacement; empty deletes"}},"required":["old_string","new_string"]}},"old_string":{"type":"string","description":"Single-edit form, used when 'edits' is absent"},"new_string":{"type":"string","description":"Replacement, for the single-edit form"}},"required":["path"]}"#,
-            Tool::FileList => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory (default '.')"}}}"#,
+            Tool::FileList => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory (default '.')"},"offset":{"type":"integer","description":"Entries to pass over first, to page on from a cut listing (default 0)"}}}"#,
             Tool::FileSearch => r#"{"type":"object","properties":{"query":{"type":"string","description":"Regular expression to search for, unless 'fixed' is true"},"path":{"type":"string","description":"Directory to search under (default '.')"},"glob":{"type":"string","description":"Only search files whose path matches this glob, e.g. '**/*.rs' or '*.{md,typ}'"},"fixed":{"type":"boolean","description":"Match 'query' as literal text, not a regex (default false)"},"ignore_case":{"type":"boolean","description":"Fold case when matching (default false)"},"before":{"type":"integer","description":"Context lines before each match (max 20)"},"after":{"type":"integer","description":"Context lines after each match (max 20)"},"context":{"type":"integer","description":"Context lines either side (max 20); sets before and after"},"offset":{"type":"integer","description":"Matches to skip, to page past an earlier call's limit"},"limit":{"type":"integer","description":"Most matches to report (default 200, maximum 1000)"},"all":{"type":"boolean","description":"Also search .git, .hg, .svn, node_modules and target"}},"required":["query"]}"#,
             Tool::Outline => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file"},"depth":{"type":"integer","description":"Nesting levels to show below the top (default 1, maximum 6)"},"name":{"type":"string","description":"Only items whose name matches this regular expression"},"offset":{"type":"integer","description":"Skip this many rows, to page past an earlier limit"},"limit":{"type":"integer","description":"Most rows (default 400, maximum 2000)"}},"required":["path"]}"#,
-            Tool::FileGlob => r#"{"type":"object","properties":{"pattern":{"type":"string","description":"Glob to match, e.g. '**/*_test.rs', '*.{md,typ}' or 'src/**/mod.rs'"},"path":{"type":"string","description":"Directory to search under (default '.')"},"limit":{"type":"integer","description":"Most paths to return (default 500, maximum 500)"},"all":{"type":"boolean","description":"Walk .git, .hg, .svn, node_modules and target as well (default false)"}},"required":["pattern"]}"#,
+            Tool::FileGlob => r#"{"type":"object","properties":{"pattern":{"type":"string","description":"Glob to match, e.g. '**/*_test.rs', '*.{md,typ}' or 'src/**/mod.rs'"},"path":{"type":"string","description":"Directory to search under (default '.')"},"limit":{"type":"integer","description":"Most paths to return (default 100, maximum 500; a page holds about 4 KB whatever this says, and 'offset' reaches the rest)"},"offset":{"type":"integer","description":"Paths to pass over first, to page on from a cut answer (default 0)"},"all":{"type":"boolean","description":"Walk .git, .hg, .svn, node_modules and target as well (default false)"}},"required":["pattern"]}"#,
             Tool::FileDelete => r#"{"type":"object","properties":{"path":{"type":"string","description":"One file, never a folder"}},"required":["path"]}"#,
             Tool::FileRevert => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file to put back"},"version":{"type":"integer","description":"Omit for the state before the most recent recorded change"}},"required":["path"]}"#,
             Tool::FileMove => r#"{"type":"object","properties":{"path":{"type":"string","description":"Existing workspace-relative path"},"to":{"type":"string","description":"New workspace-relative path; must not already exist"}},"required":["path","to"]}"#,
@@ -24600,6 +24859,9 @@ impl Tool {
                     }
                 }
                 if let Some(e) = stopped_empty("file_search", &raw, &budget, stats.matched) {
+                    if extract_json_bool(args_json, "all").unwrap_or(false) {
+                        return Ok(MessageContent::text(stopped_wide("file_search", &raw)));
+                    }
                     return Err(e);
                 }
                 let mut notes = search_notes(&opts, &stats, &budget, &raw);
@@ -24639,7 +24901,7 @@ impl Tool {
                 };
                 let all = extract_json_bool(args_json, "all").unwrap_or(false);
                 let walk = Skips::new(all, &[&raw, &pattern]);
-                let limit = uint_arg(args_json, "limit", GLOB_PATHS_MAX, GLOB_PATHS_MAX).max(1);
+                let (limit, page) = GlobPage::of(args_json);
                 let mut hits: Vec<GlobHit> = Vec::new();
                 let mut skipped = 0usize;
                 let mut refused = 0usize;
@@ -24788,6 +25050,9 @@ impl Tool {
                     }
                 }
                 if let Some(e) = stopped_empty("file_glob", &raw, &budget, hits.len()) {
+                    if all {
+                        return Ok(MessageContent::text(stopped_wide("file_glob", &raw)));
+                    }
                     return Err(e);
                 }
                 let here = if hits.is_empty() {
@@ -24796,7 +25061,7 @@ impl Tool {
                     String::new()
                 };
                 let mut out = Self::glob_output(
-                    &pattern, &raw, hits, limit, skipped, refused, walk, &budget, &here);
+                    &pattern, &raw, hits, limit, page, skipped, refused, walk, &budget, &here);
                 out.push_str(&unopened_residue("file_glob", unopened, 0));
                 out.push_str(&residue);
                 Ok(out)
@@ -29350,7 +29615,7 @@ impl Tool {
         let bare = !arg_given(args, "offset")
             && !arg_given(args, "limit")
             && !arg_given(args, "end");
-        let peek = bare && size > READ_BIG_BYTES;
+        let peek = bare && size > output_caps().read_bytes;
         let limit = if peek { READ_PEEK_LINES } else { limit };
         numbered_view(path, text, offset, limit, budget, peek, whole)
     }
@@ -29666,13 +29931,30 @@ impl Tool {
         if entries.is_empty() {
             return Ok(fmt!("{} is empty.", path));
         }
+        // One page of entries (HATE-17): from `offset`, until `list_bytes` is spent. The first
+        // entry of a page is always shown, so paging always moves.
+        let total = entries.len();
+        let from = uint_arg(args, "offset", 0, usize::MAX).min(total);
+        let cap = output_caps().list_bytes;
         let mut out = String::new();
-        for (is_dir, name, size) in entries {
-            if is_dir {
-                out.push_str(&fmt!("{}/\n", name));
+        let mut shown = 0usize;
+        for (is_dir, name, size) in entries.iter().skip(from) {
+            let line = if *is_dir {
+                fmt!("{}/\n", name)
             } else {
-                out.push_str(&fmt!("{}  ({} bytes)\n", name, size));
+                fmt!("{}  ({} bytes)\n", name, size)
+            };
+            if shown > 0 && out.len() + line.len() > cap {
+                break;
             }
+            out.push_str(&line);
+            shown += 1;
+        }
+        if from + shown < total {
+            out.push_str(&fmt!(
+                "[file_list] entries {} to {} of {}; {} more are NOT shown. To find a file by \
+                name use file_glob with a pattern ('dev/*check*'), or page on with \"offset\":{}.\n",
+                from + 1, from + shown, total, total - from - shown, from + shown));
         }
         if hidden > 0 {
             out.push_str(&list_hidden_note(hidden));
@@ -29918,6 +30200,9 @@ impl Tool {
         }
         budget.unwalked(stack.len());
         if let Some(e) = stopped_empty("file_search", &path, &budget, stats.matched) {
+            if extract_json_bool(args, "all").unwrap_or(false) {
+                return Ok(stopped_wide("file_search", &path));
+            }
             return Err(e);
         }
         let mut notes = search_notes(&opts, &stats, &budget, &path);
@@ -29973,7 +30258,7 @@ impl Tool {
         let path = starts_named(&starts);
         let all = extract_json_bool(args, "all").unwrap_or(false);
         let walk = Skips::new(all, &[&path, &pattern]);
-        let limit = uint_arg(args, "limit", GLOB_PATHS_MAX, GLOB_PATHS_MAX).max(1);
+        let (limit, page) = GlobPage::of(args);
         let mut hits: Vec<GlobHit> = Vec::new();
         let mut skipped = 0usize;
         let mut refused = 0usize;
@@ -30041,10 +30326,13 @@ impl Tool {
         }
         budget.unwalked(stack.len());
         if let Some(e) = stopped_empty("file_glob", &path, &budget, hits.len()) {
+            if all {
+                return Ok(stopped_wide("file_glob", &path));
+            }
             return Err(e);
         }
         let mut out = Self::glob_output(
-            &pattern, &path, hits, limit, skipped, refused, walk, &budget, "");
+            &pattern, &path, hits, limit, page, skipped, refused, walk, &budget, "");
         out.push_str(&unopened_residue("file_glob", unopened, 0));
         Ok(out)
     }
@@ -30067,6 +30355,7 @@ impl Tool {
         path:       &str,
         mut hits:   Vec<GlobHit>,
         limit:      usize,
+        page:       GlobPage,
         skipped:    usize,
         refused:    usize,
         walk:       Skips,
@@ -30081,12 +30370,27 @@ impl Tool {
         // order -- which is the only order they have -- without a second pass sorting the ones
         // that DO know back into alphabetical.
         hits.sort_by(|a, b| b.when.cmp(&a.when).then(a.path.cmp(&b.path)));
-        let shown = found.min(limit);
+        // The page this call asked for: from `offset`, at most `limit` paths and, where the call
+        // named no limit, at most `page.bytes` of them (HATE-17). The first path of a page is
+        // always shown, however long, so a page can never be empty while paths remain.
+        let from = page.offset.min(found);
+        let column = hits.iter().skip(from).take(limit).any(|h| h.when.is_some());
+        let mut shown = 0usize;
+        let mut spent = 0usize;
+        for h in hits.iter().skip(from).take(limit) {
+            let len = h.path.len() + 1 + if column { 21 } else { 0 };
+            if shown > 0 && spent + len > page.bytes {
+                break;
+            }
+            spent += len;
+            shown += 1;
+        }
+        let by_bytes = from + shown < found && shown < limit;
         // What is true of THESE paths, counted rather than assumed.  The old flag was a property
         // of the build, and it said "no modification times" over a listing half of which had one.
-        let stamped = hits.iter().take(shown).filter(|h| h.when.is_some()).count();
+        let stamped = hits.iter().skip(from).take(shown).filter(|h| h.when.is_some()).count();
         let mut out = String::new();
-        for h in hits.iter().take(shown) {
+        for h in hits.iter().skip(from).take(shown) {
             out.push_str(&h.path);
             // The column is dropped when not one path in the result has a time: repeating
             // "unknown" down a whole listing costs tokens to say once what the summary line says
@@ -30134,19 +30438,31 @@ impl Tool {
                 and they are in path order",
                 shown - stamped, GLOB_NO_TIME)
         };
-        out.push_str(&fmt!(
-            "[file_glob] {} of {} path(s) matching '{}' under '{}', {}.",
-            shown, found, pattern, path, order));
+        if from == 0 {
+            out.push_str(&fmt!(
+                "[file_glob] {} of {} path(s) matching '{}' under '{}', {}.",
+                shown, found, pattern, path, order));
+        } else {
+            out.push_str(&fmt!(
+                "[file_glob] paths {} to {} of {} matching '{}' under '{}', {}.",
+                from + 1, from + shown, found, pattern, path, order));
+        }
         // First among the notices, because it changes how the count above is to be read: `found`
         // is what turned up before the walk stopped, not what is there.
         out.push_str(&budget.notice("file_glob", path,
             "Narrow it and ask again: set 'path' to a directory further down -- the walk had got \
             as far as the one named above -- or write the pattern with a directory in it, so each \
             call has less ground to cover."));
-        if found > shown {
+        if found > from + shown {
+            let why = if by_bytes {
+                fmt!("cut at about {} bytes", page.bytes)
+            } else {
+                fmt!("cut at {} paths", limit)
+            };
             out.push_str(&fmt!(
-                "\n[file_glob] {} more are NOT shown; narrow the pattern or the 'path'.",
-                found - shown));
+                "\n[file_glob] {} more are NOT shown ({}). Narrow the pattern or the 'path' -- \
+                the usual answer -- or page on with \"offset\":{}.",
+                found - from - shown, why, from + shown));
         }
         if skipped > 0 {
             out.push_str(&fmt!(
@@ -33420,6 +33736,15 @@ impl<H: Host> ToolRegistry<H> {
             Some(b) => b.as_str(),
             None    => args.as_ref(),
         };
+        // A listing call's one trailing '/' (HATE-15), dropped before any door judges the path.
+        let unslashed = match Tool::from_name(name) {
+            Some(t) => trailing_slash_args(&t, args_json),
+            None    => None,
+        };
+        let args_json: &str = match &unslashed {
+            Some(u) => u.as_str(),
+            None    => args_json,
+        };
         // ARMED BEFORE THE CALL, so the alarm below can only ever be about this one. An exception
         // an earlier call caught and recovered from is not evidence about this one's folder.
         // The hosted half's alone, as every port reach below is: the native half has no folder
@@ -36342,7 +36667,8 @@ mod tests {
             (Tool::FileWrite,  r#"{"path":"./secret/f.txt","content":"x"}"#),
             (Tool::FileWrite,  r#"{"path":"secret\\f.txt","content":"x"}"#),
             (Tool::FileRead,   r#"{"path":"../x.md"}"#),
-            (Tool::FileList,   r#"{"path":"code/"}"#),
+            (Tool::FileList,   r#"{"path":"code//"}"#),
+            (Tool::FileRead,   r#"{"path":"code/x.md/"}"#),
         ] {
             let got = t.guard(a, &c).expect("guard");
             if !got.as_deref().is_some_and(|g| g.starts_with("Refused")) {
@@ -36351,6 +36677,8 @@ mod tests {
         }
         assert!(bad.is_empty(), "{} case(s):\n{}", bad.len(), bad.join("\n"));
         for (t, a) in [
+            // One trailing '/' on a listing tool names the same folder (HATE-15, rc-b, 26 Oct).
+            (Tool::FileList,  r#"{"path":"code/"}"#),
             (Tool::FileWrite, r#"{"path":"a..b.md","content":"x"}"#),
             (Tool::FileWrite, r#"{"path":"notes/a b.md","content":"x"}"#),
             (Tool::FileList,  r#"{"path":"."}"#),
@@ -46956,6 +47284,19 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert_eq!(want, got, "an end line must return exactly offset..=end: {}", out);
     }
 
+    /// The probe's `locales` task read the 41.6 KB `i18ncheck.mjs` bare and took 44,763 bytes,
+    /// although the description promises a big file is a 200-line peek: the peek began at 64 KB.
+    #[test]
+    fn test_a_bare_read_of_a_forty_kilobyte_file_is_a_peek() {
+        let c = ctx();
+        let body: String = (1..=1100).map(|n| fmt!("const line_{:05} = 'some script text';\n", n)).collect();
+        assert!(body.len() > 40_000 && body.len() < 64_000, "fixture is {} bytes", body.len());
+        put(&c, "check.mjs", &body);
+        let out = Tool::FileRead.execute_sync(r#"{"path":"check.mjs"}"#, &c).expect("read").as_text().to_string();
+        assert_eq!(READ_PEEK_LINES, read_lines(&out).len(), "a bare 40 KB read was not a peek");
+        assert!(out.len() < 16_000, "{} bytes came back", out.len());
+    }
+
     #[test]
     fn test_an_end_range_on_a_big_file_is_honoured_in_full_and_not_peeked() {
         let c = ctx();
@@ -47643,7 +47984,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             GlobHit { path: fmt!("sandbox/b.md"),   when: None },
         ];
         let out = Tool::glob_output(
-            "**/*.md", ".", hits, 10, 0, 0, Skips::default_rule(), &WalkBudget::new(), "");
+            "**/*.md", ".", hits, 10, GlobPage::whole(), 0, 0, Skips::default_rule(), &WalkBudget::new(), "");
         let line_of = |p: &str| out.lines()
             .find(|l| l.starts_with(&fmt!("{}\t", p)))
             .map(|l| l.to_string());
@@ -47673,7 +48014,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             GlobHit { path: fmt!("a.md"), when: None },
         ];
         let out = Tool::glob_output(
-            "*.md", ".", hits, 10, 0, 0, Skips::default_rule(), &WalkBudget::new(), "");
+            "*.md", ".", hits, 10, GlobPage::whole(), 0, 0, Skips::default_rule(), &WalkBudget::new(), "");
         assert!(!out.contains('\t'), "the column must be dropped, not filled with a marker: {}", out);
         assert!(out.contains("no modification time was recorded for any of them"),
             "and the reason must be stated once: {}", out);
@@ -47695,6 +48036,98 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         ] {
             assert_eq!(want, iso8601_utc(secs * 1_000), "epoch second {}", secs);
         }
+    }
+
+    #[test]
+    fn test_a_default_glob_is_one_page_of_about_four_kilobytes() {
+        // HATE-17: 500 long paths came back as 39,542 bytes. With no `limit`, the answer is cut
+        // at the configured bytes, says how many it held back, and names the offset to page on.
+        let hits: Vec<GlobHit> = (0..400)
+            .map(|n| GlobHit { path: fmt!("ht/web/apps/oxedyne/app/www/js/module_{:04}.js", n), when: None })
+            .collect();
+        let caps = output_caps();
+        let page = GlobPage { offset: 0, bytes: caps.glob_bytes };
+        let out = Tool::glob_output("**/*", ".", hits, caps.glob_paths, page, 0, 0,
+            Skips::default_rule(), &WalkBudget::new(), "");
+        assert!(out.len() < caps.glob_bytes + 600, "{} bytes: {}", out.len(), out);
+        assert!(out.contains("more are NOT shown"), "{}", out);
+        assert!(out.contains("\"offset\":"), "the cut must say how to page on: {}", out);
+        let shown = out.lines().filter(|l| l.starts_with("ht/")).count();
+        assert!(out.contains(&fmt!("\"offset\":{}", shown)), "{}", out);
+        // And the next page starts where this one stopped.
+        let hits: Vec<GlobHit> = (0..400)
+            .map(|n| GlobHit { path: fmt!("ht/web/apps/oxedyne/app/www/js/module_{:04}.js", n), when: None })
+            .collect();
+        let next = Tool::glob_output("**/*", ".", hits, caps.glob_paths,
+            GlobPage { offset: shown, bytes: caps.glob_bytes }, 0, 0,
+            Skips::default_rule(), &WalkBudget::new(), "");
+        assert!(next.starts_with(&fmt!("ht/web/apps/oxedyne/app/www/js/module_{:04}.js", shown)),
+            "{}", next);
+    }
+
+    #[test]
+    fn test_an_edit_retyped_with_other_spacing_inside_a_line_lands_once() {
+        // HATE-13: ko.js aligns its values with a run of spaces; the hunk was retyped with one.
+        let data = "\t'spend.period_week':     '주',\n\t'spend.period_month':    '달',\n";
+        let old = "\t'spend.period_week': '주',\n\t'spend.period_month': '달',";
+        let new = "\t'spend.period_week': '주',\n\t'spend.period_hour': '시간',\n\t'spend.period_month': '달',";
+        let (out, relaxed) = file_edited_all("www/i18n/ko.js", data,
+            &[(old.to_string(), new.to_string())]).expect("placed");
+        assert_eq!(vec![1], relaxed);
+        assert_eq!("\t'spend.period_week':     '주',\n\t'spend.period_hour': '시간',\n\
+            \t'spend.period_month':    '달',\n", out, "kept lines keep the file's spacing");
+        // Ambiguous is still refused, and a content difference is still a miss that names where.
+        let twice = fmt!("{}{}", data, data);
+        assert!(file_edited_all("x.js", &twice, &[(old.to_string(), new.to_string())]).is_err());
+        let wrong = "\t'spend.period_week': '週',\n\t'spend.period_month': '달',";
+        let e = fmt!("{}", file_edited_all("x.js", data, &[(wrong.to_string(), new.to_string())])
+            .err().expect("a content miss"));
+        assert!(e.contains("first differ at line 1"), "{}", e);
+    }
+
+    #[test]
+    fn test_a_large_directory_lists_as_one_page() {
+        // HATE-17's third door: `file_list` of a 526-entry `dev/` was 36,443 bytes.
+        let c = ctx();
+        for n in 0..600 {
+            put(&c, &fmt!("big/script_with_a_long_name_{:04}.sh", n), "x\n");
+        }
+        let out = Tool::FileList.execute_sync(r#"{"path":"big"}"#, &c).expect("list");
+        let t = out.as_text();
+        assert!(t.len() < output_caps().list_bytes + 400, "{} bytes", t.len());
+        assert!(t.contains("more are NOT shown") && t.contains("\"offset\":"), "{}", t);
+    }
+
+    /// HATE-15 (rc-b ruling, 26 Oct): a listing tool given `dev/` names the same folder as `dev`,
+    /// and was refused in 3 of 3 probe runs. It answers now, as though the slash were not there.
+    #[test]
+    fn test_a_listing_tool_takes_one_trailing_slash_on_a_folder() {
+        let c = ctx();
+        put(&c, "dev/run_me.sh", "echo NEEDLE\n");
+        for (t, a) in [
+            (Tool::FileList,   r#"{"path":"dev/"}"#),
+            (Tool::FileGlob,   r#"{"pattern":"*.sh","path":"dev/"}"#),
+            (Tool::FileSearch, r#"{"query":"NEEDLE","path":"dev/"}"#),
+        ] {
+            let out = t.execute_sync_guarded(a, &c).expect("listing").as_text().to_string();
+            assert!(!out.starts_with(REFUSAL_OPENING), "{} refused 'dev/': {}", t.name(), out);
+            assert!(out.contains("run_me.sh"), "{} did not list the folder: {}", t.name(), out);
+        }
+        // Only ONE slash: 'dev//' is still a second spelling and is refused.
+        let two = Tool::FileList.execute_sync_guarded(r#"{"path":"dev//"}"#, &c).expect("list");
+        assert!(two.as_text().starts_with(REFUSAL_OPENING), "'dev//' passed: {}", two);
+    }
+
+    /// HATE-15's other half: a file tool still refuses `x/`, and says plainly what to write.
+    #[test]
+    fn test_a_file_tool_refuses_a_trailing_slash_and_says_drop_it() {
+        let c = ctx();
+        put(&c, "dev/run_me.sh", "echo hi\n");
+        let out = Tool::FileRead.execute_sync_guarded(r#"{"path":"dev/run_me.sh/"}"#, &c)
+            .expect("read").as_text().to_string();
+        assert!(out.starts_with(REFUSAL_OPENING), "a file path with a trailing '/' passed: {}", out);
+        assert!(out.contains("drop the trailing slash") && out.contains("'dev/run_me.sh'"),
+            "the refusal does not say plainly what to write: {}", out);
     }
 
     #[test]
@@ -47880,6 +48313,24 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         let got = glob_says(&c, &fmt!(r#"{{"pattern":"{}","path":"{}"}}"#, missed, dir));
         assert!(got.iter().any(|p| p.ends_with(missed)),
             "the fixture has lost its needle, so nothing above proves anything: {:?}", got);
+    }
+
+    /// HATE-12: an `all:true` walk over a wide mark that stops with nothing found is a plain
+    /// answer saying the place is too wide, not a failed call; without `all` it still refuses.
+    #[test]
+    fn test_a_stopped_walk_under_all_is_a_plain_note_not_a_failure() {
+        let c = big_ctx();
+        for t in [Tool::FileSearch, Tool::FileGlob] {
+            let a = match t {
+                Tool::FileSearch => r#"{"query":"NO-SUCH-LINE-ANYWHERE","all":true}"#,
+                _                => r#"{"pattern":"**/no_such_file_anywhere.zz","all":true}"#,
+            };
+            let (answered, text) = tool_said(t, &c, a);
+            assert!(answered, "{} under all:true failed: {}", t.name(), text);
+            assert!(text.contains("too many entries") && text.contains("narrow the path or pattern"),
+                "{} did not say why it stopped: {}", t.name(), text);
+            assert!(!text.contains("No matches"), "{} read as 'nothing there': {}", t.name(), text);
+        }
     }
 
     #[test]
@@ -52498,7 +52949,11 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert_eq!(3, top.len(), "depth 0 did not narrow to the top level: {:?}", top);
     }
 
-    /// **The app's own largest file, mapped in well under a second.**
+    /// The deepest stack of open items a walk of `daimond.js` may reach: measured 6 on 26 Oct
+    /// 2026 (79,679 lines, 3,475 items), so a nesting of items the file never had trips it.
+    const OUTLINE_STACK_BOUND: usize = 16;
+
+    /// **The app's own largest file, mapped in one bounded walk.**
     ///
     /// 46,000 lines and 2.36 MB: the file `file_read` refuses to hand over whole and the search
     /// could not open at all until the ceiling went. The two rows asserted are the ones the plan
@@ -52512,11 +52967,30 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         let began = std::time::Instant::now();
         let out = Tool::Outline
             .execute_sync(r#"{"path":"www/js/daimond.js","limit":2000}"#, &c).expect("outline");
-        let took = began.elapsed();
         let text = out.as_text();
-        println!("[outline] www/js/daimond.js in {:?}", took);
-        assert!(took.as_secs_f64() < 1.0,
-            "the outline of daimond.js took {:?}, which is not the cost of a map", took);
+        // Fast is asserted by its shape, never a clock under shared CPU: the map is one walk of
+        // the file, each line fed once, and its stack of open items stays shallow, so each line
+        // costs a bounded step and the whole walk is linear in the file.
+        let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("www/js/daimond.js")).unwrap_or_default();
+        let mut scan = OutlineScan::new(OutlineLang::Js);
+        let (mut fed, mut deepest) = (0usize, 0usize);
+        for (i, line) in src.lines().enumerate() {
+            scan.feed(i + 1, line);
+            fed += 1;
+            deepest = deepest.max(scan.open.len());
+        }
+        let (items, last) = scan.finish();
+        println!("[outline] www/js/daimond.js in {:?}: {} lines, {} items, deepest stack {}",
+            began.elapsed(), last, items.len(), deepest);
+        assert!(fed > 40_000 && last == fed, "the walk fed {} lines and ended at {}", fed, last);
+        assert!(items.len() <= fed, "the map has {} items for {} lines", items.len(), fed);
+        assert!(deepest <= OUTLINE_STACK_BOUND,
+            "the walk's stack of open items reached {}, over {}: a line no longer costs a bounded step",
+            deepest, OUTLINE_STACK_BOUND);
+        assert!(text.contains(&fmt!("{} lines, ", fed)),
+            "the tool's map is not of one walk of the file's {} lines: {}", fed,
+            text.lines().next().unwrap_or_default());
         assert!(text.len() <= MAX_OUTPUT, "the outline is {} bytes", text.len());
         assert!(text.contains("var\tWorkers"),
             "the object every worker runs through is not in the map: {}",
@@ -53917,6 +54391,11 @@ impl Tool {
     /// The synchronous path used by the tests, through the same guard the dispatcher applies, so a
     /// test cannot pass through a door the real code closes.
     fn execute_sync_guarded(&self, args: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        let unslashed = trailing_slash_args(self, args);
+        let args = match &unslashed {
+            Some(u) => u.as_str(),
+            None    => args,
+        };
         if let Some(refusal) = res!(self.guard(args, ctx)) {
             return Ok(MessageContent::text(refusal));
         }

@@ -979,6 +979,25 @@ impl Agent {
                 starting {:?}", text.len(), text.chars().take(24).collect::<String>();
                 Invalid, Input));
         }
+        // The listing caps (HATE-17), process-wide because the tools that read them are: zero
+        // or absent keeps the figure in force.
+        {
+            let n = |k: &str| crate::llm::extract_json_number(text, k).map(|n| n as usize)
+                .unwrap_or(0);
+            let caps = crate::tools::OutputCaps {
+                glob_paths:     n("glob_paths"),
+                glob_bytes:     n("glob_bytes"),
+                search_matches: n("search_matches"),
+                search_bytes:   n("search_bytes"),
+                list_bytes:     n("list_bytes"),
+                read_bytes:     n("read_bytes"),
+            };
+            if caps != (crate::tools::OutputCaps { glob_paths: 0, glob_bytes: 0,
+                search_matches: 0, search_bytes: 0, list_bytes: 0, read_bytes: 0 })
+            {
+                crate::tools::set_output_caps(caps);
+            }
+        }
         {
             let mut l = self.limits.borrow_mut();
             // The retire measures.
