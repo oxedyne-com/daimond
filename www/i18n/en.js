@@ -621,6 +621,11 @@
 	// The name field in a chat's cog dialog. It has no placeholder: one only
 	// restated the label (CHAT-10, then D-13).
 	'tile.dlg_name': 'Name',
+	'tile.dlg_folder': 'Folder',
+	'tile.dlg_folder_ph': 'An absolute path on its runner, e.g. /home/you/project',
+	'tile.dlg_folder_help': 'Where this Diamond’s turns start on its runner. The workspace stays as it is.',
+	'tile.dlg_folder_abs': 'A folder is an absolute path, starting with /.',
+	'tile.dlg_folder_reach': '{path} lies outside every folder its runner may reach.',
 	'tile.dlg_running': 'Running',
 	'tile.dlg_advanced': 'Advanced',
 	'tile.dlg_detail': 'Detail',

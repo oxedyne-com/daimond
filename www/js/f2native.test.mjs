@@ -92,6 +92,7 @@ const scopeOf = new Function('window', 'with (window) {\n'
 	+ 'function rootHere() { return "fid-usr"; }\n'
 	+ 'function selfHoldsFolder() { return true; }\n'
 	+ 'function diag() {}\n'
+	+ 'function diamondFolder() { return ""; }\n'		// no Diamond names its own (HATE-7)
 	+ lift('chatNeedsFolder') + lift('errandScope')
 	+ '\nreturn errandScope;\n}')(dwin);
 const plain = scopeOf({ id: 'plain-ws' }, ['a']);

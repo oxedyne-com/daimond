@@ -298,8 +298,8 @@ console.log('\nA8. a Diamond folder rooted on the asker');
 	tab.localStorage.setItem(M.KEY, JSON.stringify({ v: 1, d: { [DIA]: [{ id: 'l1', to: 'dir:[machine:usr]books/x',
 		rel: 'holds', share: false, root }] }, c: {} }));
 	const lifted = liftFn(DMND, 'chatNeedsFolder');
-	const needs = lifted ? new Function('window', 'DaimondMarksHere', 'selfHoldsFolder', 'rootHere',
-		lifted + '\nreturn chatNeedsFolder;')(tab, M, () => true, () => root) : () => undefined;
+	const needs = lifted ? new Function('window', 'DaimondMarksHere', 'selfHoldsFolder', 'rootHere', 'diamondFolder',
+		lifted + '\nreturn chatNeedsFolder;')(tab, M, () => true, () => root, () => '') : () => undefined;
 	const nf = needs(CHAT);
 	check('A8a. the asker reads the chat as rooted here', nf === true, 'needFolder=' + nf);
 	const s = sw({ [RUN]: derived({ folder: false, lastSeen: NOW - 1000 }) }, { needFolder: nf });
@@ -308,8 +308,8 @@ console.log('\nA8. a Diamond folder rooted on the asker');
 		s.choice === 'here' && d.dispatch === false, 'choice=' + s.choice + ' dispatch=' + d.dispatch);
 	const s2 = sw({ [RUN]: derived({ folder: true, lastSeen: NOW - 1000 }) }, { needFolder: nf });
 	check('A8b. rooted on both: offered', s2.choice === 'runner', 'choice=' + s2.choice);
-	const browser = lifted ? new Function('window', 'DaimondMarksHere', 'selfHoldsFolder', 'rootHere',
-		lifted + '\nreturn chatNeedsFolder;')(tab, M, () => false, () => 'browser')(CHAT) : false;
+	const browser = lifted ? new Function('window', 'DaimondMarksHere', 'selfHoldsFolder', 'rootHere', 'diamondFolder',
+		lifted + '\nreturn chatNeedsFolder;')(tab, M, () => false, () => 'browser', () => '')(CHAT) : false;
 	check('A8c. no folder open here: nothing required', browser === false);
 }
 

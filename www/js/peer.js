@@ -2725,6 +2725,13 @@
 				// on a runner's row and only when it said so, so `honoursModelSet` never reads
 				// a guess. A tab states the same fact on its roster line, not here.
 				if (rec.modelset === true) recOut.modelset = true;
+				// REACH (HATE-2): the absolute roots its config lets it reach, from its signed
+				// beat. ABSENT when it sent none, so a Diamond's folder is checked only against a
+				// runner that said where it may go (`folderInReach`).
+				if (Array.isArray(rec.reach)) {
+					var rr = rec.reach.filter(function (r) { return typeof r === 'string' && r.charAt(0) === '/'; });
+					if (rr.length) recOut.reach = rr;
+				}
 				// Its engine ABI and the oldest it reads (OWNKEY ABI-b), kept only when it names
 				// one, so a legacy runner is judged by the old rule (`recEngineOk`).
 				if ((+rec.abi | 0) > 0) {

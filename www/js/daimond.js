@@ -28372,6 +28372,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
+	// ── A DIAMOND'S OWN FOLDER (HATE-7) ──
+	//
+	// An absolute path on its runner, where that Diamond's turns start: sent as the errand's
+	// `scope.root`, which the runner reads as the start directory (`errand_place`), the
+	// workspace staying its home. Choosing it never swaps the workspace, so a second Diamond
+	// keeps its own. Kept on this device, keyed by Diamond id, as `daimond-diamond-models` is.
+	var DIAMOND_FOLDER_KEY = 'daimond-diamond-folder';	// { diamondId: '/abs/path' }
+
+	function diamondFolder(id) {
+		if (!id) return '';
+		var all = readJson(DIAMOND_FOLDER_KEY, {}) || {};
+		var f = all[id];
+		return (typeof f === 'string' && f.charAt(0) === '/') ? f : '';
+	}
+
+	/// '' clears.
+	function setDiamondFolder(id, path) {
+		if (!id) return;
+		var all = readJson(DIAMOND_FOLDER_KEY, {}) || {};
+		if (path) all[id] = path; else delete all[id];
+		try { localStorage.setItem(DIAMOND_FOLDER_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+	}
+
+	/// Does a runner that said where it may go reach `path`? Read from every runner row
+	/// carrying `reach` (gateway HATE-2); true while none does, the runner's own clamp then
+	/// being the only judge.
+	function folderInReach(path, presence) {
+		var p = String(path || '').replace(/\/+$/, '') || '/';
+		var roots = [];
+		Object.keys(presence || {}).forEach(function (id) {
+			var r = presence[id];
+			if (r && Array.isArray(r.reach)) roots = roots.concat(r.reach);
+		});
+		if (!roots.length) return true;
+		return roots.some(function (r) {
+			var b = String(r || '').replace(/\/+$/, '');
+			return p === (b || '/') || p.indexOf(b + '/') === 0;
+		});
+	}
+
 	/// THE SCOPE A DISPATCHED TURN CARRIES (UNBLOCK-32 F2b): its holds, and, for a turn whose
 	/// folder is rooted here in a machine folder, that folder's NAME (`usr`, never a path),
 	/// as `{ root, holds }`, so the runner starts the turn in its own folder of that name and reads
@@ -28381,8 +28421,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// ONE PREDICATE with the switch (F2-FIX M1): the folder is sent exactly where
 	/// `chatNeedsFolder` makes the turn need one, a plain chat whose workspace holding is opened
 	/// in the folder as much as a Diamond's mark, so a runner seated for the folder starts in it.
+	///
+	/// A Diamond with its own folder (HATE-7) sends that absolute path instead, ahead of all.
 	function errandScope(chat, holds) {
 		try {
+			var own = (chat && chat.diamondId) ? diamondFolder(chat.diamondId) : '';
+			if (own) return { root: own, holds: holds };
 			if (chatNeedsFolder(chat)) {
 				var r = DaimondMarksHere._core.rootOf(rootHere());
 				if (r.kind === 'machine' && r.name) return { root: r.name, holds: holds };
@@ -32699,6 +32743,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the turn runs only where a folder is held too, since a runner with none reaches none
 	/// of it and a switch that offers one which then cannot do the turn is a fault (§1).
 	function chatNeedsFolder(chat) {
+		// A Diamond naming its own folder (HATE-7) needs no workspace folder held at the runner.
+		if (chat && chat.diamondId && diamondFolder(chat.diamondId)) return false;
 		if (!chat || !selfHoldsFolder() || !window.DaimondMarksHere || !DaimondMarksHere.rootedHere) return false;
 		try { return DaimondMarksHere.rootedHere(chat.diamondId || '', chat.id || '', rootHere()); }
 		catch (e) { return false; }
@@ -37812,6 +37858,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// shows the pending pulldown, and without this row a chat could only
 		// ever run on the starred default.
 		if (opts.models === 'diamond') mountDiamondModels(card, adv, opts);
+		// ── Folder, a Diamond's own place on its runner (HATE-7).
+		if (opts.models === 'diamond') mountDiamondFolder(card, opts);
 		if (opts.chat) mountChatModel(card, opts.chat);
 
 		// ── Colour, which the tile takes at once and the Graph takes with it.
@@ -38025,6 +38073,47 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		row.appendChild(input);
 		card.appendChild(row);
+	}
+
+	/// The folder field in a Diamond's cog dialog (HATE-7): a typed or pasted absolute path,
+	/// refused with one sentence when it is not absolute or lies outside every runner's reach.
+	/// Empty clears it. The browse picker waits on a runner that can list folders.
+	function mountDiamondFolder(card, opts) {
+		card.appendChild(secHead(t('tile.dlg_folder')));
+		var input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'tile-dlg-name-input tile-dlg-folder-input';
+		input.value = diamondFolder(opts.id);
+		input.placeholder = t('tile.dlg_folder_ph');
+		input.title = t('tile.dlg_folder_help');
+		input.spellcheck = false;
+		input.setAttribute('autocomplete', 'off');
+		input.setAttribute('aria-label', t('tile.dlg_folder'));
+		var say = document.createElement('p');
+		say.className = 'tile-dlg-note tile-dlg-say warn';
+		say.hidden = true;
+		input.addEventListener('change', function () {
+			var v = input.value.trim();
+			var why = folderRefusal(v);
+			say.hidden = !why;
+			say.textContent = why;
+			if (why) return;
+			setDiamondFolder(opts.id, v);
+			input.value = v;
+		});
+		card.appendChild(input);
+		card.appendChild(say);
+	}
+
+	/// The sentence a typed folder is refused with, '' when it may be kept.
+	function folderRefusal(v) {
+		if (!v) return '';
+		if (v.charAt(0) !== '/') return t('tile.dlg_folder_abs');
+		var pr = {};
+		var P = window.DaimondPresence;
+		try { pr = (P && P.snapshot && P.snapshot()) || {}; }
+		catch (e) { pr = {}; }
+		return folderInReach(v, pr) ? '' : t('tile.dlg_folder_reach', { path: v });
 	}
 
 	/// The two ways to turn a chat into a Diamond, off the row (CHAT-15) and
@@ -63118,6 +63207,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And its folders' answered marks, which are otherwise never drained (r569 A3).
 		pruneMailMarks(id, true);
 		forgetTilePrefs(id);
+		setDiamondFolder(id, '');
 		forgetDiamondView(id);
 		// The daimon's conversation goes with its daimon. Left behind it would be a
 		// chat record with no tile, no Diamond and no way to reach it, sitting in
