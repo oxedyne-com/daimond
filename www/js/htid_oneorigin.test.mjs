@@ -28,6 +28,7 @@
                MM_SRC_REV=c05d1ba3a node www/js/htid_oneorigin.test.mjs   (R)
    ============================================================ */
 import { source } from './testlift.mjs';
+import { createHash } from 'node:crypto';
 import { webcrypto } from 'node:crypto';
 
 let failures = 0, checks = 0;
@@ -242,10 +243,9 @@ function makeTab(opts) {
 		applySync: async () => ({}),
 	};
 	win.DaimondCloud = {
-		sha256: async (s) => {
-			const d = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-			return Array.from(new Uint8Array(d)).map((b) => ('0' + b.toString(16)).slice(-2)).join('');
-		},
+		// Digested on this thread: `subtle.digest` runs on libuv's pool, in real time, so
+		// under load it could outlast the test's settling and a step be read early.
+		sha256: async (s) => createHash('sha256').update(s).digest('hex'),
 	};
 	win.WebSocket = class {
 		constructor(url) { this.url = url; this.readyState = 0; tab.sockets.push(this); }

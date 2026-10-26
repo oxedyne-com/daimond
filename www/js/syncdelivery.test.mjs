@@ -63,6 +63,7 @@
      node www/js/syncdelivery.test.mjs WAKELOOP   # one case
    ============================================================ */
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -236,10 +237,9 @@ function makeTab(cfg) {
 		},
 	};
 	win.DaimondCloud = {
-		sha256: async (s) => {
-			const d = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-			return Array.from(new Uint8Array(d)).map((b) => ('0' + b.toString(16)).slice(-2)).join('');
-		},
+		// Digested on this thread: `subtle.digest` runs on libuv's pool, in real time, so
+		// under load it outlasted `quiet()` and a landed push still read 'syncing'.
+		sha256: async (s) => createHash('sha256').update(s).digest('hex'),
 	};
 	const src = readFileSync(SYNC_JS, 'utf8');
 	const fn = new Function('window', 'document', 'crypto', 'localStorage', 'TextEncoder', 'TextDecoder',

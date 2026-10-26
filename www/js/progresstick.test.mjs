@@ -32,6 +32,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { webcrypto } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -129,10 +130,9 @@ function makeTab() {
 		applySync: async () => ({}),
 	};
 	win.DaimondCloud = {
-		sha256: async (s) => {
-			const d = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-			return Array.from(new Uint8Array(d)).map((b) => ('0' + b.toString(16)).slice(-2)).join('');
-		},
+		// Digested on this thread: `subtle.digest` runs on libuv's pool, in real time, so
+		// under load it could outlast the test's settling and a step be read early.
+		sha256: async (s) => createHash('sha256').update(s).digest('hex'),
 	};
 	// The socket the page opens: open when the test says so, and fed by it.
 	win.WebSocket = class {

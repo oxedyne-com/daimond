@@ -33,6 +33,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { webcrypto } from 'node:crypto';
 import { loadSeal, installSeal } from './sealfixture.mjs';
 await loadSeal();
@@ -1015,7 +1016,7 @@ async function main() {
 	// The runner's checks (settle.rs `open_pieces`, `session_of_ref`), in the laptop's tab: every
 	// piece present, at its address and size, opening under the account key, the whole at `size`
 	// hashing to `key`, and the body naming the errand's chat, thread sig and session marker.
-	const shaHex = async (u8) => toHex(await real.subtle.digest('SHA-256', u8));
+	const shaHex = async (u8) => createHash('sha256').update(u8).digest('hex');	// on this thread, not libuv's pool
 	async function openRef(errand) {
 		const r = errand && errand.sessionRef;
 		if (!r || r.v !== 2 || !Array.isArray(r.chunks) || !r.chunks.length) return { why: 'no manifest' };

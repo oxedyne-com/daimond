@@ -320,7 +320,7 @@ enum Mark {
 /// A function over the tree and the reply, and never over what the model said about its own
 /// work.  `CONTRACT_CLAIMS.md` gives the reason at length: a turn's account of itself is
 /// prose, and this codebase removed thirty-four prose sniffs in one night.
-type Check = fn(&Path, &str) -> Result<(), String>;
+type Check = fn(&Path, &str, &str) -> Result<(), String>;
 
 struct Task {
     /// Short name, for `DAIMOND_PROBE_TASKS` and the report.
@@ -331,14 +331,17 @@ struct Task {
     mark:       Mark,
     brief:      &'static str,
     check:      Check,
+    /// What the tree says the answer is, found by the probe before the turn and handed to
+    /// `check` as its third argument.  `None` hands it an empty string.
+    truth:      Option<fn(&Path) -> Result<String, String>>,
     /// Tool calls this task may make.
     max_calls:  usize,
     /// Bytes of tool output it may take into context.
     max_bytes:  usize,
-    /// Seconds the turn may take. Here because the first live run answered `bigmark`
-    /// correctly in 89.9 s: a right answer that costs a minute and a half of walking is a
-    /// finding, and correctness alone could not see it.
-    max_secs:   f64,
+    // No seconds budget.  Wall-clock time is printed and never graded: it moves with the
+    // provider's load, so `world` failed ccp9 run 1 at 20.0 s against 20 s on one call and
+    // 713 bytes, a pass in every way the app controls.  The 89.9 s `bigmark` walk that first
+    // put seconds here is caught by its call and byte budgets.  No task measures time.
     /// Paths, repository-relative, `git checkout --` reverts after the run.  Empty for a
     /// read-only task, and a read-only task is CHECKED to have written nothing.
     touches:    &'static [&'static str],
@@ -366,7 +369,7 @@ struct Task {
 /// budget is the second half: the file is 1.6 MB, so a run that reads it whole passes the
 /// answer and fails the probe, which is correct -- taking 1.6 MB into context to find one
 /// line is not a working development loop.
-fn check_bigfile(repo: &Path, reply: &str) -> Result<(), String> {
+fn check_bigfile(repo: &Path, reply: &str, _truth: &str) -> Result<(), String> {
     let (line, _) = match first_cell_line(repo) {
         Some(f) => f,
         None    => return Err(fmt!("www/js/daimond.js no longer holds a row.appendChild( inside \
@@ -441,7 +444,7 @@ fn update_spend_span(repo: &Path) -> Option<(usize, usize)> {
 /// `file_search` reports "0 matches" with the shortfall in a footnote.  The task is
 /// answerable -- the constant is right there in `src/tools.rs` -- so a failure here is the
 /// app answering a smaller question than the one it was asked.
-fn check_bigmark(_repo: &Path, reply: &str) -> Result<(), String> {
+fn check_bigmark(_repo: &Path, reply: &str, _truth: &str) -> Result<(), String> {
     let says_file = reply.contains("tools.rs");
     let says_num  = reply.contains("20000") || reply.contains("20_000") || reply.contains("20,000");
     if says_file && says_num {
@@ -506,7 +509,7 @@ fn choose_period_key(repo: &Path) -> Option<(&'static str, &'static str)> {
 /// files are read here rather than put through `dev/i18ncheck.mjs`, because that script answers
 /// a coverage question over the whole catalogue and this task is about ONE key: a run that added
 /// it to four files would leave the script red for reasons that were red before.
-fn check_locales(repo: &Path, _reply: &str) -> Result<(), String> {
+fn check_locales(repo: &Path, _reply: &str, _truth: &str) -> Result<(), String> {
     let (key, _) = match period_key(repo) {
         Some(k) => k,
         None    => return Err(fmt!("every key in PERIOD_KEYS is already in the tree, so there is \
@@ -535,14 +538,56 @@ fn check_locales(repo: &Path, _reply: &str) -> Result<(), String> {
 /// of it to learn how to invoke it.  The answer is one line of that script's output, so a
 /// run that reads the file at all is spending 39 KB to avoid one `run` call -- which the
 /// byte budget, set below the file's size, is what catches.
-fn check_ran_it(_repo: &Path, reply: &str) -> Result<(), String> {
-    let l = reply.to_lowercase();
-    // The script says "all 7 locales carry every one of en.js's N keys" when it is happy.
-    if l.contains("locales carry") || l.contains("out of step") {
+fn check_ran_it(_repo: &Path, reply: &str, truth: &str) -> Result<(), String> {
+    // `truth` is the verdict line the probe got from the same command before the turn, so
+    // the grade follows the tree and not a sentence written when the tree was green.  The
+    // `i18ncheck: ` prefix is dropped and only the head is held, because a reply that quotes
+    // the verdict often drops the tag, and the tail carries counts nobody needs repeated.
+    let want = squash(truth.trim_start_matches("i18ncheck:"));
+    let head: String = want.chars().take(50).collect();
+    if !head.is_empty() && squash(reply).contains(&head) {
         return Ok(());
     }
-    Err(fmt!("the reply does not quote the checker's own verdict: {}",
-        reply.chars().take(200).collect::<String>()))
+    Err(fmt!("the reply does not quote the checker's verdict, which was \"{}\": {}",
+        truth, reply.chars().take(200).collect::<String>()))
+}
+
+/// Lower case, every run of whitespace one space, and markdown's backticks and quote marks
+/// gone, so a verdict quoted in a code block or a blockquote still reads as the same line.
+fn squash(s: &str) -> String {
+    s.to_lowercase()
+        .replace(['`', '>', '*'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The verdict `node dev/i18ncheck.mjs --frozen` gives in this tree, run by the probe itself.
+///
+/// On exit 0 that is the locale line the script opens with; on any other exit it is the last
+/// `i18ncheck:` line, which is where the script says what is wrong.  Until 26 Oct the check
+/// held a green sentence as the answer, so a turn that ran the script and quoted its red
+/// verdict word for word was failed for telling the truth.
+fn truth_ran_it(repo: &Path) -> Result<String, String> {
+    let out = match std::process::Command::new("node")
+        .args(["dev/i18ncheck.mjs", "--frozen"])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(o)  => o,
+        Err(e) => return Err(fmt!("node dev/i18ncheck.mjs --frozen could not start: {}", e)),
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let tagged: Vec<&str> = text.lines().filter(|l| l.starts_with("i18ncheck:")).collect();
+    let code = out.status.code().unwrap_or(-1);
+    let line = match code {
+        0 => tagged.iter().find(|l| l.contains("locales carry")).copied(),
+        _ => tagged.last().copied(),
+    };
+    match line {
+        Some(l) => Ok(l.to_string()),
+        None    => Err(fmt!("node dev/i18ncheck.mjs --frozen exited {} with no verdict line", code)),
+    }
 }
 
 // ── Four more, from the night of the 23rd and the day after ──────────────────────────
@@ -628,7 +673,7 @@ fn repo_state(repo: &Path) -> String {
 /// directory the probe made, which cannot touch a tracked file at all.  What it gives up is the
 /// hand's fence, which this transport could not see in any case; what it keeps is the whole of
 /// the capability.
-fn check_commit(repo: &Path, _reply: &str) -> Result<(), String> {
+fn check_commit(repo: &Path, _reply: &str, _truth: &str) -> Result<(), String> {
     let dir = commit_dir(repo);
     let subject = match git(&dir, &["log", "-1", "--pretty=%s"]) {
         Ok(s)  => s,
@@ -703,7 +748,7 @@ fn teardown_commit(repo: &Path) {
 /// **So the wrong route does not merely cost more, it answers wrongly**, which is why this task
 /// is checked on the verdict and not only on the budget: a turn that reaches for its own
 /// `node --check` is told the file is fine, and reports that the file is fine.
-fn check_parses(_repo: &Path, reply: &str) -> Result<(), String> {
+fn check_parses(_repo: &Path, reply: &str, _truth: &str) -> Result<(), String> {
     let l = reply.to_lowercase();
     let named = l.contains("jscheck");
     let failed = l.contains("do not parse") || l.contains("does not parse")
@@ -867,7 +912,7 @@ fn bare_method_scan(repo: &Path) -> String {
 /// This app answers that question with string matching, so the fault is not the model's: it is
 /// what `file_search` can see.  The check computes the callers from the tree at run time, so it
 /// follows a file that moves and goes red rather than stale when the alias does.
-fn check_alias(repo: &Path, reply: &str) -> Result<(), String> {
+fn check_alias(repo: &Path, reply: &str, _truth: &str) -> Result<(), String> {
     let callers = match method_callers(repo) {
         Ok(c)  => c,
         Err(e) => return Err(e),
@@ -903,7 +948,7 @@ fn check_alias(repo: &Path, reply: &str) -> Result<(), String> {
 /// The scratch path is the whole check, because it is the one line of that output `$HOME` is
 /// needed to produce -- the ports beside it are arithmetic and would be printed by a shell that
 /// had nothing.
-fn check_world(_repo: &Path, reply: &str) -> Result<(), String> {
+fn check_world(_repo: &Path, reply: &str, _truth: &str) -> Result<(), String> {
     let home = match std::env::var("HOME") {
         Ok(h) if !h.trim().is_empty() => h,
         _ => return Err(fmt!("this probe's own HOME is unset, so there is no value to check the \
@@ -926,6 +971,7 @@ const TASKS: &[Task] = &[
                     number of the first row.appendChild(...) call inside it. Answer \
                     with the number and nothing else. Change no files.",
         check:     check_bigfile,
+        truth:     None,
         max_calls: 6,
         // 20 KB. The first live run passed this task at 87,296 bytes, of which ONE
         // `file_read` was 80,016 -- 80 KB taken into context to learn a line number, which
@@ -933,7 +979,6 @@ const TASKS: &[Task] = &[
         // figure measures nothing, so this is set at what the task is worth: a targeted
         // search and a small read around the hit.
         max_bytes: 20_000,
-        max_secs:  30.0,
         touches:   &[],
         setup:     None,
         teardown:  None,
@@ -946,10 +991,9 @@ const TASKS: &[Task] = &[
                     WALK_ENTRIES_MAX. Tell me which file defines it and what value it is \
                     given. Change no files.",
         check:     check_bigmark,
+        truth:     None,
         max_calls: 8,
         max_bytes: 60_000,
-        // 89.9 s on the first live run, nearly all of it the walk over 590,000 files.
-        max_secs:  30.0,
         touches:   &[],
         setup:     None,
         teardown:  None,
@@ -962,10 +1006,13 @@ const TASKS: &[Task] = &[
                     beside the existing spend.period_week. The English value is {eng}; \
                     translate it for the other seven. Touch nothing else.",
         check:     check_locales,
+        truth:     None,
         max_calls: 24,
         max_bytes: 60_000,
-        max_secs:  90.0,
-        touches:   &["www/i18n"],
+        // The coverage map too: a daimon adding a key may run `i18ncheck --write-map`, and
+        // ccp9 run 2 did, so reverting only the locales left a map declaring a family variant
+        // (`spend.period_hour`) en.js no longer has, and `--frozen` red for every run after.
+        touches:   &["www/i18n", "dev/results/i18n-coverage.json"],
         setup:     None,
         teardown:  None,
     },
@@ -976,11 +1023,11 @@ const TASKS: &[Task] = &[
         brief:     "In {app}, run node dev/i18ncheck.mjs --frozen and tell me the verdict line \
                     it prints. Do not pass any other flag. Change no files.",
         check:     check_ran_it,
+        truth:     Some(truth_ran_it),
         max_calls: 4,
         // Below the 39 KB of `dev/i18ncheck.mjs`, deliberately: reading the script is the
         // failure, so the budget has to be a figure reading it cannot fit inside.
         max_bytes: 30_000,
-        max_secs:  30.0,
         touches:   &[],
         setup:     None,
         teardown:  None,
@@ -994,6 +1041,7 @@ const TASKS: &[Task] = &[
                     'count = 1' to 'count = 2', and commit that one change with the message \
                     'probe: bump the count'. Run no git command anywhere else.",
         check:     check_commit,
+        truth:     None,
         // A read of a one-line file, an edit, an add, a commit, and a look at the log to see it
         // landed. Five is the shape; the sixth is the allowance for landing in the wrong
         // directory once, which is what the 23rd looked like.
@@ -1001,7 +1049,6 @@ const TASKS: &[Task] = &[
         // The file is 70 bytes and git's own output for these verbs is a few hundred more. Set
         // where reading anything large to find out where the repository is will not fit.
         max_bytes: 5_000,
-        max_secs:  45.0,
         touches:   &[],
         setup:     Some(setup_commit),
         teardown:  Some(teardown_commit),
@@ -1014,13 +1061,13 @@ const TASKS: &[Task] = &[
                     already in this repository for that question rather than a command of your \
                     own, and report the verdict it prints. Change no files.",
         check:     check_parses,
+        truth:     None,
         // A targeted glob to find the checker, the checker's own 1,952 bytes if the turn wants
         // to read it, and the run.
         max_calls: 5,
         // Below the ~11 KB a capped listing of `dev/`'s 526 entries costs. Knowing which script
         // answers "does this parse" should not cost a directory.
         max_bytes: 8_000,
-        max_secs:  40.0,
         touches:   &[],
         setup:     Some(setup_parse),
         teardown:  Some(teardown_parse),
@@ -1033,6 +1080,7 @@ const TASKS: &[Task] = &[
                     each as a file and a line number. Include the ones that reach it through a \
                     local name. Change no files.",
         check:     check_alias,
+        truth:     None,
         // Three searches -- the symbol, the object, the local name it is bound to -- and one
         // targeted read around a hit.
         max_calls: 5,
@@ -1040,7 +1088,6 @@ const TASKS: &[Task] = &[
         // searches and a read with an offset, and refuses a bare read of `spend.js`, which is
         // 22,629 bytes and under the peek threshold, so it would come back whole.
         max_bytes: 8_000,
-        max_secs:  40.0,
         touches:   &[],
         setup:     None,
         teardown:  None,
@@ -1052,13 +1099,13 @@ const TASKS: &[Task] = &[
         brief:     "In {app}, run 'bash dev/world.sh 0 --env' and tell me the scratch directory \
                     it names. Pass no other argument, and start nothing. Change no files.",
         check:     check_world,
+        truth:     None,
         // One command answers it. Three is two false starts' grace.
         max_calls: 3,
         // The script is 11,419 bytes and its answer is 330. Set between them deliberately: this
         // is `ranit`'s fault in a second place, and the budget has to be a figure the read
         // cannot fit inside.
         max_bytes: 4_000,
-        max_secs:  20.0,
         touches:   &[],
         setup:     None,
         teardown:  None,
@@ -1201,6 +1248,18 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
     let mut bad = 0usize;
 
     for t in chosen {
+        // The same ground truth a live run finds before its turn, found the same way.
+        let truth = match t.truth {
+            Some(find) => match find(repo) {
+                Ok(v)  => v,
+                Err(e) => {
+                    println!("  FAIL {:<9} could not find its own answer: {}", t.name, e);
+                    bad += 1;
+                    continue;
+                }
+            },
+            None => String::new(),
+        };
         // The answer a task's check should accept, and one it must not.  Written here
         // rather than derived, because the point is to hand each check a case whose right
         // answer is known independently of the code under test.
@@ -1211,8 +1270,15 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
                           },
                           fmt!("I could not read the file; it is binary.")),
             "bigmark" => (fmt!("src/tools.rs, 20_000"), fmt!("No matches found.")),
-            "ranit"   => (fmt!("i18ncheck: all 7 locales carry every one of en.js's 3512 keys"),
-                          fmt!("I read the script. It checks locale coverage.")),
+            // The poor answer is the OTHER verdict, quoted as if it had been printed: a check
+            // that accepts either polarity is the fault this task's grade had until 26 Oct.
+            "ranit"   => (fmt!("The verdict line:\n\n> `{}`", truth),
+                          if truth.contains("locales carry") {
+                              fmt!("i18ncheck: --frozen, and dev/results/i18n-coverage.json is \
+                                  DECLARING DIFFERENT HOLES")
+                          } else {
+                              fmt!("i18ncheck: all 7 locales carry every one of en.js's keys")
+                          }),
             // The two poor answers below are not invented.  `parses` is told what
             // `node --check` actually says about that file -- exit 0 and nothing printed --
             // and `alias` is handed the reply a daimon really gave: the literal caller, alone.
@@ -1239,7 +1305,7 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
                     bad += 1;
                 }
                 Ok(()) => {
-                    match (t.check)(repo, "") {
+                    match (t.check)(repo, "", &truth) {
                         Ok(())  => {
                             println!("  FAIL {:<9} passes on a repository with no such commit", t.name);
                             bad += 1;
@@ -1253,7 +1319,7 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
                         .and_then(|()| git(&dir, &["add", "scratch.txt"]))
                         .and_then(|_| git(&dir, &["commit", "-q", "-m", COMMIT_SUBJECT]));
                     let verdict = match done {
-                        Ok(_)  => (t.check)(repo, ""),
+                        Ok(_)  => (t.check)(repo, "", &truth),
                         Err(e) => Err(e),
                     };
                     // Taken down BEFORE the verdict is printed, as the locale branch does, so a
@@ -1274,7 +1340,7 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
 
         if t.name == "locales" {
             // Red first, against the tree as it stands.
-            match (t.check)(repo, "") {
+            match (t.check)(repo, "", &truth) {
                 Ok(())  => {
                     println!("  FAIL {:<9} the check passes on a tree where the key is absent", t.name);
                     bad += 1;
@@ -1311,7 +1377,7 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
             }
             let verdict = match plant_failed {
                 Some(e) => Err(e),
-                None    => (t.check)(repo, ""),
+                None    => (t.check)(repo, "", &truth),
             };
             // Put the tree back BEFORE reporting, so a panic in the report cannot leave it
             // dirty.  `git checkout` is the belt; this is the braces.
@@ -1328,11 +1394,11 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
             continue;
         }
 
-        match (t.check)(repo, &good) {
+        match (t.check)(repo, &good, &truth) {
             Ok(())  => println!("  ok   {:<9} green on a right answer", t.name),
             Err(e)  => { println!("  FAIL {:<9} red on a right answer: {}", t.name, e); bad += 1; }
         }
-        match (t.check)(repo, &poor) {
+        match (t.check)(repo, &poor, &truth) {
             Ok(())  => { println!("  FAIL {:<9} GREEN on a wrong answer, so it checks nothing", t.name); bad += 1; }
             Err(_)  => println!("  ok   {:<9} red on a wrong answer", t.name),
         }
@@ -1361,16 +1427,17 @@ fn selftest(repo: &Path, chosen: &[&Task]) -> Outcome<usize> {
     println!();
     let over = Spend { calls: 99, bytes: 1, ..Default::default() };
     let fat  = Spend { calls: 1, bytes: 9_999_999, ..Default::default() };
+    // Slow is inside: seconds are information, never a budget.
     let slow = Spend { calls: 1, bytes: 1, secs: 9_999.0, ..Default::default() };
     let fine = Spend { calls: 1, bytes: 1, secs: 0.1, ..Default::default() };
     let t = &TASKS[0];
     for (label, s, want_over) in [
         ("too many calls", &over, true),
         ("too many bytes", &fat,  true),
-        ("too slow",       &slow, true),
+        ("slow, no more",  &slow, false),
         ("inside all",     &fine, false),
     ] {
-        let is_over = s.calls > t.max_calls || s.bytes > t.max_bytes || s.secs > t.max_secs;
+        let is_over = s.calls > t.max_calls || s.bytes > t.max_bytes;
         if is_over == want_over {
             println!("  ok   budget    {} reads as {}", label,
                 if want_over { "over" } else { "inside" });
@@ -1636,6 +1703,16 @@ fn one_task(
     // there. See `period_key`, and the constant that rotted before it.
     let (key, eng) = period_key(repo).unwrap_or(("spend.period_day", "Day"));
     let brief = brief.replace("{key}", key).replace("{eng}", eng);
+    // The ground truth, BEFORE the turn, so what the reply is graded against is what the
+    // tree said while the daimon was looking at it.
+    let truth = match t.truth {
+        Some(find) => match find(repo) {
+            Ok(v)  => v,
+            Err(e) => return (false, Spend::default(),
+                fmt!("the probe could not find its own answer: {}", e)),
+        },
+        None => String::new(),
+    };
     let mut s = Spend::default();
     let mut reply = String::new();
     let started = Instant::now();
@@ -1682,7 +1759,7 @@ fn one_task(
     s.completion = session.completion_tokens as u64;
 
     // (1) It got there.
-    if let Err(e) = (t.check)(repo, &reply) {
+    if let Err(e) = (t.check)(repo, &reply, &truth) {
         return (false, s, fmt!("did not get there — {}", e));
     }
     // (2) It did not flail. A right answer reached through refusals found a fault and
@@ -1704,10 +1781,6 @@ fn one_task(
     if s.bytes > t.max_bytes {
         let why = fmt!("{} bytes of tool output against a budget of {} -- worst was {} at {}",
             s.bytes, t.max_bytes, s.worst.0, s.worst.1);
-        return (false, s, why);
-    }
-    if s.secs > t.max_secs {
-        let why = fmt!("{:.1}s against a budget of {:.0}s", s.secs, t.max_secs);
         return (false, s, why);
     }
     (true, s, String::new())
