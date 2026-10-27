@@ -26,9 +26,16 @@
              with `finalTail`; the done report reads the frame, and all 22 rows land
              whole, in order, once (`readReportedFinal`)
 
+     LIVE    a native turn's provisional frames, drawn as they come on the asker and on
+             a second device (UNBLOCK-43): three frames, the third over the cap and so
+             missing its front rows, then a chunked final that cut a row; each row shows
+             once and in the runner's order, and the adoption leaves exactly the final rows
+
    Run:  node www/js/framedanswer.test.mjs
    On 7ca624dd's daimond.js: adoptFinalFrame is missing (ABORT).
    On 0e21f01fa's: readReportedFinal is missing, NATIVE fails.
+   On a6aaae055's: a frame missing its front rows draws its new row above the turn, LIVE fails.
+   On 1d13d0b4a's: a frame of only new rows (a frame missed) draws them above the turn, LIVE fails.
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -120,7 +127,10 @@ const lifted = new Function('env', [
 	// The read a `done` report makes of the door (NANCY); absent on the base, where NATIVE fails.
 	...(HAS_READ ? [extractVar(src, '_reportRead'), extractFn(src, 'readReportedFinal')] : ['function readReportedFinal() { return false; }']),
 	src.indexOf('\n\tfunction otherErrandReport(') >= 0 ? extractFn(src, 'otherErrandReport') : 'function otherErrandReport() { return false; }',
-	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef, readReportedFinal: readReportedFinal, otherErrandReport: otherErrandReport, progressView: _progressView };',
+	// The watch's frame reader (LIVE): every device that watches the turn draws through it.
+	'var _progressWatched = env.watched || {};',
+	extractFn(src, 'onProgressFrame'),
+	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef, readReportedFinal: readReportedFinal, otherErrandReport: otherErrandReport, onProgressFrame: onProgressFrame, progressView: _progressView };',
 ].join('\n'));
 const settledLease = new Function(extractFn(psrc, 'settledLease') + '\nreturn settledLease;')();
 const otherRunRows = (psrc.indexOf('function otherRunRows(') >= 0)
@@ -371,6 +381,81 @@ console.log('\nNATIVE: a chunked final frame read on the done report, after the 
 	check('a report on another errand of the turn id is not this hand-off\'s', w2.otherErrandReport({ t: 'report', turnId: T, eid: 'E1', status: 'aborted' }) === true);
 	check('[ctl] the errand it was sent as is', w2.otherErrandReport({ t: 'report', turnId: T, eid: 'E2', status: 'done' }) === false);
 	check('[ctl] and a report naming none decides nothing', w2.otherErrandReport({ t: 'report', turnId: T, status: 'done' }) === false);
+}
+
+console.log('\nLIVE: a native turn\'s rows drawn as they come, on the asker and a second device (UNBLOCK-43)\n');
+{
+	const win = {};
+	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
+		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+	const T = 'mvq1live-3-x', RUN = 'K7';
+	const r = (i, role, content, x) => Object.assign({ mid: RUN + '-t' + i, role, content, ts: 200 + i, run: RUN, ranOn: 'kim', whole: 1 }, x || {});
+	const th0 = r(0, 'think_log', 'reading the question'), tl1 = r(1, 'tool_log', 'ls: 4 files', { name: 'ls' });
+	const tl2 = r(2, 'tool_log', 'cat: three and three', { name: 'cat' });
+	const cutRow = r(1, 'cut_log', '', { mid: RUN + '-cut', say: { k: 'turn.rows_cut', v: { n: 1 } } });
+	const ans = (c) => r(3, 'assistant', c);
+	// The runner's provisional frames (final:false, same envelope as the final): ALL rows so far,
+	// and the third over the cap, so it carries the newest rows that fit and not its front ones.
+	const frame = (seq, msgs, extra) => ({ seq, final: false, abi: 0, tail: JSON.stringify(Object.assign({ v: 1, msgs }, extra || {})) });
+	const f1 = frame(1, [th0, tl1]);
+	const f2 = frame(2, [th0, tl1, ans('Si')]);
+	const f3 = frame(3, [tl2, Object.assign(ans('Six, becau'), { whole: 0 })]);
+	// The final frame, chunked (the turn is over the door): the view that fits, and the whole rows,
+	// where the runner cut tl1 for its stand-in.
+	const fin = [th0, cutRow, tl2, ans('Six, because three and three.')];
+	const body = new TextEncoder().encode(JSON.stringify({ v: 1, turn: T, msgs: fin }));
+	const ref = { v: 2, size: body.length, key: 'k', chunks: [{ addr: 'a', size: body.length }] };
+	const ff = { seq: 4, final: true, abi: 0, tail: JSON.stringify({ v: 1, msgs: [Object.assign(ans('Six, because'), { whole: 0 })], ref, n: fin.length }) };
+	const lease = { turnId: T, holder: 'kim', mode: 'held', expiry: Date.now() + 60000 };
+	const placeRow = { mid: 'p1', role: 'assistant', content: '', why: 'dispatched', iturn: T, ts: 51 };
+	const device = (name, asker) => {
+		const w = world(lease);
+		w.window.DaimondPeer = Object.assign({}, win.DaimondPeer, { settledLease, otherRunRows });
+		w.window.DaimondChunks = { materialiseBytes: async (x) => (JSON.stringify(x) === JSON.stringify(ref) ? body : null) };
+		w.watched = { [T]: true };
+		Object.assign(w, lifted(w));
+		w.chat = { id: 'c1', messages: [{ mid: T, role: 'user', content: 'what is three plus three', ts: 50 }, Object.assign({}, placeRow)] };
+		w.name = name; w.asker = asker;
+		return w;
+	};
+	const turnRows = (w) => w.chat.messages.filter((m) => m.role !== 'user' && m.why !== 'dispatched').map((m) => m.mid);
+	const mids = (rows) => rows.map((x) => x.mid).join();
+	// Both devices watch: the runner holds the lease, and neither tab is that runner.
+	for (const self of ['gil', 'arg']) {
+		check('the ' + self + ' tab watches the native runner\'s turn', win.DaimondPeer.watchDecision(Object.assign({}, placeRow, { ts: Date.now() }), lease, false, self, Date.now()) === true);
+	}
+	const gil = device('the asker', true), arg = device('the second device', false);
+	// A watcher that missed frame 2: frame 3 carries only rows it has not drawn (the door keeps
+	// only the newest frame), so none has a neighbour held and all are newer than the turn's.
+	const skip = device('a device that missed frame 2', false);
+	skip.onProgressFrame(T, f1);
+	skip.onProgressFrame(T, f3);
+	check(skip.name + ': frame 3, every row new, goes below the rows held', mids([th0, tl1, tl2, ans('')]) === turnRows(skip).join(), turnRows(skip).join());
+	for (const w of [gil, arg]) {
+		w.onProgressFrame(T, f1);
+		check(w.name + ': frame 1 draws its rows', mids([th0, tl1]) === turnRows(w).join(), turnRows(w).join());
+		w.onProgressFrame(T, f2);
+		check(w.name + ': frame 2 adds the answer as it grows', mids([th0, tl1, ans('')]) === turnRows(w).join() && w.chat.messages.find((m) => m.mid === RUN + '-t3').content === 'Si', turnRows(w).join());
+		w.onProgressFrame(T, f3);
+		check(w.name + ': frame 3, missing its front rows, keeps them and adds its new row after them', mids([th0, tl1, tl2, ans('')]) === turnRows(w).join(), turnRows(w).join());
+		check(w.name + ': the answer grew in place', w.chat.messages.find((m) => m.mid === RUN + '-t3').content === 'Six, becau');
+		w.onProgressFrame(T, f2);
+		check(w.name + ': a late frame changes nothing', mids([th0, tl1, tl2, ans('')]) === turnRows(w).join() && w.chat.messages.find((m) => m.mid === RUN + '-t3').content === 'Six, becau', turnRows(w).join());
+		check(w.name + ': every row so far provisional', w.chat.messages.filter((m) => m.iturn === T && m.provisional).length === 4);
+	}
+	// The turn ends: the asker has its `done` report, the second device sees the lease settle.
+	gil.peerReports[T] = { t: 'report', turnId: T, status: 'done', finalTail: 1 };
+	Object.assign(lease, { mode: 'released', settled: 1 });
+	for (const w of [gil, arg, skip]) {
+		w.onProgressFrame(T, ff);
+		for (let i = 0; i < 40 && !w.dropped.length; i++) await new Promise((res) => setTimeout(res, 0));
+		const got = w.chat.messages.filter((m) => m.iturn === T && m.role !== 'user' && m.why !== 'dispatched');
+		check(w.name + ': the final adoption leaves exactly the final rows, in order', mids(fin) === got.map((m) => m.mid).join(), got.map((m) => m.mid).join());
+		check(w.name + ': each real, whole, once', got.length === fin.length && got.every((m, i) => m.content === fin[i].content && m.framed === 1 && !m.provisional),
+			JSON.stringify(got.map((m) => ({ mid: m.mid, framed: m.framed, provisional: m.provisional }))));
+		check(w.name + ': the cut row is gone and its cut_log line stands', !got.some((m) => m.mid === tl1.mid) && got.some((m) => m.role === 'cut_log'));
+		check(w.name + ': the placeholder dropped', w.dropped.join() === T);
+	}
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nALL PASS');

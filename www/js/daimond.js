@@ -30667,7 +30667,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat.messages.forEach(function (m) { if (m && m.mid && String(m.iturn || '') === String(turnId)) heldMids[String(m.mid)] = 1; });
 		var next = DaimondPeer.foldProvisional(chat.messages, turnId, rows);
 		if (!next) { if (final) adoptFinalFrame(turnId); return; }	// nothing to draw; the frame may still be the answer
-		var grewOnly = next.length === prevLen;	// no rows added: only content grew in place
+		// No rows added and none moved: only content grew in place. A frame that restores the
+		// runner's order (`foldProvisional`, UNBLOCK-43) is drawn whole, not grown.
+		var grewOnly = next.length === prevLen && next.every(function (m, i) { return m === chat.messages[i]; });
 		chat.messages = next;
 		if (!grewOnly) {
 			var tfloor = Date.now() - ARRIVE_FRESH_MS;

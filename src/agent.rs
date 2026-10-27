@@ -13314,6 +13314,49 @@ fn test_agent_message_building() {
             "recall missed the staged words: {}", &staged.as_text()[..staged.as_text().len().min(300)]);
     }
 
+    /// KEY-BODY (QA R7 check 1): a refused key's 401 or 403 body -- OpenAI's echoes the key's
+    /// last characters -- reaches no fold note, error, event or session text on the Here path.
+    /// The summary call is refused first (a turn opening over its fold target), then the turn's
+    /// own call: both must say only that the key was refused, with the status.
+    #[tokio::test]
+    async fn test_keybody_a_refused_keys_body_reaches_no_note_or_event() {
+        const TAIL: &str = "sk-proj-****ABCD";
+        for status in [401u16, 403] {
+            let body = fmt!("{{\"error\":{{\"message\":\"Incorrect API key provided: {}. You \
+                can find your API key at https://platform.openai.com/account/api-keys.\",\
+                \"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}}}", TAIL);
+            let refuse = || crate::llm::tests::Reply::Http {
+                status, reason: "Refused", headers: Vec::new(), body: body.clone(),
+            };
+            let (port, _seen) = crate::llm::tests::start_stub(
+                vec![refuse(), refuse(), refuse(), refuse()]).await;
+            let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+            a.set_context_window(20_000);
+            let mut session = foldable_session(100, 600);
+            let registry = no_tools();
+            let mut events: Vec<AgentEvent> = Vec::new();
+            let out = a.run_turn(&mut session, fmt!("carry on"), &registry,
+                &mut |ev| events.push(ev)).await;
+            let note = events.iter().find_map(|e| match e {
+                AgentEvent::Compacted { note, .. } => Some(note.clone()),
+                _ => None,
+            }).unwrap_or_default();
+            assert!(note.contains("could not be written"),
+                "{}: the fixture must fail its summary call: {:?}", status, note);
+            let mut seen: Vec<String> = events.iter().map(|e| fmt!("{:?}", e)).collect();
+            seen.extend(session.messages.iter().map(|m| m.text().to_string()));
+            if let Err(e) = &out {
+                seen.push(fmt!("{}", e));
+                seen.push(e.plain());
+            }
+            let leaks: Vec<&String> = seen.iter()
+                .filter(|t| t.contains("ABCD") || t.contains("Incorrect API key")).collect();
+            assert!(leaks.is_empty(), "{}: the provider's body got out: {:?}", status, leaks);
+            assert!(note.contains("key was refused") && note.contains(&fmt!("{}", status)),
+                "{}: the note does not say the key was refused: {:?}", status, note);
+        }
+    }
+
 }
 
 /// ALERT-PENDING (D-20261016-17): a turn that reported on the Pending panel may end with no

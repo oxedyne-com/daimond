@@ -1332,6 +1332,103 @@ const RETRY_AFTER_JITTER_MS: u64 = 250;
 /// browser and the native path say the same thing about the same failure.
 pub(crate) const ERR_BODY_BYTES: usize = 300;
 
+/// What a refused key's error says in place of the provider's body (KEY-BODY).
+pub(crate) const KEY_BODY_WITHHELD: &str =
+    "the provider's reply is withheld, as a key refusal can echo part of the key";
+
+/// Is `status` the provider refusing the KEY -- 401 (not a key it knows) or 403 (not one allowed
+/// to do this)?  Such a refusal's body is never put into an error: OpenAI's 401 names the key's
+/// last characters, and an error's words reach fold notes, rows, frames and journals.
+pub(crate) fn refuses_key(status: u16) -> bool {
+    status == 401 || status == 403
+}
+
+/// The plain reason a refused key gives the caller: the provider by name where its host is one
+/// Daimond knows, else the host, and the status.  "Your OpenAI key was refused (HTTP 401)".
+///
+/// # Arguments
+/// * `host` - The host the request went to.
+/// * `status` - The refusing status, 401 or 403.
+pub(crate) fn key_refused_words(host: &str, status: u16) -> String {
+    match provider_name(host) {
+        Some(p) => fmt!("Your {} key was refused (HTTP {})", p, status),
+        None    => fmt!("Your key was refused by {} (HTTP {})", host, status),
+    }
+}
+
+/// The name a person knows a provider's API host by, or `None` for a host not on the list.
+fn provider_name(host: &str) -> Option<&'static str> {
+    const KNOWN: [(&str, &str); 12] = [
+        ("openai.com",      "OpenAI"),
+        ("anthropic.com",   "Anthropic"),
+        ("openrouter.ai",   "OpenRouter"),
+        ("googleapis.com",  "Google"),
+        ("deepseek.com",    "DeepSeek"),
+        ("mistral.ai",      "Mistral"),
+        ("x.ai",            "xAI"),
+        ("groq.com",        "Groq"),
+        ("together.xyz",    "Together"),
+        ("deepinfra.com",   "DeepInfra"),
+        ("fireworks.ai",    "Fireworks"),
+        ("moonshot.ai",     "Moonshot"),
+    ];
+    let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    KNOWN.iter().find(|(d, _)| h == *d || h.ends_with(&fmt!(".{}", d))).map(|(_, n)| *n)
+}
+
+/// The fewest characters of the client's own key that count as a fragment of it (KEY-REDACT).
+pub(crate) const KEY_FRAGMENT_MIN: usize = 4;
+
+/// What stands in a quoted body where the client's own key, or a fragment of it, was.
+pub(crate) const KEY_REDACTED: &str = "[key]";
+
+/// `body` with the client's own `key` blanked out, and with it every prefix and every suffix of
+/// the key of [`KEY_FRAGMENT_MIN`] or more characters (KEY-REDACT).
+///
+/// A provider's body is quoted into errors that reach rows, notes and frames, and a provider may
+/// echo the key -- whole, or masked to its first or last characters ("sk-proj-****abcd").  So no
+/// body is quoted anywhere before this has run over it.  Left to right, the longest fragment at
+/// each place wins.  A key shorter than the minimum is left alone: matching it would blank
+/// ordinary text.
+///
+/// # Arguments
+/// * `body` - The provider's words, as they would be quoted.
+/// * `key` - The key this client sends.
+pub(crate) fn redact_own_key(body: &str, key: &str) -> String {
+    let k = key.trim().as_bytes();
+    if k.len() < KEY_FRAGMENT_MIN {
+        return body.to_string();
+    }
+    let b = body.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        // The longest prefix of the key that starts here.
+        let mut pre = 0;
+        while pre < k.len() && i + pre < b.len() && b[i + pre] == k[pre] {
+            pre += 1;
+        }
+        // The longest suffix of the key that starts here: suffixes shrink as `s` grows, so the
+        // first that matches is the longest.
+        let mut suf = 0;
+        for s in 0..=(k.len() - KEY_FRAGMENT_MIN) {
+            if b[i..].starts_with(&k[s..]) {
+                suf = k.len() - s;
+                break;
+            }
+        }
+        let n = pre.max(suf);
+        if n >= KEY_FRAGMENT_MIN {
+            out.extend_from_slice(KEY_REDACTED.as_bytes());
+            i += n;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// `s` cut to at most `n` bytes, never through the middle of a character.
 ///
 /// `&s[..n]` panics on a multi-byte boundary, and the one place this is used is an error
@@ -3687,13 +3784,22 @@ impl LlmClient {
                     }
                 }
             }).await;
-            let err_msg = String::from_utf8_lossy(&err_body);
-            let err = err!(
-                "LLM: HTTP error: {} | {}", status_line, clip_bytes(&err_msg, ERR_BODY_BYTES);
-                IO, Network, Wire, Read);
+            // A REFUSED KEY'S BODY NEVER TRAVELS (KEY-BODY, QA R7 check 1): OpenAI's 401 echoes the
+            // key's last characters, and whatever this error carries reaches fold notes, rows and
+            // frames.  The status says all that is needed.
+            let (reason, err) = if refuses_key(status) {
+                drop(err_body);
+                (key_refused_words(&self.host, status), err!(
+                    "LLM: HTTP error: {} | {}", status_line, KEY_BODY_WITHHELD;
+                    IO, Network, Wire, Read))
+            } else {
+                let err_msg = String::from_utf8_lossy(&err_body);
+                (fmt!("the provider returned HTTP {}", status), err!(
+                    "LLM: HTTP error: {} | {}", status_line, self.quoted_body(&err_msg);
+                    IO, Network, Wire, Read))
+            };
             // A 429 or a 5xx is the provider saying "not now"; a 400 is this
             // request being wrong, and sending it again only costs money.
-            let reason = fmt!("the provider returned HTTP {}", status);
             return Err(if status_retryable(status) {
                 let after = header_value(&headers_str, "retry-after")
                     .and_then(|v| parse_retry_after(&v));
@@ -3932,6 +4038,19 @@ impl LlmClient {
     /// the one payload of a stream, so it reaches the screen, the store, the ledger and the
     /// usage exactly as a streamed reply does; see [`SseLines`].
     ///
+    /// The first [`ERR_BODY_BYTES`] of a provider's `body` as it may be quoted: this client's own
+    /// key and its fragments blanked out first ([`redact_own_key`]).  Both transports quote a
+    /// body only through here.  The cut is taken a key's length wide before the blanking, so a
+    /// fragment straddling the final cut is still blanked whole.
+    ///
+    /// # Arguments
+    /// * `body` - The provider's words.
+    pub(crate) fn quoted_body(&self, body: &str) -> String {
+        let key = self.api_key.as_str();
+        let wide = clip_bytes(body, ERR_BODY_BYTES + key.len());
+        clip_bytes(&redact_own_key(wide, key), ERR_BODY_BYTES).to_string()
+    }
+
     /// A whole completion is a delta that says everything at once: the accumulator reads it as
     /// it reads a stream's chunks.  A body that is not one -- an HTML error page, a truncated
     /// body, an Anthropic dialect that never answers this way -- is a provider error naming the
@@ -3949,7 +4068,7 @@ impl LlmClient {
             on_data(Wire::Data(body));
             return Ok(StreamOutcome::default());
         }
-        let head = clip_bytes(body, ERR_BODY_BYTES);
+        let head = self.quoted_body(body);
         Err(TransportErr::fatal(
             fmt!("{} answered HTTP {} with no reply it could read: {}", self.host, status, head),
             err!("LLM: '{}' ({}) answered a streaming request with HTTP {} and a body that is \
@@ -11019,6 +11138,82 @@ pub mod tests {
         // A short body is untouched, and an empty one is not a special case.
         assert_eq!(clip_bytes("short", ERR_BODY_BYTES), "short");
         assert_eq!(clip_bytes("", ERR_BODY_BYTES), "");
+    }
+
+    /// The client's own key in the KEY-BODY own-key tests, and every 4+ character fragment of it.
+    const OWN_KEY: &str = "sk-own-Zq7XvB2mN9pLwT4R";
+
+    /// Every prefix and suffix of `key` of 4 or more characters that occurs in `text`.
+    fn key_fragments_in(text: &str, key: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for n in 4..=key.len() {
+            for f in [&key[..n], &key[key.len() - n..]] {
+                if text.contains(f) {
+                    out.push(f.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// KEY-REDACT: a 429 whose body echoes the key's tail, and a 400 whose body echoes its
+    /// prefix, reach the error with no 4+ character fragment of the client's own key.
+    #[tokio::test]
+    async fn test_keyredact_quoted_bodies_carry_no_key_fragment() {
+        let tail = fmt!("{{\"error\":{{\"message\":\"Rate limit reached for key ...{}\"}}}}",
+            &OWN_KEY[OWN_KEY.len() - 6..]);
+        let head = fmt!("{{\"error\":{{\"message\":\"bad request from key {}...\"}}}}",
+            &OWN_KEY[..9]);
+        for (status, reason, body) in [(429u16, "Too Many Requests", tail), (400, "Bad Request", head)] {
+            let reply = || Reply::Http {
+                status, reason, headers: Vec::new(), body: body.clone(),
+            };
+            let (port, _seen) = start_stub(vec![reply(), reply(), reply(), reply()]).await;
+            let mut client = stub_client(port);
+            client.api_key = Zeroizing::new(OWN_KEY.to_string());
+            let msgs = [ChatMessage::user("hello".to_string())];
+            let e = match client.chat_stream_tools(&msgs, None, &mut |_| {}).await {
+                Ok(_)  => panic!("a {} must not be reported as success", status),
+                Err(e) => e,
+            };
+            let text = fmt!("{} {}", e, e.plain());
+            assert!(text.contains(&fmt!("{}", status)), "{}", text);
+            let found = key_fragments_in(&text, OWN_KEY);
+            assert!(found.is_empty(), "{}: the key's fragments {:?} reached the error: {}",
+                status, found, text);
+        }
+    }
+
+    /// KEY-REDACT: the helper blanks the whole key and its 4+ character prefixes and suffixes,
+    /// leaves a body with no fragment of it unchanged, and never splits a character.
+    #[test]
+    fn test_keyredact_helper() {
+        let k = OWN_KEY;
+        let clean = "{\"error\":{\"message\":\"Rate limit reached. Try again in 20s. ünïcødé\"}}";
+        assert_eq!(redact_own_key(clean, k), clean, "a body with no fragment changed");
+        let whole = fmt!("key {} refused", k);
+        assert_eq!(redact_own_key(&whole, k), "key [key] refused");
+        let tail = fmt!("key ...{} ü", &k[k.len() - 4..]);
+        assert_eq!(redact_own_key(&tail, k), "key ...[key] ü");
+        let head = fmt!("é{}****", &k[..5]);
+        assert_eq!(redact_own_key(&head, k), "é[key]****");
+        // Three characters are not a fragment.
+        let three = fmt!("x {} x", &k[k.len() - 3..]);
+        assert_eq!(redact_own_key(&three, k), three);
+        assert_eq!(redact_own_key("abc abc", "abc"), "abc abc", "a key under the minimum is left alone");
+        for t in [&whole, &tail, &head] {
+            assert!(key_fragments_in(&redact_own_key(t, k), k).is_empty(), "{}", t);
+        }
+    }
+
+    /// KEY-BODY: a refused key is named by its provider where the host is known, and never by
+    /// a look-alike host.
+    #[test]
+    fn test_keybody_refused_key_words() {
+        assert_eq!(key_refused_words("api.openai.com", 401), "Your OpenAI key was refused (HTTP 401)");
+        assert_eq!(key_refused_words("openrouter.ai", 403), "Your OpenRouter key was refused (HTTP 403)");
+        assert_eq!(key_refused_words("evilopenai.com", 401), "Your key was refused by evilopenai.com (HTTP 401)");
+        assert!(refuses_key(401) && refuses_key(403) && !refuses_key(400) && !refuses_key(429));
     }
 
     #[tokio::test]

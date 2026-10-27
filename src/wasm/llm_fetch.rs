@@ -100,11 +100,18 @@ impl LlmClient {
             } else {
                 None
             };
-            let detail = self.body_detail(&resp, wait_ms).await;
-            let err = err!(
-                "LLM: HTTP error: {} {} | {}", status, status_text, detail;
-                IO, Network, Wire, Read);
-            let reason = fmt!("the provider returned HTTP {}", status);
+            // A REFUSED KEY'S BODY IS NEVER READ (KEY-BODY): OpenAI's 401 echoes the key's
+            // last characters, and this error's words reach fold notes, rows and frames.
+            let (reason, err) = if refuses_key(status) {
+                (key_refused_words(&self.host, status), err!(
+                    "LLM: HTTP error: {} {} | {}", status, status_text, KEY_BODY_WITHHELD;
+                    IO, Network, Wire, Read))
+            } else {
+                let detail = self.body_detail(&resp, wait_ms).await;
+                (fmt!("the provider returned HTTP {}", status), err!(
+                    "LLM: HTTP error: {} {} | {}", status, status_text, detail;
+                    IO, Network, Wire, Read))
+            };
             return Err(if status_retryable(status) {
                 TransportErr::transient(reason, err).after(after)
             } else {
@@ -142,7 +149,7 @@ impl LlmClient {
             }
             Err(_) => String::new(),
         };
-        clip_bytes(&text, ERR_BODY_BYTES).to_string()
+        self.quoted_body(&text)
     }
 
     /// POST `body` via `fetch` and await the `Response` without checking

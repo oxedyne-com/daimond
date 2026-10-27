@@ -7753,22 +7753,27 @@
 				add.push([j, want]); prov[rid] = want; changed = true;
 			}
 		}
-		if (!changed) return null;
-		if (!add.length) return msgs.slice();			// in-place growth only: same order, new content
+		var out = msgs.slice();
+		var moved = frameOrder(out, id, rows);
+		if (!changed && !moved) return null;
+		if (!add.length) return out;				// in place: new content, or the runner's order restored
 		// Each new row goes right after the nearest EARLIER row of the frame the transcript
 		// already holds (merged or provisional, by mid), so a row that arrives a frame late --
 		// the answer after its thinking, tool 2 after tool 1 -- is drawn where the runner has
-		// it. With no earlier row held it goes after the placeholder (or, when there is none,
-		// after the turn's own last row, so a final frame folded once a later turn has begun
-		// stays with its turn). Rows added together keep the frame's order, and while the
+		// it. A frame over the cap carries only its newest rows (UNBLOCK-43), so a new row may
+		// have no earlier row in it: it goes right before the nearest LATER row held, which
+		// keeps it below the rows earlier frames drew. With neither, the row is newer than
+		// everything the turn holds (a watcher that missed a frame reads one of only new rows),
+		// so it goes after the turn's own last row: after the placeholder when that is all the
+		// turn holds, and before any later turn, so a final frame folded once a later turn has
+		// begun stays with its turn. Rows added together keep the frame's order, and while the
 		// turn's rows end the transcript an add is a pure append.
-		var out = msgs.slice();
 		var endAt = userAt;
 		for (var e = userAt + 1; e < out.length; e++) {
 			if (out[e] && out[e].role === 'user' && String(out[e].iturn || '') !== id) break;
 			endAt = e;
 		}
-		var baseAt = placeAt >= 0 ? placeAt + 1 : endAt + 1;
+		var baseAt = endAt + 1;
 		for (var a = 0; a < add.length; a++) {
 			var insAt = -1;
 			for (var p = add[a][0] - 1; p >= 0 && insAt < 0; p--) {
@@ -7778,10 +7783,41 @@
 					if (out[q] && String(out[q].mid || '') === pid) { insAt = q + 1; break; }
 				}
 			}
+			for (var f = add[a][0] + 1; f < rows.length && insAt < 0; f++) {
+				var fid = rows[f] && rows[f].mid ? String(rows[f].mid) : '';
+				if (!fid || isAdded(add, a, fid)) continue;		// added later in this pass: not yet placed
+				for (var g = userAt; g < out.length; g++) {
+					if (out[g] && String(out[g].mid || '') === fid) { insAt = g; break; }
+				}
+			}
 			if (insAt < 0) insAt = baseAt;
 			out.splice(insAt, 0, add[a][1]);
 		}
 		return out;
+	}
+
+	/// Is `mid` one of the rows `add` places after its `a`th?
+	function isAdded(add, a, mid) {
+		for (var i = a + 1; i < add.length; i++) if (String(add[i][1].mid) === mid) return true;
+		return false;
+	}
+
+	/// Put the provisional rows of turn `id` that a frame carries into the frame's order, in
+	/// place, in the slots they already hold: the runner's order is the turn's (UNBLOCK-43).
+	/// Real rows and rows the frame does not carry stay where they are. Answers whether
+	/// anything moved.
+	function frameOrder(out, id, rows) {
+		var at = {};
+		rows.forEach(function (r, i) { if (r && r.mid) at[String(r.mid)] = i; });
+		var slots = [], held = [];
+		for (var i = 0; i < out.length; i++) {
+			var m = out[i];
+			if (m && m.provisional && String(m.iturn || '') === id && m.mid && at[String(m.mid)] != null) { slots.push(i); held.push(m); }
+		}
+		var want = held.slice().sort(function (x, y) { return at[String(x.mid)] - at[String(y.mid)]; });
+		var moved = false;
+		for (var k = 0; k < slots.length; k++) { if (out[slots[k]] !== want[k]) { out[slots[k]] = want[k]; moved = true; } }
+		return moved;
 	}
 
 	/// A provisional transcript row from a streamed structured row.
