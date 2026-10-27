@@ -936,6 +936,9 @@
 		has:          has,
 		apply:        apply,
 		mark:         mark,
+		// The key these exact words came from, '' when none (an interpolated sentence),
+		// 'a|b' when several keys share them. Read by the lens's `ui.msg` (debugshare.js).
+		keyOf:        function (s) { return origin[s] || reverse()[s] || ''; },
 		bind:         bind,
 		surface:      surface,
 		register:     register,

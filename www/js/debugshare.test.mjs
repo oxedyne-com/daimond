@@ -136,7 +136,11 @@ function makeEnv(cfg) {
 		querySelectorAll: () => [],
 	};
 
-	const win = { DaimondGateway: { clientApi: () => 3 } };	// the page's gateway.js, the one copy of the version
+	// the page's gateway.js, the one copy of the version. `cfg.lateGateway` loads the
+	// module WITHOUT it, as index.html does (gateway.js comes ~150 tags later), and
+	// `installGateway()` is the moment that tag runs.
+	const gateway = { clientApi: () => 3 };
+	const win = cfg.lateGateway ? {} : { DaimondGateway: gateway };
 	// Capture registered window listeners so a test can fire a synthetic `storage`
 	// event (the same-device cross-tab path) and a `daimond:debugshare` can be observed.
 	const listeners = {};
@@ -228,6 +232,7 @@ function makeEnv(cfg) {
 		win, document, localStorage, posts, topActions, store,
 		fireStorage, firePagehide, console: consoleShim, logged, events, timerDelays, drainAll,
 		halt: () => { halted = true; },
+		installGateway: () => { win.DaimondGateway = gateway; },
 		nudges: () => nudges,
 	};
 }
@@ -1047,6 +1052,7 @@ async function main() {
 		// module is torn down and rebuilt on the SAME localStorage.
 		const first = makeEnv({ fastTimers: true, respond: () => 500 });
 		const DS1 = first.win.DEBUG_SHARE;
+		await sleep(5);		// the page boots before anyone can reach the Settings toggle
 		DS1.setEnabled(true);
 		for (let i = 0; i < 40; i++) DS1.event('tool', { name: 'read', r: i });
 		DS1._persistNow();
@@ -2438,6 +2444,62 @@ async function main() {
 		env.win.DaimondMail = { beat: () => { throw new Error('mail is not up'); } };
 		DS._mailBeat(t0 + 7200000 + 2000);
 		check('a mail module that throws costs the beat nothing', mail().length === 41);
+		DS.setEnabled(false);
+	}
+
+	// LENS-BLIND (27 Oct): a tab reloaded with the switch on and a non-empty outbox
+	// posted from an event raised WHILE THE PAGE WAS STILL LOADING, before gateway.js
+	// existed. The post stamped the clock, threw on `DaimondGateway`, and left
+	// `draining` latched true: that device never posted again, and every device that
+	// reloaded went the same way. The feed must not start before the page has booted,
+	// and no throw on the post path may silence it for the session.
+	console.log('');
+	console.log('a feed restored mid-load keeps posting once the page is up');
+	{
+		const store = new Map();
+		const t0 = Date.now() - 60000;
+		store.set('daimond-debugshare', '1');
+		store.set('daimond-debugshare-at', String(t0));
+		store.set('daimond-debugshare-lastpost', String(t0));
+		store.set('daimond-debugshare-outbox', JSON.stringify([
+			{ ts: t0, tag: 'ev sync', data: '{"v":1}' },
+			{ ts: t0, tag: 'ev sync', data: '{"v":1}' },
+		]));
+		const env = makeEnv({ store, lateGateway: true, fastTimers: true });
+		const DS = env.win.DEBUG_SHARE;
+		// An event raised by a script that runs before gateway.js's tag.
+		let threw = false;
+		try { DS.event('early', { at: 'load' }); } catch (e) { threw = true; }
+		check('an event raised during load does not throw', !threw);
+		check('nothing is posted before the page has booted', env.posts.length === 0);
+		env.installGateway();
+		await sleep(60);
+		const evs = env.posts.filter((p) => p.body && (p.body.rows || []).some((r) => /^ev /.test(r.tag)));
+		check('the restored outbox and the load-time event reach the gateway', evs.length > 0);
+		check('the outbox drains once the page is up', DS.outboxDepth() === 0);
+		check('the feed is still collecting', DS.feedOk());
+		env.halt();
+		DS.setEnabled(false);
+	}
+
+	console.log('');
+	console.log('a post that throws costs one failure, not the feed');
+	{
+		const env = makeEnv({ fastTimers: true });
+		const DS = env.win.DEBUG_SHARE;
+		await sleep(5);					// boot
+		DS.setEnabled(true);
+		await sleep(30);
+		let left = 1;
+		const good = env.win.DaimondGateway.clientApi;
+		env.win.DaimondGateway.clientApi = () => { if (left-- > 0) throw new Error('not yet'); return good(); };
+		const before = env.posts.length;
+		DS.event('after.throw', { k: 1 });
+		await sleep(400);
+		check('a throw on the post path is counted as a post failure', DS._health().postFail >= 1);
+		check('the event still reaches the gateway after the throw',
+			env.posts.slice(before).some((p) => p.body && (p.body.rows || []).some((r) => r.tag === 'ev after.throw')));
+		env.halt();
 		DS.setEnabled(false);
 	}
 

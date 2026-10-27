@@ -186,6 +186,8 @@
 	var MAX_FULL_CHARS = 300;					// a refusal or error sentence, whole (D-20261008-02)
 	var MAX_HEAD_CHARS = 120;					// its head, on the row itself
 	var MAX_SRC_CHARS = 60;						// and where it came from
+	var MAX_WHERE_CHARS = 40;					// a `ui.msg`'s panel or dialog name
+	var UI_SCAN_MS    = 250;					// a burst of page mutations is one scan
 	// The console lanes. A dedupe window and the rate window are deliberately the
 	// same minute: a line repeating faster than once a minute is one event with a
 	// count, and a device that finds sixty DISTINCT things to say in a minute is
@@ -278,6 +280,11 @@
 	var telQueue  = [];				// priority lane: telemetry posts, each an array of rows
 	var snapQueue = [];				// snapshot lane: drained only when telQueue is empty
 	var draining = false;
+	// Nothing goes on the wire until the page has BOOTED (`bootRestore`). This file
+	// loads near the top of index.html, so an event raised while the later tags are
+	// still running (gateway.js among them) would otherwise post at once, into a page
+	// that is only half there. Rows raised before then wait in the lanes.
+	var booted = false;
 	var telTimer = null, snapTimer = null, beatTimer = null;
 	// The event lane, which is neither of the above: DURABLE. Its rows leave only
 	// when a post has landed, and they survive a reload -- see `loadOutbox`.
@@ -1484,6 +1491,17 @@
 		// when the post arrives, and a slow reply must not buy a second one.
 		lastPostAt = Date.now();
 		write(POST_AT_KEY, String(lastPostAt)); // survives a reload; `write` itself is guarded
+		// A throw here is one failed post, never a silent feed: the drainer waits on this
+		// promise, and a throw instead of a promise left it latched for the session
+		// (LENS-BLIND, 27 Oct: every device that reloaded stopped posting).
+		try {
+			return sendRows(body);
+		} catch (e) {
+			return Promise.resolve(settle(false, 0));
+		}
+	}
+
+	function sendRows(body) {
 		// The version is read from gateway.js at the send, never copied: index.html loads
 		// gateway.js after this file, so a lookup at load would find nothing (as chunks.js).
 		return fetch(ENDPOINT, {
@@ -1538,7 +1556,7 @@
 	/// the very next thing on the wire. Stops the instant the feature is turned off
 	/// (both lanes are cleared by `applyState`, and this checks `enabled` each round).
 	function drain() {
-		if (draining) return;
+		if (draining || !booted) return;
 		draining = true;
 		step(false);
 
@@ -1696,12 +1714,14 @@
 		try { telTimer  = setInterval(telemetryTick, TELEMETRY_MS); } catch (e) {}
 		try { snapTimer = setInterval(function () { snapshotNow(); }, RESNAP_MS); } catch (e) {}
 		try { beatTimer = setInterval(function () { try { beatTick(); } catch (e2) { fault(e2); } }, BEAT_TICK_MS); } catch (e) {}
+		uiWatch();
 	}
 	function stopTimers() {
 		try { if (telTimer) clearInterval(telTimer); } catch (e) {}
 		try { if (snapTimer) clearInterval(snapTimer); } catch (e) {}
 		try { if (beatTimer) clearInterval(beatTimer); } catch (e) {}
 		telTimer = null; snapTimer = null; beatTimer = null;
+		uiUnwatch();
 	}
 
 	function isOn() { return enabled; }
@@ -1919,9 +1939,124 @@
 		event('screen', s);
 	}
 
+	// ── What the person is told (LENS-UI, UNBLOCK-41, 2026-10-27) ──────────────
+	//
+	// EVERY SENTENCE THE PAGE PUTS IN FRONT OF HIM, ONCE, AS IT APPEARS. The owner's
+	// Email panel said "This unlock covers 3 mailboxes. Remove one to add another."
+	// and the lens had no event with those words: the page shows messages through
+	// dozens of panel-local paths (`state.err` re-rendered into `.mail-err`, the
+	// composer's `#compose-note`, `toast()`, a dialog's `.dlg-err`, the update
+	// banner) and none of them told the feed. So the ONE choke point is the page
+	// itself: a MutationObserver, live only while sharing is on, coalesces each burst
+	// of changes into one scan of the message elements, and emits `ui.msg {where, kind, text, i18n}` for each
+	// (where, kind, text) that is visible now and was not at the last scan. A panel
+	// that re-renders the same line every poll says it once; the line cleared and
+	// shown again is said again, because he was told again. A new message site joins
+	// by wearing the page's existing classes (`*-err`, `*-toast`, `role="alert"` ...),
+	// with nothing to call.
+	//
+	// What is read is the message elements' own words, never a thread, a composer
+	// field or a mail body: the matched classes are message lines, not content, and
+	// the text goes through `clip`, the content scrubber, like every free-text field.
+	var UI_NOTE_CLASSES = { 'mail-note': 1, 'compose-note': 1, 'dlg-note': 1, 'daimond-undo': 1 };
+	var UI_CANDIDATES = '[class*="err"],[class*="toast"],[class*="banner-msg"],[class*="-note"],'
+		+ '[class*="daimond-undo"],[role="alert"],[role="status"]';
+	var uiObs     = null;
+	var uiTimer   = null;
+	var uiShown   = {};			// key -> 1, what the last scan saw on screen
+
+	/// What kind of message an element is, '' for none.
+	function uiKind(el) {
+		var cls = String((el && el.className && typeof el.className === 'string') ? el.className : '').split(/\s+/);
+		var kind = '';
+		for (var i = 0; i < cls.length; i++) {
+			var c = cls[i];
+			if (!c) continue;
+			if (c.indexOf('toast') !== -1 || c === 'daimond-undo')		return 'toast';
+			if (c === 'err' || /-(err|error)$/.test(c))					kind = 'error';
+			else if (!kind && /-banner-msg$/.test(c))					kind = 'banner';
+			else if (!kind && UI_NOTE_CLASSES[c])						kind = 'note';
+		}
+		if (kind) return kind;
+		var role = el.getAttribute ? el.getAttribute('role') : null;
+		if (role === 'alert')  return 'error';
+		if (role === 'status') return 'note';
+		return '';
+	}
+
+	/// The panel or dialog a message sits in, by the page's own names.
+	function uiWhere(el) {
+		try {
+			if (el.closest('[role="dialog"],dialog')) return 'dialog';
+			var p = el.closest('[data-panel]');
+			if (p) return clip(p.getAttribute('data-panel'), MAX_WHERE_CHARS);
+			var withId = el.closest('[id]');
+			if (withId) return clip(withId.getAttribute('id'), MAX_WHERE_CHARS);
+		} catch (e) { /* an element with no `closest` */ }
+		return 'page';
+	}
+
+	/// One scan: emit what is shown now and was not at the last scan.
+	function uiScan() {
+		uiTimer = null;
+		if (!enabled || feedOff || typeof document === 'undefined' || !document.querySelectorAll) return;
+		var els = document.querySelectorAll(UI_CANDIDATES);
+		var found = [];
+		var seen = typeof Set === 'function' ? new Set() : null;
+		for (var i = 0; i < els.length; i++) {
+			var kind = uiKind(els[i]);
+			if (!kind) continue;
+			found.push({ el: els[i], kind: kind });
+			if (seen) seen.add(els[i]);
+		}
+		var now = {};
+		found.forEach(function (f) {
+			// A message inside another message (an `.err` inside a `role="status"`) is
+			// said once, by the outer one.
+			if (seen) for (var a = f.el.parentNode; a; a = a.parentNode) if (seen.has(a)) return;
+			var rects = f.el.getClientRects ? f.el.getClientRects() : [1];
+			if (!rects || !rects.length) return;
+			var text = clip(f.el.textContent, MAX_MSG_CHARS);
+			if (!text) return;
+			var where = uiWhere(f.el);
+			var k = where + '|' + f.kind + '|' + text;
+			if (now[k]) return;
+			now[k] = 1;
+			if (uiShown[k]) return;
+			var key = (f.el.getAttribute && f.el.getAttribute('data-i18n')) || '';
+			if (!key) try { key = window.DaimondI18n && DaimondI18n.keyOf ? DaimondI18n.keyOf(String(f.el.textContent || '').trim()) : ''; } catch (e) { key = ''; }
+			var p = { where: where, kind: f.kind, text: text };
+			// `i18n`, not `key`: the redactor fingerprints any field NAMED key (scrub.js `SECRET_RE`).
+			if (key) p.i18n = clip(key, MAX_SRC_CHARS);
+			event('ui.msg', p);
+		});
+		uiShown = now;
+	}
+	function uiSoon() {
+		if (uiTimer) return;
+		try { uiTimer = setTimeout(function () { try { uiScan(); } catch (e) { fault(e); } }, UI_SCAN_MS); } catch (e) {}
+	}
+	function uiWatch() {
+		uiUnwatch();
+		uiShown = {};
+		try {
+			if (typeof MutationObserver === 'undefined' || typeof document === 'undefined' || !document.body) return;
+			uiObs = new MutationObserver(uiSoon);
+			uiObs.observe(document.body, { childList: true, subtree: true, characterData: true,
+				attributes: true, attributeFilter: ['class', 'hidden', 'style'] });
+		} catch (e) { uiObs = null; return; }
+		uiSoon();			// what is already on screen when sharing comes on
+	}
+	function uiUnwatch() {
+		try { if (uiObs) uiObs.disconnect(); } catch (e) {}
+		try { if (uiTimer) clearTimeout(uiTimer); } catch (e) {}
+		uiObs = null; uiTimer = null;
+	}
+
 	// If the switch was left on from a previous session, restore the indicator and
 	// resume collection once the DOM is ready.
 	function bootRestore() {
+		booted = true;
 		if (!enabled) return;
 		mountIndicator();
 		var s = publicSources();
@@ -1944,8 +2079,10 @@
 				// Defer a tick so daimond.js has a chance to register its provider.
 				setTimeout(bootRestore, 0);
 			}
+		} else {
+			booted = true;			// no page to wait for
 		}
-	} catch (e) {}
+	} catch (e) { booted = true; }
 
 	// A switch flipped in one tab reaches the others of the SAME device, so turning
 	// it off in one place stops collection everywhere on this machine. The sibling
@@ -2112,6 +2249,7 @@
 		_capabilities: capabilities,
 		_gatherScreen: gatherScreen,
 		_screenTick:   screenTick,
+		_uiScan:       uiScan,
 		_updaterState: updaterState,
 		// Simulate the five-minute floor having elapsed, without a real wait: the
 		// change-detection compares against `lastScreenAt`, and this is the one
