@@ -750,7 +750,13 @@ async fn name_from_crystal(id: &str) -> Option<String> {
 /// A Diamond whose metadata is damaged must still LIST and still OPEN. Dropping
 /// it would be answering a bug the user can report with one they can only mourn.
 async fn read_meta(id: &str) -> Outcome<Meta> {
-    let (bytes, total) = res!(own::read_file_capped(&meta_path(id), META_MAX).await);
+    let (bytes, total) = match own::read_file_capped(&meta_path(id), META_MAX).await {
+        Ok(read) => read,
+        Err(e)   => return match rebuild_meta(id).await {
+            Some(meta)  => Ok(meta),
+            None        => Err(e),
+        },
+    };
     if total > META_MAX as f64 {
         // Loud, and in the durable trail: this is data damage, the user cannot
         // see it, and the next write is about to heal it silently.
@@ -815,6 +821,83 @@ async fn read_meta(id: &str) -> Outcome<Meta> {
         }
     }
     Ok(meta)
+}
+
+/// A Diamond's metadata, rebuilt from its own crystal when `meta.json` is missing or unreadable
+/// (UNBLOCK-48).
+///
+/// Every door to a Diamond passes through [`read_meta`] -- the list, the page, `crystal_look`,
+/// `capture`, a rename -- so a Diamond that lost the file while keeping its crystal was one the
+/// panel did not list and nothing could open, though everything that matters was still on disk.
+/// An import lays `meta.json` down LAST, after deleting the old one, so an import cut short
+/// leaves exactly that.
+///
+/// Rebuilt only from what the folder says: the name is `crystal.json`'s `title`, the version is
+/// the newest data snapshot, and both stamps are the newest write time in the Diamond's own
+/// directory.  `crystal.json` is read directly rather than through [`read_crystal_data`], whose
+/// fallbacks read the metadata again.  `None`, and nothing written, where there is no crystal or
+/// it carries no title: a name invented here could not be told from one the user chose, and a
+/// folder with no crystal is not a Diamond.  Written back, so it happens once, and logged.
+async fn rebuild_meta(id: &str) -> Option<Meta> {
+    let path = crystal_data_path(id);
+    let text = match own::read_file(&path).await {
+        Ok(bytes)   => match crate::tools::utf8_text(&bytes, &path) {
+            Ok(text)    => text,
+            Err(_)      => return None,
+        },
+        Err(_)      => return None,
+    };
+    let name: String = match extract_json_string(&text, "title") {
+        Some(title) => title.trim().chars().take(80).collect(),
+        None        => return None,
+    };
+    if name.is_empty() {
+        return None;
+    }
+    let version = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await
+        .iter().map(|(n, _)| *n).max().unwrap_or(0);
+    let mut when: f64 = 0.0;
+    for dir in [diamond_dir(id), fmt!("{}/{}", diamond_dir(id), STORE_DIR)] {
+        if let Ok(entries) = own::list_dir_stamped(&dir).await {
+            for (_, is_dir, _, ms) in entries {
+                if let (false, Some(ms)) = (is_dir, ms) {
+                    if ms.is_finite() && ms > when {
+                        when = ms;
+                    }
+                }
+            }
+        }
+    }
+    if when <= 0.0 {
+        if let Ok(Some((ms, _))) = own::stamp(&path).await {
+            if ms.is_finite() && ms > 0.0 {
+                when = ms;
+            }
+        }
+    }
+    let at = when as u64;
+    let meta = Meta {
+        name,
+        version,
+        updated:     at,
+        touched:     at,
+        tags:        Vec::new(),
+        kits:        Vec::new(),
+        builtin:     String::new(),
+        named:       false,
+        no_progress: 0,
+        extra:       Vec::new(),
+    };
+    match write_meta(id, &meta).await {
+        Ok(())  => own::trail("META REBUILT", &fmt!("{} v{} from crystal.json", id, version)),
+        Err(e)  => console_log(&fmt!(
+            "Diamond '{}' had its metadata rebuilt from its crystal, but it could not be kept: {}",
+            id, e)),
+    }
+    console_log(&fmt!(
+        "Diamond '{}' had no readable meta.json; it was rebuilt from crystal.json as '{}'.",
+        id, meta.name));
+    Some(meta)
 }
 
 /// Write a Diamond's metadata.
@@ -10418,5 +10501,63 @@ mod link_sidecar_tests {
         assert!(e.contains("links.jsonl") && e.contains("UTF-8"), "{}", e);
         assert_eq!(after, bytes, "nothing written");
         assert_eq!(read.expect("a lossy read for display").len(), 1);
+    }
+}
+
+// UNBLOCK-48: a Diamond whose `meta.json` went missing while its crystal stayed.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod lost_meta_tests {
+    use super::*;
+    use crate::store::{mem::MemBackend, native::{install, NativeBackend}};
+
+    const CRYSTAL: &str = "{\"title\":\"Nancy Hopkins\",\"summary\":\"An interview.\"}";
+
+    async fn lay(id: &str, crystal: Option<&str>) {
+        own::write_file(&fmt!("diamonds/{}/{}/state-touched.tsv", id, STORE_DIR), b"x\t1\n")
+            .await.expect("the tsv written");
+        if let Some(c) = crystal {
+            own::write_file(&crystal_data_path(id), c.as_bytes()).await.expect("the crystal written");
+            own::write_file(&version_data_path(id, 3), c.as_bytes()).await.expect("the version written");
+        }
+    }
+
+    /// The record is rebuilt from the crystal's title, once, and the Diamond lists and opens.
+    #[tokio::test]
+    async fn test_a_missing_meta_is_rebuilt_from_the_crystal_and_the_diamond_lists() {
+        let _ = install(NativeBackend::Mem(MemBackend::default()));
+        lay("19faba2f2212", Some(CRYSTAL)).await;
+        let listed = list().await;
+        let meta = read_meta("19faba2f2212").await;
+        let kept = own::read_file(&meta_path("19faba2f2212")).await;
+        let page = find_crystal_page("19faba2f2212").await;
+        let _ = install(NativeBackend::Closed);
+        let listed = listed.expect("the list");
+        assert!(listed.contains("\"id\":\"19faba2f2212\"") && listed.contains("\"name\":\"Nancy Hopkins\""),
+            "the Diamond lists under its crystal's title: {}", listed);
+        let meta = meta.expect("the metadata reads");
+        assert_eq!((meta.name.as_str(), meta.version), ("Nancy Hopkins", 3));
+        assert!(meta.updated > 0 && meta.touched > 0, "stamped from the folder");
+        let kept = String::from_utf8(kept.expect("meta.json written back")).expect("utf8");
+        assert!(kept.contains("Nancy Hopkins"), "{}", kept);
+        // The page no longer fails on the metadata: it falls back to the version.
+        if let Err(e) = page {
+            assert!(!e.to_string().contains("metadata could not be read"), "{}", e);
+        }
+    }
+
+    /// Never invented: no crystal, or a crystal with no title, leaves the folder alone.
+    #[tokio::test]
+    async fn test_a_missing_meta_with_no_crystal_title_is_not_invented() {
+        let _ = install(NativeBackend::Mem(MemBackend::default()));
+        lay("aa01", None).await;
+        lay("aa02", Some("{\"summary\":\"no title\"}")).await;
+        let listed = list().await;
+        let one = read_meta("aa01").await.is_err();
+        let two = read_meta("aa02").await.is_err();
+        let none = !own::exists(&meta_path("aa01")).await.unwrap_or(true)
+            && !own::exists(&meta_path("aa02")).await.unwrap_or(true);
+        let _ = install(NativeBackend::Closed);
+        assert_eq!(listed.expect("the list"), "[]");
+        assert!(one && two && none, "nothing written for a Diamond with no name to recover");
     }
 }
