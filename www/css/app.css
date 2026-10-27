@@ -1117,6 +1117,12 @@ html .diamond-box > .session-box-tags > .tag-chip.tag-more:not(.tag-inc):not(.ta
 #chat-jump:hover, #chat-end:hover { background: var(--bg-hover); color: var(--text-primary); }
 /* Hidden while there is nowhere to walk to (`DaimondAnswer.shown`); `display: flex` above would beat the UA's [hidden]. */
 #chat-jump[hidden], #chat-end[hidden] { display: none; }
+/* New activity below a reader who scrolled up (UNBLOCK-45): the end button wears a dot rather
+   than the thread pulling him down. */
+#chat-end { position: relative; }
+#chat-end.has-news { color: var(--text-primary); border-color: var(--accent); }
+#chat-end.has-news::after { content: ''; position: absolute; top: 3px; right: 3px; width: 8px; height: 8px;
+	border-radius: 50%; background: var(--accent); }
 /* A note answering a press inside a panel's body: the role, and so the look, of `.files-mode-msg`. */
 .panel-say { font-size: var(--fs-2xs); color: var(--text-secondary); margin: 0 0 8px; }
 .panel-say.err { color: var(--accent-text); }

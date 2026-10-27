@@ -16877,6 +16877,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var s = { users: userDivs().length, top: chatOutput.scrollTop, height: chatOutput.scrollHeight, view: chatOutput.clientHeight };
 		DaimondAnswer.show(jumpBtn, DaimondAnswer.shown.jump_back(s));
 		DaimondAnswer.show(endBtn, DaimondAnswer.shown.jump_end(s));
+		var away = DaimondAnswer.shown.jump_end(s);
+		if (!away) _endNews = false;			// back at the end: the activity is seen
+		endBtn.classList.toggle('has-news', _endNews && away);
 	}
 
 	// ── The chat tile ──────────────────────────────────────────
@@ -26231,6 +26234,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (_renderingHistory) return;
 		setScrollTop(chatOutput.scrollHeight);
 	}
+
+	/// Is the reader following the live end (UNBLOCK-45)? At it now, or at it when the thread last
+	/// moved and not scrolled away since. A tile that grows in place moves no scroll, so the
+	/// geometry alone said "not at the end" after one grown answer, and every frame after it was
+	/// drawn below a reader who had never left: CC keeps the last tile's bottom in view.
+	function followsEnd() {
+		return _wasAtEnd || nearBottom();
+	}
+
+	// Activity drawn below a reader who has scrolled up: the end button wears a mark until he is
+	// back at the end, rather than the thread being pulled down under him.
+	var _endNews = false;
+
+	/// New rows or growth landed: keep a following reader's last tile in view, or mark the end
+	/// button for one who has scrolled up. `follow` is `followsEnd()` read before the drawing.
+	function followActivity(follow) {
+		if (follow) { pinBottom(); return; }
+		_endNews = true;
+		syncJumps();
+	}
 	try {
 		if (chatOutput && chatOutput.addEventListener) {
 			chatOutput.addEventListener('scroll', function () {
@@ -27449,7 +27472,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// turn added elsewhere comes into view. Both readings are taken BEFORE the
 		// rebuild, while the old scroll state is still on screen.
 		var sameChat = current && current.id && current.id === _renderedChatId;
-		var wasDown  = nearBottom();
+		var wasDown  = followsEnd();
 		var keepTop  = chatOutput.scrollTop;
 		// And the reader's place as a TILE, which survives a height change above the
 		// viewport that the number cannot. See `takeAnchor`.
@@ -30743,6 +30766,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// No rows added and none moved: only content grew in place. A frame that restores the
 		// runner's order (`foldProvisional`, UNBLOCK-43) is drawn whole, not grown.
 		var grewOnly = next.length === prevLen && next.every(function (m, i) { return m === chat.messages[i]; });
+		var follow = (current && current.id === chat.id) ? followsEnd() : true;	// before the tiles move
 		chat.messages = next;
 		if (!grewOnly) {
 			var tfloor = Date.now() - ARRIVE_FRESH_MS;
@@ -30772,6 +30796,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// fast path draws each once and leaves the tiles already shown alone.
 			renderHistory(chat.messages);
 		}
+		// The last tile's bottom stays in view while he follows; scrolled up, the end button says
+		// there is more (UNBLOCK-45). The asker and every other device draw a frame here.
+		followActivity(follow);
 		touchChat(chat);
 		if (final) adoptFinalFrame(turnId);
 	}
@@ -67761,6 +67788,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				touchChat(chat);
 				persistChats();
 				if (row && ownsChat(chat)) renderHistory(chat.messages);
+				// The flush above went before the row was made: the row goes out now, so the
+				// other devices draw it from this parcel rather than the next one.
+				if (row && window.DaimondSync && DaimondSync.flush) DaimondSync.flush().catch(function () {});
 			});
 		}).catch(function () { /* the next report of the run, or none: the rows are only History */ });
 	}
@@ -67772,8 +67802,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// turn's last row. Answers the row, or null where it is held already or nothing is credited.
 	async function carriedFilesRow(chat, rec, said) {
 		var store = String(rec.keeper || ''), v = Number(said.version), turnId = String(rec.turnId || '');
-		var mid = String(rec.run) + '-files', ms = chat.messages || (chat.messages = []);
-		if (ms.some(function (m) { return m && m.mid === mid; })) return null;
+		var mid = String(rec.run) + '-files';
+		if ((chat.messages || []).some(function (m) { return m && m.mid === mid; })) return null;
 		var isChat = store.indexOf('chat:') === 0;
 		var counts = {};
 		(rec.files || []).forEach(function (f) {
@@ -67822,7 +67852,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			row.away = { keeper: store, on: String(rec.on || ''), onName: String(rec.onName || ''), run: String(rec.run),
 				since: Number(rec.since) || 0, until: Number(rec.until) || 0 };
 		}
-		// Held meanwhile (the awaits above): the first one in keeps it.
+		// THE TRANSCRIPT AS IT IS NOW, NOT AS IT WAS (UNBLOCK-46). The awaits above outlast a
+		// final frame's adoption and the placeholder's drop, each of which puts a NEW array on
+		// `chat.messages`; a row spliced into the array read before them went with the old one,
+		// and the Files tile was never the chat's. Held meanwhile: the first one in keeps it.
+		var ms = chat.messages || (chat.messages = []);
 		if (ms.some(function (m) { return m && m.mid === mid; })) return null;
 		var end = -1, last = -1;
 		for (var i = 0; i < ms.length; i++) {

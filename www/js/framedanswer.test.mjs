@@ -36,6 +36,10 @@
              missing its front rows, then a chunked final that cut a row; each row shows
              once and in the runner's order, and the adoption leaves exactly the final rows
 
+     FILES   the Files row a runner's turn gets here (`<run>-files`, UNBLOCK-46): made while
+             the final frame is adopted inside its own awaits, it still lands in the chat, and
+             made first, the adoption and the runner's parcel leave it
+
    Run:  node www/js/framedanswer.test.mjs
    On 7ca624dd's daimond.js: adoptFinalFrame is missing (ABORT).
    On 0e21f01fa's: readReportedFinal is missing, NATIVE fails.
@@ -43,6 +47,7 @@
    On aa5fab050's (ccp14): the watch's close keeps the streamed rows as a final view, the done
    report takes it as folded and reads nothing, CLOSED fails.
    On 1d13d0b4a's: a frame of only new rows (a frame missed) draws them above the turn, LIVE fails.
+   On 47a27e90b's: the Files row is spliced into the array the adoption replaced, FILES RACE fails.
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +63,8 @@ function check(name, cond, detail) {
 /// Lifts `function name(...) { ... }` out of `src` by counting braces, past the quoted
 /// strings and comments (`parseFrameRef` tests for a `'{'`).
 function extractFn(src, name) {
-	const start = src.indexOf('\n\tfunction ' + name + '(');
+	let start = src.indexOf('\n\tfunction ' + name + '(');
+	if (start < 0) start = src.indexOf('\n\tasync function ' + name + '(');
 	if (start < 0) throw new Error('function not found: ' + name);
 	const brace = src.indexOf('{', start);
 	let depth = 0, i = brace;
@@ -140,7 +146,14 @@ const lifted = new Function('env', [
 	// The watch's end (CLOSED): what a settling report runs before it reads the door.
 	'var _watchIx = env.watchIx || {}, _progressSent = {}, _frameWorkers = {};',
 	extractFn(src, 'updateProgressWatch'),
-	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef, readReportedFinal: readReportedFinal, otherErrandReport: otherErrandReport, onProgressFrame: onProgressFrame, updateProgressWatch: updateProgressWatch, progressView: _progressView };',
+	// The Files row a runner's turn gets here (UNBLOCK-46), with its version-store reads stubbed:
+	// `env.during` runs inside the first await, where a final frame's adoption may land.
+	'var DaimondProvenance = { h: { file: function (s, v, p) { return s + "@" + v + ":" + p; } } };',
+	'function carriedProdBase() { return null; }',
+	'async function turnFileProds() { await null; if (env.during) env.during(); return ["h1"]; }',
+	'async function turnFileList() { return [{ path: "a.txt" }]; }',
+	extractFn(src, 'carriedFilesRow'),
+	'return { carriedFilesRow: carriedFilesRow, mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef, readReportedFinal: readReportedFinal, otherErrandReport: otherErrandReport, onProgressFrame: onProgressFrame, updateProgressWatch: updateProgressWatch, progressView: _progressView };',
 ].join('\n'));
 const settledLease = new Function(extractFn(psrc, 'settledLease') + '\nreturn settledLease;')();
 const otherRunRows = (psrc.indexOf('function otherRunRows(') >= 0)
@@ -520,6 +533,52 @@ console.log('\nLIVE: a native turn\'s rows drawn as they come, on the asker and 
 			JSON.stringify(got.map((m) => ({ mid: m.mid, framed: m.framed, provisional: m.provisional }))));
 		check(w.name + ': the cut row is gone and its cut_log line stands', !got.some((m) => m.mid === tl1.mid) && got.some((m) => m.role === 'cut_log'));
 		check(w.name + ': the placeholder dropped', w.dropped.join() === T);
+	}
+}
+
+console.log('\nFILES: the page-made Files row of a runner\'s turn stands past the final frame (UNBLOCK-46)\n');
+{
+	// His turn: the tile "appeared only briefly". The Files row (`<run>-files`) is made here, from
+	// the done report, while the final frame of the same report is adopted.
+	const rec = { run: 'R1', turnId: 'u1', keeper: 'chat:c1', on: 'b', ts: 20,
+		files: [{ path: 'a.txt', add: 2, del: 1, his: true, change: { text: true, rows: [] } }] };
+	const said = { version: 3, note: { role: 'user', content: '[Daimond: this turn changed a.txt]' } };
+	const runRows = () => [user(), place(), Object.assign(prov('t1', 'thinking'), { run: 'R1' }),
+		Object.assign(prov('a1', 'six'), { run: 'R1' }), Object.assign(prov('R1-end', ''), { role: 'end_log', run: 'R1', ts: 30 })];
+	for (const keeper of ['chat:c1', 'diamond:d1']) {
+		const k = keeper.split(':')[0];
+		// RACE: the adoption lands inside the row's own awaits.
+		{
+			const w = world(null);
+			w.chat = { id: 'c1', messages: runRows() };
+			w.finalMids.u1 = { t1: 1, a1: 1, 'R1-end': 1 };
+			w.finalRun.u1 = 'R1';
+			w.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
+			let adopted = false;
+			w.during = () => { adopted = w.adoptFinalFrame('u1'); };
+			const row = await w.carriedFilesRow(w.chat, Object.assign({}, rec, { keeper }), said);
+			check(k + ' RACE: the frame was adopted inside the row\'s awaits', adopted === true);
+			check(k + ' RACE: the row was made', !!row && row.mid === 'R1-files' && Array.isArray(row.yours));
+			check(k + ' RACE: and the chat holds it after the adoption', find(w.chat.messages, 'R1-files').length === 1,
+				w.chat.messages.map((m) => m.mid).join());
+			check(k + ' RACE: before the turn\'s end row', (() => { const ms = w.chat.messages.map((m) => m.mid);
+				return ms.indexOf('R1-files') >= 0 && ms.indexOf('R1-files') === ms.indexOf('R1-end') - 1; })(), w.chat.messages.map((m) => m.mid).join());
+		}
+		// AFTER: the row made first, then the final frame adopted (the replace never takes it).
+		{
+			const w = world(null);
+			w.chat = { id: 'c1', messages: runRows() };
+			await w.carriedFilesRow(w.chat, Object.assign({}, rec, { keeper }), said);
+			w.finalMids.u1 = { t1: 1, a1: 1, 'R1-end': 1 };
+			w.finalRun.u1 = 'R1';
+			w.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
+			check(k + ' AFTER: adopted', w.adoptFinalFrame('u1') === true);
+			check(k + ' AFTER: the Files row stands, untombstoned', find(w.chat.messages, 'R1-files').length === 1 && w.tombs.indexOf('R1-files') < 0,
+				w.chat.messages.map((m) => m.mid).join());
+			// B: the asker's parcel brings the row; the runner's final copy merges over it.
+			const b = w.mergeMessages(w.chat.messages, [user(), real('a1', 'six')], 'c1', {});
+			check(k + ' AFTER: and the runner\'s parcel leaves it', find(b, 'R1-files').length === 1);
+		}
 	}
 }
 
