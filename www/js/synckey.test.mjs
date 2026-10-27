@@ -537,5 +537,70 @@ console.log('\nE. the stand-off — three devices, one hand-off, and who may pus
 		plain.posts.length >= 1, plain.posts.length + ' POST(s)');
 }
 
+console.log('\nF. the asker — its own dispatch parcel is never held behind its own turn (UNBLOCK-44)\n');
+
+{
+	// What daimond.js really publishes on `window.DaimondCore`, read from its text: a stub
+	// that offered sync.js a function the page never published would prove nothing.
+	// UNBLOCK-44: `ownDispatch` read `DaimondCore.chats`, which the page never published, so
+	// it answered false on the asker as on everybody else. The asker (gilgamesh) then stood
+	// off its own runner's `running` lease for the whole run: its dispatch parcel, the only
+	// carrier of the waiting row, landed after the run settled, and the second device
+	// (argonaut) never followed the turn.
+	const dsrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const at = dsrc.indexOf('\n\twindow.DaimondCore = {');
+	const end = dsrc.indexOf('\n\t};', at);
+	const published = new Set();
+	for (const m of dsrc.slice(at, end).matchAll(/\n\t\t(?:get )?([A-Za-z_$][\w$]*)\s*[:(]/g)) published.add(m[1]);
+	const ssrc = readFileSync(join(HERE, 'sync.js'), 'utf8');
+	const read = [...new Set([...ssrc.matchAll(/DaimondCore\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]))];
+	const unpublished = read.filter((k) => !published.has(k));
+	check('F1. every DaimondCore member sync.js reads is one daimond.js publishes',
+		at > 0 && end > at && unpublished.length === 0, unpublished.length ? 'not published: ' + unpublished.join(', ') : read.length + ' read');
+
+	// The asker, as the page makes it: the turn's user row and its dispatched placeholder,
+	// stamped `dispatchedBy` = this device. The page's answer to "did I send it?" is offered
+	// only through what daimond.js publishes.
+	const TURN = 'turn-asked-here';
+	const chat = { id: 'c1', _loaded: true, messages: [
+		{ role: 'user', content: 'go', mid: TURN, iturn: TURN },
+		{ role: 'assistant', content: '', why: 'dispatched', iturn: TURN, dispatchedBy: SELF, toNative: 1, mid: TURN + '-ph' }] };
+	const asker = makeTab();
+	asker.unlocked = true;
+	asker.parcel = parcel({ selfSeen: 1000, chats: [{ id: 'c1', messages: ['one'] }] });
+	await asker.win.DaimondSync.push();
+	const base = asker.posts.length;
+	if (published.has('chats')) asker.win.DaimondCore.chats = () => [chat];
+	if (published.has('dispatchedHere')) {
+		asker.win.DaimondCore.dispatchedHere = (t) => chat.messages.some((m) => m.why === 'dispatched'
+			&& m.iturn === t && m.dispatchedBy === SELF);
+	}
+	// The runner (another device) holds the turn's lease, running: the errand was taken.
+	const now = Date.now();
+	asker.leases = { [TURN]: { turnId: TURN, holder: 'NATIVE-RUNNER', mode: 'running', expiry: now + 120000, renewedAt: now } };
+	asker.parcel = parcel({ selfSeen: 2000, chats: [{ id: 'c1', messages: ['one', 'the waiting row'] }] });
+	const fl = await asker.win.DaimondSync.flush();
+	check('F2. the asker\'s dispatch flush lands while its own turn runs on the runner',
+		asker.posts.length === base + 1 && !!fl && fl.ok === true,
+		(asker.posts.length - base) + ' POST(s), flush ' + JSON.stringify(fl));
+
+	// The rule it keeps: a device that did NOT send the turn still stands off it.
+	const third = makeTab();
+	third.unlocked = true;
+	third.parcel = parcel({ selfSeen: 1000, chats: [{ id: 'c1', messages: ['one'] }] });
+	await third.win.DaimondSync.push();
+	const tb = third.posts.length;
+	const other = { id: 'c1', _loaded: true, messages: [Object.assign({}, chat.messages[1], { dispatchedBy: PEER })] };
+	if (published.has('chats')) third.win.DaimondCore.chats = () => [other];
+	if (published.has('dispatchedHere')) {
+		third.win.DaimondCore.dispatchedHere = (t) => other.messages.some((m) => m.iturn === t && m.dispatchedBy === SELF);
+	}
+	third.leases = asker.leases;
+	third.parcel = parcel({ selfSeen: 2000, chats: [{ id: 'c1', messages: ['one', 'two'] }] });
+	await third.win.DaimondSync.push();
+	check('F3. [ctl] a device that did not send the turn still stands off it',
+		third.posts.length === tb, (third.posts.length - tb) + ' POST(s) during the hand-off');
+}
+
 console.log(failures ? '\n' + failures + ' FAILED\n' : '\nall push-skip and parcel-size checks passed\n');
 process.exit(failures ? 1 : 0);

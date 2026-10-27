@@ -31059,7 +31059,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var had = _progressView[j];
 			var last = (had && had.final) ? null : onLastFrame.bind(null, j);
 			try { DaimondSync.unwatchProgress(j, last); } catch (e) { /* sync gone with the page */ }
-			var closed = DaimondPeer.foldProgress(had, { turn: j, final: true });
+			// The marker holds NO rows (UNBLOCK-44b). Closed with the streamed rows as its
+			// `msgs`, it read as a final frame already folded, so the `done` report's own read
+			// (`readReportedFinal`) was skipped, and where the last read found the door empty
+			// (it keeps one frame per account) the answer row never came.
+			var closed = DaimondPeer.foldProgress(had, { turn: j, final: true, msgs: [] });
 			if (closed) _progressView[j] = closed;
 		}
 	}
@@ -31157,6 +31161,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (cid == null) return null;
 		for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === cid) return chats[i];
 		return null;
+	}
+
+	/// Did THIS device dispatch `turnId`? Read from the turn's dispatched placeholder, which
+	/// carries `dispatchedBy`; no placeholder resident here answers false.
+	///
+	/// Published for sync.js `ownDispatch`, which decides whether a push stands off a running
+	/// hand-off. It read a `DaimondCore.chats` this object never published, so it answered false
+	/// on the asker too, and the asker held its own dispatch parcel for the whole of the run: a
+	/// second device never received the waiting row and never followed the turn (UNBLOCK-44).
+	function dispatchedHere(turnId) {
+		var self = selfDeviceId();
+		var chat = self ? dispatchedChat(turnId) : null;
+		var ms = (chat && chat.messages) || [];
+		for (var i = 0; i < ms.length; i++) {
+			var m = ms[i];
+			if (m && m.why === REASON_DISPATCHED_STR && String(m.iturn) === String(turnId)) {
+				return String(m.dispatchedBy || '') === String(self);
+			}
+		}
+		return false;
 	}
 
 	/// The loaded chat holding `turnId`'s own user message, or null.
@@ -42009,6 +42033,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the updater read a folding app as idle and could reload over it.
 		busy:            function () { return anyGen() || anyQueued() || anyCrystalBusy()
 			|| (typeof Workers !== 'undefined' && Workers && Workers.active > 0); },
+		// Did this device dispatch the turn? sync.js's stand-off asks (`ownDispatch`).
+		dispatchedHere:  dispatchedHere,
 		/// Has THIS Diamond a turn in flight -- a steer or a fold?
 		///
 		/// Published beside `busy` because the two answer different questions and the

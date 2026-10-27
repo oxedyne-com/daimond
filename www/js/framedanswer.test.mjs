@@ -26,6 +26,11 @@
              with `finalTail`; the done report reads the frame, and all 22 rows land
              whole, in order, once (`readReportedFinal`)
 
+     CLOSED  a native turn of 36 rows (UNBLOCK-44b): 34 drawn from provisional frames, the
+             report `done` ends the watch, whose last read finds the door empty (the door
+             keeps one frame per account); the done report must still read the chunked
+             final, and the answer row (`-final`) and the ending land real
+
      LIVE    a native turn's provisional frames, drawn as they come on the asker and on
              a second device (UNBLOCK-43): three frames, the third over the cap and so
              missing its front rows, then a chunked final that cut a row; each row shows
@@ -35,6 +40,8 @@
    On 7ca624dd's daimond.js: adoptFinalFrame is missing (ABORT).
    On 0e21f01fa's: readReportedFinal is missing, NATIVE fails.
    On a6aaae055's: a frame missing its front rows draws its new row above the turn, LIVE fails.
+   On aa5fab050's (ccp14): the watch's close keeps the streamed rows as a final view, the done
+   report takes it as folded and reads nothing, CLOSED fails.
    On 1d13d0b4a's: a frame of only new rows (a frame missed) draws them above the turn, LIVE fails.
    ============================================================ */
 import { readFileSync } from 'node:fs';
@@ -130,7 +137,10 @@ const lifted = new Function('env', [
 	// The watch's frame reader (LIVE): every device that watches the turn draws through it.
 	'var _progressWatched = env.watched || {};',
 	extractFn(src, 'onProgressFrame'),
-	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef, readReportedFinal: readReportedFinal, otherErrandReport: otherErrandReport, onProgressFrame: onProgressFrame, progressView: _progressView };',
+	// The watch's end (CLOSED): what a settling report runs before it reads the door.
+	'var _watchIx = env.watchIx || {}, _progressSent = {}, _frameWorkers = {};',
+	extractFn(src, 'updateProgressWatch'),
+	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef, readReportedFinal: readReportedFinal, otherErrandReport: otherErrandReport, onProgressFrame: onProgressFrame, updateProgressWatch: updateProgressWatch, progressView: _progressView };',
 ].join('\n'));
 const settledLease = new Function(extractFn(psrc, 'settledLease') + '\nreturn settledLease;')();
 const otherRunRows = (psrc.indexOf('function otherRunRows(') >= 0)
@@ -381,6 +391,61 @@ console.log('\nNATIVE: a chunked final frame read on the done report, after the 
 	check('a report on another errand of the turn id is not this hand-off\'s', w2.otherErrandReport({ t: 'report', turnId: T, eid: 'E1', status: 'aborted' }) === true);
 	check('[ctl] the errand it was sent as is', w2.otherErrandReport({ t: 'report', turnId: T, eid: 'E2', status: 'done' }) === false);
 	check('[ctl] and a report naming none decides nothing', w2.otherErrandReport({ t: 'report', turnId: T, status: 'done' }) === false);
+}
+
+console.log('\nCLOSED: a 36-row native turn read on its done report after a 34-row provisional view (UNBLOCK-44b)\n');
+{
+	const win = {};
+	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
+		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+	const T = 'mvnu8dx4-9-1kqcx-rt-rt-rt', RUN = 'e-32f1';
+	const now = Date.now();
+	const row = (mid, role, content, i) => ({ mid, role, content, iturn: T, ts: now - 60000 + i * 1000, run: RUN, ranOn: 'kdu5d0t4', whole: 1 });
+	const live = [];
+	for (let i = 0; i < 34; i++) live.push(row(RUN + '-t' + i, i % 2 ? 'tool_log' : 'think_log', ('step ' + i + ' ').repeat(500), i));
+	const answer = 'The answer: ' + 'six, because three and three. '.repeat(100);
+	const whole = live.concat([row(RUN + '-final', 'assistant', answer, 34), Object.assign(row(RUN + '-end', 'end_log', '', 35), { lst: 1 })]);
+	const body = new TextEncoder().encode(JSON.stringify({ v: 1, turn: T, msgs: whole }));
+	check('[ctl] the turn is over the 64 KB door', body.length > 64 * 1024, body.length + 'B');
+	const ref = { v: 2, size: body.length, key: 'k', chunks: [{ addr: 'a', size: 50000 }, { addr: 'b', size: 50000 }, { addr: 'c', size: body.length - 100000 }] };
+	const strip = (r, n) => { const c = Object.assign({}, r, { content: r.content.slice(0, n) }); delete c.whole; return c; };
+	const fin = { seq: 40, final: true, abi: 0, tail: JSON.stringify({ v: 1, ref, n: whole.length, msgs: whole.slice(-8).map((r) => strip(r, 600)) }) };
+	const placeRow = { mid: 'p1', role: 'assistant', content: '', why: 'dispatched', iturn: T, ts: now - 61000 };
+	const w = world(null);
+	w.window.DaimondPeer = Object.assign({}, win.DaimondPeer, { settledLease, otherRunRows });
+	let reads = 0, lastReads = 0;
+	w.window.DaimondSync = {
+		watchProgress: () => {},
+		// The watch's one last read: the door was reclaimed by another key's frame, so it is empty.
+		unwatchProgress: (k, onLast) => { if (onLast) lastReads++; },
+		getProgressFrame: async (t, since) => { reads++; return t === T && since === 0 ? fin : null; },
+	};
+	w.window.DaimondChunks = { materialiseBytes: async (x) => (JSON.stringify(x) === JSON.stringify(ref) ? body : null) };
+	w.watched = { [T]: true };
+	w.watchIx = { [T]: 1 };
+	Object.assign(w, lifted(w));
+	w.chat = { id: 'c1', messages: [{ mid: T, role: 'user', content: 'what is three plus three', ts: now - 62000 }, Object.assign({}, placeRow)] };
+	// 15:21:17-15:22:19: the runner's provisional frames, the last of them all 34 live rows.
+	for (let f = 1; f <= 34; f++) w.onProgressFrame(T, { seq: f, final: false, abi: 0, tail: JSON.stringify({ v: 1, msgs: live.slice(0, f) }) });
+	const held = () => w.chat.messages.filter((m) => m.iturn === T && m.role !== 'user' && m.why !== 'dispatched');
+	check('[ctl] the 34 live rows are drawn provisional', held().length === 34 && held().every((m) => m.provisional), held().length + ' rows');
+	// 15:22:24: the `done` report. It ends the watch first (`updateExpedite`), then reads the door.
+	const done = { t: 'report', turnId: T, status: 'done', finalTail: 1 };
+	w.peerReports[T] = done;
+	delete w.watchIx[T];
+	w.updateProgressWatch();
+	check('[ctl] the watch\'s last read was made', lastReads === 1);
+	check('the closed watch is not taken for a folded final frame', !(w.progressView[T] && w.progressView[T].msgs && w.progressView[T].msgs.length),
+		JSON.stringify(w.progressView[T] && { final: w.progressView[T].final, n: (w.progressView[T].msgs || []).length }));
+	check('the done report reads the final frame from the door', w.readReportedFinal(T, done) === true && reads === 1, 'reads=' + reads);
+	for (let i = 0; i < 40 && !w.dropped.length; i++) await new Promise((r) => setTimeout(r, 0));
+	const got = held();
+	const ans = got.find((m) => m.mid === RUN + '-final');
+	check('the answer row is there, whole and real', !!ans && ans.content === answer && ans.framed === 1 && !ans.provisional,
+		ans ? JSON.stringify({ n: ans.content.length, framed: ans.framed, provisional: ans.provisional }) : 'no -final row');
+	check('all 36 rows landed, once each, in order', got.map((m) => m.mid).join() === whole.map((r) => r.mid).join(), got.length + ' rows');
+	check('every row real', got.every((m) => m.framed === 1 && !m.provisional));
+	check('the placeholder dropped once', w.dropped.join() === T, 'dropped=' + w.dropped.join());
 }
 
 console.log('\nLIVE: a native turn\'s rows drawn as they come, on the asker and a second device (UNBLOCK-43)\n');

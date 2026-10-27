@@ -574,5 +574,87 @@ await (async () => {
 		&& !tombs[T2] && chat.messages.some((m) => m.mid === T2), JSON.stringify(chat.messages.map((m) => [m.mid, m.role, m.iturn, m.content])));
 })();
 
+// ── UNBLOCK-44: a second device handed the waiting row while the turn runs follows it (27 Oct 2026). ──
+// The asker's dispatch parcel carries the user row and the dispatched placeholder; it is the only
+// way a second device learns a native runner is answering. Live, that parcel landed only after the
+// run settled (sync.js `ownDispatch`, synckey F), so argonaut drew nothing until the answer. Here the
+// rows arrive by the merge while the runner's lease is `running`: the page's REAL index, watch
+// decision, watch, frame fold and provisional draw must follow the turn from that moment.
+await (async () => {
+	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const { liftSource } = await import('../../dev/syncprobe.mjs');
+	const FNS = ['rebuildDispatchedIndex', 'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished',
+		'dispatchedTurnSettled', 'handoffLeaseSettled', 'handoffDone', 'dispatchedAnswerPresent', 'updateExpedite',
+		'updateProgressWatch', 'onProgressFrame', 'onLastFrame', 'applyProvisional', 'adoptFinalFrame', 'finalFrameChat',
+		'dropOtherRunRows', 'isNotRunRow', 'isLostRow', 'dropDispatchedPlaceholder', 'dispatchedChat', 'chatHoldingTurn',
+		'chatHoldsTurn'];
+	const lifted = FNS.map((n) => extractFn(src, n));
+	check('UNBLOCK-44: the page functions exist', lifted.every(Boolean), FNS.filter((n, i) => !lifted[i]).join(','));
+	if (!lifted.every(Boolean)) return;
+	const stampSrc = readFileSync(join(HERE, 'stamp.js'), 'utf8');
+	let clock = Date.now();
+	const D = { now: () => clock };
+	const leases = {}, watched = {}, events = [];
+	const W = {};
+	W.DaimondPeer = P;
+	W.DaimondLease = { record: (t) => leases[t] || null, holder: (t) => (leases[t] && leases[t].holder) || '' };
+	W.DaimondSync = { watchProgress: (k, cb) => { watched[k] = cb; }, unwatchProgress: () => {} };
+	W.DaimondPresence = { snapshot: () => ({}) };
+	const S = {
+		chats: [], current: null, peerReports: {}, _progressView: {}, _dispatchedIx: {}, _watchIx: {},
+		_progressWatched: {}, _progressSent: {}, _frameWorkers: {}, _finalMids: {}, _finalRun: {}, _abiRefused: {},
+		_handoffStart: {}, _watchTick: 1, _expediting: false, _renderedSigs: null,
+		WATCH_RECHECK_MS: 1000, ARRIVE_FRESH_MS: 60000, REASON_DISPATCHED_STR: 'dispatched',
+		ChatStore: { stored: () => [], compact: () => {} },
+		diag: () => {}, persistChats: () => {}, touchChat: () => {}, ownsChat: () => false, renderHistory: () => {},
+		renderDispatchedBadges: () => {}, growProvisionalTiles: () => {}, sigsOf: () => null,
+		selfDeviceId: () => 'DEVICE-B', deviceLabelFor: () => 'runner', handoffTargetLabel: () => 'runner',
+		autoLogHandoffLatency: () => {}, clearDispatchFallback: () => {}, drainHeldQueues: () => {},
+		frameAbiOk: () => true, refuseAbiFrame: () => {}, applyFrameUi: () => {}, setFrameWorkers: () => {},
+		fetchFinalRef: () => {}, foldRunnerTotals: () => {}, frameUi: () => [], msgTombstone: () => {},
+		parseFrameRef: (t) => { try { const o = JSON.parse(t); return { msgs: o.msgs, ref: null, n: 0, ui: [], workers: [] }; } catch (e) { return null; } },
+		noteArrive: (k, o) => { events.push(['arrive', k, o && o.mid]); },
+		loadMsgTombs: () => ({}),
+	};
+	const keys = Object.keys(S);
+	const api = new Function('S', 'window', 'Date',
+		'var DaimondPeer = window.DaimondPeer, DaimondLease = window.DaimondLease, DaimondSync = window.DaimondSync,'
+		+ ' DaimondPresence = window.DaimondPresence;\n'
+		+ 'var DaimondStamp = (function () { var window = {}; ' + stampSrc + '\n return window.DaimondStamp; })();\n'
+		+ keys.map((k) => 'var ' + k + ' = S.' + k + ';').join('\n') + '\n'
+		+ liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src + '\n'
+		+ lifted.join('\n') + '\n'
+		+ 'return { ' + FNS.map((n) => n + ': ' + n).join(', ') + ', mergeMessages: mergeMessages,'
+		+ ' watchIx: function () { return _watchIx; }, chats: chats };')(S, W, D);
+
+	// Device B holds the chat (an earlier exchange); the asker A sends turn T to the native runner,
+	// which takes it: its lease on the door reads `running`.
+	const T = 'mv44a-1-follow', RUN = 'e-44a';
+	const chat = { id: 'c44', _loaded: true, messages: [{ role: 'user', content: 'hi', mid: 'm0', iturn: 'm0', ts: clock - 60000 }] };
+	S.chats.push(chat);
+	api.rebuildDispatchedIndex();
+	leases[T] = { turnId: T, holder: 'NATIVE-RUNNER', mode: 'running', expiry: clock + 10 * MIN, renewedAt: clock };
+	check('UNBLOCK-44 [ctl]: B follows nothing before the waiting row arrives', !watched[T], JSON.stringify(Object.keys(watched)));
+	// A's dispatch parcel lands on B, as `onChatsChangedElsewhere` takes it: merged, then indexed.
+	clock += 2000;
+	const incoming = [chat.messages[0],
+		{ role: 'user', content: 'write the big file', mid: T, iturn: T, ts: clock - 1500 },
+		{ role: 'assistant', content: '', mid: T + '-ph', interrupted: true, why: 'dispatched', iturn: T, itext: 'write the big file',
+			dispatchedBy: 'DEVICE-A', toDevice: 'NATIVE-RUNNER', toNative: 1, ts: clock - 1400 }];
+	chat.messages = api.mergeMessages(incoming, chat.messages, chat.id, {});
+	api.rebuildDispatchedIndex();
+	check('UNBLOCK-44 (a): B starts following the turn the moment the waiting row arrives',
+		typeof watched[T] === 'function' && !!S._progressWatched[T], JSON.stringify({ watched: Object.keys(watched), ix: api.watchIx() }));
+	// The runner's first streaming frame: B draws it, provisional, before any final frame.
+	clock += 3000;
+	const rows = [{ mid: RUN + '-t0', role: 'assistant', content: 'Writing part one.', ts: clock - 500, run: RUN, ranOn: 'NATIVE-RUNNER' },
+		{ mid: RUN + '-t1', role: 'tool_log', name: 'file_write', content: '', ts: clock - 400, run: RUN, ranOn: 'NATIVE-RUNNER' }];
+	if (watched[T]) watched[T]({ turn: T, seq: 1, final: false, tail: JSON.stringify({ v: 1, msgs: rows }) });
+	const prov = chat.messages.filter((m) => m && m.provisional && String(m.iturn) === T);
+	check('UNBLOCK-44 (b): B draws the streaming rows provisionally, before the final frame',
+		prov.length === 2 && prov[0].mid === RUN + '-t0', JSON.stringify(chat.messages.map((m) => [m.mid, m.role, !!m.provisional])));
+	check('UNBLOCK-44 (b): each row is an arrival by frame', events.filter((e) => e[0] === 'arrive').length === 2, JSON.stringify(events));
+})();
+
 console.log('\n' + (checks - failures) + '/' + checks + ' passed');
 if (failures) process.exit(1);

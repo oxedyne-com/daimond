@@ -3175,26 +3175,14 @@
 		} catch (e) { return ''; }
 	}
 
-	/// Did THIS device dispatch `turnId`? Read from the dispatched placeholder it
-	/// holds for that turn, which carries `dispatchedBy`. A device with no placeholder
-	/// for the turn did not send it -- and answering false is the safe direction,
-	/// because it only ever makes this device MORE willing to stand off the door.
+	/// Did THIS device dispatch `turnId`? daimond.js answers from the dispatched placeholder it
+	/// holds for that turn (`dispatchedHere`). A device with no placeholder for the turn did not
+	/// send it -- and answering false is the safe direction, because it only ever makes this
+	/// device MORE willing to stand off the door.
 	function ownDispatch(turnId) {
 		try {
-			var me = selfDeviceId();
-			if (!me) return false;
-			var cs = (window.DaimondCore && DaimondCore.chats) ? DaimondCore.chats() : [];
-			for (var i = 0; i < (cs || []).length; i++) {
-				var msgs = (cs[i] && cs[i].messages) || [];
-				for (var j = 0; j < msgs.length; j++) {
-					var m = msgs[j];
-					if (m && String(m.iturn || '') === String(turnId) && m.dispatchedBy) {
-						return String(m.dispatchedBy) === me;
-					}
-				}
-			}
-		} catch (e) { /* fall through */ }
-		return false;
+			return !!(window.DaimondCore && DaimondCore.dispatchedHere && DaimondCore.dispatchedHere(turnId));
+		} catch (e) { return false; }
 	}
 
 	/// Can a beat reach the gateway now? False while the door is not yet open -- locked,
