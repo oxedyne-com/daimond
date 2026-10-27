@@ -133,7 +133,7 @@ const stubs = {
 	markChatTainted: () => false,
 	loadMsgTombs: () => ({}),
 	peerReports: {}, takeReportTaint() {}, settleRunnerAlerts() {}, settleRunnerAsk() {}, recordCarriedTurn() {}, requeueUnheard() {},
-	_openAsk: {}, markPlaceholderParked() {}, updateExpedite() {}, adoptFinalFrame: () => false, renderDispatchedBadges() {},
+	_openAsk: {}, markPlaceholderParked() {}, updateExpedite() {}, adoptFinalFrame: () => false, readReportedFinal: () => false, otherErrandReport: () => false, renderDispatchedBadges() {},
 };
 const names = ['settleRunnerWords', 'settleRunnerSession', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint'];
 const lifted = names.map((n) => lift(SRC, n));

@@ -188,6 +188,7 @@
 	var MAX_SRC_CHARS = 60;						// and where it came from
 	var MAX_WHERE_CHARS = 40;					// a `ui.msg`'s panel or dialog name
 	var UI_SCAN_MS    = 250;					// a burst of page mutations is one scan
+	var UI_HISTORY_MS = 120000;					// a transcript row older than this is history redrawn, not news
 	// The console lanes. A dedupe window and the rate window are deliberately the
 	// same minute: a line repeating faster than once a minute is one event with a
 	// count, and a device that finds sixty DISTINCT things to say in a minute is
@@ -1996,6 +1997,15 @@
 		return 'page';
 	}
 
+	/// When the transcript row a message line sits in was made (its `data-made`, the
+	/// message's own time), or 0 for a line outside the transcript.
+	function uiMade(el) {
+		try {
+			var row = el.closest('[data-made]');
+			return row ? (+row.getAttribute('data-made') || 0) : 0;
+		} catch (e) { return 0; }
+	}
+
 	/// One scan: emit what is shown now and was not at the last scan.
 	function uiScan() {
 		uiTimer = null;
@@ -2023,6 +2033,11 @@
 			if (now[k]) return;
 			now[k] = 1;
 			if (uiShown[k]) return;
+			// HISTORY IS NOT NEWS (NANCY): a line in a transcript row made long ago was drawn
+			// because a chat opened, not shown to him now. On 27 Oct a 25 Oct error was said
+			// again at 09:05. It is held as seen, so it is not said later either.
+			var made = uiMade(f.el);
+			if (made && Date.now() - made > UI_HISTORY_MS) return;
 			var key = (f.el.getAttribute && f.el.getAttribute('data-i18n')) || '';
 			if (!key) try { key = window.DaimondI18n && DaimondI18n.keyOf ? DaimondI18n.keyOf(String(f.el.textContent || '').trim()) : ''; } catch (e) { key = ''; }
 			var p = { where: where, kind: f.kind, text: text };

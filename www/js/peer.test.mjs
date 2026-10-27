@@ -5433,6 +5433,20 @@ async function runTurnAgeAcceptance(P, L, PR, check) {
 		check('E-R1 (1): a turn born five days ago and re-handed now is refused, though its own deadline is 15 min off',
 			v.ok === false && v.why === 'stale' && e.deadline > REAL + 30);
 	}
+	// (1b) A LOST RUN'S RETRY (NANCY, UNBLOCK-42). Its id is derived from the turn it
+	// replaces (`lostRetryMid`, `<iturn>-rt`), whose prefix is that turn's birth, two days
+	// gone; read as its own, every page collector refused the fresh press as stale and its
+	// `aborted` report ended the sender's watch before the runner's answer came.
+	{
+		const rt = idAt(REAL - 2 * DAY) + '-rt';
+		const e = errandAt(REAL, REAL, { turnId: rt,
+			seed: { chatId: 'c', title: '', provider: '', model: '', msgs: [{ role: 'user', content: 'p', mid: rt, ts: REAL }] } });
+		const v = V(e, at(REAL, REAL + 30, REAL + 30));
+		check('E-R1 (1b): a retry pressed now under an id derived from a two-day-old turn starts (its birth is its press)',
+			v.ok === true && v.birth === REAL, JSON.stringify(v));
+		const bare = V(P.makeErrand(Object.assign({}, e, { seed: null })), at(REAL, REAL + 30, REAL + 30));
+		check('E-R1 (1b) [ctl]: and with no stamp of its own it is unaged, never fresh by its prefix', bare.ok === false && bare.why === 'unaged', JSON.stringify(bare));
+	}
 	// (2) A SENDER FIVE DAYS FAST. Its five-day-old turn was born, on its clock, at the
 	// relay's NOW -- so a collector reading the birth against its own clock passes it.
 	{

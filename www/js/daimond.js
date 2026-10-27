@@ -16997,6 +16997,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tile.className = 'ctile csel-unit' + (opts.expanded ? '' : ' collapsed') + (opts.result ? ' ctile-result' : '');
 		tile.dataset.t = type;
 		tile.dataset.dir = TILE_DIR[type] || 'from';
+		// The message's own time, so the lens tells a line drawn as history from news (`uiScan`).
+		if (opts.ts) tile.setAttribute('data-made', String(opts.ts));
 		var lbl = document.createElement('div');
 		lbl.className = 'ctile-lbl';
 		var dot = document.createElement('span'); dot.className = 'ctile-dot';
@@ -19990,6 +19992,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function appendError(msg, m) {
 		var div = document.createElement('div');
 		div.className = 'chat-msg chat-msg-error';
+		// A stored row's own time (one from before `ts` reads as old), or now for one made now (`uiScan`).
+		div.setAttribute('data-made', String(m ? (+m.ts || 1) : Date.now()));
 		div.innerHTML = '<div class="chat-msg-content" style="color: var(--danger);"></div>';
 		var body = div.querySelector('.chat-msg-content');
 		// A road that broke on the runner names the runner, as a seat reason: its label here, its
@@ -28674,6 +28678,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		//     conversation matches at once. A runner that lacks it waits on the parcel below
 		//     or hands the turn back -- the documented fallback, never a stalled send.
 		var seedDropped = !!sealed.seedDropped;
+		// THE ERRAND IT WAS SENT AS goes on the placeholder before the post, so a report
+		// that answers another errand of the same turn id is known for one (`otherErrandReport`).
+		var phE = placeholderNow(), sentEid = String((sealed.plan && sealed.plan.fields && sealed.plan.fields.eid) || '');
+		if (phE && sentEid && phE.eid !== sentEid) { phE.eid = sentEid; touchMsg(phE); }
 		// 3. POST THE ERRAND. It carries the prompt, the model, the scope, the pause
 		//    snapshot and (where it fit) the thread, so a peer that claims reads
 		//    everything the turn needs without waiting for a parcel. `parcelVersion` is 0 on
@@ -29460,6 +29468,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return false;
 	}
 
+	/// Does a report answer an errand other than the one its turn's placeholder was last
+	/// sent as (NANCY, UNBLOCK-42)? A turn id can be sent more than once -- a lost run's
+	/// retry is named from the turn it replaces (`lostRetryMid`), so every press on every
+	/// device names one id -- and a report left from an earlier errand of that id must not
+	/// settle the one in flight and end its watch. Matched on the exact errand id; a report
+	/// or a placeholder from an older build names none, and decides nothing.
+	function otherErrandReport(report) {
+		var eid = String((report && report.eid) || '');
+		if (!eid) return false;
+		var tid = String(report.turnId || ''), chat = dispatchedChat(tid);
+		var ph = chat ? dispatchedPlaceholderIn(chat, tid) : null;
+		return !!(ph && ph.eid && String(ph.eid) !== eid);
+	}
+
 	/// Does the lease this device holds for `turnId` say the turn ran to completion?
 	function handoffLeaseSettled(turnId) {
 		if (!window.DaimondPeer || !DaimondPeer.settledLease || !window.DaimondLease || !DaimondLease.record) return false;
@@ -30065,6 +30087,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		DaimondPeer.onReport(async function (report) {
 			try {
 				var tid = String(report.turnId);
+				// A REPORT ON ANOTHER ERRAND of this turn id is not this hand-off's, and settles nothing.
+				if (otherErrandReport(report)) {
+					diag('handoff report ignored', 'turn=' + tid + ' eid=' + String(report.eid).slice(0, 12)
+						+ ' ' + String(report.status) + ': not the errand the turn was sent as');
+					return;
+				}
 				// A REPORT BELOW THE PAGE'S MIN (OWNKEY H3, lead ruling 25 Oct): made by an engine
 				// whose shapes this page no longer reads, so nothing of it is applied -- not its
 				// rows, its session, its cost. The turn goes down the hand-back path with cause
@@ -30165,6 +30193,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { updateExpedite(); } catch (e) { /* the next reindex re-decides it */ }
 				// The final frame folded before the report came: it is the answer now.
 				if (report.status === 'done' && adoptFinalFrame(tid)) return;
+				// A final frame on the door that this tab has not read is read now, watched or not.
+				readReportedFinal(tid, report);
 				renderDispatchedBadges();
 			} catch (e) { /* a report is only a nudge */ }
 		});
@@ -31051,6 +31081,35 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (pf.ref) fetchFinalRef(key, pf.ref, pf.n);
 	}
 
+	// The turns whose final frame a `done` report has had read (`readReportedFinal`).
+	var _reportRead = {};
+
+	/// Read the final frame a `done` report says is on the door (`finalTail`) when this tab has
+	/// not folded it, WHETHER OR NOT THE TURN IS STILL WATCHED (NANCY, UNBLOCK-42).
+	///
+	/// The watch's last read is not enough. A settling report that came before the turn's end
+	/// (on 27 Oct an `aborted` from a page that misread a retry's age) ended the watch 49 s
+	/// early, its one last read found an empty door, and the real `done` then found nothing
+	/// watching: a native runner's rows never come by parcel, so the answer was lost. The
+	/// report is the runner's word that the frame is there, so it is read on that word. The
+	/// frame is taken through `onLastFrame`, which writes the view itself (a closed view
+	/// refuses `foldProgress`) and fetches a chunked one whole; `adoptFinalFrame` takes it once.
+	function readReportedFinal(tid, report) {
+		var key = String(tid);
+		if (!report || report.status !== 'done' || !report.finalTail) return false;
+		var had = _progressView[key];
+		if (had && had.final && had.msgs && had.msgs.length) return false;	// folded already
+		if (_reportRead[key]) return false;
+		if (!window.DaimondSync || !DaimondSync.getProgressFrame) return false;
+		_reportRead[key] = 1;
+		diag('handoff final frame read', 'turn=' + key.slice(0, 12) + ' on its done report');
+		DaimondSync.getProgressFrame(key, 0).then(function (frame) {
+			if (frame && frame.final) onLastFrame(key, frame);
+			else delete _reportRead[key];	// not on the door: a re-collected report asks again
+		}, function () { delete _reportRead[key]; });
+		return true;
+	}
+
 	/// One string safe inside a CSS attribute selector. `CSS.escape` where the engine
 	/// has it, and a conservative strip where it does not -- a turn id is a mid, so
 	/// nothing legitimate is lost.
@@ -31603,6 +31662,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// deadline.
 	function errandForRecovery(chat, m) {
 		return DaimondPeer.makeErrand({
+			eid:          m.eid ? String(m.eid) : undefined,	// the errand it was sent as, so its reports are its own
 			turnId:       String(m.iturn),
 			chatId:       String(chat.id || ''),
 			prompt:       String(m.itext == null ? '' : m.itext),

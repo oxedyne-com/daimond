@@ -5338,6 +5338,7 @@
 		pushProgressFrame: pushProgressFrame,
 		progressWeight:    progressWeight,
 		progressBudget:    { chars: PROGRESS_TAIL_MAX, bytes: PROGRESS_SEAL_MAX },
+		getProgressFrame:  getProgressFrame,
 		watchProgress:     watchProgress,
 		unwatchProgress:   unwatchProgress,
 		progressWatched:   progressWatched,

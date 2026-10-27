@@ -15,7 +15,9 @@
          the panel it sits in, and a re-render of the same line adds none;
      (b) a toast yields exactly one `ui.msg` of kind `toast`;
      (c) an i18n-marked line carries its key;
-     (d) with sharing off, nothing is emitted.
+     (d) with sharing off, nothing is emitted;
+     (e) a transcript error drawn as history when a chat opens says nothing,
+         and one made now in that chat says itself once (NANCY).
 
    Run:  node www/js/uimsg.test.mjs
    ============================================================ */
@@ -224,6 +226,29 @@ await crank();
 renderMail(CAP);
 await crank();
 check('(a) the line shown again after it cleared is one more', uiRows(DS).filter(r => r.text === CAP).length === 2);
+
+// (e) A chat opens: its transcript draws a 25 Oct error row (`appendError`, its own time on
+// `data-made`). History, not news: nothing. Then a turn fails now in it: one.
+const OLD = 'The runner could not finish this turn.';
+const out = makeNode('div');
+out.setAttribute('id', 'chat-output');
+env.body.appendChild(out);
+const errRow = (text, made) => {
+	const d = makeNode('div'); d.className = 'chat-msg chat-msg-error'; d.setAttribute('data-made', String(made));
+	const c = makeNode('div'); c.className = 'chat-msg-content'; c.textContent = text; d.appendChild(c);
+	return d;
+};
+out.appendChild(errRow(OLD, Date.UTC(2026, 9, 25, 13, 2, 44)));
+await crank();
+check('(e) an old error drawn as history when a chat opens gives no ui.msg', uiRows(DS).filter(r => r.text === OLD).length === 0);
+const NEW = 'This turn was stopped.';
+out.appendChild(errRow(NEW, Date.now()));
+await crank();
+rows = uiRows(DS).filter(r => r.text === NEW);
+check('(e) an error made now in the open chat gives exactly one', rows.length === 1 && rows[0].kind === 'error' && rows[0].where === 'chat-output');
+out.appendChild(makeNode('div'));
+await crank();
+check('(e) [ctl] and the history row is still not said on a later scan', uiRows(DS).filter(r => r.text === OLD).length === 0);
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

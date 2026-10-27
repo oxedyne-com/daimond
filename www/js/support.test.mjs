@@ -425,6 +425,7 @@ async function main() {
 				},
 				appendChild(c) { this.children.push(c); return c; },
 				addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); },
+				setAttribute(k, v) { this['_' + k] = String(v); },	// `data-made` (NANCY)
 			};
 			return n;
 		}

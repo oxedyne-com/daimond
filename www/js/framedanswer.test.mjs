@@ -21,9 +21,14 @@
              no row left out, may become the answer (`progressRow`, `frameWhole`)
      REF     a 100 kB answer the runner sent as a head and a `ref` (REPLY-REF):
              a second device with no report adopts the whole from the chunks
+     NATIVE  a native turn of 22 rows over 64 KB (UNBLOCK-42): an early settling
+             report ended the watch, the chunked final frame came after, then `done`
+             with `finalTail`; the done report reads the frame, and all 22 rows land
+             whole, in order, once (`readReportedFinal`)
 
    Run:  node www/js/framedanswer.test.mjs
    On 7ca624dd's daimond.js: adoptFinalFrame is missing (ABORT).
+   On 0e21f01fa's: readReportedFinal is missing, NATIVE fails.
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -36,13 +41,21 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail ? '  (' + detail + ')' : '')); failures++; }
 }
 
-/// Lifts `function name(...) { ... }` out of `src` by counting braces.
+/// Lifts `function name(...) { ... }` out of `src` by counting braces, past the quoted
+/// strings and comments (`parseFrameRef` tests for a `'{'`).
 function extractFn(src, name) {
 	const start = src.indexOf('\n\tfunction ' + name + '(');
 	if (start < 0) throw new Error('function not found: ' + name);
 	const brace = src.indexOf('{', start);
 	let depth = 0, i = brace;
 	for (; i < src.length; i++) {
+		if (src[i] === '/' && src[i + 1] === '/') { i = src.indexOf('\n', i); continue; }
+		if (src[i] === '/' && src[i + 1] === '*') { i = src.indexOf('*/', i) + 1; continue; }
+		if (src[i] === "'" || src[i] === '"') {
+			const q = src[i];
+			for (i++; i < src.length && src[i] !== q; i++) if (src[i] === '\\') i++;
+			continue;
+		}
 		if (src[i] === '{') depth++;
 		else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
 	}
@@ -62,6 +75,7 @@ if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname
 const { liftSource } = await import('../../dev/syncprobe.mjs');
 const src  = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
 const psrc = readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
+const HAS_READ = src.indexOf('\n\tfunction readReportedFinal(') >= 0;
 const lifted = new Function('env', [
 	'var REASON_DISPATCHED_STR = "dispatched";',
 	'function loadMsgTombs() { return {}; }',
@@ -69,7 +83,9 @@ const lifted = new Function('env', [
 	'var peerReports = env.peerReports, _finalMids = env.finalMids, _finalRun = env.finalRun, _abiRefused = env.abiRefused || {};',
 	'var current = null; function renderHistory() {}',
 	// What `fetchFinalRef` and `applyProvisional` read beside the lifted law (REPLY-REF).
-	'var DaimondChunks = env.window.DaimondChunks, _refFetch = {}, _progressView = {}, _renderedSigs = null;',
+	'var DaimondChunks = env.window.DaimondChunks, DaimondSync = env.window.DaimondSync, _refFetch = {}, _progressView = env.progressView, _renderedSigs = null;',
+	// What `onLastFrame` reaches beside them (NATIVE): no ABI floor, no panels, no workers.
+	'function frameAbiOk() { return true; } function refuseAbiFrame() {} function applyFrameUi() {} function setFrameWorkers() {}',
 	'function ownsChat() { return true; } function growProvisionalTiles() {} function sigsOf() { return null; }',
 	'function msgTombstone(mids) { env.tombs.push.apply(env.tombs, mids); }',
 	'function dispatchedChat(t) { return env.chatFor(t); }',
@@ -100,7 +116,11 @@ const lifted = new Function('env', [
 	extractFn(src, 'adoptFinalFrame'),
 	extractFn(src, 'applyProvisional'),
 	extractFn(src, 'fetchFinalRef'),
-	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef };',
+	...['uiWebUrl', 'frameUi', 'parseFrameRef', 'onLastFrame'].map((n) => extractFn(src, n)),
+	// The read a `done` report makes of the door (NANCY); absent on the base, where NATIVE fails.
+	...(HAS_READ ? [extractVar(src, '_reportRead'), extractFn(src, 'readReportedFinal')] : ['function readReportedFinal() { return false; }']),
+	src.indexOf('\n\tfunction otherErrandReport(') >= 0 ? extractFn(src, 'otherErrandReport') : 'function otherErrandReport() { return false; }',
+	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame, fetchFinalRef: fetchFinalRef, readReportedFinal: readReportedFinal, otherErrandReport: otherErrandReport, progressView: _progressView };',
 ].join('\n'));
 const settledLease = new Function(extractFn(psrc, 'settledLease') + '\nreturn settledLease;')();
 const otherRunRows = (psrc.indexOf('function otherRunRows(') >= 0)
@@ -112,7 +132,7 @@ function world(lease) {
 			DaimondPeer:  { settledLease, otherRunRows },
 			DaimondLease: { record: () => lease || null },
 		},
-		peerReports: {}, finalMids: {}, finalRun: {}, tombs: [], persisted: 0, badges: 0, dropped: [], chat: null,
+		peerReports: {}, finalMids: {}, finalRun: {}, tombs: [], persisted: 0, badges: 0, dropped: [], chat: null, progressView: {},
 		chatFor: () => env.chat,
 	};
 	return Object.assign(env, lifted(env));
@@ -298,6 +318,59 @@ console.log('\nREF: a long answer sent as a head and a ref is adopted whole (REP
 	w2.fetchFinalRef('u1', ref, 1);
 	for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
 	check('[ctl] a ref\'d row not marked whole is not adopted', find(w2.chat.messages, 'AN')[0].provisional === 1 && !w2.dropped.length);
+}
+
+console.log('\nNATIVE: a chunked final frame read on the done report, after the watch ended (UNBLOCK-42)\n');
+{
+	const win = {};
+	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
+		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+	// 22 rows of a native runner's turn, about 107 kB in all, each marked whole (settle.rs).
+	const T = 'mvnu8dx4-9-1kqcx-rt';
+	const rows = [];
+	for (let i = 0; i < 22; i++) {
+		rows.push({ mid: 'R' + String(i).padStart(2, '0'), role: i % 2 ? 'assistant' : 'tool', content: ('row ' + i + ' ').repeat(700),
+			iturn: T, ts: 100 + i, run: 'K1', ranOn: 'kim', whole: 1 });
+	}
+	const body = new TextEncoder().encode(JSON.stringify({ v: 1, turn: T, msgs: rows }));
+	check('[ctl] the turn is over the 64 KB door', body.length > 64 * 1024, body.length + 'B');
+	const ref = { v: 2, size: body.length, key: 'k', chunks: [{ addr: 'a', size: 40000 }, { addr: 'b', size: 40000 }, { addr: 'c', size: body.length - 80000 }] };
+	// The frame on the door (`view_frame`): the last rows that fit, the newest cut, and the manifest.
+	const view = rows.slice(-6).map((r, i, a) => (i === a.length - 1 ? Object.assign({}, r, { content: r.content.slice(0, 900), whole: 0 }) : r));
+	const frame = { seq: 7, final: true, abi: 0, tail: JSON.stringify({ v: 1, msgs: view, ref: ref, n: 22 }) };
+	const w = world(null);
+	w.window.DaimondPeer = Object.assign({}, win.DaimondPeer, { settledLease, otherRunRows });
+	let reads = 0, chunkReads = 0;
+	w.window.DaimondSync = { getProgressFrame: async (t, since) => { reads++; return t === T && since === 0 ? frame : null; } };
+	w.window.DaimondChunks = { materialiseBytes: async (r) => { chunkReads++; return JSON.stringify(r) === JSON.stringify(ref) ? body : null; } };
+	Object.assign(w, lifted(w));
+	w.chat = { id: 'c1', messages: [{ mid: T, role: 'user', content: 'again', ts: 50 }, { mid: 'p1', role: 'assistant', content: '', why: 'dispatched', iturn: T, ts: 51 }] };
+	// 09:11:56: an early settling report, and the watch closed on an empty door.
+	const early = { t: 'report', turnId: T, status: 'aborted', why: 'stale' };
+	w.peerReports[T] = early;
+	check('[ctl] the early report reads nothing', w.readReportedFinal(T, early) === false && reads === 0);
+	w.progressView[T] = { turn: T, seq: 0, msgs: null, final: true };	// the closed view
+	// 09:12:44: the real `done`, which says the final frame is on the door.
+	const done = { t: 'report', turnId: T, status: 'done', finalTail: 1 };
+	w.peerReports[T] = done;
+	check('the done report reads the final frame from the door', w.readReportedFinal(T, done) === true && reads === 1, 'reads=' + reads);
+	for (let i = 0; i < 40 && !w.dropped.length; i++) await new Promise((r) => setTimeout(r, 0));
+	// And the same report collected again: nothing is read or adopted twice.
+	w.readReportedFinal(T, done);
+	for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+	const got = w.chat.messages.filter((m) => m.iturn === T && m.role !== 'user' && m.why !== 'dispatched');
+	check('the chunks were read', chunkReads === 1, 'chunkReads=' + chunkReads);
+	check('all 22 rows landed, once each, in order', got.map((m) => m.mid).join() === rows.map((r) => r.mid).join(), got.map((m) => m.mid).join());
+	check('every row whole, byte for byte, and real', got.length === 22 && got.every((m, i) => m.content === rows[i].content && m.framed === 1 && !m.provisional),
+		JSON.stringify(got.map((m) => ({ mid: m.mid, n: m.content.length, framed: m.framed, provisional: m.provisional }))));
+	check('adopted once: the placeholder dropped once, and the store written', w.dropped.join() === T && w.persisted >= 1, 'dropped=' + w.dropped.join());
+	check('the door was read once', reads === 1, 'reads=' + reads);
+	// A report left from an earlier errand of the same derived id settles nothing (exact eid).
+	const w2 = world(null);
+	w2.chat = { id: 'c1', messages: [{ mid: T, role: 'user', content: 'again', ts: 50 }, { mid: 'p1', role: 'assistant', content: '', why: 'dispatched', iturn: T, ts: 51, eid: 'E2' }] };
+	check('a report on another errand of the turn id is not this hand-off\'s', w2.otherErrandReport({ t: 'report', turnId: T, eid: 'E1', status: 'aborted' }) === true);
+	check('[ctl] the errand it was sent as is', w2.otherErrandReport({ t: 'report', turnId: T, eid: 'E2', status: 'done' }) === false);
+	check('[ctl] and a report naming none decides nothing', w2.otherErrandReport({ t: 'report', turnId: T, status: 'done' }) === false);
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nALL PASS');

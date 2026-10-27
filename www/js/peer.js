@@ -2210,8 +2210,15 @@
 
 	/// The moment an id was minted, read off its base-36 prefix (`newMid`, daimond.js),
 	/// or 0 for an id that carries none.
+	///
+	/// ONLY AN ID OF `newMid`'S OWN SHAPE (time-seq-random) carries its birth (NANCY,
+	/// UNBLOCK-42). An id DERIVED from another -- a lost run's retry, `<iturn>-rt`
+	/// (`lostRetryMid`) -- keeps the prefix of the turn it was derived from, so it read as
+	/// born then: on 27 Oct a retry pressed two days after its lost turn was refused as
+	/// stale by every page that collected it, and that `aborted` report ended the sender's
+	/// watch before the runner's answer came. Such a turn is aged by its own stamps alone.
 	function midMs(id) {
-		var m = /^([0-9a-z]{8,9})-/.exec(String(id == null ? '' : id));
+		var m = /^([0-9a-z]{8,9})-[0-9a-z]+-[0-9a-z]*$/.exec(String(id == null ? '' : id));
 		return m ? plausibleMs(parseInt(m[1], 36)) : 0;
 	}
 
