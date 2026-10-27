@@ -28306,6 +28306,79 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (ownsChat(chat)) renderHistory(chat.messages);
 		touchChat(chat);
 		persistChats();
+		// Guarded: tests lift this function out alone (peer.test R4b, saidrunner).
+		if (typeof noteDispatch === 'function') noteDispatch(chat, mark);
+	}
+
+	// ── The dispatch note (UNBLOCK-44d, `DaimondPeer.dispatchNote`) ──
+	//
+	// The other devices are told of a hand-off AT ONCE, in this device's agents frame, which
+	// every page already follows: they hold its user row and placeholder within a second and
+	// follow the runner's frames from the first, where the parcel (a whole account, 40 s on
+	// the owner's road) left them starting late. Held in memory: a note lives while its turn
+	// can stream, and the parcel carries the rows for good.
+	var _dispNotes = Object.create(null);
+	var DISP_NOTE_LIVE_MS = 10 * 60 * 1000;
+
+	/// Note a hand-off THIS device asked for, and send the frame now.
+	function noteDispatch(chat, mark) {
+		try {
+			var tid = String((mark && mark.iturn) || ''), self = selfDeviceId();
+			if (!chat || !chat.id || !tid || !self || String(mark.dispatchedBy || '') !== self) return;
+			var ms = chat.messages || [], ph = null, user = null;
+			for (var i = ms.length - 1; i >= 0; i--) {
+				var m = ms[i];
+				if (!m) continue;
+				if (!ph) { if (m.why === REASON_DISPATCHED_STR && String(m.iturn || '') === tid) ph = m; continue; }
+				if (m.role === 'user') { user = m; break; }
+			}
+			if (!ph) return;
+			var rows = JSON.parse(JSON.stringify(user ? [user, ph] : [ph]));
+			_dispNotes[tid] = { tid: tid, cid: String(chat.id), by: self, at: Date.now(), rows: rows };
+			PeerAgents.publishNow();
+		} catch (e) { /* the parcel still carries it */ }
+	}
+
+	/// The notes still worth sending: young, and their turn still watched or unclaimed here.
+	function liveDispatchNotes() {
+		var now = Date.now(), out = [];
+		for (var t in _dispNotes) {
+			if (!Object.prototype.hasOwnProperty.call(_dispNotes, t)) continue;
+			var n = _dispNotes[t];
+			if (now - n.at > DISP_NOTE_LIVE_MS || !dispatchedChat(t) || !_watchIx[t]) { delete _dispNotes[t]; continue; }
+			out.push(n);
+		}
+		return out;
+	}
+
+	/// A peer's notes, read off its agents frame: the rows this device lacks are added to a
+	/// chat it holds, and the turn is watched at once. A chat not held here, or not resident,
+	/// waits for the parcel as before.
+	function takeDispatchNotes(notes) {
+		if (!Array.isArray(notes) || !notes.length || !window.DaimondPeer || !DaimondPeer.dispatchNoteRows) return;
+		var self = selfDeviceId(), now = Date.now(), moved = false;
+		notes.forEach(function (n) {
+			try {
+				var chat = null;
+				for (var i = 0; i < chats.length; i++) if (chats[i] && chats[i].id === n.cid) { chat = chats[i]; break; }
+				if (!chat || !chat._loaded || !Array.isArray(chat.messages)) return;
+				// A turn already over here is never re-opened by a late note.
+				if (dispatchedTurnFinished(chat, n.tid)) return;
+				var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(n.tid) : null;
+				if (lease && DaimondPeer.settledLease && DaimondPeer.settledLease(lease)) return;
+				var add = DaimondPeer.dispatchNoteRows(chat.messages, n, self, now);
+				if (!add) return;
+				chat.messages = chat.messages.concat(JSON.parse(JSON.stringify(add)));
+				_dispatchedIx[String(n.tid)] = chat.id;
+				moved = true;
+				add.forEach(function (m) {
+					noteArrive('tile', { via: 'note', cid: chat.id, tid: String(n.tid), mid: m.mid, made: +m.ts, role: m.role });
+				});
+				diag('handoff note', 'turn=' + String(n.tid).slice(0, 12) + ' ' + add.length + ' row(s) from ' + String(n.by).slice(0, 8));
+				if (ownsChat(chat)) renderHistory(chat.messages);
+			} catch (e) { /* one note's fault stays its own */ }
+		});
+		if (moved) updateExpedite();
 	}
 
 	/// Dispatch a turn to a peer of this account. STRICT ORDER (§4.1, seq 223):
@@ -49161,7 +49234,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var me = '';
 			try { me = deviceId(); } catch (e) { return; }
 			Workers.stampEnds();
-			var body = DaimondPeer.agentsFrame(Workers.runs, me, Date.now(), DaimondSync.progressBudget, DaimondSync.progressWeight);
+			var body = DaimondPeer.agentsFrame(Workers.runs, me, Date.now(), DaimondSync.progressBudget, DaimondSync.progressWeight,
+				liveDispatchNotes());
 			if (!body) return;
 			if (body === this.sent && Date.now() - this.sentAt < this.REFRESH_MS) return;
 			var self = this;
@@ -49197,6 +49271,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!got) return;
 			this.seen[dev] = Date.now();
 			this.store = DaimondPeer.peerRunsMerge(this.store, got, Date.now());
+			takeDispatchNotes(got.disp);
 			this.draw();
 		},
 

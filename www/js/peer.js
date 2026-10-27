@@ -7478,14 +7478,32 @@
 	/// to the door (`budget`/`weigh` as `frameJson`) by leaving out the OLDEST runs: a cut
 	/// string would be lost whole. '' when there is no device id. An empty list is still a
 	/// frame, so a peer learns the runs have gone.
-	function agentsFrame(runs, dev, now, budget, weigh) {
+	///
+	/// `disp` (UNBLOCK-44d) is the turns this device has just handed off, each its
+	/// `dispatchNote`: carried ahead of the runs, and only whole notes that fit.
+	function agentsFrame(runs, dev, now, budget, weigh, disp) {
 		if (!dev) return '';
 		var parts = [];
 		(runs || []).forEach(function (r) {
 			var c = agentsRun(r);
 			if (c && agentsCurrent(c, now)) parts.push(JSON.stringify(c));
 		});
-		var head = '{"v":1,"dev":' + JSON.stringify(String(dev)) + ',"runs":[';
+		var notes = [];
+		(disp || []).forEach(function (d) {
+			var c = dispatchNote(d, now);
+			if (c && notes.length < DISP_NOTES_MAX) notes.push(JSON.stringify(c));
+		});
+		var head = '{"v":1,"dev":' + JSON.stringify(String(dev)) + ',"disp":[';
+		if (budget && typeof weigh === 'function') {
+			var n0 = weigh(head + '],"runs":[]}'), nc = n0.chars, nb = n0.bytes, nkeep = [];
+			notes.forEach(function (t) {
+				var w = weigh(t), sep = nkeep.length ? 1 : 0;
+				if (nc + w.chars + sep > budget.chars || nb + w.bytes + sep > budget.bytes) return;
+				nc += w.chars + sep; nb += w.bytes + sep; nkeep.push(t);
+			});
+			notes = nkeep;
+		}
+		head += notes.join(',') + '],"runs":[';
 		if (budget && typeof weigh === 'function') {
 			var w0 = weigh(head + ']}'), chars = w0.chars, bytes = w0.bytes, keep = 0;
 			for (var i = 0; i < parts.length; i++) {
@@ -7510,7 +7528,75 @@
 			var c = agentsRun(obj.runs[i]);
 			if (c) { c.deviceId = String(dev); runs.push(c); }
 		}
-		return { dev: String(dev), runs: runs };
+		var disp = [];
+		var raw = Array.isArray(obj.disp) ? obj.disp : [];
+		for (var j = 0; j < raw.length && disp.length < DISP_NOTES_MAX; j++) {
+			var d = dispatchNote(raw[j], null);
+			if (d && d.by === String(dev)) disp.push(d);
+		}
+		return { dev: String(dev), runs: runs, disp: disp };
+	}
+
+	// ── The dispatch note (UNBLOCK-44d) ──────────────────────────
+	//
+	// A SECOND DEVICE LEARNED OF A HAND-OFF ONLY FROM THE ASKER'S PARCEL. The rows that
+	// say "this turn is running elsewhere" -- the user's row and the dispatched
+	// placeholder -- reached it only when the asker's whole parcel did, and a parcel of
+	// two megabytes on the owner's road took 40 s (pull 19 s, then push 21 s, lens
+	// 27 Oct: argonaut's tiles P90 39.6 s, gilgamesh's 119 ms). Until the placeholder is
+	// there, nothing is watched, so the runner's frames were read late, all at once.
+	//
+	// So the asker puts the two rows in its agents frame, which every page already
+	// follows on the progress door, and the gateway taps every page the moment it is
+	// stored: a peer holds the rows, and watches the turn, within a second. The rows are
+	// the asker's own (same mids), so the parcel that follows merges over them as over
+	// any copy. No new door and no gateway change.
+	var DISP_NOTES_MAX  = 4;				// notes on one frame
+	var DISP_NOTE_ROWS  = 2;				// the user's row and the placeholder
+	var DISP_NOTE_CHARS = 24 * 1024;		// a note bigger than this (an attachment) waits for the parcel
+
+	/// One dispatch note, checked: `{ tid, cid, by, at, rows }` whose rows are at most the
+	/// turn's user row and its EMPTY dispatched placeholder, or null. With `now`, a note
+	/// past the errand's deadline is null too (no peer starts that turn).
+	function dispatchNote(d, now) {
+		if (!d || typeof d !== 'object') return null;
+		var tid = (typeof d.tid === 'string') ? d.tid : '', cid = (typeof d.cid === 'string') ? d.cid : '';
+		var by = (typeof d.by === 'string') ? d.by : '', at = Number(d.at);
+		if (!tid || tid.length > 64 || !cid || cid.length > 64 || !by || by.length > 64 || !(at > 0)) return null;
+		if (now != null && now - at >= DISPATCH_DEADLINE_MS) return null;
+		if (!Array.isArray(d.rows) || !d.rows.length || d.rows.length > DISP_NOTE_ROWS) return null;
+		var ph = 0;
+		for (var i = 0; i < d.rows.length; i++) {
+			var r = d.rows[i];
+			if (!r || typeof r !== 'object' || typeof r.mid !== 'string' || !r.mid) return null;
+			if (r.role === 'user') continue;
+			if (r.role !== 'assistant' || r.why !== REASON_DISPATCHED || String(r.iturn || '') !== tid
+				|| (r.content && String(r.content).trim()) || String(r.dispatchedBy || '') !== by) return null;
+			ph++;
+		}
+		if (ph !== 1) return null;
+		var out = { tid: tid, cid: cid, by: by, at: at, rows: d.rows };
+		try { if (JSON.stringify(out).length > DISP_NOTE_CHARS) return null; } catch (e) { return null; }
+		return out;
+	}
+
+	/// The rows of `note` a device holding `messages` should add now, or null. Pure. None
+	/// when the note is this device's own, the turn's placeholder is already held, any row
+	/// of the turn has come (it ran, or its answer merged), or the note is past the
+	/// errand's deadline. Only rows not already held, by mid, in the note's order.
+	function dispatchNoteRows(messages, note, selfId, now) {
+		var n = dispatchNote(note, now);
+		if (!n || n.by === String(selfId || '')) return null;
+		var have = {};
+		var ms = Array.isArray(messages) ? messages : [];
+		for (var i = 0; i < ms.length; i++) {
+			var m = ms[i];
+			if (!m) continue;
+			if (String(m.iturn || '') === n.tid && m.role !== 'user') return null;
+			if (m.mid) have[String(m.mid)] = 1;
+		}
+		var add = n.rows.filter(function (r) { return !have[String(r.mid)]; });
+		return add.length ? add : null;
 	}
 
 	/// The peers' runs held, with `frame` taken in: a device's newest frame replaces its
@@ -8022,6 +8108,8 @@
 		agentsKey:     agentsKey,
 		agentsFrame:   agentsFrame,
 		agentsFromFrame: agentsFromFrame,
+		dispatchNote:  dispatchNote,
+		dispatchNoteRows: dispatchNoteRows,
 		peerRunsMerge: peerRunsMerge,
 		peerRunsList:  peerRunsList,
 		turnRows:      turnRows,
