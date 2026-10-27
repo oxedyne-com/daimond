@@ -16745,6 +16745,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// until the next one. That number is what lets an answer be folded away behind the thing that
 	// prompted it, and what lets a selected few turns be folded into a Diamond.
 	var _turn = 0;
+	// The drawing state each turn started from, by turn number: what `redrawFromTurn` puts back
+	// to draw a changed turn again without the turns above it (UNBLOCK-47).
+	var _turnMarks = [];
 
 	// Where the walk back through the questions has got to. -1 means "at the bottom, not walking",
 	// so the next jump lands on the most recent question.
@@ -17865,6 +17868,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// door a person's message is drawn through, live and on a reload alike, so the two cannot
 		// disagree about whether a card was answered. Nothing is stored to say so: the message
 		// itself is the record. A message the app sent (`app`: a trigger, a preset) is not one.
+		_turnMarks[_turn + 1] = { ask: _askCard, askJust: _askJust, said: _saidJust, handoff: _handoffTurn };
 		askMarkAnswered(text, app);
 		var div = buildTile('user', { expanded: true, copy: text, ts: ts });
 		div.classList.add('chat-msg-user');           // kept for older hooks
@@ -18339,7 +18343,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// message, so marking them would leave a rule beside the two things that are
 			// permanently BELOW the line.
 			if (n.id === 'chat-queued' || n === spinnerEl) continue;
-			n.classList.add('chat-above-fold');
+			// Marked by an earlier fold: written again, it would be a page mutation per tile on
+			// every redraw that draws a fold (the lens's observer sees each, UNBLOCK-47).
+			if (!n.classList.contains('chat-above-fold')) n.classList.add('chat-above-fold');
 		}
 	}
 
@@ -26098,7 +26104,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The turns belonged to the thread that has just been thrown away. Numbering them from
 		// scratch is what keeps a turn number meaning "the nth question in THIS chat", which is
 		// the assumption the fold relies on when it maps a ticked turn back to a message.
-		_turn = 0; _jumpAt = -1;
+		_turn = 0; _jumpAt = -1; _turnMarks = [];
 		_handoffTurn = -1;
 		setSelectMode(false);
 		syncJumps();
@@ -27524,12 +27530,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// report or a lease change moves the state without touching the transcript, so
 		// the nothing-changed return below kept the old tile: "Sent to your other
 		// devices" and its spinner stood beside a turn whose `done` report was in.
-		var _staleDispatch = false;
+		var _staleDispatch = false, _staleAt = -1;
 		if (sameChat && current && Array.isArray(messages)) {
 			for (var _sdi = 0; _sdi < messages.length; _sdi++) {
 				var _sdm = messages[_sdi];
 				if (!_sdm || _sdm.why !== 'dispatched' || (_sdm.content && _sdm.content.trim())) continue;
-				if (dispatchedAnswerPresent(current, _sdm) || handoffTileMoved(_sdm)) { _staleDispatch = true; break; }
+				if (dispatchedAnswerPresent(current, _sdm) || handoffTileMoved(_sdm)) { _staleDispatch = true; _staleAt = _sdi; break; }
 			}
 		}
 		// NOTHING CHANGED, SO NOTHING IS DRAWN AND NOTHING IS SCROLLED.
@@ -27577,6 +27583,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 
+		// THE CHANGED TURN, NOT THE THREAD (UNBLOCK-47, 27 Oct). A handed-off turn's frame grows
+		// the row the last frame ended on and adds the next: not an append, so every frame cleared
+		// and redrew the whole thread, 558 messages on gilgamesh, until the page stopped. A change
+		// confined to the last turns redraws from the question that opened the first of them, and
+		// the turns above stand as drawn.
+		if (sameChat && _renderSynced && Array.isArray(messages) && redrawFromTurn(messages, nextSigs, _staleAt)) {
+			syncJumps();
+			renderHistoryFurniture();
+			if (wasDown) { setScrollTop(chatOutput.scrollHeight); holdBottom(); }
+			else { if (!applyAnchor(anchor)) anchor = null; holdAnchor(anchor); }
+			_renderedSigs = nextSigs;
+			_renderedChatId = current && current.id ? current.id : null;
+			_renderSynced = true;
+			return;
+		}
+
 		_renderingHistory = true;
 		// THE SYSTEM BAND CROSSES THE REBUILD, because it is not part of the transcript
 		// and it is at the HEAD of it. `clearChat` empties the thread, and `renderWire`
@@ -27613,6 +27635,51 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_renderedSigs = sigsOf(messages);
 		_renderedChatId = current && current.id ? current.id : null;
 		_renderSynced = true;
+	}
+
+	/// Does `m` open a turn when drawn (`appendUserMessage`'s `_turn += 1`)?
+	function opensTurn(m) {
+		return !!m && m.role === 'user' && !m.interject && !/^\[Daimond: this turn changed /.test(String(m.content || ''));
+	}
+
+	/// Redraw from the question opening the turn the first change in `messages` is in (or the
+	/// stale hand-off at `staleAt`), leaving the turns above it as drawn. The drawing state is
+	/// put back as that turn started (`_turnMarks`), so the result is what a whole rebuild draws.
+	/// False, with nothing touched, where it cannot be: no turn opens above the change, the
+	/// turn's question is not on screen, or a fold row whose marks stand above it has gone.
+	function redrawFromTurn(messages, nextSigs, staleAt) {
+		var prev = _renderedSigs, n = Math.min(prev.length, nextSigs.length), i0 = 0;
+		while (i0 < n && prev[i0] === nextSigs[i0]) i0++;
+		if (staleAt >= 0 && staleAt < i0) i0 = staleAt;
+		var sigKey = function (g) { var p = String(g).split('#'); return { role: p[1], key: p[0] || String(g) }; };
+		var folds = {};
+		for (var k = i0; k < nextSigs.length; k++) { var nk = sigKey(nextSigs[k]); if (nk.role === 'fold_log') folds[nk.key] = 1; }
+		for (var r = i0; r < prev.length; r++) { var pk = sigKey(prev[r]); if (pk.role === 'fold_log' && !folds[pk.key]) return false; }
+		var u = -1, turnN = 0;
+		for (var i = 0; i < i0 && i < messages.length; i++) if (opensTurn(messages[i])) { u = i; turnN++; }
+		if (u < 0 || turnN > _turn) return false;
+		var mark = _turnMarks[turnN], head = null;
+		var kids = chatOutput.children;
+		for (var c = kids.length - 1; c >= 0; c--) {
+			var kc = kids[c];
+			if (kc.classList.contains('chat-msg-user') && kc.dataset.turn === String(turnN)) { head = kc; break; }
+		}
+		if (!mark || !head) return false;
+		_renderingHistory = true;
+		// Furniture stays, and so does a tile an earlier turn pinned last (`pinAwaiting`).
+		for (var node = head, nx; node; node = nx) {
+			nx = node.nextSibling;
+			if (node === spinnerEl || node.id === 'chat-queued') continue;
+			if (node.dataset && node.dataset.turn != null && +node.dataset.turn < turnN) continue;
+			node.remove();
+		}
+		curAsstDiv = null; curAsstText = ''; liveThink = null; lastToolBlock = null;
+		_askCard = mark.ask; _askJust = mark.askJust; _saidJust = mark.said; _handoffTurn = mark.handoff;
+		_turn = turnN - 1; _jumpAt = -1; _turnMarks.length = turnN;
+		loadTextFolds();
+		for (var j = u; j < messages.length; j++) drawHistoryMessage(messages[j], j, messages);
+		_renderingHistory = false;
+		return true;
 	}
 
 	/// Is `m` the "not run" row? Read off its `notRun`, whatever its tag (SUHT-R F1). Its tag is the
