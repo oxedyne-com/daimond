@@ -2954,6 +2954,7 @@
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title':           'Files',
+	'dws.files_n':         'Files ({n})',
 	'dws.count.one':       '{n} item',
 	'dws.count.other':     '{n} items',
 	'dws.none_yet':        'Nothing kept here yet',

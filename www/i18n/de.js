@@ -1981,6 +1981,7 @@
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'Dateien',
+	'dws.files_n': 'Dateien ({n})',
 	'dws.count.one': '{n} Element',
 	'dws.count.other': '{n} Elemente',
 	'dws.none_yet':    'Noch nichts hinterlegt',

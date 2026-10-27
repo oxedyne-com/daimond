@@ -165,6 +165,13 @@
 	--attach-row-h:      calc(23px * var(--fs-scale) + 9px);
 	--attach-cap:        6;
 	--attach-peek:       14px;
+	/* THE CRYSTAL'S FOOTER (UNBLOCK-49, D-20261027-02). Its file list is held to five
+	   tiles here and three on a phone, a lower bound than a chat's because the crystal
+	   above it is the page; past the bound the list scrolls in its own box and starts
+	   shut (daimond.js `crystalFilesOpen`). `--crystal-keep` is the share of the view
+	   the crystal is never squeezed below, whatever the footer holds. */
+	--crystal-files-cap:  5;
+	--crystal-keep:       50%;
 	/* One icon cell, sized so two rows of them come to the same 192px that six
 	   tiles do: one cap, one footer height, whichever view is showing. */
 	--attach-icon-h:     84px;
@@ -652,5 +659,5 @@
 /* A short window is mostly composer and chrome already, so six tiles there
    would be half of what is left. Four. */
 @media (max-height: 700px) {
-	:root { --attach-cap: 4; }
+	:root { --attach-cap: 4; --crystal-files-cap: 3; }
 }

@@ -1976,6 +1976,7 @@
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'Arquivos',
+	'dws.files_n': 'Arquivos ({n})',
 	'dws.count.one': '{n} item',
 	'dws.count.other': '{n} itens',
 	'dws.none_yet':    'Nada guardado aqui ainda',

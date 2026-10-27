@@ -2009,6 +2009,7 @@
 
 	// ── 这个 Diamond 的工作区 ──────────────────────────────────
 	'dws.title': '文件',
+	'dws.files_n': '文件（{n}）',
 	'dws.count.one':       '{n} 项',
 	'dws.count.other':     '{n} 项',
 	'dws.none_yet':        '这里还没有放东西',

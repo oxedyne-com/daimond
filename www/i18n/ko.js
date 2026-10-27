@@ -2015,6 +2015,7 @@
 
 	// ── 이 Diamond의 작업 공간 ─────────────────────────────────
 	'dws.title': '파일',
+	'dws.files_n': '파일 ({n})',
 	'dws.count.one':       '{n}개',
 	'dws.count.other':     '{n}개',
 	'dws.none_yet':        '아직 여기에 둔 것이 없습니다',

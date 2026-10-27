@@ -1988,6 +1988,7 @@
 
 	// ── This Diamond's workspace ───────────────────────────────
 	'dws.title': 'Fichiers',
+	'dws.files_n': 'Fichiers ({n})',
 	'dws.count.one': '{n} élément',
 	'dws.count.other': '{n} éléments',
 	'dws.none_yet':    'Rien de conservé ici pour l’instant',

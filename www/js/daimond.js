@@ -68704,12 +68704,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// pages that are part of this pursuit -- which is the same set the Workspace
 		// panel draws as a tree, and the same set its daimon may open. It used to
 		// call them artefacts, which named only how most of them got here.
-		markName(strip, links.length
-			? tn('dws.count', links.length)
-			: t('dws.none_yet'));
+		// "Files (N)" at every count, zero included: it heads the list it opens (UNBLOCK-49).
+		markName(strip, t('dws.files_n', { n: links.length }));
 		strip.title = t('dws.title');
-		// The fold is the device's, shared with a chat's workspace list (`footOpen`).
-		var wsOpen = footOpen('ws');
+		// The fold is this Diamond's, on this device, and unchosen it opens only when every
+		// file fits under the bound the stylesheet gives (`--crystal-files-cap`).
+		var cap = parseInt(getComputedStyle(list).getPropertyValue('--crystal-files-cap'), 10);
+		var wsOpen = crystalFilesOpen(diamondId, links.length, cap);
 		strip.setAttribute('aria-expanded', wsOpen ? 'true' : 'false');
 		if (!wsOpen) { list.style.display = 'none'; return; }
 		list.style.display = '';
@@ -70006,9 +70007,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// the view above, so it lives in the same kind of place and is held the same way: in
 	// memory as well as in storage, so the toggle still works where `localStorage` throws.
 	//
-	// ONE `ws` KEY FOR BOTH SURFACES. A chat's workspace list and a diamond's are the same
-	// component (`renderAttachFooter`), and a person who opened the one to see what the daimon
-	// may reach meant to see it everywhere; two keys would make them answer a question twice.
+	// `ws` is a chat's workspace list. A Diamond's crystal list shared it until UNBLOCK-49 and
+	// now has a fold of its own per Diamond (`crystalFilesOpen`, below).
 	var FOOT_KEYS = { ws: 'daimond-foot-ws', links: 'daimond-foot-links' };
 	var footNow   = {};
 	function footOpen(k) {
@@ -70021,6 +70021,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function setFootOpen(k, on) {
 		footNow[k] = !!on;
 		try { localStorage.setItem(FOOT_KEYS[k], on ? '1' : '0'); }
+		catch (e) { /* private mode: the choice holds for this session only */ }
+	}
+
+	// THE CRYSTAL'S FILE LIST IS PER DIAMOND (UNBLOCK-49, D-20261027-02: "the file list that
+	// grows underneath the crystal view can become so big as to completely obscure it"). It
+	// left the shared `ws` key above: one Diamond holding two hundred files and another
+	// holding three want different answers, and a device-wide fold gave them one. A chat's
+	// workspace list keeps `ws`.
+	var CRYSTAL_FILES_KEY = 'daimond-crystal-files:';
+	var crystalFilesNow   = {};
+	/// Is this Diamond's file list open on this device? Unchosen, it is open only while all
+	/// `n` files fit under `cap`, so a long list never arrives drawn over the crystal; a cap
+	/// the stylesheet did not give (NaN) answers shut.
+	function crystalFilesOpen(id, n, cap) {
+		if (crystalFilesNow[id] === undefined) {
+			var v = null;
+			try { v = localStorage.getItem(CRYSTAL_FILES_KEY + id); }
+			catch (e) { /* private mode: nothing stored */ }
+			if (v !== '1' && v !== '0') return n <= cap;   // no choice made: follow the count
+			crystalFilesNow[id] = v === '1';
+		}
+		return crystalFilesNow[id];
+	}
+	function setCrystalFilesOpen(id, on) {
+		crystalFilesNow[id] = !!on;
+		try { localStorage.setItem(CRYSTAL_FILES_KEY + id, on ? '1' : '0'); }
 		catch (e) { /* private mode: the choice holds for this session only */ }
 	}
 
@@ -71485,7 +71511,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// at zero rather than hiding: the control that attaches the first thing is inside
 		// the list, so a strip that hid itself hid the way in. See `renderArtefacts`.
 		var arte = document.createElement('button');
-		arte.className = 'arte-strip foot-toggle';
+		arte.className = 'arte-strip foot-toggle lead-disc';
 		arte.id = 'arte-strip';
 		arte.type = 'button';
 		arte.setAttribute('aria-expanded', 'false');
@@ -71494,10 +71520,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		arteList.className = 'arte-list';
 		arteList.id = 'arte-list';
 		arteList.style.display = 'none';
+		// The fold is this Diamond's own, on this device (`crystalFilesOpen`), so it reads its
+		// state off the strip rather than recomputing a default the person just overrode.
 		arte.addEventListener('click', function () {
-			setFootOpen('ws', !footOpen('ws'));
+			if (!currentDiamond) return;
+			setCrystalFilesOpen(currentDiamond.id, arte.getAttribute('aria-expanded') !== 'true');
 			renderArtefacts();
-			renderChatAttachments();
 		});
 
 		// NO INPUT BOXES HERE. The crystal used to carry two: a "steer" box, on

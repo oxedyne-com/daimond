@@ -9,6 +9,8 @@
    ============================================================ */
 
 @media (max-width: 760px) {
+	/* A phone's crystal is a few hundred pixels tall: three file tiles under it. */
+	:root { --crystal-files-cap: 3; }
 
 	/* The page itself never scrolls or drags: it is pinned to the DYNAMIC
 	   viewport (dvh — the space actually visible, excluding the browser's

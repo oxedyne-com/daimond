@@ -1418,9 +1418,13 @@ button.tag-pool { cursor: pointer; }
 /* R1: the crystal face shares the AI panel's own chat head (28px left,
    skin-daylight.css), not a dock panel's -- its body now matches that inset
    rather than the plain 20px every OTHER `.chead`-headed view used. */
-.crystal-body { flex: 1; overflow-y: auto; padding: 16px 20px 16px 28px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
+.crystal-body { flex: 1; min-height: var(--crystal-keep); overflow-y: auto; padding: 16px 20px 16px 28px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
 .crystal-body .crystal-empty { color: var(--text-muted); font-style: italic; }
-.crystal-controls { border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+/* The footer gives way to the crystal, never the reverse (UNBLOCK-49): it may shrink to
+   what the crystal leaves, and then scrolls, so no fold opened in it can bury the page. */
+.crystal-controls { border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+	flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.crystal-controls > * { flex: none; }
 
 /* THE COMPOSER ROW (D-20261014-08): under the composer on a desktop and above it on a
    phone (responsive.css), inside its border so it reads as part of the one control. ONE LINE AT EVERY WIDTH, never wrapped: each text slot
@@ -1616,6 +1620,9 @@ button.tag-pool { cursor: pointer; }
 .arte-strip:hover { color: var(--text-secondary); }
 .arte-list { margin: 0 0 6px;
 	border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); }
+/* The crystal's own list takes the crystal's bound, not a chat's: every tile body in it,
+   the daimon's group too, scrolls past `--crystal-files-cap` tiles. */
+#arte-list { --attach-cap: var(--crystal-files-cap); }
 .arte-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px;
 	min-height: var(--attach-row-h); box-sizing: border-box;
 	border-bottom: 1px solid var(--border); }

@@ -2016,6 +2016,7 @@
 
 	// ── この Diamond の作業領域 ────────────────────────────────
 	'dws.title': 'ファイル',
+	'dws.files_n': 'ファイル（{n}）',
 	'dws.count.one':       '{n} 件',
 	'dws.count.other':     '{n} 件',
 	'dws.none_yet':        'まだ何も置かれていません',
