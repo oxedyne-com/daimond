@@ -314,6 +314,9 @@ function build(harness) {
 		'function writeDiamondRecv(m) { ctx.writeRecv(m); }\n' +
 		'function readDiamondSeen() { return ctx.readSeen(); }\n' +
 		'function writeDiamondSeen(m) { ctx.writeSeen(m); }\n' +
+		// The equal-copy union record (diamondunioned.test.mjs asserts it): none, so every
+		// equal meeting here unions, as this suite's shapes expect.
+		'function readDiamondUnioned() { return {}; }\nfunction writeDiamondUnioned() {}\n' +
 		// The page's note writer and the pure module under it, as the page holds them.
 		'var DaimondSteering = window.DaimondSteering;\n' +
 		'var Wasm = ctx.wasm;\n' +

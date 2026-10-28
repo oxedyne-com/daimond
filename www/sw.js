@@ -49,6 +49,13 @@
  * app that will not open on a train. The instant the network answers again the
  * shell is fetched fresh, and a moved build empties the old cache.
  *
+ * A worker the browser has just started knows no id, and the server may not
+ * answer. It then takes the NEWEST cache as live (each is marked when its build
+ * was adopted) and deletes the rest, on activate as well as on the first offline
+ * fetch. Before 28 Oct it read no cache at all in that state, and an old build's
+ * cache that no answered stamp had swept outlived seventeen releases and booted
+ * on a reload (UNBLOCK-55).
+ *
  * IN DEVELOPMENT the cache is off. On a dev server the files change constantly
  * and the build id does not move at all, so a build-keyed cache would serve an
  * editor's last save for ever. The rule is by host, and `?cache=on` on the
@@ -129,6 +136,46 @@ async function sweep(keep) {
 		.map(function (n) { return caches.delete(n); }));
 }
 
+/// Where each build's cache records when this device last took it as live. Not a
+/// shell path, so it is never served; it is what lets a worker that has just
+/// started, with no network and no memory, tell the newest cache from an old one.
+const MARK = new URL('.daimond-at', BASE).href;
+
+/// When a cache's build was last live here: its mark, else the server's `Date` on
+/// its document (a cache written before marks existed), else 0.
+async function takenAt(name) {
+	try {
+		const c = await caches.open(name);
+		const m = await c.match(MARK);
+		if (m) return Number(await m.text()) || 0;
+		const d = await c.match(key(''));
+		const t = d ? Date.parse(d.headers.get('date') || '') : NaN;
+		return isNaN(t) ? 0 : t;
+	} catch (e) { return 0; }
+}
+
+/// The build id of the newest shell cache this device holds, or null.
+async function newest() {
+	const names = (await caches.keys()).filter(function (n) { return n.indexOf(PREFIX) === 0; });
+	let best = null, at = -1;
+	for (const n of names) {
+		const t = await takenAt(n);
+		if (t > at) { best = n; at = t; }
+	}
+	return best ? best.slice(PREFIX.length) : null;
+}
+
+/// With the server unreachable, take the newest cache as live and drop the rest.
+/// Ranked every time rather than trusting `live`: a worker that has just started
+/// remembers nothing, and one kept alive by a busy tab may remember a build a
+/// later instance has moved past. Without this an old build's cache outlived
+/// every deploy that ran while no stamp was answered.
+async function recall() {
+	const b = await newest();
+	if (b) { await sweep(b); live = b; }
+	return live;
+}
+
 /// Take `b` as the live build. A DIFFERENT id empties the cupboard before it is
 /// recorded, so there is no instant at which `live` names a build whose
 /// predecessor's files are still reachable.
@@ -136,6 +183,10 @@ async function adopt(b) {
 	if (b !== live) {
 		await sweep(b);
 		live = b;
+		try {
+			const c = await caches.open(PREFIX + b);
+			await c.put(MARK, new Response(String(Date.now())));
+		} catch (e) { /* no store: there is nothing to rank either */ }
 	}
 	seen = Date.now();
 }
@@ -196,6 +247,7 @@ async function serve(req, p, done) {
 			// shell this device saw the server offer. Guarded on its own -- a
 			// browser with no usable Cache Storage (some private modes, a full disk)
 			// must surface the network error, not take the whole app down with it.
+			try { await recall(); } catch (e) { /* no store; the failure stands */ }
 			if (live) {
 				try {
 					const c = await caches.open(PREFIX + live);
@@ -223,7 +275,10 @@ self.addEventListener('install', function () {
 self.addEventListener('activate', function (ev) {
 	ev.waitUntil((async function () {
 		await self.clients.claim();
-		await stamp();			// know the build before serving a byte
+		// Know the build before serving a byte, and empty every older build's
+		// cache NOW: from the server when it answers, else by keeping only the
+		// newest this device holds. Either way one build's shell survives.
+		if (!(await stamp())) await recall();
 	})());
 });
 

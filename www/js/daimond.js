@@ -6360,6 +6360,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// (S-SYNC #4). Advanced on every successful push (`commitDiamondBaseline`) and
 	// after every import.
 	var SYNC_DIAMONDBASE_KEY = 'daimond-diamond-base';
+	var SYNC_DIAMONDUNION_KEY = 'daimond-diamond-unioned';	// id -> the equal copy (`key@stamp`) already unioned here
 	var SYNC_SKIP_ROOT_DIRS  = { diamonds: 1 };		// Daimond's own per-diamond store.
 
 	/// Is this path the app's own state (`system/agents`, `system/guide`, `system/usage`)
@@ -8671,6 +8672,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// `diamondTwoSided`), and it seeds `daimond-diamond-recv` once, on the update. An
 	// unknown base reads as "changed", the conservative direction.
 	function readDiamondBase() { return readJson(SYNC_DIAMONDBASE_KEY, {}); }
+
+	// ── The equal copies already unioned (UNBLOCK-55, 28 Oct 2026) ───
+	// An equal-stamp arrival whose bytes differ from this device's is fetched from
+	// chunks and unioned. Nothing recorded that it had been, so EVERY pull fetched
+	// every such Diamond again, chunk by chunk: on gilgamesh a conflict pull took
+	// 256 s, longer than the other device's push interval, and the retry was always
+	// one version behind. A union of the same copy is idempotent, so it is done once.
+	function readDiamondUnioned() { return readJson(SYNC_DIAMONDUNION_KEY, {}); }
+	function writeDiamondUnioned(map) {
+		try { localStorage.setItem(SYNC_DIAMONDUNION_KEY, JSON.stringify(map || {})); }
+		catch (e) { /* best effort: an unrecorded union is only fetched again */ }
+	}
 	function writeDiamondBase(map) {
 		try { localStorage.setItem(SYNC_DIAMONDBASE_KEY, JSON.stringify(map || {})); }
 		catch (e) { /* best effort: an unknown base only makes the merge more cautious */ }
@@ -10561,6 +10574,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// an import lays the two sides on the same copy, and an equal-stamp arrival means
 		// they already hold it.
 		var dbase = readDiamondBase(), baseDirty = false;
+		var unioned = readDiamondUnioned(), unionDirty = false;
 		// And each copy's lineage and what this device received (lanes DIA, DIA2): read
 		// once for the decisions, and laid down afresh at each import below, and at an
 		// equal-stamp meeting only where a union then builds on that copy.
@@ -10641,7 +10655,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// agree on now, so the fork point moves to it (S-SYNC #4).
 					dbase[r.id] = diamondStamp(r); baseDirty = true;
 					var skipUnion = false;
-					if (r.dataRef && r.dataRef.key && window.DaimondCloud && DaimondCloud.contentGet) {
+					var ucopy = (r.dataRef && r.dataRef.key) ? r.dataRef.key + '@' + diamondStamp(r) : '';
+					if (ucopy && unioned[r.id] === ucopy) skipUnion = true;		// this copy is in already
+					else if (r.dataRef && r.dataRef.key && window.DaimondCloud && DaimondCloud.contentGet) {
 						try {
 							var sd = DaimondCloud.contentGet('@d/' + r.id);
 							if (sd && sd.key && sd.key === r.dataRef.key) skipUnion = true;
@@ -10667,6 +10683,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 								} catch (e) { lj = null; }		// waited too long, or would not join: next round
 							}
 							if (lj) noteLogsHeld(r.id, mine.name, !!lj.held);
+							// Only a union that finished is recorded: a held or refused log join
+							// is owed again next round.
+							if (ucopy && (app.union_logs ? (lj && !lj.held) : true)) { unioned[r.id] = ucopy; unionDirty = true; }
 							var joined = !!(lj && !lj.held && lj.here > 0);
 							if (lj && !lj.held && lj.arriving > 0) changed = true;
 							if (joined) trail('sync log joined', r.id + ' files ' + lj.files + ' rows +' + lj.here + '/+' + lj.arriving);
@@ -10843,6 +10862,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// records agreement without replacing anything, and losing that record would
 		// have the next resume-pull read a one-sided edit as two-sided (S-SYNC #4).
 		if (baseDirty) writeDiamondBase(dbase);
+		if (unionDirty) writeDiamondUnioned(unioned);
 		if (modelsMoved) renderEffortStep();		// the step on a Diamond's face reads the record
 		if (!changed) { if (modelsMoved) bumpDiamonds(); return; }
 		bumpDiamonds();                            // tell the other TABS
