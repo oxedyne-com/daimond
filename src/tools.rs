@@ -22489,7 +22489,7 @@ impl Tool {
             Tool::PendingRaise => "Put an alert on the user's Pending panel, the one place they look for alerts, on every device; do not also post it in your chat. Raising a 'key' again updates that item in place. Clear it with pending_clear once the condition is over.",
             Tool::PendingClear => "Take this Diamond's alert off the user's Pending panel, on every device, by its 'key'.",
             Tool::PendingNone  => "Pending-only turns: nothing needs the user, so call this, then end with no reply.",
-            Tool::StateSet     => "Set one '## key' section of STATE.md; empty text drops it. Past 4 KiB the oldest go to the archive.",
+            Tool::StateSet     => "Set one '## key' section of STATE.md; empty text drops it; 'replaces' renames one. Past 4 KiB the oldest go to the archive.",
             Tool::Compound    => "Several READS in one round, answered in order, each under a '--- [n]' header. Each op in 'ops' names one read and carries that read's own arguments: {\"op\":\"list\",\"path\":\"src\"}, {\"op\":\"read\",\"paths\":[\"a.js\",\"b.js\"]}, {\"op\":\"search\",\"query\":\"fmt\",\"glob\":\"**/*.js\"}. Use it whenever reads go together. A refused op keeps its slot and says why; the rest still run. The ops share one byte budget, and the header names any op it cut. READS only.",
         }
     }
@@ -22618,7 +22618,7 @@ impl Tool {
             Tool::PendingRaise => r#"{"type":"object","properties":{"key":{"type":"string","description":"The alert's name, e.g. 'imap-login': letters, digits, '-', '_', '.'; at most 64."},"headline":{"type":"string","description":"What happened: one line, at most 120."},"detail":{"type":"string","description":"The fix, at most 600."},"needs":{"type":"boolean","description":"true if the user must act (counts on the badge); false shows it quietly for 24 hours."}},"required":["key","headline","needs"]}"#,
             Tool::PendingClear => r#"{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}"#,
             Tool::PendingNone  => r#"{"type":"object","properties":{}}"#,
-            Tool::StateSet     => r#"{"type":"object","properties":{"key":{"type":"string"},"text":{"type":"string"}},"required":["key","text"]}"#,
+            Tool::StateSet     => r#"{"type":"object","properties":{"key":{"type":"string"},"text":{"type":"string"},"replaces":{"type":"string"}},"required":["key","text"]}"#,
             Tool::Compound => r#"{"type":"object","properties":{"ops":{"type":"array","minItems":1,"maxItems":12,"description":"The reads, in order. An op's other keys are that read's own arguments.","items":{"type":"object","properties":{"op":{"type":"string","enum":["list","read","search","glob","outline"]},"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"pattern":{"type":"string"},"query":{"type":"string"},"glob":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"},"end":{"type":"integer"},"context":{"type":"integer"},"depth":{"type":"integer"},"name":{"type":"string"}},"required":["op"]}},"budget":{"type":"integer","description":"Most bytes all ops return (default 32768, most 80000)."}},"required":["ops"]}"#,
         }
     }
@@ -26485,7 +26485,9 @@ impl Tool {
         if let Some(b) = &now {
             lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(b));
         }
-        let next = crate::state_md::set(&was, &key, &text);
+        // A rename's retired section goes out in this same write (UNBLOCK-52): whole, or not at all.
+        let replaces = extract_json_string(args_json, "replaces");
+        let next = crate::state_md::set_replacing(&was, &key, &text, replaces.as_deref());
         let args = fmt!("{{\"path\":\"{}\",\"content\":\"{}\"}}",
             crate::llm::json_escape(&path), crate::llm::json_escape(&next));
         Self::file_write_page(&args, ctx).await
@@ -28722,8 +28724,13 @@ impl Tool {
     ///
     /// # Arguments
     /// * `key` - As the captures name it: normalised, or absolute on the machine.
+    ///
+    /// **Never in [`Mode::Bypass`]** (UNBLOCK-52), whose promise is that nothing is asked: there
+    /// the protection is the automatic guards -- the copy kept before the change, the stale-read
+    /// guard, the turn's bound and Undo -- not a question.  It asked there, on the Diamond's own
+    /// `STATE.md`, and a "do not ask again" left a two-step rewrite half done.
     async fn asks_first<H: Host>(ctx: &ToolContext<H>, dia: &str, key: &str, now: &[u8]) -> bool {
-        ctx.by_model && ctx.restoring == 0
+        ctx.by_model && ctx.restoring == 0 && !matches!(mode(), Mode::Bypass)
             && (key.starts_with('/') || stored_is_mark(dia, key))
             && ctx.host().store().authored_by_user(dia, key, now, None).await
     }
@@ -28766,7 +28773,9 @@ impl Tool {
         -> (bool, Option<Vec<u8>>)
     {
         let machine = key.starts_with('/');
-        if !ctx.by_model || ctx.restoring != 0 || !(machine || stored_is_mark(dia, &normalise(key))) {
+        if !ctx.by_model || ctx.restoring != 0 || matches!(mode(), Mode::Bypass)
+            || !(machine || stored_is_mark(dia, &normalise(key)))
+        {
             return (false, None);
         }
         if folder {

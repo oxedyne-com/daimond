@@ -18068,7 +18068,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function appendHandoff(ranOn, meta) {
 		var dl = deviceLabelFor(ranOn);
 		if (!dl) return;
-		var line = tOr('chat.handed_off', 'Handed off to {name}', { name: dl });
+		// Past tense: the turn is over. "{name} is on it" read as a progress line left behind (UNBLOCK-56).
+		var line = tOr('chat.ran_on', 'Ran on {name}', { name: dl });
 		var tile = buildTile('handoff', { expanded: false, who: line, ts: meta && meta.ts });
 		tile.classList.add('chat-msg-handoff');
 		var body = handoffBody('peer', dl, meta);
@@ -18718,7 +18719,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// ROLL UP A RUN OF TILES OF ONE CLASS. A rollable tile joins the box standing last
 		// in the thread when that box is of its class; anything else lying between closes
 		// the run, as it must.
-		var cls = node.classList && node.classList.contains('ctile') && TILE_ROLL[node.dataset.t];
+		// A RESULT IS NOT A STEP (UNBLOCK-56): the Files list a turn leaves (`ctile-result`) stands on
+		// its own however it is ordered. A runner's Files row sorts beside its answer by (ts, mid),
+		// and one stamped at the answer's time drew straight after the steps, rolled into them, unseen.
+		var cls = node.classList && node.classList.contains('ctile') && !node.classList.contains('ctile-result')
+			&& TILE_ROLL[node.dataset.t];
 		if (cls) {
 			var prev = lastContent();
 			if (prev && prev.classList.contains('crollup') && prev._type === cls && prev.id !== 'wire-head') {
@@ -28248,7 +28253,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// intention not a claim, so seq 217's honesty holds. Generic only when no target.
 		var dl   = handoffClaimLabel(m);				// the real lease holder, or ''
 		var tgt  = (dl || st === 'ending') ? '' : handoffTargetLabel(m);	// the chosen target, pre-claim
-		var line = dl  ? tOr('chat.handed_off', 'Handed off to {name}', { name: dl })
+		var line = dl  ? tOr('chat.ran_on', 'Ran on {name}', { name: dl })
 			: tgt ? t('turn.peer_sending_named', { name: tgt })
 			:       tOr('chat.who_handoff', 'Hand-off');
 		// ONE STATUS LINE WHILE IT RUNS, as a Here turn has (owner, Nancy run: "the double
@@ -67952,9 +67957,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (m.mid === String(rec.run) + '-end') end = i;
 			if (m.mid === turnId || m.iturn === turnId) last = i;
 		}
-		var ts = rec.ts || Date.now();
-		if (end >= 0 && ms[end].ts) ts = Math.min(ts, ms[end].ts - 1);
+		// UNDER ITS ANSWER, as a Here turn's (UNBLOCK-56): past every row of the turn but its end, since
+		// a merge orders by (ts, mid) and `-files` sorts before `-final` on a tie. A runner stamps its
+		// end a millisecond after its answer, so `end - 1` was the answer's own time.
+		var ts = 0;
+		for (var k = 0; k < ms.length; k++) {
+			var r = ms[k];
+			if (r && k !== end && (r.mid === turnId || r.iturn === turnId) && +r.ts > ts) ts = +r.ts;
+		}
+		ts = ts ? ts + 1 : (rec.ts || Date.now());
 		row.ts = ts;
+		if (end >= 0 && !(ts < (+ms[end].ts || 0))) end += 1;		// on or past the end's time: after it
 		if (end >= 0) ms.splice(end, 0, row);
 		else if (last >= 0) ms.splice(last + 1, 0, row);
 		else ms.push(row);

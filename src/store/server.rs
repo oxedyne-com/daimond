@@ -2494,6 +2494,7 @@ async fn state_read(id: &str, root: FileRoot, path: &str)
 async fn store_file_read(id: &str, path: &str, max: u32) -> Outcome<Option<(Vec<u8>, u64)>> {
     let root = FileRoot::Opfs;
     res!(own_area("store_file_read", id, root, path));
+    diamond::heal_lost_meta(id, path).await;
     match own::user_read_file_capped(root, path, max).await {
         Ok((b, total))  => Ok(Some((b, total as u64))),
         Err(e)          => match own::user_exists(root, path).await {
@@ -2719,6 +2720,7 @@ fn late_refusal(path: &str) -> Error<ErrTag> {
 /// name, whether it is a folder, its length and its write time in milliseconds where known.
 async fn store_file_list(id: &str, dir: &str) -> Outcome<Vec<(String, bool, u64, Option<u64>)>> {
     res!(own_area("store_file_list", id, FileRoot::Opfs, dir));
+    diamond::heal_lost_meta(id, dir).await;
     let listed = res!(own::list_dir_stamped(dir).await);
     Ok(listed.into_iter()
         .map(|(name, is_dir, len, when)| (name, is_dir, len,

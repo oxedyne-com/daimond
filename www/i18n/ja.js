@@ -3595,7 +3595,6 @@
 	'chat.who_you': 'あなた',
 	'chat.who_daimond': 'Daimond',
 	'chat.ran_on': '{name} で実行',
-	'chat.handed_off': '{name} が対応中',
 	'chat.ran_here_failed': 'ここで実行——{name} への引き継ぎが完了しませんでした',
 	'chat.ran_here_refused': 'ここで実行——リレーが引き継ぎを拒否しました',
 	'chat.ran_here_busy': 'ここで実行——{name} は別のチャットで使用中でした',

@@ -3232,6 +3232,11 @@
 	/// whether its lease says so (`queueOn`) or its beat names the chat (`busyForRec`).
 	function recBusy(rec, id, o) {
 		if (!rec || !(rec.busy > 0)) return false;
+		// A NATIVE RUNNER IS NEVER BUSY BY ITS ROW (UNBLOCK-57). The row's `busy` is the gateway's sum
+		// over the machine's origins, and a native runner beats none: it is the depth of the browser
+		// tabs open on that machine. The runner runs its own pool beside them and queues past it, so
+		// a tab's turn sent the person's next turn to run here "busy with another chat".
+		if (rec.kind === 'runner') return false;
 		if (o && o.queueOn && String(o.queueOn) === String(id)) return false;
 		return busyForRec(rec, o && o.chatId) > 0;
 	}

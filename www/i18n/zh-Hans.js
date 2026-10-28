@@ -3583,7 +3583,6 @@
 	'chat.who_you': '你',
 	'chat.who_daimond': 'Daimond',
 	'chat.ran_on': '在 {name} 上运行',
-	'chat.handed_off': '{name} 正在处理',
 	'chat.ran_here_failed': '在这里运行——移交给 {name} 未完成',
 	'chat.ran_here_refused': '在这里运行——中继拒绝了移交',
 	'chat.ran_here_busy': '在这里运行——{name} 正忙于另一个聊天',

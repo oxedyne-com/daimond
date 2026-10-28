@@ -3593,7 +3593,6 @@
 	'chat.who_you': '당신',
 	'chat.who_daimond': 'Daimond',
 	'chat.ran_on': '{name}에서 실행됨',
-	'chat.handed_off': '{name}이(가) 처리 중',
 	'chat.ran_here_failed': '여기서 실행됨 — {name}으로의 인계가 끝나지 않았어요',
 	'chat.ran_here_refused': '여기서 실행됨 — 릴레이가 인계를 거부했어요',
 	'chat.ran_here_busy': '여기서 실행됨 — {name}이(가) 다른 채팅으로 바빴어요',

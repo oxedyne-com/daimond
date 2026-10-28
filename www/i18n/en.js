@@ -555,8 +555,7 @@
 	// own now (see chat.handed_off), drawn in the flow above the answer when the
 	// turn ran on another device; `chat.ran_on` is the older header-meta phrasing,
 	// kept for any path that still reads it.
-	'chat.ran_on':         'ran on {name}',
-	'chat.handed_off':     '{name} is on it',
+	'chat.ran_on':         'Ran on {name}',
 	// A hand-off that fell back to this device: it was sent to {name}, that device
 	// never finished, and the turn ran here. Said so provenance is never silent.
 	'chat.ran_here_failed': 'Ran here — hand-off to {name} didn’t finish',

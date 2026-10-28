@@ -1,1 +1,1 @@
-{"build":"581759019141","note":"Devices keep up with each other, a reload never lands on an old build, and a dropped connection cannot lose an answer."}
+{"build":"5f30cf6067ac","note":"Daimons can update their notes, runner turns show changed files, and a free runner is no longer skipped as busy."}

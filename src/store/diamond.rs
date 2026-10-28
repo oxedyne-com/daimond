@@ -900,6 +900,31 @@ async fn rebuild_meta(id: &str) -> Option<Meta> {
     Some(meta)
 }
 
+/// Rebuild `id`'s lost `meta.json` where a run's own read or listing names it (UNBLOCK-52).
+///
+/// [`read_meta`] rebuilds on the store's own doors, but a run's file tools reach the store
+/// through `store_file_read` and `store_file_list`, which read the bytes and never the record:
+/// on the runner a daimon looking at `.daimond/meta.json` found nothing, and its `file_write`
+/// there is refused by design (`.daimond/` is the store's).  So the rebuild happens on the read.
+/// Only where the path is the metadata itself or the folder holding it, and only where the file
+/// is absent; a file that stands is never touched here.  Best-effort: a rebuild that cannot be
+/// made leaves the read to answer as it would have.
+///
+/// # Arguments
+/// * `id` - The Diamond.
+/// * `path` - The store key the run named, file or folder.
+pub async fn heal_lost_meta(id: &str, path: &str) {
+    let meta = meta_path(id);
+    let dir = fmt!("{}/{}", diamond_dir(id), STORE_DIR);
+    let p = path.trim_matches('/');
+    if p != meta && p != dir {
+        return;
+    }
+    if let Ok(false) = own::exists(&meta).await {
+        let _ = rebuild_meta(id).await;
+    }
+}
+
 /// Write a Diamond's metadata.
 async fn write_meta(id: &str, meta: &Meta) -> Outcome<()> {
     own::write_file(&meta_path(id), meta.to_json().as_bytes()).await

@@ -264,6 +264,19 @@ mod tests {
         assert_eq!(c.host().fs().writes(), seeded);
     }
 
+    /// UNBLOCK-52: in Bypass nothing is asked, his file included; the change lands, and the
+    /// automatic guards (the kept copy, the bound) are what protect it.
+    #[tokio::test]
+    async fn u52_an_edit_of_his_file_in_bypass_asks_nobody() {
+        let c = his_letter("daimond_u52_bypass");
+        let was = crate::tools::set_mode(crate::tools::Mode::Bypass);
+        let got = said(Tool::FileEdit, EDIT, &c).await;
+        crate::tools::set_mode(was);
+        assert!(c.host().ui().changes_asked().is_empty(), "Bypass asked: {:?}", got);
+        assert_eq!(c.host().fs().peek(FileRoot::Workspace, "Bio/letter.md").as_deref(),
+            Some(&b"Dear Bob"[..]), "the change did not land: {:?}", got);
+    }
+
     /// Allow: exactly the change he was shown lands, over the bytes he was shown.
     #[tokio::test]
     async fn an_edit_of_his_file_allowed_writes_the_shown_change() {

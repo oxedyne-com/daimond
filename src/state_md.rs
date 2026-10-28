@@ -131,6 +131,37 @@ pub fn set(text: &str, key: &str, body: &str) -> String {
 	render(&secs)
 }
 
+/// [`set`], taking out the section `replaces` in the same write (UNBLOCK-52): a section renamed,
+/// say "Code base size" to "Code base size (2026-10-28)", is one landing, whole or not at all.
+/// Two `state_set` calls made it two writes, and a second one declined or failed left both
+/// sections standing.  The new section takes the old one's place in the file where it is not
+/// already there; `replaces` naming `key`, or no section, is [`set`] alone.
+///
+/// # Arguments
+/// * `text` - The file as it stands.
+/// * `key` - The section's heading words.
+/// * `body` - What goes under the heading; empty takes `key` out as well.
+/// * `replaces` - The heading words of a section this write retires, if any.
+pub fn set_replacing(text: &str, key: &str, body: &str, replaces: Option<&str>) -> String {
+	let clean = |k: &str| k.trim().trim_start_matches('#').trim().to_string();
+	let new = clean(key);
+	let old = match replaces.map(clean) {
+		Some(o) if o != new => o,
+		_                   => return set(text, key, body),
+	};
+	let mut secs = parse(text);
+	let at = match secs.iter().position(|s| s.key == old) {
+		Some(i) => i,
+		None    => return set(text, key, body),
+	};
+	match !body.trim().is_empty() && !secs.iter().any(|s| s.key == new) {
+		// Its heading, so `set` below finds it there and writes the body in its place.
+		true  => secs[at] = Section { text: fmt!("## {}\n\n", new), key: new },
+		false => { secs.remove(at); },
+	}
+	set(&render(&secs), key, body)
+}
+
 /// The touched record as it is stored: `<ms>\t<key>` a line.  A line that does not read is
 /// skipped; the record is a hint about age, and a damaged one makes a section look old, no more.
 pub fn touched_parse(text: &str) -> BTreeMap<String, u64> {
@@ -693,5 +724,23 @@ mod tests {
 		assert_eq!(m, touched_parse(&touched_render(&m)));
 		assert_eq!("2026-10-17", day_of(1_792_227_830_035));
 		assert_eq!("1970-01-01", day_of(0));
+	}
+
+	/// UNBLOCK-52: a section renamed is one write, in its place, and never leaves both standing.
+	#[test]
+	fn u52_a_rename_is_one_write_and_leaves_no_duplicate() {
+		let was = "# S\n\n## Next\n\nn\n\n## Code base size\n\nold\n\n## Tail\n\nt\n\n";
+		let now = set_replacing(was, "Code base size (2026-10-28)", "new", Some("Code base size"));
+		let keys: Vec<String> = parse(&now).into_iter().map(|s| s.key).collect();
+		assert_eq!(keys, vec!["", "Next", "Code base size (2026-10-28)", "Tail"], "{}", now);
+		assert!(now.contains("new") && !now.contains("old"), "{}", now);
+		// The new key already there: the old one goes, the new one is set.
+		let both = set(was, "Code base size (2026-10-28)", "mid");
+		let now = set_replacing(&both, "Code base size (2026-10-28)", "new", Some("## Code base size"));
+		let keys: Vec<String> = parse(&now).into_iter().map(|s| s.key).collect();
+		assert_eq!(keys, vec!["", "Next", "Tail", "Code base size (2026-10-28)"], "{}", now);
+		// No such old section, or the same key: set alone.
+		assert_eq!(set_replacing(was, "Next", "m", Some("Gone")), set(was, "Next", "m"));
+		assert_eq!(set_replacing(was, "Next", "m", Some("Next")), set(was, "Next", "m"));
 	}
 }

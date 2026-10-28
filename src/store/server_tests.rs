@@ -1977,3 +1977,23 @@ fn u2_run_binding_refuses_his_words() {
     assert!(unbound_id(&red).is_none(), "break: rule run_words off still refused: {:?}", red);
     eprintln!("BREAK RUN WORDS: run_words off, a run is served his words");
 }
+
+/// UNBLOCK-52: a run's own read of a Diamond's lost `meta.json` rebuilds it from the crystal, as
+/// the store's own doors do, and a listing of `.daimond/` shows it; the daimon cannot write it.
+#[tokio::test]
+async fn u52_a_runs_read_of_a_lost_meta_rebuilds_it() {
+    use crate::store::native::install;
+    let id = "19faba2f2212";
+    let _ = install(NativeBackend::Mem(MemBackend::default()));
+    let crystal = "{\"title\":\"Daimond Self-dev\"}";
+    let _ = own::write_file(&fmt!("diamonds/{}/crystal.json", id), crystal.as_bytes()).await;
+    let _ = own::write_file(&fmt!("diamonds/{}/.daimond/state-touched.tsv", id), b"x\t1\n").await;
+    let listed = store_file_list(id, &fmt!("diamonds/{}/.daimond", id)).await;
+    let read = store_file_read(id, &fmt!("diamonds/{}/.daimond/meta.json", id), 65536).await;
+    let _ = install(NativeBackend::Closed);
+    let listed = listed.expect("the listing");
+    assert!(listed.iter().any(|(n, _, _, _)| n == "meta.json"),
+        "a listing of .daimond/ does not show the rebuilt meta.json: {:?}", listed);
+    let (b, _) = read.expect("the read").expect("meta.json is still missing to a run's read");
+    assert!(String::from_utf8_lossy(&b).contains("Daimond Self-dev"));
+}

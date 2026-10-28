@@ -89,7 +89,8 @@ const A = page(), B = page();
 }
 {
 	const s = offer(A, answer({ busy: 1, busy_chats: ['other'] }), ENGINE);
-	check('O8 a runner busy with another chat is not offered', s.runner === null, JSON.stringify(s));
+	// UNBLOCK-57: the row's `busy` is the tabs' depth on that machine; the native runner runs its own pool.
+	check('O8 a runner whose machine is busy with another chat is still offered', !!s.runner, JSON.stringify(s));
 }
 {
 	// A tab runner carries no engine id and is judged as before: the gate is the native kind's.

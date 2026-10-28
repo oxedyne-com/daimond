@@ -348,8 +348,8 @@ function offerChecks(M) {
 	// SEATWHY-ALL: a starred runner that listens and is still passed over always says why.
 	check('SEATWHY-ALL an offered runner names no reason', !own.why, JSON.stringify(own));
 	const busy = abi({ busy: 1 }, ['an']);
-	check('SEATWHY-ALL a busy starred runner: runner-busy', !busy.runner && busy.why === 'runner-busy'
-		&& busy.runnerId === 'rn', JSON.stringify(busy));
+	// UNBLOCK-57: a native runner is never passed over for the busy its machine's tabs beat.
+	check('SEATWHY-ALL a starred runner on a busy machine is offered', !!busy.runner && !busy.why, JSON.stringify(busy));
 	const phone = abi({ mobile: true }, ['an']);
 	check('SEATWHY-ALL a starred runner that is a phone: runner-phone', !phone.runner && phone.why === 'runner-phone',
 		JSON.stringify(phone));
