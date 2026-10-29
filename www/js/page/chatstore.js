@@ -10,9 +10,14 @@ import { drainHeldQueues } from './steer.js';
 import { Workers } from './workers.js';
 import { signalDiamondChanged } from './links.js';
 import { BACKUP_VERSION, diag, toast } from './passkey_phrase.js';
-import { chatDisplayName, chatOpening, crystalArrived, destroyChat, destroyDiamond, diamondApp,
-	dispatchedAnswerPresent, loadDiamonds, renderEmptyState, renderHistory, renderSessionList,
-	setCurrent, setDiamondWhen, showCentre, tOr, updateMeters } from './rest.js';
+import { dispatchedAnswerPresent, renderHistory } from './turns.js';
+import { destroyChat, setCurrent, updateMeters } from './chats.js';
+import { chatDisplayName, chatOpening, renderSessionList } from './tilestyle.js';
+import { diamondApp, loadDiamonds } from './diamonds.js';
+import { destroyDiamond, setDiamondWhen, showCentre } from './agentspanel.js';
+import { crystalArrived } from './crystal.js';
+import { tOr } from './settingsui.js';
+import { renderEmptyState } from './rest.js';
 // page-split: end imports
 export let ChatStore; // page-split: hoisted
 

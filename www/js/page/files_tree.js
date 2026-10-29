@@ -14,13 +14,18 @@ import { DaimondPanels, isMobile } from './layout.js';
 import { signalLinksChanged } from './links.js';
 import { toast } from './passkey_phrase.js';
 import { FsaDB } from './termpanel.js';
-import { INSTRUCTIONS_FILE, Instructions, PROMPTS_DIR, Prompts, abortTurn, askUseHere, attachChanged,
-	attachFocus, chatAttachFind, chatAttachList, chatAttachToggle, chatBounds, chatConfirmHere,
-	chatDisplayName, chatWaiting, confirmDialog, confirmMarkHere, diamondApp, dropRefused, folderOpen,
-	grantHoldHere, heldLink, isUsersMark, linkAmong, linkTo, loadDiamonds, markForce, markHere,
-	markInForce, markWaiting, marksNotSaved, noticeDialog, ownLinkById, ownLinks, parseRef, readRecent,
-	refReachable, refWhere, removeLinkHere, renderArtefacts, rootHere, rootedRef, samePlace,
-	shareRefused, toolReason, undoAble, versionsPath, watchedPath } from './rest.js';
+import { chatBounds, confirmDialog, noticeDialog, readRecent } from './consent.js';
+import { abortTurn, undoAble, versionsPath } from './chats.js';
+import { chatDisplayName } from './tilestyle.js';
+import { INSTRUCTIONS_FILE, Instructions, PROMPTS_DIR, Prompts, folderOpen } from './pending.js';
+import { diamondApp, loadDiamonds } from './diamonds.js';
+import { watchedPath } from './agentspanel.js';
+import { askUseHere, attachChanged, attachFocus, chatAttachFind, chatAttachList, chatAttachToggle,
+	chatConfirmHere, chatWaiting, confirmMarkHere, dropRefused, grantHoldHere, heldLink, isUsersMark,
+	linkAmong, linkTo, markForce, markHere, markInForce, markWaiting, marksNotSaved, ownLinkById,
+	ownLinks, parseRef, refReachable, refWhere, removeLinkHere, renderArtefacts, rootHere, rootedRef,
+	samePlace, shareRefused } from './marks.js';
+import { toolReason } from './rest.js';
 // page-split: end imports
 export let showLineNos; // page-split: hoisted
 let sysShown, knowing, drawnKey, restShown; // page-split: hoisted

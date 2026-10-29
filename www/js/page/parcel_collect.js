@@ -12,8 +12,10 @@ import { Files } from './files_view.js';
 import { renderSeatSwitch } from './sourcemenu.js';
 import { diag } from './passkey_phrase.js';
 import { FsaDB } from './termpanel.js';
-import { INSTRUCTIONS_FILE, Instructions, Pending, Prompts, buildId, diamondApp, diamondModels,
-	instructionsSeed, tOr } from './rest.js';
+import { buildId } from './turns.js';
+import { INSTRUCTIONS_FILE, Instructions, Pending, Prompts, instructionsSeed } from './pending.js';
+import { diamondApp, diamondModels } from './diamonds.js';
+import { tOr } from './settingsui.js';
 // page-split: end imports
 export let _lastConflicts; // page-split: hoisted
 

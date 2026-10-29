@@ -23,8 +23,11 @@ import { DaimondPanels } from './layout.js';
 import { renderEffortStep } from './sourcemenu.js';
 import { signalLinksChanged } from './links.js';
 import { MANIFEST_LOST_NAMED, clog, diag, heapNote, mergeLedgers, toast } from './passkey_phrase.js';
-import { DIAMOND_LOCK_WAIT, adoptDiamondModel, diamondApp, dropChatApp, dropRefused, holdDiamond,
-	inheritGate, loadDiamonds, notePrunes, removeLinkHere, tOr } from './rest.js';
+import { DIAMOND_LOCK_WAIT, holdDiamond } from './pending.js';
+import { adoptDiamondModel, diamondApp, inheritGate, loadDiamonds } from './diamonds.js';
+import { notePrunes } from './crystal.js';
+import { dropChatApp, dropRefused, removeLinkHere } from './marks.js';
+import { tOr } from './settingsui.js';
 // page-split: end imports
 let diamondCounter; // page-split: hoisted
 

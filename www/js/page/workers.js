@@ -13,19 +13,24 @@ import { appSpend, chatWorkerModel, recordSpend, runTurn, turnMeter, updateSpend
 import { Files } from './files_view.js';
 import { WakeLock, isPassingFailure, revealAgents } from './layout.js';
 import { diag } from './passkey_phrase.js';
-import { DEFAULT_SPEND_CAP, FOLLOW_MAX_MS, Instructions, Pending, Prompts, SYSTEM_PROMPT, _lastSteer,
-	actBtn, adoptFork, agentAsk, agentBudget, agentDiamondChip, agentMatches, agentRunSpend,
-	agentSheetDots, agentSquareFill, agentTagsOf, agentWaiting, appendAssistantText, appendNote,
-	applyCrystalCap, applyEffort, applyFoldSettings, applyLiveness, applyProviderRouting,
-	applyRoundLimit, applySight, blindLine, chatShowingOrRunning, chatSpendNode, configuredNow,
-	confirmDialog, daimonChat, diamondApp, diamondCanRun, diamondModels, diamondVisionModel,
-	diamondWorkerModel, dsRounds, endingParts, ensureWantMinor, finalizeAssistant, firstAsk,
-	foldDeltaInto, forkForget, forkable, giveWorkerWeb, imagesModelFor, markAlone, migrateWorkerHold,
-	noteRecent, noteWorkerProv, noticeDialog, readBtn, renderAgentFilter, renderAgentGrid,
-	renderAgentTagPool, repaintPause, roundMetaRow, runSteer, scopeAgentTo, scopeChatTo, setAgentPinned,
-	setAgentTagFilter, setCrystalStatus, setWorkersHeld, settleKind, startedKind, tOr, tagChip,
-	taskWantsVision, updateAgentControls, updateAgentStat, workerKind, workerKindSaid, workerProd,
-	workersHeld } from './rest.js';
+import { appendAssistantText, appendNote, endingParts, finalizeAssistant } from './turns.js';
+import { adoptFork, chatShowingOrRunning, confirmDialog, firstAsk, forkForget, forkable,
+	giveWorkerWeb, markAlone, noteRecent, noticeDialog, scopeAgentTo, scopeChatTo, settleKind,
+	startedKind, workerKind, workerKindSaid } from './consent.js';
+import { chatSpendNode, migrateWorkerHold, repaintPause, setWorkersHeld, workersHeld } from './chats.js';
+import { DEFAULT_SPEND_CAP, ensureWantMinor, noteWorkerProv, workerProd } from './tilestyle.js';
+import { Instructions, Pending, Prompts, foldDeltaInto } from './pending.js';
+import { FOLLOW_MAX_MS, _lastSteer, daimonChat, diamondApp, diamondCanRun, diamondModels,
+	diamondVisionModel, diamondWorkerModel, tagChip, taskWantsVision } from './diamonds.js';
+import { actBtn, agentAsk, agentBudget, agentDiamondChip, agentMatches, agentRunSpend,
+	agentSheetDots, agentSquareFill, agentTagsOf, agentWaiting, readBtn, renderAgentFilter,
+	renderAgentGrid, renderAgentTagPool, setAgentPinned, setAgentTagFilter, updateAgentControls,
+	updateAgentStat } from './agentspanel.js';
+import { imagesModelFor, runSteer, setCrystalStatus } from './crystal.js';
+import { applyCrystalCap, applyEffort, applyFoldSettings, applyLiveness, applyProviderRouting,
+	applyRoundLimit, applySight, blindLine, configuredNow, tOr } from './settingsui.js';
+import { dsRounds, roundMetaRow } from './boot.js';
+import { SYSTEM_PROMPT } from './rest.js';
 // page-split: end imports
 
 // ── Agents: real, dispatched workers ───────────────────────

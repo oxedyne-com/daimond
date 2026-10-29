@@ -23,15 +23,21 @@ import { commitRatings, turnModelOf } from './rating.js';
 import { lastTurnOf, lostRetryMid, maybeAutoDispatch, placeOpts, placeRoster, renderEffortStep,
 	renderSeatSwitch, retryTurn, seatDrawnRunner, seatOpts, seatPlanNow } from './sourcemenu.js';
 import { diag, showIdentity, toast } from './passkey_phrase.js';
-import { Instructions, Notes, PEER_HELD, SYSTEM_PROMPT, Triggers, _lastSteer, _peerStopping,
-	appendRanHere, applyCrystalCap, applyEffort, applyFoldSettings, applyLiveness, applyProviderRouting,
-	applyRoundLimit, applySight, askDrawable, askHolds, attachPrefixText, attachTile, chatAttachList,
-	chatDisplayName, chatSaid, chatScratchDir, confirmDialog, daimonApp, dayBucket, diamondApp, doSteer,
-	folderOpen, hideSpinner, isLostRow, keepAsDiamond, keepFocusIn, lensToolRow, liveWork, loadDiamonds,
-	newChat, noteAppProv, noticeDialog, openSettings, pauseTree, promptPrint, renderHistory,
-	renderToolCall, renderToolResult, runnerTurnOf, scopeAgentTo, scopeChatTo, scrubAttachPrefixDup,
-	setTilePref, showSpinner, startChat, syncFoldBusy, syncSendMode, tOr, taintDaimon, tileConcise,
-	tileWhen, turnHold } from './rest.js';
+import { appendRanHere, askDrawable, askHolds, isLostRow, liveWork, renderHistory, renderToolCall,
+	renderToolResult } from './turns.js';
+import { PEER_HELD, _peerStopping, confirmDialog, keepFocusIn, noticeDialog, runnerTurnOf,
+	scopeAgentTo, scopeChatTo } from './consent.js';
+import { hideSpinner, keepAsDiamond, newChat, pauseTree, setTilePref, showSpinner, startChat,
+	syncSendMode, tileConcise, turnHold } from './chats.js';
+import { chatDisplayName, chatSaid, dayBucket, noteAppProv, promptPrint, tileWhen } from './tilestyle.js';
+import { Instructions, Notes, folderOpen } from './pending.js';
+import { Triggers, _lastSteer, daimonApp, diamondApp, loadDiamonds, taintDaimon } from './diamonds.js';
+import { doSteer, syncFoldBusy } from './crystal.js';
+import { attachPrefixText, attachTile, chatAttachList, chatScratchDir, scrubAttachPrefixDup } from './marks.js';
+import { applyCrystalCap, applyEffort, applyFoldSettings, applyLiveness, applyProviderRouting,
+	applyRoundLimit, applySight, openSettings, tOr } from './settingsui.js';
+import { lensToolRow } from './boot.js';
+import { SYSTEM_PROMPT } from './rest.js';
 // page-split: end imports
 
 // ── Send a turn ────────────────────────────────────────────

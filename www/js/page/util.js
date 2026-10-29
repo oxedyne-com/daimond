@@ -871,6 +871,8 @@ export function friendlyError(raw) {
 	if (/^[a-z][a-z0-9]*(_[a-z0-9]+)+\b/.test(s)) return s ? s + '.' : t('err.generic');
 	return s ? s.charAt(0).toUpperCase() + s.slice(1) + '.' : t('err.generic');
 }
+
+// ── Meters ─────────────────────────────────────────────────
 export function fmtCtx(n) {
 	if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
 	if (n >= 1000) return Math.round(n / 1000) + 'k';

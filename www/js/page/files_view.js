@@ -13,9 +13,14 @@ import { attachedTruly, attachedTrulyAll, attachmentsOf, bind, clear, closePop, 
 	tryReconnect, underPath, viewEl } from './files_tree.js';
 import { DaimondPanels } from './layout.js';
 import { placeOpts, selfHoldsFolder, selfHoldsHand } from './sourcemenu.js';
-import { INSTRUCTIONS_FILE, Instructions, Prompts, annotatePresence, confirmDialog, diamondApp,
-	instructionsSeed, markInForce, promptDialog, runnerAskerOf, showDoc, toolReason, versionsPath,
-	watchedPath } from './rest.js';
+import { annotatePresence } from './turns.js';
+import { confirmDialog, promptDialog, runnerAskerOf } from './consent.js';
+import { versionsPath } from './chats.js';
+import { INSTRUCTIONS_FILE, Instructions, Prompts, instructionsSeed } from './pending.js';
+import { diamondApp } from './diamonds.js';
+import { showDoc, watchedPath } from './agentspanel.js';
+import { markInForce } from './marks.js';
+import { toolReason } from './rest.js';
 // page-split: end imports
 export let Files; // page-split: hoisted
 

@@ -18,12 +18,18 @@ import { DaimondPanels, isMobile, tel, telOrd } from './layout.js';
 import { presenceTick, recoverInterrupted } from './sourcemenu.js';
 import { signalDiamondChanged } from './links.js';
 import { DaimondTerm } from './termpanel.js';
-import { Instructions, Pending, Prompts, abortTurn, applyPushCred, bootInherit, clearCrystalBody,
-	closerRow, confirmDialog, connectGateway, crystalJson, diamondApp, fillSettings, handOverTarget,
-	hideSpinner, keepFocusIn, loadDiamonds, notePrunes, noticeDialog, promptDialog, rebuildChatApp,
-	refocus, renderEmptyState, renderSessionList, resetDiamondApps, runnerPairWatch, runnerWatch,
-	seedDefaultDiamonds, selectChat, selectDiamond, setCurrent, setSendMode, startExpiryClock,
-	startTriggerClock, sweepSeededDuplicates, tOr, tagsOf, unmigrateInherit, writeGuideMirror } from './rest.js';
+import { closerRow, confirmDialog, handOverTarget, keepFocusIn, noticeDialog, promptDialog, refocus } from './consent.js';
+import { abortTurn, hideSpinner, selectChat, setCurrent, setSendMode } from './chats.js';
+import { renderSessionList } from './tilestyle.js';
+import { Instructions, Pending, Prompts, connectGateway, runnerPairWatch, runnerWatch } from './pending.js';
+import { bootInherit, diamondApp, loadDiamonds, resetDiamondApps, seedDefaultDiamonds,
+	startExpiryClock, startTriggerClock, sweepSeededDuplicates, tagsOf, unmigrateInherit,
+	writeGuideMirror } from './diamonds.js';
+import { selectDiamond } from './agentspanel.js';
+import { clearCrystalBody, crystalJson, notePrunes } from './crystal.js';
+import { rebuildChatApp } from './marks.js';
+import { fillSettings, tOr } from './settingsui.js';
+import { applyPushCred, renderEmptyState } from './rest.js';
 // page-split: end imports
 let passkeyAutoTried; // page-split: hoisted
 

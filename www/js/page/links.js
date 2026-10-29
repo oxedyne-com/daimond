@@ -5,9 +5,12 @@ import { bumpDiamonds, persistChats, touchChatMeta } from './chatstore.js';
 import { Workers } from './workers.js';
 import { isMobile, mshow } from './layout.js';
 import { DaimondTerm } from './termpanel.js';
-import { confirmDialog, diamondApp, footOpen, noticeDialog, parseRef, refreshDiamondAfterChange,
-	removeLinkHere, renderCrystal, renderSessionList, selectDiamond, setCrystalStatus, setFootOpen,
-	tagChip } from './rest.js';
+import { confirmDialog, noticeDialog } from './consent.js';
+import { renderSessionList } from './tilestyle.js';
+import { diamondApp, tagChip } from './diamonds.js';
+import { selectDiamond } from './agentspanel.js';
+import { refreshDiamondAfterChange, renderCrystal, setCrystalStatus } from './crystal.js';
+import { footOpen, parseRef, removeLinkHere, setFootOpen } from './marks.js';
 // page-split: end imports
 
 // ── Links: Diamond to Diamond ──────────────────────────────────

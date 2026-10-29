@@ -13,12 +13,18 @@ import { rateFlushAll } from './rating.js';
 import { handoffInFlightOnStepAway } from './sourcemenu.js';
 import { diag, errorToastWithReport, toast, updateUserRow } from './passkey_phrase.js';
 import { DaimondTerm, SearchRow, TermRootRow } from './termpanel.js';
-import { Pending, changeDiamondModel, clearDiamondFilters, crystalFull, daimonChat, diamondApp,
-	diamondMayPublish, diamondModel, diamondView, diamondWorkerCap, initPauseUi, loadDiamonds,
-	mountBuildCopy, notePrunes, noticeDialog, pendingCentreChat, readCrystalAsset, renderArtefacts,
-	renderChatAttachments, renderCredits, renderDiamondList, renderEmptyState, renderPendingCentre,
-	renderSessionList, repaintTileDetail, retitleDoc, seedDefaultDiamonds, setCrystalFull,
-	sweepSeededDuplicates, syncCrystalFullBtn, tOr, writeUsageDigest } from './rest.js';
+import { mountBuildCopy } from './turns.js';
+import { noticeDialog } from './consent.js';
+import { initPauseUi, pendingCentreChat, renderPendingCentre, repaintTileDetail } from './chats.js';
+import { changeDiamondModel, renderSessionList } from './tilestyle.js';
+import { Pending, renderCredits } from './pending.js';
+import { daimonChat, diamondApp, diamondMayPublish, diamondModel, diamondView, diamondWorkerCap,
+	loadDiamonds, seedDefaultDiamonds, sweepSeededDuplicates, writeUsageDigest } from './diamonds.js';
+import { clearDiamondFilters, renderDiamondList, retitleDoc } from './agentspanel.js';
+import { crystalFull, notePrunes, readCrystalAsset, setCrystalFull, syncCrystalFullBtn } from './crystal.js';
+import { renderArtefacts, renderChatAttachments } from './marks.js';
+import { tOr } from './settingsui.js';
+import { renderEmptyState } from './rest.js';
 // page-split: end imports
 export let WakeLock, mobileMq, DaimondPanels; // page-split: hoisted
 let SKIN_AS_FOUND; // page-split: hoisted

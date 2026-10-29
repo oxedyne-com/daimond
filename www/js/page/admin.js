@@ -13,10 +13,12 @@ import { accountHandle, addAccount, doAddPasskey, doChangeHandle, doChangePassph
 	doImport, doRemovePasskey, doRename, fallback, forgetIdentity, identityAvailable, lockApp,
 	neverHeldAnIdentity, offerRecovery, showIdentity, switchAccount, toast } from './passkey_phrase.js';
 import { SearchRow, TermRootRow } from './termpanel.js';
-import { Pending, Prompts, buildForm, buildId, closerFor, confirmDialog, dialog, fillPushSettings,
-	fleetCurrentBuild, idCopyBtn, mountBuildCopy, noticeDialog, openCredits, openSettings, proBuyLabel,
-	proHasEnded, proPaused, proTermLine, promptDialog, pushHostHeld, relTime, renderCredits,
-	renderLimitRows, renderPushState, savePushCred, tOr } from './rest.js';
+import { buildId, fleetCurrentBuild, idCopyBtn, mountBuildCopy } from './turns.js';
+import { buildForm, closerFor, confirmDialog, dialog, noticeDialog, promptDialog } from './consent.js';
+import { Pending, Prompts, proBuyLabel, proHasEnded, proPaused, proTermLine, renderCredits } from './pending.js';
+import { relTime } from './diamonds.js';
+import { openCredits, openSettings, renderLimitRows, tOr } from './settingsui.js';
+import { fillPushSettings, pushHostHeld, renderPushState, savePushCred } from './rest.js';
 // page-split: end imports
 export let DaimondAdmin; // page-split: hoisted
 // page-split: install 49

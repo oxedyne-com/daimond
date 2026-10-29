@@ -19,16 +19,22 @@ import { commitRatings, mountRateControls, pushUserRecord, rateArm, ratingPre, t
 	turnModelOf } from './rating.js';
 import { maybeAutoDispatch, mountTurnActions, seatNamesRunner } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
-import { Instructions, Prompts, _appProv, _peerStopping, abortTurn, appendAssistantText,
-	appendCompacted, appendEnding, appendError, appendFailure, appendFilesLog, appendInterjected,
-	appendLeak, appendThinking, appendUserMessage, applyEffort, askHolds, blindLine, busySay,
-	chatDisplayName, chatSpendNode, chatWebWord, copyTurnSet, cutAccount, cutReason, dropAssistant,
-	dsRounds, endLogOf, endRetryWait, ensureWantMinor, failRole, filesLogOf, finalizeAssistant,
-	foldProd, honoursModelSet, lensToolRow, logThinking, mailProd, nearBottom, noteRecent,
-	offerTurnUndo, offline, renderAgentGrid, renderHistory, renderSessionList, renderToolCall,
-	renderToolResult, respModel, roundMetaRow, runSteer, runnerDeaf, runnerRoundTagged, runnerTurnOf,
-	sayAnswered, setScrollTop, stampAfter, stampProd, syncSendMode, tOr, turnHold, turnModelsOfRun,
-	updateMeters, worthSaying, writeUsageDigest } from './rest.js';
+import { appendAssistantText, appendCompacted, appendEnding, appendError, appendFailure,
+	appendFilesLog, appendInterjected, appendLeak, appendThinking, appendUserMessage, askHolds,
+	cutAccount, cutReason, dropAssistant, endLogOf, failRole, finalizeAssistant, honoursModelSet,
+	logThinking, nearBottom, renderHistory, renderToolCall, renderToolResult, respModel, stampAfter,
+	worthSaying } from './turns.js';
+import { _peerStopping, chatWebWord, noteRecent, runnerDeaf, runnerRoundTagged, runnerTurnOf } from './consent.js';
+import { abortTurn, busySay, chatSpendNode, sayAnswered, syncSendMode, turnHold, updateMeters } from './chats.js';
+import { _appProv, chatDisplayName, ensureWantMinor, foldProd, mailProd, renderSessionList,
+	stampProd } from './tilestyle.js';
+import { Instructions, Prompts } from './pending.js';
+import { copyTurnSet, turnModelsOfRun, writeUsageDigest } from './diamonds.js';
+import { renderAgentGrid } from './agentspanel.js';
+import { endRetryWait, filesLogOf, runSteer } from './crystal.js';
+import { applyEffort, blindLine, tOr } from './settingsui.js';
+import { dsRounds, lensToolRow, offerTurnUndo, roundMetaRow } from './boot.js';
+import { offline, setScrollTop } from './rest.js';
 // page-split: end imports
 
 // ── What you typed while the answer was still coming ───────

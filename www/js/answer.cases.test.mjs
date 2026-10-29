@@ -20,6 +20,13 @@ const cut  = (s, from, to) => {
 	assert.ok(a >= 0 && b > a, `cannot cut ${JSON.stringify(from)} .. ${JSON.stringify(to)}: the banners moved`);
 	return s.slice(a, b);
 };
+// From a banner through the end of the function `last`: the page's modules are grouped by
+// definition, so the banner after a section's last function need not follow it in the view.
+const thru = (s, from, last) => {
+	const a = s.indexOf(from), f = s.indexOf('\tfunction ' + last + '(', a), b = s.indexOf('\n\t}\n', f);
+	assert.ok(a >= 0 && f > a && b > f, `cannot cut ${JSON.stringify(from)} .. ${last}(): the source moved`);
+	return s.slice(a, b + 4);
+};
 
 function el(init = {}) {
 	const e = Object.assign({ disabled: false, value: '', attrs: new Map(), on: {}, children: [], className: '', textContent: '', innerHTML: '', clicks: 0 }, init);
@@ -310,7 +317,7 @@ test('Refresh: a listing that drew rows says "Refreshed." for three seconds', as
 
 // ── the home composer's Send, from daimond.js ───────────────────────────
 function homeSend(opts = {}) {
-	const body = cut(src('daimond.js'), '\t/// What the one button under the composer means right now.', '\t// ── Meters');
+	const body = thru(src('daimond.js'), '\t/// What the one button under the composer means right now.', 'bindSend');
 	const chatSend = el({ attrs: new Map([ [ 'title', 'Send' ] ]) }), chatInput = el({ value: opts.value || '' });
 	const log = { stopped: 0, sent: 0, toasts: [], focused: 0 };
 	chatInput.focus = () => { log.focused++; };

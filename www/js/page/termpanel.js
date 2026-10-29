@@ -5,7 +5,8 @@ import { getSecret, hideSecret, installSecretMask, readJson, secretEye, setSecre
 import { Files } from './files_view.js';
 import { DaimondAdmin } from './admin.js';
 import { DaimondPanels } from './layout.js';
-import { noticeDialog, tOr } from './rest.js';
+import { noticeDialog } from './consent.js';
+import { tOr } from './settingsui.js';
 // page-split: end imports
 export let DaimondTerm, FsaDB; // page-split: hoisted
 // page-split: install 77

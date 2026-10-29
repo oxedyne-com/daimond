@@ -17,14 +17,17 @@ import { Files } from './files_view.js';
 import { isMobile, mobileMq } from './layout.js';
 import { commitRatings, errandModelOf, pushUserRecord, recoverUserRecord, turnEffortOf } from './rating.js';
 import { diag, toast } from './passkey_phrase.js';
-import { _askCard, abortTurn, appendUserMessage, askOpenIn, awaitDiamondIdle, busyForChat, busyHere,
-	chatIsActiveErrand, chatRunningOn, diamondEffort, diamondFolder, diamondModel, effortClearedNote,
-	endContinuable, endRetryWait, fleetCurrentBuild, handoffTargetLabel, handoffWhenAway, isAttended,
-	isLostRow, isNotRunRow, loadDiamonds, logThinking, noticeDialog, openSettings, outcomeOfStoredText,
-	preferredWorkerLabel, presenceWithLeaseBusy, refreshDiamondAfterChange, renderHistory,
-	renderPendingCentre, renderSessionList, retireContinue, rootHere, runSteer, setDiamondEffort,
-	sourceLabel, sourceMenuRows, sourceMovedPair, sourceOf, switchChatSource, syncSendMode, turnHold,
-	turnPresence } from './rest.js';
+import { appendUserMessage, askOpenIn, chatRunningOn, endContinuable, fleetCurrentBuild,
+	handoffTargetLabel, isLostRow, isNotRunRow, logThinking, outcomeOfStoredText, preferredWorkerLabel,
+	presenceWithLeaseBusy, renderHistory, retireContinue, turnPresence } from './turns.js';
+import { busyForChat, busyHere, chatIsActiveErrand, handoffWhenAway, isAttended, noticeDialog } from './consent.js';
+import { abortTurn, renderPendingCentre, syncSendMode, turnHold } from './chats.js';
+import { effortClearedNote, renderSessionList } from './tilestyle.js';
+import { diamondEffort, diamondFolder, diamondModel, loadDiamonds, setDiamondEffort, sourceLabel,
+	sourceMenuRows, sourceMovedPair, sourceOf, switchChatSource } from './diamonds.js';
+import { awaitDiamondIdle, endRetryWait, refreshDiamondAfterChange, runSteer } from './crystal.js';
+import { rootHere } from './marks.js';
+import { openSettings } from './settingsui.js';
 // page-split: end imports
 let seatHereBtn, seatRunBtn, seatWhyEl, effDn, effUp, srcBtn, _beatBusy, _beatAt, _beatOwed; // page-split: hoisted
 
@@ -1860,7 +1863,7 @@ export function answerAgain(chat, iturn) {
 	catch (e) { /* the entry is stale either way */ }
 	renderHistory(chat.messages);
 	// The reopened card is the last question on screen; bring it into view.
-	try { if (_askCard && _askCard.scrollIntoView) _askCard.scrollIntoView({ block: 'center' }); }
+	try { if (pg._askCard && pg._askCard.scrollIntoView) pg._askCard.scrollIntoView({ block: 'center' }); }
 	catch (e) { /* nothing to scroll to */ }
 }
 

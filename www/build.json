@@ -1,1 +1,1 @@
-{"build":"b8855818f329","note":"The Files list under a crystal shows the diamond mark again, like the Files list in the chat."}
+{"build":"2bfed7ec36a7","note":"Under the hood: the page is now 33 smaller parts instead of one large file. Nothing you see changes."}

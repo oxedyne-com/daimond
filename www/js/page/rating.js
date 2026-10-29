@@ -5,10 +5,12 @@ import { t } from './util.js';
 import { ChatStore, persistChats, storedChats } from './chatstore.js';
 import { cssEsc } from './handoff.js';
 import { nowTs } from './sourcemenu.js';
-import { RATE_DOWN_SVG, RATE_MORE_SVG, RATE_UP_SVG, USAGE_DIR, _renderSynced, advancedBox, buildTile,
-	diamondEffort, diamondModel, drawHistoryMessage, finalizeAssistant, hold, isLastContent, nearBottom,
-	openBodyDialog, pinBottom, postToChat, renderHistory, secHead, setScrollTop, turnModelsOfChat,
-	turnModelsOfDiamond, writeUsageDigest } from './rest.js';
+import { RATE_DOWN_SVG, RATE_MORE_SVG, RATE_UP_SVG, buildTile, drawHistoryMessage, finalizeAssistant,
+	hold, isLastContent, nearBottom, postToChat, renderHistory } from './turns.js';
+import { advancedBox, openBodyDialog, secHead } from './tilestyle.js';
+import { USAGE_DIR, diamondEffort, diamondModel, turnModelsOfChat, turnModelsOfDiamond,
+	writeUsageDigest } from './diamonds.js';
+import { pinBottom, setScrollTop } from './rest.js';
 // page-split: end imports
 let RATE_HIT; // page-split: hoisted
 
@@ -474,7 +476,7 @@ export function recoverUserRecord(chat, iturn, t) {
 /// append path draws just the tail and keeps every tile standing; on one a live turn
 /// drew, a rebuild would replace the tile just rated, so the tail is drawn by itself.
 function rateDraw(chat, list) {
-	if (_renderSynced) { renderHistory(chat.messages); return; }
+	if (pg._renderSynced) { renderHistory(chat.messages); return; }
 	var down = nearBottom();
 	list.forEach(drawHistoryMessage);
 	if (down) pinBottom();

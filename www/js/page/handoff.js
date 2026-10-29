@@ -16,13 +16,17 @@ import { errandModelOf, storedEffort, storedPre, turnEffortOf } from './rating.j
 import { _electionTrace, _handoffStart, answerUnhanded, autoLogHandoffLatency, continueTurn,
 	foldJournalTurn, notRunCause, presenceTick, renderSeatSwitch, seatReason, seatSwitchFor } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
-import { _openAsk, _peerStopping, _runnerCtx, _runnerParked, abortTurn, adoptRemoteGrant,
-	busyForChat, chatHasWork, claimedModelsOf, cutAccount, deliverGrant, diamondCanRun, dispatchToPeer,
-	dispatchedAnswerPresent, followActivity, followsEnd, handoffTargetLabel, isLostRow, loadDiamonds,
-	noticeDialog, noticePermit, ownTurns, queueBehind, raiseConsentFromPeer, reRaiseOpenAsks,
-	recordCarriedTurn, renderHistory, runSteerDetached, runnerCtxBegin, runnerCtxEnd, runnerDeaf,
-	runnerFrameExtra, runnerPairPoll, scopeChatTo, sentModelsOf, setCrystalBusy, sigsOf, syncSendMode,
-	tilePeek, turnHold, undoTurnDeps, undoTurnProbe, undoneFromRunner } from './rest.js';
+import { cutAccount, dispatchedAnswerPresent, handoffTargetLabel, isLostRow, renderHistory, sigsOf,
+	tilePeek } from './turns.js';
+import { _openAsk, _peerStopping, _runnerCtx, _runnerParked, adoptRemoteGrant, busyForChat,
+	chatHasWork, deliverGrant, noticeDialog, noticePermit, ownTurns, queueBehind, raiseConsentFromPeer,
+	reRaiseOpenAsks, runnerCtxBegin, runnerCtxEnd, runnerDeaf, runnerFrameExtra, scopeChatTo } from './consent.js';
+import { abortTurn, syncSendMode, turnHold } from './chats.js';
+import { runnerPairPoll } from './pending.js';
+import { diamondCanRun, dispatchToPeer, loadDiamonds } from './diamonds.js';
+import { claimedModelsOf, runSteerDetached, sentModelsOf, setCrystalBusy } from './crystal.js';
+import { recordCarriedTurn, undoTurnDeps, undoTurnProbe, undoneFromRunner } from './marks.js';
+import { followActivity, followsEnd } from './rest.js';
 // page-split: end imports
 let presenceOnReturn; // page-split: hoisted
 
