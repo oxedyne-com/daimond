@@ -184,7 +184,10 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 				const lr = lab.getBoundingClientRect(); const pl = parseFloat(cs(lab).paddingLeft) + parseFloat(cs(lab).borderLeftWidth);
 				const gw = b.display === 'inline-block' || b.display === 'block' ? parseFloat(b.width) || cv.measureText(bc).width : cv.measureText(bc).width;
 				const gEnd = lr.left + pl + parseFloat(b.marginLeft || 0) + gw;
-				if (Math.abs(c0.left - gEnd) < 40 && lab === (tn && tn.parentElement)) { glyph = '::' + bc.trim(); ggap = +(c0.left - gEnd).toFixed(1); }
+				// The diamond mark leading a name (`markName`: `.mark-ic` then the words) is the start of the label, as a glyph is under
+				// GLYROLE: the caret's gap is to the mark, and the mark's own 0.4em to the words is its rule (REL3, the crystal's "Files (N)").
+				const mk = lab.firstElementChild; const lead = mk && mk.matches('img.mark-ic') && mk.nextSibling === tn && vis(mk) ? mk.getBoundingClientRect().left : c0.left;
+				if (Math.abs(lead - gEnd) < 40 && lab === (tn && tn.parentElement)) { glyph = '::' + bc.trim(); ggap = +(lead - gEnd).toFixed(1); }
 			}
 		}
 		// A leading svg/img icon: its size and the gap to the label.
@@ -1955,7 +1958,8 @@ const ROLES = [
 	// A file tile's refer arrow (`.arte-use`, the crystal footer's) is the same kind of row verb as its cross, drawn by the one rule
 	// (app.css `.arte-use, .arte-drop`), so the two are one role; filed as icon buttons they were measured against the 20px tile tools
 	// (REL2b, UNBLOCK-49's open Files list). The tile's name (`.arte-open`) opens it, as `.turn-file-name` does: a row's name, not a
-	// text button's chip, compared with its own instances (crystal footer, chat footer, Trash). Its path is mono, as a path is everywhere.
+	// text button's chip, compared with its own instances (crystal footer, chat footer, Trash). `.turn-file-name` takes `font: inherit`; `.arte-open`
+	// keeps the monospace path font, as `.hist-file-path` does.
 	['row-drop',        'none',     (it) => it.ctrl && (has(it, 'arte-drop') || has(it, 'arte-use'))],
 	['row-name',        'none',     (it) => it.ctrl && has(it, 'arte-open')],
 	['history-count',   'none',     (it) => it.ctrl && has(it, 'hist-files-n')],

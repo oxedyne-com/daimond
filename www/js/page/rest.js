@@ -26308,10 +26308,8 @@ export async function renderArtefacts() {
 	// pages that are part of this pursuit -- which is the same set the Workspace
 	// panel draws as a tree, and the same set its daimon may open. It used to
 	// call them artefacts, which named only how most of them got here.
-	// "Files (N)" at every count, zero included: it heads the list it opens (UNBLOCK-49). Led by the
-	// disclosure's own caret alone, as every fold is: the diamond mark after it put 17px between the
-	// caret and the words where every other fold has 3 (REL2b, the by-role gate).
-	strip.textContent = t('dws.files_n', { n: links.length });
+	// "Files (N)" at every count, zero included: it heads the list it opens (UNBLOCK-49).
+	markName(strip, t('dws.files_n', { n: links.length }));
 	strip.title = t('dws.title');
 	// The fold is this Diamond's, on this device, and unchosen it opens only when every
 	// file fits under the bound the stylesheet gives (`--crystal-files-cap`).
