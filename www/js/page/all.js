@@ -1,4 +1,4 @@
-// page-split: every page module, for tests (generated)
+// page-split: every page module, for tests
 export * from './wasm.js';
 export * from './state.js';
 export * from './util.js';
@@ -29,4 +29,3 @@ export * from './crystal.js';
 export * from './marks.js';
 export * from './settingsui.js';
 export * from './boot.js';
-export * from './rest.js';

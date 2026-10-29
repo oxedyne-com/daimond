@@ -1,17 +1,17 @@
 // dev/pagesrc.mjs -- the page's modules re-assembled into the old one-file shape.
 //
-// DATED INTERIM, 29 Oct 2026 (review P1.3). The page was one file, `www/js/daimond.js`:
-// a module head and one IIFE over 80k lines. It is now `www/js/page/*.js`, written by
-// `dev/pagesplit/split.mjs` from `dev/pagesplit/manifest.json`. Some 260 dev scripts
-// and slice tests read the page's SOURCE TEXT (lift a function by name, assert a
-// string is in it); they read this view instead, which is the text they were written
-// against: imports and `export ` gone, the top level back inside the IIFE at one tab,
-// the `/* let */` keywords and the `pg.` rewrites undone, each install body back at
-// the top level. A test that imports the modules (`www/js/test/page.mjs`) does not
-// need it; P1.5 retires it for the tests and R1 for the dev scripts.
+// The page was one file, `www/js/daimond.js`: a module head and one IIFE over 80k lines.
+// Since the cut-over (30 Oct 2026) it is `www/js/page/*.js`, edited by hand; the
+// generator that wrote the modules from the one-file base is gone, and this view runs
+// one way only: modules -> text. Some 400 dev scripts and slice tests still read the
+// page's SOURCE TEXT (lift a function by name, assert a string is in it), and the break
+// arms of the browser verifiers patch this view and serve it as js/daimond.js; they read
+// the text they were written against: imports and `export ` gone, the top level back
+// inside the IIFE at one tab, the `/* let */` keywords and the `pg.` rewrites undone,
+// each install body back at the top level. A test that imports the modules
+// (`www/js/test/page.mjs`, loadPage) does not need it.
 //
-// Statement order is module by module, each module in the old file order; everything
-// else is the old text. `node dev/pagesplit/splitcheck.mjs` proves that.
+// Statement order is module by module, each module in the entry's order.
 
 import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
