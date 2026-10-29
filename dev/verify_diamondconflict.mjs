@@ -48,6 +48,7 @@
 // and shared by both contexts — a mailbox with the gateway's version guard and a
 // content-addressed chunk store whose commit sweeps exactly as the gateway does —
 // so no dev gateway and no o3db store are needed. Needs dev/serve.mjs only.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,7 +92,7 @@ const SEAM = [
 	  why: 'the one lock per Diamond is missing (round F, R1)' },
 ];
 for (const s of SEAM) {
-	const src = fs.readFileSync(path.join(WWW, s.file), 'utf8');
+	const src = readPage(path.join(WWW, s.file), 'utf8');
 	if (!src.includes(s.want) && !BREAK) { console.error(`seam missing: ${s.file}: ${s.why}`); process.exit(2); }
 }
 
@@ -99,7 +100,7 @@ for (const s of SEAM) {
 const PATCHED = new Map();
 if (BREAK === 'lww') {
 	const file = 'js/daimond.js';
-	const src = fs.readFileSync(path.join(WWW, file), 'utf8');
+	const src = readPage(path.join(WWW, file), 'utf8');
 	const find = 'var twoSided = diamondTwoSided(r, mine, recv, dbase);';
 	const n = src.split(find).length - 1;
 	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1)`); process.exit(2); }
@@ -108,7 +109,7 @@ if (BREAK === 'lww') {
 }
 if (BREAK === 'nonotes') {
 	const file = 'js/daimond.js';
-	const src = fs.readFileSync(path.join(WWW, file), 'utf8');
+	const src = readPage(path.join(WWW, file), 'utf8');
 	const find = 'await window.DaimondNotes.uniteHeld(r.id, loserNotes);';
 	const n = src.split(find).length - 1;
 	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1)`); process.exit(2); }
@@ -117,7 +118,7 @@ if (BREAK === 'nonotes') {
 // --break nolock: the lock admits everyone at once (a shared Web Lock), so a press made as the import starts runs beside it (G5b, and G5d for a second tab).
 // --break stale: the apply decides from the list read at the top of the pull and not from the Diamond under the lock (G5a, G5c).
 function patchOnce(file, find, to) {
-	const src = PATCHED.get(file) || fs.readFileSync(path.join(WWW, file), 'utf8');
+	const src = PATCHED.get(file) || readPage(path.join(WWW, file), 'utf8');
 	const n = src.split(find).length - 1;
 	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1): ${find}`); process.exit(2); }
 	PATCHED.set(file, src.replace(find, to));

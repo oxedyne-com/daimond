@@ -17,6 +17,7 @@
         each refusal told to the sender, and a dispatcher's own run left alone.
    ============================================================ */
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -26,8 +27,8 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 
 const HERE    = dirname(fileURLToPath(import.meta.url));
-const PEER    = readFileSync(join(HERE, 'peer.js'), 'utf8');
-const DAIMOND = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const PEER    = readPage(join(HERE, 'peer.js'), 'utf8');
+const DAIMOND = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function loadPeer() {
 	const win = {};

@@ -19,6 +19,7 @@
 //
 //   node dev/verify_compact.mjs
 
+import { readPage } from './pagesrc.mjs';
 import { port, WORLD } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,7 +67,7 @@ const HEADROOM    = 400;
 /// Where the engine folds, as a fraction of the window: the one authority is `compact.rs`.
 const FOLD_AT = (() => {
 	const m = /pub const FOLD_AT:\s*f64\s*=\s*([0-9.]+)/.exec(
-		fs.readFileSync(path.join(ROOT, 'src', 'compact.rs'), 'utf8'));
+		readPage(path.join(ROOT, 'src', 'compact.rs'), 'utf8'));
 	if (!m) throw new Error('compact.rs no longer declares FOLD_AT; this file cannot calibrate');
 	return Number(m[1]);
 })();
@@ -89,7 +90,7 @@ const check = (ok, what, detail = '') => {
 let rendersCompacted = false;
 try {
 	rendersCompacted = /'compacted'|"compacted"/.test(
-		fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8'));
+		readPage(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8'));
 } catch (e) { /* no www tree: treat as not rendered */ }
 
 // A check whose subject is that browser-side edit.  It becomes a real check the moment
@@ -102,7 +103,7 @@ const whenRendered = (ok, what, detail = '') => {
 	pending++;
 };
 
-const requests = () => fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean)
+const requests = () => readPage(LOG, 'utf8').split('\n').filter(Boolean)
 	.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 
 /// An independent reading of the rule a provider enforces: an assistant message with
@@ -165,7 +166,7 @@ await newChat(s);
 await say(s, 'hello', 4000);
 const probed = (() => {
 	try {
-		const rows = fs.readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+		const rows = readPage(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
 		return rows.length ? rows[0].used : 0;
 	} catch (e) { return 0; }
 })();
@@ -177,7 +178,7 @@ if (!probed) {
 LIMIT = Math.ceil((probed + HEADROOM) / FOLD_AT);
 log(`floor ${probed} tokens (system prompt + ${(() => {
 	try {
-		const rows = fs.readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+		const rows = readPage(LOG, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
 		return rows[0].tools;
 	} catch (e) { return '?'; }
 })()} tool schemas), folding at ${FOLD_AT}, so the window for this run is ${LIMIT}`);

@@ -20,13 +20,14 @@
 
    Run:  node www/js/runnerstar.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
-const DSRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const DSRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 let failures = 0;
 function check(name, cond, detail) {
 	const line = name + (detail !== undefined && detail !== '' ? ' — ' + detail : '');
@@ -49,8 +50,8 @@ function v(name, src) {
 }
 
 // ── The gateway's minting, read from its source ──────────────────────
-const UTIL = readFileSync(join(ROOT, 'gateway', 'src', 'util.rs'), 'utf8');
-const PAIR = readFileSync(join(ROOT, 'gateway', 'src', 'handlers', 'runner_pair.rs'), 'utf8');
+const UTIL = readPage(join(ROOT, 'gateway', 'src', 'util.rs'), 'utf8');
+const PAIR = readPage(join(ROOT, 'gateway', 'src', 'handlers', 'runner_pair.rs'), 'utf8');
 const CHARSET = /const TOKEN_CHARSET: &str = "([^"]+)";/.exec(UTIL)[1];
 const LEN = Number(/const DEVICE_ID_LEN: usize = (\d+);/.exec(PAIR)[1]);
 check('runner_pair mints its device id with gen_token(DEVICE_ID_LEN)',
@@ -150,12 +151,12 @@ console.log('\n(d) the roster keeps the runner\'s line through a merge');
 
 console.log('\n(e) the other files that key by device id agree');
 {
-	const CLOUD = readFileSync(join(HERE, 'cloud.js'), 'utf8');
+	const CLOUD = readPage(join(HERE, 'cloud.js'), 'utf8');
 	const PEER_RE = new Function(v('PEER_RE', CLOUD) + '; return PEER_RE;')();
 	const m = PEER_RE.exec('chat-abc.peer.' + RUNNER);
 	check('cloud.js PEER_RE reads a runner peer slot', !!m && m[1] === RUNNER, String(m && m[1]));
 	check('cloud.js PEER_RE still reads a 32-hex slot', (PEER_RE.exec('x.peer.' + HEX32) || [])[1] === HEX32);
-	const MARKS = readFileSync(join(HERE, 'markshere.js'), 'utf8');
+	const MARKS = readPage(join(HERE, 'markshere.js'), 'utf8');
 	const REF = new Function(v('REF_DEVICES_RE', MARKS) + '; return REF_DEVICES_RE;')();
 	const r = REF.exec('usr@' + HEX32 + ',' + RUNNER);
 	check('markshere.js reads a reference made on a runner', !!r && r[1] === HEX32 + ',' + RUNNER, String(r && r[1]));

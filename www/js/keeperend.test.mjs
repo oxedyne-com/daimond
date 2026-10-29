@@ -6,6 +6,7 @@
 // turn went; the page only says whose turn it is (`run_turn`'s `own`, a Diamond thread's). The lease
 // a hand-off runs under reaches the engine's TurnSpec from the claim's deadline (`deadAt`), and an
 // ordinary send's spec names its chat without making one.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -13,8 +14,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PAGE = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const PEER = readFileSync(join(HERE, 'peer.js'), 'utf8');
+const PAGE = readPage(join(HERE, 'daimond.js'), 'utf8');
+const PEER = readPage(join(HERE, 'peer.js'), 'utf8');
 
 function lift(src, name) {
 	const at = src.indexOf('function ' + name + '(');
@@ -27,7 +28,7 @@ test('no page script calls end_keeper_turn (the engine ends the keeper turn)', (
 	const calls = [];
 	for (const f of readdirSync(HERE)) {
 		if (!/\.(m?js)$/.test(f) || /\.test\.mjs$/.test(f)) continue;
-		const src = readFileSync(join(HERE, f), 'utf8');
+		const src = readPage(join(HERE, f), 'utf8');
 		src.split('\n').forEach((l, i) => { if (/end_keeper_turn\s*\(/.test(l)) calls.push(f + ':' + (i + 1)); });
 	}
 	assert.deepEqual(calls, [], 'the page calls end_keeper_turn at ' + calls.join(', '));

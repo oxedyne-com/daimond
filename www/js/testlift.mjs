@@ -7,14 +7,19 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { pageSource, pageSourceAt } from '../../dev/pagesrc.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/// The source of `www/js/<file>`, at MM_SRC_REV when it is set.
+/// The source of `www/js/<file>`, at MM_SRC_REV when it is set. The page, `daimond.js`,
+/// is the one-file view of its modules (dev/pagesrc.mjs, since the split of 30 Oct
+/// 2026), at whichever revision is asked for: the lifts were written against that text.
 export function source(file, rev) {
 	const r = rev === undefined ? (process.env.MM_SRC_REV || '') : rev;
+	const app = join(HERE, '..', '..');
+	if (file === 'daimond.js') return r ? pageSourceAt(r, app) : pageSource(app);
 	if (!r) return readFileSync(join(HERE, file), 'utf8');
-	return execFileSync('git', ['show', r + ':www/js/' + file], { cwd: join(HERE, '..', '..'), encoding: 'utf8', maxBuffer: 1 << 28 });
+	return execFileSync('git', ['show', r + ':www/js/' + file], { cwd: app, encoding: 'utf8', maxBuffer: 1 << 28 });
 }
 
 /// `function name(...) { ... }` at any tab depth; '' when absent.

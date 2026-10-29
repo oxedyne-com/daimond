@@ -16,6 +16,7 @@
 // handed, serves cetz 0.3.4 out of the local Typst cache (READ ONLY -- nothing is fetched
 // over the network), and tries to compile a document that imports it.  Whether it
 // succeeds or fails, the log says what the interface actually wants.
+import { readPage } from './pagesrc.mjs';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join as pjoin } from 'node:path';
 import { open } from './harness.mjs';
@@ -34,7 +35,7 @@ function walk(root, rel = '') {
 	for (const name of readdirSync(pjoin(root, rel))) {
 		const r = rel ? rel + '/' + name : name;
 		if (statSync(pjoin(root, r)).isDirectory()) { out.push(...walk(root, r)); continue; }
-		out.push([r, Array.from(readFileSync(pjoin(root, r)))]);
+		out.push([r, Array.from(readPage(pjoin(root, r)))]);
 	}
 	return out;
 }

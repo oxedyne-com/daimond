@@ -12,6 +12,7 @@
    Run:  node --test www/js/appendopens.test.mjs
    ============================================================ */
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -19,8 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE    = dirname(fileURLToPath(import.meta.url));
-const DAIMOND = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const APP     = readFileSync(join(HERE, '..', '..', 'src', 'wasm', 'app.rs'), 'utf8');
+const DAIMOND = readPage(join(HERE, 'daimond.js'), 'utf8');
+const APP     = readPage(join(HERE, '..', '..', 'src', 'wasm', 'app.rs'), 'utf8');
 
 /// The text of every call to `fn(` in `src`, paren-matched.
 function calls(src, fn) {

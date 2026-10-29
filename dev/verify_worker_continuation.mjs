@@ -16,12 +16,13 @@
 // `restore`.
 //
 //   node dev/verify_worker_continuation.mjs
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 
 let bad = 0, ran = 0;
 const check = (pass, name, detail) => {
@@ -110,7 +111,7 @@ const { priorSessionRun } = f();
 	};
 	// The exact branch `start()` runs, lifted rather than retyped: proves the
 	// condition and the call it drives stay in sync with the real function.
-	const startSrc = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+	const startSrc = readPage(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 	const branch = startSrc.slice(
 		startSrc.indexOf('if (run._priorSession && run._priorSession.length'),
 		startSrc.indexOf("} else if (run.resume) {") + "} else if (run.resume) {".length);

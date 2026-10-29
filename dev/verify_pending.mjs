@@ -85,6 +85,7 @@
 // `bringToFront` does not either — so `document.visibilityState` is redefined
 // for the length of that check. The code under test is untouched; what is faked
 // is the browser's report of something this environment cannot produce.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -205,7 +206,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	return byFile;

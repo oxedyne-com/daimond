@@ -15,11 +15,12 @@
    `billChatSpend` and `rebuildAppWithout`, lifted out of daimond.js, and the
    worker's own `billAttempt`, lifted out of its block.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { loadStore } from './storefixture.mjs';
 
-const LEDGER = readFileSync(new URL('./ledger.js', import.meta.url), 'utf8');
-const DAIMOND = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const LEDGER = readPage(new URL('./ledger.js', import.meta.url), 'utf8');
+const DAIMOND = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {

@@ -21,6 +21,7 @@
    shadows here exactly as it does in the page.   `node www/js/runnerchat.test.mjs`
    ============================================================ */
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -53,7 +54,7 @@ function extractAll(src, name) {
 	return out;
 }
 
-const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 const names = ['runnerTagged', 'runnerRoundTagged', 'activeRunnerTurn', 'runnerTurnByTag', 'runnerTurnOf', 'runnerTurnOfReq',
 	'chatIsActiveErrand', 'turnPhase', 'stopGeneration', 'endRunnerLocal', 'continueStopped', 'answerAgain'];
 const found = {};

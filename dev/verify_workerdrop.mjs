@@ -47,6 +47,7 @@
 //   node dev/verify_workerdrop.mjs
 //
 // Needs dev/serve.mjs. No gateway, no model: nothing here sends a turn.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,7 +88,7 @@ const check = (pass, name, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 
-const SRC = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+const SRC = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 for (const [k, [from]] of Object.entries(BREAKS)) {
 	if (SRC.split(from).length !== 2) {
 		console.error(`the line the '${k}' break patches is not in js/daimond.js exactly once; `

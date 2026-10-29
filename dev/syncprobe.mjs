@@ -8,6 +8,7 @@
  * www/js/stampfloor.test.mjs.
  *
  * TREE selects the checkout (default: the one this file is in). */
+import { readPage } from './pagesrc.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,7 +103,7 @@ const compiled = new Map();
 export function loadScript(win, file) {
 	let fn = compiled.get(file);
 	if (!fn) {
-		const src = readFileSync(js(file), 'utf8');
+		const src = readPage(js(file), 'utf8');
 		fn = new Function('window', 'with (window) {\n' + src + '\n}\n//# sourceURL=' + file);
 		compiled.set(file, fn);
 	}
@@ -115,7 +116,7 @@ export function loadScript(win, file) {
 let _decls = null;
 function daimondDecls() {
 	if (_decls) return _decls;
-	const lines = readFileSync(js('daimond.js'), 'utf8').split('\n');
+	const lines = readPage(js('daimond.js'), 'utf8').split('\n');
 	const out = new Map();
 	let start = lines.findIndex((l) => /^\(function\b/.test(l));
 	const fnRe = /^\t(?:async )?function\*? ?([A-Za-z_$][\w$]*)\s*\(/;

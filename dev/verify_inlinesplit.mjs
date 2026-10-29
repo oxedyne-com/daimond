@@ -28,6 +28,7 @@
 //   node dev/verify_inlinesplit.mjs --break nosplit    # no placement of a held split copy (S13): C2P fails
 //   node dev/verify_inlinesplit.mjs --break renameedit # a kept edit re-names V1's manifest as newest: the ancestor returns
 //   --trace                                            # each device's notes/p* index entries, round by round (C2*)
+import { readPage } from './pagesrc.mjs';
 import { open, signInAs, scratch, markHere, workMenu } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
@@ -57,7 +58,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'`); proces
 const WWW = new URL('../www', import.meta.url).pathname;
 const PATCHED = new Map();
 for (const spec of (BREAKS[BREAK] || [])) {
-	const s0 = PATCHED.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const s0 = PATCHED.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 	if (s0.split(spec.find).length !== 2) { console.error(`break '${BREAK}': anchor not unique in ${spec.file}`); process.exit(2); }
 	PATCHED.set(spec.file, s0.replace(spec.find, spec.with));
 }

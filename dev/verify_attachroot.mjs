@@ -33,6 +33,7 @@
 //   node dev/verify_attachroot.mjs --break silent     # 3 fails: says nothing about where
 //   node dev/verify_attachroot.mjs --break strict     # 4 fails: legacy links dropped
 //   node dev/verify_attachroot.mjs                    # and then, clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,7 +98,7 @@ const { page } = s;
 
 if (BREAK) {
 	const spec = BREAKS[BREAK];
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

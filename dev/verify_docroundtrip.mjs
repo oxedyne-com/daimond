@@ -33,6 +33,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and the mock LLM for the one
 // @tool turn that sets the anchor. No gateway.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import { open, connectMock, scratch } from './harness.mjs';
 
@@ -92,7 +93,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(new URL('../www/' + spec.file, import.meta.url), 'utf8');
+			: readPage(new URL('../www/' + spec.file, import.meta.url), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	return byFile;

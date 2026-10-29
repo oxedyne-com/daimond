@@ -42,6 +42,7 @@
 //
 // Needs dev/serve.mjs only: the guide is flat files and loads none of the app.
 // Writes its screenshots to dev/shots/ifdiag-*.png.
+import { readPage } from './pagesrc.mjs';
 import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -83,10 +84,10 @@ const check = (name, pass, detail) => {
 const die = (why) => { console.error('ABORT: ' + why); process.exit(2); };
 
 // ── The inputs, and the damage ───────────────────────────────────────
-let pageBytes  = fs.readFileSync(PAGE, 'utf8');
-let spendBytes = fs.readFileSync(SPEND, 'utf8');
-let appJs      = fs.readFileSync(path.join(WWW, 'js', 'daimond.js'), 'utf8');
-let spendJs    = fs.readFileSync(path.join(WWW, 'js', 'spend.js'), 'utf8');
+let pageBytes  = readPage(PAGE, 'utf8');
+let spendBytes = readPage(SPEND, 'utf8');
+let appJs      = readPage(path.join(WWW, 'js', 'daimond.js'), 'utf8');
+let spendJs    = readPage(path.join(WWW, 'js', 'spend.js'), 'utf8');
 
 const applied = [];
 switch (BREAK) {
@@ -178,7 +179,7 @@ if (BREAK) console.log(`BREAK ${BREAK}: ${applied.join('; ')}\n`);
 	// The named binding, from daimond.js's own `var topMeter = getElementById(...)`.
 	const RE = /\b(topMeter|document\.getElementById\(\s*'top-meter'\s*\))\s*\.\s*(textContent|innerHTML|innerText|append\w*|replaceChildren)\s*(=[^=]|\()/g;
 	for (const f of files) {
-		const src = f.endsWith('daimond.js') ? appJs : (f.endsWith('spend.js') ? spendJs : fs.readFileSync(f, 'utf8'));
+		const src = f.endsWith('daimond.js') ? appJs : (f.endsWith('spend.js') ? spendJs : readPage(f, 'utf8'));
 		let m;
 		while ((m = RE.exec(src))) {
 			// An assignment of the empty string is a clearing, not a readout.

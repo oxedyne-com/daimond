@@ -17,13 +17,14 @@
    Lifts the REAL functions out of daimond.js. Red proof:
    HATE7_SRC=<daimond.js at the base> node this file.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(process.env.HATE7_SRC || join(HERE, 'daimond.js'), 'utf8');
-const PEER = readFileSync(process.env.HATE7_PEER || join(HERE, 'peer.js'), 'utf8');
+const SRC  = readPage(process.env.HATE7_SRC || join(HERE, 'daimond.js'), 'utf8');
+const PEER = readPage(process.env.HATE7_PEER || join(HERE, 'peer.js'), 'utf8');
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
 	checks++;

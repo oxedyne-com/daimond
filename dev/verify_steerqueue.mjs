@@ -39,6 +39,7 @@
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099). No gateway.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,7 +87,7 @@ const BREAKS = {
 function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
-		const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		const src = readPage(path.join(WWW, spec.file), 'utf8');
 		if (!src.includes(spec.find)) {
 			console.error(`--break ${BREAK}: anchor not found in ${spec.file}. The break is stale.`);
 			process.exit(1);

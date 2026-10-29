@@ -62,6 +62,7 @@
           node www/js/quotamanifest.test.mjs --break noreopen
           node www/js/quotamanifest.test.mjs --break nostickyread
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -112,7 +113,7 @@ function makeStorage() {
 
 /// One simulated tab holding cloud.js, the peer.test.mjs / peerkey.test.mjs pattern.
 function makeCloudTab(storageApi) {
-	let body = readFileSync(join(HERE, 'cloud.js'), 'utf8');
+	let body = readPage(join(HERE, 'cloud.js'), 'utf8');
 	if (BREAK === 'ignorequota') {
 		// The bug: `setIndex` never remembers a write it could not land, so
 		// `contentSet` always answers true and `indexDurable()` never goes false.
@@ -144,7 +145,7 @@ function loadParcelRefs() {
 			return out;
 		};
 	}
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const start = src.indexOf('\tfunction parcelRefs(state) {');
 	if (start < 0) throw new Error('parcelRefs not found in daimond.js');
 	// The function body ends at the first line that is exactly a tab + `}`.
@@ -158,7 +159,7 @@ function loadParcelRefs() {
 /// A tab holding the REAL chunks.js `commit`, with the gateway mocked so the test
 /// can read back exactly which addresses the commit declared live.
 function makeChunksTab() {
-	const body = readFileSync(join(HERE, 'chunks.js'), 'utf8');
+	const body = readPage(join(HERE, 'chunks.js'), 'utf8');
 	let lastCommit = null;
 	const gateway = {
 		clientApi: () => 1,
@@ -316,9 +317,9 @@ function makeDurableCloudTab(storage, idbApi, core) {
 			'with (window) {\n' + src + '\n}');
 		fn(win, storage.api, nav, setTimeout, clearTimeout, QUIET);
 	};
-	run(readFileSync(join(HERE, 'store.js'), 'utf8'));
-	run(patchDurable(readFileSync(join(HERE, 'durable.js'), 'utf8')));
-	run(patchCloud(readFileSync(join(HERE, 'cloud.js'), 'utf8')));
+	run(readPage(join(HERE, 'store.js'), 'utf8'));
+	run(patchDurable(readPage(join(HERE, 'durable.js'), 'utf8')));
+	run(patchCloud(readPage(join(HERE, 'cloud.js'), 'utf8')));
 	return win.DaimondCloud;
 }
 

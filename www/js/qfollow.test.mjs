@@ -25,6 +25,7 @@
 
    Run:  node --test www/js/qfollow.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -33,7 +34,7 @@ import { dirname, join } from 'node:path';
 import { fakeIDB, tabJournal, journalQueueOver } from './journalfixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function lift(name, optional) {
 	let a = SRC.indexOf('\n\tfunction ' + name + '(');

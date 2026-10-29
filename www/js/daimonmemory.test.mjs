@@ -21,6 +21,7 @@
 
    Run:  node www/js/daimonmemory.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -34,8 +35,8 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail ? '  (' + detail + ')' : '')); failures++; }
 }
 const J = JSON.stringify;
-const DJS = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const PJS = readFileSync(join(HERE, 'peer.js'), 'utf8');
+const DJS = readPage(join(HERE, 'daimond.js'), 'utf8');
+const PJS = readPage(join(HERE, 'peer.js'), 'utf8');
 
 function extractFn(src, name) {
 	const at = src.indexOf('function ' + name + '(');

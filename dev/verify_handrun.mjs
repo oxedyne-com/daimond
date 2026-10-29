@@ -72,6 +72,7 @@
 // Needs nothing running: the dev server and the mock provider are started here
 // if they are not already up. Headed, under xvfb:
 //	xvfb-run -a -s "-screen 0 1400x900x24" node dev/verify_handrun.mjs
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -174,7 +175,7 @@ async function installBreak(page) {
 		console.error(`--break ${BREAK}: no such break. One of: ${Object.keys(BREAKS).join(', ')}`);
 		process.exit(2);
 	}
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

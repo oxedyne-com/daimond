@@ -11,6 +11,7 @@
 
    Run:  node www/js/errandlocked.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
 
@@ -48,12 +49,12 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 }
 // ── The dispatch door passes it ──────────────────────────────────────────
 {
-	const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+	const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 	check('dispatchToPeer sends errandLocked() as locked', /locked:\s*errandLocked\(\),/.test(src));
 }
 // ── The envelope ─────────────────────────────────────────────────────────
 {
-	const body = readFileSync(new URL('./peer.js', import.meta.url), 'utf8');
+	const body = readPage(new URL('./peer.js', import.meta.url), 'utf8');
 	const pw = { addEventListener() {}, dispatchEvent() { return true; } };
 	new Function('window', 'document', 'with (window) {\n' + body + '\n}')(pw, { addEventListener() {} });
 	const P = pw.DaimondPeer;

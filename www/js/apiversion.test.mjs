@@ -17,6 +17,7 @@
 
    Run: node www/js/apiversion.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
@@ -60,7 +61,7 @@ let headers = 0;
 for (const p of files) {
 	const rel = relative(ROOT, p);
 	if (rel === SELF) continue;
-	const src = readFileSync(p, 'utf8');
+	const src = readPage(p, 'utf8');
 	const isGw = rel === 'www/js/gateway.js';
 	const imports = /import\s*\{[^}]*\bCLIENT_API\b[^}]*\}\s*from\s*['"]\.\/clientapi\.mjs['"]/.test(src);
 	const isLib = rel === 'dev/clientapi.mjs';
@@ -96,7 +97,7 @@ for (const p of files) {
 	}
 }
 
-const gw = readFileSync(join(ROOT, 'www/js/gateway.js'), 'utf8');
+const gw = readPage(join(ROOT, 'www/js/gateway.js'), 'utf8');
 check('gateway.js defines CLIENT_API exactly once', (gw.match(/\bvar CLIENT_API\s*=\s*\d+;/g) || []).length === 1);
 check('gateway.js exports clientApi()', /clientApi:\s*function \(\) \{ return CLIENT_API; \}/.test(gw));
 check('the scan found header sites at all (' + headers + ')', headers > 50);

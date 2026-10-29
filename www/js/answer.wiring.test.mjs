@@ -7,6 +7,7 @@
 // click, would otherwise bring back a control that takes a press, changes nothing
 // and says nothing, and no unit test of the helper could see it. The checks are
 // over the source, by role (the pattern layers.wiring.test.mjs set).
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..');
-const read = (...p) => fs.readFileSync(path.join(WWW, ...p), 'utf8');
+const read = (...p) => readPage(path.join(WWW, ...p), 'utf8');
 const JS   = fs.readdirSync(HERE).filter((f) => f.endsWith('.js') && !f.endsWith('.test.mjs'));
 const html = read('index.html');
 const count = (s, re) => (s.match(re) || []).length;

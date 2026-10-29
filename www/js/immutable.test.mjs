@@ -18,6 +18,7 @@
 
    Run:  node www/js/immutable.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -39,7 +40,7 @@ function loadPeer() {
 		classList: { add() {}, remove() {}, toggle() {} } };
 	const document = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null, createElement: () => Object.assign({}, noEl), body: noEl };
-	const body = readFileSync(join(HERE, 'peer.js'), 'utf8');
+	const body = readPage(join(HERE, 'peer.js'), 'utf8');
 	const fn = new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
 		'with (window) {\n' + body + '\n}');
 	fn(win, document, console, setTimeout, clearTimeout, Date);
@@ -296,7 +297,7 @@ async function main() {
 
 		// The AddressGuard storm fix must stand: expedite is stood down after
 		// EXPEDITE_MAX_MS, and the value is unchanged (memory reference_daimond_addrguard).
-		const syncSrc = readFileSync(join(HERE, 'sync.js'), 'utf8');
+		const syncSrc = readPage(join(HERE, 'sync.js'), 'utf8');
 		check('(d3) sync.js EXPEDITE_MAX_MS is still 120000 (the storm fix is intact)',
 			/EXPEDITE_MAX_MS\s*=\s*120000/.test(syncSrc));
 		check('(d4) sync.js still stands the full pull down past EXPEDITE_MAX_MS',
@@ -304,7 +305,7 @@ async function main() {
 
 		// The daimond.js watcher follows frames through the sync engine's tap-driven
 		// watch, not a parked read per turn and not a heavier expedite pull.
-		const dSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const dSrc = readPage(join(HERE, 'daimond.js'), 'utf8');
 		check('(d5) the watcher follows frames through the wake-tapped watch, never a parked read',
 			/DaimondSync\.watchProgress\(k, onProgressFrame/.test(dSrc)
 			&& !/[?&]wait=/.test(syncSrc) && !/getProgressFrame\([^)]*,[^)]*,/.test(dSrc + syncSrc));
@@ -380,7 +381,7 @@ async function main() {
 		// once at the parcel merge, during the PRE-EXISTING stale-dispatch rebuild that
 		// drops the placeholder) and never rebuilds it after -- confirm the divert lives
 		// in appendUserMessage (the user path), not in the provisional streaming path.
-		const dSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const dSrc = readPage(join(HERE, 'daimond.js'), 'utf8');
 		// `_tailNoteTable` now takes the chat as its second argument (S-HAND #4: the id is
 		// resolved from `chat.diamondId`, so a daimon chat opened from the chat list -- where
 		// `currentDiamond` is null -- still finds its manifests), so the call is
@@ -397,8 +398,8 @@ async function main() {
 	console.log('\n(h) — the answer\'s product record is the same bytes on every copy');
 	{
 		const win = {};
-		new Function('window', readFileSync(join(HERE, 'pricing.js'), 'utf8'))(win);
-		new Function('window', readFileSync(join(HERE, 'provenance.js'), 'utf8'))(win);
+		new Function('window', readPage(join(HERE, 'pricing.js'), 'utf8'))(win);
+		new Function('window', readPage(join(HERE, 'provenance.js'), 'utf8'))(win);
 		const V = win.DaimondProvenance;
 		const AMID = 'ans-h';
 		// What runTurn stamps before a token streams, on the RUNNER.
@@ -446,7 +447,7 @@ async function main() {
 		// And the record is chrome: `msgSig` does not read it, so it can never force a rebuild.
 		const bare = Object.assign({}, settled[settled.length - 1]); delete bare.prod;
 		check('(h7) the drawing signature ignores the record', msgSig(bare) === msgSig(settled[settled.length - 1]));
-		const dSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const dSrc = readPage(join(HERE, 'daimond.js'), 'utf8');
 		const sigSrc = dSrc.split('function msgSig(')[1].split('\n\t}')[0];
 		check('(h8) daimond.js msgSig does not read `prod` either', sigSrc.indexOf('prod') < 0);
 		check('(h9) the live row takes the record stamped at turn start (withLiveAnswer reads _liveProd)',

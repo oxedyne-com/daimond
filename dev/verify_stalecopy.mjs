@@ -12,6 +12,7 @@
 //
 //   node dev/verify_stalecopy.mjs [--arms=HEF]
 //   node dev/verify_stalecopy.mjs --break nosettle     # the fix undone: H, E and F fail
+import { readPage } from './pagesrc.mjs';
 import crypto from 'node:crypto';
 import { open, signInAs, scratch, markHere, workMenu } from './harness.mjs';
 import { makePagePro, GW_URL } from './pro.mjs';
@@ -34,7 +35,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; known: $
 const WWW = new URL('../www', import.meta.url).pathname;
 const PATCHED = new Map();
 for (const spec of (BREAKS[BREAK] || [])) {
-	const src0 = PATCHED.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src0 = PATCHED.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src0.split(spec.find).length - 1;
 	if (n !== 1) { console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}; nothing proved`); process.exit(2); }
 	PATCHED.set(spec.file, src0.replace(spec.find, spec.with));

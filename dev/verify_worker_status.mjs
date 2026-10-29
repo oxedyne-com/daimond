@@ -16,12 +16,13 @@
 // here rather than silently testing a stale copy.
 //
 //   node dev/verify_worker_status.mjs
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 
 let bad = 0, ran = 0;
 const check = (pass, name, detail) => {
@@ -117,7 +118,7 @@ check(workerEndStatus('failed', '') === 'error', 'a plain failure is still error
 	const term = grabFn('isTerminal: function (');
 	check(/'blocked'/.test(term), 'a blocked worker is terminal for gather');
 	check(/'end\.why_blocked'/.test(grabFn('function endingParts(')), 'the tile\'s ending line names a blocked turn');
-	const EN = fs.readFileSync(path.join(HERE, '..', 'www', 'i18n', 'en.js'), 'utf8');
+	const EN = readPage(path.join(HERE, '..', 'www', 'i18n', 'en.js'), 'utf8');
 	check(/'agents\.status_blocked':/.test(EN), 'the tile has a word for blocked');
 }
 
@@ -136,7 +137,7 @@ check(workerEndStatus('failed', 'timed_out') === 'timed_out', 'a timed-out worke
 		'a timed-out worker names its rounds and is offered a resume', note);
 	const term = grabFn('isTerminal: function (');
 	check(/'timed_out'/.test(term), 'a timed-out worker is terminal for gather');
-	const EN = fs.readFileSync(path.join(HERE, '..', 'www', 'i18n', 'en.js'), 'utf8');
+	const EN = readPage(path.join(HERE, '..', 'www', 'i18n', 'en.js'), 'utf8');
 	check(/'agents\.status_timed_out':/.test(EN), 'the tile has a word for timed_out');
 	check(!/runTurnCapped|WORKER_WALL_CLOCK_MS/.test(SRC), 'no wall-clock race is left in the page');
 }

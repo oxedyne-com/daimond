@@ -31,6 +31,7 @@
 
    Run:  node www/js/chatstamp.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -43,10 +44,10 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail !== undefined ? '  (' + JSON.stringify(detail) + ')' : '')); failures++; }
 }
 
-const APP = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const APP = readPage(join(HERE, 'daimond.js'), 'utf8');
 // The REAL stamp module, which the taint reader (`chatTaintOf`, H3) joins with.
 const STAMPWIN = {};
-new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
+new Function('window', readPage(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
 
 /// Lifts `function name(...) { ... }` at any indentation by counting braces.
 function extractFn(src, name) {

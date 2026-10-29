@@ -33,14 +33,15 @@
 //   node dev/verify_workerreport.mjs --node            # the pure halves only, no browser
 //
 // VARIANT 3 drives a real page (a world must be up: `eval "$(bash dev/world.sh N --up)"`).
+import { readPage } from './pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { guardRan } from './verdict.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
-const RUST = readFileSync(join(HERE, '..', 'src/agent.rs'), 'utf8');
+const SRC  = readPage(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
+const RUST = readPage(join(HERE, '..', 'src/agent.rs'), 'utf8');
 
 const BREAK = (() => { const i = process.argv.indexOf('--break'); return (i >= 0 && process.argv[i + 1]) ? process.argv[i + 1] : ''; })();
 const BREAKS = ['note', 'offscreen', 'busydrop', 'emitter', 'rust'];

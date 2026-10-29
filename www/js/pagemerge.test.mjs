@@ -8,6 +8,7 @@
    own history at full size (past the 2,000-line LCS cap).   `node www/js/pagemerge.test.mjs`
    The offer in the real app: dev/verify_crystalupdate.mjs.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -83,15 +84,15 @@ const L = (...xs) => xs.join('\n');
 // At full size, against the real template's history.
 {
 	const sha = (s) => createHash('sha256').update(s).digest('hex');
-	const now = readFileSync(join(TPL, 'crystal.html'), 'utf8');
+	const now = readPage(join(TPL, 'crystal.html'), 'utf8');
 	let bases = [];
 	try { bases = readdirSync(join(TPL, 'base')).filter((f) => /^[0-9a-f]{64}\.html$/.test(f)); } catch (e) { /* none */ }
 	check('the bundle carries the template\'s past pages, by hash', bases.length >= 1, bases.length);
 	let named = true;
-	for (const f of bases) if (sha(readFileSync(join(TPL, 'base', f), 'utf8')) + '.html' !== f) named = false;
+	for (const f of bases) if (sha(readPage(join(TPL, 'base', f), 'utf8')) + '.html' !== f) named = false;
 	check('each named for its own SHA-256', named);
 	for (const f of bases) {
-		const base = readFileSync(join(TPL, 'base', f), 'utf8');
+		const base = readPage(join(TPL, 'base', f), 'utf8');
 		const lines = base.split('\n');
 		// The person's daimon changed a line near the top that the template has not touched since.
 		let at = lines.findIndex((l, i) => i > 3 && /<title>|<meta/.test(l) && now.split('\n').includes(l));

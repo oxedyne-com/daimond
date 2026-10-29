@@ -6,6 +6,7 @@
    through `versions_state().pruned`); the page draws each one as a row where the removed
    versions stood, states the limit under the list, and tells the Lens once per record.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -58,7 +59,7 @@ const placed = V.withPrunes(rows, g2).map(e => e.row ? 'v' + e.row.v : (e.prune.
 check('a renumbering stands where it happened', placed === 'v22,N,v20,P,v17,v8', placed);
 
 // The page: a prune row, a limit line, and the Lens event.
-const d = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const d = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 check('History draws prune rows', /withPrunes\(rows, g0\.pruned/.test(d) && /histPrunedRow\(e\.prune\)/.test(d));
 check('History states the limit', /t\('versions\.limit_note'/.test(d) && /histFoot\(g0\)/.test(d));
 check('the Lens hears each prune', /dsEvent\('versions\.pruned'/.test(d));
@@ -66,7 +67,7 @@ check('History words a renumbering as one', /'versions\.renumbered_kind'/.test(d
 const calls = (d.match(/notePrunes\((diamondId|r\.id|f\.id|id|id, g0\.pruned)\)/g) || []).length;
 check('notePrunes after a turn, an arrival, a backup restore, a template copy and History', calls === 5, String(calls));
 
-const en = readFileSync(new URL('../i18n/en.js', import.meta.url), 'utf8');
+const en = readPage(new URL('../i18n/en.js', import.meta.url), 'utf8');
 ['versions.pruned_kind', 'versions.pruned_row.one', 'versions.pruned_row.other', 'versions.limit_note',
 	'versions.renumbered_kind', 'versions.renumbered_row.one', 'versions.renumbered_row.other']
 	.forEach(k => check('en carries ' + k, en.includes("'" + k + "'")));

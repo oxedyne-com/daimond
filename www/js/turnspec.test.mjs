@@ -6,6 +6,7 @@
 // moved into `src/engine/turn.rs`. This replays that recorded JS decision over the rows (so the
 // table is the page's own answer), requires the page to ask the engine (`Wasm.turn_spec`) instead of
 // deciding again, and, where a DEV wasm sits in www/pkg, requires the export to give the same rows.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -14,8 +15,8 @@ import { fileURLToPath } from 'node:url';
 
 const HERE   = dirname(fileURLToPath(import.meta.url));
 const APP    = join(HERE, '..', '..');
-const GOLDEN = JSON.parse(readFileSync(join(APP, 'src', 'testdata', 'turn_golden.json'), 'utf8'));
-const PAGE   = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const GOLDEN = JSON.parse(readPage(join(APP, 'src', 'testdata', 'turn_golden.json'), 'utf8'));
+const PAGE   = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 // The page's decision as it stood (daimond.js `runSteerHeld`, `diamondModel`, `diamondCanRun`;
 // models.js `resolve`), over the golden row's inputs. `keyed` is the providers configured with a key.
@@ -49,7 +50,7 @@ test('the golden table has twelve sends and each is the JS decision recorded', (
 });
 
 test('the engine exports turn_spec', () => {
-	const src = readFileSync(join(APP, 'src', 'wasm', 'entry.rs'), 'utf8');
+	const src = readPage(join(APP, 'src', 'wasm', 'entry.rs'), 'utf8');
 	assert.match(src, /#\[wasm_bindgen\]\s*pub fn turn_spec\(/, 'no turn_spec export in src/wasm/entry.rs');
 });
 
@@ -74,7 +75,7 @@ test('the page asks the engine for the turn and does not decide it again', () =>
 let ENGINE = null;
 try {
 	const mod = await import(join(APP, 'www', 'pkg', 'oxedyne_daimond.js'));
-	mod.initSync({ module: readFileSync(join(APP, 'www', 'pkg', 'oxedyne_daimond_bg.wasm')) });
+	mod.initSync({ module: readPage(join(APP, 'www', 'pkg', 'oxedyne_daimond_bg.wasm')) });
 	ENGINE = mod;
 } catch (e) { ENGINE = null; }
 

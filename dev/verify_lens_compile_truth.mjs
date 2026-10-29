@@ -56,6 +56,7 @@
 //
 //   node dev/verify_lens_compile_truth.mjs
 
+import { readPage } from './pagesrc.mjs';
 import fs   from 'node:fs';
 import os   from 'node:os';
 import path from 'node:path';
@@ -94,8 +95,8 @@ function extractFunction(src, name) {
 	return src.slice(at, i);
 }
 
-const daimondSrc    = fs.readFileSync(path.join(ROOT, 'www/js/daimond.js'), 'utf8');
-const typstSrc      = fs.readFileSync(path.join(ROOT, 'www/js/typst.js'), 'utf8');
+const daimondSrc    = readPage(path.join(ROOT, 'www/js/daimond.js'), 'utf8');
+const typstSrc      = readPage(path.join(ROOT, 'www/js/typst.js'), 'utf8');
 
 // ── (1) The PDF byte floor, run as the real extracted function ──────────────
 

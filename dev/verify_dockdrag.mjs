@@ -24,6 +24,7 @@
 //   node dev/verify_dockdrag.mjs --list           # the breaks and what each takes away
 //
 // Needs a world (DAIMOND_PORT). No gateway, no wasm rebuild.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,7 +128,7 @@ if (BREAK && !BREAKS[BREAK]) {
 /// which is a green that means nothing at all.
 const breaker = BREAK ? async (page) => {
 	const b = BREAKS[BREAK];
-	const src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+	const src = readPage(path.join(WWW, b.file), 'utf8');
 	let out = src;
 	for (const [from, to] of b.edits) {
 		if (!out.includes(from)) {

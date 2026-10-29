@@ -30,6 +30,7 @@
         replica keeps a stamp of 0.
      node www/js/chatlaw.test.mjs      # ALL PASS
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -37,7 +38,7 @@ import vm from 'node:vm';
 import { makeWindow, sliceDaimond, rng } from '../../dev/syncprobe.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const APP = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -190,7 +191,7 @@ console.log('\nC. the store\'s change stamp sees a merge that decides a field at
 
 console.log('\nD. a seed carries the name and the worker; the replica keeps its stamp\n');
 {
-	const src = readFileSync(join(HERE, 'peer.js'), 'utf8');
+	const src = readPage(join(HERE, 'peer.js'), 'utf8');
 	const win = { console, setTimeout: () => 0, clearTimeout: () => {} };
 	win.window = win;
 	const ctx = vm.createContext(win);

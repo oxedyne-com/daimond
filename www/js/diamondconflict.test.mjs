@@ -39,6 +39,7 @@
           node www/js/diamondconflict.test.mjs --break stale     (Case 6 only)
           node www/js/diamondconflict.test.mjs --break noarchive (Case 7 only)
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -79,7 +80,7 @@ function lift(src, marker) {
 	return src.slice(start, end + 3);
 }
 
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 const liftedStamp   = lift(SRC, '\tfunction diamondStamp(d) {');
 const liftedTags    = lift(SRC, '\tfunction packTags(data) {');
 const liftedLinks   = lift(SRC, '\tfunction packLinks(data) {');
@@ -123,7 +124,7 @@ const liftedNotes = (() => {
 })();
 const STEERING = (() => {
 	const win = {};
-	new Function('window', readFileSync(join(HERE, 'steering.js'), 'utf8'))(win);
+	new Function('window', readPage(join(HERE, 'steering.js'), 'utf8'))(win);
 	return win.DaimondSteering;
 })();
 // The shape law's apply side (F3): no `DaimondCloud` here, so no manifest stands and none is adopted.

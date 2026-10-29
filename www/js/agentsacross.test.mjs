@@ -24,6 +24,7 @@
    Run:  node www/js/agentsacross.test.mjs
    ============================================================ */
 const { makeWindow, loadScript, TREE } = await import('../../dev/syncprobe.mjs');
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -102,8 +103,8 @@ if (have) {
 }
 
 // (e) wiring
-const APP  = readFileSync(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
-const SYNC = readFileSync(join(TREE, 'www', 'js', 'sync.js'), 'utf8');
+const APP  = readPage(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
+const SYNC = readPage(join(TREE, 'www', 'js', 'sync.js'), 'utf8');
 const grid = (APP.match(/function renderAgentGrid\(\) \{[\s\S]*?\n\t\}\n/) || [''])[0];
 check('(e) the grid draws the peers\' runs beside its own', /Workers\.runs\.concat\([\s\S]*PeerAgents[\s\S]*\.list\(\)/.test(grid));
 check('(e) a peer square is no button', /createElement\(peer \? 'span' : 'button'\)/.test(grid));

@@ -47,6 +47,7 @@
 // that quietly stopped applying, and a green run under it would prove nothing.
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both).
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -133,7 +134,7 @@ const SRC_BREAKS = {
 let patched = null;
 if (SRC_BREAKS[BREAK]) {
 	const spec = SRC_BREAKS[BREAK];
-	patched = fs.readFileSync(path.join(HERE, '..', 'www', SRC), 'utf8');
+	patched = readPage(path.join(HERE, '..', 'www', SRC), 'utf8');
 	const n = patched.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${SRC}, so nothing was `

@@ -32,6 +32,7 @@
         the source, and the browser probe `qa_stalefp` is the behavioural proof).
      node www/js/stalefp.test.mjs            # ALL PASS
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -116,7 +117,7 @@ check('4. control: the summary\'s fp is the new serial\'s', c.mirror.fp === c.ne
 
 console.log('\n-- the database put of noteFps is a compare-and-set on the seed --');
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 const at = src.indexOf('noteFps: function (fixes)');
 const body = at < 0 ? '' : src.slice(at, src.indexOf('loadCount:', at));
 const put = body.indexOf('st.put(s)');

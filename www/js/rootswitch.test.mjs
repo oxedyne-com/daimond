@@ -4,6 +4,7 @@
 //
 // rootSwitchBlocked and turnsInFolder live inside the Workspace panel's closure, so each is cut out
 // of the source by its name and run alone against stand-ins for what it calls.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function cut(name) {
 	let at = src.indexOf('\t\tasync function ' + name + '(');

@@ -41,6 +41,7 @@
      node www/js/collectheap.test.mjs --break flush3      # flush collects three times a round
      node www/js/collectheap.test.mjs                     # and then, clean
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -87,7 +88,7 @@ function funcBody(src, decl) {
 // ── The daimond.js / sync.js sources, optionally patched to REINTRODUCE a
 //    defect so a guard can be shown to catch it. ────────────────────────────
 function daimondSrc() {
-	let src = readFileSync(DAIMOND_SRC, 'utf8');
+	let src = readPage(DAIMOND_SRC, 'utf8');
 	if (BREAK === 'holdall') {
 		// The stream goes: the two-pass loop is replaced by the old up-front loop
 		// that reads and HOLDS every transcript in one array before returning.
@@ -112,7 +113,7 @@ function daimondSrc() {
 	return src;
 }
 function syncSrc() {
-	let src = readFileSync(SYNC_SRC, 'utf8');
+	let src = readPage(SYNC_SRC, 'utf8');
 	if (BREAK === 'flush3') {
 		// The one-collect flush goes: a pre-push collect is put back at the top of
 		// the round, so the round pays three whole-parcel collects again.

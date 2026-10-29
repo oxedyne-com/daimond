@@ -41,6 +41,7 @@
 // --break legacy serves a daimond.js whose two-sided test is the fork point's alone and whose landing reads the live
 // store, i.e. 5.2.1's Diamond merge, without touching the shipped code. Chromium only (a Diamond needs OPFS; the
 // break and the old page ride `page.route`). Needs dev/serve.mjs only.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -68,7 +69,7 @@ if (BROWSER !== 'chromium') { console.error('Chromium only: a Diamond needs OPFS
 
 // ── The seam must be present, or a green run would prove nothing ──────
 const FILE = 'js/daimond.js';
-const SRC  = fs.readFileSync(path.join(WWW, FILE), 'utf8');
+const SRC  = readPage(path.join(WWW, FILE), 'utf8');
 const SEAM = [
 	'var twoSided = diamondTwoSided(r, mine, recv, dbase);',
 	'try { await commitDiamondBaseline(fork); } catch (e) { /* best effort */ }',

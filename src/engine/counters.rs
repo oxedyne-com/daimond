@@ -67,25 +67,5 @@ impl Counters {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn spend(n: u64, last: u64) -> Counters {
-        Counters { prompt: n, completion: n, cached: n, cost: n as f64, last_prompt: last }
-    }
-
-    /// Lead ruling (EP-6 F6L, QA LOW-3): a child's spend owed into the chat adds to the chat's
-    /// totals and never sets the chat's last prompt, which the fold check and the context % read
-    /// as the chat's own last request.
-    #[test]
-    fn owed_child_spend_adds_but_never_sets_the_last_prompt() {
-        let chat = spend(100, 4000);
-        let got = chat.owing(&[spend(10, 90_000), spend(5, 7)]);
-        assert_eq!(got.prompt, 115);
-        assert_eq!(got.completion, 115);
-        assert_eq!(got.cached, 115);
-        assert_eq!(got.cost, 115.0);
-        assert_eq!(got.last_prompt, 4000, "the chat's last request stands");
-        assert_eq!(chat.plus(&spend(1, 1)).last_prompt, 4000);
-    }
-}
+#[path = "../../tests/unit/engine/counters/tests.rs"]
+mod tests;

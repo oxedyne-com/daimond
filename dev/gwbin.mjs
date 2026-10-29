@@ -20,6 +20,7 @@
 // numbers about a build nobody is shipping, and those numbers are harder to
 // disbelieve than an absent result.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -91,7 +92,7 @@ function requireDevGateway() {
 		process.exit(1);
 	}
 	const cfg = path.join(GWCWD, 'app.jdat');
-	const txt = fs.existsSync(cfg) ? fs.readFileSync(cfg, 'utf8') : '';
+	const txt = fs.existsSync(cfg) ? readPage(cfg, 'utf8') : '';
 	if (!/"beta_only":\s*"false"/.test(txt)) {
 		console.log('  FAIL ' + path.relative(ROOT, cfg) + ' is not open for registration, so '
 			+ 'every fresh keypair here would be answered 403 the beta is closed');
@@ -174,7 +175,7 @@ export function procLog(name, what = 'gateway') {
 		/// summary has passed it through `tee`.
 		lines() {
 			let text = '';
-			try { text = fs.readFileSync(file, 'utf8'); } catch (e) { return []; }
+			try { text = readPage(file, 'utf8'); } catch (e) { return []; }
 			return text.split('\n')
 				.map(l => l.replace(/\u001b\[[0-9;]*m/g, ''))	// a literal escape byte in source is fragile.
 				.filter(l => l.trim() !== '');
@@ -257,7 +258,7 @@ function walkRust(dir, out) {
 function pathDeps() {
 	const toml = path.join(GWDIR, 'Cargo.toml');
 	let text = '';
-	try { text = fs.readFileSync(toml, 'utf8'); }
+	try { text = readPage(toml, 'utf8'); }
 	catch (e) {
 		console.log('  FAIL cannot read ' + toml + ' to find the crates the gateway is built from — '
 			+ e.message);

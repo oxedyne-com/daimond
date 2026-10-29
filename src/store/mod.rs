@@ -187,10 +187,5 @@ pub trait StoreEnv {
 mod store_tests;
 
 #[cfg(test)]
-mod tests {
-    /// The store's code builds on the native target too (d1_plan D1s1).
-    #[test]
-    fn diamond_builds_natively() {
-        assert_eq!(super::diamond::diamond_dir("x"), "diamonds/x");
-    }
-}
+#[path = "../../tests/unit/store/tests.rs"]
+mod tests;

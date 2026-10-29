@@ -14,6 +14,7 @@
 // `--break notiles` drops the foldStage* wiring from foldChatInto -- the opaque spinner as it shipped.
 // `--break leak` leaves the fold tile unsettled on the commit throw path.
 // `--break dotkeys` restores the dotted i18n keys the code does not read.
+import { readPage } from './pagesrc.mjs';
 'use strict';
 const { readFileSync } = await import('node:fs');
 const { join } = await import('node:path');
@@ -45,7 +46,7 @@ function fnText(s, name) {
 	return s.slice(i, j < 0 ? undefined : j + 3);
 }
 
-let src = readFileSync(JS, 'utf-8');
+let src = readPage(JS, 'utf-8');
 if (BREAK === 'notiles')
 	src = src.replace(/foldStageSay\(frun, 'read'\);[\s\S]*?foldStageSay\(frun, 'propose'\);/, '')
 		.replace(/foldStageSay\(frun, 'commit'\);/, '')
@@ -137,7 +138,7 @@ const DEAD = ['fold.proposed_toast', 'fold.proposed_elsewhere', 'fold.pending_ba
 	'diff.proposed_into', 'fold.keys_lost', 'fold.committed_fresh'];
 let allKeys = true, named = true, dead = true, raw = true;
 for (const c of CATS) {
-	let cat = readFileSync(join(ROOT, 'www/i18n', c + '.js'), 'utf-8');
+	let cat = readPage(join(ROOT, 'www/i18n', c + '.js'), 'utf-8');
 	if (BREAK === 'dotkeys')
 		cat = cat.replace(/'fold\.stage_(read|propose|commit|failed)'/g, "'fold.stage.$1'");
 	for (const k of ['fold.stage_read', 'fold.stage_propose', 'fold.stage_commit',

@@ -9,6 +9,7 @@
 // every builder of a `.modal` registers it, the drawer and a popover have one
 // opener and one closer each, and the safe-area inset is applied to each role of
 // layer head by ONE rule of its own.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..');
-const read = (...p) => fs.readFileSync(path.join(WWW, ...p), 'utf8');
+const read = (...p) => readPage(path.join(WWW, ...p), 'utf8');
 const JS   = fs.readdirSync(HERE).filter((f) => f.endsWith('.js') && !f.endsWith('.test.mjs'));
 const count = (s, re) => (s.match(re) || []).length;
 

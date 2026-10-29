@@ -17,6 +17,7 @@
 //
 //   node dev/verify_runnersaid.mjs
 //   node dev/verify_runnersaid.mjs --break nolabel
+import { readPage } from './pagesrc.mjs';
 import { checker, pair, send, until, freshChat } from './handoffpair.mjs';
 import { mockLog, shot } from './harness.mjs';
 import fs from 'node:fs';
@@ -49,7 +50,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		let src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		const n = src.split(spec.find).length - 1;
 		if (n !== 1) {
 			console.error(`break '${BREAK}': anchor appears ${n} times in ${spec.file}; fix the anchor`);

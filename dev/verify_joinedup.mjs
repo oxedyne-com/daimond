@@ -77,6 +77,7 @@
 //
 // Needs dev/serve.mjs only. No gateway on :9002 -- the account endpoint is
 // stubbed here -- and no mock LLM: nothing here runs a turn.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,7 +151,7 @@ if (BREAK && !BREAKS[BREAK]) {
 /// same URL serves only the last, so a break with two edits in one file would
 /// silently deliver half of itself.
 function damaged(file, specs) {
-	let src = fs.readFileSync(path.join(WWW, file), 'utf8');
+	let src = readPage(path.join(WWW, file), 'utf8');
 	for (const spec of specs) {
 		const n = src.split(spec.find).length - 1;
 		if (n !== 1) {
@@ -183,7 +184,7 @@ async function serveBroken(page) {
 // ── The English the user is owed ─────────────────────────────────────
 // Read from the CATALOGUE FILE, not from the page.
 const CATALOGUE = (() => {
-	const src = fs.readFileSync(path.join(WWW, 'i18n/en.js'), 'utf8');
+	const src = readPage(path.join(WWW, 'i18n/en.js'), 'utf8');
 	const out = {};
 	for (const key of ['handle.taken', 'handle.invalid', 'handle.reserved', 'handle.failed']) {
 		const m = src.match(new RegExp(`'${key.replace('.', '\\.')}':\\s*'((?:[^'\\\\]|\\\\.)*)'`));
@@ -288,9 +289,9 @@ async function stubGateway(page) {
 // It is now `folder_loss_reported(outcome, thrown)` in `src/tools.rs`: the call's
 // outcome first, then the NAME the browser threw, and never the result's words.
 {
-	const ts = fs.readFileSync(path.join(ROOT, 'src/tools.rs'), 'utf8');
-	const os = fs.readFileSync(path.join(ROOT, 'src/wasm/opfs.rs'), 'utf8');
-	const js = fs.readFileSync(path.join(WWW, SRC), 'utf8');
+	const ts = readPage(path.join(ROOT, 'src/tools.rs'), 'utf8');
+	const os = readPage(path.join(ROOT, 'src/wasm/opfs.rs'), 'utf8');
+	const js = readPage(path.join(WWW, SRC), 'utf8');
 
 	const name = (ts.match(/pub const WITHDRAWN_GRANT: &str = "([^"]+)"/) || [])[1] || '';
 	check('src/tools.rs names the withdrawn-grant exception', !!name, name);
@@ -344,7 +345,7 @@ async function stubGateway(page) {
 
 // ── 6. The dead word-mark swap, at the source ────────────────────────
 {
-	const js = fs.readFileSync(path.join(WWW, SRC), 'utf8');
+	const js = readPage(path.join(WWW, SRC), 'utf8');
 	check('nothing in js/daimond.js queries .empty-logo any more',
 		!/querySelector\([^)]*empty-logo/.test(js));
 }
@@ -671,7 +672,7 @@ const GLUE = 'pkg/oxedyne_daimond.js';
 const NOT_ALLOWED = "OPFS: open dir 'x' failed: NotAllowedError: The request is not allowed "
 	+ 'by the user agent or the platform in the current context.. [IO, File, Read]';
 
-const glueSrc = fs.readFileSync(path.join(WWW, GLUE), 'utf8');
+const glueSrc = readPage(path.join(WWW, GLUE), 'utf8');
 const MODE_FN = 'export function workspace_mode() {';
 const READ_FN = 'export function read_file(path) {';
 for (const anchor of [MODE_FN, READ_FN]) {

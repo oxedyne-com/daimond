@@ -27,6 +27,7 @@
 //
 //   node dev/verify_askdrawn.mjs                     # clean: all checks pass
 //   node dev/verify_askdrawn.mjs --break paintlie    # the defect as it shipped
+import { readPage } from './pagesrc.mjs';
 import { open, connectMock, mockLog, clearMockLog } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -83,7 +84,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	return byFile;

@@ -49,6 +49,7 @@
 //   node dev/verify_wire.mjs --break chars      # the schemas counted in characters, not bytes
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both).
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -150,7 +151,7 @@ if (BREAK && !BREAKS[BREAK]) {
 /// serve the second edit alone, and the run would report a check as proved that
 /// had been asked of working code.
 function damaged(file, specs) {
-	let src = fs.readFileSync(path.join(WWW, file), 'utf8');
+	let src = readPage(path.join(WWW, file), 'utf8');
 	for (const spec of specs) {
 		const n = src.split(spec.find).length - 1;
 		if (n !== 1) {

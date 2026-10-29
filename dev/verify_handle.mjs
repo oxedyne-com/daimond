@@ -58,6 +58,7 @@
 //
 // Needs dev/serve.mjs only. No gateway on :9002 and no mock LLM: nothing here
 // runs a turn.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -181,7 +182,7 @@ if (BREAK && !BREAKS[BREAK]) {
 /// the check was written for. That happened here: the merge was left intact, the
 /// run went green, and the break looked like a proof that the code was right.
 function damaged(file, specs) {
-	let src = fs.readFileSync(path.join(WWW, file), 'utf8');
+	let src = readPage(path.join(WWW, file), 'utf8');
 	for (const spec of specs) {
 		const n = src.split(spec.find).length - 1;
 		if (n !== 1) {
@@ -199,7 +200,7 @@ function damaged(file, specs) {
 // what it thinks the sentence is, and then asserts the page said it, is a check
 // that would pass with every sentence replaced by the same one.
 const CATALOGUE = (() => {
-	const src = fs.readFileSync(path.join(WWW, 'i18n/en.js'), 'utf8');
+	const src = readPage(path.join(WWW, 'i18n/en.js'), 'utf8');
 	const out = {};
 	for (const key of ['handle.taken', 'handle.invalid', 'handle.reserved', 'handle.failed']) {
 		const m = src.match(new RegExp(`'${key.replace('.', '\\.')}':\\s*'((?:[^'\\\\]|\\\\.)*)'`));

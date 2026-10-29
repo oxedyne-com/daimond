@@ -17,6 +17,7 @@
 
    Run:  node www/js/devicelabel.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -49,8 +50,8 @@ function extractVar(src, name) {
 }
 
 function main() {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-	const en  = readFileSync(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
+	const en  = readPage(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
 
 	const parts = {
 		DEVICE_ID_RE:       extractVar(src, 'DEVICE_ID_RE'),

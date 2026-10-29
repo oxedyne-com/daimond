@@ -33,6 +33,7 @@
 //
 // `--broken` rewrites the ONE line in the served daimond.js, so the two runs
 // differ by that line and nothing else.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,7 +90,7 @@ async function newDiamond(p, name) {
 }
 
 const route = BROKEN ? async (page) => {
-	const src = fs.readFileSync(APPDIR + '/www/js/daimond.js', 'utf8');
+	const src = readPage(APPDIR + '/www/js/daimond.js', 'utf8');
 	if (!src.includes(FIXED_LINE)) throw new Error('the fixed line is not in the file; --broken cannot rewrite it');
 	const hurt = src.replace(FIXED_LINE, BROKEN_LINE);
 	await page.route('**/js/daimond.js', (r) => r.fulfill({

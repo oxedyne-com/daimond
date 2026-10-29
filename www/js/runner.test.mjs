@@ -40,6 +40,7 @@
      node www/js/runner.test.mjs --break parklocked # (f) parks while locked
      node www/js/runner.test.mjs                    # and then, clean
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -152,7 +153,7 @@ function makeTab(cfg) {
 	};
 	win.window = win;
 
-	let src = readFileSync(join(HERE, 'runner.js'), 'utf8');
+	let src = readPage(join(HERE, 'runner.js'), 'utf8');
 	if (BREAK === 'askalways') {
 		// The asking is no longer remembered, so a no is asked again on every tick.
 		src = src.replace("if (asked === me) return { act: 'hold', why: 'declined' };", '');
@@ -412,7 +413,7 @@ async function main() {
 
 	console.log('\nrunner: neither key rides the sync parcel');
 	{
-		const core = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const core = readPage(join(HERE, 'daimond.js'), 'utf8');
 		const collect = (() => {
 			const i = core.indexOf('function collectSync');
 			return i < 0 ? '' : core.slice(i, i + 12000);

@@ -10,6 +10,7 @@
    copy) and a `broken` reason when the read throws, so the bar leaves Edit out, the face
    names the failure, and the memory panel offers no raw editor over text it never read.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -61,7 +62,7 @@ if (fns) {
 		bad.data === null && bad.broken !== null && !bad.unread, JSON.stringify(bad));
 }
 
-const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 const a = src.indexOf('\tasync function renderCrystal()');
 const rc = src.slice(a, src.indexOf('\n\t}\n', a));
 check('renderCrystal reads through readCrystalFor, not a catch that answers empty text',

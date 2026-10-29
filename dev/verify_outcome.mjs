@@ -76,6 +76,7 @@
 //
 // Needs dev/serve.mjs and the mock. No gateway. No wasm rebuild — the wasm is the
 // one already built; only its JS glue is wrapped, and only in this file's browser.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -156,7 +157,7 @@ if (BREAK && !BREAKS[BREAK]) {
 	process.exit(2);
 }
 
-const GLUE_SRC = fs.readFileSync(path.join(WWW, 'pkg/oxedyne_daimond.js'), 'utf8');
+const GLUE_SRC = readPage(path.join(WWW, 'pkg/oxedyne_daimond.js'), 'utf8');
 
 // A break entry is `[find, replace, count]` and patches `js/daimond.js`, which is
 // where all but one of them live. A fourth element names another served file
@@ -166,7 +167,7 @@ const GLUE_SRC = fs.readFileSync(path.join(WWW, 'pkg/oxedyne_daimond.js'), 'utf8
 const DEFAULT_FILE = 'js/daimond.js';
 const damaged = new Map();
 const sourceOf = (f) => {
-	if (!damaged.has(f)) damaged.set(f, fs.readFileSync(path.join(WWW, f), 'utf8'));
+	if (!damaged.has(f)) damaged.set(f, readPage(path.join(WWW, f), 'utf8'));
 	return damaged.get(f);
 };
 sourceOf(DEFAULT_FILE);

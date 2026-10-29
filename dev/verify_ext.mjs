@@ -61,6 +61,7 @@
 // served locally (serve.mjs) and passed in, so the check runs offline against the same
 // chain. Needs dev/serve.mjs (DAIMOND_PORT, default 8777). Headed: MV3 service workers
 // need a real browser, so run it under xvfb.
+import { readPage } from './pagesrc.mjs';
 import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import path from 'node:path';
 import os from 'node:os';
@@ -131,7 +132,7 @@ async function extForPort(port) {
 	// not be settable from outside it.
 	if (port !== 8777) {
 		const bg = path.join(out, 'background.js');
-		const before = fs.readFileSync(bg, 'utf8');
+		const before = readPage(bg, 'utf8');
 		const after = before.replace(/:8777/g, ':' + port);
 		if (after === before) {
 			throw new Error('verify/ext/background.js no longer names :8777, so the dev copy '
@@ -145,13 +146,13 @@ async function extForPort(port) {
 	// one thing this whole directory exists to prevent.
 	if (BREAK === 'blind') {
 		const chk = path.join(out, 'check.js');
-		const src = fs.readFileSync(chk, 'utf8');
+		const src = readPage(chk, 'utf8');
 		const hurt = src.replace("add('every served file matches the manifest', bad.length === 0,",
 			"add('every served file matches the manifest', true,");
 		if (hurt === src) die('the blind break did not reach the file comparison in check.js');
 		fs.writeFileSync(chk, hurt);
 	}
-	const m = JSON.parse(fs.readFileSync(path.join(EXT_SRC, 'manifest.json'), 'utf8'));
+	const m = JSON.parse(readPage(path.join(EXT_SRC, 'manifest.json'), 'utf8'));
 	// Added, not substituted: the shipped origins stay, so the copy is the shipped
 	// extension plus this port rather than a different extension that happens to
 	// pass. Both spellings of loopback, because Chrome matches the origin string.
@@ -211,7 +212,7 @@ const fixLog = JSON.stringify(nextEntry(parseLog(''), {
 	ts: '2026-01-01T00:00:00.000Z', build: 'fixture', bundle: FIX_BUNDLE, note: 'verify_ext fixture',
 })) + '\n';
 fs.writeFileSync(`${ROOT}/www/_vtest_fixlog.jsonl`, fixLog);
-fs.writeFileSync(`${ROOT}/www/_vtest_log.jsonl`, fs.readFileSync(`${ROOT}/verify/transparency.jsonl`, 'utf8'));
+fs.writeFileSync(`${ROOT}/www/_vtest_log.jsonl`, readPage(`${ROOT}/verify/transparency.jsonl`, 'utf8'));
 fs.writeFileSync(`${ROOT}/www/_vtest_empty.jsonl`, '');
 const cleanup = () => {
 	for (const f of ['_vtest_fixlog.jsonl', '_vtest_log.jsonl', '_vtest_empty.jsonl']) {
@@ -286,7 +287,7 @@ try {
 		// on the way out looks like from here, and proves the naming as well as
 		// the comparison.
 		const from = (BREAK === 'wire' && rel === 'index.html') ? 'manifest.json' : rel;
-		const disk = sha256(fs.readFileSync(path.join(ROOT, 'www', from)));
+		const disk = sha256(readPage(path.join(ROOT, 'www', from)));
 		if (served !== disk) wrong.push(rel);
 	}
 	check('every served file is the file on disk', wrong.length === 0,

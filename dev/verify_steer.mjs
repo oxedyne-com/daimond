@@ -16,6 +16,7 @@
 //
 //   node dev/verify_steer.mjs --break silent   # expected to FAIL
 //   node dev/verify_steer.mjs                  # and then, clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +54,7 @@ if (BREAK && !BREAKS[BREAK]) {
 async function breakInto(page) {
 	const bodies = {};
 	for (const spec of BREAKS[BREAK]) {
-		const src = bodies[spec.file] || fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		const src = bodies[spec.file] || readPage(path.join(WWW, spec.file), 'utf8');
 		const n = src.split(spec.find).length - 1;
 		if (n !== 1) {
 			console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

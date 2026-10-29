@@ -53,6 +53,7 @@
 // no crystal, so every other check here is blind to it. The breaks go on the APP, as
 // `verify_capp.mjs`'s do, and for the same reason — what is under test is what the app does to
 // a page it did not write.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -112,7 +113,7 @@ if (BREAK) {
 		console.error('no such break: ' + BREAK + '\nhave: ' + Object.keys(BREAKS).join(' '));
 		process.exit(2);
 	}
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

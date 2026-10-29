@@ -20,6 +20,7 @@
 //   node dev/verify_diamondshape.mjs --break nosticky   # a reference may go back to inline at its stamp
 //   node dev/verify_diamondshape.mjs --break noadopt    # an equal-stamp reference is not adopted
 //   node dev/verify_diamondshape.mjs --break noshape    # both: the build before F3 (05f63268)
+import { readPage } from './pagesrc.mjs';
 import { open, signInAs, scratch } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
@@ -34,7 +35,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'`); proces
 const WWW = new URL('../www', import.meta.url).pathname;
 const PATCHED = new Map();
 for (const spec of (BREAKS[BREAK] || [])) {
-	const s0 = PATCHED.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const s0 = PATCHED.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 	if (s0.split(spec.find).length !== 2) { console.error(`break '${BREAK}': anchor not unique in ${spec.file}`); process.exit(2); }
 	PATCHED.set(spec.file, s0.replace(spec.find, spec.with));
 }

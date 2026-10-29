@@ -10,6 +10,7 @@
 //
 //   node dev/verify_promptmigrate.mjs
 //   node dev/verify_promptmigrate.mjs --break numbers   # must fail something
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,7 +64,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	return byFile;

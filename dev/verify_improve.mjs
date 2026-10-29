@@ -262,6 +262,7 @@
 // Needs dev/serve.mjs and node. No gateway and no Rust: the gateway's half of
 // the path is reproduced here, from the source, and the forge's half is the
 // mock.
+import { readPage } from './pagesrc.mjs';
 import { port } from './ports.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -392,7 +393,7 @@ const SEAM = [
 function requireSeams() {
 	const bad = [];
 	for (const s of SEAM) {
-		const src = fs.readFileSync(path.join(WWW, s.file), 'utf8');
+		const src = readPage(path.join(WWW, s.file), 'utf8');
 		const ok = (s.want instanceof RegExp) ? s.want.test(src) : src.includes(s.want);
 		if (!ok) bad.push(`  ${s.file}: ${s.why}`);
 	}
@@ -729,7 +730,7 @@ function build() {
 	if (!BREAK) return;
 	for (const spec of BREAKS[BREAK]) {
 		const p = spec.file;
-		const src = FILES.get(p) ?? fs.readFileSync(path.join(WWW, p), 'utf8');
+		const src = FILES.get(p) ?? readPage(path.join(WWW, p), 'utf8');
 		FILES.set(p, edit(src, spec, `break '${BREAK}'`));
 	}
 }
@@ -898,7 +899,7 @@ async function stub(page) {
 
 // ── The guide, read as the contract it is ────────────────────────────
 
-const GUIDE = fs.readFileSync(path.join(WWW, 'guide', 'social.html'), 'utf8');
+const GUIDE = readPage(path.join(WWW, 'guide', 'social.html'), 'utf8');
 
 function guideSection() {
 	const i = GUIDE.indexOf('<section id="social-panel">');
@@ -1874,7 +1875,7 @@ try {
 	const gaps = [];
 	for (const code of ['en', 'de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans']) {
 		const p   = 'i18n/' + code + '.js';
-		const src = FILES.get(p) ?? fs.readFileSync(path.join(WWW, p), 'utf8');
+		const src = FILES.get(p) ?? readPage(path.join(WWW, p), 'utf8');
 		for (const [key, ph] of CATALOGUE) {
 			const m = src.match(new RegExp("'" + key.replace('.', '\\.') + "':\\s*'((?:[^'\\\\]|\\\\.)*)'"));
 			if (!m) gaps.push(code + ' has no ' + key);

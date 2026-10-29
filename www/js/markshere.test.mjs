@@ -11,6 +11,7 @@
      node www/js/markshere.test.mjs
      node --test www/js/*.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
@@ -51,7 +52,7 @@ function tab(ls, opts) {
 		dispatchEvent: () => { heard++; return true; },
 		DaimondIdentity: { isUnlocked: () => unlocked },
 	};
-	new Function('window', 'CustomEvent', readFileSync(join(HERE, 'markshere.js'), 'utf8'))(win,
+	new Function('window', 'CustomEvent', readPage(join(HERE, 'markshere.js'), 'utf8'))(win,
 		function CustomEvent(type) { this.type = type; });
 	return {
 		M: win.DaimondMarksHere,
@@ -464,7 +465,7 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	})(WWW);
 	const sandboxes = [];
 	for (const f of files) {
-		const src = readFileSync(join(WWW, f), 'utf8');
+		const src = readPage(join(WWW, f), 'utf8');
 		for (const m of src.matchAll(/setAttribute\(\s*['"]sandbox['"]\s*,\s*(['"])(.*?)\1/g)) sandboxes.push([f, m[2]]);
 		for (const m of src.matchAll(/<iframe\b[^>]*?\bsandbox\s*=\s*"([^"]*)"/gs)) sandboxes.push([f, m[1]]);
 		for (const m of src.matchAll(/\.sandbox\s*(?:=|\.add\()\s*['"]([^'"]*)['"]/g)) sandboxes.push([f, m[1]]);
@@ -472,17 +473,17 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	check('every frame\'s sandbox was found (crystal, viewer, web panel)', sandboxes.length >= 3, JSON.stringify(sandboxes));
 	const same = sandboxes.filter(([, v]) => /allow-same-origin/.test(v));
 	check('no frame in www/ runs in the page\'s origin', same.length === 0, JSON.stringify(same));
-	const iframes = files.filter((f) => /createElement\(\s*['"]iframe['"]\s*\)|<iframe\b/.test(readFileSync(join(WWW, f), 'utf8')));
+	const iframes = files.filter((f) => /createElement\(\s*['"]iframe['"]\s*\)|<iframe\b/.test(readPage(join(WWW, f), 'utf8')));
 	const bare = iframes.filter((f) => !sandboxes.some(([g]) => g === f));
 	check('every file that makes a frame sandboxes it', bare.length === 0, JSON.stringify(bare));
-	const crystal = readFileSync(join(HERE, 'crystal.js'), 'utf8');
+	const crystal = readPage(join(HERE, 'crystal.js'), 'utf8');
 	const m = /var PAGE_NEVER_WRITES = (\/.*\/[a-z]*);/.exec(crystal);
 	const re = m ? new Function('return ' + m[1])() : null;
 	check('a capp page may never write a Diamond\'s sidecar', !!re && re.test('.daimond/links.jsonl') && re.test('.daimond/meta.json'));
 	const key = 'daimond-marks-' + 'here';
-	const hits = files.filter((f) => readFileSync(join(WWW, f), 'utf8').includes(key));
+	const hits = files.filter((f) => readPage(join(WWW, f), 'utf8').includes(key));
 	check('the record\'s key is named only in markshere.js and daimond.js', hits.sort().join(',') === 'js/daimond.js,js/markshere.js', hits.join(','));
-	const dsrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const dsrc = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const list = /var FORGET_CLEARS = \[([\s\S]*?)\n\t\];/.exec(dsrc);
 	const inList = list ? list[1].split(key).length - 1 : 0;
 	check('and in daimond.js only in FORGET_CLEARS', inList === 1 && dsrc.split(key).length - 1 === 1,

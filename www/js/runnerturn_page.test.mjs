@@ -27,6 +27,7 @@
    Run:  node www/js/runnerturn_page.test.mjs
    On 9f601b5b4: the RT-C functions are missing (FAILs).
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -60,8 +61,8 @@ function extractVar(src, name) {
 
 if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname(process.env.DAIMOND_JS), '..', '..');
 const { liftSource, makeWindow, sliceDaimond } = await import('../../dev/syncprobe.mjs');
-const src  = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
-const psrc = readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
+const src  = readPage(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
+const psrc = readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
 
 // The real peer.js and provenance.js, each in a bare window.
 const pwin = {};
@@ -71,7 +72,7 @@ new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Dat
 // The real module, and its row functions the page adopts through (not exported: reached in place).
 const P = Object.assign({}, pwin.DaimondPeer, pwin.__rtc);
 const vwin = {};
-new Function('window', readFileSync(join(HERE, 'provenance.js'), 'utf8'))(vwin);
+new Function('window', readPage(join(HERE, 'provenance.js'), 'utf8'))(vwin);
 const Prov = vwin.DaimondProvenance;
 
 const RTC = ['FOLDED_RUNS_MAX', 'NATIVE_FIGS', 'HERE_FIELDS', 'TOTAL_FIELDS'];
@@ -99,7 +100,7 @@ const lifted = new Function('env', [
 	'function diag() {}',
 	'function renderDispatchedBadges() {}',
 	'function dropDispatchedPlaceholder(t) { var c = env.chatFor(t); c.messages = c.messages.filter(function (m) { return !(m.why === "dispatched" && m.iturn === t); }); }',
-	'var DaimondStamp = (function () { var window = {}; ' + readFileSync(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
+	'var DaimondStamp = (function () { var window = {}; ' + readPage(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
 	liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src,
 	extractFn(src, 'dispatchedAnswerPresent'),
 	extractFn(src, 'dispatchedPlaceholderIn'),
@@ -430,9 +431,9 @@ console.log('\nCUT: a frame\'s "N steps not shown" row is drawn, once, where it 
 	const ictx = vm.createContext({ window: iw, console, navigator: { language: 'en' },
 		localStorage: { getItem: () => null, setItem() {} },
 		document: { querySelectorAll: () => [], documentElement: { setAttribute() {}, lang: '' } } });
-	vm.runInContext(readFileSync(join(HERE, 'i18n.js'), 'utf8'), ictx);
+	vm.runInContext(readPage(join(HERE, 'i18n.js'), 'utf8'), ictx);
 	ictx.DaimondI18n = iw.DaimondI18n;
-	vm.runInContext(readFileSync(join(HERE, '..', 'i18n', 'en.js'), 'utf8'), ictx);
+	vm.runInContext(readPage(join(HERE, '..', 'i18n', 'en.js'), 'utf8'), ictx);
 	const I = iw.DaimondI18n;
 	const logRowText = new Function('t', 'tn', [extractFn(src, 'tOr'), extractFn(src, 'logRowText'),
 		'return logRowText;'].join('\n'))(I.t, I.tn);

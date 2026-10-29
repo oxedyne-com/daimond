@@ -7,12 +7,13 @@
    A a second tab opens while a worker runs; B a crash in the 250 ms after the end's bill;
    C a crash after a re-mint's bill. Each must bill what was spent, no more.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 // The REAL agent grid helper the Workers record's stampEnds calls (r570s).
 globalThis.DaimondAgentGrid = createRequire(import.meta.url)('./agentgrid.js');
 
-const DAIMOND = readFileSync(process.env.DAIMOND_JS || new URL('./daimond.js', import.meta.url), 'utf8');
+const DAIMOND = readPage(process.env.DAIMOND_JS || new URL('./daimond.js', import.meta.url), 'utf8');
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {
 	if (cond) { ok++; console.log('  ok   ' + name); }

@@ -8,21 +8,14 @@
 //! Key components:
 //!
 //! - [`llm`] — async LLM client with SSE streaming
-//! - [`session`] — per-user session and conversation storage (O3db)
 //! - [`agent`] — the agent loop: message → LLM → tools → streamed response
 //! - [`protocol`] — WS message types (JDAT serialisation)
-//! - [`handler`] — `WebSocketHandler` impl for Steel integration
 
 #![forbid(unsafe_code)]
 
 pub mod activity;
 pub mod agent;
 pub mod executor;
-/// The Steel WebSocket handler is a native-only server concern; the
-/// browser (wasm32) build drives the agent directly, so this module is
-/// gated out of the wasm target.
-#[cfg(not(target_arch = "wasm32"))]
-pub mod handler;
 /// Crystal version history as a delta log: when a version stores a full copy
 /// and when it stores splices, and which stored files rebuild any one version.
 pub mod diamond_delta;
@@ -84,11 +77,10 @@ pub mod protocol;
 pub mod rating;
 /// The seal: post, peer-envelope and account-wrap records, one code path for wasm and native.
 pub mod seal;
-pub mod session;
 /// Named instruction bundles, and the two ways a turn invokes one.
 ///
-/// Target-agnostic on purpose.  The directory walk ([`skills::list_skills`]) is `std::fs` and so
-/// serves the native `handler` alone, but the parts that decide what a `/name` means and what the
+/// Target-agnostic on purpose.  The directory walk ([`skills::list_skills`]) is `std::fs`, native
+/// only, and has had no caller since the native `handler` went (P1.2); the parts that decide what a `/name` means and what the
 /// model is finally handed are pure, and the browser drives them over OPFS from `wasm::app` --
 /// because in the browser, which is where the user actually works, this module used to compile and
 /// be read by nothing.

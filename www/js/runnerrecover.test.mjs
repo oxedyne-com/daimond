@@ -17,6 +17,7 @@
    Drives the REAL `recoverRunnerTurns`, lifted from daimond.js.
      node www/js/runnerrecover.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -41,7 +42,7 @@ function extractFn(src, name) {
 	}
 	return src.slice(start + 1, i);
 }
-const APP = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const APP = readPage(join(HERE, 'daimond.js'), 'utf8');
 const drain = () => new Promise((r) => setImmediate(r));
 async function ticks(n = 30) { for (let i = 0; i < n; i++) await drain(); }
 

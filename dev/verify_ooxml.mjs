@@ -63,6 +63,7 @@
 //
 // Run: node dev/verify_ooxml.mjs [--selftest] [--keep]
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -218,7 +219,7 @@ if (!fs.existsSync(path.join(PKG, 'oxedyne_daimond_bg.wasm'))) {
 	process.exit(1);
 }
 const wasm = await import(path.join(PKG, 'oxedyne_daimond.js'));
-await wasm.default({ module_or_path: fs.readFileSync(
+await wasm.default({ module_or_path: readPage(
 	path.join(PKG, 'oxedyne_daimond_bg.wasm')) });
 
 // ---------------------------------------------------------------------------
@@ -336,7 +337,7 @@ try {
 // The edits, on files this project did not write
 // ---------------------------------------------------------------------------
 
-const read = (p) => new Uint8Array(fs.readFileSync(p));
+const read = (p) => new Uint8Array(readPage(p));
 
 console.log('\nedited, on somebody else\'s bytes');
 

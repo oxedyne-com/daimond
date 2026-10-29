@@ -15,6 +15,7 @@
 
    Run:  node www/js/errandlimits.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
 import { source, lift } from './testlift.mjs';
@@ -28,14 +29,14 @@ function check(name, cond, detail) {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // The runner's vector, as the page's names and order.
-const RS = readFileSync(new URL('../../kimberlite/src/errands/tests.rs', import.meta.url), 'utf8');
+const RS = readPage(new URL('../../kimberlite/src/errands/tests.rs', import.meta.url), 'utf8');
 const LM = /const LIMITS: &str = r#"(.*)"#;/.exec(RS);
 const LIMITS = LM ? JSON.parse(LM[1]) : null;
 check('the runner\'s LIMITS vector is readable', !!LIMITS);
 const LIMITS_JSON = JSON.stringify(LIMITS);
 
 // ── The envelope ─────────────────────────────────────────────────────────
-const PEER = readFileSync(new URL('./peer.js', import.meta.url), 'utf8');
+const PEER = readPage(new URL('./peer.js', import.meta.url), 'utf8');
 const pw = { addEventListener() {}, dispatchEvent() { return true; } };
 new Function('window', 'document', 'with (window) {\n' + PEER + '\n}')(pw, { addEventListener() {} });
 const P = pw.DaimondPeer;
@@ -95,7 +96,7 @@ const LOCALES = ['en', 'de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans'];
 function table(code) {
 	let got = null;
 	const w = { DaimondI18n: { register: (c, t) => { got = t; } } };
-	new Function('window', readFileSync(new URL('../i18n/' + code + '.js', import.meta.url), 'utf8'))(w);
+	new Function('window', readPage(new URL('../i18n/' + code + '.js', import.meta.url), 'utf8'))(w);
 	return got || {};
 }
 function tOf(tab) {

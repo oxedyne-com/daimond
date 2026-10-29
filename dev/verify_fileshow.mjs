@@ -77,6 +77,7 @@
 //   node dev/verify_fileshow.mjs
 //
 // Needs dev/serve.mjs only. No gateway, no mock LLM, no wasm rebuild.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -125,7 +126,7 @@ const SEAM = '\t})();\n\n'
 	+ '\tif (window.DaimondViewer && DaimondViewer.opener) DaimondViewer.opener(Files.open);\n\n'
 	+ '\t// ── The Terminal panel';
 
-const seamLanded = () => fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8')
+const seamLanded = () => readPage(path.join(WWW, 'js/daimond.js'), 'utf8')
 	.indexOf('DaimondViewer.opener(Files.open)') !== -1;
 
 // ── The breaks ───────────────────────────────────────────────────────
@@ -277,7 +278,7 @@ async function stub(page) {
 	const edited = {};
 	const edit = (spec, why) => {
 		const src = edited[spec.file]
-			|| fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			|| readPage(path.join(WWW, spec.file), 'utf8');
 		edited[spec.file] = apply(src, spec, why);
 	};
 	// The seam, when it is not in the tree yet. `--break seam` withholds it EITHER

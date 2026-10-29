@@ -82,6 +82,7 @@
 //
 // Needs dev/serve.mjs only. No gateway and no model: About spends nothing and
 // asks nothing of anybody.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -112,14 +113,14 @@ const check = (name, pass, detail) => {
 // the app fetches — so re-drawing the splash or sealing a new build moves both
 // of these on their own, and a check that has silently stopped meaning anything
 // is not a thing this file can leave lying about.
-const SPLASH = fs.readFileSync(path.join(WWW, 'assets', 'splash.svg'), 'utf8');
+const SPLASH = readPage(path.join(WWW, 'assets', 'splash.svg'), 'utf8');
 const VIEWBOX = (() => {
 	const m = /viewBox="([\d.\s-]+)"/.exec(SPLASH);
 	if (!m) { console.error('splash.svg carries no viewBox; nothing to measure against.'); process.exit(2); }
 	const n = m[1].trim().split(/\s+/).map(Number);
 	return { w: n[2], h: n[3], ar: n[2] / n[3] };
 })();
-const BUILD = JSON.parse(fs.readFileSync(path.join(WWW, 'build.json'), 'utf8')).build;
+const BUILD = JSON.parse(readPage(path.join(WWW, 'build.json'), 'utf8')).build;
 
 // ── The breaks ───────────────────────────────────────────────────────
 // Each is a real edit to a real file, served in place of it. `find` must appear
@@ -253,7 +254,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	return byFile;

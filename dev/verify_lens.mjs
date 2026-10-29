@@ -46,6 +46,7 @@
 //      feed health reaches `status` and `digest`, because a throttled feed is
 //      why a count below it would be short.
 
+import { readPage } from './pagesrc.mjs';
 import { execFileSync }	from 'node:child_process';
 import fs			from 'node:fs';
 import os			from 'node:os';
@@ -741,8 +742,8 @@ const snapSecret = lensJson3('snapshot', '--latest');
 // line the client cannot bypass by us only checking its own read path.
 const secretBodyFile = fs.readdirSync(path.join(ROOT3, 'archive', 'snapshots'))
 	.map(n => path.join(ROOT3, 'archive', 'snapshots', n))
-	.find(f => fs.readFileSync(f, 'utf8').includes('"kind":"snapshot"'));
-const secretBodyText = secretBodyFile ? fs.readFileSync(secretBodyFile, 'utf8') : '';
+	.find(f => readPage(f, 'utf8').includes('"kind":"snapshot"'));
+const secretBodyText = secretBodyFile ? readPage(secretBodyFile, 'utf8') : '';
 
 check('a camelCase pushToken the client missed is NOT on disk in the clear',
 	!secretBodyText.includes(RAW_PUSH_TOKEN));
@@ -846,7 +847,7 @@ const archiveText = (() => {
 		for (const n of names) {
 			const f = path.join(d, n);
 			if (!fs.statSync(f).isFile()) continue;
-			out += fs.readFileSync(f, 'utf8');
+			out += readPage(f, 'utf8');
 		}
 	}
 	return out;

@@ -10,6 +10,7 @@
 // crystal is left on screen. The STATE half runs the fold's own functions, cut out of
 // daimond.js by name: the list starts shut when it holds more than the bound and open when
 // it fits, and a choice is remembered per Diamond.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,8 +21,8 @@ import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WWW  = join(HERE, '..');
-const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const HTML = readFileSync(join(WWW, 'index.html'), 'utf8');
+const SRC  = readPage(join(HERE, 'daimond.js'), 'utf8');
+const HTML = readPage(join(WWW, 'index.html'), 'utf8');
 
 // ── The layout ─────────────────────────────────────────────────────────
 const CHROME = ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser']

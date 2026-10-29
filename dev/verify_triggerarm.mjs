@@ -36,6 +36,7 @@
 //                                             # served through page.route: A, D, F, G, H fail
 //   TRIGARM_BASE=b32be427 node dev/verify_triggerarm.mjs
 //                                             # any revision: there, the slash rows of A fail
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -75,7 +76,7 @@ async function routeBase(page) {
 {
 	const src = BASE
 		? execFileSync('git', ['-C', TREE, 'show', BASE + ':www/js/crystal.js']).toString()
-		: fs.readFileSync(path.join(TREE, 'www/js/crystal.js'), 'utf8');
+		: readPage(path.join(TREE, 'www/js/crystal.js'), 'utf8');
 	const m = src.match(/var PAGE_NEVER_WRITES = (\/.*\/);/);
 	let re = null;
 	try { re = m ? eval(m[1]) : null; } catch (e) { re = null; }

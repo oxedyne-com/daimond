@@ -12,14 +12,15 @@
 
    Run:  node www/js/pricetag.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, 'i18n.js'), 'utf8');
-const EN   = fs.readFileSync(path.join(HERE, '..', 'i18n', 'en.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, 'i18n.js'), 'utf8');
+const EN   = readPage(path.join(HERE, '..', 'i18n', 'en.js'), 'utf8');
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
@@ -137,7 +138,7 @@ const SYMBOL = /[$€£¥₩≈~]|A\$|US/;
 // (daimond.js, mail.js, models.js) at least writes no "≈" of its own. Comments
 // are stripped first: a "≈" in prose about the old mark is not a mark.
 {
-	const code = (f) => fs.readFileSync(path.join(HERE, f), 'utf8')
+	const code = (f) => readPage(path.join(HERE, f), 'utf8')
 		.replace(/\/\*[\s\S]*?\*\//g, '')
 		.split('\n').map((l) => l.replace(/(^|[^:'"\\])\/\/.*$/, '$1')).join('\n');
 	const ALL_EST = ['spend.js', 'modeldash.js', 'triage.js', 'ledger.js', 'governor.js'];
@@ -161,7 +162,7 @@ const SYMBOL = /[$€£¥₩≈~]|A\$|US/;
 {
 	const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
 		.split('\n').map((l) => l.replace(/(^|[^:'"\\])\/\/.*$/, '$1')).join('\n');
-	const code = (f) => strip(fs.readFileSync(path.join(HERE, f), 'utf8'));
+	const code = (f) => strip(readPage(path.join(HERE, f), 'utf8'));
 	const sites = fs.readdirSync(HERE).filter((f) => /\.js$/.test(f));
 	const users = sites.filter((f) => /\bfmtMoney\b/.test(code(f)));
 	check('gate: the old fmtMoney is retired everywhere', users.length === 0, users.join(', '));
@@ -170,7 +171,7 @@ const SYMBOL = /[$€£¥₩≈~]|A\$|US/;
 	check('gate: daimond.js glues no English round a balance', !/'a balance of /.test(dj));
 	const LOC = path.join(HERE, '..', 'i18n');
 	for (const f of fs.readdirSync(LOC).filter((x) => /\.js$/.test(x))) {
-		const s = fs.readFileSync(path.join(LOC, f), 'utf8');
+		const s = readPage(path.join(LOC, f), 'utf8');
 		const has = ['forget.held_both', 'forget.held_balance', 'forget.held_pro']
 			.every((k) => s.indexOf("'" + k + "'") >= 0);
 		check('i18n: ' + f + ' translates what the forget warning holds', has

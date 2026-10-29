@@ -573,49 +573,5 @@ impl StoreBackend for MemBackend {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{future::Future, pin::pin, task::{Context, Waker}};
-
-    fn held(l: Locked<MemLock>) -> MemLock {
-        match l {
-            Locked::Held(l) => l,
-            _               => panic!("a free lock was not granted"),
-        }
-    }
-
-    /// A waiter polled again and again keeps one waker, and one that gives up leaves none.
-    #[tokio::test]
-    async fn waiters_leave_no_stale_wakers() {
-        let m = MemBackend::default();
-        let first = held(m.lock("a", LockHow::Wait).await);
-        {
-            let mut wait = pin!(m.lock("a", LockHow::Wait));
-            let mut cx = Context::from_waker(Waker::noop());
-            for _ in 0..5 {
-                assert!(wait.as_mut().poll(&mut cx).is_pending(), "a waiter on a held lock");
-            }
-            assert_eq!(m.area().locks.get("a").map(|s| s.waiters.len()), Some(1),
-                "one waiter polled five times");
-        }
-        assert_eq!(m.area().locks.get("a").map(|s| s.waiters.len()), Some(0), "a dropped waiter");
-        assert!(matches!(m.lock("a", LockHow::Timeout(10)).await, Locked::TimedOut));
-        assert_eq!(m.area().locks.get("a").map(|s| s.waiters.len()), Some(0), "a timed-out waiter");
-        drop(first);
-    }
-
-    /// A lock nobody holds and nobody waits for is forgotten.
-    #[tokio::test]
-    async fn lock_table_forgets_free_locks() {
-        let m = MemBackend::default();
-        drop(held(m.lock("a", LockHow::Wait).await));
-        drop(held(m.lock("b", LockHow::IfAvailable).await));
-        drop(held(m.lock("c", LockHow::Timeout(10)).await));
-        let first = held(m.lock("d", LockHow::Wait).await);
-        assert!(matches!(m.lock("d", LockHow::Timeout(10)).await, Locked::TimedOut));
-        drop(first);
-        assert_eq!(m.lock_held("e").await, Some(false));
-        let left: Vec<String> = m.area().locks.keys().cloned().collect();
-        assert!(left.is_empty(), "locks left in the table: {:?}", left);
-    }
-}
+#[path = "../../tests/unit/store/mem/tests.rs"]
+mod tests;

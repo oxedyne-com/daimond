@@ -52,6 +52,7 @@
 //
 //   node dev/verify_prefixpeer.mjs --break   # the keeper check FAILS
 //   node dev/verify_prefixpeer.mjs           # the full run, clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,7 +88,7 @@ function grabFn(src, sig) {
 
 console.log('the keeper itself: scrubAttachPrefixDup on a single stacked copy');
 {
-	const daimondSrc = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+	const daimondSrc = readPage(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 	let scrubSrc = grabFn(daimondSrc, 'function scrubAttachPrefixDup(');
 	if (BREAK) {
 		// Reinstate the fault: a single copy returns unchanged no matter what

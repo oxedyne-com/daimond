@@ -44,6 +44,7 @@
 
    Run:  node www/js/synckey.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -196,7 +197,7 @@ function makeTab(seed) {
 		// The REAL function, read out of peer.js rather than restated: a stand-off the
 		// test agreed with but the app did not would prove nothing.
 		deferPushFor: (function () {
-			const src = readFileSync(join(HERE, 'peer.js'), 'utf8');
+			const src = readPage(join(HERE, 'peer.js'), 'utf8');
 			const m = /\n\tfunction deferPushFor\(leases, selfId, now, isOriginatorOf\) \{[\s\S]*?\n\t\}\n/.exec(src);
 			if (!m) throw new Error('synckey.test: deferPushFor not found in peer.js -- has it been renamed?');
 			// `liveLease` is the one sibling it calls; lifted the same way.
@@ -214,7 +215,7 @@ function makeTab(seed) {
 		sha256: async (s) => createHash('sha256').update(s).digest('hex'),
 	};
 
-	const body = readFileSync(join(HERE, 'sync.js'), 'utf8');
+	const body = readPage(join(HERE, 'sync.js'), 'utf8');
 	// `with (window)`, as peer.test.mjs explains: the app scripts read their
 	// siblings as bare identifiers after a `window.X &&` guard, and `new Function`
 	// gives them no global to find them on.
@@ -547,12 +548,12 @@ console.log('\nF. the asker — its own dispatch parcel is never held behind its
 	// off its own runner's `running` lease for the whole run: its dispatch parcel, the only
 	// carrier of the waiting row, landed after the run settled, and the second device
 	// (argonaut) never followed the turn.
-	const dsrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const dsrc = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const at = dsrc.indexOf('\n\twindow.DaimondCore = {');
 	const end = dsrc.indexOf('\n\t};', at);
 	const published = new Set();
 	for (const m of dsrc.slice(at, end).matchAll(/\n\t\t(?:get )?([A-Za-z_$][\w$]*)\s*[:(]/g)) published.add(m[1]);
-	const ssrc = readFileSync(join(HERE, 'sync.js'), 'utf8');
+	const ssrc = readPage(join(HERE, 'sync.js'), 'utf8');
 	const read = [...new Set([...ssrc.matchAll(/DaimondCore\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]))];
 	const unpublished = read.filter((k) => !published.has(k));
 	check('F1. every DaimondCore member sync.js reads is one daimond.js publishes',

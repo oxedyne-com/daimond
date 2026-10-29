@@ -27,6 +27,7 @@
 //
 // A break whose every anchor does not match exactly once exits 2. The engine's own lint and clause order are Rust and cannot be broken
 // from here (lane V runs no cargo): each break damages the PAGE side of the same guarantee, so the wire check goes red.
+import { readPage } from './pagesrc.mjs';
 import { open, scratch, signInAs, newChat, connectMock, chat, mockLog, clearMockLog, contentText, APP, workMenu } from './harness.mjs';
 import { pair, settle, send, freshChat, storedMsgs, answersFor, placeholders, until } from './handoffpair.mjs';
 import { makePagePro } from './pro.mjs';
@@ -58,7 +59,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; known: $
 let patched = null;
 if (BREAK) {
 	const b = BREAKS[BREAK];
-	let src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+	let src = readPage(path.join(WWW, b.file), 'utf8');
 	for (const e of b.edits) {
 		const n = src.split(e.anchor).length - 1;
 		if (n !== 1) { console.error(`break '${BREAK}': anchor matched ${n} times, not once, in ${b.file}`); process.exit(2); }
@@ -355,7 +356,7 @@ const liveRoute = (dir) => async (page) => {
 		if (process.env.LIVE_OWN_PKG !== '1' && p.startsWith('/pkg/')) return r.fallback();
 		const f = path.join(dir, p);
 		if (!f.startsWith(dir) || !fs.existsSync(f) || !fs.statSync(f).isFile()) return r.fallback();
-		await r.fulfill({ status: 200, contentType: type[path.extname(f)] || 'application/octet-stream', body: fs.readFileSync(f) });
+		await r.fulfill({ status: 200, contentType: type[path.extname(f)] || 'application/octet-stream', body: readPage(f) });
 	});
 };
 SECTIONS.MIX = async () => {

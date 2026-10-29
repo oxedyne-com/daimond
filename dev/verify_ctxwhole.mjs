@@ -28,6 +28,7 @@
 //   node dev/verify_ctxwhole.mjs --break dimmed     # the mark, but the ink taken out of it
 //   node dev/verify_ctxwhole.mjs --break oldfold    # the fold fraction back at 0.8
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,13 +105,13 @@ function damaged(src, spec) {
 const _bodies = new Map();
 for (const spec of (BREAKS[BREAK] || [])) {
 	const src = _bodies.has(spec.file) ? _bodies.get(spec.file)
-		: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		: readPage(path.join(WWW, spec.file), 'utf8');
 	_bodies.set(spec.file, damaged(src, spec));
 }
 
 /// A file as the browser will see it, damaged where a break says so.
 const srcOf = (f) => _bodies.has(f) ? _bodies.get(f)
-	: fs.readFileSync(path.join(WWW, f), 'utf8');
+	: readPage(path.join(WWW, f), 'utf8');
 
 const TYPE = { '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript' };
 async function serveBreaks(page) {

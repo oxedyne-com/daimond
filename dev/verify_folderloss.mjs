@@ -45,6 +45,7 @@
 //   bash dev/world.sh 28 --down
 //
 // Needs dev/serve.mjs only. No gateway and no mock provider: nothing here runs a turn.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -96,7 +97,7 @@ if (BREAK && !BREAKS[BREAK]) {
 async function serveBroken(page) {
 	for (const b of (BREAKS[BREAK] || [])) {
 		const full = path.join(WWW, b.file);
-		const text = fs.readFileSync(full, 'utf8');
+		const text = readPage(full, 'utf8');
 		if (text.split(b.find).length !== 2) {
 			console.error(`--break ${BREAK}: the anchor below is not in ${b.file} exactly once, `
 				+ `so this break would prove nothing:\n  ${b.find}`);
@@ -117,7 +118,7 @@ async function serveBroken(page) {
 {
 	// The break is applied HERE too, to the same source the browser is served, so one break
 	// proves the node half and the browser half at once rather than one of them.
-	let js = fs.readFileSync(path.join(WWW, SRC), 'utf8');
+	let js = readPage(path.join(WWW, SRC), 'utf8');
 	for (const b of (BREAKS[BREAK] || [])) {
 		if (b.file !== SRC) continue;
 		if (js.split(b.find).length !== 2) {

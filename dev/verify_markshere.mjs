@@ -52,6 +52,7 @@
 // controls. The count line says how many of each held.
 //
 // Needs a world for the app and the mock provider: `eval "$(bash dev/world.sh N --env)"`.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import { open, signInAs, connectMock, newChat, errors, scratch, workRows, pressRowItem, pressRowMark } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
@@ -663,7 +664,7 @@ const bkWith = scratch('markshere', 'backup-with-' + process.pid + '.json');
 await (await dl).saveAs(bkWith);
 await p.keyboard.press('Escape');
 await sleep(400);
-const bk = JSON.parse(fs.readFileSync(bkWith, 'utf8'));
+const bk = JSON.parse(readPage(bkWith, 'utf8'));
 const bkSide = (bk.workspace || []).find((x) => x && x.path === 'diamonds/' + dR + '/.daimond/links.jsonl');
 control('F1. the backup carries the Diamond\'s sidecar', !!bkSide, bkSide ? bkSide.path : J((bk.workspace || []).length));
 // Its copy of the sidecar has lost one mark and narrowed another: what a later backup, or one

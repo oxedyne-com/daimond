@@ -2,6 +2,7 @@
 // the field that an app password is what some providers want instead. It read "App password"
 // and "The app password is required", which told the owner, on his own server with no app
 // passwords, that he needed something he did not have. Red at 9f601b5b4.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -11,9 +12,9 @@ const root = new URL('../..', import.meta.url).pathname;
 let table = {};
 const ctx = { window: { DaimondI18n: { register: (_c, tb) => { table = tb; } } } };
 ctx.DaimondI18n = ctx.window.DaimondI18n;
-vm.runInNewContext(readFileSync(root + 'www/i18n/en.js', 'utf8'), ctx);
+vm.runInNewContext(readPage(root + 'www/i18n/en.js', 'utf8'), ctx);
 const t = (k) => table[k] ?? k;
-const src = readFileSync(root + 'www/js/daimond.js', 'utf8');
+const src = readPage(root + 'www/js/daimond.js', 'utf8');
 const fn = (name) => {
 	const at = src.indexOf('\tfunction ' + name + '(');
 	assert.ok(at >= 0, name + ' is in daimond.js');

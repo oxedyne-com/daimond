@@ -78,6 +78,7 @@
 // the previous build, which has the pin: check out the commit before this change,
 // build the wasm, and run this file. That is written in the report rather than left
 // as an exercise, because a check whose red has never been seen is not evidence.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -121,7 +122,7 @@ const BREAKS = {
 /// # Arguments
 /// * `file` - The path to `src/tools.rs`.
 function webToolNames(file) {
-	const src = fs.readFileSync(file, 'utf8');
+	const src = readPage(file, 'utf8');
 	const at = src.indexOf('pub fn web() -> Vec<Tool> {');
 	if (at < 0) throw new Error('src/tools.rs holds no `pub fn web()`, so nothing can be read out of it');
 	const end = src.indexOf('\n    }', at);
@@ -168,7 +169,7 @@ function fnBody(src, name) {
 // somebody adds a branch to it.  These four run before the browser is opened, so they still
 // answer when the heavier half of this file cannot.
 {
-	const src = fs.readFileSync(RUST, 'utf8');
+	const src = readPage(RUST, 'utf8');
 	const run = fnBody(src, 'run_result');
 	check('a command\'s output still reaches the model in an untrusted envelope',
 		!!run && /\bwrap_untrusted\s*\(/.test(run),
@@ -207,7 +208,7 @@ const { page } = s;
 if (BREAK) {
 	const spec = BREAKS[BREAK];
 	if (!spec) { console.error(`no such break: ${BREAK}`); process.exit(2); }
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

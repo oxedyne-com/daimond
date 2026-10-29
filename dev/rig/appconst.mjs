@@ -7,6 +7,7 @@
 // constant in src/prompts.rs, read the same way (`strIn`, `appStr`): a law that tells a request
 // by the app's words moves with them (rigfix7: r578c's fork hand-off broke law MDL's copy).
 
+import { readPage } from '../pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +26,7 @@ export function constIn(src, name) {
 }
 
 /// The constant `name` of the app tree the rig runs from (www/js/daimond.js).
-export function appConst(name, file = APP_JS) { return constIn(fs.readFileSync(file, 'utf8'), name); }
+export function appConst(name, file = APP_JS) { return constIn(readPage(file, 'utf8'), name); }
 
 /// The text of `pub const NAME: &str = "…";` in Rust source `src`, its escapes and line
 /// continuations undone; null when the source has no such constant (an app before it). A
@@ -52,4 +53,4 @@ export function strIn(src, name) {
 }
 
 /// The string constant `name` of the app tree the rig runs from (src/prompts.rs), or null.
-export function appStr(name, file = PROMPTS_RS) { return strIn(fs.readFileSync(file, 'utf8'), name); }
+export function appStr(name, file = PROMPTS_RS) { return strIn(readPage(file, 'utf8'), name); }

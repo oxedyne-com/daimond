@@ -16,6 +16,7 @@
    source is what runs.   `node www/js/enginepoison.test.mjs`
    ============================================================ */
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -44,7 +45,7 @@ function extractVar(src, name) {
 	return m[0].trim();
 }
 
-const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 const lifted = [
 	extractVar(src, '_enginePoison'), extractVar(src, '_engineAwaits'), extractVar(src, 'POISON_RELOAD_MS'), extractVar(src, 'ENGINE_HUNG_MS'),
 	extractFn(src, 'isWasmTrap'), extractFn(src, 'engineKillError'), extractFn(src, 'turnKill'),
@@ -176,7 +177,7 @@ check('wiring: every chat run_turn is raced', (src.match(/turnKill\(app\.run_tur
 check('wiring: the runner deps carry endLocal', /endLocal: function \(e, why\) \{ return endRunnerLocal\(ctx && ctx\.chat, e, why\); \}/.test(src));
 check('wiring: a trap on the window poisons', /isWasmTrap\(/.test(src.slice(src.indexOf("addEventListener('unhandledrejection'"), src.indexOf("addEventListener('unhandledrejection'") + 2000)));
 check('wiring: the panic note poisons', /onNote\(/.test(src) && /'WASM PANIC'/.test(src));
-const bc = readFileSync(join(HERE, 'breadcrumb.js'), 'utf8');
+const bc = readPage(join(HERE, 'breadcrumb.js'), 'utf8');
 check('wiring: the trail offers onNote', /onNote:\s*onNote/.test(bc));
 
 if (failures) { console.log(failures + ' FAILURE(S)'); process.exitCode = 1; }

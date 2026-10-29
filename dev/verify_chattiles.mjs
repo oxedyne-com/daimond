@@ -50,6 +50,7 @@
 // store `daimond-chats` the app itself reads on boot) rather than clicked into
 // existence one at a time, so `updatedAt` and `id` can be set to exactly the
 // values that expose the ordering bug, and a run stays fast with a dozen tiles.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -144,7 +145,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	return byFile;

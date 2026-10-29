@@ -19,6 +19,7 @@
 // E2b (B's folder takes the edit) stays red while the file tools' stale-read guard keeps a read made in one
 // storage against the same path in another (src/tools.rs `stale_write`, keyed by path alone): B's write of the
 // edit into its folder is refused, and B holds the version back (not merged) rather than reverting it.
+import { readPage } from './pagesrc.mjs';
 import { open, signInAs, scratch, markHere, workMenu } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
@@ -42,7 +43,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'`); proces
 const WWW = new URL('../www', import.meta.url).pathname;
 const PATCHED = new Map();
 for (const spec of (BREAKS[BREAK] || [])) {
-	const s0 = PATCHED.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const s0 = PATCHED.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 	if (s0.split(spec.find).length !== 2) { console.error(`break '${BREAK}': anchor not unique in ${spec.file}`); process.exit(2); }
 	PATCHED.set(spec.file, s0.replace(spec.find, spec.with));
 }

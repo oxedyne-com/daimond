@@ -95,6 +95,7 @@
 //
 // Chromium is enough; the reload/unlock leg is worth one run under WebKit
 // (DAIMOND_BROWSER=webkit) for the engine the owner's phone runs.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -124,7 +125,7 @@ const EDITED = new Map();
 /// loudly, not silently neutralise nothing). Reads the current EDITED copy so several
 /// edits to one file compose.
 function neutralise(file, find, repl) {
-	const src = EDITED.get(file) || fs.readFileSync(path.join(WWW, file), 'utf8');
+	const src = EDITED.get(file) || readPage(path.join(WWW, file), 'utf8');
 	const n = src.split(find).length - 1;
 	if (n !== 1) {
 		console.error(`${file}: the anchor ${JSON.stringify(find)} appears ${n} times (expected 1); `

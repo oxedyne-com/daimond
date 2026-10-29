@@ -41,6 +41,7 @@
 //   node dev/verify_transcriptlaw.mjs                    # and then, clean
 //
 // Needs dev/serve.mjs and the mock only. No gateway.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -115,7 +116,7 @@ if (BREAK && !BREAKS[BREAK]) {
 	process.exit(2);
 }
 function damaged(spec) {
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, so nothing was broken.`);
@@ -127,7 +128,7 @@ async function breakInto(page) {
 	const bodies = {};
 	for (const spec of BREAKS[BREAK]) {
 		damaged(spec);
-		bodies[spec.file] = (bodies[spec.file] || fs.readFileSync(path.join(WWW, spec.file), 'utf8'))
+		bodies[spec.file] = (bodies[spec.file] || readPage(path.join(WWW, spec.file), 'utf8'))
 			.replace(spec.find, spec.with);
 	}
 	for (const file of Object.keys(bodies)) {
@@ -284,7 +285,7 @@ try {
 	await P.click('button.admin-item:has-text("Export a backup")');
 	const bkPath = scratch('transcriptlaw-backup' + (BREAK ? '-' + BREAK : '') + '.json');
 	await (await dl).saveAs(bkPath);
-	const backup = JSON.parse(fs.readFileSync(bkPath, 'utf8'));
+	const backup = JSON.parse(readPage(bkPath, 'utf8'));
 	const now = Date.now();
 	backup.chats = (backup.chats || []).map((c) => (c && c.id === ownId)
 		? Object.assign({}, c, { messages: 'not-a-list', updatedAt: now + 9000, name: 'poisoned in the backup' }) : c)

@@ -25,6 +25,7 @@
    Run:  node www/js/framedanswer.test.mjs
    On 7ca624dd's daimond.js: adoptFinalFrame is missing (ABORT).
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -60,8 +61,8 @@ function extractVar(src, name) {
 // `liftSource`), from the same tree as DAIMOND_JS, so no hand-kept list can drift from it.
 if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname(process.env.DAIMOND_JS), '..', '..');
 const { liftSource } = await import('../../dev/syncprobe.mjs');
-const src  = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
-const psrc = readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
+const src  = readPage(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
+const psrc = readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
 const lifted = new Function('env', [
 	'var REASON_DISPATCHED_STR = "dispatched";',
 	'function loadMsgTombs() { return {}; }',
@@ -80,7 +81,7 @@ const lifted = new Function('env', [
 	'function renderDispatchedBadges() { env.badges++; }',
 	'function dropDispatchedPlaceholder(t) { env.dropped.push(t); var c = env.chatFor(t); c.messages = c.messages.filter(function (m) { return !(m.why === "dispatched" && m.iturn === t); }); }',
 	// The message law (r53), lifted whole, and the stamp rule it ranks by.
-	'var DaimondStamp = (function () { var window = {}; ' + readFileSync(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
+	'var DaimondStamp = (function () { var window = {}; ' + readPage(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
 	liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src,
 	extractFn(src, 'dispatchedAnswerPresent'),
 	extractFn(src, 'dispatchedPlaceholderIn'),
@@ -222,7 +223,7 @@ console.log('\nWHOLE: only a frame the runner marked whole may become the answer
 	// The real peer.js, in a bare window (its streaming functions read no siblings).
 	const win = {};
 	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
-		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+		'with (window) {\n' + readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
 	const P = win.DaimondPeer;
 	const turn = (answer, extra) => [{ role: 'user', content: 'q', mid: 'U', iturn: 'U', ts: 1 }].concat(extra || [],
 		[{ role: 'assistant', content: answer, mid: 'AN', iturn: 'U', ranOn: 'b', ts: 99 }]);
@@ -265,7 +266,7 @@ console.log('\nQA-OKD-B REFMISS: a ref whose pieces are missing\n');
 	// The real peer.js, as WHOLE loads it, beside the settled-lease rule.
 	const win = {};
 	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
-		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+		'with (window) {\n' + readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
 	// About 100 kB, of every UTF-8 width, as the runner's errand_settle arm sends it.
 	let long = '';
 	for (let i = 0; i < 10000; i++) long += String(i).padStart(4, '0') + 'é€😀 ';

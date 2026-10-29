@@ -7,6 +7,7 @@
 // output tokens and its rate, and its bytes as `by` (the envelope's `b` is the build tag, which
 // overwrote them); the `round` rows carry `o`; and `DaimondHostSpeed.figures()` gives the page
 // the fixed shape the U5b routing rows and Model Compare build on.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -18,7 +19,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // daimond.js's own `roundMetaRow`, lifted out of its source: the function every round_meta arm
 // (chat, worker, daimon) builds its feed row with.
 function liftRoundMetaRow() {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const at = src.indexOf('function roundMetaRow(');
 	assert.ok(at >= 0, 'daimond.js has no roundMetaRow');
 	const end = src.indexOf('\n\t}\n', at);
@@ -47,7 +48,7 @@ test('the lens round_meta row carries output tokens, first token, rate and bytes
 test('the `round` rows carry the round\'s output tokens', () => {
 	// The feed's `roundFeed` reads only the event; the rest of debugshare.js needs a tab, so the
 	// function is checked on its source for the `o` it now carries.
-	const src = readFileSync(join(HERE, 'debugshare.js'), 'utf8');
+	const src = readPage(join(HERE, 'debugshare.js'), 'utf8');
 	const at = src.indexOf('function roundFeed(');
 	const body = src.slice(at, src.indexOf('flush: send', at));
 	assert.ok(/o:\s*Math\.round\(Number\(ev && ev\.o\)/.test(body), 'roundFeed.meta does not take o');
@@ -57,7 +58,7 @@ test('the `round` rows carry the round\'s output tokens', () => {
 function loadHostSpeed(ls) {
 	const win = {};
 	new Function('window', 'localStorage', 'setTimeout', 'clearTimeout',
-		readFileSync(join(HERE, 'hostspeed.js'), 'utf8'))(win, ls, () => 1, () => {});
+		readPage(join(HERE, 'hostspeed.js'), 'utf8'))(win, ls, () => 1, () => {});
 	return win.DaimondHostSpeed;
 }
 
@@ -85,9 +86,9 @@ test('DaimondHostSpeed.figures() gives one fixed-shape row per model+host', () =
 });
 
 test('index.html loads hostspeed.js before modelcompare.js, and the page attaches it at boot', () => {
-	const html = readFileSync(join(HERE, '..', 'index.html'), 'utf8');
+	const html = readPage(join(HERE, '..', 'index.html'), 'utf8');
 	const a = html.indexOf('js/hostspeed.js'), b = html.indexOf('js/modelcompare.js');
 	assert.ok(a > 0 && a < b, 'hostspeed.js must load, and before modelcompare.js');
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	assert.ok(/DaimondHostSpeed\.attach\(Wasm\)/.test(src), 'the engine is never attached');
 });

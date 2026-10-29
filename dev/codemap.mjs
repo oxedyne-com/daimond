@@ -43,6 +43,7 @@
 // BUDGET. A bare `codemap <file>` prints the full outline when that is under ~14,000 characters
 // (about 3.5k tokens) and the section list otherwise, with a line saying how to go on. The
 // full outline of `daimond.js` is ~14x that; nobody should be handed it by accident.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -879,7 +880,7 @@ function load(file) {
 	const abs = path.isAbsolute(file) ? file : (fs.existsSync(file) ? path.resolve(file) : path.join(ROOT, file));
 	const lang = langOf(abs);
 	if (!lang) throw new Error(`${file}: only .js, .mjs and .rs files are mapped.`);
-	return mapSource(fs.readFileSync(abs, 'utf8'), lang);
+	return mapSource(readPage(abs, 'utf8'), lang);
 }
 
 function allFiles() {

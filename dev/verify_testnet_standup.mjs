@@ -24,6 +24,7 @@
 //
 // The fixtures live under /tmp/tn-u1d-<slot> and are removed at the end.
 
+import { readPage } from './pagesrc.mjs';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -49,7 +50,7 @@ const check = (name, ok, detail) => {
 const want = arm => !ONLY || ONLY.includes(String(arm));
 const write = (p, s, mode) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, s); if (mode) fs.chmodSync(p, mode); };
 const allOut = [];					// every stdout and stderr, for arm 6
-const rd = p => fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+const rd = p => fs.existsSync(p) ? readPage(p, 'utf8') : '';
 
 // ── The shims ──────────────────────────────────────────────────────────────
 const LOGF = `log() { { printf '%s' "$(basename "$0")"; for a in "$@"; do printf ' «%s»' "$a"; done; printf '\\n'; } >> "$SHIM_LOG"; }\n`;
@@ -159,7 +160,7 @@ function world(name) {
 		const r = spawnSync('bash', [script, ...args], { encoding: 'utf8', env, timeout: 120000 });
 		const out = (r.stdout || '') + (r.stderr || '') + (r.error ? String(r.error) : '');
 		allOut.push(out);
-		return { code: r.status, out, log: fs.readFileSync(log, 'utf8') };
+		return { code: r.status, out, log: readPage(log, 'utf8') };
 	};
 	// Step 5, the lead's `dk deploy`, as far as the later steps can see it.
 	const deploy = (ctl = true) => {
@@ -179,7 +180,7 @@ function snap(...roots) {
 	const walk = d => {
 		for (const n of fs.readdirSync(d).sort()) {
 			const p = path.join(d, n), st = fs.lstatSync(p);
-			const h = st.isFile() ? crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex').slice(0, 16) : '-';
+			const h = st.isFile() ? crypto.createHash('sha256').update(readPage(p)).digest('hex').slice(0, 16) : '-';
 			out.push(`${p} ${st.mode.toString(8)} ${st.size} ${st.mtimeMs} ${h}`);
 			if (st.isDirectory()) walk(p);
 		}
@@ -206,13 +207,13 @@ fs.mkdirSync(ROOT, { recursive: true });
 // ── Arm 0: the templates ───────────────────────────────────────────────────
 if (want(0)) {
 	console.log('arm 0: the unit template and run.sh');
-	const u = fs.readFileSync(path.join(REPO, 'deploy/net/daimond-testnet.service'), 'utf8');
+	const u = readPage(path.join(REPO, 'deploy/net/daimond-testnet.service'), 'utf8');
 	const body = u.split('\n').filter(l => !l.startsWith('#')).join('\n');
 	for (const l of ['CPUQuota=50%', 'IOWeight=10', 'MemoryMax=512M', 'Restart=always', 'ExecStart=@GW_DIR@/run.sh @NET_EXE@',
 		'EnvironmentFile=@GW_DIR@/gateway.env', 'WorkingDirectory=@GW_DIR@'])
 		check(`unit holds ${l}`, body.split('\n').includes(l));
 	check('unit holds no MemoryHigh', !/MemoryHigh/.test(body));
-	const r = fs.readFileSync(path.join(REPO, 'deploy/net/testnet-run.sh'), 'utf8');
+	const r = readPage(path.join(REPO, 'deploy/net/testnet-run.sh'), 'utf8');
 	check('run.sh execs the gateway', /^exec "\.\/\$exe"/m.test(r));
 	check('run.sh sources no env file', !/^\s*(\.|source) /m.test(r));
 }
@@ -224,7 +225,7 @@ if (want(1) || want(3) || want(6)) {
 	check('all, before step 5: exit 0', pre.code === 0, pre.out);
 	check('all, before step 5: stops and names step 5', /step 5/.test(pre.out), pre.out);
 	const unitF = path.join(w.E, 'etc/systemd/system/daimond-testnet.service');
-	const unit = fs.existsSync(unitF) ? fs.readFileSync(unitF, 'utf8') : '';
+	const unit = fs.existsSync(unitF) ? readPage(unitF, 'utf8') : '';
 	check('the unit is rendered into /etc', /ExecStart=\/.*\/usr\/daimond-testnet\/run\.sh daimond_gw_test$/m.test(unit) && !/@[A-Z_]+@/.test(unit), unit);
 	check('the unit is enabled, not started', fs.existsSync(path.join(w.S, 'sysd/enabled_daimond-testnet')) && !/«(?:start|restart)» «daimond-testnet»/.test(pre.log), pre.log);
 	const G = path.join(w.J, 'usr/daimond-testnet');
@@ -233,27 +234,27 @@ if (want(1) || want(3) || want(6)) {
 		.every(d => mode(path.join(G, d)) === '700'), ['keys', 'keys/licence', 'keys/db'].map(d => `${d} ${mode(path.join(G, d))}`).join('\n'));
 	check('sk copied, 600', mode(path.join(G, 'keys/stripe/sandbox/sk')) === '600' && rd(path.join(G, 'keys/stripe/sandbox/sk'), 'utf8') === SK);
 	const kpF = path.join(G, 'keys/licence/ed25519_kp_b64url');
-	const kp = fs.existsSync(kpF) ? fs.readFileSync(kpF, 'utf8') : '';
+	const kp = fs.existsSync(kpF) ? readPage(kpF, 'utf8') : '';
 	check('licence keypair: 64 bytes base64url, 600', /^[A-Za-z0-9_-]{86}$/.test(kp) && mode(kpF) === '600', `${kp.length} chars, ${mode(kpF)}`);
 	check('whsec written, 600', mode(path.join(G, 'keys/stripe/sandbox/whsec')) === '600'
 		&& rd(path.join(G, 'keys/stripe/sandbox/whsec'), 'utf8') === WHSEC);
-	const eps = JSON.parse(fs.readFileSync(path.join(w.S, 'endpoints.json'), 'utf8'));
+	const eps = JSON.parse(readPage(path.join(w.S, 'endpoints.json'), 'utf8'));
 	const te = eps.filter(e => e.url === 'https://test.daimond.oxedyne.com/webhook/stripe');
 	check('one test endpoint, production\'s events', te.length === 1 && JSON.stringify(te[0].enabled_events) === '["checkout.session.completed"]'
 		&& eps.some(e => e.id === 'we_prod1'), JSON.stringify(eps));
 	check('gateway.env is test.gateway.env, 600', mode(path.join(G, 'gateway.env')) === '600'
-		&& rd(path.join(G, 'gateway.env'), 'utf8') === fs.readFileSync(path.join(REPO, 'deploy/net/test.gateway.env'), 'utf8'));
+		&& rd(path.join(G, 'gateway.env'), 'utf8') === readPage(path.join(REPO, 'deploy/net/test.gateway.env'), 'utf8'));
 	check('run.sh installed, 755', mode(path.join(G, 'run.sh')) === '755');
 	check('lens-pull@test.timer enabled, test.env names the test mirror and remote',
 		fs.existsSync(path.join(w.S, 'sysd/user_enabled_lens-pull@test.timer'))
-		&& /DAIMOND_LENS_REMOTE=jarrah:~\/usr\/daimond-testnet\/debug-traces\//.test(fs.existsSync(path.join(w.A, '.config/daimond-lens/test.env')) ? fs.readFileSync(path.join(w.A, '.config/daimond-lens/test.env'), 'utf8') : ''));
+		&& /DAIMOND_LENS_REMOTE=jarrah:~\/usr\/daimond-testnet\/debug-traces\//.test(fs.existsSync(path.join(w.A, '.config/daimond-lens/test.env')) ? readPage(path.join(w.A, '.config/daimond-lens/test.env'), 'utf8') : ''));
 	check('no db/at_rest written: the gateway makes its own', !fs.existsSync(path.join(G, 'keys/db/at_rest')));
 
 	w.deploy();
 	const post = w.run(['all']);
 	check('all, after step 5: exit 0', post.code === 0, post.out);
 	check('all, after step 5: five isolation PASS lines', (post.out.match(/^PASS \((?:i|ii|iii|iv|v)\)/gm) || []).length === 5, post.out);
-	check('gateway.env put back after check (v)', rd(path.join(G, 'gateway.env'), 'utf8') === fs.readFileSync(path.join(REPO, 'deploy/net/test.gateway.env'), 'utf8'));
+	check('gateway.env put back after check (v)', rd(path.join(G, 'gateway.env'), 'utf8') === readPage(path.join(REPO, 'deploy/net/test.gateway.env'), 'utf8'));
 	const jc = path.join(G, 'keys/owner_join_code');
 	check('one join code, in a 600 file', fs.existsSync(jc) && rd(jc).trim() === JOIN && mode(jc) === '600');
 
@@ -311,7 +312,7 @@ if (want(4)) {
 		fs.cpSync(path.join(REPO, 'deploy'), path.join(C, 'deploy'), { recursive: true });
 		for (const f of ['testnet_standup.sh', 'lens-pull@.service', 'lens-pull@.timer']) fs.copyFileSync(path.join(REPO, 'dev', f), path.join(C, 'dev', f));
 		const tf = path.join(C, 'deploy/net/test.env');
-		fs.writeFileSync(tf, fs.readFileSync(tf, 'utf8').replace(new RegExp(`^${k}=.*$`, 'm'), `${k}=${v}`));
+		fs.writeFileSync(tf, readPage(tf, 'utf8').replace(new RegExp(`^${k}=.*$`, 'm'), `${k}=${v}`));
 		const before = snap(w.J, w.E, w.A);
 		const r = w.run(['all'], path.join(C, 'dev/testnet_standup.sh'));
 		check(`${k}=${v}: refused, non-zero, before any remote call`, r.code !== 0 && /refuse/i.test(r.out) && r.log === '', r.out + r.log);
@@ -355,11 +356,11 @@ if (want(6)) {
 	const kps = [];
 	for (const d of fs.existsSync(ROOT) ? fs.readdirSync(ROOT) : []) {
 		const f = path.join(ROOT, d, 'jarrah/usr/daimond-testnet/keys/licence/ed25519_kp_b64url');
-		if (fs.existsSync(f)) kps.push(fs.readFileSync(f, 'utf8').trim());
+		if (fs.existsSync(f)) kps.push(readPage(f, 'utf8').trim());
 	}
 	check('at least one licence keypair to look for', kps.length > 0);
 	const outs = allOut.join('\n');
-	const logs = fs.readdirSync(ROOT).map(d => path.join(ROOT, d, 'state/calls.log')).filter(fs.existsSync).map(f => fs.readFileSync(f, 'utf8')).join('\n');
+	const logs = fs.readdirSync(ROOT).map(d => path.join(ROOT, d, 'state/calls.log')).filter(fs.existsSync).map(f => readPage(f, 'utf8')).join('\n');
 	for (const [n, v] of [['sandbox sk', SK], ['whsec', WHSEC], ['join code', JOIN], ...kps.map((k, i) => [`licence keypair ${i}`, k])]) {
 		check(`${n}: not in stdout or stderr`, !outs.includes(v));
 		check(`${n}: not in any tool's argv`, !logs.split('\n').filter(l => !l.startsWith(' ')).some(l => /^(ssh|sudo|systemctl|curl) /.test(l) && l.includes(v)));

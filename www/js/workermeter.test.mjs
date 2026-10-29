@@ -11,9 +11,10 @@
    Asserted on the source, read from the worker's own block of daimond.js: the
    worker's run cannot be loaded standalone (it needs the wasm app).
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 
-const SRC = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const SRC = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {

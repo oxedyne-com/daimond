@@ -28,6 +28,7 @@
 //   node dev/verify_thinking.mjs --break nocollapse # and never folded away afterwards
 //   node dev/verify_thinking.mjs --break asanswer   # the working recorded as the reply
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -100,7 +101,7 @@ function damaged(src, spec) {
 const bodies = new Map();
 for (const spec of (BREAKS[BREAK] || [])) {
 	const src = bodies.has(spec.file) ? bodies.get(spec.file)
-		: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		: readPage(path.join(WWW, spec.file), 'utf8');
 	bodies.set(spec.file, damaged(src, spec));
 }
 async function serveBreaks(page) {

@@ -27,6 +27,7 @@
 //   node dev/verify_chatshape.mjs --break noadopt    # an equal-transcript reference is not adopted
 //   node dev/verify_chatshape.mjs --break noempty    # an empty transcript may be offloaded
 //   node dev/verify_chatshape.mjs --break noshape    # all three: the build before F3b (40dbb627)
+import { readPage } from './pagesrc.mjs';
 import { open, signInAs, scratch, newChat } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
@@ -42,7 +43,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'`); proces
 const WWW = new URL('../www', import.meta.url).pathname;
 const PATCHED = new Map();
 for (const spec of (BREAKS[BREAK] || [])) {
-	const s0 = PATCHED.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const s0 = PATCHED.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 	if (s0.split(spec.find).length !== 2) { console.error(`break '${BREAK}': anchor not unique in ${spec.file}`); process.exit(2); }
 	PATCHED.set(spec.file, s0.replace(spec.find, spec.with));
 }

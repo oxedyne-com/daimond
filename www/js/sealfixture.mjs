@@ -10,6 +10,7 @@
                                       bridge ready, s.fail(e) marks the boot failed
 
    Needs www/pkg (dev/build-wasm.sh --no-opt). */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 
 const PKG = new URL('../pkg/', import.meta.url);
@@ -17,7 +18,7 @@ const JS = new URL('oxedyne_daimond.js', PKG);
 const WASM = new URL('oxedyne_daimond_bg.wasm', PKG);
 
 function bridgeSource() {
-	const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+	const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 	const a = src.indexOf('// SEAL-BRIDGE-BEGIN'), b = src.indexOf('// SEAL-BRIDGE-END');
 	if (a < 0 || b < 0) throw new Error('sealfixture: daimond.js has no SEAL-BRIDGE markers');
 	return src.slice(a, b);
@@ -35,7 +36,7 @@ let shared = null;
 export async function loadSeal() {
 	if (!shared) {
 		const mod = await freshModule('shared');
-		mod.initSync({ module: readFileSync(WASM) });
+		mod.initSync({ module: readPage(WASM) });
 		shared = mod;
 	}
 	return shared;
@@ -58,7 +59,7 @@ export async function pendingSeal(win) {
 	return {
 		seal: win.DaimondSeal,
 		mod,
-		start() { mod.initSync({ module: readFileSync(WASM) }); win.DaimondSeal.markReady(); },
+		start() { mod.initSync({ module: readPage(WASM) }); win.DaimondSeal.markReady(); },
 		fail(e) { win.DaimondSeal.markFailed(e); },
 	};
 }

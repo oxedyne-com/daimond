@@ -58,6 +58,7 @@
 // dev/owner_eye/*.mjs add assertion modules to the registry (see the loader below).
 // Exit 0 green, 1 a finding, 2 a lint or setup fault, 3 zero checks (ZERO-ARMS).
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { open, signInAs, scratch, APP } from './harness.mjs';
@@ -500,7 +501,7 @@ const SEEDS = [], MODS = {};
 // ── The cite lint ────────────────────────────────────────────────────
 {
 	let lines;
-	try { lines = fs.readFileSync(RULINGS, 'utf8').split('\n'); } catch (e) { console.error('rulings not readable: ' + RULINGS); process.exit(2); }
+	try { lines = readPage(RULINGS, 'utf8').split('\n'); } catch (e) { console.error('rulings not readable: ' + RULINGS); process.exit(2); }
 	let bad = 0;
 	for (const r of REG) for (const c of [r.cite, ...[].concat(r.also || [])]) {	// `also`: one cite or a list
 		const at = lines.findIndex((l) => l.includes(c.id) && l.includes(c.quote));
@@ -530,7 +531,7 @@ async function serve(page) {
 		const rel = u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname.slice(1));
 		const file = path.join(OTHER, rel);
 		if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return r.fallback();
-		return r.fulfill({ status: 200, body: fs.readFileSync(file), contentType: MIME[path.extname(file)] || 'application/octet-stream' });
+		return r.fulfill({ status: 200, body: readPage(file), contentType: MIME[path.extname(file)] || 'application/octet-stream' });
 	});
 }
 

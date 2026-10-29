@@ -38,6 +38,7 @@
                                                         # MC1: one turn fact taken away each
      node www/js/ledger.test.mjs                        # and then, clean
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -84,7 +85,7 @@ function load() {
 	};
 	const win = {};
 
-	let src = readFileSync(LEDGER_SRC, 'utf8');
+	let src = readPage(LEDGER_SRC, 'utf8');
 	if (BREAK === 'nomergeprune') {
 		// The prune step goes: merge is a plain union again, exactly the shape
 		// `mergeLedgers` had before the fix.
@@ -290,7 +291,7 @@ function main() {
 
 	console.log('\nledger: source guard -- daimond.js routes every merge point through DaimondLedger.merge');
 	{
-		let src = readFileSync(DAIMOND_SRC, 'utf8');
+		let src = readPage(DAIMOND_SRC, 'utf8');
 		if (BREAK === 'nodelegate') {
 			// daimond.js goes back to carrying its own union, with no prune.
 			src = src.replace('DaimondLedger.merge(mine, theirs, Date.now());',

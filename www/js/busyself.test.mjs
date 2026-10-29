@@ -30,6 +30,7 @@
 
    Run:  node www/js/busyself.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -48,7 +49,7 @@ const win = { addEventListener() {}, dispatchEvent() { return true; } };
 	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
-		const body = readFileSync(join(HERE, rel), 'utf8');
+		const body = readPage(join(HERE, rel), 'utf8');
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
 			'with (window) {\n' + body + '\n}')(win, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
@@ -56,7 +57,7 @@ const win = { addEventListener() {}, dispatchEvent() { return true; } };
 }
 const P = win.DaimondPeer;
 
-const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 const a = src.indexOf('\n\tfunction busyHere(');
 const b = src.indexOf('\n\tfunction busyForChat(');
 const from = a >= 0 && a < b ? a : b;
@@ -305,7 +306,7 @@ console.log('\n— R: runErrand takes the lease, then waits, then rebuilds —')
 console.log('\n— B: the beat names its chats, and the switch reads them —');
 {
 	// B1: the gateway beat carries busy_chats beside busy, a list of ids, [] included.
-	const ssrc = readFileSync(join(HERE, 'sync.js'), 'utf8');
+	const ssrc = readPage(join(HERE, 'sync.js'), 'utf8');
 	// The beat's body is built in `postureBody` (HT2), sent by `beatOnce`; `beatPresence`
 	// is its single-flight door. Before HT2 the body was built in `beatOnce` itself.
 	const sp = ssrc.indexOf('\n\tfunction postureBody(');

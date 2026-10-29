@@ -86,6 +86,7 @@
 // The hand binary: `DAIMOND_HAND_BIN` if set, else the first of
 // `kimberlite/target/{release,debug}` or this slot's cache that is NEWER than `kimberlite/src`,
 // else built. A stale binary is refused rather than driven -- see `newestSource`.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -462,7 +463,7 @@ function talk(messages, ms = 60000, later = [], grant = GRANT) {
 /// be wrong about it. Reading the page's own number means the two shipped halves
 /// have to agree, and check 1b below says so in one line when they do not.
 function pageProto() {
-	const src = fs.readFileSync(path.join(ROOT, 'ext/hand.js'), 'utf8');
+	const src = readPage(path.join(ROOT, 'ext/hand.js'), 'utf8');
 	const m = /^\s*const PROTO\s*=\s*(\d+)\s*;/m.exec(src);
 	return m ? Number(m[1]) : null;
 }
@@ -592,7 +593,7 @@ const trailerOf = (out) =>
 	// sequence really made three of them.
 	const ran = ['clean', 'bites', 'dead']
 		.map(w => path.join(DEV, `ran-${w}.txt`))
-		.map(f => { try { return fs.readFileSync(f, 'utf8').trim(); } catch (e) { return ''; } });
+		.map(f => { try { return readPage(f, 'utf8').trim(); } catch (e) { return ''; } });
 	check('12 all three runs really happened, each leaving this run\'s nonce on disk',
 		ran.length === 3 && ran.every(v => v === NONCE),
 		`clean=${ran[0] === NONCE} bites=${ran[1] === NONCE} dead=${ran[2] === NONCE}`);
@@ -664,7 +665,7 @@ const trailerOf = (out) =>
 		? fs.readdirSync(where).filter(f => f.endsWith('.jsonl') || f.includes('journal'))
 		: [];
 	const text = files.map(f => {
-		try { return fs.readFileSync(path.join(where, f), 'utf8'); } catch (e) { return ''; }
+		try { return readPage(path.join(where, f), 'utf8'); } catch (e) { return ''; }
 	}).join('\n');
 	check('14 the journal records the real node command line',
 		/verify_fixdead\.mjs/.test(text) && /"?fence:none"?/.test(text),
@@ -689,7 +690,7 @@ const free = (port) => new Promise((res) => {
 /// Not written down here: the band in `dev/ports.json` is the reservation, and a
 /// second copy of it is the staleness the register exists against.
 const BAND = (() => {
-	const reg = JSON.parse(fs.readFileSync(path.join(DEV, 'ports.json'), 'utf8'));
+	const reg = JSON.parse(readPage(path.join(DEV, 'ports.json'), 'utf8'));
 	const b = reg.bands.find(x => x.name === 'daimon');
 	if (!b) return [];
 	const out = [];
@@ -705,7 +706,7 @@ const worldOf = (out) => {
 
 /// What a fixture verifier wrote about the world it was actually given.
 const sawOf = (file) => {
-	try { return JSON.parse(fs.readFileSync(path.join(DEV, `${file}.json`), 'utf8')); }
+	try { return JSON.parse(readPage(path.join(DEV, `${file}.json`), 'utf8')); }
 	catch (e) { return null; }
 };
 
@@ -719,7 +720,7 @@ const stood = [];
 	// `--up`: the world comes up exactly as it does in the clean run, and nothing
 	// takes it away. Committed, because the verb refuses a world.sh that is not.
 	if (BREAK === 'leak') {
-		const txt = fs.readFileSync(path.join(DEV, 'world.sh'), 'utf8');
+		const txt = readPage(path.join(DEV, 'world.sh'), 'utf8');
 		const damaged = txt.replace('--down)\n', '--down)\n\texit 0\n');
 		if (damaged === txt) {
 			console.error('break leak: the --down case did not match; has world.sh moved?');
@@ -919,7 +920,7 @@ const stood = [];
 	// The scratch the report names is under the CHILD and not under the grant, and
 	// the child asked both servers who they were and wrote down what answered.
 	let saw = null;
-	try { saw = JSON.parse(fs.readFileSync(path.join(CHILD, 'dev', 'saw-clean.json'), 'utf8')); }
+	try { saw = JSON.parse(readPage(path.join(CHILD, 'dev', 'saw-clean.json'), 'utf8')); }
 	catch (e) { saw = null; }
 	if (n !== null) {
 		// The CHILD's own script: the world is the child's, and world.sh refuses a

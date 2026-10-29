@@ -116,6 +116,7 @@
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs. No gateway and no real provider: the
 // mock is told exactly what to stream, so nothing here spends anything.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -309,7 +310,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	return byFile;
@@ -328,11 +329,11 @@ async function serveBreaks(page) {
 // Not transcribed. A lane that believes a case is wrong reports it; a lane that
 // copies the cases into its own source has stopped testing the pin.
 const FIXTURE = path.join(HERE, 'fixtures', 'fold_keys.json');
-const fixture = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+const fixture = JSON.parse(readPage(FIXTURE, 'utf8'));
 // The SEAM's own fixture, the pin on the other thing the two languages must agree on:
 // what a `Fold:` line becomes. dev/CONTRACT_FOLD.md §15.
 const SEAMFIX = path.join(HERE, 'fixtures', 'fold_seam.json');
-const seamfix = JSON.parse(fs.readFileSync(SEAMFIX, 'utf8'));
+const seamfix = JSON.parse(readPage(SEAMFIX, 'utf8'));
 
 // ── What the model is told to stream ─────────────────────────────────
 //

@@ -50,6 +50,7 @@
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (a world: `bash dev/world.sh N --up`).
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,7 +103,7 @@ const BREAKS = {
 function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
-		const src = byFile.get(spec.file) || fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		const src = byFile.get(spec.file) || readPage(path.join(WWW, spec.file), 'utf8');
 		if (!src.includes(spec.find)) {
 			console.error(`--break ${BREAK}: anchor not found in ${spec.file}. The break is stale.`);
 			process.exit(1);
@@ -132,14 +133,14 @@ async function serveBreaks(page) {
 /// a fact about what went on the wire.
 function requestsSince(mark) {
 	let lines = [];
-	try { lines = fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean); }
+	try { lines = readPage(LOG, 'utf8').split('\n').filter(Boolean); }
 	catch (e) { return []; }
 	return lines.slice(mark).map(l => { try { return JSON.parse(l); } catch (e) { return null; } })
 		.filter(Boolean);
 }
 
 function logLines() {
-	try { return fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).length; }
+	try { return readPage(LOG, 'utf8').split('\n').filter(Boolean).length; }
 	catch (e) { return 0; }
 }
 

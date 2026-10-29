@@ -58,6 +58,7 @@
 // The breaks go on the app's own guard rather than on the page, because the page is untrusted by
 // construction: what is under test is what the APP refuses, and a break in the page would only
 // prove that a page which does not ask does not receive.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -166,7 +167,7 @@ if (BREAK) {
 	const sites = Array.isArray(spec) ? spec : [spec];
 	const edited = new Map();
 	for (const site of sites) {
-		const src = edited.get(site.file) || fs.readFileSync(path.join(WWW, site.file), 'utf8');
+		const src = edited.get(site.file) || readPage(path.join(WWW, site.file), 'utf8');
 		const n = src.split(site.find).length - 1;
 		if (n !== 1) {
 			console.error(`break '${BREAK}': the anchor appears ${n} times in ${site.file}, `

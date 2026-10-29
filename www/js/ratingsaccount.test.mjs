@@ -30,6 +30,7 @@
      node www/js/ratingsaccount.test.mjs --break notimer    # a burst of ratings never writes the digest
      node www/js/ratingsaccount.test.mjs                    # and then, clean
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -84,7 +85,7 @@ function patch(src) {
 const NAMES = ['ratingsKey', 'ratingsWalk', 'ratingsAccount', 'ratingsDigest', 'ratingsDigestSoon', 'importModelCounts', 'writeUsageDigest',
 	'_ratingsMemo', 'MODEL_COUNTS_KEY'];
 const STUBS = ['ChatStore', 'storedChats', 'chats', 'rateForm', 'diamonds', 'Wasm', 'steerRaise'];
-const FORM = JSON.parse(readFileSync(join(APP, 'dev', 'fixtures', 'rating_form_daimond1_1.json'), 'utf8'));
+const FORM = JSON.parse(readPage(join(APP, 'dev', 'fixtures', 'rating_form_daimond1_1.json'), 'utf8'));
 
 function hashOf(s) { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h.toString(36); }
 
@@ -502,7 +503,7 @@ await kase('a burst of ratings writes the digest once, ten seconds after the las
 });
 
 await kase('source: commitRatings asks for the digest after a burst commits, and the page hands the Models page its source', async () => {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const at = src.indexOf('function commitRatings(');
 	ok(at > 0, 'commitRatings not found');
 	const end = src.indexOf('\n\t}\n', at);

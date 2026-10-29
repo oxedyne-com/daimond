@@ -72,6 +72,7 @@
 // THE HARNESS. Use a world, or the run silently drives world 0 on :8777 and says nothing:
 //
 //   eval "$(bash dev/world.sh 3 --env)" && node dev/verify_daimonface.mjs
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -165,7 +166,7 @@ const check = (name, pass, detail) => {
 //
 // The STATIC checks below read this string and not the file on disk, so a break that is a
 // static regression really does turn its check red.
-let source = fs.readFileSync(path.join(WWW, SRC), 'utf8');
+let source = readPage(path.join(WWW, SRC), 'utf8');
 if (BREAK) {
 	const spec = BREAKS[BREAK];
 	if (!spec) { console.error(`no such break: ${BREAK}`); process.exit(2); }

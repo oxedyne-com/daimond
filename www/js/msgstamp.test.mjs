@@ -16,6 +16,7 @@
    blocks, so a third has to be read before the count is changed.
      node www/js/msgstamp.test.mjs     # ALL PASS
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { js } from '../../dev/syncprobe.mjs';
 
@@ -25,7 +26,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail ? '  (' + detail + ')' : '')); failures++; }
 }
 
-const lines = readFileSync(js('daimond.js'), 'utf8').split('\n');
+const lines = readPage(js('daimond.js'), 'utf8').split('\n');
 
 // The blocks that file a mail draft's product onto a message in place.
 const blocks = [];

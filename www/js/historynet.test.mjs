@@ -12,12 +12,13 @@
 
    Run:  node --test www/js/historynet.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
-const en = readFileSync(new URL('../i18n/en.js', import.meta.url), 'utf8');
+const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
+const en = readPage(new URL('../i18n/en.js', import.meta.url), 'utf8');
 
 /// A function declared at the IIFE's top level, by a brace-balanced scan; '' when absent.
 function fn(name) {
@@ -110,7 +111,7 @@ test('U8h-b (b): a runner row with no net, and a row of this device, list none',
 
 test('U8h-b (b): every locale has the four sentences', () => {
 	for (const loc of ['en', 'de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans']) {
-		const tab = readFileSync(new URL('../i18n/' + loc + '.js', import.meta.url), 'utf8');
+		const tab = readPage(new URL('../i18n/' + loc + '.js', import.meta.url), 'utf8');
 		for (const k of ['versions.net_registry', 'versions.net_outside', 'versions.net_refused', 'versions.net_more']) {
 			assert.ok(tab.includes("'" + k + "':"), loc + ' lacks ' + k);
 		}

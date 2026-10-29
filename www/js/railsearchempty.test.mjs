@@ -5,6 +5,7 @@
 //
 // The functions live in a 50,000-line IIFE this harness cannot load, so each is cut out of the
 // source by its own name and run alone, against a DOM just large enough for them.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +13,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function cut(name, optional) {
 	const at = src.indexOf('\tfunction ' + name + '(');

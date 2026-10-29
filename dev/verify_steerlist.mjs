@@ -25,6 +25,7 @@
 //
 // A break whose anchor does not match exactly once exits 2. Sections run in the order of ORDER, one page, because each starts from
 // what the one before left (the note added, the switch pressed); SL7 opens a second context.
+import { readPage } from './pagesrc.mjs';
 import { open, scratch, signInAs, connectMock, chat, mockLog, clearMockLog, servedChats, steerDiamond, MOCK } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -52,7 +53,7 @@ if (BREAK && !BREAK_DEFS[BREAK]) { console.error(`unknown break '${BREAK}'; know
 let patched = null;
 if (BREAK) {
 	const b = BREAK_DEFS[BREAK];
-	let src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+	let src = readPage(path.join(WWW, b.file), 'utf8');
 	for (const e of b.edits) {
 		const n = src.split(e.from).length - 1;
 		if (n !== 1) { console.error(`break '${BREAK}': anchor matched ${n} times, not once, in ${b.file}: ${JSON.stringify(e.from)}`); process.exit(2); }

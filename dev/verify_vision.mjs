@@ -139,6 +139,7 @@
 // check below would then be measuring a fixture that is not there. No gateway, no wasm
 // rebuild: the branch under test is JavaScript.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -146,7 +147,7 @@ import { open, steerDiamond, scratch, shot, mockLog, clearMockLog, MOCK } from '
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
-const SRC  = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+const SRC  = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 const MOCK_LOG_PATH = process.env.DAIMOND_MOCK_LOG || path.join(HERE, 'mockllm.log');
 
 // The two blind models and the sighted one. `mock/blind-too` is never listed by the

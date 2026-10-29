@@ -5,10 +5,11 @@
 // Run: node <this> <daimond.js>. FAIL = after the enqueue no durable store holds the words.
 // ADAPTED for the gate (CCP3-QAFIX3): runs over www/js/daimond.js with no argument, and the journal stub takes
 // the chat's own queue record (`chatQueue`, journal.js since 05b532b4b) beside the turn's `queueSet`.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-const SRC = readFileSync(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), 'daimond.js'), 'utf8');
+const SRC = readPage(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), 'daimond.js'), 'utf8');
 function lift(src, name) {
 	let start = src.indexOf('\n\tasync function ' + name + '(');
 	if (start < 0) start = src.indexOf('\n\tfunction ' + name + '(');

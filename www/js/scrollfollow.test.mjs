@@ -25,6 +25,7 @@
    Run:  node www/js/scrollfollow.test.mjs
    On 52151fa76's daimond.js: the first grown frame is not followed, FOLLOW and UP fail.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -56,7 +57,7 @@ function extractFn(src, name) {
 }
 const need = (src, n) => { const f = extractFn(src, n); if (!f) throw new Error('function not found: ' + n); return f; };
 
-const src = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
 const HAS = extractFn(src, 'followsEnd') !== null;
 
 const lifted = new Function('env', [

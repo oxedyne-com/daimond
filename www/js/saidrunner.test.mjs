@@ -14,6 +14,7 @@
    Drives the REAL peer.js on a virtual clock and lifts the page's helpers from
    daimond.js.   `node www/js/saidrunner.test.mjs`
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -55,7 +56,7 @@ function loadPeer() {
 	const atob = (s) => Buffer.from(s, 'base64').toString('binary');
 	function EventShim(t) { this.type = t; }
 	function loadScript(rel, extra) {
-		let body = readFileSync(join(HERE, rel), 'utf8');
+		let body = readPage(join(HERE, rel), 'utf8');
 		if (extra) body += extra;
 		const fn = new Function(
 			'window', 'document', 'crypto', 'localStorage', 'btoa', 'atob',
@@ -205,7 +206,7 @@ if (typeof L.say === 'function') {
 
 // ── PAGE: delivered into the turn running here, once; unheard words re-queued once. ──
 {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const must = ['interjectMessage', 'interjectInto', 'landInterjection', 'sayToRunner', 'requeueUnheard', 'drainAfterHeld', 'lapsedByClock', 'confirmLapse', 'leaseDoorRead'];
 	// R7c's helpers, lifted where they exist, so the arms above them still run on a tree without them.
 	const r7c = ['resendUnheard', 'heedUnheard', 'sendToDiamondTurn'];
@@ -414,7 +415,7 @@ if (typeof L.say === 'function') {
 // page, and nothing drew: no frame folded and the placeholder went with no answer. Drives the page's
 // REAL say, re-send, watch, last read, fold, adoption, merge and placeholder drop, on peer.js's rules.
 await (async () => {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const { liftSource } = await import('../../dev/syncprobe.mjs');
 	const FNS = ['touchMsg', 'sayToRunner', 'requeueUnheard', 'resendUnheard', 'pushUserRecord', 'tsPast', 'markTurnDispatched',
 		'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished', 'dispatchedTurnSettled',
@@ -429,7 +430,7 @@ await (async () => {
 	const r1 = src.indexOf('} catch (e) { /* a reconcile must never break the merge */ }', r0);
 	const reconcile = 'function reconcileMerged() {\n' + src.slice(r0, r1) + '}\n';
 	check('HATE-3: the merge reconcile is found', r0 > 0 && r1 > r0);
-	const stampSrc = readFileSync(join(HERE, 'stamp.js'), 'utf8');
+	const stampSrc = readPage(join(HERE, 'stamp.js'), 'utf8');
 
 	let clock = 1793000000000;
 	const D = { now: () => clock };
@@ -581,7 +582,7 @@ await (async () => {
 // rows arrive by the merge while the runner's lease is `running`: the page's REAL index, watch
 // decision, watch, frame fold and provisional draw must follow the turn from that moment.
 await (async () => {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const { liftSource } = await import('../../dev/syncprobe.mjs');
 	const FNS = ['rebuildDispatchedIndex', 'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished',
 		'dispatchedTurnSettled', 'handoffLeaseSettled', 'handoffDone', 'dispatchedAnswerPresent', 'updateExpedite',
@@ -591,7 +592,7 @@ await (async () => {
 	const lifted = FNS.map((n) => extractFn(src, n));
 	check('UNBLOCK-44: the page functions exist', lifted.every(Boolean), FNS.filter((n, i) => !lifted[i]).join(','));
 	if (!lifted.every(Boolean)) return;
-	const stampSrc = readFileSync(join(HERE, 'stamp.js'), 'utf8');
+	const stampSrc = readPage(join(HERE, 'stamp.js'), 'utf8');
 	let clock = Date.now();
 	const D = { now: () => clock };
 	const leases = {}, watched = {}, events = [];

@@ -54,6 +54,7 @@
 //   node dev/verify_social.mjs --break refhref     # 3d a reference is drawn as a link
 //   node dev/verify_social.mjs --break msgname     # 4  two panels called Message
 //   node dev/verify_social.mjs                     # and then, clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -219,7 +220,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, edit(src, spec));
 	}
 	return byFile;
@@ -233,7 +234,7 @@ function damagedFiles() {
 // which is exactly what `--break bootblind` did on 2026-08-17: it went green,
 // and a green break run means the check it aims at is checking nothing.
 const served = damagedFiles();
-const source = (rel) => served.get(rel) ?? fs.readFileSync(path.join(WWW, rel), 'utf8');
+const source = (rel) => served.get(rel) ?? readPage(path.join(WWW, rel), 'utf8');
 
 const routeBreaks = async (pg) => {
 	if (!BREAK) return;

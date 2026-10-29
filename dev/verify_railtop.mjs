@@ -39,6 +39,7 @@
 //
 // Needs a world: `eval "$(bash dev/world.sh N --up)"`. No gateway.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,7 +105,7 @@ const p = s.page;
 
 if (BREAK) {
 	for (const spec of BREAKS[BREAK]) {
-		const src = damaged(fs.readFileSync(path.join(WWW, spec.file), 'utf8'), spec);
+		const src = damaged(readPage(path.join(WWW, spec.file), 'utf8'), spec);
 		await p.route('**/' + spec.file, (route) => route.fulfill({
 			status: 200, contentType: 'application/javascript', body: src }));
 	}

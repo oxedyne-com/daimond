@@ -40,6 +40,7 @@
 // kind gone its first test kept every item, so it walked the list and could not
 // change it. A mode that reproduces a defect in deleted code cannot go red for
 // the right reason, and a red nobody can trigger is a red nobody will see.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -63,7 +64,7 @@ const head = (n) => console.log('\n── ' + n + ' ' + '─'.repeat(Math.max(0,
 const serveOld = async (page) => {
 	if (!RED) return;
 	for (const f of ['daimond.js', 'graph.js']) {
-		const body = fs.readFileSync(path.join(OLD, f), 'utf8');
+		const body = readPage(path.join(OLD, f), 'utf8');
 		await page.route('**/js/' + f, (route) =>
 			route.fulfill({ status: 200, contentType: 'application/javascript', body }));
 	}

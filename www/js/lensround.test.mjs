@@ -8,6 +8,7 @@
 // engine now states each round's own figures on its `round_meta` event, and the turn's
 // `roundFeed` carries them onto the round's rows. This drives the REAL debugshare.js in a
 // stand-in tab, and reads daimond.js's source for the call sites.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -50,7 +51,7 @@ function loadFeed() {
 			'window', 'document', 'localStorage', 'fetch', 'btoa', 'atob',
 			'TextEncoder', 'TextDecoder', 'CustomEvent',
 			'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'console',
-			'with (window) {\n' + readFileSync(join(HERE, rel), 'utf8') + '\n}');
+			'with (window) {\n' + readPage(join(HERE, rel), 'utf8') + '\n}');
 		fn(win, document, localStorage, fetchImpl, btoa, atob, TextEncoder, TextDecoder,
 			CustomEventShim, () => 1, () => {}, () => 1, () => {}, quiet);
 	}
@@ -100,7 +101,7 @@ test('the fold past 60 rounds still folds, on the rounds\' own figures', () => {
 });
 
 test('daimond.js builds every round row from the round\'s own event, the daimon\'s included', () => {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	assert.ok(!/live_last_prompt_tokens\)\s*\|\|\s*0,/.test(src) && !/live_cached_tokens\)\s*\|\|\s*0,/.test(src),
 		'a round row still reads a live_* getter off an app that may not be the one running');
 	const arms = src.split("ev.type === 'round_meta'").slice(1).map((s) => s.slice(0, 1600));

@@ -4,11 +4,12 @@
 // ADAPTED for the gate (CCP3-QAFIX4): runs over this www/js/daimond.js with no argument, every door on fresh state:
 // resume (switchChat), wake (drainAfterHeld), drain (drainQueue itself) and steer (a daimon's drainSteerQueue);
 // lifts the confirmation names (`lapseConfirmed`, `lapseMark`, state `_lapseRead`), absent at the base.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(process.argv[2] || join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(process.argv[2] || join(HERE, 'daimond.js'), 'utf8');
 function lift(src, name) {
 	let start = src.indexOf('\n\tasync function ' + name + '(');
 	if (start < 0) start = src.indexOf('\n\tfunction ' + name + '(');

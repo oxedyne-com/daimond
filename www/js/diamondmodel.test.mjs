@@ -22,14 +22,15 @@
 
    Run:  node www/js/diamondmodel.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const PEER = readFileSync(join(HERE, 'peer.js'), 'utf8');
-const STAMP = readFileSync(join(HERE, 'stamp.js'), 'utf8');
+const APP = readPage(join(HERE, 'daimond.js'), 'utf8');
+const PEER = readPage(join(HERE, 'peer.js'), 'utf8');
+const STAMP = readPage(join(HERE, 'stamp.js'), 'utf8');
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {

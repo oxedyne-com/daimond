@@ -39,6 +39,7 @@
 //
 // It writes no path down: `harness.mjs` is imported relative to this file, and the
 // profile and screenshot go to the harness scratch root — never into `www/`.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,7 +95,7 @@ const BREAKS = {
 };
 
 /// The real template on disk, which is what an unbroken run delivers at version 2.
-const real = (rel) => fs.readFileSync(path.join(TPL, rel), 'utf8');
+const real = (rel) => readPage(path.join(TPL, rel), 'utf8');
 const V0 = JSON.parse(real('capp.json')).v;	// the shipped version: every one served below is past it, whatever it is
 
 /// What the bundle SERVES, when this file wants it to be something else.
@@ -121,7 +122,7 @@ const s = await open({
 		if (BREAK) {
 			const spec = BREAKS[BREAK];
 			if (!spec) { console.error('no such break: ' + BREAK); process.exit(2); }
-			const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			const src = readPage(path.join(WWW, spec.file), 'utf8');
 			const n = src.split(spec.find).length - 1;
 			if (n !== 1) {
 				console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

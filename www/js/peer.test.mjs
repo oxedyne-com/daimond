@@ -30,6 +30,7 @@
    (Node 20+, whose WebCrypto implements X25519 and Ed25519 -- the
     real engine the seal and the identity run on.)
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -39,7 +40,7 @@ import { loadSeal, installSeal } from './sealfixture.mjs';
 await loadSeal();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DAIMOND_SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const DAIMOND_SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 const real = webcrypto;
 let failures = 0;
 function check(name, cond, detail) {
@@ -125,7 +126,7 @@ function makeTab(clockOffsetMs) {
 	function EventShim(t) { this.type = t; }
 
 	function loadScript(rel, extra) {
-		let body = readFileSync(join(HERE, rel), 'utf8');
+		let body = readPage(join(HERE, rel), 'utf8');
 		if (extra) body += extra;
 		// A REAL browser makes `window` the global object, so the app scripts refer
 		// to their siblings by a bare `DaimondIdentity` / `DaimondPost` after a
@@ -5376,7 +5377,7 @@ async function runLeaseFollowupAcceptance(phone, check) {
 		let calls = 0;
 		await mkTb({ revoke: async () => { calls++; return { ok: false, why: 'holder' }; } })('turn-l3');
 		check('L3: a refusal that is a fact is not retried', calls === 1, String(calls));
-		const en = readFileSync(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
+		const en = readPage(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
 		check('L3: the copy says "Could not run it here. Try again." and no longer names a take-back',
 			/'turn\.peer_takeback_failed':\s*'Could not run it here\. Try again\.'/.test(en));
 	}
@@ -5649,7 +5650,7 @@ async function runElectedTriedAcceptance(P, check) {
 		renderHistory: () => {}, ownsChat: () => false, diag: () => {}, touchChat: () => {}, persistChats: () => {},
 		newMid: () => Date.now().toString(36) + '-1-ph000',
 		_dispatchedIx: {}, updateExpedite: () => {},
-		DaimondStamp: (() => { const w = {}; new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(w); return w.DaimondStamp; })(),
+		DaimondStamp: (() => { const w = {}; new Function('window', readPage(join(HERE, 'stamp.js'), 'utf8'))(w); return w.DaimondStamp; })(),
 		msgFpSeen: new WeakMap(),
 	};
 	try {

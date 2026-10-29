@@ -17,6 +17,7 @@
 
    Run:  node www/js/runnerask.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -86,7 +87,7 @@ const pw = { addEventListener() {}, dispatchEvent() { return true; } };
 	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
-		const body = readFileSync(join(HERE, rel), 'utf8');
+		const body = readPage(join(HERE, rel), 'utf8');
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
 			'with (window) {\n' + body + '\n}')(pw, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
@@ -95,7 +96,7 @@ const pw = { addEventListener() {}, dispatchEvent() { return true; } };
 const P = pw.DaimondPeer;
 
 // ── The tab: the settle, the card and the one send entry ────
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 const NAMES = ['chatHoldsTurn', 'chatHoldingReport', 'runnerAskArgs', 'settleRunnerAsk', 'askDrawable', 'askCurrent',
 	'blockedAsk', 'renderAsk', 'askAnswer', 'askClose', 'askMarkAnswered', 'sendUserMessage'];
 const bodies = NAMES.map((n) => lift(SRC, n));

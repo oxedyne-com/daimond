@@ -37,6 +37,7 @@
    No browser: stand-ins cover what each module touches.
      node www/js/ownkeyoffer.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -139,7 +140,7 @@ function page(M, shared, more) {
 	const localStorage = { getItem: (k) => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => ls.set(k, String(v)), removeItem: (k) => ls.delete(k) };
 	for (const rel of ['stamp.js'].concat(more || [], ['peer.js'])) {
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
-			'with (window) {\n' + readFileSync(join(HERE, rel), 'utf8') + '\n}')(win, doc, quiet, localStorage, { storage: {} }, function () {});
+			'with (window) {\n' + readPage(join(HERE, rel), 'utf8') + '\n}')(win, doc, quiet, localStorage, { storage: {} }, function () {});
 	}
 	win._ls = ls;
 	return win;
@@ -644,11 +645,11 @@ function stringChecks() {
 		'seat.reach_https', 'seat.reach_device', 'seat.reach_unlock', 'seat.reach_nokey'];
 	const dir = join(HERE, '..', 'i18n');
 	for (const f of ['en', 'de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans']) {
-		const s = readFileSync(join(dir, f + '.js'), 'utf8');
+		const s = readPage(join(dir, f + '.js'), 'utf8');
 		const lack = KEYS.filter((k) => s.indexOf("'" + k + "'") < 0);
 		check('K6 ' + f + ' has every new seat string', lack.length === 0, lack.join());
 	}
-	const en = readFileSync(join(dir, 'en.js'), 'utf8');
+	const en = readPage(join(dir, 'en.js'), 'utf8');
 	check('K6 runner-engine: it updates itself', /'seat\.why_runner_engine':\s*'\{name\} runs another Daimond version; it updates itself\.'/.test(en));
 }
 

@@ -9,6 +9,7 @@
 // and Diamond B watching a mailbox, an arrival for B must run one turn in B -- in B's own
 // thread, the screen unmoved -- and none in A; a paused leaf never fires; a busy B gets no
 // second turn, and the arrival it refused is asked again rather than lost.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -17,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const APP  = readPage(join(HERE, 'daimond.js'), 'utf8');
 const require = createRequire(import.meta.url);
 
 function balanced(src, start) {
@@ -218,7 +219,7 @@ test('the turn-failed alert passes fire/alertpending\'s own bounds', async (tt) 
 	new Function('window', src)(win);
 	const EN = {};
 	globalThis.window.DaimondI18n = undefined;
-	readFileSync(join(HERE, '../i18n/en.js'), 'utf8').replace(/'(pending\.turn_failed(?:_detail)?)':\s*'((?:[^'\\]|\\.)*)'/g,
+	readPage(join(HERE, '../i18n/en.js'), 'utf8').replace(/'(pending\.turn_failed(?:_detail)?)':\s*'((?:[^'\\]|\\.)*)'/g,
 		(m, k, v) => { EN[k] = v.replace(/\\'/g, "'"); });
 	assert.ok(EN['pending.turn_failed'] && EN['pending.turn_failed_detail'], 'the English is missing');
 	const fill = (s, v) => s.replace(/\{(\w+)\}/g, (m, k) => v[k]);

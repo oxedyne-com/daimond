@@ -84,6 +84,7 @@
 //   node dev/verify_foldershare.mjs --break nonames      # the banner counts the folders instead of naming them
 //   node dev/verify_foldershare.mjs --break skillprobe   # a SKILL.md's own folder being fenced is believed over the file
 //   bash dev/world.sh 32 --down
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -323,7 +324,7 @@ const SEAM = [
 {
 	const missing = [];
 	for (const s of SEAM) {
-		const src = fs.readFileSync(path.join(WWW, s.file), 'utf8');
+		const src = readPage(path.join(WWW, s.file), 'utf8');
 		if (!src.includes(s.want)) missing.push(`  ${s.file}: ${s.why}`);
 	}
 	if (missing.length) {
@@ -336,7 +337,7 @@ const SEAM = [
 const PATCHED = new Map();
 if (BREAK) {
 	for (const spec of BREAKS[BREAK]) {
-		const src = PATCHED.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		const src = PATCHED.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 		const n = src.split(spec.find).length - 1;
 		if (n !== 1) {
 			console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
@@ -533,7 +534,7 @@ async function routeFor(withFixture) {
 			const abs = path.join(BOOK, rel);
 			if (!abs.startsWith(BOOK)) return r.fulfill({ status: 403, body: 'no' });
 			let buf;
-			try { buf = fs.readFileSync(abs); } catch (e) { return r.fulfill({ status: 404, body: 'no' }); }
+			try { buf = readPage(abs); } catch (e) { return r.fulfill({ status: 404, body: 'no' }); }
 			return r.fulfill({ status: 200, contentType: 'application/octet-stream', body: buf });
 		});
 	};

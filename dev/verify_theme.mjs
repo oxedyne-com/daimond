@@ -29,6 +29,7 @@
 // which is the only property that matters for a picker with eleven entries.
 // `node dev/verify_theme.mjs --emit-baseline` prints the table to paste back.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -209,7 +210,7 @@ const KNOWN = {
 };
 
 // ── The declared palettes ────────────────────────────────────────
-const css = fs.readFileSync(path.join(WWW, 'css', 'variables.css'), 'utf8');
+const css = readPage(path.join(WWW, 'css', 'variables.css'), 'utf8');
 
 /// Every `:root[data-theme="x"] { ... }` block, plus the bare `:root` block,
 /// which is the dark palette's home and the source of every default.
@@ -241,7 +242,7 @@ const palette = (n) => Object.assign({}, base, declared[n] || {});
 /// or in the palette's own dark surface depends on the ink.
 const THEME_SPEC = {};
 {
-	const js0 = fs.readFileSync(path.join(WWW, 'js', 'daimond.js'), 'utf8');
+	const js0 = readPage(path.join(WWW, 'js', 'daimond.js'), 'utf8');
 	const tbl = js0.match(/var THEMES = \{([\s\S]*?)\n\t\};/);
 	if (tbl) {
 		const re = /([a-z]+)\s*:\s*\{\s*tone:\s*'([a-z]+)'\s*,\s*ink:\s*'([a-z]+)'\s*\}/g;
@@ -373,8 +374,8 @@ for (const n of NAMES) {
 // index.html carries a copy of the palette table so the first paint is right;
 // a copy that drifts shows a returning user the wrong band for a frame, or
 // leaves data-ink saying the opposite of the palette actually loaded.
-const html = fs.readFileSync(path.join(WWW, 'index.html'), 'utf8');
-const js   = fs.readFileSync(path.join(WWW, 'js', 'daimond.js'), 'utf8');
+const html = readPage(path.join(WWW, 'index.html'), 'utf8');
+const js   = readPage(path.join(WWW, 'js', 'daimond.js'), 'utf8');
 
 const fromHtml = {};
 {
@@ -429,7 +430,7 @@ for (const n of Object.keys(declared)) {
 // A rule naming a palette is a rule that a new palette silently misses, which
 // is exactly how ten palettes would ship half-styled.
 for (const file of ['app.css', 'render.css', 'guide.css']) {
-	const src = fs.readFileSync(path.join(WWW, 'css', file), 'utf8');
+	const src = readPage(path.join(WWW, 'css', file), 'utf8');
 	const named = [...src.matchAll(/\[data-theme="([a-z]+)"\]/g)].map(m => m[1]);
 	check(named.length === 0,
 		`${file}: no rule keys on a palette NAME${named.length ? ` (${[...new Set(named)].join(', ')})` : ''}`);
@@ -528,7 +529,7 @@ for (const n of NAMES) {
 	// where it does named a box that is not a control at all.
 	const css = ['app.css', 'files.css', 'mail.css', 'models.css', 'workspace.css',
 		'autoreload.css', 'mobile.css', 'render.css', 'spend.css']
-		.map((f) => fs.readFileSync(path.join(WWW, 'css', f), 'utf8'))
+		.map((f) => readPage(path.join(WWW, 'css', f), 'utf8'))
 		.join('\n').replace(/\/\*[\s\S]*?\*\//g, ' ');
 	const CONTROL = /\b(input|select|textarea)\b|(btn|button)\b/i;
 	const stragglers = [];
@@ -639,7 +640,7 @@ for (const n of NAMES) {
 // The hues and the formulas are read out of the source rather than restated, so
 // that adding a hue to TAG_HUES or retuning a chip is measured on the next run
 // instead of drifting away from a copy kept here.
-const appCss = fs.readFileSync(path.join(WWW, 'css', 'app.css'), 'utf8');
+const appCss = readPage(path.join(WWW, 'css', 'app.css'), 'utf8');
 const TAG_HUES = (() => {
 	const m = js.match(/var TAG_HUES\s*=\s*\[([^\]]*)\]/);
 	return m ? m[1].split(',').map(s => parseInt(s.trim(), 10)).filter(v => !Number.isNaN(v)) : [];
@@ -755,7 +756,7 @@ for (const n of NAMES) {
 	const MOTION = fs.readdirSync(path.join(WWW, 'css')).filter(f => f.endsWith('.css'));
 	const infinite = [];
 	for (const f of MOTION) {
-		const src = fs.readFileSync(path.join(WWW, 'css', f), 'utf8');
+		const src = readPage(path.join(WWW, 'css', f), 'utf8');
 		const rm  = src.includes('prefers-reduced-motion');
 		// Which animations does that file's reduce block actually turn off?
 		const stopped = new Set();

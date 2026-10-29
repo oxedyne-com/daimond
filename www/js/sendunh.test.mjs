@@ -147,12 +147,13 @@
    advertises running a turn pending-only): it runs here, pending-only.
    Red on 7e73f10db. Break: mailhere. (The hand-off: RESUME_MAILHANDOFF.md.)
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-let SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+let SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 const BREAK = (process.argv.indexOf('--break') >= 0) ? process.argv[process.argv.indexOf('--break') + 1] : '';
 const BREAKS = {
 	entry: ['if (!r.ok && !st.marked) answerUnhanded(chat, turnId, promptText, r);', ''],
@@ -241,7 +242,7 @@ const PW = { addEventListener() {}, dispatchEvent() { return true; } };
 	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
-		const body = readFileSync(join(HERE, rel), 'utf8');
+		const body = readPage(join(HERE, rel), 'utf8');
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
 			'with (window) {\n' + body + '\n}')(PW, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
@@ -1010,7 +1011,7 @@ async function main() {
 			const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 				querySelectorAll: () => [], getElementById: () => null };
 			for (const rel of ['stamp.js', 'peer.js']) {
-				let body = readFileSync(join(HERE, rel), 'utf8');
+				let body = readPage(join(HERE, rel), 'utf8');
 				if (rel === 'peer.js' && PEER_BREAKS[BREAK]) {
 					if (body.indexOf(PEER_BREAKS[BREAK][0]) < 0) { console.log('FAIL — peer.js break text is gone: ' + BREAK); process.exit(1); }
 					body = body.replace(PEER_BREAKS[BREAK][0], PEER_BREAKS[BREAK][1]);
@@ -1068,7 +1069,7 @@ async function main() {
 				querySelectorAll: () => [], getElementById: () => null };
 			for (const rel of ['stamp.js', 'peer.js']) {
 				new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
-					'with (window) {\n' + readFileSync(join(HERE, rel), 'utf8') + '\n}')(PW3, doc, quiet,
+					'with (window) {\n' + readPage(join(HERE, rel), 'utf8') + '\n}')(PW3, doc, quiet,
 					{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
 			}
 			PW3.DaimondPresence.learnRelayNow(clock + 2000);		// the gateway is 2 s ahead of this device

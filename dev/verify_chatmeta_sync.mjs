@@ -35,6 +35,7 @@
 // with the gateway's version guard, and a content store), so no dev gateway and no
 // mock LLM are needed — a "turn" here is a message appended with `touchChat`'s
 // stamp, which is what the runner's landed turn is to the merge. Needs dev/serve.mjs.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,14 +66,14 @@ const SEAM = [
 	{ want: 'var metaNewer = chatMetaBeats(a, b) ? a : b;', why: 'the metaAt merge winner is missing' },
 ];
 {
-	const src = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+	const src = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 	for (const s of SEAM) if (!src.includes(s.want) && !BREAK) { console.error(`seam missing: ${s.why}`); process.exit(2); }
 }
 
 // ── The break: mergeChatRecords resolves the name from the TURN winner ──
 const PATCHED = new Map();
 if (BREAK === 'lww') {
-	const src = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+	const src = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 	const find = 'takeChatMeta(out, metaNewer);';
 	const n = src.split(find).length - 1;
 	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1)`); process.exit(2); }

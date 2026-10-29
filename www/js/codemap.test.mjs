@@ -21,6 +21,7 @@
 
      node --test www/js/codemap.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -264,7 +265,7 @@ test('a bare outline gives the section list when the full outline is over budget
 // ── The real source ──────────────────────────────────────────────────────────────────────
 
 const DAIMOND = path.join(ROOT, 'www/js/daimond.js');
-const real = fs.existsSync(DAIMOND) ? fs.readFileSync(DAIMOND, 'utf8') : null;
+const real = fs.existsSync(DAIMOND) ? readPage(DAIMOND, 'utf8') : null;
 const rmap = real ? mapSource(real, 'js') : null;
 
 /// Does `text` parse as a whole program, a whole object member, or a whole class member?
@@ -352,6 +353,6 @@ test('every www/js/*.js and src/*.rs balances', () => {
 		if (fs.existsSync(d)) for (const f of fs.readdirSync(d)) if (re.test(f)) files.push([path.join(d, f), re.test('x.rs') ? 'rs' : 'js']);
 	}
 	assert.ok(files.length > 20, `${files.length} files`);
-	const bad = files.filter(([f, lang]) => mapSource(fs.readFileSync(f, 'utf8'), lang).strays > 0).map(([f]) => path.basename(f));
+	const bad = files.filter(([f, lang]) => mapSource(readPage(f, 'utf8'), lang).strays > 0).map(([f]) => path.basename(f));
 	assert.deepEqual(bad, []);
 });

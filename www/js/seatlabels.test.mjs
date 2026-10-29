@@ -9,6 +9,7 @@
 //
 //     node www/js/seatlabels.test.mjs
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -26,7 +27,7 @@ function check(name, ok, detail) {
 
 /// The table a locale file installs, read in a sandbox the way i18n.js would take it.
 function table(file) {
-	const src = readFileSync(join(I18N, file), 'utf8');
+	const src = readPage(join(I18N, file), 'utf8');
 	let got = null;
 	const ctx = vm.createContext({});
 	ctx.window = ctx;

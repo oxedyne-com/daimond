@@ -20,6 +20,7 @@
 
    Run:  node www/js/kt5dalerts.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -54,7 +55,7 @@ const pw = { addEventListener() {}, dispatchEvent() { return true; } };
 	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
-		const body = readFileSync(join(HERE, rel), 'utf8');
+		const body = readPage(join(HERE, rel), 'utf8');
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
 			'with (window) {\n' + body + '\n}')(pw, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
@@ -73,8 +74,8 @@ check('(a) a malformed alert is dropped or filled as the runner reads it', JSON.
 check('(a) a report with no alerts names none', !('alerts' in P.makeReport({ alerts: [] })) && !('alerts' in P.makeReport({})));
 
 // (b)-(h) The real alerts.js, and the tab's settle lifted from daimond.js.
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const ALERTS_SRC = readFileSync(join(HERE, 'alerts.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
+const ALERTS_SRC = readPage(join(HERE, 'alerts.js'), 'utf8');
 const NAMES = ['chatHoldsTurn', 'chatHoldingReport', 'settleRunnerAlerts'];
 const bodies = NAMES.map((n) => lift(SRC, n));
 check('the tab applies a report\'s alerts through daimond.js', bodies.every(Boolean), NAMES.filter((n, i) => !bodies[i]));

@@ -51,6 +51,7 @@
 //   node dev/verify_socialpost.mjs --break nobrake       # the box does not count the title
 //   node dev/verify_socialpost.mjs --break nodeadline    # the card waits for ever, unattended
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,7 +95,7 @@ const SEAM = [
 function requireSeams() {
 	const missing = [];
 	for (const s of SEAM) {
-		const src = FILES.get(s.file) ?? fs.readFileSync(path.join(WWW, s.file), 'utf8');
+		const src = FILES.get(s.file) ?? readPage(path.join(WWW, s.file), 'utf8');
 		if (!src.includes(s.want)) missing.push(`  ${s.file}: ${s.why}`);
 	}
 	if (missing.length) {
@@ -163,7 +164,7 @@ function build() {
 	if (BREAK) {
 		for (const spec of BREAKS[BREAK]) {
 			const p = spec.file;
-			const src = FILES.get(p) ?? fs.readFileSync(path.join(WWW, p), 'utf8');
+			const src = FILES.get(p) ?? readPage(path.join(WWW, p), 'utf8');
 			FILES.set(p, edit(src, spec, `break '${BREAK}'`));
 		}
 	}

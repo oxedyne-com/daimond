@@ -28,6 +28,7 @@
 // Run: node dev/verify_contrast_ui.mjs   (needs dev/serve.mjs -- DAIMOND_PORT,
 // default 8777)
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -308,7 +309,7 @@ const paintedAt = (page, x, y) => page.evaluate(([px, py]) => {
 // One real `.tag-chip` per hue, in the real page, with the real stylesheet
 // resolving `hsl(var(--tag-h) S% L%)`. The hues come from daimond.js, so a hue
 // added there is measured here on the next run.
-const js = fs.readFileSync(path.join(WWW, 'js', 'daimond.js'), 'utf8');
+const js = readPage(path.join(WWW, 'js', 'daimond.js'), 'utf8');
 const TAG_HUES = (() => {
 	const m = js.match(/var TAG_HUES\s*=\s*\[([^\]]*)\]/);
 	return m ? m[1].split(',').map(v => parseInt(v.trim(), 10)).filter(v => !Number.isNaN(v)) : [];
@@ -408,7 +409,7 @@ for (const theme of NAMES) {
 	// would know. Only the resting chip is compared -- one rule is enough to
 	// catch a wrong formula.
 	const ink = await page.evaluate(() => document.documentElement.getAttribute('data-ink'));
-	const app = fs.readFileSync(path.join(WWW, 'css', 'app.css'), 'utf8');
+	const app = readPage(path.join(WWW, 'css', 'app.css'), 'utf8');
 	const sel = ink === 'dark' ? ':root[data-ink="dark"] .tag-chip' : '.tag-chip';
 	const body = app.slice(app.indexOf(sel + ' {'), app.indexOf('}', app.indexOf(sel + ' {')));
 	const m = body.match(/color:[^;]*?hsl\(var\(--tag-h[^)]*\)\s*(\d+)%\s*(\d+)%/);

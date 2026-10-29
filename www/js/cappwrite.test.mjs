@@ -16,6 +16,7 @@
 
    Run:   node www/js/cappwrite.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -27,7 +28,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail ? '  (' + detail + ')' : '')); failures++; }
 }
 
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 const A = SRC.indexOf('\tasync function writeCrystalAsset(');
 const Z = SRC.indexOf('\tvar _cappWrite = Promise.resolve();', A);
 const LA = SRC.indexOf('\tvar DIAMOND_LOCKS = {};');

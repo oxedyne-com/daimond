@@ -7,10 +7,11 @@
 // ADAPTED for the gate (CCP3-QAFIX3): runs over www/js/daimond.js with no argument; the door is the real one
 // (`DaimondSync.leaseGet`, adopted through `DaimondLease.adopt`), not a `Lease.pull`; the R3 names and their
 // state are lifted and stubbed; and the door's fresh renewal must keep the queue waiting, not only be read.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-const SRC = readFileSync(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), 'daimond.js'), 'utf8');
+const SRC = readPage(process.argv[2] || join(dirname(fileURLToPath(import.meta.url)), 'daimond.js'), 'utf8');
 function lift(src, name) {
 	let start = src.indexOf('\n\tasync function ' + name + '(');
 	if (start < 0) start = src.indexOf('\n\tfunction ' + name + '(');

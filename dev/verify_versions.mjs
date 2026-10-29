@@ -66,6 +66,7 @@
 // of §11 — the before body read through the hand's own `Read` and the bytes going back to
 // disk — lives in dev/verify_handreal.mjs, which already has the whole chain up; the fence
 // half is here, against a workspace folder, through the same `run_tool_outcome` door.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -75,7 +76,7 @@ import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
-const SRC  = fs.readFileSync(path.join(WWW, 'js', 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(WWW, 'js', 'daimond.js'), 'utf8');
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -193,7 +194,7 @@ function damaged(spec) {
 		console.error(`break '${BREAK}': ${spec.file} does not exist, so nothing was broken.`);
 		process.exit(2);
 	}
-	const src = fs.readFileSync(file, 'utf8');
+	const src = readPage(file, 'utf8');
 	if (src.indexOf(spec.needs) < 0) {
 		console.error(`break '${BREAK}': ${spec.file} does not define '${spec.needs}', `
 			+ 'so nothing was broken and the run below would prove nothing.');

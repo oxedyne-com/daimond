@@ -65,6 +65,7 @@
 // Needs dev/serve.mjs only. No gateway: every surface here is reachable without
 // one, and any that is not is SKIPPED out loud rather than passed.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -188,7 +189,7 @@ if (BREAK && !BREAKS[BREAK]) {
 /// then passed, and reported a check as proved that had been asked of working
 /// code.
 function damaged(file, specs) {
-	let src = fs.readFileSync(path.join(WWW, file), 'utf8');
+	let src = readPage(path.join(WWW, file), 'utf8');
 	for (const spec of specs) {
 		const n = src.split(spec.find).length - 1;
 		if (n !== 1) {

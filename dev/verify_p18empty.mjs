@@ -16,6 +16,7 @@
 // the shipped defect (no prev.remove()) and `--break=always` to append
 // unconditionally.
 
+import { readPage } from './pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 
 const BIDX = process.argv.indexOf('--break');
@@ -23,7 +24,7 @@ const BEQ = process.argv.find(a => a.startsWith('--break='));
 const BREAK = BEQ ? BEQ.slice(8) : (BIDX >= 0 ? (process.argv[BIDX + 1] || '') : '');
 
 // ── Source guards ──────────────────────────────────────────
-const src = readFileSync('www/js/daimond.js', 'utf-8');
+const src = readPage('www/js/daimond.js', 'utf-8');
 let checks = 0, fails = 0;
 const ck = (name, ok) => {
 	checks++;

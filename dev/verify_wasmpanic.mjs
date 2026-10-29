@@ -33,6 +33,7 @@
 //
 // Needs dev/serve.mjs. No gateway, no model.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,7 +56,7 @@ const check = (ok, what, detail) => {
 // that panics reports nothing. Checked in the file rather than at runtime,
 // because a runtime check can only see the order that happened to occur.
 {
-	const src = fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
+	const src = readPage(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
 	const at   = src.indexOf('install_panic_hook()');
 	const init = src.indexOf('await init();');
 	const ready = src.indexOf('__DAIMOND_READY = true');

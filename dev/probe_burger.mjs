@@ -25,6 +25,7 @@
 // Engine: WebKit by default, because an iPhone runs WebKit. `--engine chromium`
 // is for when this host's WebKit will not launch; it is a different engine and
 // the report must say so.
+import { readPage } from './pagesrc.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
@@ -75,7 +76,7 @@ const SOURCE_BREAKS = {
 /// exactly once removed nothing, and the run would prove nothing.
 function damagedSource(name) {
 	const spec = SOURCE_BREAKS[name];
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = (src.match(new RegExp(spec.re.source, 'g')) || []).length;
 	if (n !== 1) {
 		console.error(`break '${name}': the shape matches ${n} time(s) in ${spec.file}.`);

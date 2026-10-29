@@ -18,6 +18,7 @@
 //   node dev/verify_names.mjs              # this checkout
 //   node dev/verify_names.mjs --root DIR   # another tree (how it was seen failing on the base)
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -67,7 +68,7 @@ const hits = [];
 let n = 0;
 for (const f of files()) {
 	let s;
-	try { s = fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch (e) { continue; }
+	try { s = readPage(path.join(ROOT, f), 'utf8'); } catch (e) { continue; }
 	n++;
 	const raw = s.split('\n'), lines = strip(f, s).split('\n');
 	lines.forEach((line, i) => {

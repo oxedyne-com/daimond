@@ -9,6 +9,7 @@
      node www/js/runid.test.mjs      # ALL PASS
    On 436db66f: `otherRunRows` is absent and the frame drops `run`, `why` and `itext`.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -27,7 +28,7 @@ export function loadPeer() {
 		localStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) },
 	};
 	const document = { readyState: 'complete', addEventListener: () => {}, querySelector: () => null, querySelectorAll: () => [], getElementById: () => null };
-	const body = readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
+	const body = readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
 	new Function('window', 'document', 'localStorage', 'console', 'with (window) {\n' + body + '\n}')(
 		win, document, win.localStorage, { log: () => {}, debug: () => {}, warn: () => {}, error: () => {} });
 	return win.DaimondPeer;
@@ -85,7 +86,7 @@ console.log('\nThe lost run names the device it was lost on (check_f234 fix 6, I
 	check('progressRow carries lostOn', row.lostOn === 'devB', JSON.stringify(row));
 	const pr = (P.foldProvisional([{ role: 'user', mid: T, content: 'q' }], T, [row]) || [])[1] || {};
 	check('the provisional copy carries lostOn', pr.lostOn === 'devB', JSON.stringify(pr));
-	const ds = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const ds = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const at = ds.indexOf('\n\tfunction runnerLostLabel(');
 	check('daimond.js has runnerLostLabel', at >= 0);
 	if (at >= 0) {

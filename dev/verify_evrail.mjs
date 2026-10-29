@@ -40,6 +40,7 @@
 //   node dev/verify_evrail.mjs
 //   node dev/verify_evrail.mjs --break lit
 //   DAIMOND_BROWSER=webkit node dev/verify_evrail.mjs
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,7 +85,7 @@ if (OTHER && !fs.existsSync(path.join(OTHER, 'index.html'))) { console.error(`--
 const PATCHED = new Map();
 if (BREAK) {
 	const [f, from, to] = BREAKS[BREAK];
-	const src = fs.readFileSync(path.join(OTHER || WWW, f), 'utf8');
+	const src = readPage(path.join(OTHER || WWW, f), 'utf8');
 	const n = src.split(from).length - 1;
 	if (n !== 1) { console.error(`break anchor for '${BREAK}' appears ${n} times in ${f} (expected 1)`); process.exit(2); }
 	PATCHED.set(f, src.replace(from, to));
@@ -102,7 +103,7 @@ async function serveHook(page) {
 			const rel = u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname.slice(1));
 			const file = path.join(OTHER, rel);
 			if (PATCHED.has(rel) || !fs.existsSync(file) || !fs.statSync(file).isFile()) return r.fallback();
-			return r.fulfill({ status: 200, body: fs.readFileSync(file),
+			return r.fulfill({ status: 200, body: readPage(file),
 				contentType: MIME[path.extname(file)] || 'application/octet-stream' });
 		});
 	}

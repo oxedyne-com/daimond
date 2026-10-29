@@ -19,6 +19,7 @@
 //   node dev/verify_pagelog_merge.mjs --old <r547 www>   # the gate, with the mixed-version arm
 //   node dev/verify_pagelog_merge.mjs --base <r547 www>  # every device on the base (the RED run)
 //   node dev/verify_pagelog_merge.mjs --break jsonl      # .jsonl recorded as a log (reddens the daimon arm)
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,7 +49,7 @@ for (const d of [OLD, BASE]) {
 
 // The seam, unless the whole run is the base.
 if (!BASE) {
-	const src = fs.readFileSync(path.join(WWW, 'js', 'daimond.js'), 'utf8');
+	const src = readPage(path.join(WWW, 'js', 'daimond.js'), 'utf8');
 	for (const want of ['imp = joinCounts(await app.import_diamond(idata, twoSided));', 'app.union_logs(r.id, udata)', "noteLeft('logs',"]) {
 		if (!src.includes(want)) { console.error(`seam missing in js/daimond.js: ${want}`); process.exit(2); }
 	}
@@ -68,7 +69,7 @@ const routeFrom = (dir) => async (page) => {
 		try {
 			if (fs.statSync(f).isDirectory()) f = path.join(f, 'index.html');
 			return r.fulfill({ status: 200, contentType: TYPES[path.extname(f)] || 'application/octet-stream',
-				headers: { 'cache-control': 'no-cache' }, body: fs.readFileSync(f) });
+				headers: { 'cache-control': 'no-cache' }, body: readPage(f) });
 		} catch (e) { return r.fulfill({ status: 404, contentType: 'text/plain', body: 'Not found' }); }
 	});
 };

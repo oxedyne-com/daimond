@@ -40,12 +40,13 @@
          node www/js/workerfinish.test.mjs --break aserror     # FIX 1 role reverted
          node www/js/workerfinish.test.mjs --break oldprovider # FIX 5 reverted
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -274,7 +275,7 @@ function build(name, freeNames, transform) {
 	check('FIX4 `start` sets no timer of its own', !/setTimeout\s*\(/.test(start));
 	let rustMs = null, rustS = null, wallGone = null;
 	try {
-		const compactRs = readFileSync(join(HERE, '..', '..', 'src', 'compact.rs'), 'utf8');
+		const compactRs = readPage(join(HERE, '..', '..', 'src', 'compact.rs'), 'utf8');
 		rustMs = Number((/LIVENESS_MS:\s*u64\s*=\s*([\d_]+)/.exec(compactRs) || [])[1]?.replace(/_/g, ''));
 		rustS = Number((/GATHER_TIMEOUT_S:\s*u64\s*=\s*(\d+)/.exec(compactRs) || [])[1]);
 		wallGone = !compactRs.includes('WORKER_WALL_CLOCK_MS');

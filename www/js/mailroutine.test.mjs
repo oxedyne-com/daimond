@@ -17,6 +17,7 @@
 // (`test_a_pending_only_turn_*`): an empty ending with no failed call is a quiet `answered` for a
 // turn marked pending-only, and is otherwise nudged into a written report; a raise that landed
 // is a report; an empty ending over a failed call ends `silent`.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -26,8 +27,8 @@ import { createRequire } from 'node:module';
 import { makeWindow } from '../../dev/syncprobe.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const ALERTS_SRC = readFileSync(join(HERE, 'alerts.js'), 'utf8');
+const APP  = readPage(join(HERE, 'daimond.js'), 'utf8');
+const ALERTS_SRC = readPage(join(HERE, 'alerts.js'), 'utf8');
 const require = createRequire(import.meta.url);
 
 function balanced(src, start) {

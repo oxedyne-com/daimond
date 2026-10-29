@@ -5,6 +5,7 @@
 // `unionDiamondLinks` swallowed every refusal as "it goes on the next pull". A sidecar here that
 // is not UTF-8 is refused on every pull, so that was a silent retry for ever (d1k45 check, minor).
 // The function is lifted out of `www/js/daimond.js` by name and run against stand-ins.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, 'daimond.js'), 'utf8');
 
 function lift(name) {
 	let at = SRC.indexOf('\tasync function ' + name + '(');

@@ -16,6 +16,7 @@
 //   noquery  point the table insert at '.chat-msg-content' (the wrong node)
 //   usertile divert to buildTile('user', …) instead of 'tool'
 
+import { readPage } from './pagesrc.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { open, chat, newChat, shot } from './harness.mjs';
 
@@ -24,7 +25,7 @@ const BEQ = process.argv.find(a => a.startsWith('--break='));
 const BREAK = BEQ ? BEQ.slice(8) : (BIDX >= 0 ? (process.argv[BIDX + 1] || '') : '');
 
 const JS = 'www/js/daimond.js';
-let src = readFileSync(JS, 'utf8');
+let src = readPage(JS, 'utf8');
 const ORIG = src;
 
 if (BREAK === 'nopost') {
@@ -52,7 +53,7 @@ const ck = (name, ok) => {
 
 try {
 	// 1. source shape: the divert exists, posts, and targets the ctile body
-	const s = readFileSync(JS, 'utf8');
+	const s = readPage(JS, 'utf8');
 	const i = s.indexOf('function appendUserMessage');
 	const branch = s.slice(i, i + 900);
 	ck('divert branch present in appendUserMessage', /this turn changed /.test(branch) && /buildTile\('tool'/.test(branch));

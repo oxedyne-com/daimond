@@ -29,6 +29,7 @@
 
    Run:  node www/js/tailwiring.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -41,7 +42,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail !== undefined ? '  (' + JSON.stringify(detail) + ')' : '')); failures++; }
 }
 
-const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 /// Lifts `function name(...) { ... }` (or `async function`) out of `src` by
 /// counting braces from its opening one, so nesting inside (an `if`, an

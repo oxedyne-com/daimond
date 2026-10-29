@@ -77,6 +77,7 @@
 //
 // No gateway and no model: every compile here is the real vendored typst, and the
 // only network is localhost.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -180,7 +181,7 @@ async function routes(page) {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	for (const [file, body] of byFile) {
@@ -218,7 +219,7 @@ for (const n of fs.readdirSync(SRC)) {
 /// would check the refusal rather than the loop.
 const seed = [];
 for (const n of fs.readdirSync(COPY)) {
-	seed.push([ROOT + '/' + n, fs.readFileSync(path.join(COPY, n), 'utf8')]);
+	seed.push([ROOT + '/' + n, readPage(path.join(COPY, n), 'utf8')]);
 }
 for (const [rel, re] of [
 	['assets/svg',            /\.svg$/i],
@@ -230,7 +231,7 @@ for (const [rel, re] of [
 	try { names = fs.readdirSync(path.join(SRC, rel)); } catch (e) { continue; }
 	for (const n of names) {
 		if (!re.test(n)) continue;
-		const b = fs.readFileSync(path.join(SRC, rel, n));
+		const b = readPage(path.join(SRC, rel, n));
 		seed.push([ROOT + '/' + rel + '/' + n,
 			/\.svg$/i.test(n) ? b.toString('utf8') : bin(b)]);
 	}

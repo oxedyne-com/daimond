@@ -27,6 +27,7 @@
 //      corrupts a chunk: the row counts are unchanged and reconstruction still exact.
 //   6  INERT. The legacy `chats` rows are untouched across both boots, and the rail
 //      shows the ordinary chats -- they still load from the legacy rows.
+import { readPage } from './pagesrc.mjs';
 import { open, shot, scratch, errors, signInAs } from './harness.mjs';
 import fs from 'node:fs';
 
@@ -199,7 +200,7 @@ await shadowSettled(page);        // the shadow pass kicked at boot has settled
 const info = await dbInfo(page);
 // The version the app opens the store at, read off the source under test so a later
 // store added (v3 added `tombs`, S-SYNC #6) never leaves this assertion stale again.
-const DB_VERSION = Number((/var CHATS_DB_VERSION = (\d+);/.exec(fs.readFileSync(new URL('../www/js/daimond.js', import.meta.url), 'utf8')) || [])[1]);
+const DB_VERSION = Number((/var CHATS_DB_VERSION = (\d+);/.exec(readPage(new URL('../www/js/daimond.js', import.meta.url), 'utf8')) || [])[1]);
 check(info && DB_VERSION >= 2 && info.version === DB_VERSION, `upgrade: db version is ${DB_VERSION} (got ${info && info.version})`);
 check(info && info.stores.includes('chats') && info.stores.includes('msgchunks') && info.stores.includes('chatsum'),
 	`upgrade: stores are ${info && info.stores.join(', ')}`);

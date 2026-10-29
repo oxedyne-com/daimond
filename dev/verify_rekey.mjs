@@ -172,6 +172,7 @@
 //   node dev/verify_rekey.mjs
 //
 // A verifier run WITHOUT that eval drives world 0 on :8777 and does not warn.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -413,7 +414,7 @@ const ADDED  = new Map();	// a module that exists only for the scanner
 	const sites = Array.isArray(spec) ? spec : [spec];
 	for (const site of sites) {
 		if (site.add) { ADDED.set(site.add, site.body); continue; }
-		const src = EDITED.get(site.file) || fs.readFileSync(path.join(WWW, site.file), 'utf8');
+		const src = EDITED.get(site.file) || readPage(path.join(WWW, site.file), 'utf8');
 		const n = src.split(site.find).length - 1;
 		if (n !== 1) {
 			console.error(`break '${BREAK}': the anchor appears ${n} times in ${site.file}, `
@@ -537,7 +538,7 @@ function appSources() {
 	for (const name of fs.readdirSync(path.join(WWW, 'js')).sort()) {
 		if (!name.endsWith('.js')) continue;
 		const rel = 'js/' + name;
-		out.push({ name: rel, src: EDITED.get(rel) || fs.readFileSync(path.join(WWW, rel), 'utf8') });
+		out.push({ name: rel, src: EDITED.get(rel) || readPage(path.join(WWW, rel), 'utf8') });
 	}
 	for (const [rel, src] of ADDED) out.push({ name: rel, src });
 	return out;

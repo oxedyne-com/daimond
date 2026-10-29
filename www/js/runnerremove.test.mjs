@@ -1,6 +1,7 @@
 // R2f: a paired native runner's presence row keeps the gateway's `kind: "runner"`, and
 // the Devices list's Remove on such a row goes to the runner's own door.
 //   node www/js/runnerremove.test.mjs
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -18,7 +19,7 @@ const win = { addEventListener() {}, dispatchEvent() { return true; } };
 	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
-		const body = readFileSync(join(HERE, rel), 'utf8');
+		const body = readPage(join(HERE, rel), 'utf8');
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
 			'with (window) {\n' + body + '\n}')(win, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
@@ -34,7 +35,7 @@ const win = { addEventListener() {}, dispatchEvent() { return true; } };
 	check('K2 a tab\'s row carries no kind', snap.tab && !('kind' in snap.tab), JSON.stringify(snap));
 }
 {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const a = src.indexOf('async function askRemoveDevice(');
 	const b = src.indexOf('\n\t\tfunction el(', a);
 	const body = a >= 0 && b > a ? src.slice(a, b) : '';

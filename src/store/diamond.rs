@@ -727,13 +727,9 @@ async fn name_from_crystal(id: &str) -> Option<String> {
 /// THIS IS THE iPHONE LOOP. Two of one user's fifteen Diamonds had a `meta.json`
 /// of roughly 117 MB and 702 MB, and this function read them whole — twice over,
 /// because `from_utf8_lossy().to_string()` copies again. The device's own trail
-/// caught it in the act:
-///
-///     list entry 19fb11892cdc heap 1M
-///     HEAP GREW  read_meta +234M -> 235M
-///     …
-///     HEAP GREW  read_meta +1404M -> 1639M
-///     boot                                  <- the tab is gone
+/// caught it in the act: `list entry 19fb11892cdc heap 1M`, then
+/// `HEAP GREW read_meta +234M -> 235M`, on up to `HEAP GREW read_meta +1404M -> 1639M`,
+/// and then `boot`, which is the tab gone.
 ///
 /// Wasm linear memory never shrinks, so 1.6 GB stood for the life of the tab and
 /// iOS took it away — on every boot, which is the whole of the login loop that
@@ -10436,153 +10432,14 @@ pub async fn take_viewer_note(id: &str) -> String {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod claims_turn_tests {
-    use super::*;
-    use crate::store::{mem::MemBackend, native::{install, NativeBackend}};
-
-    /// Under one version hold, on a backend that yields at each read and write: two claims taken
-    /// at once, then the first released beside a third claim.  The claims on file after each.
-    async fn interleaved() -> (usize, usize) {
-        let _ = install(NativeBackend::Slow(MemBackend::default(),
-            std::time::Duration::ZERO));
-        let held = hold_versions("d").await.expect("the version hold");
-        let (a, b) = tokio::join!(
-            BodyClaim::under_hold("d", "h1", &held),
-            BodyClaim::under_hold("d", "h2", &held));
-        let two = test_claims("d").await;
-        let (a, _b) = (a.expect("the claim of h1"), b.expect("the claim of h2"));
-        let (_, c) = tokio::join!(
-            a.done_under("d", &held),
-            BodyClaim::under_hold("d", "h3", &held));
-        let _c = c.expect("the claim of h3");
-        let after = test_claims("d").await;
-        drop(held);
-        let _ = install(NativeBackend::Closed);
-        (two, after)
-    }
-
-    /// Two claims, then a release beside the next claim, under the run's own hold: every edit is
-    /// on file (D1r1 check D-Q2a).  Red: edits that do not take turns lose one.
-    #[tokio::test]
-    async fn claims_edits_under_one_hold_take_turns() {
-        CLAIMS_UNTURNED.with(|u| u.set(true));
-        let red = interleaved().await;
-        CLAIMS_UNTURNED.with(|u| u.set(false));
-        assert_ne!(red, (2, 2), "the interleaving was not reached");
-        eprintln!("RED claims_turn: with no turns, the claims on file are {:?}, not (2, 2)", red);
-
-        assert_eq!(interleaved().await, (2, 2));
-    }
-}
+#[path = "../../tests/unit/store/diamond/claims_turn_tests.rs"]
+mod claims_turn_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod link_sidecar_tests {
-    use super::*;
-    use crate::store::{mem::MemBackend, native::{install, NativeBackend}};
-
-    const GOOD: &str = "{\"id\":\"g1\",\"from\":\"diamond:a\",\"to\":\"diamond:b\",\"rel\":\"cites\",\"by\":\"agent:x\"}";
-    // `Link::from_json` reads this row, and it is not one JSON object: the trailing comma.
-    const LOOSE: &str = "{\"id\":\"w1\",\"from\":\"diamond:a\",\"to\":\"diamond:c\",\"rel\":\"cites\",\"note\":\"old\",\"by\":\"agent:x\",\"x\":1,}";
-
-    async fn with_sidecar(owner: &str, bytes: &[u8]) {
-        let _ = install(NativeBackend::Mem(MemBackend::default()));
-        own::write_file(&links_path(owner), bytes).await.expect("the sidecar written");
-    }
-
-    async fn sidecar(owner: &str) -> Vec<u8> {
-        own::read_file(&links_path(owner)).await.expect("the sidecar read")
-    }
-
-    /// A row the raw editor cannot read is refused, by its id and line, not written whole.
-    #[tokio::test]
-    async fn test_a_row_the_editor_cannot_read_is_refused_not_rewritten() {
-        let text = fmt!("{}\n{}\n", GOOD, LOOSE);
-        with_sidecar("d1", text.as_bytes()).await;
-        let out = update_link("d1", "w1", "cites", "new").await;
-        let after = sidecar("d1").await;
-        let _ = install(NativeBackend::Closed);
-        let e = match out {
-            Err(e) => e.to_string(),
-            Ok(moved) => panic!("answered {} and wrote {:?}", moved, String::from_utf8_lossy(&after)),
-        };
-        assert!(e.contains("w1") && e.contains("line 2"), "{}", e);
-        assert_eq!(after, text.as_bytes(), "nothing written");
-    }
-
-    /// A sidecar that is not UTF-8 is not written, so its bytes are not replaced; it still reads.
-    #[tokio::test]
-    async fn test_a_sidecar_that_is_not_utf8_is_not_written() {
-        let mut bytes = fmt!("{}\n", GOOD).into_bytes();
-        bytes.extend_from_slice(b"\xff\xfe not text\n");
-        with_sidecar("d2", &bytes).await;
-        let added = add_link("d2", "diamond:a", "diamond:z", "cites", "", "user").await;
-        let after = sidecar("d2").await;
-        let read = read_links("d2").await;
-        let _ = install(NativeBackend::Closed);
-        let e = match added {
-            Err(e) => e.to_string(),
-            Ok(_) => panic!("added and wrote {:?}", String::from_utf8_lossy(&after)),
-        };
-        assert!(e.contains("links.jsonl") && e.contains("UTF-8"), "{}", e);
-        assert_eq!(after, bytes, "nothing written");
-        assert_eq!(read.expect("a lossy read for display").len(), 1);
-    }
-}
+#[path = "../../tests/unit/store/diamond/link_sidecar_tests.rs"]
+mod link_sidecar_tests;
 
 // UNBLOCK-48: a Diamond whose `meta.json` went missing while its crystal stayed.
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod lost_meta_tests {
-    use super::*;
-    use crate::store::{mem::MemBackend, native::{install, NativeBackend}};
-
-    const CRYSTAL: &str = "{\"title\":\"Nancy Hopkins\",\"summary\":\"An interview.\"}";
-
-    async fn lay(id: &str, crystal: Option<&str>) {
-        own::write_file(&fmt!("diamonds/{}/{}/state-touched.tsv", id, STORE_DIR), b"x\t1\n")
-            .await.expect("the tsv written");
-        if let Some(c) = crystal {
-            own::write_file(&crystal_data_path(id), c.as_bytes()).await.expect("the crystal written");
-            own::write_file(&version_data_path(id, 3), c.as_bytes()).await.expect("the version written");
-        }
-    }
-
-    /// The record is rebuilt from the crystal's title, once, and the Diamond lists and opens.
-    #[tokio::test]
-    async fn test_a_missing_meta_is_rebuilt_from_the_crystal_and_the_diamond_lists() {
-        let _ = install(NativeBackend::Mem(MemBackend::default()));
-        lay("19faba2f2212", Some(CRYSTAL)).await;
-        let listed = list().await;
-        let meta = read_meta("19faba2f2212").await;
-        let kept = own::read_file(&meta_path("19faba2f2212")).await;
-        let page = find_crystal_page("19faba2f2212").await;
-        let _ = install(NativeBackend::Closed);
-        let listed = listed.expect("the list");
-        assert!(listed.contains("\"id\":\"19faba2f2212\"") && listed.contains("\"name\":\"Nancy Hopkins\""),
-            "the Diamond lists under its crystal's title: {}", listed);
-        let meta = meta.expect("the metadata reads");
-        assert_eq!((meta.name.as_str(), meta.version), ("Nancy Hopkins", 3));
-        assert!(meta.updated > 0 && meta.touched > 0, "stamped from the folder");
-        let kept = String::from_utf8(kept.expect("meta.json written back")).expect("utf8");
-        assert!(kept.contains("Nancy Hopkins"), "{}", kept);
-        // The page no longer fails on the metadata: it falls back to the version.
-        if let Err(e) = page {
-            assert!(!e.to_string().contains("metadata could not be read"), "{}", e);
-        }
-    }
-
-    /// Never invented: no crystal, or a crystal with no title, leaves the folder alone.
-    #[tokio::test]
-    async fn test_a_missing_meta_with_no_crystal_title_is_not_invented() {
-        let _ = install(NativeBackend::Mem(MemBackend::default()));
-        lay("aa01", None).await;
-        lay("aa02", Some("{\"summary\":\"no title\"}")).await;
-        let listed = list().await;
-        let one = read_meta("aa01").await.is_err();
-        let two = read_meta("aa02").await.is_err();
-        let none = !own::exists(&meta_path("aa01")).await.unwrap_or(true)
-            && !own::exists(&meta_path("aa02")).await.unwrap_or(true);
-        let _ = install(NativeBackend::Closed);
-        assert_eq!(listed.expect("the list"), "[]");
-        assert!(one && two && none, "nothing written for a Diamond with no name to recover");
-    }
-}
+#[path = "../../tests/unit/store/diamond/lost_meta_tests.rs"]
+mod lost_meta_tests;

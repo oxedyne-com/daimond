@@ -19,6 +19,7 @@
 //     node dev/probe_typstloop.mjs            # packages live
 //     node dev/probe_typstloop.mjs --stub     # the two cetz imports removed
 //     node dev/probe_typstloop.mjs --idle     # the idle-rebuild count only
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { open, scratch } from './harness.mjs';
@@ -44,7 +45,7 @@ function collect(dir, prefix, keep, depth) {
 			continue;
 		}
 		if (!keep(name)) continue;
-		const buf = fs.readFileSync(abs);
+		const buf = readPage(abs);
 		out.push([rel, /\.(typ|svg|bib|csv|json|yaml|yml|toml|xml|txt)$/i.test(name)
 			? buf.toString('utf8') : Array.from(buf)]);
 	}
@@ -57,7 +58,7 @@ const seed = [
 	...collect('assets/svg', 'elearnity/assets/svg', (n) => /\.svg$/i.test(n), 1),
 	...collect('assets/thinking', 'elearnity/assets/thinking', (n) => /\.svg$/i.test(n), 1),
 	...collect('assets/fonts', 'elearnity/assets/fonts', (n) => /\.(ttf|otf|ttc|otc)$/i.test(n), 2),
-	['elearnity/terms.typ', fs.readFileSync(path.join(BOOK, 'terms.typ'), 'utf8')],
+	['elearnity/terms.typ', readPage(path.join(BOOK, 'terms.typ'), 'utf8')],
 ];
 console.log(`seeding ${seed.length} files; packages ${STUB ? 'STUBBED OUT' : 'LIVE'}`);
 

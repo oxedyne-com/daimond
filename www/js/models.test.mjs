@@ -24,6 +24,7 @@
    No browser: the stand-in covers what models.js touches.
      node www/js/models.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -52,7 +53,7 @@ const documentShim = {
 	visibilityState:  'hidden',
 };
 function loadScript(rel) {
-	const body = readFileSync(join(HERE, rel), 'utf8');
+	const body = readPage(join(HERE, rel), 'utf8');
 	const fn = new Function('window', 'document', 'localStorage', 'console', 'globalThis', body);
 	fn(win, documentShim, localStorage, console, globalThis);
 }
@@ -142,7 +143,7 @@ async function main() {
 	check('unset stays unset, quietly', unset.effort === '' && unset.cleared === false);
 
 	console.log('(d) the page hands the level to the engine wherever an app is built');
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const lift = (name) => {
 		const at = src.indexOf('\tfunction ' + name + '(');
 		const end = at < 0 ? -1 : src.indexOf('\n\t}\n', at);

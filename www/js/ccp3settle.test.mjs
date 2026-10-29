@@ -18,13 +18,14 @@
 
    Run:  node www/js/ccp3settle.test.mjs   (CCP3SETTLE_SRC=<daimond.js> to run it over another copy)
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { fakeIDB, tabJournal } from './journalfixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(process.env.CCP3SETTLE_SRC || join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(process.env.CCP3SETTLE_SRC || join(HERE, 'daimond.js'), 'utf8');
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
 	checks++;

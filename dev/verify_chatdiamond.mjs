@@ -14,6 +14,7 @@
 //   node dev/verify_chatdiamond.mjs              # GREEN: bad ids refused, good ones land
 //   node dev/verify_chatdiamond.mjs --break off  # RED: the check reads every id as good
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +46,7 @@ if (BREAK && !BREAKS[BREAK]) {
 async function breakInto(page) {
 	if (!BREAK) return;
 	const spec = BREAKS[BREAK];
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	if (src.indexOf(spec.find) < 0) {
 		console.error('--break ' + BREAK + ': anchor not found in ' + spec.file);
 		process.exit(2);

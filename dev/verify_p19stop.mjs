@@ -10,6 +10,7 @@
 // Every declared break reddens a check that passes clean, so these checks have
 // each been seen to fail. That is what makes the pass above evidence.
 
+import { readPage } from './pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 
 const BIDX = process.argv.indexOf('--break');
@@ -21,16 +22,16 @@ if (BREAK && !['markup', 'unhide', 'listener'].includes(BREAK)) {
 }
 
 const html = BREAK === 'markup'
-	? readFileSync('www/index.html', 'utf-8') +
+	? readPage('www/index.html', 'utf-8') +
 		'\n\t\t\t\t<button id="chat-stop" title="Stop" hidden>■</button>\n'
-	: readFileSync('www/index.html', 'utf-8');
-const js0 = readFileSync('www/js/daimond.js', 'utf-8');
+	: readPage('www/index.html', 'utf-8');
+const js0 = readPage('www/js/daimond.js', 'utf-8');
 const js = BREAK === 'listener'
 	? js0 + "\nvar chatStop = document.getElementById('chat-stop');\n"
 	: BREAK === 'unhide'
 	? js0 + "\nif (chatStop) chatStop.hidden = (mode !== 'interject');\n"
 	: js0;
-const appC = readFileSync('www/css/app.css', 'utf-8');
+const appC = readPage('www/css/app.css', 'utf-8');
 
 let fails = 0, n = 0;
 function ck(name, ok) {
@@ -69,7 +70,7 @@ ck('app.css carries no #chat-stop styling', !/#chat-stop/.test(appC));
 
 // 7. The i18n key chat.stop is still in the catalogue -- the send button's ■
 //    mode still needs it (chat.send_into likewise).
-const en = readFileSync('www/i18n/en.js', 'utf-8');
+const en = readPage('www/i18n/en.js', 'utf-8');
 ck("en.js still carries 'chat.stop' and 'chat.send_into'",
 	/'chat\.stop'/.test(en) && /'chat\.send_into'/.test(en));
 

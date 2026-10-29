@@ -38,6 +38,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no model.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,7 +82,7 @@ const BREAKS = {
 function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
-		const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		const src = readPage(path.join(WWW, spec.file), 'utf8');
 		if (!src.includes(spec.find)) {
 			// A break whose anchor is not there patches nothing and launders a
 			// plain run as proof. Loud, and fatal.

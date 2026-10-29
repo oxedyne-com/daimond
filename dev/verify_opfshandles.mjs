@@ -25,6 +25,7 @@
 //
 // Its own profile, its own headless Chromium (through dev/pw.mjs, so its shared
 // memory is in /dev/shm and is what is counted).  Linux only: it reads /proc.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import { open, scratch } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
@@ -65,8 +66,8 @@ function ours() {
 	for (const d of fs.readdirSync('/proc')) {
 		if (!/^\d+$/.test(d)) continue;
 		try {
-			const cmd = fs.readFileSync(`/proc/${d}/cmdline`, 'utf8').split('\0').join(' ');
-			const stat = fs.readFileSync(`/proc/${d}/stat`, 'utf8');
+			const cmd = readPage(`/proc/${d}/cmdline`, 'utf8').split('\0').join(' ');
+			const stat = readPage(`/proc/${d}/stat`, 'utf8');
 			const ppid = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
 			all.set(Number(d), { ppid, cmd });
 		} catch (e) { /* gone between the listing and the read */ }
@@ -89,7 +90,7 @@ function ours() {
 function regions(pid) {
 	let n = 0;
 	let text = '';
-	try { text = fs.readFileSync(`/proc/${pid}/maps`, 'utf8'); } catch (e) { return 0; }
+	try { text = readPage(`/proc/${pid}/maps`, 'utf8'); } catch (e) { return 0; }
 	for (const line of text.split('\n')) {
 		const sp = line.indexOf(' ');
 		if (sp < 0 || line.slice(sp + 1, sp + 5) !== 'rw-s' || !SHM.test(line)) continue;

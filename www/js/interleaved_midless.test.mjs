@@ -6,12 +6,13 @@
 // SKIPPED for the gate (CCP3-QAFIX4) as FLOW, kept red on purpose: the root fix is the runner sending its own held
 // set in `report.session` (kimberlite/src/errands/settle.rs ~1892, codec, vectors), with U2 in ccp4. Run it by hand
 // with QA_FLOW=1 (or node --test with it set) to see it fail until then.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(process.argv[2] && !process.argv[2].endsWith('.mjs') ? process.argv[2] : join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(process.argv[2] && !process.argv[2].endsWith('.mjs') ? process.argv[2] : join(HERE, 'daimond.js'), 'utf8');
 function lift(src, name) {
 	let start = src.indexOf('\n\tasync function ' + name + '(');
 	if (start < 0) start = src.indexOf('\n\tfunction ' + name + '(');

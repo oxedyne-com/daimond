@@ -17,6 +17,7 @@
 
    Run:  node www/js/daimonapps.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
 
@@ -116,7 +117,7 @@ const daimons = () => { const doors = [F.diamondApp('d1'), F.diamondApp('d3')]; 
 	check('forgetting a web consent reaches every daimon client', daimons().every((a) => a.calls.includes('forget:d1')));
 	check('and every store door', F.diamondApp('d1').calls.includes('forget:d1') && F.diamondApp('d3').calls.includes('forget:d1'));
 	// What `Prompts.refresh`, `Instructions.refresh`, `Notes.reapply` and the fold settings do with it.
-	const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+	const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 	const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
 	check('no fan-out loops over the store doors alone (only everyDiamondClient walks them)',
 		(code.match(/Object\.keys\(_diamondApps\)/g) || []).length === 1);

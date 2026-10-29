@@ -30,6 +30,7 @@
 // Usage (from the f4 tree; the live tree needs www/pkg and nothing else of its own):
 //   node dev/verify_resurrect_mixed.mjs <case|all> <liveTree> [--worlds 92,94] [--gw <binary>]
 // Ports: the f4 app on 8777+W1, the live app on 8777+W2, the gateway on 9700+W1. Headless.
+import { readPage } from './pagesrc.mjs';
 import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -119,7 +120,7 @@ async function startWorld() {
 	// Each origin must serve its own tree's code, byte for byte.
 	for (const k of ['f4', 'live']) for (const f of ['sync.js', 'daimond.js', 'cloud.js']) {
 		const web = Buffer.from(await (await fetch(`http://127.0.0.1:${PORT[k]}/js/${f}`, { cache: 'no-store' })).arrayBuffer());
-		const loc = fs.readFileSync(path.join(TREE[k], 'www/js', f));
+		const loc = readPage(path.join(TREE[k], 'www/js', f));
 		check('the ' + k + ' origin serves its tree\'s js/' + f, crypto.createHash('sha256').update(web).digest('hex') === crypto.createHash('sha256').update(loc).digest('hex'));
 	}
 }

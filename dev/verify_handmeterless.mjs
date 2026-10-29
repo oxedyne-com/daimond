@@ -73,6 +73,7 @@
 // The dev server is started here, on DAIMOND_PORT, and a port already in use is REFUSED rather
 // than borrowed: a server this file did not start may be serving another tree's page. Headless,
 // with DISPLAY dropped by the harness; the wasm bundle must be this tree's (`dev/build-wasm.sh`).
+import { readPage } from './pagesrc.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -156,7 +157,7 @@ function names(dir) {
 			else if (e.isDirectory()) { out[rel] = 'dir'; walk(p); }
 			else if (e.isFile()) {
 				let body = Buffer.alloc(0);
-				try { body = fs.readFileSync(p); } catch (x) { /* a mode tightened */ }
+				try { body = readPage(p); } catch (x) { /* a mode tightened */ }
 				out[rel] = `file:${body.length}:` + crypto.createHash('sha256').update(body).digest('hex').slice(0, 16);
 			} else out[rel] = 'other';
 		}
@@ -413,7 +414,7 @@ async function drive(label, bin, meters) {
 			const cw = await page.evaluate(() => window.__marked.run_tool('file_write',
 				JSON.stringify({ path: 'proj/docs/f004.txt', content: 'overwritten\n' })));
 			let body = '';
-			try { body = fs.readFileSync(path.join(proj, 'docs/f004.txt'), 'utf8'); } catch (e) { /* gone */ }
+			try { body = readPage(path.join(proj, 'docs/f004.txt'), 'utf8'); } catch (e) { /* gone */ }
 			check(`${label}: a file tool's write through a hand that meters lands`,
 				/^Wrote /.test(cw) && body === 'overwritten\n', String(cw).slice(0, 160) + ' | now ' + JSON.stringify(body));
 

@@ -37,6 +37,7 @@
 //   node dev/verify_spendowner.mjs --break maxoutwide  # a ceiling above its own window
 //   node dev/verify_spendowner.mjs --break ceilwins    # the ceiling widens instead of tightening
 //   node dev/verify_spendowner.mjs                     # and then, clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -100,7 +101,7 @@ const BREAKS = {
 if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}"`);
 if (BREAK) console.log(`\n*** BREAK ${BREAK}: ${BREAKS[BREAK].what} — failures below are the point ***\n`);
 
-const SRC = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+const SRC = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 const BROKEN = BREAKS[BREAK] ? BREAKS[BREAK].edit(SRC) : SRC;
 if (BREAK && BROKEN === SRC) die(`the "${BREAK}" break no longer matches www/js/daimond.js`);
 
@@ -125,7 +126,7 @@ const CEILING_SRC     = cut('maxOutCeiling',     /\tfunction maxOutCeiling\(mode
 
 const sandbox = { window: {}, console };
 vm.createContext(sandbox);
-vm.runInContext(fs.readFileSync(path.join(WWW, 'js/pricing.js'), 'utf8'), sandbox);
+vm.runInContext(readPage(path.join(WWW, 'js/pricing.js'), 'utf8'), sandbox);
 // `window` is the global object in a browser, so the extracted source reaches
 // `DaimondPricing` bare. In a sandbox it is a property, hence the alias.
 vm.runInContext('var DaimondPricing = window.DaimondPricing;', sandbox);

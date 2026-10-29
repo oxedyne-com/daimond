@@ -20,6 +20,7 @@
 
    Run:  node www/js/presencebeat.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -31,7 +32,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail ? '  (' + detail + ')' : '')); failures++; }
 }
 
-const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 const from = src.indexOf('\n\tvar _beatBusy = null;');
 const to = src.indexOf("\ttry { window.addEventListener('daimond:unlock', startPresenceBeat);", from);
 if (from < 0 || to < 0) throw new Error('presence beat block not found in daimond.js');

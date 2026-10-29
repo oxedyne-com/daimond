@@ -27,6 +27,7 @@
    Run:  node www/js/modelstamp.test.mjs
          DAIMOND_JS=<tree>/www/js/daimond.js node www/js/modelstamp.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -40,7 +41,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail !== undefined ? '  (' + JSON.stringify(detail) + ')' : '')); failures++; }
 }
 
-const src = readFileSync(SRC, 'utf8');
+const src = readPage(SRC, 'utf8');
 
 function extractFn(name) {
 	let start = src.indexOf('\n\tasync function ' + name + '(');
@@ -66,7 +67,7 @@ const DateStub = { now: () => clock };
 
 // The real stamp rule (stamp.js) on this clock: a local write is `max(now, prev + 1)`.
 const stampWin = {};
-new Function('window', 'Date', readFileSync(join(dirname(SRC), 'stamp.js'), 'utf8'))(stampWin, DateStub);
+new Function('window', 'Date', readPage(join(dirname(SRC), 'stamp.js'), 'utf8'))(stampWin, DateStub);
 
 const lib = new Function('localStorage', 'readJson', 'Date', 'Notes', 'DaimondStamp',
 	"var DIAMOND_MODELS_KEY = '" + KEY + "';\n" +

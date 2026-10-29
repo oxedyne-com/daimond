@@ -35,6 +35,7 @@
 //
 // The cloud is stood up IN THIS PROCESS and shared by both contexts, as
 // verify_chatmeta_sync does; no gateway or mock model is needed. Needs dev/serve.mjs.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +59,7 @@ if (BREAK && BROWSER !== 'chromium') { console.error('--break serves an edited f
 
 const PATCHED = new Map();
 if (BREAK === 'txpending') {
-	const src = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+	const src = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 	const find = '&& disk[c.id] === stamp && !txPending(c)) return;';
 	const n = src.split(find).length - 1;
 	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1)`); process.exit(2); }

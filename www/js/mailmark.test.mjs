@@ -14,6 +14,7 @@
 // Each device is the REAL `Triggers.fire` / `retryMail` and claim helpers lifted from
 // daimond.js over its OWN copy of the real peer.js, sharing ONE lease door, with its own
 // timers so a device that dies stops renewing. Red on 4024e3a5.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -23,7 +24,7 @@ import { createRequire } from 'node:module';
 import { webcrypto } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const APP  = readPage(join(HERE, 'daimond.js'), 'utf8');
 const require = createRequire(import.meta.url);
 
 function balanced(src, start) {
@@ -85,7 +86,7 @@ function loadPeer() {
 		['vendor/noble-curves.min.js', '\n;window.DaimondNoble = DaimondNoble;'],
 		['curvefallback.js'], ['identity.js'], ['post.js'], ['peer.js'],
 	]) {
-		let body = readFileSync(join(HERE, rel), 'utf8');
+		let body = readPage(join(HERE, rel), 'utf8');
 		if (extra) body += extra;
 		new Function('window', 'document', 'crypto', 'localStorage', 'btoa', 'atob',
 			'TextEncoder', 'TextDecoder', 'Event', 'setTimeout', 'clearTimeout',

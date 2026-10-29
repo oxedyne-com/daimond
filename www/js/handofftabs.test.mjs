@@ -30,6 +30,7 @@
 
    Run:  node www/js/handofftabs.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -42,12 +43,12 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail !== undefined ? '  (' + JSON.stringify(detail) + ')' : '')); failures++; }
 }
 
-const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const POST = readFileSync(join(HERE, 'post.js'), 'utf8');
-const PEER = readFileSync(join(HERE, 'peer.js'), 'utf8');
+const APP  = readPage(join(HERE, 'daimond.js'), 'utf8');
+const POST = readPage(join(HERE, 'post.js'), 'utf8');
+const PEER = readPage(join(HERE, 'peer.js'), 'utf8');
 // The REAL stamp module: the record's one-way taint (H3) is read through it.
 const STAMPWIN = {};
-new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
+new Function('window', readPage(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
 
 /// Lifts `function name(...) { ... }` (or `async function`) by counting braces.
 function extractFn(src, name) {

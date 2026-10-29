@@ -60,6 +60,7 @@
 //   eval "$(bash dev/world.sh N --env)"
 //   node dev/verify_provenance.mjs
 
+import { readPage } from './pagesrc.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -97,7 +98,7 @@ if (BREAK && !BREAKS[BREAK]) {
 // Every break is matched on every run, so one whose anchor has drifted fails loudly
 // rather than sitting there as a check that cannot fail.
 {
-	const src = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+	const src = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 	const stale = Object.entries(BREAKS).filter(([, b]) => src.split(b.from).length !== 2).map(([n]) => n);
 	if (stale.length) { console.error('break(s) no longer match www/js/daimond.js once: ' + stale.join(', ')); process.exit(2); }
 }
@@ -107,7 +108,7 @@ const on = (sec) => ONLY.has(sec);
 let ROUTE = null;
 if (BREAK) {
 	const b = BREAKS[BREAK];
-	const broken = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8').replace(b.from, b.to);
+	const broken = readPage(path.join(WWW, 'js/daimond.js'), 'utf8').replace(b.from, b.to);
 	console.log(`\n*** BREAK ${BREAK}: ${b.what} — failures below are the point ***\n`);
 	ROUTE = async (page) => {
 		await page.route('**/js/daimond.js*', (r) => r.fulfill({

@@ -4,6 +4,7 @@
 //
 // openRowMenu lives inside the Workspace panel's closure in a 60,000-line IIFE, so it is cut out of the
 // source by its name and run alone against stand-ins for what it calls.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function cut(name) {
 	const at = src.indexOf('\t\tfunction ' + name + '(');
@@ -20,7 +21,7 @@ function cut(name) {
 	return src.slice(at, end + 4);
 }
 
-const css = readFileSync(join(HERE, '..', 'css', 'files.css'), 'utf8');
+const css = readPage(join(HERE, '..', 'css', 'files.css'), 'utf8');
 
 // Run the menu for one row with one focus and one attach state; return its items and the presses made.
 function menu(focus, st, e) {

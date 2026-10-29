@@ -12,6 +12,7 @@
    `node www/js/crystalbar.test.mjs`
    ============================================================ */
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -64,7 +65,7 @@ async function editThenSave(bar) {
 }
 
 // The call site, as the page writes it: the parsed copy handed over as it is.
-const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 check('renderCrystal hands the bar the parsed copy as it is, null included',
 	/crystalBody\.appendChild\(crystalBar\(data\)\)/.test(src) && !/crystalBar\(data \|\| \{\}\)/.test(src));
 

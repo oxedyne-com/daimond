@@ -10,6 +10,7 @@
 
    Run:  node www/js/u56.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -32,9 +33,9 @@ function extractFn(src, name) {
 	}
 	return src.slice(start + 1, i);
 }
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const psrc = readFileSync(join(HERE, 'peer.js'), 'utf8');
-const en   = readFileSync(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
+const psrc = readPage(join(HERE, 'peer.js'), 'utf8');
+const en   = readPage(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
 
 // FILES: the row as the Diamond keeper's road makes it, then the merge's own order.
 {

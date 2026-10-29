@@ -12,6 +12,7 @@
 // BEHAVIOUR runs secret.js against a small stand-in DOM: the eye flips the field and says so in
 // `aria-pressed` and its label, it is a real button (so the keyboard works it), and the field
 // goes back to hidden when it is emptied or submitted, without its autocomplete being touched.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -30,7 +31,7 @@ function walk(dir, out = []) {
 	}
 	return out;
 }
-const FILES = walk(WWW).map((p) => ({ p: relative(WWW, p), s: readFileSync(p, 'utf8') }));
+const FILES = walk(WWW).map((p) => ({ p: relative(WWW, p), s: readPage(p, 'utf8') }));
 const lineOf = (s, i) => s.slice(0, i).split('\n').length;
 const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const eyed = (s, v) => new RegExp('(?:secretEye|DaimondSecret\\.eye)\\(\\s*' + esc(v) + '\\s*\\)').test(s);
@@ -115,7 +116,7 @@ function dom() {
 	};
 	const window = { DaimondI18n: { t: (k) => ({ 'common.show_secret': 'Show', 'common.hide_secret': 'Hide' })[k] || k } };
 	window.window = window; window.document = document;
-	vm.runInNewContext(readFileSync(join(HERE, 'secret.js'), 'utf8'), window);
+	vm.runInNewContext(readPage(join(HERE, 'secret.js'), 'utf8'), window);
 	return { S: window.DaimondSecret, document, El };
 }
 
@@ -204,7 +205,7 @@ test('Show and Hide are in all eight locales', () => {
 	const locs = readdirSync(dir).filter((f) => f.endsWith('.js'));
 	assert.equal(locs.length, 8);
 	for (const f of locs) {
-		const s = readFileSync(join(dir, f), 'utf8');
+		const s = readPage(join(dir, f), 'utf8');
 		for (const k of ['common.show_secret', 'common.hide_secret']) {
 			assert.match(s, new RegExp(`'${esc(k)}':\\s*'[^']+'`), `${f} lacks ${k}`);
 		}

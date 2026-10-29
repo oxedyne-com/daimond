@@ -4,6 +4,7 @@
 //
 // The functions live in a 50,000-line IIFE this harness cannot load, so each is cut out of the
 // source by its own name and run alone.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 // One top-level function of the IIFE, from its `function` line to its closing brace.
 function cut(name) {
@@ -62,7 +63,7 @@ test('a blocked turn draws its stop line even though it drew text', () => {
 
 test('end.why_blocked is in every locale', () => {
 	for (const loc of ['en', 'de', 'es', 'fr', 'pt-BR', 'ja', 'ko', 'zh-Hans']) {
-		const t = readFileSync(join(HERE, '..', 'i18n', loc + '.js'), 'utf8');
+		const t = readPage(join(HERE, '..', 'i18n', loc + '.js'), 'utf8');
 		assert.match(t, /'end\.why_blocked':\s+'[^']+'/, loc + ' has no end.why_blocked');
 	}
 });
@@ -90,7 +91,7 @@ test('the blocked Decision is drawn in the user\'s words and language', () => {
 
 test('the blocked Decision is in every locale', () => {
 	for (const loc of ['en', 'de', 'es', 'fr', 'pt-BR', 'ja', 'ko', 'zh-Hans']) {
-		const t = readFileSync(join(HERE, '..', 'i18n', loc + '.js'), 'utf8');
+		const t = readPage(join(HERE, '..', 'i18n', loc + '.js'), 'utf8');
 		for (const k of BLOCKED_KEYS) {
 			assert.match(t, new RegExp("'" + k.replace('.', '\\.') + "':\\s+'[^']+'"),
 				loc + ' has no ' + k);

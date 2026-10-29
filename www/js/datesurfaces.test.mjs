@@ -16,6 +16,7 @@
 
      node www/js/datesurfaces.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -40,7 +41,7 @@ function boot(seed, locale) {
 	const CustomEvent = class { constructor(type, o) { this.type = type; this.detail = o && o.detail; } };
 	for (const f of ['store.js', 'stamp.js', 'time.js']) {
 		new Function('window', 'localStorage', 'setTimeout', 'clearTimeout', 'CustomEvent',
-			readFileSync(join(HERE, f), 'utf8'))(win, localStorage, setTimeout, clearTimeout, CustomEvent);
+			readPage(join(HERE, f), 'utf8'))(win, localStorage, setTimeout, clearTimeout, CustomEvent);
 	}
 	return win;
 }
@@ -98,7 +99,7 @@ const SURFACES = [
 ];
 const src = {};
 const files = readdirSync(HERE).filter((f) => f.endsWith('.js') && !f.endsWith('.min.js'));
-for (const f of files) src[f] = readFileSync(join(HERE, f), 'utf8');
+for (const f of files) src[f] = readPage(join(HERE, f), 'utf8');
 for (const [f, what, shape] of SURFACES) {
 	const re = new RegExp("DaimondTime\\.fmtLocal\\([^;]*'" + shape + "'");
 	check(what + ' (' + f + ') through fmtLocal ' + shape, re.test(src[f] || ''));

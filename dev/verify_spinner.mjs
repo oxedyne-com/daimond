@@ -30,6 +30,7 @@
 // The old circles are emulated with the two declarations the stylesheet used to carry
 // (`border-radius: 50%`, no clip-path) injected over the new rule. A route to the old
 // stylesheet would be better, and does not intercept under Playwright-WebKit.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,7 +51,7 @@ const done = () => {
 };
 
 // ── SOURCE ──────────────────────────────────────────────────────────
-const lines = fs.readFileSync(APPJS, 'utf8').split('\n');
+const lines = readPage(APPJS, 'utf8').split('\n');
 const DOT = '<span class="chat-spinner-dot"></span>';
 const MARKUP = DOT + DOT + DOT;
 const sites = [];
@@ -73,7 +74,7 @@ check('source: six places build the spinner marks, and they are the six this fil
 	JSON.stringify(byWrap));
 check('source: every site builds exactly three marks, with the same markup',
 	sites.length > 0 && sites.every((s) => s.markup === MARKUP));
-const css = fs.readFileSync(path.join(HERE, '..', 'www', 'css', 'app.css'), 'utf8');
+const css = readPage(path.join(HERE, '..', 'www', 'css', 'app.css'), 'utf8');
 const rule = (css.match(/^\.chat-spinner-dot \{[^}]*\}/m) || [''])[0];
 check('source: the mark is drawn with the app\'s diamond polygon and carries no radius',
 	/clip-path:\s*polygon\(50% 0%, 100% 50%, 50% 100%, 0% 50%\)/.test(rule) && !/border-radius/.test(rule), rule.slice(0, 160));

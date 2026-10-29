@@ -11,6 +11,7 @@
 // `data:` URLs: a `blob:` URL belongs to the page's origin and the sandboxed frame has none, so no
 // engine loaded one there (review_c1a_csp, 26 Oct). The real-browser check is
 // dev/verify_mailframe.mjs.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
@@ -268,7 +269,7 @@ test('the frame: sandbox unchanged with no allow-scripts, the policy as before C
 
 test('daimond.js hands mail.js the bytes door, whole and with the withdrawn-grant alarm', async () => {
 	const { readFileSync } = await import('node:fs');
-	const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+	const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 	const fn = (src.match(/\nasync function readRawBytes\(path\) \{\n([\s\S]*?)\n\}\n/) || [])[1] || '';
 	assert.match(fn, /Wasm\.read_bytes\(path, 0, 4294967295\)/, 'the whole file, not a prefix');
 	assert.match(fn, /catch \(e\) \{ noteFolderLost\(e\); throw e; \}/, 'a withdrawn grant is raised, then rethrown');

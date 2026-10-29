@@ -10,6 +10,7 @@
 //
 // The other capture sites hold no control: the resize handles are empty bars, the dock heading refuses a
 // press on a button before it claims one, and the graph's drags match anchors and nodes only.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..');
-const read = (...p) => fs.readFileSync(path.join(WWW, ...p), 'utf8');
+const read = (...p) => readPage(path.join(WWW, ...p), 'utf8');
 
 test('the sheet\'s grab bar leaves a press on its close button alone', () => {
 	const m = read('js', 'mobile.js');

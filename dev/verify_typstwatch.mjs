@@ -96,6 +96,7 @@
 //
 // Needs dev/serve.mjs and `pdftoppm` (poppler-utils). No gateway, no model: every
 // compile here is the real vendored typst, and the only network is localhost.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -350,7 +351,7 @@ async function routes(page) {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	for (const [file, body] of byFile) {
@@ -373,7 +374,7 @@ async function routes(page) {
 
 /// Every distinct match of `re` in a file read as latin1.
 function scan(file, re) {
-	const text = fs.readFileSync(file).toString('latin1');
+	const text = readPage(file).toString('latin1');
 	const out = new Set();
 	const g = new RegExp(re.source, 'g');
 	let m;
@@ -1127,7 +1128,7 @@ function inkOf(png) {
 	const dims = execFileSync('identify', ['-format', '%wx%h', png]).toString();
 	const [w, h] = dims.split('x').map(Number);
 	execFileSync('convert', [png, '-colorspace', 'gray', '-depth', '8', raw]);
-	const g = fs.readFileSync(raw);
+	const g = readPage(raw);
 	let total = 0;
 	for (let i = 0; i < w * h; i++) total += 255 - g[i];
 	return { w, h, gray: g, total, ratio: total / (255 * w * h) };

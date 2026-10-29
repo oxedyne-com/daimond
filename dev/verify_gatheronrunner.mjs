@@ -23,13 +23,14 @@
 //   node dev/verify_gatheronrunner.mjs
 //   node dev/verify_gatheronrunner.mjs --break noadmit   # must fail something
 //   node dev/verify_gatheronrunner.mjs --break nowait    # must fail something
+import { readPage } from './pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { guardRan } from './verdict.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
+const SRC  = readPage(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');

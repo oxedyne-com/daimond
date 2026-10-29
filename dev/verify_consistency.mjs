@@ -22,6 +22,7 @@
 // each in Obsidian and Porcelain, then `report`, then the transcript gap gate
 // (dev/verify_transcript_gaps.mjs, both engines), whose faults count in the verdict. `report` re-reads the saved
 // captures, so the table can be corrected and re-run without a browser.
+import { readPage } from './pagesrc.mjs';
 import { open, chat, newChat, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
@@ -646,7 +647,7 @@ async function rateSurfaces(pre) {
 // TMPLOFF switches the offer off at its source (`CAPP_MERGE_OFFERED` in www/js/daimond.js); with it off the offer is absent by design, not
 // missing. The switch is read from the tree under test, so the offer is covered again as soon as TMPL2 turns it on or removes it.
 const CAPP_OFFERED = (() => {
-	const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'www', 'js', 'daimond.js'), 'utf8');
+	const src = readPage(path.join(import.meta.dirname, '..', 'www', 'js', 'daimond.js'), 'utf8');
 	const m = src.match(/\bvar\s+CAPP_MERGE_OFFERED\s*=\s*(\w+)\s*;/);
 	return !m || m[1] !== 'false';
 })();
@@ -1274,19 +1275,19 @@ function saveCap(name) { fs.writeFileSync(`${OUT}/cap_${name}.json`, JSON.string
 function lifelogFork() {
 	const www = path.join(import.meta.dirname, '..', 'www');
 	const dir = path.join(www, 'capps', 'lifelog');
-	const fresh = fs.readFileSync(path.join(dir, 'crystal.html'), 'utf8');
+	const fresh = readPage(path.join(dir, 'crystal.html'), 'utf8');
 	const now = fresh.split('\n');
 	const have = new Set(now);
 	const ctx = { window: { addEventListener() {}, removeEventListener() {} }, document: { addEventListener() {}, visibilityState: 'visible' }, setTimeout, clearTimeout };
 	vm.createContext(ctx);
-	vm.runInContext(fs.readFileSync(path.join(www, 'js', 'versions.js'), 'utf8'), ctx);
+	vm.runInContext(readPage(path.join(www, 'js', 'versions.js'), 'utf8'), ctx);
 	const merge3 = ctx.window.DaimondVersions.merge3;
 	const decl = (t) => new Set([...t.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(|\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)/g)].map((m) => m[1] || m[2]));
 	const calls = (ls) => [...ls.join('\n').matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)].map((m) => m[1]);
 	const want = decl(fresh);
 	const bases = [];
 	for (const f of fs.readdirSync(path.join(dir, 'base'))) {
-		const ls = fs.readFileSync(path.join(dir, 'base', f), 'utf8').split('\n');
+		const ls = readPage(path.join(dir, 'base', f), 'utf8').split('\n');
 		const off = ls.filter((l) => !have.has(l)).length;
 		if (off) bases.push({ hash: f.replace(/\.html$/, ''), ls, off });
 	}
@@ -2121,7 +2122,7 @@ const words = (t) => t.replace(/(\p{L})['’](\p{L})/gu, '$1$2').replace(GLY_CHA
 // own capital is not the label's casing ("Help and What’s new" names the page "What’s new"). The titles are read from the English
 // table, so the rule follows the words on screen (one apostrophe, ’, which i18ncheck holds every string to).
 const PAGE_TITLE_KEYS = ['rel.whats_new'];
-const EN_TABLE = fs.readFileSync(path.join(import.meta.dirname, '..', 'www', 'i18n', 'en.js'), 'utf8');
+const EN_TABLE = readPage(path.join(import.meta.dirname, '..', 'www', 'i18n', 'en.js'), 'utf8');
 const PAGE_TITLES = PAGE_TITLE_KEYS.map((k) => {
 	const m = EN_TABLE.match(new RegExp(`'${k.replace(/\./g, '\\.')}'\\s*:\\s*(['"])(.*?)\\1`));
 	if (!m) throw new Error(`verify_consistency: no English title for ${k} in www/i18n/en.js`);
@@ -2157,7 +2158,7 @@ const CASE_OK = { title: ['Title', 'Cap', 'n/a', 'UPPER'], sentence: ['Sentence'
 const CASE_ALLOW = [/^New Diamond$/, /^New Message$/, /^Say Hello$/, /^New Chat$/];
 
 function report() {
-	const caps = ['desk', 'phone', 'webkit'].map((n) => `${OUT}/cap_${n}.json`).filter((f) => fs.existsSync(f)).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
+	const caps = ['desk', 'phone', 'webkit'].map((n) => `${OUT}/cap_${n}.json`).filter((f) => fs.existsSync(f)).map((f) => JSON.parse(readPage(f, 'utf8')));
 	if (!caps.length) { log('no captures in', OUT); process.exit(2); }
 	const items = caps.flatMap((c) => c.items), faults = caps.flatMap((c) => c.faults), missing = caps.flatMap((c) => c.missing), surfaces = caps.flatMap((c) => c.surfaces);
 	// Recorded, printed, and never scored as a pass or a fail: a SURFACE the harness cannot reach (WebKit's own Workspace, CRF2).
@@ -2991,7 +2992,7 @@ function verdictOf(r, vn, m, own, changes) {
 	return bad;
 }
 function varlenReport() {
-	const recs = ['desk', 'phone', 'webkit'].map((w) => `${OUT}/varlen_${w}.json`).filter((f) => fs.existsSync(f)).flatMap((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
+	const recs = ['desk', 'phone', 'webkit'].map((w) => `${OUT}/varlen_${w}.json`).filter((f) => fs.existsSync(f)).flatMap((f) => JSON.parse(readPage(f, 'utf8')));
 	const out = [];
 	const cmp = (a, b, where) => { const m = new Map(a.map((p) => [p.k, p])); const ch = [];
 		for (const q of b) { const p = m.get(q.k); if (!p) continue;
@@ -3078,7 +3079,7 @@ function diffRuns() {
 		const m = new Map();
 		for (const n of ['desk', 'phone', 'webkit']) {
 			const f = `${dir}/cap_${n}.json`; if (!fs.existsSync(f)) continue;
-			for (const it of JSON.parse(fs.readFileSync(f, 'utf8')).items) {
+			for (const it of JSON.parse(readPage(f, 'utf8')).items) {
 				const cfg = it.surface.split('/')[0];
 				if (!prefixes.some((x) => cfg.startsWith(x))) continue;
 				if (rootSel && !(norm(it.sig).includes(rootSel.replace(/^[#.]/, '')) || it.anc.some((a) => norm(a).includes(rootSel.replace(/^[#.]/, ''))))) continue;

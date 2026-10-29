@@ -46,6 +46,7 @@
 //   node dev/verify_waiting.mjs --source    # the source half alone, no server
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs for the browser half. No gateway.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,7 +85,7 @@ const blockAfter = (src, marker) => {
 /// The `onEvent` sink declared inside `fnBody` — the arms that run DURING a turn.
 const sinkOf = (fnBody) => fnBody && blockAfter(fnBody, 'var onEvent = function');
 
-const src     = fs.readFileSync(APPJS, 'utf8');
+const src     = readPage(APPJS, 'utf8');
 const runTurn = blockAfter(src, 'async function runTurn(');
 const doSteer = blockAfter(src, 'async function doSteer(');
 const sync    = blockAfter(src, 'function syncComposer(');

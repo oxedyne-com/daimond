@@ -40,6 +40,7 @@
 //
 // Needs the live gate: the dev server at :8777 and the mock provider, like every harness
 // verifier here.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,7 +100,7 @@ if (BREAK) {
 		console.error('no such break: ' + BREAK + '\nhave: ' + Object.keys(BREAKS).join(' '));
 		process.exit(2);
 	}
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

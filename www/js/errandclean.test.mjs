@@ -14,6 +14,7 @@
 
    Run:  node www/js/errandclean.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
 
@@ -84,14 +85,14 @@ const F = sliceDaimond(win, ['errandClean', 'daimonApp', 'taintDaimon', 'resetDi
 }
 // ── The dispatch door passes it, and only as true ────────────────────────
 {
-	const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+	const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 	check('dispatchToPeer reads the engine before the fence, then the verdict after',
 		/var heldApp = chat && chat\.app;\s*\n\s*var fence = await errandFence\(chat, turnId\);/.test(src)
 		&& /clean:\s*errandClean\(chat, cleanDia, heldApp\) \? true : undefined,/.test(src));
 }
 // ── The envelope: the key only for exactly true ──────────────────────────
 {
-	const body = readFileSync(new URL('./peer.js', import.meta.url), 'utf8');
+	const body = readPage(new URL('./peer.js', import.meta.url), 'utf8');
 	const pw = { addEventListener() {}, dispatchEvent() { return true; } };
 	new Function('window', 'document', 'with (window) {\n' + body + '\n}')(pw, { addEventListener() {} });
 	const P = pw.DaimondPeer;

@@ -15,6 +15,7 @@
 
    Run:  node www/js/u2abiwords.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -50,14 +51,14 @@ const pw = { addEventListener() {}, dispatchEvent() { return true; } };
 	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
-		const body = readFileSync(join(HERE, rel), 'utf8');
+		const body = readPage(join(HERE, rel), 'utf8');
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
 			'with (window) {\n' + body + '\n}')(pw, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
 	}
 }
 const P = pw.DaimondPeer;
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 const runner = (abi, min) => ({ kind: 'runner', abi: abi, abiMin: min });
 
 // (a) An in-range runner at words_abi or above takes his words; no other record does.

@@ -44,6 +44,7 @@
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (a world: `bash dev/world.sh N --up`).
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -111,7 +112,7 @@ function damagedFiles() {
 		// From what is ALREADY DAMAGED where a break edits one file twice, or the
 		// second edit would drop the first and a two-place rule would be half
 		// restored -- silently, since both anchors are found either way.
-		const src = byFile.get(spec.file) || fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		const src = byFile.get(spec.file) || readPage(path.join(WWW, spec.file), 'utf8');
 		if (!src.includes(spec.find)) {
 			// A break whose anchor is not there patches nothing and launders a plain
 			// run as proof. Loud, and fatal.
@@ -139,14 +140,14 @@ async function serveBreaks(page) {
 /// showing a nudge proves the app wrote one, not that it sent one.
 function requestsSince(mark) {
 	let lines = [];
-	try { lines = fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean); }
+	try { lines = readPage(LOG, 'utf8').split('\n').filter(Boolean); }
 	catch (e) { return []; }
 	return lines.slice(mark).map(l => { try { return JSON.parse(l); } catch (e) { return null; } })
 		.filter(Boolean);
 }
 
 function logLines() {
-	try { return fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).length; }
+	try { return readPage(LOG, 'utf8').split('\n').filter(Boolean).length; }
 	catch (e) { return 0; }
 }
 

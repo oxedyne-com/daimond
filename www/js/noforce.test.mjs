@@ -10,6 +10,7 @@
 // The ban is a ratchet. `dev/noforce_baseline.json` holds the count each older script had on
 // 18 Oct 2026; a script may only go down from it, a script not in it must have none, and the gates
 // named in ZERO must have none. Lower a count (or drop the row) when a script is cleaned.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEV  = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'dev');
-const BASE = JSON.parse(fs.readFileSync(path.join(DEV, 'noforce_baseline.json'), 'utf8'));
+const BASE = JSON.parse(readPage(path.join(DEV, 'noforce_baseline.json'), 'utf8'));
 const ZERO = ['verify_consistency.mjs', 'verify_rating_widget.mjs', 'verify_rating_rest.mjs'];
 
 /// Playwright option objects carrying `force: true`; a file-system call's `{ recursive, force }` is not one.
@@ -34,7 +35,7 @@ export function forced(src) {
 }
 
 const files = fs.readdirSync(DEV).filter((f) => /\.(mjs|js)$/.test(f));
-const counts = Object.fromEntries(files.map((f) => [f, forced(fs.readFileSync(path.join(DEV, f), 'utf8'))]));
+const counts = Object.fromEntries(files.map((f) => [f, forced(readPage(path.join(DEV, f), 'utf8'))]));
 
 test('the detector counts a forced click and not a forced delete', () => {
 	assert.equal(forced("await b.click({ force: true });\nfs.rmSync(p, { recursive: true, force: true });\nfs.rmSync(p, { force: true });"), 1);

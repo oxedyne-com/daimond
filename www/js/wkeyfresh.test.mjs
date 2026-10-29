@@ -32,6 +32,7 @@
      node www/js/wkeyfresh.test.mjs --break swallow  # the worker swallows a refused key ask
      node www/js/wkeyfresh.test.mjs                  # and then, clean
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -119,7 +120,7 @@ function loadModels() {
 			limit_minor: gw.live[s].cap, raised_minor: raised, credits_minor: 900, currency: 'usd' });
 	};
 	const g = { window: win, document: documentShim, localStorage, fetch: fetchStub, console };
-	const body = patchModels(readFileSync(MODELS_SRC, 'utf8'));
+	const body = patchModels(readPage(MODELS_SRC, 'utf8'));
 	loadStore(win, localStorage);
 	const fn = new Function('window', 'document', 'localStorage', 'fetch', 'console', 'globalThis', body);
 	fn(win, documentShim, localStorage, fetchStub, console, g);
@@ -130,7 +131,7 @@ function loadModels() {
 // From the slot being taken to the end of the refusal catch: the whole of a worker's key path
 // before it builds its app. Run as an async function with `this` as the pump.
 function workerKeySegment() {
-	const src = patchDaimond(readFileSync(DAIMOND_SRC, 'utf8'));
+	const src = patchDaimond(readPage(DAIMOND_SRC, 'utf8'));
 	const A = 'if (onCredits) {\n\t\t\t\trun.slot = self.takeSlot();';
 	const Z = '\n\t\t\ttry {\n\t\t\t\tbuild();';
 	const a = src.indexOf(A), z = src.indexOf(Z, a);
@@ -155,7 +156,7 @@ async function runWorker(M, slot, want) {
 // ── The real first-attempt-and-retry block of daimond.js ───────
 // The attempt dies on its key (a 401 mid-turn); the worker remints ITS OWN slot and re-runs.
 function retryBlock() {
-	const src = patchDaimond(readFileSync(DAIMOND_SRC, 'utf8'));
+	const src = patchDaimond(readPage(DAIMOND_SRC, 'utf8'));
 	const A = '\t\t\t\ttry {\n\t\t\t\t\t// Cleared as it is read';
 	const Z = '\t\t\t\t// A stopped or paused worker keeps whatever it managed to do';
 	const a = src.indexOf(A), z = src.indexOf(Z, a);
@@ -269,7 +270,7 @@ async function main() {
 		if (credits) check('worker ' + status + ': the credits text', CREDITS.test(msg), msg);
 		else check('worker ' + status + ': its own reason, not credits', msg === 'F:Refused (' + status + ').', msg);
 		// The chat's remint catch, lifted and run on the same refusal.
-		const src = patchDaimond(readFileSync(DAIMOND_SRC, 'utf8'));
+		const src = patchDaimond(readPage(DAIMOND_SRC, 'utf8'));
 		const c = src.indexOf('catch (e2) {', src.indexOf('DaimondModels.remint(chat._gen'));
 		const z = src.indexOf('REMINT-REFUSAL-END', c);
 		const body = c > 0 && z > c ? src.slice(c + 'catch (e2) {'.length, z) : 'throw new Error("no catch")';
@@ -283,7 +284,7 @@ async function main() {
 
 	console.log('(5) source guard — the worker makes no second key ask at turn start');
 	{
-		const src = patchDaimond(readFileSync(DAIMOND_SRC, 'utf8'));
+		const src = patchDaimond(readPage(DAIMOND_SRC, 'utf8'));
 		check('daimond.js has no worker ensure on its own slot', !src.includes('DaimondModels.ensure(run.slot,'));
 		check('the worker never mints its first key at the float', !src.includes('DaimondModels.mintSlot(run.slot'));
 	}

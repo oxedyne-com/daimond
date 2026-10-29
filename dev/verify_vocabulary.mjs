@@ -95,6 +95,7 @@
 //
 // Needs dev/serve.mjs only: the guide is flat files and loads none of the app.
 // Writes its screenshots to dev/shots/vocab-page-*.png.
+import { readPage } from './pagesrc.mjs';
 import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -179,10 +180,10 @@ const ANCHORS = ['writing-a-note', 'regions', 'glossary', 'two-words', 'social-p
 //
 // Each returns the bytes to serve in place of a real file, or mutates the input
 // a static check reads. Nothing on disk is touched.
-let pageBytes = fs.readFileSync(PAGE, 'utf8');
-let en        = fs.readFileSync(path.join(WWW, 'i18n', 'en.js'), 'utf8');
+let pageBytes = readPage(PAGE, 'utf8');
+let en        = readPage(path.join(WWW, 'i18n', 'en.js'), 'utf8');
 let guideText = fs.readdirSync(GUIDE).filter((f) => f.endsWith('.html') && f !== 'social.html')
-	.map((f) => fs.readFileSync(path.join(GUIDE, f), 'utf8')).join('\n');
+	.map((f) => readPage(path.join(GUIDE, f), 'utf8')).join('\n');
 let blankCrop = null;      // a crop name to replace with a flat rectangle
 
 /// The locale folders that actually hold a Social page. A folder is a locale,
@@ -196,7 +197,7 @@ const onDiskLocales = fs.readdirSync(GUIDE, { withFileTypes: true })
 /// Each translated page's bytes, by locale, so a break can damage them in
 /// flight the way it damages the English page.
 const localeBytes = {};
-for (const l of onDiskLocales) localeBytes[l] = fs.readFileSync(path.join(GUIDE, l, 'social.html'), 'utf8');
+for (const l of onDiskLocales) localeBytes[l] = readPage(path.join(GUIDE, l, 'social.html'), 'utf8');
 
 const applied = [];
 switch (BREAK) {
@@ -360,7 +361,7 @@ function nolanding(src) {
 	// file the index generator writes, and `--break heading` proves it by taking
 	// the ids off, which is what the generator's renumbering would do to ids
 	// written on the headings instead.
-	const onDisk = BREAK === 'heading' ? pageBytes : fs.readFileSync(PAGE, 'utf8');
+	const onDisk = BREAK === 'heading' ? pageBytes : readPage(PAGE, 'utf8');
 	const gone = ANCHORS.filter((a) => !new RegExp(`<section[^>]*\\sid="${a}"`).test(onDisk));
 	// And the headings themselves must carry the positional ids, which is what
 	// says the index has been built over this page at all.
@@ -430,7 +431,7 @@ if (blankCrop) {
 }
 if (BREAK === 'nomargin' || BREAK === 'nolanding') {
 	await page.route('**/guide/frame.js', async (route) => {
-		const src = fs.readFileSync(path.join(GUIDE, 'frame.js'), 'utf8');
+		const src = readPage(path.join(GUIDE, 'frame.js'), 'utf8');
 		const hurt = BREAK === 'nomargin'
 			? src.replace("rule.textContent = 'main [id] { scroll-margin-top: var(--guide-head-h, 7rem); }';",
 				"rule.textContent = '';")

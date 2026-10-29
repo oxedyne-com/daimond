@@ -27,6 +27,7 @@
 
    Run:  node www/js/taintbook.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, copyFileSync, existsSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -49,7 +50,7 @@ if (BREAK) {
 	scratch = mkdtempSync(join(tmpdir(), 'taintbook-break-'));
 	mkdirSync(join(scratch, 'www', 'js'), { recursive: true });
 	for (const f of ['stamp.js', 'store.js']) if (existsSync(join(from, 'www', 'js', f))) copyFileSync(join(from, 'www', 'js', f), join(scratch, 'www', 'js', f));
-	const src = readFileSync(join(from, 'www', 'js', 'daimond.js'), 'utf8');
+	const src = readPage(join(from, 'www', 'js', 'daimond.js'), 'utf8');
 	const [a, b] = BREAKS[BREAK];
 	if (!src.includes(a)) { console.error('break ' + BREAK + ': the line to patch is not in daimond.js'); process.exit(2); }
 	writeFileSync(join(scratch, 'www', 'js', 'daimond.js'), src.replace(a, b));
@@ -58,7 +59,7 @@ if (BREAK) {
 	console.log('BREAK ' + BREAK + ' (a patched copy of the tree)');
 }
 const { makeWindow, sliceDaimond, rng, TREE } = await import('../../dev/syncprobe.mjs');
-const APP = readFileSync(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
+const APP = readPage(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {

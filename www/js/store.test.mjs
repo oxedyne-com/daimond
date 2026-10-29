@@ -28,6 +28,7 @@
      node www/js/store.test.mjs --break nolaw      # the retry ignores the law: a sibling's write is lost
      node www/js/store.test.mjs                    # and then, clean
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -45,7 +46,7 @@ function check(name, cond, detail) {
 }
 
 function storeSrc() {
-	let s = readFileSync(join(HERE, 'store.js'), 'utf8');
+	let s = readPage(join(HERE, 'store.js'), 'utf8');
 	if (BREAK === 'swallow') {
 		const n = 'catch (e) { hold(key, value, law); return false; }';
 		if (!s.includes(n)) throw new Error('break target not found: ' + n);
@@ -95,10 +96,10 @@ function tab(b, files, extra) {
 	};
 	win.localStorage = ls;
 	new Function('window', 'localStorage', storeSrc())(win, ls);
-	new Function('window', 'localStorage', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(win, ls);
+	new Function('window', 'localStorage', readPage(join(HERE, 'stamp.js'), 'utf8'))(win, ls);
 	for (const f of files || []) {
 		new Function('window', 'localStorage', 'CustomEvent', 'Event', 'document',
-			'with (window) {\n' + readFileSync(join(HERE, f), 'utf8') + '\n}')(win, ls, function CustomEvent(type) { this.type = type; },
+			'with (window) {\n' + readPage(join(HERE, f), 'utf8') + '\n}')(win, ls, function CustomEvent(type) { this.type = type; },
 			function Event(type) { this.type = type; }, { getElementById: () => null, addEventListener: () => {} });
 	}
 	b.tabs.push(t);
@@ -110,7 +111,7 @@ function throwsRefusal(S, fn) {
 }
 
 // ── daimond.js lifting, as the other harnesses here do ──────────
-const DSRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const DSRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 function fn(name) {
 	const at = DSRC.indexOf('\n\tfunction ' + name + '(');
 	if (at < 0) throw new Error('not found in daimond.js: ' + name);
@@ -316,7 +317,7 @@ async function main() {
 		const b = box();
 		const ix = {}, set = (o) => { for (const k of Object.keys(ix)) delete ix[k]; Object.assign(ix, o); };
 		const t = tab(b, [], { DaimondDurable: { durable: () => false, ready: async () => {}, get: async () => null, set: async () => true, migrate: async () => false } });
-		new Function('window', 'localStorage', 'indexedDB', 'with (window) {\n' + readFileSync(join(HERE, 'cloud.js'), 'utf8') + '\n}')(t.win, t.win.localStorage, undefined);
+		new Function('window', 'localStorage', 'indexedDB', 'with (window) {\n' + readPage(join(HERE, 'cloud.js'), 'utf8') + '\n}')(t.win, t.win.localStorage, undefined);
 		const C = t.win.DaimondCloud;
 		const m = (h) => ({ v: 2, size: 1, chunks: [{ addr: h.repeat(8), size: 1 }], hash: h });
 		// Here: a.md is ours (h2) with an OLD conflict copy (h0) beside it; the fork point

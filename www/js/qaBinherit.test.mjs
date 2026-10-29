@@ -17,12 +17,13 @@
    Lifts the REAL functions out of daimond.js with the REAL peer.js
    election. Red proof: run against e6594b179.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(join(HERE, 'daimond.js'), 'utf8');
 let failures = 0;
 function check(name, cond, detail) {
 	if (cond) console.log('  ok   ' + name);
@@ -40,7 +41,7 @@ const win = { addEventListener() {}, dispatchEvent() { return true; } };
 	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
-		const body = readFileSync(join(HERE, rel), 'utf8');
+		const body = readPage(join(HERE, rel), 'utf8');
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
 			'with (window) {\n' + body + '\n}')(win, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});

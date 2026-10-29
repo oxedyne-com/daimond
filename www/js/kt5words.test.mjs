@@ -19,6 +19,7 @@
 
    Run:  node www/js/kt5words.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -54,14 +55,14 @@ const pw = { addEventListener() {}, dispatchEvent() { return true; } };
 	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
-		const body = readFileSync(join(HERE, rel), 'utf8');
+		const body = readPage(join(HERE, rel), 'utf8');
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
 			'with (window) {\n' + body + '\n}')(pw, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
 	}
 }
 const P = pw.DaimondPeer;
-const PEER_SRC = readFileSync(join(HERE, 'peer.js'), 'utf8');
+const PEER_SRC = readPage(join(HERE, 'peer.js'), 'utf8');
 const T0 = 1790000000000;
 const LOG = '## His words\n\n### [k1] 2026-10-25\n> q1\n\n';
 const WORDS = '\n### [m1] 2026-10-25\n> u2 first "quoted" é\n\n### 2026-10-25\n> over\n> two lines\n\n';
@@ -101,14 +102,14 @@ const WORDS = '\n### [m1] 2026-10-25\n> u2 first "quoted" é\n\n### 2026-10-25\n
 	check('(b) after the alerts too', JSON.stringify(both).endsWith('"alerts":[{"op":"clear","key":"k"}],"words":' + JSON.stringify(WORDS) + '}'));
 	check('(b) a report with no words names none', !('words' in P.makeReport({ words: '' })) && !('words' in P.makeReport({}))
 		&& !('words' in P.makeReport({ words: 5 })));
-	const nv = JSON.parse(readFileSync(join(HERE, '../../kimberlite/src/errands/testdata/native_vectors.json'), 'utf8'));
+	const nv = JSON.parse(readPage(join(HERE, '../../kimberlite/src/errands/testdata/native_vectors.json'), 'utf8'));
 	const g = nv.golden.report_words || '';
 	const back = g ? JSON.stringify(P.makeReport(JSON.parse(g))) : '';
 	check('(b) the runner\'s report_words vector is the bytes makeReport writes', !!g && back === g, back.slice(-160));
 }
 
 // (c)-(f) The tab's onReport and settle, lifted from daimond.js over stubs.
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 function reportHandler() {
 	const at = SRC.indexOf('DaimondPeer.onReport(');
 	if (at < 0) return '';

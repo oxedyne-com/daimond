@@ -61,6 +61,7 @@
      `dmid`, `doSteer`'s own per-turn id (`newMid()`, generated fresh every
      call) -- the exact analogue of `runTurn`'s `umid`.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -106,7 +107,7 @@ function load(store, pricing) {
 	const win = {};
 	if (pricing) win.DaimondPricing = pricing;
 
-	let ledgerSrc = readFileSync(LEDGER_SRC, 'utf8');
+	let ledgerSrc = readPage(LEDGER_SRC, 'utf8');
 	if (BREAK === 'noolguard') {
 		// Finding 1, reverted: reprice() stops skipping `ol` entries, so an
 		// outcome-only turn gets priced and marked `estimated` like any other
@@ -142,7 +143,7 @@ function load(store, pricing) {
 	loadStore(win, localStorage);
 	new Function('window', 'localStorage', ledgerSrc)(win, localStorage);
 
-	let modeldashSrc = readFileSync(MODELDASH_SRC, 'utf8');
+	let modeldashSrc = readPage(MODELDASH_SRC, 'utf8');
 	// eslint-disable-next-line no-new-func
 	new Function('window', 'localStorage', modeldashSrc)(win, localStorage);
 
@@ -340,7 +341,7 @@ function main() {
 
 	console.log('\ndaimond.js: source guard -- runTurn classifies and records the outcome at the one exit funnel');
 	{
-		let src = readFileSync(DAIMOND_SRC, 'utf8');
+		let src = readPage(DAIMOND_SRC, 'utf8');
 		if (BREAK === 'sharedtid') {
 			// Finding 2, reverted: both ledger call sites in `doSteer` go back to
 			// keying on `rec.id`, the daimon chat's id -- shared by every steer of

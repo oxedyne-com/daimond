@@ -12,9 +12,10 @@
    closure and `appSpend`, and the `finally`'s REAL total lines, lifted out of
    daimond.js, over a stand-in app that keeps the counters the wasm keeps.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 
-const DAIMOND = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const DAIMOND = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {

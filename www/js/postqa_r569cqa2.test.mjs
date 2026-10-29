@@ -1,6 +1,7 @@
 // POST-QA r569cqa2 (confirm round, 2026-10-17): two gaps left beside the MAIL-FIX2 fixes.
 // Each test asserts the correct behaviour, so red is a reproduced defect.
 // Run: node --test www/js/postqa_r569cqa2.test.mjs
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { makeWindow } from '../../dev/syncprobe.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const ALERTS = readFileSync(join(HERE, 'alerts.js'), 'utf8');
+const APP  = readPage(join(HERE, 'daimond.js'), 'utf8');
+const ALERTS = readPage(join(HERE, 'alerts.js'), 'utf8');
 
 function balanced(src, start) {
 	const brace = src.indexOf('{', start);

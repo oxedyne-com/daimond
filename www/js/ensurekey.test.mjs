@@ -47,6 +47,7 @@
      node www/js/ensurekey.test.mjs --break noturnstart   # the turn-start ensure is removed
      node www/js/ensurekey.test.mjs                       # and then, clean
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -144,7 +145,7 @@ function loadModels() {
 	const g = { window: win, document: documentShim, localStorage, fetch: fetchStub, console };
 	// The IIFE reads these names; `globalThis` inside resolves to `g` so bare
 	// `fetch` finds the stub.
-	let body = readFileSync(MODELS_SRC, 'utf8');
+	let body = readPage(MODELS_SRC, 'utf8');
 	body = patchModels(body);
 	loadStore(win, localStorage);
 	const fn = new Function('window', 'document', 'localStorage', 'fetch', 'console', 'globalThis', body);
@@ -154,7 +155,7 @@ function loadModels() {
 
 // ── Part B: the shipped keyRefused, extracted and run ──────────
 function extractKeyRefused() {
-	let src = readFileSync(DAIMOND_SRC, 'utf8');
+	let src = readPage(DAIMOND_SRC, 'utf8');
 	src = patchDaimond(src);
 	const m = src.match(/function keyRefused\(raw\) \{[\s\S]*?\n\t\}/);
 	if (!m) { console.error('ABORT: keyRefused not found in daimond.js'); process.exit(2); }
@@ -239,7 +240,7 @@ async function main() {
 	// ── (6) THE daimond.js WIRING IS PRESENT ───────────────────
 	console.log('(6) source guard — daimond.js wires ensure at turn start, mid-turn, on a fresh key, and for workers');
 	{
-		let src = readFileSync(DAIMOND_SRC, 'utf8');
+		let src = readPage(DAIMOND_SRC, 'utf8');
 		src = patchDaimond(src);
 		const chatCall = /DaimondModels\.ensure\(0, wantMinor, chatSpendNode\(chat\)\)/g;
 		const chatCalls = (src.match(chatCall) || []).length;

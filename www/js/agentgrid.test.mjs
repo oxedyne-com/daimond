@@ -9,6 +9,7 @@
 
      node --test www/js/agentgrid.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -244,7 +245,7 @@ test('thread: a diamond opens the thread its run came from, a Diamond before a c
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-const APP = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'daimond.js'), 'utf8');
+const APP = readPage(join(dirname(fileURLToPath(import.meta.url)), 'daimond.js'), 'utf8');
 function lift(name) {
 	const m = new RegExp('\\n\\t+function ' + name + '\\(').exec(APP);
 	if (!m) return '';

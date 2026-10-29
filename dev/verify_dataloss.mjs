@@ -42,6 +42,7 @@
 //   node dev/verify_dataloss.mjs --break shipped     # 4b+4d fail: the defect as it shipped
 //   node dev/verify_dataloss.mjs --break stamp-only  # 4c+4e fail: the clear stops sticking
 //   node dev/verify_dataloss.mjs                     # and then, clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,7 +105,7 @@ if (BREAK && !BREAKS[BREAK]) {
 /// The damaged source, or a hard stop. Nothing is served that was not verified to
 /// differ from the file on disk.
 function damaged(spec) {
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
@@ -118,7 +119,7 @@ function damaged(spec) {
 async function breakInto(page) {
 	const bodies = {};
 	for (const spec of BREAKS[BREAK]) {
-		bodies[spec.file] = bodies[spec.file] || fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		bodies[spec.file] = bodies[spec.file] || readPage(path.join(WWW, spec.file), 'utf8');
 		// Each spec is checked against the file ON DISK, so two edits to one file
 		// cannot mask each other's anchor.
 		damaged(spec);
@@ -210,7 +211,7 @@ const dl = p.waitForEvent('download', { timeout: 15000 });
 await p.click('button.admin-item:has-text("Export a backup")');
 const file = scratch('dataloss-backup.json');
 await (await dl).saveAs(file);
-const backup = JSON.parse(fs.readFileSync(file, 'utf8'));
+const backup = JSON.parse(readPage(file, 'utf8'));
 await p.keyboard.press('Escape');
 await p.waitForTimeout(200);
 

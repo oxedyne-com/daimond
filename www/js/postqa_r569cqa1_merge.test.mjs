@@ -15,6 +15,7 @@
    The stand-in directory gives every write a fresh lastModified, as a real disk does.
    Run:   node www/js/postqa_r569cqa1_merge.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -86,7 +87,7 @@ function lift(src, first, endMark) {
 	if (end < 0) throw new Error('end not found for: ' + first);
 	return src.slice(start, end + endMark.length);
 }
-const DSRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const DSRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 const LIFTED = lift(DSRC, '\tasync function settleAdopted(plan, was, fromDevice, judged) {', '\n\t}\n')
 	+ lift(DSRC, '\tasync function inlineVerOf(f) {', '\n\t}\n')
 	+ lift(DSRC, '\tasync function materialiseShared(plan, was, fromDevice, stand, judged) {', '\n\t}\n')
@@ -99,7 +100,7 @@ function page(folder, ix, staleBytes, opfs = dir([])) {
 	const ls = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
 	const win = { addEventListener: () => {}, dispatchEvent: () => true };
 	loadStore(win, ls);
-	const body = readFileSync(join(HERE, 'cloud.js'), 'utf8');
+	const body = readPage(join(HERE, 'cloud.js'), 'utf8');
 	new Function('window', 'localStorage', 'navigator', 'setTimeout', 'clearTimeout', 'console', 'CustomEvent',
 		'with (window) {\n' + body + '\n}')(win, ls, { storage: { getDirectory: async () => opfs } }, setTimeout, clearTimeout,
 		{ log: () => {}, debug: () => {}, warn: () => {}, error: () => {} }, class { constructor(t, o) { this.type = t; this.detail = o && o.detail; } });

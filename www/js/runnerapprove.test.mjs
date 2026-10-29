@@ -20,6 +20,7 @@
      node www/js/runnerapprove.test.mjs --break plain     # the plaintext is posted, not the seal
      node www/js/runnerapprove.test.mjs                   # and then, clean
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { makeWindow, liftSource } from '../../dev/syncprobe.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -187,13 +188,13 @@ await kase('Pending.add refuses a malformed runner, and replaces one for the sam
 const pkgJs = join(APP, 'www', 'pkg', 'oxedyne_daimond.js');
 if (!existsSync(pkgJs)) { console.log('no www/pkg: build it with dev/build-wasm.sh --no-opt'); process.exit(2); }
 const mod = await import(pkgJs);
-mod.initSync({ module: readFileSync(join(APP, 'www', 'pkg', 'oxedyne_daimond_bg.wasm')) });
+mod.initSync({ module: readPage(join(APP, 'www', 'pkg', 'oxedyne_daimond_bg.wasm')) });
 if (typeof mod.seal_runner_bundle !== 'function') { console.log('www/pkg carries no seal_runner_bundle: rebuild it'); process.exit(2); }
-const dsrc = readFileSync(join(APP, 'www', 'js', 'daimond.js'), 'utf8');
+const dsrc = readPage(join(APP, 'www', 'js', 'daimond.js'), 'utf8');
 const sa = dsrc.indexOf('// SEAL-BRIDGE-BEGIN'), sb = dsrc.indexOf('// SEAL-BRIDGE-END');
 function sealBridge() { const w = {}; new Function('window', 'Sbj', dsrc.slice(sa, sb))(w, mod); return w.DaimondSeal; }
 
-const V = JSON.parse(readFileSync(join(APP, 'src', 'seal', 'testdata', 'runner_bundle.json'), 'utf8'));
+const V = JSON.parse(readPage(join(APP, 'src', 'seal', 'testdata', 'runner_bundle.json'), 'utf8'));
 const hexb = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
 const b64u = (b) => Buffer.from(b).toString('base64url');
 const SENT = V.sentinel;
@@ -238,7 +239,7 @@ async function approveTab(assert) {
 	win.DaimondSeal = sealBridge();
 	win.DaimondIdentity = { deviceId: () => 'tab-approver-1' };
 	win.PRF_FALLBACK = PRF;	// what the `noassert` break pretends the authenticator gave
-	let src = readFileSync(join(APP, 'www', 'js', 'passkey.js'), 'utf8');
+	let src = readPage(join(APP, 'www', 'js', 'passkey.js'), 'utf8');
 	src = patchPasskey(src);
 	new Function('window', 'with (window) {\n' + src + '\n}')(win);
 	return { win, st, P: win.DaimondPasskey };

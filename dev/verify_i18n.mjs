@@ -31,6 +31,7 @@
 //   node dev/verify_i18n.mjs
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway and no model.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -52,7 +53,7 @@ const check = (cond, msg, detail) => {
 const loadTable = (file) => {
 	let table = null;
 	const sandbox = { window: { DaimondI18n: { register: (c, t2) => { table = t2; } } } };
-	const src = fs.readFileSync(path.join(I18NDIR, file), 'utf8');
+	const src = readPage(path.join(I18NDIR, file), 'utf8');
 	new Function('window', src)(sandbox.window);
 	return table;
 };

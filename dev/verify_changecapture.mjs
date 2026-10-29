@@ -16,6 +16,7 @@
 // It applies a patch of its own and puts the tree back with `git checkout --`, and it
 // REFUSES to start on a dirty worktree so that "put it back" can never mean "throw the
 // lane's work away".
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,7 +46,7 @@ function treeHash(dir) {
 			if (e.name === '.git' || e.name === 'target' || e.name === '.cargo') continue;
 			const p = path.join(d, e.name), r = rel ? `${rel}/${e.name}` : e.name;
 			if (e.isDirectory()) walk(p, r);
-			else if (e.isFile()) { h.update(r); h.update(fs.readFileSync(p)); }
+			else if (e.isFile()) { h.update(r); h.update(readPage(p)); }
 		}
 	};
 	walk(dir, '');
@@ -104,7 +105,7 @@ git('apply', '--whitespace=nowarn', PATCH);
 const onDirty = run(['--world', '2', '--dry', '--from', CAP], 'dirty');
 say(!onDirty.ok && /CLEAN worktree/.test(onDirty.out), '--from refuses a dirty worktree');
 git('checkout', '--', '.');
-const moved = JSON.parse(fs.readFileSync(CAP, 'utf8'));
+const moved = JSON.parse(readPage(CAP, 'utf8'));
 moved.head = '0'.repeat(40);
 fs.writeFileSync(CAP + '.moved', JSON.stringify(moved));
 const onMoved = run(['--world', '2', '--dry', '--from', CAP + '.moved'], 'moved');

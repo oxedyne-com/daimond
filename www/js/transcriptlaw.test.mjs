@@ -27,6 +27,7 @@
    Run:  node www/js/transcriptlaw.test.mjs
          node www/js/transcriptlaw.test.mjs --break nolaw    # the law off: base behaviour
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -190,8 +191,8 @@ for (const id of ['a#b', 'a/b', 'a\\b', '..', 5]) {
 
 // ── The other doors and the store, held to their source (the browser verifier runs them) ──
 if (!BREAK) {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-	const syncSrc = readFileSync(join(HERE, 'sync.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
+	const syncSrc = readPage(join(HERE, 'sync.js'), 'utf8');
 	const restoreAt = src.indexOf("trail('restore chat REFUSED'");
 	check('the backup restore applies the same law before it adopts or merges a chat',
 		restoreAt > 0 && src.lastIndexOf('!transcriptOk(r.messages)', restoreAt) > src.lastIndexOf('for (var di = 0; di < data.chats.length; di++)', restoreAt));

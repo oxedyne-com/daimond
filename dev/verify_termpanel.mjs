@@ -52,6 +52,7 @@
 // Without the mock provider every model turn fails and the app reads as broken when it
 // is only unattended.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -99,9 +100,9 @@ async function proved(name, breakIt, testIt, fixIt) {
 
 // ── Phase one: the page's own source ────────────────────────────────
 
-const indexSrc = fs.readFileSync(INDEX, 'utf8');
-const appSrc   = fs.readFileSync(APPJS, 'utf8');
-const relaySrc = fs.readFileSync(RELAYJS, 'utf8');
+const indexSrc = readPage(INDEX, 'utf8');
+const appSrc   = readPage(APPJS, 'utf8');
+const relaySrc = readPage(RELAYJS, 'utf8');
 
 console.log('\nThe panel, as the page declares it');
 
@@ -133,7 +134,7 @@ check('and it is NOT given the `term` class, which belongs to what terminal.js b
 // its body would share the WIDTH and nothing inside could be told to fill the
 // height, which is the failure that froze the terminal at its minimum grid.
 {
-	const cssSrc = fs.readFileSync(path.join(ROOT, 'www/css/terminal.css'), 'utf8');
+	const cssSrc = readPage(path.join(ROOT, 'www/css/terminal.css'), 'utf8');
 	const rule = (/\.panel\.termpanel\s*\{([^}]*)\}/.exec(cssSrc) || [, ''])[1];
 	check('the panel is given the stage card: a ground, an edge and a corner',
 		/background:/.test(rule) && /border:/.test(rule) && /border-radius:/.test(rule), rule.replace(/\s+/g, ' ').trim());
@@ -215,12 +216,12 @@ const locales = fs.readdirSync(I18NDIR).filter((f) => f.endsWith('.js'));
 function missing(src, keys) {
 	return keys.filter((k) => !new RegExp(`['"]${k.replace('.', '\\.')}['"]\\s*:`).test(src));
 }
-const enSrc = fs.readFileSync(path.join(I18NDIR, 'en.js'), 'utf8');
+const enSrc = readPage(path.join(I18NDIR, 'en.js'), 'utf8');
 provedNames.push('the missing-string check is not blind');
 check('PROVED the missing-string check sees a string that is gone',
 	missing(enSrc.replace(/'term\.no_composer':/, "'term.gone':"), KEYS).join(',') === 'term.no_composer');
 for (const f of locales) {
-	const src = fs.readFileSync(path.join(I18NDIR, f), 'utf8');
+	const src = readPage(path.join(I18NDIR, f), 'utf8');
 	const gone = missing(src, KEYS);
 	check(`${f} says every string the panel needs`, gone.length === 0, gone.join(', '));
 }

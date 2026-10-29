@@ -19,10 +19,11 @@
    Run:  node www/js/reporttaint.test.mjs
    ============================================================ */
 const { makeWindow, sliceDaimond, loadScript, TREE } = await import('../../dev/syncprobe.mjs');
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const APP = readFileSync(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
+const APP = readPage(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
 	checks++;

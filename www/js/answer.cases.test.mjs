@@ -6,6 +6,7 @@
 // source routes through them. This runs the shipped code itself: the sources of the Ask pill
 // (mobile.js) and of Compose (daimond.js) are cut out by their banners and evaluated against
 // stand-ins, so what is asserted is what a press does in each state, not what the source says.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const src  = (f) => fs.readFileSync(path.join(HERE, f), 'utf8');
+const src  = (f) => readPage(path.join(HERE, f), 'utf8');
 const cut  = (s, from, to) => {
 	const a = s.indexOf(from), b = s.indexOf(to, a);
 	assert.ok(a >= 0 && b > a, `cannot cut ${JSON.stringify(from)} .. ${JSON.stringify(to)}: the banners moved`);

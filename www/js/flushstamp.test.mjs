@@ -29,6 +29,7 @@
    Run:  node www/js/flushstamp.test.mjs
          DAIMOND_JS=<tree>/www/js/daimond.js node www/js/flushstamp.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -42,7 +43,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail !== undefined ? '  (' + JSON.stringify(detail) + ')' : '')); failures++; }
 }
 
-const src = readFileSync(SRC, 'utf8');
+const src = readPage(SRC, 'utf8');
 
 /// Lifts `function name(...) { ... }` (or `async function`) by counting braces
 /// from its opening one. As in tailwiring.test.mjs.

@@ -78,6 +78,7 @@
 // through `DaimondSync.parcel()` / `DaimondSync.apply()`, which sync.js publishes
 // precisely so a test measures the fixed point THROUGH the two functions the
 // wire uses rather than around them.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -261,7 +262,7 @@ function damagedFiles() {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	return byFile;
@@ -840,7 +841,7 @@ try {
 		await A.click('button.admin-item:has-text("Export a backup")');
 		const file = scratch('trash-backup' + (BREAK ? '-' + BREAK : '') + '.json');
 		await (await dl).saveAs(file);
-		backup = JSON.parse(fs.readFileSync(file, 'utf8'));
+		backup = JSON.parse(readPage(file, 'utf8'));
 	} catch (e) { why = String((e && e.message) || e).split('\n')[0]; }
 	const recipeId = await A.evaluate(async () => {
 		const list = await window.DaimondCore.trashList();

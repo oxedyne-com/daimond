@@ -7,6 +7,7 @@
 // left the mark waiting (FLOW LINK-BLANK review, follow-up). It now removes such a row by its
 // content, and takes the entry off only once the store has taken the row. The function is lifted
 // out of `www/js/daimond.js` by name and run against stand-ins, so what is proved is what the page runs.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, 'daimond.js'), 'utf8');
 
 function lift(name) {
 	const at = SRC.indexOf('\tasync function ' + name + '(');

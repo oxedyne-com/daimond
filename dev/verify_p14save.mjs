@@ -36,6 +36,7 @@
 // Declared break `staleanchor` restores the defect exactly as it shipped: the
 // tool door skips the re-anchoring read and calls file_write directly over the
 // stale anchor, which reddens the stale-anchor check below.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,7 +77,7 @@ const SRC_DIR = path.join(HERE, '..', 'www');
 const PATCHES = BREAK ? BREAKS[BREAK] : [];
 const MEMENTOES = new Map();
 function memento(file) {
-	if (!MEMENTOES.has(file)) MEMENTOES.set(file, fs.readFileSync(file, 'utf8'));
+	if (!MEMENTOES.has(file)) MEMENTOES.set(file, readPage(file, 'utf8'));
 	return MEMENTOES.get(file);
 }
 for (const p of PATCHES) {
@@ -97,7 +98,7 @@ process.on('exit', () => { for (const p of PATCHES) {                    // rest
 // The damaged source as it NOW sits on disk, read AFTER any break was applied:
 // the checks must see the defect, while MEMENTOES holds the pristine bytes
 // captured BEFORE the patch loop for the restore-on-exit.
-const DAIMOND_SRC = fs.readFileSync(path.join(SRC_DIR, 'js', 'daimond.js'), 'utf8');
+const DAIMOND_SRC = readPage(path.join(SRC_DIR, 'js', 'daimond.js'), 'utf8');
 
 let bad = 0, ran = 0;
 const check = (pass, name, detail) => {

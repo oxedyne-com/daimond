@@ -41,6 +41,7 @@
 //
 // Headless. The gateway does NOT need to be running: this is a check on what
 // leaves the browser, and a batch that reaches a closed port has still left.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -317,7 +318,7 @@ async function serveModule(page, src) {
 /// * `quick` - Skip the marker fixture. Only for a session that is not about
 ///   content leaking; the leak checks need the markers proved present first.
 async function runSession({ label, patch, giveConsent, buildId = '', quick = false }) {
-	const src = patch(fs.readFileSync(SRC_JS, 'utf8'));
+	const src = patch(readPage(SRC_JS, 'utf8'));
 	const requests = [];
 	const profile = scratch('telemetry-' + label);
 	fs.rmSync(profile, { recursive: true, force: true });
@@ -430,7 +431,7 @@ async function timerSession({ label, act }) {
 	// `asDriven` first, so a `--break` run drives the same module the Node-side
 	// checks above read. A session on the unpatched file under a break flag is a
 	// session answering about a different program.
-	const src = withFastFlush(asDriven(fs.readFileSync(SRC_JS, 'utf8')));
+	const src = withFastFlush(asDriven(readPage(SRC_JS, 'utf8')));
 	const requests = [];
 	const profile = scratch('telemetry-' + label);
 	fs.rmSync(profile, { recursive: true, force: true });
@@ -486,7 +487,7 @@ async function timerSession({ label, act }) {
 /// * `label` - Names the profile and the session.
 /// * `withdrawFirst` - Take consent back before reloading.
 async function reloadSession({ label, withdrawFirst }) {
-	const src = withFastFlush(asDriven(fs.readFileSync(SRC_JS, 'utf8')));
+	const src = withFastFlush(asDriven(readPage(SRC_JS, 'utf8')));
 	const requests = [];
 	const profile = scratch('telemetry-' + label);
 	fs.rmSync(profile, { recursive: true, force: true });
@@ -546,7 +547,7 @@ async function reloadSession({ label, withdrawFirst }) {
 /// buffer is `www/js/daimond.js` doing its own work, so what comes back is what
 /// the app actually reports when somebody uses it.
 async function realSession(label) {
-	const src = withFastFlush(asDriven(fs.readFileSync(SRC_JS, 'utf8')));
+	const src = withFastFlush(asDriven(readPage(SRC_JS, 'utf8')));
 	const requests = [];
 	const profile = scratch('telemetry-' + label);
 	fs.rmSync(profile, { recursive: true, force: true });
@@ -585,7 +586,7 @@ async function realSession(label) {
 /// # Arguments
 /// * `answer` - `'yes'`, `'no'`, or `'escape'` for the person who closes it.
 async function cardSession(answer) {
-	const src = withFastFlush(asDriven(fs.readFileSync(SRC_JS, 'utf8')));
+	const src = withFastFlush(asDriven(readPage(SRC_JS, 'utf8')));
 	const requests = [];
 	const profile = scratch('telemetry-card-' + answer);
 	fs.rmSync(profile, { recursive: true, force: true });
@@ -687,14 +688,14 @@ async function withdrawal() {
 const nodeCopy = (() => {
 	if (!BREAK) return SRC_JS;
 	const p = scratch('telemetry-driven-' + BREAK + '.js');
-	fs.writeFileSync(p, asDriven(fs.readFileSync(SRC_JS, 'utf8')));
+	fs.writeFileSync(p, asDriven(readPage(SRC_JS, 'utf8')));
 	return p;
 })();
 const client = createRequire(import.meta.url)(nodeCopy);
 
 /// The gateway's copy, read out of the Rust: variant → code, and variant → name.
 function rustVocabulary() {
-	const rs = fs.readFileSync(SRC_RS, 'utf8');
+	const rs = readPage(SRC_RS, 'utf8');
 	const codes = {}, names = {};
 	for (const m of rs.matchAll(/^\s{4}([A-Z][A-Za-z]*)\s*=\s*(\d+),$/gm)) codes[m[1]] = Number(m[2]);
 	for (const m of rs.matchAll(/Self::([A-Za-z]+)\s*=>\s*"([a-z.]+)",/g))  names[m[1]] = m[2];
@@ -755,7 +756,7 @@ const SRC_TOOLS = path.join(ROOT, 'src/tools.rs');
 /// arm whose right-hand side is neither is reported rather than skipped, or a
 /// third shape would quietly shrink the list this checks against.
 function registryToolNames() {
-	const rs = fs.readFileSync(SRC_TOOLS, 'utf8');
+	const rs = readPage(SRC_TOOLS, 'utf8');
 	// FROM THE FIRST ARM, not from the signature: several enums in that file have a
 	// `name(&self)`, and the first of them is a build system's. The arms end at the
 	// match's own closing brace.
@@ -833,12 +834,12 @@ check('and no tool shares a number with another',
 function scanFor(what) {
 	return fs.readdirSync(path.join(ROOT, 'www/js'))
 		.filter((f) => f.endsWith('.js') && f !== 'telemetry.js')
-		.filter((f) => what.test(fs.readFileSync(path.join(ROOT, 'www/js', f), 'utf8')));
+		.filter((f) => what.test(readPage(path.join(ROOT, 'www/js', f), 'utf8')));
 }
 const callers  = scanFor(/DaimondTelemetry\s*\.\s*consent/);
 const emitters = BREAK === 'inert' ? [] : scanFor(/DaimondTelemetry\s*\.\s*emit/);
 
-const indexHtml = fs.readFileSync(path.join(ROOT, 'www/index.html'), 'utf8');
+const indexHtml = readPage(path.join(ROOT, 'www/index.html'), 'utf8');
 // Paired with its own presence check: an absence proved against a file that was
 // never read is the way both halves of this feature stayed invisible.
 check('index.html was actually read, and does load the sibling modules',
@@ -849,7 +850,7 @@ const loaded = /<script[^>]+telemetry\.js/.test(indexHtml);
 // An id and not a sentence: prose is edited and an anchor is not, and this is
 // the anchor the consent line links to.
 const POLICY = path.join(ROOT, 'www/guide/legal/privacy.html');
-const policyHtml = fs.readFileSync(POLICY, 'utf8');
+const policyHtml = readPage(POLICY, 'utf8');
 check('the policy the consent line would link to was actually read',
 	policyHtml.indexOf('id="cookies"') !== -1, `${policyHtml.length} bytes`);
 const disclosed = BREAK !== 'undisclosed' && /id="beta-telemetry"/.test(policyHtml);
@@ -979,7 +980,7 @@ check('telemetry.js is loaded only where the Privacy Policy describes what it se
 
 /// A named integer constant out of the Rust, or NaN.
 function rustConst(name) {
-	const m = fs.readFileSync(SRC_RS, 'utf8')
+	const m = readPage(SRC_RS, 'utf8')
 		.match(new RegExp('pub const ' + name + ':\\s*i64\\s*=\\s*([0-9_]+)\\s*;'));
 	return m ? Number(m[1].replace(/_/g, '')) : NaN;
 }
@@ -1072,7 +1073,7 @@ check('it was a POST with no query string on the address',
 // against "not zero", so a wrong number could not pass.
 const stampedBuild = (() => { try { return JSON.parse(batches[0].body).b; } catch (e) { return -1; } })();
 const wantBuild = (() => {
-	try { return parseInt(JSON.parse(fs.readFileSync(path.join(ROOT, 'www/build.json'), 'utf8')).build.slice(0, 8), 16); }
+	try { return parseInt(JSON.parse(readPage(path.join(ROOT, 'www/build.json'), 'utf8')).build.slice(0, 8), 16); }
 	catch (e) { return -2; }
 })();
 check('and it names the build it came from', stampedBuild === wantBuild,

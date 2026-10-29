@@ -52,6 +52,7 @@
 //   node dev/verify_quotamanifest_sync.mjs --break    # both belts undone (must redden)
 //
 // Chromium only for --break (page.route). Needs dev/serve.mjs; no gateway, no mock.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,14 +83,14 @@ const SEAM = [
 	{ file: 'js/daimond.js', want: 'DaimondCloud.indexDurable && !DaimondCloud.indexDurable()', why: 'the commit gate does not consult indexDurable' },
 ];
 for (const s of SEAM) {
-	const src = fs.readFileSync(path.join(WWW, s.file), 'utf8');
+	const src = readPage(path.join(WWW, s.file), 'utf8');
 	if (!src.includes(s.want) && !BREAK) { console.error(`seam missing: ${s.file}: ${s.why}`); process.exit(2); }
 }
 
 // ── The break: revert BOTH belts (the whole #2 invariant) ─────────────
 const PATCHED = new Map();
 function patchOnce(file, find, repl) {
-	const cur = PATCHED.get(file) || fs.readFileSync(path.join(WWW, file), 'utf8');
+	const cur = PATCHED.get(file) || readPage(path.join(WWW, file), 'utf8');
 	const n = cur.split(find).length - 1;
 	if (n !== 1) { console.error(`break anchor in ${file} appears ${n} times (expected 1)`); process.exit(2); }
 	PATCHED.set(file, cur.replace(find, repl));

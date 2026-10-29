@@ -16,12 +16,13 @@
 // rather than silently testing a stale copy.
 //
 //   node dev/verify_report_cap.mjs
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 
 let bad = 0, ran = 0;
 const check = (pass, name, detail) => {

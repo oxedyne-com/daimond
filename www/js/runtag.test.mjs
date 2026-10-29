@@ -16,12 +16,13 @@
 
    Run:  node www/js/runtag.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
 	checks++;
@@ -50,7 +51,7 @@ function loadPeer() {
 		localStorage: { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) },
 	};
 	const document = { readyState: 'complete', addEventListener: () => {}, querySelector: () => null, querySelectorAll: () => [], getElementById: () => null };
-	const body = readFileSync(join(HERE, 'peer.js'), 'utf8');
+	const body = readPage(join(HERE, 'peer.js'), 'utf8');
 	new Function('window', 'document', 'localStorage', 'console', 'with (window) {\n' + body + '\n}')(
 		win, document, win.localStorage, { log: () => {}, debug: () => {}, warn: () => {}, error: () => {} });
 	return win.DaimondPeer;

@@ -38,6 +38,7 @@
      node www/js/tombdurable.test.mjs                 # the fix, clean
      node www/js/tombdurable.test.mjs --break swallow # tombs localStorage-only again → resurrect
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -79,7 +80,7 @@ function funcBody(src, decl) {
 // ── The daimond.js source, optionally patched to REINTRODUCE the swallow so a
 //    guard can be shown to catch it. ─────────────────────────────────────────
 function daimondSrc() {
-	let src = readFileSync(DAIMOND_SRC, 'utf8');
+	let src = readPage(DAIMOND_SRC, 'utf8');
 	if (BREAK === 'swallow') {
 		// The overlay goes: `tombMapNow` reads localStorage alone, exactly as it
 		// did before the tomb store existed -- so a tomb the cache lost to quota is
@@ -149,7 +150,7 @@ function sourceGuards() {
 
 	console.log('\ntombdurable: source -- trash.js surfaces a lost write instead of swallowing it');
 	{
-		const ts = readFileSync(TRASH_SRC, 'utf8');
+		const ts = readPage(TRASH_SRC, 'utf8');
 		const save = funcBody(ts, 'function save() {');
 		// Since release 5 through DaimondStore, whose `put` answers whether it landed
 		// and holds a refused record owed rather than dropping it.
@@ -164,7 +165,7 @@ function sourceGuards() {
 		// old `fileTombs` field is written through to the tomb store for 5.2.1 and a rollback.
 		const nf = funcBody(d, 'function noteFileTombs(col, complete) {');
 		const ow = funcBody(d, 'function writeOldFileTombs(want) {');
-		const cj = readFileSync(join(HERE, 'cloud.js'), 'utf8');
+		const cj = readPage(join(HERE, 'cloud.js'), 'utf8');
 		check('noteFileTombs writes deletions and returns into the record set', nf.includes('DaimondCloud.mark(marks)'),
 			'file deletions are not records');
 		check('the record set is kept through the durable store', funcBody(cj, 'async function flush(km) {').includes('DaimondDurable.update(km.key'),

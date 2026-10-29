@@ -13,13 +13,14 @@
    Run:  node www/js/workerfork.test.mjs
    ============================================================ */
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APP  = join(HERE, '..', '..');
-const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(join(HERE, 'daimond.js'), 'utf8');
 let failures = 0, cases = 0, bad = null;
 
 function ok(cond, detail) { if (!cond && !bad) bad = detail || 'assertion'; }
@@ -304,7 +305,7 @@ kase('spawn hands the engine\'s fork id and size to dispatch, and dispatch puts 
 let ENGINE = null;
 try {
 	const mod = await import(join(APP, 'www', 'pkg', 'oxedyne_daimond.js'));
-	mod.initSync({ module: readFileSync(join(APP, 'www', 'pkg', 'oxedyne_daimond_bg.wasm')) });
+	mod.initSync({ module: readPage(join(APP, 'www', 'pkg', 'oxedyne_daimond_bg.wasm')) });
 	if (typeof mod.worker_handoff === 'function' && typeof mod.fork_forget === 'function') ENGINE = mod;
 } catch (e) { ENGINE = null; }
 
@@ -318,7 +319,7 @@ if (!ENGINE) {
 		ok(ENGINE.worker_handoff('MY ROLE', 't').startsWith('MY ROLE\n\n## Your task'), 'own role');
 		// The arms' mock reads a worker's directive past this separator (dev/mockllm.mjs HANDOFF): a reworded
 		// hand-off must redden here, not as four verify_actor money arms.
-		const lit = /const HANDOFF = '([^']*)';/.exec(readFileSync(join(APP, 'dev', 'mockllm.mjs'), 'utf8'));
+		const lit = /const HANDOFF = '([^']*)';/.exec(readPage(join(APP, 'dev', 'mockllm.mjs'), 'utf8'));
 		ok(lit, 'dev/mockllm.mjs declares HANDOFF');
 		const sep = lit[1].replace(/\\n/g, '\n');
 		ok(ENGINE.worker_handoff('', 'T').endsWith(sep + 'T'), JSON.stringify(ENGINE.worker_handoff('', 'T').slice(-40)));

@@ -49,6 +49,7 @@
    On 1d13d0b4a's: a frame of only new rows (a frame missed) draws them above the turn, LIVE fails.
    On 47a27e90b's: the Files row is spliced into the array the adoption replaced, FILES RACE fails.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -93,8 +94,8 @@ function extractVar(src, name) {
 // `liftSource`), from the same tree as DAIMOND_JS, so no hand-kept list can drift from it.
 if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname(process.env.DAIMOND_JS), '..', '..');
 const { liftSource } = await import('../../dev/syncprobe.mjs');
-const src  = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
-const psrc = readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
+const src  = readPage(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
+const psrc = readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
 const HAS_READ = src.indexOf('\n\tfunction readReportedFinal(') >= 0;
 const lifted = new Function('env', [
 	'var REASON_DISPATCHED_STR = "dispatched";',
@@ -116,7 +117,7 @@ const lifted = new Function('env', [
 	'function renderDispatchedBadges() { env.badges++; }',
 	'function dropDispatchedPlaceholder(t) { env.dropped.push(t); var c = env.chatFor(t); c.messages = c.messages.filter(function (m) { return !(m.why === "dispatched" && m.iturn === t); }); }',
 	// The message law (r53), lifted whole, and the stamp rule it ranks by.
-	'var DaimondStamp = (function () { var window = {}; ' + readFileSync(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
+	'var DaimondStamp = (function () { var window = {}; ' + readPage(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
 	liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src,
 	extractFn(src, 'dispatchedAnswerPresent'),
 	extractFn(src, 'dispatchedPlaceholderIn'),
@@ -275,7 +276,7 @@ console.log('\nWHOLE: only a frame the runner marked whole may become the answer
 	// The real peer.js, in a bare window (its streaming functions read no siblings).
 	const win = {};
 	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
-		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+		'with (window) {\n' + readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
 	const P = win.DaimondPeer;
 	const turn = (answer, extra) => [{ role: 'user', content: 'q', mid: 'U', iturn: 'U', ts: 1 }].concat(extra || [],
 		[{ role: 'assistant', content: answer, mid: 'AN', iturn: 'U', ranOn: 'b', ts: 99 }]);
@@ -318,7 +319,7 @@ console.log('\nREF: a long answer sent as a head and a ref is adopted whole (REP
 	// The real peer.js, as WHOLE loads it, beside the settled-lease rule.
 	const win = {};
 	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
-		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+		'with (window) {\n' + readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
 	// About 100 kB, of every UTF-8 width, as the runner's errand_settle arm sends it.
 	let long = '';
 	for (let i = 0; i < 10000; i++) long += String(i).padStart(4, '0') + 'é€😀 ';
@@ -357,7 +358,7 @@ console.log('\nNATIVE: a chunked final frame read on the done report, after the 
 {
 	const win = {};
 	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
-		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+		'with (window) {\n' + readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
 	// 22 rows of a native runner's turn, about 107 kB in all, each marked whole (settle.rs).
 	const T = 'mvnu8dx4-9-1kqcx-rt';
 	const rows = [];
@@ -410,7 +411,7 @@ console.log('\nCLOSED: a 36-row native turn read on its done report after a 34-r
 {
 	const win = {};
 	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
-		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+		'with (window) {\n' + readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
 	const T = 'mvnu8dx4-9-1kqcx-rt-rt-rt', RUN = 'e-32f1';
 	const now = Date.now();
 	const row = (mid, role, content, i) => ({ mid, role, content, iturn: T, ts: now - 60000 + i * 1000, run: RUN, ranOn: 'kdu5d0t4', whole: 1 });
@@ -465,7 +466,7 @@ console.log('\nLIVE: a native turn\'s rows drawn as they come, on the asker and 
 {
 	const win = {};
 	new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
-		'with (window) {\n' + readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
+		'with (window) {\n' + readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8') + '\n}')(win, undefined, console, setTimeout, clearTimeout, Date);
 	const T = 'mvq1live-3-x', RUN = 'K7';
 	const r = (i, role, content, x) => Object.assign({ mid: RUN + '-t' + i, role, content, ts: 200 + i, run: RUN, ranOn: 'kim', whole: 1 }, x || {});
 	const th0 = r(0, 'think_log', 'reading the question'), tl1 = r(1, 'tool_log', 'ls: 4 files', { name: 'ls' });

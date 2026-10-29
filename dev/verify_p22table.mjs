@@ -5,6 +5,7 @@
 // 6-plus-fold behaviour, red-first: `--break` restores the shipped defect
 // (no diversion at the tile) and reddens the checks that carry it.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -34,7 +35,7 @@ function deltaText(d) {
 }
 
 // ── checks ─────────────────────────────────────────────────────
-const src = fs.readFileSync(path.join(root, 'www/js/daimond.js'), 'utf8');
+const src = readPage(path.join(root, 'www/js/daimond.js'), 'utf8');
 // BREAKS (red-first, each reddens the checks that carry it):
 //   --break divert   removes the tail-note diversion from appendUserMessage
 //   --break fold     removes the 6-plus fold
@@ -107,7 +108,7 @@ function grn(msg) { process.stdout.write(msg + '\n'); }
 	const cats = fs.readdirSync(path.join(root, 'www/i18n')).filter(f => f.endsWith('.js'));
 	let all = true;
 	for (const f of cats) {
-		const s = fs.readFileSync(path.join(root, 'www/i18n', f), 'utf8');
+		const s = readPage(path.join(root, 'www/i18n', f), 'utf8');
 		if (!/'chat\.turn_files\.(one|other|)':/.test(s)) { all = false; red('  ' + f + ' missing chat.turn_files'); }
 		if (!/'chat\.turn_files_more':/.test(s)) { all = false; red('  ' + f + ' missing chat.turn_files_more'); }
 	}
@@ -116,7 +117,7 @@ function grn(msg) { process.stdout.write(msg + '\n'); }
 
 // 6. the CSS for the table rows
 (function () {
-	const s = fs.readFileSync(path.join(root, 'www/css/app.css'), 'utf8');
+	const s = readPage(path.join(root, 'www/css/app.css'), 'utf8');
 	ok('css: .turn-files styles the table', /\.turn-files/.test(s) && /\.turn-file-row/.test(s));
 	ok('css: the name is one horizontal line (no per-character stack)', !/\.turn-file-name \{[^}]*writing-mode/.test(s) && !/\.turn-file-name \{[^}]*flex-direction: column/.test(s));
 	ok('css: additions green, deletions red', /\.tf-add \{ color: var\(--ok/.test(s) && /\.tf-del \{ color: var\(--danger/.test(s));

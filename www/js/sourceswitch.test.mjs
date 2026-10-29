@@ -32,6 +32,7 @@
    testlift.mjs), in a vm realm.
      node --test www/js/sourceswitch.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import vm from 'node:vm';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -323,7 +324,7 @@ async function eye() {
 		// (CSS Flexbox §9.7), so with no runner on screen a weight of 0.01 left the source whole
 		// and pushed the Effort's + out of a narrow panel (1280x720, 27px). Every part of the row
 		// that gives way takes a weight of at least one; the order is kept by the ratio.
-		const css = readFileSync(join(HERE, '..', 'css', 'app.css'), 'utf8');
+		const css = readPage(join(HERE, '..', 'css', 'app.css'), 'utf8');
 		const w = (sel) => { const m = css.match(new RegExp('\\n' + sel.replace('.', '\\.') + ' \\{ flex: 0 ([0-9.]+) auto;')); return m ? +m[1] : NaN; };
 		const src = w('.source-switch'), seat = w('.seat-switch');
 		check('the source gives way on its own, with no runner beside it', src >= 1, 'source ' + src);
@@ -340,13 +341,13 @@ function strings() {
 		const KEYS = ['composer.source', 'composer.source_help', 'composer.source_add', 'composer.source_this_chat',
 			'composer.source_this_diamond'];
 		for (const f of files) {
-			const s = readFileSync(join(dir, f), 'utf8');
+			const s = readPage(join(dir, f), 'utf8');
 			check(f + ': chat.model_for_chat is gone', s.indexOf("'chat.model_for_chat'") < 0);
 			const gone = KEYS.filter((k) => !new RegExp("\\n\\t'" + k.replace('.', '\\.') + "':").test(s));
 			check(f + ': the five source keys are there', !gone.length, gone.join(', '));
 		}
 		const js = readdirSync(HERE).filter((f) => f.endsWith('.js'))
-			.some((f) => readFileSync(join(HERE, f), 'utf8').indexOf('chat.model_for_chat') >= 0);
+			.some((f) => readPage(join(HERE, f), 'utf8').indexOf('chat.model_for_chat') >= 0);
 		check('no script reads the dead key', !js);
 	}
 }

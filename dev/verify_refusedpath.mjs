@@ -66,6 +66,7 @@
 //
 // Needs dev/serve.mjs. No mock and no gateway: `collectSync` and `applySync` are
 // driven directly, which is what lets a census be measured without a push.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,9 +128,9 @@ if (BREAK && !BREAKS[BREAK]) {
 	process.exit(2);
 }
 
-const APP_SRC   = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
-const LIST_SRC  = fs.readFileSync(path.join(WWW, 'js/listing.js'), 'utf8');
-const GLUE_SRC  = fs.readFileSync(path.join(WWW, 'pkg/oxedyne_daimond.js'), 'utf8');
+const APP_SRC   = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
+const LIST_SRC  = readPage(path.join(WWW, 'js/listing.js'), 'utf8');
+const GLUE_SRC  = readPage(path.join(WWW, 'pkg/oxedyne_daimond.js'), 'utf8');
 
 // A break names the file it damages with a fourth element; the default is the app.  Two files
 // rather than one since the listing parser moved out of `daimond.js` into `js/listing.js`.

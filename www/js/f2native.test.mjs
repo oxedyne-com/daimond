@@ -17,6 +17,7 @@
    Break:  node www/js/f2native.test.mjs --break nofolder
            (the row as the base's beat made it, no `folder`): red.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -31,7 +32,7 @@ function check(name, cond, detail) {
 	console.log('  FAIL ' + name + (detail ? ' -- ' + detail : ''));
 }
 
-const PEER = readFileSync(join(HERE, 'peer.js'), 'utf8');
+const PEER = readPage(join(HERE, 'peer.js'), 'utf8');
 const win = { addEventListener() {}, dispatchEvent() { return true; },
 	localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} } };
 const document = { readyState: 'complete', addEventListener() {}, querySelector() { return null; }, getElementById() { return null; } };
@@ -74,7 +75,7 @@ check("makeReport keeps the 'place' cause",
 // ── F2-FIX M1: errandScope sends the folder exactly where chatNeedsFolder needs one ──
 // Lifted from daimond.js with the switch's own predicate: a plain chat (no diamondId) whose
 // workspace holding is opened in the folder carries `scope.root` as a Diamond's turn does.
-const DSRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const DSRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 function lift(name) {
 	let a = DSRC.indexOf('\n\tfunction ' + name + '(');
 	if (a < 0) throw new Error('not found: ' + name);

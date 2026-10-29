@@ -90,6 +90,7 @@
 // slot's `lane-hand` target (DEBUG, the app's own profile):
 //
 //	cargo build --offline --example command_fence
+import { readPage } from './pagesrc.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -305,7 +306,7 @@ function snapshot(dir) {
 			else if (e.isDirectory()) { names[rel] = 'dir'; walk(p); }
 			else if (e.isFile()) {
 				let body = Buffer.alloc(0);
-				try { body = fs.readFileSync(p); } catch (x) { /* a mode the command tightened */ }
+				try { body = readPage(p); } catch (x) { /* a mode the command tightened */ }
 				names[rel] = `file:${st.size}:` + crypto.createHash('sha256').update(body).digest('hex').slice(0, 16);
 			} else names[rel] = 'other';
 			meta[rel] = (st.mode & 0o7777).toString(8) + '@' + Math.round(st.mtimeMs);
@@ -704,14 +705,14 @@ async function driveSide(label, bin, expectFence) {
 		const sinceMs = await turnStart();
 		const r = await run(['/bin/sh', '-c', 'echo junk > junk.tmp && mv -f junk.tmp keep.txt'],
 			mark, [grant, mark], { sinceMs });
-		const now = fs.readFileSync(keep, 'utf8');
+		const now = readPage(keep, 'utf8');
 		const kept = path.join(h.trash, String(sinceMs), '0', ...keep.split(path.sep).filter(Boolean));
 		if (expectFence) {
 			check(`${label}: (f) mv -f of a new file over an old one counts the old one, unasked`,
 				now === 'junk\n' && !!r.metered && r.metered.counted === 1 && !r.held,
 				`${JSON.stringify(now)} ${JSON.stringify(r.metered)}`);
 			check(`${label}: (f) and the old bytes are in the trash`,
-				fs.existsSync(kept) && fs.readFileSync(kept, 'utf8') === 'precious\n', kept);
+				fs.existsSync(kept) && readPage(kept, 'utf8') === 'precious\n', kept);
 		} else {
 			check(`${label}: (baseline, f) the old file's bytes are gone and nothing kept them`,
 				now === 'junk\n' && !r.metered && !fs.existsSync(kept), JSON.stringify(r.metered));

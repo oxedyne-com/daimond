@@ -56,6 +56,7 @@
 //
 // The key is read as `dev/probe_notes.mjs` reads it and there is no default:
 //   DAIMOND_PROBE_KEY, else the `openrouter` file of the dev key config (~/.config/oxedyne/daimond-dev/devkey.jdat) (0600), checked first.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -128,7 +129,7 @@ for (const r of REGS) {
 }
 const HOUSE_HEAD = '## Standing instructions from the user';
 const registerText = (name) => (REGISTERS[name]
-	? fs.readFileSync(path.join(HERE, 'house', REGISTERS[name]), 'utf8').trim() : '');
+	? readPage(path.join(HERE, 'house', REGISTERS[name]), 'utf8').trim() : '');
 
 // ── The task, read out of `dev/reflux.mjs` rather than copied ───────
 //
@@ -152,7 +153,7 @@ function templateConst(src, name) {
 	}
 	throw new Error(`probe_register: ${name} is unterminated`);
 }
-const RSRC        = fs.readFileSync(REFLUX, 'utf8');
+const RSRC        = readPage(REFLUX, 'utf8');
 const PROSE_DRAFT = templateConst(RSRC, 'PROSE_DRAFT');
 const PROSE_KEPT  = templateConst(RSRC, 'PROSE_KEPT');
 
@@ -167,7 +168,7 @@ const BRIEF = (mark) => `The "${mark}" folder of this workspace is on this compu
 
 // ── The request the app really sends ────────────────────────────────
 
-const req = JSON.parse(fs.readFileSync(REQUEST, 'utf8'));
+const req = JSON.parse(readPage(REQUEST, 'utf8'));
 const sysMsg = (req.messages || []).find((m) => m.role === 'system');
 if (!sysMsg) throw new Error(`${REQUEST} carries no system message.`);
 const SYSTEM = typeof sysMsg.content === 'string' ? sysMsg.content
@@ -233,7 +234,7 @@ function bandDistance(r) {
 function scoreProse(dir, file) {
 	const s = { ok: null, dl: null, mean: null, long: null, spec: null, changed: false };
 	let now;
-	try { now = fs.readFileSync(file, 'utf8'); }
+	try { now = readPage(file, 'utf8'); }
 	catch (e) { s.ok = 'draft.typ is gone'; return s; }
 	s.changed = now.trim() !== PROSE_DRAFT.trim();
 	if (!s.changed) { s.ok = 'draft.typ is unchanged'; return s; }
@@ -300,7 +301,7 @@ function runTool(state, name, args) {
 		const p = rel(a.path);
 		if (!p) return { text: `Error: file_read: '${a.path}' is not a workspace-relative path.`, bad: true };
 		let text;
-		try { text = fs.readFileSync(p, 'utf8'); }
+		try { text = readPage(p, 'utf8'); }
 		catch (e) { return { text: `Error: file_read: ${a.path}: ${e.code || e.message}`, bad: true }; }
 		const lines = text.split('\n');
 		const off = Math.max(1, Number(a.offset || 1));
@@ -332,7 +333,7 @@ function runTool(state, name, args) {
 		const p = rel(a.path);
 		if (!p) return { text: `Error: file_edit: '${a.path}' is not a workspace-relative path.`, bad: true };
 		let text;
-		try { text = fs.readFileSync(p, 'utf8'); }
+		try { text = readPage(p, 'utf8'); }
 		catch (e) { return { text: `Error: file_edit: ${a.path}: ${e.code || e.message}`, bad: true }; }
 		const parts = text.split(a.old_string || '\u0000');
 		if (parts.length !== 2) {

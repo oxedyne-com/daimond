@@ -70,6 +70,7 @@
 //
 // Needs dev/serve.mjs and the vendored typst. No gateway and no model: every compile
 // here is the real wasm compiler and the only network is localhost.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -155,7 +156,7 @@ async function routes(page) {
 	const byFile = new Map();
 	for (const spec of (BREAKS[BREAK] || [])) {
 		const src = byFile.has(spec.file) ? byFile.get(spec.file)
-			: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			: readPage(path.join(WWW, spec.file), 'utf8');
 		byFile.set(spec.file, damaged(src, spec));
 	}
 	for (const [file, body] of byFile) {
@@ -210,21 +211,21 @@ function fixture() {
 		return out.map(([p, t]) => [p, Buffer.from(t, 'utf8')]);
 	}
 	for (const n of fs.readdirSync(DIR)) {
-		if (n.endsWith('.typ')) out.push([ROOT + '/' + n, fs.readFileSync(path.join(DIR, n))]);
+		if (n.endsWith('.typ')) out.push([ROOT + '/' + n, readPage(path.join(DIR, n))]);
 	}
 	for (const d of ['svg', 'jpg']) {
 		const at = path.join(DIR, 'assets', d);
 		if (!fs.existsSync(at)) continue;
 		for (const n of fs.readdirSync(at)) {
-			out.push([ROOT + '/assets/' + d + '/' + n, fs.readFileSync(path.join(at, n))]);
+			out.push([ROOT + '/assets/' + d + '/' + n, readPage(path.join(at, n))]);
 		}
 	}
 	const felipa = path.join(DIR, 'assets/fonts/Felipa-Regular.ttf');
-	if (fs.existsSync(felipa)) out.push([ROOT + '/assets/fonts/Felipa-Regular.ttf', fs.readFileSync(felipa)]);
+	if (fs.existsSync(felipa)) out.push([ROOT + '/assets/fonts/Felipa-Regular.ttf', readPage(felipa)]);
 	const lib = path.join(DIR, 'assets/fonts/libertinus');
 	if (fs.existsSync(lib)) {
 		for (const n of fs.readdirSync(lib)) {
-			if (FACES.test(n)) out.push([ROOT + '/assets/fonts/' + n, fs.readFileSync(path.join(lib, n))]);
+			if (FACES.test(n)) out.push([ROOT + '/assets/fonts/' + n, readPage(path.join(lib, n))]);
 		}
 	}
 	return out;

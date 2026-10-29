@@ -8,6 +8,7 @@
 // reach, and only there. `scrollStop` in daimond.js sets it from the box's own size, and
 // re-reads on resize and on content change. daimond.js imports the wasm surface and cannot be
 // loaded here, so the function is cut out of the source and run against a stand-in box.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, 'daimond.js'), 'utf8');
 
 const cut = (name) => {
 	const i = SRC.indexOf('\n\tfunction ' + name + '(');

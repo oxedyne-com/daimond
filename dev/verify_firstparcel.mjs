@@ -56,6 +56,7 @@
 // half, which is the fault that refused the parcel, runs on both engines; the
 // confirmation half runs where a workspace can exist. Real iOS Safari has OPFS: the
 // limitation is the test engine's, not the app's.
+import { readPage } from './pagesrc.mjs';
 import { open, scratch, signInAs, BROWSER } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -63,7 +64,7 @@ import { fileURLToPath } from 'node:url';
 import { guardRan } from './verdict.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const APP  = fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
+const APP  = readPage(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
 
 /// A `var NAME = a * b;` ceiling, read out of the app rather than restated here,
 /// so a change to either number cannot leave this file asserting the old one.

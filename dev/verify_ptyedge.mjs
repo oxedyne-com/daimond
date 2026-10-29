@@ -67,6 +67,7 @@
 // compositor and opened a real window on the owner's desktop while he was
 // working. `dev/display.mjs`, imported below, takes both variables out, so the
 // command above is now true as written.
+import { readPage } from './pagesrc.mjs';
 import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import { port } from './ports.mjs';
 import fs from 'node:fs';
@@ -238,7 +239,7 @@ function whyStale(bin) {
 	}
 	const record = `${bin}.d`;
 	let listed;
-	try { listed = fs.readFileSync(record, 'utf8'); }
+	try { listed = readPage(record, 'utf8'); }
 	catch (e) {
 		return `The pty edge cannot be verified, because ${bin} has no dep-info file at `
 			+ `${record}, so there is no record of what went into it and its vintage `
@@ -456,7 +457,7 @@ let breaking = '';
 
 /// The source of one served file, patched if a break names it.
 function served(rel) {
-	let src = fs.readFileSync(path.join(WWW, rel), 'utf8');
+	let src = readPage(path.join(WWW, rel), 'utf8');
 	const p = PATCHES[breaking];
 	if (p && p[0] === rel) {
 		if (src.indexOf(p[1]) < 0) {
@@ -525,7 +526,7 @@ const WASM_PATCHES = {
 function buildWasm(name) {
 	const out = path.join(BROKEN, name, 'pkg');
 	const file = name === 'whole' ? PTY_RS : WASM_PATCHES[name][0];
-	const orig = fs.readFileSync(file, 'utf8');
+	const orig = readPage(file, 'utf8');
 	// The file's own timestamps, kept so the restore below can put them back.
 	//
 	// The staleguard that protects this verifier compares MTIMES, not content, so
@@ -736,7 +737,7 @@ const server = http.createServer((req, res) => {
 		const f = path.join(base, url.slice('/pkg/'.length));
 		if (!fs.existsSync(f)) { res.writeHead(404); return res.end('no'); }
 		return send(f.endsWith('.wasm') ? 'application/wasm' : 'text/javascript; charset=utf-8',
-			fs.readFileSync(f));
+			readPage(f));
 	}
 	return send('text/html; charset=utf-8', PAGE);
 });

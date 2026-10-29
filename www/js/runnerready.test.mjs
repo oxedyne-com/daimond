@@ -7,6 +7,7 @@
 // daimond.js cannot be loaded whole in Node, so the boot's chat load is cut out by name and run
 // against a stub world. On the base, where the load is still inline in `boot`, that inline
 // sequence is cut instead.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function cut(name) {
 	let at = src.indexOf('\n\tasync function ' + name + '(');

@@ -42,6 +42,7 @@
 //
 //   eval "$(bash dev/world.sh <N> --env)"
 //   node dev/verify_pausehandoff.mjs [--only A,F,...] [--break <name>]
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -102,7 +103,7 @@ async function stack() {
 	const appUp = await listening(PORT), mockUp = await listening(MOCK_PORT);
 	if (appUp) {
 		const served = await fetch(`http://127.0.0.1:${PORT}/js/daimond.js`).then((r) => r.text()).catch(() => '');
-		if (served !== fs.readFileSync(path.join(TREE, 'www/js/daimond.js'), 'utf8')) {
+		if (served !== readPage(path.join(TREE, 'www/js/daimond.js'), 'utf8')) {
 			throw new Error('the app server on ' + PORT + ' is not serving this tree (' + TREE + ')');
 		}
 	}
@@ -164,7 +165,7 @@ function breakRoute() {
 	if (!BREAK) return null;
 	const files = new Map();
 	for (const b of BREAKS[BREAK]) {
-		const src = files.get(b.file) ?? fs.readFileSync(path.join(TREE, 'www', b.file), 'utf8');
+		const src = files.get(b.file) ?? readPage(path.join(TREE, 'www', b.file), 'utf8');
 		const n = src.split(b.find).length - 1;
 		if (n !== 1) {
 			console.log(`break '${BREAK}': its anchor appears ${n} times in ${b.file}, so nothing was changed and this run would prove nothing`);

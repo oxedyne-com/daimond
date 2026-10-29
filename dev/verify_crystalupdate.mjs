@@ -24,6 +24,7 @@
 //
 //   node dev/verify_crystalupdate.mjs --base   # RED: r545's daimond.js, versions.js, crystal.js
 //   node dev/verify_crystalupdate.mjs          # GREEN
+import { readPage } from './pagesrc.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,8 +45,8 @@ const check = (cond, msg, detail) => {
 };
 
 const sha = (t) => crypto.createHash('sha256').update(t, 'utf8').digest('hex');
-const REAL = fs.readFileSync(path.join(TPL, 'crystal.html'), 'utf8');
-const MAN  = JSON.parse(fs.readFileSync(path.join(TPL, 'capp.json'), 'utf8'));
+const REAL = readPage(path.join(TPL, 'crystal.html'), 'utf8');
+const MAN  = JSON.parse(readPage(path.join(TPL, 'capp.json'), 'utf8'));
 const V0   = MAN.v;
 const H0   = sha(REAL);
 const H60  = '60fe671170fc11b3ee995699e8227f5d8746c6956226719b1fdb9f54151418af';   // the readLanes base
@@ -289,7 +290,7 @@ try {
 	// delivered at 60fe… less its `/// Everything the page needs` line; today's
 	// template inserts `function readLanes(` just before that line. diff3 calls it
 	// a conflict, the person's side wins, and the merge calls readLanes undefined.
-	const B60 = fs.readFileSync(path.join(TPL, 'base', H60 + '.html'), 'utf8');
+	const B60 = readPage(path.join(TPL, 'base', H60 + '.html'), 'utf8');
 	const bl = B60.split('\n');
 	const cut = bl.findIndex(l => l.startsWith('/// Everything the page needs'));
 	if (cut < 0) throw new Error('the 60fe page no longer has its `/// Everything` line');

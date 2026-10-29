@@ -19,6 +19,7 @@
 
    Run:  node www/js/catchup.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -42,7 +43,7 @@ function extractFn(src, name) {
 	return src.slice(at + 1, i);
 }
 
-const src = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
 const STALL = 6000;
 function runner(sync) {
 	return new Function('env', [

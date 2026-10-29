@@ -17,13 +17,14 @@
 
    Run:  node www/js/ccp2settle.test.mjs   (CCP2SETTLE_SRC=<daimond.js> to run it over another copy)
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { fakeIDB, tabJournal, journalQueueOver } from './journalfixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(process.env.CCP2SETTLE_SRC || join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(process.env.CCP2SETTLE_SRC || join(HERE, 'daimond.js'), 'utf8');
 /// The not-run cause map (NOTRUN-WHY), lifted as the page holds it.
 const NOTRUN_SRC = (/\n\tvar NOTRUN_KEYS = \{[\s\S]*?\n\t\};/.exec(SRC) || [''])[0];
 let failures = 0, checks = 0;

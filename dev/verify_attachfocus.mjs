@@ -60,6 +60,7 @@
 //   eval "$(bash dev/world.sh 7 --up)"
 //   eval "$(bash dev/world.sh 7 --env)"
 //   node dev/verify_attachfocus.mjs
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -214,7 +215,7 @@ const { page } = s;
 async function installBreak() {
 	if (!BREAK) return;
 	const spec = BREAKS[BREAK];
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

@@ -25,6 +25,7 @@
 //
 // A break whose every anchor does not match exactly once in its file exits 2. Sections run in the order RD1 RD2 RD3 RD5 RD4 RD3b:
 // RD4 adds a rating, which RD2's hand count and RD5's comparison must not see, and RD3b writes a leftover row, which RD4's reads must not meet.
+import { readPage } from './pagesrc.mjs';
 import { open, scratch, signInAs } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,7 +55,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; known: $
 let patched = null;
 if (BREAK) {
 	const b = BREAKS[BREAK];
-	let src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+	let src = readPage(path.join(WWW, b.file), 'utf8');
 	for (const e of b.edits) {
 		const n = src.split(e.from).length - 1;
 		if (n !== 1) { console.error(`break '${BREAK}': anchor matched ${n} times, not once, in ${b.file}: ${JSON.stringify(e.from)}`); process.exit(2); }

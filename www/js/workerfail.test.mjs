@@ -18,11 +18,12 @@
          WT_SRC=/path/to/old/daimond.js node www/js/workerfail.test.mjs  # red run
    Diagnosis: ~/usr/code/ai/claude/notes/daimond_sync_20261017/diag_zeroround.md
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const GRID = createRequire(import.meta.url)('./agentgrid.js');
 
-const SRC = readFileSync(process.env.WT_SRC || new URL('./daimond.js', import.meta.url), 'utf8');
+const SRC = readPage(process.env.WT_SRC || new URL('./daimond.js', import.meta.url), 'utf8');
 
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {
@@ -246,7 +247,7 @@ const endRow = (events) => (events.find((e) => e.kind === 'worker' && e.row.at =
 		check('(d) a done worker is', S.workerFoldable(Object.assign({ status: 'done' }, base)) === true);
 		check('(d) a chat worker is not', S.workerFoldable({ status: 'done', text: 'x' }) === false);
 	}
-	const SRC2 = readFileSync(process.env.WT_SRC || new URL('./daimond.js', import.meta.url), 'utf8');
+	const SRC2 = readPage(process.env.WT_SRC || new URL('./daimond.js', import.meta.url), 'utf8');
 	check('(d) the tile and foldIn both ask workerFoldable',
 		(SRC2.match(/workerFoldable\(run\)/g) || []).length >= 2);
 }

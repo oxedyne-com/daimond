@@ -28,12 +28,13 @@
    Run:  node www/js/verify_attach.test.mjs
          node www/js/verify_attach.test.mjs --break stale  # pre-root-fix code back
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');

@@ -37,6 +37,7 @@
      node www/js/chatmeta.test.mjs              # the fix, clean
      node www/js/chatmeta.test.mjs --break lww  # record-level LWW again → rename reverts
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -77,7 +78,7 @@ function funcBody(src, decl) {
 // ── The daimond.js source, optionally patched to REINTRODUCE record-level LWW so
 //    a guard can be shown to catch it. ────────────────────────────────────────
 function daimondSrc() {
-	let src = readFileSync(DAIMOND_SRC, 'utf8');
+	let src = readPage(DAIMOND_SRC, 'utf8');
 	if (BREAK === 'lww') {
 		// The metadata scalars resolve from the TURN winner again -- record-level
 		// LWW -- so a rename loses to a later turn exactly as it did before the split.

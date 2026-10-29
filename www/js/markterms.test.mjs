@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { readPage } from '../../dev/pagesrc.mjs';
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const WWW   = path.join(HERE, '..');
@@ -118,7 +119,7 @@ for (const c of LOCALES) {
 // line continuations joined, so a phrase split across source lines still reads whole.
 // `for mark in ...` is a Rust loop over a variable, not words, so it is not matched.
 function engineText(rel) {
-	const s = fs.readFileSync(path.join(SRC, rel), 'utf8');
+	const s = readPage(path.join(SRC, rel), 'utf8');
 	const cut = s.search(/\n(#\[cfg\(test\)\]\s*\n)?mod tests \{/);
 	return (cut < 0 ? s : s.slice(0, cut))
 		.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')

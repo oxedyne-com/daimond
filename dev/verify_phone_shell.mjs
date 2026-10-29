@@ -37,6 +37,7 @@
 //
 // Shots: $SHELL_SHOTS (default $DAIMOND_SCRATCH/phone_shell/shots), named <section>_<state>_<look>_<title>.png
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -95,7 +96,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; one of: 
 {
 	const src = {}, stale = [];
 	for (const [n, b] of Object.entries(BREAKS)) {
-		src[b.file] = src[b.file] || fs.readFileSync(path.join(WWW, b.file), 'utf8');
+		src[b.file] = src[b.file] || readPage(path.join(WWW, b.file), 'utf8');
 		if (src[b.file].split(b.from).length !== 2) stale.push(n);
 	}
 	// A break whose anchor is not there YET (the code it damages is written after the check) is reported, not hidden,
@@ -109,7 +110,7 @@ const ONLY = new Set((arg('--only') || (BREAK && !process.argv.includes('--full'
 const on = (s) => ONLY.has(s);
 const ROUTE = !BREAK ? null : async (page) => {
 	const b = BREAKS[BREAK];
-	const body = fs.readFileSync(path.join(WWW, b.file), 'utf8').replace(b.from, () => b.to);
+	const body = readPage(path.join(WWW, b.file), 'utf8').replace(b.from, () => b.to);
 	console.log(`\n*** BREAK ${BREAK}: ${b.what} — failures below are the point ***\n`);
 	await page.route('**/' + b.file + '*', (r) => r.fulfill({ status: 200, contentType: b.file.endsWith('.css') ? 'text/css' : 'application/javascript', body }));
 };

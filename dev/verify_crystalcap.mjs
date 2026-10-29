@@ -66,6 +66,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no mock LLM: nothing
 // here runs a turn.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,7 +82,7 @@ import { open, scratch } from './harness.mjs';
 // constant the same way.
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const capOf = (name) => {
-	const src = fs.readFileSync(path.join(ROOT, 'src', 'tools.rs'), 'utf8');
+	const src = readPage(path.join(ROOT, 'src', 'tools.rs'), 'utf8');
 	const m = new RegExp(name + ':\\s*usize\\s*=\\s*(\\d+)\\s*\\*\\s*(\\d+)').exec(src);
 	if (!m) throw new Error('verify_crystalcap: ' + name + ' not found in src/tools.rs');
 	return Number(m[1]) * Number(m[2]);
@@ -112,7 +113,7 @@ if (!(DATA_CAP < PAGE_CAP)) {
 // that met the real ceiling had to establish it by experiment. This runs before the browser does,
 // because a number that disagrees with the engine is wrong whatever the app then does with it.
 const labelOf = (name) => {
-	const src = fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
+	const src = readPage(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
 	const m = new RegExp('var\\s+' + name + '\\s*=\\s*(\\d+)\\s*;').exec(src);
 	if (!m) throw new Error('verify_crystalcap: ' + name + ' not found in www/js/daimond.js');
 	return Number(m[1]) * 1024;
@@ -156,7 +157,7 @@ const guideCap = (label, file, rel, text) => {
 	// and would have been "fixed" by putting the card back. Whatever block names the control is
 	// read, and the figure is taken from that block.
 	const rel  = path.join('www', 'guide', 'capps.html');
-	const html = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+	const html = readPage(path.join(ROOT, rel), 'utf8');
 	const at   = html.search(/Page size limit/i);
 	if (at < 0) {
 		console.error('verify_crystalcap: nothing in ' + rel + ' names "Page size limit", so the '
@@ -181,7 +182,7 @@ const guideCap = (label, file, rel, text) => {
 	}
 	// And the translatable run behind it, which is what the seven locale pages are built from.
 	const bankRel = path.join('dev', 'guide-i18n', '_source.json');
-	const bank    = JSON.parse(fs.readFileSync(path.join(ROOT, bankRel), 'utf8'));
+	const bank    = JSON.parse(readPage(path.join(ROOT, bankRel), 'utf8'));
 	const runs    = (bank['capps.html'] || []).filter((s) => /^\s*\d+\s*(K|M)i?B\s*$/i.test(s));
 	if (runs.length !== 1 || guideCap('the bank\'s copy', bankRel, bankRel, runs[0]) !== PAGE_CAP) {
 		console.error('verify_crystalcap: ' + bankRel + ' holds ' + JSON.stringify(runs) + ' where '

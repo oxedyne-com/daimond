@@ -29,6 +29,7 @@
 //
 //   eval "$(bash dev/world.sh 99 --up)"; node dev/verify_crystalsync.mjs
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +37,7 @@ import { open, scratch } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIR  = path.join(HERE, '..', 'www', 'capps', 'lifelog');
-const MAN  = JSON.parse(fs.readFileSync(path.join(DIR, 'capp.json'), 'utf8'));
+const MAN  = JSON.parse(readPage(path.join(DIR, 'capp.json'), 'utf8'));
 const NAME = 'Sync log';
 
 let bad = 0;
@@ -57,7 +58,7 @@ const iso = d => {
 /// future before 08:00 and, before the Body lane's day turns (`dayStart`, 04:00), on a day
 /// the page was not showing yet: the run was red from midnight (r545 QA B F-B3; the nightly
 /// runs it about 05:00). Kept inside the page's current day, so one shard holds them all.
-const DS    = JSON.parse(fs.readFileSync(path.join(DIR, 'lanes', 'body.json'), 'utf8')).dayStart || 0;
+const DS    = JSON.parse(readPage(path.join(DIR, 'lanes', 'body.json'), 'utf8')).dayStart || 0;
 const dayOf = (t) => ymd(new Date(t - DS * 60e3));
 const NOW0  = Date.now();
 const DAY0  = (() => { const d = new Date(NOW0 - DS * 60e3); d.setHours(0, 0, 0, 0); return d.getTime() + DS * 60e3; })();
@@ -179,9 +180,9 @@ try {
 	check(!!id, 'a Diamond was made on A', id);
 	if (!id) throw new Error('no Diamond');
 	await put(pa, id, 'crystal.json', JSON.stringify({ title: NAME, summary: 'What I weigh.' }, null, 2));
-	await put(pa, id, 'crystal.html', fs.readFileSync(path.join(DIR, 'crystal.html'), 'utf8'));
+	await put(pa, id, 'crystal.html', readPage(path.join(DIR, 'crystal.html'), 'utf8'));
 	for (const rel of MAN.files.filter(f => f !== 'crystal.html')) {
-		await put(pa, id, rel, fs.readFileSync(path.join(DIR, rel), 'utf8'));
+		await put(pa, id, rel, readPage(path.join(DIR, rel), 'utf8'));
 	}
 	await put(pa, id, SHARD, ent(81.3, 'a1', 3) + '\n');
 	await pa.evaluate(() => { try { DaimondPanels.hide('guide'); DaimondPanels.hide('work'); DaimondPanels.show('ai'); } catch (e) {} });
@@ -443,7 +444,7 @@ try {
 	// A forked page of a past template that says when it is mid-entry, and its record.
 	const BASES = path.join(DIR, 'base');
 	const bf = fs.existsSync(BASES) ? fs.readdirSync(BASES).filter(f => /^[0-9a-f]{64}\.html$/.test(f)) : [];
-	const b9 = bf.map(f => ({ f, t: fs.readFileSync(path.join(BASES, f), 'utf8') }))
+	const b9 = bf.map(f => ({ f, t: readPage(path.join(BASES, f), 'utf8') }))
 		.filter(x => x.t.indexOf("cmd: 'dirty'") >= 0).sort((x, y) => y.t.length - x.t.length)[0];
 	check(!!b9, '9: a served base page that reports mid-entry', bf.length + ' bases');
 	if (b9) {

@@ -85,6 +85,7 @@
 //
 // Needs dev/serve.mjs and the mock. No gateway, no wasm rebuild — the branch under
 // test is JavaScript.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -121,7 +122,7 @@ const check = (pass, name, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 
-const SRC = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+const SRC = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 for (const anchor of [COND, PART]) {
 	if (SRC.split(anchor).length !== 2) {
 		console.error(`the line ${JSON.stringify(anchor.trim())} is not in js/daimond.js `

@@ -35,6 +35,7 @@
 // Options: --fill N (fillers in the first save, default 40), --msgs N, --len N, --hold MS
 // (how long the database is held before W1 may run, default 800; 0 is the bare race).
 // Needs dev/serve.mjs and a Chromium for --break; no gateway or mock model.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,7 +69,7 @@ if (BREAK && BROWSER !== 'chromium') { console.error('--break serves an edited f
 
 const PATCHED = new Map();
 if (BREAK) {
-	let src = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+	let src = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 	for (const part of BREAKS[BREAK]) {
 		const [find, put] = REVERT[part];
 		const n = src.split(find).length - 1;

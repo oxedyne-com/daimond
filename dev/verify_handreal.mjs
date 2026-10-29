@@ -119,6 +119,7 @@
 // Needs nothing running: the dev server and the mock provider are started here
 // if they are not already up. Headed, because Chromium loads an unpacked
 // extension in no other mode.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -215,7 +216,7 @@ async function installBreak(page) {
 		console.error(`--break ${BREAK}: no such break. One of: ${Object.keys(BREAKS).join(', ')}`);
 		process.exit(2);
 	}
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
@@ -386,7 +387,7 @@ check('install.sh registers the real binary in the profile it was pointed at',
 	inst.status === 0 && fs.existsSync(manifestPath),
 	(inst.stderr || inst.stdout || '').trim().split('\n').slice(-2).join(' '));
 let manifest = {};
-try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch (e) { /* checked below */ }
+try { manifest = JSON.parse(readPage(manifestPath, 'utf8')); } catch (e) { /* checked below */ }
 check('the manifest names the built hand and this extension',
 	manifest.path === HAND && (manifest.allowed_origins || []).includes(`chrome-extension://${EXTID}/`),
 	JSON.stringify(manifest.path) + ' ' + JSON.stringify(manifest.allowed_origins));
@@ -616,7 +617,7 @@ try {
 	const wsCap = (st.caps || []).find((c) => c.indexOf('ws:') === 0) || '';
 	check('and it published an identity for the folder it was granted, which is on disk',
 		/^ws:[0-9a-f]{32}$/.test(wsCap) && fs.existsSync(path.join(GRANT, '.daimond/workspace.id'))
-		&& fs.readFileSync(path.join(GRANT, '.daimond/workspace.id'), 'utf8').includes(wsCap.slice(3)),
+		&& readPage(path.join(GRANT, '.daimond/workspace.id'), 'utf8').includes(wsCap.slice(3)),
 		wsCap);
 	note(`hand ${st.version} on ${st.os}: ${(st.caps || []).join(' ')}`);
 
@@ -823,7 +824,7 @@ try {
 	// ── The journal on disk ─────────────────────────────────────────
 	const files = fs.readdirSync(JOURNAL).filter((f) => /^hand-\d+\.jsonl$/.test(f));
 	const lines = files.flatMap((f) =>
-		fs.readFileSync(path.join(JOURNAL, f), 'utf8').split('\n').filter(Boolean));
+		readPage(path.join(JOURNAL, f), 'utf8').split('\n').filter(Boolean));
 	check('the hand wrote a journal beside root.txt', files.length > 0, files.join(' '));
 	check('and it names the command that was run',
 		lines.some((l) => l.includes('/bin/cat') && l.includes('inside.txt')),

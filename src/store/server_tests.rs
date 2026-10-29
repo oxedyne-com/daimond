@@ -1869,7 +1869,7 @@ fn qa1_a_a_write_past_its_commit_point_is_answered_with_what_it_did() {
 fn qa1_f3_delete_entry_is_the_stores_own_door() {
     const DIAMOND: &str = include_str!("diamond.rs");
     const SERVER: &str = include_str!("server.rs");
-    const TOOLS: &str = include_str!("../tools.rs");
+    let tools = crate::tools::source();
     const KEPT: [&str; 13] = ["migrate_one_root", "delete", "write_snapshot", "take_back",
         "unpend", "settle", "prune_held", "restore_let_go", "end_run", "refile_own_versions",
         "undo_refile", "rebase_before_import", "delete_except_kept"];
@@ -1900,7 +1900,7 @@ fn qa1_f3_delete_entry_is_the_stores_own_door() {
     };
     assert!(!file_act.contains("delete_entry("), "the run's file act calls delete_entry");
     assert!(!SERVER.contains("own::delete_entry("), "the store server calls own::delete_entry");
-    assert!(!TOOLS.contains("own::delete_entry("), "the tools call own::delete_entry");
+    assert!(!tools.contains("own::delete_entry("), "the tools call own::delete_entry");
 }
 
 /// rc-a ruling F2: a run's grant naming a keeper id that is not one store's name is refused at

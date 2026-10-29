@@ -20,6 +20,7 @@
 
      node www/js/lookheal.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -44,7 +45,7 @@ const win = globalThis;
 win.dispatchEvent = () => true;
 const documentShim = { addEventListener: () => {}, getElementById: () => null, visibilityState: 'hidden' };
 function loadScript(rel) {
-	const body = readFileSync(join(HERE, rel), 'utf8');
+	const body = readPage(join(HERE, rel), 'utf8');
 	const fn = new Function('window', 'document', 'localStorage', 'console', 'globalThis', body);
 	fn(win, documentShim, localStorage, console, globalThis);
 }
@@ -111,7 +112,7 @@ async function main() {
 	check('one mint between them, and the retry on it', mints === before + 1 && keys[1] === 'k' + mints && d.ok, keys.join(',') + ' mints ' + mints);
 
 	console.log('(e) the look is wired through it');
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const at = src.indexOf('async function lookAt(');
 	const body = at >= 0 ? src.slice(at, src.indexOf('window.DaimondVision', at)) : '';
 	check('lookAt sends through DaimondModels.sendOnKey', /DaimondModels\.sendOnKey\(/.test(body));

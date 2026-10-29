@@ -8,6 +8,7 @@
 // brace-balanced scan and run over a stand-in DOM with real sibling order, so an edit that
 // lets a turn's tiles land below its "<device> is on it" tile, or the indicator below an
 // open Decision, fails here.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -15,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP  = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
+const APP  = readPage(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
 
 function extractFn(src, name) {
 	const m = new RegExp('\\n\\t+(?:async )?function ' + name + '\\(').exec(src);

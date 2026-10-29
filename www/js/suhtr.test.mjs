@@ -24,6 +24,7 @@
 
    Run: node www/js/suhtr.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -90,7 +91,7 @@ function loadPeer() {
 		querySelectorAll: () => [], getElementById: () => null };
 	for (const rel of ['stamp.js', 'peer.js']) {
 		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
-			'with (window) {\n' + readFileSync(join(HERE, rel), 'utf8') + '\n}')(win, doc, quiet,
+			'with (window) {\n' + readPage(join(HERE, rel), 'utf8') + '\n}')(win, doc, quiet,
 			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
 	}
 	return win;
@@ -237,7 +238,7 @@ for (const diamond of [false, true]) {
 }
 {
 	console.log('R2: a daimon turn takes its id from how.mid');
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	check('R2b runSteer names the person\'s message from how.mid when given',
 		/var dumid = detached \? String\(detached\.turnId\) : \(\(how && how\.mid\) \? String\(how\.mid\) : newMid\(\)\);/.test(src));
 }

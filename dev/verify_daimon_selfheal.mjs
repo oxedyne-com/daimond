@@ -23,13 +23,14 @@
 //   node dev/verify_daimon_selfheal.mjs --break dropped   # reinstates the #12-era
 //                                                          # `chat.diamondId ||` term;
 //                                                          # must fail (b) both ways.
+import { readPage } from './pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { guardRan } from './verdict.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
+const SRC  = readPage(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');

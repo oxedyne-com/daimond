@@ -27,6 +27,7 @@
 
 // The pictures live in dev/shots_focus_and_ink.mjs -- this file measures and
 // says so in words; nothing here writes an image.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -640,7 +641,7 @@ function focusSelectors() {
 	const dir = path.join(HERE, '..', 'www', 'css');
 	const rows = [];
 	for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.css'))) {
-		const css = fs.readFileSync(path.join(dir, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+		const css = readPage(path.join(dir, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 		for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
 			const body = m[2];
 			for (const part of m[1].split(',')) {

@@ -9,6 +9,7 @@
 // beat and the New Chat click fell through to #main (verify_handoff_fault case N).
 // The closed drawer is now `visibility: hidden` in the same media query that slides
 // it away, the #msheet pattern, so the layout and the hiding can never disagree.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,8 +17,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const CSS  = fs.readFileSync(path.join(HERE, '..', 'css', 'mobile.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-const JS   = fs.readFileSync(path.join(HERE, 'mobile.js'), 'utf8');
+const CSS  = readPage(path.join(HERE, '..', 'css', 'mobile.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+const JS   = readPage(path.join(HERE, 'mobile.js'), 'utf8');
 
 // The body of the first `@media (max-width: 760px) {` block, braces balanced.
 function phoneBlock() {
@@ -57,7 +58,7 @@ test('a widened window has a live rail at once: no script makes the rail inert',
 
 // The focus helpers, lifted from daimond.js and run over a small DOM. A closed drawer
 // still has boxes, so "has client rects" cannot mean "can take the focus" (S1MF-live).
-const APP = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
+const APP = readPage(path.join(HERE, 'daimond.js'), 'utf8');
 function lift(name) {
 	const m = new RegExp('\\n\\t+function ' + name + '\\(').exec(APP);
 	if (!m) return '';

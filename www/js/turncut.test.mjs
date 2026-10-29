@@ -22,6 +22,7 @@
    Drives the REAL peer.js (DaimondPeer.runErrand, DaimondLease) on a virtual clock
    and lifts the page's helpers from daimond.js.   `node www/js/turncut.test.mjs`
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -62,7 +63,7 @@ function loadPeer() {
 	const atob = (s) => Buffer.from(s, 'base64').toString('binary');
 	function EventShim(t) { this.type = t; }
 	function loadScript(rel, extra) {
-		let body = readFileSync(join(HERE, rel), 'utf8');
+		let body = readPage(join(HERE, rel), 'utf8');
 		if (extra) body += extra;
 		const fn = new Function(
 			'window', 'document', 'crypto', 'localStorage', 'btoa', 'atob',
@@ -226,8 +227,8 @@ function extractFn(src, name) {
 	return src.slice(start + 1, i);
 }
 {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-	const en = readFileSync(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
+	const en = readPage(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
 	const fns = ['cutReason', 'cutAccount'].map((n) => extractFn(src, n));
 	check('U4: the page has cutReason and cutAccount', fns.every(Boolean));
 	if (fns.every(Boolean)) {

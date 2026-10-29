@@ -54,6 +54,7 @@
 //   node dev/verify_chatid.mjs
 //
 // Needs dev/serve.mjs and the mock only. No gateway.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -116,7 +117,7 @@ if (BREAK && !BREAKS[BREAK]) {
 /// The damaged source, or a hard stop. Nothing is served that was not verified to
 /// differ from the file on disk.
 function damaged(spec) {
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
@@ -130,7 +131,7 @@ async function breakInto(page) {
 	if (!BREAK) return;
 	const bodies = {};
 	for (const spec of BREAKS[BREAK]) {
-		bodies[spec.file] = bodies[spec.file] || fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		bodies[spec.file] = bodies[spec.file] || readPage(path.join(WWW, spec.file), 'utf8');
 		// Each spec is checked against the file ON DISK, so two edits to one file
 		// cannot mask each other's anchor.
 		damaged(spec);

@@ -7,6 +7,7 @@
 // the REAL daimond.js by a brace-balanced scan and run over a small stand-in DOM, so an edit that
 // lets a typed answer leave the card open, or a drained queue answer the question, fails here.
 // The browser half (placement, reload, the live queue box) is dev/verify_decision_last.mjs.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -14,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const APP  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function extractFn(src, name) {
 	const m = new RegExp('\\n\\t+(?:async )?function ' + name + '\\(').exec(src);

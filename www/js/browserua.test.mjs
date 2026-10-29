@@ -15,6 +15,7 @@
 
    Run:  node www/js/browserua.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -39,7 +40,7 @@ function extractFn(src, name) {
 	return src.slice(start + 1, i);
 }
 
-const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 let browserOf = null;
 try {
 	const lifted = ['uaBrand', 'shortBrand', 'browserOf', 'brandsOf'].map((n) => extractFn(src, n)).join('\n');

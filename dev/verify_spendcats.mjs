@@ -47,6 +47,7 @@
 //
 // The browser half needs dev/serve.mjs (DAIMOND_PORT) and the mock provider; no
 // gateway, and no model is asked to think.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,7 +66,7 @@ const setEq = (a, b) => a.length === b.length && a.every(x => b.includes(x));
 
 // ── The gateway, read as the authority ──────────────────────────────
 
-const RUST = fs.readFileSync(path.join(TREE, 'gateway/src/schema.rs'), 'utf8');
+const RUST = readPage(path.join(TREE, 'gateway/src/schema.rs'), 'utf8');
 
 /// The body of `LedgerEntry::category()`, from its signature to the brace that
 /// closes it. Every inner brace is indented deeper than the four spaces the
@@ -114,7 +115,7 @@ check('gateway: SPEND_CATEGORIES names exactly what category() can return for a 
 
 // ── The page's copy ─────────────────────────────────────────────────
 
-const SPENDJS = fs.readFileSync(path.join(TREE, 'www/js/spend.js'), 'utf8');
+const SPENDJS = readPage(path.join(TREE, 'www/js/spend.js'), 'utf8');
 const jm      = SPENDJS.match(/var CATS = \[([\s\S]*?)\];/);
 const pageCats = jm ? [...jm[1].matchAll(/'([a-z_]+)'/g)].map(m => m[1]) : [];
 check('spend.js: CATS found', !!jm && pageCats.length > 0, pageCats.join(' '));
@@ -135,7 +136,7 @@ const I18NDIR = path.join(TREE, 'www/i18n');
 function loadTable(code) {
 	let table = null;
 	const w = { DaimondI18n: { register: (c, t) => { table = t; } } };
-	new Function('window', fs.readFileSync(path.join(I18NDIR, code + '.js'), 'utf8'))(w);
+	new Function('window', readPage(path.join(I18NDIR, code + '.js'), 'utf8'))(w);
 	return table || {};
 }
 const codes  = fs.readdirSync(I18NDIR).filter(f => f.endsWith('.js')).map(f => f.slice(0, -3)).sort();

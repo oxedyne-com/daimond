@@ -17,6 +17,7 @@
 
    Run:  node www/js/prenote.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -34,8 +35,8 @@ function same(name, got, want) {
 	check(name, a === b, 'got ' + a + ' want ' + b);
 }
 
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const PEER = readFileSync(join(HERE, 'peer.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
+const PEER = readPage(join(HERE, 'peer.js'), 'utf8');
 
 /// The source of `function name(...) {...}` (or async), brace-balanced, or null.
 function lift(src, name) {
@@ -89,7 +90,7 @@ function calls(src, name) {
 
 // ── The real modules, in a bare scope ──────────────────────
 const win = {};
-for (const f of ['provenance.js', 'ratings.js']) new Function('window', readFileSync(join(HERE, f), 'utf8'))(win);
+for (const f of ['provenance.js', 'ratings.js']) new Function('window', readPage(join(HERE, f), 'utf8'))(win);
 const R = win.DaimondRatings;
 function loadPeer() {
 	const w = {};
@@ -525,7 +526,7 @@ console.log('\nThe turn-starting exports, the journal and the runner carry it');
 	check('a journal from before the fields recovers the plain record it always did', q3 && J(Object.keys(q3)) === J(['role', 'content', 'mid', 'iturn', 'ts']), q3 && Object.keys(q3));
 	const q4 = run(() => S.recoverUserRecord(cc, 'it4', { turnId: 'it4', userText: 'no meta' }));
 	check('and one with no meta at all', q4 && !hasPre(q4) && !('app' in q4) && q4.content === 'no meta', q4 && Object.keys(q4));
-	check('the journal passes the meta through untouched (it carries pre and app by being opaque)', /meta:\s*meta \|\| null/.test(readFileSync(join(HERE, 'journal.js'), 'utf8')));
+	check('the journal passes the meta through untouched (it carries pre and app by being opaque)', /meta:\s*meta \|\| null/.test(readPage(join(HERE, 'journal.js'), 'utf8')));
 }
 
 // ═══ 5. tailAfter and dedupeSession compare content only ═══

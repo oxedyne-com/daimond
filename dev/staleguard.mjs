@@ -85,6 +85,7 @@
 // exactly as a changed fence does. Nothing short of compiling can tell the two
 // apart, so a comment still costs a build; what stops costing a build is source
 // that did not change at all and only looks like it did.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -129,7 +130,7 @@ export function whyStaleBinary(bin, { subject, rebuild, what = 'binary' }) {
 	}
 	const record = `${bin}.d`;
 	let listed;
-	try { listed = fs.readFileSync(record, 'utf8'); }
+	try { listed = readPage(record, 'utf8'); }
 	catch (e) {
 		return `${subject} cannot be verified, because ${bin} has no dep-info file at `
 			+ `${record}, so there is no record of what went into it and its vintage `
@@ -202,11 +203,11 @@ export const WASM_SOURCE_RECORD = 'source.json';
 export function sourceMap(root, srcDir = path.join(root, SRC_REL)) {
 	const map = {};
 	for (const f of rustSources(srcDir)) {
-		try { map[posix(path.relative(root, f))] = sha256(fs.readFileSync(f)); }
+		try { map[posix(path.relative(root, f))] = sha256(readPage(f)); }
 		catch (e) { /* removed under us; the next build will say so */ }
 	}
 	for (const extra of ['Cargo.toml', 'Cargo.lock']) {
-		try { map[extra] = sha256(fs.readFileSync(path.join(root, extra))); }
+		try { map[extra] = sha256(readPage(path.join(root, extra))); }
 		catch (e) { /* a tree without one is described by not naming it */ }
 	}
 	return map;
@@ -252,7 +253,7 @@ export function certifyWasm(pkgDir, from, { by = 'dev/gate.sh' } = {}) {
 	const record = {
 		version:	1,
 		source:		bundleHash(files),
-		bundle:		sha256(fs.readFileSync(wasm)),
+		bundle:		sha256(readPage(wasm)),
 		files,
 		from:		homeless(path.resolve(from)),
 		by,
@@ -271,10 +272,10 @@ export function certifyWasm(pkgDir, from, { by = 'dev/gate.sh' } = {}) {
 /// one that does.
 export function wasmRecord(wasm) {
 	let rec;
-	try { rec = JSON.parse(fs.readFileSync(path.join(path.dirname(wasm), WASM_SOURCE_RECORD), 'utf8')); }
+	try { rec = JSON.parse(readPage(path.join(path.dirname(wasm), WASM_SOURCE_RECORD), 'utf8')); }
 	catch (e) { return null; }
 	if (!rec || rec.version !== 1 || !rec.files || typeof rec.bundle !== 'string') return null;
-	try { if (sha256(fs.readFileSync(wasm)) !== rec.bundle) return null; }
+	try { if (sha256(readPage(wasm)) !== rec.bundle) return null; }
 	catch (e) { return null; }
 	return rec;
 }

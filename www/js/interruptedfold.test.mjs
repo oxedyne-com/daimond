@@ -6,6 +6,7 @@
 //
 // daimond.js cannot be loaded whole in Node, so the fold and the graft are cut out by name and run
 // against a stub world.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,10 +14,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
 // The REAL stamp module: a seed-built chat takes the seed's one-way taint through it (H3).
 const STAMPWIN = {};
-new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
+new Function('window', readPage(join(HERE, 'stamp.js'), 'utf8'))(STAMPWIN);
 
 function cut(name) {
 	let at = src.indexOf('\n\tasync function ' + name + '(');

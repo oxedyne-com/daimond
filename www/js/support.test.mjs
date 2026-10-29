@@ -43,6 +43,7 @@
 
    Run:  node www/js/support.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -155,7 +156,7 @@ function makeEnv(cfg) {
 	const setTimeoutImpl = (fn, ms) => { timerDelays.push(ms); return setTimeout(fn, 1); };
 
 	function loadScript(rel) {
-		const bodyText = readFileSync(join(HERE, rel), 'utf8');
+		const bodyText = readPage(join(HERE, rel), 'utf8');
 		const fn = new Function(
 			'window', 'document', 'localStorage', 'fetch',
 			'setTimeout', 'clearTimeout', 'console',
@@ -393,7 +394,7 @@ async function main() {
 		// The REAL daimond.js source, lifted with a brace-balanced scan (the same
 		// technique tailwiring.test.mjs uses) -- not retyped, so a regression in
 		// the actual wired function is what reddens this, not a copy of it.
-		const daimondSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const daimondSrc = readPage(join(HERE, 'daimond.js'), 'utf8');
 		function extractFn(src, name) {
 			const start = src.indexOf('\n\tfunction ' + name + '(');
 			if (start < 0) throw new Error('function not found in daimond.js: ' + name);
@@ -468,7 +469,7 @@ async function main() {
 	{
 		// The REAL daimond.js `errorToastWithReport`, lifted the same way (i) lifts
 		// `appendError`: a brace-balanced scan, not a retyped copy.
-		const daimondSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const daimondSrc = readPage(join(HERE, 'daimond.js'), 'utf8');
 		function extractFn(src, name) {
 			const start = src.indexOf('\n\tfunction ' + name + '(');
 			if (start < 0) throw new Error('function not found in daimond.js: ' + name);

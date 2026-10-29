@@ -13,6 +13,7 @@
 //
 // The functions are lifted from daimond.js by a brace-balanced scan (the tailwiring.test.mjs
 // technique), so a regression in the source is what reddens this.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -20,8 +21,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const src  = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
-const css  = fs.readFileSync(path.join(HERE, '..', 'css', 'app.css'), 'utf8');
+const src  = readPage(path.join(HERE, 'daimond.js'), 'utf8');
+const css  = readPage(path.join(HERE, '..', 'css', 'app.css'), 'utf8');
 
 function extractFn(name) {
 	let start = src.indexOf('\n\tasync function ' + name + '(');

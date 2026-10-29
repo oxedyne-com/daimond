@@ -39,6 +39,7 @@
 // what `Tool::TypstCompile` did, line for line, until seq 117, and it is still the right
 // door for a source with no project behind it.  Every project claim below must fail
 // under it.  A check that stays green there is checking nothing.
+import { readPage } from './pagesrc.mjs';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pjoin } from 'node:path';
@@ -78,10 +79,10 @@ const FILES = [
 const CONTENT = {};
 for (const [rel, kind] of FILES) {
 	CONTENT[rel] = kind === 'text'
-		? readFileSync(pjoin(FIX, rel), 'utf8')
-		: bin(readFileSync(pjoin(FIX, rel)));
+		? readPage(pjoin(FIX, rel), 'utf8')
+		: bin(readPage(pjoin(FIX, rel)));
 }
-const SOLO = readFileSync(pjoin(FIX, 'solo/main.typ'), 'utf8');
+const SOLO = readPage(pjoin(FIX, 'solo/main.typ'), 'utf8');
 
 const s = await open({ name: 'typstproject' });
 const p = s.page;
@@ -456,7 +457,7 @@ if (!existsSync(pjoin(BOOK, BOOK_MAIN))) {
 	while (q.length) {
 		const f = q.pop();
 		const dir = f.indexOf('/') >= 0 ? f.slice(0, f.lastIndexOf('/')) : '';
-		let text; try { text = readFileSync(pjoin(BOOK, f), 'utf8'); } catch { continue; }
+		let text; try { text = readPage(pjoin(BOOK, f), 'utf8'); } catch { continue; }
 		for (const l of lits(text)) {
 			if (l.startsWith('@')) continue;
 			const e = (l.split('/').pop().split('.').pop() || '').toLowerCase();
@@ -497,8 +498,8 @@ if (!existsSync(pjoin(BOOK, BOOK_MAIN))) {
 	// goes in, drawings included.  Reinstating a stub or an import filter here would put
 	// the fiction back; if a `@preview/…` import stops this compile, the answer is to
 	// vendor the pack (www/assets/typst/refresh.sh), not to edit it out.
-	const bookSrc = [...seen].map(rel => [rel, readFileSync(pjoin(BOOK, rel), 'utf8')]);
-	const bookBin = [...pics, ...fontFiles].map(rel => [rel, bin(readFileSync(pjoin(BOOK, rel)))]);
+	const bookSrc = [...seen].map(rel => [rel, readPage(pjoin(BOOK, rel), 'utf8')]);
+	const bookBin = [...pics, ...fontFiles].map(rel => [rel, bin(readPage(pjoin(BOOK, rel)))]);
 	console.log(`  ..   the real book: ${bookSrc.length} sources, ${pics.size} pictures, ${fontFiles.length} fonts`);
 
 	// (a) The folder above the book is marked in -- the arrangement that makes the

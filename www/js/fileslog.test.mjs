@@ -15,6 +15,7 @@
 
    Run:  node www/js/fileslog.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -31,8 +32,8 @@ function same(name, got, want) {
 	check(name, a === b, 'got ' + a + ' want ' + b);
 }
 
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const PEER = readFileSync(join(HERE, 'peer.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
+const PEER = readPage(join(HERE, 'peer.js'), 'utf8');
 
 /// The source of `function name(...) {...}` (or async), brace-balanced, or null.
 function lift(src, name) {
@@ -50,7 +51,7 @@ function lift(src, name) {
 
 // ── The real modules, in a bare scope ──────────────────────
 const win = {};
-for (const f of ['provenance.js', 'ratings.js']) new Function('window', readFileSync(join(HERE, f), 'utf8'))(win);
+for (const f of ['provenance.js', 'ratings.js']) new Function('window', readPage(join(HERE, f), 'utf8'))(win);
 const R = win.DaimondRatings, V = win.DaimondProvenance;
 function loadPeer() {
 	const w = {};

@@ -18,12 +18,13 @@
    Lifts the REAL function out of daimond.js. Red proof: run
    against 770b1069c.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(join(HERE, 'daimond.js'), 'utf8');
 let failures = 0;
 function check(name, cond, detail) {
 	if (cond) console.log('  ok   ' + name);

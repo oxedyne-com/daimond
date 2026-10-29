@@ -54,6 +54,7 @@
 //   node dev/verify_models.mjs --break pinkfill      # P4: app.css's fill reaching the model rows
 //   node dev/verify_models.mjs --break headclutter   # P5: key state and model count back in the head
 //   node dev/verify_models.mjs                       # and then, clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -253,7 +254,7 @@ if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}"`);
 const hurt = (() => {
 	if (!BREAKS[BREAK]) return null;
 	const b   = BREAKS[BREAK];
-	const src = fs.readFileSync(path.join(ROOT, b.file), 'utf8');
+	const src = readPage(path.join(ROOT, b.file), 'utf8');
 	const out = b.edit(src);
 	if (out === src) die(`the "${BREAK}" break no longer matches ${b.file}`);
 	return { ...b, body: out };

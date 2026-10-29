@@ -111,6 +111,7 @@
 // Headed, because Chromium loads an unpacked extension in no other mode. Needs
 // nothing else running: it serves its own two files, on its own port from 8837,
 // into its own profile, journal and granted folder, and takes all of it down again.
+import { readPage } from './pagesrc.mjs';
 import './predeploy_guard.mjs';	// first: deploy first, refuses (41) this suite on code that is not live (D-20261023-04)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -145,7 +146,7 @@ const SCRATCH	= process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/d
 // wait that disagreed with the hold would pass or fail for a reason that is not
 // the property.
 const HOLD_S = (() => {
-	const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../ext/hand.js'), 'utf8');
+	const src = readPage(path.join(path.dirname(fileURLToPath(import.meta.url)), '../ext/hand.js'), 'utf8');
 	const m = /const HOLD_MS = (\d+);/.exec(src);
 	if (!m) { console.error('ext/hand.js no longer names HOLD_MS; the wait cannot be aimed'); process.exit(2); }
 	return Number(m[1]) / 1000;
@@ -231,7 +232,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function alive(pid) {
 	if (!pid || !Number.isInteger(pid)) return false;
 	try {
-		const st = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+		const st = readPage(`/proc/${pid}/stat`, 'utf8');
 		return st.slice(st.lastIndexOf(')') + 2).split(' ')[0] !== 'Z';
 	} catch (e) { return false; }
 }
@@ -299,7 +300,7 @@ function damage(text, name) {
 }
 if (BREAK && BREAKS[BREAK].file === 'ext') {
 	const f = path.join(EXT, 'hand.js');
-	fs.writeFileSync(f, damage(fs.readFileSync(f, 'utf8'), BREAK));
+	fs.writeFileSync(f, damage(readPage(f, 'utf8'), BREAK));
 	note(`break '${BREAK}' applied to the extension copy`);
 }
 
@@ -320,7 +321,7 @@ window.__held   = function (id) { return DaimondHand.held(id).then(function (h) 
 
 const server = http.createServer((req, res) => {
 	if (/^\/js\/hand\.js/.test(req.url || '')) {
-		let js = fs.readFileSync(path.join(WWW, 'js/hand.js'), 'utf8');
+		let js = readPage(path.join(WWW, 'js/hand.js'), 'utf8');
 		if (BREAK && BREAKS[BREAK].file === 'www') js = damage(js, BREAK);
 		res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
 		res.end(js);

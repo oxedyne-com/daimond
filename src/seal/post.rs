@@ -205,40 +205,5 @@ pub fn open(bytes: &[u8], sk: &[u8]) -> Outcome<Opened> {
 }
 
 #[cfg(test)]
-mod open_body_tests {
-	use super::*;
-
-	fn refusal(o: Outcome<Vec<u8>>) -> Option<&'static str> {
-		match o {
-			Ok(_)	=> None,
-			Err(e)	=> Refusal::of_message(&fmt!("{}", e)),
-		}
-	}
-
-	/// The content key a recipient's open answers opens the body alone, and nothing else does.
-	#[test]
-	fn open_body_with_the_content_key() -> Outcome<()> {
-		let mut sk = [0u8; KEY_LEN];
-		os_random(&mut sk);
-		let pk = res!(AgreementScheme::x25519_public_of(&sk));
-		let mut to = [0u8; KEY_LEN];
-		to.copy_from_slice(&pk[..]);
-		let sealed = res!(seal(&[to], b"a reported message"));
-		let o = res!(open(&sealed, &sk));
-		assert_eq!(res!(open_body(&sealed, &o.ck[..])), b"a reported message".to_vec());
-
-		let mut bad = sealed.clone();
-		let last = bad.len() - 1;
-		bad[last] ^= 1;
-		assert_eq!(refusal(open_body(&bad, &o.ck[..])), Some("damaged"));
-		let mut wrong = o.ck.clone();
-		wrong[0] ^= 0x80;
-		assert_eq!(refusal(open_body(&sealed, &wrong[..])), Some("damaged"));
-		assert_eq!(refusal(open_body(&sealed, &o.ck[..31])), Some("bad_key"));
-		assert_eq!(refusal(open_body(&sealed[..40], &o.ck[..])), Some("short"));
-		let mut tag = sealed.clone();
-		tag[0] ^= 1;
-		assert_eq!(refusal(open_body(&tag, &o.ck[..])), Some("not_sealed"));
-		Ok(())
-	}
-}
+#[path = "../../tests/unit/seal/post/open_body_tests.rs"]
+mod open_body_tests;

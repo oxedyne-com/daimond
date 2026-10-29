@@ -7,6 +7,7 @@
 // cut out of daimond.js or workspace.js by name and called, and after every open the body is asked for strays
 // (`DaimondLayers.strays()`: a role=menu child that hang did not put up). The last test plants a builder that skips
 // hang, and the same check finds it.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC  = { d: readFileSync(join(HERE, 'daimond.js'), 'utf8'), w: readFileSync(join(HERE, 'workspace.js'), 'utf8') };
+const SRC  = { d: readPage(join(HERE, 'daimond.js'), 'utf8'), w: readPage(join(HERE, 'workspace.js'), 'utf8') };
 
 /// The function `name` defined at `tabs` indentation in `src`, from its head to its closing brace.
 function cut(src, name, tabs = '\t') {
@@ -61,7 +62,7 @@ function world() {
 	};
 	const hist = { state: null, length: 1, pushState(s) { hist.state = s; hist.length++; }, replaceState(s) { hist.state = s; }, go() {}, back() {} };
 	const win = { document: doc, history: hist, innerWidth: 390, innerHeight: 845, DaimondModels: {}, addEventListener() {}, removeEventListener() {} };
-	new Function('window', readFileSync(join(HERE, 'layers.js'), 'utf8'))(win);
+	new Function('window', readPage(join(HERE, 'layers.js'), 'utf8'))(win);
 	return { el, doc, body, win, L: win.DaimondLayers, byId };
 }
 

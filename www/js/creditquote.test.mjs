@@ -18,17 +18,18 @@
 
    Run:  node www/js/creditquote.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const I18N = fs.readFileSync(path.join(HERE, 'i18n.js'), 'utf8');
-const EN   = fs.readFileSync(path.join(HERE, '..', 'i18n', 'en.js'), 'utf8');
-const GW   = fs.readFileSync(path.join(HERE, 'gateway.js'), 'utf8');
-const AR   = fs.readFileSync(path.join(HERE, 'autoreload.js'), 'utf8');
-const APP  = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
+const I18N = readPage(path.join(HERE, 'i18n.js'), 'utf8');
+const EN   = readPage(path.join(HERE, '..', 'i18n', 'en.js'), 'utf8');
+const GW   = readPage(path.join(HERE, 'gateway.js'), 'utf8');
+const AR   = readPage(path.join(HERE, 'autoreload.js'), 'utf8');
+const APP  = readPage(path.join(HERE, 'daimond.js'), 'utf8');
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {

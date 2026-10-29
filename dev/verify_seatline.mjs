@@ -42,6 +42,7 @@
 
    Run:  node dev/verify_seatline.mjs
    ============================================================ */
+import { readPage } from './pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -62,7 +63,7 @@ function loadPeer() {
 	const win = {};
 	win.addEventListener = () => {};
 	win.dispatchEvent    = () => {};
-	const body = readFileSync(join(HERE, '..', 'www', 'js', 'peer.js'), 'utf8');
+	const body = readPage(join(HERE, '..', 'www', 'js', 'peer.js'), 'utf8');
 	const fn = new Function(
 		'window', 'crypto', 'console', 'TextEncoder', 'TextDecoder',
 		'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
@@ -78,7 +79,7 @@ function loadEn() {
 	const win = { DaimondI18n: null };
 	let table = null;
 	win.DaimondI18n = { register: (_lang, t) => { table = t; } };
-	const body = readFileSync(join(HERE, '..', 'www', 'i18n', 'en.js'), 'utf8');
+	const body = readPage(join(HERE, '..', 'www', 'i18n', 'en.js'), 'utf8');
 	const fn = new Function('window', 'console', 'with (window) {\n' + body + '\n}');
 	fn(win, console);
 	return table;
@@ -219,10 +220,10 @@ try {
 
 	// ── (h) THE SWITCH IS CRYSTAL | CHAT'S CONTROL; THE TILE'S WARNING IS LOUD. ──
 	{
-		const css  = readFileSync(join(HERE, '..', 'www', 'css', 'app.css'), 'utf8');
-		const html = readFileSync(join(HERE, '..', 'www', 'index.html'), 'utf8');
+		const css  = readPage(join(HERE, '..', 'www', 'css', 'app.css'), 'utf8');
+		const html = readPage(join(HERE, '..', 'www', 'index.html'), 'utf8');
 		const en   = loadEn();
-		const js   = readFileSync(join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+		const js   = readPage(join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 		check('(h) the switch is a `dview` group of `dview-btn` segments, as Crystal | Chat is',
 			/class="dview seat-switch" id="seat-switch"/.test(html)
 				&& /class="dview-btn" id="seat-here"/.test(html)
@@ -251,7 +252,7 @@ try {
 		const p = P.seatPlan(daimon, { [ARG]: desk('argonaut', 2000) }, opt({ nominatedId: ARG }), now);
 		check('(j) a DAIMON chat with a live nominee -> the runner, named',
 			p.where === 'runner' && p.label === 'argonaut', 'where=' + p.where + ' label=' + p.label);
-		const js = readFileSync(join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+		const js = readPage(join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 		const sp = js.slice(js.indexOf('\tfunction seatPlanNow('),
 			js.indexOf('\tfunction seatPlanNow(') + 700);
 		check('(j) seatPlanNow no longer early-returns on a daimon (current.diamondId gate lifted)',

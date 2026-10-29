@@ -16,6 +16,7 @@
 //   eval "$(bash dev/world.sh 107 --up)"
 //   node dev/verify_pagelog_heal.mjs --old <r547 www>                    # the gate
 //   node dev/verify_pagelog_heal.mjs --old <r547 www> --base <plguard www>  # the RED run (no heal wiring)
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +43,7 @@ for (const d of [OLD, BASE]) {
 	if (d && !fs.existsSync(path.join(d, 'pkg', 'oxedyne_daimond_bg.wasm'))) { console.error(`no www with a wasm at ${d}`); process.exit(2); }
 }
 if (!BASE) {
-	const src = fs.readFileSync(path.join(WWW, 'js', 'daimond.js'), 'utf8');
+	const src = readPage(path.join(WWW, 'js', 'daimond.js'), 'utf8');
 	for (const want of ['await healLogsHeld(app, r.id);', 'return healPageLogsAll()', "trail('sync log healed'"]) {
 		if (!src.includes(want)) { console.error(`seam missing in js/daimond.js: ${want}`); process.exit(2); }
 	}
@@ -66,7 +67,7 @@ const routeFrom = (dir) => async (page) => {
 		try {
 			if (fs.statSync(f).isDirectory()) f = path.join(f, 'index.html');
 			return r.fulfill({ status: 200, contentType: TYPES[path.extname(f)] || 'application/octet-stream',
-				headers: { 'cache-control': 'no-cache' }, body: fs.readFileSync(f) });
+				headers: { 'cache-control': 'no-cache' }, body: readPage(f) });
 		} catch (e) { return r.fulfill({ status: 404, contentType: 'text/plain', body: 'Not found' }); }
 	});
 };

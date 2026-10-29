@@ -10,6 +10,7 @@
 // the state of each case (what its reason is, in every state it can be in).
 // No browser: the elements are stand-ins with the few members the helper uses,
 // and answer.js is a plain IIFE evaluated against one stand-in global.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -23,7 +24,7 @@ const I18N = path.join(HERE, '..', 'i18n');
 // A stand-in global; `changes` is what a language switch would call.
 function load() {
 	const win = { DaimondI18n: { onChange(fn) { win.changes.push(fn); } }, changes: [] };
-	new Function('window', fs.readFileSync(SRC, 'utf8'))(win);
+	new Function('window', readPage(SRC, 'utf8'))(win);
 	return win;
 }
 
@@ -273,7 +274,7 @@ test('every reason the table can give is worded, in all eight languages', () => 
 		{ loaded: true, unread: true }, { loaded: true, ticked: 0 } ]) for (const f of Object.values(R)) { const k = f(s); if (k) keys.add(k); }
 	assert.ok(keys.size >= 4, 'the table gave only ' + keys.size + ' keys');
 	for (const f of fs.readdirSync(I18N).filter((x) => x.endsWith('.js'))) {
-		const src = fs.readFileSync(path.join(I18N, f), 'utf8');
+		const src = readPage(path.join(I18N, f), 'utf8');
 		for (const k of keys) {
 			const m = src.match(new RegExp("'" + k.replace(/\./g, '\\.') + "':\\s*'([^']+)'"));
 			assert.ok(m && m[1].trim(), `${f} has no words for ${k}`);

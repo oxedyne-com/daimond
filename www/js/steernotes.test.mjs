@@ -19,6 +19,7 @@
    Run:   node www/js/steernotes.test.mjs
           node www/js/steernotes.test.mjs --break <name>      (each must go red; see KNOWN)
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -40,7 +41,7 @@ const KNOWN = ['stale', 'runapp', 'diaid', 'bump', 'force', 'back'];
 const BREAK = (() => { const i = process.argv.indexOf('--break'); return i >= 0 ? (process.argv[i + 1] || '') : ''; })();
 if (BREAK && !KNOWN.includes(BREAK)) { console.error('unknown break ' + JSON.stringify(BREAK) + '; known: ' + KNOWN.join(', ')); process.exit(2); }
 
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 function lift(marker) {
 	const a = SRC.indexOf(marker);
 	if (a < 0) { console.log('  (not in daimond.js: ' + marker.trim() + ')'); return ''; }
@@ -69,7 +70,7 @@ const NOTES = (() => {
 })();
 const WANT = [lift('\tvar DIAMOND_LOCKS = {};'), NOTES, lift('\tfunction abortTurn(c) {'), lift('\tfunction turnPhase() {'), lift('\tfunction stopGeneration() {'), lift('\tfunction rebuildChatApp(c) {'),
 	lift('\tfunction steerApi(op) {'), lift('\tasync function steerStore(op, a, b) {'), lift('\tasync function steerNotes() {')];
-const STEERING = (() => { const win = {}; new Function('window', readFileSync(join(HERE, 'steering.js'), 'utf8'))(win); return win.DaimondSteering; })();
+const STEERING = (() => { const win = {}; new Function('window', readPage(join(HERE, 'steering.js'), 'utf8'))(win); return win.DaimondSteering; })();
 
 const OPT = 'OPT', D1 = 'D1';
 const SEPR = ' \xb7 ';

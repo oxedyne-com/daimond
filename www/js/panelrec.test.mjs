@@ -10,6 +10,7 @@
 // (the viewer's `deferred`, the Diamond-only "save arrangement", a switch that
 // closes without saving) out of the tree, so a second owner cannot come back
 // beside the record unnoticed.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const src = (f) => fs.readFileSync(path.join(HERE, f), 'utf8');
+const src = (f) => readPage(path.join(HERE, f), 'utf8');
 const shim = { window: {} };
 // eslint-disable-next-line no-new-func
 new Function('window', src('panelrec.js'))(shim.window);
@@ -171,7 +172,7 @@ test('"save arrangement" is gone; a switch saves the record before it closes any
 });
 
 test('the page loads the record before the modules that use it', () => {
-	const html = fs.readFileSync(path.join(HERE, '..', 'index.html'), 'utf8');
+	const html = readPage(path.join(HERE, '..', 'index.html'), 'utf8');
 	const tag = (f) => html.indexOf('<script src="js/' + f + '"></script>');
 	assert.ok(tag('panelrec.js') !== -1);
 	assert.ok(tag('panelrec.js') < tag('viewer.js') && tag('panelrec.js') < tag('web.js'));

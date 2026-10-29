@@ -20,15 +20,5 @@ pub fn peer_ok(abi: u32, min: u32) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn engine_abi_range_is_two_sided() {
-        assert!(ENGINE_ABI_MIN >= 1 && ENGINE_ABI >= ENGINE_ABI_MIN, "ABI {} below its own min {}",
-            ENGINE_ABI, ENGINE_ABI_MIN);
-        assert!(peer_ok(ENGINE_ABI, ENGINE_ABI_MIN), "a build must accept itself");
-        assert!(!peer_ok(ENGINE_ABI_MIN - 1, ENGINE_ABI_MIN), "a peer below the min is offered");
-        assert!(!peer_ok(ENGINE_ABI, ENGINE_ABI + 1), "a peer needing a newer build is offered");
-    }
-}
+#[path = "../../tests/unit/engine/abi/tests.rs"]
+mod tests;

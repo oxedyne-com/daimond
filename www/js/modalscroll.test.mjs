@@ -7,6 +7,7 @@
 // the bottom with the x above the glass (the crawl's TRAPPED `admin: settings | (leave: Back)`,
 // 390x845, 2026-10-05, reproduced in Chromium: scrollTop 889 of 1708 after close and reopen).
 // The shipped toModal is cut out of daimond.js and run against stand-ins.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const src  = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(path.join(HERE, 'daimond.js'), 'utf8');
 const cut  = (s, from, to) => {
 	const a = s.indexOf(from), b = s.indexOf(to, a);
 	assert.ok(a >= 0 && b > a, `cannot cut ${JSON.stringify(from)} .. ${JSON.stringify(to)}: the banners moved`);

@@ -9,6 +9,7 @@
 // object detected which would lead to unsafe aliasing in rust" (daimond-rig, verify_agents on
 // r568, 1 run in 2). The read is now an async `&self` call and the mutation a synchronous one.
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -33,7 +34,7 @@ test('no exported async method in src/wasm takes &mut self', () => {
 	const bad = [];
 	const re = /pub\s+async\s+fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(\s*&\s*(?:'\w+\s+)?mut\s+self/g;
 	for (const f of rustFiles(SRC)) {
-		const src = readFileSync(f, 'utf8');
+		const src = readPage(f, 'utf8');
 		for (const m of src.matchAll(re)) bad.push(f.slice(SRC.length + 1) + ': ' + m[1]);
 	}
 	assert.deepEqual(bad, [], 'async `&mut self` exports hold the whole engine across an await: ' + bad.join(', '));
@@ -62,7 +63,7 @@ function shimPage() {
 test("a tile's getter answers while a Diamond's scope is being read", { skip: !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wasm here' }, async () => {
 	shimPage();
 	const m = await import(join(PKG, 'oxedyne_daimond.js'));
-	m.initSync({ module: readFileSync(join(PKG, 'oxedyne_daimond_bg.wasm')) });
+	m.initSync({ module: readPage(join(PKG, 'oxedyne_daimond_bg.wasm')) });
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
 	const id = '0da1000000e1';
 	// A build from before the split has only the one async call; it is the one that threw.
@@ -124,7 +125,7 @@ test('every dev/ and www/js caller hands set_diamond_scope a read_scope_reach re
 		if (!existsSync(dir)) continue;
 		for (const name of readdirSync(dir)) {
 			if (!ext.test(name) || name === 'scopereentry.test.mjs') continue;
-			bad.push(...staleScopeCalls(name, readFileSync(join(dir, name), 'utf8')));
+			bad.push(...staleScopeCalls(name, readPage(join(dir, name), 'utf8')));
 		}
 	}
 	assert.deepEqual(bad, [], 'set_diamond_scope given something other than a ScopeReach: ' + bad.join('; '));

@@ -77,6 +77,7 @@
 //   eval "$(bash dev/world.sh N --env)"            # a gateway on DAIMOND_GW_PORT, as for provenance
 //   RC_SLOT=<slot>-rate2s node dev/verify_ratings_sync.mjs [--break order] [--only S3]
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -199,7 +200,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; one of: 
 {
 	const stale = [];
 	for (const [n, b] of Object.entries(BREAKS)) {
-		const src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+		const src = readPage(path.join(WWW, b.file), 'utf8');
 		for (const e of b.edits) if (src.split(e.from).length !== 2) stale.push(`${n} (${b.file})`);
 	}
 	if (stale.length) { console.error('break anchor(s) no longer match exactly once: ' + stale.join(', ')); process.exit(2); }
@@ -209,7 +210,7 @@ const ONLY = new Set((arg('--only') || ALL.join(',')).split(',').map((s) => s.tr
 const on = (s) => ONLY.has(s);
 const ROUTE = !BREAK ? null : async (page) => {
 	const b = BREAKS[BREAK];
-	let body = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+	let body = readPage(path.join(WWW, b.file), 'utf8');
 	for (const e of b.edits) body = body.replace(e.from, () => e.to);
 	await page.route('**/' + b.file + '*', (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body }));
 };

@@ -41,13 +41,14 @@
 // early return away, so it also holds the tagging's own nesting (red on feat/sync-msglaw 28917b51: a second copy).
 //
 // Needs nothing running.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -92,7 +93,7 @@ function grabFn(sig) {
 }
 
 const NUDGE_STMT = grabVarStmt('CONTINUE_NUDGE');
-const STAMP = (() => { const w = {}; new Function('window', fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'stamp.js'), 'utf8'))(w); return w.DaimondStamp; })();
+const STAMP = (() => { const w = {}; new Function('window', readPage(path.join(HERE, '..', 'www', 'js', 'stamp.js'), 'utf8'))(w); return w.DaimondStamp; })();
 const CT_ORIG    = grabFn('function continueTurn(');   // the pristine lift, for the sentinels
 const TM_SRC     = grabFn('function turnMessagesOf(');   // the finder continueTurn asks for its turn's messages
 

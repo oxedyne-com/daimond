@@ -40,6 +40,7 @@
 //   node dev/verify_turnfacts.mjs --break dmid       # the daimon join fails
 //   node dev/verify_turnfacts.mjs --break norid      # the worker join fails
 //   node dev/verify_turnfacts.mjs                    # clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -98,7 +99,7 @@ function served() {
 	}
 	const out = {};
 	for (const e of spec) {
-		const src = out[e.file] || fs.readFileSync(path.join(WWW, e.file), 'utf8');
+		const src = out[e.file] || readPage(path.join(WWW, e.file), 'utf8');
 		const n = src.split(e.find).length - 1;
 		if (n !== 1) {
 			console.error(`break '${BREAK}': the anchor appears ${n} times in ${e.file}, so nothing was broken`);

@@ -6,6 +6,7 @@
 // star stayed hollow. The row set `fill="currentColor"` on the svg, but a presentation
 // attribute loses to any author rule, and `.ic { fill: none }` is one. The fill belongs
 // in the sheet, at a weight above `.ic`, and the dead attribute goes.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..');
-const read = (...p) => fs.readFileSync(path.join(WWW, ...p), 'utf8');
+const read = (...p) => readPage(path.join(WWW, ...p), 'utf8');
 
 // Flat `selector { body }` pairs of a sheet, comments dropped, at-rule bodies entered.
 function rules(src) {

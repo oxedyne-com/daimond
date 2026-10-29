@@ -95,6 +95,7 @@
 //   26 an action that did not ask ........ offall
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both).
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -224,7 +225,7 @@ let OP_PATCH = null;
 for (const [name, b] of Object.entries(OP_BREAKS)) {
 	// A 5.3.1 tree has no ratingroll.js or steering.js: its breaks cannot be checked there, and only a break asked for (or --breaks) is refused for it.
 	let src = null;
-	try { src = fs.readFileSync(path.join(WWW, b.file), 'utf8'); }
+	try { src = readPage(path.join(WWW, b.file), 'utf8'); }
 	catch (e) { if (name === BREAK || process.argv.includes('--breaks')) { console.error(`break '${name}': www/${b.file} is not in this tree`); process.exit(2); } continue; }
 	for (const e of b.edits) {
 		const n = src.split(e.from).length - 1;
@@ -243,7 +244,7 @@ if (BREAK && !BREAKS[BREAK] && !OP_BREAKS[BREAK]) die(`no break called "${BREAK}
 {
 	const stale = [];
 	for (const [name, b] of Object.entries(BREAKS)) {
-		const src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+		const src = readPage(path.join(WWW, b.file), 'utf8');
 		const n = src.split(b.from).length - 1;
 		if (n !== 1) stale.push(`${name} matches www/${b.file} ${n} time(s), not once`);
 	}
@@ -257,7 +258,7 @@ if (BREAK && !BREAKS[BREAK] && !OP_BREAKS[BREAK]) die(`no break called "${BREAK}
 let ROUTE = null;
 if (BREAK && BREAKS[BREAK]) {
 	const b = BREAKS[BREAK];
-	const src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+	const src = readPage(path.join(WWW, b.file), 'utf8');
 	const broken = src.replace(b.from, b.to);
 	console.log(`\n*** BREAK ${BREAK}: ${b.what} — failures below are the point ***\n`);
 	ROUTE = async (page) => {

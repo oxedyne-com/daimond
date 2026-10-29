@@ -7,6 +7,7 @@
 // check, Q5). `mergeConflictLinks` now goes through the same door as `unionDiamondLinks`
 // (`unionLinksSaid`): a refusal is toasted once per Diamond and per copy, and a refused removal is
 // gathered into one notice. The functions are lifted out of `www/js/daimond.js` by name.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC  = fs.readFileSync(path.join(HERE, 'daimond.js'), 'utf8');
+const SRC  = readPage(path.join(HERE, 'daimond.js'), 'utf8');
 
 function lift(name) {
 	let at = SRC.indexOf('\tasync function ' + name + '(');

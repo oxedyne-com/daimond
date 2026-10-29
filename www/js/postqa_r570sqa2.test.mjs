@@ -1,6 +1,7 @@
 // POST-QA r570sqa2 (post-deploy, 2026-10-17): MAIL-FU3's retirement of the r569 bare
 // `turn-failed`. Each test asserts the correct behaviour, so red is a reproduced defect.
 // Run: node --test www/js/postqa_r570sqa2.test.mjs
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,8 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { makeWindow } from '../../dev/syncprobe.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const ALERTS = readFileSync(join(HERE, 'alerts.js'), 'utf8');
+const APP  = readPage(join(HERE, 'daimond.js'), 'utf8');
+const ALERTS = readPage(join(HERE, 'alerts.js'), 'utf8');
 
 function balanced(src, start) {
 	const brace = src.indexOf('{', start);
@@ -66,7 +67,7 @@ test('QA2-M1: an answered mail turn leaves turn-failed up when the Diamond\'s ac
 // run off the right edge (dev/postqa_r570sqa2_wsadd.mjs, WebKit iPhone). Held here on the CSS that
 // would keep it on screen: a max-width inside the viewport, and an item that ellipsises.
 test('QA2-W1: the Workspace ⋯ menu cannot be wider than the screen, and a long item ellipsises', () => {
-	const CSS = readFileSync(join(HERE, '..', 'css', 'app.css'), 'utf8');
+	const CSS = readPage(join(HERE, '..', 'css', 'app.css'), 'utf8');
 	const rule = (sel) => {
 		const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		const m = new RegExp('(^|\\n)' + esc + '\\s*\\{([^}]*)\\}').exec(CSS);

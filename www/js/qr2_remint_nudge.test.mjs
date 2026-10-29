@@ -6,9 +6,10 @@
    invitation to do it again. The retry sends what the first attempt sent. Runs the REAL
    first-attempt-and-retry block of `start()` with a first attempt that dies on its key.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 
-const D = readFileSync(process.env.DAIMOND_JS || new URL('./daimond.js', import.meta.url), 'utf8');
+const D = readPage(process.env.DAIMOND_JS || new URL('./daimond.js', import.meta.url), 'utf8');
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {
 	if (cond) { ok++; console.log('  ok   ' + name); }

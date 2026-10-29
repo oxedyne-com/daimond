@@ -8,6 +8,7 @@
 // BREAK-FIRST: `--break wholetext` serves the pre-fix expression (the whole of
 // run.text as the fallback) -- the defect as it shipped -- and must redden.
 
+import { readPage } from './pagesrc.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +22,7 @@ if (BREAK && BREAK !== 'wholetext') {
 	process.exit(2);
 }
 
-let src = readFileSync(SRC, 'utf8');
+let src = readPage(SRC, 'utf8');
 
 // LIFT the three live lines out of the page (they are one statement in situ).
 const LIFT_ANCHOR = "\t\t\t\tvar _tailText = (run._tail || '').trim();";

@@ -96,6 +96,7 @@
 //
 // Needs dev/serve.mjs and the mock. No gateway. Needs the wasm to have been
 // rebuilt since src/ last changed.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -171,7 +172,7 @@ const check = (pass, name, detail) => {
 const stub = async (page) => {
 	if (!BREAK) return;
 	const spec = BREAKS[BREAK];
-	const src  = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src  = readPage(path.join(WWW, spec.file), 'utf8');
 	// An anchor that is not there exactly once patches nothing and the run would
 	// pass quietly, which is worse than a red.
 	if (src.split(spec.find).length !== 2) {

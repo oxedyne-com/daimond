@@ -135,70 +135,8 @@ fn trim(v: &mut Vec<(String, Arc<Fork>)>, cap: usize) {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::protocol::ImageMedia;
-	use crate::protocol::ImagePart;
-	use crate::protocol::MessageContent;
-	use crate::protocol::ContentPart;
-
-	fn pictured(n: usize) -> Arc<Fork> {
-		let img = ImagePart::new(ImageMedia::Png, vec![0u8; n], "p.png".to_string());
-		Arc::new(Fork {
-			messages: vec![ChatMessage::user(MessageContent::Parts(vec![ContentPart::Image(img)]))],
-			..Default::default()
-		})
-	}
-
-	#[test]
-	fn test_a_copy_is_weighed_by_its_raw_picture_bytes() {
-		let f = pictured(1_000_000);
-		assert!(f.held_bytes() >= 1_000_000, "held {} for a 1 MB picture", f.held_bytes());
-	}
-
-	#[test]
-	fn test_the_store_is_bounded_by_bytes_oldest_out_and_a_shared_copy_counts_once() {
-		let mut v: Vec<(String, Arc<Fork>)> = Vec::new();
-		let shared = pictured(400_000);
-		for i in 0..3 { v.push((fmt!("s{}", i), shared.clone())); }
-		trim(&mut v, 1_000_000);
-		assert_eq!(v.len(), 3, "one copy shared by a fan-out was counted three times");
-		v.push((fmt!("a"), pictured(400_000)));
-		v.push((fmt!("b"), pictured(400_000)));
-		trim(&mut v, 1_000_000);
-		let ids: Vec<&str> = v.iter().map(|(k, _)| k.as_str()).collect();
-		assert_eq!(ids, vec!["a", "b"], "the oldest copy did not go first");
-		v.push((fmt!("huge"), pictured(5_000_000)));
-		trim(&mut v, 1_000_000);
-		let ids: Vec<&str> = v.iter().map(|(k, _)| k.as_str()).collect();
-		assert_eq!(ids, vec!["huge"], "the newest copy must stay, whatever its size");
-	}
-
-	/// r578e n2: an adopted copy is the worker's, and stops counting toward the store's bound,
-	/// so it no longer pushes out a queued worker's copy; a re-mint still finds it, and a fan-out
-	/// sibling keeps its own filing of the shared copy.
-	#[test]
-	fn test_an_adopted_copy_leaves_the_bound_and_a_remint_still_finds_it_00() {
-		let mut waiting: Vec<(String, Arc<Fork>)> = Vec::new();
-		let mut adopted: Vec<(String, Arc<Fork>)> = Vec::new();
-		let shared = pictured(600_000);
-		waiting.push((fmt!("a"), shared.clone()));
-		waiting.push((fmt!("a2"), shared.clone()));	// a fan-out sibling, not yet started
-		let got = take_in(&mut waiting, &mut adopted, "a");
-		assert!(got.map(|f| Arc::ptr_eq(&f, &shared)).unwrap_or(false), "adoption found no copy");
-		let ids: Vec<&str> = waiting.iter().map(|(k, _)| k.as_str()).collect();
-		assert_eq!(ids, vec!["a2"], "adoption took the sibling's filing too, or left its own");
-		waiting.push((fmt!("q"), pictured(500_000)));
-		waiting.push((fmt!("r"), pictured(500_000)));
-		trim(&mut waiting, 1_100_000);
-		let ids: Vec<&str> = waiting.iter().map(|(k, _)| k.as_str()).collect();
-		assert_eq!(ids, vec!["q", "r"], "the queued copies were not the ones counted");
-		assert!(take_in(&mut waiting, &mut adopted, "a").is_some(),
-			"a re-mint of the adopted worker found no copy");
-		forget_in(&mut waiting, &mut adopted, "a");
-		assert!(take_in(&mut waiting, &mut adopted, "a").is_none(), "an ended worker's copy stayed");
-	}
-}
+#[path = "../tests/unit/fork/tests.rs"]
+mod tests;
 
 /// The copy filed under `id`, waiting or adopted, left where it is.
 pub fn get(id: &str) -> Option<Arc<Fork>> {

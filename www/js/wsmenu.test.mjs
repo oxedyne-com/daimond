@@ -6,6 +6,7 @@
 // now also when the panel is drawn again, when it leaves the screen, and when the rows its ⋯ hung from are
 // drawn afresh. The functions live inside the Workspace panel's closure in a 70,000-line IIFE, so they are
 // cut out of the source by name and run against a small stand-in DOM.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 /// The function `name` defined at `tabs` indentation, from its head to its closing brace.
 function cut(name, tabs = '\t\t', from = 0) {

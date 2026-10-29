@@ -11,9 +11,10 @@
    transcript, or a continuation's brief with no prior conversation.
    Runs the REAL segment of start(), from the restore to `Files.reknow`.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 
-const D = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const D = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {
 	if (cond) { ok++; console.log('  ok   ' + name); }

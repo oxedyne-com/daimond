@@ -34,6 +34,7 @@
 //   node dev/verify_valuea.mjs                     # and then, clean
 //
 // Needs a world: `bash dev/world.sh N --up`, then DAIMOND_APP / DAIMOND_MOCK from it.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -141,7 +142,7 @@ if (BREAK) {
 		console.error('no such break: ' + BREAK + '\nhave: ' + Object.keys(BREAKS).join(' '));
 		process.exit(2);
 	}
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
@@ -415,7 +416,7 @@ try {
 		rawOpen.ta && /KB/.test(rawOpen.gauge), `ta=${rawOpen.ta} gauge="${rawOpen.gauge.trim()}"`);
 
 	// The capp's own second dump is gone from the page it shipped in.
-	const cappSrc = fs.readFileSync(path.join(WWW, 'capps', 'lifelog', 'crystal.html'), 'utf8');
+	const cappSrc = readPage(path.join(WWW, 'capps', 'lifelog', 'crystal.html'), 'utf8');
 	check('the Life log page no longer draws a memory dump of its own',
 		!/Diamond memory/.test(cappSrc) && !/function memory\(/.test(cappSrc));
 

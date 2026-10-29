@@ -21,6 +21,7 @@
 
    Run:  node www/js/debugshare.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -205,7 +206,7 @@ function makeEnv(cfg) {
 		: setTimeout;
 
 	function loadScript(rel) {
-		const bodyText = readFileSync(join(HERE, rel), 'utf8');
+		const bodyText = readPage(join(HERE, rel), 'utf8');
 		const fn = new Function(
 			'window', 'document', 'localStorage', 'fetch', 'btoa', 'atob',
 			'TextEncoder', 'TextDecoder', 'CustomEvent',
@@ -1364,7 +1365,7 @@ async function main() {
 		// and at the right two seams: read from the source, as the doSteer checks
 		// above do, for the same reason -- the property belongs to a 44,000-line IIFE
 		// this harness cannot load.
-		const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 		const startFn = src.slice(src.indexOf('start: async function (run) {'));
 		const body = startFn.slice(0, startFn.indexOf('\n\t\tstop: function (run) {'));
 		check('a worker emits a round row on a tool call, keyed by its own id',
@@ -1771,7 +1772,7 @@ async function main() {
 		// event and had no `turn.start`/`turn.end` at all, so a turn that died -- or
 		// whose wasm trapped, which is what happened -- was invisible, and the lens had
 		// to invent a daimon's turns out of its `ended` rows.
-		const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 		// `runSteer`, NOT `doSteer`. Since the trigger lane, `doSteer` is a twenty-line
 		// door that finds the Diamond a press belongs to and hands it on; `runSteer(f, …)`
 		// is the turn, and is what a timer steers a Diamond nobody is looking at through.
@@ -1814,7 +1815,7 @@ async function main() {
 		// `guardFetch`. That wrapper must not report failures, or every debug-trace
 		// post would arrive as a fetch.fail about itself. Read from the source,
 		// because the property belongs to that file and this harness does not load it.
-		const gw = readFileSync(join(HERE, 'gateway.js'), 'utf8');
+		const gw = readPage(join(HERE, 'gateway.js'), 'utf8');
 		const guard = gw.slice(gw.indexOf('function guardFetch()'));
 		const guardBody = guard.slice(0, guard.indexOf('wrapped.__daimondPause'));
 		check('the global fetch wrapper reports nothing to the feed',
@@ -2265,7 +2266,7 @@ async function main() {
 		// by a test here; both now load `www/js/scrub.js`, so neither may grow a copy.
 		const SRC = ['debugshare.js', join('..', '..', 'dev', 'lens.mjs')];
 		const copies = SRC.filter((rel) => /SCRUB_SHAPES|function scrubText|function fingerprint|SECRET_RE\s*=/
-			.test(readFileSync(join(HERE, rel), 'utf8')));
+			.test(readPage(join(HERE, rel), 'utf8')));
 		check('no scrubber copy is left in debugshare.js or lens.mjs', copies.length === 0);
 		check('debugshare.js scrubs with the module the page loads first',
 			env0.win.DEBUG_SHARE._scrubText === env0.win.DaimondScrub.scrubText);

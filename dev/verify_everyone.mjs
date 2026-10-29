@@ -39,6 +39,7 @@
 // run refuses: an anchor that drifted is a break that quietly stopped applying.
 //
 // Needs dev/serve.mjs and dev/mockllm.mjs (dev/world.sh N --up gives both).
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -115,7 +116,7 @@ if (BREAK && !SRC_BREAKS[BREAK]) {
 }
 const served = {};
 for (const b of (SRC_BREAKS[BREAK] || [])) {
-	let body = served[b.file] || fs.readFileSync(path.join(HERE, '..', 'www', b.file), 'utf8');
+	let body = served[b.file] || readPage(path.join(HERE, '..', 'www', b.file), 'utf8');
 	const n = body.split(b.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${b.file}, so nothing was broken `

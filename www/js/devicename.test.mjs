@@ -29,6 +29,7 @@
 
    Run:  node www/js/devicename.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -66,7 +67,7 @@ function extractVar(src, name) {
 }
 
 function main() {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 	const lifted = [
 		extractVar(src, 'DEVICE_NAME_MAX'),

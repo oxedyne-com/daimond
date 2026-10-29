@@ -37,8 +37,6 @@ store_conformance = []
 [dependencies]
 oxedyne_fe2o3_core		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
 oxedyne_fe2o3_jdat		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
-oxedyne_fe2o3_iop_hash		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
-oxedyne_fe2o3_iop_db		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
 oxedyne_fe2o3_iop_crypto	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
 oxedyne_fe2o3_syntax		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
 oxedyne_fe2o3_graphics		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
@@ -94,7 +92,6 @@ sha2				= { version = "0.10", default-features = false }
 # natively too (U2c4), against whatever host it is given.
 oxedyne_fe2o3_mail	= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3", default-features = false }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-oxedyne_fe2o3_net		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
 oxedyne_fe2o3_o3db_sync		= { git = "https://github.com/oxedyne-com/fe2o3", rev = "6630ca48a64b21a69d746d5307ab95b0c8f654b3" }
 
 tokio = { version = "1.35", features = ["full"] }

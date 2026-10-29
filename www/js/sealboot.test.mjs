@@ -15,6 +15,7 @@
         waits for DOMContentLoaded rather than throwing.
 
    Needs www/pkg (dev/build-wasm.sh --no-opt). */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -56,7 +57,7 @@ function makeTab(parsing) {
 	const atob = (s) => Buffer.from(s, 'base64').toString('binary');
 	function EventShim(t) { this.type = t; }
 	function load(rel, extra) {
-		let body = readFileSync(join(HERE, rel), 'utf8');
+		let body = readPage(join(HERE, rel), 'utf8');
 		if (extra) body += extra;
 		const fn = new Function(
 			'window', 'document', 'crypto', 'localStorage', 'btoa', 'atob',
@@ -150,7 +151,7 @@ async function main() {
 
 	console.log('D4: a boot that throws before its own try still fails the waiting seals');
 	{
-		const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 		const a = src.indexOf('\tboot().then(');
 		const b = src.indexOf('});', a) + 3;
 		check('daimond.js has the boot().then(..) statement', a > 0 && b > a);

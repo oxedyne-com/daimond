@@ -36,6 +36,7 @@
               (a parcel's chunkedOld is ignored: section 11, the upgrade
                crossed while asleep, never commits again -- QCMG2's G4)
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -60,7 +61,7 @@ function makeStorage() {
 
 /// One tab: the real cloud.js in the box path (no IndexedDB), over `ls`.
 function makeCloud(win, ls) {
-	const body = readFileSync(join(HERE, 'cloud.js'), 'utf8');
+	const body = readPage(join(HERE, 'cloud.js'), 'utf8');
 	loadStore(win, ls);
 	new Function('window', 'localStorage', 'navigator', 'setTimeout', 'clearTimeout', 'console',
 		'with (window) {\n' + body + '\n}')(win, ls, { storage: {} }, setTimeout, clearTimeout,
@@ -77,7 +78,7 @@ function lift(src, first, endMark) {
 	return src.slice(start, end + endMark.length);
 }
 function loadGate(win, env) {
-	const src = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	let text = lift(src, '\tfunction mayCommitChunks() {', '\n\t}\n')
 		+ lift(src, '\tfunction offloadBlockedReason() {', '\n\t}\n')
 		+ lift(src, '\tfunction indexWhole() {', '\n\t}\n')

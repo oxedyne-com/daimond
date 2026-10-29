@@ -44,6 +44,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no model.
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -94,7 +95,7 @@ const check = (ok, what, detail) => {
 		if (!fs.existsSync(ixf)) { missing.push(`${loc}: no index`); continue; }
 		const g = {};
 		// eslint-disable-next-line no-new-func
-		new Function('window', fs.readFileSync(ixf, 'utf8'))(g);
+		new Function('window', readPage(ixf, 'utf8'))(g);
 		const ix = g.GUIDE_INDEX;
 		const pages = new Map();
 		for (const s of ix.sections) {
@@ -102,7 +103,7 @@ const check = (ok, what, detail) => {
 			if (!s.a) continue;
 			if (!pages.has(s.p)) {
 				const pf = path.join(dir, s.p);
-				pages.set(s.p, fs.existsSync(pf) ? fs.readFileSync(pf, 'utf8') : null);
+				pages.set(s.p, fs.existsSync(pf) ? readPage(pf, 'utf8') : null);
 			}
 			const html = pages.get(s.p);
 			if (html == null) { missing.push(`${loc}/${s.p}: no such page`); continue; }
@@ -140,7 +141,7 @@ const check = (ok, what, detail) => {
 	const dead = [];
 	let urls = 0;
 	for (const f of files) {
-		const html = fs.readFileSync(f, 'utf8');
+		const html = readPage(f, 'utf8');
 		for (const m of html.matchAll(/(?:href|src)="([^"]*)"/g)) {
 			const raw = m[1];
 			// An anchor, a root-relative path the dev server owns, or anything

@@ -1,6 +1,7 @@
 // ASKCH-F (QA PORT-G half B, F1): the runner's change ask, raised on the tab, shows the path and
 // the act and the change, from its own kind `change`.  Red at 556a954c0: the ask came as a
 // `consent` ask with no tool or host, and the tile read "An agent wants to reach " with no path.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -10,11 +11,11 @@ const root = new URL('../..', import.meta.url).pathname;
 let table = {};
 const ctx = { window: { DaimondI18n: { register: (_c, tb) => { table = tb; } } } };
 ctx.DaimondI18n = ctx.window.DaimondI18n;
-vm.runInNewContext(readFileSync(root + 'www/i18n/en.js', 'utf8'), ctx);
+vm.runInNewContext(readPage(root + 'www/i18n/en.js', 'utf8'), ctx);
 const fill = (s, v) => String(s).replace(/\{(\w+)\}/g, (_, k) => (v && k in v) ? v[k] : '{' + k + '}');
 const t = (k, v) => fill(table[k] ?? k, v);
 const tOr = (k, d, v) => fill(table[k] ?? d, v);
-const src = readFileSync(root + 'www/js/daimond.js', 'utf8');
+const src = readPage(root + 'www/js/daimond.js', 'utf8');
 const fn = (name) => {
 	const at = src.indexOf('function ' + name + '(');
 	assert.ok(at >= 0, name + ' is in daimond.js');

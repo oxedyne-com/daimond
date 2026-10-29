@@ -134,6 +134,7 @@
 //   node dev/verify_netchip.mjs
 //
 // Needs dev/serve.mjs and the mock. No gateway, no wasm rebuild.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -256,7 +257,7 @@ const check = (pass, name, detail) => {
 const stub = async (page) => {
 	if (!BREAK) return;
 	const spec = BREAKS[BREAK];
-	const src  = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src  = readPage(path.join(WWW, spec.file), 'utf8');
 	// An anchor that is not there exactly once patches nothing and the run would
 	// pass quietly, which is worse than a red.
 	if (src.split(spec.find).length !== 2) {
@@ -651,7 +652,7 @@ try {
 	// `dev/verify_handrun.mjs`. What is asked here is the half neither of those
 	// can see: whether the person is told.
 	const MARK = (() => {
-		const rs = fs.readFileSync(path.join(WWW, '..', 'src/tools.rs'), 'utf8');
+		const rs = readPage(path.join(WWW, '..', 'src/tools.rs'), 'utf8');
 		const m  = rs.match(/pub const NO_NET_MARK: &str = "([^"]+)"/);
 		return m ? m[1] : '';
 	})();
@@ -696,7 +697,7 @@ try {
 	// one and nothing reports it.
 	const LOCALES = ['en', 'es', 'de', 'fr', 'pt-BR', 'zh-Hans', 'ja', 'ko'];
 	const gaps = LOCALES.filter((code) => {
-		const src = fs.readFileSync(path.join(WWW, 'i18n', code + '.js'), 'utf8');
+		const src = readPage(path.join(WWW, 'i18n', code + '.js'), 'utf8');
 		return !/'chat\.tool_no_net':\s*'[^']{20,}'/.test(src);
 	});
 	check(gaps.length === 0,

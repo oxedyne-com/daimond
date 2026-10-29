@@ -16,6 +16,7 @@
 //
 //   node dev/verify_createrefused.mjs [--arms=DX]
 //   node dev/verify_createrefused.mjs --break nocreate    # the fix undone: D and X fail
+import { readPage } from './pagesrc.mjs';
 import { open, signInAs, scratch, markHere, workMenu } from './harness.mjs';
 import { makePagePro, GW_URL } from './pro.mjs';
 import { GWDIR } from './gwbin.mjs';
@@ -38,7 +39,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; known: $
 const WWW = new URL('../www', import.meta.url).pathname;
 const PATCHED = new Map();
 for (const spec of (BREAKS[BREAK] || [])) {
-	const src0 = PATCHED.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src0 = PATCHED.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src0.split(spec.find).length - 1;
 	if (n !== 1) { console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}; nothing proved`); process.exit(2); }
 	PATCHED.set(spec.file, src0.replace(spec.find, spec.with));

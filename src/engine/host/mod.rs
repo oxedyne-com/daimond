@@ -64,17 +64,5 @@ pub type DefaultHost = crate::wasm::host::WasmHost;
 pub type DefaultHost = local::LocalHost;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_host_is_local() {
-        assert!(!<DefaultHost as Host>::HOSTED);
-        let _: local::LocalHost = DefaultHost::default();
-    }
-
-    #[test]
-    fn test_host_is_hosted() {
-        assert!(<test::TestHost as Host>::HOSTED);
-    }
-}
+#[path = "../../../tests/unit/engine/host/tests.rs"]
+mod tests;

@@ -31,6 +31,7 @@
 //   node dev/verify_queuebadge.mjs --break swallow    # a busy daimon drops what you type
 //   node dev/verify_queuebadge.mjs --break meterrow   # the badge on the row Simple hides
 //   node dev/verify_queuebadge.mjs                    # and then, clean
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,7 +84,7 @@ const BREAKS = {
 if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}"`);
 if (BREAK) console.log(`\n*** BREAK ${BREAK}: ${BREAKS[BREAK].what} — failures below are the point ***\n`);
 
-const SRC = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
+const SRC = readPage(path.join(WWW, 'js/daimond.js'), 'utf8');
 const BROKEN = BREAKS[BREAK] ? BREAKS[BREAK].edit(SRC) : SRC;
 if (BREAK && BROKEN === SRC) die(`the "${BREAK}" break no longer matches www/js/daimond.js`);
 

@@ -4,17 +4,18 @@
 // runner marks which rows were his (`his`, with `change`, kimberlite settle.rs `turn_rec`); the
 // page never guesses.  Red at 03c79323238b: the carried Files row named both files alike and no
 // line said his file was changed.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const root = new URL('../..', import.meta.url).pathname;
-const DAIMOND = readFileSync(root + 'www/js/daimond.js', 'utf8');
+const DAIMOND = readPage(root + 'www/js/daimond.js', 'utf8');
 let table = {};
 const ictx = { window: { DaimondI18n: { register: (_c, tb) => { table = tb; } } } };
 ictx.DaimondI18n = ictx.window.DaimondI18n;
-vm.runInNewContext(readFileSync(root + 'www/i18n/en.js', 'utf8'), ictx);
+vm.runInNewContext(readPage(root + 'www/i18n/en.js', 'utf8'), ictx);
 const fill = (s, v) => String(s).replace(/\{(\w+)\}/g, (_, k) => (v && k in v) ? v[k] : '{' + k + '}');
 const t = (k, v) => fill(table[k] ?? k, v);
 const tn = (k, n, v) => t(k + '.' + (n === 1 ? 'one' : 'other'), v);
@@ -125,7 +126,7 @@ test('C: wiring: a history row with `yours` draws the tile; the ask and the turn
 	assert.match(lift('changeTile'), /changeDiff\(box, c\);/);
 	assert.match(lift('undoneFromRunner'), /_turnUndoRows/);
 	for (const loc of ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans']) {
-		const s = readFileSync(root + 'www/i18n/' + loc + '.js', 'utf8');
+		const s = readPage(root + 'www/i18n/' + loc + '.js', 'utf8');
 		assert.match(s, /'change\.yours':/, loc + ' has change.yours');
 		assert.match(s, /'change\.file':/, loc + ' has change.file');
 	}

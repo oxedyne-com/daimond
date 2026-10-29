@@ -15,6 +15,7 @@
    Run:   node www/js/diamondlock.test.mjs
           node www/js/diamondlock.test.mjs --break <name>      (nolock, norelease, nowait, nofallback; each must go red)
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -74,7 +75,7 @@ function lockManager(o) {
 	};
 }
 
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 // One page: the lock code as written, with `navigator` as the page would see it. `nav` is undefined for a browser with no Web Locks.
 function lift(nav) {
 	const a = SRC.indexOf('\tvar DIAMOND_LOCKS = {};');

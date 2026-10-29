@@ -4,13 +4,14 @@
 // Real journal.js (journalfixture). Run: node <this> <www/js dir> [return|edit]
 // ADAPTED for the gate (CCP3-QAFIX4): runs over this www/js with no argument, both ways out (return, edit) each
 // on fresh state; lifts the one composer intake (`intoComposer`), absent at the base.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIR = process.argv[2] || HERE, hows = process.argv[3] ? [process.argv[3]] : ['return', 'edit'];
 const { fakeIDB, tabJournal } = await import(DIR + '/journalfixture.mjs');
-const SRC = readFileSync(DIR + '/daimond.js', 'utf8');
+const SRC = readPage(DIR + '/daimond.js', 'utf8');
 function lift(src, name) {
 	let start = src.indexOf('\n\tasync function ' + name + '(');
 	if (start < 0) start = src.indexOf('\n\tfunction ' + name + '(');

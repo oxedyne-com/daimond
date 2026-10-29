@@ -11,6 +11,7 @@
 // not. The three event handlers are LIFTED from the real sources by a scan that skips strings and
 // comments, and run in a scope that stubs every name the test does not care about, so an edit that
 // lets a round run on into the next fails here. The date is read from the real engine's briefing.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
@@ -18,8 +19,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const JRNL = readFileSync(join(HERE, 'journal.js'), 'utf8');
+const APP  = readPage(join(HERE, 'daimond.js'), 'utf8');
+const JRNL = readPage(join(HERE, 'journal.js'), 'utf8');
 
 // The balanced `{…}` that opens at or after `from`, skipping strings, templates and comments.
 function block(src, from) {
@@ -145,7 +146,7 @@ const PKG = process.env.LOOPTEXT_PKG || join(HERE, '..', 'pkg');
 
 test("every conversation's first turn note carries today's date in ISO and the user's zone", { skip: !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wasm here' }, async () => {
 	const m = await import(join(PKG, 'oxedyne_daimond.js'));
-	m.initSync({ module: readFileSync(join(PKG, 'oxedyne_daimond_bg.wasm')) });
+	m.initSync({ module: readPage(join(PKG, 'oxedyne_daimond_bg.wasm')) });
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
 	// A chat's own wire is wire_chat_system's: wire_system is a Diamond's and takes no lists from the page (HIST-SAFE U2).
 	// `note` is what the next turn sends; with no conversation yet it is the opening note, every block.
@@ -170,7 +171,7 @@ test("every conversation's first turn note carries today's date in ISO and the u
 // it, and the page draws it under that band and out of the note band: each sent byte drawn once.
 test("the Wire names the turn note's <machine> block, and the page draws it under This computer", { skip: !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wasm here' }, async () => {
 	const m = await import(join(PKG, 'oxedyne_daimond.js'));
-	m.initSync({ module: readFileSync(join(PKG, 'oxedyne_daimond_bg.wasm')) });
+	m.initSync({ module: readPage(join(PKG, 'oxedyne_daimond_bg.wasm')) });
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
 	const wire = JSON.parse(await app.wire_chat_system());
 	const blk = wire.note.match(/^<machine>\n[\s\S]*?\n<\/machine>$/m);
@@ -186,7 +187,7 @@ test("the Wire names the turn note's <machine> block, and the page draws it unde
 // block while saying "as they changed since their last copy". It is handed the conversation the next
 // steer would start from, and the engine reads it as `steer_crystal` does.
 test("a Diamond's Wire composes its note over the conversation the next turn starts from", () => {
-	const RS = readFileSync(join(HERE, '..', '..', 'src', 'wasm', 'app.rs'), 'utf8');
+	const RS = readPage(join(HERE, '..', '..', 'src', 'wasm', 'app.rs'), 'utf8');
 	const ws = RS.slice(RS.indexOf('pub async fn wire_system('));
 	const body = ws.slice(0, ws.indexOf('\n    }\n'));
 	assert.ok(!/wire_json\([^)]*&\[\]\)/.test(body), 'wire_system still composes its note over no conversation');

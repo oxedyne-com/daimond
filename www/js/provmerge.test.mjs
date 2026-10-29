@@ -16,6 +16,7 @@
      node www/js/provmerge.test.mjs      # ALL PASS
    On 82a0e52f's daimond.js: 1, 3 and 5 fail.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -44,11 +45,11 @@ function extractFn(src, name) {
 // `liftSource`), from the same tree as DAIMOND_JS, so no hand-kept list can drift from it.
 if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname(process.env.DAIMOND_JS), '..', '..');
 const { liftSource } = await import('../../dev/syncprobe.mjs');
-const src = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
+const src = readPage(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
 const lifted = [
 	'function loadMsgTombs() { return {}; }',
 	// The message law (r53), lifted whole, and the stamp rule it ranks by.
-	'var DaimondStamp = (function () { var window = {}; ' + readFileSync(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
+	'var DaimondStamp = (function () { var window = {}; ' + readPage(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
 	liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src,
 	'return mergeMessages;',
 ].join('\n');

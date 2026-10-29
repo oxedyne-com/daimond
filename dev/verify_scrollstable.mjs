@@ -55,6 +55,7 @@
 //   node dev/verify_scrollstable.mjs --break rawtop
 //   node dev/verify_scrollstable.mjs --break seatresize
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,13 +143,13 @@ function edit(src, spec) {
 function build() {
 	if (BREAK) {
 		for (const spec of BREAKS[BREAK]) {
-			const src = FILES.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+			const src = FILES.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 			FILES.set(spec.file, edit(src, spec));
 		}
 	}
 	const missing = [];
 	for (const s of SEAM) {
-		const src = fs.readFileSync(path.join(WWW, s.file), 'utf8');
+		const src = readPage(path.join(WWW, s.file), 'utf8');
 		if (!src.includes(s.want)) missing.push(`  ${s.file}: ${s.why}`);
 	}
 	if (missing.length) {

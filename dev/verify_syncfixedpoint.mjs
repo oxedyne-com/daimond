@@ -96,6 +96,7 @@
 //   node dev/verify_syncfixedpoint.mjs --break nofix      # (ix): collect drops `burst` from a rating
 //   node dev/verify_syncfixedpoint.mjs --break novia      # (x): collect drops `via` from the records of a files_log and a file rating
 //   node dev/verify_syncfixedpoint.mjs --break appfirst   # (xi): collect writes `app` as a user message's first key
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -294,7 +295,7 @@ const SEAM = [
 function requireSeams() {
 	const missing = [];
 	for (const s of SEAM) {
-		const src = fs.readFileSync(path.join(WWW, s.file), 'utf8');
+		const src = readPage(path.join(WWW, s.file), 'utf8');
 		if (!src.includes(s.want)) missing.push(`  ${s.file}: ${s.why}`);
 	}
 	if (missing.length && !BREAK) {
@@ -327,7 +328,7 @@ function edit(src, spec, what) {
 const PATCHED = new Map();
 if (BREAK) {
 	for (const spec of BREAKS[BREAK]) {
-		const src = PATCHED.get(spec.file) ?? fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		const src = PATCHED.get(spec.file) ?? readPage(path.join(WWW, spec.file), 'utf8');
 		PATCHED.set(spec.file, edit(src, spec, `break '${BREAK}'`));
 	}
 }
@@ -1498,7 +1499,7 @@ await C.close().catch(() => {});
 // careless copy loses first, which is what `--break nofix` does.
 console.log('\n— (ix) a chat of the three fixture ratings collects byte for byte —');
 
-const FIXTURE = fs.readFileSync(path.join(HERE, 'fixtures', 'rating_u2.json'), 'utf8');
+const FIXTURE = readPage(path.join(HERE, 'fixtures', 'rating_u2.json'), 'utf8');
 const RATED   = 'rating-fixture';
 /// Where two strings first differ, with a few characters either side, for a failure line that says what was lost.
 const diffAt = (got, want) => {
@@ -1582,7 +1583,7 @@ console.log('\n— (x) a chat of the U3 fixture collects byte for byte —');
 
 // The fixture lists its rating before the files_log it rates, and a chat is held in time order (ts), so the messages are put in
 // that order here, once, and the chat is seeded and compared in it. The bytes of each message are the fixture's own.
-const FIXTURE3 = JSON.stringify(JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'rating_u3.json'), 'utf8'))
+const FIXTURE3 = JSON.stringify(JSON.parse(readPage(path.join(HERE, 'fixtures', 'rating_u3.json'), 'utf8'))
 	.sort((x, y) => (x.ts - y.ts) || (x.mid < y.mid ? -1 : 1)));
 const FILED    = 'rating-u3-fixture';
 const ROLES3   = ['files_log', 'rating_log', 'user'];
@@ -1646,7 +1647,7 @@ check('(x) and after it A\'s store and B\'s still hold the fixture byte for byte
 console.log('\n— (xi) a chat of every 5.3.0 record collects byte for byte —');
 
 const FIXTURE4 = (() => {
-	const base = JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'rating_u3.json'), 'utf8'));
+	const base = JSON.parse(readPage(path.join(HERE, 'fixtures', 'rating_u3.json'), 'utf8'));
 	const rate = base.find((m) => m.role === 'rating_log');
 	// A second file rating on another row of the files_log's turn, an up where the fixture's is a down.
 	const rate2 = JSON.parse(JSON.stringify(rate));

@@ -7,6 +7,7 @@
 // taken-back turn ends, however it ends.
 //
 // daimond.js cannot be loaded whole in Node, so the functions are cut out by name.
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const src  = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function cut(name) {
 	let at = src.indexOf('\n\tasync function ' + name + '(');

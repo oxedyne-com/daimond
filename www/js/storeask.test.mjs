@@ -12,6 +12,7 @@
 // `storage()` lives nested inside `www/js/daimond.js`, which cannot be loaded under
 // node, so it is cut out by brace matching and run against a stub DOM.
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +20,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const SRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 function cut(src, head) {
 	const start = src.indexOf(head);

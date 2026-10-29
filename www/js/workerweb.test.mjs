@@ -13,6 +13,7 @@
 //       the dispatch puts it on the run, and both build branches hand it to the engine;
 //   W4  the standing reading answer covers a light address and nothing else;
 //   W5  the door checks that answer BEFORE it parks a lone worker, and after the runner route.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -21,7 +22,7 @@ import { dirname, join } from 'node:path';
 import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const APP = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+const APP = readPage(join(HERE, 'daimond.js'), 'utf8');
 
 // The body of a function at any indentation, by counting braces.
 function body(name) {

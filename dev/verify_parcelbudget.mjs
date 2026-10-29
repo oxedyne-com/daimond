@@ -43,13 +43,14 @@
 //   node dev/verify_parcelbudget.mjs
 //
 // No browser, no gateway, no mock LLM: this reads source and does arithmetic.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const APP  = fs.readFileSync(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
-const SYNC = fs.readFileSync(path.join(ROOT, 'www', 'js', 'sync.js'), 'utf8');
+const APP  = readPage(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
+const SYNC = readPage(path.join(ROOT, 'www', 'js', 'sync.js'), 'utf8');
 
 // Steel's `http_max_body_bytes`, whose default is 8 MiB in fe2o3_steel/src/srv/cfg.rs
 // and which the deployed config does not set. Restated here because fe2o3 is a
@@ -196,7 +197,7 @@ check('and it is a PERSISTENT banner, not a toast that fades before it can be re
 // In all eight, because `tOr` and `tn` fall back to English and a missing
 // translation looks exactly like a finished one.
 const gaps = ['en', 'es', 'de', 'fr', 'pt-BR', 'zh-Hans', 'ja', 'ko'].filter((code) => {
-	const src = fs.readFileSync(path.join(ROOT, 'www', 'i18n', code + '.js'), 'utf8');
+	const src = readPage(path.join(ROOT, 'www', 'i18n', code + '.js'), 'utf8');
 	return !/'sync\.files_left\.one':/.test(src) || !/'sync\.files_left\.other':/.test(src);
 });
 check('and the sentence is in all eight catalogues, both plural arms', gaps.length === 0,
@@ -227,7 +228,7 @@ check('and names `http_max_body_bytes`, so the reader can go and read the defaul
 const cfg = path.join(process.env.HOME || '', 'usr', 'code', 'rust', 'fe2o3',
 	'fe2o3_steel', 'src', 'srv', 'cfg.rs');
 if (fs.existsSync(cfg)) {
-	const m = /http_max_body_bytes:\s+([0-9*\s]+),/.exec(fs.readFileSync(cfg, 'utf8'));
+	const m = /http_max_body_bytes:\s+([0-9*\s]+),/.exec(readPage(cfg, 'utf8'));
 	const shipped = m ? m[1].split('*').reduce((a, b) => a * Number(b.trim()), 1) : 0;
 	check('the 8 MiB restated here is the default fe2o3_steel ships',
 		shipped === STEEL_BODY_MAX, shipped + ' in ' + cfg);

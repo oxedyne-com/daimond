@@ -10,6 +10,7 @@
 // token gives 14). The checks read the cascade, by weight and source order, so the
 // next field put in front of a head cannot quietly bring the extra gap back; the
 // measured proof is `verify_consistency` section-gap, in a browser.
+import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..');
-const css  = (f) => fs.readFileSync(path.join(WWW, 'css', f), 'utf8');
+const css  = (f) => readPage(path.join(WWW, 'css', f), 'utf8');
 
 // Flat rules of a sheet, in source order. At-rule bodies are entered, their own
 // preludes dropped; that is enough for the plain selectors read here.
@@ -127,7 +128,7 @@ test('the rename row leaves the dialog head to own the gap beneath it', () => {
 test('no section head is built empty, anywhere in the page\'s scripts', () => {
 	const bad = [];
 	for (const f of fs.readdirSync(HERE).filter((n) => n.endsWith('.js'))) {
-		fs.readFileSync(path.join(HERE, f), 'utf8').split('\n').forEach((l, i) => {
+		readPage(path.join(HERE, f), 'utf8').split('\n').forEach((l, i) => {
 			if (/\bel\(\s*'div'\s*,\s*'(admin-sec|pop-head|tile-dlg-head)'\s*,\s*(''|""|)\s*\)/.test(l)) bad.push(`${f}:${i + 1}`);
 		});
 	}

@@ -11,12 +11,13 @@
    Runs the REAL stop, persistNow, load, holdRunLock, freeRunLock and lockStop, and the REAL
    `billAttempt` closure of `start()`, wired to the run as `start()` wires it.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 // The REAL agent grid helper the Workers record's stampEnds calls (r570s).
 globalThis.DaimondAgentGrid = createRequire(import.meta.url)('./agentgrid.js');
 
-const DAIMOND = readFileSync(process.env.DAIMOND_JS || new URL('./daimond.js', import.meta.url), 'utf8');
+const DAIMOND = readPage(process.env.DAIMOND_JS || new URL('./daimond.js', import.meta.url), 'utf8');
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {
 	if (cond) { ok++; console.log('  ok   ' + name); }

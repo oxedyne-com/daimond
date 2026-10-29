@@ -34,6 +34,7 @@
 //   eval "$(bash dev/world.sh N --env)"            # with the live gateway on DAIMOND_GW_PORT, as for provenance
 //   RC_SLOT=<slot>-sessrec node dev/verify_session_reconcile.mjs [--break noextend|wirebuild] [--only P1,P2] [--red [--base <daimond.js>]]
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,7 +69,7 @@ if (!process.argv.includes('--red')) {
 	const stale = [];
 	for (const [n, b] of Object.entries(BREAKS)) {
 		if (BREAK && n !== BREAK) continue;
-		const src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
+		const src = readPage(path.join(WWW, b.file), 'utf8');
 		for (const e of b.edits) if (src.split(e.from).length !== 2) stale.push(`${n} (${b.file})`);
 	}
 	if (stale.length) { console.error('break anchor(s) no longer match exactly once: ' + stale.join(', ')); process.exit(2); }
@@ -86,7 +87,7 @@ const INSTR = [
 	  to: '\t\t(window.__builds = window.__builds || []).push({ id: chat.id, nm: (chat.messages || []).length, ld: chat._loaded !== false });\n\t\tchat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,' },
 ];
 const ROUTE = async (page) => {
-	let body = fs.readFileSync(arg('--base') || path.join(WWW, 'js/daimond.js'), 'utf8');
+	let body = readPage(arg('--base') || path.join(WWW, 'js/daimond.js'), 'utf8');
 	const edits = INSTR.concat(BREAK ? BREAKS[BREAK].edits : []);
 	for (const e of edits) {
 		const n = body.split(e.from).length - 1;

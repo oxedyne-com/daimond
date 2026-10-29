@@ -67,6 +67,7 @@
 // only honest way to ask "did that come from the cache or from you?". It listens
 // on port 0, so it cannot collide with another lane. The world is still used --
 // for its scratch directory, and because that is where a browser belongs.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -212,7 +213,7 @@ const DAMAGED = {};
 for (const spec of (BREAKS[BREAK] || [])) {
 	const src = Object.prototype.hasOwnProperty.call(DAMAGED, spec.file)
 		? DAMAGED[spec.file]
-		: fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		: readPage(path.join(WWW, spec.file), 'utf8');
 	DAMAGED[spec.file] = damaged(src, spec);
 }
 
@@ -272,7 +273,7 @@ const server = http.createServer((req, res) => {
 		return send(res, 200, type, DAMAGED[rel], 'no-cache');
 	}
 	let body;
-	try { body = fs.readFileSync(path.join(WWW, rel)); }
+	try { body = readPage(path.join(WWW, rel)); }
 	catch (e) { return send(res, 404, 'text/plain', 'not found: ' + rel, 'no-store'); }
 	// `no-cache` on everything, which is what Steel serves (srv/cache.rs): a
 	// store may hold it and may not use it without asking. The worker's whole
@@ -297,7 +298,7 @@ fs.rmSync(PROFILE, { recursive: true, force: true });
 /// The pixel size a PNG really is, from its IHDR. The manifest's `sizes` is a
 /// claim; this is the file.
 function pngSize(file) {
-	const b = fs.readFileSync(file);
+	const b = readPage(file);
 	if (b.length < 24 || b.readUInt32BE(0) !== 0x89504e47) return null;
 	return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
 }
@@ -305,7 +306,7 @@ function pngSize(file) {
 /// The app's ground colour, from the stylesheet that defines it. The manifest
 /// has to agree with it, or the splash and the app are two different blacks.
 function groundColour() {
-	const css = fs.readFileSync(path.join(WWW, 'css', 'variables.css'), 'utf8');
+	const css = readPage(path.join(WWW, 'css', 'variables.css'), 'utf8');
 	const m = /:root\s*\{[\s\S]*?--bg-primary:\s*(#[0-9a-fA-F]{3,8})\s*;/.exec(css);
 	return m ? m[1].toLowerCase() : null;
 }
@@ -605,7 +606,7 @@ try {
 	// set to an iPhone 15 Pro's real numbers and the frame is measured against
 	// them. That is only honest because the tokens are the ONE place the app
 	// reads the platform, which is asserted first.
-	const varsCss = fs.readFileSync(path.join(WWW, 'css', 'variables.css'), 'utf8');
+	const varsCss = readPage(path.join(WWW, 'css', 'variables.css'), 'utf8');
 	const tokenSrc = ['t:top', 'r:right', 'b:bottom', 'l:left'].every(pair => {
 		const [k, side] = pair.split(':');
 		return new RegExp(`--safe-${k}:\\s*env\\(safe-area-inset-${side}`).test(

@@ -1275,7 +1275,7 @@ fn the_side_files_are_settled_archive_first_and_only_once_accepted() {
     assert!(!retired.contains("write_file") && !retired.contains("archive_append(")
         && !retired.contains("standing_settle("), "F6: standing_retired only reads");
     // HL3: the doors hand the landing to the held write, which settles it under the lock.
-    let tools = include_str!("../tools.rs");
+    let tools = &crate::tools::source()[..];
     let write = &tools[at(tools, "async fn file_write_page<")..];
     let write = &write[..at(write, "\n    /// ")];
     assert!(at(write, "before_overwrite(") < at(write, "Some(&landed)")

@@ -10,6 +10,7 @@
    Run:  node --test www/js/stopasks.test.mjs
    ============================================================ */
 
+import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -17,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE    = dirname(fileURLToPath(import.meta.url));
-const DAIMOND = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-const DELETES = readFileSync(join(HERE, '..', '..', 'src', 'wasm', 'deletes.rs'), 'utf8');
+const DAIMOND = readPage(join(HERE, 'daimond.js'), 'utf8');
+const DELETES = readPage(join(HERE, '..', '..', 'src', 'wasm', 'deletes.rs'), 'utf8');
 
 function lift(name) {
 	let a = DAIMOND.indexOf('\tfunction ' + name + '(');

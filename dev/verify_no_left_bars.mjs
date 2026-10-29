@@ -43,6 +43,7 @@
 // each with the classes the page gives it, in Obsidian and in Porcelain. A
 // `data-nlb="label"` marks every element that is measured; a surface fails if any of
 // them draws an accent.
+import { readPage } from './pagesrc.mjs';
 import { open } from './harness.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,7 +70,7 @@ function staticScan() {
 	const bad = [];
 	for (const f of fs.readdirSync(dir)) {
 		if (!f.endsWith('.css')) continue;
-		const text = fs.readFileSync(path.join(dir, f), 'utf8');
+		const text = readPage(path.join(dir, f), 'utf8');
 		// One CSS rule block at a time: a selector list up to its `{...}` body.
 		const re = /([^{}]+)\{([^{}]*)\}/g;
 		let m;
@@ -326,7 +327,7 @@ function expandIs(sel, cap = 600) {
 function outlineCandidates() {
 	const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'www', 'css');
 	const files = fs.readdirSync(dir).filter((f) => f.endsWith('.css') && f !== 'katex.min.css').sort();
-	const rules = files.flatMap((f) => cssRules(fs.readFileSync(path.join(dir, f), 'utf8'), f));
+	const rules = files.flatMap((f) => cssRules(readPage(path.join(dir, f), 'utf8'), f));
 	const four = rules.map((r) => ({ ...r, four: fourSided(r.body) })).filter((r) => r.four);
 	const bySel = new Map();	// the expanded selector -> where it came from
 	const state = [], printed = [], unreadable = [];

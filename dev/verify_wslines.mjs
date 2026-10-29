@@ -14,6 +14,7 @@
 // The served daimond.js has its two search limits lowered (SEARCH_MAX 3, SEARCH_WALK_MAX 60, or
 // 1500 for the long count) so a small fixture reaches both lines through the real path.
 // Run with the world up; no gateway.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +34,7 @@ const GONE = ['q', 'joinery-and-benchtop-quotes', 'joinery-and-benchtop-quotes-f
 const VPS = [[1440, 900], [390, 845]];
 const LOCALES = ['en', 'de', 'ja'];
 
-const src = fs.readFileSync(path.join(ROOT, 'www/js/daimond.js'), 'utf8');
+const src = readPage(path.join(ROOT, 'www/js/daimond.js'), 'utf8');
 const lowered = (walk) => {
 	const out = src.replace(/var SEARCH_MAX\t\t= 100;/, 'var SEARCH_MAX\t\t= 3;')
 		.replace(/var SEARCH_WALK_MAX\t= 500000;/, `var SEARCH_WALK_MAX\t= ${walk};`);

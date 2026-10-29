@@ -7,12 +7,13 @@
    so after `load` the sentence is back in the worker's "own words".
    Runs the REAL persistNow, load, resume and the seed block of start().
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 // The REAL agent grid helper the Workers record's stampEnds calls (r570s).
 globalThis.DaimondAgentGrid = createRequire(import.meta.url)('./agentgrid.js');
 
-const DAIMOND = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const DAIMOND = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {
 	if (cond) { ok++; console.log('  ok   ' + name); }

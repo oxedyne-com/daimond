@@ -22,6 +22,7 @@
    Run:  node www/js/dispnote.test.mjs
    ============================================================ */
 const { makeWindow, loadScript, TREE } = await import('../../dev/syncprobe.mjs');
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -75,7 +76,7 @@ if (have) {
 		P.dispatchNoteRows(held.concat([user, { role: 'assistant', content: 'done', mid: 'e-1-t0', iturn: T }]), note(), B, NOW) === null);
 }
 
-const APP = readFileSync(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
+const APP = readPage(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
 const mark = (APP.match(/function markTurnDispatched\(chat, mark\) \{[\s\S]*?\n\t\}\n/) || [''])[0];
 check('(d) a dispatch notes itself', /noteDispatch\(chat, mark\)/.test(mark));
 const nd = (APP.match(/function noteDispatch\([\s\S]*?\n\t\}\n/) || [''])[0];

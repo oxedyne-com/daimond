@@ -6,12 +6,13 @@
    `billAttempt` (`run._billedApp`) leaves nothing unbilled; a finished run carries
    no `unbilled` at all, so a normal end is never billed again by a reload.
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 // The REAL agent grid helper the Workers record's stampEnds calls (r570s).
 globalThis.DaimondAgentGrid = createRequire(import.meta.url)('./agentgrid.js');
 
-const DAIMOND = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
+const DAIMOND = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 let ok = 0, bad = 0;
 const check = (name, cond, detail) => {
 	if (cond) { ok++; console.log('  ok   ' + name); }

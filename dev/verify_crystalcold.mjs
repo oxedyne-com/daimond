@@ -37,6 +37,7 @@
 // than the prompt -- so a red there would mean this file is measuring the wrong thing.
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs.
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,7 +115,7 @@ if (BREAK && !WHOLE) {
 			+ Object.keys(BREAKS).join(' '));
 		process.exit(2);
 	}
-	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+	const src = readPage(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `

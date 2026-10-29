@@ -18,6 +18,7 @@
 
    Run:  node www/js/runhist.test.mjs
    ============================================================ */
+import { readPage } from '../../dev/pagesrc.mjs';
 import { makeWindow, loadScript, storage } from '../../dev/syncprobe.mjs';
 import { readFileSync } from 'node:fs';
 
@@ -27,8 +28,8 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail ? '  (' + detail + ')' : '')); failures++; }
 }
 
-const src = readFileSync(new URL('./daimond.js', import.meta.url), 'utf8');
-const en = readFileSync(new URL('../i18n/en.js', import.meta.url), 'utf8');
+const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
+const en = readPage(new URL('../i18n/en.js', import.meta.url), 'utf8');
 
 /// A function declared at the IIFE's top level, by a brace-balanced scan; '' when absent.
 function fn(name) {
@@ -143,7 +144,7 @@ console.log('RUN-HIST N-a -- a settling report records the turn\'s rows once');
 		turnRec: Object.assign({}, rec, { run: 'e-43' }) });
 	for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
 	check('N-a: a hand-back records nothing', calls.carried.length === 1);
-	check('N-a: the row carries away (versions.js rows)', /row\.away = /.test(readFileSync(new URL('./versions.js', import.meta.url), 'utf8')));
+	check('N-a: the row carries away (versions.js rows)', /row\.away = /.test(readPage(new URL('./versions.js', import.meta.url), 'utf8')));
 	void win;
 }
 

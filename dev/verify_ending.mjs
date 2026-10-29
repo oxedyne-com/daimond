@@ -36,6 +36,7 @@
 //
 // Needs dev/serve.mjs (:8777) and dev/mockllm.mjs (:9099).
 
+import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,7 +81,7 @@ function damagedFiles() {
 		// From what is ALREADY DAMAGED where a break edits one file twice, or the
 		// second edit would drop the first and a two-place rule would be half
 		// restored -- silently, since both anchors are found either way.
-		const src = byFile.get(spec.file) || fs.readFileSync(path.join(WWW, spec.file), 'utf8');
+		const src = byFile.get(spec.file) || readPage(path.join(WWW, spec.file), 'utf8');
 		if (!src.includes(spec.find)) {
 			// A break whose anchor is not there patches nothing and launders a plain
 			// run as proof. Loud, and fatal.
