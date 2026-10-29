@@ -31,7 +31,8 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage, isSplit } from './test/page.mjs';
 
 // R1d's child: one build's real `markInterrupted` + `continueTurn` (TREE names the build) draw
 // the row in SUHTR_ROW in a chat (or a Diamond, SUHTR_DIAMOND) and press its button. Answers
@@ -48,7 +49,10 @@ if (process.env.SUHTR_P1D) {
 	const chat = { id: 'c1', diamondId: process.env.SUHTR_DIAMOND ? 'f1' : undefined,
 		messages: [{ role: 'user', content: 'go', mid: row.iturn, iturn: row.iturn }, row] };
 	const P = (x) => JSON.stringify(x);
-	const { fns } = sliceDaimond(w, ['markInterrupted', 'continueTurn'], {
+	// A build from before the page split (www/js/page/) is lifted by its own harness, the
+	// dev/syncprobe.mjs the parent copies beside its daimond.js.
+	const old = isSplit() ? null : await import(join(process.env.TREE, 'dev', 'syncprobe.mjs'));
+	const stub = {
 		current: chat, t: (k) => k, runnerLostLabel: () => 'LOST', renderDispatchedFooter() {},
 		turnHold: () => null, holdSend: () => () => {}, confirmHold: async () => {}, toast() {},
 		selfDeviceId: () => 'OLDDEV', leaseClockNow: () => Date.now(), loadMsgTombs: () => ({}),
@@ -60,7 +64,9 @@ if (process.env.SUHTR_P1D) {
 		runTurn: (c, x, o) => calls.push('runTurn HERE ' + P(x) + ' ' + P(o)),
 		runSteer: (f, x, d, det, how) => calls.push('runSteer HERE ' + P(how)),
 		diamonds: [{ id: 'f1', name: 'Lifelog' }], currentDiamond: null,
-	});
+	};
+	const want = ['markInterrupted', 'continueTurn'];
+	const fns = old ? old.sliceDaimond(w, want, stub).fns : loadPage({ window: w, want, stub });
 	const div = mk('div');
 	fns.markInterrupted(div, row);
 	const foot = div.children[0] || { children: [] };
@@ -122,10 +128,10 @@ const wrote = {};
 	console.log('R1: the "not run" row, written and drawn');
 	const w = makeWindow({ now: Date.now() });
 	let n = 0;
-	const { fns } = sliceDaimond(w, ['answerUnhanded'], {
+	const fns = loadPage({ window: w, want: ['answerUnhanded'], stub: {
 		touchMsg: (m) => { m._touched = 1; return m; }, newMid: () => 'row' + (++n), touchChat() {}, persistChats() {},
 		ownsChat: () => false, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, diag() {}, DaimondModels: { pauseError: () => ({ message: 'p' }) },
-	});
+	} });
 	const chat = { id: 'c1', messages: [{ role: 'user', content: 'go', mid: 'X', iturn: 'X' }] };
 	fns.answerUnhanded(chat, 'X', 'go', { ok: false, why: 'refused after the mark: 500' });
 	const row = chat.messages[1] || {};
@@ -145,11 +151,11 @@ const wrote = {};
 		iturn: 'X', itext: 'go', notRun: { why: 'w' } }]];
 	for (const [what, r] of shapes) {
 		const calls = [];
-		const { fns: d } = sliceDaimond(makeWindow({ now: Date.now() }), ['markInterrupted'], {
+		const d = loadPage({ window: makeWindow({ now: Date.now() }), want: ['markInterrupted'], stub: {
 			current: { id: 'c1', messages: [chat.messages[0], r] }, t: (k) => k, runnerLostLabel: () => 'LOST',
 			renderDispatchedFooter() {}, retryTurn: (c, i, x, o) => { calls.push(['retry', i, x, o]); },
 			continueTurn: () => calls.push(['continue']), document: { createElement: el },
-		});
+		} });
 		const div = el('div');
 		d.markInterrupted(div, r);
 		const foot = div.children[0] || { children: [] };
@@ -168,7 +174,7 @@ const wrote = {};
 	const root = join(HERE, '..', '..');
 	const builds = [['178d721c0', '178d721c0'], ['4c94152fd (live)', '4c94152fd'], ['head', null]];
 	const run = (tree, row, diamond) => {
-		const out = execFileSync(process.execPath, [fileURLToPath(import.meta.url)], { encoding: 'utf8',
+		const out = execFileSync(process.execPath, process.execArgv.concat([fileURLToPath(import.meta.url)]), { encoding: 'utf8',
 			env: Object.assign({}, process.env, { TREE: tree, SUHTR_P1D: '1', SUHTR_ROW: J(row), SUHTR_DIAMOND: diamond ? '1' : '' }) });
 		const line = out.split('\n').find((l) => l.startsWith('P1D ')) || 'P1D {}';
 		return JSON.parse(line.slice(4));
@@ -184,6 +190,8 @@ const wrote = {};
 			tmp = mkdtempSync(join(tmpdir(), 'suhtr-' + sha + '-'));
 			mkdirSync(join(tmp, 'www', 'js'), { recursive: true });
 			writeFileSync(join(tmp, 'www', 'js', 'daimond.js'), execFileSync('git', ['-C', root, 'show', sha + ':www/js/daimond.js'], { maxBuffer: 1 << 28 }));
+			mkdirSync(join(tmp, 'dev'));
+			writeFileSync(join(tmp, 'dev', 'syncprobe.mjs'), execFileSync('git', ['-C', root, 'show', sha + ':dev/syncprobe.mjs']));
 			tree = tmp;
 		}
 		try {
@@ -217,7 +225,7 @@ for (const diamond of [false, true]) {
 		const chat = { id: 'c', diamondId: diamond ? 'd1' : '', messages: [{ role: 'user', content: 'go', mid: 'X', iturn: 'X' },
 			{ role: 'assistant', content: '', interrupted: true, why: 'runner', iturn: 'X', itext: 'go', mid: 'R', notRun: { why: 'w' } }] };
 		let n = 0;
-		const { fns } = sliceDaimond(w, ['retryTurn'], {
+		const fns = loadPage({ window: w, want: ['retryTurn'], stub: {
 			selfDeviceId: () => self, leaseClockNow: () => Date.now(), peerSyncShim: () => ({}), diag() {}, toast() {},
 			peerUiStateFor: () => 'x', answerAgain() {}, loadMsgTombs: () => ({}), msgTombstone() {}, sessionCut() {},
 			touchChat() {}, persistChats() {}, ChatStore: { compact() {} }, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, newMid: () => self + '-m' + (++n),
@@ -228,7 +236,7 @@ for (const diamond of [false, true]) {
 			runTurn: async (c, x, o) => { runs.push(self + ' runTurn ' + (o && o.mid)); },
 			runSteer: async (f, x, dp, det, how) => { runs.push(self + ' runSteer ' + ((how && how.mid) || 'fresh')); },
 			diamonds: [{ id: 'd1' }], currentDiamond: null,
-		});
+		} });
 		return { fns, chat };
 	};
 	const A = device('A'), B = device('B');
@@ -247,7 +255,7 @@ for (const diamond of [false, true]) {
 	const calls = [];
 	const chat = { id: 'c', diamondId: 'd1', messages: [{ role: 'user', content: 'go', mid: 'X', iturn: 'X' },
 		{ role: 'assistant', content: 'half', interrupted: true, why: 'runner', iturn: 'X', itext: 'go', mid: 'R' }] };
-	const { fns } = sliceDaimond(makeWindow({ now: Date.now() }), ['continueTurn'], {
+	const fns = loadPage({ window: makeWindow({ now: Date.now() }), want: ['continueTurn'], stub: {
 		turnHold: () => null, holdSend: () => () => {}, confirmHold: async () => {}, toast() {}, t: (k) => k,
 		retryTurn: (c, i, x, o) => { calls.push(['retry', i, o]); }, askAgain: () => calls.push(['askAgain']),
 		answerAgain: () => calls.push(['answerAgain']), msgTombstone() {}, sessionCut() {}, touchChat() {}, persistChats() {},
@@ -255,7 +263,7 @@ for (const diamond of [false, true]) {
 		loadMsgTombs: () => ({}), tombstone() {}, mark() {}, offline() {}, hold() {}, handoffTargetLabel: () => '',
 		selfDeviceId: () => 'A', leaseClockNow: () => Date.now(), deviceLabelFor: () => '', dropDispatchedPlaceholder() {},
 		continueRouted: () => calls.push(['continueRouted']), continueAsked: () => calls.push(['continueAsked']), seatDrawnRunner: () => '', ensureApp() {}, runTurn: () => calls.push(['runTurn']),
-	});
+	} });
 	fns.continueTurn(chat, 'X', 'go', false, true);
 	await settle();
 	check('R2c retryTurn lost, never askAgain', calls.length === 1 && calls[0][0] === 'retry' && calls[0][2] && calls[0][2].lost === true, J(calls));
@@ -265,9 +273,9 @@ for (const diamond of [false, true]) {
 for (const [what, row] of [['written row', { why: 'runner', notRun: { why: 'w' } }], ['legacy notrun', { why: 'notrun' }]]) {
 	console.log('R3: Stop on the other device, ' + what);
 	const held = { 'X-rt': true };
-	const { fns } = sliceDaimond(makeWindow({ now: Date.now() }), ['peerHeldTurnOf'], {
+	const fns = loadPage({ window: makeWindow({ now: Date.now() }), want: ['peerHeldTurnOf'], stub: {
 		peerLeaseHeld: (t) => !!held[t], _peerStopping: {}, peerUiStateFor: () => 'done', PEER_HELD: {},
-	});
+	} });
 	const prev = [{ role: 'user', content: 'earlier', mid: 'P', iturn: 'P' }, { role: 'assistant', content: 'ok', iturn: 'P' }];
 	const chat = { id: 'c3', messages: prev.concat([{ role: 'user', content: 'go', mid: 'X', iturn: 'X' },
 		Object.assign({ role: 'assistant', content: '', interrupted: true, iturn: 'X', itext: 'go' }, row)]) };
@@ -291,7 +299,7 @@ function endWorld(self, door, chat) {
 		} });
 	w.DaimondPost = { collect: async () => {} };
 	w.DaimondSync = { leaseGet: async () => ({ leases: (await door.read()).leases }), pull: async () => {} };
-	const { fns } = sliceDaimond(w, ['endHandOffNotRun', 'runDispatchFallback', 'leaseDoorRead', 'peerCollectOnReturn'], {
+	const fns = loadPage({ window: w, want: ['endHandOffNotRun', 'runDispatchFallback', 'leaseDoorRead', 'peerCollectOnReturn'], stub: {
 		selfDeviceId: () => self, leaseClockNow: () => Date.now(), peerSyncShim: () => ({}),
 		claimTurnHere: async () => ({ release() {} }), diag() {}, redrawRunner() {}, scheduleDispatchFallback() {},
 		UNDECIDED_RECOLLECT_MS: 1, clearDispatchFallback() {}, drainAfterHeld() {},
@@ -302,7 +310,7 @@ function endWorld(self, door, chat) {
 		chats: [chat], dispatchedChat: () => chat, _dispatchedIx: { [chat.messages[0].iturn]: chat.id },
 		dispatchedTurnFinished: () => false, dispatchedAnswerPresent: () => false,
 		recoverOneLocally: async (c, m) => { W.ran.push('recover:' + m.iturn); }, releaseOwnStaleLeases: async () => 0,
-	});
+	} });
 	W.fns = fns;
 	return W;
 }
@@ -365,16 +373,16 @@ for (const diamond of [false, true]) {
 	console.log('R5: two writers of one turn\'s "not run" row, ' + (diamond ? 'Diamond' : 'chat'));
 	const writer = (dev) => {
 		let n = 0;
-		return sliceDaimond(makeWindow({ now: Date.now() }), ['answerUnhanded'], {
+		return loadPage({ window: makeWindow({ now: Date.now() }), want: ['answerUnhanded'], stub: {
 			touchMsg: (m) => m, newMid: () => dev + (++n), touchChat() {}, persistChats() {},
 			ownsChat: () => false, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, diag() {}, DaimondModels: { pauseError: () => ({ message: 'p' }) },
-		}).fns;
+		} });
 	};
 	const copy = () => ({ id: 'c', diamondId: diamond ? 'f1' : undefined, messages: [{ role: 'user', content: 'go', mid: 'X-rt', iturn: 'X-rt', ts: 1 }] });
 	const a = copy(), b = copy();
 	writer('A').answerUnhanded(a, 'X-rt', 'go', { ok: false, why: 'refused on A' });
 	writer('B').answerUnhanded(b, 'X-rt', 'go', { ok: false, why: 'declined on B' });
-	const { fns: M } = sliceDaimond(makeWindow({ now: Date.now() }), ['mergeMessages'], { loadMsgTombs: () => ({}) });
+	const M = loadPage({ window: makeWindow({ now: Date.now() }), want: ['mergeMessages'], stub: { loadMsgTombs: () => ({}) } });
 	const merged = M.mergeMessages(a.messages, b.messages, 'c', {});
 	const rows = merged.filter((m) => m.notRun);
 	check('R5 ' + (diamond ? 'Diamond' : 'chat') + ': the two copies merge into one not-run row', rows.length === 1
@@ -401,7 +409,7 @@ for (const [what, busy, list, lost] of [['busy', true, [{ id: 'd1' }], true], ['
 	w.DaimondSync = { flush: async () => {} };
 	const chat = { id: 'c', diamondId: 'd1', messages: [{ role: 'user', content: 'go', mid: 'X', iturn: 'X' },
 		{ role: 'assistant', content: '', interrupted: true, why: 'notrun', iturn: 'X', itext: 'go', mid: 'X-nr', notRun: { why: 'w' } }] };
-	const { fns } = sliceDaimond(w, ['retryTurn', 'setCrystalBusy'], {
+	const fns = loadPage({ window: w, want: ['retryTurn', 'setCrystalBusy'], stub: {
 		selfDeviceId: () => 'A', leaseClockNow: () => Date.now(), peerSyncShim: () => ({}), diag() {}, toast() {}, t: (k) => k,
 		peerUiStateFor: () => 'x', answerAgain() {}, loadMsgTombs: () => ({}), msgTombstone: (x) => tombs.push(...x), sessionCut() {},
 		touchChat() {}, persistChats() {}, ChatStore: { compact() {} }, renderHistory() {}, renderQueue() {}, putInComposer() {}, syncFoldBusy() {}, newMid: () => 'fresh',
@@ -411,7 +419,7 @@ for (const [what, busy, list, lost] of [['busy', true, [{ id: 'd1' }], true], ['
 		runTurn: async () => { runs.push('runTurn'); },
 		runSteer: async (f, x, dp, det, how) => { runs.push('runSteer ' + ((how && how.mid) || 'fresh')); return busy ? '' : 'ok'; },
 		diamonds: list, currentDiamond: null, crystalRunning: busy ? { d1: true } : {},
-	});
+	} });
 	// Not awaited whole: a busy Diamond's retry is under way until the turn it waits on ends.
 	const rp = fns.retryTurn(chat, 'X', 'go', { lost });
 	await settle();

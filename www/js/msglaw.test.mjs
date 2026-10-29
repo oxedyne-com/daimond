@@ -39,7 +39,8 @@
    On release/r52 @ 69127922 (first-wins) A and most of B fail.
      node www/js/msglaw.test.mjs      # ALL PASS
    ============================================================ */
-import { makeWindow, sliceDaimond, rng } from '../../dev/syncprobe.mjs';
+import { makeWindow, rng } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -49,9 +50,7 @@ function check(name, cond, detail) {
 
 const NOW = 1_000_000_000;
 const w = makeWindow({ now: NOW });
-const { mergeMessages, msgCmp, copyStanding, msgBodyLen, slimMessages, clearBadge } = sliceDaimond(w,
-	['mergeMessages', 'msgCmp', 'copyStanding', 'msgBodyLen', 'slimMessages', 'clearBadge'],
-	{ loadMsgTombs: () => ({}) }).fns;
+const { mergeMessages, msgCmp, copyStanding, msgBodyLen, slimMessages, clearBadge } = loadPage({ window: w, want: ['mergeMessages', 'msgCmp', 'copyStanding', 'msgBodyLen', 'slimMessages', 'clearBadge'], stub: { loadMsgTombs: () => ({}) } });
 
 // The bytes a transcript travels as. Key order counts, and so does a key holding
 // `undefined` (JSON drops it, as the parcel does).

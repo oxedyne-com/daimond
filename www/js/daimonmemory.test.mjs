@@ -25,7 +25,8 @@ import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeWindow, sliceDaimond, declLine } from '../../dev/syncprobe.mjs';
+import { makeWindow, declLine } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0, checks = 0;
@@ -51,7 +52,7 @@ function extractFn(src, name) {
 function lift(names, stub, win) {
 	const have = names.filter((n) => declLine(n) > 0);
 	if (!have.length) return {};
-	try { return sliceDaimond(win || makeWindow({}), have, Object.assign({ diag() {} }, stub || {})).fns; }
+	try { return loadPage({ window: win || makeWindow({}), want: have, stub: Object.assign({ diag() {} }, stub || {}) }); }
 	catch (e) { console.log('  (lift failed: ' + e.message + ')'); return {}; }
 }
 const F = lift(['daimonPrior', 'foldFrom', 'mergeFold', 'landFailedTurn', 'transcriptSearch', 'withRecent', 'sessionMarker']);

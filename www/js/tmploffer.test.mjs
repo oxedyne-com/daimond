@@ -14,7 +14,8 @@
    fixture page draws when its script is run; the off-screen frame itself is exercised in
    the browser by dev/verify_crystalupdate.mjs.   `node www/js/tmploffer.test.mjs`
    ============================================================ */
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
@@ -109,10 +110,10 @@ const stubs = {
 };
 const names = ['cappMergeOffer', 'cappTakeMerge', 'cappOfferNote', 'cappProveAndShow'];
 let fns = null;
-try { fns = sliceDaimond(win, names, stubs).fns; }
+try { fns = loadPage({ window: win, want: names, stub: stubs }); }
 catch (e) {
 	check('the merge is proved before it is offered (cappProveAndShow exists)', false, e.message);
-	try { fns = sliceDaimond(win, ['cappMergeOffer', 'cappTakeMerge'], stubs).fns; } catch (e2) { fns = null; }
+	try { fns = loadPage({ window: win, want: ['cappMergeOffer', 'cappTakeMerge'], stub: stubs }); } catch (e2) { fns = null; }
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 20));

@@ -3,7 +3,8 @@
 // copy keeps pulling to the one deadline, then runs with a note saying how many messages it lacks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { loadPeer } from './c2ready_common.mjs';
 const DP = loadPeer();
 const BOUND = 400;
@@ -18,10 +19,10 @@ async function run(runnerMsgs) {
 	const win = makeWindow({}); win.setTimeout = setTimeout; win.Date = Date;
 	win.DaimondPeer = DP;
 	win.DaimondSync = { version: () => 0, pull: async () => {} };	// the parcel never brings the rest in this window
-	const R = sliceDaimond(win, ['peerReady', 'peerReconstruct', 'lackedNote', 'THROUGH_WAIT_MS', 'throughDeadline', 'graftSeed',
-		'RECONSTRUCT_STALL_MS', 'RECONSTRUCT_ABS_CAP_MS', 'RECONSTRUCT_PULL_MIN_MS', 'RECONSTRUCT_PULL_MAX_MS', 'syncHeld', 'runnerTurnOpts'], {
+	const R = loadPage({ window: win, want: ['peerReady', 'peerReconstruct', 'lackedNote', 'THROUGH_WAIT_MS', 'throughDeadline', 'graftSeed',
+		'RECONSTRUCT_STALL_MS', 'RECONSTRUCT_ABS_CAP_MS', 'RECONSTRUCT_PULL_MIN_MS', 'RECONSTRUCT_PULL_MAX_MS', 'syncHeld', 'runnerTurnOpts'], stub: {
 		diag() {}, chats, loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {}, persistChats() {}, touchChat() {},
-		honourGone() {}, DaimondMarksHere: { chatSettle() {} }, ensureApp: () => ({}), scopeChatTo: async () => {}, diamonds: [], loadDiamonds: async () => {} }).fns;
+		honourGone() {}, DaimondMarksHere: { chatSettle() {} }, ensureApp: () => ({}), scopeChatTo: async () => {}, diamonds: [], loadDiamonds: async () => {} } });
 	const t0 = Date.now();
 	const rd = await R.peerReady(errand, [], BOUND);
 	const waited = Date.now() - t0;

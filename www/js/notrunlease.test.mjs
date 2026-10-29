@@ -30,7 +30,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0, checks = 0;
@@ -151,8 +152,8 @@ function device(peerWin, self, extra) {
 		continueTurn() {}, answerAgain() {}, drainAfterHeld() {}, current: null, ms: null,	// `ms`: a local name the lifter takes for a declaration
 		t: (k, o) => k + (o ? J(o) : ''),
 	}, extra && extra.stub);
-	return sliceDaimond(w, ['endHandOffNotRun', 'turnRunnerId', 'peerUiStateFor', 'peerHeldTurnOf',
-		'renderDispatchedFooter', 'handoffLive'].concat((extra && extra.names) || []), stub).fns;
+	return loadPage({ window: w, want: ['endHandOffNotRun', 'turnRunnerId', 'peerUiStateFor', 'peerHeldTurnOf',
+		'renderDispatchedFooter', 'handoffLive'].concat((extra && extra.names) || []), stub: stub });
 }
 try {
 	const phW = loadPeer(), dkW = loadPeer(), door = makeDoor();

@@ -154,9 +154,6 @@ function mentions(src) {
 	while ((m = re.exec(body))) out.add(m[2]);
 	return out;
 }
-/// Lift `names` (and what they reach) from daimond.js into `win`. `stub` names are
-/// supplied rather than lifted (a store, a renderer). Answers the functions and the
-/// line each lifted declaration came from.
 /// The source of `names` and every top-level declaration they reach, functions first,
 /// less the names in `stubbed` (which the caller supplies). For a test that builds its
 /// own scope around the app's code: it cannot drift from what the app's code reaches
@@ -181,15 +178,6 @@ export function liftSource(names, stubbed) {
 	return { src: ordered.map((n) => all.get(n).src).join('\n'), ordered, lines: Object.fromEntries(ordered.map((n) => [n, all.get(n).line])) };
 }
 
-export function sliceDaimond(win, names, stub) {
-	stub = stub || {};
-	const { src, ordered, lines } = liftSource(names, Object.keys(stub));
-	const sk = Object.keys(stub);
-	const body = 'with (window) { return (function (' + sk.join(', ') + ') {\n' + src + '\nreturn { ' + names.join(', ') + ' };\n}).apply(null, arguments[1]); }';
-	const fn = new Function('window', 'stubs', body.replace('arguments[1]', 'stubs'));
-	const fns = fn(win, sk.map((k) => stub[k]));
-	return { fns, lines, lifted: ordered };
-}
 export function declLine(name) { const d = daimondDecls().get(name); return d ? d.line : 0; }
 
 // ── Seeded choice ─────────────────────────────────────────────────

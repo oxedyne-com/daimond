@@ -24,7 +24,8 @@
 
      node www/js/defaultopened.test.mjs
    ============================================================ */
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -43,8 +44,8 @@ function gate(enc) {
 	return gates[enc];
 }
 w.DaimondIdentity = { isUnlocked: () => true, wrap: async (s) => s, unwrap: (s) => gate(s).promise };
-const c = sliceDaimond(w, ['mergeTombMap', 'loadTombMap'], { ChatStore: { putTombs: () => Promise.resolve(true) },
-	storageAlarm: () => {}, tOr: (k, f) => f }).fns;
+const c = loadPage({ window: w, want: ['mergeTombMap', 'loadTombMap'], stub: { ChatStore: { putTombs: () => Promise.resolve(true) },
+	storageAlarm: () => {}, tOr: (k, f) => f } });
 w.DaimondCore = { mergeTombs: c.mergeTombMap, loadTombMap: c.loadTombMap, tombs: c.loadTombMap };
 loadScript(w, 'models.js');
 const M = w.DaimondModels;

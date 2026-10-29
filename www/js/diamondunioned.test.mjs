@@ -18,7 +18,8 @@
    no longer re-fetches.
    Run:  node www/js/diamondunioned.test.mjs
    ============================================================ */
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -44,7 +45,7 @@ function device() {
 		unionDiamondTags: async () => false, unionDiamondLinks: async () => false,
 		diamondAdoptsRef: () => false, diamondManifest: () => null,
 	};
-	const f = sliceDaimond(w, ['applyDiamonds', 'diamondData', 'readDiamondUnioned', 'writeDiamondUnioned'], stubs).fns;
+	const f = loadPage({ window: w, want: ['applyDiamonds', 'diamondData', 'readDiamondUnioned', 'writeDiamondUnioned'], stub: stubs });
 	return {
 		f,
 		get fetches() { return fetches; },

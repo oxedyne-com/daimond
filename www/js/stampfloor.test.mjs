@@ -25,7 +25,8 @@
 
    Run:  node www/js/stampfloor.test.mjs [--tree <checkout>]
    ============================================================ */
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -77,8 +78,8 @@ for (const [label, set, get] of [['default model', 'setDefault', 'getDefault'], 
 	await skewCase(label + ': m1, then m2', async (now) => {
 		const w = makeWindow({ now });
 		w.DaimondIdentity = { isUnlocked: () => true, wrap: async (s) => s, unwrap: async (s) => s };
-		const c = sliceDaimond(w, ['mergeTombMap', 'loadTombMap'], { ChatStore: { putTombs: () => Promise.resolve(true) },
-			storageAlarm: () => {}, tOr: (k, f) => f }).fns;
+		const c = loadPage({ window: w, want: ['mergeTombMap', 'loadTombMap'], stub: { ChatStore: { putTombs: () => Promise.resolve(true) },
+			storageAlarm: () => {}, tOr: (k, f) => f } });
 		w.DaimondCore = { mergeTombs: c.mergeTombMap, loadTombMap: c.loadTombMap, tombs: c.loadTombMap };
 		loadScript(w, 'models.js');
 		const M = w.DaimondModels;
@@ -93,7 +94,7 @@ for (const [label, set, get] of [['default model', 'setDefault', 'getDefault'], 
 console.log('\nstampfloor: a chat rename and a device name (daimond.js closures, lifted)');
 await skewCase('chat rename: Alpha, then Beta', async (now) => {
 	const w = makeWindow({ now });
-	const f = sliceDaimond(w, ['touchChatMeta', 'mergeChatRecords'], { ChatStore: {} }).fns;
+	const f = loadPage({ window: w, want: ['touchChatMeta', 'mergeChatRecords'], stub: { ChatStore: {} } });
 	let c = { id: 'c1', name: 'Untitled', messages: [], updatedAt: 1, metaAt: 1 };
 	return { w,
 		write: (n) => { c.name = n; f.touchChatMeta(c); },
@@ -103,9 +104,9 @@ await skewCase('chat rename: Alpha, then Beta', async (now) => {
 }, 'Alpha', 'Beta');
 await skewCase('device name: Desk, then Kitchen', async (now) => {
 	const w = makeWindow({ now });
-	const f = sliceDaimond(w, ['renameDevice', 'mergeDevices', 'loadDevices'], {
+	const f = loadPage({ window: w, want: ['renameDevice', 'mergeDevices', 'loadDevices'], stub: {
 		ChatStore: { putTombs: () => Promise.resolve(true) }, storageAlarm: () => {}, tOr: (k, x) => x, t: (k) => k,
-		deviceId: () => 'ffffffffffffffff', renderSeatSwitch: () => {}, nudgeSync: () => {} }).fns;
+		deviceId: () => 'ffffffffffffffff', renderSeatSwitch: () => {}, nudgeSync: () => {} } });
 	const ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 	f.mergeDevices({ [ID]: { name: 'Chrome on Linux', label: '', created: 1, namedAt: 0, seen: 1, build: '' } });
 	return { w,
@@ -122,7 +123,7 @@ for (const [label, write, read, first, second] of [
 ]) {
 	await skewCase(label, async (now) => {
 		const w = makeWindow({ now });
-		const f = sliceDaimond(w, ['diamondModels', 'setDiamondModel', 'adoptDiamondModel'], { Notes: undefined }).fns;
+		const f = loadPage({ window: w, want: ['diamondModels', 'setDiamondModel', 'adoptDiamondModel'], stub: { Notes: undefined } });
 		return { w,
 			write: (v) => write(f, v),
 			snap: () => JSON.parse(JSON.stringify(f.diamondModels().d || null)),
@@ -155,12 +156,12 @@ async function diamondCase(skew) {
 			delete_diamond: async (id) => { delete store[id]; },
 			set_tags: async () => {}, union_links: async () => false,
 		};
-		const f = sliceDaimond(w, ['applyDiamonds'], {
+		const f = loadPage({ window: w, want: ['applyDiamonds'], stub: {
 			ChatStore: { putTombs: () => Promise.resolve(true) }, diamondApp: () => app, trail: () => {}, heapNote: () => '',
 			DaimondMarksHere: { dropAll: () => false, settle: () => false }, notePeerRef: () => {}, bumpDiamonds: () => {},
 			onDiamondsChangedElsewhere: async () => {}, signalLinksChanged: () => {}, setDiamondModel: () => {}, adoptDiamondModel: () => false, renderEffortStep: () => {},
 			storageAlarm: () => {}, tOr: (k, x) => x, DaimondCloud: undefined, DaimondChunks: undefined,
-		}).fns;
+		} });
 		return { store, f, w,
 			advance(ms) { clock += ms; w._setNow(clock); },
 			edit(id, body) { store[id].body = body; store[id].touched = clock; },

@@ -2,13 +2,17 @@
 import { CHATS_KEY, DIAMONDS_KEY, DIAMOND_TOMBS_KEY, MSG_TOMBS_KEY, TOMBS_KEY, chatInputBar, pg,
 	sessionNameEl } from './state.js';
 import { OLD_LEGACY, readJson, t, tombTtl, trail } from './util.js';
+import { DEVICE_TOMBS_KEY, SYNC_FILE_TOMBS_KEY, fileHash } from './parcel_collect.js';
 import { _dispatchedIx, deriveNativeTotals, dispatchedChat, dropDispatchedPlaceholder, hereOf,
 	nativeJoin, rebuildDispatchedIndex, updateExpedite } from './handoff.js';
-import { BACKUP_VERSION, DEVICE_TOMBS_KEY, SYNC_FILE_TOMBS_KEY, Workers, armRunnerReady,
-	chatDisplayName, chatOpening, crystalArrived, destroyChat, destroyDiamond, diag, diamondApp,
-	dispatchedAnswerPresent, drainHeldQueues, fileHash, loadDiamonds, mergeFold, renderEmptyState,
-	renderHistory, renderSessionList, runnerReadyReject, setCurrent, setDiamondWhen, showCentre,
-	signalDiamondChanged, tOr, toast, updateMeters } from './rest.js';
+import { armRunnerReady, mergeFold, runnerReadyReject } from './send.js';
+import { drainHeldQueues } from './steer.js';
+import { Workers } from './workers.js';
+import { signalDiamondChanged } from './links.js';
+import { BACKUP_VERSION, diag, toast } from './passkey_phrase.js';
+import { chatDisplayName, chatOpening, crystalArrived, destroyChat, destroyDiamond, diamondApp,
+	dispatchedAnswerPresent, loadDiamonds, renderEmptyState, renderHistory, renderSessionList,
+	setCurrent, setDiamondWhen, showCentre, tOr, updateMeters } from './rest.js';
 // page-split: end imports
 export let ChatStore; // page-split: hoisted
 
@@ -1001,12 +1005,6 @@ async function sweepDue(due) {
 /// The Diamonds deleted on purpose, by id, with anything past its TTL pruned.
 export function loadDiamondTombs() {
 	return tombMapNow(DIAMOND_TOMBS_KEY);
-}
-/// Record that a Diamond was deleted on purpose, so the other device deletes
-/// it too rather than handing it back. Resolves whether the durable write landed.
-function diamondTombstone(id) {
-	if (!id) return Promise.resolve(false);
-	return persistTombs(DIAMOND_TOMBS_KEY, [id], Date.now());
 }
 
 // ── Where a transcript actually lives ──────────────────────

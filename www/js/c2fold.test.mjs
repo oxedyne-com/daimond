@@ -1,8 +1,9 @@
 // QA r572y C2a: fold record vs a turn from another device that the fold never summarised.
-import { makeWindow, sliceDaimond, declLine } from '../../dev/syncprobe.mjs';
+import { makeWindow, declLine } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 const names = ['daimonPrior', 'foldFrom', 'mergeFold', 'tailAfter', 'sessionDoubt', 'dedupeSession', 'sessionMarker'];
 const have = names.filter((n) => declLine(n) > 0);
-const F = sliceDaimond(makeWindow({}), have, { diag() {} }).fns;
+const F = loadPage({ window: makeWindow({}), want: have, stub: { diag() {} } });
 const J = JSON.stringify, said = (l) => l.map((m) => m.content);
 let fail = 0; const check = (n, c, d) => { console.log((c ? '  ok   ' : '  FAIL ') + n + (c ? '' : '  ' + d)); if (!c) fail++; };
 const FOLD = '[Daimond folded the earlier part of this conversation] A asked q1 and q2; we chose blue';

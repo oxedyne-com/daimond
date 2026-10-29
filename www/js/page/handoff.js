@@ -3,21 +3,26 @@ import { chatOutput, diamondBusy, pg } from './state.js';
 import { readJson, t } from './util.js';
 import { ChatStore, chatTaintOf, ensureDispatchedResident, loadChatMessages, msgTombstone, newMid,
 	onChatsChangedElsewhere, persistChats, stampMessages, takeReportTaint, touchChat, touchMsg } from './chatstore.js';
-import { ARRIVE_FRESH_MS, DEVICE_ID_RE, Files, PeerAgents, Workers, _electionTrace, _enginePoison,
-	_handoffStart, _openAsk, _peerStopping, _runnerCtx, _runnerParked, _threadScope, abortTurn,
-	adoptRemoteGrant, answerUnhanded, autoLogHandoffLatency, busyForChat, captureSession, chatHasWork,
-	claimedModelsOf, continueTurn, cutAccount, deliverGrant, diag, diamondCanRun, dispatchToPeer,
-	dispatchedAnswerPresent, drainAfterHeld, drainHeldQueues, drainQueue, drainSteerQueue,
-	endTurnEngine, ensureApp, errandModelOf, foldJournalTurn, followActivity, followsEnd,
-	handoffTargetLabel, heedUnheard, honourGone, interjectMessage, isLostRow, leaseDoorRead,
-	loadDevices, loadDiamonds, nominatedDeviceId, notRunCause, noteArrive, noticeDialog, noticePermit,
-	ownTurns, presenceTick, queueBehind, raiseConsentFromPeer, reRaiseOpenAsks, recordCarriedTurn,
-	renderHistory, renderSeatSwitch, requeueUnheard, runSteerDetached, runTurn, runnerCtxBegin,
-	runnerCtxEnd, runnerDeaf, runnerFrameExtra, runnerPairPoll, scopeChatTo, scopeTurnApp, seatReason,
-	seatSwitchFor, sentModelsOf, setCrystalBusy, settleRunnerAlerts, settleRunnerAsk,
-	settleRunnerSession, settleRunnerWords, sigsOf, storedEffort, storedPre, syncComposer, syncSendMode,
-	threadScopeKey, tilePeek, toast, turnEffortOf, turnHold, undoTurnDeps, undoTurnProbe,
-	undoneFromRunner } from './rest.js';
+import { DEVICE_ID_RE, loadDevices, nominatedDeviceId } from './parcel_collect.js';
+import { ARRIVE_FRESH_MS, noteArrive } from './parcel_apply.js';
+import { _threadScope, captureSession, ensureApp, honourGone, scopeTurnApp, settleRunnerAlerts,
+	settleRunnerAsk, settleRunnerSession, settleRunnerWords, syncComposer, threadScopeKey } from './send.js';
+import { drainAfterHeld, drainHeldQueues, drainQueue, drainSteerQueue, heedUnheard, interjectMessage,
+	leaseDoorRead, requeueUnheard, runTurn } from './steer.js';
+import { PeerAgents, Workers } from './workers.js';
+import { Files } from './files_view.js';
+import { _enginePoison, endTurnEngine } from './layout.js';
+import { errandModelOf, storedEffort, storedPre, turnEffortOf } from './rating.js';
+import { _electionTrace, _handoffStart, answerUnhanded, autoLogHandoffLatency, continueTurn,
+	foldJournalTurn, notRunCause, presenceTick, renderSeatSwitch, seatReason, seatSwitchFor } from './sourcemenu.js';
+import { diag, toast } from './passkey_phrase.js';
+import { _openAsk, _peerStopping, _runnerCtx, _runnerParked, abortTurn, adoptRemoteGrant,
+	busyForChat, chatHasWork, claimedModelsOf, cutAccount, deliverGrant, diamondCanRun, dispatchToPeer,
+	dispatchedAnswerPresent, followActivity, followsEnd, handoffTargetLabel, isLostRow, loadDiamonds,
+	noticeDialog, noticePermit, ownTurns, queueBehind, raiseConsentFromPeer, reRaiseOpenAsks,
+	recordCarriedTurn, renderHistory, runSteerDetached, runnerCtxBegin, runnerCtxEnd, runnerDeaf,
+	runnerFrameExtra, runnerPairPoll, scopeChatTo, sentModelsOf, setCrystalBusy, sigsOf, syncSendMode,
+	tilePeek, turnHold, undoTurnDeps, undoTurnProbe, undoneFromRunner } from './rest.js';
 // page-split: end imports
 let presenceOnReturn; // page-split: hoisted
 
@@ -1753,7 +1758,7 @@ function registerPeerRunner() {
 	} catch (e) { /* the backstop of a later send and the deadline remain */ }
 	return true;
 }
-// page-split: install 20
+// page-split: install 28
 
 // ── The dispatching side: state, controls, return collect ──
 
@@ -1912,7 +1917,7 @@ export var _liveProd = {};
 // Watcher side: the streamed view per turn (`DaimondPeer.foldProgress` state), and
 // which turns are registered with the sync engine's progress watch.
 export var _progressView = {};
-var _progressWatched = {};
+export var _progressWatched = {};
 
 /// Append the LIVE ANSWER still arriving to a frame's structured rows. The finished
 /// assistant message is not in `chat.messages` until the turn settles, and a
@@ -2144,7 +2149,7 @@ function fetchFinalRef(turnId, ref, n) {
 /// APPENDED (the append fast path draws it, nothing rebuilt), and a growing assistant
 /// row is patched IN PLACE by mid -- no tile is torn down. The rows carry the mids the
 /// runner will push, so the parcel merge converges by mid with no rebuild.
-function applyProvisional(turnId, rows, final) {
+export function applyProvisional(turnId, rows, final) {
 	if (!window.DaimondPeer || !DaimondPeer.foldProvisional) return;
 	if (_abiRefused[String(turnId)]) return;	// its runner's frame or report was below the page's min (A2)
 	var chat = finalFrameChat(turnId, final);
@@ -2218,7 +2223,7 @@ var _finalRun = {};		// the run a whole final frame was made by, by turn
 /// 2): looked up by the placeholder alone it was never folded, and the sender kept the cut
 /// streamed copy as its answer. `foldProvisional` leaves a row whose real copy has merged
 /// alone, so a late frame never overdraws one.
-function finalFrameChat(turnId, final) {
+export function finalFrameChat(turnId, final) {
 	return dispatchedChat(turnId) || (final ? chatHoldingTurn(turnId) : null);
 }
 
@@ -2379,7 +2384,7 @@ function foldRunnerTotals(chat, row, ph) {
 	return true;
 }
 
-function adoptFinalFrame(turnId) {
+export function adoptFinalFrame(turnId) {
 	var tid = String(turnId || ''), mids = _finalMids[tid];
 	if (!mids || !handoffDone(tid)) return false;
 	if (_abiRefused[tid]) { delete _finalMids[tid]; delete _finalRun[tid]; return false; }	// never the turn (A2)
@@ -2505,7 +2510,7 @@ export function drawHandoffWorkers(tile, key) {
 /// channel taps it. There is no read loop per turn any more, and nothing here is
 /// ever parked at the gateway: the page holds its one wake channel whatever it
 /// watches (see `DaimondSync.watchProgress`).
-function onProgressFrame(key, frame) {
+export function onProgressFrame(key, frame) {
 	if (!_progressWatched[key] || !frame) return;
 	// A runner's frame below the page's min is never taken (OWNKEY A2); a refused turn's final
 	// frame still ends it here, so the check comes before the refused turn's stop.
@@ -2575,7 +2580,7 @@ function updateProgressWatch() {
 /// finished turn, and `foldProvisional` leaves any row whose real copy has merged
 /// alone, so it can never overdraw the answer. A streaming frame read this late is
 /// a tail the turn has moved past, and is dropped as the closed view would drop it.
-function onLastFrame(key, frame) {
+export function onLastFrame(key, frame) {
 	if (!frame || !frame.final) return;
 	if (!frameAbiOk(key, frame)) { refuseAbiFrame(key, frame); return; }	// OWNKEY A2, as `onProgressFrame`
 	if (_abiRefused[key]) return;
@@ -3478,7 +3483,7 @@ async function releaseOwnStaleLeases() {
 		return freed;
 	} catch (e) { return 0; }
 }
-// page-split: install 21
+// page-split: install 29
 async function peerCollectOnReturn() {
 	if (pg._recovering) return;
 	pg._recovering = true;
@@ -3727,7 +3732,7 @@ function noteHandBack(report) {
 
 var _fallbackInFlight = Object.create(null);	// turn id -> a runDispatchFallback awaiting its reads
 var _handBackCause    = Object.create(null);	// turn id -> a hand-back's cause, should the placeholder miss it
-var _abiRefused       = Object.create(null);	// turn id -> its report or a frame was below the page's min (OWNKEY H3, A2)
+export var _abiRefused       = Object.create(null);	// turn id -> its report or a frame was below the page's min (OWNKEY H3, A2)
 
 /// End a turn whose runner's report or final frame is below the page's min (OWNKEY H3, A2):
 /// nothing of it is applied. On the device that sent it, the turn goes down the hand-back path
@@ -3760,7 +3765,7 @@ function refuseAbiTurn(tid, chatId, rep) {
 
 /// May this page take a frame of `tid` (OWNKEY A2)? The rule a report meets (`abiOk`), for the
 /// runner the turn's lease names, else the device its placeholder was sent to.
-function frameAbiOk(tid, frame) {
+export function frameAbiOk(tid, frame) {
 	if (!window.DaimondPeer || !DaimondPeer.abiOk) return true;
 	var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(String(tid)) : null;
 	var chat = finalFrameChat(tid, true), ph = chat ? dispatchedPlaceholderIn(chat, tid) : null;
@@ -4118,7 +4123,7 @@ function startErrandListener() {
 	try { if (window.DaimondPost && DaimondPost.parkStart) DaimondPost.parkStart(); } catch (e) { /* no transport */ }
 	try { if (window.DaimondPost && DaimondPost.collect) DaimondPost.collect(); } catch (e) { /* offline */ }
 }
-// page-split: install 22
+// page-split: install 30
 
 // ── THIS DEVICE WAS REMOVED ─────────────────────────────────
 //
@@ -4172,7 +4177,7 @@ async function onThisDeviceRemoved() {
 	try { noticeDialog(t('devices.removed_self_title'), t('devices.removed_self_body')); }
 	catch (e) { /* no dialog: the lock is still the operative half */ }
 }
-// page-split: install 23
+// page-split: install 31
 
 // ── Presence beat + smart auto-dispatch (step 7) ───────────
 
@@ -4205,14 +4210,14 @@ export function isMobileDeviceSelf() {
 	} catch (e) { /* fall through */ }
 	return isPhoneViewport();
 }
-// page-split: install 24
+// page-split: install 32
 
 export function install() { // page-split: install
-	// page-split: install 20
+	// page-split: install 28
 	// Registered on unlock, by which point every peer module is loaded; idempotent,
 	// so re-registering on a later unlock simply replaces the handler.
 	try { window.addEventListener('daimond:unlock', registerPeerRunner); } catch (e) { /* no window */ }
-	// page-split: install 21
+	// page-split: install 29
 
 	/// On return to a foregrounded tab: learn the latest, then RESCUE any orphan.
 	///
@@ -4230,9 +4235,9 @@ export function install() { // page-split: install
 	/// HERE -- through the lease, so if a peer is genuinely on it we stand down. A
 	/// backgrounded phone cannot fire the deadline fallback, so this is the fallback.
 	/* var */ pg._recovering = false;
-	// page-split: install 22
+	// page-split: install 30
 	try { window.addEventListener('daimond:unlock', startErrandListener); } catch (e) { /* no window */ }
-	// page-split: install 23
+	// page-split: install 31
 	try {
 		window.addEventListener('daimond:device-removed', function () {
 			Promise.resolve(onThisDeviceRemoved()).catch(function () {});
@@ -4283,7 +4288,7 @@ export function install() { // page-split: install
 } // page-split: end install
 
 export function install_2() { // page-split: install
-	// page-split: install 24
+	// page-split: install 32
 
 	/* var */ pg._recovering = false;
 } // page-split: end install

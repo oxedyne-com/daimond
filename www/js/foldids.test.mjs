@@ -1,6 +1,7 @@
 // FOLDIDS (QA r572w A F1/F2): the fold record lists the message ids the engine held; answers link their prompt.
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
-const F = sliceDaimond(makeWindow({}), ['daimonPrior', 'foldFrom', 'mergeFold', 'foldCover', 'foldGap', 'tailAfter', 'sessionDoubt', 'dedupeSession'], { diag() {} }).fns;
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
+const F = loadPage({ window: makeWindow({}), want: ['daimonPrior', 'foldFrom', 'mergeFold', 'foldCover', 'foldGap', 'tailAfter', 'sessionDoubt', 'dedupeSession'], stub: { diag() {} } });
 const J = JSON.stringify, said = (l) => l.map((m) => m.content);
 let fail = 0; const check = (n, c, d) => { console.log((c ? '  ok   ' : '  FAIL ') + n + (c ? '' : '  ' + d)); if (!c) fail++; };
 const FOLD = '[Daimond folded the earlier part] summary';

@@ -19,7 +19,8 @@
    ============================================================ */
 import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
@@ -75,9 +76,9 @@ stub.runSteerHeld = async (f, p, d, det, how, held) => {
 	held.app = F.claimDaimon(F.daimonApp(f.id));
 	return steerBody(held);
 };
-const F = sliceDaimond(win, ['daimonApp', 'diamondApp', 'everyDiamondClient', 'taintDaimon', 'claimDaimon',
+const F = loadPage({ window: win, want: ['daimonApp', 'diamondApp', 'everyDiamondClient', 'taintDaimon', 'claimDaimon',
 	'daimonSettled', 'trimDaimonApps', 'forgetDiamondWebConsent', 'resetDiamondApps', 'meterDiamondTurn',
-	'daimonBusy', 'runSteer'], stub).fns;
+	'daimonBusy', 'runSteer'], stub: stub });
 const all = () => { const out = []; F.everyDiamondClient((a) => out.push(a)); return out; };
 const daimons = () => { const doors = [F.diamondApp('d1'), F.diamondApp('d3')]; return all().filter((a) => !doors.includes(a)); };
 

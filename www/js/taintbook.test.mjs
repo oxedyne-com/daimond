@@ -58,7 +58,8 @@ if (BREAK) {
 	process.on('exit', () => rmSync(scratch, { recursive: true, force: true }));
 	console.log('BREAK ' + BREAK + ' (a patched copy of the tree)');
 }
-const { makeWindow, sliceDaimond, rng, TREE } = await import('../../dev/syncprobe.mjs');
+const { makeWindow, rng, TREE } = await import('../../dev/syncprobe.mjs');
+const { loadPage } = await import('./test/page.mjs');
 const APP = readPage(join(TREE, 'www', 'js', 'daimond.js'), 'utf8');
 
 let failures = 0, checks = 0;
@@ -69,7 +70,7 @@ function check(name, cond, detail) {
 }
 /// Lift `names` from the tree, or answer the reason it cannot (the functions are absent before R1).
 function lift(win, names, stub) {
-	try { return sliceDaimond(win, names, stub).fns; }
+	try { return loadPage({ window: win, want: names, stub: stub }); }
 	catch (e) { check('the tree has ' + names.join(', '), false, String(e && e.message || e)); return null; }
 }
 /// The body of `function name(...) { ... }` in the tree, by counting braces ('' when absent).

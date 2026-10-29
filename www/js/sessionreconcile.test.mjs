@@ -22,7 +22,8 @@
 
    Run:  node www/js/sessionreconcile.test.mjs [--break noreconcile|appendonly|nohold]
    ============================================================ */
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const BREAK = (() => { const i = process.argv.indexOf('--break'); return i >= 0 ? process.argv[i + 1] : ''; })();
 let failures = 0, checks = 0;
@@ -49,13 +50,13 @@ class Engine {
 }
 const stub = { diag(a, b) { if (process.env.DIAG) console.log('diag', a, b); }, dedupeSession: (m) => m };
 const NAMES = ['seedEngine', 'armEngine', 'reconcileEngine', 'heldRun', 'heldNote', 'tailAfter', 'captureSession', 'sessionHeld'];
-const base = sliceDaimond(makeWindow({}), ['sessionPlan'].concat(NAMES), stub).fns;		// the code as it stands
+const base = loadPage({ window: makeWindow({}), want: ['sessionPlan'].concat(NAMES), stub: stub });		// the code as it stands
 const sessionPlan = base.sessionPlan;
 let F = base;
 if (BREAK === 'appendonly') {
 	// The order case is not told apart: whatever the engine lacks is added behind what it holds.
 	const wrapped = (held, ran, msgs, ex) => { const p = base.sessionPlan(held, ran, msgs, ex); return p.act === 'order' ? { act: 'append', add: p.add } : p; };
-	F = sliceDaimond(makeWindow({}), NAMES, Object.assign({}, stub, { sessionPlan: wrapped })).fns;
+	F = loadPage({ window: makeWindow({}), want: NAMES, stub: Object.assign({}, stub, { sessionPlan: wrapped }) });
 }
 if (BREAK === 'noreconcile') F = Object.assign({}, base, { reconcileEngine: (chat) => chat.app });
 if (BREAK === 'nohold') F = Object.assign({}, base, { heldRun: () => {}, heldNote: () => {} });
@@ -206,7 +207,7 @@ console.log('\nreconcileEngine, one case at a time');
 	let thrown = null;
 	try { F.armEngine(c); } catch (e) { thrown = e; }
 	check('fresh arm: a failed restore is forgiven, and the record holds nothing', !thrown && !!c._held && J(c._held.mids) === '{}', String(thrown));
-	const loud = sliceDaimond(makeWindow({}), NAMES, Object.assign({}, stub, { dedupeSession: () => { throw new Error('dedupe broke'); } })).fns;
+	const loud = loadPage({ window: makeWindow({}), want: NAMES, stub: Object.assign({}, stub, { dedupeSession: () => { throw new Error('dedupe broke'); } }) });
 	const d = newChat();
 	d.messages = [U('u1', 1, 'q1'), A('a1', 2, 'r1')];
 	d.session = { msgs: [{ role: 'user', content: 'q1' }, { role: 'assistant', content: 'r1' }], upto: 'a1' };
@@ -229,7 +230,7 @@ console.log('\nreconcileEngine, one case at a time');
 		maxOutFor: () => 0, cfg: { tools: false }, noteAppProv: nop, promptPrint: () => '', DaimondModels: { noteUse: nop },
 		applyRoundLimit: nop, applyFoldSettings: nop, applyProviderRouting: nop, applySight: nop, applyEffort: nop, applyCrystalCap: nop,
 	});
-	const page = sliceDaimond(makeWindow({}), ['ensureApp'].concat(NAMES), pageStub).fns;
+	const page = loadPage({ window: makeWindow({}), want: ['ensureApp'].concat(NAMES), stub: pageStub });
 	const e = newChat();
 	e.messages = [U('u1', 1, 'q1'), A('a1', 2, 'r1')];
 	e.session = { msgs: [{ role: 'user', content: 'q1' }, { role: 'assistant', content: 'r1' }], upto: 'a1' };

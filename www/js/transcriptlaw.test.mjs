@@ -31,7 +31,8 @@ import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BREAK = (() => {
@@ -101,7 +102,7 @@ function world(opts) {
 		stub.transcriptOk = () => true;			// the base: nothing is checked
 		stub.chatIdOk = (id) => !!id;
 	}
-	const { fns } = sliceDaimond(w, ['applyChats'], stub);
+	const fns = loadPage({ window: w, want: ['applyChats'], stub: stub });
 	return { applyChats: fns.applyChats, rec };
 }
 

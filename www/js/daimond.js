@@ -73,24 +73,54 @@ import { bindWasm } from './page/wasm.js';
 import { install as state_install, install_2 as state_install_2, install_3 as state_install_3 } from './page/state.js';
 import { install as util_install, install_2 as util_install_2, install_3 as util_install_3 } from './page/util.js';
 import { install as chatstore_install } from './page/chatstore.js';
+import { install as parcel_collect_install } from './page/parcel_collect.js';
+import { install as parcel_apply_install } from './page/parcel_apply.js';
 import { install as handoff_install, install_2 as handoff_install_2 } from './page/handoff.js';
+import { install as send_install } from './page/send.js';
+import { install as workers_install } from './page/workers.js';
+import { install as files_tree_install } from './page/files_tree.js';
+import { install as files_view_install } from './page/files_view.js';
+import { install as admin_install } from './page/admin.js';
+import { install as layout_install } from './page/layout.js';
+import { install as rating_install } from './page/rating.js';
+import { install as sourcemenu_install } from './page/sourcemenu.js';
+import { install as links_install } from './page/links.js';
+import { install as passkey_phrase_install } from './page/passkey_phrase.js';
+import { install as termpanel_install, install_2 as termpanel_install_2 } from './page/termpanel.js';
 import { install as rest_install, install_2 as rest_install_2, install_3 as rest_install_3,
-	install_4 as rest_install_4, install_5 as rest_install_5 } from './page/rest.js';
+	install_4 as rest_install_4, install_5 as rest_install_5, install_6 as rest_install_6,
+	install_7 as rest_install_7 } from './page/rest.js';
 bindWasm({ Wasm, init, DaimondApp, builtin_tools, qr_matrix, set_account_ns, heap_bytes,
 	grow_on_purpose, install_panic_hook, set_workspace_dir, use_opfs_workspace, compose_prompt,
 	compose_prompt_for, default_prompt, safety_clause, Sbj });
-// page-split: order state util chatstore handoff rest
+// page-split: order state util chatstore parcel_collect parcel_apply handoff send steer workers files_tree files_view admin layout rating sourcemenu links passkey_phrase termpanel rest
 rest_install();
 util_install();
 state_install();
 util_install_2();
 chatstore_install();
-rest_install_2();
+parcel_collect_install();
+parcel_apply_install();
 state_install_2();
 util_install_3();
 state_install_3();
+layout_install();
+rest_install_2();
+admin_install();
 rest_install_3();
+rating_install();
 handoff_install();
-rest_install_4();
+sourcemenu_install();
 handoff_install_2();
+rest_install_4();
+send_install();
+workers_install();
 rest_install_5();
+files_tree_install();
+files_view_install();
+termpanel_install();
+rest_install_6();
+links_install();
+passkey_phrase_install();
+termpanel_install_2();
+rest_install_7();

@@ -35,7 +35,8 @@
         offloads and records nothing (r533 QA A-F1).
      node www/js/chatrefmeasure.test.mjs            # ALL PASS
    ============================================================ */
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
@@ -55,7 +56,7 @@ const msgs = (tag, n, len) => Array.from({ length: n }, (_, i) => ({
 function world(specs, opts) {
 	opts = opts || {};
 	const win = makeWindow({ now: 1_000_000_000 });
-	const { fileHash } = sliceDaimond(win, ['fileHash'], {}).fns;
+	const { fileHash } = loadPage({ window: win, want: ['fileHash'], stub: {} });
 	const transcripts = {}, mirror = [], manifests = {}, offloaded = [], writes = [];
 	let loads = 0, resident = 0, peak = 0, perId = {}, failOnce = opts.failOnce || null;
 	const failReads = Object.assign({}, opts.failReads || {});		// id -> reads still to fail in the reader's own shape
@@ -102,9 +103,9 @@ function world(specs, opts) {
 		contentForget: () => {},
 		contentReap:   () => {},
 	};
-	const { collectChatsRefs, dropInlineHeld } = sliceDaimond(win, ['collectChatsRefs', 'dropInlineHeld'], {
+	const { collectChatsRefs, dropInlineHeld } = loadPage({ window: win, want: ['collectChatsRefs', 'dropInlineHeld'], stub: {
 		ChatStore, storedChats: () => ChatStore.stored(), noteCloudIndexStuck: () => {},
-	}).fns;
+	} });
 	const form = (parcel) => parcel.map((e) => e.id + (e.messages ? ':I' : (e.messagesRef ? ':R' : ':?'))).sort().join(' ');
 	return { collect: collectChatsRefs, drop: dropInlineHeld, form, mirror, offloaded, writes, fileHash, fault, manifests,
 		stats: () => ({ loads, peak, perId }), reset: () => { loads = 0; peak = 0; perId = {}; offloaded.length = 0; writes.length = 0; } };

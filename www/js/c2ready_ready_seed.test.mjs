@@ -2,7 +2,8 @@
 // the errand's own seed completes the thread. A copy the seed completes is ready at once (seq 223 kept).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { loadPeer } from './c2ready_common.mjs';
 const DP = loadPeer();
 const asker = { id: 'c1', _loaded: true, messages: [
@@ -19,8 +20,8 @@ for (const variant of ['runner holds m1 only', 'runner has never seen the chat',
 		const win = makeWindow({}); win.setTimeout = setTimeout; win.Date = Date;
 		win.DaimondPeer = DP;
 		win.DaimondSync = { version: () => 1, pull: async () => {} };	// the parcel has not arrived yet
-		const R = sliceDaimond(win, ['peerReady', 'lackedNote', 'syncHeld', 'THROUGH_WAIT_MS', 'throughDeadline'], {
-			diag() {}, chats, loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {} }).fns;
+		const R = loadPage({ window: win, want: ['peerReady', 'lackedNote', 'syncHeld', 'THROUGH_WAIT_MS', 'throughDeadline'], stub: {
+			diag() {}, chats, loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {} } });
 		const t0 = Date.now();
 		const v = await R.peerReady(errand, [], 3000);
 		const dt = Date.now() - t0;

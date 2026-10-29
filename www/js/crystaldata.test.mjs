@@ -15,7 +15,8 @@
    (r544 QA C, F-C1).   `node www/js/crystaldata.test.mjs`
    ============================================================ */
 
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -25,7 +26,7 @@ function check(name, cond, detail) {
 
 const win = makeWindow({});
 loadScript(win, 'crystal.js');
-const lift = (names) => sliceDaimond(win, names, {}).fns;
+const lift = (names) => loadPage({ window: win, want: names, stub: {} });
 const { crystalData, crystalJson } = lift(['crystalData', 'crystalJson', 'crystalLib']);
 let crystalFile = null;
 try { crystalFile = lift(['crystalFile', 'crystalLib']).crystalFile; } catch (e) { /* not there yet */ }
@@ -64,9 +65,9 @@ check('an array is not a crystal: unread, not damaged JSON to mend',
 
 // No library: the text goes back as it came, and nothing is called broken.
 const bare = makeWindow({});
-const bareFns = sliceDaimond(bare, ['crystalData', 'crystalJson', 'crystalLib'], {}).fns;
+const bareFns = loadPage({ window: bare, want: ['crystalData', 'crystalJson', 'crystalLib'], stub: {} });
 let bareBroken = null;
-try { const f = sliceDaimond(bare, ['crystalFile', 'crystalLib'], {}).fns.crystalFile; bareBroken = (t) => f(t).broken; } catch (e) { /* not there yet */ }
+try { const f = loadPage({ window: bare, want: ['crystalFile', 'crystalLib'], stub: {} }).crystalFile; bareBroken = (t) => f(t).broken; } catch (e) { /* not there yet */ }
 check('no library: unchanged, and not called broken',
 	bareFns.crystalJson('{"title":"T",}') === '{"title":"T",}'
 	&& typeof bareBroken === 'function' && bareBroken('{"title":"T",}') === null);

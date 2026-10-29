@@ -11,7 +11,8 @@
    names the failure, and the memory panel offers no raw editor over text it never read.
    ============================================================ */
 import { readPage } from '../../dev/pagesrc.mjs';
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { readFileSync } from 'node:fs';
 
 let failures = 0;
@@ -38,7 +39,7 @@ const stubs = {
 };
 let fns = null;
 try {
-	fns = sliceDaimond(win, ['readCrystalFor', 'crystalBar', 'crystalData', 'crystalFile', 'crystalLib'], stubs).fns;
+	fns = loadPage({ window: win, want: ['readCrystalFor', 'crystalBar', 'crystalData', 'crystalFile', 'crystalLib'], stub: stubs });
 } catch (e) { check('readCrystalFor exists', false, e.message); }
 
 if (fns) {

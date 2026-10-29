@@ -14,7 +14,8 @@
 import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { wasm } from '../../dev/wasmpkg.mjs';
 
 const W = await wasm();
@@ -235,9 +236,9 @@ function panelPage() {
 	const hides = [];
 	const panels = { show() {}, reflow() {}, onUserHide: (fn) => hides.push(fn) };
 	w.DaimondTime = { fmtLocal: () => '' };
-	const { fns } = sliceDaimond(w, ['showMessage'], {
+	const fns = loadPage({ window: w, want: ['showMessage'], stub: {
 		t: (k) => k, esc: (s) => String(s), fmtBytes: (n) => n + ' B', DaimondPanels: panels,
-	});
+	} });
 	const frame = () => { let f = null; walk(ids['msg-body'], (n) => { if (n.tag === 'iframe') f = n; }); return f; };
 	return { w, urls, show: fns.showMessage, frame, hide: (id) => hides.forEach((f) => f(id)), hides };
 }

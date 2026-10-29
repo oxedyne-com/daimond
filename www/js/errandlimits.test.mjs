@@ -17,7 +17,8 @@
    ============================================================ */
 import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { source, lift } from './testlift.mjs';
 
 let failures = 0, checks = 0;
@@ -76,13 +77,12 @@ const P = pw.DaimondPeer;
 		DaimondModels: { effective: (h, role) => ({ model: (h.provider === 'anthropic' && role === 'summarising') ? 'm-fold' : '' }) },
 	}, over || {});
 	let F = null;
-	try { F = sliceDaimond(win(), ['errandLimits'], env()).fns; }
+	try { F = loadPage({ window: win(), want: ['errandLimits'], stub: env() }); }
 	catch (e) { check('errandLimits is in daimond.js', false, String(e && e.message)); }
 	if (F) {
 		check('the page\'s limits are the runner\'s vector, byte for byte', JSON.stringify(F.errandLimits({ id: 'c1' })) === LIMITS_JSON,
 			JSON.stringify(F.errandLimits({ id: 'c1' })));
-		const G = sliceDaimond(win({ DaimondPricing: { contextWindow: () => null } }), ['errandLimits'],
-			env({ cfg: {}, Prompts: { md: {} } })).fns;
+		const G = loadPage({ window: win({ DaimondPricing: { contextWindow: () => null } }), want: ['errandLimits'], stub: env({ cfg: {}, Prompts: { md: {} } }) });
 		const z = G.errandLimits({ id: 'c1' });
 		check('nothing set and an unknown window send zeros, the engine\'s defaults', same(z,
 			{ window: 0, foldAt: 0, contextCap: 0, spendCap: 0, maxRounds: 0, foldModel: 'm-fold', foldPrompt: '', tune: '' }),
@@ -111,7 +111,7 @@ const SRC = source('daimond.js');
 	for (const code of LOCALES) {
 		const tab = table(code);
 		let F = null;
-		try { F = sliceDaimond(makeWindow({}), ['handBackNote', 'seatReason'], { t: tOf(tab) }).fns; }
+		try { F = loadPage({ window: makeWindow({}), want: ['handBackNote', 'seatReason'], stub: { t: tOf(tab) } }); }
 		catch (e) { check(code + ': handBackNote is in daimond.js', false, String(e && e.message)); continue; }
 		const th = F.handBackNote('thread', 'argonaut'), li = F.handBackNote('limits', 'argonaut');
 		const dr = F.handBackNote('door', 'argonaut');	// the session sent as a reference (KT-4b)

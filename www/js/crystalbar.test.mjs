@@ -13,7 +13,8 @@
    ============================================================ */
 
 import { readPage } from '../../dev/pagesrc.mjs';
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { readFileSync } from 'node:fs';
 
 let failures = 0;
@@ -54,7 +55,7 @@ const stubs = {
 	// The store holds what the form opened on, so the save door writes it straight through.
 	diamondApp: () => ({ read_crystal_data: async () => good, write_crystal_data: async (id, text) => { writes.push([id, text]); } }),
 };
-const fns = sliceDaimond(win, ['crystalData', 'crystalFile', 'crystalJson', 'crystalBar', 'editCrystal', 'crystalLib'], stubs).fns;
+const fns = loadPage({ window: win, want: ['crystalData', 'crystalFile', 'crystalJson', 'crystalBar', 'editCrystal', 'crystalLib'], stub: stubs });
 const editOf = (bar) => bar.children.find((c) => c.textContent === 'files.edit');
 async function editThenSave(bar) {
 	const btn = editOf(bar);

@@ -13,7 +13,8 @@
 
    Run: node www/js/shorter.test.mjs
    ============================================================ */
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
@@ -56,7 +57,7 @@ function world() {
 		diag: () => {},
 		fileHash: (s) => 'h' + String(s).length,
 	};
-	const { fns } = sliceDaimond(w, ['applyChats'], stub);
+	const fns = loadPage({ window: w, want: ['applyChats'], stub: stub });
 	return { applyChats: fns.applyChats, rec };
 }
 

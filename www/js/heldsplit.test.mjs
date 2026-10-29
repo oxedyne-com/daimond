@@ -17,7 +17,8 @@
    `sliceDaimond`), storage and walk stubbed. `node www/js/heldsplit.test.mjs [--break nosplit]`.
    ============================================================ */
 
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const BREAK = (() => { const i = process.argv.indexOf('--break'); return i >= 0 ? process.argv[i + 1] : ''; })();
 let failures = 0;
@@ -43,7 +44,6 @@ async function merge({ held = {}, local = {}, base = {}, remote, theirIx = {}, i
 	const plan = { folder, roots: [''], app: {} };
 	const stub = {
 		syncWalkPlan:      async () => plan,
-		readFilebase:      () => Object.assign({}, base),
 		collectFiles:      async () => ({ files: Object.assign({}, local), plan }),
 		syncFileLoc:       () => 'browser',
 		readFilebaseAt:    () => Object.assign({}, base),
@@ -55,7 +55,6 @@ async function merge({ held = {}, local = {}, base = {}, remote, theirIx = {}, i
 		syncAppState:      () => false,
 		ownHere:           () => false,
 		withinShare:       () => true,
-		deadCopy:          async () => false,
 		deleteSyncFile:    async () => true,
 		conflictName:      (p) => p + '.conflict',
 		heldLoc:           () => false,
@@ -64,7 +63,7 @@ async function merge({ held = {}, local = {}, base = {}, remote, theirIx = {}, i
 		commitAgreedFiles: async (agreed) => { committed.push(Object.keys(agreed).sort()); },
 		_lastConflicts:    [],
 	};
-	const { fns } = sliceDaimond(w, ['applyFiles'], stub);
+	const fns = loadPage({ window: w, want: ['applyFiles'], stub: stub });
 	let threw = null;
 	try { await fns.applyFiles(remote, true, {}, 'desk', {}, true, theirIx); } catch (e) { threw = String(e && e.message || e); }
 	return { threw, writes, agreed: committed[0] || [] };

@@ -3,7 +3,8 @@
 // One rule says which rows are conversation, and a landed interrupted partial is one of them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { loadPeer } from './c2ready_common.mjs';
 const DP = loadPeer();
 const asker = { id: 'c1', _loaded: true, messages: [
@@ -22,8 +23,8 @@ test('a runner holding m1..m3 is ready at once on the seed, with no false lacked
 	const live = { id: 'c1', _loaded: true, messages: asker.messages.slice(0, 3).map(m => Object.assign({}, m)) };
 	const win = makeWindow({}); win.setTimeout = setTimeout; win.Date = Date; win.DaimondPeer = DP;
 	win.DaimondSync = { version: () => 0, pull: async () => {} };
-	const R = sliceDaimond(win, ['peerReady', 'lackedNote', 'syncHeld', 'THROUGH_WAIT_MS', 'throughDeadline'], {
-		diag() {}, chats: [live], loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {} }).fns;
+	const R = loadPage({ window: win, want: ['peerReady', 'lackedNote', 'syncHeld', 'THROUGH_WAIT_MS', 'throughDeadline'], stub: {
+		diag() {}, chats: [live], loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {} } });
 	const t0 = Date.now();
 	const v = await R.peerReady(errand, [], 3000);
 	const dt = Date.now() - t0;

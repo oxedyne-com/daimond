@@ -60,7 +60,8 @@ function extractVar(src, name) {
 }
 
 if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname(process.env.DAIMOND_JS), '..', '..');
-const { liftSource, makeWindow, sliceDaimond } = await import('../../dev/syncprobe.mjs');
+const { liftSource, makeWindow } = await import('../../dev/syncprobe.mjs');
+const { loadPage } = await import('./test/page.mjs');
 const src  = readPage(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
 const psrc = readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
 
@@ -211,7 +212,7 @@ console.log('\nC: the totals grow once per run, native only\n');
 {
 	const mw = makeWindow({ now: 1_000_000_000 });
 	let M = null, why = '';
-	try { M = sliceDaimond(mw, ['mergeChatRecords', 'slimChat', 'nativeJoin', 'markRunFolded', 'noteHerePrompt']).fns; } catch (e) { why = String((e && e.message) || e); }
+	try { M = loadPage({ window: mw, want: ['mergeChatRecords', 'slimChat', 'nativeJoin', 'markRunFolded', 'noteHerePrompt'] }); } catch (e) { why = String((e && e.message) || e); }
 	if (!M) check('mergeChatRecords and nativeJoin lift', false, why);
 	else {
 		// Device A adopted and folded; its record synced to B before B adopted.

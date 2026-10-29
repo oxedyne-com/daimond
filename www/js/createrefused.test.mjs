@@ -21,7 +21,8 @@
    only in cloud storage, as the engine's does. `node www/js/createrefused.test.mjs`
    ============================================================ */
 
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -31,7 +32,7 @@ function check(name, cond, detail) {
 const J = (x) => JSON.stringify(x);
 
 // The hash the merge keys files by, from daimond.js itself.
-const H = sliceDaimond(makeWindow({}), ['fileHash'], {}).fns.fileHash;
+const H = loadPage({ window: makeWindow({}), want: ['fileHash'], stub: {} }).fileHash;
 
 /// The page's tools app, as far as the merge meets it. `seen` is the stale-read guard's view
 /// (path -> hash of what this app last read or wrote); `cloud` the paths held only in cloud
@@ -121,7 +122,7 @@ async function merge({ disk: d0 = {}, base = {}, remote, folder = false, seen, c
 		commitAgreedFiles: (agreed) => { committed.push(Object.keys(agreed).sort()); },
 		_lastConflicts:    [],
 	};
-	const { fns } = sliceDaimond(w, ['applyFiles'], stub);
+	const fns = loadPage({ window: w, want: ['applyFiles'], stub: stub });
 	let threw = null;
 	try { await fns.applyFiles(remote, true, {}, 'phone', {}, true, {}); }
 	catch (e) { threw = String(e && e.message || e); }

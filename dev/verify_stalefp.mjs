@@ -40,7 +40,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, scratch, BROWSER } from './harness.mjs';
-import { makeWindow, sliceDaimond } from './syncprobe.mjs';
+import { makeWindow } from './syncprobe.mjs';
+import { loadPage } from '../www/js/test/page.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -127,7 +128,7 @@ const ready = (s) => s.page.waitForFunction(
 	() => !!(window.DaimondCore && DaimondCore.collectSync && DaimondCore.chatStore && window.DaimondCloud && window.DaimondStamp),
 	null, { timeout: 20000 });
 
-const { fileHash } = sliceDaimond(makeWindow({ now: 1_000_000_000 }), ['fileHash'], {}).fns;
+const { fileHash } = loadPage({ window: makeWindow({ now: 1_000_000_000 }), want: ['fileHash'], stub: {} });
 
 const T0 = 1758790000000;
 const pad = (tag) => Array.from({ length: 15 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user',

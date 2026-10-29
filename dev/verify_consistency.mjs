@@ -1952,7 +1952,12 @@ const ROLES = [
 	// row and a cross that purges it are the row's own verbs, drawn smaller than a dialog's text button on purpose, and the fact line is a date
 	// and a size, which are data and not a sentence (the user's own words and times are not compared for casing either).
 	['row-action',      'title',    (it) => it.ctrl && (has(it, 'trash-keep') || has(it, 'trash-restore'))],
-	['row-drop',        'none',     (it) => it.ctrl && has(it, 'arte-drop')],
+	// A file tile's refer arrow (`.arte-use`, the crystal footer's) is the same kind of row verb as its cross, drawn by the one rule
+	// (app.css `.arte-use, .arte-drop`), so the two are one role; filed as icon buttons they were measured against the 20px tile tools
+	// (REL2b, UNBLOCK-49's open Files list). The tile's name (`.arte-open`) opens it, as `.turn-file-name` does: a row's name, not a
+	// text button's chip, compared with its own instances (crystal footer, chat footer, Trash). Its path is mono, as a path is everywhere.
+	['row-drop',        'none',     (it) => it.ctrl && (has(it, 'arte-drop') || has(it, 'arte-use'))],
+	['row-name',        'none',     (it) => it.ctrl && has(it, 'arte-open')],
 	['history-count',   'none',     (it) => it.ctrl && has(it, 'hist-files-n')],
 	['row-fact',        'none',     (it) => has(it, 'arte-note')],
 	// G14: a figures strip is not a status row (L3 lays it out on its own).
@@ -2029,6 +2034,7 @@ const ROLE_PROPS = {
 	'rail-tile': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad'], 'rail-tile-label': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad'],
 	'file-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h', 'lh'],
 	'file-row-name': ['ff', 'fs', 'fw', 'col', 'lh'],
+	'row-name': ['ff', 'fs', 'fw', 'col', 'lh', 'pad', 'h'],
 	'status-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'], 'stat-strip': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'],
 	'gallery-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'],
 	'door-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h', 'gap'],
@@ -2316,6 +2322,7 @@ function report() {
 	const NEED_ROW = (it) => /\bastat-val\b/.test(it.sig) && /^div\.astat-row\.astat-need\b/.test((it.anc || [])[0] || '');
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
+	// The crystal's Files list (`#arte-list`) is such a card: a filled well (`--bg-tertiary`) whose tiles keep its own inset.
 	const textBySurf = new Map(); for (const o of items) { if (!o.view || o.tx == null || o.tcy == null) continue; if (!textBySurf.has(o.surface)) textBySurf.set(o.surface, []); textBySurf.get(o.surface).push(o); }
 	const leftMate = (it) => (textBySurf.get(it.surface) || []).some((o) => o !== it && o.panel === it.panel && Math.abs(o.tcy - it.tcy) <= 4 && o.r[0] < it.r[0] && o.r[0] + o.r[2] <= it.r[0] + 2);
 	const byPanel = new Map(); for (const it of items) { if (!it.view || it.tx == null || it.lines !== 1) continue; if (!/panel-title|section-head|list-row|meta|disclosure|body-text|create-button|text-button/.test(it.roleName)) continue;
@@ -2323,7 +2330,7 @@ function report() {
 		// A text edge is the left edge of a row's FIRST text. An item with another text-bearing item wholly to its left on the same line (a button
 		// after a note, a unit after a field) is placed by that neighbour, not by the panel (5.2.9: `.ar-card-btn` after "No card saved.").
 		if (leftMate(it)) continue;
-		if (within(it, /ctile|crollup|mem-card|hist-row|tag-row|fileview|crystal-bar|link-sec|session-box|pptw-|rel-|mode-pop/)) continue;
+		if (within(it, /ctile|crollup|#arte-list\b|mem-card|hist-row|tag-row|fileview|crystal-bar|link-sec|session-box|pptw-|rel-|mode-pop/)) continue;
 		it.cmpx = GLYROLE(it) ? it.r[0] : it.tx;
 		const k = it.surface + '|' + it.panel; if (!byPanel.has(k)) byPanel.set(k, []); byPanel.get(k).push(it); }
 	for (const [k, L] of byPanel) {

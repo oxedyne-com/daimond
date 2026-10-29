@@ -13,7 +13,8 @@
    `node www/js/crystalsync.test.mjs`
    ============================================================ */
 
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -107,7 +108,7 @@ const stubs = {
 };
 let fns = null;
 try {
-	fns = sliceDaimond(win, ['renderCrystal', 'clearCrystalBody', 'crystalArrived', 'saveCrystalEdit'], stubs).fns;
+	fns = loadPage({ window: win, want: ['renderCrystal', 'clearCrystalBody', 'crystalArrived', 'saveCrystalEdit'], stub: stubs });
 } catch (e) { check('crystalArrived and saveCrystalEdit exist', false, e.message); }
 
 if (fns) {

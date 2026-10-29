@@ -22,7 +22,8 @@
    Run:  node www/js/fileagree.test.mjs        (TREE=<checkout> runs it against another tree)
    ============================================================ */
 import { readFileSync } from 'node:fs';
-import { sliceDaimond, declLine, js } from '../../dev/syncprobe.mjs';
+import { declLine, js } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { loadStore } from './storefixture.mjs';
 
 let failures = 0;
@@ -63,11 +64,11 @@ async function device() {
 	const plan = { folder: false, roots: [''], app: {} };
 	// `readAgreedAt` is absent from a tree before the fix, so the red can be run against it.
 	const names = ['noteFileTombs', 'owesDeletion', 'commitAgreedFiles', 'readFilebaseAt', 'readAgreedAt', 'readMine', 'fileHash'].filter((n) => declLine(n));
-	const { fns } = sliceDaimond(win, names, {
+	const fns = loadPage({ window: win, want: names, stub: {
 		syncFileLoc: () => 'browser', syncFileAt: async () => null, withinShare: () => true, ownHere: () => false,
 		writeOldFileTombs: () => {}, ChatStore: { putTombs: () => Promise.resolve(true), dropTombs: () => {} },
 		storageAlarm: () => {}, tOr: (k, f) => f,
-	});
+	} });
 	return {
 		C: win.DaimondCloud, fns, box,
 		/// This device and the account hold `files` agreed at mailbox version `at`.

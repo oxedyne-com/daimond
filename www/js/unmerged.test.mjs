@@ -18,7 +18,8 @@
    storage and walk stubbed. `node www/js/unmerged.test.mjs [--break nowrite]`.
    ============================================================ */
 
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const BREAK = (() => { const i = process.argv.indexOf('--break'); return i >= 0 ? process.argv[i + 1] : ''; })();
 let failures = 0;
@@ -35,7 +36,6 @@ async function merge({ local, base, remote, refuse }) {
 	const plan = { folder: false, roots: [''], app: {} };
 	const stub = {
 		syncWalkPlan:      async () => plan,
-		readFilebase:      () => Object.assign({}, base),
 		collectFiles:      async () => ({ files: Object.assign({}, local), plan }),
 		syncFileLoc:       () => 'browser',
 		readFilebaseAt:    () => Object.assign({}, base),
@@ -47,7 +47,6 @@ async function merge({ local, base, remote, refuse }) {
 		syncAppState:      () => false,
 		ownHere:           () => false,
 		withinShare:       () => true,
-		deadCopy:          async () => false,
 		deleteSyncFile:    async () => true,
 		conflictName:      (p) => p + '.conflict',
 		syncFileAt:        async () => null,			// nothing held here off the inline section (S13: heldsplit.test)
@@ -56,7 +55,7 @@ async function merge({ local, base, remote, refuse }) {
 		commitAgreedFiles: async (agreed, gone) => { committed.push(Object.keys(agreed).sort()); },
 		_lastConflicts:    [],
 	};
-	const { fns } = sliceDaimond(w, ['applyFiles'], stub);
+	const fns = loadPage({ window: w, want: ['applyFiles'], stub: stub });
 	let body = fns.applyFiles.toString();
 	if (BREAK === 'nowrite') {
 		// 5.2.1's pass: a refused write is passed over.

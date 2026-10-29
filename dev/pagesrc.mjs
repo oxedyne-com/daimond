@@ -87,7 +87,23 @@ function assemble(js) {
 		});
 		out += shiftIndent(top.replace(EXPORT, ''), +1).replace(new RegExp('^\\t// ' + MARK + ': install (\\d+)\\n', 'gm'), (_, n) => runs.get(n));
 	}
-	return unRebase(unCtx(out).replace(KEYWORD, '$1 ')) + '})();\n';
+	return unLift(unRebase(unCtx(out).replace(KEYWORD, '$1 '))) + '})();\n';
+}
+
+// An inner module the generator lifted to the top level (`lift` in the manifest): from
+// its marker line to `var <name> = <value>; // page-split: end lift`, put back in its
+// closure a tab in, `<value>` returned, and the renames the marker names undone.
+const LIFTED	= new RegExp('^\\t// ' + MARK + ': lift (\\w+)((?: \\w+=\\w+)*)\\n([\\s\\S]*?)^\\tvar \\1 = ([\\s\\S]*?); // '
+	+ MARK + ': end lift$', 'gm');
+function unLift(t) {
+	return t.replace(LIFTED, (_, name, renames, body, val) => {
+		let inner = shiftIndent(body, +1) + shiftIndent('\treturn ' + val + ';', +1);
+		for (const r of renames.trim().split(' ').filter(Boolean)) {
+			const [from, to] = r.split('=');
+			inner = inner.replace(new RegExp('(?<![\\w$])' + to + '(?![\\w$])', 'g'), from);
+		}
+		return '\tvar ' + name + ' = (function () {\n' + inner + '\n\t})();';
+	});
 }
 
 /// `readFileSync` for a test that walks www/js file by file: the page entry reads as

@@ -65,7 +65,7 @@ for (const f of locales) {
 
 // THE ONE RENDERER: no `seat.why_` is read in daimond.js except inside `seatReason`.
 const src = source('daimond.js');
-const L = lift(src, ['seatReason', 'seatWhyKey', 'seatWhyText'], []);
+const L = lift(src, ['seatReason', 'seatWhyKey'], []);
 check('the renderer and its key map are there', L.missing.length === 0, L.missing.join());
 const reads = src.split('\n').map((l, i) => [i + 1, l]).filter(([, l]) => /['"]seat\.(why|label)_/.test(l));
 const body = /function seatReason\([^)]*\) \{[\s\S]*?\n\t\}/.exec(src);
@@ -78,7 +78,7 @@ if (!L.missing.length) {
 		deviceLabelFor: (id) => (id === 'rn' ? 'argonaut' : ''),
 		DaimondModels: { providerName: (id) => id.toUpperCase() } });
 	ctx.window = ctx;
-	const api = vm.runInContext(L.body + ';({seatReason, seatWhyKey, seatWhyText})', ctx);
+	const api = vm.runInContext(L.body + ';({seatReason, seatWhyKey})', ctx);
 	const r = api.seatReason(api.seatWhyKey({ why: 'runner-unchecked', runnerId: 'rn' }));
 	check('a reason renders a label and its sentence', r && /^seat\.label_runner_unchecked/.test(r.label)
 		&& /^seat\.why_runner_unchecked/.test(r.why) && r.label.indexOf('argonaut') > 0, JSON.stringify(r));

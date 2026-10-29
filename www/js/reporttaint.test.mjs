@@ -18,7 +18,8 @@
 
    Run:  node www/js/reporttaint.test.mjs
    ============================================================ */
-const { makeWindow, sliceDaimond, loadScript, TREE } = await import('../../dev/syncprobe.mjs');
+const { makeWindow, loadScript, TREE } = await import('../../dev/syncprobe.mjs');
+const { loadPage } = await import('./test/page.mjs');
 import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -63,7 +64,7 @@ console.log('\n(b) take: the asker marks, saves and tells the engine\n');
 		const saved = { n: 0 };
 		let F = null;
 		try {
-			F = sliceDaimond(w, ['takeReportTaint'], { chats: recs, persistChats: () => { saved.n++; } }).fns;
+			F = loadPage({ window: w, want: ['takeReportTaint'], stub: { chats: recs, persistChats: () => { saved.n++; } } });
 		} catch (e) { check('the tree has takeReportTaint', false, String(e && e.message || e)); }
 		return { F, saved };
 	};

@@ -13,7 +13,8 @@
    ============================================================ */
 import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
@@ -28,7 +29,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 	let answer = () => 'drop01,email';
 	const Wasm = { locked_packs: () => answer() };
 	let F = null;
-	try { F = sliceDaimond(makeWindow({}), ['errandLocked'], { Wasm }).fns; }
+	try { F = loadPage({ window: makeWindow({}), want: ['errandLocked'], stub: { Wasm } }); }
 	catch (e) { check('errandLocked is in daimond.js', false, String(e && e.message)); }
 	if (F) {
 		check('two locked packs read as a list', same(F.errandLocked(), ['drop01', 'email']));
@@ -44,7 +45,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 		check('no answer sends no list', F.errandLocked() === undefined);
 	}
 	let G = null;
-	try { G = sliceDaimond(makeWindow({}), ['errandLocked'], { Wasm: {} }).fns; } catch (e) {}
+	try { G = loadPage({ window: makeWindow({}), want: ['errandLocked'], stub: { Wasm: {} } }); } catch (e) {}
 	check('a module without the export sends no list', !!G && G.errandLocked() === undefined);
 }
 // ── The dispatch door passes it ──────────────────────────────────────────

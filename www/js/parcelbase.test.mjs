@@ -16,7 +16,8 @@
 
      node www/js/parcelbase.test.mjs            # ALL PASS
    ============================================================ */
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -27,7 +28,7 @@ function check(name, cond, detail) {
 
 /// The parcel's builders over `win`, every store reader stubbed to an empty answer.
 function lift(win, seen) {
-	return sliceDaimond(win, ['syncParcelBase', 'syncInlineRoom', 'jsonBytes', 'SYNC_DOOR_RESERVE'], {
+	return loadPage({ window: win, want: ['syncParcelBase', 'syncInlineRoom', 'jsonBytes', 'SYNC_DOOR_RESERVE'], stub: {
 		loadTombs:          () => ({}),
 		loadMsgTombs:       () => ({}),
 		fileTombs:          () => ({}),
@@ -37,7 +38,7 @@ function lift(win, seen) {
 		collectDevices:     () => { seen.devices++; return { d1: { name: 'é' } }; },
 		loadTombMap:        () => ({}),
 		nominationSnapshot: () => null,
-	}).fns;
+	} });
 }
 
 function world(extra) {

@@ -52,7 +52,8 @@
         different one at the old count, is not given the pair of the transcript it replaced.
      node www/js/chatfigures.test.mjs            # ALL PASS
    ============================================================ */
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -62,9 +63,9 @@ function check(name, cond, detail) {
 const J = (x) => JSON.stringify(x);
 
 const w = makeWindow({ now: 1_000_000_000 });
-const base = sliceDaimond(w, ['slimChat', 'mergeChatRecords', 'fileHash', 'chatMsgCount', 'standingOf', 'msgStanding']).fns;
+const base = loadPage({ window: w, want: ['slimChat', 'mergeChatRecords', 'fileHash', 'chatMsgCount', 'standingOf', 'msgStanding'] });
 let lifted = null, why = '';
-try { lifted = sliceDaimond(w, ['carryChatFigures', 'chatSeed']).fns; } catch (e) { why = String((e && e.message) || e); }
+try { lifted = loadPage({ window: w, want: ['carryChatFigures', 'chatSeed'] }); } catch (e) { why = String((e && e.message) || e); }
 
 const msgs = (tag, n, len) => Array.from({ length: n }, (_, i) => ({
 	role: i % 2 ? 'assistant' : 'user', mid: tag + '-m' + i, ts: 1000 + i,

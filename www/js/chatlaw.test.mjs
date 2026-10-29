@@ -35,7 +35,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
-import { makeWindow, sliceDaimond, rng } from '../../dev/syncprobe.mjs';
+import { makeWindow, rng } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APP = readPage(join(HERE, 'daimond.js'), 'utf8');
@@ -53,7 +54,7 @@ const want = ['mergeChatRecords', 'slimChat', 'chatFields'];
 const TAINT = ['chatTaintOf', 'chatTaintJoin', 'applyChatTaint', 'runKeyCmp', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals'];
 const has = (n) => new RegExp('\\n\\t+function ' + n + '\\(').test(APP);
 for (const n of ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].concat(TAINT)) if (has(n)) want.push(n);
-const F = sliceDaimond(w, want, { loadMsgTombs: () => ({}) }).fns;
+const F = loadPage({ window: w, want: want, stub: { loadMsgTombs: () => ({}) } });
 const { mergeChatRecords, slimChat } = F;
 
 /// Lifts `function name(...) { ... }` at any indentation by counting braces.

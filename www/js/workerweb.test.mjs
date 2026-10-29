@@ -19,7 +19,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APP = readPage(join(HERE, 'daimond.js'), 'utf8');
@@ -39,7 +40,7 @@ function body(name) {
 function lift(names, scope) {
 	const w = makeWindow({ now: 1_000_000_000 });
 	if (scope) w.DaimondHandMode = { scopeGranted: (s) => s === scope };
-	return sliceDaimond(w, names, {}).fns;
+	return loadPage({ window: w, want: names, stub: {} });
 }
 
 test('W1 a chat answer is read off its engine as one word', () => {

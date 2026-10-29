@@ -40,7 +40,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, signInAs, scratch, BROWSER } from './harness.mjs';
-import { makeWindow, sliceDaimond } from './syncprobe.mjs';
+import { makeWindow } from './syncprobe.mjs';
+import { loadPage } from '../www/js/test/page.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -118,7 +119,7 @@ const settle = (s) => s.page.evaluate(() => window.DaimondCore.chatStore().settl
 
 const C1 = 'msg-prompt', C2 = 'msg-reseat', C3 = 'msg-fill-at', C4 = 'msg-fill-old';
 // The store's cut, by the app's own `slimMessages` (lifted from the tree under test).
-const { slimMessages } = sliceDaimond(makeWindow({ now: 1_000_000_000 }), ['slimMessages'], {}).fns;
+const { slimMessages } = loadPage({ window: makeWindow({ now: 1_000_000_000 }), want: ['slimMessages'], stub: {} });
 const RESULT = 'R'.repeat(5000);
 const T0 = 1758790000000;						// one fixed moment, so the two records are equal but for the message
 

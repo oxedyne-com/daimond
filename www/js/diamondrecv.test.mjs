@@ -40,7 +40,8 @@
          node www/js/diamondrecv.test.mjs --break absent     (a malformed lineage reads as none)
          node www/js/diamondrecv.test.mjs --break keeprecords (a tomb leaves the records)
    ============================================================ */
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { readFileSync } from 'node:fs';
 
 /// The page's own sidecar read (markshere.js), so a row is named here as `settle` names it.
@@ -162,8 +163,8 @@ function device(name, skew) {
 		};
 	}
 	if (BREAK === 'keeprecords') stubs.dropDiamondRecords = () => {};
-	const f = sliceDaimond(w, ['applyDiamonds', 'entryLineage', 'recordDiamondCopies', 'readDiamondRecv', 'readDiamondSeen',
-		'syncForkPoint', 'commitDiamondBaseline', 'readDiamondBase', 'diamondAncOf', 'recvOf'], stubs).fns;
+	const f = loadPage({ window: w, want: ['applyDiamonds', 'entryLineage', 'recordDiamondCopies', 'readDiamondRecv', 'readDiamondSeen',
+		'syncForkPoint', 'commitDiamondBaseline', 'readDiamondBase', 'diamondAncOf', 'recvOf'], stub: stubs });
 	const dev = {
 		name, store, w, f, settled, drops,
 		// Rows taken off whose entry did not follow.

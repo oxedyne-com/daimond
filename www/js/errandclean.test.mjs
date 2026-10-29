@@ -16,7 +16,8 @@
    ============================================================ */
 import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
@@ -55,7 +56,7 @@ const stub = {
 };
 const win = makeWindow({});
 win.DaimondLedger = {};
-const F = sliceDaimond(win, ['errandClean', 'daimonApp', 'taintDaimon', 'resetDiamondApps'], stub).fns;
+const F = loadPage({ window: win, want: ['errandClean', 'daimonApp', 'taintDaimon', 'resetDiamondApps'], stub: stub });
 
 // ── An ordinary chat ─────────────────────────────────────────────────────
 {

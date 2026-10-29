@@ -232,7 +232,7 @@ function lift(name) {
 const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'electSources', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
 	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
-	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'handBackNote', 'seatReason', 'seatWhyKey', 'seatWhyText', 'dropRefusedTiles',
+	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'handBackNote', 'seatReason', 'seatWhyKey', 'dropRefusedTiles',
 	'notRunCause', 'notRunRecord', 'placeholderNotRun', 'notRunWhyKey', 'drawNotRunReason'];
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──

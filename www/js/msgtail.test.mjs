@@ -29,7 +29,8 @@
 
    Run:  node www/js/msgtail.test.mjs [--tree <checkout>]
    ============================================================ */
-import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -90,11 +91,11 @@ console.log('\nmsgtail (ii): a tail the gateway no longer holds is offloaded aga
 	const before = w.DaimondCloud.contentGet('@m/a1');
 	check('the tail has a manifest', !!before);
 	held.delete(before.chunks[0].addr);						// swept at the gateway
-	const f = sliceDaimond(w, ['verifyManifestPresence'], {
+	const f = loadPage({ window: w, want: ['verifyManifestPresence'], stub: {
 		ChatStore: { stored: () => [] }, diamondApp: () => ({ list_diamonds: async () => '[]' }),
 		filesSyncable: () => true, syncFileAt: async () => null, clog: () => {}, trail: () => {}, diag: () => {},
 		tOr: (k, x) => x, t: (k) => k,
-	}).fns;
+	} });
 	await f.verifyManifestPresence();
 	check('the presence check forgets the dead manifest (reoffload)', !w.DaimondCloud.contentGet('@m/a1'));
 	await w.DaimondPost.snapshotRefs();
@@ -108,7 +109,7 @@ console.log('\nmsgtail (iii): a peer\'s tail is named in its slot');
 {
 	const gate = { value: true };
 	const { w } = await tab(gate);
-	const f = sliceDaimond(w, ['notePeerMsgRefs'], {}).fns;
+	const f = loadPage({ window: w, want: ['notePeerMsgRefs'], stub: {} });
 	const peerRef = { v: 1, size: 9, key: 'pk', chunks: [{ addr: 'p'.repeat(64), size: 9 }] };
 	f.notePeerMsgRefs({ msgs: { a1: { addr: 'a1', msgRef: peerRef }, a2: { addr: 'a2', body: 'inline' } } }, PEER);
 	const slot = w.DaimondCloud.contentGet('@m/a1.peer.' + PEER);

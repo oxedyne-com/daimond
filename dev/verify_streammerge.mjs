@@ -11,7 +11,8 @@
 //
 //   node dev/verify_streammerge.mjs
 
-import { makeWindow, sliceDaimond } from './syncprobe.mjs';
+import { makeWindow } from './syncprobe.mjs';
+import { loadPage } from '../www/js/test/page.mjs';
 import { guardRan } from './verdict.mjs';
 
 function loadMsgTombs() { return {}; }		// no tombstones in these cases
@@ -19,7 +20,7 @@ function loadMsgTombs() { return {}; }		// no tombstones in these cases
 // The app's own `mergeMessages`, lifted with everything it reaches (the message law,
 // `slimMessages` and the keep figures it ranks a cut copy by), so this cannot drift
 // from the law the way a hand-listed set of functions did (r53 msg2).
-const { mergeMessages, slimMessages } = sliceDaimond(makeWindow({ now: 1_000_000_000 }), ['mergeMessages', 'slimMessages'], { loadMsgTombs }).fns;
+const { mergeMessages, slimMessages } = loadPage({ window: makeWindow({ now: 1_000_000_000 }), want: ['mergeMessages', 'slimMessages'], stub: { loadMsgTombs } });
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {

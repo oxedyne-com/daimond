@@ -44,7 +44,8 @@
      node www/js/diamondshape.test.mjs            # ALL PASS
      node www/js/diamondshape.test.mjs --break    # the old law: FAILs
    ============================================================ */
-import { makeWindow, sliceDaimond, rng, canon } from '../../dev/syncprobe.mjs';
+import { makeWindow, rng, canon } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -55,7 +56,7 @@ const BREAK = process.argv.includes('--break');
 if (BREAK) console.log('\n*** RUNNING UNDER --break: the old law (no sticky reference, no adoption); failures below are the point ***');
 
 const w = makeWindow({ now: 1_000_000_000 });
-const lifted = sliceDaimond(w, ['diamondRefStands', 'diamondAdoptsRef', 'diamondInlineSet']).fns;
+const lifted = loadPage({ window: w, want: ['diamondRefStands', 'diamondAdoptsRef', 'diamondInlineSet'] });
 // The old law, for --break: every reference may go back to inline, and no reference is adopted at an equal stamp.
 const adoptsRef  = BREAK ? () => false : lifted.diamondAdoptsRef;
 const inlineSet  = lifted.diamondInlineSet;

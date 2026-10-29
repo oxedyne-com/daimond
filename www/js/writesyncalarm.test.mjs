@@ -23,7 +23,8 @@
    Run:  node www/js/writesyncalarm.test.mjs
          node www/js/writesyncalarm.test.mjs --break noquotacheck
    ============================================================ */
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
@@ -58,8 +59,8 @@ function makeWriteSyncFile() {
 			} catch (e) { return false; }
 		};
 	} else {
-		const sliced = sliceDaimond(w, ['writeSyncFile'], stub);
-		w.writeSyncFile = sliced.fns.writeSyncFile;
+		const sliced = loadPage({ window: w, want: ['writeSyncFile'], stub: stub });
+		w.writeSyncFile = sliced.writeSyncFile;
 	}
 	return { writeSyncFile: w.writeSyncFile, alarms, clears };
 }

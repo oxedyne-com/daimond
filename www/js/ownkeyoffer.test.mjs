@@ -543,7 +543,7 @@ function frameChecks(M) {
 
 // ── daimond.js, the page half ───────────────────────────────────
 function pageChecks() {
-	const NAMES = ['electSources', 'seatReason', 'seatWhyKey', 'seatWhyText', 'bookReportCost', 'handBackNote', 'wasmEngineAbi'];
+	const NAMES = ['electSources', 'seatReason', 'seatWhyKey', 'bookReportCost', 'handBackNote', 'wasmEngineAbi'];
 	const L = lift(source('daimond.js'), NAMES, []);
 	check('K6 the page functions are there', L.missing.length === 0, L.missing.join());
 	if (L.missing.length) return;
@@ -561,25 +561,27 @@ function pageChecks() {
 	});
 	ctx.window = ctx;
 	const api = vm.runInContext(L.body + ';({' + NAMES.map((n) => n + ':' + n).join(',') + '})', ctx);
+	// The reason's sentence, as the seat switch draws it (sourcemenu.js).
+	const whyText = (sw) => { const r = api.seatReason(api.seatWhyKey(sw)); return r ? r.why : ''; };
 	check('K4 electSources is the pid set across the halves', api.electSources(ctx.chats[0]).join() === 'an,credits',
 		api.electSources(ctx.chats[0]).join());
-	const src = api.seatWhyText({ why: 'runner-source', runnerId: 'rn', source: 'http', reach: 'https' });
+	const src = whyText({ why: 'runner-source', runnerId: 'rn', source: 'http', reach: 'https' });
 	check('K6 runner-source names the runner, the provider and the reason', /^seat\.why_runner_source/.test(src)
 		&& src.indexOf('"name":"argonaut"') > 0 && src.indexOf('"provider":"HTTP"') > 0 && src.indexOf('seat.reach_https') > 0, src);
-	check('K6 runner-engine says it updates itself', api.seatWhyText({ why: 'runner-engine', runnerId: 'rn' }).indexOf('seat.why_runner_engine') === 0);
-	check('K6 runner-rekey asks for re-approval', api.seatWhyText({ why: 'runner-rekey', runnerId: 'rn' }).indexOf('seat.why_runner_rekey') === 0);
-	check('K6 the legacy reason keeps its line', api.seatWhyText({ why: 'runner-credits-only', runnerId: 'rn' }).indexOf('seat.why_runner_credits') === 0);
-	check('RUNNER-DOOR runner-silent says it is not listening', api.seatWhyText({ why: 'runner-silent', runnerId: 'rn' }).indexOf('seat.why_runner_quiet') === 0);
-	check('TRUTH runner-unchecked has its line', api.seatWhyText({ why: 'runner-unchecked', runnerId: 'rn' }).indexOf('seat.why_runner_unchecked') === 0,
-		api.seatWhyText({ why: 'runner-unchecked', runnerId: 'rn' }));
-	check('TRUTH page-old has its line', api.seatWhyText({ why: 'page-old', runnerId: 'rn' }).indexOf('seat.why_page_old') === 0,
-		api.seatWhyText({ why: 'page-old', runnerId: 'rn' }));
+	check('K6 runner-engine says it updates itself', whyText({ why: 'runner-engine', runnerId: 'rn' }).indexOf('seat.why_runner_engine') === 0);
+	check('K6 runner-rekey asks for re-approval', whyText({ why: 'runner-rekey', runnerId: 'rn' }).indexOf('seat.why_runner_rekey') === 0);
+	check('K6 the legacy reason keeps its line', whyText({ why: 'runner-credits-only', runnerId: 'rn' }).indexOf('seat.why_runner_credits') === 0);
+	check('RUNNER-DOOR runner-silent says it is not listening', whyText({ why: 'runner-silent', runnerId: 'rn' }).indexOf('seat.why_runner_quiet') === 0);
+	check('TRUTH runner-unchecked has its line', whyText({ why: 'runner-unchecked', runnerId: 'rn' }).indexOf('seat.why_runner_unchecked') === 0,
+		whyText({ why: 'runner-unchecked', runnerId: 'rn' }));
+	check('TRUTH page-old has its line', whyText({ why: 'page-old', runnerId: 'rn' }).indexOf('seat.why_page_old') === 0,
+		whyText({ why: 'page-old', runnerId: 'rn' }));
 	for (const [why, key] of [['runner-busy', 'busy'], ['runner-phone', 'phone'], ['runner-require', 'require'],
 		['runner-nosource', 'nosource']]) {
-		check('SEATWHY-ALL ' + why + ' has its line', api.seatWhyText({ why: why, runnerId: 'rn' }).indexOf('seat.why_runner_' + key) === 0,
-			api.seatWhyText({ why: why, runnerId: 'rn' }));
+		check('SEATWHY-ALL ' + why + ' has its line', whyText({ why: why, runnerId: 'rn' }).indexOf('seat.why_runner_' + key) === 0,
+			whyText({ why: why, runnerId: 'rn' }));
 	}
-	check('K6 no reason, no line', api.seatWhyText({}) === '' && api.seatWhyText(null) === '');
+	check('K6 no reason, no line', whyText({}) === '' && whyText(null) === '');
 	check('K7 an abi hand-back says the runner runs another version', api.handBackNote('abi', 'argonaut').indexOf('seat.why_runner_engine') === 0,
 		api.handBackNote('abi', 'argonaut'));
 	check('K6 a keys hand-back keeps the runner\'s own words', api.handBackNote('keys', 'argonaut', 're-approve argonaut after a passphrase change')

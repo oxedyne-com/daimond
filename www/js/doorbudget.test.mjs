@@ -23,7 +23,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { webcrypto } from 'node:crypto';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -149,14 +150,14 @@ console.log('\nC. collectFiles over mail, counted as the parcel counts it\n');
 			? { outcome: 'done', text: names.map((n) => n + '  (' + PER + ' bytes)').join('\n') }
 			: { outcome: 'done', text: '' },
 	};
-	const { collectFiles } = sliceDaimond(w, ['collectFiles'], {
+	const { collectFiles } = loadPage({ window: w, want: ['collectFiles'], stub: {
 		syncWalkPlan:       async () => ({ app, folder: null }),
 		syncFileAt:         async (plan, full) => new File([bodies[full]], full, { lastModified: 0 }),
 		offloadConfirmed:   () => false,
 		isMobileDeviceSelf: () => false,
 		syncAppState:       () => false,
 		parseSyncListing:   () => names.map((name) => ({ name, size: PER, dir: false })),
-	}).fns;
+	} });
 	// Five files' worth of code units and a little over: `String.length` admits five,
 	// whose JSON-UTF-8 is well past it.
 	for (const budget of [5 * PER + 1000, 3 * PER + 7, 777777]) {
@@ -173,7 +174,7 @@ console.log('\nC. collectFiles over mail, counted as the parcel counts it\n');
 console.log('\nD. one scan\n');
 {
 	const w = makeWindow();
-	const { jsonBytes } = sliceDaimond(w, ['jsonBytes'], {}).fns;
+	const { jsonBytes } = loadPage({ window: w, want: ['jsonBytes'], stub: {} });
 	const samples = ['', 'ascii', 'café — 日本語', 'a\u{1F600}b', 'a\uD83Db', 'a\uDE00b', JSON.stringify(mail(3, 4000))];
 	const bad = samples.filter((s) => jsonBytes(s) !== F.utf8Len(s) || jsonBytes(s) !== enc(s));
 	check('D1. jsonBytes and utf8Len agree with TextEncoder on every sample', !bad.length,

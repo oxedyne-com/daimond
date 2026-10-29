@@ -45,10 +45,11 @@ import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 // The order the inline budget is spent in, lifted from the tree under test.
-const { freshestFirst } = sliceDaimond(makeWindow({ now: 1_000_000_000 }), ['freshestFirst'], {}).fns;
+const { freshestFirst } = loadPage({ window: makeWindow({ now: 1_000_000_000 }), want: ['freshestFirst'], stub: {} });
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DAIMOND_SRC = join(HERE, 'daimond.js');

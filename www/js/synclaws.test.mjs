@@ -40,7 +40,8 @@
 
    Run:  node www/js/synclaws.test.mjs [--tree <checkout>]
    ============================================================ */
-import { makeWindow, loadScript, sliceDaimond, checkKind } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript, checkKind } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -60,15 +61,15 @@ function win() {
 }
 function core(names) {
 	const w = win();
-	return sliceDaimond(w, names, {
+	return loadPage({ window: w, want: names, stub: {
 		ChatStore: { putTombs: () => Promise.resolve(true), stored: () => [] },
 		storageAlarm: () => {}, renderSeatSwitch: () => {}, tOr: (k, f) => f, t: (k) => k,
 		deviceId: () => 'ffffffffffffffff', nudgeSync: () => {},
-	}).fns;
+	} });
 }
 function tombCore(w) {
-	const c = sliceDaimond(w, ['mergeTombMap', 'loadTombMap'], {
-		ChatStore: { putTombs: () => Promise.resolve(true) }, storageAlarm: () => {}, tOr: (k, f) => f }).fns;
+	const c = loadPage({ window: w, want: ['mergeTombMap', 'loadTombMap'], stub: {
+		ChatStore: { putTombs: () => Promise.resolve(true) }, storageAlarm: () => {}, tOr: (k, f) => f } });
 	w.DaimondCore = { mergeTombs: c.mergeTombMap, loadTombMap: c.loadTombMap, tombs: c.loadTombMap };
 }
 

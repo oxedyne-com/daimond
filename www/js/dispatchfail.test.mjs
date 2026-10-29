@@ -22,7 +22,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0, checks = 0;
@@ -94,7 +95,7 @@ function labels(holder, recovering, self = PHONE, names0 = null) {
 		rememberDeviceName: () => {},
 		t: (k, o) => k + (o ? J(o) : ''),
 	};
-	const { fns } = sliceDaimond(w, ['turnRunnerId', 'handoffClaimLabel', 'handoffTargetLabel', 'runnerLabel'], stub);
+	const fns = loadPage({ window: w, want: ['turnRunnerId', 'handoffClaimLabel', 'handoffTargetLabel', 'runnerLabel'], stub: stub });
 	return fns;
 }
 function provenance(self) {
@@ -108,7 +109,7 @@ function provenance(self) {
 		rememberDeviceName: () => {},
 		t: (k, o) => k + (o ? J(o) : ''),
 	};
-	return sliceDaimond(w, ['runnerLabel', 'ranHereProvenance'], stub).fns;
+	return loadPage({ window: w, want: ['runnerLabel', 'ranHereProvenance'], stub: stub });
 }
 try {
 	const m = { iturn: 't1', why: 'dispatched', toDevice: DESK, toName: 'argonaut' };
@@ -168,13 +169,13 @@ async function refusedPost(mode) {
 		errandLimits: () => undefined,		// the page's limits (KT-2b) are errandlimits.test's
 		errandSession: () => undefined, errandReach: async () => undefined, errandToday: () => '', errandWords: async () => undefined, errandWordsFor: async () => undefined, errandProdBase: () => null,	// KT-4's are peer.test's
 		markTurnDispatched: (ch, mark) => { ch.messages.push({ role: 'assistant', content: '', why: 'dispatched', iturn: mark.iturn, toDevice: DESK, toName: 'argonaut' }); },
-		seatNoteOnPrompt: () => true, seatNameOf: (id, nm) => nm || id,
+		seatNameOf: (id, nm) => nm || id,
 		touchMsg: () => {}, touchChat: () => {}, persistChats: () => { rec.persisted++; }, ownsChat: () => false, renderHistory: () => {},
 		recoverOneLocally: (ch, m) => { rec.ranHere = m; },
 		endHandOffNotRun: (ch, m) => { rec.recovered = m; },
 		t: (k) => k,
 	};
-	const { fns } = sliceDaimond(w, ['dispatchToPeer'], stub);
+	const fns = loadPage({ window: w, want: ['dispatchToPeer'], stub: stub });
 	const res = await fns.dispatchToPeer(c, 't9', 'go', [], { toId: DESK, toName: 'argonaut' });
 	const ph = c.messages.find((x) => x.why === 'dispatched');
 	return { res, ph, rec };

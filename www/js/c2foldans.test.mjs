@@ -1,7 +1,8 @@
 // C2-N2 (QA r572z-A N2), as FOLDIDS reads it: the fold lists the rows the engine held, so an answer it
 // did not hold is laid however its prompt was covered (the arms that said 'not covered' asserted QA r572w A F2).
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
-const F = sliceDaimond(makeWindow({}), ['daimonPrior', 'foldFrom', 'mergeFold', 'foldCover', 'foldGap', 'tailAfter', 'sessionDoubt', 'dedupeSession'], { diag() {} }).fns;
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
+const F = loadPage({ window: makeWindow({}), want: ['daimonPrior', 'foldFrom', 'mergeFold', 'foldCover', 'foldGap', 'tailAfter', 'sessionDoubt', 'dedupeSession'], stub: { diag() {} } });
 const J = JSON.stringify, said = (l) => l.map((m) => m.content);
 let fail = 0; const check = (n, c, d) => { console.log((c ? '  ok   ' : '  FAIL ') + n + (c ? '' : '  ' + d)); if (!c) fail++; };
 const FOLD = '[Daimond folded the earlier part] summary';

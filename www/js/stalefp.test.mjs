@@ -36,7 +36,8 @@ import { readPage } from '../../dev/pagesrc.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -54,7 +55,7 @@ const NEW  = OLD.concat([msg('m3', 'THE NEWEST MESSAGE')]);
 /// leaves it), its write still queued, and a collect begun.
 async function scenario(landFirst) {
 	const win = makeWindow({ now: 1_000_000_000 });
-	const { fileHash } = sliceDaimond(win, ['fileHash'], {}).fns;
+	const { fileHash } = loadPage({ window: win, want: ['fileHash'], stub: {} });
 	const ser = (m) => JSON.stringify(m);
 
 	let disk = OLD.slice();							// what the store serves
@@ -83,9 +84,9 @@ async function scenario(landFirst) {
 		contentForget: () => {},
 		contentReap:   () => {},
 	};
-	const { collectChatsRefs } = sliceDaimond(win, ['collectChatsRefs'], {
+	const { collectChatsRefs } = loadPage({ window: win, want: ['collectChatsRefs'], stub: {
 		ChatStore, storedChats: () => ChatStore.stored(), noteCloudIndexStuck: () => {},
-	}).fns;
+	} });
 
 	// The save of the new copy is queued behind a write in flight: it lands later.
 	writeLands = wait(30).then(() => { disk = NEW.slice(); writeLands = null; });

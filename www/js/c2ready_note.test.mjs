@@ -5,7 +5,8 @@
 // reading: `runnerTurnOpts` counts the lack when the turn lays its history. Red on aec3dd78, green after.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeWindow, sliceDaimond, declLine } from '../../dev/syncprobe.mjs';
+import { makeWindow, declLine } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { loadPeer } from './c2ready_common.mjs';
 const DP = loadPeer();
 const msgs = [];
@@ -23,9 +24,9 @@ async function run(landBeforeTurn) {
 	const names = ['peerReady', 'peerReconstruct', 'lackedNote', 'THROUGH_WAIT_MS', 'throughDeadline', 'graftSeed',
 		'RECONSTRUCT_STALL_MS', 'RECONSTRUCT_ABS_CAP_MS', 'RECONSTRUCT_PULL_MIN_MS', 'RECONSTRUCT_PULL_MAX_MS', 'syncHeld'];
 	if (declLine('runnerTurnOpts') > 0) names.push('runnerTurnOpts');
-	const R = sliceDaimond(win, names, {
+	const R = loadPage({ window: win, want: names, stub: {
 		diag() {}, chats, loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {}, persistChats() {}, touchChat() {},
-		honourGone() {}, DaimondMarksHere: { chatSettle() {} }, ensureApp: () => ({}), scopeChatTo: async () => {}, diamonds: [], loadDiamonds: async () => {} }).fns;
+		honourGone() {}, DaimondMarksHere: { chatSettle() {} }, ensureApp: () => ({}), scopeChatTo: async () => {}, diamonds: [], loadDiamonds: async () => {} } });
 	await R.peerReady(errand, [], 200);
 	const ctx = await R.peerReconstruct(errand, []);
 	// The note as reconstruct read it, before any pull lands.
